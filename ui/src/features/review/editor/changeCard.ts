@@ -16,6 +16,7 @@ const TITLE: Record<NonTextKind, string> = {
   binary: "Binary file",
   contentUnavailable: "Content unavailable",
   rename: "Renamed",
+  empty: "Empty file",
 };
 
 const size = (bytes: number | null): string =>
@@ -38,6 +39,7 @@ function describe(kind: NonTextKind, side: EntryDesc | null, path: string): stri
     case "submodule":
       return side.target?.slice(0, 7) ?? "";
     case "binary":
+    case "empty":
       return size(side.size);
     case "rename":
       return path;
