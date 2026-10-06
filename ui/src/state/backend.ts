@@ -10,6 +10,7 @@ import type { Event as ServerEvent } from "../generated/Event";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { Response } from "../generated/Response";
+import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { TextContent } from "../generated/TextContent";
 import { Connection } from "./connection";
@@ -109,6 +110,11 @@ export class Backend {
   /** Compares against another base; every subscriber, this one included, then gets `snapshotSettled`. */
   async setBase(base: BaseChoice): Promise<Base> {
     return expect(await this.conn.request({ type: "setBase", session: this.sid, base }), "base");
+  }
+
+  /** Replaces the review filter; every subscriber, this one included, then gets `snapshotSettled`. Rejects with the backend's message for an invalid glob. */
+  async setFilter(filter: ReviewFilter): Promise<void> {
+    expect(await this.conn.request({ type: "setFilter", session: this.sid, filter }), "done");
   }
 
   /** The branches and recent commits a base can be picked from. */

@@ -153,7 +153,11 @@
     {completion}
     onopenrepo={() => void changeset.pickRepo()}
   >
-    {#snippet filter()}<FilterPopover {excluded} />{/snippet}
+    {#snippet filter()}
+      {#if changeset.manifest}
+        <FilterPopover filter={changeset.manifest.filter} {excluded} onsave={(f) => changeset.setFilter(f)} />
+      {/if}
+    {/snippet}
     {#snippet run()}<RunButton />{/snippet}
   </Header>
 

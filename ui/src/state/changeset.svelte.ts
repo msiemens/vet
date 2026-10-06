@@ -6,6 +6,7 @@ import { SvelteMap } from "svelte/reactivity";
 import type { FileChange } from "../generated/FileChange";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { Manifest } from "../generated/Manifest";
+import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { BaseChoice } from "../generated/BaseChoice";
 import { Backend, type BaseCandidates } from "./backend";
@@ -135,6 +136,37 @@ class ChangesetStore {
     } catch (error) {
       this.notice = error instanceof Error ? error.message : String(error);
     }
+  }
+
+  /**
+   * Replaces the review filter. The backend pushes `snapshotSettled`, which fetches the new
+   * manifest. Resolves with the backend's message if it refused the filter (a bad glob).
+   */
+  async setFilter(filter: ReviewFilter): Promise<string | undefined> {
+    try {
+      await this.connected().setFilter(filter);
+      return undefined;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  /** Adds `path` (a file, or a folder with `dir`) to the filter's exclude globs. */
+  async excludePath(path: string, dir: boolean) {
+    const filter = this.manifest?.filter;
+    if (!filter) return;
+    const glob = dir ? `${path}/**` : path;
+    if (filter.exclude.includes(glob)) return;
+    const error = await this.setFilter({ ...filter, exclude: [...filter.exclude, glob] });
+    if (error) this.notice = error;
+  }
+
+  /** Limits the review to the folder `path`. */
+  async reviewOnly(path: string) {
+    const filter = this.manifest?.filter;
+    if (!filter) return;
+    const error = await this.setFilter({ ...filter, roots: [path] });
+    if (error) this.notice = error;
   }
 
   /** The children of a directory of the target snapshot; `undefined` after showing why it failed. */
