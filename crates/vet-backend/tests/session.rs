@@ -9,8 +9,9 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    Base, BaseChoice, Completion, DirEntry, DirEntryKind, Event, FileStatus, HunkState, Manifest, NoTextReason,
-    NonTextKind, Request, Response, ReviewUpdate, ServerMessage, SessionId, TextContent,
+    AnchorState, Base, BaseChoice, Completion, DirEntry, DirEntryKind, Event, FileStatus, HunkState, LineLocation,
+    Manifest, NoTextReason, NonTextKind, Request, Response, ReviewUpdate, ServerMessage, SessionId, Side, TextContent,
+    Thread, ThreadStatus, ThreadTarget,
 };
 use vet_transport::{Events, Handler};
 
@@ -166,6 +167,136 @@ async fn open(client: &Client, repo: &Path) -> SessionId {
 
 fn lines(c: &Completion) -> (u32, u32) {
     (c.lines, c.seen_lines)
+}
+
+impl Client {
+    async fn thread(&self, request: Request) -> Thread {
+        match self.call(request).await.unwrap() {
+            Response::Thread(thread) => thread,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    async fn threads(&self, session: SessionId) -> (u32, Vec<Thread>) {
+        match self.call(Request::Threads { session }).await.unwrap() {
+            Response::Threads { revision, threads } => (revision, threads),
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn threads_follow_edits_and_notify_other_connections() {
+    let dirty = text(30, &[3]);
+    let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;
+    let mut one = Client::new(&fx.handler);
+    let mut two = Client::new(&fx.handler);
+    let session = open(&one, fx.repo.path()).await;
+    assert_eq!(open(&two, fx.repo.path()).await, session);
+
+    let created = one
+        .thread(Request::CreateThread {
+            session,
+            revision: 0,
+            target: ThreadTarget::Range {
+                side: Side::Target,
+                path: "a.txt".into(),
+                start: 10,
+                len: 3,
+            },
+            body: "why?".into(),
+        })
+        .await;
+    assert_eq!(
+        created.anchor,
+        Some(AnchorState::Exact {
+            whitespace_changed: false
+        })
+    );
+    assert_eq!(created.messages.len(), 1);
+    assert!(!created.messages[0].author.is_empty());
+    let Event::ThreadsChanged { revision: 0, .. } = two.event().await else {
+        panic!("no threads event")
+    };
+    assert!(one.no_event(), "the requester is not told about its own change");
+
+    // An edit above shifts the lines; the next fetch resolves them at the new revision.
+    write(fx.repo.path(), "a.txt", &format!("new 1\nnew 2\n{dirty}"));
+    assert_eq!(one.settled().await, 1);
+    assert_eq!(two.settled().await, 1);
+    let (revision, threads) = one.threads(session).await;
+    assert_eq!(revision, 1);
+    let at = |start| {
+        Some(LineLocation {
+            path: "a.txt".into(),
+            start,
+            len: 3,
+        })
+    };
+    assert_eq!(
+        threads[0].anchor,
+        Some(AnchorState::Exact {
+            whitespace_changed: false
+        })
+    );
+    assert_eq!(
+        (threads[0].location.clone(), threads[0].original.clone()),
+        (at(12), at(10))
+    );
+
+    // An edit inside the range makes the anchor inferred, and confirming it re-anchors.
+    write(
+        fx.repo.path(),
+        "a.txt",
+        &format!("new 1\nnew 2\n{}", dirty.replace("line 11", "changed")),
+    );
+    assert_eq!(one.settled().await, 2);
+    two.settled().await;
+    let (_, threads) = one.threads(session).await;
+    assert!(
+        matches!(threads[0].anchor, Some(AnchorState::Inferred { .. })),
+        "{:?}",
+        threads[0].anchor
+    );
+    let id = threads[0].id;
+    let confirmed = one
+        .thread(Request::ConfirmAnchor {
+            session,
+            revision: 2,
+            thread: id,
+        })
+        .await;
+    assert_eq!(
+        confirmed.anchor,
+        Some(AnchorState::Exact {
+            whitespace_changed: false
+        })
+    );
+    assert_eq!(confirmed.location, at(12));
+    assert!(matches!(two.event().await, Event::ThreadsChanged { revision: 2, .. }));
+
+    // Reply, resolve and delete reach the other connection too.
+    let replied = one
+        .thread(Request::Reply {
+            session,
+            thread: id,
+            body: "because".into(),
+        })
+        .await;
+    assert_eq!(replied.messages.len(), 2);
+    let resolved = one
+        .thread(Request::SetThreadStatus {
+            session,
+            thread: id,
+            status: ThreadStatus::Resolved,
+        })
+        .await;
+    assert_eq!(resolved.status, ThreadStatus::Resolved);
+    one.call(Request::DeleteThread { session, thread: id }).await.unwrap();
+    for _ in 0..3 {
+        assert!(matches!(two.event().await, Event::ThreadsChanged { .. }));
+    }
+    assert!(one.threads(session).await.1.is_empty());
 }
 
 #[tokio::test]

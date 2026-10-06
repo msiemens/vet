@@ -9,8 +9,10 @@ use vet_core::content::{
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle;
 use vet_core::platform::PlatformThread;
-use vet_core::review::Side;
-use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
+use vet_core::review::{
+    AnchorState, CommentTarget, Location, Message, ReviewedSpan, Side, StaleReason, Strategy, Thread, ThreadId,
+    ThreadStatus,
+};
 
 use super::*;
 use crate::pin::{BaseChoice, CommitId, Pin, PinId};
@@ -98,6 +100,9 @@ struct FakeGit {
     commits: Arc<Mutex<HashMap<String, (CommitId, Snapshot)>>>,
     /// Largest blob `read_blob_capped` returns.
     cap: Arc<Mutex<Option<usize>>>,
+    /// Renames `diff` reports, `old -> new`.
+    renames: Arc<Mutex<Vec<(RepoPath, RepoPath)>>>,
+    user: Arc<Mutex<Option<String>>>,
 }
 
 impl FakeGit {
@@ -121,6 +126,9 @@ impl FakeGit {
 impl GitRepo for FakeGit {
     async fn head(&self) -> std::result::Result<CommitId, GitError> {
         Ok(CommitId("head".into()))
+    }
+    async fn user_name(&self) -> Option<String> {
+        self.user.lock().unwrap().clone()
     }
     async fn scan(&self, _: Dirty) -> std::result::Result<Scan, GitError> {
         let snapshot = self.scans.lock().unwrap().remove(0);
@@ -202,6 +210,7 @@ impl GitRepo for FakeGit {
         };
         let paths: BTreeSet<_> = old.entries.keys().chain(new.entries.keys()).collect();
         let mut out = SnapshotDiff::default();
+        out.renames.0.extend(self.renames.lock().unwrap().iter().cloned());
         for p in paths {
             let (o, n) = (old.entries.get(p), new.entries.get(p));
             if o == n {
@@ -251,6 +260,13 @@ struct Mem {
     acks: Vec<NonTextAck>,
     base: Option<(SnapshotId, BaseChoice)>,
     closed: bool,
+    threads: Vec<Thread>,
+}
+
+impl Mem {
+    fn thread(&mut self, id: ThreadId) -> &mut Thread {
+        self.threads.iter_mut().find(|t| t.id == id).expect("a stored thread")
+    }
 }
 
 #[derive(Clone, Default)]
@@ -334,23 +350,36 @@ impl ReviewStore for MemStore {
         self.0.lock().unwrap().acks.retain(|a| *a != ack);
         Ok(())
     }
-    async fn add_thread(&self, _: SessionId, _: CommentTarget, _: Message) -> StoreResult<ThreadId> {
-        unimplemented!()
+    async fn add_thread(&self, _: SessionId, target: CommentTarget, opener: Message) -> StoreResult<ThreadId> {
+        let mut mem = self.0.lock().unwrap();
+        let id = ThreadId(mem.threads.len() as u64 + 1);
+        mem.threads.push(Thread {
+            id,
+            target,
+            messages: vec![opener],
+            status: ThreadStatus::Open,
+            platform: None,
+        });
+        Ok(id)
     }
-    async fn add_message(&self, _: ThreadId, _: Message) -> StoreResult<()> {
-        unimplemented!()
+    async fn add_message(&self, thread: ThreadId, message: Message) -> StoreResult<()> {
+        self.0.lock().unwrap().thread(thread).messages.push(message);
+        Ok(())
     }
-    async fn set_thread_status(&self, _: ThreadId, _: ThreadStatus) -> StoreResult<()> {
-        unimplemented!()
+    async fn set_thread_status(&self, thread: ThreadId, status: ThreadStatus) -> StoreResult<()> {
+        self.0.lock().unwrap().thread(thread).status = status;
+        Ok(())
     }
-    async fn set_thread_target(&self, _: ThreadId, _: CommentTarget) -> StoreResult<()> {
-        unimplemented!()
+    async fn set_thread_target(&self, thread: ThreadId, target: CommentTarget) -> StoreResult<()> {
+        self.0.lock().unwrap().thread(thread).target = target;
+        Ok(())
     }
     async fn set_thread_platform(&self, _: ThreadId, _: Option<PlatformThread>) -> StoreResult<()> {
         unimplemented!()
     }
-    async fn delete_thread(&self, _: ThreadId) -> StoreResult<()> {
-        unimplemented!()
+    async fn delete_thread(&self, thread: ThreadId) -> StoreResult<()> {
+        self.0.lock().unwrap().threads.retain(|t| t.id != thread);
+        Ok(())
     }
 }
 
@@ -966,4 +995,303 @@ async fn settled_snapshots_are_stored_and_bump_the_revision() {
     let mem = fx.store.0.lock().unwrap();
     assert_eq!(mem.timeline.len(), 2);
     assert!(mem.blobs.contains_key(&BlobId::of(b"three\n")));
+}
+
+fn on(file: &str, start: u32, end: u32) -> NewThread {
+    NewThread::Range {
+        side: Side::Target,
+        path: path(file),
+        range: LineRange { start, end },
+    }
+}
+
+fn at(file: &str, start: u32, end: u32) -> Option<Location> {
+    Some(Location {
+        file: path(file),
+        range: LineRange { start, end },
+    })
+}
+
+impl Fixture {
+    async fn thread(&self, target: NewThread) -> ThreadId {
+        let revision = self.session.revision().await;
+        let view = self
+            .session
+            .create_thread(revision, target, "why?".into(), 100)
+            .await
+            .unwrap();
+        view.id
+    }
+
+    async fn view(&self, id: ThreadId) -> ThreadView {
+        let all = self.session.threads().await.unwrap();
+        all.threads.into_iter().find(|t| t.id == id).unwrap()
+    }
+}
+
+const EXACT: AnchorState = AnchorState::Exact {
+    whitespace_changed: false,
+};
+
+#[tokio::test]
+async fn a_thread_follows_an_edit_above_it() {
+    let dirty = numbered(30, &[3]);
+    let fx = Fixture::open(&[("a.txt", &numbered(30, &[]))], &[("a.txt", &dirty)]).await;
+    let id = fx.thread(on("a.txt", 10, 13)).await;
+    let view = fx.view(id).await;
+    assert_eq!((view.state, view.location), (Some(EXACT), at("a.txt", 10, 13)));
+
+    fx.settle(&[("a.txt", &format!("new 1\nnew 2\n{dirty}"))]).await;
+
+    let view = fx.view(id).await;
+    assert_eq!((view.state, view.location), (Some(EXACT), at("a.txt", 12, 15)));
+    assert_eq!(view.path, Some(path("a.txt")));
+    let CommentTarget::Range(recorded) = view.target else {
+        panic!()
+    };
+    assert_eq!(recorded.range, LineRange { start: 10, end: 13 }, "never rewritten");
+}
+
+#[tokio::test]
+async fn a_line_ending_change_keeps_the_anchor_exact() {
+    let dirty = numbered(10, &[3]);
+    let fx = Fixture::open(&[("a.txt", &numbered(10, &[]))], &[("a.txt", &dirty)]).await;
+    let id = fx.thread(on("a.txt", 2, 5)).await;
+
+    fx.settle(&[("a.txt", &dirty.replace('\n', "\r\n"))]).await;
+
+    let view = fx.view(id).await;
+    assert_eq!(
+        view.state,
+        Some(AnchorState::Exact {
+            whitespace_changed: true
+        })
+    );
+    assert_eq!(view.location, at("a.txt", 2, 5));
+}
+
+#[tokio::test]
+async fn an_edit_inside_the_range_is_inferred_until_confirmed() {
+    let dirty = numbered(30, &[3]);
+    let fx = Fixture::open(&[("a.txt", &numbered(30, &[]))], &[("a.txt", &dirty)]).await;
+    let id = fx.thread(on("a.txt", 10, 13)).await;
+
+    let rev = fx.settle(&[("a.txt", &numbered(30, &[3, 11]))]).await;
+
+    let view = fx.view(id).await;
+    let Some(AnchorState::Inferred { strategy, .. }) = view.state else {
+        panic!("{:?}", view.state)
+    };
+    assert_eq!(
+        (strategy, view.location),
+        (Strategy::ContextWindow, at("a.txt", 10, 13))
+    );
+
+    // Confirming from an older revision is refused.
+    let err = fx.session.confirm_anchor(rev - 1, id).await.unwrap_err();
+    assert!(matches!(err, SessionError::Stale { .. }));
+    let confirmed = fx.session.confirm_anchor(rev, id).await.unwrap();
+    assert_eq!(
+        (confirmed.state, confirmed.location),
+        (Some(EXACT), at("a.txt", 10, 13))
+    );
+    let stored = fx.store.0.lock().unwrap().threads[0].target.clone();
+    let CommentTarget::Range(anchor) = stored else { panic!() };
+    assert_eq!(anchor.snapshot, fx.session.state.lock().await.target.id);
+    // An exact anchor cannot be confirmed again.
+    let err = fx.session.confirm_anchor(rev, id).await.unwrap_err();
+    assert!(matches!(err, SessionError::Invalid(_)));
+}
+
+#[tokio::test]
+async fn resolution_starts_from_the_recorded_anchor() {
+    let dirty = numbered(30, &[3]);
+    let fx = Fixture::open(&[("a.txt", &numbered(30, &[]))], &[("a.txt", &dirty)]).await;
+    let id = fx.thread(on("a.txt", 10, 13)).await;
+
+    fx.settle(&[("a.txt", &numbered(30, &[3, 11]))]).await;
+    assert!(matches!(fx.view(id).await.state, Some(AnchorState::Inferred { .. })));
+    // The edit is reverted: the recorded anchor matches again, exactly.
+    fx.settle(&[("a.txt", &dirty)]).await;
+
+    assert_eq!(fx.view(id).await.state, Some(EXACT));
+}
+
+#[tokio::test]
+async fn duplicated_content_is_ambiguous_until_one_is_attached() {
+    let block = "dup A\ndup B\ndup C\n";
+    let before = format!("p1\np2\np3\n{block}q1\nq2\nq3\n");
+    let fx = Fixture::open(&[("a.txt", "x\n")], &[("a.txt", &before)]).await;
+    let id = fx.thread(on("a.txt", 3, 6)).await;
+
+    let after = format!("x1\nx2\nx3\n{block}x4\nx5\nx6\nx7\nx8\n{block}y1\ny2\ny3\n");
+    let rev = fx.settle(&[("a.txt", &after)]).await;
+
+    let view = fx.view(id).await;
+    assert_eq!(view.location, None);
+    assert_eq!(
+        view.state,
+        Some(AnchorState::Ambiguous {
+            candidates: vec![at("a.txt", 3, 6).unwrap(), at("a.txt", 11, 14).unwrap()]
+        })
+    );
+    let err = fx.session.attach_anchor(rev, id, 2).await.unwrap_err();
+    assert!(matches!(err, SessionError::NotFound(_)));
+
+    let attached = fx.session.attach_anchor(rev, id, 1).await.unwrap();
+    assert_eq!((attached.state, attached.location), (Some(EXACT), at("a.txt", 11, 14)));
+}
+
+#[tokio::test]
+async fn moved_content_in_another_changed_file_is_inferred() {
+    let a = numbered(10, &[]);
+    let b: String = (0..10).map(|i| format!("b {i}\n")).collect();
+    let block = "m1\nm2\nm3\n";
+    let with_block = format!(
+        "{}{block}{}",
+        &a[..a.find("line 5").unwrap()],
+        &a[a.find("line 5").unwrap()..]
+    );
+    let fx = Fixture::open(
+        &[("a.txt", &a), ("b.txt", &b)],
+        &[("a.txt", &with_block), ("b.txt", &b)],
+    )
+    .await;
+    let id = fx.thread(on("a.txt", 5, 8)).await;
+
+    let moved = format!(
+        "{}{block}{}",
+        &b[..b.find("b 7").unwrap()],
+        &b[b.find("b 7").unwrap()..]
+    );
+    fx.settle(&[("a.txt", &a), ("b.txt", &moved)]).await;
+
+    let view = fx.view(id).await;
+    assert!(
+        matches!(
+            view.state,
+            Some(AnchorState::Inferred {
+                strategy: Strategy::CrossFileMove,
+                ..
+            })
+        ),
+        "{:?}",
+        view.state
+    );
+    assert_eq!((view.path, view.location), (Some(path("b.txt")), at("b.txt", 7, 10)));
+}
+
+#[tokio::test]
+async fn deleting_the_file_detaches_range_and_file_threads_but_not_the_changeset_thread() {
+    let fx = Fixture::open(&[("a.txt", &numbered(10, &[]))], &[("a.txt", &numbered(10, &[1]))]).await;
+    let range = fx.thread(on("a.txt", 2, 5)).await;
+    let file = fx
+        .thread(NewThread::File {
+            side: Side::Target,
+            path: path("a.txt"),
+        })
+        .await;
+    let whole = fx.thread(NewThread::Changeset).await;
+
+    fx.settle(&[("other.txt", "o\n")]).await;
+
+    let gone = Some(AnchorState::Stale {
+        reason: StaleReason::FileDeleted,
+    });
+    let view = fx.view(range).await;
+    assert_eq!((view.state, view.location), (gone.clone(), None));
+    assert_eq!(fx.view(file).await.state, gone);
+    let whole = fx.view(whole).await;
+    assert_eq!((whole.state, whole.path, whole.location), (None, None, None));
+}
+
+#[tokio::test]
+async fn range_and_file_threads_follow_a_rename() {
+    let text = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &text)], &[("a.txt", &text)]).await;
+    let range = fx.thread(on("a.txt", 2, 5)).await;
+    let file = fx
+        .thread(NewThread::File {
+            side: Side::Target,
+            path: path("a.txt"),
+        })
+        .await;
+    fx.git.renames.lock().unwrap().push((path("a.txt"), path("b.txt")));
+
+    fx.settle(&[("b.txt", &text)]).await;
+
+    let view = fx.view(range).await;
+    assert_eq!((view.state, view.location), (Some(EXACT), at("b.txt", 2, 5)));
+    let view = fx.view(file).await;
+    assert_eq!((view.state, view.path), (Some(EXACT), Some(path("b.txt"))));
+}
+
+#[tokio::test]
+async fn replies_status_and_deletion_are_persisted() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    *fx.git.user.lock().unwrap() = Some("Ada".into());
+    let id = fx.thread(on("a.txt", 0, 1)).await;
+    let other = fx.thread(NewThread::Changeset).await;
+
+    let view = fx.session.reply(id, "because".into(), 200).await.unwrap();
+    assert_eq!(view.messages.len(), 2);
+    assert_eq!(view.messages[1].at, 200);
+    let view = fx.session.set_thread_status(id, ThreadStatus::Resolved).await.unwrap();
+    assert_eq!(view.status, ThreadStatus::Resolved);
+    fx.session.delete_thread(other).await.unwrap();
+
+    let stored = fx.store.0.lock().unwrap().threads.clone();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].status, ThreadStatus::Resolved);
+    assert_eq!(
+        stored[0].messages.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
+        ["why?", "because"]
+    );
+    assert_eq!(fx.session.threads().await.unwrap().threads.len(), 1);
+    assert!(matches!(
+        fx.session.reply(other, "x".into(), 1).await,
+        Err(SessionError::NotFound(_))
+    ));
+    assert!(matches!(
+        fx.session.reply(id, "  ".into(), 1).await,
+        Err(SessionError::Invalid(_))
+    ));
+}
+
+#[tokio::test]
+async fn the_author_is_the_git_user_or_you() {
+    let git = FakeGit::default();
+    *git.base.lock().unwrap() = Some(git.snapshot(&[("a.txt", "one\n")]));
+    let first = git.snapshot(&[("a.txt", "two\n")]);
+    git.scans.lock().unwrap().push(first);
+    *git.user.lock().unwrap() = Some("Ada".into());
+    let named = LiveSession::open(git.clone(), MemStore::default(), "t".into())
+        .await
+        .unwrap();
+    let anonymous = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+
+    let view = named
+        .create_thread(0, NewThread::Changeset, "hi".into(), 1)
+        .await
+        .unwrap();
+    assert_eq!(view.messages[0].author, "Ada");
+    let view = anonymous
+        .session
+        .create_thread(0, NewThread::Changeset, "hi".into(), 1)
+        .await
+        .unwrap();
+    assert_eq!(view.messages[0].author, "You");
+}
+
+#[tokio::test]
+async fn threads_need_text_inside_the_current_revision() {
+    let fx = Fixture::open(&[("a.txt", "one\ntwo\n")], &[("a.txt", "one\ntwo\n"), ("bin", "x\0y")]).await;
+    let new = |target| fx.session.create_thread(0, target, "x".into(), 1);
+
+    assert!(matches!(new(on("a.txt", 1, 3)).await, Err(SessionError::Invalid(_))));
+    assert!(matches!(new(on("bin", 0, 1)).await, Err(SessionError::NotText(_))));
+    assert!(matches!(new(on("nope", 0, 1)).await, Err(SessionError::NotFound(_))));
+    fx.settle(&[("a.txt", "one\n")]).await;
+    assert!(matches!(new(on("a.txt", 0, 1)).await, Err(SessionError::Stale { .. })));
+    assert!(fx.store.0.lock().unwrap().threads.is_empty());
 }

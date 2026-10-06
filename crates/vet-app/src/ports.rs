@@ -135,6 +135,8 @@ pub trait GitRepo {
         snapshot: &Snapshot,
         root: &Path,
     ) -> impl Future<Output = Result<(), CheckoutError>> + Send;
+    /// The configured `user.name`, if any.
+    fn user_name(&self) -> impl Future<Output = Option<String>> + Send;
     /// The snapshot of a commit's tree.
     fn commit_snapshot(&self, commit: &CommitId) -> impl Future<Output = Result<Snapshot, GitError>> + Send;
     /// Content of `blob` as git would store it: from the object database, else

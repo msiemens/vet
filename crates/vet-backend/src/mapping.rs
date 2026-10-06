@@ -3,11 +3,12 @@
 use vet_app::pin::{BaseChoice, CommitId};
 use vet_app::ports::{BaseCandidates, Degraded};
 use vet_app::session::{
-    BaseView, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemView, ManifestView, NoText,
-    ReviewUpdateView, ReviewView, TargetText, path_str,
+    BaseView, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemView, ManifestView, NewThread, NoText,
+    ReviewUpdateView, ReviewView, TargetText, ThreadView, ThreadsView, path_str,
 };
 use vet_core::completion::{Completion, HunkState};
-use vet_core::content::{EntryKind, Hunk, NonTextKind};
+use vet_core::content::{EntryKind, Hunk, LineRange, NonTextKind, RepoPath};
+use vet_core::review::{AnchorState, CommentTarget, Confidence, Location, Side, StaleReason, Strategy, ThreadStatus};
 use vet_protocol as p;
 
 fn completion(c: &Completion) -> p::Completion {
@@ -209,6 +210,126 @@ pub fn target_text(t: &TargetText) -> p::Response {
                 },
             },
         },
+    }
+}
+
+fn side(s: Side) -> p::Side {
+    match s {
+        Side::Base => p::Side::Base,
+        Side::Target => p::Side::Target,
+    }
+}
+
+fn core_side(s: p::Side) -> Side {
+    match s {
+        p::Side::Base => Side::Base,
+        p::Side::Target => Side::Target,
+    }
+}
+
+fn line_location(file: &RepoPath, range: LineRange) -> p::LineLocation {
+    p::LineLocation {
+        path: path_str(file),
+        start: range.start,
+        len: range.len(),
+    }
+}
+
+fn location(l: &Location) -> p::LineLocation {
+    line_location(&l.file, l.range)
+}
+
+pub fn new_thread(t: p::ThreadTarget) -> NewThread {
+    match t {
+        p::ThreadTarget::Range { side, path, start, len } => NewThread::Range {
+            side: core_side(side),
+            path: RepoPath(path.into_bytes()),
+            range: LineRange {
+                start,
+                end: start.saturating_add(len),
+            },
+        },
+        p::ThreadTarget::File { side, path } => NewThread::File {
+            side: core_side(side),
+            path: RepoPath(path.into_bytes()),
+        },
+        p::ThreadTarget::Changeset => NewThread::Changeset,
+    }
+}
+
+pub fn core_thread_status(s: p::ThreadStatus) -> ThreadStatus {
+    match s {
+        p::ThreadStatus::Open => ThreadStatus::Open,
+        p::ThreadStatus::Resolved => ThreadStatus::Resolved,
+    }
+}
+
+fn anchor_state(s: &AnchorState) -> p::AnchorState {
+    match s {
+        AnchorState::Exact { whitespace_changed } => p::AnchorState::Exact {
+            whitespace_changed: *whitespace_changed,
+        },
+        AnchorState::Inferred { strategy, confidence } => p::AnchorState::Inferred {
+            strategy: match strategy {
+                Strategy::ContextWindow => p::AnchorStrategy::ContextWindow,
+                Strategy::CrossFileMove => p::AnchorStrategy::CrossFileMove,
+            },
+            confidence: match confidence {
+                Confidence::Low => p::AnchorConfidence::Low,
+                Confidence::Medium => p::AnchorConfidence::Medium,
+                Confidence::High => p::AnchorConfidence::High,
+            },
+        },
+        AnchorState::Stale { reason } => p::AnchorState::Stale {
+            reason: match reason {
+                StaleReason::ContextChanged => p::StaleReason::ContextChanged,
+                StaleReason::FileDeleted => p::StaleReason::FileDeleted,
+            },
+        },
+        AnchorState::Ambiguous { candidates } => p::AnchorState::Ambiguous {
+            candidates: candidates.iter().map(location).collect(),
+        },
+    }
+}
+
+pub fn thread(t: &ThreadView) -> p::Thread {
+    let (kind, side_of, original) = match &t.target {
+        CommentTarget::Range(a) => (
+            p::ThreadKind::Range,
+            Some(side(a.side)),
+            Some(line_location(&a.file, a.range)),
+        ),
+        CommentTarget::File { side: s, .. } => (p::ThreadKind::File, Some(side(*s)), None),
+        CommentTarget::Changeset => (p::ThreadKind::Changeset, None, None),
+    };
+    p::Thread {
+        id: u32::try_from(t.id.0).unwrap_or(u32::MAX),
+        kind,
+        side: side_of,
+        path: t.path.as_ref().map(path_str),
+        original,
+        location: t.location.as_ref().map(location),
+        anchor: t.state.as_ref().map(anchor_state),
+        messages: t
+            .messages
+            .iter()
+            .map(|m| p::ThreadMessage {
+                author: m.author.clone(),
+                body: m.body.clone(),
+                at: u32::try_from(m.at).unwrap_or(0),
+            })
+            .collect(),
+        status: match t.status {
+            ThreadStatus::Open => p::ThreadStatus::Open,
+            ThreadStatus::Resolved => p::ThreadStatus::Resolved,
+        },
+    }
+}
+
+pub fn threads(v: &ThreadsView) -> p::Response {
+    p::Response::Threads {
+        revision: v.revision,
+        threads: v.threads.iter().map(thread).collect(),
     }
 }
 

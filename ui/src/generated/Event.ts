@@ -5,4 +5,4 @@ import type { ReviewUpdate } from "./ReviewUpdate";
  * Events are invalidations or small state updates; the client re-requests
  * whatever it displays.
  */
-export type Event = { "type": "snapshotSettled", session: number, revision: number, } | { "type": "reviewChanged", session: number, revision: number, update: ReviewUpdate, };
+export type Event = { "type": "snapshotSettled", session: number, revision: number, } | { "type": "reviewChanged", session: number, revision: number, update: ReviewUpdate, } | { "type": "threadsChanged", session: number, revision: number, };

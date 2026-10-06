@@ -159,6 +159,13 @@ impl Handler for Mock {
             Request::Acknowledge { .. } => Err("the corpus has no non-text items".into()),
             Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),
             Request::ListDirectory { .. } | Request::FileText { .. } => Err("the corpus has no file tree".into()),
+            Request::Threads { .. }
+            | Request::CreateThread { .. }
+            | Request::Reply { .. }
+            | Request::SetThreadStatus { .. }
+            | Request::DeleteThread { .. }
+            | Request::ConfirmAnchor { .. }
+            | Request::AttachAnchor { .. } => Err("the corpus has no threads".into()),
             Request::Hover { path, line, col, .. } => {
                 position(&path)?;
                 Ok(Response::Hover {

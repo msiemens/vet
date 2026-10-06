@@ -26,14 +26,18 @@ use std::{fmt, slice};
 use tokio::sync::Mutex;
 use vet_core::completion::{Completion, Coverage, HunkState};
 use vet_core::content::{
-    BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hunk, NonTextChange, NonTextKind, RepoPath, Snapshot,
+    BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextChange, NonTextKind, RepoPath, Snapshot,
     SnapshotDiff, SnapshotId, SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::marking::{hunk_regions, hunk_span};
 use vet_core::prepared::PreparedFile;
 use vet_core::remap::{cut_recorded, remap_span};
-use vet_core::review::{FileRemapInput, ReviewedSpan};
+use vet_core::resolve::{Resolution, resolve_anchor};
+use vet_core::review::{
+    Anchor, AnchorState, CommentTarget, FileRemapInput, Location, Message, ReviewedSpan, Side, StaleReason, Thread,
+    ThreadId, ThreadStatus,
+};
 
 use crate::acquisition::Acquisition;
 use crate::pin::{BaseChoice, CommitId};
@@ -56,6 +60,8 @@ pub enum SessionError {
     NotText(String),
     /// The chosen base does not resolve; the message is fit to show.
     Base(String),
+    /// The request does not apply to the thread or the text; the message is fit to show.
+    Invalid(String),
 }
 
 impl fmt::Display for SessionError {
@@ -66,7 +72,7 @@ impl fmt::Display for SessionError {
             Self::Stale { current } => write!(f, "stale revision; the changeset is at revision {current}"),
             Self::NotFound(what) => write!(f, "no such {what}"),
             Self::NotText(path) => write!(f, "{path} has no text to show"),
-            Self::Base(message) => f.write_str(message),
+            Self::Base(message) | Self::Invalid(message) => f.write_str(message),
         }
     }
 }
@@ -217,6 +223,45 @@ pub struct TargetText {
     pub content: std::result::Result<String, NoText>,
 }
 
+/// What a new thread is attached to. Ranges are in the text of the revision the
+/// request names.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum NewThread {
+    Range {
+        side: Side,
+        path: RepoPath,
+        range: LineRange,
+    },
+    File {
+        side: Side,
+        path: RepoPath,
+    },
+    Changeset,
+}
+
+/// A thread with its anchor resolved against the current revision.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ThreadView {
+    pub id: ThreadId,
+    /// As recorded, never replaced by a resolution.
+    pub target: CommentTarget,
+    /// The file the thread is shown at: where the anchor or file is now, else
+    /// where it was. `None` for a changeset thread.
+    pub path: Option<RepoPath>,
+    /// `None` for a changeset thread.
+    pub state: Option<AnchorState>,
+    /// The lines of a range thread now; `None` when it is detached.
+    pub location: Option<Location>,
+    pub messages: Vec<Message>,
+    pub status: ThreadStatus,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ThreadsView {
+    pub revision: u32,
+    pub threads: Vec<ThreadView>,
+}
+
 /// What the current revision's diff needs, computed on first use.
 struct Changes {
     diff: SnapshotDiff,
@@ -227,6 +272,8 @@ struct Changes {
     /// Recorded spans as they are now.
     remapped: Vec<(SpanId, Vec<ReviewedSpan>)>,
     flat: Vec<ReviewedSpan>,
+    /// Range threads resolved from their recorded anchors.
+    resolutions: HashMap<ThreadId, Resolution>,
     /// Both sides of each `diff.non_text` change.
     items: Vec<ItemView>,
 }
@@ -243,12 +290,15 @@ struct State {
     known: HashMap<SnapshotId, Snapshot>,
     recorded: Vec<RecordedSpan>,
     acks: Vec<NonTextAck>,
+    threads: Vec<Thread>,
     degraded: Option<Degraded>,
     changes: Option<Changes>,
 }
 
 pub struct LiveSession<G, S> {
     pub id: SessionId,
+    /// Author of the messages written here: git's `user.name`, else "You".
+    author: String,
     acquisition: Acquisition<G, S>,
     /// The pinned commit every target snapshot of the session is built on.
     head: CommitId,
@@ -314,11 +364,19 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             known: HashMap::new(),
             recorded: Vec::new(),
             acks: Vec::new(),
+            threads: Vec::new(),
             degraded: None,
             changes: None,
         };
+        let author = acquisition
+            .git
+            .user_name()
+            .await
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| "You".into());
         Ok(Self {
             id,
+            author,
             acquisition,
             head: opened.head,
             pin_base: opened.base,
@@ -642,7 +700,9 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
-        let (inputs, slots) = self.prepare(&mut st).await?;
+        let Prepared {
+            inputs, spans: slots, ..
+        } = self.prepare(&mut st).await?;
         let (remove, add) = {
             let changes = st.changes.as_ref().expect("computed");
             let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &changes.blobs)).collect();
@@ -717,6 +777,154 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         update_of(&st, path)
     }
 
+    /// Every thread, with range anchors resolved at the current revision.
+    pub async fn threads(&self) -> Result<ThreadsView> {
+        let mut st = self.state.lock().await;
+        self.ensure_changes(&mut st).await?;
+        Ok(ThreadsView {
+            revision: st.revision,
+            threads: st.threads.iter().map(|t| thread_view(&st, t)).collect(),
+        })
+    }
+
+    /// Opens a thread with its first message. `now` is unix seconds.
+    pub async fn create_thread(&self, revision: u32, target: NewThread, body: String, now: i64) -> Result<ThreadView> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        let opener = self.message(body, now)?;
+        let target = match target {
+            NewThread::Range { side, path, range } => {
+                CommentTarget::Range(self.anchor_at(&st, side, &path, range).await?)
+            }
+            NewThread::File { side, path } => {
+                if !side_snapshot(&st, side).entries.contains_key(&path) {
+                    return Err(SessionError::NotFound(format!("file {}", path_str(&path))));
+                }
+                CommentTarget::File { side, path }
+            }
+            NewThread::Changeset => CommentTarget::Changeset,
+        };
+        let id = self
+            .acquisition
+            .store
+            .add_thread(self.id, target.clone(), opener.clone())
+            .await?;
+        st.threads.push(Thread {
+            id,
+            target,
+            messages: vec![opener],
+            status: ThreadStatus::Open,
+            platform: None,
+        });
+        self.remap(&mut st).await?;
+        thread_by_id(&st, id)
+    }
+
+    pub async fn reply(&self, thread: ThreadId, body: String, now: i64) -> Result<ThreadView> {
+        let mut st = self.state.lock().await;
+        self.ensure_changes(&mut st).await?;
+        find_thread(&st, thread)?;
+        let message = self.message(body, now)?;
+        self.acquisition.store.add_message(thread, message.clone()).await?;
+        edit_thread(&mut st, thread, |t| t.messages.push(message));
+        thread_by_id(&st, thread)
+    }
+
+    /// Resolves or reopens a thread.
+    pub async fn set_thread_status(&self, thread: ThreadId, status: ThreadStatus) -> Result<ThreadView> {
+        let mut st = self.state.lock().await;
+        self.ensure_changes(&mut st).await?;
+        find_thread(&st, thread)?;
+        self.acquisition.store.set_thread_status(thread, status).await?;
+        edit_thread(&mut st, thread, |t| t.status = status);
+        thread_by_id(&st, thread)
+    }
+
+    /// Deletes a thread; this is also how a detached one is discarded.
+    pub async fn delete_thread(&self, thread: ThreadId) -> Result<()> {
+        let mut st = self.state.lock().await;
+        find_thread(&st, thread)?;
+        self.acquisition.store.delete_thread(thread).await?;
+        st.threads.retain(|t| t.id != thread);
+        if let Some(changes) = st.changes.as_mut() {
+            changes.resolutions.remove(&thread);
+        }
+        Ok(())
+    }
+
+    /// Re-anchors an `Inferred` thread at its current location, which makes it
+    /// `Exact`. Fails if `revision` is no longer current.
+    pub async fn confirm_anchor(&self, revision: u32, thread: ThreadId) -> Result<ThreadView> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        let location = match resolution_of(&st, thread)? {
+            Resolution {
+                state: AnchorState::Inferred { .. },
+                location: Some(location),
+            } => location.clone(),
+            _ => return Err(SessionError::Invalid("the anchor was not moved".into())),
+        };
+        self.reanchor(&mut st, thread, &location).await
+    }
+
+    /// Re-anchors an `Ambiguous` thread at one of its candidates (an index into
+    /// the candidates of its state). Fails if `revision` is no longer current.
+    pub async fn attach_anchor(&self, revision: u32, thread: ThreadId, candidate: usize) -> Result<ThreadView> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        let location = match &resolution_of(&st, thread)?.state {
+            AnchorState::Ambiguous { candidates } => candidates
+                .get(candidate)
+                .cloned()
+                .ok_or_else(|| SessionError::NotFound(format!("candidate {candidate}")))?,
+            _ => return Err(SessionError::Invalid("the anchor is not ambiguous".into())),
+        };
+        self.reanchor(&mut st, thread, &location).await
+    }
+
+    fn message(&self, body: String, at: i64) -> Result<Message> {
+        if body.trim().is_empty() {
+            return Err(SessionError::Invalid("a message cannot be empty".into()));
+        }
+        Ok(Message {
+            author: self.author.clone(),
+            body,
+            at,
+        })
+    }
+
+    /// Records the thread's anchor anew, from the current text at `location`.
+    async fn reanchor(&self, st: &mut State, thread: ThreadId, location: &Location) -> Result<ThreadView> {
+        let side = match &find_thread(st, thread)?.target {
+            CommentTarget::Range(a) => a.side,
+            _ => return Err(SessionError::Invalid("only a range thread has an anchor".into())),
+        };
+        let target = CommentTarget::Range(self.anchor_at(st, side, &location.file, location.range).await?);
+        self.acquisition.store.set_thread_target(thread, target.clone()).await?;
+        edit_thread(st, thread, |t| t.target = target);
+        self.remap(st).await?;
+        thread_by_id(st, thread)
+    }
+
+    /// An anchor on `range` of `path` in the current snapshot of `side`.
+    async fn anchor_at(&self, st: &State, side: Side, path: &RepoPath, range: LineRange) -> Result<Anchor> {
+        let snapshot = side_snapshot(st, side);
+        let entry = snapshot
+            .entries
+            .get(path)
+            .filter(|e| e.kind == EntryKind::File)
+            .ok_or_else(|| SessionError::NotFound(format!("file {}", path_str(path))))?;
+        let mut blobs = BTreeMap::new();
+        if !self.fetch(&mut blobs, path, entry.blob, true).await? || is_binary(&blobs[&entry.blob]) {
+            return Err(SessionError::NotText(path_str(path)));
+        }
+        Anchor::from_text(side, snapshot.id, path.clone(), &blobs[&entry.blob], range)
+            .ok_or_else(|| SessionError::Invalid("the lines are outside the file".into()))
+    }
+
     async fn ensure_changes(&self, st: &mut State) -> Result<()> {
         if st.changes.is_some() {
             return Ok(());
@@ -762,6 +970,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             blobs,
             remapped: Vec::new(),
             flat: Vec::new(),
+            resolutions: HashMap::new(),
             items,
         });
         self.remap(st).await
@@ -844,15 +1053,48 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         })
     }
 
-    /// Remaps every recorded span onto the current changeset (§5.2).
+    /// Remaps every recorded span onto the current changeset (§5.2) and
+    /// resolves every range thread's anchor (§5.1), each from what was recorded.
     async fn remap(&self, st: &mut State) -> Result<()> {
-        let (inputs, slots) = self.prepare(st).await?;
+        let Prepared { inputs, spans, threads } = self.prepare(st).await?;
         let to = Changeset {
             base: st.base.id,
             target: st.target.id,
         };
         let changes = st.changes.as_mut().expect("diffed");
         let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &changes.blobs)).collect();
+
+        // Moved content is searched for among the changed files of the anchor's side.
+        let (base_inputs, target_inputs) = if threads.iter().any(Option::is_some) {
+            changed_inputs(&changes.diff)
+        } else {
+            Default::default()
+        };
+        let base_changed: Vec<PreparedFile> = (base_inputs.iter())
+            .map(|i| PreparedFile::new(i, &changes.blobs))
+            .collect();
+        let target_changed: Vec<PreparedFile> = (target_inputs.iter())
+            .map(|i| PreparedFile::new(i, &changes.blobs))
+            .collect();
+        let resolutions: HashMap<ThreadId, Resolution> = st
+            .threads
+            .iter()
+            .zip(&threads)
+            .filter_map(|(t, slot)| match (&t.target, slot) {
+                (CommentTarget::Range(a), Some(i)) => {
+                    let changed = if a.side == Side::Base {
+                        &base_changed
+                    } else {
+                        &target_changed
+                    };
+                    Some((t.id, resolve_anchor(a, &prepared[*i], changed)))
+                }
+                _ => None,
+            })
+            .collect();
+        drop((base_changed, target_changed));
+
+        let slots = spans;
         let remapped: Vec<(SpanId, Vec<ReviewedSpan>)> = st
             .recorded
             .iter()
@@ -867,28 +1109,39 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         drop(prepared);
         changes.flat = remapped.iter().flat_map(|(_, s)| s.iter().cloned()).collect();
         changes.remapped = remapped;
+        changes.resolutions = resolutions;
         Ok(())
     }
 
-    /// The file pairs of the recorded spans' sides, and for each span the
-    /// indices of its base and target pair. Loads the texts into `changes.blobs`.
-    async fn prepare(&self, st: &mut State) -> Result<(Vec<FileRemapInput>, Vec<Slot>)> {
+    /// The file pairs of the anchors' sides, and for each recorded span and
+    /// thread the indices of its pairs. Loads the texts into `changes.blobs`.
+    async fn prepare(&self, st: &mut State) -> Result<Prepared> {
         let anchors = |r: &RecordedSpan| {
             [(true, r.span.base.clone()), (false, r.span.target.clone())]
                 .into_iter()
                 .filter_map(|(base, a)| a.map(|a| (base, a)))
                 .collect::<Vec<_>>()
         };
-        for a in st.recorded.iter().flat_map(anchors).map(|(_, a)| a) {
-            if a.snapshot != st.base.id
-                && a.snapshot != st.target.id
-                && !st.known.contains_key(&a.snapshot)
-                && let Some((snapshot, _)) = self.acquisition.store.snapshot(a.snapshot).await?
+        let thread_anchor = |t: &Thread| match &t.target {
+            CommentTarget::Range(a) => Some((a.side == Side::Base, a.clone())),
+            _ => None,
+        };
+        let referenced: Vec<SnapshotId> = st
+            .recorded
+            .iter()
+            .flat_map(anchors)
+            .chain(st.threads.iter().filter_map(thread_anchor))
+            .map(|(_, a)| a.snapshot)
+            .collect();
+        for &id in &referenced {
+            if id != st.base.id
+                && id != st.target.id
+                && !st.known.contains_key(&id)
+                && let Some((snapshot, _)) = self.acquisition.store.snapshot(id).await?
             {
-                st.known.insert(a.snapshot, snapshot);
+                st.known.insert(id, snapshot);
             }
         }
-        let referenced: Vec<SnapshotId> = st.recorded.iter().flat_map(anchors).map(|(_, a)| a.snapshot).collect();
         st.known.retain(|id, _| referenced.contains(id));
 
         let mut blobs = std::mem::take(&mut st.changes.as_mut().expect("diffed").blobs);
@@ -911,32 +1164,39 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         // One prepared file per anchored file and side.
         let mut index: HashMap<(bool, RepoPath, SnapshotId), usize> = HashMap::new();
         let mut inputs: Vec<FileRemapInput> = Vec::new();
-        let mut slots: Vec<Slot> = Vec::new();
+        let mut at = |is_base: bool, a: &Anchor| {
+            let key = (is_base, a.file.clone(), a.snapshot);
+            *index.entry(key).or_insert_with(|| {
+                // The base side stays at its path; the target side follows a
+                // rename from `HEAD` if its file is gone.
+                let new_path = if is_base || st.target.entries.contains_key(&a.file) {
+                    Some(a.file.clone())
+                } else {
+                    renames.0.get(&a.file).cloned()
+                };
+                let current = if is_base { &st.base } else { &st.target };
+                inputs.push(FileRemapInput {
+                    old_blob: file_entry(snapshot_of(a.snapshot), &a.file),
+                    new_blob: new_path.as_ref().and_then(|p| file_entry(Some(current), p)),
+                    old_path: Some(a.file.clone()),
+                    new_path,
+                });
+                inputs.len() - 1
+            })
+        };
+        let mut spans: Vec<Slot> = Vec::new();
         for rec in &st.recorded {
             let mut slot = [None, None];
             for (is_base, a) in anchors(rec) {
-                let key = (is_base, a.file.clone(), a.snapshot);
-                let at = *index.entry(key).or_insert_with(|| {
-                    // The base side stays at its path; the target side follows a
-                    // rename from `HEAD` if its file is gone.
-                    let new_path = if is_base || st.target.entries.contains_key(&a.file) {
-                        Some(a.file.clone())
-                    } else {
-                        renames.0.get(&a.file).cloned()
-                    };
-                    let current = if is_base { &st.base } else { &st.target };
-                    inputs.push(FileRemapInput {
-                        old_blob: file_entry(snapshot_of(a.snapshot), &a.file),
-                        new_blob: new_path.as_ref().and_then(|p| file_entry(Some(current), p)),
-                        old_path: Some(a.file.clone()),
-                        new_path,
-                    });
-                    inputs.len() - 1
-                });
-                slot[if is_base { 0 } else { 1 }] = Some(at);
+                slot[if is_base { 0 } else { 1 }] = Some(at(is_base, &a));
             }
-            slots.push((slot[0], slot[1]));
+            spans.push((slot[0], slot[1]));
         }
+        let threads = st
+            .threads
+            .iter()
+            .map(|t| thread_anchor(t).map(|(is_base, a)| at(is_base, &a)))
+            .collect();
         let mut loaded = Ok(());
         for input in &inputs {
             for (path, blob) in [(&input.old_path, input.old_blob), (&input.new_path, input.new_blob)] {
@@ -948,12 +1208,118 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             }
         }
         st.changes.as_mut().expect("diffed").blobs = blobs;
-        loaded.map(|()| (inputs, slots))
+        loaded.map(|()| Prepared { inputs, spans, threads })
     }
 }
 
 /// Indices into the prepared files of a recorded span's base and target side.
 type Slot = (Option<usize>, Option<usize>);
+
+struct Prepared {
+    inputs: Vec<FileRemapInput>,
+    /// One per recorded span.
+    spans: Vec<Slot>,
+    /// One per thread; `None` unless it is a range thread.
+    threads: Vec<Option<usize>>,
+}
+
+/// The changed text files of the diff as seen on the base side and on the
+/// target side, for finding moved content.
+fn changed_inputs(diff: &SnapshotDiff) -> (Vec<FileRemapInput>, Vec<FileRemapInput>) {
+    let (mut base, mut target) = (Vec::new(), Vec::new());
+    for d in &diff.files {
+        if let (Some(path), Some(blob)) = (&d.old_path, d.old_blob) {
+            base.push(FileRemapInput {
+                old_path: Some(path.clone()),
+                new_path: Some(path.clone()),
+                old_blob: Some(blob),
+                new_blob: Some(blob),
+            });
+        }
+        if d.new_path.is_some() && d.new_blob.is_some() {
+            target.push(FileRemapInput {
+                old_path: d.old_path.clone(),
+                new_path: d.new_path.clone(),
+                old_blob: d.old_blob,
+                new_blob: d.new_blob,
+            });
+        }
+    }
+    (base, target)
+}
+
+fn side_snapshot(st: &State, side: Side) -> &Snapshot {
+    match side {
+        Side::Base => &st.base,
+        Side::Target => &st.target,
+    }
+}
+
+fn find_thread(st: &State, id: ThreadId) -> Result<&Thread> {
+    st.threads
+        .iter()
+        .find(|t| t.id == id)
+        .ok_or_else(|| SessionError::NotFound(format!("thread {}", id.0)))
+}
+
+fn edit_thread(st: &mut State, id: ThreadId, edit: impl FnOnce(&mut Thread)) {
+    if let Some(t) = st.threads.iter_mut().find(|t| t.id == id) {
+        edit(t);
+    }
+}
+
+/// The resolution of a range thread at the current revision.
+fn resolution_of(st: &State, id: ThreadId) -> Result<&Resolution> {
+    find_thread(st, id)?;
+    let changes = st.changes.as_ref().expect("computed");
+    changes
+        .resolutions
+        .get(&id)
+        .ok_or_else(|| SessionError::Invalid("only a range thread has an anchor".into()))
+}
+
+fn thread_by_id(st: &State, id: ThreadId) -> Result<ThreadView> {
+    Ok(thread_view(st, find_thread(st, id)?))
+}
+
+/// File threads follow a git-detected rename and detach only when the file is
+/// gone; changeset threads never detach.
+fn thread_view(st: &State, t: &Thread) -> ThreadView {
+    let changes = st.changes.as_ref().expect("computed");
+    let (path, state, location) = match &t.target {
+        CommentTarget::Range(a) => {
+            let r = &changes.resolutions[&t.id];
+            let path = r.location.as_ref().map_or(&a.file, |l| &l.file);
+            (Some(path.clone()), Some(r.state.clone()), r.location.clone())
+        }
+        CommentTarget::File { side, path } => {
+            let moved = (*side == Side::Target && !st.target.entries.contains_key(path))
+                .then(|| changes.diff.renames.0.get(path))
+                .flatten()
+                .filter(|new| st.target.entries.contains_key(*new));
+            let state = if moved.is_some() || side_snapshot(st, *side).entries.contains_key(path) {
+                AnchorState::Exact {
+                    whitespace_changed: false,
+                }
+            } else {
+                AnchorState::Stale {
+                    reason: StaleReason::FileDeleted,
+                }
+            };
+            (Some(moved.unwrap_or(path).clone()), Some(state), None)
+        }
+        CommentTarget::Changeset => (None, None, None),
+    };
+    ThreadView {
+        id: t.id,
+        target: t.target.clone(),
+        path,
+        state,
+        location,
+        messages: t.messages.clone(),
+        status: t.status,
+    }
+}
 
 fn base_view(st: &State) -> BaseView {
     BaseView {

@@ -131,6 +131,192 @@ pub enum Request {
         session: SessionId,
         path: String,
     },
+    /// Every thread with its anchor resolved at the current revision. Resolution
+    /// is lazy: a settled snapshot only invalidates it, and this request computes
+    /// it. Kept apart from `Manifest` so the manifest does not wait for it.
+    Threads {
+        session: SessionId,
+    },
+    /// Opens a thread with its first message. The lines of a range target are in
+    /// the text of `revision`. Fails if `revision` is no longer current, or if the
+    /// target does not exist at it. Answers with `Response::Thread`.
+    CreateThread {
+        session: SessionId,
+        revision: u32,
+        target: ThreadTarget,
+        body: String,
+    },
+    /// Answers with `Response::Thread`.
+    Reply {
+        session: SessionId,
+        thread: u32,
+        body: String,
+    },
+    /// Resolves or reopens a thread. Answers with `Response::Thread`.
+    SetThreadStatus {
+        session: SessionId,
+        thread: u32,
+        status: ThreadStatus,
+    },
+    /// Deletes a thread; this is also how a detached one is discarded.
+    DeleteThread {
+        session: SessionId,
+        thread: u32,
+    },
+    /// Re-anchors a thread whose anchor is `Inferred` at its current location,
+    /// which makes it `Exact`. Fails if `revision` is no longer current or the
+    /// anchor is not `Inferred`. Answers with `Response::Thread`.
+    ConfirmAnchor {
+        session: SessionId,
+        revision: u32,
+        thread: u32,
+    },
+    /// Re-anchors a thread whose anchor is `Ambiguous` at one of its candidates
+    /// (an index into the candidates of `revision`). Fails like `ConfirmAnchor`.
+    /// Answers with `Response::Thread`.
+    AttachAnchor {
+        session: SessionId,
+        revision: u32,
+        thread: u32,
+        candidate: u32,
+    },
+}
+
+/// What a new thread is attached to.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum ThreadTarget {
+    /// `len` lines from line `start` (0-based) of one side of a file.
+    Range {
+        side: Side,
+        path: String,
+        start: u32,
+        len: u32,
+    },
+    File {
+        side: Side,
+        path: String,
+    },
+    /// The changeset as a whole.
+    Changeset,
+}
+
+/// A side of the changeset.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Side {
+    Base,
+    Target,
+}
+
+/// Lines `start..start + len` (0-based) of a file.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LineLocation {
+    pub path: String,
+    pub start: u32,
+    pub len: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ThreadStatus {
+    Open,
+    Resolved,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ThreadKind {
+    Range,
+    File,
+    Changeset,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ThreadMessage {
+    pub author: String,
+    pub body: String,
+    /// Unix seconds.
+    pub at: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum AnchorStrategy {
+    ContextWindow,
+    CrossFileMove,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum AnchorConfidence {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum StaleReason {
+    ContextChanged,
+    FileDeleted,
+}
+
+/// Where a thread's anchor is now (§5.1).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum AnchorState {
+    /// At `Thread::location`; `whitespace_changed` if only whitespace differs.
+    Exact { whitespace_changed: bool },
+    /// At `Thread::location`, found by evidence: show a "moved" badge, offer
+    /// `ConfirmAnchor`. `Thread::original` is where it was recorded.
+    Inferred {
+        strategy: AnchorStrategy,
+        confidence: AnchorConfidence,
+    },
+    /// Detached: no location. Offer `DeleteThread`.
+    Stale { reason: StaleReason },
+    /// Detached: several plausible locations, offered to `AttachAnchor` by index.
+    Ambiguous { candidates: Vec<LineLocation> },
+}
+
+/// A comment thread. `anchor` and `location` belong to the revision of the
+/// response; they are re-resolved from the recorded anchor each revision.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Thread {
+    pub id: u32,
+    pub kind: ThreadKind,
+    /// `None` for a changeset thread.
+    pub side: Option<Side>,
+    /// The file the thread is shown at: for a range thread where its anchor is
+    /// now, else where it was recorded; for a file thread where the file is now
+    /// (it follows a git-detected rename). `None` for a changeset thread.
+    pub path: Option<String>,
+    /// The recorded range of a range thread.
+    pub original: Option<LineLocation>,
+    /// Where a range thread is now; `None` when it is detached, and for file
+    /// and changeset threads.
+    pub location: Option<LineLocation>,
+    /// `None` for a changeset thread, which never detaches. A file thread is
+    /// `Exact`, or `Stale` once its file is deleted.
+    pub anchor: Option<AnchorState>,
+    /// The first one opened the thread.
+    pub messages: Vec<ThreadMessage>,
+    pub status: ThreadStatus,
 }
 
 /// How a session's base is chosen.
@@ -231,6 +417,13 @@ pub enum Response {
         revision: u32,
         content: TextContent,
     },
+    /// The answer to `Threads`, at `revision`, in creation order.
+    Threads {
+        revision: u32,
+        threads: Vec<Thread>,
+    },
+    /// One thread after a change, resolved at the current revision.
+    Thread(Thread),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -318,6 +511,10 @@ pub enum Event {
         revision: u32,
         update: ReviewUpdate,
     },
+    /// A thread was created, replied to, resolved, re-anchored or deleted by
+    /// another connection; fetch the threads again. Not sent for a settled
+    /// snapshot, which is `SnapshotSettled`: that also invalidates the threads.
+    ThreadsChanged { session: SessionId, revision: u32 },
 }
 
 /// The changeset as displayed through the session's review filter.

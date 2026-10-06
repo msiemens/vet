@@ -144,6 +144,17 @@ impl GitRepo for GixRepo {
             .await
     }
 
+    async fn user_name(&self) -> Option<String> {
+        self.blocking(|i| {
+            let repo = i.open()?;
+            let name = repo.config_snapshot().string("user.name");
+            Ok(name.map(|n| n.to_string()))
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     /// Always a full reconciliation, but only entries whose stat changed are
     /// read and hashed.
     async fn scan(&self, _dirty: Dirty) -> Result<Scan, GitError> {

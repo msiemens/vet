@@ -10,8 +10,9 @@ use std::time::Duration;
 
 use tokio::task::AbortHandle;
 use vet_app::ignore::IgnoringWatcher;
-use vet_app::session::LiveSession;
+use vet_app::session::{LiveSession, ThreadView};
 use vet_app::settle::Settling;
+use vet_core::review::ThreadId;
 use vet_infra::clock::TokioClock;
 use vet_infra::git::{GixRepo, find_root};
 use vet_infra::store::{SqliteStore, unix_now};
@@ -308,9 +309,103 @@ impl Handler for Orchestrator {
                     .map_err(message)?;
                 Ok(mapping::target_text(&text))
             }
+            Request::Threads { session } => {
+                let threads = self.find(session).await?.session.threads().await.map_err(message)?;
+                Ok(mapping::threads(&threads))
+            }
+            Request::CreateThread {
+                session,
+                revision,
+                target,
+                body,
+            } => {
+                let open = self.find(session).await?;
+                let thread = open
+                    .session
+                    .create_thread(revision, mapping::new_thread(target), body, unix_now())
+                    .await
+                    .map_err(message)?;
+                Ok(thread_changed(&open, &events, &thread).await)
+            }
+            Request::Reply { session, thread, body } => {
+                let open = self.find(session).await?;
+                let thread = open
+                    .session
+                    .reply(ThreadId(thread.into()), body, unix_now())
+                    .await
+                    .map_err(message)?;
+                Ok(thread_changed(&open, &events, &thread).await)
+            }
+            Request::SetThreadStatus {
+                session,
+                thread,
+                status,
+            } => {
+                let open = self.find(session).await?;
+                let thread = open
+                    .session
+                    .set_thread_status(ThreadId(thread.into()), mapping::core_thread_status(status))
+                    .await
+                    .map_err(message)?;
+                Ok(thread_changed(&open, &events, &thread).await)
+            }
+            Request::DeleteThread { session, thread } => {
+                let open = self.find(session).await?;
+                open.session
+                    .delete_thread(ThreadId(thread.into()))
+                    .await
+                    .map_err(message)?;
+                threads_changed(&open, &events).await;
+                Ok(Response::Done)
+            }
+            Request::ConfirmAnchor {
+                session,
+                revision,
+                thread,
+            } => {
+                let open = self.find(session).await?;
+                let thread = open
+                    .session
+                    .confirm_anchor(revision, ThreadId(thread.into()))
+                    .await
+                    .map_err(message)?;
+                Ok(thread_changed(&open, &events, &thread).await)
+            }
+            Request::AttachAnchor {
+                session,
+                revision,
+                thread,
+                candidate,
+            } => {
+                let open = self.find(session).await?;
+                let thread = open
+                    .session
+                    .attach_anchor(revision, ThreadId(thread.into()), candidate as usize)
+                    .await
+                    .map_err(message)?;
+                Ok(thread_changed(&open, &events, &thread).await)
+            }
             Request::Hover { .. } => Err("hover is not implemented yet".into()),
         }
     }
+}
+
+/// Tells the other subscribers that threads changed.
+async fn threads_changed(open: &Open, from: &Events) {
+    let revision = open.session.revision().await;
+    Orchestrator::notify_others(
+        open,
+        from,
+        Event::ThreadsChanged {
+            session: open.id,
+            revision,
+        },
+    );
+}
+
+async fn thread_changed(open: &Open, from: &Events, thread: &ThreadView) -> Response {
+    threads_changed(open, from).await;
+    Response::Thread(mapping::thread(thread))
 }
 
 /// The protocol update for the requester; the other subscribers are told too.

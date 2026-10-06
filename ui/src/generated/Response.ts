@@ -7,9 +7,10 @@ import type { Manifest } from "./Manifest";
 import type { Mark } from "./Mark";
 import type { ReviewUpdate } from "./ReviewUpdate";
 import type { TextContent } from "./TextContent";
+import type { Thread } from "./Thread";
 
 export type Response = { "type": "pong", payload: string, } | { "type": "session", session: number, 
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", text: string, } | { "type": "base" } & Base | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, };
+root: string, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", text: string, } | { "type": "base" } & Base | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "thread" } & Thread;

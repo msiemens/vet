@@ -234,6 +234,9 @@ mod tests {
         async fn head(&self) -> Result<CommitId, GitError> {
             unreachable!()
         }
+        async fn user_name(&self) -> Option<String> {
+            None
+        }
         async fn scan(&self, _: Dirty) -> Result<Scan, GitError> {
             let snapshot = self.0.lock().unwrap().tree.clone().unwrap();
             Ok(Scan {
