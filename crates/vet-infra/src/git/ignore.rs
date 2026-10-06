@@ -7,10 +7,10 @@ use gix::worktree::stack::state::ignore::Source;
 use vet_app::ports::GitError;
 use vet_core::content::RepoPath;
 
-use super::err;
+use super::{err, in_tool_store};
 
-/// `paths` without those git ignores. A path with tracked files at or below it
-/// is never ignored, as in git.
+/// `paths` without those git ignores and without tool stores. A path with tracked files
+/// at or below it is never ignored, as in git.
 pub(crate) fn unignored(repo: &gix::Repository, paths: Vec<RepoPath>) -> Result<Vec<RepoPath>, GitError> {
     let index = repo.index_or_empty().map_err(err)?;
     let mut stack = repo
@@ -29,7 +29,7 @@ pub(crate) fn unignored(repo: &gix::Repository, paths: Vec<RepoPath>) -> Result<
         let tracked = index.entry_by_path(rela).is_some()
             || (is_dir && index.prefixed_entries(prefix.as_bstr()).is_some_and(|e| !e.is_empty()));
         let mode = if is_dir { Mode::DIR } else { Mode::FILE };
-        if tracked || !stack.at_entry(rela, Some(mode)).map_err(err)?.is_excluded() {
+        if tracked || (!in_tool_store(&path.0) && !stack.at_entry(rela, Some(mode)).map_err(err)?.is_excluded()) {
             kept.push(path);
         }
     }

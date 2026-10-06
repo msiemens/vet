@@ -18,7 +18,7 @@ use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, RepoPath, Snapshot, 
 use vet_core::merkle;
 
 use super::stat_cache::{Record, StatCache, StatKey, file_stamp, now_secs};
-use super::{BlobCache, err};
+use super::{BlobCache, err, in_tool_store};
 
 /// One worktree item, converted the way git would store it.
 pub(crate) struct Item {
@@ -317,6 +317,32 @@ impl<'r> Worktree<'r> {
     }
 }
 
+/// Collects the dirwalk's entries, but never enters or reports a tool store.
+#[derive(Default)]
+struct SkipToolStores(gix::dir::walk::delegate::Collect);
+
+impl gix::dir::walk::Delegate for SkipToolStores {
+    fn emit(
+        &mut self,
+        entry: gix::dir::EntryRef<'_>,
+        collapsed_directory_status: Option<gix::dir::entry::Status>,
+    ) -> gix::dir::walk::Action {
+        if in_tool_store(&entry.rela_path) {
+            return std::ops::ControlFlow::Continue(());
+        }
+        self.0.emit(entry, collapsed_directory_status)
+    }
+
+    fn can_recurse(
+        &mut self,
+        entry: gix::dir::EntryRef<'_>,
+        for_deletion: Option<gix::dir::walk::ForDeletionMode>,
+        worktree_root_is_repository: bool,
+    ) -> bool {
+        !in_tool_store(&entry.rela_path) && self.0.can_recurse(entry, for_deletion, worktree_root_is_repository)
+    }
+}
+
 pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache, cap: u64) -> Result<Scan, GitError> {
     let mut wt = Worktree::new(repo, blobs, stats, cap)?;
     wt.use_stat_cache();
@@ -346,7 +372,7 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache,
 
     // The dirwalk only knows an index entry is tracked if it is flagged up to
     // date, so it may report tracked files too; those are skipped here.
-    let mut delegate = gix::dir::walk::delegate::Collect::default();
+    let mut delegate = SkipToolStores::default();
     let options = repo.dirwalk_options().map_err(err)?;
     repo.dirwalk(
         &index,
@@ -356,7 +382,7 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache,
         &mut delegate,
     )
     .map_err(err)?;
-    for (found, _) in delegate.into_entries_by_path() {
+    for (found, _) in delegate.0.into_entries_by_path() {
         if found.status != gix::dir::entry::Status::Untracked {
             continue;
         }

@@ -399,6 +399,25 @@ async fn session_refs_are_set_and_deleted() {
 }
 
 #[tokio::test]
+async fn tool_stores_are_neither_scanned_nor_watched() {
+    let dir = repo();
+    write(dir.path(), "tracked.txt", b"t\n");
+    commit(dir.path());
+    write(dir.path(), ".pnpm-store/v11/files/ab/cd", b"x\n");
+    write(dir.path(), "pkg/.pnpm-store/v11/x", b"x\n");
+    write(dir.path(), "untracked.txt", b"u\n");
+    let repo = GixRepo::new(dir.path());
+
+    let scan = repo.scan(Dirty::All).await.unwrap();
+    let paths: Vec<_> = scan.snapshot.entries.keys().cloned().collect();
+    assert_eq!(paths, vec![path("tracked.txt"), path("untracked.txt")]);
+
+    let watched = [".pnpm-store", ".pnpm-store/v11/x", "pkg/.pnpm-store/y", "untracked.txt"].map(path);
+    let kept = repo.unignored(watched.into()).await.unwrap();
+    assert_eq!(kept, vec![path("untracked.txt")]);
+}
+
+#[tokio::test]
 async fn ignore_rules_drop_ignored_paths_but_never_tracked_ones() {
     let dir = repo();
     write(dir.path(), ".gitignore", b"target/\n*.log\n");

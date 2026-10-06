@@ -300,3 +300,12 @@ fn session_ref_prefix(session: SessionId) -> String {
 fn err(e: impl Display) -> GitError {
     GitError(e.to_string())
 }
+
+/// Folders whose name a tool defines as its own store; their untracked contents are never
+/// part of a snapshot (SPEC §6.1).
+const TOOL_STORES: &[&[u8]] = &[b".pnpm-store"];
+
+/// Whether `path` (repository-relative, `/`-separated) is a tool store or inside one.
+fn in_tool_store(path: &[u8]) -> bool {
+    path.split(|&b| b == b'/').any(|part| TOOL_STORES.contains(&part))
+}
