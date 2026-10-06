@@ -97,7 +97,7 @@ The orchestrator, language servers, stores, and **the worktree under review** al
 | Topology | Shell | Backend side | Status |
 |---|---|---|---|
 | macOS native | Tauri | macOS | supported |
-| Windows native | Tauri | Windows | supported (M1) |
+| Windows native | Tauri | Windows | supported |
 | WSL split | Tauri on Windows | WSL2, worktree on the Linux filesystem (ext4) | supported |
 | WSL, worktree on `/mnt/*` | Tauri on Windows | WSL2 | **degraded**: watcher unreliable across 9P, polling reconciliation, performance targets void, visible banner |
 
@@ -326,7 +326,12 @@ One keystroke from review to run/debug.
 ## 10. Review UX
 
 - **Home = queue.** Changesets ordered by blocking status, then recency, with executor-relevant changes flagged. Each shows completion against the active filter plus the count of changes the filter excludes (§5.2). Review state survives rebases and force-pushes.
-- **Hunk view** with decorations: review state from spans (including `SeenAgainstOldBase`), coverage of changed lines, changed-symbol reachability (labeled derived), executor-relevant changes highlighted, whitespace-only anchor notes.
+- **Visual design** follows `Vet UI Proposal.html` (light and dark themes).
+- **Hunk view** with decorations: review state from spans (including `SeenAgainstOldBase`), coverage of changed lines, changed-symbol reachability (labeled derived), executor-relevant changes highlighted, whitespace-only anchor notes, diagnostics as gutter markers with a count in the status footer. Marking seen is a toggle: a seen hunk can be un-marked.
+- **Non-text changes** (mode, symlink target, submodule commit, binary, content unavailable) render as a change card with a hunk-style header: same "mark seen" action and key, included in hunk navigation, images with a before/after preview. A file with both kinds shows its card above the first hunk.
+- **Inferred anchors** show a neutral "moved" badge with the confidence; the tooltip names the strategy and the original location. "Confirm" re-anchors at the current position (→ `Exact`). Low-confidence ones are also grouped under "Moved" in the comments tool window.
+- **Review filter** is edited in a popover (review roots, hide binary, include/exclude globs, live excluded count) and from the file tree ("Exclude from review", "Review only this folder"). It is stored per session; excluded files collapse into one group.
+- **Run targets:** the Run control is a split button. Targets are discovered by reading manifests (Cargo bins, `package.json` scripts, `pyproject` scripts), never by executing tools, and can be edited (command, working directory, env); stored per repo.
 - **Timeline:** the `LogicalTip`'s settled snapshots, with interdiffs between any two.
 - **Semantic diff is a projection, never the canonical representation.** The byte-level diff is the source of truth; normalization, move detection, and formatting-churn suppression are views over it, and every normalized-away change is one click away.
 - **Annotations** sync to platforms or export as agent task files. A full editor is retained for small fixes (fixup commits / suggestion blocks).
@@ -403,7 +408,7 @@ How the UI follows the traits:
 
 ### POC — vertical slice (dirty tree, Rust + TS + Python, no hosts)
 
-**POC platforms:** macOS native and the WSL split. Windows native moves to M1.
+**POC platforms:** macOS native, Windows native, and the WSL split.
 
 **Acceptance criteria:**
 
@@ -415,11 +420,12 @@ How the UI follows the traits:
    - **line endings:** a CRLF-only change → `Exact { whitespace_changed: true }` for comments;
    - **filter change:** changing the review filter leaves all review state intact, and completion shows the excluded count;
    - **repeated lines:** a seen `return 0` that appears twice, with its surrounding context rewritten → unseen;
-   - **mode only:** a changeset whose only change is `100644 → 100755` is not complete until that change is acknowledged.
+   - **mode only:** a changeset whose only change is `100644 → 100755` is not complete until that change is acknowledged;
+   - **Windows filesystem:** with `core.filemode=false` / `core.symlinks=false`, mode and kind come from the index (§6.3); paths differing only in case are flagged `PathCollision` and not materialized.
 2. **Semantics:** after an agent edit settles, hover, references and diagnostics reflect it. Base-side go-to-definition works side by side with target for a dirty-tree session. Impact and reachability are shown for changed symbols; a removed function's remaining call sites are found and classified. An older timeline snapshot from an open session can be materialized and queried.
-3. **Run check:** an agent edit to `package.json` scripts → prompt before running; no build-file changes → runs without asking; a contributor PR → no run button and limited analysis until trusted; a new push to a trusted PR → restrictions return.
-4. **Reconciliation:** simulate dropped watcher events (kill, inotify overflow, FSEvents `MustScanSubDirs`) → the rescan produces the correct snapshot, and review state is never silently wrong. A Windows-side write into the WSL worktree is observed or reconciled.
-5. **Shell and topology:** the POC meets the spike's thresholds with real orchestrator data; the WSL split works end to end over the authenticated transport.
+3. **Run check:** an agent edit to `package.json` scripts → prompt before running; no build-file changes → runs without asking.
+4. **Reconciliation:** simulate dropped watcher events (kill, inotify overflow, FSEvents `MustScanSubDirs`, `ReadDirectoryChangesW` buffer overflow) → the rescan produces the correct snapshot, and review state is never silently wrong. A Windows-side write into the WSL worktree is observed or reconciled.
+5. **Shell and topology:** the POC meets the spike's thresholds with real orchestrator data on every POC platform; the WSL split works end to end over the authenticated transport.
 
 Also included: run-target-in-place; fetch-only restore with shared caches.
 
@@ -433,11 +439,11 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Throwaway-worktree execution
 - JetBrains-feel package
 - Diagnostics on the changeset
-- **Windows native topology** (watcher, `PathCollision`, filemode/symlink-from-index)
 
 ### M2
 
 - GitHub + ADO adapters
+- Contributor-PR trust (§7.5): no run and limited analysis until trusted; a new push voids trust
 - Semantic-graph diff
 - Review-questions assistant (read-only; answers cite hunks)
 - Worktree groups
@@ -475,7 +481,3 @@ Targets apply to supported topologies; the `/mnt/*` WSL topology is exempt.
 3. **Base-resolution UX:** pin vs. merge-base defaults, tuned against the actual harness mix.
 4. **Risk ordering:** whether the queue should rank changesets by a risk model, and what signals it would use.
 5. **Base-server cost:** if materializing and starting a second server per session proves too slow for some backend (likely Roslyn on large solutions), consider loading base-side files as overlays into the target server for that backend only.
-
----
-
-**Status: baseline for implementation.** Invariants I1–I6 are frozen. Next action: the shell spike (§12.0), then the POC against acceptance criteria 1–5.
