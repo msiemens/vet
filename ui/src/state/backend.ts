@@ -26,6 +26,9 @@ import type { ServerInfo } from "../generated/ServerInfo";
 import type { Side } from "../generated/Side";
 import type { SymbolId } from "../generated/SymbolId";
 import type { TextContent } from "../generated/TextContent";
+import type { Thread } from "../generated/Thread";
+import type { ThreadStatus } from "../generated/ThreadStatus";
+import type { ThreadTarget } from "../generated/ThreadTarget";
 import type { Unavailable } from "../generated/Unavailable";
 import { Connection } from "./connection";
 
@@ -44,6 +47,9 @@ function expect<T extends Response["type"]>(response: Response, type: T): Extrac
   if (response.type !== type) throw new Error("unexpected response");
   return response as Extract<Response, { type: T }>;
 }
+
+/** The `thread` response carries the thread's fields beside its tag. */
+const asThread = (response: Extract<Response, { type: "thread" }>): Thread => response;
 
 export class Backend {
   /** The open session, if any; one at a time. */
@@ -262,5 +268,43 @@ export class Backend {
       await this.conn.request({ type: "reachability", session: this.sid, revision, symbol }),
       "reachability",
     );
+  }
+
+  /** Every thread with its anchor resolved at `revision`, the current one, in creation order. */
+  async threads(): Promise<{ revision: number; threads: Thread[] }> {
+    const { revision, threads } = expect(await this.conn.request({ type: "threads", session: this.sid }), "threads");
+    return { revision, threads };
+  }
+
+  /** `revision` is the manifest's; lines of a range target are in its text. */
+  async createThread(revision: number, target: ThreadTarget, body: string): Promise<Thread> {
+    const request = { type: "createThread", session: this.sid, revision, target, body } as const;
+    return asThread(expect(await this.conn.request(request), "thread"));
+  }
+
+  async reply(thread: number, body: string): Promise<Thread> {
+    const request = { type: "reply", session: this.sid, thread, body } as const;
+    return asThread(expect(await this.conn.request(request), "thread"));
+  }
+
+  async setThreadStatus(thread: number, status: ThreadStatus): Promise<Thread> {
+    const request = { type: "setThreadStatus", session: this.sid, thread, status } as const;
+    return asThread(expect(await this.conn.request(request), "thread"));
+  }
+
+  async deleteThread(thread: number): Promise<void> {
+    expect(await this.conn.request({ type: "deleteThread", session: this.sid, thread }), "done");
+  }
+
+  /** Re-anchors an inferred thread where it is now. */
+  async confirmAnchor(revision: number, thread: number): Promise<Thread> {
+    const request = { type: "confirmAnchor", session: this.sid, revision, thread } as const;
+    return asThread(expect(await this.conn.request(request), "thread"));
+  }
+
+  /** Re-anchors an ambiguous thread at one of its candidates (an index into its `ambiguous` anchor). */
+  async attachAnchor(revision: number, thread: number, candidate: number): Promise<Thread> {
+    const request = { type: "attachAnchor", session: this.sid, revision, thread, candidate } as const;
+    return asThread(expect(await this.conn.request(request), "thread"));
   }
 }

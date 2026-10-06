@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FileChange } from "../../../generated/FileChange.ts";
 import type { NonTextItem } from "../../../generated/NonTextItem.ts";
-import { sectionLayout } from "./sectionLayout.ts";
+import { sectionLayout, shownLines } from "./sectionLayout.ts";
 
 const metrics = { line: 20, hunk: 24, header: 26, collapsed: 27, gap: 8, preview: 100 };
 const hunk = (targetStart: number, baseLen: number, targetLen: number) => ({
@@ -25,6 +25,7 @@ void test("unchanged regions collapse to one bar each, keeping 3 lines of contex
     cardTops: [],
     cardsHeight: 0,
     hunkTops: [113],
+    drawn: [],
   });
   // Side by side pads the shorter side: 3 rows instead of 5.
   assert.equal(layout(f, "split").height, 26 + 87 + 24 + 60 + 87 + 8);
@@ -61,6 +62,41 @@ void test("cards sit between the header and the first hunk and push everything d
   assert.equal(l.cardsHeight, 64 + 44);
   assert.deepEqual(l.hunkTops, [113 + 108]);
   assert.equal(l.height, plain.height + 108);
+});
+
+void test("a file's thread block pushes everything down, an inline card only what is below it", () => {
+  const f = file(100, [hunk(50, 2, 3)]);
+  const plain = layout(f, "unified");
+  const l = sectionLayout(f, "unified", metrics, true, {
+    block: 50,
+    inline: [
+      { line: 51, height: 70 }, // in the hunk, above nothing but the bottom context
+      { line: 10, height: 30 }, // in a collapsed region: not drawn
+      { line: 48, height: 40 }, // in the context above the hunk, so the hunk bar is below it
+    ],
+  });
+  assert.deepEqual(l.drawn, [true, false, true]);
+  assert.equal(l.height, plain.height + 50 + 70 + 40);
+  assert.deepEqual(l.hunkTops, [113 + 50 + 40]);
+});
+
+void test("shown lines are the hunks and their context, or everything without collapsing", () => {
+  const f = file(100, [hunk(50, 2, 3)]);
+  assert.deepEqual(shownLines(f, true), [
+    [47, 50],
+    [50, 53],
+    [53, 56],
+  ]);
+  assert.deepEqual(shownLines(f, false), [[0, 100]]);
+  // Two hunks close together leave one open gap.
+  assert.deepEqual(shownLines(file(30, [hunk(10, 1, 1), hunk(17, 1, 1)]), true), [
+    [7, 10],
+    [10, 11],
+    [11, 17],
+    [17, 18],
+    [18, 21],
+  ]);
+  assert.deepEqual(shownLines(file(40, []), true), []);
 });
 
 void test("an image card has a preview strip, other binaries do not", () => {

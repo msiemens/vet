@@ -1,0 +1,133 @@
+/* Comment threads: a card below the line it is anchored to (an editor widget), the file's own
+   between its header and first hunk, the changeset's above the first file. A card's height is
+   whatever its text needs; the view measures it. Paddings and borders add up to `CARD_PAD` of
+   `threadPlacement.ts`, its estimate. */
+.vet-thread-block {
+  background: var(--bg-editor);
+}
+/* An editor is as wide as its longest line, so a card keeps to the width of the view (a container
+   of `ChangesetView`) and stays at the left edge while the view scrolls sideways. */
+.vet-thread {
+  position: sticky;
+  left: 0;
+  width: 100cqw;
+  margin-left: calc(-1 * var(--vet-card-inset, 0px));
+  box-sizing: border-box;
+  padding: 6px 10px 6px 56px;
+  background: var(--bg-sheet);
+  border-top: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
+  box-shadow: inset 3px 0 var(--note);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ctl);
+  line-height: var(--h-line);
+}
+.vet-thread-resolved {
+  box-shadow: inset 3px 0 var(--ok);
+  color: var(--text-2);
+}
+.vet-thread-head,
+.vet-thread-foot,
+.vet-thread-reply {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.vet-thread-head {
+  height: var(--h-line);
+}
+.vet-thread-grow {
+  flex: 1;
+}
+.vet-thread-title {
+  font-weight: 600;
+}
+.vet-thread-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vet-thread-btn {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  color: var(--text-2);
+}
+.vet-thread .vet-thread-small {
+  height: 20px;
+  padding: 0 8px;
+  font-size: var(--fs-mono-s);
+}
+.vet-badge {
+  height: 16px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.vet-badge-moved {
+  border-color: var(--note);
+  color: var(--note);
+}
+.vet-badge-ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.vet-msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--h-line);
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+.vet-msg-author {
+  color: var(--text-2);
+  font-weight: 600;
+}
+.vet-msg-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.vet-thread-reply {
+  margin-top: 6px;
+}
+.vet-thread-field {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-editor);
+  color: var(--text);
+  font: inherit;
+  line-height: 18px;
+  resize: none;
+}
+.vet-thread-draft .vet-thread-field {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+}
+.vet-thread-foot {
+  margin-top: 6px;
+  justify-content: flex-end;
+}
+.vet-thread-hint {
+  flex: 1;
+  color: var(--text-3);
+  font-size: 11px;
+}

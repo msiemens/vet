@@ -8,6 +8,7 @@ import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
 import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { Side } from "../../../generated/Side";
+import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { iconSvg } from "../../../lib/ui/icons";
 import type { Backend } from "../../../state/backend";
@@ -19,6 +20,8 @@ import { baseLineToTarget } from "./positions";
 import { setCurrent, setStates } from "./reviewState";
 import { COLLAPSE, type Metrics, sectionLayout } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
+import { type ThreadListeners, type ThreadState, ThreadLayer, threadState } from "./threadLayer";
+import { selectedLines } from "./threadPlacement";
 
 /** Time a scroll frame may spend creating editors before the rest wait for the next frame. */
 const MOUNT_BUDGET_MS = 6;
@@ -44,6 +47,7 @@ export interface Listeners {
   openSource(path: string, line: number): void;
   /** The file's own diff tab; absent in a view of a single file, which already is that tab. */
   openDiff?(path: string, line: number): void;
+  threads: ThreadListeners;
 }
 
 /** A view's current stop, as a position that survives a new revision. */
@@ -55,7 +59,7 @@ export interface HunkAnchor {
   card?: NonTextKind;
 }
 
-interface Section {
+interface Section extends ThreadState {
   file: FileChange;
   review: FileReview;
   symbols: (string | undefined)[];
@@ -101,6 +105,7 @@ export class ChangesetView {
   private destroyed = false;
   /** A frame request that continues mounting once a frame's budget is spent. */
   private later?: number;
+  private threads: ThreadLayer;
 
   constructor(
     private root: HTMLElement,
@@ -115,6 +120,8 @@ export class ChangesetView {
     private collapse: boolean,
     symbolsOf: (path: string, hunks: number) => (string | undefined)[],
   ) {
+    // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
+    root.style.containerType = "inline-size";
     const style = getComputedStyle(root);
     this.m = {
       line: px(style, "--h-line"),
@@ -124,6 +131,18 @@ export class ChangesetView {
       gap: px(style, "--h-section-gap"),
       preview: px(style, "--h-preview"),
     };
+    this.threads = new ThreadLayer(
+      {
+        revision,
+        sections: this.sections,
+        root,
+        line: this.m.line,
+        estimate: (s, known) => this.estimate(s as Section, known),
+        resize: (s, height) => this.resize(s as Section, height),
+      },
+      listeners.threads,
+      collapse,
+    );
     let hunks = 0;
     let stops = 0;
     for (const file of files) {
@@ -155,6 +174,14 @@ export class ChangesetView {
         open.innerHTML = iconSvg("file", 14, 1.6);
         open.addEventListener("click", () => listeners.openDiff?.(file.path, firstLine));
       }
+      const comment = document.createElement("button");
+      comment.className = "flat open";
+      comment.type = "button";
+      comment.title = "Comment on this file";
+      comment.setAttribute("aria-label", "Comment on this file");
+      comment.innerHTML = iconSvg("comments", 14, 1.6);
+      const index = this.sections.length;
+      comment.addEventListener("click", () => this.threads.commentOnFile(this.sections[index]));
       const { added, removed } = lineDelta([file]);
       const delta = document.createElement("span");
       delta.className = "delta mono";
@@ -165,9 +192,8 @@ export class ChangesetView {
       button.className = "ctl";
       button.textContent = "Seen";
       button.title = "Toggle everything in this file seen";
-      const index = this.sections.length;
       button.addEventListener("click", () => void this.toggleSeen(index));
-      header.append(title, delta, count, ...(open ? [open] : []), button);
+      header.append(title, delta, count, comment, ...(open ? [open] : []), button);
       header.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         this.listeners.fileMenu(file.path, e.clientX, e.clientY);
@@ -177,19 +203,17 @@ export class ChangesetView {
       const cards = file.nonText.map((item, ci) =>
         changeCard(file.path, file.oldPath, item, file.review.acknowledged.includes(item.kind), {
           toggle: () => void this.toggleCard(index, ci),
-          comment: () => {
-            // Comments are not wired up yet.
-          },
+          comment: () => this.threads.commentOnFile(this.sections[index]),
           blob: (side) => this.backend.itemBlob(this.revision, file.path, item.kind, side),
         }),
       );
-      el.append(header, ...cards.map((c) => c.el), body);
+      const blockEl = document.createElement("div");
+      blockEl.className = "vet-thread-block";
+      el.append(header, ...cards.map((c) => c.el), blockEl, body);
       el.addEventListener("pointerdown", (e) => this.selectAt(index, e));
       const actions: BarActions = {
         toggleSeen: (h) => void this.toggleHunk(index, h),
-        comment: () => {
-          // Comments are not wired up yet.
-        },
+        comment: (h) => this.threads.commentOnHunk(this.sections[index], h),
         openSource: (h) => listeners.openSource(file.path, file.hunks[h].targetStart),
       };
       this.sections.push({
@@ -205,12 +229,13 @@ export class ChangesetView {
         cardTops: [],
         cardsHeight: 0,
         hunkTops: [],
+        ...threadState(blockEl),
         hooks: { ...hooks, ...bindRevision(hooks, revision), ...actions },
       });
     }
     this.totalHunks = hunks;
     this.totalStops = stops;
-    this.root.replaceChildren(...this.sections.map((s) => s.el));
+    this.root.replaceChildren(...(this.threads.lead ? [this.threads.lead] : []), ...this.sections.map((s) => s.el));
     this.layout();
     this.root.addEventListener("scroll", this.onScroll, { passive: true });
     this.root.addEventListener("click", this.onExpand, true);
@@ -227,6 +252,7 @@ export class ChangesetView {
     this.mounted.clear();
     for (const fi of this.previewing) this.sections[fi].cards.forEach((c) => c.setPreview(false));
     this.previewing.clear();
+    this.threads.destroy();
     this.root.replaceChildren();
   }
 
@@ -237,7 +263,7 @@ export class ChangesetView {
 
   /** Estimates every section's height; the section's own bottom border is one more pixel. */
   private layout() {
-    let top = 0;
+    let top = this.threads.leadHeight;
     for (const s of this.sections) {
       s.top = top;
       s.height = this.estimate(s);
@@ -273,12 +299,14 @@ export class ChangesetView {
     if (s && lines) this.resize(s, s.height + lines * this.m.line - this.m.collapsed);
   };
 
-  /** Lays the section out from the manifest; its own bottom border is one more pixel. */
-  private estimate(s: Section): number {
-    const layout = sectionLayout(s.file, this.mode, this.m, this.collapse);
+  /** Lays the section out from the manifest; its own bottom border is one more pixel. `known`: see `ThreadLayer.count`. */
+  private estimate(s: Section, known = new Map<string, number>()): number {
+    const space = this.threads.space(s, known);
+    const layout = sectionLayout(s.file, this.mode, this.m, this.collapse, space);
     s.hunkTops = layout.hunkTops;
     s.cardTops = layout.cardTops;
     s.cardsHeight = layout.cardsHeight;
+    this.threads.count(s, space, layout.drawn, known);
     s.el.style.setProperty("--vet-cards", `${layout.cardsHeight}px`);
     return layout.height + 1;
   }
@@ -368,7 +396,9 @@ export class ChangesetView {
       this.mode,
       s.hooks,
       this.collapse ? COLLAPSE : undefined,
+      [this.threads.extension(s)],
     );
+    this.threads.mounted(s);
     this.mounted.add(fi);
     const first = this.stopStart[fi] + s.cards.length;
     if (this.current >= first && this.current < first + s.file.hunks.length)
@@ -708,14 +738,61 @@ export class ChangesetView {
       const s = this.sections[fi];
       drift = Math.max(
         drift,
-        Math.abs(s.body.scrollHeight + this.m.header + s.cardsHeight + this.m.gap + 1 - s.height),
+        Math.abs(s.body.scrollHeight + this.m.header + s.cardsHeight + s.block + this.m.gap + 1 - s.height),
       );
     }
     return drift;
   }
 
+  /**
+   * Shows the threads of this view's revision: a card below the last line of each range thread,
+   * the file's own below its change cards, the changeset's above the first file.
+   */
+  setThreads(threads: Thread[], revision: number) {
+    this.threads.setThreads(threads, revision);
+  }
+
+  /**
+   * Opens the form for a comment on the focused editor's selection (its caret line without one),
+   * else on the current hunk. Answers whether there was somewhere to comment.
+   */
+  commentHere(): boolean {
+    for (const fi of this.mounted) {
+      const handle = this.sections[fi].handle;
+      const view = handle?.views.find((v) => v.hasFocus);
+      if (!handle || !view) continue;
+      const { main } = view.state.selection;
+      const doc = view.state.doc;
+      const [from, to] = [doc.lineAt(main.from), doc.lineAt(main.to)];
+      const { start, len } = selectedLines(from.number - 1, to.number - 1, !main.empty && main.to === to.from);
+      this.threads.commentOnLines(this.sections[fi], view === handle.view ? "target" : "base", start, len);
+      return true;
+    }
+    if (this.current < 0 || !this.totalStops) return false;
+    const [fi, si] = this.locate(this.current);
+    const s = this.sections[fi];
+    if (si < s.cards.length) this.threads.commentOnFile(s);
+    else this.threads.commentOnHunk(s, si - s.cards.length);
+    return true;
+  }
+
+  /** Scrolls to where a thread is shown; answers whether it is in this view. */
+  async goToThread(thread: Thread): Promise<boolean> {
+    if (thread.kind === "changeset") {
+      if (!this.threads.lead) return false;
+      this.root.scrollTop = 0;
+      return true;
+    }
+    const fi = this.indexOf(thread.path ?? "");
+    if (fi < 0) return false;
+    const card = this.sections[fi].placement.inline.find((c) => c.thread.id === thread.id);
+    if (card) await this.goToLine(fi, card.line);
+    else await this.goToFile(fi);
+    return true;
+  }
+
   seenButton(fi: number): HTMLButtonElement {
-    const button = this.sections[fi].el.querySelector("button");
+    const button = this.sections[fi].el.querySelector<HTMLButtonElement>("header .ctl");
     if (!button) throw new Error(`file ${fi} has no Seen button`);
     return button;
   }

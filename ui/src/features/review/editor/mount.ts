@@ -104,6 +104,8 @@ export function mountFile(
   hooks: Hooks,
   /** Absent: show the whole file. */
   collapseUnchanged?: Collapse,
+  /** More extensions of the target view. */
+  extra: Extension[] = [],
 ): Handle {
   const targetField = reviewField(
     sideConfig(loaded.hunks, "target", review.symbols, hooks),
@@ -118,6 +120,7 @@ export function mountFile(
     lineNumbers(),
     syntax(path),
     barText,
+    ...extra,
     EditorView.domEventHandlers({ keydown: (event) => (hooks.keydown(event), false) }),
     ...semanticExtensions(path, "target", hooks, shown),
   ];

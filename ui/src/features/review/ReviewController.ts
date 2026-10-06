@@ -9,6 +9,8 @@ import { nextPaint } from "../../lib/nextPaint";
 import type { Backend } from "../../state/backend";
 import { changeset } from "../../state/changeset.svelte";
 import { semantic } from "../../state/semantic.svelte";
+import { threads } from "../../state/threads.svelte";
+import type { Thread } from "../../generated/Thread";
 import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
 import type { Mode } from "./editor/mount";
 import { pickLocation } from "./editor/positions";
@@ -54,9 +56,14 @@ export class ReviewController {
   ) {
     window.addEventListener("keydown", this.onKey, true);
     semantic.reset(); // the controller belongs to one repository's screen
-    this.unsubscribe = changeset.onReview((u) => {
+    const offReview = changeset.onReview((u) => {
       for (const view of this.views.values()) view.applyReview(u.path, u.review);
     });
+    const offThreads = threads.onChange(() => this.showThreads());
+    this.unsubscribe = () => {
+      offReview();
+      offThreads();
+    };
     // A server installed or reconfigured elsewhere may answer differently now.
     this.unsubscribeEvents = backend.onEvent((event) => {
       if (event.type !== "serversChanged" || event.session !== backend.session) return;
@@ -114,7 +121,10 @@ export class ReviewController {
     else if (matches("Ctrl-Alt-ArrowUp", e)) run(() => void view.goToHunk(view.current - 1));
     else if (matches("Space", e) && view.current >= 0 && !takesSpace(document.activeElement))
       run(() => void view.toggleCurrent());
-    else if (matches("F4", e)) {
+    else if (matches("Ctrl-Alt-c", e) && !document.activeElement?.closest("input, textarea")) {
+      // Comment on the selection, else on the current hunk.
+      if (view.commentHere()) e.preventDefault();
+    } else if (matches("F4", e)) {
       // Jump to Source: the file of the Changes stream's caret, at its line.
       const caret = this.tabs.active === CHANGES ? view.caret() : undefined;
       if (caret) run(() => void this.openSource(caret.path, caret.line));
@@ -179,7 +189,26 @@ export class ReviewController {
       openSource: (path, line) => void this.openSource(path, line),
       // A diff tab shows its file's hunks; only the Changes tab offers to open one.
       openDiff: id === CHANGES ? (path, line) => void this.openFile(path, line) : undefined,
+      threads: {
+        create: (revision, target, body) => threads.create(revision, target, body),
+        reply: (thread, body) => threads.reply(thread, body),
+        setStatus: (thread, status) => threads.setStatus(thread, status),
+        remove: (thread) => threads.remove(thread),
+        confirm: (thread) => threads.confirm(thread),
+      },
     };
+  }
+
+  /** Gives every view the threads, if they are of the view's revision. */
+  private showThreads() {
+    if (threads.revision === undefined) return;
+    for (const view of this.views.values()) view.setThreads(threads.items, threads.revision);
+  }
+
+  /** Shows a thread in the Changes tab: its card, or its file or the changeset's top. */
+  async goToThread(thread: Thread): Promise<boolean> {
+    this.tabs.active = CHANGES;
+    return this.views.get(CHANGES)?.goToThread(thread) ?? false;
   }
 
   /**
@@ -222,6 +251,7 @@ export class ReviewController {
       noSymbols,
     );
     this.views.set(id, view);
+    if (threads.revision === manifest.revision) view.setThreads(threads.items, threads.revision);
     root.scrollTop = top;
     view.keepCurrent(anchor);
     view.sync();

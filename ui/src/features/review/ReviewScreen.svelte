@@ -5,9 +5,12 @@
   import SideBar from "../../lib/ui/SideBar.svelte";
   import type { Backend } from "../../state/backend";
   import { changeset } from "../../state/changeset.svelte";
+  import { threads } from "../../state/threads.svelte";
+  import { CommentsPanel } from "../comments";
   import FileTree from "./FileTree.svelte";
   import type { Mode } from "./editor/mount";
   import "./editor/editor.css";
+  import "./editor/threadCard.css";
   import { type Hud, ReviewController } from "./ReviewController";
   import { CHANGES, kindOf, pathOf } from "./Tabs.svelte";
   import TabStrip from "./TabStrip.svelte";
@@ -62,11 +65,15 @@
   $effect(() => onfile?.(highlighted));
 
   onMount(() => {
+    const stopThreads = threads.start(backend);
     controller.open(true).then(
       (ms) => onready(controller, ms),
       (e: unknown) => (changeset.status = e instanceof Error ? e.message : String(e)),
     );
-    return () => controller.destroy();
+    return () => {
+      stopThreads();
+      controller.destroy();
+    };
   });
 
   // A settled snapshot moved the changeset to a new revision.
@@ -110,6 +117,8 @@
         onopen={(path) => void controller.openSource(path)}
         onmenu={(path, dir, x, y) => (menu = { path, dir, x, y })}
       />
+    {:else if leftTool === "comments"}
+      <CommentsPanel onselect={(thread) => void controller.goToThread(thread)} />
     {:else}
       <p class="soon">This tool window is not available yet.</p>
     {/if}
