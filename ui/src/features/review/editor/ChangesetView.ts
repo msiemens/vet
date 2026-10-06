@@ -3,28 +3,37 @@
 // is mounted only for sections near the viewport.
 
 import { EditorView } from "@codemirror/view";
-import { type Handle, type Hooks, type Loaded, type Mode, mountFile, setCurrent, setSeen } from "./editor";
-import type { FileChange } from "./generated/FileChange";
-import type { Manifest } from "./generated/Manifest";
-import type { Connection } from "./connection";
+import type { Backend } from "../../../state/backend";
+import type { FileState } from "../../../state/changeset.svelte";
+import type { BarActions, HunkState } from "./hunkBar";
+import { type Handle, type Hooks, type Loaded, type Mode, mountFile } from "./mount";
+import { setCurrent, setStates } from "./reviewState";
 
-export const LINE_H = 18;
-const HEADER_H = 28;
+/** Row heights come from the theme tokens, which are the only place they are defined. */
+interface Metrics {
+  line: number;
+  hunk: number;
+  header: number;
+}
 
-export function sectionHeight(entry: FileChange, mode: Mode): number {
-  // Unified shows every deleted line as an extra row; side by side pads the shorter side of each hunk.
-  const extra = entry.hunks.reduce((rows, h) => rows + (mode === "unified" ? h.baseLen : Math.max(0, h.baseLen - h.targetLen)), 0);
-  return HEADER_H + (entry.targetLines + extra) * LINE_H;
+const px = (style: CSSStyleDeclaration, name: string) => parseFloat(style.getPropertyValue(name));
+
+export interface Listeners {
+  /** A file's seen state changed on the backend's say-so. */
+  seen(path: string, seen: boolean[], oldBase: boolean[]): void;
 }
 
 interface Section {
-  entry: FileChange;
+  file: FileState;
   seen: boolean[];
+  oldBase: boolean[];
+  symbols: (string | undefined)[];
   el: HTMLElement;
   body: HTMLElement;
   count: HTMLElement;
   top: number;
   height: number;
+  hooks: Hooks;
   loaded?: Loaded;
   loading?: Promise<Loaded>;
   handle?: Handle;
@@ -35,25 +44,36 @@ export class ChangesetView {
   private hunkStart: number[] = [];
   readonly totalHunks: number;
   private mounted = new Set<number>();
+  private m: Metrics;
   current = -1;
   private onScroll = () => this.sync();
 
   constructor(
     private root: HTMLElement,
-    private manifest: Manifest,
-    private conn: Connection,
+    files: FileState[],
+    private backend: Backend,
     public mode: Mode,
-    private hooks: Hooks,
+    private hooks: Omit<Hooks, keyof BarActions>,
+    private listeners: Listeners,
+    symbolsOf: (path: string, hunks: number) => (string | undefined)[],
   ) {
+    const style = getComputedStyle(root);
+    this.m = { line: px(style, "--h-line"), hunk: px(style, "--h-hunk"), header: px(style, "--h-section") };
     let hunks = 0;
-    for (const entry of manifest.files) {
+    for (const file of files) {
+      const { entry } = file;
       this.hunkStart.push(hunks);
       hunks += entry.hunks.length;
       const el = document.createElement("section");
       el.className = "file";
       const header = document.createElement("header");
       const title = document.createElement("span");
+      title.className = "path";
       title.textContent = entry.path;
+      const [added, removed] = entry.hunks.reduce(([a, r], [base, target]) => [a + target, r + base], [0, 0]);
+      const delta = document.createElement("span");
+      delta.className = "delta mono";
+      delta.innerHTML = `<span class="add">+${added}</span> <span class="del">−${removed}</span>`;
       const count = document.createElement("span");
       count.className = "count";
       const button = document.createElement("button");
@@ -61,11 +81,23 @@ export class ChangesetView {
       button.title = "Toggle all hunks of this file seen (Ctrl-Alt-S)";
       const index = this.sections.length;
       button.addEventListener("click", () => void this.toggleSeen(index));
-      header.append(title, count, button);
+      header.append(title, delta, count, button);
       const body = document.createElement("div");
       body.className = "body";
       el.append(header, body);
-      this.sections.push({ entry, seen: entry.review.hunks.map((s) => s === "seen"), el, body, count, top: 0, height: 0 });
+      const actions: BarActions = { toggleSeen: (h) => void this.toggleHunk(index, h), comment: () => {} };
+      this.sections.push({
+        file,
+        seen: [...file.seen],
+        oldBase: [...file.oldBase],
+        symbols: symbolsOf(entry.path, entry.hunks.length),
+        el,
+        body,
+        count,
+        top: 0,
+        height: 0,
+        hooks: { ...hooks, ...actions },
+      });
     }
     this.totalHunks = hunks;
     this.root.replaceChildren(...this.sections.map((s) => s.el));
@@ -85,11 +117,18 @@ export class ChangesetView {
     return last.top + last.height;
   }
 
+  private sectionHeight(s: Section): number {
+    const { entry } = s.file;
+    // Unified shows every deleted line as an extra row; side by side pads the shorter side of each hunk.
+    const extra = entry.hunks.reduce((rows, [base, target]) => rows + (this.mode === "unified" ? base : Math.max(0, base - target)), 0);
+    return this.m.header + (entry.targetLines + extra) * this.m.line + entry.hunks.length * this.m.hunk;
+  }
+
   private layout() {
     let top = 0;
     for (const s of this.sections) {
       s.top = top;
-      s.height = sectionHeight(s.entry, this.mode);
+      s.height = this.sectionHeight(s);
       s.el.style.height = `${s.height}px`;
       top += s.height;
       this.updateCount(s);
@@ -98,6 +137,10 @@ export class ChangesetView {
 
   private updateCount(s: Section) {
     s.count.textContent = `${s.seen.filter(Boolean).length}/${s.seen.length} hunks seen`;
+  }
+
+  private states(s: Section): HunkState[] {
+    return s.seen.map((seen, i) => (s.oldBase[i] ? "oldBase" : seen ? "seen" : "unseen"));
   }
 
   setMode(mode: Mode) {
@@ -124,12 +167,10 @@ export class ChangesetView {
 
   load(fi: number): Promise<Loaded> {
     const s = this.sections[fi];
-    const { session } = this.manifest;
-    s.loading ??= this.conn.request({ type: "fileContents", session, path: s.entry.path }).then((r) => {
-      if (r.type !== "fileContents" || r.revision !== this.manifest.revision) throw new Error("unexpected response");
-      s.loaded = { base: r.base ?? "", target: r.target ?? "", hunks: r.hunks, marks: r.marks };
+    s.loading ??= this.backend.getFile(s.file.entry.path).then((r) => {
+      s.loaded = r;
       this.sync();
-      return s.loaded;
+      return r;
     });
     return s.loading;
   }
@@ -158,9 +199,9 @@ export class ChangesetView {
     for (let fi = near[0]; fi <= near[1]; fi++) {
       const s = this.sections[fi];
       if (s.handle || !s.loaded) continue;
-      s.handle = mountFile(s.body, s.entry.path, s.loaded, s.seen, this.mode, this.hooks);
+      s.handle = mountFile(s.body, s.file.entry.path, s.loaded, { states: this.states(s), symbols: s.symbols }, this.mode, s.hooks);
       this.mounted.add(fi);
-      if (this.current >= this.hunkStart[fi] && this.current < this.hunkStart[fi] + s.entry.hunks.length) s.handle.dispatchAll(setCurrent.of(this.current - this.hunkStart[fi]));
+      if (this.current >= this.hunkStart[fi] && this.current < this.hunkStart[fi] + s.file.entry.hunks.length) s.handle.dispatchAll(setCurrent.of(this.current - this.hunkStart[fi]));
     }
   }
 
@@ -176,7 +217,7 @@ export class ChangesetView {
   }
 
   private locate(global: number): [number, number] {
-    let fi = this.hunkStart.findIndex((start, i) => start + this.sections[i].entry.hunks.length > global);
+    let fi = this.hunkStart.findIndex((start, i) => start + this.sections[i].file.entry.hunks.length > global);
     if (fi < 0) fi = this.sections.length - 1;
     return [fi, global - this.hunkStart[fi]];
   }
@@ -201,7 +242,7 @@ export class ChangesetView {
     // The row estimate scrolls close enough to mount the editor; CodeMirror then scrolls exactly.
     let row = hunk.targetStart;
     for (const h of loaded.hunks.slice(0, hi)) row += this.mode === "unified" ? h.baseLen : Math.max(0, h.baseLen - h.targetLen);
-    this.root.scrollTop = Math.max(0, s.top + HEADER_H + row * LINE_H - this.root.clientHeight / 2);
+    this.root.scrollTop = Math.max(0, s.top + this.m.header + row * this.m.line + (hi + 1) * this.m.hunk - this.root.clientHeight / 2);
     this.sync();
     const handle = s.handle!;
     const doc = handle.view.state.doc;
@@ -215,20 +256,31 @@ export class ChangesetView {
   pendingToggle: Promise<void> = Promise.resolve();
 
   /**
-   * Asks the backend to mark all hunks of file `fi` seen, or unseen if they all
-   * already are, and renders the state it returns (I5: the shell keeps none of its own).
+   * Asks the backend to mark the hunks seen, or unseen, and renders the state it
+   * returns (I5: the shell keeps none of its own). Re-confirming clears the old-base mark.
    */
-  toggleSeen(fi: number): Promise<void> {
+  private setSeen(fi: number, hunks: number[], value: boolean): Promise<void> {
     const s = this.sections[fi];
-    const value = !s.seen.every(Boolean);
-    const { session, revision } = this.manifest;
-    const request = this.conn.request({ type: "setSeen", session, revision, path: s.entry.path, hunks: s.seen.map((_, i) => i), seen: value }).then((r) => {
-      if (r.type !== "review") throw new Error("unexpected response");
-      s.seen = r.review.hunks.map((h) => h === "seen");
-      s.handle?.dispatchAll(setSeen.of(s.seen));
+    const request = this.backend.setSeen(s.file.entry.path, hunks, value).then((seen) => {
+      s.seen = seen;
+      for (const h of hunks) s.oldBase[h] = false;
+      s.handle?.dispatchAll(setStates.of(this.states(s)));
       this.updateCount(s);
+      this.listeners.seen(s.file.entry.path, s.seen, s.oldBase);
     });
     return (this.pendingToggle = request);
+  }
+
+  /** Marks all hunks of file `fi` seen, or unseen if they all already are. */
+  toggleSeen(fi: number): Promise<void> {
+    const s = this.sections[fi];
+    return this.setSeen(fi, s.seen.map((_, i) => i), !s.seen.every(Boolean));
+  }
+
+  /** Unseen → seen, seen → unseen, seen against an old base → re-confirmed. */
+  toggleHunk(fi: number, hi: number): Promise<void> {
+    const s = this.sections[fi];
+    return this.setSeen(fi, [hi], !s.seen[hi] || s.oldBase[hi]);
   }
 
   currentFile(): number {
@@ -240,7 +292,7 @@ export class ChangesetView {
     let n = 0;
     for (const fi of this.mounted) {
       const s = this.sections[fi];
-      if (s.handle && s.handle.chunkCount() !== s.entry.hunks.length) n++;
+      if (s.handle && s.handle.chunkCount() !== s.file.entry.hunks.length) n++;
     }
     return n;
   }
@@ -250,7 +302,7 @@ export class ChangesetView {
     let drift = 0;
     for (const fi of this.mounted) {
       const body = this.sections[fi].body;
-      drift = Math.max(drift, Math.abs(body.scrollHeight + HEADER_H - this.sections[fi].height));
+      drift = Math.max(drift, Math.abs(body.scrollHeight + this.m.header - this.sections[fi].height));
     }
     return drift;
   }

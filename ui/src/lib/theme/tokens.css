@@ -1,0 +1,70 @@
+/* Design tokens from "Vet UI Proposal.html". Components reference these, never literal colours or sizes.
+   Theme: `data-theme="light|dark"` on <html> forces one; without it the system preference applies. */
+
+:root {
+  color-scheme: light dark;
+
+  --win: light-dark(#e8e8ea, #2b2d30);
+  --panel: light-dark(#f3f3f4, #26282b);
+  --ed: light-dark(#ffffff, #1e1f22);
+  --sheet: light-dark(#f7f7f8, #2d2f33);
+  --btn: light-dark(#ffffff, #34373d);
+  --hunk: light-dark(#eef2f8, #262a31);
+  --dim: light-dark(rgba(30, 32, 36, 0.18), rgba(0, 0, 0, 0.35));
+
+  --ln: light-dark(#d2d2d6, #3c3f45);
+  --ln2: light-dark(#e6e6e9, #313338);
+  --tx: light-dark(#1d1f23, #dfe1e5);
+  --tx2: light-dark(#575d67, #a9aeb6);
+  --tx3: light-dark(#6a707a, #8e939b);
+  --sel: light-dark(#d4e3fb, #2e436e);
+  --hov: light-dark(#eceef0, #30333a);
+
+  --acc: light-dark(#2d6fd8, #6b9cf7);
+  --shadow: 0 14px 40px light-dark(rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.5));
+
+  /* Review state: seen, seen against an old base, warnings, notes. */
+  --seen: light-dark(#3d7be0, #5b8ef0);
+  --old: light-dark(#c17f0c, #d9a13b);
+  --oldbg: light-dark(#fdf5e4, #33291a);
+  --oldln: light-dark(#e2c27a, #7a6230);
+  --warn: light-dark(#bc4b27, #e07a5f);
+  --note: light-dark(#7150c2, #a98beb);
+  --notebg: light-dark(#f6f2fd, #2a2536);
+  --noteln: light-dark(#d9ccf3, #4a3f6e);
+  --ok: light-dark(#2b8546, #6fcf97);
+
+  --add: light-dark(#e4f4e8, #20352a);
+  --addt: light-dark(#2b8546, #6fcf97);
+  --del: light-dark(#fbe8e7, #3e2629);
+  --delt: light-dark(#bf3a2e, #f28b82);
+
+  /* Syntax */
+  --kw: light-dark(#8b2dae, #c79bff);
+  --ty: light-dark(#0d7a69, #7fd1c7);
+  --fn: light-dark(#1f5ec2, #8ab8ff);
+  --nu: light-dark(#975a00, #e9b872);
+  --st: light-dark(#2f7d32, #a5d6a7);
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, Menlo, monospace;
+  --fs: 13px;
+  --fs-ctl: 12.5px;
+  --fs-mono: 12px;
+  --fs-mono-s: 11.5px;
+
+  --h-header: 40px;
+  --h-footer: 24px;
+  --h-ctl: 26px;
+  --h-row: 22px;
+  --h-section: 26px;
+  --h-hunk: 24px;
+  --h-line: 20px;
+  --w-rail: 34px;
+  --w-tree: 270px;
+  --w-symbols: 330px;
+  --radius: 5px;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }

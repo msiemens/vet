@@ -1,16 +1,5 @@
 // Measurement helpers and result formatting for SPEC §12.0.
 
-/** Resolves after the next frame has been painted (rAF, then a task after it). */
-export function nextPaint(): Promise<void> {
-  return new Promise((resolve) =>
-    requestAnimationFrame(() => {
-      const channel = new MessageChannel();
-      channel.port1.onmessage = () => resolve();
-      channel.port2.postMessage(null);
-    }),
-  );
-}
-
 export function percentile95(samples: number[]): number {
   const sorted = [...samples].sort((a, b) => a - b);
   return sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)];

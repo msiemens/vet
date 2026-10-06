@@ -1,8 +1,9 @@
 // Automated benchmark for SPEC §12.0: drives each scenario in both views and
 // returns one row per metric (p95 against the threshold).
 
-import { type Row, nextPaint, percentile95, row } from "./metrics";
-import type { Shell } from "./shell";
+import type { ReviewController as Shell } from "../features/review";
+import { nextPaint } from "../lib/nextPaint";
+import { type Row, percentile95, row } from "./metrics";
 
 export interface BenchOptions {
   /** Seconds the full-changeset scroll takes (the speed follows from the height). */
@@ -96,9 +97,9 @@ async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Pro
   const tag = `[${shell.mode}]`;
   const view = shell.view!;
   const files = view.sections;
-  const biggest = files.reduce((best, s, i) => (s.entry.targetLines > files[best].entry.targetLines ? i : best), 0);
+  const biggest = files.reduce((best, s, i) => (s.file.entry.targetLines > files[best].file.entry.targetLines ? i : best), 0);
   const big = await view.goToFile(biggest);
-  await view.goToHunk(view.firstHunkOf(biggest) + (files[biggest].entry.hunks.length >> 1));
+  await view.goToHunk(view.firstHunkOf(biggest) + (files[biggest].file.entry.hunks.length >> 1));
   const editor = big.view;
   editor.focus();
   const [at, length, decorations] = [editor.state.selection.main.head, editor.state.doc.length, big.decorationCount()];
@@ -118,7 +119,7 @@ async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Pro
   const typed = editor.state.doc.length - length;
   const intact = big.decorationCount() === decorations; // typing inside a line must not add or drop decorations
   editor.dispatch({ changes: { from: at, to: at + typed, insert: "" } });
-  const label = `${files[biggest].entry.targetLines}-line file ${tag}`;
+  const label = `${files[biggest].file.entry.targetLines}-line file ${tag}`;
   return {
     tag,
     rows:
@@ -168,7 +169,7 @@ async function mode(shell: Shell, root: HTMLElement, m: "unified" | "split", o: 
   rows.push(...(await typeSamples(shell, o, interval)).rows);
 
   o.progress(`${tag} toggle Seen`);
-  const near1000 = files.reduce((best, s, i) => (Math.abs(s.entry.targetLines - 1000) < Math.abs(files[best].entry.targetLines - 1000) ? i : best), 0);
+  const near1000 = files.reduce((best, s, i) => (Math.abs(s.file.entry.targetLines - 1000) < Math.abs(files[best].file.entry.targetLines - 1000) ? i : best), 0);
   await view.goToFile(near1000);
   await nextPaint();
   const button = view.seenButton(near1000);
@@ -182,7 +183,7 @@ async function mode(shell: Shell, root: HTMLElement, m: "unified" | "split", o: 
       }),
     );
   }
-  rows.push(row(`Toggle Seen (click → IPC → repaint), ${files[near1000].entry.targetLines}-line file, ${files[near1000].entry.hunks.length} hunks ${tag}`, toggles, "ms", 50));
+  rows.push(row(`Toggle Seen (click → IPC → repaint), ${files[near1000].file.entry.targetLines}-line file, ${files[near1000].file.entry.hunks.length} hunks ${tag}`, toggles, "ms", 50));
 
   o.progress(`${tag} scroll (${o.scrollSeconds}s)`);
   const dropped = await scrollThrough(shell, root, o.scrollSeconds, interval);
@@ -230,10 +231,10 @@ export async function runBenchmark(shell: Shell, root: HTMLElement, o: BenchOpti
   const note = o.topology === "wsl-split" ? undefined : "native topology; §12.0 requires the WSL split";
   o.progress("hover round trip");
   const hover: number[] = [];
-  const path = shell.entries[0].path;
+  const path = shell.files[0].entry.path;
   for (let i = 0; i < 200; i++) {
     const t0 = performance.now();
-    await shell.conn.request({ type: "hover", session: shell.session, path, line: i % 10, col: 0 });
+    await shell.backend.hover(path, i % 10, 0);
     hover.push(performance.now() - t0);
   }
   rows.push(row(`Hover round trip, request → response (${topology})`, hover, "ms", 100, "<", note));
