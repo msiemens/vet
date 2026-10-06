@@ -456,6 +456,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Soft wrap, toggled per view and on by default for prose (Markdown, reStructuredText, plain text); a changed line that runs past the visible width is marked whether or not it wraps
 - Resizable dialogs (Settings first), keeping their size
 - The window reopens at its last position and size (falling back to the default when that display is gone)
+- The file icon of a file in the Changes tab opens the file's tab, like the hunk bar's; a changed file's tab switches between file and diff view
 
 ### M2
 
