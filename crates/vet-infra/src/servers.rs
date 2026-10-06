@@ -26,6 +26,9 @@ use crate::exec::{Host, TokioRunner, invocation, is_file};
 pub const TYPESCRIPT_LANGUAGE_SERVER_VERSION: &str = "6.0.1";
 pub const PYRIGHT_VERSION: &str = "1.1.414";
 pub const ROSLYN_LANGUAGE_SERVER_VERSION: &str = "5.12.0-1.26475.2";
+/// The `tsserver` for projects without a usable one: the language server
+/// bundles none, and TypeScript 7 and later ship no `lib/tsserver.js`.
+pub const FALLBACK_TYPESCRIPT_VERSION: &str = "6.0.3";
 
 /// How long a `--version` probe may take.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -36,10 +39,10 @@ const OUTPUT_TAIL_LINES: usize = 12;
 enum Install {
     /// Not installed by Vet.
     No,
-    /// `npm install --prefix <dir> <package>@<version>`; `bin` is in `node_modules/.bin`.
+    /// `npm install --prefix <dir> <package>@<version>...`; the binary is in
+    /// `node_modules/.bin`. The first package is the server, the others its companions.
     Npm {
-        package: &'static str,
-        version: &'static str,
+        packages: &'static [(&'static str, &'static str)],
     },
     /// `dotnet tool install <package> --tool-path <dir> --version <version>`.
     DotnetTool {
@@ -68,8 +71,10 @@ const SPECS: [Spec; 4] = [
         language: "typescript",
         binary: "typescript-language-server",
         install: Install::Npm {
-            package: "typescript-language-server",
-            version: TYPESCRIPT_LANGUAGE_SERVER_VERSION,
+            packages: &[
+                ("typescript-language-server", TYPESCRIPT_LANGUAGE_SERVER_VERSION),
+                ("typescript", FALLBACK_TYPESCRIPT_VERSION),
+            ],
         },
         version_flag: Some("--version"),
     },
@@ -77,8 +82,7 @@ const SPECS: [Spec; 4] = [
         language: "python",
         binary: "pyright-langserver",
         install: Install::Npm {
-            package: "pyright",
-            version: PYRIGHT_VERSION,
+            packages: &[("pyright", PYRIGHT_VERSION)],
         },
         version_flag: None,
     },
@@ -133,12 +137,7 @@ impl ToolResolver {
         let dir = self.install_dir(spec);
         match spec.install {
             Install::No => None,
-            Install::Npm { package, .. } => {
-                let manifest =
-                    std::fs::read_to_string(dir.join("node_modules").join(package).join("package.json")).ok()?;
-                let manifest: serde_json::Value = serde_json::from_str(&manifest).ok()?;
-                Some(manifest.get("version")?.as_str()?.to_owned())
-            }
+            Install::Npm { packages } => package_version(&dir.join("node_modules").join(packages[0].0)),
             Install::DotnetTool { package, .. } => std::fs::read_dir(dir.join(".store").join(package))
                 .ok()?
                 .flatten()
@@ -167,19 +166,21 @@ impl ToolResolver {
         }
     }
 
-    /// The project's own `typescript`, which the language server must use so its
-    /// answers match what the project compiles with.
-    fn tsserver(project: &Path) -> Option<(PathBuf, Option<String>)> {
-        let package = project.join("node_modules").join("typescript");
-        let tsserver = package.join("lib").join("tsserver.js");
-        if !tsserver.is_file() {
-            return None;
-        }
-        let version = std::fs::read_to_string(package.join("package.json"))
-            .ok()
-            .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok())
-            .and_then(|m| m.get("version")?.as_str().map(str::to_owned));
-        Some((tsserver, version))
+    /// The `tsserver` the language server must use: the project's own
+    /// `typescript`, so its answers match what the project compiles with, else
+    /// the fallback Vet installed beside the server.
+    fn tsserver(&self, spec: &Spec, project: &Path) -> Option<(PathBuf, String)> {
+        let project_package = project.join("node_modules").join("typescript");
+        let fallback = self.install_dir(spec).join("node_modules").join("typescript");
+        [(project_package, "the project's"), (fallback, "Vet's fallback")]
+            .into_iter()
+            .find_map(|(package, whose)| {
+                let tsserver = package.join("lib").join("tsserver.js");
+                tsserver.is_file().then(|| {
+                    let version = package_version(&package).map_or(String::new(), |v| format!(" {v}"));
+                    (tsserver, format!("{whose} typescript{version}"))
+                })
+            })
     }
 
     async fn probe_version(spec: &Spec, program: &Path) -> Option<String> {
@@ -199,6 +200,13 @@ impl ToolResolver {
         };
         format!("{} was not found ({}). {hint}", spec.binary, looked.join("; "))
     }
+}
+
+/// The `version` of the npm package in `package`.
+fn package_version(package: &Path) -> Option<String> {
+    let manifest = std::fs::read_to_string(package.join("package.json")).ok()?;
+    let manifest: serde_json::Value = serde_json::from_str(&manifest).ok()?;
+    Some(manifest.get("version")?.as_str()?.to_owned())
 }
 
 struct Captured {
@@ -293,18 +301,16 @@ impl ServerResolver for ToolResolver {
         let mut notes = Vec::new();
         let mut initialization_options = None;
         if spec.language == "typescript" {
-            match Self::tsserver(project) {
-                Some((tsserver, ts_version)) => {
-                    let ts_version = ts_version.map_or(String::new(), |v| format!(" {v}"));
-                    notes.push(format!(
-                        "tsserver: the project's typescript{ts_version} ({})",
-                        tsserver.display()
-                    ));
+            match self.tsserver(spec, project) {
+                Some((tsserver, whose)) => {
+                    notes.push(format!("tsserver: {whose} ({})", tsserver.display()));
                     initialization_options = Some(json!({"tsserver": {"path": tsserver.to_string_lossy()}}));
                 }
-                None => {
-                    notes.push("tsserver: the server's own typescript (the project has none in node_modules)".into())
-                }
+                None => notes.push(
+                    "tsserver: none; the project has no typescript with lib/tsserver.js (TypeScript 7 ships none) \
+                     and Vet's fallback is not installed"
+                        .into(),
+                ),
             }
         }
         ServerState::Found(FoundServer {
@@ -321,7 +327,8 @@ impl ServerResolver for ToolResolver {
     fn pinned(&self, language: &BackendId) -> Option<String> {
         match Self::spec(language)?.install {
             Install::No => None,
-            Install::Npm { version, .. } | Install::DotnetTool { version, .. } => Some(version.to_owned()),
+            Install::Npm { packages } => Some(packages[0].1.to_owned()),
+            Install::DotnetTool { version, .. } => Some(version.to_owned()),
         }
     }
 
@@ -343,18 +350,20 @@ impl ServerResolver for ToolResolver {
         let dir_arg = dir.to_string_lossy().into_owned();
         let (program, args) = match spec.install {
             Install::No => return Err("Vet does not install this server".into()),
-            Install::Npm { package, version } => (
-                "npm",
-                vec![
-                    "install".to_owned(),
-                    "--prefix".into(),
-                    dir_arg,
-                    "--no-audit".into(),
-                    "--no-fund".into(),
-                    "--save-exact".into(),
-                    format!("{package}@{version}"),
-                ],
-            ),
+            Install::Npm { packages } => {
+                let mut args: Vec<String> = [
+                    "install",
+                    "--prefix",
+                    &dir_arg,
+                    "--no-audit",
+                    "--no-fund",
+                    "--save-exact",
+                ]
+                .map(str::to_owned)
+                .into();
+                args.extend(packages.iter().map(|(package, version)| format!("{package}@{version}")));
+                ("npm", args)
+            }
             Install::DotnetTool { package, version } => {
                 // A tool path holds one version; start clean so the pin replaces any other.
                 let _ = std::fs::remove_dir_all(&dir);
@@ -497,10 +506,28 @@ mod tests {
         assert_eq!(options["tsserver"]["path"], tsserver.to_string_lossy().as_ref());
         assert!(server.notes[0].contains("5.9.2"), "{:?}", server.notes);
 
+        // A project without a usable typescript (none, or TypeScript 7, which has no tsserver.js).
         let bare = tempfile::tempdir().unwrap();
         let server = found(resolver.resolve(&language("typescript"), bare.path(), None).await);
         assert!(server.command.initialization_options.is_none());
-        assert!(server.notes[0].contains("none in node_modules"));
+        assert!(server.notes[0].starts_with("tsserver: none"), "{:?}", server.notes);
+
+        let fallback = data.path().join("servers/typescript/node_modules/typescript");
+        touch(&fallback.join("lib/tsserver.js"));
+        let server = found(resolver.resolve(&language("typescript"), bare.path(), None).await);
+        let options = server.command.initialization_options.unwrap();
+        assert_eq!(
+            options["tsserver"]["path"],
+            fallback.join("lib/tsserver.js").to_string_lossy().as_ref()
+        );
+        assert!(server.notes[0].contains("Vet's fallback"), "{:?}", server.notes);
+        // The project's own still wins over the fallback.
+        let server = found(resolver.resolve(&language("typescript"), project.path(), None).await);
+        assert!(
+            server.notes[0].contains("the project's typescript 5.9.2"),
+            "{:?}",
+            server.notes
+        );
     }
 
     #[tokio::test]
