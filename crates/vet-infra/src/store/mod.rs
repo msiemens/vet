@@ -607,14 +607,27 @@ impl ReviewStore for SqliteStore {
         })
     }
 
+    async fn pin(&self, id: PinId) -> Result<Option<Pin>, StoreError> {
+        let Some(row) = pin::Entity::find_by_id(id.0 as i64).one(&self.db).await? else {
+            return Ok(None);
+        };
+        Ok(Some(Pin {
+            id,
+            head: CommitId(row.head),
+            tree: SnapshotId(hash(&row.tree)?),
+        }))
+    }
+
     async fn open_session(
         &self,
+        repo: String,
         pin: PinId,
         changeset: Changeset,
         filter: ReviewFilter,
     ) -> Result<SessionId, StoreError> {
         let txn = self.db.begin().await?;
         let row = session::ActiveModel {
+            repo: Set(Some(repo)),
             pin: Set(pin.0 as i64),
             base: Set(changeset.base.0.0.to_vec()),
             target: Set(changeset.target.0.0.to_vec()),
@@ -639,8 +652,9 @@ impl ReviewStore for SqliteStore {
         Ok(())
     }
 
-    async fn open_sessions(&self) -> Result<Vec<SessionId>, StoreError> {
+    async fn open_sessions(&self, repo: String) -> Result<Vec<SessionId>, StoreError> {
         let ids: Vec<i64> = session::Entity::find()
+            .filter(session::Column::Repo.eq(repo))
             .filter(session::Column::ClosedAt.is_null())
             .order_by_asc(session::Column::Id)
             .select_only()

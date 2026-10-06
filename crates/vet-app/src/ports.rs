@@ -233,15 +233,20 @@ pub trait Store {
 /// a partition.
 pub trait ReviewStore {
     fn put_pin(&self, head: CommitId, tree: SnapshotId) -> impl Future<Output = Result<Pin, StoreError>> + Send;
+    fn pin(&self, id: PinId) -> impl Future<Output = Result<Option<Pin>, StoreError>> + Send;
+    /// `repo` is the repository root the session reviews, which is how a later
+    /// open finds it again.
     fn open_session(
         &self,
+        repo: String,
         pin: PinId,
         changeset: Changeset,
         filter: ReviewFilter,
     ) -> impl Future<Output = Result<SessionId, StoreError>> + Send;
     /// `now` is unix seconds.
     fn close_session(&self, id: SessionId, now: i64) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn open_sessions(&self) -> impl Future<Output = Result<Vec<SessionId>, StoreError>> + Send;
+    /// The open sessions of `repo`, oldest first.
+    fn open_sessions(&self, repo: String) -> impl Future<Output = Result<Vec<SessionId>, StoreError>> + Send;
     fn session(&self, id: SessionId) -> impl Future<Output = Result<Option<Session>, StoreError>> + Send;
     fn set_filter(&self, id: SessionId, filter: ReviewFilter) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Moves the session's changeset to the base snapshot `base`, chosen as `choice`.

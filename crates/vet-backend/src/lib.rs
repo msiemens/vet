@@ -88,13 +88,14 @@ pub struct Orchestrator {
 type Sessions = Arc<tokio::sync::Mutex<Vec<Arc<Open>>>>;
 
 impl Open {
-    /// Stops watching, kills the session's runs and language servers, deletes
-    /// its refs and records it closed.
-    async fn shut(&self) -> Result<(), String> {
+    /// Stops watching and kills the session's runs and language servers. The
+    /// session stays open in the store, with its refs, for the next open of the
+    /// repository to resume: the last connection leaving (a reload, an app
+    /// quit) is not the end of a review.
+    async fn shut(&self) {
         self.settling.abort();
         self.runs.stop_all();
         self.semantics.shutdown().await;
-        self.session.close(unix_now()).await.map_err(message)
     }
 }
 
@@ -116,9 +117,7 @@ async fn reap(sessions: Sessions, id: SessionId, grace: Duration) {
         if since.elapsed() >= grace {
             // Holding the list lock, so a connection cannot attach meanwhile.
             sessions.retain(|o| o.id != id);
-            if let Err(error) = open.shut().await {
-                eprintln!("vet: closing orphaned session {id}: {error}");
-            }
+            open.shut().await;
             return;
         }
     }
@@ -193,7 +192,7 @@ impl Orchestrator {
             .file_name()
             .map_or_else(|| repo.display().to_string(), |n| n.to_string_lossy().into_owned());
         let session = Arc::new(
-            Live::open(git.clone(), self.store.clone(), name)
+            Live::open(git.clone(), self.store.clone(), name, root.clone(), unix_now())
                 .await
                 .map_err(message)?,
         );
@@ -263,7 +262,7 @@ impl Orchestrator {
         if last {
             self.sessions.lock().await.retain(|o| o.id != id);
             open.reaper.abort();
-            open.shut().await?;
+            open.shut().await;
         }
         Ok(())
     }

@@ -169,6 +169,9 @@ pub mod session {
     pub struct Model {
         #[sea_orm(primary_key)]
         pub id: i64,
+        /// The repository root; `None` for sessions recorded before it was kept,
+        /// which are never resumed.
+        pub repo: Option<String>,
         pub pin: i64,
         pub base: Vec<u8>,
         pub target: Vec<u8>,

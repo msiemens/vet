@@ -666,7 +666,7 @@ fn colliding_repo() -> TempDir {
 async fn collision_session(repo: &Path) -> (LiveSession<GixRepo, SqliteStore>, SqliteStore, TempDir) {
     let data = tempfile::tempdir().unwrap();
     let store = open_store(data.path()).await.unwrap();
-    let session = LiveSession::open(GixRepo::new(repo), store.clone(), "t".into())
+    let session = LiveSession::open(GixRepo::new(repo), store.clone(), "t".into(), "/repo".into(), 0)
         .await
         .unwrap();
     (session, store, data)
@@ -1043,7 +1043,7 @@ impl Live {
         let data = tempfile::tempdir().unwrap();
         let store = open_store(data.path()).await.unwrap();
         let session = Arc::new(
-            Session::open(GixRepo::new(repo.path()), store, "t".into())
+            Session::open(GixRepo::new(repo.path()), store, "t".into(), "/repo".into(), 0)
                 .await
                 .unwrap(),
         );

@@ -16,7 +16,35 @@ impl MigratorTrait for Migrator {
             Box::new(RunState),
             Box::new(SessionBase),
             Box::new(ServerPaths),
+            Box::new(SessionRepo),
         ]
+    }
+}
+
+struct SessionRepo;
+
+impl MigrationName for SessionRepo {
+    fn name(&self) -> &str {
+        "m0005_session_repo"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for SessionRepo {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        // A fresh database already has the column: `Initial` creates the table
+        // from the current entity.
+        if manager.has_column("session", "repo").await? {
+            return Ok(());
+        }
+        manager
+            .alter_table(
+                Table::alter()
+                    .table(Alias::new("session"))
+                    .add_column(ColumnDef::new(Alias::new("repo")).string().null())
+                    .to_owned(),
+            )
+            .await
     }
 }
 

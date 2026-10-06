@@ -19,6 +19,8 @@ use crate::pin::{BaseChoice, CommitId, Pin, PinId};
 use crate::ports::{BlobRead, Dirty, GcReport};
 use crate::review::Session;
 
+const REPO: &str = "/repo";
+
 fn path(s: &str) -> RepoPath {
     RepoPath(s.as_bytes().to_vec())
 }
@@ -267,6 +269,9 @@ struct Mem {
     closed: bool,
     threads: Vec<Thread>,
     filter: Option<ReviewFilter>,
+    pin: Option<Pin>,
+    /// The repository and changeset the session was opened with.
+    opened: Option<(String, Changeset)>,
 }
 
 impl Mem {
@@ -310,24 +315,66 @@ impl Store for MemStore {
 
 impl ReviewStore for MemStore {
     async fn put_pin(&self, head: CommitId, tree: SnapshotId) -> StoreResult<Pin> {
-        Ok(Pin {
+        let pin = Pin {
             id: PinId(1),
             head,
             tree,
-        })
+        };
+        self.0.lock().unwrap().pin = Some(pin.clone());
+        Ok(pin)
     }
-    async fn open_session(&self, _: PinId, _: Changeset, _: ReviewFilter) -> StoreResult<SessionId> {
+    async fn pin(&self, _: PinId) -> StoreResult<Option<Pin>> {
+        Ok(self.0.lock().unwrap().pin.clone())
+    }
+    async fn open_session(
+        &self,
+        repo: String,
+        _: PinId,
+        changeset: Changeset,
+        filter: ReviewFilter,
+    ) -> StoreResult<SessionId> {
+        let mut mem = self.0.lock().unwrap();
+        mem.opened = Some((repo, changeset));
+        mem.filter = Some(filter);
+        mem.closed = false;
         Ok(SessionId(1))
     }
     async fn close_session(&self, _: SessionId, _: i64) -> StoreResult<()> {
         self.0.lock().unwrap().closed = true;
         Ok(())
     }
-    async fn open_sessions(&self) -> StoreResult<Vec<SessionId>> {
-        unimplemented!()
+    async fn open_sessions(&self, repo: String) -> StoreResult<Vec<SessionId>> {
+        let mem = self.0.lock().unwrap();
+        let open = mem.opened.as_ref().is_some_and(|(r, _)| *r == repo) && !mem.closed;
+        Ok(open.then_some(SessionId(1)).into_iter().collect())
     }
-    async fn session(&self, _: SessionId) -> StoreResult<Option<Session>> {
-        unimplemented!()
+    async fn session(&self, id: SessionId) -> StoreResult<Option<Session>> {
+        let mem = self.0.lock().unwrap();
+        let Some((_, changeset)) = &mem.opened else {
+            return Ok(None);
+        };
+        let (base, choice) = mem.base.clone().unzip();
+        Ok(Some(Session {
+            id,
+            pin: PinId(1),
+            changeset: Changeset {
+                base: base.unwrap_or(changeset.base),
+                target: changeset.target,
+            },
+            base: choice.unwrap_or_default(),
+            filter: mem.filter.clone().unwrap_or_default(),
+            spans: mem
+                .spans
+                .iter()
+                .map(|(id, span)| RecordedSpan {
+                    id: *id,
+                    span: span.clone(),
+                })
+                .collect(),
+            acks: mem.acks.clone(),
+            threads: mem.threads.clone(),
+            closed_at: mem.closed.then_some(0),
+        }))
     }
     async fn set_filter(&self, _: SessionId, filter: ReviewFilter) -> StoreResult<()> {
         self.0.lock().unwrap().filter = Some(filter);
@@ -415,7 +462,7 @@ impl Fixture {
         let first = git.snapshot(dirty);
         git.scans.lock().unwrap().push(first);
         let store = MemStore::default();
-        let session = LiveSession::open(git.clone(), store.clone(), "test".into())
+        let session = LiveSession::open(git.clone(), store.clone(), "test".into(), REPO.into(), 0)
             .await
             .unwrap();
         Self { git, store, session }
@@ -617,7 +664,9 @@ async fn a_mode_change_needs_acknowledging() {
     *git.base.lock().unwrap() = Some(base);
     git.scans.lock().unwrap().push(dirty);
     let store = MemStore::default();
-    let session = LiveSession::open(git, store.clone(), "t".into()).await.unwrap();
+    let session = LiveSession::open(git, store.clone(), "t".into(), REPO.into(), 0)
+        .await
+        .unwrap();
 
     let m = session.manifest().await.unwrap();
     assert_eq!((m.completion.items, m.completion.acknowledged_items), (1, 0));
@@ -645,7 +694,9 @@ async fn items_of_one_file_are_acknowledged_separately() {
     dirty.id = merkle::snapshot_id(&dirty.entries);
     *git.base.lock().unwrap() = Some(base);
     git.scans.lock().unwrap().push(dirty);
-    let session = LiveSession::open(git, MemStore::default(), "t".into()).await.unwrap();
+    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), 0)
+        .await
+        .unwrap();
 
     let m = session.manifest().await.unwrap();
     assert_eq!(m.completion.items, 2);
@@ -676,7 +727,9 @@ async fn submodule_changes_carry_both_commits() {
     };
     *git.base.lock().unwrap() = Some(tree(b"one"));
     git.scans.lock().unwrap().push(tree(b"two"));
-    let session = LiveSession::open(git, MemStore::default(), "t".into()).await.unwrap();
+    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), 0)
+        .await
+        .unwrap();
 
     let m = session.manifest().await.unwrap();
 
@@ -703,6 +756,117 @@ async fn the_pinned_commit_is_held_while_the_session_is_open() {
 
     assert!(held(&fx).is_empty());
     assert!(fx.store.0.lock().unwrap().closed);
+}
+
+impl Fixture {
+    /// Vet restarts: a new session on the same git and store, with the tree as
+    /// `dirty` now.
+    async fn reopen(&self, dirty: &[(&str, &str)]) -> LiveSession<FakeGit, MemStore> {
+        let scan = self.git.snapshot(dirty);
+        self.git.scans.lock().unwrap().push(scan);
+        LiveSession::open(self.git.clone(), self.store.clone(), "test".into(), REPO.into(), 1)
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn reopening_resumes_marks_and_threads_and_remaps_edits_made_while_closed() {
+    let base = numbered(30, &[]);
+    let dirty = numbered(30, &[3, 20]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &dirty)]).await;
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    let range = LineRange { start: 20, end: 21 };
+    let thread = NewThread::Range {
+        side: Side::Target,
+        path: path("a.txt"),
+        range,
+    };
+    fx.session.create_thread(0, thread, "why".into(), 1).await.unwrap();
+    let before = fx.session.manifest().await.unwrap();
+
+    assert_eq!(before.files[0].review.hunks, [HunkState::Seen, HunkState::Unseen]);
+
+    // Another hunk appeared while Vet was closed.
+    let edited = dirty.replace("line 25", "changed 25");
+    let session = fx.reopen(&[("a.txt", &edited)]).await;
+
+    assert_eq!(session.id, SessionId(1));
+    let after = session.manifest().await.unwrap();
+    assert_eq!(after.revision, 1, "the tree on disk is a new settled snapshot");
+    assert_eq!(
+        after.files[0].review.hunks,
+        [HunkState::Seen, HunkState::Unseen, HunkState::Unseen]
+    );
+    let threads = session.threads().await.unwrap().threads;
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].messages[0].body, "why");
+    assert_eq!(threads[0].location.as_ref().map(|l| l.range), Some(range));
+    assert_eq!(fx.store.0.lock().unwrap().timeline.len(), 2);
+}
+
+#[tokio::test]
+async fn resuming_an_unchanged_tree_does_not_settle_again() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    let session = fx.reopen(&[("a.txt", "two\n")]).await;
+
+    assert_eq!(session.revision().await, 0);
+    assert_eq!(fx.store.0.lock().unwrap().timeline.len(), 1);
+}
+
+#[tokio::test]
+async fn a_resumed_session_keeps_its_filter_pin_and_refs() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    let filter = ReviewFilter {
+        hide_binary: true,
+        ..Default::default()
+    };
+    fx.session.set_filter(filter.clone()).await.unwrap();
+
+    let session = fx.reopen(&[("a.txt", "two\n")]).await;
+
+    let m = session.manifest().await.unwrap();
+    assert_eq!((&m.filter, base_of(&m).0), (&filter, &BaseChoice::Pin));
+    assert_eq!(base_of(&m).1, "head");
+    assert_eq!(fx.git.refs.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_merge_base_is_resolved_again_on_resume_and_falls_back_to_the_pin() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.git.add_commit("merge-base main", "m1", &[("a.txt", "one\n")]);
+    let choice = BaseChoice::MergeBase {
+        reference: "main".into(),
+    };
+    fx.session.set_base(choice.clone()).await.unwrap();
+
+    fx.git.add_commit("merge-base main", "m2", &[("a.txt", "one\n")]);
+    let session = fx.reopen(&[("a.txt", "two\n")]).await;
+    let m = session.manifest().await.unwrap();
+    assert_eq!((base_of(&m).0, base_of(&m).1), (&choice, "m2"));
+
+    fx.git.commits.lock().unwrap().remove("merge-base main");
+    let session = fx.reopen(&[("a.txt", "two\n")]).await;
+    let m = session.manifest().await.unwrap();
+    assert_eq!((base_of(&m).0, base_of(&m).1), (&BaseChoice::Pin, "head"));
+    assert_eq!(
+        fx.store.0.lock().unwrap().base.as_ref().map(|b| b.1.clone()),
+        Some(BaseChoice::Pin)
+    );
+}
+
+#[tokio::test]
+async fn a_closed_session_is_not_resumed() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    fx.session.close(0).await.unwrap();
+
+    let session = fx.reopen(&[("a.txt", "two\n")]).await;
+
+    assert_eq!(
+        session.manifest().await.unwrap().files[0].review.hunks,
+        [HunkState::Unseen]
+    );
 }
 
 fn base_of(m: &ManifestView) -> (&BaseChoice, &str, &str) {
@@ -1358,7 +1522,7 @@ async fn the_author_is_the_git_user_or_you() {
     let first = git.snapshot(&[("a.txt", "two\n")]);
     git.scans.lock().unwrap().push(first);
     *git.user.lock().unwrap() = Some("Ada".into());
-    let named = LiveSession::open(git.clone(), MemStore::default(), "t".into())
+    let named = LiveSession::open(git.clone(), MemStore::default(), "t".into(), REPO.into(), 0)
         .await
         .unwrap();
     let anonymous = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;

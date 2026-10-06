@@ -46,7 +46,7 @@ use crate::execution::Execution;
 use crate::execution::check::RunCheckConfig;
 use crate::pin::{BaseChoice, CommitId};
 use crate::ports::{
-    BaseCandidates, BlobRead, Clock, Degraded, GitError, GitRepo, ReviewStore, Scan, Store, StoreError, Watcher,
+    BaseCandidates, BlobRead, Clock, Degraded, Dirty, GitError, GitRepo, ReviewStore, Scan, Store, StoreError, Watcher,
 };
 use crate::review::{NonTextAck, RecordedSpan, SessionId, SpanId};
 use crate::settle::Settling;
@@ -352,6 +352,14 @@ fn ack_of(change: &NonTextChange) -> NonTextAck {
     }
 }
 
+/// Git's `user.name`, else "You".
+async fn author_of<G: GitRepo>(git: &G) -> String {
+    git.user_name()
+        .await
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| "You".into())
+}
+
 fn diff_path(d: &FileDiff) -> &RepoPath {
     d.new_path.as_ref().or(d.old_path.as_ref()).expect("a diff has a path")
 }
@@ -365,9 +373,20 @@ fn is_binary(bytes: &[u8]) -> bool {
 }
 
 impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
-    /// Pins the tree, records the session and its first snapshots (§6.1).
-    pub async fn open(git: G, store: S, name: String) -> Result<Self> {
+    /// Resumes the open session of the repository at `repo` (the root, as the
+    /// key sessions are recorded under), or else pins the tree and records a
+    /// session with its first snapshots (§6.1). `now` is unix seconds, for
+    /// closing a session that cannot be resumed.
+    pub async fn open(git: G, store: S, name: String, repo: String, now: i64) -> Result<Self> {
         let acquisition = Arc::new(Acquisition::new(git, store));
+        if let Some(&id) = acquisition.store.open_sessions(repo.clone()).await?.last() {
+            if let Some(session) = Self::resume(&acquisition, id, &name).await? {
+                return Ok(session);
+            }
+            // Its pin or snapshots are gone: start over rather than fail to open.
+            acquisition.git.delete_session_refs(id).await?;
+            acquisition.store.close_session(id, now).await?;
+        }
         let opened = acquisition.open_pin().await?;
         let store = &acquisition.store;
         store
@@ -380,7 +399,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             base: opened.base.id,
             target: opened.target.id,
         };
-        let id = store.open_session(pin.id, changeset, filter.clone()).await?;
+        let id = store.open_session(repo, pin.id, changeset, filter.clone()).await?;
         store.append_timeline(id, opened.target.id).await?;
         // Every snapshot of the session is built on the pinned commit.
         for name in ["base", "target"] {
@@ -400,21 +419,83 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             degraded: None,
             changes: None,
         };
-        let author = acquisition
-            .git
-            .user_name()
-            .await
-            .filter(|n| !n.trim().is_empty())
-            .unwrap_or_else(|| "You".into());
         Ok(Self {
             id,
-            author,
+            author: author_of(&acquisition.git).await,
             acquisition,
             head: opened.head,
             pin_base: opened.base,
             name,
             state: Mutex::new(state),
         })
+    }
+
+    /// Loads the review state of the stored session `id` and settles the tree as
+    /// it is now, so recorded spans and threads remap onto whatever changed
+    /// while Vet was not running (I3). `None` if the session cannot be
+    /// reconstructed: its pin, its latest snapshot or the pinned commit is gone.
+    async fn resume(acquisition: &Arc<Acquisition<G, S>>, id: SessionId, name: &str) -> Result<Option<Self>> {
+        let store = &acquisition.store;
+        let Some(stored) = store.session(id).await? else {
+            return Ok(None);
+        };
+        let Some(pin) = store.pin(stored.pin).await? else {
+            return Ok(None);
+        };
+        let timeline = store.timeline(id).await?;
+        let latest = timeline.last().copied().unwrap_or(stored.changeset.target);
+        let Some((target, _)) = store.snapshot(latest).await? else {
+            return Ok(None);
+        };
+        let Ok(pin_base) = acquisition.git.commit_snapshot(&pin.head).await else {
+            return Ok(None);
+        };
+        // The session keeps its pin however far `HEAD` has moved since: commits
+        // made while Vet was closed are part of what is under review, and
+        // re-pinning would turn every mark against the old base into
+        // `SeenAgainstOldBase`. Moving the base is the user's call (§6.5).
+        for snapshot in timeline.iter().copied().chain([pin_base.id]) {
+            acquisition.record_commit(snapshot, pin.head.clone());
+        }
+        for name in ["base", "target"] {
+            acquisition.git.set_session_ref(id, name, &pin.head).await?;
+        }
+        let state = State {
+            revision: 0,
+            filter: stored.filter,
+            base: pin_base.clone(),
+            base_choice: BaseChoice::Pin,
+            base_commit: pin.head.clone(),
+            target,
+            known: HashMap::new(),
+            recorded: stored.spans,
+            acks: stored.acks,
+            threads: stored.threads,
+            degraded: None,
+            changes: None,
+        };
+        let session = Self {
+            id,
+            author: author_of(&acquisition.git).await,
+            acquisition: acquisition.clone(),
+            head: pin.head,
+            pin_base,
+            name: name.to_owned(),
+            state: Mutex::new(state),
+        };
+        // A merge base follows its reference as it is now; one that no longer
+        // resolves falls back to the pin.
+        if stored.base != BaseChoice::Pin && session.set_base(stored.base).await.is_err() {
+            store.set_base(id, session.pin_base.id, BaseChoice::Pin).await?;
+        }
+        let scan = acquisition.reconcile(Dirty::All).await?;
+        if scan.snapshot.id != session.settled_snapshot().await {
+            let (revision, retained) = session.settled(scan).await?;
+            if let Some(e) = retained {
+                eprintln!("vet: could not keep the content of revision {revision}: {}", e.0);
+            }
+        }
+        Ok(Some(session))
     }
 
     /// Releases the session's refs and records it closed. `now` is unix seconds.

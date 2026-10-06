@@ -72,7 +72,12 @@ fn message(body: &str) -> Message {
 async fn session(store: &SqliteStore, base: SnapshotId, target: SnapshotId) -> SessionId {
     let pin = store.put_pin(CommitId("abc123".into()), base).await.unwrap();
     store
-        .open_session(pin.id, Changeset { base, target }, ReviewFilter::default())
+        .open_session(
+            "/repo".into(),
+            pin.id,
+            Changeset { base, target },
+            ReviewFilter::default(),
+        )
         .await
         .unwrap()
 }
@@ -254,7 +259,12 @@ async fn snapshots_timeline_and_approvals_survive_reopen() {
         store.timeline(id).await.unwrap(),
         vec![SnapshotId(h(3)), SnapshotId(h(1)), SnapshotId(h(2))]
     );
-    assert_eq!(store.open_sessions().await.unwrap(), vec![id]);
+    assert_eq!(store.open_sessions("/repo".into()).await.unwrap(), vec![id]);
+    assert!(store.open_sessions("/other".into()).await.unwrap().is_empty());
+    let pin = store.session(id).await.unwrap().unwrap().pin;
+    assert_eq!(store.pin(pin).await.unwrap().unwrap().head, CommitId("abc123".into()));
+    store.close_session(id, 1).await.unwrap();
+    assert!(store.open_sessions("/repo".into()).await.unwrap().is_empty());
 }
 
 #[tokio::test]

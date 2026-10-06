@@ -690,7 +690,59 @@ fn session_refs(repo: &Path) -> String {
 }
 
 #[tokio::test]
-async fn an_orphaned_session_is_closed_after_the_grace_period() {
+async fn reopening_a_repository_resumes_its_review_across_a_restart() {
+    let dirty = text(30, &[3, 20]);
+    let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;
+    let first = Client::new(&fx.handler);
+    let session = open(&first, fx.repo.path()).await;
+    first.set_seen(session, 0, &[0], true).await;
+    first
+        .thread(Request::CreateThread {
+            session,
+            revision: 0,
+            target: ThreadTarget::Range {
+                side: Side::Target,
+                path: "a.txt".into(),
+                start: 20,
+                len: 1,
+            },
+            body: "why?".into(),
+        })
+        .await;
+    first.call(Request::CloseSession { session }).await.unwrap();
+
+    // The app quits, and a file is edited while it is closed: two lines go in at the top.
+    let restarted = std::sync::Arc::new(Orchestrator::new(
+        open_store(fx._data.path()).await.unwrap(),
+        Config {
+            debounce: Duration::from_millis(150),
+            poll: Duration::from_millis(300),
+            orphan_grace: Duration::from_secs(60),
+        },
+    ));
+    write(fx.repo.path(), "a.txt", &format!("new 1\nnew 2\n{dirty}"));
+    let second = Client::new(&restarted);
+    assert_eq!(
+        open(&second, fx.repo.path()).await,
+        session,
+        "the open session is resumed"
+    );
+
+    let m = second.manifest(session).await;
+    assert_eq!(m.revision, 1, "what is on disk now is a new settled snapshot");
+    assert_eq!(
+        hunk_states(&m),
+        [HunkState::Unseen, HunkState::Seen, HunkState::Unseen],
+        "the mark followed its lines"
+    );
+    let (_, threads) = second.threads(session).await;
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].messages[0].body, "why?");
+    assert_eq!(threads[0].location.as_ref().map(|l| l.start), Some(22));
+}
+
+#[tokio::test]
+async fn an_orphaned_session_is_released_but_stays_open_for_the_next_open() {
     let fx = fixture(&[("a.txt", &text(5, &[]))], &[("a.txt", &text(5, &[1]))]).await;
     let first = Client::new(&fx.handler);
     let session = open(&first, fx.repo.path()).await;
@@ -710,7 +762,12 @@ async fn an_orphaned_session_is_closed_after_the_grace_period() {
     tokio::time::sleep(Duration::from_millis(1200)).await;
     let third = Client::new(&fx.handler);
     assert!(third.call(Request::Manifest { session }).await.is_err());
-    assert_eq!(session_refs(fx.repo.path()), "");
+    // Not closed: its refs stay, and opening the repository again resumes it.
+    assert_eq!(
+        session_refs(fx.repo.path()),
+        format!("refs/vet/sessions/{session}/base\nrefs/vet/sessions/{session}/target\n")
+    );
+    assert_eq!(open(&third, fx.repo.path()).await, session);
 }
 
 #[tokio::test]
