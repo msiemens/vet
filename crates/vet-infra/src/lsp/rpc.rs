@@ -138,7 +138,10 @@ impl Connection {
         if tail.is_empty() {
             error
         } else {
-            format!("{error}\nserver stderr:\n{}", tail.iter().cloned().collect::<Vec<_>>().join("\n"))
+            format!(
+                "{error}\nserver stderr:\n{}",
+                tail.iter().cloned().collect::<Vec<_>>().join("\n")
+            )
         }
     }
 
@@ -178,7 +181,10 @@ impl Connection {
             .request_with_timeout::<lsp_types::request::Shutdown>((), Duration::from_secs(5))
             .await;
         let _ = self.notify::<lsp_types::notification::Exit>(()).await;
-        if tokio::time::timeout(Duration::from_secs(3), self.child.wait()).await.is_err() {
+        if tokio::time::timeout(Duration::from_secs(3), self.child.wait())
+            .await
+            .is_err()
+        {
             let _ = self.child.kill().await;
         }
     }
@@ -308,10 +314,13 @@ fn notification(shared: &Shared, method: &str, params: &Value) {
         }
         "textDocument/publishDiagnostics" => {
             if let Ok(p) = serde_json::from_value::<lsp_types::PublishDiagnosticsParams>(params.clone()) {
-                let entry = state.diagnostics.entry(p.uri.as_str().to_owned()).or_insert(DiagnosticsState {
-                    generation: 0,
-                    items: Vec::new(),
-                });
+                let entry = state
+                    .diagnostics
+                    .entry(p.uri.as_str().to_owned())
+                    .or_insert(DiagnosticsState {
+                        generation: 0,
+                        items: Vec::new(),
+                    });
                 entry.generation += 1;
                 entry.items = p.diagnostics;
             }

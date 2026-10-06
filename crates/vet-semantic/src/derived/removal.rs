@@ -17,7 +17,9 @@ pub enum Fate {
     /// Unchanged text that no longer resolves.
     LikelyBroken,
     /// Unchanged text that now resolves to something else.
-    BindingChanged { now: Vec<Location> },
+    BindingChanged {
+        now: Vec<Location>,
+    },
     Unknown(String),
 }
 
@@ -115,7 +117,10 @@ fn locate(files: &[FileDiff], base: &Location) -> Located {
     let mut touched = 0;
     let mut deleted = 0;
     for line in lines.start..lines.end {
-        let hit = file.hunks.iter().find(|h| !h.old.is_empty() && h.old.start <= line && line < h.old.end);
+        let hit = file
+            .hunks
+            .iter()
+            .find(|h| !h.old.is_empty() && h.old.start <= line && line < h.old.end);
         if let Some(h) = hit {
             touched += 1;
             if h.new.is_empty() {

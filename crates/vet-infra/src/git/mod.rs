@@ -2,6 +2,7 @@
 //! fsmonitor, or filter and diff drivers (§6.3). All filesystem, hashing and
 //! gix work runs on the blocking pool.
 
+mod checkout;
 mod diff;
 mod scan;
 mod stat_cache;
@@ -14,10 +15,11 @@ use std::sync::{Arc, Mutex};
 use gix::bstr::ByteSlice;
 use gix::objs::Find;
 use vet_app::pin::CommitId;
-use vet_app::ports::{Dirty, GitError, GitRepo, Scan, Store};
-use vet_core::content::{BlobId, RepoPath, Snapshot, SnapshotDiff};
+use vet_app::ports::{CheckoutError, Dirty, GitError, GitRepo, Scan, Store};
+use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
 use vet_core::merkle;
 
+use checkout::Pending;
 use stat_cache::StatCache;
 
 pub use diff::line_hunks;
@@ -61,6 +63,11 @@ impl GixRepo {
     ) -> Result<T, GitError> {
         let inner = self.0.clone();
         tokio::task::spawn_blocking(move || f(&inner)).await.map_err(err)?
+    }
+
+    async fn write_batch(&self, root: &Path, batch: Vec<Pending>) -> Result<Vec<BlobId>, GitError> {
+        let root = root.to_owned();
+        self.blocking(move |i| i.write_entries(&root, batch)).await
     }
 }
 
@@ -120,8 +127,44 @@ impl GitRepo for GixRepo {
             .await
     }
 
-    async fn checkout(&self, _commit: &CommitId, _snapshot: &Snapshot, _root: &Path) -> Result<(), GitError> {
-        Err(GitError("checkout is not implemented yet".into()))
+    /// Content-store bytes are read here, a bounded batch at a time; the rest
+    /// comes from the object database on the blocking pool.
+    async fn checkout<S: Store + Sync>(
+        &self,
+        store: &S,
+        commit: &CommitId,
+        snapshot: &Snapshot,
+        root: &Path,
+    ) -> Result<(), CheckoutError> {
+        const BATCH_FILES: usize = 256;
+        const BATCH_BYTES: usize = 64 * 1024 * 1024;
+
+        // Learns which git blob holds each of the commit's contents.
+        let commit = commit.clone();
+        self.blocking(move |i| i.commit_snapshot(&commit).map(drop)).await?;
+
+        let mut missing = Vec::new();
+        let mut batch: Vec<Pending> = Vec::new();
+        let mut bytes = 0;
+        for (path, entry) in &snapshot.entries {
+            let stored = if entry.kind == EntryKind::Submodule {
+                None
+            } else {
+                store.blob(entry.blob).await.map_err(|e| GitError(e.0))?
+            };
+            bytes += stored.as_ref().map_or(0, Vec::len);
+            batch.push((path.clone(), entry.clone(), stored));
+            if batch.len() >= BATCH_FILES || bytes >= BATCH_BYTES {
+                missing.extend(self.write_batch(root, std::mem::take(&mut batch)).await?);
+                bytes = 0;
+            }
+        }
+        missing.extend(self.write_batch(root, batch).await?);
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(CheckoutError::MissingBlobs(missing))
+        }
     }
 
     async fn commit_snapshot(&self, commit: &CommitId) -> Result<Snapshot, GitError> {

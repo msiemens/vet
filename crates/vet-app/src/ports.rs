@@ -62,6 +62,19 @@ pub struct Scan {
 #[derive(Debug)]
 pub struct GitError(pub String);
 
+#[derive(Debug)]
+pub enum CheckoutError {
+    /// Neither git nor the content store has these blobs.
+    MissingBlobs(Vec<BlobId>),
+    Git(GitError),
+}
+
+impl From<GitError> for CheckoutError {
+    fn from(e: GitError) -> Self {
+        Self::Git(e)
+    }
+}
+
 /// Everything that touches git or hashes the worktree. The persisted
 /// stat-to-hash cache, racy-mtime handling and git blob hashing are private to
 /// the adapter: callers get correct snapshots, not "uncertain" markers.
@@ -69,14 +82,19 @@ pub trait GitRepo {
     fn head(&self) -> impl Future<Output = Result<CommitId, GitError>> + Send;
     /// Establish correct snapshot identity, metadata first (§6.2).
     fn scan(&self, dirty: Dirty) -> impl Future<Output = Result<Scan, GitError>> + Send;
-    /// Check out `commit` into `root` and overlay content-store blobs for
-    /// everything git cannot reconstruct (§7.2).
-    fn checkout(
+    /// Write every entry of `snapshot` into the empty directory `root`: each
+    /// blob from `store`, else from the object database (`commit` is where git
+    /// is expected to have the rest). Content is written as stored: no hooks,
+    /// filters or smudging. Every blob is attempted; if any is unavailable the
+    /// result is `MissingBlobs` and `root` holds a partial tree the caller must
+    /// discard (§6.1, §7.2).
+    fn checkout<S: Store + Sync>(
         &self,
+        store: &S,
         commit: &CommitId,
         snapshot: &Snapshot,
         root: &Path,
-    ) -> impl Future<Output = Result<(), GitError>> + Send;
+    ) -> impl Future<Output = Result<(), CheckoutError>> + Send;
     /// The snapshot of a commit's tree.
     fn commit_snapshot(&self, commit: &CommitId) -> impl Future<Output = Result<Snapshot, GitError>> + Send;
     /// Content of `blob` as git would store it: from the object database, else

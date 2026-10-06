@@ -17,9 +17,7 @@ use lsp_types::request::{
     DocumentSymbolRequest, GotoDefinition, HoverRequest, References, WorkspaceSymbolRequest,
 };
 use vet_core::content::RepoPath;
-use vet_semantic::ports::{
-    At, Diagnostic, LanguageServer, Location, Pos, QueryError, Severity, Span, Sym, SymbolInfo,
-};
+use vet_semantic::ports::{At, Diagnostic, LanguageServer, Location, Pos, QueryError, Severity, Span, Sym, SymbolInfo};
 
 use super::capabilities::Diagnostics;
 use super::config::language_id;
@@ -151,7 +149,9 @@ impl LspServer {
 
     async fn refresh(&mut self, file: &RepoPath) -> Result<bool, QueryError> {
         let path = self.path_of(file)?;
-        let text = tokio::fs::read(&path).await.map(|b| String::from_utf8_lossy(&b).into_owned());
+        let text = tokio::fs::read(&path)
+            .await
+            .map(|b| String::from_utf8_lossy(&b).into_owned());
         let index = self.docs.iter().position(|d| &d.file == file);
         let text = match (text, index) {
             (Ok(text), _) => text,
@@ -214,7 +214,10 @@ impl LspServer {
                 text,
             }],
         };
-        self.conn()?.notify::<DidChangeTextDocument>(params).await.map_err(err)?;
+        self.conn()?
+            .notify::<DidChangeTextDocument>(params)
+            .await
+            .map_err(err)?;
         Ok(true)
     }
 
@@ -266,7 +269,11 @@ impl LspServer {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
         };
-        let items = self.conn()?.request::<CallHierarchyPrepare>(params).await.map_err(err)?;
+        let items = self
+            .conn()?
+            .request::<CallHierarchyPrepare>(params)
+            .await
+            .map_err(err)?;
         Ok(items.unwrap_or_default())
     }
 }
@@ -338,7 +345,11 @@ impl LanguageServer for LspServer {
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self.conn()?.request::<DocumentSymbolRequest>(params).await.map_err(err)?;
+        let response = self
+            .conn()?
+            .request::<DocumentSymbolRequest>(params)
+            .await
+            .map_err(err)?;
         let mut out = Vec::new();
         match response {
             None => {}
@@ -374,9 +385,7 @@ impl LanguageServer for LspServer {
         Ok(match response {
             None => Vec::new(),
             Some(lsp::GotoDefinitionResponse::Scalar(l)) => vec![self.location(&l.uri, l.range)],
-            Some(lsp::GotoDefinitionResponse::Array(ls)) => {
-                ls.iter().map(|l| self.location(&l.uri, l.range)).collect()
-            }
+            Some(lsp::GotoDefinitionResponse::Array(ls)) => ls.iter().map(|l| self.location(&l.uri, l.range)).collect(),
             Some(lsp::GotoDefinitionResponse::Link(ls)) => ls
                 .iter()
                 .map(|l| self.location(&l.target_uri, l.target_selection_range))
@@ -421,11 +430,21 @@ impl LanguageServer for LspServer {
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
             };
-            let calls = self.conn()?.request::<CallHierarchyIncomingCalls>(params).await.map_err(err)?;
+            let calls = self
+                .conn()?
+                .request::<CallHierarchyIncomingCalls>(params)
+                .await
+                .map_err(err)?;
             for call in calls.unwrap_or_default() {
                 let from = call.from;
                 let resolved = self
-                    .resolve(&mut cache, &from.uri, &from.name, from.range, from.selection_range.start)
+                    .resolve(
+                        &mut cache,
+                        &from.uri,
+                        &from.name,
+                        from.range,
+                        from.selection_range.start,
+                    )
                     .await;
                 if let Some(s) = resolved.filter(|s| !out.iter().any(|o| o.sym == s.sym)) {
                     out.push(s);
@@ -444,7 +463,11 @@ impl LanguageServer for LspServer {
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
             };
-            let calls = self.conn()?.request::<CallHierarchyOutgoingCalls>(params).await.map_err(err)?;
+            let calls = self
+                .conn()?
+                .request::<CallHierarchyOutgoingCalls>(params)
+                .await
+                .map_err(err)?;
             for call in calls.unwrap_or_default() {
                 let to = call.to;
                 let resolved = self
@@ -464,7 +487,11 @@ impl LanguageServer for LspServer {
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self.conn()?.request::<WorkspaceSymbolRequest>(params).await.map_err(err)?;
+        let response = self
+            .conn()?
+            .request::<WorkspaceSymbolRequest>(params)
+            .await
+            .map_err(err)?;
         // (uri, name, range if the server gave one)
         let found: Vec<(Uri, String, Option<lsp::Range>)> = match response {
             None => Vec::new(),
@@ -498,9 +525,7 @@ impl LanguageServer for LspServer {
 
     async fn diagnostics(&mut self, file: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
         let key = self.uri_of(file)?.as_str().to_owned();
-        let generation = |conn: &Connection| {
-            conn.with_state(|s| s.diagnostics.get(&key).map_or(0, |d| d.generation))
-        };
+        let generation = |conn: &Connection| conn.with_state(|s| s.diagnostics.get(&key).map_or(0, |d| d.generation));
         let before = generation(self.conn()?);
         let changed = self.sync(file).await?;
         let items = match self.diagnostics {
@@ -512,7 +537,11 @@ impl LanguageServer for LspServer {
                     work_done_progress_params: Default::default(),
                     partial_result_params: Default::default(),
                 };
-                let report = self.conn()?.request::<DocumentDiagnosticRequest>(params).await.map_err(err)?;
+                let report = self
+                    .conn()?
+                    .request::<DocumentDiagnosticRequest>(params)
+                    .await
+                    .map_err(err)?;
                 match report {
                     lsp::DocumentDiagnosticReportResult::Report(lsp::DocumentDiagnosticReport::Full(full)) => {
                         full.full_document_diagnostic_report.items

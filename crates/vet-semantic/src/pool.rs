@@ -185,7 +185,11 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         let (root, guard, cache) = match key.target {
             Target::Live => (self.live_root.clone(), None, None),
             Target::Snapshot(id) => {
-                let m = self.materializer.materialize(id).await.map_err(PoolError::NotMaterializable)?;
+                let m = self
+                    .materializer
+                    .materialize(id)
+                    .await
+                    .map_err(PoolError::NotMaterializable)?;
                 (m.root, Some(m.guard), Some(Cache::default()))
             }
         };

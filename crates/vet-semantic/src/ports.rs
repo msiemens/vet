@@ -73,7 +73,10 @@ impl Backend {
 /// The backend serving `file`, by extension. `None`: the language is unsupported.
 pub fn backend_for<'a>(backends: &'a [Backend], file: &RepoPath) -> Option<&'a Backend> {
     let name = file.0.rsplit(|b| *b == b'/').next()?;
-    let ext = name.rsplit(|b| *b == b'.').next().filter(|ext| ext.len() < name.len())?;
+    let ext = name
+        .rsplit(|b| *b == b'.')
+        .next()
+        .filter(|ext| ext.len() < name.len())?;
     backends
         .iter()
         .find(|b| b.config().filetypes.iter().any(|t| t.as_bytes() == ext))
@@ -212,10 +215,8 @@ impl fmt::Display for QueryError {
 /// The required operations (§7.1). Whether the server's answers come from the
 /// live worktree or an immutable snapshot is the pool's concern, not this trait's.
 pub trait LanguageServer: Send {
-    fn document_symbols(
-        &mut self,
-        file: &RepoPath,
-    ) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
+    fn document_symbols(&mut self, file: &RepoPath)
+    -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     fn definition(&mut self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
     /// Without the declaration itself.
     fn references(&mut self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
@@ -224,10 +225,7 @@ pub trait LanguageServer: Send {
     fn incoming_calls(&mut self, at: &At) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     fn outgoing_calls(&mut self, at: &At) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     /// Matches inside the root.
-    fn workspace_symbols(
-        &mut self,
-        query: &str,
-    ) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
+    fn workspace_symbols(&mut self, query: &str) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     fn diagnostics(&mut self, file: &RepoPath) -> impl Future<Output = Result<Vec<Diagnostic>, QueryError>> + Send;
     /// Ask the server to exit. It is killed if it does not.
     fn shutdown(&mut self) -> impl Future<Output = ()> + Send;

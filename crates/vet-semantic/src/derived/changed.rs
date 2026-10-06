@@ -90,7 +90,11 @@ pub async fn changed_symbols(p: &impl Primitives, files: &[FileDiff]) -> Derived
             });
         }
 
-        let touched_base: Vec<_> = if deleted_file { base.iter().collect() } else { touched(&base, &old) };
+        let touched_base: Vec<_> = if deleted_file {
+            base.iter().collect()
+        } else {
+            touched(&base, &old)
+        };
         for s in touched_base.into_iter().filter(|s| !has(&target, s)) {
             out.symbols.push(ChangedSymbol {
                 symbol: s.clone(),

@@ -1,0 +1,231 @@
+//! Materializing snapshots from real temporary repositories (§6.1, §7.2).
+//! `git` is used only to build fixtures.
+
+use std::collections::HashMap;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use std::process::Command;
+use std::sync::Mutex;
+
+use tempfile::TempDir;
+use vet_app::acquisition::Acquisition;
+use vet_app::pin::PinId;
+use vet_app::ports::{CheckoutError, GcReport, GitRepo, Store, StoreError};
+use vet_app::review::SessionId;
+use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
+use vet_core::merkle;
+use vet_infra::git::GixRepo;
+use vet_semantic::ports::{Materializer, NotMaterializable};
+
+fn git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+fn write(dir: &Path, name: &str, content: &[u8]) {
+    let path = dir.join(name);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, content).unwrap();
+}
+
+fn path(s: &str) -> RepoPath {
+    RepoPath(s.as_bytes().to_vec())
+}
+
+#[derive(Default)]
+struct MemStore {
+    blobs: Mutex<HashMap<BlobId, Vec<u8>>>,
+    snapshots: Mutex<HashMap<SnapshotId, (Snapshot, SnapshotStatus)>>,
+}
+
+impl Store for MemStore {
+    async fn put_blob(&self, bytes: Vec<u8>) -> Result<BlobId, StoreError> {
+        let id = BlobId::of(&bytes);
+        self.blobs.lock().unwrap().insert(id, bytes);
+        Ok(id)
+    }
+    async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
+        Ok(self.blobs.lock().unwrap().get(&id).cloned())
+    }
+    async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus) -> Result<(), StoreError> {
+        self.snapshots.lock().unwrap().insert(snapshot.id, (snapshot, status));
+        Ok(())
+    }
+    async fn snapshot(&self, id: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
+        Ok(self.snapshots.lock().unwrap().get(&id).cloned())
+    }
+    async fn append_timeline(&self, _: SessionId, _: SnapshotId) -> Result<(), StoreError> {
+        unimplemented!()
+    }
+    async fn timeline(&self, _: SessionId) -> Result<Vec<SnapshotId>, StoreError> {
+        unimplemented!()
+    }
+    async fn gc(&self, _: i64) -> Result<GcReport, StoreError> {
+        unimplemented!()
+    }
+}
+
+/// HEAD has a.txt, run.sh (executable), link and dir/b.txt. The worktree edits
+/// a.txt and adds an untracked new.txt.
+fn fixture() -> TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    write(dir.path(), "a.txt", b"committed\n");
+    write(dir.path(), "dir/b.txt", b"b\n");
+    write(dir.path(), "run.sh", b"#!/bin/sh\n");
+    std::fs::set_permissions(dir.path().join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink("a.txt", dir.path().join("link")).unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "c"]);
+    write(dir.path(), "a.txt", b"dirty\n");
+    write(dir.path(), "new.txt", b"new\n");
+    dir
+}
+
+fn read(root: &Path, name: &str) -> Vec<u8> {
+    std::fs::read(root.join(name)).unwrap()
+}
+
+#[tokio::test]
+async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
+    let dir = fixture();
+    let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
+    let opened = acq.open_pin(PinId(1)).await.unwrap();
+    acq.store
+        .put_snapshot(opened.target.clone(), opened.status.clone())
+        .await
+        .unwrap();
+
+    // The worktree moves on; the materialized dirty snapshot does not.
+    write(dir.path(), "a.txt", b"later\n");
+
+    let target = acq.materialize(opened.target.id).await.unwrap();
+    assert_eq!(read(&target.root, "a.txt"), b"dirty\n");
+    assert_eq!(read(&target.root, "new.txt"), b"new\n");
+    assert_eq!(read(&target.root, "dir/b.txt"), b"b\n");
+    let mode = std::fs::metadata(target.root.join("run.sh"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o111, 0o111);
+    assert_eq!(
+        std::fs::read_link(target.root.join("link")).unwrap(),
+        Path::new("a.txt")
+    );
+    assert!(!target.root.join(".git").exists());
+
+    // The base is the HEAD tree: git alone, not in the store.
+    let base = acq.materialize(opened.base.id).await.unwrap();
+    assert_eq!(read(&base.root, "a.txt"), b"committed\n");
+    assert!(!base.root.join("new.txt").exists());
+
+    let (root, guard) = (target.root.clone(), target.guard);
+    assert!(root.exists());
+    drop(guard);
+    assert!(!root.exists());
+}
+
+#[tokio::test]
+async fn unknown_snapshot_is_refused() {
+    let dir = fixture();
+    let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
+    let result = acq.materialize(SnapshotId(vet_core::content::Hash([9; 32]))).await;
+    assert!(matches!(result, Err(NotMaterializable::Other(_))));
+}
+
+#[tokio::test]
+async fn snapshot_with_unavailable_blobs_is_refused_naming_them() {
+    let dir = fixture();
+    // Not pinned: the dirty blobs were never copied into the store.
+    let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
+    let scan = acq.git.scan(vet_app::ports::Dirty::All).await.unwrap();
+    acq.store
+        .put_snapshot(scan.snapshot.clone(), scan.status)
+        .await
+        .unwrap();
+    acq.record_commit(scan.snapshot.id, acq.git.head().await.unwrap());
+    // Dirty content is gone from the worktree too, so nothing can reconstruct it.
+    let gone = [BlobId::of(b"dirty\n"), BlobId::of(b"new\n")];
+    match acq.materialize(scan.snapshot.id).await {
+        Err(NotMaterializable::MissingBlobs(mut blobs)) => {
+            blobs.sort();
+            let mut want = gone.to_vec();
+            want.sort();
+            assert_eq!(blobs, want);
+        }
+        other => panic!("{:?}", other.map(|m| m.root)),
+    }
+}
+
+#[tokio::test]
+async fn checkout_refuses_paths_that_escape_the_root() {
+    let dir = fixture();
+    let repo = GixRepo::new(dir.path());
+    let head = repo.head().await.unwrap();
+    for bad in ["../escape", "a/../../escape", ".git/hooks/pre-commit", "x//y"] {
+        let blob = BlobId::of(b"x");
+        let store = MemStore::default();
+        store.put_blob(b"x".to_vec()).await.unwrap();
+        let entries = [(
+            path(bad),
+            FileEntry {
+                blob,
+                mode: 0o100644,
+                kind: EntryKind::File,
+                unfiltered: false,
+            },
+        )]
+        .into_iter()
+        .collect();
+        let snapshot = Snapshot {
+            id: merkle::snapshot_id(&entries),
+            entries,
+        };
+        let out = TempDir::new().unwrap();
+        let result = repo.checkout(&store, &head, &snapshot, out.path()).await;
+        assert!(matches!(result, Err(CheckoutError::Git(_))), "{bad}");
+        assert!(std::fs::read_dir(out.path()).unwrap().next().is_none(), "{bad}");
+    }
+}
+
+#[tokio::test]
+async fn checkout_never_runs_filter_drivers() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    let marker = dir.path().join("marker");
+    write(dir.path(), ".gitattributes", b"*.dat filter=probe\n");
+    write(dir.path(), "a.dat", b"clean\n");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "c"]);
+    git(
+        dir.path(),
+        &[
+            "config",
+            "filter.probe.smudge",
+            &format!("touch {}; cat", marker.display()),
+        ],
+    );
+    let repo = GixRepo::new(dir.path());
+    let head = repo.head().await.unwrap();
+    let snapshot = repo.commit_snapshot(&head).await.unwrap();
+    let out = TempDir::new().unwrap();
+    repo.checkout(&MemStore::default(), &head, &snapshot, out.path())
+        .await
+        .unwrap();
+    assert_eq!(read(out.path(), "a.dat"), b"clean\n");
+    assert!(!marker.exists());
+}

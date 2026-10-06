@@ -156,7 +156,7 @@ mod tests {
 
     use super::*;
     use crate::pin::CommitId;
-    use crate::ports::{GcReport, Scan, StoreError};
+    use crate::ports::{CheckoutError, GcReport, Scan, StoreError};
     use crate::review::SessionId;
 
     fn path(name: &str) -> RepoPath {
@@ -285,7 +285,13 @@ mod tests {
                 status: Default::default(),
             })
         }
-        async fn checkout(&self, _: &CommitId, _: &Snapshot, _: &Path) -> Result<(), GitError> {
+        async fn checkout<S: Store + Sync>(
+            &self,
+            _: &S,
+            _: &CommitId,
+            _: &Snapshot,
+            _: &Path,
+        ) -> Result<(), CheckoutError> {
             unreachable!()
         }
         async fn commit_snapshot(&self, _: &CommitId) -> Result<Snapshot, GitError> {
@@ -337,10 +343,7 @@ mod tests {
         }));
         Harness {
             settling: Settling::new(FakeWatcher(sim.clone()), FakeClock(sim.clone()), 1500, settled),
-            acquisition: Acquisition {
-                git: FakeGit(sim.clone()),
-                store: FakeStore,
-            },
+            acquisition: Acquisition::new(FakeGit(sim.clone()), FakeStore),
             sim,
         }
     }

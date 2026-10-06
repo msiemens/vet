@@ -98,7 +98,9 @@ impl Primitives for Fake {
     }
     async fn incoming_calls(&self, which: Which, a: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
         if self.failing_callers.contains(a) {
-            return Err(SemanticError::Query(crate::ports::QueryError("no call hierarchy".into())));
+            return Err(SemanticError::Query(crate::ports::QueryError(
+                "no call hierarchy".into(),
+            )));
         }
         Ok(self.callers.get(&(which, a.clone())).cloned().unwrap_or_default())
     }
@@ -167,9 +169,12 @@ fn changed_symbols_are_the_innermost_symbols_touched_by_hunks() {
 #[test]
 fn added_and_deleted_files_report_every_symbol() {
     let mut fake = Fake::default();
+    fake.symbols.insert(
+        (Which::Target, file("new.rs")),
+        vec![sym("new.rs", "T", 0, 5), sym("new.rs", "T::f", 1, 3)],
+    );
     fake.symbols
-        .insert((Which::Target, file("new.rs")), vec![sym("new.rs", "T", 0, 5), sym("new.rs", "T::f", 1, 3)]);
-    fake.symbols.insert((Which::Base, file("old.rs")), vec![sym("old.rs", "U", 0, 3)]);
+        .insert((Which::Base, file("old.rs")), vec![sym("old.rs", "U", 0, 3)]);
     let files = vec![
         FileDiff {
             old_path: None,
@@ -204,7 +209,8 @@ fn impact_lists_references_and_callers_of_added_and_modified_symbols_only() {
     let (mut fake, files) = changed_fixture();
     let changes = block_on(changed_symbols(&fake, &files)).value.symbols;
     let keep = changes[0].symbol.location();
-    fake.references.insert((Which::Target, keep.clone()), vec![site("b.rs", 7)]);
+    fake.references
+        .insert((Which::Target, keep.clone()), vec![site("b.rs", 7)]);
     fake.callers
         .insert((Which::Target, keep), vec![sym("b.rs", "caller", 5, 9)]);
     fake.failing_callers.push(changes[1].symbol.location());
@@ -226,7 +232,10 @@ fn removed_symbol_call_sites_are_classified() {
 
     // c.rs: line 2 deleted, line 5 edited, line 8 unchanged and unresolved,
     // line 20 unchanged and resolves elsewhere. d.rs is deleted.
-    files.push(diff("c.rs", vec![hunk((2, 3), (2, 2)), hunk((5, 6), (5, 7)), hunk((0, 0), (0, 1))]));
+    files.push(diff(
+        "c.rs",
+        vec![hunk((2, 3), (2, 2)), hunk((5, 6), (5, 7)), hunk((0, 0), (0, 1))],
+    ));
     files.push(FileDiff {
         old_path: Some(file("d.rs")),
         new_path: None,
@@ -236,14 +245,19 @@ fn removed_symbol_call_sites_are_classified() {
     });
     fake.references.insert(
         (Which::Base, dropped.symbol.location()),
-        vec![site("c.rs", 2), site("c.rs", 5), site("c.rs", 8), site("c.rs", 20), site("d.rs", 1), site("e.rs", 3)],
+        vec![
+            site("c.rs", 2),
+            site("c.rs", 5),
+            site("c.rs", 8),
+            site("c.rs", 20),
+            site("d.rs", 1),
+            site("e.rs", 3),
+        ],
     );
     // c.rs gains one line at the top, so old line 8 is new line 9.
     let elsewhere = site("other.rs", 1);
-    fake.definitions.insert(
-        (Which::Target, at("c.rs", 21, 4)),
-        vec![elsewhere.clone()],
-    );
+    fake.definitions
+        .insert((Which::Target, at("c.rs", 21, 4)), vec![elsewhere.clone()]);
 
     let result = block_on(removal_impact(&fake, &changes, &files));
     let fates: Vec<_> = result.value[0].call_sites.iter().map(|c| c.fate.clone()).collect();
@@ -258,8 +272,18 @@ fn removed_symbol_call_sites_are_classified() {
             Fate::LikelyBroken,
         ]
     );
-    assert!(result.inputs.primitives.contains(&"definition(target:c.rs:9:4)".to_string()));
-    assert!(result.inputs.primitives.contains(&"definition(target:e.rs:3:4)".to_string()));
+    assert!(
+        result
+            .inputs
+            .primitives
+            .contains(&"definition(target:c.rs:9:4)".to_string())
+    );
+    assert!(
+        result
+            .inputs
+            .primitives
+            .contains(&"definition(target:e.rs:3:4)".to_string())
+    );
 }
 
 /// A call-graph node; its line is its first letter, so nodes have distinct positions.

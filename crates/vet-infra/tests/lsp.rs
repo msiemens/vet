@@ -81,7 +81,11 @@ async fn rust_analyzer_answers_the_primitive_queries() {
         ready_timeout: Duration::from_secs(120),
     };
     let mut server = launcher
-        .start(dir.path(), &config::rust_analyzer(), AnalysisPolicy { allow_executing: true })
+        .start(
+            dir.path(),
+            &config::rust_analyzer(),
+            AnalysisPolicy { allow_executing: true },
+        )
         .await
         .expect("rust-analyzer starts and has every required capability");
     let lib = path("src/lib.rs");
@@ -121,7 +125,11 @@ async fn rust_analyzer_answers_the_primitive_queries() {
     assert!(callees.contains(&"impl Counter::bump".to_string()), "{callees:?}");
 
     let found = server.workspace_symbols("entry").await.unwrap();
-    assert!(found.iter().any(|s| s.sym.name.last().map(String::as_str) == Some("entry")));
+    assert!(
+        found
+            .iter()
+            .any(|s| s.sym.name.last().map(String::as_str) == Some("entry"))
+    );
 
     assert!(server.diagnostics(&lib).await.unwrap().is_empty());
 
@@ -142,5 +150,53 @@ async fn rust_analyzer_answers_the_primitive_queries() {
         "{diagnostics:?}"
     );
 
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn typescript_language_server_answers_the_primitive_queries() {
+    if !installed("typescript-language-server") {
+        eprintln!("skipped: typescript-language-server is not installed");
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let src = "export function helper(): number {\n  return 1;\n}\nexport function entry(): number {\n  return helper();\n}\n";
+    std::fs::write(
+        dir.path().join("tsconfig.json"),
+        "{\"compilerOptions\":{\"strict\":true}}",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("a.ts"), src).unwrap();
+    let mut server = LspLauncher::default()
+        .start(
+            dir.path(),
+            &config::typescript(),
+            AnalysisPolicy { allow_executing: false },
+        )
+        .await
+        .expect("typescript-language-server starts and has every required capability");
+    let file = path("a.ts");
+    let mut names: Vec<String> = server
+        .document_symbols(&file)
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.sym.name.join("::"))
+        .collect();
+    names.sort();
+    assert_eq!(names, ["entry", "helper"]);
+    let call = At {
+        file: file.clone(),
+        pos: find(src, "helper()", 0, 1),
+    };
+    assert!(server.hover(&call).await.unwrap().is_some());
+    assert_eq!(server.definition(&call).await.unwrap().len(), 1);
+    let decl = At {
+        file: file.clone(),
+        pos: find(src, "helper", 0, 1),
+    };
+    assert_eq!(server.references(&decl).await.unwrap().len(), 1);
+    assert_eq!(server.incoming_calls(&decl).await.unwrap().len(), 1);
+    assert!(server.diagnostics(&file).await.unwrap().is_empty());
     server.shutdown().await;
 }

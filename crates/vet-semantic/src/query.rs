@@ -9,8 +9,8 @@ use vet_core::content::RepoPath;
 use crate::policy::AnalysisPolicy;
 use crate::pool::{Lease, Pool, PoolError, PoolKey, Target};
 use crate::ports::{
-    At, Backend, BackendId, Diagnostic, LanguageServer, Location, Materializer, QueryError, ServerLauncher,
-    SymbolInfo, backend_for,
+    At, Backend, BackendId, Diagnostic, LanguageServer, Location, Materializer, QueryError, ServerLauncher, SymbolInfo,
+    backend_for,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

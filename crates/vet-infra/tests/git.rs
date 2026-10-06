@@ -217,10 +217,7 @@ async fn files_over_the_cap_are_hashed_but_not_retained() {
     let big = vec![b'x'; 100];
     write(dir.path(), "big.txt", &big);
     let repo = GixRepo::new(dir.path()).with_cap(10);
-    let acq = Acquisition {
-        git: repo,
-        store: MemStore::default(),
-    };
+    let acq = Acquisition::new(repo, MemStore::default());
     let opened = acq.open_pin(PinId(1)).await.unwrap();
     assert_eq!(opened.status.content_unavailable, vec![path("big.txt")]);
     assert_eq!(opened.target.entries[&path("big.txt")].blob, blob(&big));
@@ -239,10 +236,7 @@ async fn pin_copies_dirty_content_and_diff_survives_later_edits() {
     commit(dir.path());
     write(dir.path(), "a.txt", b"1\nTWO\n3\n");
     write(dir.path(), "new.txt", b"n\n");
-    let acq = Acquisition {
-        git: GixRepo::new(dir.path()),
-        store: MemStore::default(),
-    };
+    let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
     let opened = acq.open_pin(PinId(1)).await.unwrap();
     assert_eq!(opened.pin.tree, opened.target.id);
     assert!(acq.store.blob(blob(b"1\nTWO\n3\n")).await.unwrap().is_some());

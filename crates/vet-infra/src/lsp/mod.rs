@@ -48,17 +48,21 @@ impl ServerLauncher for LspLauncher {
             .iter()
             .filter_map(|f| {
                 let uri = url::Url::from_directory_path(f).ok()?;
-                let name = f.file_name().map_or_else(|| "root".into(), |n| n.to_string_lossy().into_owned());
+                let name = f
+                    .file_name()
+                    .map_or_else(|| "root".into(), |n| n.to_string_lossy().into_owned());
                 Some(json!({"uri": uri.as_str(), "name": name}))
             })
             .collect();
-        let conn = Connection::spawn(&config.binary, &config.args, &root, json!(folder_values))
-            .map_err(LaunchError::Spawn)?;
+        let conn =
+            Connection::spawn(&config.binary, &config.args, &root, json!(folder_values)).map_err(LaunchError::Spawn)?;
 
         #[allow(deprecated)]
         let params = lsp::InitializeParams {
             process_id: Some(std::process::id()),
-            root_uri: url::Url::from_directory_path(&root).ok().and_then(|u| u.as_str().parse().ok()),
+            root_uri: url::Url::from_directory_path(&root)
+                .ok()
+                .and_then(|u| u.as_str().parse().ok()),
             capabilities: client_capabilities(),
             workspace_folders: Some(
                 serde_json::from_value(json!(folder_values)).map_err(|e| LaunchError::Protocol(e.to_string()))?,
