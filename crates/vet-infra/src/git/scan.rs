@@ -96,13 +96,28 @@ impl<'r> Worktree<'r> {
         keep: bool,
     ) -> Result<Option<Item>, GitError> {
         let full = self.root.join(gix::path::from_bstr(path));
-        let md = match std::fs::symlink_metadata(&full) {
+        let at = |e: std::io::Error| err(format!("{}: {e}", full.display()));
+        let mut md = match std::fs::symlink_metadata(&full) {
             Ok(md) => md,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(err(e)),
+            Err(e) => return Err(at(e)),
         };
+        // Windows reports other reparse points (cloud placeholders, deduplicated files, app
+        // execution aliases) as symlinks that `read_link` cannot read. Like Git for Windows,
+        // treat them as what they point at.
+        let mut link_target = None;
+        if md.is_symlink() {
+            match std::fs::read_link(&full) {
+                Ok(target) => link_target = Some(target),
+                Err(_) => match std::fs::metadata(&full) {
+                    Ok(followed) => md = followed,
+                    Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+                    Err(e) => return Err(at(e)),
+                },
+            }
+        }
         let index_mode = tracked.map(|t| t.mode);
-        let kind = if md.is_symlink() {
+        let kind = if link_target.is_some() {
             EntryKind::Symlink
         } else if md.is_file() {
             // Without symlink support a link is checked out as a file holding its target.
@@ -131,12 +146,9 @@ impl<'r> Worktree<'r> {
         };
 
         if kind == EntryKind::Symlink {
-            let bytes = if md.is_symlink() {
-                gix::path::into_bstr(std::fs::read_link(&full).map_err(err)?)
-                    .into_owned()
-                    .into()
-            } else {
-                std::fs::read(&full).map_err(err)?
+            let bytes = match link_target {
+                Some(target) => gix::path::into_bstr(target).into_owned().into(),
+                None => std::fs::read(&full).map_err(at)?,
             };
             return Ok(Some(Item {
                 entry: entry(BlobId::of(&bytes), false),
@@ -199,15 +211,16 @@ impl<'r> Worktree<'r> {
         keep: bool,
         entry: impl Fn(BlobId, bool) -> FileEntry,
     ) -> Result<Item, GitError> {
+        let at = |e: std::io::Error| err(format!("{}: {e}", full.display()));
         if len > self.cap {
-            let blob = BlobId(Hash::of_reader(std::fs::File::open(full).map_err(err)?).map_err(err)?);
+            let blob = BlobId(Hash::of_reader(std::fs::File::open(full).map_err(at)?).map_err(at)?);
             return Ok(Item {
                 entry: entry(blob, false),
                 unavailable: true,
                 bytes: None,
             });
         }
-        let raw = std::fs::read(full).map_err(err)?;
+        let raw = std::fs::read(full).map_err(at)?;
         let (converted, custom_filter) = self.convert(path, &raw)?;
         let (bytes, unfiltered) = match (converted, custom_filter) {
             (_, true) | (None, _) => (raw, custom_filter),
