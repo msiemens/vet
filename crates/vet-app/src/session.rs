@@ -37,7 +37,9 @@ use vet_core::review::{FileRemapInput, ReviewedSpan};
 
 use crate::acquisition::Acquisition;
 use crate::pin::{BaseChoice, CommitId};
-use crate::ports::{BaseCandidates, Clock, Degraded, GitError, GitRepo, ReviewStore, Scan, Store, StoreError, Watcher};
+use crate::ports::{
+    BaseCandidates, BlobRead, Clock, Degraded, GitError, GitRepo, ReviewStore, Scan, Store, StoreError, Watcher,
+};
 use crate::review::{NonTextAck, RecordedSpan, SessionId, SpanId};
 use crate::settle::Settling;
 
@@ -203,7 +205,7 @@ pub struct DirListing {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NoText {
     Binary,
-    /// Over the capture cap, or not readable any more.
+    /// Over the capture cap (also for git-tracked content), or not readable any more.
     Unavailable,
     /// A symlink or a submodule.
     NotAFile,
@@ -794,24 +796,46 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
 
     /// Content from the store, else from git or the worktree. `false` if unavailable.
     async fn load(&self, blobs: &mut BTreeMap<BlobId, Vec<u8>>, path: &RepoPath, blob: BlobId) -> Result<bool> {
+        self.fetch(blobs, path, blob, false).await
+    }
+
+    /// Like `load`; with `capped`, git content over the capture cap is not read.
+    async fn fetch(
+        &self,
+        blobs: &mut BTreeMap<BlobId, Vec<u8>>,
+        path: &RepoPath,
+        blob: BlobId,
+        capped: bool,
+    ) -> Result<bool> {
         if blobs.contains_key(&blob) {
             return Ok(true);
         }
-        let bytes = match self.acquisition.store.blob(blob).await? {
-            Some(bytes) => Some(bytes),
-            None => self.acquisition.git.read_blob(path, blob).await?,
+        let read = match self.acquisition.store.blob(blob).await? {
+            Some(bytes) => BlobRead::Found(bytes),
+            None if capped => self.acquisition.git.read_blob_capped(path, blob).await?,
+            None => match self.acquisition.git.read_blob(path, blob).await? {
+                Some(bytes) => BlobRead::Found(bytes),
+                None => BlobRead::Missing,
+            },
         };
-        Ok(bytes.map(|b| blobs.insert(blob, b)).is_some())
+        Ok(match read {
+            BlobRead::Found(bytes) => {
+                blobs.insert(blob, bytes);
+                true
+            }
+            BlobRead::TooLarge | BlobRead::Missing => false,
+        })
     }
 
-    /// The text of a blob loaded by [`Self::load`], or why there is none.
+    /// The text of a blob, or why there is none. Content over the capture cap is
+    /// not read.
     async fn text_of(
         &self,
         blobs: &mut BTreeMap<BlobId, Vec<u8>>,
         path: &RepoPath,
         blob: BlobId,
     ) -> Result<std::result::Result<String, NoText>> {
-        Ok(if !self.load(blobs, path, blob).await? {
+        Ok(if !self.fetch(blobs, path, blob, true).await? {
             Err(NoText::Unavailable)
         } else if is_binary(&blobs[&blob]) {
             Err(NoText::Binary)

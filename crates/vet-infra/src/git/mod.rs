@@ -15,9 +15,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use gix::bstr::ByteSlice;
-use gix::objs::Find;
+use gix::objs::{Find, FindHeader};
 use vet_app::pin::CommitId;
-use vet_app::ports::{BaseCandidates, CheckoutError, Dirty, GitError, GitRepo, IgnoreRules, Scan, Store};
+use vet_app::ports::{BaseCandidates, BlobRead, CheckoutError, Dirty, GitError, GitRepo, IgnoreRules, Scan, Store};
 use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
 use vet_core::merkle;
@@ -116,6 +116,16 @@ impl Inner {
         Ok(item.filter(|i| i.entry.blob == blob).and_then(|i| i.bytes))
     }
 
+    /// The object's size is checked before its content is read.
+    fn read_blob_capped(&self, path: &RepoPath, blob: BlobId) -> Result<BlobRead, GitError> {
+        let repo = self.open()?;
+        if self.blobs.odb_size(&repo, blob)?.is_some_and(|size| size > self.cap) {
+            return Ok(BlobRead::TooLarge);
+        }
+        // A blob not in git is read from the worktree, which applies the cap itself.
+        Ok(self.read_blob(path, blob)?.map_or(BlobRead::Missing, BlobRead::Found))
+    }
+
     fn diff(
         &self,
         stored: BTreeMap<BlobId, Vec<u8>>,
@@ -189,6 +199,11 @@ impl GitRepo for GixRepo {
     async fn read_blob(&self, path: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
         let path = path.clone();
         self.blocking(move |i| i.read_blob(&path, blob)).await
+    }
+
+    async fn read_blob_capped(&self, path: &RepoPath, blob: BlobId) -> Result<BlobRead, GitError> {
+        let path = path.clone();
+        self.blocking(move |i| i.read_blob_capped(&path, blob)).await
     }
 
     async fn submodule_commit(&self, blob: BlobId) -> Result<Option<String>, GitError> {
@@ -296,6 +311,13 @@ impl BlobCache {
         ids.by_oid.insert(oid, id);
         ids.by_blob.insert(id, oid);
         Ok(id)
+    }
+
+    /// Size of `blob` if git has it, from the object header.
+    pub fn odb_size(&self, repo: &gix::Repository, blob: BlobId) -> Result<Option<u64>, GitError> {
+        let oid = self.ids.lock().expect("not poisoned").by_blob.get(&blob).copied();
+        let Some(oid) = oid else { return Ok(None) };
+        Ok(repo.objects.try_header(&oid).map_err(err)?.map(|h| h.size))
     }
 
     /// Content of `blob` if git has it and it is within `cap`.

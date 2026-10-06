@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
-use vet_app::ports::{Dirty, GcReport, GitRepo, IgnoreRules, Store, StoreError};
+use vet_app::ports::{BlobRead, Dirty, GcReport, GitRepo, IgnoreRules, Store, StoreError};
 use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_infra::git::GixRepo;
@@ -225,6 +225,32 @@ async fn files_over_the_cap_are_hashed_but_not_retained() {
     let diff = acq.git.diff(&acq.store, &opened.base, &opened.target).await.unwrap();
     assert_eq!(diff.non_text.len(), 1);
     assert_eq!(diff.non_text[0].kind, NonTextKind::ContentUnavailable);
+}
+
+#[tokio::test]
+async fn capped_reads_refuse_large_tracked_blobs_and_large_worktree_files() {
+    let dir = repo();
+    let big = vec![b'x'; 100];
+    write(dir.path(), "small.txt", b"s\n");
+    write(dir.path(), "big.txt", &big);
+    commit(dir.path());
+    write(dir.path(), "untracked.txt", &[b'y'; 100]);
+    let repo = GixRepo::new(dir.path()).with_cap(10);
+    // The commit's tree maps its blobs to git objects.
+    let tree = repo.commit_snapshot(&repo.head().await.unwrap()).await.unwrap();
+    let scan = repo.scan(Dirty::All).await.unwrap();
+
+    let read = async |name: &str| {
+        let p = path(name);
+        let entries = if name == "untracked.txt" { &scan.snapshot } else { &tree }
+            .entries
+            .get(&p)
+            .unwrap();
+        repo.read_blob_capped(&p, entries.blob).await.unwrap()
+    };
+    assert_eq!(read("small.txt").await, BlobRead::Found(b"s\n".to_vec()));
+    assert_eq!(read("big.txt").await, BlobRead::TooLarge);
+    assert_eq!(read("untracked.txt").await, BlobRead::Missing);
 }
 
 #[tokio::test]

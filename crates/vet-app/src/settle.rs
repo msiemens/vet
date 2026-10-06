@@ -164,7 +164,7 @@ mod tests {
 
     use super::*;
     use crate::pin::CommitId;
-    use crate::ports::{CheckoutError, GcReport, Scan, StoreError};
+    use crate::ports::{BlobRead, CheckoutError, GcReport, Scan, StoreError};
     use crate::review::SessionId;
 
     fn path(name: &str) -> RepoPath {
@@ -306,6 +306,9 @@ mod tests {
             unreachable!()
         }
         async fn read_blob(&self, _: &RepoPath, _: BlobId) -> Result<Option<Vec<u8>>, GitError> {
+            unreachable!()
+        }
+        async fn read_blob_capped(&self, _: &RepoPath, _: BlobId) -> Result<BlobRead, GitError> {
             unreachable!()
         }
         async fn submodule_commit(&self, _: BlobId) -> Result<Option<String>, GitError> {

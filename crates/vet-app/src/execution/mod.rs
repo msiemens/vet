@@ -186,7 +186,7 @@ mod tests {
 
     use super::*;
     use crate::pin::CommitId;
-    use crate::ports::{CheckoutError, GcReport, ProcessEvent, RunningProcess, Scan};
+    use crate::ports::{BlobRead, CheckoutError, GcReport, ProcessEvent, RunningProcess, Scan};
     use crate::review::SessionId;
 
     fn snapshot(files: &[(&str, &str)]) -> (Snapshot, HashMap<BlobId, Vec<u8>>) {
@@ -255,6 +255,9 @@ mod tests {
         }
         async fn read_blob(&self, _: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
             Ok(self.0.lock().unwrap().blobs.get(&blob).cloned())
+        }
+        async fn read_blob_capped(&self, _: &RepoPath, _: BlobId) -> Result<BlobRead, GitError> {
+            unreachable!()
         }
         async fn submodule_commit(&self, _: BlobId) -> Result<Option<String>, GitError> {
             unreachable!()

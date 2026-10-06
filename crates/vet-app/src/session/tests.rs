@@ -14,7 +14,7 @@ use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadSta
 
 use super::*;
 use crate::pin::{BaseChoice, CommitId, Pin, PinId};
-use crate::ports::{Dirty, GcReport};
+use crate::ports::{BlobRead, Dirty, GcReport};
 use crate::review::Session;
 
 fn path(s: &str) -> RepoPath {
@@ -96,6 +96,8 @@ struct FakeGit {
     refs: Arc<Mutex<Vec<(String, CommitId)>>>,
     /// What revisions (`merge-base <ref>` for merge bases) resolve to, with the commit's tree.
     commits: Arc<Mutex<HashMap<String, (CommitId, Snapshot)>>>,
+    /// Largest blob `read_blob_capped` returns.
+    cap: Arc<Mutex<Option<usize>>>,
 }
 
 impl FakeGit {
@@ -145,6 +147,14 @@ impl GitRepo for FakeGit {
     }
     async fn read_blob(&self, _: &RepoPath, blob: BlobId) -> std::result::Result<Option<Vec<u8>>, GitError> {
         Ok(self.blobs.lock().unwrap().get(&blob).cloned())
+    }
+    async fn read_blob_capped(&self, _: &RepoPath, blob: BlobId) -> std::result::Result<BlobRead, GitError> {
+        let cap = *self.cap.lock().unwrap();
+        Ok(match self.blobs.lock().unwrap().get(&blob) {
+            Some(bytes) if cap.is_some_and(|cap| bytes.len() > cap) => BlobRead::TooLarge,
+            Some(bytes) => BlobRead::Found(bytes.clone()),
+            None => BlobRead::Missing,
+        })
     }
     /// The first byte of the blob id, in hex.
     async fn submodule_commit(&self, blob: BlobId) -> std::result::Result<Option<String>, GitError> {
@@ -908,6 +918,19 @@ async fn target_text_reads_unchanged_files_and_explains_missing_text() {
         fx.session.target_text("link").await.unwrap().content,
         Err(NoText::NotAFile)
     );
+    // Over the cap, and not retained by the store (as the scan would do).
+    let big = "x".repeat(100);
+    fx.git.snapshot(&[("big.txt", &big)]);
+    let mut st = fx.session.state.lock().await;
+    st.target.entries.insert(path("big.txt"), entry(&big, 0o100644));
+    drop(st);
+    *fx.git.cap.lock().unwrap() = Some(10);
+    assert_eq!(
+        fx.session.target_text("big.txt").await.unwrap().content,
+        Err(NoText::Unavailable)
+    );
+    *fx.git.cap.lock().unwrap() = None;
+    assert_eq!(fx.session.target_text("big.txt").await.unwrap().content, Ok(big));
     // Content no source has any more.
     fx.git.blobs.lock().unwrap().clear();
     fx.store.0.lock().unwrap().blobs.clear();

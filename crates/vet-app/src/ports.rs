@@ -61,6 +61,14 @@ pub enum Dirty {
     Paths(Vec<RepoPath>),
 }
 
+/// The result of [`GitRepo::read_blob_capped`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum BlobRead {
+    Found(Vec<u8>),
+    TooLarge,
+    Missing,
+}
+
 pub struct Scan {
     pub snapshot: Snapshot,
     pub status: SnapshotStatus,
@@ -136,6 +144,12 @@ pub trait GitRepo {
         path: &RepoPath,
         blob: BlobId,
     ) -> impl Future<Output = Result<Option<Vec<u8>>, GitError>> + Send;
+    /// Like [`Self::read_blob`], but content over the capture cap is not read.
+    fn read_blob_capped(
+        &self,
+        path: &RepoPath,
+        blob: BlobId,
+    ) -> impl Future<Output = Result<BlobRead, GitError>> + Send;
     /// The commit a submodule entry with this `BlobId` is pinned at, for display.
     fn submodule_commit(&self, blob: BlobId) -> impl Future<Output = Result<Option<String>, GitError>> + Send;
     /// The merge base of `reference` (a branch or any revision) and `HEAD`.
