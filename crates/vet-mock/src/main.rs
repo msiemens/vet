@@ -71,7 +71,7 @@ impl Handler for Mock {
             }
             Request::FileContents { path, .. } => {
                 let f = &self.corpus.files[position(&path)?];
-                Ok(Response::FileContents { revision: REVISION, base: Some(f.base.clone()), target: Some(f.target.clone()), hunks: f.hunks.clone(), marks: f.marks.clone() })
+                Ok(Response::FileContents { revision: REVISION, base: Some(f.base.clone()), target: Some(f.target.clone()), marks: f.marks.clone() })
             }
             Request::SetSeen { session, revision, path, hunks, seen: value } => {
                 current(session, revision)?;

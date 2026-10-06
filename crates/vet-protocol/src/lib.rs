@@ -78,9 +78,9 @@ pub enum Response {
     /// Acknowledges a request that has no result.
     Done,
     Manifest(Manifest),
-    /// `None` is a side the file does not have (added or deleted). `hunks` and
-    /// `marks` belong to `revision`.
-    FileContents { revision: u32, base: Option<String>, target: Option<String>, hunks: Vec<Hunk>, marks: Vec<Mark> },
+    /// `None` is a side the file does not have (added or deleted). The text and
+    /// `marks` belong to `revision`; the hunks are in that revision's manifest.
+    FileContents { revision: u32, base: Option<String>, target: Option<String>, marks: Vec<Mark> },
     NonTextDetail { before: Option<EntryDesc>, after: Option<EntryDesc> },
     /// The file's review state after `SetSeen` or `Acknowledge`.
     Review { path: String, review: FileReview },
