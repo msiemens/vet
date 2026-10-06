@@ -139,6 +139,52 @@ pub enum Request {
         session: SessionId,
         path: String,
     },
+    /// The run targets of the current target snapshot (§10): discovered from its
+    /// manifests, with the user's edits applied, then the targets the user added.
+    /// Answers with `Response::RunTargets`.
+    ListRunTargets {
+        session: SessionId,
+    },
+    /// Stores an edited discovered target (same `id`) or a new one, per repository.
+    /// For a new target the client chooses a non-empty `id` no discovered target
+    /// uses. Fails with a message fit to show if the id or the command is empty
+    /// or `cwd` is not inside the repository. Answers with `Response::Done`.
+    SaveRunTarget {
+        session: SessionId,
+        target: RunTarget,
+    },
+    /// Drops the stored target: an edited discovered target reverts, an added one
+    /// disappears. Answers with `Response::Done`.
+    ResetRunTarget {
+        session: SessionId,
+        id: String,
+    },
+    /// Starts a target in place (§9): the backend reconciles the tree, applies the
+    /// run check (§7.5) and either starts the process or asks for approval first.
+    /// Answers with `Response::RunNeedsApproval`, which starts nothing, or
+    /// `Response::RunStarted`. After the former, ask again with its `hash` as
+    /// `approved_hash` to approve and run; the hash is honored only while the
+    /// files about to run still hash to it, else the answer is a new
+    /// `RunNeedsApproval`.
+    Run {
+        session: SessionId,
+        target_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        approved_hash: Option<String>,
+    },
+    /// The files behind a pending `RunNeedsApproval`, with their text. Fails if
+    /// no approval with this hash is pending. Answers with `Response::RunApprovalDiff`.
+    RunApprovalDiff {
+        session: SessionId,
+        hash: String,
+    },
+    /// Kills a running process; `RunExited` follows. Answers with `Response::Done`,
+    /// also for a run that already exited.
+    StopRun {
+        session: SessionId,
+        run_id: u32,
+    },
     /// Every thread with its anchor resolved at the current revision. Resolution
     /// is lazy: a settled snapshot only invalidates it, and this request computes
     /// it. Kept apart from `Manifest` so the manifest does not wait for it.
@@ -448,6 +494,106 @@ pub enum Response {
     },
     /// One thread after a change, resolved at the current revision.
     Thread(Thread),
+    RunTargets {
+        targets: Vec<RunTargetEntry>,
+    },
+    /// Nothing was started. Show `changed` (and `RunApprovalDiff` for the text)
+    /// and ask "run anyway?"; approving is `Run` with `hash` as `approved_hash`.
+    RunNeedsApproval {
+        hash: String,
+        /// No run was ever approved in this repository.
+        first_run: bool,
+        changed: Vec<ApprovalChange>,
+    },
+    /// The process runs in place. Its output arrives as `RunOutput` and its end as
+    /// `RunExited`, which can reach the connection before this response.
+    RunStarted {
+        run_id: u32,
+        /// The reconciled tree that runs, as a snapshot id.
+        snapshot: String,
+        /// Files that differ between that tree and the target snapshot the
+        /// review last showed; the run panel says "N files changed since review"
+        /// if not zero.
+        changed_since_review: u32,
+    },
+    /// The answer to `RunApprovalDiff`, in the order of `RunNeedsApproval::changed`.
+    RunApprovalDiff {
+        files: Vec<ApprovalFile>,
+    },
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EnvVar {
+    pub name: String,
+    pub value: String,
+}
+
+/// What to run and how (§10).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RunTarget {
+    /// Stable across snapshots, so an edit made to a discovered target keeps applying.
+    pub id: String,
+    pub label: String,
+    pub program: String,
+    pub args: Vec<String>,
+    /// Relative to the repository root; empty for the root.
+    pub cwd: String,
+    pub env: Vec<EnvVar>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RunTargetEntry {
+    pub target: RunTarget,
+    /// The user edited or added it: it is stored, and `ResetRunTarget` applies.
+    pub stored: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RunChange {
+    Added,
+    Modified,
+    Removed,
+}
+
+/// An executor-relevant file that changed since the last approved run.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ApprovalChange {
+    pub path: String,
+    pub change: RunChange,
+}
+
+/// One changed file of an approval prompt. A side is `None` if the file did not
+/// exist there, has no text (binary) or is over the capture cap.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ApprovalFile {
+    pub path: String,
+    pub change: RunChange,
+    /// The last approved version.
+    pub base: Option<String>,
+    /// The version about to run.
+    pub target: Option<String>,
+    /// Line hunks between the two, as in `FileChange`.
+    pub hunks: Vec<Hunk>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RunStream {
+    Stdout,
+    Stderr,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -539,6 +685,23 @@ pub enum Event {
     /// another connection; fetch the threads again. Not sent for a settled
     /// snapshot, which is `SnapshotSettled`: that also invalidates the threads.
     ThreadsChanged { session: SessionId, revision: u32 },
+    /// Output of a run, in order per stream. `bytes` is base64 (standard alphabet,
+    /// padded) of the raw bytes: process output is not necessarily UTF-8 and a
+    /// chunk can end inside a multi-byte character, so a client decodes and joins
+    /// the chunks of a stream before decoding text.
+    RunOutput {
+        session: SessionId,
+        run_id: u32,
+        stream: RunStream,
+        bytes: String,
+    },
+    /// The last event of a run. `code` is `None` if a signal ended the process,
+    /// as `StopRun` does.
+    RunExited {
+        session: SessionId,
+        run_id: u32,
+        code: Option<i32>,
+    },
 }
 
 /// The changeset as displayed through the session's review filter.

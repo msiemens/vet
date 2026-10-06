@@ -12,6 +12,28 @@ impl Hash {
         Self(*blake3::hash(bytes).as_bytes())
     }
 
+    /// The 64 lowercase hex digits [`Self::from_hex`] reads back.
+    pub fn to_hex(&self) -> String {
+        use std::fmt::Write;
+        self.0.iter().fold(String::with_capacity(64), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+    }
+
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        let digits = hex.as_bytes();
+        if digits.len() != 64 || !digits.iter().all(u8::is_ascii_hexdigit) {
+            return None;
+        }
+        let mut out = [0; 32];
+        for (byte, pair) in out.iter_mut().zip(digits.chunks(2)) {
+            let pair = std::str::from_utf8(pair).ok()?;
+            *byte = u8::from_str_radix(pair, 16).ok()?;
+        }
+        Some(Self(out))
+    }
+
     /// BLAKE3 of everything `reader` yields, without holding it in memory.
     pub fn of_reader(mut reader: impl std::io::Read) -> std::io::Result<Self> {
         let mut hasher = blake3::Hasher::new();
@@ -172,4 +194,19 @@ pub struct SnapshotDiff {
     pub files: Vec<FileDiff>,
     pub non_text: Vec<NonTextChange>,
     pub renames: RenameMap,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hash_round_trips_through_hex() {
+        let hash = Hash::of(b"x");
+        let hex = hash.to_hex();
+        assert_eq!(hex.len(), 64);
+        assert_eq!(Hash::from_hex(&hex), Some(hash));
+        assert_eq!(Hash::from_hex(&hex[1..]), None);
+        assert_eq!(Hash::from_hex(&format!("+{}", &hex[1..])), None);
+    }
 }

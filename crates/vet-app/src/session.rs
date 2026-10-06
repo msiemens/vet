@@ -21,6 +21,7 @@
 //! when the edit is reverted.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::PathBuf;
 use std::{fmt, slice};
 
 use tokio::sync::Mutex;
@@ -40,6 +41,8 @@ use vet_core::review::{
 };
 
 use crate::acquisition::Acquisition;
+use crate::execution::Execution;
+use crate::execution::check::RunCheckConfig;
 use crate::pin::{BaseChoice, CommitId};
 use crate::ports::{
     BaseCandidates, BlobRead, Clock, Degraded, GitError, GitRepo, ReviewStore, Scan, Store, StoreError, Watcher,
@@ -457,6 +460,28 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
 
     pub async fn revision(&self) -> u32 {
         self.state.lock().await.revision
+    }
+
+    /// The latest settled target: what the review last showed.
+    pub async fn target_snapshot(&self) -> Snapshot {
+        self.state.lock().await.target.clone()
+    }
+
+    /// Running in place and the run check, on the session's acquisition.
+    pub fn execution<'a, P>(
+        &'a self,
+        runner: &'a P,
+        repo: String,
+        root: PathBuf,
+        config: RunCheckConfig,
+    ) -> Execution<'a, G, S, P> {
+        Execution {
+            acquisition: &self.acquisition,
+            runner,
+            repo,
+            root,
+            config,
+        }
     }
 
     /// The initial scan identifies the settled snapshot, so settling does not

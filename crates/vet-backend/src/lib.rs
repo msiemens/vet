@@ -3,6 +3,7 @@
 //! to protocol messages.
 
 mod mapping;
+mod run;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -53,6 +54,7 @@ struct Open {
     subscribers: Subscribers,
     settling: AbortHandle,
     reaper: AbortHandle,
+    runs: run::Runs,
 }
 
 fn live(subscribers: &Subscribers) -> std::sync::MutexGuard<'_, Vec<Events>> {
@@ -70,9 +72,10 @@ pub struct Orchestrator {
 type Sessions = Arc<tokio::sync::Mutex<Vec<Arc<Open>>>>;
 
 impl Open {
-    /// Stops watching, deletes the session's refs and records it closed.
+    /// Stops watching, kills the session's runs, deletes its refs and records it closed.
     async fn shut(&self) -> Result<(), String> {
         self.settling.abort();
+        self.runs.stop_all();
         self.session.close(unix_now()).await.map_err(message)
     }
 }
@@ -178,6 +181,7 @@ impl Orchestrator {
             subscribers,
             settling: task.abort_handle(),
             reaper: reaper.abort_handle(),
+            runs: Default::default(),
         }));
         Ok((id, root))
     }
@@ -396,6 +400,29 @@ impl Handler for Orchestrator {
                     .await
                     .map_err(message)?;
                 Ok(thread_changed(&open, &events, &thread).await)
+            }
+            Request::ListRunTargets { session } => self.find(session).await?.run_targets().await,
+            Request::SaveRunTarget { session, target } => {
+                let open = self.find(session).await?;
+                open.save_run_target(mapping::core_run_target(target)).await?;
+                Ok(Response::Done)
+            }
+            Request::ResetRunTarget { session, id } => {
+                self.find(session).await?.reset_run_target(id).await?;
+                Ok(Response::Done)
+            }
+            Request::Run {
+                session,
+                target_id,
+                approved_hash,
+            } => {
+                let open = self.find(session).await?;
+                open.run(&target_id, approved_hash.as_deref()).await
+            }
+            Request::RunApprovalDiff { session, hash } => self.find(session).await?.run_approval_diff(&hash).await,
+            Request::StopRun { session, run_id } => {
+                self.find(session).await?.stop_run(run_id);
+                Ok(Response::Done)
             }
             Request::Hover { .. } => Err("hover is not implemented yet".into()),
         }

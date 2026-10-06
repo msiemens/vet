@@ -1,5 +1,8 @@
 //! vet-app views to protocol DTOs, and back for the request enums.
 
+use vet_app::execution::check::{Approval, Change};
+use vet_app::execution::targets::RunTarget;
+use vet_app::execution::{ApprovalFile, ListedTarget};
 use vet_app::pin::{BaseChoice, CommitId};
 use vet_app::ports::{BaseCandidates, Degraded};
 use vet_app::session::{
@@ -354,6 +357,77 @@ pub fn threads(v: &ThreadsView) -> p::Response {
     p::Response::Threads {
         revision: v.revision,
         threads: v.threads.iter().map(thread).collect(),
+    }
+}
+
+pub fn core_run_target(t: p::RunTarget) -> RunTarget {
+    RunTarget {
+        id: t.id,
+        label: t.label,
+        program: t.program,
+        args: t.args,
+        cwd: t.cwd,
+        env: t.env.into_iter().map(|e| (e.name, e.value)).collect(),
+    }
+}
+
+pub fn run_targets(listed: &[ListedTarget]) -> p::Response {
+    p::Response::RunTargets {
+        targets: listed
+            .iter()
+            .map(|l| p::RunTargetEntry {
+                target: p::RunTarget {
+                    id: l.target.id.clone(),
+                    label: l.target.label.clone(),
+                    program: l.target.program.clone(),
+                    args: l.target.args.clone(),
+                    cwd: l.target.cwd.clone(),
+                    env: (l.target.env.iter())
+                        .map(|(name, value)| p::EnvVar {
+                            name: name.clone(),
+                            value: value.clone(),
+                        })
+                        .collect(),
+                },
+                stored: l.stored,
+            })
+            .collect(),
+    }
+}
+
+fn run_change(c: Change) -> p::RunChange {
+    match c {
+        Change::Added => p::RunChange::Added,
+        Change::Modified => p::RunChange::Modified,
+        Change::Removed => p::RunChange::Removed,
+    }
+}
+
+pub fn needs_approval(a: &Approval) -> p::Response {
+    p::Response::RunNeedsApproval {
+        hash: a.hash.to_hex(),
+        first_run: a.first_run,
+        changed: (a.changed.iter())
+            .map(|c| p::ApprovalChange {
+                path: path_str(&c.path),
+                change: run_change(c.change),
+            })
+            .collect(),
+    }
+}
+
+pub fn approval_files(files: &[ApprovalFile]) -> p::Response {
+    p::Response::RunApprovalDiff {
+        files: files
+            .iter()
+            .map(|f| p::ApprovalFile {
+                path: path_str(&f.path),
+                change: run_change(f.change),
+                base: f.old.clone(),
+                target: f.new.clone(),
+                hunks: f.hunks.iter().map(hunk).collect(),
+            })
+            .collect(),
     }
 }
 

@@ -8,13 +8,14 @@ pub mod targets;
 pub mod trust;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::fmt;
+use std::path::{Component, PathBuf};
 
-use vet_core::content::{Hash, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
+use vet_core::content::{BlobId, Hash, Hunk, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
 
 use crate::acquisition::Acquisition;
-use crate::ports::{Command, Dirty, GitError, GitRepo, ProcessRunner, RunStore, Store, StoreError};
-use check::{Approval, RunCheck, RunCheckConfig};
+use crate::ports::{BlobRead, Command, Dirty, GitError, GitRepo, ProcessRunner, RunStore, Store, StoreError};
+use check::{Approval, Change, RunCheck, RunCheckConfig};
 use targets::RunTarget;
 
 #[derive(Debug)]
@@ -22,6 +23,37 @@ pub enum RunError {
     Git(GitError),
     Store(StoreError),
     Spawn(String),
+    /// The request does not apply; the message is fit to show.
+    Invalid(String),
+}
+
+impl fmt::Display for RunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Git(e) => write!(f, "git: {}", e.0),
+            Self::Store(e) => write!(f, "store: {}", e.0),
+            Self::Spawn(message) | Self::Invalid(message) => f.write_str(message),
+        }
+    }
+}
+
+/// A run target and whether the user edited or added it (it is in the store).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ListedTarget {
+    pub target: RunTarget,
+    pub stored: bool,
+}
+
+/// One executor-relevant file of an approval prompt, with its text on both sides.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ApprovalFile {
+    pub path: RepoPath,
+    pub change: Change,
+    /// The last approved version; `None` if there was none, or it has no text.
+    pub old: Option<String>,
+    /// The version about to run; `None` if the file is gone, or it has no text.
+    pub new: Option<String>,
+    pub hunks: Vec<Hunk>,
 }
 
 impl From<GitError> for RunError {
@@ -74,7 +106,7 @@ pub struct Execution<'a, G, S, P> {
 
 impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<'_, G, S, P> {
     /// Discovered targets of `snapshot` with the user's edits applied.
-    pub async fn targets(&self, snapshot: &Snapshot) -> Result<Vec<RunTarget>, RunError> {
+    pub async fn targets(&self, snapshot: &Snapshot) -> Result<Vec<ListedTarget>, RunError> {
         let mut blobs = BTreeMap::new();
         for (path, entry) in &snapshot.entries {
             let name = path.0.rsplit(|b| *b == b'/').next().unwrap_or_default();
@@ -85,11 +117,33 @@ impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<
             }
         }
         let stored = self.acquisition.store.run_targets(self.repo.clone()).await?;
-        Ok(targets::merge(targets::discover(snapshot, &blobs), stored))
+        let stored_ids: Vec<String> = stored.iter().map(|t| t.id.clone()).collect();
+        let merged = targets::merge(targets::discover(snapshot, &blobs), stored);
+        Ok(merged
+            .into_iter()
+            .map(|target| ListedTarget {
+                stored: stored_ids.contains(&target.id),
+                target,
+            })
+            .collect())
     }
 
-    /// Saves an edited or user-added target.
+    /// Saves an edited or user-added target. Ids of added targets are the
+    /// caller's to choose.
     pub async fn save_target(&self, target: RunTarget) -> Result<(), RunError> {
+        let invalid = |message: &str| Err(RunError::Invalid(message.into()));
+        if target.id.trim().is_empty() {
+            return invalid("a run target needs an id");
+        }
+        if target.program.trim().is_empty() {
+            return invalid("a run target needs a command");
+        }
+        let relative = std::path::Path::new(&target.cwd)
+            .components()
+            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+        if !relative {
+            return invalid("the working directory must be inside the repository");
+        }
         Ok(self.acquisition.store.put_run_target(self.repo.clone(), target).await?)
     }
 
@@ -121,6 +175,47 @@ impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<
         Ok(diff)
     }
 
+    /// The files behind an approval prompt with their text, for display.
+    pub async fn approval_files(&self, approval: &Approval) -> Result<Vec<ApprovalFile>, RunError> {
+        let diff = self.diff(approval).await?;
+        let mut files = Vec::new();
+        for changed in &approval.changed {
+            let found = diff
+                .files
+                .iter()
+                .find(|d| d.new_path.as_ref().or(d.old_path.as_ref()) == Some(&changed.path));
+            let (old, new, hunks) = match found {
+                Some(d) => (
+                    self.text(&changed.path, d.old_blob).await?,
+                    self.text(&changed.path, d.new_blob).await?,
+                    d.hunks.clone(),
+                ),
+                None => (None, None, Vec::new()),
+            };
+            files.push(ApprovalFile {
+                path: changed.path.clone(),
+                change: changed.change,
+                old,
+                new,
+                hunks,
+            });
+        }
+        Ok(files)
+    }
+
+    /// UTF-8 content, from the store, else git or the worktree; nothing over the capture cap.
+    async fn text(&self, path: &RepoPath, blob: Option<BlobId>) -> Result<Option<String>, RunError> {
+        let Some(blob) = blob else { return Ok(None) };
+        let bytes = match self.acquisition.store.blob(blob).await? {
+            Some(bytes) => bytes,
+            None => match self.acquisition.git.read_blob_capped(path, blob).await? {
+                BlobRead::Found(bytes) => bytes,
+                BlobRead::TooLarge | BlobRead::Missing => return Ok(None),
+            },
+        };
+        Ok(String::from_utf8(bytes).ok())
+    }
+
     /// Records the approval and keeps the approved files' content, so later
     /// prompts can diff against it.
     pub async fn approve(&self, approval: &Approval, now: i64) -> Result<(), RunError> {
@@ -137,6 +232,27 @@ impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<
             .record_run_approval(self.repo.clone(), approval.hash, approval.current.id, now)
             .await?;
         Ok(())
+    }
+
+    /// [`Self::launch`] for the target with this id among those of `reviewed`.
+    pub async fn run(
+        &self,
+        target_id: &str,
+        reviewed: &Snapshot,
+        approved: Option<Hash>,
+        now: i64,
+    ) -> Result<LaunchOutcome<P::Process>, RunError> {
+        let target = (self.targets(reviewed).await?.into_iter())
+            .find(|t| t.target.id == target_id)
+            .ok_or_else(|| RunError::Invalid(format!("no run target {target_id}")))?
+            .target;
+        self.launch(LaunchRequest {
+            target: &target,
+            reviewed,
+            approved,
+            now,
+        })
+        .await
     }
 
     /// Reconcile, run check, start the process in place (§9).
@@ -176,12 +292,12 @@ pub fn changed_files(a: &Snapshot, b: &Snapshot) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll, Waker};
 
-    use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath};
+    use vet_core::content::{BlobId, EntryKind, FileDiff, FileEntry, LineRange, RepoPath};
     use vet_core::merkle::snapshot_id;
 
     use super::*;
@@ -259,8 +375,11 @@ mod tests {
         async fn read_blob(&self, _: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
             Ok(self.0.lock().unwrap().blobs.get(&blob).cloned())
         }
-        async fn read_blob_capped(&self, _: &RepoPath, _: BlobId) -> Result<BlobRead, GitError> {
-            unreachable!()
+        async fn read_blob_capped(&self, _: &RepoPath, blob: BlobId) -> Result<BlobRead, GitError> {
+            Ok(match self.0.lock().unwrap().blobs.get(&blob) {
+                Some(bytes) => BlobRead::Found(bytes.clone()),
+                None => BlobRead::Missing,
+            })
         }
         async fn submodule_commit(&self, _: BlobId) -> Result<Option<String>, GitError> {
             unreachable!()
@@ -280,8 +399,36 @@ mod tests {
         async fn delete_session_refs(&self, _: SessionId) -> Result<(), GitError> {
             unreachable!()
         }
-        async fn diff<S: Store + Sync>(&self, _: &S, _: &Snapshot, _: &Snapshot) -> Result<SnapshotDiff, GitError> {
-            unreachable!()
+        /// One hunk over the whole file for every path whose blob differs.
+        async fn diff<S: Store + Sync>(&self, _: &S, old: &Snapshot, new: &Snapshot) -> Result<SnapshotDiff, GitError> {
+            let w = self.0.lock().unwrap();
+            let lines = |e: Option<&FileEntry>| {
+                e.map_or(0, |e| w.blobs[&e.blob].split_inclusive(|&b| b == b'\n').count() as u32)
+            };
+            let mut out = SnapshotDiff::default();
+            for path in old.entries.keys().chain(new.entries.keys()).collect::<BTreeSet<_>>() {
+                let (o, n) = (old.entries.get(path), new.entries.get(path));
+                if o == n {
+                    continue;
+                }
+                out.files.push(FileDiff {
+                    old_path: o.map(|_| path.clone()),
+                    new_path: n.map(|_| path.clone()),
+                    old_blob: o.map(|e| e.blob),
+                    new_blob: n.map(|e| e.blob),
+                    hunks: vec![Hunk {
+                        old: LineRange {
+                            start: 0,
+                            end: lines(o),
+                        },
+                        new: LineRange {
+                            start: 0,
+                            end: lines(n),
+                        },
+                    }],
+                });
+            }
+            Ok(out)
         }
     }
 
@@ -291,8 +438,8 @@ mod tests {
             self.0.lock().unwrap().blobs.insert(id, bytes);
             Ok(id)
         }
-        async fn blob(&self, _: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
-            unreachable!()
+        async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
+            Ok(self.0.lock().unwrap().blobs.get(&id).cloned())
         }
         async fn put_snapshot(&self, s: Snapshot, _: SnapshotStatus) -> Result<(), StoreError> {
             self.0.lock().unwrap().snapshots.insert(s.id, s);
@@ -384,7 +531,9 @@ mod tests {
         };
         fake.set_tree(&[("ui/package.json", PACKAGE), ("ui/src/a.ts", "1")]);
         let reviewed = fake.0.lock().unwrap().tree.clone().unwrap();
-        let target = run(exec.targets(&reviewed)).unwrap().remove(0);
+        let listed = run(exec.targets(&reviewed)).unwrap().remove(0);
+        assert!(!listed.stored);
+        let target = listed.target;
         assert_eq!(target.id, "script:ui:dev");
         let request = |approved| LaunchRequest {
             target: &target,
@@ -434,6 +583,88 @@ mod tests {
         assert!(!second.first_run);
         assert_eq!(second.changed.len(), 1);
         assert_eq!(second.baseline.entries.len(), 1);
+    }
+
+    fn execution<'a>(fake: &'a Fake, acquisition: &'a Acquisition<Fake, Fake>) -> Execution<'a, Fake, Fake, Fake> {
+        Execution {
+            acquisition,
+            runner: fake,
+            repo: "/repo".into(),
+            root: PathBuf::from("/repo"),
+            config: RunCheckConfig::default(),
+        }
+    }
+
+    #[test]
+    fn a_run_by_id_prompts_with_the_text_of_what_changed() {
+        let fake = Fake::default();
+        let acquisition = Acquisition::new(fake.clone(), fake.clone());
+        let exec = execution(&fake, &acquisition);
+        fake.set_tree(&[("package.json", PACKAGE), ("src/a.ts", "1")]);
+        let reviewed = fake.0.lock().unwrap().tree.clone().unwrap();
+
+        let Ok(LaunchOutcome::NeedsApproval(first)) = run(exec.run("script::dev", &reviewed, None, 1)) else {
+            panic!("expected a prompt");
+        };
+        let files = run(exec.approval_files(&first)).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, RepoPath(b"package.json".to_vec()));
+        assert_eq!(files[0].change, Change::Added);
+        assert_eq!(
+            (files[0].old.as_deref(), files[0].new.as_deref()),
+            (None, Some(PACKAGE))
+        );
+
+        assert!(matches!(
+            run(exec.run("script::dev", &reviewed, Some(first.hash), 1)),
+            Ok(LaunchOutcome::Started(_))
+        ));
+        let edited = r#"{"scripts":{"dev":"vite --open"}}"#;
+        fake.set_tree(&[("package.json", edited), ("src/a.ts", "1")]);
+        let Ok(LaunchOutcome::NeedsApproval(second)) = run(exec.run("script::dev", &reviewed, None, 2)) else {
+            panic!("package.json changed");
+        };
+        let files = run(exec.approval_files(&second)).unwrap();
+        assert_eq!(
+            (files[0].old.as_deref(), files[0].new.as_deref()),
+            (Some(PACKAGE), Some(edited))
+        );
+        assert_eq!(files[0].change, Change::Modified);
+        assert_eq!(files[0].hunks.len(), 1);
+
+        let missing = run(exec.run("nope", &reviewed, None, 1));
+        assert_eq!(missing.err().unwrap().to_string(), "no run target nope");
+    }
+
+    #[test]
+    fn saved_targets_are_listed_as_stored_and_must_make_sense() {
+        let fake = Fake::default();
+        let acquisition = Acquisition::new(fake.clone(), fake.clone());
+        let exec = execution(&fake, &acquisition);
+        fake.set_tree(&[("package.json", PACKAGE)]);
+        let reviewed = fake.0.lock().unwrap().tree.clone().unwrap();
+        let target = |id: &str, program: &str, cwd: &str| RunTarget {
+            id: id.into(),
+            label: "mine".into(),
+            program: program.into(),
+            args: vec![],
+            cwd: cwd.into(),
+            env: vec![],
+        };
+
+        for bad in [
+            target("", "make", ""),
+            target("t", " ", ""),
+            target("t", "make", "../x"),
+            target("t", "make", "/x"),
+        ] {
+            assert!(matches!(run(exec.save_target(bad)), Err(RunError::Invalid(_))));
+        }
+        run(exec.save_target(target("custom:1", "make", "sub"))).unwrap();
+
+        let listed = run(exec.targets(&reviewed)).unwrap();
+        let flags: Vec<_> = listed.iter().map(|t| (t.target.id.as_str(), t.stored)).collect();
+        assert_eq!(flags, [("script::dev", false), ("custom:1", true)]);
     }
 
     #[test]

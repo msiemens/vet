@@ -9,9 +9,9 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    AnchorState, Base, BaseChoice, Completion, DirEntry, DirEntryKind, Event, FileStatus, HunkState, LineLocation,
-    Manifest, NoTextReason, NonTextKind, Request, Response, ReviewFilter, ReviewUpdate, ServerMessage, SessionId, Side,
-    TextContent, Thread, ThreadStatus, ThreadTarget,
+    AnchorState, ApprovalChange, Base, BaseChoice, Completion, DirEntry, DirEntryKind, EnvVar, Event, FileStatus,
+    HunkState, LineLocation, Manifest, NoTextReason, NonTextKind, Request, Response, ReviewFilter, ReviewUpdate,
+    RunChange, RunStream, RunTarget, ServerMessage, SessionId, Side, TextContent, Thread, ThreadStatus, ThreadTarget,
 };
 use vet_transport::{Events, Handler};
 
@@ -842,4 +842,222 @@ async fn the_filter_moves_completion_and_the_excluded_counts() {
     assert!(err.starts_with("invalid pattern \"src/[\""), "{err}");
     assert_eq!(client.manifest(session).await.revision, 1);
     assert!(client.no_event());
+}
+
+const PACKAGE: &str = r#"{"scripts":{"hi":"echo hi"}}"#;
+
+fn sh_target(id: &str, script: &str) -> RunTarget {
+    RunTarget {
+        id: id.into(),
+        label: id.into(),
+        program: "sh".into(),
+        args: vec!["-c".into(), script.into()],
+        cwd: String::new(),
+        env: vec![EnvVar {
+            name: "GREETING".into(),
+            value: "hi".into(),
+        }],
+    }
+}
+
+impl Client {
+    async fn run_targets(&self, session: SessionId) -> Vec<(String, bool)> {
+        match self.call(Request::ListRunTargets { session }).await.unwrap() {
+            Response::RunTargets { targets } => targets.into_iter().map(|t| (t.target.id, t.stored)).collect(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    async fn save_target(&self, session: SessionId, target: RunTarget) -> Result<Response, String> {
+        self.call(Request::SaveRunTarget { session, target }).await
+    }
+
+    async fn run(&self, session: SessionId, target: &str, approved: Option<&str>) -> Response {
+        let request = Request::Run {
+            session,
+            target_id: target.into(),
+            approved_hash: approved.map(String::from),
+        };
+        self.call(request).await.unwrap()
+    }
+
+    /// Output until the exit, whatever else is pushed meanwhile.
+    async fn output(&mut self, run: u32) -> (String, String, Option<i32>) {
+        use base64::Engine;
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        loop {
+            match self.event().await {
+                Event::RunOutput {
+                    run_id, stream, bytes, ..
+                } => {
+                    assert_eq!(run_id, run);
+                    let bytes = base64::engine::general_purpose::STANDARD.decode(bytes).unwrap();
+                    match stream {
+                        RunStream::Stdout => out.extend(bytes),
+                        RunStream::Stderr => err.extend(bytes),
+                    }
+                }
+                Event::RunExited { run_id, code, .. } => {
+                    assert_eq!(run_id, run);
+                    return (String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap(), code);
+                }
+                Event::SnapshotSettled { .. } => {}
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+}
+
+fn needs_approval(response: Response) -> (String, bool, Vec<ApprovalChange>) {
+    match response {
+        Response::RunNeedsApproval {
+            hash,
+            first_run,
+            changed,
+        } => (hash, first_run, changed),
+        other => panic!("{other:?}"),
+    }
+}
+
+fn started(response: Response) -> (u32, u32) {
+    match response {
+        Response::RunStarted {
+            run_id,
+            changed_since_review,
+            ..
+        } => (run_id, changed_since_review),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_run_needs_approval_once_then_streams_output_and_the_exit_code() {
+    let fx = fixture(&[("package.json", PACKAGE)], &[("a.txt", "dirty\n")]).await;
+    let mut client = Client::new(&fx.handler);
+    let session = open(&client, fx.repo.path()).await;
+
+    // The script is discovered; saving a target of the same id edits it.
+    assert_eq!(client.run_targets(session).await, [("script::hi".to_string(), false)]);
+    let no_command = RunTarget {
+        program: " ".into(),
+        ..sh_target("t", "true")
+    };
+    for bad in [sh_target("", "true"), no_command] {
+        assert!(client.save_target(session, bad).await.is_err());
+    }
+    let mut edited = sh_target("script::hi", "echo $GREETING; echo oops >&2; exit 3");
+    edited.label = "hi".into();
+    client.save_target(session, edited).await.unwrap();
+    assert_eq!(client.run_targets(session).await, [("script::hi".to_string(), true)]);
+
+    // The first run asks, with the build file that has never been approved.
+    let (hash, first_run, changed) = needs_approval(client.run(session, "script::hi", None).await);
+    assert!(first_run);
+    assert_eq!(
+        changed,
+        [ApprovalChange {
+            path: "package.json".into(),
+            change: RunChange::Added
+        }]
+    );
+    let Response::RunApprovalDiff { files } = client
+        .call(Request::RunApprovalDiff {
+            session,
+            hash: hash.clone(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not a diff");
+    };
+    assert_eq!(files.len(), 1);
+    assert_eq!(
+        (files[0].base.as_deref(), files[0].target.as_deref()),
+        (None, Some(PACKAGE))
+    );
+    let unknown = Request::RunApprovalDiff {
+        session,
+        hash: "0".repeat(64),
+    };
+    assert!(client.call(unknown).await.is_err());
+
+    // A wrong hash does not approve; the right one runs.
+    assert!(matches!(
+        client.run(session, "script::hi", Some(&"0".repeat(64))).await,
+        Response::RunNeedsApproval { .. }
+    ));
+    let (run, changed_since_review) = started(client.run(session, "script::hi", Some(&hash)).await);
+    assert_eq!(changed_since_review, 0);
+    assert_eq!(client.output(run).await, ("hi\n".into(), "oops\n".into(), Some(3)));
+
+    // Approved: it runs without asking, until the build file changes.
+    let (second, _) = started(client.run(session, "script::hi", None).await);
+    assert_ne!(second, run);
+    client.output(second).await;
+    let changed = r#"{"scripts":{"hi":"echo changed"}}"#;
+    write(fx.repo.path(), "package.json", changed);
+    let (_, first_run, changed_files) = needs_approval(client.run(session, "script::hi", None).await);
+    assert!(!first_run);
+    assert_eq!(changed_files[0].change, RunChange::Modified);
+
+    // Resetting drops the edit; an unknown target is refused.
+    client
+        .call(Request::ResetRunTarget {
+            session,
+            id: "script::hi".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(client.run_targets(session).await, [("script::hi".to_string(), false)]);
+    let unknown = Request::Run {
+        session,
+        target_id: "nope".into(),
+        approved_hash: None,
+    };
+    assert_eq!(client.call(unknown).await.unwrap_err(), "no run target nope");
+}
+
+fn pid_is_gone(pid: &str) -> bool {
+    !Command::new("kill")
+        .args(["-0", pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_run_can_be_stopped_and_dies_with_its_session() {
+    let fx = fixture(&[("package.json", PACKAGE)], &[]).await;
+    let mut client = Client::new(&fx.handler);
+    let session = open(&client, fx.repo.path()).await;
+    let pids = tempfile::tempdir().unwrap();
+    let pid_file = pids.path().join("pid");
+    let long = format!("echo $$ > {}; exec sleep 30", pid_file.display());
+    client.save_target(session, sh_target("long", &long)).await.unwrap();
+    let (hash, ..) = needs_approval(client.run(session, "long", None).await);
+
+    let (run, _) = started(client.run(session, "long", Some(&hash)).await);
+    client.call(Request::StopRun { session, run_id: run }).await.unwrap();
+    assert_eq!(client.output(run).await, (String::new(), String::new(), None));
+    client.call(Request::StopRun { session, run_id: run }).await.unwrap();
+
+    // Closing the session kills what still runs.
+    std::fs::remove_file(&pid_file).ok();
+    let (run, _) = started(client.run(session, "long", None).await);
+    let pid = loop {
+        match std::fs::read_to_string(&pid_file) {
+            Ok(pid) if pid.ends_with('\n') => break pid.trim().to_string(),
+            _ => tokio::time::sleep(Duration::from_millis(20)).await,
+        }
+    };
+    assert!(!pid_is_gone(&pid));
+    client.call(Request::CloseSession { session }).await.unwrap();
+    let mut waited = 0;
+    while !pid_is_gone(&pid) {
+        assert!(waited < 250, "run {run} outlived its session");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        waited += 1;
+    }
 }
