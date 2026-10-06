@@ -47,8 +47,8 @@ LogicalTip        an evolving tip (the dirty tree, a branch, a PR) whose value i
                   time-ordered sequence of settled Snapshots. This sequence IS the
                   edit timeline.
 Changeset         (base: SnapshotId, target: SnapshotId)
-ReviewFilter      review roots + include/exclude patterns. A VIEW over a changeset;
-                  never part of snapshot identity.
+ReviewFilter      review roots + include/exclude patterns, set per repository. A
+                  VIEW over a changeset; never part of snapshot identity.
 Pin               recorded {head, tree_hash} when a review starts (version 1); the
                   dirty content of that snapshot copied into the content store
 Anchor            content anchor for one range on one side (I3); used by threads
@@ -193,7 +193,7 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 ### 5.3 Session lifecycle
 
 - **Browsing:** opening a repository shows the live working tree against the base, and nothing is recorded: no versions, no retained content, no session refs. The base is a view setting.
-- **Open:** a review starts implicitly with the first review action: marking something seen (span, hunk or file), acknowledging a non-text change, or creating a thread. Un-marking, reading and run approvals (§7.5, per repository) do not start one. The snapshot current at that moment is **version 1**, the review's start snapshot; the pin records its `HEAD` and tree, and the chosen base and filter carry over. Each later settled snapshot is the next version (v2, v3, …). Content retention and session refs (§6.1) apply from the start. A complete review (§5.2) stays open and keeps tracking.
+- **Open:** a review starts implicitly with the first review action: marking something seen (span, hunk or file), acknowledging a non-text change, or creating a thread. Un-marking, reading and run approvals (§7.5, per repository) do not start one. The snapshot current at that moment is **version 1**, the review's start snapshot; the pin records its `HEAD` and tree, and the chosen base carries over. Each later settled snapshot is the next version (v2, v3, …). Content retention and session refs (§6.1) apply from the start. A complete review (§5.2) stays open and keeps tracking.
 - **Closed:** "Finish review" is an explicit action, allowed with changes still unseen; it records whether the review was complete. It releases the session refs and stops versioning. Further edits are browsing again until the next review action starts a new review. Closed sessions follow the retention rule (§8).
 - **Resume:** opening a repository with an open review resumes it (the tree settles as the next version and review state remaps, §5.2); with none, it opens browsing.
 
@@ -204,7 +204,7 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 ### 6.1 Snapshots and scope
 
 - **Snapshot contents:** a file is in a snapshot iff it is under the repository root **and** (tracked by git **or** untracked and not git-ignored). Files over the capture size cap (default 50 MB) are still hashed in full, so snapshot identity stays exact, but their content is not retained and they appear as `content unavailable`. Ignored paths can be opted in explicitly. The untracked contents of folders a tool owns by name (`.pnpm-store/`) are never part of a snapshot; this list is explicit and fixed. No relevance inference of any kind (I4). Executable-bit and symlink changes are first-class `(mode, kind)` entries. Submodules are recorded as pinned commits; descent is opt-in.
-- **Review filter:** review roots, binary hiding, and user patterns are a `ReviewFilter` applied when *displaying* a changeset. Changing it never changes snapshot identity, so it never disturbs anchors or review state.
+- **Review filter:** review roots, binary hiding, and user patterns are a `ReviewFilter` applied when *displaying* a changeset. It is a project setting, stored per repository and applied to every changeset of it. Changing it never changes snapshot identity, so it never disturbs anchors or review state.
 - **Pin at review start (§5.3):** record `{head, tree_hash}` of version 1 and copy its dirty and untracked content into Vet's content store. Dirty content is **never** written into the git object database, so untracked secrets never become pushable objects. The changeset is the base to the latest settled snapshot; version 1 is the one current when the review started.
 - **Content retention:** when a snapshot settles while a review is open, every blob of it that git cannot reconstruct (dirty and untracked content) is copied into the content store, so every snapshot on the session's timeline stays reconstructible. In addition, every blob that appears on either side of a displayed diff, or under an anchor or span, is copied when first displayed, so review state and anchors never depend on git keeping old objects alive.
 - **Session refs:** while a review is open, it holds `refs/vet/sessions/<session-id>/{base,target}` on the commits its snapshots are built from, so they stay materializable. The refs are deleted when the review is finished.
@@ -342,7 +342,7 @@ One keystroke from review to run/debug.
 - **Hunk view** with decorations: review state from spans (including `SeenAgainstOldBase`), coverage of changed lines, changed-symbol reachability (labeled derived), executor-relevant changes highlighted, whitespace-only anchor notes, diagnostics as gutter markers with a count in the status footer. Marking seen is a toggle: a seen hunk can be un-marked.
 - **Non-text changes** (mode, symlink target, submodule commit, binary, content unavailable) render as a change card with a hunk-style header: same "mark seen" action and key, included in hunk navigation, images with a before/after preview. A file with both kinds shows its card above the first hunk.
 - **Inferred anchors** show a neutral "moved" badge with the confidence; the tooltip names the strategy and the original location. "Confirm" re-anchors at the current position (→ `Exact`). Low-confidence ones are also grouped under "Moved" in the comments tool window.
-- **Review filter** is edited in a popover (review roots, hide binary, include/exclude globs, live excluded count) and from the file tree ("Exclude from review", "Review only this folder"). It is stored per session; excluded files collapse into one group.
+- **Review filter** is edited in the project's settings (review roots, hide binary, include/exclude globs, live excluded count). Excluded files collapse into one group in the file tree, which shows the excluded count.
 - **Run targets:** the Run control is a split button. Targets are discovered by reading manifests (Cargo bins, `package.json` scripts, `pyproject` scripts), never by executing tools, and can be edited (command, working directory, env); stored per repo.
 - **Timeline:** the `LogicalTip`'s settled snapshots, with interdiffs between any two.
 - **Semantic diff is a projection, never the canonical representation.** The byte-level diff is the source of truth; normalization, move detection, and formatting-churn suppression are views over it, and every normalized-away change is one click away.
@@ -478,6 +478,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Export annotations as agent task files
 - Problems panel: the diagnostics of the whole changeset in one list
 - Minimap
+- Narrowing the project's review filter for one review from the file tree ("Review only this folder", "Exclude from review"), shown in the tree with a reset
 
 ### Later
 
