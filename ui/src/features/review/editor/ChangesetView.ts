@@ -174,6 +174,7 @@ export class ChangesetView {
         }),
       );
       el.append(header, ...cards.map((c) => c.el), body);
+      el.addEventListener("pointerdown", (e) => this.selectAt(index, e));
       const actions: BarActions = {
         toggleSeen: (h) => void this.toggleHunk(index, h),
         comment: () => {
@@ -412,12 +413,38 @@ export class ChangesetView {
     const handle = this.mountedHandle(fi);
     this.sync();
     const { cards, file } = this.sections[fi];
-    if (cards.length + file.hunks.length) {
-      if (this.current >= 0) this.markCurrent(this.current, false);
-      this.current = this.stopStart[fi];
-      this.markCurrent(this.current, true);
-    }
+    if (cards.length + file.hunks.length) this.select(this.stopStart[fi]);
     return handle;
+  }
+
+  /** Makes `stop` the current one without scrolling. */
+  private select(stop: number) {
+    if (this.current === stop) return;
+    if (this.current >= 0) this.markCurrent(this.current, false);
+    this.current = stop;
+    this.markCurrent(stop, true);
+  }
+
+  /**
+   * A press inside file `fi` selects what it lands on: a change card, the hunk at or above the
+   * pressed line (either side of a split view), or the file's first stop on its header.
+   */
+  private selectAt(fi: number, e: PointerEvent) {
+    const s = this.sections[fi];
+    if (!(e.target instanceof Node) || s.cards.length + s.file.hunks.length === 0) return;
+    const ci = s.cards.findIndex((c) => c.el.contains(e.target as Node));
+    if (ci >= 0) return this.select(this.stopStart[fi] + ci);
+    const views = s.handle?.views ?? [];
+    const view = views.find((v) => v.dom.contains(e.target as Node));
+    if (!view || !s.file.hunks.length) return this.select(this.stopStart[fi]);
+    const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }, false);
+    const line = view.state.doc.lineAt(pos).number - 1;
+    const base = view !== s.handle?.view;
+    let hunk = 0;
+    s.file.hunks.forEach((h, i) => {
+      if ((base ? h.baseStart : h.targetStart) <= line) hunk = i;
+    });
+    this.select(this.stopStart[fi] + s.cards.length + hunk);
   }
 
   /** The file of a stop, and the stop's index among that file's stops: below its card count it is a card, else a hunk. */
