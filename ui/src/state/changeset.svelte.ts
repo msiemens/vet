@@ -1,6 +1,9 @@
 // What the backend sent about the open changeset. Progress and review state are the
 // backend's; this holds and distributes them (SPEC I5).
 
+import { untrack } from "svelte";
+import { SvelteMap } from "svelte/reactivity";
+import type { FileChange } from "../generated/FileChange";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
@@ -19,10 +22,32 @@ class ChangesetStore {
   repo = $state<string>();
   /** Why the last attempt to open a repository failed. */
   openError = $state<{ path: string; message: string }>();
+  /**
+   * The manifest of the last refresh, with the changeset's completion kept current. Its
+   * `files` are as of the refresh (paths and hunks, which only a new revision changes);
+   * their review state is current in `file(path)`. Immutable snapshots, never deep proxies.
+   */
   manifest = $state.raw<Manifest>();
+  /** The current state of each file, one reactive cell per path: a review update invalidates only its file. */
+  private cells = new SvelteMap<string, FileChange>();
   private listeners = new Set<ReviewListener>();
 
   files = $derived(this.manifest?.files ?? []);
+  /** Same array while only review state changes. */
+  paths = $derived(this.files.map((f) => f.path));
+
+  /** A file as it is now, with its current review state and completion. */
+  file(path: string): FileChange | undefined {
+    return this.cells.get(path);
+  }
+
+  /** The manifest with every file's current state, for building views; reads nothing reactively. */
+  currentManifest(): Manifest | undefined {
+    return untrack(() => {
+      const manifest = this.manifest;
+      return manifest && { ...manifest, files: manifest.files.map((f) => this.cells.get(f.path) ?? f) };
+    });
+  }
 
   async connect() {
     try {
@@ -72,12 +97,15 @@ class ChangesetStore {
   async closeRepo() {
     this.repo = undefined;
     this.manifest = undefined;
+    this.cells.clear();
     await this.connected().close();
   }
 
   /** Fetches the manifest again; the revision may have moved. */
   async refresh(): Promise<Manifest> {
     const manifest = await this.connected().manifest();
+    this.cells.clear();
+    for (const file of manifest.files) this.cells.set(file.path, file);
     this.manifest = manifest;
     return manifest;
   }
@@ -118,13 +146,9 @@ class ChangesetStore {
   applyReview(update: ReviewUpdate) {
     const manifest = this.manifest;
     if (!manifest) return;
-    this.manifest = {
-      ...manifest,
-      completion: update.changeset,
-      files: manifest.files.map((f) =>
-        f.path === update.path ? { ...f, review: update.review, completion: update.completion } : f,
-      ),
-    };
+    const file = this.cells.get(update.path);
+    if (file) this.cells.set(update.path, { ...file, review: update.review, completion: update.completion });
+    this.manifest = { ...manifest, completion: update.changeset };
     for (const listener of this.listeners) listener(update);
   }
 

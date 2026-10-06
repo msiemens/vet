@@ -25,6 +25,14 @@ Svelte 5 + CodeMirror 6, organised by feature under `src/`.
 - Events: `state/changeset.svelte.ts` subscribes to the backend's events (refetch on `snapshotSettled`, update one file on `reviewChanged`); views listen to the store, not the connection.
 - One component per file, named by what it is. No `utils`/`helpers`; put a function next to its user, or in `lib/` if shared.
 
+## Reactivity
+
+- Backend data lives in `state/` as immutable snapshots (`$state.raw`), one reactive cell per file (`SvelteMap<path, FileChange>`), never deep `$state`: proxies over thousands of files and hunks cost memory and every read. `changeset.manifest` is the manifest of the last refresh with the changeset completion kept current; `changeset.file(path)` is a file's current state.
+- No full rebuilds. A `$derived` over a large collection is keyed or incremental: one `ReviewChanged` or `SetSeen` reply invalidates only that file's cell, and with it the tree row and tab that show it. The file tree's structure depends on `changeset.paths`, which keeps its identity while only review state changes, so it is built once per revision; a row reads its own file.
+- The editor and virtualized views get explicit calls (`applyReview(path, review)`, `goToHunk`, `setMode`); they never subscribe to stores, and editor state is never mirrored into Svelte state.
+- Nothing reactive per frame: no `$effect` or reactive state on what changes with a scroll position, a pointer move or a keystroke. Mounting editors while scrolling is imperative, and spends at most a few milliseconds per frame (the rest follows on the next frames).
+- Small UI state is plain `$state`: tool windows, widths, theme, tabs, menus, toasts.
+
 ## Controls and selection
 
 Controls behave like a desktop app (JetBrains-like): `cursor: default`, no transitions or shadows, a flat background on hover and while pressed, a distinct toggled state, and a focus ring only for keyboard focus (`:focus-visible`). The colours are tokens (`--hov`, `--press`, `--tog`, `--tog-hov`, `--tog-press`, `--focus`); `global.css` applies them to two classes:

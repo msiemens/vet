@@ -12,7 +12,6 @@
   import { type Hud, ReviewController } from "./ReviewController";
   import { CHANGES, pathOf } from "./Tabs.svelte";
   import TabStrip from "./TabStrip.svelte";
-  import type { FileRow } from "./tree";
   import ViewControls from "./ViewControls.svelte";
 
   let {
@@ -48,7 +47,7 @@
 
   const revision = $derived(changeset.manifest?.revision);
   const highlighted = $derived(pathOf(tabs.active) ?? selected);
-  const fileOf = (path: string) => changeset.files.find((f) => f.path === path);
+  const fileOf = (path: string) => changeset.file(path);
 
   onMount(() => {
     controller.open(true).then(
@@ -62,7 +61,7 @@
   $effect(() => {
     if (revision === undefined) return;
     untrack(() => {
-      const manifest = changeset.manifest;
+      const manifest = changeset.currentManifest();
       if (!manifest) return;
       tabs.keepOnly(new Set(manifest.files.map((f) => f.path)));
       controller.update(manifest);
@@ -70,15 +69,15 @@
   });
 
   /** Shows the file in the Changes tab; a file with only non-text changes has nothing there, so it opens its own tab. */
-  function select(row: FileRow) {
-    selected = row.path;
-    if (!row.file.hunks.length) {
-      void controller.openFile(row.path);
+  function select(path: string) {
+    selected = path;
+    if (!fileOf(path)?.hunks.length) {
+      void controller.openFile(path);
       return;
     }
     tabs.active = CHANGES;
     const view = controller.changes;
-    void view.goToFile(view.indexOf(row.path));
+    void view.goToFile(view.indexOf(path));
   }
 
   function setMode(next: Mode) {
@@ -95,11 +94,12 @@
   <SideBar side="left" defaultWidth="var(--w-tree)">
     {#if leftTool === "files"}
       <FileTree
-        files={changeset.files}
+        paths={changeset.paths}
+        {fileOf}
         selected={highlighted}
         excluded={{ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 }}
         onselect={select}
-        onopen={(row) => void controller.openFile(row.path)}
+        onopen={(path) => void controller.openFile(path)}
         onmenu={(path, x, y) => (menu = { path, x, y })}
       />
     {:else}

@@ -11,7 +11,12 @@ import type { BarActions } from "./hunkBar";
 import { lineDelta } from "./lineDelta";
 import { type Handle, type Hooks, type Loaded, type Mode, mountFile } from "./mount";
 import { setCurrent, setStates } from "./reviewState";
-import { COLLAPSE, type Metrics, sectionHeight } from "./sectionLayout";
+import { COLLAPSE, type Metrics, sectionLayout } from "./sectionLayout";
+
+/** Time a scroll frame may spend creating editors before the rest wait for the next frame. */
+const MOUNT_BUDGET_MS = 6;
+/** Scrolling counts as stopped after this long without a scroll event. */
+const SETTLE_MS = 120;
 
 const px = (style: CSSStyleDeclaration, name: string) => parseFloat(style.getPropertyValue(name));
 
@@ -43,6 +48,8 @@ interface Section {
   count: HTMLElement;
   top: number;
   height: number;
+  /** Estimated offset of each hunk bar from the top of the section. */
+  hunkTops: number[];
   hooks: Hooks;
   loaded?: Loaded;
   loading?: Promise<Loaded>;
@@ -56,7 +63,15 @@ export class ChangesetView {
   private mounted = new Set<number>();
   private m: Metrics;
   current = -1;
-  private onScroll = () => this.sync();
+  /** While the viewer scrolls only what is in view mounts; the surroundings follow once the scrolling stops. */
+  private onScroll = () => {
+    this.sync(false);
+    clearTimeout(this.settle);
+    this.settle = setTimeout(() => this.sync(), SETTLE_MS);
+  };
+  private settle?: ReturnType<typeof setTimeout>;
+  /** A frame request that continues mounting once a frame's budget is spent. */
+  private later?: number;
 
   constructor(
     private root: HTMLElement,
@@ -129,6 +144,7 @@ export class ChangesetView {
         count,
         top: 0,
         height: 0,
+        hunkTops: [],
         hooks: { ...hooks, ...actions },
       });
     }
@@ -140,6 +156,9 @@ export class ChangesetView {
   }
 
   destroy() {
+    if (this.later !== undefined) cancelAnimationFrame(this.later);
+    this.later = undefined;
+    clearTimeout(this.settle);
     this.root.removeEventListener("scroll", this.onScroll);
     this.root.removeEventListener("click", this.onExpand, true);
     for (const fi of this.mounted) this.sections[fi].handle?.destroy();
@@ -190,8 +209,11 @@ export class ChangesetView {
     if (s && lines) this.resize(s, s.height + lines * this.m.line - this.m.collapsed);
   };
 
+  /** Lays the section out from the manifest; its own bottom border is one more pixel. */
   private estimate(s: Section): number {
-    return sectionHeight(s.file, this.mode, this.m, this.collapse) + 1;
+    const layout = sectionLayout(s.file, this.mode, this.m, this.collapse);
+    s.hunkTops = layout.hunkTops;
+    return layout.height + 1;
   }
 
   private updateCount(s: Section) {
@@ -252,47 +274,77 @@ export class ChangesetView {
     await Promise.all(Array.from({ length: concurrency }, worker));
   }
 
-  sync() {
+  /** Mounts the editor of a loaded section. */
+  private mount(fi: number): Handle {
+    const s = this.sections[fi];
+    if (s.handle) return s.handle;
+    if (!s.loaded) throw new Error(`file ${fi} is not loaded`);
+    s.handle = mountFile(
+      s.body,
+      s.file.path,
+      s.loaded,
+      { states: s.review.hunks, symbols: s.symbols },
+      this.mode,
+      s.hooks,
+      this.collapse ? COLLAPSE : undefined,
+    );
+    this.mounted.add(fi);
+    if (this.current >= this.hunkStart[fi] && this.current < this.hunkStart[fi] + s.file.hunks.length)
+      s.handle.dispatchAll(setCurrent.of(this.current - this.hunkStart[fi]));
+    return s.handle;
+  }
+
+  /**
+   * Unmounts far sections and mounts loaded near ones, the ones in view first. Creating an
+   * editor is the expensive step, so a scroll frame mounts only as many as fit a time
+   * budget; the rest follow on later frames.
+   */
+  sync(wide = true) {
     const top = this.root.scrollTop;
     const h = this.root.clientHeight;
-    const near = [this.indexAt(Math.max(0, top - h)), this.indexAt(top + 2 * h)];
-    const far = [this.indexAt(Math.max(0, top - 3 * h)), this.indexAt(top + 4 * h)];
+    const near = wide
+      ? [this.indexAt(Math.max(0, top - h)), this.indexAt(top + 2 * h)]
+      : [this.indexAt(top), this.indexAt(top + h)];
+    const far = [this.indexAt(Math.max(0, top - 2 * h)), this.indexAt(top + 3 * h)];
     for (const fi of [...this.mounted]) {
       if (fi < far[0] || fi > far[1]) {
         this.unmount(this.sections[fi]);
         this.mounted.delete(fi);
       }
     }
-    for (let fi = near[0]; fi <= near[1]; fi++) {
+    const middle = top + h / 2;
+    const distance = (fi: number) => {
       const s = this.sections[fi];
-      if (s.handle || !s.loaded) continue;
-      s.handle = mountFile(
-        s.body,
-        s.file.path,
-        s.loaded,
-        { states: s.review.hunks, symbols: s.symbols },
-        this.mode,
-        s.hooks,
-        this.collapse ? COLLAPSE : undefined,
-      );
-      this.mounted.add(fi);
-      if (this.current >= this.hunkStart[fi] && this.current < this.hunkStart[fi] + s.file.hunks.length)
-        s.handle.dispatchAll(setCurrent.of(this.current - this.hunkStart[fi]));
+      return Math.abs(s.top + s.height / 2 - middle);
+    };
+    const pending: number[] = [];
+    for (let fi = near[0]; fi <= near[1]; fi++)
+      if (!this.sections[fi].handle && this.sections[fi].loaded) pending.push(fi);
+    pending.sort((a, b) => distance(a) - distance(b));
+    const started = performance.now();
+    for (const [i, fi] of pending.entries()) {
+      if (i > 0 && performance.now() - started > MOUNT_BUDGET_MS) {
+        this.later ??= requestAnimationFrame(() => {
+          this.later = undefined;
+          this.sync(wide);
+        });
+        return;
+      }
+      this.mount(fi);
     }
   }
 
-  /** The editor of a loaded section near the viewport; throws if `sync` did not mount it. */
+  /** The editor of a section, mounted now if it was not; the section must be loaded. */
   private mountedHandle(fi: number): Handle {
-    const handle = this.sections[fi].handle;
-    if (!handle) throw new Error(`file ${fi} is not mounted`);
-    return handle;
+    return this.mount(fi);
   }
 
   async goToFile(fi: number): Promise<Handle> {
     await this.load(fi);
     this.root.scrollTop = this.sections[fi].top;
+    const handle = this.mountedHandle(fi);
     this.sync();
-    return this.mountedHandle(fi);
+    return handle;
   }
 
   private locate(global: number): [number, number] {
@@ -317,7 +369,7 @@ export class ChangesetView {
     }
     this.current = global;
 
-    const handle = this.reveal(fi, hunk.targetStart);
+    const handle = this.reveal(fi, hunk.targetStart, hi);
     handle.dispatchAll(setCurrent.of(hi));
   }
 
@@ -327,11 +379,13 @@ export class ChangesetView {
     this.reveal(fi, line);
   }
 
-  /** The section's top mounts its editor; CodeMirror then scrolls to the line exactly. */
-  private reveal(fi: number, line: number): Handle {
-    this.root.scrollTop = this.sections[fi].top;
-    this.sync();
+  /** Scrolls near the line by the estimate and mounts the editor; CodeMirror then scrolls to the line exactly. */
+  private reveal(fi: number, line: number, hunk?: number): Handle {
+    const s = this.sections[fi];
+    const offset = hunk === undefined ? 0 : s.hunkTops[hunk] - this.root.clientHeight / 2;
+    this.root.scrollTop = Math.max(0, s.top + offset);
     const handle = this.mountedHandle(fi);
+    this.sync();
     const doc = handle.view.state.doc;
     const pos = doc.line(Math.min(line + 1, doc.lines)).from;
     handle.view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: "center" }) });

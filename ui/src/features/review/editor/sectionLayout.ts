@@ -15,14 +15,26 @@ export interface Metrics {
   collapsed: number;
 }
 
+export interface SectionLayout {
+  height: number;
+  /** Offset of each hunk's header bar from the top of the section. */
+  hunkTops: number[];
+}
+
 /** Rows and bars an unchanged region of `lines` lines takes, with `context` lines kept at its edges. */
 function unchanged(lines: number, context: number): { rows: number; bars: number } {
   return lines - context >= COLLAPSE.minSize ? { rows: context, bars: 1 } : { rows: Math.max(0, lines), bars: 0 };
 }
 
 /** `mode` is the editor's `Mode`; spelled out so this module needs no DOM or CodeMirror types. */
-export function sectionHeight(file: FileChange, mode: "unified" | "split", m: Metrics, collapse: boolean): number {
+export function sectionLayout(
+  file: FileChange,
+  mode: "unified" | "split",
+  m: Metrics,
+  collapse: boolean,
+): SectionLayout {
   const { margin } = COLLAPSE;
+  const hunkTops: number[] = [];
   let y = m.header;
   let end = 0; // where the previous hunk ends in the target, in lines
   const gap = (lines: number, context: number) => {
@@ -31,11 +43,12 @@ export function sectionHeight(file: FileChange, mode: "unified" | "split", m: Me
   };
   file.hunks.forEach((h, i) => {
     gap(h.targetStart - end, i === 0 ? margin : 2 * margin);
+    hunkTops.push(y);
     // Unified shows each deleted line as an extra row; side by side pads the shorter side.
     const rows = mode === "unified" ? h.baseLen + h.targetLen : Math.max(h.baseLen, h.targetLen);
     y += m.hunk + rows * m.line;
     end = h.targetStart + h.targetLen;
   });
   gap(file.targetLines - end, file.hunks.length ? margin : 0);
-  return y;
+  return { height: y, hunkTops };
 }

@@ -3,30 +3,34 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
   import type { FileChange } from "../../generated/FileChange";
-  import { type DirRow, type FileRow, buildRows, buildTree } from "./tree";
+  import { type DirRow, buildRows, buildTree, summarize } from "./tree";
 
   let {
-    files,
+    paths,
+    fileOf,
     selected,
     excluded,
     onselect,
     onopen,
     onmenu,
   }: {
-    files: FileChange[];
+    /** Changes only with the changeset's revision, so the tree is built once per revision. */
+    paths: string[];
+    /** A file's current state; reading it subscribes to that file alone. */
+    fileOf: (path: string) => FileChange | undefined;
     selected?: string;
     /** Changes hidden by the review filter, collapsed into one group. */
     excluded?: { lines: number; items: number };
     /** Single click. */
-    onselect: (row: FileRow) => void;
+    onselect: (path: string) => void;
     /** Double click or Enter. */
-    onopen: (row: FileRow) => void;
+    onopen: (path: string) => void;
     /** Context menu on a file or folder row, at the pointer position. */
     onmenu: (path: string, x: number, y: number) => void;
   } = $props();
 
   const collapsed = new SvelteSet<string>();
-  const tree = $derived(buildTree(files));
+  const tree = $derived(buildTree(paths));
   const rows = $derived(buildRows(tree, collapsed));
 
   const STATUS = { M: "var(--old)", A: "var(--addt)", D: "var(--delt)", R: "var(--tx2)" } as const;
@@ -45,7 +49,7 @@
 </script>
 
 <nav aria-label="Changed files">
-  <div class="sh"><span>Files</span><span class="grow"></span><span class="mono count">{files.length}</span></div>
+  <div class="sh"><span>Files</span><span class="grow"></span><span class="mono count">{paths.length}</span></div>
   <div class="rows">
     {#each rows as row (row.path + row.kind)}
       {#if row.kind === "dir"}
@@ -62,33 +66,35 @@
           <span class="name">{row.name}</span>
         </button>
       {:else}
+        {@const file = fileOf(row.path)}
+        {@const s = file && summarize(file)}
         <button
           class="flat tw"
           class:on={row.path === selected}
           type="button"
           title={row.path}
           style:padding-left="calc(8px + {row.depth} * var(--w-indent))"
-          onclick={() => onselect(row)}
-          ondblclick={() => onopen(row)}
+          onclick={() => onselect(row.path)}
+          ondblclick={() => onopen(row.path)}
           onkeydown={(e) => {
             if (e.key !== "Enter") return;
             e.preventDefault();
-            onopen(row);
+            onopen(row.path);
           }}
           oncontextmenu={(e) => menu(e, row.path)}
         >
           <span class="chev"></span>
-          {#if row.build}<span class="build" title="Build file"><Icon name="build" size={12} stroke={2} /></span>{/if}
+          {#if s?.build}<span class="build" title="Build file"><Icon name="build" size={12} stroke={2} /></span>{/if}
           <span class="name">{row.name}</span>
-          {#if row.mode}<span class="mono x" title="File mode changed">{row.mode}</span>{/if}
+          {#if s?.mode}<span class="mono x" title="File mode changed">{s.mode}</span>{/if}
           <Meter
             width={22}
             segments={[
-              { value: row.seenPct, color: "var(--seen)" },
-              { value: row.oldPct, color: "var(--old)" },
+              { value: s?.seenPct ?? 0, color: "var(--seen)" },
+              { value: s?.oldPct ?? 0, color: "var(--old)" },
             ]}
           />
-          <span class="mono status" style:color={STATUS[row.status]}>{row.status}</span>
+          <span class="mono status" style:color={s && STATUS[s.status]}>{s?.status}</span>
         </button>
       {/if}
     {/each}

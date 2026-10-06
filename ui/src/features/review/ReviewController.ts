@@ -158,7 +158,8 @@ export class ReviewController {
   attach(id: TabId, root: HTMLElement): () => void {
     this.roots.set(id, root);
     // The Changes tab is built by `open`, which fetches the manifest first.
-    if (id !== CHANGES && changeset.manifest) this.build(id, changeset.manifest);
+    const manifest = changeset.currentManifest();
+    if (id !== CHANGES && manifest) this.build(id, manifest);
     return () => {
       this.views.get(id)?.destroy();
       this.views.delete(id);
