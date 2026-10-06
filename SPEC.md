@@ -455,6 +455,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Language-server status per server (starting, indexing with the server's progress, ready, failed, not installed), in the footer with details on click
 - Soft wrap, toggled per view and on by default for prose (Markdown, reStructuredText, plain text); a changed line that runs past the visible width is marked whether or not it wraps
 - Resizable dialogs (Settings first), keeping their size
+- The window reopens at its last position and size (falling back to the default when that display is gone)
 
 ### M2
 
