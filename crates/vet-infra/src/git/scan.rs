@@ -112,7 +112,19 @@ impl<'r> Worktree<'r> {
                 Err(_) => match std::fs::metadata(&full) {
                     Ok(followed) => md = followed,
                     Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-                    Err(e) => return Err(at(e)),
+                    // A link whose target cannot be accessed: recorded, but without content.
+                    Err(_) => {
+                        return Ok(Some(Item {
+                            entry: FileEntry {
+                                blob: BlobId::of(&[]),
+                                mode: 0o120000,
+                                kind: EntryKind::Symlink,
+                                unfiltered: false,
+                            },
+                            unavailable: true,
+                            bytes: None,
+                        }));
+                    }
                 },
             }
         }
