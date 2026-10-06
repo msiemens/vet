@@ -15,8 +15,8 @@
     align-items: center;
     gap: 8px;
     height: var(--h-header);
-    padding: 0 max(10px, var(--tauri-plugin-decoration-right-clearance, 0px)) 0
-      max(10px, var(--tauri-plugin-decoration-left-clearance, 0px));
+    padding: 0 calc(var(--tauri-plugin-decoration-right-clearance, 0px) + 10px) 0
+      calc(var(--tauri-plugin-decoration-left-clearance, 0px) + 10px);
     box-sizing: border-box;
     overflow: hidden;
     background: var(--bg-window);
