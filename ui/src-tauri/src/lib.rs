@@ -23,7 +23,12 @@ struct Backend {
 const EXIT_FLAG: &str = "--exit-on-stdin-close";
 
 /// Environment the corpus loader reads; forwarded into WSL through `WSLENV`.
-const CORPUS_ENV: [&str; 4] = ["VET_CORPUS_URL", "VET_CORPUS_REPO", "VET_CORPUS_BASE", "VET_CORPUS_HEAD"];
+const CORPUS_ENV: [&str; 4] = [
+    "VET_CORPUS_URL",
+    "VET_CORPUS_REPO",
+    "VET_CORPUS_BASE",
+    "VET_CORPUS_HEAD",
+];
 
 /// The command that starts the backend, and the binary path it runs.
 ///
@@ -38,11 +43,24 @@ fn backend_command() -> Result<(Command, String), String> {
             let binary = configured.ok_or("VET_WSL_DISTRO is set: set VET_BACKEND to the backend's Linux path inside WSL, e.g. /home/me/vet/target/debug/vet-mock")?;
             let mut command = Command::new("wsl.exe");
             // `--exec` skips the login environment, so PATH lacks e.g. NixOS's per-user profile (git).
-            command.args(["--distribution", &distro, "--exec", "/bin/sh", "-lc", r#"exec "$0" "$@""#, &binary, EXIT_FLAG]);
+            command.args([
+                "--distribution",
+                &distro,
+                "--exec",
+                "/bin/sh",
+                "-lc",
+                r#"exec "$0" "$@""#,
+                &binary,
+                EXIT_FLAG,
+            ]);
             // Env vars cross into WSL only when listed in WSLENV.
             let mut wslenv = std::env::var("WSLENV").unwrap_or_default();
             for name in CORPUS_ENV.iter().filter(|name| std::env::var_os(name).is_some()) {
-                wslenv = if wslenv.is_empty() { (*name).to_owned() } else { format!("{wslenv}:{name}") };
+                wslenv = if wslenv.is_empty() {
+                    (*name).to_owned()
+                } else {
+                    format!("{wslenv}:{name}")
+                };
             }
             command.env("WSLENV", wslenv);
             (command, format!("{binary} (in WSL distro {distro})"))
@@ -50,14 +68,19 @@ fn backend_command() -> Result<(Command, String), String> {
         _ => {
             let binary = configured.unwrap_or_else(default_backend);
             if !std::path::Path::new(&binary).exists() {
-                return Err(format!("backend binary not found at {binary}; run `pnpm backend` in ui/ or set VET_BACKEND"));
+                return Err(format!(
+                    "backend binary not found at {binary}; run `pnpm backend` in ui/ or set VET_BACKEND"
+                ));
             }
             let mut command = Command::new(&binary);
             command.arg(EXIT_FLAG);
             (command, binary)
         }
     };
-    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -70,13 +93,18 @@ fn backend_command() -> Result<(Command, String), String> {
 fn default_backend() -> String {
     let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
     let exe = if cfg!(windows) { "vet-mock.exe" } else { "vet-mock" };
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target").join(profile).join(exe);
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target")
+        .join(profile)
+        .join(exe);
     path.canonicalize().unwrap_or(path).to_string_lossy().into_owned()
 }
 
 fn start_backend() -> Result<Backend, String> {
     let (mut command, binary) = backend_command()?;
-    let mut child = command.spawn().map_err(|error| format!("cannot start the backend {binary}: {error}"))?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("cannot start the backend {binary}: {error}"))?;
     let stdout = child.stdout.take().ok_or("backend has no stdout")?;
 
     // Read on a thread so the wait can time out.
@@ -87,13 +115,21 @@ fn start_backend() -> Result<Backend, String> {
         let _ = sender.send(result);
     });
     let line = match receiver.recv_timeout(READY_TIMEOUT) {
-        Ok(Ok(line)) if line.is_empty() => return Err(abort(child, format!("the backend {binary} exited before printing its Ready line; see its output above"))),
+        Ok(Ok(line)) if line.is_empty() => {
+            return Err(abort(
+                child,
+                format!("the backend {binary} exited before printing its Ready line; see its output above"),
+            ));
+        }
         Ok(Ok(line)) => line,
         Ok(Err(error)) => return Err(abort(child, format!("cannot read the backend's Ready line: {error}"))),
         Err(_) => return Err(abort(child, "the backend did not print its Ready line in time".into())),
     };
     match serde_json::from_str::<Ready>(&line) {
-        Ok(ready) => Ok(Backend { ready, child: Mutex::new(child) }),
+        Ok(ready) => Ok(Backend {
+            ready,
+            child: Mutex::new(child),
+        }),
         Err(error) => Err(abort(child, format!("malformed Ready line {line:?}: {error}"))),
     }
 }
@@ -121,8 +157,15 @@ struct BenchConfig {
 fn bench_config() -> BenchConfig {
     BenchConfig {
         auto: std::env::var("VET_BENCH").is_ok_and(|v| v == "1"),
-        scroll_seconds: std::env::var("VET_BENCH_SCROLL_SECONDS").ok().and_then(|v| v.parse().ok()).unwrap_or(20),
-        topology: if cfg!(windows) && std::env::var_os("VET_WSL_DISTRO").is_some() { "wsl-split" } else { "native" },
+        scroll_seconds: std::env::var("VET_BENCH_SCROLL_SECONDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(20),
+        topology: if cfg!(windows) && std::env::var_os("VET_WSL_DISTRO").is_some() {
+            "wsl-split"
+        } else {
+            "native"
+        },
     }
 }
 
@@ -154,7 +197,13 @@ fn renderer_memory(backend: tauri::State<Backend>) -> Option<u64> {
     let own = descendants(Pid::from_u32(std::process::id()));
     let backend_pid = backend.child.lock().unwrap_or_else(PoisonError::into_inner).id();
     let excluded = descendants(Pid::from_u32(backend_pid));
-    let total = own.iter().skip(1).filter(|pid| !excluded.contains(pid)).filter_map(|pid| system.process(*pid)).map(|p| p.memory()).sum();
+    let total = own
+        .iter()
+        .skip(1)
+        .filter(|pid| !excluded.contains(pid))
+        .filter_map(|pid| system.process(*pid))
+        .map(|p| p.memory())
+        .sum();
     Some(total)
 }
 
@@ -177,7 +226,12 @@ pub fn run() {
             app.manage(start_backend()?);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![backend_connection, bench_config, renderer_memory, save_results])
+        .invoke_handler(tauri::generate_handler![
+            backend_connection,
+            bench_config,
+            renderer_memory,
+            save_results
+        ])
         .build(tauri::generate_context!())
         .expect("error while building the Vet shell");
 
