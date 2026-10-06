@@ -8,14 +8,20 @@ import { markdown } from "@codemirror/lang-markdown";
 import { python } from "@codemirror/lang-python";
 import { rust } from "@codemirror/lang-rust";
 import { yaml } from "@codemirror/lang-yaml";
-import { HighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
+import {
+  HighlightStyle,
+  type Language,
+  type LanguageSupport,
+  StreamLanguage,
+  syntaxHighlighting,
+} from "@codemirror/language";
 import { csharp } from "@codemirror/legacy-modes/mode/clike";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { toml } from "@codemirror/legacy-modes/mode/toml";
 import type { Extension } from "@codemirror/state";
 import { tags as t } from "@lezer/highlight";
 
-function language(path: string): Extension {
+function language(path: string): LanguageSupport | Language | undefined {
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
   switch (ext) {
     case "rs":
@@ -58,11 +64,17 @@ function language(path: string): Extension {
     case "svg":
       return html();
     default:
-      return [];
+      return undefined;
   }
 }
 
-const highlightStyle = HighlightStyle.define([
+/** The parser's language for a file name (or a bare extension), for code shown outside an editor. */
+export const languageOf = (path: string): Language | undefined => {
+  const l = language(path);
+  return l && "language" in l ? l.language : l;
+};
+
+export const highlightStyle = HighlightStyle.define([
   { tag: [t.keyword, t.operatorKeyword, t.modifier], color: "var(--syn-keyword)" },
   { tag: [t.string, t.special(t.string)], color: "var(--syn-string)" },
   { tag: [t.number, t.bool, t.null, t.atom], color: "var(--syn-number)" },
@@ -74,4 +86,4 @@ const highlightStyle = HighlightStyle.define([
   { tag: [t.link, t.url], color: "var(--accent)" },
 ]);
 
-export const syntax = (path: string): Extension => [language(path), syntaxHighlighting(highlightStyle)];
+export const syntax = (path: string): Extension => [language(path) ?? [], syntaxHighlighting(highlightStyle)];

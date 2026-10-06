@@ -5,6 +5,7 @@
 import { getChunks, getOriginalDoc } from "@codemirror/merge";
 import { type EditorView, ViewPlugin } from "@codemirror/view";
 import { nextPaint } from "../../../lib/nextPaint";
+import { hoverContent } from "./hoverContent";
 import { isGotoClick, type SemanticHooks } from "./semantic";
 
 const HOVER_MS = 50;
@@ -75,7 +76,7 @@ export function deletedLines(path: string, hooks: SemanticHooks, hoverShown: (ms
         if (!text || seq !== this.seq) return;
         const tip = document.createElement("div");
         tip.className = "cm-tooltip vet-hover vet-hover-floating";
-        tip.textContent = text;
+        tip.append(hoverContent(text, path));
         tip.style.left = `${x}px`;
         tip.style.top = `${y - 8}px`;
         document.body.append(tip);

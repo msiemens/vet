@@ -374,22 +374,73 @@
 
 .vet-hover {
   user-select: text;
-  padding: 4px 8px;
+  padding: 6px 10px;
   background: var(--bg-sheet);
   color: var(--text);
   border: 1px solid var(--line);
-  white-space: pre-wrap;
-  max-width: 80ch;
+  max-width: min(80ch, 90vw);
   max-height: 40vh;
   overflow: auto;
+  font-family: var(--font-ui);
+  font-size: var(--fs-ctl);
+  line-height: 1.45;
+}
+/* The Markdown of a hover (editor/hoverContent.ts); code is highlighted with the editor's theme tokens. */
+.vet-md > :first-child {
+  margin-top: 0;
+}
+.vet-md > :last-child {
+  margin-bottom: 0;
+}
+.vet-md p,
+.vet-md ul,
+.vet-md ol,
+.vet-md blockquote {
+  margin: 0.5em 0;
+}
+.vet-md ul,
+.vet-md ol {
+  padding-left: 1.4em;
+}
+.vet-md h1,
+.vet-md h2,
+.vet-md h3,
+.vet-md h4 {
+  margin: 0.6em 0 0.3em;
+  font-size: inherit;
+  font-weight: 600;
+}
+.vet-md blockquote {
+  padding-left: 8px;
+  border-left: 2px solid var(--line);
+  color: var(--text-2);
+}
+.vet-md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.vet-md code {
+  font-family: var(--font-mono);
   font-size: var(--fs-mono);
+}
+.vet-md :not(pre) > code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--bg-hunk);
+}
+.vet-md pre {
+  margin: 0.5em 0;
+  padding: 4px 8px;
+  overflow-x: auto;
+  border-radius: 4px;
+  background: var(--bg-editor);
+  border: 1px solid var(--line-soft);
 }
 /* The hover of a deleted line is not a CodeMirror tooltip: it sits above the pointer. */
 .vet-hover-floating {
   position: fixed;
   transform: translateY(-100%);
   z-index: 1000;
-  font-family: var(--font-mono);
 }
 
 /* The span a go to definition reached. */

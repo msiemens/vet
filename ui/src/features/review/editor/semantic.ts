@@ -11,6 +11,7 @@ import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { nextPaint } from "../../../lib/nextPaint";
 import { isMac } from "../../../state/host";
+import { hoverContent } from "./hoverContent";
 import { offsetAt } from "./positions";
 
 /** What an editor asks of its owner, which knows the view's revision and what to do with an answer. */
@@ -120,7 +121,7 @@ export function semanticExtensions(
           create: () => {
             const dom = document.createElement("div");
             dom.className = "vet-hover";
-            dom.textContent = text;
+            dom.append(hoverContent(text, path));
             if (hoverShown) void nextPaint().then(() => hoverShown(performance.now() - started));
             return { dom };
           },

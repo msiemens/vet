@@ -34,12 +34,15 @@
     "@lezer/highlight": "^1.2.5",
     "@tauri-apps/api": "^2.12.1",
     "codemirror": "^6.0.2",
+    "markdown-it": "^15.0.2",
+    "style-mod": "^4.1.4",
     "svelte": "^5.57.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tauri-apps/cli": "^2.12.1",
+    "@types/markdown-it": "^14.2.0",
     "@types/node": "^26.6.4",
     "eslint": "^10.12.0",
     "eslint-config-prettier": "^10.1.8",

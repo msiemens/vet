@@ -6,6 +6,7 @@
   import type { Reachability } from "../../generated/Reachability";
   import type { RemovalImpact } from "../../generated/RemovalImpact";
   import type { Side } from "../../generated/Side";
+  import { codeBlock } from "../review";
   import DerivedSection from "./DerivedSection.svelte";
   import { containerOf, describeFate, nameOf, type OpenLocation, place, signatureOf } from "./symbolList";
   import { symbols } from "./symbols.svelte";
@@ -30,7 +31,9 @@
   {:else if signature.state === "failed"}
     <p class="note err">{signature.message}</p>
   {:else if signature.value.text}
-    <div class="block"><code class="mono selectable">{signatureOf(signature.value.text)}</code></div>
+    <div class="block">
+      <code class="mono selectable" use:codeBlock={{ code: signatureOf(signature.value.text), path: id.path }}></code>
+    </div>
   {:else}
     <p class="note">{signature.value.unavailable?.message ?? "The language server has no text for it"}</p>
   {/if}
