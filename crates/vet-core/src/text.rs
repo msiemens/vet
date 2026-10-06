@@ -1,6 +1,7 @@
 //! Line splitting, range hashing and exact line mapping between two texts.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use similar::{Algorithm, DiffOp, capture_diff_slices};
 
@@ -17,13 +18,24 @@ pub(crate) const NO_LINE: Hash = Hash([0; 32]);
 pub(crate) struct Text<'a> {
     pub raw: Vec<&'a [u8]>,
     pub norm: Vec<&'a [u8]>,
+    hashes: OnceLock<Vec<Hash>>,
 }
 
 impl<'a> Text<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
         let raw: Vec<_> = bytes.split_inclusive(|&b| b == b'\n').collect();
         let norm = raw.iter().map(|l| l.trim_ascii_end()).collect();
-        Self { raw, norm }
+        Self {
+            raw,
+            norm,
+            hashes: OnceLock::new(),
+        }
+    }
+
+    /// Hash of each normalized line, computed on first use.
+    pub fn hashes(&self) -> &[Hash] {
+        self.hashes
+            .get_or_init(|| self.norm.iter().map(|l| Hash::of(l)).collect())
     }
 
     fn in_bounds(&self, r: LineRange) -> bool {
@@ -40,11 +52,12 @@ impl<'a> Text<'a> {
         })
     }
 
+    /// Hash of the normalized line hashes of `r`.
     pub fn norm_hash(&self, r: LineRange) -> Option<Hash> {
         self.in_bounds(r).then(|| {
             let mut h = blake3::Hasher::new();
-            for l in &self.norm[r.start as usize..r.end as usize] {
-                h.update(l).update(b"\n");
+            for l in &self.hashes()[r.start as usize..r.end as usize] {
+                h.update(&l.0);
             }
             Hash(*h.finalize().as_bytes())
         })
@@ -52,10 +65,8 @@ impl<'a> Text<'a> {
 
     /// `CONTEXT` lines before, then `CONTEXT` lines after, normalized.
     pub fn context(&self, r: LineRange) -> Vec<Hash> {
-        let at = |i: Option<usize>| match i.and_then(|i| self.norm.get(i)) {
-            Some(l) => Hash::of(l),
-            None => NO_LINE,
-        };
+        let hashes = self.hashes();
+        let at = |i: Option<usize>| i.and_then(|i| hashes.get(i)).copied().unwrap_or(NO_LINE);
         let (s, e) = (r.start as usize, r.end as usize);
         (1..=CONTEXT)
             .rev()

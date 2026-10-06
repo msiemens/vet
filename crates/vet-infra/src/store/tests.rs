@@ -184,6 +184,7 @@ async fn gc_grace_protects_fresh_content() {
 
 #[tokio::test]
 async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
+    use vet_core::prepared::PreparedFile;
     use vet_core::remap::remap_span;
     use vet_core::review::FileRemapInput;
 
@@ -204,7 +205,9 @@ async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
 
     let remapped = async |new| {
         let session = store.session(id).await.unwrap().unwrap();
-        session.spans.iter().flat_map(|r| remap_span(&r.span, now, None, Some(&input(new)), &blobs)).count()
+        let input = input(new);
+        let target = PreparedFile::new(&input, &blobs);
+        session.spans.iter().flat_map(|r| remap_span(&r.span, now, None, Some(&target))).count()
     };
     assert_eq!(remapped(e).await, 2, "the edited line splits the span");
     assert_eq!(remapped(o).await, 1, "reverted: full coverage again");

@@ -8,8 +8,9 @@ use vet_core::content::{
     BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hash, Hunk, LineRange, NonTextChange, NonTextKind, RepoPath,
     ReviewFilter, SnapshotId,
 };
+use vet_core::prepared::PreparedFile;
 use vet_core::remap::remap_span;
-use vet_core::resolve::resolve_anchor;
+use vet_core::resolve::{Resolution, resolve_anchor};
 use vet_core::review::{
     Anchor, AnchorState, Confidence, FileRemapInput, Location, ReviewedSpan, Side, SpanState,
     StaleReason, Strategy,
@@ -62,6 +63,29 @@ fn input(path_: &str, old: BlobId, new: BlobId) -> FileRemapInput {
     }
 }
 
+fn resolve(a: &Anchor, file: &FileRemapInput, changed: &[FileRemapInput], fx: &Fix) -> Resolution {
+    let changed: Vec<_> = changed
+        .iter()
+        .map(|c| PreparedFile::new(c, &fx.0))
+        .collect();
+    resolve_anchor(a, &PreparedFile::new(file, &fx.0), &changed)
+}
+
+fn remap(
+    span: &ReviewedSpan,
+    base: Option<&FileRemapInput>,
+    target: Option<&FileRemapInput>,
+    fx: &Fix,
+) -> Vec<ReviewedSpan> {
+    let prepare = |i| PreparedFile::new(i, &fx.0);
+    remap_span(
+        span,
+        NOW,
+        base.map(prepare).as_ref(),
+        target.map(prepare).as_ref(),
+    )
+}
+
 fn target_span(a: Anchor) -> ReviewedSpan {
     ReviewedSpan {
         base: None,
@@ -92,7 +116,7 @@ fn split_seen_region_around_an_edit() {
     let (o, n) = (fx.blob(&join(&old)), fx.blob(&join(&new)));
     let span = target_span(anchor(Side::Target, "a.rs", &join(&old), range(10, 30)));
 
-    let out = remap_span(&span, NOW, None, Some(&input("a.rs", o, n)), &fx.0);
+    let out = remap(&span, None, Some(&input("a.rs", o, n)), &fx);
 
     let got = ranges(&out, Side::Target);
     assert_eq!(
@@ -114,10 +138,10 @@ fn revert_restores_coverage() {
     let (o, e) = (fx.blob(&join(&old)), fx.blob(&join(&edited)));
     let span = target_span(anchor(Side::Target, "a.rs", &join(&old), range(10, 30)));
 
-    let during = remap_span(&span, NOW, None, Some(&input("a.rs", o, e)), &fx.0);
+    let during = remap(&span, None, Some(&input("a.rs", o, e)), &fx);
     assert_eq!(ranges(&during, Side::Target).len(), 2);
 
-    let after = remap_span(&span, NOW, None, Some(&input("a.rs", o, o)), &fx.0);
+    let after = remap(&span, None, Some(&input("a.rs", o, o)), &fx);
     assert_eq!(
         ranges(&after, Side::Target),
         vec![(range(10, 30), SpanState::Seen)]
@@ -133,7 +157,7 @@ fn lines_inserted_above_shift_the_span() {
     let (o, n) = (fx.blob(&join(&old)), fx.blob(&join(&new)));
     let span = target_span(anchor(Side::Target, "a.rs", &join(&old), range(10, 30)));
 
-    let out = remap_span(&span, NOW, None, Some(&input("a.rs", o, n)), &fx.0);
+    let out = remap(&span, None, Some(&input("a.rs", o, n)), &fx);
 
     assert_eq!(
         ranges(&out, Side::Target),
@@ -159,12 +183,11 @@ fn base_change_marks_seen_against_old_base() {
         state: SpanState::Seen,
     };
 
-    let out = remap_span(
+    let out = remap(
         &span,
-        NOW,
         Some(&input("a.rs", bo, bn)),
         Some(&input("a.rs", t, t)),
-        &fx.0,
+        &fx,
     );
 
     assert_eq!(
@@ -192,7 +215,7 @@ fn seen_pure_deletion_survives_unrelated_change() {
         state: SpanState::Seen,
     };
 
-    let out = remap_span(&span, NOW, Some(&input("a.rs", o, n)), None, &fx.0);
+    let out = remap(&span, Some(&input("a.rs", o, n)), None, &fx);
 
     assert_eq!(
         ranges(&out, Side::Base),
@@ -208,7 +231,7 @@ fn crlf_only_change_is_whitespace_exact_and_unseen() {
     let (o, n) = (fx.blob(&lf), fx.blob(&crlf));
     let a = anchor(Side::Target, "a.rs", &lf, range(3, 6));
 
-    let r = resolve_anchor(&a, &input("a.rs", o, n), &[], &fx.0);
+    let r = resolve(&a, &input("a.rs", o, n), &[], &fx);
 
     assert_eq!(
         r.state,
@@ -223,16 +246,7 @@ fn crlf_only_change_is_whitespace_exact_and_unseen() {
             range: range(3, 6)
         })
     );
-    assert!(
-        remap_span(
-            &target_span(a),
-            NOW,
-            None,
-            Some(&input("a.rs", o, n)),
-            &fx.0
-        )
-        .is_empty()
-    );
+    assert!(remap(&target_span(a), None, Some(&input("a.rs", o, n)), &fx).is_empty());
 }
 
 #[test]
@@ -244,7 +258,7 @@ fn identical_blob_and_diff_mapped_are_exact() {
     let (o, n) = (fx.blob(&join(&old)), fx.blob(&join(&new)));
     let a = anchor(Side::Target, "a.rs", &join(&old), range(5, 8));
 
-    let r = resolve_anchor(&a, &input("a.rs", o, o), &[], &fx.0);
+    let r = resolve(&a, &input("a.rs", o, o), &[], &fx);
     assert_eq!(
         (r.state, r.location.unwrap().range),
         (
@@ -255,7 +269,7 @@ fn identical_blob_and_diff_mapped_are_exact() {
         )
     );
 
-    let r = resolve_anchor(&a, &input("a.rs", o, n), &[], &fx.0);
+    let r = resolve(&a, &input("a.rs", o, n), &[], &fx);
     assert_eq!(
         (r.state, r.location.unwrap().range),
         (
@@ -282,7 +296,7 @@ fn rename_is_exact_at_the_new_path() {
         new_blob: Some(n),
     };
 
-    let r = resolve_anchor(&a, &file, &[], &fx.0);
+    let r = resolve(&a, &file, &[], &fx);
 
     assert_eq!(
         r.state,
@@ -308,7 +322,7 @@ fn edited_anchor_range_is_inferred_from_context() {
     let (o, n) = (fx.blob(&join(&old)), fx.blob(&join(&new)));
     let a = anchor(Side::Target, "a.rs", &join(&old), range(10, 13));
 
-    let r = resolve_anchor(&a, &input("a.rs", o, n), &[], &fx.0);
+    let r = resolve(&a, &input("a.rs", o, n), &[], &fx);
 
     assert_eq!(
         r.state,
@@ -320,6 +334,100 @@ fn edited_anchor_range_is_inferred_from_context() {
     assert_eq!(r.location.unwrap().range, range(10, 13));
 }
 
+const CONTEXT_WINDOW: AnchorState = AnchorState::Inferred {
+    strategy: Strategy::ContextWindow,
+    confidence: Confidence::Medium,
+};
+
+#[test]
+fn lines_inserted_inside_the_range_are_inferred() {
+    let mut fx = Fix::default();
+    let old = numbered(30);
+    let mut new = old.clone();
+    new.splice(11..12, ["edit a".into(), "edit b".into(), "edit c".into()]);
+    let (o, n) = (fx.blob(&join(&old)), fx.blob(&join(&new)));
+    let a = anchor(Side::Target, "a.rs", &join(&old), range(10, 13));
+
+    let r = resolve(&a, &input("a.rs", o, n), &[], &fx);
+
+    assert_eq!(r.state, CONTEXT_WINDOW);
+    assert_eq!(r.location.unwrap().range, range(10, 15));
+}
+
+#[test]
+fn lines_deleted_inside_the_range_are_inferred() {
+    let mut fx = Fix::default();
+    let old = numbered(30);
+    let mut new = old.clone();
+    new.drain(12..14);
+    let (o, n) = (fx.blob(&join(&old)), fx.blob(&join(&new)));
+    let a = anchor(Side::Target, "a.rs", &join(&old), range(10, 16));
+
+    let r = resolve(&a, &input("a.rs", o, n), &[], &fx);
+
+    assert_eq!(r.state, CONTEXT_WINDOW);
+    assert_eq!(r.location.unwrap().range, range(10, 14));
+}
+
+#[test]
+fn length_change_with_rewritten_context_is_stale() {
+    let mut fx = Fix::default();
+    let old = numbered(30);
+    let mut new = old.clone();
+    let rewritten: Vec<String> = (0..8).map(|i| format!("rewritten {i}")).collect();
+    new.splice(6..17, rewritten);
+    let (o, n) = (fx.blob(&join(&old)), fx.blob(&join(&new)));
+    let a = anchor(Side::Target, "a.rs", &join(&old), range(10, 13));
+
+    let r = resolve(&a, &input("a.rs", o, n), &[], &fx);
+
+    assert_eq!(
+        r.state,
+        AnchorState::Stale {
+            reason: StaleReason::ContextChanged
+        }
+    );
+}
+
+#[test]
+#[ignore = "benchmark; run with --release -- --ignored --nocapture"]
+fn many_anchors_on_a_large_file_pair() {
+    let mut fx = Fix::default();
+    let old: Vec<String> = (0..10_000).map(|i| format!("line {i}")).collect();
+    let mut new = old.clone();
+    for i in (2..10_000).step_by(50).rev() {
+        match i % 3 {
+            0 => new[i] = "edited".into(),
+            1 => new.insert(i, "inserted".into()),
+            _ => {
+                new.remove(i);
+            }
+        }
+    }
+    let (o, n) = (fx.blob(&join(&old)), fx.blob(&join(&new)));
+    let (old_text, file) = (join(&old), input("a.rs", o, n));
+    let anchors: Vec<_> = (0..200)
+        .map(|k| anchor(Side::Target, "a.rs", &old_text, range(k * 50, k * 50 + 5)))
+        .collect();
+
+    let start = std::time::Instant::now();
+    let prepared = PreparedFile::new(&file, &fx.0);
+    let resolved: Vec<_> = anchors
+        .iter()
+        .map(|a| resolve_anchor(a, &prepared, std::slice::from_ref(&prepared)))
+        .collect();
+    let elapsed = start.elapsed();
+
+    eprintln!("200 anchors on 10k lines: {elapsed:?}");
+    let lost: Vec<_> = resolved
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.location.is_none())
+        .collect();
+    assert!(lost.is_empty(), "{lost:?}");
+    assert!(elapsed < std::time::Duration::from_secs(5));
+}
+
 #[test]
 fn duplicate_content_is_ambiguous() {
     let mut fx = Fix::default();
@@ -328,7 +436,7 @@ fn duplicate_content_is_ambiguous() {
     let (o, n) = (fx.blob(old), fx.blob(new));
     let a = anchor(Side::Target, "a.rs", old, range(2, 3));
 
-    let r = resolve_anchor(&a, &input("a.rs", o, n), &[], &fx.0);
+    let r = resolve(&a, &input("a.rs", o, n), &[], &fx);
 
     let candidates = vec![
         Location {
@@ -359,7 +467,7 @@ fn cross_file_move_is_inferred() {
         new_blob: Some(bn),
     }];
 
-    let r = resolve_anchor(&a, &input("a.rs", o, an), &changed, &fx.0);
+    let r = resolve(&a, &input("a.rs", o, an), &changed, &fx);
 
     assert_eq!(
         r.state,
@@ -390,7 +498,7 @@ fn deleted_file_is_stale() {
         new_blob: None,
     };
 
-    let r = resolve_anchor(&a, &file, &[], &fx.0);
+    let r = resolve(&a, &file, &[], &fx);
 
     assert_eq!(
         r.state,
@@ -407,7 +515,7 @@ fn rewritten_content_is_stale() {
     let (o, n) = (fx.blob(&old), fx.blob("completely\ndifferent\n"));
     let a = anchor(Side::Target, "a.rs", &old, range(2, 5));
 
-    let r = resolve_anchor(&a, &input("a.rs", o, n), &[], &fx.0);
+    let r = resolve(&a, &input("a.rs", o, n), &[], &fx);
 
     assert_eq!(
         r.state,
@@ -425,11 +533,11 @@ fn repeated_line_with_rewritten_context_is_unseen() {
     let (o, n) = (fx.blob(old), fx.blob(rewritten));
     let span = target_span(anchor(Side::Target, "a.rs", old, range(1, 2)));
 
-    assert!(remap_span(&span, NOW, None, Some(&input("a.rs", o, n)), &fx.0).is_empty());
+    assert!(remap(&span, None, Some(&input("a.rs", o, n)), &fx).is_empty());
 
     let unrelated = "fn a() {\n    return 0;\n}\nfn b() {\n    return 1;\n}\n";
     let u = fx.blob(unrelated);
-    let out = remap_span(&span, NOW, None, Some(&input("a.rs", o, u)), &fx.0);
+    let out = remap(&span, None, Some(&input("a.rs", o, u)), &fx);
     assert_eq!(
         ranges(&out, Side::Target),
         vec![(range(1, 2), SpanState::Seen)]
@@ -541,6 +649,23 @@ fn mode_only_change_needs_acknowledgement() {
 }
 
 #[test]
+fn glob_semantics() {
+    let pass = |include: &[&str], p: &[u8]| {
+        let f = ReviewFilter {
+            include: include.iter().map(|s| s.to_string()).collect(),
+            ..ReviewFilter::default()
+        };
+        f.compile().passes(&RepoPath(p.to_vec()))
+    };
+    assert!(pass(&["*.rs"], b"a/b/c.rs") && pass(&["*.rs"], b"c.rs"));
+    let paths = ["src/*.rs", "lib/**/x?.rs"];
+    assert!(pass(&paths, b"src/a.rs") && !pass(&paths, b"src/a/b.rs"));
+    assert!(pass(&paths, b"lib/a/b/xy.rs") && !pass(&paths, b"lib/a/x/y.rs"));
+    assert!(pass(&["*.rs"], b"caf\xe9/\xff.rs") && !pass(&["*.rs"], b"caf\xe9/\xff.md"));
+    assert!(!pass(&["[bad"], b"a.rs"));
+}
+
+#[test]
 fn filter_roots_globs_and_binary() {
     let f = ReviewFilter {
         roots: vec![path("src")],
@@ -548,10 +673,11 @@ fn filter_roots_globs_and_binary() {
         exclude: vec!["src/gen/**".into()],
         hide_binary: true,
     };
-    assert!(f.passes(&path("src/a/b.rs")));
-    assert!(!f.passes(&path("srcx/b.rs")));
-    assert!(!f.passes(&path("src/a/b.md")));
-    assert!(!f.passes(&path("src/gen/x/b.rs")));
+    let compiled = f.compile();
+    assert!(compiled.passes(&path("src/a/b.rs")));
+    assert!(!compiled.passes(&path("srcx/b.rs")));
+    assert!(!compiled.passes(&path("src/a/b.md")));
+    assert!(!compiled.passes(&path("src/gen/x/b.rs")));
 
     let bin = NonTextChange {
         path: path("src/img.rs"),

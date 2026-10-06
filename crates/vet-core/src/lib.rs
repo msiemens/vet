@@ -6,6 +6,7 @@ pub mod completion;
 pub mod content;
 pub mod merkle;
 pub mod platform;
+pub mod prepared;
 pub mod remap;
 pub mod resolve;
 pub mod review;

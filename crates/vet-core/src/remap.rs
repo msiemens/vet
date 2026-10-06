@@ -1,8 +1,8 @@
 //! Span remapping as a partition (SPEC §5.2).
 
-use crate::content::{BlobSource, Changeset, LineRange, SnapshotId};
-use crate::review::{Anchor, FileRemapInput, ReviewedSpan, SpanState};
-use crate::text::{Text, unique_map};
+use crate::content::{Changeset, LineRange, SnapshotId};
+use crate::prepared::PreparedFile;
+use crate::review::{Anchor, ReviewedSpan, SpanState};
 
 /// The runs of one side's recorded lines that are still identical and uniquely
 /// mapped, anchored in the current snapshot.
@@ -14,7 +14,8 @@ struct Side {
 
 /// Remap `span` from its recorded snapshots to the changeset `to`. Pass the
 /// recorded span each time, not an earlier remap, so reverting an edit restores
-/// coverage. `None` for a side whose file no longer exists. Only exact line
+/// coverage. `None` for a side whose file no longer exists. Prepare each file
+/// once and share it across spans. Only exact line
 /// identity carries coverage; a span may become several or none.
 ///
 /// Target lines that survive while any base line changed are
@@ -22,18 +23,14 @@ struct Side {
 pub fn remap_span(
     span: &ReviewedSpan,
     to: Changeset,
-    base: Option<&FileRemapInput>,
-    target: Option<&FileRemapInput>,
-    blobs: &dyn BlobSource,
+    base: Option<&PreparedFile>,
+    target: Option<&PreparedFile>,
 ) -> Vec<ReviewedSpan> {
-    let b = span
-        .base
-        .as_ref()
-        .map(|a| remap_side(a, base, to.base, blobs));
+    let b = span.base.as_ref().map(|a| remap_side(a, base, to.base));
     let t = span
         .target
         .as_ref()
-        .map(|a| remap_side(a, target, to.target, blobs));
+        .map(|a| remap_side(a, target, to.target));
 
     if b.iter().chain(&t).all(|s| s.full) {
         let one =
@@ -66,37 +63,20 @@ pub fn remap_span(
     base_pieces.chain(target_pieces).collect()
 }
 
-fn remap_side(
-    anchor: &Anchor,
-    input: Option<&FileRemapInput>,
-    snapshot: SnapshotId,
-    blobs: &dyn BlobSource,
-) -> Side {
+fn remap_side(anchor: &Anchor, file: Option<&PreparedFile>, snapshot: SnapshotId) -> Side {
     let none = Side {
         runs: Vec::new(),
         full: false,
     };
-    let Some(FileRemapInput {
-        new_path: Some(path),
-        old_blob: Some(old_id),
-        new_blob: Some(new_id),
-        ..
-    }) = input
+    let Some(file) = file else { return none };
+    let (Some(path), Some(old), Some(new), Some(map)) =
+        (&file.input.new_path, &file.old, &file.new, file.raw_map())
     else {
         return none;
     };
-    let (Some(old), Some(new)) = (blobs.blob(*old_id), blobs.blob(*new_id)) else {
-        return none;
-    };
-    let (old, new) = (Text::new(old), Text::new(new));
     if old.raw_hash(anchor.range) != Some(anchor.content_hash_raw) {
         return none;
     }
-    let map = if old_id == new_id {
-        (0..old.raw.len()).map(Some).collect()
-    } else {
-        unique_map(&old.raw, &new.raw)
-    };
 
     let mut ranges: Vec<LineRange> = Vec::new();
     for old_line in anchor.range.start..anchor.range.end {

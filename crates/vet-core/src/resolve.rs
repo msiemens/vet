@@ -1,10 +1,9 @@
 //! Anchor resolution (SPEC §5.1).
 
-use crate::content::{BlobSource, Hash, LineRange, RepoPath};
-use crate::review::{
-    Anchor, AnchorState, Confidence, FileRemapInput, Location, StaleReason, Strategy,
-};
-use crate::text::{NO_LINE, Text, unique_map};
+use crate::content::{Hash, LineRange, RepoPath};
+use crate::prepared::PreparedFile;
+use crate::review::{Anchor, AnchorState, Confidence, Location, StaleReason, Strategy};
+use crate::text::{CONTEXT, NO_LINE, Text};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Resolution {
@@ -17,67 +16,68 @@ pub struct Resolution {
 const CONTENT: u32 = 200;
 /// A context-only candidate (edited content) needs at least this much context.
 const MIN_CONTEXT: u32 = 80;
+/// Lines a context-only candidate may exceed twice the anchor's length by.
+const GROWTH: usize = 3;
 /// Candidates within this distance of the best one compete with it.
 const MARGIN: u32 = 50;
 
 /// Resolve `anchor` into the same side of the current changeset, directly from
 /// its recorded snapshot. `file` is the anchor's file there; `changed` are the
-/// other changed files on that side, searched for moved content.
+/// changed files on that side (it may include `file`), searched for moved
+/// content.
 pub fn resolve_anchor(
     anchor: &Anchor,
-    file: &FileRemapInput,
-    changed: &[FileRemapInput],
-    blobs: &dyn BlobSource,
+    file: &PreparedFile,
+    changed: &[PreparedFile],
 ) -> Resolution {
-    let text = |b| blobs.blob(b).map(Text::new);
-    let old = file.old_blob.and_then(text);
-    let new = file.new_blob.and_then(text);
-
-    if let (Some(old), Some(new), Some(path)) = (&old, &new, &file.new_path) {
-        let same = file.old_path == file.new_path && file.old_blob == file.new_blob;
-        if let Some((range, whitespace_changed)) = exact(anchor, same, old, new) {
-            return Resolution {
-                state: AnchorState::Exact { whitespace_changed },
-                location: Some(Location {
-                    file: path.clone(),
-                    range,
-                }),
-            };
-        }
+    let path = file.input.new_path.as_ref();
+    if let (Some(new), Some(path)) = (&file.new, path)
+        && let Some((range, whitespace_changed)) = exact(anchor, file, new)
+    {
+        return Resolution {
+            state: AnchorState::Exact { whitespace_changed },
+            location: Some(Location {
+                file: path.clone(),
+                range,
+            }),
+        };
     }
 
+    // The recorded lines, when the old text still has them, make the content
+    // check a comparison of line hashes instead of a hash per window.
+    let lines = file
+        .old
+        .as_ref()
+        .filter(|old| old.norm_hash(anchor.range) == Some(anchor.content_hash_norm))
+        .map(|old| &old.hashes()[anchor.range.start as usize..anchor.range.end as usize]);
     let mut candidates = Vec::new();
-    if let (Some(new), Some(path)) = (&new, &file.new_path) {
-        scan(anchor, new, path, false, &mut candidates);
+    if let (Some(new), Some(path)) = (&file.new, path) {
+        scan(anchor, lines, new, path, false, &mut candidates);
     }
-    for other in changed.iter().filter(|c| c.new_path != file.new_path) {
-        if let (Some(new), Some(path)) = (other.new_blob.and_then(text), &other.new_path) {
-            scan(anchor, &new, path, true, &mut candidates);
+    for other in changed.iter().filter(|c| c.input.new_path.as_ref() != path) {
+        if let (Some(new), Some(path)) = (&other.new, &other.input.new_path) {
+            scan(anchor, lines, new, path, true, &mut candidates);
         }
     }
-    infer(candidates, file.new_blob.is_none())
+    infer(candidates, file.input.new_blob.is_none())
 }
 
-fn exact(anchor: &Anchor, same_blob: bool, old: &Text, new: &Text) -> Option<(LineRange, bool)> {
+fn exact(anchor: &Anchor, file: &PreparedFile, new: &Text) -> Option<(LineRange, bool)> {
     let r = anchor.range;
-    if same_blob && new.raw_hash(r) == Some(anchor.content_hash_raw) {
-        return Some((r, false));
-    }
-    if let Some(m) = map_range(&old.raw, &new.raw, r)
+    if let Some(m) = map_range(file.raw_map()?, r)
         && new.raw_hash(m) == Some(anchor.content_hash_raw)
     {
         return Some((m, false));
     }
-    let m = map_range(&old.norm, &new.norm, r)?;
+    let m = map_range(file.norm_map()?, r)?;
     (new.norm_hash(m) == Some(anchor.content_hash_norm)).then_some((m, true))
 }
 
 /// The new range of `r` if every line of it maps uniquely and contiguously.
-fn map_range(old: &[&[u8]], new: &[&[u8]], r: LineRange) -> Option<LineRange> {
-    if r.is_empty() || r.end as usize > old.len() {
+fn map_range(map: &[Option<usize>], r: LineRange) -> Option<LineRange> {
+    if r.is_empty() || r.end as usize > map.len() {
         return None;
     }
-    let map = unique_map(old, new);
     let start = map[r.start as usize]?;
     (0..r.len() as usize)
         .all(|k| map[r.start as usize + k] == Some(start + k))
@@ -94,50 +94,128 @@ struct Candidate {
 }
 
 /// Windows of the anchor's length that match its content, or, unless
-/// `content_only`, its surrounding context (the content was edited).
+/// `content_only`, its surrounding context (the content was edited). Context
+/// matches may also differ in length from the anchor, up to `2n + GROWTH`
+/// lines, when the lines between intact context were added or removed.
 fn scan(
     anchor: &Anchor,
+    recorded: Option<&[Hash]>,
     text: &Text,
     path: &RepoPath,
     content_only: bool,
     out: &mut Vec<Candidate>,
 ) {
-    let n = anchor.range.len();
-    if n == 0 || n as usize > text.raw.len() {
+    let n = anchor.range.len() as usize;
+    let lines = text.raw.len();
+    if n == 0 {
         return;
     }
-    for start in 0..=(text.raw.len() as u32 - n) {
-        let range = LineRange {
-            start,
-            end: start + n,
-        };
-        let content = text.norm_hash(range) == Some(anchor.content_hash_norm);
-        let context = context_score(&anchor.context_hashes, &text.context(range));
-        if content || (!content_only && context >= MIN_CONTEXT) {
-            out.push(Candidate {
-                location: Location {
-                    file: path.clone(),
-                    range,
+    let context = ContextHits::new(&anchor.context_hashes, text.hashes());
+    let mut push = |start: usize, end: usize, content: bool, context: u32| {
+        out.push(Candidate {
+            location: Location {
+                file: path.clone(),
+                range: LineRange {
+                    start: start as u32,
+                    end: end as u32,
                 },
-                score: if content { CONTENT } else { 0 } + context,
-                same_file: !content_only,
-            });
+            },
+            score: if content { CONTENT } else { 0 } + context,
+            same_file: !content_only,
+        });
+    };
+    for start in 0..lines {
+        if start + n <= lines {
+            let range = LineRange {
+                start: start as u32,
+                end: (start + n) as u32,
+            };
+            let content = match recorded {
+                Some(l) => text.hashes()[start..start + n] == *l,
+                None => text.norm_hash(range) == Some(anchor.content_hash_norm),
+            };
+            let score = context.score(start, start + n);
+            if content || (!content_only && score >= MIN_CONTEXT) {
+                push(start, start + n, content, score);
+            }
+        }
+        if content_only || context.best_score(start) < MIN_CONTEXT {
+            continue;
+        }
+        for len in (1..=(2 * n + GROWTH).min(lines - start)).filter(|&l| l != n) {
+            let score = context.score(start, start + len);
+            if score >= MIN_CONTEXT {
+                push(start, start + len, false, score);
+            }
         }
     }
 }
 
-/// Percentage of the anchor's real context lines found at the same position.
-fn context_score(anchor: &[Hash], candidate: &[Hash]) -> u32 {
-    let real = anchor.iter().filter(|&&h| h != NO_LINE).count() as u32;
-    if real == 0 {
-        return 0;
+/// Anchor context lines found around each line of a text. An anchor at the
+/// start or end of its file only matches candidates there.
+struct ContextHits {
+    /// Leading context lines found before line `i`, for `i` in `0..=lines`.
+    lead: Vec<u32>,
+    /// Trailing context lines found from line `i` on.
+    trail: Vec<u32>,
+    /// Real (existing) lines in the anchor's context.
+    real: u32,
+    trail_real: u32,
+    at_start: bool,
+    end_only: Option<usize>,
+}
+
+impl ContextHits {
+    fn new(context: &[Hash], hashes: &[Hash]) -> Self {
+        let (lead_ctx, trail_ctx) = context.split_at(CONTEXT.min(context.len()));
+        let real = |c: &[Hash]| c.iter().filter(|&&h| h != NO_LINE).count() as u32;
+        let hit = |want: Hash, at: Option<usize>| {
+            want != NO_LINE && at.and_then(|i| hashes.get(i)) == Some(&want)
+        };
+        let lead = (0..=hashes.len())
+            .map(|i| {
+                (lead_ctx.iter().enumerate())
+                    .filter(|&(k, &h)| hit(h, i.checked_sub(lead_ctx.len() - k)))
+                    .count() as u32
+            })
+            .collect();
+        let trail = (0..=hashes.len())
+            .map(|i| {
+                (trail_ctx.iter().enumerate())
+                    .filter(|&(k, &h)| hit(h, Some(i + k)))
+                    .count() as u32
+            })
+            .collect();
+        Self {
+            lead,
+            trail,
+            real: real(lead_ctx) + real(trail_ctx),
+            trail_real: real(trail_ctx),
+            at_start: lead_ctx.last() == Some(&NO_LINE),
+            end_only: (trail_ctx.first() == Some(&NO_LINE)).then_some(hashes.len()),
+        }
     }
-    let hits = anchor
-        .iter()
-        .zip(candidate)
-        .filter(|(a, c)| **a != NO_LINE && a == c)
-        .count() as u32;
-    hits * 100 / real
+
+    /// Percentage of the anchor's real context lines found at the same position
+    /// around `start..end`.
+    fn score(&self, start: usize, end: usize) -> u32 {
+        if self.end_only.is_some_and(|n| end != n) {
+            return 0;
+        }
+        self.percent(start, self.lead[start] + self.trail[end])
+    }
+
+    /// Upper bound of `score(start, _)`.
+    fn best_score(&self, start: usize) -> u32 {
+        self.percent(start, self.lead[start] + self.trail_real)
+    }
+
+    fn percent(&self, start: usize, hits: u32) -> u32 {
+        if self.at_start && start != 0 {
+            return 0;
+        }
+        (hits * 100).checked_div(self.real).unwrap_or(0)
+    }
 }
 
 fn infer(mut candidates: Vec<Candidate>, file_deleted: bool) -> Resolution {
