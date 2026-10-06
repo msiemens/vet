@@ -7,7 +7,7 @@ use vet_app::review::NonTextAck;
 use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, LineRange, RepoPath, SnapshotId};
 use vet_core::review::{Anchor, CommentTarget, Side, SpanState, ThreadStatus};
 
-use super::entity::{ack, anchor, snapshot_entry, thread};
+use super::entity::{ack, anchor, kinds, snapshot_entry, thread};
 
 fn corrupt(what: &str) -> DbErr {
     DbErr::Custom(format!("corrupt row: {what}"))
@@ -17,74 +17,31 @@ pub fn hash(bytes: &[u8]) -> Result<Hash, DbErr> {
     <[u8; 32]>::try_from(bytes).map(Hash).map_err(|_| corrupt("hash is not 32 bytes"))
 }
 
-pub fn side_to(side: Side) -> i64 {
-    match side {
-        Side::Base => 0,
-        Side::Target => 1,
-    }
+/// Infallible conversions between a `vet-core` enum and its stored twin.
+macro_rules! twin {
+    ($core:ident, $db:ident { $($variant:ident),+ }) => {
+        impl From<$core> for kinds::$db {
+            fn from(v: $core) -> Self {
+                match v { $($core::$variant => Self::$variant),+ }
+            }
+        }
+        impl From<kinds::$db> for $core {
+            fn from(v: kinds::$db) -> Self {
+                match v { $(kinds::$db::$variant => Self::$variant),+ }
+            }
+        }
+    };
 }
 
-pub fn side_from(v: i64) -> Result<Side, DbErr> {
-    match v {
-        0 => Ok(Side::Base),
-        1 => Ok(Side::Target),
-        _ => Err(corrupt("side")),
-    }
-}
-
-pub fn kind_to(kind: EntryKind) -> i64 {
-    match kind {
-        EntryKind::File => 0,
-        EntryKind::Symlink => 1,
-        EntryKind::Submodule => 2,
-    }
-}
-
-fn kind_from(v: i64) -> Result<EntryKind, DbErr> {
-    match v {
-        0 => Ok(EntryKind::File),
-        1 => Ok(EntryKind::Symlink),
-        2 => Ok(EntryKind::Submodule),
-        _ => Err(corrupt("entry kind")),
-    }
-}
-
-pub const OPEN: i64 = 0;
-
-pub fn status_to(status: ThreadStatus) -> i64 {
-    match status {
-        ThreadStatus::Open => OPEN,
-        ThreadStatus::Resolved => 1,
-    }
-}
-
-pub fn status_from(v: i64) -> Result<ThreadStatus, DbErr> {
-    match v {
-        OPEN => Ok(ThreadStatus::Open),
-        1 => Ok(ThreadStatus::Resolved),
-        _ => Err(corrupt("thread status")),
-    }
-}
-
-pub fn span_state_to(state: SpanState) -> i64 {
-    match state {
-        SpanState::Seen => 0,
-        SpanState::SeenAgainstOldBase => 1,
-    }
-}
-
-pub fn span_state_from(v: i64) -> Result<SpanState, DbErr> {
-    match v {
-        0 => Ok(SpanState::Seen),
-        1 => Ok(SpanState::SeenAgainstOldBase),
-        _ => Err(corrupt("span state")),
-    }
-}
+twin!(Side, Side { Base, Target });
+twin!(EntryKind, EntryKind { File, Symlink, Submodule });
+twin!(SpanState, SpanState { Seen, SeenAgainstOldBase });
+twin!(ThreadStatus, ThreadStatus { Open, Resolved });
 
 pub fn anchor_row(session: i64, a: &Anchor) -> anchor::ActiveModel {
     anchor::ActiveModel {
         session: Set(session),
-        side: Set(side_to(a.side)),
+        side: Set(a.side.into()),
         snapshot: Set(a.snapshot.0.0.to_vec()),
         file: Set(a.file.0.clone()),
         start: Set(a.range.start.into()),
@@ -98,7 +55,7 @@ pub fn anchor_row(session: i64, a: &Anchor) -> anchor::ActiveModel {
 
 pub fn anchor_from(m: &anchor::Model) -> Result<Anchor, DbErr> {
     Ok(Anchor {
-        side: side_from(m.side)?,
+        side: m.side.into(),
         snapshot: SnapshotId(hash(&m.snapshot)?),
         file: RepoPath(m.file.clone()),
         range: LineRange { start: u32::try_from(m.start).map_err(|_| corrupt("range"))?, end: u32::try_from(m.end).map_err(|_| corrupt("range"))? },
@@ -114,13 +71,13 @@ pub fn entry_row(snapshot: &[u8], path: &RepoPath, e: &FileEntry) -> snapshot_en
         path: Set(path.0.clone()),
         blob: Set(e.blob.0.0.to_vec()),
         mode: Set(e.mode.into()),
-        kind: Set(kind_to(e.kind)),
+        kind: Set(e.kind.into()),
         unfiltered: Set(e.unfiltered),
     }
 }
 
 pub fn entry_from(m: snapshot_entry::Model) -> Result<(RepoPath, FileEntry), DbErr> {
-    let entry = FileEntry { blob: BlobId(hash(&m.blob)?), mode: u32::try_from(m.mode).map_err(|_| corrupt("mode"))?, kind: kind_from(m.kind)?, unfiltered: m.unfiltered };
+    let entry = FileEntry { blob: BlobId(hash(&m.blob)?), mode: u32::try_from(m.mode).map_err(|_| corrupt("mode"))?, kind: m.kind.into(), unfiltered: m.unfiltered };
     Ok((RepoPath(m.path), entry))
 }
 
@@ -130,21 +87,21 @@ pub struct AckSide {
     path: Option<Vec<u8>>,
     blob: Option<Vec<u8>>,
     mode: Option<i64>,
-    kind: Option<i64>,
+    kind: Option<kinds::EntryKind>,
     unfiltered: Option<bool>,
 }
 
 impl AckSide {
     fn new(entry: Option<&(RepoPath, FileEntry)>) -> Self {
         let Some((path, e)) = entry else { return Self::default() };
-        Self { path: Some(path.0.clone()), blob: Some(e.blob.0.0.to_vec()), mode: Some(e.mode.into()), kind: Some(kind_to(e.kind)), unfiltered: Some(e.unfiltered) }
+        Self { path: Some(path.0.clone()), blob: Some(e.blob.0.0.to_vec()), mode: Some(e.mode.into()), kind: Some(e.kind.into()), unfiltered: Some(e.unfiltered) }
     }
 
     fn entry(self) -> Result<Option<(RepoPath, FileEntry)>, DbErr> {
         let (Some(path), Some(blob), Some(mode), Some(kind), Some(unfiltered)) = (self.path, self.blob, self.mode, self.kind, self.unfiltered) else {
             return Ok(None);
         };
-        let entry = FileEntry { blob: BlobId(hash(&blob)?), mode: u32::try_from(mode).map_err(|_| corrupt("mode"))?, kind: kind_from(kind)?, unfiltered };
+        let entry = FileEntry { blob: BlobId(hash(&blob)?), mode: u32::try_from(mode).map_err(|_| corrupt("mode"))?, kind: kind.into(), unfiltered };
         Ok(Some((RepoPath(path), entry)))
     }
 }
@@ -197,16 +154,12 @@ pub fn ack_from(m: ack::Model) -> Result<NonTextAck, DbErr> {
     Ok(NonTextAck { before: before.entry()?, after: after.entry()? })
 }
 
-const RANGE: i64 = 0;
-const FILE: i64 = 1;
-const CHANGESET: i64 = 2;
-
 /// Sets the target columns; `anchor` is the row id of a `Range` target's anchor.
 pub fn set_target(row: &mut thread::ActiveModel, target: &CommentTarget, anchor: Option<i64>) {
     let (kind, side, path) = match target {
-        CommentTarget::Range(_) => (RANGE, None, None),
-        CommentTarget::File { side, path } => (FILE, Some(side_to(*side)), Some(path.0.clone())),
-        CommentTarget::Changeset => (CHANGESET, None, None),
+        CommentTarget::Range(_) => (kinds::ThreadKind::Range, None, None),
+        CommentTarget::File { side, path } => (kinds::ThreadKind::File, Some((*side).into()), Some(path.0.clone())),
+        CommentTarget::Changeset => (kinds::ThreadKind::Changeset, None, None),
     };
     row.kind = Set(kind);
     row.file_side = Set(side);
@@ -216,12 +169,11 @@ pub fn set_target(row: &mut thread::ActiveModel, target: &CommentTarget, anchor:
 
 pub fn target_from(m: &thread::Model, anchor: Option<&anchor::Model>) -> Result<CommentTarget, DbErr> {
     match m.kind {
-        RANGE => Ok(CommentTarget::Range(anchor_from(anchor.ok_or_else(|| corrupt("range thread without anchor"))?)?)),
-        FILE => Ok(CommentTarget::File {
-            side: side_from(m.file_side.ok_or_else(|| corrupt("file thread without side"))?)?,
+        kinds::ThreadKind::Range => Ok(CommentTarget::Range(anchor_from(anchor.ok_or_else(|| corrupt("range thread without anchor"))?)?)),
+        kinds::ThreadKind::File => Ok(CommentTarget::File {
+            side: m.file_side.ok_or_else(|| corrupt("file thread without side"))?.into(),
             path: RepoPath(m.file_path.clone().ok_or_else(|| corrupt("file thread without path"))?),
         }),
-        CHANGESET => Ok(CommentTarget::Changeset),
-        _ => Err(corrupt("thread kind")),
+        kinds::ThreadKind::Changeset => Ok(CommentTarget::Changeset),
     }
 }

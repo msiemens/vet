@@ -70,7 +70,8 @@ async fn spans_and_threads_round_trip() {
         ReviewedSpan { base: None, target: Some(anchor(Side::Target, 2)), state: SpanState::SeenAgainstOldBase },
         ReviewedSpan { base: Some(anchor(Side::Base, 1)), target: None, state: SpanState::Seen },
     ];
-    store.replace_spans(id, spans.clone()).await.unwrap();
+    let ids = store.edit_spans(id, vec![], spans.clone()).await.unwrap();
+    assert_eq!(ids.len(), 3);
 
     let range = store.add_thread(id, CommentTarget::Range(anchor(Side::Target, 2)), message("why?")).await.unwrap();
     let file = store.add_thread(id, CommentTarget::File { side: Side::Base, path: RepoPath(b"a/b".to_vec()) }, message("file")).await.unwrap();
@@ -88,7 +89,7 @@ async fn spans_and_threads_round_trip() {
     store.set_filter(id, filter.clone()).await.unwrap();
 
     let loaded = store.session(id).await.unwrap().unwrap();
-    assert_eq!(loaded.spans, spans);
+    assert_eq!(loaded.spans.iter().map(|r| r.span.clone()).collect::<Vec<_>>(), spans);
     assert_eq!(loaded.acks, vec![ack.clone()]);
     assert_eq!(loaded.filter, filter);
     assert_eq!(loaded.threads.len(), 3);
@@ -103,7 +104,7 @@ async fn spans_and_threads_round_trip() {
     store.set_thread_target(range, moved.clone()).await.unwrap();
     store.delete_thread(file).await.unwrap();
     store.unacknowledge(id, ack).await.unwrap();
-    store.replace_spans(id, vec![]).await.unwrap();
+    store.edit_spans(id, ids, vec![]).await.unwrap();
     let loaded = store.session(id).await.unwrap().unwrap();
     assert_eq!(loaded.threads.iter().map(|t| &t.target).collect::<Vec<_>>(), vec![&moved, &CommentTarget::Changeset]);
     assert!(loaded.spans.is_empty() && loaded.acks.is_empty());
@@ -179,4 +180,36 @@ async fn gc_grace_protects_fresh_content() {
     store.put_snapshot(snapshot(1, &[("a", 1)])).await.unwrap();
     assert_eq!(store.gc(unix_now()).await.unwrap(), Default::default());
     assert!(store.blob(BlobId::of(&[1])).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
+    use vet_core::remap::remap_span;
+    use vet_core::review::FileRemapInput;
+
+    let text = |line15: &str| -> String { (0..40).map(|i| if i == 15 { format!("{line15}\n") } else { format!("line {i}\n") }).collect() };
+    let (original, edited) = (text("line 15"), text("changed"));
+    let (o, e) = (BlobId::of(original.as_bytes()), BlobId::of(edited.as_bytes()));
+    let blobs = BTreeMap::from([(o, original.clone().into_bytes()), (e, edited.into_bytes())]);
+    let path = || Some(RepoPath(b"a.rs".to_vec()));
+    let input = |new| FileRemapInput { old_path: path(), new_path: path(), old_blob: Some(o), new_blob: Some(new) };
+    let now = Changeset { base: SnapshotId(h(2)), target: SnapshotId(h(3)) };
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let id = session(&store, 2, 3).await;
+    let recorded = Anchor::from_text(Side::Target, SnapshotId(h(1)), path().unwrap(), original.as_bytes(), LineRange { start: 10, end: 30 }).unwrap();
+    let span = ReviewedSpan { base: None, target: Some(recorded), state: SpanState::Seen };
+    let ids = store.edit_spans(id, vec![], vec![span.clone()]).await.unwrap();
+
+    let remapped = async |new| {
+        let session = store.session(id).await.unwrap().unwrap();
+        session.spans.iter().flat_map(|r| remap_span(&r.span, now, None, Some(&input(new)), &blobs)).count()
+    };
+    assert_eq!(remapped(e).await, 2, "the edited line splits the span");
+    assert_eq!(remapped(o).await, 1, "reverted: full coverage again");
+    assert_eq!(store.session(id).await.unwrap().unwrap().spans[0].span, span, "nothing was overwritten");
+
+    store.edit_spans(id, ids, vec![]).await.unwrap();
+    assert_eq!(remapped(o).await, 0, "un-marked");
 }

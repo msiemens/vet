@@ -1,6 +1,28 @@
 //! Tables as SeaORM entities. Hashes and paths are blobs; enums are integers
 //! mapped in `codec`. Children of a session cascade on its deletion.
 
+/// Enumerations stored as integers.
+pub mod kinds {
+    use sea_orm::entity::prelude::*;
+
+    macro_rules! int_enum {
+        ($name:ident { $($variant:ident = $n:literal),+ }) => {
+            #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter, DeriveActiveEnum)]
+            #[sea_orm(rs_type = "i32", db_type = "Integer")]
+            pub enum $name {
+                $(#[sea_orm(num_value = $n)] $variant),+
+            }
+        };
+    }
+
+    int_enum!(Side { Base = 0, Target = 1 });
+    int_enum!(EntryKind { File = 0, Symlink = 1, Submodule = 2 });
+    int_enum!(SpanState { Seen = 0, SeenAgainstOldBase = 1 });
+    int_enum!(ThreadKind { Range = 0, File = 1, Changeset = 2 });
+    int_enum!(ThreadStatus { Open = 0, Resolved = 1 });
+    int_enum!(FilterKind { Root = 0, Include = 1, Exclude = 2 });
+}
+
 macro_rules! child_of_session {
     () => {
         #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -50,6 +72,7 @@ pub mod snapshot {
 }
 
 pub mod snapshot_entry {
+    use super::kinds::*;
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -61,7 +84,7 @@ pub mod snapshot_entry {
         pub path: Vec<u8>,
         pub blob: Vec<u8>,
         pub mode: i64,
-        pub kind: i64,
+        pub kind: EntryKind,
         pub unfiltered: bool,
     }
 
@@ -100,6 +123,7 @@ pub mod session {
 
 /// `kind`: 0 root, 1 include, 2 exclude. Order is the row id.
 pub mod filter_item {
+    use super::kinds::*;
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -108,7 +132,7 @@ pub mod filter_item {
         #[sea_orm(primary_key)]
         pub id: i64,
         pub session: i64,
-        pub kind: i64,
+        pub kind: FilterKind,
         pub value: Vec<u8>,
     }
 
@@ -133,6 +157,7 @@ pub mod timeline {
 
 /// Owned by a span or a thread; deleted with its owner.
 pub mod anchor {
+    use super::kinds::*;
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -141,7 +166,7 @@ pub mod anchor {
         #[sea_orm(primary_key)]
         pub id: i64,
         pub session: i64,
-        pub side: i64,
+        pub side: Side,
         pub snapshot: Vec<u8>,
         pub file: Vec<u8>,
         pub start: i64,
@@ -156,6 +181,7 @@ pub mod anchor {
 }
 
 pub mod span {
+    use super::kinds::*;
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -164,7 +190,7 @@ pub mod span {
         #[sea_orm(primary_key)]
         pub id: i64,
         pub session: i64,
-        pub state: i64,
+        pub state: SpanState,
         pub base_anchor: Option<i64>,
         pub target_anchor: Option<i64>,
     }
@@ -175,6 +201,7 @@ pub mod span {
 /// A non-text acknowledgement: before and after entries, each absent for an
 /// added or deleted path.
 pub mod ack {
+    use super::kinds::*;
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -186,12 +213,12 @@ pub mod ack {
         pub before_path: Option<Vec<u8>>,
         pub before_blob: Option<Vec<u8>>,
         pub before_mode: Option<i64>,
-        pub before_kind: Option<i64>,
+        pub before_kind: Option<EntryKind>,
         pub before_unfiltered: Option<bool>,
         pub after_path: Option<Vec<u8>>,
         pub after_blob: Option<Vec<u8>>,
         pub after_mode: Option<i64>,
-        pub after_kind: Option<i64>,
+        pub after_kind: Option<EntryKind>,
         pub after_unfiltered: Option<bool>,
     }
 
@@ -200,6 +227,7 @@ pub mod ack {
 
 /// `kind`: 0 range (uses `anchor`), 1 file (`file_side`, `file_path`), 2 changeset.
 pub mod thread {
+    use super::kinds::*;
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
@@ -208,11 +236,11 @@ pub mod thread {
         #[sea_orm(primary_key)]
         pub id: i64,
         pub session: i64,
-        pub kind: i64,
-        pub file_side: Option<i64>,
+        pub kind: ThreadKind,
+        pub file_side: Option<Side>,
         pub file_path: Option<Vec<u8>>,
         pub anchor: Option<i64>,
-        pub status: i64,
+        pub status: ThreadStatus,
         pub remote_id: Option<String>,
         pub remote_status: Option<String>,
         pub remote_resolvable: Option<bool>,

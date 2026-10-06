@@ -23,13 +23,14 @@ use sea_orm::{
 use sea_orm_migration::MigratorTrait;
 use vet_app::acquisition::{CommitId, Pin, PinId};
 use vet_app::ports::{GcReport, ReviewStore, Store, StoreError};
-use vet_app::review::{NonTextAck, Session, SessionId};
+use vet_app::review::{NonTextAck, RecordedSpan, Session, SessionId, SpanId};
 use vet_core::content::{BlobId, Changeset, Hash, ReviewFilter, Snapshot, SnapshotId};
 use vet_core::platform::PlatformThread;
 use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Thread, ThreadId, ThreadStatus};
 
 use codec::*;
 use content::ContentStore;
+use entity::kinds::FilterKind;
 use entity::*;
 
 type Res<T> = Result<T, DbErr>;
@@ -85,13 +86,13 @@ async fn put_anchor(db: &impl ConnectionTrait, session: i64, anchor: Option<&Anc
 }
 
 async fn write_filter(db: &impl ConnectionTrait, session: i64, filter: &ReviewFilter) -> Res<()> {
-    let item = |kind: i64, value: Vec<u8>| filter_item::ActiveModel { session: Set(session), kind: Set(kind), value: Set(value), ..Default::default() };
+    let item = |kind: FilterKind, value: Vec<u8>| filter_item::ActiveModel { session: Set(session), kind: Set(kind), value: Set(value), ..Default::default() };
     let rows = filter
         .roots
         .iter()
-        .map(|r| item(0, r.0.clone()))
-        .chain(filter.include.iter().map(|s| item(1, s.clone().into_bytes())))
-        .chain(filter.exclude.iter().map(|s| item(2, s.clone().into_bytes())))
+        .map(|r| item(FilterKind::Root, r.0.clone()))
+        .chain(filter.include.iter().map(|s| item(FilterKind::Include, s.clone().into_bytes())))
+        .chain(filter.exclude.iter().map(|s| item(FilterKind::Exclude, s.clone().into_bytes())))
         .collect();
     insert_chunked(db, rows).await
 }
@@ -101,9 +102,9 @@ fn read_filter(hide_binary: bool, items: Vec<filter_item::Model>) -> Res<ReviewF
     for item in items {
         let text = |v: Vec<u8>| String::from_utf8(v).map_err(db_err);
         match item.kind {
-            0 => filter.roots.push(vet_core::content::RepoPath(item.value)),
-            1 => filter.include.push(text(item.value)?),
-            _ => filter.exclude.push(text(item.value)?),
+            FilterKind::Root => filter.roots.push(vet_core::content::RepoPath(item.value)),
+            FilterKind::Include => filter.include.push(text(item.value)?),
+            FilterKind::Exclude => filter.exclude.push(text(item.value)?),
         }
     }
     Ok(filter)
@@ -150,7 +151,10 @@ impl SqliteStore {
             .all(&self.db)
             .await?
             .into_iter()
-            .map(|s| Ok(ReviewedSpan { base: anchor_of(s.base_anchor)?, target: anchor_of(s.target_anchor)?, state: span_state_from(s.state)? }))
+            .map(|s| {
+                let span = ReviewedSpan { base: anchor_of(s.base_anchor)?, target: anchor_of(s.target_anchor)?, state: s.state.into() };
+                Ok(RecordedSpan { id: SpanId(s.id as u64), span })
+            })
             .collect::<Res<_>>()?;
         let acks = ack::Entity::find().filter(ack::Column::Session.eq(sid)).order_by_asc(ack::Column::Id).all(&self.db).await?.into_iter().map(ack_from).collect::<Res<_>>()?;
 
@@ -176,7 +180,7 @@ impl SqliteStore {
                     id: ThreadId(t.id as u64),
                     target: target_from(&t, t.anchor.and_then(|a| anchors.get(&a)))?,
                     messages: messages.remove(&t.id).unwrap_or_default(),
-                    status: status_from(t.status)?,
+                    status: t.status.into(),
                     platform,
                 })
             })
@@ -207,7 +211,7 @@ impl SqliteStore {
         let expired: Vec<i64> = session::Entity::find().filter(session::Column::ClosedAt.lte(cutoff)).select_only().column(session::Column::Id).into_tuple().all(&txn).await?;
         let kept: HashSet<i64> = thread::Entity::find()
             .filter(thread::Column::Session.is_in(expired.clone()))
-            .filter(thread::Column::Status.eq(OPEN))
+            .filter(thread::Column::Status.eq(kinds::ThreadStatus::Open))
             .select_only()
             .column(thread::Column::Session)
             .into_tuple()
@@ -335,26 +339,29 @@ impl ReviewStore for SqliteStore {
         Ok(txn.commit().await?)
     }
 
-    async fn replace_spans(&self, id: SessionId, spans: Vec<ReviewedSpan>) -> Result<(), StoreError> {
+    async fn edit_spans(&self, id: SessionId, remove: Vec<SpanId>, add: Vec<ReviewedSpan>) -> Result<Vec<SpanId>, StoreError> {
         let txn = self.db.begin().await?;
         let sid = id.0 as i64;
         // Anchors are owned by their spans, so they go with them.
-        let old = span::Entity::find().filter(span::Column::Session.eq(sid)).all(&txn).await?;
-        let old_anchors: Vec<i64> = old.iter().flat_map(|s| [s.base_anchor, s.target_anchor]).flatten().collect();
-        span::Entity::delete_many().filter(span::Column::Session.eq(sid)).exec(&txn).await?;
-        anchor::Entity::delete_many().filter(anchor::Column::Id.is_in(old_anchors)).exec(&txn).await?;
-        for s in &spans {
-            span::ActiveModel {
+        let remove: Vec<i64> = remove.iter().map(|s| s.0 as i64).collect();
+        let doomed = span::Entity::find().filter(span::Column::Session.eq(sid)).filter(span::Column::Id.is_in(remove)).all(&txn).await?;
+        span::Entity::delete_many().filter(span::Column::Id.is_in(doomed.iter().map(|s| s.id))).exec(&txn).await?;
+        anchor::Entity::delete_many().filter(anchor::Column::Id.is_in(doomed.iter().flat_map(|s| [s.base_anchor, s.target_anchor]).flatten())).exec(&txn).await?;
+        let mut ids = Vec::new();
+        for s in &add {
+            let row = span::ActiveModel {
                 session: Set(sid),
-                state: Set(span_state_to(s.state)),
+                state: Set(s.state.into()),
                 base_anchor: Set(put_anchor(&txn, sid, s.base.as_ref()).await?),
                 target_anchor: Set(put_anchor(&txn, sid, s.target.as_ref()).await?),
                 ..Default::default()
             }
             .insert(&txn)
             .await?;
+            ids.push(SpanId(row.id as u64));
         }
-        Ok(txn.commit().await?)
+        txn.commit().await?;
+        Ok(ids)
     }
 
     async fn acknowledge(&self, id: SessionId, ack: NonTextAck) -> Result<(), StoreError> {
@@ -379,7 +386,7 @@ impl ReviewStore for SqliteStore {
             CommentTarget::Range(a) => put_anchor(&txn, sid, Some(a)).await?,
             _ => None,
         };
-        let mut row = thread::ActiveModel { session: Set(sid), status: Set(status_to(ThreadStatus::Open)), ..Default::default() };
+        let mut row = thread::ActiveModel { session: Set(sid), status: Set(ThreadStatus::Open.into()), ..Default::default() };
         set_target(&mut row, &target, anchor);
         let thread = row.insert(&txn).await?.id;
         message::ActiveModel { thread: Set(thread), author: Set(opener.author), body: Set(opener.body), at: Set(opener.at), ..Default::default() }.insert(&txn).await?;
@@ -394,7 +401,7 @@ impl ReviewStore for SqliteStore {
     }
 
     async fn set_thread_status(&self, thread: ThreadId, status: ThreadStatus) -> Result<(), StoreError> {
-        thread::ActiveModel { id: Set(thread.0 as i64), status: Set(status_to(status)), ..Default::default() }.update(&self.db).await?;
+        thread::ActiveModel { id: Set(thread.0 as i64), status: Set(status.into()), ..Default::default() }.update(&self.db).await?;
         Ok(())
     }
 

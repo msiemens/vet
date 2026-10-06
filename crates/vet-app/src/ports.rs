@@ -9,7 +9,7 @@ use vet_core::platform::{PlatformThread, PlatformTraits};
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 
 use crate::acquisition::{CommitId, Pin, PinId};
-use crate::review::{NonTextAck, Session, SessionId};
+use crate::review::{NonTextAck, Session, SessionId, SpanId};
 
 /// Monotonic milliseconds.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -123,7 +123,13 @@ pub trait ReviewStore {
     fn open_sessions(&self) -> impl Future<Output = Result<Vec<SessionId>, StoreError>> + Send;
     fn session(&self, id: SessionId) -> impl Future<Output = Result<Option<Session>, StoreError>> + Send;
     fn set_filter(&self, id: SessionId, filter: ReviewFilter) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn replace_spans(&self, id: SessionId, spans: Vec<ReviewedSpan>) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Recorded spans are the user's marks in the coordinates they were made
+    /// in. They are never remapped in place: callers remap them per changeset
+    /// from these (so a reverted edit regains coverage) and keep the result
+    /// only in memory. Marking adds spans; un-marking removes the recorded
+    /// spans that cover the lines and adds back the uncovered remainder.
+    /// Atomic; returns the ids of the added spans.
+    fn edit_spans(&self, id: SessionId, remove: Vec<SpanId>, add: Vec<ReviewedSpan>) -> impl Future<Output = Result<Vec<SpanId>, StoreError>> + Send;
     fn acknowledge(&self, id: SessionId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn unacknowledge(&self, id: SessionId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn add_thread(&self, id: SessionId, target: CommentTarget, opener: Message) -> impl Future<Output = Result<ThreadId, StoreError>> + Send;

@@ -18,12 +18,22 @@ pub struct NonTextAck {
     pub after: Option<(RepoPath, FileEntry)>,
 }
 
+/// A span as recorded, in the snapshots it was marked in; never remapped in place.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RecordedSpan {
+    pub id: SpanId,
+    pub span: ReviewedSpan,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct SpanId(pub u64);
+
 pub struct Session {
     pub id: SessionId,
     pub pin: PinId,
     pub changeset: Changeset,
     pub filter: ReviewFilter,
-    pub spans: Vec<ReviewedSpan>,
+    pub spans: Vec<RecordedSpan>,
     pub acks: Vec<NonTextAck>,
     pub threads: Vec<Thread>,
     /// Unix seconds; `None` while open.
