@@ -6,6 +6,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import Tab from "../../lib/ui/Tab.svelte";
+  import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { AllFiles } from "./AllFiles.svelte";
   import { lineDelta } from "./editor/lineDelta";
   import { buildRows, buildTree, summarize } from "./tree";
@@ -47,6 +48,21 @@
   // The list function does not change for a mounted tree.
   // svelte-ignore state_referenced_locally
   const all = new AllFiles(list);
+
+  const hasExcluded = $derived(!!excluded && excluded.lines + excluded.items > 0);
+  let changesList = $state<VirtualRows>();
+  let allList = $state<VirtualRows>();
+
+  // A file selected elsewhere (a tab, the editor) scrolls into view here; rows outside the window are not in the DOM.
+  $effect(() => {
+    const path = selected;
+    const list = scope === "changes" ? changesList : allList;
+    if (!path || !list) return;
+    untrack(() => {
+      const index = (scope === "changes" ? rows : all.rows).findIndex((r) => r.path === path && r.kind === "file");
+      list.reveal(index);
+    });
+  });
 
   $effect(() => {
     if (scope === "all" && revision !== undefined) untrack(() => all.reset(revision));
@@ -130,46 +146,55 @@
     <span class="grow"></span>
     {#if scope === "changes"}<span class="mono count">{paths.length}</span>{/if}
   </div>
-  <div class="rows">
-    {#if scope === "changes"}
-      {#each rows as row (row.path + row.kind)}
-        {#if row.kind === "dir"}
-          {@render dirRow(row.path, row.name, row.depth, !collapsed.has(row.path), () =>
-            toggle(row.path, row.descendants),
-          )}
-        {:else}
-          {@render fileRow(row.path, row.name, row.depth)}
+  {#if scope === "changes"}
+    <!-- The excluded group is one more row after the files. -->
+    <VirtualRows
+      bind:this={changesList}
+      count={rows.length + (hasExcluded ? 1 : 0)}
+      key={(i) => {
+        const r = rows.at(i);
+        return r ? r.path + r.kind : "excluded";
+      }}
+    >
+      {#snippet row(i)}
+        {@const r = rows.at(i)}
+        {#if !r && excluded}
+          <div
+            class="tw excluded"
+            title="{excluded.lines} changed lines and {excluded.items} other changes excluded by the review filter"
+          >
+            <span class="chev"><Icon name="closed" size={10} /></span><Icon
+              name="filter"
+              size={11}
+              stroke={2}
+            />Excluded<span class="mono x">{excluded.lines}</span>
+          </div>
+        {:else if r?.kind === "dir"}
+          {@render dirRow(r.path, r.name, r.depth, !collapsed.has(r.path), () => toggle(r.path, r.descendants))}
+        {:else if r}
+          {@render fileRow(r.path, r.name, r.depth)}
         {/if}
-      {/each}
-      {#if excluded && excluded.lines + excluded.items > 0}
-        <div
-          class="tw excluded"
-          title="{excluded.lines} changed lines and {excluded.items} other changes excluded by the review filter"
-        >
-          <span class="chev"><Icon name="closed" size={10} /></span><Icon
-            name="filter"
-            size={11}
-            stroke={2}
-          />Excluded<span class="mono x">{excluded.lines}</span>
-        </div>
-      {/if}
-    {:else}
-      {#each all.rows as row (row.key + row.kind)}
-        {#if row.kind === "dir"}
-          {@render dirRow(
-            row.path,
-            row.name,
-            row.depth,
-            all.expanded.has(row.key),
-            () => all.toggle(row.key),
-            row.entry,
-          )}
-        {:else}
-          {@render fileRow(row.path, row.name, row.depth, row.entry)}
+      {/snippet}
+    </VirtualRows>
+  {:else}
+    <VirtualRows
+      bind:this={allList}
+      count={all.rows.length}
+      key={(i) => {
+        const r = all.rows.at(i);
+        return r ? r.key + r.kind : "";
+      }}
+    >
+      {#snippet row(i)}
+        {@const r = all.rows.at(i)}
+        {#if r?.kind === "dir"}
+          {@render dirRow(r.path, r.name, r.depth, all.expanded.has(r.key), () => all.toggle(r.key), r.entry)}
+        {:else if r}
+          {@render fileRow(r.path, r.name, r.depth, r.entry)}
         {/if}
-      {/each}
-    {/if}
-  </div>
+      {/snippet}
+    </VirtualRows>
+  {/if}
 </nav>
 
 <style>
@@ -199,11 +224,6 @@
   }
   .count {
     color: var(--text-3);
-  }
-  .rows {
-    padding: 4px 0;
-    overflow: hidden auto;
-    min-height: 0;
   }
   .tw {
     display: flex;
