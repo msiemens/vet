@@ -1,8 +1,9 @@
 //! vet-app views to protocol DTOs, and back for the request enums.
 
-use vet_app::ports::Degraded;
+use vet_app::pin::{BaseChoice, CommitId};
+use vet_app::ports::{BaseCandidates, Degraded};
 use vet_app::session::{
-    EntryInfo, FileStatus, FileView, ItemView, ManifestView, ReviewUpdateView, ReviewView, path_str,
+    BaseView, EntryInfo, FileStatus, FileView, ItemView, ManifestView, ReviewUpdateView, ReviewView, path_str,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, NonTextKind};
@@ -108,11 +109,60 @@ fn file(f: &FileView) -> p::FileChange {
     }
 }
 
+pub fn core_base_choice(choice: p::BaseChoice) -> BaseChoice {
+    match choice {
+        p::BaseChoice::Pin => BaseChoice::Pin,
+        p::BaseChoice::MergeBase { reference } => BaseChoice::MergeBase { reference },
+        p::BaseChoice::Commit { id } => BaseChoice::Commit { id: CommitId(id) },
+    }
+}
+
+pub fn base(b: &BaseView) -> p::Base {
+    p::Base {
+        choice: match &b.choice {
+            BaseChoice::Pin => p::BaseChoice::Pin,
+            BaseChoice::MergeBase { reference } => p::BaseChoice::MergeBase {
+                reference: reference.clone(),
+            },
+            BaseChoice::Commit { id } => p::BaseChoice::Commit { id: id.0.clone() },
+        },
+        commit: b.commit.0.clone(),
+        label: b.label.clone(),
+    }
+}
+
+pub fn base_candidates(c: &BaseCandidates) -> p::Response {
+    p::Response::BaseCandidates {
+        branches: c
+            .branches
+            .iter()
+            .map(|b| p::BranchInfo {
+                name: b.name.clone(),
+                commit: b.commit.0.clone(),
+                current: b.current,
+                default: b.default,
+            })
+            .collect(),
+        commits: c
+            .commits
+            .iter()
+            .map(|c| p::CommitInfo {
+                id: c.id.0.clone(),
+                short_id: c.id.0.chars().take(7).collect(),
+                subject: c.subject.clone(),
+                author: c.author.clone(),
+                time: u32::try_from(c.time).unwrap_or(0),
+            })
+            .collect(),
+    }
+}
+
 pub fn manifest(session: p::SessionId, m: &ManifestView) -> p::Manifest {
     p::Manifest {
         session,
         revision: m.revision,
         name: m.name.clone(),
+        base: base(&m.base),
         files: m.files.iter().map(file).collect(),
         completion: completion(&m.completion),
         excluded_lines: m.completion.excluded_lines,

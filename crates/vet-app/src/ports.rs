@@ -10,7 +10,7 @@ use vet_core::platform::{PlatformThread, PlatformTraits};
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 
 use crate::execution::targets::RunTarget;
-use crate::pin::{CommitId, Pin, PinId};
+use crate::pin::{BaseChoice, CommitId, Pin, PinId};
 use crate::review::{NonTextAck, Session, SessionId, SpanId};
 
 /// Monotonic milliseconds.
@@ -69,6 +69,31 @@ pub struct Scan {
 #[derive(Debug)]
 pub struct GitError(pub String);
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct BranchInfo {
+    pub name: String,
+    pub commit: CommitId,
+    /// The checked-out branch.
+    pub current: bool,
+    /// The remote's default branch (`origin/HEAD`), if the repository has one.
+    pub default: bool,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CommitInfo {
+    pub id: CommitId,
+    pub subject: String,
+    pub author: String,
+    /// Unix seconds.
+    pub time: i64,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct BaseCandidates {
+    pub branches: Vec<BranchInfo>,
+    pub commits: Vec<CommitInfo>,
+}
+
 #[derive(Debug)]
 pub enum CheckoutError {
     /// Neither git nor the content store has these blobs.
@@ -113,6 +138,14 @@ pub trait GitRepo {
     ) -> impl Future<Output = Result<Option<Vec<u8>>, GitError>> + Send;
     /// The commit a submodule entry with this `BlobId` is pinned at, for display.
     fn submodule_commit(&self, blob: BlobId) -> impl Future<Output = Result<Option<String>, GitError>> + Send;
+    /// The merge base of `reference` (a branch or any revision) and `HEAD`.
+    /// The error is fit to show to a user.
+    fn merge_base(&self, reference: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
+    /// The commit `spec` (a full or abbreviated id, or a revision) names.
+    /// The error is fit to show to a user.
+    fn resolve_commit(&self, spec: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
+    /// Local branches and up to `max_commits` commits reachable from `HEAD`, newest first.
+    fn base_candidates(&self, max_commits: usize) -> impl Future<Output = Result<BaseCandidates, GitError>> + Send;
     /// Points `refs/vet/sessions/<session>/<name>` at `commit` so git keeps it
     /// (§6.1).
     fn set_session_ref(
@@ -194,6 +227,13 @@ pub trait ReviewStore {
     fn open_sessions(&self) -> impl Future<Output = Result<Vec<SessionId>, StoreError>> + Send;
     fn session(&self, id: SessionId) -> impl Future<Output = Result<Option<Session>, StoreError>> + Send;
     fn set_filter(&self, id: SessionId, filter: ReviewFilter) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Moves the session's changeset to the base snapshot `base`, chosen as `choice`.
+    fn set_base(
+        &self,
+        id: SessionId,
+        base: SnapshotId,
+        choice: BaseChoice,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Recorded spans are the user's marks in the coordinates they were made
     /// in. They are never remapped in place: callers remap them per changeset
     /// from these (so a reverted edit regains coverage) and keep the result

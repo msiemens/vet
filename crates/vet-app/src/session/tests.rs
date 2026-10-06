@@ -13,7 +13,7 @@ use vet_core::review::Side;
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 
 use super::*;
-use crate::pin::{CommitId, Pin, PinId};
+use crate::pin::{BaseChoice, CommitId, Pin, PinId};
 use crate::ports::{Dirty, GcReport};
 use crate::review::Session;
 
@@ -94,9 +94,19 @@ struct FakeGit {
     scans: Arc<Mutex<Vec<Snapshot>>>,
     /// `<name>` of each held `refs/vet/sessions/<id>/<name>` and the commit.
     refs: Arc<Mutex<Vec<(String, CommitId)>>>,
+    /// What revisions (`merge-base <ref>` for merge bases) resolve to, with the commit's tree.
+    commits: Arc<Mutex<HashMap<String, (CommitId, Snapshot)>>>,
 }
 
 impl FakeGit {
+    fn add_commit(&self, spec: &str, id: &str, files: &[(&str, &str)]) {
+        let snapshot = self.snapshot(files);
+        self.commits
+            .lock()
+            .unwrap()
+            .insert(spec.into(), (CommitId(id.into()), snapshot));
+    }
+
     fn snapshot(&self, files: &[(&str, &str)]) -> Snapshot {
         let mut blobs = self.blobs.lock().unwrap();
         for (_, text) in files {
@@ -126,8 +136,12 @@ impl GitRepo for FakeGit {
     ) -> std::result::Result<(), crate::ports::CheckoutError> {
         unreachable!()
     }
-    async fn commit_snapshot(&self, _: &CommitId) -> std::result::Result<Snapshot, GitError> {
-        Ok(self.base.lock().unwrap().clone().unwrap())
+    async fn commit_snapshot(&self, commit: &CommitId) -> std::result::Result<Snapshot, GitError> {
+        let known = self.commits.lock().unwrap();
+        match known.values().find(|(c, _)| c == commit) {
+            Some((_, snapshot)) => Ok(snapshot.clone()),
+            None => Ok(self.base.lock().unwrap().clone().unwrap()),
+        }
     }
     async fn read_blob(&self, _: &RepoPath, blob: BlobId) -> std::result::Result<Option<Vec<u8>>, GitError> {
         Ok(self.blobs.lock().unwrap().get(&blob).cloned())
@@ -136,8 +150,29 @@ impl GitRepo for FakeGit {
     async fn submodule_commit(&self, blob: BlobId) -> std::result::Result<Option<String>, GitError> {
         Ok(Some(format!("{:02x}", blob.0.0[0])))
     }
+    async fn merge_base(&self, reference: &str) -> std::result::Result<CommitId, GitError> {
+        self.commits
+            .lock()
+            .unwrap()
+            .get(&format!("merge-base {reference}"))
+            .map(|(c, _)| c.clone())
+            .ok_or_else(|| GitError(format!("no common ancestor with {reference}")))
+    }
+    async fn resolve_commit(&self, spec: &str) -> std::result::Result<CommitId, GitError> {
+        self.commits
+            .lock()
+            .unwrap()
+            .get(spec)
+            .map(|(c, _)| c.clone())
+            .ok_or_else(|| GitError(format!("unknown commit {spec}")))
+    }
+    async fn base_candidates(&self, _: usize) -> std::result::Result<crate::ports::BaseCandidates, GitError> {
+        unreachable!()
+    }
     async fn set_session_ref(&self, _: SessionId, name: &str, commit: &CommitId) -> std::result::Result<(), GitError> {
-        self.refs.lock().unwrap().push((name.into(), commit.clone()));
+        let mut refs = self.refs.lock().unwrap();
+        refs.retain(|(n, _)| n != name);
+        refs.push((name.into(), commit.clone()));
         Ok(())
     }
     async fn delete_session_refs(&self, _: SessionId) -> std::result::Result<(), GitError> {
@@ -204,6 +239,7 @@ struct Mem {
     spans: Vec<(SpanId, ReviewedSpan)>,
     next_span: u64,
     acks: Vec<NonTextAck>,
+    base: Option<(SnapshotId, BaseChoice)>,
     closed: bool,
 }
 
@@ -263,6 +299,10 @@ impl ReviewStore for MemStore {
     }
     async fn set_filter(&self, _: SessionId, _: ReviewFilter) -> StoreResult<()> {
         unimplemented!()
+    }
+    async fn set_base(&self, _: SessionId, base: SnapshotId, choice: BaseChoice) -> StoreResult<()> {
+        self.0.lock().unwrap().base = Some((base, choice));
+        Ok(())
     }
     async fn edit_spans(&self, _: SessionId, remove: Vec<SpanId>, add: Vec<ReviewedSpan>) -> StoreResult<Vec<SpanId>> {
         let mut mem = self.0.lock().unwrap();
@@ -617,6 +657,117 @@ async fn the_pinned_commit_is_held_while_the_session_is_open() {
 
     assert!(held(&fx).is_empty());
     assert!(fx.store.0.lock().unwrap().closed);
+}
+
+fn base_of(m: &ManifestView) -> (&BaseChoice, &str, &str) {
+    (&m.base.choice, &m.base.commit.0, &m.base.label)
+}
+
+#[tokio::test]
+async fn setting_the_base_moves_the_ref_and_bumps_the_revision() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
+    let m = fx.session.manifest().await.unwrap();
+    assert_eq!(base_of(&m), (&BaseChoice::Pin, "head", "pin"));
+    assert_eq!(m.files[0].hunks.len(), 1);
+
+    // The chosen commit already has the edit: nothing is left to review.
+    fx.git.add_commit("c1", "c1-full", &[("a.txt", &numbered(10, &[3]))]);
+    let (view, revision) = fx
+        .session
+        .set_base(BaseChoice::Commit {
+            id: CommitId("c1".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(revision, 1);
+    let full = BaseChoice::Commit {
+        id: CommitId("c1-full".into()),
+    };
+    assert_eq!(
+        (&view.choice, view.commit.0.as_str(), view.label.as_str()),
+        (&full, "c1-full", "commit")
+    );
+    let m = fx.session.manifest().await.unwrap();
+    assert_eq!((m.revision, base_of(&m)), (1, (&full, "c1-full", "commit")));
+    assert!(m.files.is_empty());
+    let held = fx.git.refs.lock().unwrap().clone();
+    assert!(held.contains(&("base".to_string(), CommitId("c1-full".into()))));
+    assert!(held.contains(&("target".to_string(), CommitId("head".into()))));
+    assert_eq!(fx.store.0.lock().unwrap().base.as_ref().unwrap().1, full);
+
+    // Back to the pin; asking again changes nothing.
+    let (view, revision) = fx.session.set_base(BaseChoice::Pin).await.unwrap();
+    assert_eq!(
+        (revision, view.commit.0.as_str(), view.label.as_str()),
+        (2, "head", "pin")
+    );
+    assert_eq!(fx.session.set_base(BaseChoice::Pin).await.unwrap().1, 2);
+    assert_eq!(fx.session.manifest().await.unwrap().files[0].hunks.len(), 1);
+    assert_eq!(fx.store.0.lock().unwrap().base.as_ref().unwrap().1, BaseChoice::Pin);
+    assert!(
+        fx.git
+            .refs
+            .lock()
+            .unwrap()
+            .contains(&("base".to_string(), CommitId("head".into())))
+    );
+}
+
+#[tokio::test]
+async fn a_changed_base_makes_marks_seen_against_an_old_base_until_it_is_chosen_again() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3, 4]))]).await;
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    // The merge base lacks the second base line of the marked hunk.
+    let other = base.replace("line 4\n", "");
+    fx.git.add_commit("merge-base main", "mb", &[("a.txt", &other)]);
+    let merge_base = BaseChoice::MergeBase {
+        reference: "main".into(),
+    };
+
+    fx.session.set_base(merge_base.clone()).await.unwrap();
+    // The target lines are as marked, the base lines are not all.
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::SeenAgainstOldBase]);
+    let m = fx.session.manifest().await.unwrap();
+    assert_eq!((m.completion.seen_lines, m.completion.old_base_lines), (1, 2));
+    assert!(!m.completion.is_complete());
+
+    // Choosing the pin again restores the coverage, and so does coming back.
+    fx.session.set_base(BaseChoice::Pin).await.unwrap();
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen]);
+    fx.session.set_base(merge_base).await.unwrap();
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::SeenAgainstOldBase]);
+
+    // Re-confirming marks the hunk against the new base.
+    fx.session.set_seen(3, "a.txt", &[0], true).await.unwrap();
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen]);
+}
+
+#[tokio::test]
+async fn a_base_that_does_not_resolve_is_refused_and_changes_nothing() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+
+    let err = fx
+        .session
+        .set_base(BaseChoice::Commit {
+            id: CommitId("nope".into()),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.to_string(), "unknown commit nope");
+    let err = fx
+        .session
+        .set_base(BaseChoice::MergeBase {
+            reference: "dev".into(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.to_string(), "no common ancestor with dev");
+
+    assert_eq!(fx.session.revision().await, 0);
+    assert_eq!(fx.session.manifest().await.unwrap().base.choice, BaseChoice::Pin);
+    assert!(fx.store.0.lock().unwrap().base.is_none());
 }
 
 #[tokio::test]

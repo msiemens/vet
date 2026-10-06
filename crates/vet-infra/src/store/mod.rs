@@ -22,7 +22,7 @@ use sea_orm::{
     IntoActiveModel, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Set, SqlxSqliteConnector, TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait;
-use vet_app::pin::{CommitId, Pin, PinId};
+use vet_app::pin::{BaseChoice, CommitId, Pin, PinId};
 use vet_app::ports::{GcReport, ReviewStore, Store, StoreError};
 use vet_app::review::{NonTextAck, RecordedSpan, Session, SessionId, SpanId};
 use vet_core::content::{BlobId, Changeset, Hash, Snapshot, SnapshotId, SnapshotStatus};
@@ -33,7 +33,7 @@ use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Thread, Thr
 
 use codec::*;
 use content::ContentStore;
-use entity::kinds::FilterKind;
+use entity::kinds::{BaseKind, FilterKind};
 use entity::*;
 
 type Res<T> = Result<T, DbErr>;
@@ -269,6 +269,13 @@ impl SqliteStore {
             changeset: Changeset {
                 base: SnapshotId(hash(&row.base)?),
                 target: SnapshotId(hash(&row.target)?),
+            },
+            base: match session_base::Entity::find_by_id(sid).one(&self.db).await? {
+                None => BaseChoice::Pin,
+                Some(b) => match b.kind {
+                    BaseKind::MergeBase => BaseChoice::MergeBase { reference: b.value },
+                    BaseKind::Commit => BaseChoice::Commit { id: CommitId(b.value) },
+                },
             },
             filter: read_filter(row.hide_binary, filter_items)?,
             spans,
@@ -655,6 +662,34 @@ impl ReviewStore for SqliteStore {
             .exec(&txn)
             .await?;
         write_filter(&txn, sid, &filter).await?;
+        Ok(txn.commit().await?)
+    }
+
+    async fn set_base(&self, id: SessionId, base: SnapshotId, choice: BaseChoice) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        let sid = id.0 as i64;
+        session::ActiveModel {
+            id: Set(sid),
+            base: Set(base.0.0.to_vec()),
+            ..Default::default()
+        }
+        .update(&txn)
+        .await?;
+        session_base::Entity::delete_by_id(sid).exec(&txn).await?;
+        let (kind, value) = match choice {
+            BaseChoice::Pin => (None, String::new()),
+            BaseChoice::MergeBase { reference } => (Some(BaseKind::MergeBase), reference),
+            BaseChoice::Commit { id } => (Some(BaseKind::Commit), id.0),
+        };
+        if let Some(kind) = kind {
+            session_base::ActiveModel {
+                session: Set(sid),
+                kind: Set(kind),
+                value: Set(value),
+            }
+            .insert(&txn)
+            .await?;
+        }
         Ok(txn.commit().await?)
     }
 

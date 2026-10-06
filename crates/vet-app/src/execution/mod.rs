@@ -259,6 +259,15 @@ mod tests {
         async fn submodule_commit(&self, _: BlobId) -> Result<Option<String>, GitError> {
             unreachable!()
         }
+        async fn merge_base(&self, _: &str) -> Result<CommitId, GitError> {
+            unreachable!()
+        }
+        async fn resolve_commit(&self, _: &str) -> Result<CommitId, GitError> {
+            unreachable!()
+        }
+        async fn base_candidates(&self, _: usize) -> Result<crate::ports::BaseCandidates, GitError> {
+            unreachable!()
+        }
         async fn set_session_ref(&self, _: SessionId, _: &str, _: &CommitId) -> Result<(), GitError> {
             unreachable!()
         }

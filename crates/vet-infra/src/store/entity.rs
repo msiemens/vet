@@ -21,6 +21,7 @@ pub mod kinds {
     int_enum!(ThreadKind { Range = 0, File = 1, Changeset = 2 });
     int_enum!(ThreadStatus { Open = 0, Resolved = 1 });
     int_enum!(FilterKind { Root = 0, Include = 1, Exclude = 2 });
+    int_enum!(BaseKind { MergeBase = 0, Commit = 1 });
     int_enum!(ChildKind { File = 0, Dir = 1 });
     int_enum!(PathFlag { Collision = 0, ContentUnavailable = 1 });
     int_enum!(ChangeKind { Mode = 0, Symlink = 1, Submodule = 2, Binary = 3, ContentUnavailable = 4, Rename = 5 });
@@ -186,6 +187,24 @@ pub mod session {
     }
 
     impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// How the session's base was chosen; no row means the pin. `value` is the
+/// reference or the commit id.
+pub mod session_base {
+    use super::kinds::*;
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "session_base")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub session: i64,
+        pub kind: BaseKind,
+        pub value: String,
+    }
+
+    child_of_session!();
 }
 
 /// `kind`: 0 root, 1 include, 2 exclude. Order is the row id.

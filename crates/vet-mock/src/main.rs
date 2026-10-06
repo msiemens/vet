@@ -14,8 +14,8 @@ use std::sync::{Mutex, PoisonError};
 
 use corpus::{Config, Corpus};
 use vet_protocol::{
-    Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, Manifest, Request, Response, ReviewUpdate,
-    SessionId,
+    Base, BaseChoice, Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, Manifest, Request, Response,
+    ReviewUpdate, SessionId,
 };
 use vet_transport::{Events, Handler, Server};
 
@@ -107,6 +107,11 @@ impl Handler for Mock {
                     session: SESSION,
                     revision: REVISION,
                     name: self.corpus.name.clone(),
+                    base: Base {
+                        choice: BaseChoice::Pin,
+                        commit: "0123456789abcdef0123456789abcdef01234567".into(),
+                        label: "pin".into(),
+                    },
                     completion: total(files.iter().map(|f| f.completion)),
                     files,
                     excluded_lines: 0,
@@ -152,6 +157,7 @@ impl Handler for Mock {
                 }))
             }
             Request::Acknowledge { .. } => Err("the corpus has no non-text items".into()),
+            Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),
             Request::Hover { path, line, col, .. } => {
                 position(&path)?;
                 Ok(Response::Hover {

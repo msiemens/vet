@@ -266,6 +266,28 @@ impl Handler for Orchestrator {
                     .map_err(message)?;
                 Ok(Response::Review(review_changed(&open, &events, &update)))
             }
+            Request::SetBase { session, base } => {
+                let open = self.find(session).await?;
+                let (base, revision) = open
+                    .session
+                    .set_base(mapping::core_base_choice(base))
+                    .await
+                    .map_err(message)?;
+                for events in live(&open.subscribers).iter() {
+                    events.send(Event::SnapshotSettled { session, revision });
+                }
+                Ok(Response::Base(mapping::base(&base)))
+            }
+            Request::ListBaseCandidates { session } => {
+                let candidates = self
+                    .find(session)
+                    .await?
+                    .session
+                    .base_candidates()
+                    .await
+                    .map_err(message)?;
+                Ok(mapping::base_candidates(&candidates))
+            }
             Request::Hover { .. } => Err("hover is not implemented yet".into()),
         }
     }

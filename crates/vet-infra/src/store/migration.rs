@@ -10,7 +10,7 @@ pub struct Migrator;
 
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(Initial), Box::new(RunState)]
+        vec![Box::new(Initial), Box::new(RunState), Box::new(SessionBase)]
     }
 }
 
@@ -50,6 +50,24 @@ impl MigrationTrait for Initial {
             message::Entity
         );
         Ok(())
+    }
+}
+
+struct SessionBase;
+
+impl MigrationName for SessionBase {
+    fn name(&self) -> &str {
+        "m0003_session_base"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for SessionBase {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        let schema = Schema::new(DbBackend::Sqlite);
+        manager
+            .create_table(schema.create_table_from_entity(session_base::Entity))
+            .await
     }
 }
 

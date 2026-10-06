@@ -2,7 +2,8 @@
 //!
 //! **Changeset.** The session pins `HEAD` and dirty-at-open (§6.1) and stores
 //! the changeset `HEAD → dirty-at-open`, but what it displays is `HEAD → the
-//! latest settled snapshot`, from the unchanged pinned base. The review is of
+//! latest settled snapshot`, from the session's base: the pin until
+//! `set_base` chooses another (§6.5). The review is of
 //! everything the agent has done to the tree, so reviewing the live part
 //! (`dirty-at-open → now`) alone would hide reviewed work behind a changeset
 //! that has no review state of its own. Marks recorded against earlier targets
@@ -35,8 +36,8 @@ use vet_core::remap::{cut_recorded, remap_span};
 use vet_core::review::{FileRemapInput, ReviewedSpan};
 
 use crate::acquisition::Acquisition;
-use crate::pin::CommitId;
-use crate::ports::{Clock, Degraded, GitError, GitRepo, ReviewStore, Scan, Store, StoreError, Watcher};
+use crate::pin::{BaseChoice, CommitId};
+use crate::ports::{BaseCandidates, Clock, Degraded, GitError, GitRepo, ReviewStore, Scan, Store, StoreError, Watcher};
 use crate::review::{NonTextAck, RecordedSpan, SessionId, SpanId};
 use crate::settle::Settling;
 
@@ -51,6 +52,8 @@ pub enum SessionError {
     NotFound(String),
     /// The content cannot be shown or marked as text.
     NotText(String),
+    /// The chosen base does not resolve; the message is fit to show.
+    Base(String),
 }
 
 impl fmt::Display for SessionError {
@@ -61,6 +64,7 @@ impl fmt::Display for SessionError {
             Self::Stale { current } => write!(f, "stale revision; the changeset is at revision {current}"),
             Self::NotFound(what) => write!(f, "no such {what}"),
             Self::NotText(path) => write!(f, "{path} has no text to show"),
+            Self::Base(message) => f.write_str(message),
         }
     }
 }
@@ -78,6 +82,9 @@ impl From<StoreError> for SessionError {
 }
 
 type Result<T> = std::result::Result<T, SessionError>;
+
+/// How many recent commits a base can be picked from.
+const MAX_BASE_COMMITS: usize = 200;
 
 /// Display form of a path; invalid UTF-8 is replaced.
 pub fn path_str(path: &RepoPath) -> String {
@@ -129,12 +136,22 @@ pub struct FileView {
     pub completion: Completion,
 }
 
+/// The session's base as chosen and as resolved.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct BaseView {
+    pub choice: BaseChoice,
+    pub commit: CommitId,
+    /// What the choice is, without the commit: `pin`, `merge-base <ref>`, `commit`.
+    pub label: String,
+}
+
 /// The changeset through the review filter; hidden files are only counted in
 /// `completion`.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ManifestView {
     pub revision: u32,
     pub name: String,
+    pub base: BaseView,
     pub files: Vec<FileView>,
     pub completion: Completion,
     /// Why the tree is polled instead of watched, if it is.
@@ -173,6 +190,9 @@ struct State {
     revision: u32,
     filter: ReviewFilter,
     base: Snapshot,
+    base_choice: BaseChoice,
+    /// The commit `base` is the tree of.
+    base_commit: CommitId,
     target: Snapshot,
     /// Other snapshots that recorded spans refer to.
     known: HashMap<SnapshotId, Snapshot>,
@@ -185,8 +205,10 @@ struct State {
 pub struct LiveSession<G, S> {
     pub id: SessionId,
     acquisition: Acquisition<G, S>,
-    /// The pinned commit every snapshot of the session is built on.
+    /// The pinned commit every target snapshot of the session is built on.
     head: CommitId,
+    /// The tree of `head`: the base while the choice is the pin.
+    pin_base: Snapshot,
     name: String,
     /// Serializes everything that reads or edits review state.
     state: Mutex<State>,
@@ -240,7 +262,9 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let state = State {
             revision: 0,
             filter,
-            base: opened.base,
+            base: opened.base.clone(),
+            base_choice: BaseChoice::Pin,
+            base_commit: opened.head.clone(),
             target: opened.target,
             known: HashMap::new(),
             recorded: Vec::new(),
@@ -252,6 +276,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             id,
             acquisition,
             head: opened.head,
+            pin_base: opened.base,
             name,
             state: Mutex::new(state),
         })
@@ -261,6 +286,53 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     pub async fn close(&self, now: i64) -> Result<()> {
         self.acquisition.git.delete_session_refs(self.id).await?;
         Ok(self.acquisition.store.close_session(self.id, now).await?)
+    }
+
+    /// Changes what the target is compared against; the target stays the live
+    /// tree. Moves the session's base ref, and bumps the revision unless nothing
+    /// changed. Recorded spans are untouched: the next manifest remaps them onto
+    /// the new base, so base-side changes in reviewed regions show as
+    /// `SeenAgainstOldBase` (§5.2), and choosing an earlier base again restores
+    /// the earlier coverage. Returns the revision.
+    pub async fn set_base(&self, choice: BaseChoice) -> Result<(BaseView, u32)> {
+        let git = &self.acquisition.git;
+        let base_err = |e: GitError| SessionError::Base(e.0);
+        let (choice, commit) = match choice {
+            BaseChoice::Pin => (BaseChoice::Pin, self.head.clone()),
+            BaseChoice::MergeBase { reference } => {
+                let commit = git.merge_base(&reference).await.map_err(base_err)?;
+                (BaseChoice::MergeBase { reference }, commit)
+            }
+            BaseChoice::Commit { id } => {
+                let commit = git.resolve_commit(&id.0).await.map_err(base_err)?;
+                (BaseChoice::Commit { id: commit.clone() }, commit)
+            }
+        };
+        let snapshot = match choice {
+            BaseChoice::Pin => self.pin_base.clone(),
+            _ => git.commit_snapshot(&commit).await?,
+        };
+
+        let mut st = self.state.lock().await;
+        if st.base_choice == choice && st.base.id == snapshot.id {
+            return Ok((base_view(&st), st.revision));
+        }
+        let store = &self.acquisition.store;
+        store.put_snapshot(snapshot.clone(), SnapshotStatus::default()).await?;
+        git.set_session_ref(self.id, "base", &commit).await?;
+        self.acquisition.record_commit(snapshot.id, commit.clone());
+        store.set_base(self.id, snapshot.id, choice.clone()).await?;
+        st.base = snapshot;
+        st.base_choice = choice;
+        st.base_commit = commit;
+        st.revision += 1;
+        st.changes = None;
+        Ok((base_view(&st), st.revision))
+    }
+
+    /// Branches and recent commits to pick a base from.
+    pub async fn base_candidates(&self) -> Result<BaseCandidates> {
+        Ok(self.acquisition.git.base_candidates(MAX_BASE_COMMITS).await?)
     }
 
     pub async fn revision(&self) -> u32 {
@@ -381,6 +453,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         Ok(ManifestView {
             revision: st.revision,
             name: self.name.clone(),
+            base: base_view(&st),
             completion: cov.completion(&st.filter, &changes.diff.files, &changes.diff.non_text, &acked),
             files,
             degraded: st.degraded,
@@ -696,6 +769,18 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
 
 /// Indices into the prepared files of a recorded span's base and target side.
 type Slot = (Option<usize>, Option<usize>);
+
+fn base_view(st: &State) -> BaseView {
+    BaseView {
+        label: match &st.base_choice {
+            BaseChoice::Pin => "pin".into(),
+            BaseChoice::MergeBase { reference } => format!("merge-base {reference}"),
+            BaseChoice::Commit { .. } => "commit".into(),
+        },
+        choice: st.base_choice.clone(),
+        commit: st.base_commit.clone(),
+    }
+}
 
 fn check_revision(st: &State, revision: u32) -> Result<()> {
     if revision == st.revision {

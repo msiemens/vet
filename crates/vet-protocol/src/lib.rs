@@ -106,6 +106,69 @@ pub enum Request {
         line: u32,
         col: u32,
     },
+    /// Changes what the live tree is compared against (§6.5). Review state is
+    /// remapped onto the new base. The revision increases and every subscriber,
+    /// including the requester, gets `SnapshotSettled`; fetch the manifest again.
+    /// Fails with a message fit to show if the choice does not resolve.
+    SetBase {
+        session: SessionId,
+        base: BaseChoice,
+    },
+    /// What a base can be picked from.
+    ListBaseCandidates {
+        session: SessionId,
+    },
+}
+
+/// How a session's base is chosen.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum BaseChoice {
+    /// `HEAD` at the time the session was opened.
+    Pin,
+    /// The merge base of `reference` (a branch or any revision) and `HEAD`.
+    MergeBase { reference: String },
+    /// A commit: a full or abbreviated id, or any revision.
+    Commit { id: String },
+}
+
+/// A base as resolved.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Base {
+    /// A commit is reported by its full id.
+    pub choice: BaseChoice,
+    /// The full id of the base commit.
+    pub commit: String,
+    /// What the choice is, without the commit: `pin`, `merge-base main`, `commit`.
+    pub label: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BranchInfo {
+    pub name: String,
+    /// Full id of the tip.
+    pub commit: String,
+    /// The checked-out branch.
+    pub current: bool,
+    /// The remote's default branch (`origin/HEAD`); never set without a remote.
+    pub default: bool,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CommitInfo {
+    pub id: String,
+    pub short_id: String,
+    pub subject: String,
+    pub author: String,
+    /// Unix seconds.
+    pub time: u32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -135,6 +198,14 @@ pub enum Response {
     Review(ReviewUpdate),
     Hover {
         text: String,
+    },
+    /// The base after `SetBase`.
+    Base(Base),
+    /// Local branches by name, and up to about 200 commits reachable from
+    /// `HEAD`, newest first.
+    BaseCandidates {
+        branches: Vec<BranchInfo>,
+        commits: Vec<CommitInfo>,
     },
 }
 
@@ -192,6 +263,8 @@ pub struct Manifest {
     /// Increases whenever the changeset's target changes.
     pub revision: u32,
     pub name: String,
+    /// What the files are compared against.
+    pub base: Base,
     pub files: Vec<FileChange>,
     /// Completion of the whole changeset.
     pub completion: Completion,

@@ -6,7 +6,7 @@ use vet_core::content::{Changeset, FileEntry, NonTextKind, RepoPath};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{ReviewedSpan, Thread};
 
-use crate::pin::PinId;
+use crate::pin::{BaseChoice, PinId};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct SessionId(pub u64);
@@ -34,6 +34,8 @@ pub struct Session {
     pub id: SessionId,
     pub pin: PinId,
     pub changeset: Changeset,
+    /// How `changeset.base` was chosen.
+    pub base: BaseChoice,
     pub filter: ReviewFilter,
     pub spans: Vec<RecordedSpan>,
     pub acks: Vec<NonTextAck>,

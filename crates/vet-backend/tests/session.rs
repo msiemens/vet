@@ -9,13 +9,13 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    Completion, Event, FileStatus, HunkState, Manifest, NonTextKind, Request, Response, ReviewUpdate, ServerMessage,
-    SessionId,
+    Base, BaseChoice, Completion, Event, FileStatus, HunkState, Manifest, NonTextKind, Request, Response, ReviewUpdate,
+    ServerMessage, SessionId,
 };
 use vet_transport::{Events, Handler};
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
@@ -28,9 +28,10 @@ fn git(dir: &Path, args: &[&str]) {
             "commit.gpgsign=false",
         ])
         .args(args)
-        .status()
+        .output()
         .unwrap();
-    assert!(status.success(), "git {args:?}");
+    assert!(output.status.success(), "git {args:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
 fn write(dir: &Path, name: &str, content: &str) {
@@ -443,4 +444,137 @@ async fn hover_is_not_implemented() {
             .await
             .is_err()
     );
+}
+
+impl Client {
+    async fn set_base(&self, session: SessionId, base: BaseChoice) -> Result<Base, String> {
+        match self.call(Request::SetBase { session, base }).await? {
+            Response::Base(base) => Ok(base),
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+fn session_base_ref(repo: &Path, session: SessionId) -> String {
+    git(repo, &["rev-parse", &format!("refs/vet/sessions/{session}/base")])
+}
+
+fn merge_base(reference: &str) -> BaseChoice {
+    BaseChoice::MergeBase {
+        reference: reference.into(),
+    }
+}
+
+#[tokio::test]
+async fn the_base_can_be_changed_and_review_state_follows() {
+    let main_text = text(40, &[]);
+    let fx = fixture(&[("a.txt", &main_text)], &[]).await;
+    let p = fx.repo.path();
+    let main = git(p, &["rev-parse", "HEAD"]);
+    git(p, &["checkout", "-q", "-b", "feature"]);
+    // The first branch commit drops a line inside what the second one edits.
+    let dropped = main_text.replace("line 21\n", "");
+    write(p, "a.txt", &dropped);
+    git(p, &["commit", "-q", "-am", "drop a line"]);
+    let one = git(p, &["rev-parse", "HEAD"]);
+    let committed = dropped.replace("line 20\n", "edited 20\n");
+    write(p, "a.txt", &committed);
+    git(p, &["commit", "-q", "-am", "edit a line"]);
+    let two = git(p, &["rev-parse", "HEAD"]);
+    write(p, "a.txt", &committed.replace("line 30\n", "edited 30\n"));
+    let tree = git(p, &["rev-parse", "HEAD^{tree}"]);
+    let unrelated = git(p, &["commit-tree", &tree, "-m", "unrelated"]);
+    git(p, &["branch", "unrelated", &unrelated]);
+
+    let mut client = Client::new(&fx.handler);
+    let session = open(&client, p).await;
+
+    // The pin: only the dirty edit.
+    let m = client.manifest(session).await;
+    assert_eq!(m.base.choice, BaseChoice::Pin);
+    assert_eq!((m.base.commit.as_str(), m.base.label.as_str()), (two.as_str(), "pin"));
+    assert_eq!(m.files[0].hunks.len(), 1);
+    assert_eq!(lines(&m.completion), (2, 0));
+
+    // The merge base with main: the branch's change shows as well.
+    let base = client.set_base(session, merge_base("main")).await.unwrap();
+    assert_eq!(
+        (base.commit.as_str(), base.label.as_str()),
+        (main.as_str(), "merge-base main")
+    );
+    assert_eq!(client.settled().await, 1);
+    assert_eq!(session_base_ref(p, session), main);
+    let m = client.manifest(session).await;
+    assert_eq!((m.revision, &m.base), (1, &base));
+    assert_eq!(hunk_states(&m), [HunkState::Unseen, HunkState::Unseen]);
+    assert_eq!((m.files[0].base_lines, m.files[0].target_lines), (40, 39));
+
+    // Mark the branch's hunk.
+    let update = client.set_seen(session, 1, &[0], true).await;
+    assert_eq!(update.review.hunks, [HunkState::Seen, HunkState::Unseen]);
+
+    // Against the first branch commit, base lines of the marked hunk have changed.
+    let base = client
+        .set_base(session, BaseChoice::Commit { id: one[..10].into() })
+        .await
+        .unwrap();
+    assert_eq!((base.commit.as_str(), base.label.as_str()), (one.as_str(), "commit"));
+    assert_eq!(base.choice, BaseChoice::Commit { id: one.clone() });
+    assert_eq!(client.settled().await, 2);
+    assert_eq!(session_base_ref(p, session), one);
+    let m = client.manifest(session).await;
+    assert_eq!(hunk_states(&m), [HunkState::SeenAgainstOldBase, HunkState::Unseen]);
+    assert_eq!(m.completion.old_base_lines, 1);
+    let Response::FileContents {
+        revision, base: shown, ..
+    } = client
+        .call(Request::FileContents {
+            session,
+            path: "a.txt".into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not file contents");
+    };
+    assert_eq!((revision, shown), (2, Some(dropped)));
+
+    // Back to the pin; the mark lies outside what is left to review.
+    let base = client.set_base(session, BaseChoice::Pin).await.unwrap();
+    assert_eq!((base.commit.as_str(), base.label.as_str()), (two.as_str(), "pin"));
+    assert_eq!(client.settled().await, 3);
+    assert_eq!(session_base_ref(p, session), two);
+    assert_eq!(hunk_states(&client.manifest(session).await), [HunkState::Unseen]);
+
+    // The earlier base brings the earlier coverage back.
+    client.set_base(session, merge_base("main")).await.unwrap();
+    client.settled().await;
+    assert_eq!(
+        hunk_states(&client.manifest(session).await),
+        [HunkState::Seen, HunkState::Unseen]
+    );
+
+    // Candidates: branches by name and the commits HEAD reaches.
+    let Response::BaseCandidates { branches, commits } =
+        client.call(Request::ListBaseCandidates { session }).await.unwrap()
+    else {
+        panic!("not candidates");
+    };
+    let branches: Vec<_> = branches.iter().map(|b| (b.name.as_str(), b.current)).collect();
+    assert_eq!(branches, [("feature", true), ("main", false), ("unrelated", false)]);
+    let ids: Vec<_> = commits.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(ids, [two.as_str(), one.as_str(), main.as_str()]);
+    assert_eq!(commits[0].short_id, two[..7]);
+    assert_eq!(commits[0].subject, "edit a line");
+
+    // Unresolvable bases are refused with a readable message and change nothing.
+    let err = client
+        .set_base(session, BaseChoice::Commit { id: "nope".into() })
+        .await
+        .unwrap_err();
+    assert_eq!(err, "unknown commit nope");
+    let err = client.set_base(session, merge_base("unrelated")).await.unwrap_err();
+    assert_eq!(err, "no common ancestor with unrelated");
+    assert_eq!(client.manifest(session).await.revision, 4);
+    assert!(client.no_event());
 }

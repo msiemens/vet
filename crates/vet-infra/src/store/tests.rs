@@ -78,6 +78,37 @@ async fn session(store: &SqliteStore, base: SnapshotId, target: SnapshotId) -> S
 }
 
 #[tokio::test]
+async fn the_base_choice_and_snapshot_are_stored_and_survive_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    let loaded = |store: &SqliteStore| {
+        let store = store.clone();
+        async move { store.session(id).await.unwrap().unwrap() }
+    };
+    assert_eq!(loaded(&store).await.base, BaseChoice::Pin);
+
+    let merge_base = BaseChoice::MergeBase {
+        reference: "main".into(),
+    };
+    store.set_base(id, SnapshotId(h(3)), merge_base.clone()).await.unwrap();
+    let s = loaded(&store).await;
+    assert_eq!((s.base, s.changeset.base), (merge_base, SnapshotId(h(3))));
+
+    let commit = BaseChoice::Commit {
+        id: CommitId("abc".into()),
+    };
+    store.set_base(id, SnapshotId(h(4)), commit.clone()).await.unwrap();
+    drop(store);
+    let store = open(&dir).await;
+    let s = loaded(&store).await;
+    assert_eq!((s.base, s.changeset.base), (commit, SnapshotId(h(4))));
+
+    store.set_base(id, SnapshotId(h(1)), BaseChoice::Pin).await.unwrap();
+    assert_eq!(loaded(&store).await.base, BaseChoice::Pin);
+}
+
+#[tokio::test]
 async fn database_is_in_wal_mode() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;

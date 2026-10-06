@@ -2,6 +2,7 @@
 //! fsmonitor, or filter and diff drivers (§6.3). All filesystem, hashing and
 //! gix work runs on the blocking pool.
 
+mod base;
 mod checkout;
 mod diff;
 mod ignore;
@@ -16,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use gix::bstr::ByteSlice;
 use gix::objs::Find;
 use vet_app::pin::CommitId;
-use vet_app::ports::{CheckoutError, Dirty, GitError, GitRepo, IgnoreRules, Scan, Store};
+use vet_app::ports::{BaseCandidates, CheckoutError, Dirty, GitError, GitRepo, IgnoreRules, Scan, Store};
 use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
 use vet_core::merkle;
@@ -192,6 +193,20 @@ impl GitRepo for GixRepo {
 
     async fn submodule_commit(&self, blob: BlobId) -> Result<Option<String>, GitError> {
         Ok(self.0.blobs.submodule_commit(blob))
+    }
+
+    async fn merge_base(&self, reference: &str) -> Result<CommitId, GitError> {
+        let reference = reference.to_owned();
+        self.blocking(move |i| base::merge_base(&i.open()?, &reference)).await
+    }
+
+    async fn resolve_commit(&self, spec: &str) -> Result<CommitId, GitError> {
+        let spec = spec.to_owned();
+        self.blocking(move |i| base::resolve_commit(&i.open()?, &spec)).await
+    }
+
+    async fn base_candidates(&self, max_commits: usize) -> Result<BaseCandidates, GitError> {
+        self.blocking(move |i| base::candidates(&i.open()?, max_commits)).await
     }
 
     async fn set_session_ref(&self, session: SessionId, name: &str, commit: &CommitId) -> Result<(), GitError> {
