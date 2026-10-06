@@ -1,4 +1,7 @@
-//! `vet_app::ports::ProcessRunner` over tokio processes.
+//! `vet_app::ports::ProcessRunner` over tokio processes, and the one place
+//! that finds and invokes external programs.
+
+mod program;
 
 use std::process::Stdio;
 use std::sync::Arc;
@@ -7,6 +10,8 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::{Notify, mpsc};
 use vet_app::ports::{Command, ProcessEvent, ProcessRunner, RunningProcess};
+
+pub use program::{Host, invocation, is_file, parse_pathext};
 
 /// Must be called from within a tokio runtime.
 pub struct TokioRunner;
@@ -21,8 +26,9 @@ impl ProcessRunner for TokioRunner {
     type Process = Process;
 
     fn spawn(&self, command: &Command) -> Result<Process, String> {
-        let mut child = TokioCommand::new(&command.program)
-            .args(&command.args)
+        let (program, args) = invocation(&command.program, &command.args);
+        let mut child = TokioCommand::new(program)
+            .args(args)
             .current_dir(&command.cwd)
             .envs(command.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::null())

@@ -58,7 +58,8 @@ impl Connection {
         cwd: &std::path::Path,
         workspace_folders: Value,
     ) -> Result<Self, String> {
-        let mut child = Command::new(binary)
+        let (program, args) = crate::exec::invocation(binary, args);
+        let mut child = Command::new(program)
             .args(args)
             .current_dir(cwd)
             .stdin(Stdio::piped())
