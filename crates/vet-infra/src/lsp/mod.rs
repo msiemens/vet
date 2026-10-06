@@ -5,7 +5,7 @@
 
 mod capabilities;
 pub mod config;
-mod dotnet;
+pub(crate) mod dotnet;
 mod rpc;
 mod server;
 
@@ -17,7 +17,7 @@ use lsp_types::request::Initialize;
 use serde_json::json;
 use vet_app::ports::{ServerCommand, ServerLocator};
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{Backend, LaunchError, ServerConfig, ServerLauncher, Tree};
+use vet_semantic::ports::{Backend, LaunchError, Restored, Restorer, ServerConfig, ServerLauncher, Tree};
 
 use rpc::Connection;
 
@@ -26,19 +26,31 @@ pub use server::LspServer;
 /// No server message for this long, none in progress: indexing is done.
 const QUIET: Duration = Duration::from_millis(750);
 
-pub struct LspLauncher<L> {
+pub struct LspLauncher<L, R> {
     /// How long to wait for indexing after `initialized`.
     pub ready_timeout: Duration,
     /// Where each language's server is, asked on every start.
     pub locator: L,
+    /// Restores the dependencies of an immutable tree before its server starts.
+    pub restorer: R,
 }
 
-impl<L> LspLauncher<L> {
-    pub fn new(locator: L) -> Self {
+impl<L, R> LspLauncher<L, R> {
+    pub fn new(locator: L, restorer: R) -> Self {
         Self {
             ready_timeout: Duration::from_secs(180),
             locator,
+            restorer,
         }
+    }
+}
+
+/// Restores nothing: for trees that already have their dependencies.
+pub struct NoRestore;
+
+impl Restorer for NoRestore {
+    async fn restore(&self, _root: &Path, _backend: &Backend, _policy: AnalysisPolicy) -> Restored {
+        Restored::default()
     }
 }
 
@@ -55,7 +67,7 @@ impl ServerLocator for BinaryLocator {
     }
 }
 
-impl<L: ServerLocator + Sync> ServerLauncher for LspLauncher<L> {
+impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher<L, R> {
     type Server = LspServer;
 
     async fn start(
@@ -63,10 +75,17 @@ impl<L: ServerLocator + Sync> ServerLauncher for LspLauncher<L> {
         root: &Path,
         tree: Tree,
         backend: &Backend,
-        _policy: AnalysisPolicy,
+        policy: AnalysisPolicy,
     ) -> Result<LspServer, LaunchError> {
         let config = backend.config();
         let root = std::fs::canonicalize(root).map_err(|e| LaunchError::Spawn(format!("{}: {e}", root.display())))?;
+        let restored = match tree {
+            Tree::Immutable => self.restorer.restore(&root, backend, policy).await,
+            Tree::Live => Restored::default(),
+        };
+        for failure in &restored.failures {
+            eprintln!("vet: restoring {}: {failure}", root.display());
+        }
         let command = self
             .locator
             .locate(config, &root)
@@ -83,8 +102,14 @@ impl<L: ServerLocator + Sync> ServerLauncher for LspLauncher<L> {
                 Some(json!({"uri": uri.as_str(), "name": name}))
             })
             .collect();
-        let conn = Connection::spawn(&command.program, &config.args, &root, json!(folder_values))
-            .map_err(LaunchError::Spawn)?;
+        let conn = Connection::spawn(
+            &command.program,
+            &config.args,
+            &root,
+            &restored.env,
+            json!(folder_values),
+        )
+        .map_err(LaunchError::Spawn)?;
 
         #[allow(deprecated)]
         let params = lsp::InitializeParams {

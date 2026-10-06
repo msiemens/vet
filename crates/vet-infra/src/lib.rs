@@ -18,6 +18,9 @@ pub mod lsp;
 /// `vet_app::ports::ProcessRunner`.
 pub mod exec;
 
+/// `vet_semantic::ports::Restorer`.
+pub mod restore;
+
 /// `vet_app::ports::ServerResolver`.
 pub mod servers;
 

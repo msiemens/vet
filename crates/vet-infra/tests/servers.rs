@@ -11,7 +11,7 @@ use tempfile::TempDir;
 use vet_app::ports::{ServerOrigin, ServerResolver, ServerState};
 use vet_app::servers::Servers;
 use vet_core::content::RepoPath;
-use vet_infra::lsp::{LspLauncher, config};
+use vet_infra::lsp::{LspLauncher, NoRestore, config};
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
 use vet_semantic::policy::AnalysisPolicy;
@@ -100,7 +100,7 @@ async fn typescript_installs_and_uses_the_project_typescript() {
     };
     assert!(found.notes[0].contains("Vet's fallback"), "{:?}", found.notes);
 
-    let launcher = LspLauncher::new(servers(&setup));
+    let launcher = LspLauncher::new(servers(&setup), NoRestore);
     let server = launcher
         .start(
             project.path(),
@@ -141,7 +141,7 @@ async fn csharp_installs_and_starts() {
     assert!(restore.status.success(), "{}", String::from_utf8_lossy(&restore.stdout));
     install(&setup, project.path(), "csharp").await;
 
-    let launcher = LspLauncher::new(servers(&setup));
+    let launcher = LspLauncher::new(servers(&setup), NoRestore);
     let server = launcher
         .start(
             project.path(),
@@ -203,7 +203,7 @@ async fn python_installs_and_starts() {
     .unwrap();
     install(&setup, project.path(), "python").await;
 
-    let launcher = LspLauncher::new(servers(&setup));
+    let launcher = LspLauncher::new(servers(&setup), NoRestore);
     let server = launcher
         .start(
             project.path(),

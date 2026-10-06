@@ -248,9 +248,32 @@ pub enum Tree {
     Immutable,
 }
 
+/// What a restore leaves for the server that starts on the directory.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub struct Restored {
+    /// Environment variables for the server process.
+    pub env: Vec<(String, String)>,
+    /// Steps that failed, fit to show. The server still starts: what does not
+    /// need the dependencies still works.
+    pub failures: Vec<String>,
+}
+
+/// Installs the dependencies of a materialized snapshot without executing
+/// project code (§7.2): fetch only. A step that would execute project code is
+/// skipped unless the policy allows executing (§7.5). Implemented in `vet-infra`.
+pub trait Restorer {
+    fn restore(
+        &self,
+        root: &std::path::Path,
+        backend: &Backend,
+        policy: AnalysisPolicy,
+    ) -> impl Future<Output = Restored> + Send;
+}
+
 /// Implemented by `vet-infra::lsp`. The pool needs a launcher, not a server
 /// instance, because the pool owns lifecycle: eviction, restart on settings
 /// change, and the capability assertion (which the launcher performs on start).
+/// On an `Immutable` tree the launcher restores the dependencies first.
 pub trait ServerLauncher {
     type Server: LanguageServer;
 

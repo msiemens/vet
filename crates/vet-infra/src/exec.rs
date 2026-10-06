@@ -3,8 +3,10 @@
 
 mod program;
 
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command as TokioCommand;
@@ -12,6 +14,51 @@ use tokio::sync::{Notify, mpsc};
 use vet_app::ports::{Command, ProcessEvent, ProcessRunner, RunningProcess};
 
 pub use program::{Host, invocation, is_file, parse_pathext};
+
+pub struct Captured {
+    pub ok: bool,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// Runs a program to completion with a time limit; it is killed when the limit passes.
+pub async fn capture(
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+    env: &[(String, String)],
+    timeout: Duration,
+) -> Result<Captured, String> {
+    let (program, args) = invocation(program, args);
+    let mut command = TokioCommand::new(&program);
+    command
+        .args(args)
+        .envs(env.iter().map(|(k, v)| (k, v)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    let mut child = command.spawn().map_err(|e| format!("{program}: {e}"))?;
+    let mut stdout = child.stdout.take().expect("piped");
+    let mut stderr = child.stderr.take().expect("piped");
+    let run = async {
+        let (mut out, mut err) = (String::new(), String::new());
+        let (a, b) = tokio::join!(stdout.read_to_string(&mut out), stderr.read_to_string(&mut err));
+        a.and(b).map_err(|e| e.to_string())?;
+        let status = child.wait().await.map_err(|e| e.to_string())?;
+        Ok(Captured {
+            ok: status.success(),
+            stdout: out,
+            stderr: err,
+        })
+    };
+    tokio::time::timeout(timeout, run)
+        .await
+        .map_err(|_| format!("{program} did not finish within {}s", timeout.as_secs()))?
+}
 
 /// Must be called from within a tokio runtime.
 pub struct TokioRunner;

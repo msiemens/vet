@@ -7,19 +7,16 @@
 //! pinned install in the data directory; `PATH`.
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::Duration;
 
 use serde_json::json;
-use tokio::io::AsyncReadExt;
-use tokio::process::Command as TokioCommand;
 use vet_app::ports::{
     Command, FoundServer, ProcessEvent, ProcessRunner, RunningProcess, ServerCommand, ServerOrigin, ServerResolver,
     ServerState,
 };
 use vet_semantic::ports::BackendId;
 
-use crate::exec::{Host, TokioRunner, invocation, is_file};
+use crate::exec::{Captured, Host, TokioRunner, capture as run_to_end, is_file};
 
 /// Pinned versions of the servers Vet installs. Bump with a check that the
 /// server still has every required capability (§7.1).
@@ -227,42 +224,8 @@ fn tool_list_version(table: &str, package: &str) -> Option<String> {
     })
 }
 
-struct Captured {
-    ok: bool,
-    stdout: String,
-    stderr: String,
-}
-
-/// Runs a program to completion with a time limit.
 async fn capture(program: &str, args: &[String], cwd: Option<&Path>) -> Result<Captured, String> {
-    let (program, args) = invocation(program, args);
-    let mut command = TokioCommand::new(&program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    let mut child = command.spawn().map_err(|e| format!("{program}: {e}"))?;
-    let mut stdout = child.stdout.take().expect("piped");
-    let mut stderr = child.stderr.take().expect("piped");
-    let run = async {
-        let (mut out, mut err) = (String::new(), String::new());
-        let (a, b) = tokio::join!(stdout.read_to_string(&mut out), stderr.read_to_string(&mut err));
-        a.and(b).map_err(|e| e.to_string())?;
-        let status = child.wait().await.map_err(|e| e.to_string())?;
-        Ok(Captured {
-            ok: status.success(),
-            stdout: out,
-            stderr: err,
-        })
-    };
-    tokio::time::timeout(PROBE_TIMEOUT, run)
-        .await
-        .map_err(|_| format!("{program} did not answer within {}s", PROBE_TIMEOUT.as_secs()))?
+    run_to_end(program, args, cwd, &[], PROBE_TIMEOUT).await
 }
 
 impl ServerResolver for ToolResolver {

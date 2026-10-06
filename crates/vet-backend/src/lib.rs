@@ -22,6 +22,7 @@ use vet_core::review::ThreadId;
 use vet_infra::clock::TokioClock;
 use vet_infra::git::{GixRepo, find_root};
 use vet_infra::lsp::{LspLauncher, config as lsp_config};
+use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::{SqliteStore, unix_now};
 use vet_infra::watch::FsWatcher;
@@ -51,7 +52,7 @@ impl Default for Config {
 
 type Live = LiveSession<GixRepo, SqliteStore>;
 type LanguageServers = Servers<ToolResolver, SqliteStore>;
-type Semantic = Semantics<GixRepo, SqliteStore, LspLauncher<Arc<LanguageServers>>>;
+type Semantic = Semantics<GixRepo, SqliteStore, LspLauncher<Arc<LanguageServers>, ToolRestorer>>;
 
 /// The connections that opened a session. Sessions are one per repository:
 /// opening an open repository subscribes to the existing one.
@@ -219,7 +220,7 @@ impl Orchestrator {
         let reaper = tokio::spawn(reap(self.sessions.clone(), id, self.config.orphan_grace));
         let semantics = Semantics::new(
             &session,
-            LspLauncher::new(self.servers.clone()),
+            LspLauncher::new(self.servers.clone(), ToolRestorer::new()),
             repo.clone(),
             self.backends.to_vec(),
         );
