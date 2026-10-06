@@ -5,6 +5,7 @@
 pub mod acquisition;
 pub mod execution;
 pub mod ignore;
+pub mod limits;
 pub mod pin;
 pub mod ports;
 pub mod review;

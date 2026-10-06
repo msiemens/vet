@@ -2,6 +2,7 @@
 import type { Base } from "./Base";
 import type { Completion } from "./Completion";
 import type { FileChange } from "./FileChange";
+import type { RestoreFailure } from "./RestoreFailure";
 import type { ReviewFilter } from "./ReviewFilter";
 import type { WatchDegraded } from "./WatchDegraded";
 
@@ -30,4 +31,9 @@ excludedLines: number, excludedItems: number,
  * Set when the backend polls the tree instead of watching it, so changes
  * show up late (§4.1, §6.4); the shell shows a banner.
  */
-degraded?: WatchDegraded, };
+degraded?: WatchDegraded, 
+/**
+ * Dependency restores that failed so far; the shell says analysis is limited
+ * (§7.5). `Event::RestoreFailed` updates it.
+ */
+restoreFailures: Array<RestoreFailure>, };

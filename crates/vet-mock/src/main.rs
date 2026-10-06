@@ -118,6 +118,7 @@ impl Handler for Mock {
                     excluded_lines: 0,
                     excluded_items: 0,
                     degraded: None,
+                    restore_failures: Vec::new(),
                 }))
             }
             Request::FileContents { path, .. } => {

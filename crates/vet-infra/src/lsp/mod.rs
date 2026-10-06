@@ -84,7 +84,12 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
             Tree::Live => Restored::default(),
         };
         for failure in &restored.failures {
-            eprintln!("vet: restoring {}: {failure}", root.display());
+            eprintln!(
+                "vet: restoring {} in {}: {}",
+                failure.project,
+                root.display(),
+                failure.message
+            );
         }
         let command = self
             .locator

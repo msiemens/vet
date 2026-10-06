@@ -130,11 +130,18 @@ async fn pnpm_installs_from_the_lockfile_without_running_scripts() {
         &["install", "--lockfile-only", "--ignore-scripts"],
     );
     assert!(project.path().join("pnpm-lock.yaml").is_file());
+    // pnpm would run these hooks during the install.
+    write(
+        project.path(),
+        ".pnpmfile.cjs",
+        "require('fs').writeFileSync('pnpmfile-ran', '');\nmodule.exports = { hooks: {} };\n",
+    );
 
     let restorer = ToolRestorer::with_env(env("pnpm_config_store_dir", store.path()));
     restore(&restorer, project.path(), &config::typescript(), false).await;
     assert!(project.path().join("node_modules/picocolors/package.json").is_file());
     assert!(!project.path().join("script-ran").exists());
+    assert!(!project.path().join("pnpmfile-ran").exists());
     assert!(
         std::fs::read_dir(store.path()).unwrap().next().is_some(),
         "the store took the download"
@@ -173,6 +180,147 @@ async fn uv_installs_the_locked_dependencies_into_a_venv_the_server_gets() {
     });
     run(project.path(), python.to_str().unwrap(), &["-c", "import iniconfig"]);
     assert!(cache.path().is_dir() && std::fs::read_dir(cache.path()).unwrap().next().is_some());
+}
+
+#[tokio::test]
+async fn npm_restores_a_workspace_once_at_its_root_and_a_project_in_a_subdirectory_on_its_own() {
+    if !wanted("npm") {
+        return;
+    }
+    let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let package = r#"{"name":"NAME","version":"1.0.0","dependencies":{"picocolors":"1.1.1"}}"#;
+    write(
+        project.path(),
+        "package.json",
+        r#"{"name":"root","version":"1.0.0","private":true,"workspaces":["packages/*"]}"#,
+    );
+    for dir in ["packages/a", "web"] {
+        std::fs::create_dir_all(project.path().join(dir)).unwrap();
+        write(
+            project.path(),
+            &format!("{dir}/package.json"),
+            &package.replace("NAME", dir.replace('/', "-").as_str()),
+        );
+    }
+    run(
+        project.path(),
+        "npm",
+        &["install", "--package-lock-only", "--ignore-scripts"],
+    );
+    run(
+        &project.path().join("web"),
+        "npm",
+        &["install", "--package-lock-only", "--ignore-scripts"],
+    );
+
+    let restorer = ToolRestorer::with_env(env("npm_config_cache", cache.path()));
+    restore(&restorer, project.path(), &config::typescript(), false).await;
+    // The workspace root's install hoists the member's dependency; the member is not installed on its own.
+    assert!(project.path().join("node_modules/picocolors/package.json").is_file());
+    assert!(!project.path().join("packages/a/node_modules").exists());
+    assert!(
+        project
+            .path()
+            .join("web/node_modules/picocolors/package.json")
+            .is_file()
+    );
+}
+
+#[tokio::test]
+async fn yarn_classic_installs_from_the_lockfile_without_running_scripts() {
+    if !wanted("yarn") {
+        return;
+    }
+    let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    write(
+        project.path(),
+        "package.json",
+        r#"{"name":"p","version":"1.0.0","dependencies":{"picocolors":"1.1.1"},"scripts":{"postinstall":"node -e \"require('fs').writeFileSync('script-ran','')\""}}"#,
+    );
+    let cache_env = env("YARN_CACHE_FOLDER", cache.path());
+    let restorer = ToolRestorer::with_env(cache_env.clone());
+    // Writes the lockfile; the install itself is thrown away.
+    Command::new("yarn")
+        .args(["install", "--ignore-scripts", "--non-interactive"])
+        .envs(cache_env)
+        .current_dir(project.path())
+        .output()
+        .unwrap();
+    assert!(project.path().join("yarn.lock").is_file());
+    std::fs::remove_dir_all(project.path().join("node_modules")).unwrap();
+
+    restore(&restorer, project.path(), &config::typescript(), false).await;
+    assert!(project.path().join("node_modules/picocolors/package.json").is_file());
+    assert!(!project.path().join("script-ran").exists());
+}
+
+#[tokio::test]
+async fn uv_installs_requirements_txt_into_a_venv_and_never_builds_a_source_package() {
+    if !wanted("uv") {
+        return;
+    }
+    let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let restorer = ToolRestorer::with_env(env("UV_CACHE_DIR", cache.path()));
+    write(project.path(), "requirements.txt", "iniconfig==2.1.0\n");
+    let restored = restore(&restorer, project.path(), &config::pyright(), false).await;
+    let venv = project.path().join(".venv");
+    let value = |key: &str| restored.env.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+    assert_eq!(value("VIRTUAL_ENV").as_deref(), venv.to_str());
+    let python = venv.join(if cfg!(windows) {
+        "Scripts/python.exe"
+    } else {
+        "bin/python"
+    });
+    run(project.path(), python.to_str().unwrap(), &["-c", "import iniconfig"]);
+
+    // A local source package needs its build backend, which does not run: the failure is reported.
+    let local = tempfile::tempdir().unwrap();
+    write(
+        local.path(),
+        "setup.py",
+        "open('build-ran', 'w').close()\nfrom setuptools import setup\nsetup(name='local', version='0')\n",
+    );
+    write(
+        local.path(),
+        "requirements.txt",
+        &format!("{}\n", local.path().display()),
+    );
+    let restored = restorer
+        .restore(
+            local.path(),
+            &config::pyright(),
+            AnalysisPolicy { allow_executing: false },
+        )
+        .await;
+    assert_eq!(restored.failures.len(), 1, "{restored:?}");
+    assert_eq!(restored.failures[0].tool, "uv");
+    assert!(!local.path().join("build-ran").exists());
+}
+
+#[tokio::test]
+async fn uv_installs_a_pyproject_without_a_lockfile_from_its_subdirectory() {
+    if !wanted("uv") {
+        return;
+    }
+    let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    std::fs::create_dir(project.path().join("svc")).unwrap();
+    write(
+        &project.path().join("svc"),
+        "pyproject.toml",
+        "[project]\nname = \"p\"\nversion = \"0\"\nrequires-python = \">=3.9\"\ndependencies = [\"iniconfig==2.1.0\"]\n",
+    );
+    let restorer = ToolRestorer::with_env(env("UV_CACHE_DIR", cache.path()));
+    let restored = restore(&restorer, project.path(), &config::pyright(), false).await;
+    let venv = project.path().join("svc/.venv");
+    assert!(venv.is_dir());
+    assert_eq!(
+        restored
+            .env
+            .iter()
+            .find(|(k, _)| k == "VIRTUAL_ENV")
+            .map(|(_, v)| v.as_str()),
+        venv.to_str()
+    );
 }
 
 #[tokio::test]

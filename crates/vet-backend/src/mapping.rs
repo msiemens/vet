@@ -16,6 +16,7 @@ use vet_core::content::{EntryKind, Hunk, LineRange, NonTextKind, RepoPath};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{AnchorState, CommentTarget, Confidence, Location, Side, StaleReason, Strategy, ThreadStatus};
 use vet_protocol as p;
+use vet_semantic::ports::RestoreFailure;
 
 fn completion(c: &Completion) -> p::Completion {
     p::Completion {
@@ -189,7 +190,7 @@ pub fn base_candidates(c: &BaseCandidates) -> p::Response {
     }
 }
 
-pub fn manifest(session: p::SessionId, m: &ManifestView) -> p::Manifest {
+pub fn manifest(session: p::SessionId, m: &ManifestView, restore_failures: &[RestoreFailure]) -> p::Manifest {
     p::Manifest {
         session,
         revision: m.revision,
@@ -204,6 +205,7 @@ pub fn manifest(session: p::SessionId, m: &ManifestView) -> p::Manifest {
             Degraded::MountedWindowsDrive => p::WatchDegraded::MountedWindowsDrive,
             Degraded::WatchLimit => p::WatchDegraded::WatchLimit,
         }),
+        restore_failures: semantic::restore_failures(restore_failures),
     }
 }
 

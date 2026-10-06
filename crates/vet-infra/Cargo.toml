@@ -23,6 +23,8 @@ gix = { version = "0.88", default-features = false, features = ["sha1", "index",
 unicode-normalization = "0.1"
 lsp-types = "0.97"
 serde_json = "1.0.151"
+toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
+globset = { version = "0.4.20", default-features = false }
 url = "2.5.8"
 
 [target.'cfg(not(windows))'.dependencies]

@@ -6,6 +6,7 @@ import { SvelteMap } from "svelte/reactivity";
 import type { FileChange } from "../generated/FileChange";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { Manifest } from "../generated/Manifest";
+import type { RestoreFailure } from "../generated/RestoreFailure";
 import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { BaseChoice } from "../generated/BaseChoice";
@@ -30,6 +31,8 @@ class ChangesetStore {
    * their review state is current in `file(path)`. Immutable snapshots, never deep proxies.
    */
   manifest = $state.raw<Manifest>();
+  /** Dependency restores that failed: the analysis of those projects is limited. Pushed as they happen. */
+  restoreFailures = $state.raw<RestoreFailure[]>([]);
   /** The current state of each file, one reactive cell per path: a review update invalidates only its file. */
   private cells = new SvelteMap<string, FileChange>();
   private listeners = new Set<ReviewListener>();
@@ -59,6 +62,7 @@ class ChangesetStore {
         if (event.type === "snapshotSettled") void this.refresh();
         else if (event.type === "reviewChanged" && event.revision === this.manifest?.revision)
           this.applyReview(event.update);
+        else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
       });
       this.backend = backend;
       await recent.load();
@@ -100,6 +104,7 @@ class ChangesetStore {
   async closeRepo() {
     this.repo = undefined;
     this.manifest = undefined;
+    this.restoreFailures = [];
     this.cells.clear();
     await this.connected().close();
   }
@@ -110,6 +115,7 @@ class ChangesetStore {
     this.cells.clear();
     for (const file of manifest.files) this.cells.set(file.path, file);
     this.manifest = manifest;
+    this.restoreFailures = manifest.restoreFailures;
     return manifest;
   }
 

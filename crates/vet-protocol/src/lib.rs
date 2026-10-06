@@ -1171,6 +1171,26 @@ pub enum Event {
         code: Option<i32>,
         dropped_bytes: u32,
     },
+    /// A dependency restore failed, so analysis is limited. `failures` is every
+    /// failure of the session so far, as in `Manifest::restore_failures`.
+    RestoreFailed {
+        session: SessionId,
+        failures: Vec<RestoreFailure>,
+    },
+}
+
+/// A dependency restore step that failed (§7.2): what that project's analysis
+/// cannot resolve is missing, not wrong.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RestoreFailure {
+    /// The project directory, relative to the repository with `/`; `.` is the root.
+    pub project: String,
+    /// The tool that failed, e.g. `pnpm`.
+    pub tool: String,
+    /// Fit to show.
+    pub message: String,
 }
 
 /// The changeset as displayed through the session's review filter.
@@ -1197,6 +1217,10 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub degraded: Option<WatchDegraded>,
+    /// Dependency restores that failed so far; the shell says analysis is limited
+    /// (§7.5). `Event::RestoreFailed` updates it.
+    #[serde(default)]
+    pub restore_failures: Vec<RestoreFailure>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

@@ -26,7 +26,7 @@ fn has_extension(path: &Path, extensions: &[&str]) -> bool {
 }
 
 /// The files of the tree at `root`, relative to it.
-async fn files(root: &Path) -> Result<Vec<PathBuf>, String> {
+pub(crate) async fn files(root: &Path) -> Result<Vec<PathBuf>, String> {
     // `.git` is how git marks a worktree's root, as a directory or a file.
     if root.join(".git").exists() {
         let scan = GixRepo::new(root).scan(Dirty::All).await.map_err(|e| e.0)?;

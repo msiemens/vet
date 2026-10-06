@@ -248,14 +248,29 @@ pub enum Tree {
     Immutable,
 }
 
+/// A restore step that failed: the analysis of that project is limited to what
+/// does not need its dependencies.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RestoreFailure {
+    /// The project directory, relative to the restored root with `/`; `.` is the root.
+    pub project: String,
+    /// The program that failed, e.g. `pnpm`.
+    pub tool: String,
+    /// Fit to show.
+    pub message: String,
+}
+
 /// What a restore leaves for the server that starts on the directory.
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub struct Restored {
     /// Environment variables for the server process.
     pub env: Vec<(String, String)>,
-    /// Steps that failed, fit to show. The server still starts: what does not
-    /// need the dependencies still works.
-    pub failures: Vec<String>,
+    /// Steps that failed. The server still starts: what does not need the
+    /// dependencies still works.
+    pub failures: Vec<RestoreFailure>,
+    /// `(project, tool)` of every step that ran, failed or not: a success is
+    /// what lifts an earlier failure of the same step.
+    pub ran: Vec<(String, String)>,
 }
 
 /// Installs the dependencies of a materialized snapshot without executing

@@ -4,7 +4,16 @@
   import { hudListeners } from "../dev/hud.svelte";
   import type { WatchDegraded } from "../generated/WatchDegraded";
   import Banner from "../lib/ui/Banner.svelte";
-  import { AboutDialog, Header, degradedMessage, StatusFooter, TOOLS, TitleBar, ToolRail } from "../features/chrome";
+  import {
+    AboutDialog,
+    Header,
+    degradedMessage,
+    limitedMessage,
+    StatusFooter,
+    TOOLS,
+    TitleBar,
+    ToolRail,
+  } from "../features/chrome";
   import { FilterPopover } from "../features/filter";
   import { type Mode, ReviewScreen, type ReviewController } from "../features/review";
   import { RunButton, RunDialogs, RunPanel } from "../features/run";
@@ -50,6 +59,13 @@
   });
   const degraded = $derived(changeset.manifest?.degraded);
   let dismissedDegraded = $state<WatchDegraded>();
+  const failures = $derived(changeset.restoreFailures);
+  // How many failures the viewer dismissed: a longer list is news again, and a shorter one
+  // (a project got fixed) lowers it so a failure that comes back is shown.
+  let dismissedFailures = $state(0);
+  $effect(() => {
+    if (failures.length < untrack(() => dismissedFailures)) dismissedFailures = failures.length;
+  });
   const semanticSummary = $derived(semantic.summary(controller?.activePath));
   const footer = $derived({
     snapshot: `#${changeset.manifest?.revision ?? 0}`,
@@ -208,6 +224,21 @@
     <Banner message={degradedMessage[degraded]} ondismiss={() => (dismissedDegraded = degraded)} />
   {/if}
 
+  {#if failures.length > dismissedFailures}
+    <Banner message={limitedMessage(failures)} ondismiss={() => (dismissedFailures = failures.length)}>
+      {#snippet details()}
+        <ul class="failures">
+          {#each failures as failure (failure.project + failure.tool + failure.message)}
+            <li>
+              <strong>{failure.project}</strong> ({failure.tool}):
+              <pre>{failure.message}</pre>
+            </li>
+          {/each}
+        </ul>
+      {/snippet}
+    </Banner>
+  {/if}
+
   <div class="body">
     <ToolRail bind:active={left.tool} bind:open={left.open} />
     <ReviewScreen
@@ -281,6 +312,16 @@
     flex: 1;
     display: flex;
     min-height: 0;
+  }
+  .failures {
+    margin: 0;
+    padding-left: 16px;
+  }
+  .failures pre {
+    margin: 2px 0 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    white-space: pre-wrap;
   }
   .message {
     flex: 1;

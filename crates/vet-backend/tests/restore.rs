@@ -12,7 +12,7 @@ use std::path::Path;
 
 use common::{Client, find, git, handler, repo_with, run, write};
 use vet_infra::exec::{Host, is_file};
-use vet_protocol::{Locations, Side};
+use vet_protocol::{Event, Locations, Request, Response, ServerMessage, Side};
 
 fn wanted(tools: &[&str]) -> bool {
     let listed = std::env::var("VET_TEST_INSTALL").is_ok_and(|l| l.split(',').any(|x| x.trim() == "restore"));
@@ -35,6 +35,51 @@ fn commit(repo: &Path) {
 fn only(locations: &Locations) -> &str {
     assert_eq!(locations.locations.len(), 1, "{locations:?}");
     &locations.locations[0].path
+}
+
+/// A restore that fails downloads nothing, so this runs wherever `cargo` is installed.
+#[tokio::test]
+async fn a_failed_restore_limits_the_analysis_and_says_which_project() {
+    if Host::current().find("cargo", is_file).is_none() {
+        eprintln!("skipped: cargo is not installed");
+        return;
+    }
+    const LIB: &str = "pub fn show() {}\n";
+    let repo = repo_with(
+        &[("svc/Cargo.toml", "not a manifest"), ("svc/src/lib.rs", LIB)],
+        &[("svc/src/lib.rs", "pub fn render() {}\n")],
+    );
+    let (handler, _data) = handler().await;
+    let mut client = Client::new(&handler);
+    let session = client.open(repo.path()).await;
+    let revision = client.revision(session).await;
+    async fn manifest(client: &Client, session: u32) -> vet_protocol::Manifest {
+        match client.call(Request::Manifest { session }).await.unwrap() {
+            Response::Manifest(m) => m,
+            other => panic!("{other:?}"),
+        }
+    }
+    assert!(manifest(&client, session).await.restore_failures.is_empty());
+
+    // The base side starts a server on a restored snapshot, whether or not rust-analyzer is there.
+    client
+        .hover(session, revision, Side::Base, "svc/src/lib.rs", find(LIB, "show", 0, 1))
+        .await;
+    let failures = manifest(&client, session).await.restore_failures;
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert_eq!(
+        (failures[0].project.as_str(), failures[0].tool.as_str()),
+        ("svc", "cargo")
+    );
+    assert!(failures[0].message.contains("Cargo.toml"), "{failures:?}");
+
+    let pushed = std::iter::from_fn(|| client.inbox.try_recv().ok()).find_map(|m| match m {
+        ServerMessage::Event {
+            event: Event::RestoreFailed { session: s, failures },
+        } if s == session => Some(failures),
+        _ => None,
+    });
+    assert_eq!(pushed, Some(failures));
 }
 
 #[tokio::test]

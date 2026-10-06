@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use tokio::task::AbortHandle;
 use vet_app::ignore::IgnoringWatcher;
+use vet_app::limits::{Limiting, RestoreLimits};
 use vet_app::semantics::Semantics;
 use vet_app::servers::Servers;
 use vet_app::session::{LiveSession, ThreadView};
@@ -52,7 +53,7 @@ impl Default for Config {
 
 type Live = LiveSession<GixRepo, SqliteStore>;
 type LanguageServers = Servers<ToolResolver, SqliteStore>;
-type Semantic = Semantics<GixRepo, SqliteStore, LspLauncher<Arc<LanguageServers>, ToolRestorer>>;
+type Semantic = Semantics<GixRepo, SqliteStore, LspLauncher<Arc<LanguageServers>, Limiting<ToolRestorer>>>;
 
 /// The connections that opened a session. Sessions are one per repository:
 /// opening an open repository subscribes to the existing one.
@@ -218,11 +219,24 @@ impl Orchestrator {
             })
         };
         let reaper = tokio::spawn(reap(self.sessions.clone(), id, self.config.orphan_grace));
+        let limits = RestoreLimits::default();
+        let restorer = Limiting::new(
+            ToolRestorer::new(),
+            limits.clone(),
+            Box::new({
+                let subscribers = subscribers.clone();
+                move |failures| {
+                    let failures = mapping::semantic::restore_failures(&failures);
+                    run::broadcast(&subscribers, Event::RestoreFailed { session: id, failures });
+                }
+            }),
+        );
         let semantics = Semantics::new(
             &session,
-            LspLauncher::new(self.servers.clone(), ToolRestorer::new()),
+            LspLauncher::new(self.servers.clone(), restorer),
             repo.clone(),
             self.backends.to_vec(),
+            limits,
         );
         sessions.push(Arc::new(Open {
             id,
@@ -275,8 +289,10 @@ impl Handler for Orchestrator {
                 Ok(Response::Done)
             }
             Request::Manifest { session } => {
-                let manifest = self.find(session).await?.session.manifest().await.map_err(message)?;
-                Ok(Response::Manifest(mapping::manifest(session, &manifest)))
+                let open = self.find(session).await?;
+                let manifest = open.session.manifest().await.map_err(message)?;
+                let failures = open.semantics.restore_failures();
+                Ok(Response::Manifest(mapping::manifest(session, &manifest, &failures)))
             }
             Request::FileContents { session, path } => {
                 let text = self

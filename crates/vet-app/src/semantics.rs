@@ -14,10 +14,13 @@ use vet_semantic::derived::{
 };
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::pool::{Pool, Target};
-use vet_semantic::ports::{At, Backend, BackendId, Diagnostic, Location, ServerLauncher, Sym, SymbolInfo};
+use vet_semantic::ports::{
+    At, Backend, BackendId, Diagnostic, Location, RestoreFailure, ServerLauncher, Sym, SymbolInfo,
+};
 use vet_semantic::query::{Primitives, Semantic, SemanticError, Side, Which};
 
 use crate::acquisition::SharedAcquisition;
+use crate::limits::RestoreLimits;
 use crate::ports::{GitRepo, ReviewStore, Store};
 use crate::session::{LiveSession, SessionError};
 
@@ -49,6 +52,8 @@ where
     semantic: Semantic<SharedAcquisition<G, S>, L>,
     /// The changed symbols of one revision, which every derived analysis starts from.
     changes: Mutex<Option<(u32, Arc<Derived<Changes>>)>>,
+    /// Kept current by the launcher's restorer (`Limiting`).
+    limits: RestoreLimits,
 }
 
 impl<G, S, L> Semantics<G, S, L>
@@ -59,18 +64,26 @@ where
     L::Server: Send,
 {
     /// `live_root` is the worktree the target side is served from. The dirty
-    /// tree is the user's own, so servers may execute project code.
+    /// tree is the user's own, so servers may execute project code. `limits` is
+    /// the one the launcher's restorer updates.
     pub fn new(
         session: &LiveSession<G, S>,
         launcher: L,
         live_root: std::path::PathBuf,
         backends: Vec<Backend>,
+        limits: RestoreLimits,
     ) -> Self {
         let pool = Pool::new(session.materializer(), launcher, live_root, POOL_CAPACITY);
         Self {
             semantic: Semantic::new(pool, backends),
             changes: Mutex::new(None),
+            limits,
         }
+    }
+
+    /// Restores that failed and have not succeeded since.
+    pub fn restore_failures(&self) -> Vec<RestoreFailure> {
+        self.limits.all()
     }
 
     const POLICY: AnalysisPolicy = AnalysisPolicy { allow_executing: true };
