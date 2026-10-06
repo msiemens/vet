@@ -20,17 +20,31 @@ pub trait Clock {
     fn sleep_until(&self, deadline: Millis) -> impl Future<Output = ()> + Send;
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum WatchEvent {
     Dirty(Vec<RepoPath>),
     /// Overflow, dropped events, or a poll tick: reconcile everything (§6.4).
     MustRescan,
+    /// The watcher fell back to polling; implies `MustRescan`.
+    Degraded(Degraded),
+}
+
+/// Why watching is polling-only; the session status surfaces it (§4.1, §6.4).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Degraded {
+    /// WSL worktree under `/mnt/*`: events do not cross 9P.
+    MountedWindowsDrive,
+    /// inotify watch limit exhausted.
+    WatchLimit,
 }
 
 /// A latency optimization, never authority (§6.2).
 pub trait Watcher {
+    fn degraded(&self) -> Option<Degraded>;
     fn next(&mut self) -> impl Future<Output = WatchEvent> + Send;
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Dirty {
     All,
     Paths(Vec<RepoPath>),

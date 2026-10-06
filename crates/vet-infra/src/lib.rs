@@ -6,8 +6,11 @@
 pub mod git {}
 
 /// `vet_app::ports::Watcher`: FSEvents, `ReadDirectoryChangesW`, inotify, and
-/// polling for `/mnt/*`. Emits only `Dirty` and `MustRescan`.
-pub mod watch {}
+/// polling for `/mnt/*`.
+pub mod watch;
+
+/// `vet_app::ports::Clock` over tokio time.
+pub mod clock;
 
 /// `vet_app::ports::Store`: content-addressed files (temp, fsync, rename) and
 /// SQLite in WAL mode.
