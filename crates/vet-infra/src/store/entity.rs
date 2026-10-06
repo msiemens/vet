@@ -23,6 +23,7 @@ pub mod kinds {
     int_enum!(FilterKind { Root = 0, Include = 1, Exclude = 2 });
     int_enum!(ChildKind { File = 0, Dir = 1 });
     int_enum!(PathFlag { Collision = 0, ContentUnavailable = 1 });
+    int_enum!(ChangeKind { Mode = 0, Symlink = 1, Submodule = 2, Binary = 3, ContentUnavailable = 4, Rename = 5 });
 }
 
 macro_rules! child_of_session {
@@ -276,6 +277,7 @@ pub mod ack {
         #[sea_orm(primary_key)]
         pub id: i64,
         pub session: i64,
+        pub change: ChangeKind,
         pub before_path: Option<Vec<u8>>,
         pub before_blob: Option<Vec<u8>>,
         pub before_mode: Option<i64>,

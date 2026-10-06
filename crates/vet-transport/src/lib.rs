@@ -25,8 +25,24 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct Events(mpsc::UnboundedSender<ServerMessage>);
 
 impl Events {
+    /// An `Events` that is not tied to a connection, and what it receives.
+    pub fn channel() -> (Self, mpsc::UnboundedReceiver<ServerMessage>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (Self(tx), rx)
+    }
+
     pub fn send(&self, event: Event) {
         let _ = self.0.send(ServerMessage::Event { event });
+    }
+
+    /// Whether the connection is gone.
+    pub fn is_closed(&self) -> bool {
+        self.0.is_closed()
+    }
+
+    /// Whether both belong to the same connection.
+    pub fn same_connection(&self, other: &Events) -> bool {
+        self.0.same_channel(&other.0)
     }
 }
 

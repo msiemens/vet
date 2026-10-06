@@ -4,6 +4,7 @@
 
 mod checkout;
 mod diff;
+mod ignore;
 mod scan;
 mod stat_cache;
 
@@ -15,7 +16,8 @@ use std::sync::{Arc, Mutex};
 use gix::bstr::ByteSlice;
 use gix::objs::Find;
 use vet_app::pin::CommitId;
-use vet_app::ports::{CheckoutError, Dirty, GitError, GitRepo, Scan, Store};
+use vet_app::ports::{CheckoutError, Dirty, GitError, GitRepo, IgnoreRules, Scan, Store};
+use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
 use vet_core::merkle;
 
@@ -26,6 +28,17 @@ pub use diff::line_hunks;
 
 /// Default capture size cap (§6.1).
 pub const DEFAULT_CAP: u64 = 50 * 1024 * 1024;
+
+/// The root of the working tree containing `path`, found the way git does and
+/// canonicalized. The error is fit to show to a user.
+pub fn find_root(path: &Path) -> Result<PathBuf, String> {
+    let not_a_repo = || format!("Not a git repository: {}", path.display());
+    let repo = gix::discover(path).map_err(|_| not_a_repo())?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| "Bare repositories are not supported".to_string())?;
+    workdir.canonicalize().map_err(|_| not_a_repo())
+}
 
 /// Cheap to clone: clones share the caches.
 #[derive(Clone)]
@@ -177,6 +190,35 @@ impl GitRepo for GixRepo {
         self.blocking(move |i| i.read_blob(&path, blob)).await
     }
 
+    async fn submodule_commit(&self, blob: BlobId) -> Result<Option<String>, GitError> {
+        Ok(self.0.blobs.submodule_commit(blob))
+    }
+
+    async fn set_session_ref(&self, session: SessionId, name: &str, commit: &CommitId) -> Result<(), GitError> {
+        let (name, commit) = (format!("{}{name}", session_ref_prefix(session)), commit.clone());
+        self.blocking(move |i| {
+            let id = gix::ObjectId::from_hex(commit.0.as_bytes()).map_err(err)?;
+            i.open()?
+                .reference(name, id, gix::refs::transaction::PreviousValue::Any, "vet session")
+                .map_err(err)?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn delete_session_refs(&self, session: SessionId) -> Result<(), GitError> {
+        self.blocking(move |i| {
+            let repo = i.open()?;
+            let platform = repo.references().map_err(err)?;
+            let prefix = session_ref_prefix(session);
+            for reference in platform.prefixed(prefix.as_str()).map_err(err)? {
+                reference.map_err(err)?.delete().map_err(err)?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
     async fn diff<S: Store + Sync>(&self, store: &S, old: &Snapshot, new: &Snapshot) -> Result<SnapshotDiff, GitError> {
         let mut stored = BTreeMap::new();
         for (_, blob) in diff::text_blobs(&diff::changes(old, new)) {
@@ -186,6 +228,12 @@ impl GitRepo for GixRepo {
         }
         let (old, new) = (old.clone(), new.clone());
         self.blocking(move |i| i.diff(stored, &old, &new)).await
+    }
+}
+
+impl IgnoreRules for GixRepo {
+    async fn unignored(&self, paths: Vec<RepoPath>) -> Result<Vec<RepoPath>, GitError> {
+        self.blocking(move |i| ignore::unignored(&i.open()?, paths)).await
     }
 }
 
@@ -200,9 +248,23 @@ pub(crate) struct BlobCache {
 struct Ids {
     by_oid: HashMap<gix::ObjectId, BlobId>,
     by_blob: HashMap<BlobId, gix::ObjectId>,
+    /// Pinned commit of each submodule entry's `BlobId`, which only hashes it.
+    submodules: HashMap<BlobId, gix::ObjectId>,
 }
 
 impl BlobCache {
+    /// The `BlobId` of a submodule entry pinned at `commit`.
+    pub fn submodule_id(&self, commit: gix::ObjectId) -> BlobId {
+        let id = BlobId::of(commit.as_bytes());
+        self.ids.lock().expect("not poisoned").submodules.insert(id, commit);
+        id
+    }
+
+    pub fn submodule_commit(&self, blob: BlobId) -> Option<String> {
+        let ids = self.ids.lock().expect("not poisoned");
+        ids.submodules.get(&blob).map(|c| c.to_string())
+    }
+
     /// The `BlobId` of the git blob `oid`, reading it from the object database
     /// on a miss.
     pub fn blob_id(&self, repo: &gix::Repository, oid: gix::ObjectId) -> Result<BlobId, GitError> {
@@ -229,6 +291,10 @@ impl BlobCache {
         let found = repo.objects.try_find(&oid, &mut buf).map_err(err)?.is_some();
         Ok((found && buf.len() as u64 <= cap).then_some(buf))
     }
+}
+
+fn session_ref_prefix(session: SessionId) -> String {
+    format!("refs/vet/sessions/{}/", session.0)
 }
 
 fn err(e: impl Display) -> GitError {

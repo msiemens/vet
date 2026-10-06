@@ -6,7 +6,8 @@ use tempfile::TempDir;
 use vet_app::ports::{ReviewStore, Store};
 use vet_app::review::NonTextAck;
 use vet_core::content::{
-    BlobId, Changeset, EntryKind, FileEntry, Hash, LineRange, RepoPath, Snapshot, SnapshotId, SnapshotStatus,
+    BlobId, Changeset, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId,
+    SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::platform::PlatformThread;
@@ -140,11 +141,18 @@ async fn spans_and_threads_round_trip() {
     store.set_thread_platform(whole, Some(platform.clone())).await.unwrap();
 
     let ack = NonTextAck {
+        kind: NonTextKind::Binary,
         before: Some((RepoPath(b"x".to_vec()), file_entry(5))),
         after: None,
     };
     store.acknowledge(id, ack.clone()).await.unwrap();
     store.acknowledge(id, ack.clone()).await.unwrap();
+    // Same entries, another kind: a separate item.
+    let other = NonTextAck {
+        kind: NonTextKind::Mode,
+        ..ack.clone()
+    };
+    store.acknowledge(id, other.clone()).await.unwrap();
 
     let filter = ReviewFilter {
         roots: vec![RepoPath(b"crates".to_vec())],
@@ -156,7 +164,7 @@ async fn spans_and_threads_round_trip() {
 
     let loaded = store.session(id).await.unwrap().unwrap();
     assert_eq!(loaded.spans.iter().map(|r| r.span.clone()).collect::<Vec<_>>(), spans);
-    assert_eq!(loaded.acks, vec![ack.clone()]);
+    assert_eq!(loaded.acks, vec![ack.clone(), other.clone()]);
     assert_eq!(loaded.filter, filter);
     assert_eq!(loaded.threads.len(), 3);
     assert_eq!(loaded.threads[0].target, CommentTarget::Range(anchor(Side::Target, 2)));
@@ -179,6 +187,8 @@ async fn spans_and_threads_round_trip() {
     store.set_thread_target(range, moved.clone()).await.unwrap();
     store.delete_thread(file).await.unwrap();
     store.unacknowledge(id, ack).await.unwrap();
+    assert_eq!(store.session(id).await.unwrap().unwrap().acks, vec![other.clone()]);
+    store.unacknowledge(id, other).await.unwrap();
     store.edit_spans(id, ids, vec![]).await.unwrap();
     let loaded = store.session(id).await.unwrap().unwrap();
     assert_eq!(

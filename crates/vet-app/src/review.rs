@@ -2,7 +2,7 @@
 //! than the pin itself. Remapping runs per changed file, triggered when either
 //! the base or the target blob id changes (the base case is `SeenAgainstOldBase`).
 
-use vet_core::content::{Changeset, FileEntry, RepoPath};
+use vet_core::content::{Changeset, FileEntry, NonTextKind, RepoPath};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{ReviewedSpan, Thread};
 
@@ -11,10 +11,11 @@ use crate::pin::PinId;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct SessionId(pub u64);
 
-/// A non-text change acknowledged like a hunk, keyed by the before and after
-/// entries (§5.2). `None` for an added or deleted path.
+/// A non-text change acknowledged like a hunk, keyed by its kind and the
+/// before and after entries (§5.2). `None` for an added or deleted path.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct NonTextAck {
+    pub kind: NonTextKind,
     pub before: Option<(RepoPath, FileEntry)>,
     pub after: Option<(RepoPath, FileEntry)>,
 }

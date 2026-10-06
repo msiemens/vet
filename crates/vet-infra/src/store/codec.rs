@@ -4,7 +4,9 @@
 use sea_orm::sea_query::{SimpleExpr, Value};
 use sea_orm::{ColumnTrait, DbErr, Set};
 use vet_app::review::NonTextAck;
-use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, LineRange, RepoPath, SnapshotId, SnapshotStatus};
+use vet_core::content::{
+    BlobId, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
+};
 use vet_core::merkle::TreeNode;
 use vet_core::review::{Anchor, CommentTarget, Side, SpanState, ThreadStatus};
 
@@ -53,6 +55,17 @@ twin!(
     }
 );
 twin!(ThreadStatus, ThreadStatus { Open, Resolved });
+twin!(
+    NonTextKind,
+    ChangeKind {
+        Mode,
+        Symlink,
+        Submodule,
+        Binary,
+        ContentUnavailable,
+        Rename
+    }
+);
 
 pub fn anchor_row(session: i64, a: &Anchor) -> anchor::ActiveModel {
     anchor::ActiveModel {
@@ -206,6 +219,7 @@ pub fn ack_row(session: i64, a: &NonTextAck) -> ack::ActiveModel {
     let (b, f) = (AckSide::new(a.before.as_ref()), AckSide::new(a.after.as_ref()));
     ack::ActiveModel {
         session: Set(session),
+        change: Set(a.kind.into()),
         before_path: Set(b.path),
         before_blob: Set(b.blob),
         before_mode: Set(b.mode),
@@ -232,6 +246,7 @@ pub fn ack_filter(a: &NonTextAck) -> sea_orm::Condition {
     use ack::Column as C;
     let (b, f) = (AckSide::new(a.before.as_ref()), AckSide::new(a.after.as_ref()));
     sea_orm::Condition::all()
+        .add(C::Change.eq(kinds::ChangeKind::from(a.kind)))
         .add(is(C::BeforePath, b.path))
         .add(is(C::BeforeBlob, b.blob))
         .add(is(C::BeforeMode, b.mode))
@@ -260,6 +275,7 @@ pub fn ack_from(m: ack::Model) -> Result<NonTextAck, DbErr> {
         unfiltered: m.after_unfiltered,
     };
     Ok(NonTextAck {
+        kind: m.change.into(),
         before: before.entry()?,
         after: after.entry()?,
     })

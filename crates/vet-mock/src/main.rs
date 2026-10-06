@@ -79,7 +79,10 @@ impl Handler for Mock {
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
             // The mock has one session over its corpus; `repo` is ignored.
-            Request::OpenSession { .. } => Ok(Response::Session { session: SESSION }),
+            Request::OpenSession { repo } => Ok(Response::Session {
+                session: SESSION,
+                root: repo,
+            }),
             Request::CloseSession { .. } => Ok(Response::Done),
             Request::Manifest { .. } => {
                 let seen = seen();
@@ -108,6 +111,7 @@ impl Handler for Mock {
                     files,
                     excluded_lines: 0,
                     excluded_items: 0,
+                    degraded: None,
                 }))
             }
             Request::FileContents { path, .. } => {

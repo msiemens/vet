@@ -3,4 +3,8 @@ import type { Manifest } from "./Manifest";
 import type { Mark } from "./Mark";
 import type { ReviewUpdate } from "./ReviewUpdate";
 
-export type Response = { "type": "pong", payload: string, } | { "type": "session", session: number, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", text: string, };
+export type Response = { "type": "pong", payload: string, } | { "type": "session", session: number, 
+/**
+ * The root of the repository the opened path belongs to.
+ */
+root: string, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", text: string, };

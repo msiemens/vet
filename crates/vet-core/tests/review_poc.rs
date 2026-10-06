@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use vet_core::completion::completion;
+use vet_core::completion::{Coverage, HunkState, completion};
 use vet_core::content::{
     BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hash, Hunk, LineRange, NonTextChange, NonTextKind, RepoPath,
     SnapshotId,
@@ -657,4 +657,46 @@ fn filter_roots_globs_and_binary() {
     };
     let c = completion(&f, &[], &[bin], &[], &[]);
     assert_eq!((c.items, c.excluded_items), (0, 1));
+}
+
+#[test]
+fn hunk_states_follow_coverage() {
+    let d = diff(
+        "a.rs",
+        &[
+            (range(0, 0), range(0, 4)),
+            (range(10, 12), range(14, 15)),
+            (range(20, 20), range(24, 26)),
+            (range(30, 30), range(34, 36)),
+        ],
+    );
+    let old_base = |mut s: ReviewedSpan| {
+        s.state = SpanState::SeenAgainstOldBase;
+        s
+    };
+    let base_side = ReviewedSpan {
+        base: Some(anchor(Side::Base, "a.rs", &join(&numbered(100)), range(10, 12))),
+        target: None,
+        state: SpanState::Seen,
+    };
+    let spans = [
+        seen_target("a.rs", range(0, 4)),
+        seen_target("a.rs", range(14, 15)),
+        old_base(seen_target("a.rs", range(24, 26))),
+        seen_target("a.rs", range(34, 35)),
+        base_side,
+    ];
+    let cov = Coverage::new(&spans);
+
+    assert_eq!(
+        cov.hunk_states(&d),
+        vec![
+            HunkState::Seen,
+            HunkState::Seen,
+            HunkState::SeenAgainstOldBase,
+            HunkState::Unseen
+        ]
+    );
+    let c = cov.completion(&ReviewFilter::default(), &[d], &[], &[]);
+    assert_eq!((c.lines, c.seen_lines, c.old_base_lines), (11, 4 + 3 + 1, 2));
 }

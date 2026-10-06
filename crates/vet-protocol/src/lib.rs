@@ -45,6 +45,7 @@ pub enum ServerMessage {
     },
     /// Pushed without a request. A connection receives the events of the sessions
     /// it opened, until it closes them or disconnects; there is no other subscription.
+    /// Opening a repository that is already open subscribes to the existing session.
     Event {
         event: Event,
     },
@@ -61,8 +62,10 @@ pub enum Request {
     Ping {
         payload: String,
     },
-    /// Opens a review of the dirty tree of the repository at `repo` (`HEAD` to the
-    /// working tree) and subscribes this connection to the session's events.
+    /// Opens a review of the dirty tree (`HEAD` to the working tree) of the
+    /// repository containing `repo`, which may be any folder inside it, and
+    /// subscribes this connection to the session's events. Fails if `repo` is
+    /// not inside a non-bare repository.
     OpenSession {
         repo: String,
     },
@@ -114,6 +117,8 @@ pub enum Response {
     },
     Session {
         session: SessionId,
+        /// The root of the repository the opened path belongs to.
+        root: String,
     },
     /// Acknowledges a request that has no result.
     Done,
@@ -194,6 +199,21 @@ pub struct Manifest {
     /// implies every change was seen (§5.2).
     pub excluded_lines: u32,
     pub excluded_items: u32,
+    /// Set when the backend polls the tree instead of watching it, so changes
+    /// show up late (§4.1, §6.4); the shell shows a banner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub degraded: Option<WatchDegraded>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum WatchDegraded {
+    /// A WSL worktree under `/mnt/*`: file events do not cross 9P.
+    MountedWindowsDrive,
+    /// The OS watch limit is exhausted.
+    WatchLimit,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

@@ -307,7 +307,12 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache,
             continue; // further conflict stages
         }
         if tracked.mode == Mode::COMMIT || tracked.flags.contains(Flags::SKIP_WORKTREE) {
-            entries.insert(key, tree_entry(repo, blobs, tracked.id, tracked.mode.bits())?);
+            let id = if tracked.mode == Mode::COMMIT && !tracked.flags.contains(Flags::SKIP_WORKTREE) {
+                submodule_head(repo, path).unwrap_or(tracked.id)
+            } else {
+                tracked.id
+            };
+            entries.insert(key, tree_entry(repo, blobs, id, tracked.mode.bits())?);
         } else {
             work.push((path.to_owned(), Some(tracked.clone())));
         }
@@ -372,6 +377,12 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache,
     })
 }
 
+/// The commit a checked-out submodule is at; `None` if it is not checked out.
+fn submodule_head(repo: &gix::Repository, path: &BStr) -> Option<gix::ObjectId> {
+    let dir = repo.workdir()?.join(gix::path::from_bstr(path));
+    Some(gix::open(dir).ok()?.head_id().ok()?.detach())
+}
+
 /// Paths that differ only in case or Unicode normalization.
 fn collisions<'a>(paths: impl Iterator<Item = &'a RepoPath>) -> Vec<RepoPath> {
     let mut groups: BTreeMap<Vec<u8>, Vec<&RepoPath>> = BTreeMap::new();
@@ -400,7 +411,7 @@ pub(crate) fn tree_entry(
     mode: u32,
 ) -> Result<FileEntry, GitError> {
     let (kind, blob) = match mode & 0o170000 {
-        0o160000 => (EntryKind::Submodule, BlobId::of(oid.as_bytes())),
+        0o160000 => (EntryKind::Submodule, blobs.submodule_id(oid)),
         0o120000 => (EntryKind::Symlink, blobs.blob_id(repo, oid)?),
         _ => (EntryKind::File, blobs.blob_id(repo, oid)?),
     };

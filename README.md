@@ -74,7 +74,11 @@ cargo run -p vet-backend
 ```
 
 It prints one JSON line, `{"port":...,"token":"..."}`, and serves the
-authenticated WebSocket on that port.
+authenticated WebSocket on that port. It reviews the dirty tree of the
+repository a client opens (`OpenSession{repo}`: any folder inside it, a
+relative path resolves against the backend's working directory), keeps its state in the per-platform
+data directory (`~/.local/share/vet` on Linux) and pushes `SnapshotSettled` and
+`ReviewChanged` events. `vet-mock` stays for the shell benchmark.
 
 ## UI
 

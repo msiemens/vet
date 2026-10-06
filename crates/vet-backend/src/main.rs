@@ -1,27 +1,16 @@
 //! Binds the loopback WebSocket and prints the per-launch token to stdout for
-//! the shell to read (§4.1). It answers only `Ping`; the use cases in vet-app and
-//! the adapters in vet-infra are not wired in yet.
+//! the shell to read (§4.1), then serves protocol v1 from the real components.
 
-use vet_protocol::{Request, Response};
-use vet_transport::{Events, Handler, Server};
-
-struct Orchestrator;
-
-impl Handler for Orchestrator {
-    async fn handle(&self, request: Request, _events: Events) -> Result<Response, String> {
-        match request {
-            Request::Ping { payload } => Ok(Response::Pong { payload }),
-            _ => Err("not implemented; the UI runs against vet-mock".into()),
-        }
-    }
-}
+use vet_backend::{Config, Orchestrator, open_default_store};
+use vet_transport::Server;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     if std::env::args().any(|a| a == "--exit-on-stdin-close") {
         vet_transport::exit_when_stdin_closes();
     }
+    let store = open_default_store().await.map_err(std::io::Error::other)?;
     let server = Server::bind().await?;
     server.announce()?;
-    server.serve(Orchestrator).await
+    server.serve(Orchestrator::new(store, Config::default())).await
 }

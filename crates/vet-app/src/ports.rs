@@ -48,6 +48,13 @@ pub trait Watcher {
     fn next(&mut self) -> impl Future<Output = WatchEvent> + Send;
 }
 
+/// Git's ignore rules, so watcher events for ignored paths (`target/`,
+/// `node_modules/`) never reach settling. Tracked files are never ignored.
+pub trait IgnoreRules {
+    /// `paths` without the ignored ones.
+    fn unignored(&self, paths: Vec<RepoPath>) -> impl Future<Output = Result<Vec<RepoPath>, GitError>> + Send;
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Dirty {
     All,
@@ -104,6 +111,18 @@ pub trait GitRepo {
         path: &RepoPath,
         blob: BlobId,
     ) -> impl Future<Output = Result<Option<Vec<u8>>, GitError>> + Send;
+    /// The commit a submodule entry with this `BlobId` is pinned at, for display.
+    fn submodule_commit(&self, blob: BlobId) -> impl Future<Output = Result<Option<String>, GitError>> + Send;
+    /// Points `refs/vet/sessions/<session>/<name>` at `commit` so git keeps it
+    /// (§6.1).
+    fn set_session_ref(
+        &self,
+        session: SessionId,
+        name: &str,
+        commit: &CommitId,
+    ) -> impl Future<Output = Result<(), GitError>> + Send;
+    /// Deletes every `refs/vet/sessions/<session>/*`.
+    fn delete_session_refs(&self, session: SessionId) -> impl Future<Output = Result<(), GitError>> + Send;
     /// Content comes from `store` first, then as in `read_blob`.
     fn diff<S: Store + Sync>(
         &self,

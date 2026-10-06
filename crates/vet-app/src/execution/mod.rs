@@ -141,7 +141,7 @@ impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<
 
     /// Reconcile, run check, start the process in place (§9).
     pub async fn launch(&self, request: LaunchRequest<'_>) -> Result<LaunchOutcome<P::Process>, RunError> {
-        let snapshot = self.acquisition.reconcile(Dirty::All).await?;
+        let snapshot = self.acquisition.reconcile(Dirty::All).await?.snapshot;
         if let RunCheck::NeedsApproval(approval) = self.check(&snapshot).await? {
             if request.approved != Some(approval.hash) {
                 return Ok(LaunchOutcome::NeedsApproval(approval));
@@ -255,6 +255,15 @@ mod tests {
         }
         async fn read_blob(&self, _: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
             Ok(self.0.lock().unwrap().blobs.get(&blob).cloned())
+        }
+        async fn submodule_commit(&self, _: BlobId) -> Result<Option<String>, GitError> {
+            unreachable!()
+        }
+        async fn set_session_ref(&self, _: SessionId, _: &str, _: &CommitId) -> Result<(), GitError> {
+            unreachable!()
+        }
+        async fn delete_session_refs(&self, _: SessionId) -> Result<(), GitError> {
+            unreachable!()
         }
         async fn diff<S: Store + Sync>(&self, _: &S, _: &Snapshot, _: &Snapshot) -> Result<SnapshotDiff, GitError> {
             unreachable!()

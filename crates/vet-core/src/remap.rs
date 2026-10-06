@@ -1,6 +1,7 @@
 //! Span remapping as a partition (SPEC §5.2).
 
 use crate::content::{Changeset, LineRange, SnapshotId};
+use crate::marking::Region;
 use crate::prepared::PreparedFile;
 use crate::review::{Anchor, ReviewedSpan, SpanState};
 
@@ -56,6 +57,71 @@ pub fn remap_span(
         state,
     });
     base_pieces.chain(target_pieces).collect()
+}
+
+/// Cuts `regions` (lines of the current changeset) out of the recorded `span`,
+/// in recorded coordinates: the lines of each side that map uniquely into a
+/// region are dropped, and the rest keep the recorded snapshot and are
+/// re-anchored on the recorded text. Lines that map to nothing now stay, so a
+/// revert still restores them. `None` if no line of the span lies in a region;
+/// otherwise each side becomes its own span(s).
+pub fn cut_recorded(
+    span: &ReviewedSpan,
+    regions: &[Region],
+    base: Option<&PreparedFile>,
+    target: Option<&PreparedFile>,
+) -> Option<Vec<ReviewedSpan>> {
+    let mut touched = false;
+    let mut out = Vec::new();
+    for (anchor, file) in [(&span.base, base), (&span.target, target)] {
+        let Some(a) = anchor else { continue };
+        let dropped: Vec<bool> = (a.range.start..a.range.end)
+            .map(|line| {
+                let new = file.and_then(|f| Some((f, f.raw_map()?[line as usize]?)));
+                new.is_some_and(|(f, new)| {
+                    regions.iter().any(|r| {
+                        Some(&r.file) == f.input.new_path.as_ref()
+                            && r.side == a.side
+                            && (r.range.start..r.range.end).contains(&(new as u32))
+                    })
+                })
+            })
+            .collect();
+        if !dropped.contains(&true) {
+            out.push(single(span, a.clone()));
+            continue;
+        }
+        touched = true;
+        let old = file.and_then(|f| f.old.as_ref()).expect("lines were mapped");
+        let mut start = None;
+        for (i, &drop) in dropped.iter().chain(&[true]).enumerate() {
+            let line = a.range.start + i as u32;
+            match (start, drop) {
+                (None, false) => start = Some(line),
+                (Some(s), true) => {
+                    start = None;
+                    let range = LineRange { start: s, end: line };
+                    if let Some(piece) = old.anchor(a.side, a.snapshot, a.file.clone(), range) {
+                        out.push(single(span, piece));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    touched.then_some(out)
+}
+
+fn single(span: &ReviewedSpan, a: Anchor) -> ReviewedSpan {
+    let (base, target) = match a.side {
+        crate::review::Side::Base => (Some(a), None),
+        crate::review::Side::Target => (None, Some(a)),
+    };
+    ReviewedSpan {
+        base,
+        target,
+        state: span.state,
+    }
 }
 
 fn remap_side(anchor: &Anchor, file: Option<&PreparedFile>, snapshot: SnapshotId) -> Side {

@@ -14,7 +14,10 @@ impl Handler for Echo {
                     session: 3,
                     revision: 1,
                 });
-                Ok(Response::Session { session: 3 })
+                Ok(Response::Session {
+                    session: 3,
+                    root: "/r".into(),
+                })
             }
             _ => Err("unsupported".into()),
         }
@@ -108,7 +111,10 @@ async fn handlers_push_events_to_the_connection() {
         got[0],
         ServerMessage::Response {
             id: 1,
-            response: Response::Session { session: 3 }
+            response: Response::Session {
+                session: 3,
+                root: "/r".into()
+            }
         }
     );
     assert_eq!(

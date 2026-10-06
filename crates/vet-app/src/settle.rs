@@ -7,10 +7,10 @@ use std::collections::BTreeSet;
 use std::pin::pin;
 use std::task::Poll;
 
-use vet_core::content::{RepoPath, Snapshot, SnapshotId};
+use vet_core::content::{RepoPath, SnapshotId};
 
 use crate::acquisition::Acquisition;
-use crate::ports::{Clock, Degraded, Dirty, GitError, GitRepo, Millis, Store, WatchEvent, Watcher};
+use crate::ports::{Clock, Degraded, Dirty, GitError, GitRepo, Millis, Scan, Store, WatchEvent, Watcher};
 
 pub struct Settler {
     debounce_ms: u64,
@@ -89,16 +89,16 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
         self.watcher.degraded()
     }
 
-    /// Resolves with the next settled snapshot that differs from the previous one.
+    /// Resolves with the next settled scan whose snapshot differs from the previous one.
     pub async fn next_settled<G: GitRepo, S: Store>(
         &mut self,
         acquisition: &Acquisition<G, S>,
-    ) -> Result<Snapshot, GitError> {
+    ) -> Result<Scan, GitError> {
         loop {
             match self.wake().await {
                 Wake::Event(WatchEvent::Dirty(paths)) => self.settler.record(Dirty::Paths(paths), self.clock.now()),
                 Wake::Event(WatchEvent::MustRescan | WatchEvent::Degraded(_)) => {
-                    let snapshot = acquisition.reconcile(Dirty::All).await?;
+                    let snapshot = acquisition.reconcile(Dirty::All).await?.snapshot;
                     if Some(snapshot.id) != self.candidate.or(self.settled) {
                         self.candidate = Some(snapshot.id);
                         self.settler.record(Dirty::All, self.clock.now());
@@ -108,7 +108,15 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
                     let Some(dirty) = self.settler.take_settled(self.clock.now()) else {
                         continue;
                     };
-                    let snapshot = acquisition.reconcile(dirty.clone()).await?;
+                    let scan = match acquisition.reconcile(dirty.clone()).await {
+                        Ok(scan) => scan,
+                        Err(error) => {
+                            // A later call retries after another quiet window.
+                            self.settler.record(dirty, self.clock.now());
+                            return Err(error);
+                        }
+                    };
+                    let snapshot = &scan.snapshot;
                     if self.candidate.is_some_and(|candidate| candidate != snapshot.id) {
                         self.candidate = Some(snapshot.id);
                         self.settler.record(dirty, self.clock.now());
@@ -116,7 +124,7 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
                         self.candidate = None;
                         if Some(snapshot.id) != self.settled {
                             self.settled = Some(snapshot.id);
-                            return Ok(snapshot);
+                            return Ok(scan);
                         }
                     }
                 }
@@ -152,7 +160,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Waker};
 
-    use vet_core::content::{BlobId, Hash, SnapshotDiff, SnapshotStatus};
+    use vet_core::content::{BlobId, Hash, Snapshot, SnapshotDiff, SnapshotStatus};
 
     use super::*;
     use crate::pin::CommitId;
@@ -300,6 +308,15 @@ mod tests {
         async fn read_blob(&self, _: &RepoPath, _: BlobId) -> Result<Option<Vec<u8>>, GitError> {
             unreachable!()
         }
+        async fn submodule_commit(&self, _: BlobId) -> Result<Option<String>, GitError> {
+            unreachable!()
+        }
+        async fn set_session_ref(&self, _: SessionId, _: &str, _: &CommitId) -> Result<(), GitError> {
+            unreachable!()
+        }
+        async fn delete_session_refs(&self, _: SessionId) -> Result<(), GitError> {
+            unreachable!()
+        }
         async fn diff<S: Store + Sync>(&self, _: &S, _: &Snapshot, _: &Snapshot) -> Result<SnapshotDiff, GitError> {
             unreachable!()
         }
@@ -365,7 +382,7 @@ mod tests {
     #[test]
     fn a_write_burst_settles_after_the_quiet_window() {
         let mut h = harness(vec![(0, dirty("a.rs")), (1000, dirty("b.rs"))], vec![id(1)], None);
-        let snapshot = run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap();
+        let snapshot = run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap().snapshot;
         assert_eq!(snapshot.id, id(1));
         let sim = h.sim.lock().unwrap();
         assert_eq!(sim.now, 2500);
@@ -376,7 +393,7 @@ mod tests {
     fn a_snapshot_that_keeps_changing_does_not_settle() {
         let script = vec![(0, WatchEvent::MustRescan), (1000, WatchEvent::MustRescan)];
         let mut h = harness(script, vec![id(1), id(2), id(2)], None);
-        let snapshot = run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap();
+        let snapshot = run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap().snapshot;
         assert_eq!(snapshot.id, id(2));
         assert_eq!(h.sim.lock().unwrap().now, 2500, "second rescan restarted the window");
     }

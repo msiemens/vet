@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use vet_core::content::{EntryKind, Snapshot, SnapshotId, SnapshotStatus};
 use vet_semantic::ports::{Materialized, Materializer, NotMaterializable};
 
-use crate::pin::{CommitId, Pin, PinId};
+use crate::pin::CommitId;
 use crate::ports::{CheckoutError, Dirty, GitError, GitRepo, Scan, Store};
 
 /// Where a snapshot came from. Never visible to `vet-semantic`.
@@ -119,7 +119,7 @@ pub struct Acquisition<G, S> {
 
 /// The initial changeset of a dirty-tree review: `HEAD` to dirty-at-open.
 pub struct Opened {
-    pub pin: Pin,
+    pub head: CommitId,
     pub base: Snapshot,
     pub target: Snapshot,
     pub status: SnapshotStatus,
@@ -143,47 +143,58 @@ impl<G, S> Acquisition<G, S> {
 }
 
 impl<G: GitRepo, S: Store> Acquisition<G, S> {
-    /// Pin on review open (§6.1): record `{head, dirty-at-open}` and copy every
-    /// blob git cannot be assumed to keep (anything not already in `HEAD`)
-    /// into the store.
-    pub async fn open_pin(&self, id: PinId) -> Result<Opened, GitError> {
+    /// Review open (§6.1): `HEAD`, dirty-at-open, and a copy of every blob git
+    /// cannot be assumed to keep (anything not already in `HEAD`) in the store.
+    /// Recording the pin is up to the caller.
+    pub async fn open_pin(&self) -> Result<Opened, GitError> {
         let head = self.git.head().await?;
         let base = self.git.commit_snapshot(&head).await?;
         let Scan {
             snapshot: target,
             status,
         } = self.git.scan(Dirty::All).await?;
-        for (path, entry) in &target.entries {
-            let in_head = base.entries.get(path).is_some_and(|b| b.blob == entry.blob);
-            if in_head || entry.kind == EntryKind::Submodule || status.content_unavailable.contains(path) {
-                continue;
-            }
-            let bytes = self
-                .git
-                .read_blob(path, entry.blob)
-                .await?
-                .ok_or_else(|| GitError("worktree changed while pinning".into()))?;
-            self.store.put_blob(bytes).await.map_err(|e| GitError(e.0))?;
-        }
+        self.retain(&[&base], &target, &status).await?;
         self.record_commit(base.id, head.clone());
         self.record_commit(target.id, head.clone());
-        let pin = Pin {
-            id,
-            head,
-            tree: target.id,
-        };
         Ok(Opened {
-            pin,
+            head,
             base,
             target,
             status,
         })
     }
 
+    /// Copies the blobs of `target` that `known` snapshots do not already have
+    /// (they are in git or were retained before) into the store, so the
+    /// snapshot stays reconstructible (§6.1).
+    pub async fn retain(
+        &self,
+        known: &[&Snapshot],
+        target: &Snapshot,
+        status: &SnapshotStatus,
+    ) -> Result<(), GitError> {
+        for (path, entry) in &target.entries {
+            let is_known = known
+                .iter()
+                .any(|s| s.entries.get(path).is_some_and(|k| k.blob == entry.blob));
+            if is_known || entry.kind == EntryKind::Submodule || status.content_unavailable.contains(path) {
+                continue;
+            }
+            let bytes = self.git.read_blob(path, entry.blob).await?.ok_or_else(|| {
+                GitError(format!(
+                    "{} changed while being copied",
+                    String::from_utf8_lossy(&path.0)
+                ))
+            })?;
+            self.store.put_blob(bytes).await.map_err(|e| GitError(e.0))?;
+        }
+        Ok(())
+    }
+
     /// Authoritative reconciliation (§6.2): before declaring a snapshot settled,
     /// at review open, on rescan signals, and before every launch.
-    pub async fn reconcile(&self, dirty: Dirty) -> Result<Snapshot, GitError> {
-        Ok(self.git.scan(dirty).await?.snapshot)
+    pub async fn reconcile(&self, dirty: Dirty) -> Result<Scan, GitError> {
+        self.git.scan(dirty).await
     }
 }
 

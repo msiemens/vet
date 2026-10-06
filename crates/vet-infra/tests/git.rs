@@ -8,8 +8,7 @@ use std::sync::Mutex;
 
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
-use vet_app::pin::PinId;
-use vet_app::ports::{Dirty, GcReport, GitRepo, Store, StoreError};
+use vet_app::ports::{Dirty, GcReport, GitRepo, IgnoreRules, Store, StoreError};
 use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_infra::git::GixRepo;
@@ -218,7 +217,7 @@ async fn files_over_the_cap_are_hashed_but_not_retained() {
     write(dir.path(), "big.txt", &big);
     let repo = GixRepo::new(dir.path()).with_cap(10);
     let acq = Acquisition::new(repo, MemStore::default());
-    let opened = acq.open_pin(PinId(1)).await.unwrap();
+    let opened = acq.open_pin().await.unwrap();
     assert_eq!(opened.status.content_unavailable, vec![path("big.txt")]);
     assert_eq!(opened.target.entries[&path("big.txt")].blob, blob(&big));
     assert!(acq.store.blob(blob(&big)).await.unwrap().is_none());
@@ -237,8 +236,8 @@ async fn pin_copies_dirty_content_and_diff_survives_later_edits() {
     write(dir.path(), "a.txt", b"1\nTWO\n3\n");
     write(dir.path(), "new.txt", b"n\n");
     let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
-    let opened = acq.open_pin(PinId(1)).await.unwrap();
-    assert_eq!(opened.pin.tree, opened.target.id);
+    let opened = acq.open_pin().await.unwrap();
+    assert_eq!(opened.head, acq.git.head().await.unwrap());
     assert!(acq.store.blob(blob(b"1\nTWO\n3\n")).await.unwrap().is_some());
     assert!(acq.store.blob(blob(b"n\n")).await.unwrap().is_some());
     assert!(acq.store.blob(blob(b"same\n")).await.unwrap().is_none());
@@ -319,6 +318,115 @@ async fn unchanged_tree_has_the_head_snapshot_id() {
     let repo = GixRepo::new(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
     assert_eq!(scan.snapshot, base);
+}
+
+fn head_of(dir: &Path) -> String {
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+#[tokio::test]
+async fn submodule_commits_come_from_the_index_and_the_checked_out_head() {
+    let sub = repo();
+    write(sub.path(), "s.txt", b"s\n");
+    commit(sub.path());
+    let dir = repo();
+    write(dir.path(), "a.txt", b"a\n");
+    commit(dir.path());
+    let url = sub.path().to_str().unwrap();
+    git(
+        dir.path(),
+        &["-c", "protocol.file.allow=always", "submodule", "add", "-q", url, "lib"],
+    );
+    commit(dir.path());
+    let pinned = head_of(&dir.path().join("lib"));
+    let repo = GixRepo::new(dir.path());
+
+    let (base, scan) = head_and_scan(dir.path(), &repo).await;
+    let entry = |s: &Snapshot| s.entries[&path("lib")].clone();
+    assert_eq!(entry(&base).kind, EntryKind::Submodule);
+    assert_eq!(
+        repo.submodule_commit(entry(&base).blob).await.unwrap(),
+        Some(pinned.clone())
+    );
+    assert_eq!(scan.snapshot.id, base.id);
+
+    // The submodule moves on inside its worktree.
+    write(&dir.path().join("lib"), "s.txt", b"t\n");
+    commit(&dir.path().join("lib"));
+    let moved = head_of(&dir.path().join("lib"));
+    let scan = repo.scan(Dirty::All).await.unwrap();
+    assert_ne!(scan.snapshot.id, base.id);
+    assert_eq!(
+        repo.submodule_commit(entry(&scan.snapshot).blob).await.unwrap(),
+        Some(moved)
+    );
+}
+
+#[tokio::test]
+async fn session_refs_are_set_and_deleted() {
+    let dir = repo();
+    write(dir.path(), "a.txt", b"a\n");
+    commit(dir.path());
+    let head = head_of(dir.path());
+    let repo = GixRepo::new(dir.path());
+    let commit_id = repo.head().await.unwrap();
+    let refs = |dir: &Path| {
+        let out = Command::new("git")
+            .current_dir(dir)
+            .args(["for-each-ref", "--format=%(refname) %(objectname)", "refs/vet"])
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    repo.set_session_ref(SessionId(7), "base", &commit_id).await.unwrap();
+    repo.set_session_ref(SessionId(7), "target", &commit_id).await.unwrap();
+    repo.set_session_ref(SessionId(8), "base", &commit_id).await.unwrap();
+    assert_eq!(
+        refs(dir.path()),
+        format!(
+            "refs/vet/sessions/7/base {head}\nrefs/vet/sessions/7/target {head}\nrefs/vet/sessions/8/base {head}\n"
+        )
+    );
+
+    repo.delete_session_refs(SessionId(7)).await.unwrap();
+    assert_eq!(refs(dir.path()), format!("refs/vet/sessions/8/base {head}\n"));
+}
+
+#[tokio::test]
+async fn ignore_rules_drop_ignored_paths_but_never_tracked_ones() {
+    let dir = repo();
+    write(dir.path(), ".gitignore", b"target/\n*.log\n");
+    write(dir.path(), "src/a.rs", b"a\n");
+    write(dir.path(), "target/keep.txt", b"forced\n");
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["add", "-f", "target/keep.txt"]);
+    git(dir.path(), &["commit", "-q", "-m", "c"]);
+    write(dir.path(), "target/debug/x", b"x\n");
+    let repo = GixRepo::new(dir.path());
+
+    let paths: Vec<_> = [
+        "src/a.rs",
+        "target",
+        "target/debug/x",
+        "target/keep.txt",
+        "build.log",
+        "src/new.rs",
+        ".gitignore",
+    ]
+    .map(path)
+    .into();
+    let kept = repo.unignored(paths).await.unwrap();
+
+    assert_eq!(
+        kept,
+        ["src/a.rs", "target", "target/keep.txt", "src/new.rs", ".gitignore"].map(path)
+    );
 }
 
 #[tokio::test]

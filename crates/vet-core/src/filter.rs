@@ -2,7 +2,7 @@
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
-use crate::content::RepoPath;
+use crate::content::{NonTextChange, NonTextKind, RepoPath};
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct ReviewFilter {
@@ -19,6 +19,7 @@ impl ReviewFilter {
             roots: &self.roots,
             include: (!self.include.is_empty()).then(|| GlobList::new(&self.include)),
             exclude: GlobList::new(&self.exclude),
+            hide_binary: self.hide_binary,
         }
     }
 }
@@ -31,9 +32,15 @@ pub struct CompiledFilter<'a> {
     /// `None` includes everything.
     include: Option<GlobList>,
     exclude: GlobList,
+    hide_binary: bool,
 }
 
 impl CompiledFilter<'_> {
+    /// Whether a non-text change is displayed and counted.
+    pub fn shows(&self, change: &NonTextChange) -> bool {
+        self.passes(&change.path) && !(self.hide_binary && change.kind == NonTextKind::Binary)
+    }
+
     pub fn passes(&self, path: &RepoPath) -> bool {
         let p = path.0.as_slice();
         let under = |root: &RepoPath| p.starts_with(&root.0) && (p.len() == root.0.len() || p[root.0.len()] == b'/');
