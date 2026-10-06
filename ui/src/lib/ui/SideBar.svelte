@@ -115,13 +115,13 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    background: var(--panel);
+    background: var(--bg-panel);
   }
   .left {
-    border-right: 1px solid var(--ln);
+    border-right: 1px solid var(--line);
   }
   .right {
-    border-left: 1px solid var(--ln);
+    border-left: 1px solid var(--line);
   }
   .splitter {
     position: absolute;
@@ -138,7 +138,7 @@
     left: calc(var(--w-splitter) / -2);
   }
   .splitter:hover {
-    background: var(--tog-press);
+    background: var(--toggle-press);
   }
   .splitter.dragging {
     background: var(--focus);

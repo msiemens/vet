@@ -55,8 +55,8 @@
     position: fixed;
     inset: 40px 20px 20px;
     overflow: auto;
-    background: var(--panel);
-    border: 1px solid var(--ln);
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
     padding: 10px;
     z-index: 30;
   }

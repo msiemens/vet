@@ -105,14 +105,14 @@
 
 <style>
   .card {
-    border: 1px solid var(--ln);
+    border: 1px solid var(--line);
     border-radius: 6px;
     overflow: hidden;
-    background: var(--ed);
+    background: var(--bg-editor);
   }
   .path {
     font-size: var(--fs-mono-s);
-    color: var(--tx);
+    color: var(--text);
   }
   .spacer {
     flex: 1;
@@ -134,23 +134,23 @@
     text-align: center;
   }
   .add {
-    background: var(--add);
+    background: var(--add-bg);
   }
   .add .sign {
-    color: var(--addt);
+    color: var(--add-text);
   }
   .del {
-    background: var(--del);
+    background: var(--del-bg);
   }
   .del .sign {
-    color: var(--delt);
+    color: var(--del-text);
   }
   .note {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 8px 10px;
-    color: var(--tx2);
+    color: var(--text-2);
   }
   .previews {
     display: flex;
@@ -163,7 +163,7 @@
     flex-direction: column;
     gap: 4px;
     align-items: center;
-    color: var(--tx3);
+    color: var(--text-3);
     font-size: var(--fs-mono-s);
   }
   .thumb {
@@ -172,8 +172,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px dashed var(--ln);
+    border: 1px dashed var(--line);
     border-radius: var(--radius);
-    background: var(--panel);
+    background: var(--bg-panel);
   }
 </style>

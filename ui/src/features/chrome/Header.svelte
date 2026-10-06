@@ -71,7 +71,7 @@
       width={96}
       segments={[
         { value: completion.seenPct, color: "var(--seen)" },
-        { value: completion.oldPct, color: "var(--old)" },
+        { value: completion.oldPct, color: "var(--old-base)" },
       ]}
     />
     <span class="mono pct">{Math.round(completion.seenPct + completion.oldPct)}%</span>
@@ -89,12 +89,12 @@
     padding: 6px 10px;
     min-height: var(--h-header);
     box-sizing: border-box;
-    background: var(--win);
-    border-bottom: 1px solid var(--ln);
+    background: var(--bg-window);
+    border-bottom: 1px solid var(--line);
     flex: none;
   }
   .dim {
-    color: var(--tx2);
+    color: var(--text-2);
   }
   .range {
     display: inline-flex;
@@ -104,7 +104,7 @@
   }
   .arrow {
     display: inline-flex;
-    color: var(--tx3);
+    color: var(--text-3);
   }
   .dot {
     width: 6px;

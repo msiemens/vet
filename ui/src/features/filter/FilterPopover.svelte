@@ -80,27 +80,27 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    color: var(--tx2);
+    color: var(--text-2);
   }
   .check {
     flex-direction: row;
     align-items: center;
     gap: 8px;
-    color: var(--tx);
+    color: var(--text);
   }
   textarea {
     resize: vertical;
-    border: 1px solid var(--ln);
+    border: 1px solid var(--line);
     border-radius: var(--radius);
-    background: var(--ed);
-    color: var(--tx);
+    background: var(--bg-editor);
+    color: var(--text);
     font-size: var(--fs-mono);
     padding: 4px 8px;
   }
   .count {
     margin: 0;
     padding-top: 8px;
-    border-top: 1px solid var(--ln2);
-    color: var(--tx2);
+    border-top: 1px solid var(--line-soft);
+    color: var(--text-2);
   }
 </style>

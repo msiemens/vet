@@ -104,8 +104,8 @@
     gap: 8px;
     align-items: center;
     padding: 4px 10px;
-    background: var(--hunk);
-    border-top: 1px solid var(--ln);
+    background: var(--bg-hunk);
+    border-top: 1px solid var(--line);
     font-size: 12px;
     flex: none;
   }
@@ -114,17 +114,17 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--tx2);
+    color: var(--text-2);
   }
   .hud {
-    color: var(--tx2);
+    color: var(--text-2);
   }
   .results {
     position: fixed;
     inset: 40px 20px 20px 20px;
     overflow: auto;
-    background: var(--sheet);
-    border: 1px solid var(--ln);
+    background: var(--bg-sheet);
+    border: 1px solid var(--line);
     padding: 10px;
     z-index: 30;
   }
@@ -136,15 +136,15 @@
   th {
     padding: 3px 8px;
     text-align: left;
-    border-bottom: 1px solid var(--ln2);
+    border-bottom: 1px solid var(--line-soft);
   }
   .pass td:last-child {
     color: var(--ok);
   }
   .fail td:last-child {
-    color: var(--delt);
+    color: var(--del-text);
   }
   .manual td:last-child {
-    color: var(--old);
+    color: var(--old-base);
   }
 </style>

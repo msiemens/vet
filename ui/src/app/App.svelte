@@ -130,13 +130,13 @@
   .message {
     flex: 1;
     margin: 16px;
-    color: var(--tx2);
+    color: var(--text-2);
   }
   .dev {
     height: 18px;
     padding: 0 6px;
     border-radius: var(--radius);
-    color: var(--tx3);
+    color: var(--text-3);
     font-size: 11px;
   }
 </style>

@@ -34,8 +34,8 @@
     align-items: center;
     gap: 10px;
     padding: 6px 6px 6px 12px;
-    background: var(--sheet);
-    border: 1px solid var(--ln);
+    background: var(--bg-sheet);
+    border: 1px solid var(--line);
     border-radius: 8px;
     box-shadow: var(--shadow);
     font-size: var(--fs-ctl);

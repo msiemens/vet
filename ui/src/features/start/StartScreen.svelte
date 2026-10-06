@@ -77,7 +77,7 @@
     display: flex;
     justify-content: center;
     overflow: auto;
-    background: var(--ed);
+    background: var(--bg-editor);
   }
   .column {
     width: min(560px, 100%);
@@ -97,11 +97,11 @@
     margin: 20px 0 0;
     font-size: 12px;
     font-weight: 600;
-    color: var(--tx2);
+    color: var(--text-2);
   }
   .lead {
     margin: 0 0 8px;
-    color: var(--tx2);
+    color: var(--text-2);
   }
   .open {
     height: 30px;
@@ -117,10 +117,10 @@
     height: var(--h-ctl);
     box-sizing: border-box;
     padding: 0 8px;
-    border: 1px solid var(--ln);
+    border: 1px solid var(--line);
     border-radius: var(--radius);
-    background: var(--ed);
-    color: var(--tx);
+    background: var(--bg-editor);
+    color: var(--text);
     font: inherit;
     font-family: var(--font-mono);
     font-size: var(--fs-mono);
@@ -133,9 +133,9 @@
     align-items: flex-start;
     gap: 8px;
     padding: 8px 10px;
-    border: 1px solid var(--delt);
+    border: 1px solid var(--del-text);
     border-radius: var(--radius);
-    background: var(--del);
+    background: var(--del-bg);
     font-size: var(--fs-ctl);
   }
   ul {
@@ -165,6 +165,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--fs-mono-s);
-    color: var(--tx3);
+    color: var(--text-3);
   }
 </style>

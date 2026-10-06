@@ -56,8 +56,8 @@
     margin: 0;
     padding: 4px 0;
     list-style: none;
-    background: var(--sheet);
-    border: 1px solid var(--ln);
+    background: var(--bg-sheet);
+    border: 1px solid var(--line);
     border-radius: 8px;
     box-shadow: var(--shadow);
   }

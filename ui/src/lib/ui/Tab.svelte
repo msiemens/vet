@@ -22,7 +22,11 @@
   class="tab"
   class:selected
   role="presentation"
-  onmousedown={(e) => e.button === 1 && e.preventDefault()}
+  onmousedown={(e) => {
+    // Desktop tabs select on press; the middle button is reserved for closing.
+    if (e.button === 0 && !(e.target instanceof Element && e.target.closest(".close"))) onselect();
+    if (e.button === 1) e.preventDefault();
+  }}
   onauxclick={(e) => e.button === 1 && onclose?.()}
 >
   <button class="label" type="button" role="tab" aria-selected={selected} {title} onclick={onselect}>
@@ -42,20 +46,17 @@
     flex: none;
     height: var(--h-tab);
     box-sizing: border-box;
-    border-right: 1px solid var(--ln2);
+    border-right: 1px solid var(--line-soft);
     border-bottom: 2px solid transparent;
-    color: var(--tx2);
+    color: var(--text-2);
   }
-  .tab:hover {
-    background: var(--hov);
-  }
-  .tab:active {
-    background: var(--press);
+  .tab:not(.selected):hover {
+    background: var(--hover);
   }
   .tab.selected {
-    background: var(--ed);
-    border-bottom-color: var(--acc);
-    color: var(--tx);
+    background: var(--bg-editor);
+    border-bottom-color: var(--accent);
+    color: var(--text);
   }
   .label {
     display: inline-flex;

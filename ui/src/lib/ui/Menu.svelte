@@ -40,6 +40,6 @@
   }
   .detail {
     font-size: var(--fs-mono-s);
-    color: var(--tx3);
+    color: var(--text-3);
   }
 </style>

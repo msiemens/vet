@@ -33,7 +33,7 @@
   const tree = $derived(buildTree(paths));
   const rows = $derived(buildRows(tree, collapsed));
 
-  const STATUS = { M: "var(--old)", A: "var(--addt)", D: "var(--delt)", R: "var(--tx2)" } as const;
+  const STATUS = { M: "var(--old-base)", A: "var(--add-text)", D: "var(--del-text)", R: "var(--text-2)" } as const;
 
   /** Collapsing a folder collapses everything below it too; expanding opens only the folder. */
   function toggle(row: DirRow) {
@@ -91,7 +91,7 @@
             width={22}
             segments={[
               { value: s?.seenPct ?? 0, color: "var(--seen)" },
-              { value: s?.oldPct ?? 0, color: "var(--old)" },
+              { value: s?.oldPct ?? 0, color: "var(--old-base)" },
             ]}
           />
           <span class="mono status" style:color={s && STATUS[s.status]}>{s?.status}</span>
@@ -129,8 +129,8 @@
     padding: 0 10px;
     font-size: 12px;
     font-weight: 600;
-    color: var(--tx2);
-    border-bottom: 1px solid var(--ln2);
+    color: var(--text-2);
+    border-bottom: 1px solid var(--line-soft);
     flex: none;
   }
   .grow {
@@ -138,7 +138,7 @@
   }
   .count {
     font-weight: 400;
-    color: var(--tx3);
+    color: var(--text-3);
   }
   .rows {
     padding: 4px 0;
@@ -158,7 +158,7 @@
     box-sizing: border-box;
   }
   .dir {
-    color: var(--tx2);
+    color: var(--text-2);
   }
   /* A fixed column, so names line up whether or not a row has a chevron. */
   .chev {
@@ -176,7 +176,7 @@
   .x {
     flex: none;
     font-size: 11px;
-    color: var(--tx2);
+    color: var(--text-2);
   }
   .status {
     flex: none;
@@ -190,6 +190,6 @@
   }
   .excluded {
     padding-left: 8px;
-    color: var(--tx3);
+    color: var(--text-3);
   }
 </style>

@@ -38,9 +38,9 @@
     min-height: var(--h-footer);
     padding: 0 10px;
     box-sizing: border-box;
-    border-top: 1px solid var(--ln);
-    background: var(--win);
-    color: var(--tx2);
+    border-top: 1px solid var(--line);
+    background: var(--bg-window);
+    color: var(--text-2);
     font-size: 12px;
     flex: none;
   }

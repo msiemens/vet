@@ -59,15 +59,15 @@ function language(path: string): Extension {
 }
 
 const highlightStyle = HighlightStyle.define([
-  { tag: [t.keyword, t.operatorKeyword, t.modifier], color: "var(--kw)" },
-  { tag: [t.string, t.special(t.string)], color: "var(--st)" },
-  { tag: [t.number, t.bool, t.null], color: "var(--nu)" },
-  { tag: [t.comment, t.docComment], color: "var(--tx3)", fontStyle: "italic" },
-  { tag: [t.typeName, t.className, t.namespace], color: "var(--ty)" },
-  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: "var(--fn)" },
-  { tag: [t.attributeName, t.meta, t.annotation, t.tagName], color: "var(--nu)" },
-  { tag: [t.heading, t.strong], fontWeight: "bold", color: "var(--fn)" },
-  { tag: [t.link, t.url], color: "var(--acc)" },
+  { tag: [t.keyword, t.operatorKeyword, t.modifier], color: "var(--syn-keyword)" },
+  { tag: [t.string, t.special(t.string)], color: "var(--syn-string)" },
+  { tag: [t.number, t.bool, t.null], color: "var(--syn-number)" },
+  { tag: [t.comment, t.docComment], color: "var(--text-3)", fontStyle: "italic" },
+  { tag: [t.typeName, t.className, t.namespace], color: "var(--syn-type)" },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: "var(--syn-function)" },
+  { tag: [t.attributeName, t.meta, t.annotation, t.tagName], color: "var(--syn-number)" },
+  { tag: [t.heading, t.strong], fontWeight: "bold", color: "var(--syn-function)" },
+  { tag: [t.link, t.url], color: "var(--accent)" },
 ]);
 
 export const syntax = (path: string): Extension => [language(path), syntaxHighlighting(highlightStyle)];

@@ -39,7 +39,7 @@
     align-items: center;
     justify-content: center;
     border-radius: var(--radius);
-    color: var(--tx2);
+    color: var(--text-2);
     flex: none;
   }
 </style>

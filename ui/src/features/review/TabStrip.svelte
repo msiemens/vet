@@ -46,9 +46,9 @@
     font-size: 11px;
   }
   .add {
-    color: var(--addt);
+    color: var(--add-text);
   }
   .del {
-    color: var(--delt);
+    color: var(--del-text);
   }
 </style>

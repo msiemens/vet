@@ -59,12 +59,12 @@
     gap: 4px;
     padding: 6px 0;
     box-sizing: border-box;
-    background: var(--win);
+    background: var(--bg-window);
   }
   .left {
-    border-right: 1px solid var(--ln);
+    border-right: 1px solid var(--line);
   }
   .right {
-    border-left: 1px solid var(--ln);
+    border-left: 1px solid var(--line);
   }
 </style>

@@ -6,6 +6,7 @@
 import { EditorView } from "@codemirror/view";
 import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
+import { iconSvg } from "../../../lib/ui/icons";
 import type { Backend } from "../../../state/backend";
 import type { BarActions } from "./hunkBar";
 import { lineDelta } from "./lineDelta";
@@ -101,12 +102,26 @@ export class ChangesetView {
       el.className = "file";
       const header = document.createElement("header");
       const title = document.createElement("span");
-      title.className = "path";
-      title.textContent = file.path;
+      title.className = "path mono";
+      const slash = file.path.lastIndexOf("/") + 1;
+      const dir = document.createElement("span");
+      dir.className = "dir";
+      dir.textContent = file.path.slice(0, slash);
+      title.append(dir, file.path.slice(slash));
+      title.title = file.path;
+      let open: HTMLButtonElement | undefined;
       if (listeners.openFile) {
-        title.classList.add("link");
-        title.title = "Open file";
-        title.addEventListener("click", () => listeners.openFile?.(file.path, file.hunks[0]?.targetStart ?? 0));
+        const openFile = () => listeners.openFile?.(file.path, file.hunks[0]?.targetStart ?? 0);
+        header.addEventListener("dblclick", (e) => {
+          if (!(e.target instanceof Element && e.target.closest("button"))) openFile();
+        });
+        open = document.createElement("button");
+        open.className = "flat open";
+        open.type = "button";
+        open.title = "Open in tab (F4)";
+        open.setAttribute("aria-label", "Open in tab");
+        open.innerHTML = iconSvg("file", 14, 1.6);
+        open.addEventListener("click", openFile);
       }
       const { added, removed } = lineDelta([file]);
       const delta = document.createElement("span");
@@ -120,7 +135,7 @@ export class ChangesetView {
       button.title = "Toggle all hunks of this file seen (Ctrl-Alt-S)";
       const index = this.sections.length;
       button.addEventListener("click", () => void this.toggleSeen(index));
-      header.append(title, delta, count, button);
+      header.append(title, delta, count, ...(open ? [open] : []), button);
       header.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         this.listeners.fileMenu(file.path, e.clientX, e.clientY);

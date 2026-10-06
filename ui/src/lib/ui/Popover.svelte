@@ -35,8 +35,8 @@
     left: 0;
     z-index: 20;
     min-width: 220px;
-    background: var(--sheet);
-    border: 1px solid var(--ln);
+    background: var(--bg-sheet);
+    border: 1px solid var(--line);
     border-radius: 8px;
     box-shadow: var(--shadow);
   }

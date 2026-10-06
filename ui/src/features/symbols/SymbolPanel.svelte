@@ -24,10 +24,10 @@
   let { symbol = mockSymbol }: { symbol?: SymbolInfo } = $props();
 
   const VERDICT = {
-    unresolved: "var(--delt)",
-    "binding changed": "var(--old)",
-    gone: "var(--tx3)",
-    unknown: "var(--tx3)",
+    unresolved: "var(--del-text)",
+    "binding changed": "var(--old-base)",
+    gone: "var(--text-3)",
+    unknown: "var(--text-3)",
   } as const;
 </script>
 
@@ -104,7 +104,7 @@
     flex-direction: column;
     gap: 2px;
     padding: 8px 10px;
-    border-bottom: 1px solid var(--ln2);
+    border-bottom: 1px solid var(--line-soft);
   }
   .name {
     font-size: var(--fs-ctl);
@@ -112,7 +112,7 @@
   }
   .qualified {
     font-size: var(--fs-mono-s);
-    color: var(--tx2);
+    color: var(--text-2);
   }
   .sh {
     display: flex;
@@ -122,12 +122,12 @@
     padding: 0 10px;
     font-size: 12px;
     font-weight: 600;
-    color: var(--tx2);
+    color: var(--text-2);
     flex: none;
   }
   .n {
     font-weight: 400;
-    color: var(--tx3);
+    color: var(--text-3);
   }
   .grow {
     flex: 1;
@@ -137,7 +137,7 @@
     flex-direction: column;
     gap: 4px;
     padding: 0 10px 10px 26px;
-    border-bottom: 1px solid var(--ln2);
+    border-bottom: 1px solid var(--line-soft);
   }
   code {
     font-size: var(--fs-mono-s);
@@ -145,14 +145,14 @@
   }
   .doc {
     font-size: var(--fs-ctl);
-    color: var(--tx2);
+    color: var(--text-2);
   }
   ul,
   ol {
     margin: 0;
     padding: 0 0 6px;
     list-style: none;
-    border-bottom: 1px solid var(--ln2);
+    border-bottom: 1px solid var(--line-soft);
   }
   .tw {
     display: flex;
@@ -168,7 +168,7 @@
   }
   .at {
     font-size: 11px;
-    color: var(--tx3);
+    color: var(--text-3);
   }
   .last {
     font-weight: 500;

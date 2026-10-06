@@ -161,14 +161,14 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    background: var(--ed);
+    background: var(--bg-editor);
   }
   .strip {
     display: flex;
     align-items: center;
     height: var(--h-tab);
-    background: var(--panel);
-    border-bottom: 1px solid var(--ln);
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--line);
     flex: none;
   }
   .grow {
@@ -204,10 +204,10 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-    border-bottom: 1px solid var(--ln);
+    border-bottom: 1px solid var(--line);
   }
   .soon {
     margin: 12px 10px;
-    color: var(--tx3);
+    color: var(--text-3);
   }
 </style>

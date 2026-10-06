@@ -63,7 +63,7 @@
     border-radius: 0 var(--radius) var(--radius) 0;
   }
   .footer {
-    border-top: 1px solid var(--ln2);
+    border-top: 1px solid var(--line-soft);
     padding: 4px 0;
   }
 </style>
