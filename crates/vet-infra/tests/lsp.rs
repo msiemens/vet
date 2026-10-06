@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 use vet_core::content::RepoPath;
-use vet_infra::lsp::{LspLauncher, config};
+use vet_infra::lsp::{BinaryLocator, LspLauncher, config};
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{At, LanguageServer, Pos, ServerLauncher, Tree};
 
@@ -79,6 +79,7 @@ async fn rust_analyzer_answers_the_primitive_queries() {
     project(dir.path());
     let launcher = LspLauncher {
         ready_timeout: Duration::from_secs(120),
+        ..LspLauncher::new(BinaryLocator)
     };
     let server = launcher
         .start(
@@ -168,7 +169,7 @@ async fn typescript_language_server_answers_the_primitive_queries() {
     )
     .unwrap();
     std::fs::write(dir.path().join("a.ts"), src).unwrap();
-    let server = LspLauncher::default()
+    let server = LspLauncher::new(BinaryLocator)
         .start(
             dir.path(),
             Tree::Immutable,

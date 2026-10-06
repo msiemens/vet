@@ -5,12 +5,36 @@ use sea_orm_migration::prelude::*;
 
 use super::entity::*;
 use super::run::{run_approval, run_target};
+use super::servers::server_path;
 
 pub struct Migrator;
 
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(Initial), Box::new(RunState), Box::new(SessionBase)]
+        vec![
+            Box::new(Initial),
+            Box::new(RunState),
+            Box::new(SessionBase),
+            Box::new(ServerPaths),
+        ]
+    }
+}
+
+struct ServerPaths;
+
+impl MigrationName for ServerPaths {
+    fn name(&self) -> &str {
+        "m0004_server_paths"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for ServerPaths {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        let schema = Schema::new(DbBackend::Sqlite);
+        manager
+            .create_table(schema.create_table_from_entity(server_path::Entity))
+            .await
     }
 }
 

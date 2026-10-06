@@ -14,6 +14,7 @@ use std::time::Duration;
 use lsp_types as lsp;
 use lsp_types::request::Initialize;
 use serde_json::json;
+use vet_app::ports::{ServerCommand, ServerLocator};
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, LaunchError, ServerConfig, ServerLauncher, Tree};
 
@@ -24,20 +25,36 @@ pub use server::LspServer;
 /// No server message for this long, none in progress: indexing is done.
 const QUIET: Duration = Duration::from_millis(750);
 
-pub struct LspLauncher {
+pub struct LspLauncher<L> {
     /// How long to wait for indexing after `initialized`.
     pub ready_timeout: Duration,
+    /// Where each language's server is, asked on every start.
+    pub locator: L,
 }
 
-impl Default for LspLauncher {
-    fn default() -> Self {
+impl<L> LspLauncher<L> {
+    pub fn new(locator: L) -> Self {
         Self {
             ready_timeout: Duration::from_secs(180),
+            locator,
         }
     }
 }
 
-impl ServerLauncher for LspLauncher {
+/// Runs the backend's own `binary`, found on `PATH`, with no settings. For tests
+/// and tools that have no settings to consult.
+pub struct BinaryLocator;
+
+impl ServerLocator for BinaryLocator {
+    async fn locate(&self, config: &ServerConfig, _project: &Path) -> Result<ServerCommand, String> {
+        Ok(ServerCommand {
+            program: config.binary.clone(),
+            initialization_options: None,
+        })
+    }
+}
+
+impl<L: ServerLocator + Sync> ServerLauncher for LspLauncher<L> {
     type Server = LspServer;
 
     async fn start(
@@ -49,6 +66,11 @@ impl ServerLauncher for LspLauncher {
     ) -> Result<LspServer, LaunchError> {
         let config = backend.config();
         let root = std::fs::canonicalize(root).map_err(|e| LaunchError::Spawn(format!("{}: {e}", root.display())))?;
+        let command = self
+            .locator
+            .locate(config, &root)
+            .await
+            .map_err(LaunchError::NotInstalled)?;
         let folders = workspace_folders(&root, config);
         let folder_values: Vec<_> = folders
             .iter()
@@ -60,8 +82,8 @@ impl ServerLauncher for LspLauncher {
                 Some(json!({"uri": uri.as_str(), "name": name}))
             })
             .collect();
-        let conn =
-            Connection::spawn(&config.binary, &config.args, &root, json!(folder_values)).map_err(LaunchError::Spawn)?;
+        let conn = Connection::spawn(&command.program, &config.args, &root, json!(folder_values))
+            .map_err(LaunchError::Spawn)?;
 
         #[allow(deprecated)]
         let params = lsp::InitializeParams {
@@ -69,6 +91,7 @@ impl ServerLauncher for LspLauncher {
             root_uri: url::Url::from_directory_path(&root)
                 .ok()
                 .and_then(|u| u.as_str().parse().ok()),
+            initialization_options: command.initialization_options,
             capabilities: client_capabilities(),
             workspace_folders: Some(
                 serde_json::from_value(json!(folder_values)).map_err(|e| LaunchError::Protocol(e.to_string()))?,

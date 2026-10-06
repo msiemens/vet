@@ -86,6 +86,8 @@ pub fn backend_for<'a>(backends: &'a [Backend], file: &RepoPath) -> Option<&'a B
 pub enum LaunchError {
     /// A required operation is missing: the language is unsupported (I6).
     MissingCapability(&'static str),
+    /// No server for the language was found; the reason says where Vet looked.
+    NotInstalled(String),
     Spawn(String),
     /// The server broke the protocol or failed to initialize.
     Protocol(String),
@@ -97,6 +99,7 @@ impl fmt::Display for LaunchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingCapability(c) => write!(f, "language server lacks required capability: {c}"),
+            Self::NotInstalled(why) => f.write_str(why),
             Self::Spawn(why) => write!(f, "cannot start language server: {why}"),
             Self::Protocol(why) => write!(f, "language server protocol error: {why}"),
             Self::NotReady(why) => write!(f, "language server not ready: {why}"),

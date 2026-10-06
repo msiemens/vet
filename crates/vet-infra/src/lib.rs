@@ -18,6 +18,9 @@ pub mod lsp;
 /// `vet_app::ports::ProcessRunner`.
 pub mod exec;
 
+/// `vet_app::ports::ServerResolver`.
+pub mod servers;
+
 /// `vet_app::ports::Platform`: an enum over GitHub and Azure DevOps.
 #[cfg(feature = "platform")]
 pub mod platform {}

@@ -7,6 +7,7 @@ mod content;
 mod entity;
 mod migration;
 mod run;
+mod servers;
 #[cfg(test)]
 mod tests;
 

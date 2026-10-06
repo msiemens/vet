@@ -8,6 +8,7 @@ use vet_core::content::{BlobId, Changeset, Hash, RepoPath, Snapshot, SnapshotDif
 use vet_core::filter::ReviewFilter;
 use vet_core::platform::{PlatformThread, PlatformTraits};
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
+use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::execution::targets::RunTarget;
 use crate::pin::{BaseChoice, CommitId, Pin, PinId};
@@ -339,6 +340,92 @@ pub trait RunningProcess {
     fn next(&mut self) -> impl Future<Output = ProcessEvent> + Send;
     /// Asks the process to die; `Exit` follows.
     fn kill(&self);
+}
+
+/// How to start a language server, as found.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ServerCommand {
+    /// A path, or a name the OS finds. The arguments are the backend's own.
+    pub program: String,
+    /// Sent with `initialize`, for servers that need to be told where their
+    /// compiler is (the project's `typescript`).
+    pub initialization_options: Option<serde_json::Value>,
+}
+
+/// Where a language server was found.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ServerOrigin {
+    /// The path the user set.
+    Custom,
+    /// Part of the project: its Rust toolchain.
+    Project,
+    /// Installed into Vet's data directory.
+    Installed,
+    /// On `PATH`.
+    Path,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FoundServer {
+    pub command: ServerCommand,
+    pub origin: ServerOrigin,
+    /// If it is cheap to learn.
+    pub version: Option<String>,
+    /// Facts that shape its answers, e.g. which `tsserver` it uses.
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ServerState {
+    Found(FoundServer),
+    Missing {
+        /// Fit to show: what was looked for, where, and what to do.
+        reason: String,
+    },
+}
+
+/// Finds and installs language servers (§7.1). Implemented by `vet-infra`.
+pub trait ServerResolver {
+    /// The server of `language` for the project at `project`; `custom` is the
+    /// user's path for it, which wins over everything else.
+    fn resolve(
+        &self,
+        language: &BackendId,
+        project: &Path,
+        custom: Option<&str>,
+    ) -> impl Future<Output = ServerState> + Send;
+    /// The version `install` puts in place; `None` if Vet cannot install the language's server.
+    fn pinned(&self, language: &BackendId) -> Option<String>;
+    /// Why `install` cannot run now (a tool it needs is missing), if so.
+    fn install_blocker(&self, language: &BackendId) -> Option<String>;
+    /// Installs the pinned server into Vet's data directory. `progress` gets the
+    /// tool's output lines.
+    fn install(
+        &self,
+        language: &BackendId,
+        progress: &(dyn Fn(&str) + Send + Sync),
+    ) -> impl Future<Output = Result<(), String>> + Send;
+}
+
+/// What the language server launcher asks for on every start.
+pub trait ServerLocator {
+    /// The server for `config`'s language; the error is the reason to show.
+    fn locate(
+        &self,
+        config: &ServerConfig,
+        project: &Path,
+    ) -> impl Future<Output = Result<ServerCommand, String>> + Send;
+}
+
+/// The custom server path per language, kept across launches.
+pub trait ServerSettings {
+    fn custom_server_path(&self, language: String) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
+    /// `None` removes the setting.
+    fn set_custom_server_path(
+        &self,
+        language: String,
+        path: Option<String>,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
 }
 
 /// Implemented by `vet-infra::platform` (an enum over GitHub and ADO). Core
