@@ -195,7 +195,7 @@ export class ChangesetView {
       button.setAttribute("aria-label", button.title);
       button.innerHTML = iconSvg("check", 14, 2);
       button.addEventListener("click", () => void this.toggleSeen(index));
-      header.append(title, delta, count, comment, ...(open ? [open] : []), button);
+      header.append(title, delta, count, ...(open ? [open] : []), button, comment);
       header.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         this.listeners.fileMenu(file.path, e.clientX, e.clientY);
