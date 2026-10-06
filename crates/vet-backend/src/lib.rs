@@ -318,6 +318,7 @@ impl Handler for Orchestrator {
                     revision: text.revision,
                     base: text.base,
                     target: text.target,
+                    changes: text.changes.iter().map(mapping::text_change).collect(),
                     marks: Vec::new(),
                 })
             }

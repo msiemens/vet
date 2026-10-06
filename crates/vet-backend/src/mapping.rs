@@ -14,6 +14,7 @@ use vet_app::session::{
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineRange, NonTextKind, RepoPath};
 use vet_core::filter::ReviewFilter;
+use vet_core::inline::TextChange;
 use vet_core::review::{AnchorState, CommentTarget, Confidence, Location, Side, StaleReason, Strategy, ThreadStatus};
 use vet_protocol as p;
 use vet_semantic::ports::RestoreFailure;
@@ -66,6 +67,15 @@ fn hunk(h: &Hunk) -> p::Hunk {
         base_len: h.old.len(),
         target_start: h.new.start,
         target_len: h.new.len(),
+    }
+}
+
+pub fn text_change(c: &TextChange) -> p::TextChange {
+    p::TextChange {
+        from_base: c.from_base,
+        to_base: c.to_base,
+        from_target: c.from_target,
+        to_target: c.to_target,
     }
 }
 

@@ -5,6 +5,7 @@
 pub mod completion;
 pub mod content;
 pub mod filter;
+pub mod inline;
 pub mod marking;
 pub mod merkle;
 pub mod platform;

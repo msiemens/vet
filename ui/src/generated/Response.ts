@@ -18,6 +18,7 @@ import type { ReviewUpdate } from "./ReviewUpdate";
 import type { RunTargetEntry } from "./RunTargetEntry";
 import type { ServerInfo } from "./ServerInfo";
 import type { Side } from "./Side";
+import type { TextChange } from "./TextChange";
 import type { TextContent } from "./TextContent";
 import type { Thread } from "./Thread";
 import type { Unavailable } from "./Unavailable";
@@ -26,7 +27,11 @@ export type Response = { "type": "pong", payload: string, } | { "type": "session
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", revision: number, side: Side, text: string | null, unavailable: Unavailable | null, } | { "type": "definition" } & Locations | { "type": "references" } & Locations | { "type": "diagnostics", revision: number, path: string, diagnostics: Array<Diagnostic>, unavailable: Unavailable | null, } | { "type": "changedSymbols" } & ChangedSymbols | { "type": "impact" } & Impact | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "base" } & Base | { "type": "reviewFinished", complete: boolean, } | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "thread" } & Thread | { "type": "runTargets", targets: Array<RunTargetEntry>, } | { "type": "runNeedsApproval", hash: string, 
+root: string, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
+/**
+ * The hunks' changed ranges, down to the words that differ within a replaced region.
+ */
+changes: Array<TextChange>, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", revision: number, side: Side, text: string | null, unavailable: Unavailable | null, } | { "type": "definition" } & Locations | { "type": "references" } & Locations | { "type": "diagnostics", revision: number, path: string, diagnostics: Array<Diagnostic>, unavailable: Unavailable | null, } | { "type": "changedSymbols" } & ChangedSymbols | { "type": "impact" } & Impact | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "base" } & Base | { "type": "reviewFinished", complete: boolean, } | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "thread" } & Thread | { "type": "runTargets", targets: Array<RunTargetEntry>, } | { "type": "runNeedsApproval", hash: string, 
 /**
  * No run was ever approved in this repository.
  */

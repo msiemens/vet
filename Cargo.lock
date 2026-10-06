@@ -4118,6 +4118,7 @@ version = "0.0.0"
 dependencies = [
  "similar",
  "tokio",
+ "vet-core",
  "vet-protocol",
  "vet-transport",
 ]

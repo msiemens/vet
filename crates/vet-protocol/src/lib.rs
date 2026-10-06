@@ -602,12 +602,15 @@ pub enum Response {
     Done,
     /// Boxed: it would make every response as large as the manifest.
     Manifest(Box<Manifest>),
-    /// `None` is a side the file does not have (added or deleted). The text and
-    /// `marks` belong to `revision`; the hunks are in that revision's manifest.
+    /// `None` is a side the file does not have (added or deleted). The text,
+    /// `changes` and `marks` belong to `revision`; the hunks are in that
+    /// revision's manifest.
     FileContents {
         revision: u32,
         base: Option<String>,
         target: Option<String>,
+        /// The hunks' changed ranges, down to the words that differ within a replaced region.
+        changes: Vec<TextChange>,
         marks: Vec<Mark>,
     },
     /// The file's review state after `SetSeen` or `Acknowledge`.
@@ -1400,6 +1403,18 @@ pub struct Hunk {
     pub base_len: u32,
     pub target_start: u32,
     pub target_len: u32,
+}
+
+/// A changed range of the base and target text. Offsets are UTF-16 units of the
+/// text with `\r\n` counted as one unit, as CodeMirror counts its document.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TextChange {
+    pub from_base: u32,
+    pub to_base: u32,
+    pub from_target: u32,
+    pub to_target: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

@@ -13,11 +13,24 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use corpus::{Config, Corpus};
+use vet_core::content::LineRange;
+use vet_core::inline::text_changes;
 use vet_protocol::{
     Base, BaseChoice, CommitInfo, Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, Manifest, Request,
-    Response, ReviewInfo, ReviewUpdate, SessionId, Target,
+    Response, ReviewInfo, ReviewUpdate, SessionId, Target, TextChange,
 };
 use vet_transport::{Events, Handler, Server};
+
+fn core_hunk(h: &Hunk) -> vet_core::content::Hunk {
+    let range = |start, len| LineRange {
+        start,
+        end: start + len,
+    };
+    vet_core::content::Hunk {
+        old: range(h.base_start, h.base_len),
+        new: range(h.target_start, h.target_len),
+    }
+}
 
 struct Mock {
     corpus: Corpus,
@@ -135,10 +148,21 @@ impl Handler for Mock {
             }
             Request::FileContents { path, .. } => {
                 let f = &self.corpus.files[position(&path)?];
+                let hunks: Vec<_> = f.hunks.iter().map(core_hunk).collect();
+                let changes = text_changes(&f.base, &f.target, &hunks);
                 Ok(Response::FileContents {
                     revision: REVISION,
                     base: Some(f.base.clone()),
                     target: Some(f.target.clone()),
+                    changes: changes
+                        .iter()
+                        .map(|c| TextChange {
+                            from_base: c.from_base,
+                            to_base: c.to_base,
+                            from_target: c.from_target,
+                            to_target: c.to_target,
+                        })
+                        .collect(),
                     marks: f.marks.clone(),
                 })
             }

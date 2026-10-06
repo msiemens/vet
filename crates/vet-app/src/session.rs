@@ -38,6 +38,7 @@ use vet_core::content::{
     SnapshotDiff, SnapshotId, SnapshotStatus, image_media_type,
 };
 use vet_core::filter::ReviewFilter;
+use vet_core::inline::{TextChange, text_changes};
 use vet_core::marking::{hunk_regions, hunk_span};
 use vet_core::prepared::PreparedFile;
 use vet_core::remap::{cut_recorded, remap_span};
@@ -218,6 +219,8 @@ pub struct FileText {
     pub revision: u32,
     pub base: Option<String>,
     pub target: Option<String>,
+    /// The diff's changed ranges within the texts.
+    pub changes: Vec<TextChange>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -907,7 +910,9 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         self.ensure_changes(&mut st).await?;
         let changes = st.changes.as_ref().expect("computed");
         type Side = Option<(RepoPath, BlobId)>;
-        let (old, new): (Side, Side) = if let Some(d) = find_diff(&changes.diff, path) {
+        let diff = find_diff(&changes.diff, path);
+        let hunks = diff.map(|d| d.hunks.clone()).unwrap_or_default();
+        let (old, new): (Side, Side) = if let Some(d) = diff {
             let side = |p: &Option<RepoPath>, b: Option<BlobId>| p.clone().zip(b);
             (side(&d.old_path, d.old_blob), side(&d.new_path, d.new_blob))
         } else if let Some(n) = changes.diff.non_text.iter().find(|n| path_str(&n.path) == path) {
@@ -938,10 +943,16 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         st.changes.as_mut().expect("computed").blobs = blobs;
         result?;
         let [base, target] = texts;
+        let changes = text_changes(
+            base.as_deref().unwrap_or_default(),
+            target.as_deref().unwrap_or_default(),
+            &hunks,
+        );
         Ok(FileText {
             revision: st.revision,
             base,
             target,
+            changes,
         })
     }
 

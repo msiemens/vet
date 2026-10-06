@@ -1,17 +1,19 @@
 // One file's CodeMirror editor(s): unified (`unifiedMergeView`) or side by side
 // (`MergeView`), with the review decorations of `reviewState.ts` (SPEC §10).
 
-import { Change, MergeView, diff, getChunks, presentableDiff, unifiedMergeView } from "@codemirror/merge";
+import { MergeView, getChunks, unifiedMergeView } from "@codemirror/merge";
 import { EditorState, type Extension, type StateEffect, type StateField } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { minimalSetup } from "codemirror";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Hunk } from "../../../generated/Hunk";
 import type { Mark } from "../../../generated/Mark";
+import type { TextChange } from "../../../generated/TextChange";
 import type { HunkState } from "../../../generated/HunkState";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { deletedLines } from "./deletedLines";
+import { backendDiff } from "./backendDiff";
 import type { BarActions } from "./hunkBar";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { syntax } from "./language";
@@ -23,6 +25,8 @@ export interface Loaded {
   base: string;
   target: string;
   hunks: Hunk[];
+  /** The diff, down to the words that differ; highlighting and chunks come from it. */
+  changes: TextChange[];
   marks: Mark[];
 }
 
@@ -36,40 +40,6 @@ export interface Hooks extends BarActions, SemanticHooks {
 export interface Review {
   states: HunkState[];
   symbols: (string | undefined)[];
-}
-
-/**
- * Feeds the backend's hunks to the merge extensions so highlighting and review
- * decorations share one diff. The merge code calls this with the whole documents
- * at build time and afterwards only with slices around local edits. Anything but
- * the original pair falls back to CodeMirror's diff: after an edit the backend's
- * hunks no longer describe the document, and only the edited region is re-diffed.
- * CodeMirror still merges changes under 3 characters apart (a blank line) into
- * one chunk, so a chunk can span two backend hunks.
- */
-function backendDiff(loaded: Loaded): (a: string, b: string) => readonly Change[] {
-  const starts = (text: string) => {
-    const out = [0];
-    for (let i = text.indexOf("\n"); i >= 0; i = text.indexOf("\n", i + 1)) out.push(i + 1);
-    return out;
-  };
-  let changes: Change[] | undefined;
-  return (a, b) => {
-    if (a !== loaded.base || b !== loaded.target) return diff(a, b);
-    if (!changes) {
-      const [sa, sb] = [starts(a), starts(b)];
-      changes = loaded.hunks.flatMap((h) => {
-        const [fromA, toA] = [sa[h.baseStart] ?? a.length, sa[h.baseStart + h.baseLen] ?? a.length];
-        const [fromB, toB] = [sb[h.targetStart] ?? b.length, sb[h.targetStart + h.targetLen] ?? b.length];
-        if (!h.baseLen || !h.targetLen) return [new Change(fromA, toA, fromB, toB)];
-        // The hunk's boundaries are the backend's; the changes inside it are CodeMirror's, for intra-line highlighting.
-        return presentableDiff(a.slice(fromA, toA), b.slice(fromB, toB)).map(
-          (c) => new Change(c.fromA + fromA, c.toA + fromA, c.fromB + fromB, c.toB + fromB),
-        );
-      });
-    }
-    return changes;
-  };
 }
 
 export interface Handle {
@@ -112,7 +82,7 @@ export function mountFile(
     loaded.marks,
     review.states,
   );
-  const diffConfig = { override: backendDiff(loaded) };
+  const diffConfig = { override: backendDiff(loaded.base, loaded.target, loaded.changes) };
   const shown = (ms: number) => hooks.hoverShown(ms);
   const target: Extension[] = [
     minimalSetup,

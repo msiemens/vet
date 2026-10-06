@@ -365,10 +365,10 @@ export class ChangesetView {
     const { file } = s;
     // A file without text lines (binary, content unavailable) has nothing to fetch; the backend refuses it.
     if (!s.loading && !file.hunks.length && !file.baseLines && !file.targetLines)
-      s.loading = Promise.resolve((s.loaded = { base: "", target: "", hunks: [], marks: [] }));
+      s.loading = Promise.resolve((s.loaded = { base: "", target: "", hunks: [], changes: [], marks: [] }));
     s.loading ??= this.backend.fileContents(file.path).then((r) => {
       if (r.revision !== this.revision) throw new Error("stale revision");
-      s.loaded = { base: r.base ?? "", target: r.target ?? "", hunks: file.hunks, marks: r.marks };
+      s.loaded = { base: r.base ?? "", target: r.target ?? "", hunks: file.hunks, changes: r.changes, marks: r.marks };
       this.sync();
       return s.loaded;
     });
