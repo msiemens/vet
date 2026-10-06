@@ -3,6 +3,7 @@
 
 import type { Base } from "../generated/Base";
 import type { BaseChoice } from "../generated/BaseChoice";
+import type { BlobContent } from "../generated/BlobContent";
 import type { BranchInfo } from "../generated/BranchInfo";
 import type { CommitInfo } from "../generated/CommitInfo";
 import type { DirEntry } from "../generated/DirEntry";
@@ -12,6 +13,7 @@ import type { NonTextKind } from "../generated/NonTextKind";
 import type { Response } from "../generated/Response";
 import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
+import type { Side } from "../generated/Side";
 import type { TextContent } from "../generated/TextContent";
 import { Connection } from "./connection";
 
@@ -90,6 +92,24 @@ export class Backend {
       "fileText",
     );
     return { revision, content };
+  }
+
+  /**
+   * One side of a non-text item's file, as of `revision`. The reply's own `type` is the
+   * content's: the wire has both the response tag and the content tag under that key and the
+   * last one wins, so the generated `Response` variant is not what arrives.
+   */
+  async itemBlob(revision: number, path: string, kind: NonTextKind, side: Side): Promise<BlobContent> {
+    const reply: { type: string } = await this.conn.request({
+      type: "itemBlob",
+      session: this.sid,
+      revision,
+      path,
+      kind,
+      side,
+    });
+    if (!["bytes", "absent", "tooLarge", "unavailable"].includes(reply.type)) throw new Error("unexpected response");
+    return reply as BlobContent;
   }
 
   /** `revision` is the manifest's; the backend rejects a stale one. */

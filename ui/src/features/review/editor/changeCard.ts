@@ -3,9 +3,11 @@
 // action, the before and after, and for images a preview strip. Its height is fixed by
 // `cardHeight`, so a section can account for it before anything is measured.
 
+import type { BlobContent } from "../../../generated/BlobContent";
 import type { EntryDesc } from "../../../generated/EntryDesc";
 import type { NonTextItem } from "../../../generated/NonTextItem";
 import type { NonTextKind } from "../../../generated/NonTextKind";
+import type { Side } from "../../../generated/Side";
 import { iconSvg } from "../../../lib/ui/icons";
 import { hasPreview } from "./sectionLayout";
 
@@ -63,16 +65,40 @@ function line(sign: "−" | "+", text: string): HTMLElement {
 
 export interface Card {
   el: HTMLElement;
+  /** Whether the card has a preview strip, which `setPreview` fills. */
+  hasPreview: boolean;
   /** Shows the item as acknowledged or not. */
   setAcknowledged(acknowledged: boolean): void;
   /** Marks it as the view's current stop. */
   setCurrent(current: boolean): void;
+  /** Fetches and shows the images, or drops them (and their object URLs) again. */
+  setPreview(on: boolean): void;
 }
 
 export interface CardActions {
   /** Acknowledge or un-acknowledge: the opposite of what the card shows now. */
   toggle(): void;
   comment(): void;
+  /** One side of the item's file, for the preview. */
+  blob(side: Side): Promise<BlobContent>;
+}
+
+const bytesOf = (base64: string): Uint8Array<ArrayBuffer> => Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+
+/** Fills a preview thumb from what the backend sent; an SVG is only ever an `<img>` source. */
+function showBlob(thumb: HTMLElement, blob: BlobContent, urls: string[]) {
+  if (blob.type === "bytes" && blob.mediaType) {
+    const url = URL.createObjectURL(new Blob([bytesOf(blob.bytes)], { type: blob.mediaType }));
+    urls.push(url);
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = url;
+    thumb.replaceChildren(img);
+    thumb.classList.add("image");
+  } else if (blob.type === "tooLarge" || blob.type === "unavailable") {
+    thumb.replaceChildren(blob.type === "tooLarge" ? "Too large to preview" : "Not available");
+    thumb.classList.add("note");
+  }
 }
 
 export function changeCard(
@@ -83,6 +109,7 @@ export function changeCard(
   actions: CardActions,
 ): Card {
   const root = el("article", "vet-card");
+  const thumbs: { thumb: HTMLElement; side: Side }[] = [];
   const bar = el("div", "vet-hunk");
   const toggle = el("button", "flat vet-hunk-btn vet-seen-toggle");
   toggle.type = "button";
@@ -109,20 +136,42 @@ export function changeCard(
     );
     if (hasPreview(item, path)) {
       const previews = el("div", "vet-card-previews");
-      for (const [label, entry] of [
-        ["Before", item.before],
-        ["After", item.after],
+      for (const [label, side, entry] of [
+        ["Before", "base", item.before],
+        ["After", "target", item.after],
       ] as const) {
         if (!entry) continue;
         const figure = el("figure", "vet-card-figure");
         const thumb = el("div", "vet-card-thumb");
-        thumb.innerHTML = iconSvg("image", 28, 1.4);
         figure.append(thumb, el("figcaption", "", label));
         previews.append(figure);
+        thumbs.push({ thumb, side });
       }
       root.append(previews);
     }
   }
+  const placeholder = (thumb: HTMLElement) => {
+    thumb.className = "vet-card-thumb";
+    thumb.innerHTML = iconSvg("image", 28, 1.4);
+  };
+  for (const { thumb } of thumbs) placeholder(thumb);
+
+  let urls: string[] = [];
+  let generation = 0;
+  const setPreview = (on: boolean) => {
+    const mine = ++generation;
+    for (const url of urls) URL.revokeObjectURL(url);
+    urls = [];
+    for (const { thumb, side } of thumbs) {
+      placeholder(thumb);
+      if (!on) continue;
+      // A reply that arrives after the preview was dropped or restarted is ignored.
+      actions.blob(side).then(
+        (blob) => mine === generation && showBlob(thumb, blob, urls),
+        () => undefined,
+      );
+    }
+  };
 
   const setAcknowledged = (value: boolean) => {
     bar.className = `vet-hunk vet-hunk-${value ? "seen" : "unseen"}`;
@@ -131,6 +180,8 @@ export function changeCard(
   setAcknowledged(acknowledged);
   return {
     el: root,
+    hasPreview: thumbs.length > 0,
+    setPreview,
     setAcknowledged,
     setCurrent: (current) => root.classList.toggle("vet-current", current),
   };

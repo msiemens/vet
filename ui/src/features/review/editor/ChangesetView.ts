@@ -80,6 +80,8 @@ export class ChangesetView {
   readonly totalHunks: number;
   readonly totalStops: number;
   private mounted = new Set<number>();
+  /** Sections whose cards show their image previews. */
+  private previewing = new Set<number>();
   private m: Metrics;
   current = -1;
   /** While the viewer scrolls only what is in view mounts; the surroundings follow once the scrolling stops. */
@@ -171,6 +173,7 @@ export class ChangesetView {
           comment: () => {
             // Comments are not wired up yet.
           },
+          blob: (side) => this.backend.itemBlob(this.revision, file.path, item.kind, side),
         }),
       );
       el.append(header, ...cards.map((c) => c.el), body);
@@ -215,6 +218,8 @@ export class ChangesetView {
     this.root.removeEventListener("click", this.onExpand, true);
     for (const fi of this.mounted) this.sections[fi].handle?.destroy();
     this.mounted.clear();
+    for (const fi of this.previewing) this.sections[fi].cards.forEach((c) => c.setPreview(false));
+    this.previewing.clear();
     this.root.replaceChildren();
   }
 
@@ -379,6 +384,8 @@ export class ChangesetView {
         this.mounted.delete(fi);
       }
     }
+    for (let fi = near[0]; fi <= near[1]; fi++) this.setPreviews(fi, true);
+    for (const fi of [...this.previewing]) if (fi < far[0] || fi > far[1]) this.setPreviews(fi, false);
     const middle = top + h / 2;
     const distance = (fi: number) => {
       const s = this.sections[fi];
@@ -399,6 +406,16 @@ export class ChangesetView {
       }
       this.mount(fi);
     }
+  }
+
+  /** Image previews are fetched for sections near the viewport and dropped when far away. */
+  private setPreviews(fi: number, on: boolean) {
+    if (on === this.previewing.has(fi)) return;
+    const previews = this.sections[fi].cards.filter((c) => c.hasPreview);
+    if (!previews.length) return;
+    if (on) this.previewing.add(fi);
+    else this.previewing.delete(fi);
+    for (const card of previews) card.setPreview(on);
   }
 
   /** The editor of a section, mounted now if it was not; the section must be loaded. */

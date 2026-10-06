@@ -30,6 +30,8 @@
     const card = changeCard(path, oldPath, { kind, before, after }, acknowledged, {
       toggle: ontoggle,
       comment: () => undefined,
+      // The gallery has no backend, so its previews stay placeholders.
+      blob: () => Promise.reject(new Error("no backend")),
     });
     host.append(card.el);
     return () => card.el.remove();
