@@ -132,16 +132,23 @@ impl ToolResolver {
         }
     }
 
-    /// The version of a Vet-installed server, from what the installer left behind.
-    fn installed_version(&self, spec: &Spec) -> Option<String> {
+    /// The version of a Vet-installed server: an npm package's `package.json`,
+    /// or what `dotnet tool list --tool-path` reports.
+    async fn installed_version(&self, spec: &Spec) -> Option<String> {
         let dir = self.install_dir(spec);
         match spec.install {
             Install::No => None,
             Install::Npm { packages } => package_version(&dir.join("node_modules").join(packages[0].0)),
-            Install::DotnetTool { package, .. } => std::fs::read_dir(dir.join(".store").join(package))
-                .ok()?
-                .flatten()
-                .find_map(|e| e.file_name().into_string().ok()),
+            Install::DotnetTool { package, .. } => {
+                let args = [
+                    "tool".to_owned(),
+                    "list".into(),
+                    "--tool-path".into(),
+                    dir.to_string_lossy().into_owned(),
+                ];
+                let out = capture("dotnet", &args, None).await.ok().filter(|o| o.ok)?;
+                tool_list_version(&out.stdout, package)
+            }
         }
     }
 
@@ -207,6 +214,17 @@ fn package_version(package: &Path) -> Option<String> {
     let manifest = std::fs::read_to_string(package.join("package.json")).ok()?;
     let manifest: serde_json::Value = serde_json::from_str(&manifest).ok()?;
     Some(manifest.get("version")?.as_str()?.to_owned())
+}
+
+/// The version of `package` in the table `dotnet tool list` prints: a header
+/// row (Package Id, Version, Commands), a row of dashes, then one row per tool.
+fn tool_list_version(table: &str, package: &str) -> Option<String> {
+    let mut rows = table.lines().skip_while(|l| !l.starts_with("---")).skip(1);
+    rows.find_map(|row| {
+        let mut columns = row.split_whitespace();
+        let (id, version) = (columns.next()?, columns.next()?);
+        id.eq_ignore_ascii_case(package).then(|| version.to_owned())
+    })
 }
 
 struct Captured {
@@ -295,7 +313,7 @@ impl ServerResolver for ToolResolver {
         };
 
         let version = match origin {
-            ServerOrigin::Installed => self.installed_version(spec),
+            ServerOrigin::Installed => self.installed_version(spec).await,
             _ => Self::probe_version(spec, &path).await,
         };
         let mut notes = Vec::new();
@@ -470,6 +488,20 @@ mod tests {
         assert_eq!(server.origin, ServerOrigin::Installed);
         assert_eq!(server.command.program, bin.to_string_lossy());
         assert_eq!(server.version.as_deref(), Some("6.0.1"));
+    }
+
+    #[test]
+    fn the_dotnet_tool_table_is_read_for_the_package() {
+        let table = "Package Id                  Version               Commands              \n\
+                     ------------------------------------------------------------------------\n\
+                     other-tool                  1.0.0                 other\n\
+                     roslyn-language-server      5.12.0-1.26475.2      roslyn-language-server\n";
+        assert_eq!(
+            tool_list_version(table, "roslyn-language-server").as_deref(),
+            Some("5.12.0-1.26475.2")
+        );
+        assert_eq!(tool_list_version(table, "missing"), None);
+        assert_eq!(tool_list_version("", "roslyn-language-server"), None);
     }
 
     #[tokio::test]

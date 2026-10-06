@@ -141,7 +141,8 @@ async fn load_dotnet_projects(conn: &Connection, root: &Path) -> Result<(), Laun
             .map(String::from)
             .map_err(|()| LaunchError::Protocol(format!("{} is not an absolute path", path.display())))
     };
-    let (method, params) = match dotnet::find(root) {
+    let load = dotnet::find(root).await.map_err(LaunchError::Protocol)?;
+    let (method, params) = match load {
         Some(dotnet::Load::Solution(solution)) => ("solution/open", json!({"solution": uri(&solution)?})),
         Some(dotnet::Load::Projects(projects)) => {
             let uris = projects.iter().map(|p| uri(p)).collect::<Result<Vec<_>, _>>()?;

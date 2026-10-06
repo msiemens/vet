@@ -1,16 +1,21 @@
 //! What `roslyn-language-server` is told to load. It loads nothing by itself
 //! unless sent `solution/open` or `project/open` after `initialized`.
+//!
+//! The candidates are the files of the tree as Vet sees it: in a worktree the
+//! scan, which drops what git ignores; in a materialized snapshot every file,
+//! since it holds nothing but the snapshot's own.
 
 use std::path::{Path, PathBuf};
 
-/// How many directory levels below the root are searched for projects.
-const SEARCH_DEPTH: usize = 3;
+use vet_app::ports::{Dirty, GitRepo};
+
+use crate::git::GixRepo;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Load {
     /// The only solution in the root.
     Solution(PathBuf),
-    /// Every project found, when there is no single solution to load.
+    /// Every project, when there is no single solution in the root to load.
     Projects(Vec<PathBuf>),
 }
 
@@ -20,46 +25,59 @@ fn has_extension(path: &Path, extensions: &[&str]) -> bool {
         .is_some_and(|e| extensions.iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
-/// The solution in `root` if there is exactly one (`.sln` or `.slnx`), else the
-/// `.csproj` files below it. `None` if there is nothing to load.
-pub fn find(root: &Path) -> Option<Load> {
-    let mut solutions: Vec<PathBuf> = std::fs::read_dir(root)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_file() && has_extension(p, &["sln", "slnx"]))
-        .collect();
-    if solutions.len() == 1 {
-        return solutions.pop().map(Load::Solution);
+/// The files of the tree at `root`, relative to it.
+async fn files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    // `.git` is how git marks a worktree's root, as a directory or a file.
+    if root.join(".git").exists() {
+        let scan = GixRepo::new(root).scan(Dirty::All).await.map_err(|e| e.0)?;
+        return Ok(scan
+            .snapshot
+            .entries
+            .keys()
+            .map(|p| PathBuf::from(String::from_utf8_lossy(&p.0).into_owned()))
+            .collect());
     }
-
-    let mut projects = Vec::new();
-    let mut level = vec![root.to_owned()];
-    for _ in 0..=SEARCH_DEPTH {
-        let mut next = Vec::new();
-        for dir in level {
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if path.is_dir() {
-                    if !name.starts_with('.') && !matches!(name.as_ref(), "node_modules" | "bin" | "obj" | "target") {
-                        next.push(path);
-                    }
-                } else if has_extension(&path, &["csproj"]) {
-                    projects.push(path);
-                }
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_owned()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))?
+            .flatten()
+        {
+            let path = entry.path();
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                pending.push(path);
+            } else if let Ok(relative) = path.strip_prefix(root) {
+                found.push(relative.to_owned());
             }
         }
-        level = next;
     }
+    Ok(found)
+}
+
+/// The solution (`.sln` or `.slnx`) directly in `root` if there is exactly one,
+/// else every `.csproj` of the tree. `None` if there is nothing to load.
+pub async fn find(root: &Path) -> Result<Option<Load>, String> {
+    let files = files(root).await?;
+    let mut solutions: Vec<PathBuf> = (files.iter())
+        .filter(|f| f.components().count() == 1 && has_extension(f, &["sln", "slnx"]))
+        .map(|f| root.join(f))
+        .collect();
+    if solutions.len() == 1 {
+        return Ok(solutions.pop().map(Load::Solution));
+    }
+    let mut projects: Vec<PathBuf> = (files.iter())
+        .filter(|f| has_extension(f, &["csproj"]))
+        .map(|f| root.join(f))
+        .collect();
     projects.sort();
-    (!projects.is_empty()).then_some(Load::Projects(projects))
+    Ok((!projects.is_empty()).then_some(Load::Projects(projects)))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
     use super::*;
 
     fn touch(root: &Path, name: &str) {
@@ -68,36 +86,77 @@ mod tests {
         std::fs::write(path, "").unwrap();
     }
 
-    #[test]
-    fn a_single_solution_is_loaded_whole() {
+    fn git(dir: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}");
+    }
+
+    #[tokio::test]
+    async fn a_single_solution_is_loaded_whole() {
         let dir = tempfile::tempdir().unwrap();
         touch(dir.path(), "App.sln");
         touch(dir.path(), "src/App.csproj");
-        assert_eq!(find(dir.path()), Some(Load::Solution(dir.path().join("App.sln"))));
+        assert_eq!(
+            find(dir.path()).await.unwrap(),
+            Some(Load::Solution(dir.path().join("App.sln")))
+        );
     }
 
-    #[test]
-    fn without_a_single_solution_the_projects_are_loaded() {
+    #[tokio::test]
+    async fn without_a_single_solution_every_project_is_loaded() {
         let dir = tempfile::tempdir().unwrap();
         touch(dir.path(), "A.sln");
         touch(dir.path(), "B.slnx");
         touch(dir.path(), "src/App/App.csproj");
-        touch(dir.path(), "tests/App.Tests/App.Tests.csproj");
-        touch(dir.path(), "src/App/obj/Generated.csproj");
-        touch(dir.path(), "node_modules/x/X.csproj");
+        touch(dir.path(), "a/b/c/d/e/Deep.csproj");
         assert_eq!(
-            find(dir.path()),
+            find(dir.path()).await.unwrap(),
             Some(Load::Projects(vec![
+                dir.path().join("a/b/c/d/e/Deep.csproj"),
                 dir.path().join("src/App/App.csproj"),
-                dir.path().join("tests/App.Tests/App.Tests.csproj"),
             ]))
         );
     }
 
-    #[test]
-    fn nothing_to_load_is_none() {
+    #[tokio::test]
+    async fn a_worktree_contributes_what_git_does_not_ignore() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q", "-b", "main"]);
+        touch(dir.path(), ".gitignore");
+        std::fs::write(dir.path().join(".gitignore"), "obj/\nbuild-output/\n").unwrap();
+        touch(dir.path(), "src/App/App.csproj");
+        git(dir.path(), &["add", "-A"]);
+        git(dir.path(), &["commit", "-q", "-m", "base"]);
+        touch(dir.path(), "src/New/New.csproj");
+        touch(dir.path(), "src/App/obj/Generated.csproj");
+        touch(dir.path(), "build-output/Other.csproj");
+        assert_eq!(
+            find(dir.path()).await.unwrap(),
+            Some(Load::Projects(vec![
+                dir.path().join("src/App/App.csproj"),
+                dir.path().join("src/New/New.csproj"),
+            ]))
+        );
+    }
+
+    #[tokio::test]
+    async fn nothing_to_load_is_none() {
         let dir = tempfile::tempdir().unwrap();
         touch(dir.path(), "readme.md");
-        assert_eq!(find(dir.path()), None);
+        assert_eq!(find(dir.path()).await.unwrap(), None);
     }
 }
