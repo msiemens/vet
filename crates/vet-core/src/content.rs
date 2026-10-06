@@ -6,9 +6,33 @@ use std::collections::BTreeMap;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Hash(pub [u8; 32]);
 
-/// Identity of a file's content, as git would store it.
+impl Hash {
+    /// BLAKE3 of `bytes`.
+    pub fn of(bytes: &[u8]) -> Self {
+        Self(*blake3::hash(bytes).as_bytes())
+    }
+}
+
+/// Identity of a file's content: the hash of its bytes.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct BlobId(pub Hash);
+
+impl BlobId {
+    pub fn of(bytes: &[u8]) -> Self {
+        Self(Hash::of(bytes))
+    }
+}
+
+/// Blob bytes by id. `None` when the content is unavailable (over the capture cap).
+pub trait BlobSource {
+    fn blob(&self, id: BlobId) -> Option<&[u8]>;
+}
+
+impl BlobSource for BTreeMap<BlobId, Vec<u8>> {
+    fn blob(&self, id: BlobId) -> Option<&[u8]> {
+        self.get(&id).map(Vec::as_slice)
+    }
+}
 
 /// Identity of a snapshot: a Merkle root over its directories, so a settle only
 /// recomputes the changed paths.
@@ -74,6 +98,16 @@ pub struct ReviewFilter {
 pub struct LineRange {
     pub start: u32,
     pub end: u32,
+}
+
+impl LineRange {
+    pub fn len(self) -> u32 {
+        self.end.saturating_sub(self.start)
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// One hunk of a line-level diff.

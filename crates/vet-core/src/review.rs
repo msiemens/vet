@@ -1,7 +1,8 @@
 //! Anchors, review state, threads (SPEC §5). Content-anchored, never line-anchored (I3).
 
-use crate::content::{BlobId, Changeset, FileDiff, Hash, LineRange, RenameMap, RepoPath, SnapshotId};
+use crate::content::{BlobId, Hash, LineRange, RepoPath, SnapshotId};
 use crate::platform::PlatformThread;
+use crate::text::Text;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Side {
@@ -48,11 +49,20 @@ pub enum StaleReason {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum AnchorState {
-    Exact { whitespace_changed: bool },
-    Inferred { strategy: Strategy, confidence: Confidence },
-    Stale { reason: StaleReason },
+    Exact {
+        whitespace_changed: bool,
+    },
+    Inferred {
+        strategy: Strategy,
+        confidence: Confidence,
+    },
+    Stale {
+        reason: StaleReason,
+    },
     /// Duplicate matches; distinct from `Stale`.
-    Ambiguous { candidates: Vec<Location> },
+    Ambiguous {
+        candidates: Vec<Location>,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -104,23 +114,26 @@ pub struct ReviewedSpan {
     pub state: SpanState,
 }
 
-/// Everything remapping needs about one changed file, with no git in sight.
-pub struct FileRemapInput<'a> {
-    pub diff: &'a FileDiff,
-    pub renames: &'a RenameMap,
+impl Anchor {
+    /// Anchors `range` of `text`; `None` if the range is empty or out of bounds.
+    pub fn from_text(
+        side: Side,
+        snapshot: SnapshotId,
+        file: RepoPath,
+        text: &[u8],
+        range: LineRange,
+    ) -> Option<Self> {
+        Text::new(text).anchor(side, snapshot, file, range)
+    }
+}
+
+/// One file on one side of a changeset, from the snapshot an anchor or span was
+/// recorded in (`old_*`) to the snapshot it is resolved against (`new_*`). An
+/// unchanged file has equal blobs and paths. Callers apply git-detected renames.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FileRemapInput {
+    pub old_path: Option<RepoPath>,
+    pub new_path: Option<RepoPath>,
     pub old_blob: Option<BlobId>,
     pub new_blob: Option<BlobId>,
-}
-
-/// Resolve an anchor into the same side of `changeset` (§5.1). Exact strategies
-/// first, then scored inference; never first-success-wins for inferred candidates.
-pub fn resolve_anchor(_anchor: &Anchor, _changeset: Changeset, _files: &[FileRemapInput<'_>]) -> AnchorState {
-    todo!("§5.1 resolution algorithm")
-}
-
-/// Remap one span as a partition (§5.2): only exact strategies, one span may
-/// become several or none. Triggered per changed file when either its base or
-/// target blob id changes, so `SeenAgainstOldBase` is detected.
-pub fn remap_span(_span: &ReviewedSpan, _file: &FileRemapInput<'_>) -> Vec<ReviewedSpan> {
-    todo!("§5.2 partition remap")
 }
