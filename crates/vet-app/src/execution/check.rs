@@ -61,14 +61,12 @@ impl Default for RunCheckConfig {
             ".azure-pipelines/**",
             ".circleci/config.yml",
             "Jenkinsfile",
-            // Build scripts
+            // Build tools
             "Makefile",
             "GNUmakefile",
             "justfile",
             "Justfile",
             "Dockerfile",
-            "build.*",
-            "ci/**",
             // Toolchain and environment
             ".envrc",
             "shell.nix",
