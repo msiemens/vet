@@ -7,7 +7,8 @@ import type { FileChange } from "../generated/FileChange";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
-import { Backend } from "./backend";
+import type { BaseChoice } from "../generated/BaseChoice";
+import { Backend, type BaseCandidates } from "./backend";
 import { canPickFolder, pickRepository } from "./host";
 import { recent } from "./recent.svelte";
 
@@ -121,6 +122,29 @@ class ChangesetStore {
     if (!this.manifest) throw new Error("no manifest loaded");
     const { revision } = this.manifest;
     await this.review(revision, backend.acknowledge(revision, path, kind, acknowledged));
+  }
+
+  /**
+   * Compares against `choice`. The backend remaps the review state and pushes
+   * `snapshotSettled`, which fetches the new manifest; a choice that does not resolve shows the
+   * backend's message.
+   */
+  async setBase(choice: BaseChoice) {
+    try {
+      await this.connected().setBase(choice);
+    } catch (error) {
+      this.notice = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  /** What a base can be picked from; `undefined` after showing why it failed. */
+  async baseCandidates(): Promise<BaseCandidates | undefined> {
+    try {
+      return await this.connected().baseCandidates();
+    } catch (error) {
+      this.notice = error instanceof Error ? error.message : String(error);
+      return undefined;
+    }
   }
 
   /**

@@ -6,7 +6,6 @@ import type { HeaderInfo } from "./Header.svelte";
 export const mockHeader: HeaderInfo = {
   project: "ledger-sync",
   changeset: { label: "Working tree", branch: "main" },
-  base: "a41c9e2+",
   target: { label: "#17", settled: true },
 };
 

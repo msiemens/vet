@@ -147,6 +147,9 @@
 {#if changeset.backend && changeset.repo}
   <Header
     info={{ ...mockHeader, project: repoName(changeset.repo) }}
+    base={changeset.manifest?.base}
+    loadBase={() => changeset.baseCandidates()}
+    onbase={(choice) => void changeset.setBase(choice)}
     {completion}
     onopenrepo={() => void changeset.pickRepo()}
   >

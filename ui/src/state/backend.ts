@@ -1,6 +1,10 @@
 // Typed requests over the connection. The only module besides `connection.ts` that
 // knows the wire protocol, so a protocol change lands here.
 
+import type { Base } from "../generated/Base";
+import type { BaseChoice } from "../generated/BaseChoice";
+import type { BranchInfo } from "../generated/BranchInfo";
+import type { CommitInfo } from "../generated/CommitInfo";
 import type { Event as ServerEvent } from "../generated/Event";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
@@ -9,6 +13,12 @@ import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import { Connection } from "./connection";
 
 export type FileContents = Extract<Response, { type: "fileContents" }>;
+
+export interface BaseCandidates {
+  branches: BranchInfo[];
+  /** Newest first. */
+  commits: CommitInfo[];
+}
 
 function expect<T extends Response["type"]>(response: Response, type: T): Extract<Response, { type: T }> {
   if (response.type !== type) throw new Error("unexpected response");
@@ -74,6 +84,20 @@ export class Backend {
       await this.conn.request({ type: "acknowledge", session: this.sid, revision, path, kind, acknowledged }),
       "review",
     );
+  }
+
+  /** Compares against another base; every subscriber, this one included, then gets `snapshotSettled`. */
+  async setBase(base: BaseChoice): Promise<Base> {
+    return expect(await this.conn.request({ type: "setBase", session: this.sid, base }), "base");
+  }
+
+  /** The branches and recent commits a base can be picked from. */
+  async baseCandidates(): Promise<BaseCandidates> {
+    const { branches, commits } = expect(
+      await this.conn.request({ type: "listBaseCandidates", session: this.sid }),
+      "baseCandidates",
+    );
+    return { branches, commits };
   }
 
   async hover(path: string, line: number, col: number): Promise<string> {

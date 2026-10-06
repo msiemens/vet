@@ -3,29 +3,40 @@
     project: string;
     /** "Working tree", a PR, a commit range. */
     changeset: { label: string; branch: string };
-    base: string;
     target: { label: string; settled: boolean };
   }
 </script>
 
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import type { Base } from "../../generated/Base";
+  import type { BaseChoice } from "../../generated/BaseChoice";
   import Chip from "../../lib/ui/Chip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
+  import type { BaseCandidates } from "../../state/backend";
+  import BaseChip from "./BaseChip.svelte";
   import TitleBar from "./TitleBar.svelte";
 
   let {
     info,
+    base,
+    loadBase,
+    onbase,
     completion,
     filter,
     run,
     onopenrepo,
   }: {
     info: HeaderInfo;
+    /** What the changes are compared against. */
+    base?: Base;
+    /** Lists the branches and commits the base can be picked from. */
+    loadBase: () => Promise<BaseCandidates | undefined>;
+    onbase: (choice: BaseChoice) => void;
     /** "Open repository…" in the project menu. */
     onopenrepo: () => void;
     /** Share of changed lines seen and seen against an old base, in percent. */
@@ -59,7 +70,7 @@
     />
   </Chip>
   <span class="range" data-tauri-drag-region>
-    <Chip mono>{info.base}</Chip>
+    <BaseChip {base} load={loadBase} onpick={onbase} />
     <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
     <Chip mono
       >{info.target.label}{#if info.target.settled}<span class="dot"></span>{/if}</Chip
