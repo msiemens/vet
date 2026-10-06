@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use corpus::{Config, Corpus};
-use vet_protocol::{FileChange, FileReview, FileStatus, HunkState, Manifest, Request, Response, SessionId};
+use vet_protocol::{Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, Manifest, Request, Response, ReviewUpdate, SessionId};
 use vet_transport::{Events, Handler, Server};
 
 struct Mock {
@@ -28,6 +28,29 @@ const REVISION: u32 = 0;
 
 fn review(seen: &[bool]) -> FileReview {
     FileReview { hunks: seen.iter().map(|&s| if s { HunkState::Seen } else { HunkState::Unseen }).collect(), acknowledged: vec![] }
+}
+
+/// Changed lines are counted on both sides; the corpus has no non-text items or old-base state.
+fn completion(hunks: &[Hunk], seen: &[bool]) -> Completion {
+    let mut c = Completion::default();
+    for (h, &seen) in hunks.iter().zip(seen) {
+        let lines = h.base_len + h.target_len;
+        c.lines += lines;
+        if seen {
+            c.seen_lines += lines;
+        }
+    }
+    c
+}
+
+fn total(parts: impl Iterator<Item = Completion>) -> Completion {
+    parts.fold(Completion::default(), |a, b| Completion {
+        lines: a.lines + b.lines,
+        seen_lines: a.seen_lines + b.seen_lines,
+        old_base_lines: a.old_base_lines + b.old_base_lines,
+        items: a.items + b.items,
+        acknowledged_items: a.acknowledged_items + b.acknowledged_items,
+    })
 }
 
 impl Handler for Mock {
@@ -46,27 +69,31 @@ impl Handler for Mock {
             Request::CloseSession { .. } => Ok(Response::Done),
             Request::Manifest { .. } => {
                 let seen = seen();
+                let files: Vec<FileChange> = self
+                    .corpus
+                    .files
+                    .iter()
+                    .zip(seen.iter())
+                    .map(|(f, seen)| FileChange {
+                        path: f.path.clone(),
+                        old_path: None,
+                        status: FileStatus::Modified,
+                        base_lines: corpus::line_count(&f.base) as u32,
+                        target_lines: corpus::line_count(&f.target) as u32,
+                        hunks: f.hunks.clone(),
+                        non_text: vec![],
+                        review: review(seen),
+                        completion: completion(&f.hunks, seen),
+                    })
+                    .collect();
                 Ok(Response::Manifest(Manifest {
                     session: SESSION,
                     revision: REVISION,
                     name: self.corpus.name.clone(),
-                    files: self
-                        .corpus
-                        .files
-                        .iter()
-                        .zip(seen.iter())
-                        .map(|(f, seen)| FileChange {
-                            path: f.path.clone(),
-                            old_path: None,
-                            status: FileStatus::Modified,
-                            base_lines: corpus::line_count(&f.base) as u32,
-                            target_lines: corpus::line_count(&f.target) as u32,
-                            hunks: f.hunks.clone(),
-                            non_text: vec![],
-                            review: review(seen),
-                        })
-                        .collect(),
-                    filtered_out: 0,
+                    completion: total(files.iter().map(|f| f.completion)),
+                    files,
+                    excluded_lines: 0,
+                    excluded_items: 0,
                 }))
             }
             Request::FileContents { path, .. } => {
@@ -80,9 +107,11 @@ impl Handler for Mock {
                 for hunk in hunks {
                     *all[i].get_mut(hunk as usize).ok_or("no such hunk")? = value;
                 }
-                Ok(Response::Review { path, review: review(&all[i]) })
+                let file = completion(&self.corpus.files[i].hunks, &all[i]);
+                let changeset = total(self.corpus.files.iter().zip(all.iter()).map(|(f, s)| completion(&f.hunks, s)));
+                Ok(Response::Review(ReviewUpdate { path, review: review(&all[i]), completion: file, changeset }))
             }
-            Request::NonTextDetail { .. } | Request::Acknowledge { .. } => Err("the corpus has no non-text items".into()),
+            Request::Acknowledge { .. } => Err("the corpus has no non-text items".into()),
             Request::Hover { path, line, col, .. } => {
                 position(&path)?;
                 Ok(Response::Hover { text: format!("{path}:{}:{}\n\nmock hover (derived: reachable from 2 entry points)", line + 1, col + 1) })

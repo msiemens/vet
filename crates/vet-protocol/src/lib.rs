@@ -57,8 +57,6 @@ pub enum Request {
     Manifest { session: SessionId },
     /// Both sides of one text file at the current revision.
     FileContents { session: SessionId, path: String },
-    /// Before and after entries of a file's non-text items.
-    NonTextDetail { session: SessionId, path: String },
     /// Marks hunks (indices into the manifest of `revision`) seen or unseen.
     /// Fails if `revision` is no longer current.
     SetSeen { session: SessionId, revision: u32, path: String, hunks: Vec<u32>, seen: bool },
@@ -81,10 +79,37 @@ pub enum Response {
     /// `None` is a side the file does not have (added or deleted). The text and
     /// `marks` belong to `revision`; the hunks are in that revision's manifest.
     FileContents { revision: u32, base: Option<String>, target: Option<String>, marks: Vec<Mark> },
-    NonTextDetail { before: Option<EntryDesc>, after: Option<EntryDesc> },
     /// The file's review state after `SetSeen` or `Acknowledge`.
-    Review { path: String, review: FileReview },
+    Review(ReviewUpdate),
     Hover { text: String },
+}
+
+/// A file's new review state with the completion it implies, so a shell never
+/// derives progress itself.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReviewUpdate {
+    pub path: String,
+    pub review: FileReview,
+    /// The file's completion.
+    pub completion: Completion,
+    /// The changeset's completion after the change.
+    pub changeset: Completion,
+}
+
+/// Progress against the review filter (§5.2): changed lines (counted per side)
+/// and non-text items.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Completion {
+    pub lines: u32,
+    pub seen_lines: u32,
+    /// Lines seen against an older base; they count as unseen in `seen_lines`.
+    pub old_base_lines: u32,
+    pub items: u32,
+    pub acknowledged_items: u32,
 }
 
 /// Events are invalidations or small state updates; the client re-requests
@@ -97,7 +122,7 @@ pub enum Event {
     /// manifest, with review state remapped onto it, is stale: fetch it again.
     SnapshotSettled { session: SessionId, revision: u32 },
     /// Review state of one file changed at the current `revision`.
-    ReviewChanged { session: SessionId, revision: u32, path: String, review: FileReview },
+    ReviewChanged { session: SessionId, revision: u32, update: ReviewUpdate },
 }
 
 /// The changeset as displayed through the session's review filter.
@@ -110,8 +135,12 @@ pub struct Manifest {
     pub revision: u32,
     pub name: String,
     pub files: Vec<FileChange>,
-    /// Changed files the filter hides, so "complete" never implies every change was seen (§5.2).
-    pub filtered_out: u32,
+    /// Completion of the whole changeset.
+    pub completion: Completion,
+    /// Changed lines and non-text items the filter hides, so "complete" never
+    /// implies every change was seen (§5.2).
+    pub excluded_lines: u32,
+    pub excluded_items: u32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -127,8 +156,19 @@ pub struct FileChange {
     /// Text hunks in order; the sizes let a shell lay out views before it has the text.
     pub hunks: Vec<Hunk>,
     /// Each is one review item (§5.2).
-    pub non_text: Vec<NonTextKind>,
+    pub non_text: Vec<NonTextItem>,
     pub review: FileReview,
+    pub completion: Completion,
+}
+
+/// A non-text change with both sides; `None` is a side that does not exist.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NonTextItem {
+    pub kind: NonTextKind,
+    pub before: Option<EntryDesc>,
+    pub after: Option<EntryDesc>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

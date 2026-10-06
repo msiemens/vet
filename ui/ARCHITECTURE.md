@@ -9,10 +9,10 @@ Svelte 5 + CodeMirror 6, organised by feature under `src/`.
 | `lib/ui/` | Domain-free primitives (Icon, IconButton, Chip, Meter, Popover, SplitButton). Check here before adding one. |
 | `features/<domain>/` | One folder per domain: components, its own logic, `mock.ts` for data the protocol does not carry yet, and an `index.ts` as the public entry. |
 | `features/review/editor/` | CodeMirror integration: framework-agnostic TS, no Svelte imports. |
-| `state/` | View-model stores and `backend.ts`, the typed API over `connection.ts`. No product logic (SPEC I5). |
+| `state/` | `connection.ts` (transport), `backend.ts` (typed API over it) and view-model stores. No product logic (SPEC I5): review state and completion are rendered as the backend sent them. |
 | `dev/` | Spike benchmark, metrics, HUD and a change-card gallery on fixtures, behind the "Dev" toggle in the footer. |
 
-`connection.ts` and `generated/` stay at the top level until the protocol work lands.
+`generated/` (ts-rs output of `vet-protocol`) stays at the top level; never edit it by hand.
 
 ## Rules
 

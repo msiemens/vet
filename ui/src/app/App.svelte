@@ -17,10 +17,17 @@
   let theme = $state<Theme>(storedTheme());
 
   const completion = $derived.by(() => {
-    const c = changeset.progress;
-    return { seenPct: c.seenPct, oldPct: c.oldPct, title: `${c.seen} of ${c.total} changed lines and other changes seen · ${c.old} against an old base` };
+    const c = changeset.manifest?.completion;
+    if (!c) return { seenPct: 0, oldPct: 0 };
+    const total = c.lines + c.items;
+    const pct = (n: number) => (total ? (n / total) * 100 : 0);
+    return {
+      seenPct: pct(c.seenLines + c.acknowledgedItems),
+      oldPct: pct(c.oldBaseLines),
+      title: `${c.seenLines} of ${c.lines} lines · ${c.acknowledgedItems} of ${c.items} other changes · ${c.oldBaseLines} lines against an old base`,
+    };
   });
-  const filteredOut = $derived(changeset.manifest?.filteredOut ?? 0);
+  const excluded = $derived({ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 });
   const footer = $derived({ ...mockFooter, snapshot: `#${changeset.manifest?.revision ?? 0}` });
 
   onMount(() => {
@@ -36,7 +43,7 @@
 </script>
 
 <Header info={mockHeader} {completion}>
-  {#snippet filter()}<FilterPopover excludedCount={filteredOut} />{/snippet}
+  {#snippet filter()}<FilterPopover {excluded} />{/snippet}
   {#snippet run()}<RunButton />{/snippet}
 </Header>
 

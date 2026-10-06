@@ -2,7 +2,6 @@
 
 import type { FileChange } from "../../generated/FileChange";
 import type { FileStatus } from "../../generated/FileStatus";
-import { coverage } from "../../state/changeset.svelte";
 import { mockIsBuildFile } from "./mock";
 
 export interface DirRow {
@@ -19,29 +18,37 @@ export interface FileRow {
   seenPct: number;
   oldPct: number;
   build: boolean;
-  /** The mode changed. */
-  executable: boolean;
+  /** Set when the mode changed: the executable bit gained or lost, else a plain mode change. */
+  mode?: "+x" | "-x" | "mode";
 }
 
 export type Row = DirRow | FileRow;
 
 const LETTER: Record<FileStatus, FileRow["status"]> = { modified: "M", added: "A", deleted: "D", renamed: "R" };
 
+function modeChange(file: FileChange): FileRow["mode"] {
+  const item = file.nonText.find((i) => i.kind === "mode");
+  if (!item) return undefined;
+  const [before, after] = [(item.before?.mode ?? 0) & 0o111, (item.after?.mode ?? 0) & 0o111];
+  return after && !before ? "+x" : before && !after ? "-x" : "mode";
+}
+
 const dirname = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/")));
 
 export function buildRows(files: FileChange[], collapsed: ReadonlySet<string>): Row[] {
   const items: FileRow[] = files.map((file) => {
-    const c = coverage(file);
+    const c = file.completion;
+    const total = c.lines + c.items;
     return {
       kind: "file",
       path: file.path,
       name: file.path.slice(file.path.lastIndexOf("/") + 1),
       file,
       status: LETTER[file.status],
-      seenPct: c.total ? (c.seen / c.total) * 100 : 0,
-      oldPct: c.total ? (c.old / c.total) * 100 : 0,
+      seenPct: total ? ((c.seenLines + c.acknowledgedItems) / total) * 100 : 0,
+      oldPct: total ? (c.oldBaseLines / total) * 100 : 0,
       build: mockIsBuildFile(file.path),
-      executable: file.nonText.includes("mode"),
+      mode: modeChange(file),
     };
   });
   items.sort((a, b) => dirname(a.path).localeCompare(dirname(b.path)) || a.path.localeCompare(b.path));

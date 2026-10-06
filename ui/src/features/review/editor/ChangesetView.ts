@@ -6,6 +6,7 @@ import { EditorView } from "@codemirror/view";
 import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
 import type { Manifest } from "../../../generated/Manifest";
+import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
 import type { Backend } from "../../../state/backend";
 import type { BarActions } from "./hunkBar";
 import { type Handle, type Hooks, type Loaded, type Mode, mountFile } from "./mount";
@@ -22,7 +23,7 @@ const px = (style: CSSStyleDeclaration, name: string) => parseFloat(style.getPro
 
 export interface Listeners {
   /** The backend returned a file's new review state; the owner of the state applies it and calls `applyReview`. */
-  reviewed(path: string, review: FileReview): void;
+  reviewed(update: ReviewUpdate): void;
 }
 
 interface Section {
@@ -260,7 +261,7 @@ export class ChangesetView {
   /** Asks the backend to mark the hunks seen or unseen; the returned state reaches the view through `applyReview` (I5: the view keeps none of its own). */
   private setSeen(fi: number, hunks: number[], value: boolean): Promise<void> {
     const { file } = this.sections[fi];
-    const request = this.backend.setSeen(this.manifest.revision, file.path, hunks, value).then((review) => this.listeners.reviewed(file.path, review));
+    const request = this.backend.setSeen(this.manifest.revision, file.path, hunks, value).then((update) => this.listeners.reviewed(update));
     return (this.pendingToggle = request);
   }
 

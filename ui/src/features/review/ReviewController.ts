@@ -32,15 +32,25 @@ export class ReviewController {
     readonly root: HTMLElement,
     private hud: Hud,
   ) {
-    window.addEventListener("keydown", (e) => this.onKey(e), true);
-    changeset.onReview((path, review) => this.view?.applyReview(path, review));
+    window.addEventListener("keydown", this.onKey, true);
+    this.unsubscribe = changeset.onReview((u) => this.view?.applyReview(u.path, u.review));
+  }
+
+  private unsubscribe: () => void;
+
+  /** Detaches the controller from the window and the store, and tears down the view. */
+  destroy() {
+    window.removeEventListener("keydown", this.onKey, true);
+    this.unsubscribe();
+    this.view?.destroy();
+    this.view = undefined;
   }
 
   get files() {
     return changeset.files;
   }
 
-  private onKey(e: KeyboardEvent) {
+  private onKey = (e: KeyboardEvent) => {
     const view = this.view;
     if (!view) return;
     const run = (action: () => void) => (e.preventDefault(), action());
@@ -48,7 +58,7 @@ export class ReviewController {
     else if (matches("Ctrl-Alt-ArrowUp", e)) run(() => void view.goToHunk(view.current - 1));
     else if (matches("Ctrl-Alt-s", e)) run(() => void view.toggleSeen(view.currentFile()));
     else if (BAIT.some((spec) => matches(spec, e))) run(() => this.hud.collision(++this.collisions));
-  }
+  };
 
   private keydown = (event: KeyboardEvent) => {
     if (event.key.length !== 1 && event.key !== "Backspace" && event.key !== "Enter") return;
@@ -70,7 +80,7 @@ export class ReviewController {
   show(manifest: Manifest) {
     const top = this.root.scrollTop;
     this.view?.destroy();
-    this.view = new ChangesetView(this.root, manifest, this.backend, this.mode, this.hooks, { reviewed: (path, review) => changeset.applyReview(path, review) }, mockSymbols);
+    this.view = new ChangesetView(this.root, manifest, this.backend, this.mode, this.hooks, { reviewed: (update) => changeset.applyReview(update) }, mockSymbols);
     this.root.scrollTop = top;
     this.view.sync();
   }

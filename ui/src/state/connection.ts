@@ -2,12 +2,12 @@
 // listens, authenticate, and correlate requests with responses. Rendering code
 // builds on this; it contains no product logic.
 
-import type { ClientMessage } from "./generated/ClientMessage";
-import type { Event as ServerEvent } from "./generated/Event";
-import type { Ready } from "./generated/Ready";
-import type { Request } from "./generated/Request";
-import type { Response } from "./generated/Response";
-import type { ServerMessage } from "./generated/ServerMessage";
+import type { ClientMessage } from "../generated/ClientMessage";
+import type { Event as ServerEvent } from "../generated/Event";
+import type { Ready } from "../generated/Ready";
+import type { Request } from "../generated/Request";
+import type { Response } from "../generated/Response";
+import type { ServerMessage } from "../generated/ServerMessage";
 
 // Must match PROTOCOL_VERSION in crates/vet-protocol.
 const PROTOCOL_VERSION = 1;

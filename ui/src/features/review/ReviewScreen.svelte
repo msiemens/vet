@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { onMount, untrack } from "svelte";
-  import type { Backend, NonTextDetail } from "../../state/backend";
+  import type { Backend } from "../../state/backend";
   import { changeset } from "../../state/changeset.svelte";
   import ChangeCard from "./ChangeCard.svelte";
   import FileTree from "./FileTree.svelte";
@@ -29,16 +29,15 @@
   let mode = $state<Mode>("unified");
   let selected = $state<string>();
   let showCards = $state(false);
-  let detail = $state.raw<{ path: string; value: NonTextDetail }>();
 
   const revision = $derived(changeset.manifest?.revision);
   const file = $derived(changeset.files.find((f) => f.path === (selected ?? changeset.files[0]?.path)));
-  const cards = $derived(showCards && file && detail?.path === file.path ? detail.value : undefined);
 
   onMount(() => {
     const c = new ReviewController(backend, root, hud);
     controller = c;
     c.open(true).then((ms) => onready(c, ms), (e) => (changeset.status = (e as Error).message));
+    return () => c.destroy();
   });
 
   // A settled snapshot moved the changeset to a new revision.
@@ -47,11 +46,10 @@
     if (manifest && revision !== undefined && controller?.view && controller.view.manifest.revision !== revision) controller.show(manifest);
   });
 
-  async function select(row: FileRow) {
+  function select(row: FileRow) {
     selected = row.path;
     showCards = row.file.nonText.length > 0;
-    if (showCards) detail = { path: row.path, value: await backend.nonTextDetail(row.path) };
-    else showText();
+    if (!showCards) showText();
   }
 
   function showText() {
@@ -70,7 +68,7 @@
   const hunk = (delta: number) => controller?.view && void controller.view.goToHunk(controller.view.current + delta);
 </script>
 
-<FileTree files={changeset.files} {selected} excluded={{ label: "filtered", count: changeset.manifest?.filteredOut ?? 0 }} onselect={select} />
+<FileTree files={changeset.files} {selected} excluded={{ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 }} onselect={select} />
 
 <main>
   <div class="strip">
@@ -90,12 +88,10 @@
   <div class="scroll" hidden={showCards} bind:this={root}></div>
   {#if showCards && file}
     <div class="cards">
-      {#if cards}
-        {#each file.nonText as kind (kind)}
-          {@const acknowledged = file.review.acknowledged.includes(kind)}
-          <ChangeCard path={file.path} oldPath={file.oldPath} {kind} before={cards.before} after={cards.after} {acknowledged} ontoggle={() => changeset.acknowledge(file.path, kind, !acknowledged)} />
-        {/each}
-      {/if}
+      {#each file.nonText as item (item.kind)}
+        {@const acknowledged = file.review.acknowledged.includes(item.kind)}
+        <ChangeCard path={file.path} oldPath={file.oldPath} kind={item.kind} before={item.before} after={item.after} {acknowledged} ontoggle={() => changeset.acknowledge(file.path, item.kind, !acknowledged)} />
+      {/each}
       {#if file.hunks.length}
         <button class="text" type="button" onclick={showText}>Show text changes ({file.hunks.length} hunks)</button>
       {/if}

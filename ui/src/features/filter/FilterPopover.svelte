@@ -14,11 +14,11 @@
 
   let {
     filter = $bindable(mockFilter),
-    excludedCount,
+    excluded,
   }: {
     filter?: ReviewFilter;
-    /** Files the filter currently excludes; the backend computes it. */
-    excludedCount: number;
+    /** Changes the filter currently excludes; the backend computes them. */
+    excluded: { lines: number; items: number };
   } = $props();
 
   let open = $state(false);
@@ -43,7 +43,7 @@
       <span>Exclude globs</span>
       <textarea class="mono" rows="3" value={filter.exclude.join("\n")} onchange={(e) => (filter.exclude = lines(e.currentTarget.value))}></textarea>
     </label>
-    <p class="count"><span class="mono">{excludedCount}</span> files excluded</p>
+    <p class="count"><span class="mono">{excluded.lines}</span> changed lines and <span class="mono">{excluded.items}</span> other changes excluded</p>
   </form>
 </Popover>
 

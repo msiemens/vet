@@ -12,8 +12,8 @@
   }: {
     files: FileChange[];
     selected?: string;
-    /** Files hidden by the review filter, collapsed into one group. */
-    excluded?: { label: string; count: number };
+    /** Changes hidden by the review filter, collapsed into one group. */
+    excluded?: { lines: number; items: number };
     onselect: (row: FileRow) => void;
   } = $props();
 
@@ -41,15 +41,15 @@
         <button class="tw file" class:sel={row.path === selected} class:nested={row.path.includes("/")} type="button" onclick={() => onselect(row)}>
           {#if row.build}<span class="build" title="Build file"><Icon name="build" size={12} stroke={2} /></span>{/if}
           <span class="name">{row.name}</span>
-          {#if row.executable}<span class="mono x" title="File mode changed">mode</span>{/if}
+          {#if row.mode}<span class="mono x" title="File mode changed">{row.mode}</span>{/if}
           <Meter width={22} segments={[{ value: row.seenPct, color: "var(--seen)" }, { value: row.oldPct, color: "var(--old)" }]} />
           <span class="mono status" style:color={STATUS[row.status]}>{row.status}</span>
         </button>
       {/if}
     {/each}
-    {#if excluded && excluded.count > 0}
-      <div class="tw excluded" title="Excluded by the review filter">
-        <Icon name="closed" size={10} /><Icon name="filter" size={11} stroke={2} />{excluded.label}<span class="mono x">{excluded.count}</span>
+    {#if excluded && excluded.lines + excluded.items > 0}
+      <div class="tw excluded" title="{excluded.lines} changed lines and {excluded.items} other changes excluded by the review filter">
+        <Icon name="closed" size={10} /><Icon name="filter" size={11} stroke={2} />Excluded<span class="mono x">{excluded.lines}</span>
       </div>
     {/if}
   </div>

@@ -25,7 +25,7 @@ const files = walk(src)
 const violations = (rule: (path: string, target: string) => boolean) => files.flatMap((f) => f.imports.filter((t) => rule(f.path, t)).map((t) => `${f.path} -> ${t}`));
 
 test("only state/backend.ts imports the connection", () => {
-  assert.deepEqual(violations((p, t) => t === "connection" && p !== "state/backend.ts"), []);
+  assert.deepEqual(violations((p, t) => /(^|\/)connection$/.test(t) && p !== "state/backend.ts"), []);
 });
 
 test("lib imports nothing from features, state or app", () => {
