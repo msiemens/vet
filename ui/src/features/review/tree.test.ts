@@ -50,5 +50,5 @@ void test("a file's progress comes from its summary, not from the tree", () => {
     nonText: [],
     completion: { lines: 10, seenLines: 5, oldBaseLines: 2, items: 0, acknowledgedItems: 0 },
   } as unknown as FileChange;
-  assert.deepEqual(summarize(file), { status: "M", seenPct: 50, oldPct: 20, build: true, mode: undefined });
+  assert.deepEqual(summarize(file), { status: "M", seenPct: 50, oldPct: 20, mode: undefined });
 });

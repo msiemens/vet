@@ -84,7 +84,6 @@
           oncontextmenu={(e) => menu(e, row.path)}
         >
           <span class="chev"></span>
-          {#if s?.build}<span class="build" title="Build file"><Icon name="build" size={12} stroke={2} /></span>{/if}
           <span class="name">{row.name}</span>
           {#if s?.mode}<span class="mono x" title="File mode changed">{s.mode}</span>{/if}
           <Meter
@@ -182,11 +181,6 @@
     flex: none;
     width: 10px;
     font-size: 11px;
-  }
-  .build {
-    flex: none;
-    display: inline-flex;
-    color: var(--warn);
   }
   .excluded {
     padding-left: 8px;

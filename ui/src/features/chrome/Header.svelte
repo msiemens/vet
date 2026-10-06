@@ -2,8 +2,8 @@
   export interface HeaderInfo {
     project: string;
     /** "Working tree", a PR, a commit range. */
-    changeset: { label: string; branch: string };
-    target: { label: string; settled: boolean };
+    changeset: string;
+    target: string;
   }
 </script>
 
@@ -63,18 +63,12 @@
     />
   </Popover>
   <Chip>
-    <Icon name="branch" />{info.changeset.label}<span class="dim">{info.changeset.branch}</span><Icon
-      name="caret"
-      size={10}
-      stroke={2}
-    />
+    <Icon name="branch" />{info.changeset}
   </Chip>
   <span class="range" data-tauri-drag-region>
     <BaseChip {base} load={loadBase} onpick={onbase} />
     <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
-    <Chip mono
-      >{info.target.label}{#if info.target.settled}<span class="dot"></span>{/if}</Chip
-    >
+    <Chip mono>{info.target}</Chip>
   </span>
   {#if filter}{@render filter()}{/if}
   <span class="grow" data-tauri-drag-region></span>
@@ -93,9 +87,6 @@
 </TitleBar>
 
 <style>
-  .dim {
-    color: var(--text-2);
-  }
   .range {
     display: inline-flex;
     align-items: center;
@@ -105,12 +96,6 @@
   .arrow {
     display: inline-flex;
     color: var(--text-3);
-  }
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--ok);
   }
   .grow {
     flex: 1 1 40px;

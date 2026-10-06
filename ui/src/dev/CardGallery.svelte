@@ -3,6 +3,8 @@
   import type { EntryDesc } from "../generated/EntryDesc";
   import type { NonTextKind } from "../generated/NonTextKind";
   import { ChangeCard } from "../features/review";
+  import { SymbolPanel } from "../features/symbols";
+  import { fixtureSymbol } from "./symbolFixture";
 
   const file = (mode: number, size: number | null = 12): EntryDesc => ({ kind: "file", mode, target: null, size });
   const cards: {
@@ -48,6 +50,8 @@
       />
     {/each}
   </div>
+  <h3>Symbol panel</h3>
+  <div class="symbol"><SymbolPanel symbol={fixtureSymbol} /></div>
 </section>
 
 <style>
@@ -59,6 +63,17 @@
     border: 1px solid var(--line);
     padding: 10px;
     z-index: 30;
+  }
+  h3 {
+    margin: 16px 0 0;
+    font-size: var(--fs-ctl);
+  }
+  .symbol {
+    width: var(--w-symbols);
+    display: flex;
+    margin-top: 8px;
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
   }
   .cards {
     display: flex;

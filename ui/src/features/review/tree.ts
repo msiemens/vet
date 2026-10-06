@@ -5,7 +5,6 @@
 
 import type { FileChange } from "../../generated/FileChange";
 import type { FileStatus } from "../../generated/FileStatus";
-import { mockIsBuildFile } from "./mock.ts";
 
 export interface DirRow {
   kind: "dir";
@@ -32,7 +31,6 @@ export interface FileSummary {
   status: "M" | "A" | "D" | "R";
   seenPct: number;
   oldPct: number;
-  build: boolean;
   /** Set when the mode changed: the executable bit gained or lost, else a plain mode change. */
   mode?: "+x" | "-x" | "mode";
 }
@@ -93,7 +91,6 @@ export function summarize(file: FileChange): FileSummary {
     status: LETTER[file.status],
     seenPct: total ? ((c.seenLines + c.acknowledgedItems) / total) * 100 : 0,
     oldPct: total ? (c.oldBaseLines / total) * 100 : 0,
-    build: mockIsBuildFile(file.path),
     mode: modeChange(file),
   };
 }

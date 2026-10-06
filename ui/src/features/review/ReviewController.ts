@@ -10,7 +10,6 @@ import { changeset } from "../../state/changeset.svelte";
 import { ChangesetView, type Listeners } from "./editor/ChangesetView";
 import type { Mode } from "./editor/mount";
 import { matches } from "../../lib/keymap";
-import { mockSymbols } from "./mock";
 import { CHANGES, type TabId, Tabs, fileTab, pathOf } from "./Tabs.svelte";
 
 /** Live latencies for the dev HUD. */
@@ -23,6 +22,9 @@ export interface Hud {
 
 /** Bound only to count collisions in the manual input check: AltGr types these keys on a German layout. */
 const BAIT = ["Ctrl-Alt-q", "Ctrl-Alt-e", "Ctrl-Alt-7", "Ctrl-Alt-8", "Ctrl-Alt-9", "Ctrl-Alt-0", "Ctrl-Alt-m"];
+
+/** Hunk bars show their range only, until the semantic layer names the enclosing symbols. */
+const noSymbols = (_path: string, hunks: number): undefined[] => Array.from({ length: hunks }, () => undefined);
 
 /** Space types in a field or editor and presses a focused control; it marks the current item only when none of those has the focus. */
 const takesSpace = (el: Element | null) =>
@@ -148,7 +150,7 @@ export class ReviewController {
       this.hooks,
       this.listenersFor(id),
       id === CHANGES, // only the Changes tab collapses unchanged regions
-      mockSymbols,
+      noSymbols,
     );
     this.views.set(id, view);
     root.scrollTop = top;

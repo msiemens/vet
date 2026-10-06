@@ -10,9 +10,11 @@
     onmain,
     onselect,
     label,
+    disabled = false,
     main,
     menuFooter,
   }: {
+    disabled?: boolean;
     items: MenuItem[];
     onmain: () => void;
     onselect: (id: string) => void;
@@ -24,7 +26,7 @@
 </script>
 
 <span class="split">
-  <button class="ctl main" type="button" aria-label={label} onclick={onmain}>{@render main()}</button>
+  <button class="ctl main" type="button" aria-label={label} {disabled} onclick={onmain}>{@render main()}</button>
   <Popover bind:open align="right">
     {#snippet trigger(toggle)}
       <button
@@ -33,6 +35,7 @@
         type="button"
         aria-label="{label} menu"
         aria-haspopup="menu"
+        {disabled}
         aria-expanded={open}
         onclick={toggle}><Icon name="caret" size={10} stroke={2} /></button
       >

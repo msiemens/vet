@@ -2,12 +2,13 @@
   export interface FooterInfo {
     /** Settled snapshot id and its age. */
     snapshot: string;
-    languageServer: string;
-    topology: { label: string; ok: boolean };
-    cursor: string;
-    eol: string;
-    encoding: string;
-    diagnostics: number;
+    /** The rest is shown once something reports it: the semantic layer, the caret, the file. */
+    languageServer?: string;
+    topology?: { label: string; ok: boolean };
+    cursor?: string;
+    eol?: string;
+    encoding?: string;
+    diagnostics?: number;
   }
 </script>
 
@@ -19,13 +20,15 @@
 
 <footer>
   <span class="mono small">{info.snapshot}</span>
-  <span>{info.languageServer}</span>
-  <span class="topology"><span class="dot" class:ok={info.topology.ok}></span>{info.topology.label}</span>
+  {#if info.languageServer}<span>{info.languageServer}</span>{/if}
+  {#if info.topology}
+    <span class="topology"><span class="dot" class:ok={info.topology.ok}></span>{info.topology.label}</span>
+  {/if}
   <span class="grow"></span>
-  <span title="Diagnostics">{info.diagnostics} diagnostics</span>
-  <span class="mono small">{info.cursor}</span>
-  <span>{info.eol}</span>
-  <span>{info.encoding}</span>
+  {#if info.diagnostics !== undefined}<span title="Diagnostics">{info.diagnostics} diagnostics</span>{/if}
+  {#if info.cursor}<span class="mono small">{info.cursor}</span>{/if}
+  {#if info.eol}<span>{info.eol}</span>{/if}
+  {#if info.encoding}<span>{info.encoding}</span>{/if}
   {#if end}{@render end()}{/if}
 </footer>
 

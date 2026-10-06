@@ -1,8 +1,8 @@
-// Placeholder until the semantic layer (SPEC §7) answers queries.
+// A symbol for the dev gallery: the semantic layer (SPEC §7) does not answer queries yet.
 
-import type { SymbolInfo } from "./SymbolPanel.svelte";
+import type { SymbolInfo } from "../features/symbols";
 
-export const mockSymbol: SymbolInfo = {
+export const fixtureSymbol: SymbolInfo = {
   name: "next_delay",
   qualified: "ledger_sync::sync::retry::RetryPolicy",
   signature: "pub fn next_delay(&self, attempt: u32) -> Duration",

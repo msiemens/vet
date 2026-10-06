@@ -10,13 +10,13 @@
 <script lang="ts">
   import Icon from "../../lib/ui/Icon.svelte";
   import SplitButton from "../../lib/ui/SplitButton.svelte";
-  import { mockTargets } from "./mock";
 
   let {
-    targets = mockTargets,
-    buildFilesChanged = true,
+    targets = [],
+    buildFilesChanged = false,
     onrun,
   }: {
+    /** Discovered from the repository's manifests; none until the backend reports them. */
     targets?: RunTarget[];
     /** Executor-relevant files changed since the last approved run (SPEC §7.5). */
     buildFilesChanged?: boolean;
@@ -28,6 +28,7 @@
 </script>
 
 <SplitButton
+  disabled={!targets.length}
   label={buildFilesChanged ? "Run, build files changed" : "Run"}
   items={targets.map((t) => ({ id: t.id, label: t.name, detail: t.source }))}
   onmain={() => current && onrun?.(current.id)}

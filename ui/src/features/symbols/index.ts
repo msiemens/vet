@@ -1,1 +1,1 @@
-export { default as SymbolPanel } from "./SymbolPanel.svelte";
+export { default as SymbolPanel, type SymbolInfo } from "./SymbolPanel.svelte";

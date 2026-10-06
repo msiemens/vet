@@ -10,10 +10,10 @@
 <script lang="ts">
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
-  import { mockFilter } from "./mock";
 
   let {
-    filter = $bindable(mockFilter),
+    // Editing the filter is not in the protocol yet; the manifest only reports how many changes it hides.
+    filter = $bindable({ roots: [], hideBinary: false, include: [], exclude: [] }),
     excluded,
   }: {
     filter?: ReviewFilter;

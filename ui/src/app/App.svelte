@@ -2,16 +2,7 @@
   import { onMount } from "svelte";
   import DevTools from "../dev/DevTools.svelte";
   import { hudListeners } from "../dev/hud.svelte";
-  import {
-    AboutDialog,
-    Header,
-    StatusFooter,
-    TOOLS,
-    TitleBar,
-    ToolRail,
-    mockFooter,
-    mockHeader,
-  } from "../features/chrome";
+  import { AboutDialog, Header, StatusFooter, TOOLS, TitleBar, ToolRail } from "../features/chrome";
   import { FilterPopover } from "../features/filter";
   import { type Mode, ReviewScreen, type ReviewController } from "../features/review";
   import { RunButton } from "../features/run";
@@ -53,7 +44,7 @@
     lines: changeset.manifest?.excludedLines ?? 0,
     items: changeset.manifest?.excludedItems ?? 0,
   });
-  const footer = $derived({ ...mockFooter, snapshot: `#${changeset.manifest?.revision ?? 0}` });
+  const footer = $derived({ snapshot: `#${changeset.manifest?.revision ?? 0}` });
 
   // The controller belongs to the repository's screen.
   $effect(() => {
@@ -146,7 +137,11 @@
 
 {#if changeset.backend && changeset.repo}
   <Header
-    info={{ ...mockHeader, project: repoName(changeset.repo) }}
+    info={{
+      project: repoName(changeset.repo),
+      changeset: "Working tree",
+      target: `#${changeset.manifest?.revision ?? 0}`,
+    }}
     base={changeset.manifest?.base}
     loadBase={() => changeset.baseCandidates()}
     onbase={(choice) => void changeset.setBase(choice)}

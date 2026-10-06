@@ -19,9 +19,9 @@
   import type { Snippet } from "svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
-  import { mockSymbol } from "./mock";
 
-  let { symbol = mockSymbol }: { symbol?: SymbolInfo } = $props();
+  /** The symbol at the caret; none until the semantic layer answers (SPEC §7.3). */
+  let { symbol }: { symbol?: SymbolInfo } = $props();
 
   const VERDICT = {
     unresolved: "var(--del-text)",
@@ -31,24 +31,30 @@
   } as const;
 </script>
 
-{#snippet section(title: string, count: number | undefined, derived: boolean, body: Snippet)}
+{#snippet section(
+  title: string,
+  count: number | undefined,
+  derived: boolean,
+  body: Snippet<[SymbolInfo]>,
+  symbol: SymbolInfo,
+)}
   <div class="sh">
     <Icon name="open" size={10} />{title}
     {#if count !== undefined}<span class="mono n">{count}</span>{/if}
     <span class="grow"></span>
     {#if derived}<IconButton icon="derived" label="Derived — show inputs" size={20} iconSize={13} />{/if}
   </div>
-  {@render body()}
+  {@render body(symbol)}
 {/snippet}
 
-{#snippet signature()}
+{#snippet signature(symbol: SymbolInfo)}
   <div class="block">
     <code class="mono selectable">{symbol.signature}</code>
     {#if symbol.doc}<span class="doc selectable">{symbol.doc}</span>{/if}
   </div>
 {/snippet}
 
-{#snippet callers()}
+{#snippet callers(symbol: SymbolInfo)}
   <ul>
     {#each symbol.callers as c (c.name + c.at)}<li class="tw">
         <span class="mono s">{c.name}</span><span class="grow"></span><span class="mono at">{c.at}</span>
@@ -56,7 +62,7 @@
   </ul>
 {/snippet}
 
-{#snippet reached()}
+{#snippet reached(symbol: SymbolInfo)}
   <ol>
     {#each symbol.reachedFrom as step, i (i)}
       <li class="tw mono s" style:padding-left="{26 + i * 10}px" class:last={i === symbol.reachedFrom.length - 1}>
@@ -66,7 +72,7 @@
   </ol>
 {/snippet}
 
-{#snippet removed()}
+{#snippet removed(symbol: SymbolInfo)}
   <ul>
     {#each symbol.removed?.sites ?? [] as site (site.at)}
       <li class="tw">
@@ -79,15 +85,19 @@
 {/snippet}
 
 <aside aria-label="Symbol">
-  <div class="head">
-    <span class="mono name selectable">{symbol.name}</span>
-    <span class="mono qualified selectable">{symbol.qualified}</span>
-  </div>
-  {@render section("Signature", undefined, false, signature)}
-  {@render section("Callers", symbol.callers.length, true, callers)}
-  {@render section("Reached from", undefined, true, reached)}
-  {#if symbol.removed}
-    {@render section(symbol.removed.name, symbol.removed.sites.length, true, removed)}
+  {#if symbol}
+    <div class="head">
+      <span class="mono name selectable">{symbol.name}</span>
+      <span class="mono qualified selectable">{symbol.qualified}</span>
+    </div>
+    {@render section("Signature", undefined, false, signature, symbol)}
+    {@render section("Callers", symbol.callers.length, true, callers, symbol)}
+    {@render section("Reached from", undefined, true, reached, symbol)}
+    {#if symbol.removed}
+      {@render section(symbol.removed.name, symbol.removed.sites.length, true, removed, symbol)}
+    {/if}
+  {:else}
+    <p class="empty">No symbol selected</p>
   {/if}
 </aside>
 
@@ -98,6 +108,10 @@
     display: flex;
     flex-direction: column;
     overflow: hidden auto;
+  }
+  .empty {
+    margin: 12px 10px;
+    color: var(--text-3);
   }
   .head {
     display: flex;
