@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import DevTools from "../dev/DevTools.svelte";
   import { hudListeners } from "../dev/hud.svelte";
-  import { Header, StatusFooter, ToolRail, mockFooter, mockHeader } from "../features/chrome";
+  import { Header, StatusFooter, TitleBar, ToolRail, mockFooter, mockHeader } from "../features/chrome";
   import { FilterPopover } from "../features/filter";
   import { ReviewScreen, type ReviewController } from "../features/review";
   import { RunButton } from "../features/run";
@@ -11,7 +11,7 @@
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import Toast from "../lib/ui/Toast.svelte";
   import { changeset } from "../state/changeset.svelte";
-  import { canPickFolder, repoName } from "../state/host";
+  import { canPickFolder, repoName, showWindow } from "../state/host";
   import { recent } from "../state/recent.svelte";
 
   let controller = $state.raw<ReviewController>();
@@ -47,6 +47,9 @@
 
   onMount(() => {
     applyTheme(theme);
+    showWindow().catch((e: unknown) => {
+      console.error(e);
+    });
     void changeset.connect();
   });
 
@@ -83,6 +86,7 @@
     <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />
   </div>
 {:else if changeset.backend}
+  <TitleBar />
   <div class="body">
     <StartScreen
       recent={recent.list}
@@ -97,6 +101,7 @@
     />
   </div>
 {:else}
+  <TitleBar />
   <p class="message">{changeset.status}</p>
 {/if}
 

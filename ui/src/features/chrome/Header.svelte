@@ -16,6 +16,7 @@
   import Menu from "../../lib/ui/Menu.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
+  import TitleBar from "./TitleBar.svelte";
 
   let {
     info,
@@ -37,7 +38,7 @@
   let projectMenu = $state(false);
 </script>
 
-<header>
+<TitleBar>
   <Popover bind:open={projectMenu}>
     {#snippet trigger(toggle)}
       <Chip bold onclick={toggle}>{info.project}</Chip>
@@ -57,16 +58,16 @@
       stroke={2}
     />
   </Chip>
-  <span class="range">
+  <span class="range" data-tauri-drag-region>
     <Chip mono>{info.base}</Chip>
-    <span class="arrow"><Icon name="arrow" stroke={1.8} /></span>
+    <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
     <Chip mono
       >{info.target.label}{#if info.target.settled}<span class="dot"></span>{/if}</Chip
     >
   </span>
   {#if filter}{@render filter()}{/if}
-  <span class="grow"></span>
-  <span class="completion" title={completion.title}>
+  <span class="grow" data-tauri-drag-region></span>
+  <span class="completion" title={completion.title} data-tauri-drag-region>
     <Meter
       width={96}
       segments={[
@@ -78,21 +79,9 @@
   </span>
   {#if run}{@render run()}{/if}
   <IconButton icon="search" label="Search everywhere" />
-</header>
+</TitleBar>
 
 <style>
-  header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    min-height: var(--h-header);
-    box-sizing: border-box;
-    background: var(--bg-window);
-    border-bottom: 1px solid var(--line);
-    flex: none;
-  }
   .dim {
     color: var(--text-2);
   }

@@ -35,6 +35,8 @@
   --toggle-press: light-dark(#b6cff6, #3d5c9c);
   --focus: light-dark(#2d6fd8, #6b9cf7);
   --focus-width: 2px;
+  /* The close window control's hover, as on Windows. */
+  --window-close: #c42b1c;
 
   /* Review state */
   --seen: light-dark(#3d7be0, #5b8ef0);

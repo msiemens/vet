@@ -11,6 +11,14 @@ async function invoke<T>(command: string, args?: Record<string, unknown>): Promi
   return invoke<T>(command, args);
 }
 
+/**
+ * Shows the window once the app header can act as its title bar. "native" means the host
+ * fell back to the platform's title bar; a plain browser has no window to show.
+ */
+export async function showWindow(): Promise<"custom" | "native" | "browser"> {
+  return inTauri ? invoke<"custom" | "native">("activate_and_show") : "browser";
+}
+
 /** The last folder of a backend-side path, for display. */
 export const repoName = (path: string): string => path.split(/[/\\]/).filter(Boolean).at(-1) ?? path;
 

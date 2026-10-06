@@ -10,10 +10,21 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "Vet", "width": 1400, "height": 900 }],
+    "windows": [
+      {
+        "label": "main",
+        "title": "Vet",
+        "width": 1400,
+        "height": 900,
+        "decorations": true,
+        "visible": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost ws://127.0.0.1:*",
-      "devCsp": "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost ws://127.0.0.1:* ws://localhost:1420"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline' tauri-plugin-decoration: http://tauri-plugin-decoration.localhost https://tauri-plugin-decoration.localhost; connect-src ipc: http://ipc.localhost ws://127.0.0.1:*",
+      "devCsp": "default-src 'self'; style-src 'self' 'unsafe-inline' tauri-plugin-decoration: http://tauri-plugin-decoration.localhost https://tauri-plugin-decoration.localhost; connect-src ipc: http://ipc.localhost ws://127.0.0.1:* ws://localhost:1420"
     }
   },
   "bundle": {

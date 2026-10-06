@@ -346,14 +346,47 @@ fn save_results(app: tauri::AppHandle, markdown: String, json: String, ok: bool)
     Ok(())
 }
 
+/// Replaces the native title bar with the app header (window controls drawn by
+/// tauri-plugin-decoration, native traffic lights on macOS) and shows the window. If that
+/// fails, the native frame is restored and shown instead. Returns "custom" or "native".
+#[tauri::command]
+async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static str, String> {
+    use tauri_plugin_decoration::WebviewWindowExt;
+
+    async fn native(window: &tauri::WebviewWindow, cause: impl std::fmt::Display) -> Result<&'static str, String> {
+        let restored = window.restore_decoration().await;
+        window
+            .show()
+            .map_err(|e| format!("{cause}; showing the native frame failed: {e}"))?;
+        restored
+            .map(|()| "native")
+            .map_err(|e| format!("{cause}; restoring the native frame failed: {e}"))
+    }
+
+    if let Err(e) = window.activate_decoration().await {
+        return native(&window, e).await;
+    }
+    // Centres the traffic lights in the 40px header.
+    #[cfg(target_os = "macos")]
+    if let Err(e) = window.set_traffic_lights_inset(16.0, 20.0).await {
+        return native(&window, e).await;
+    }
+    match window.show() {
+        Ok(()) => Ok("custom"),
+        Err(e) => native(&window, e).await,
+    }
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_decoration::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(start_backend()?);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            activate_and_show,
             backend_connection,
             bench_config,
             forget_repository,
