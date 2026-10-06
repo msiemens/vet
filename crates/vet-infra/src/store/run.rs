@@ -4,8 +4,8 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set,
     TransactionTrait,
 };
+use vet_app::execution::targets::RunTarget;
 use vet_app::ports::{RunStore, StoreError};
-use vet_app::run::targets::RunTarget;
 use vet_core::content::{Hash, SnapshotId};
 
 use super::SqliteStore;

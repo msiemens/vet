@@ -1,6 +1,5 @@
-//! Execution and trust (§7.5, §9). Computes the `AnalysisPolicy` handed to the
-//! pool, so `vet-semantic` never looks at provenance. Executing restores and
-//! launches go through the run check here, before the pool or a process is asked.
+//! Trust (§7.5). Computes the `AnalysisPolicy` handed to the pool, so
+//! `vet-semantic` never looks at provenance.
 
 use vet_semantic::policy::AnalysisPolicy;
 

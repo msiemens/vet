@@ -9,9 +9,9 @@ use vet_core::filter::ReviewFilter;
 use vet_core::platform::{PlatformThread, PlatformTraits};
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 
+use crate::execution::targets::RunTarget;
 use crate::pin::{CommitId, Pin, PinId};
 use crate::review::{NonTextAck, Session, SessionId, SpanId};
-use crate::run::targets::RunTarget;
 
 /// Monotonic milliseconds.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
