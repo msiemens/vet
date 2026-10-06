@@ -18,7 +18,36 @@ impl MigratorTrait for Migrator {
             Box::new(ServerPaths),
             Box::new(SessionRepo),
             Box::new(ReviewLifecycle),
+            Box::new(CloseUnstartedSessions),
         ]
+    }
+}
+
+struct CloseUnstartedSessions;
+
+impl MigrationName for CloseUnstartedSessions {
+    fn name(&self) -> &str {
+        "m0007_close_unstarted_sessions"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for CloseUnstartedSessions {
+    /// Before the lifecycle every open created a session; one without a mark,
+    /// an acknowledgement or a thread never had a review, so it would resume as
+    /// one that did. Its session refs stay in git.
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        manager
+            .get_connection()
+            .execute_unprepared(
+                "UPDATE session SET closed_at = CAST(strftime('%s', 'now') AS INTEGER), complete = 0 \
+                 WHERE closed_at IS NULL \
+                 AND NOT EXISTS (SELECT 1 FROM span WHERE span.session = session.id) \
+                 AND NOT EXISTS (SELECT 1 FROM ack WHERE ack.session = session.id) \
+                 AND NOT EXISTS (SELECT 1 FROM thread WHERE thread.session = session.id)",
+            )
+            .await?;
+        Ok(())
     }
 }
 
