@@ -211,11 +211,13 @@ pub enum Request {
     ListBaseCandidates {
         session: SessionId,
     },
-    /// Replaces the session's review filter and persists it. The revision
-    /// increases and every subscriber, including the requester, gets
-    /// `SnapshotSettled`; fetch the manifest again. Fails with a message fit to
-    /// show if a glob is invalid, and then changes nothing. Answers with `Response::Done`.
-    SetFilter {
+    /// Replaces the review filter of the repository `session` has open and
+    /// persists it: a project setting, not part of the session (`session` is
+    /// only the handle to its repository). The revision increases and every
+    /// subscriber, including the requester, gets `SnapshotSettled`; fetch the
+    /// manifest again. Fails with a message fit to show if a glob is invalid, and
+    /// then changes nothing. Answers with `Response::Done`.
+    SetProjectFilter {
         session: SessionId,
         filter: ReviewFilter,
     },
@@ -1249,7 +1251,7 @@ pub struct RestoreFailure {
     pub message: String,
 }
 
-/// The changeset as displayed through the session's review filter.
+/// The changeset as displayed through the repository's review filter.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

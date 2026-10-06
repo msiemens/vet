@@ -388,7 +388,7 @@ impl Handler for Orchestrator {
                 }
                 Ok(Response::Base(mapping::base(&base)))
             }
-            Request::SetFilter { session, filter } => {
+            Request::SetProjectFilter { session, filter } => {
                 let open = self.find(session).await?;
                 let revision = open
                     .session

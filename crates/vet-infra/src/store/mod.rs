@@ -95,9 +95,15 @@ async fn put_anchor(db: &impl ConnectionTrait, session: i64, anchor: Option<&Anc
     }
 }
 
-async fn write_filter(db: &impl ConnectionTrait, session: i64, filter: &ReviewFilter) -> Res<()> {
-    let item = |kind: FilterKind, value: Vec<u8>| filter_item::ActiveModel {
-        session: Set(session),
+async fn write_filter(db: &impl ConnectionTrait, repo: &str, filter: &ReviewFilter) -> Res<()> {
+    project_filter::ActiveModel {
+        repo: Set(repo.to_owned()),
+        hide_binary: Set(filter.hide_binary),
+    }
+    .insert(db)
+    .await?;
+    let item = |kind: FilterKind, value: Vec<u8>| project_filter_item::ActiveModel {
+        repo: Set(repo.to_owned()),
         kind: Set(kind),
         value: Set(value),
         ..Default::default()
@@ -122,7 +128,7 @@ async fn write_filter(db: &impl ConnectionTrait, session: i64, filter: &ReviewFi
     insert_chunked(db, rows).await
 }
 
-fn read_filter(hide_binary: bool, items: Vec<filter_item::Model>) -> Res<ReviewFilter> {
+fn read_filter(hide_binary: bool, items: Vec<project_filter_item::Model>) -> Res<ReviewFilter> {
     let mut filter = ReviewFilter {
         hide_binary,
         ..Default::default()
@@ -190,11 +196,6 @@ impl SqliteStore {
         let Some(row) = session::Entity::find_by_id(sid).one(&self.db).await? else {
             return Ok(None);
         };
-        let filter_items = filter_item::Entity::find()
-            .filter(filter_item::Column::Session.eq(sid))
-            .order_by_asc(filter_item::Column::Id)
-            .all(&self.db)
-            .await?;
         let anchors: HashMap<i64, anchor::Model> = anchor::Entity::find()
             .filter(anchor::Column::Session.eq(sid))
             .all(&self.db)
@@ -295,7 +296,6 @@ impl SqliteStore {
             },
             base,
             base_commit,
-            filter: read_filter(row.hide_binary, filter_items)?,
             spans,
             acks,
             threads,
@@ -635,26 +635,16 @@ impl ReviewStore for SqliteStore {
         }))
     }
 
-    async fn open_session(
-        &self,
-        repo: String,
-        pin: PinId,
-        changeset: Changeset,
-        filter: ReviewFilter,
-    ) -> Result<SessionId, StoreError> {
-        let txn = self.db.begin().await?;
+    async fn open_session(&self, repo: String, pin: PinId, changeset: Changeset) -> Result<SessionId, StoreError> {
         let row = session::ActiveModel {
             repo: Set(Some(repo)),
             pin: Set(pin.0 as i64),
             base: Set(changeset.base.0.0.to_vec()),
             target: Set(changeset.target.0.0.to_vec()),
-            hide_binary: Set(filter.hide_binary),
             ..Default::default()
         }
-        .insert(&txn)
+        .insert(&self.db)
         .await?;
-        write_filter(&txn, row.id, &filter).await?;
-        txn.commit().await?;
         Ok(SessionId(row.id as u64))
     }
 
@@ -687,21 +677,22 @@ impl ReviewStore for SqliteStore {
         Ok(self.load_session(id).await?)
     }
 
-    async fn set_filter(&self, id: SessionId, filter: ReviewFilter) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
-        let sid = id.0 as i64;
-        session::ActiveModel {
-            id: Set(sid),
-            hide_binary: Set(filter.hide_binary),
-            ..Default::default()
-        }
-        .update(&txn)
-        .await?;
-        filter_item::Entity::delete_many()
-            .filter(filter_item::Column::Session.eq(sid))
-            .exec(&txn)
+    async fn filter(&self, repo: String) -> Result<ReviewFilter, StoreError> {
+        let Some(row) = project_filter::Entity::find_by_id(repo.clone()).one(&self.db).await? else {
+            return Ok(ReviewFilter::default());
+        };
+        let items = project_filter_item::Entity::find()
+            .filter(project_filter_item::Column::Repo.eq(repo))
+            .order_by_asc(project_filter_item::Column::Id)
+            .all(&self.db)
             .await?;
-        write_filter(&txn, sid, &filter).await?;
+        Ok(read_filter(row.hide_binary, items)?)
+    }
+
+    async fn set_filter(&self, repo: String, filter: ReviewFilter) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        project_filter::Entity::delete_by_id(repo.clone()).exec(&txn).await?;
+        write_filter(&txn, &repo, &filter).await?;
         Ok(txn.commit().await?)
     }
 

@@ -9,7 +9,7 @@ import type { Target } from "./Target";
 import type { WatchDegraded } from "./WatchDegraded";
 
 /**
- * The changeset as displayed through the session's review filter.
+ * The changeset as displayed through the repository's review filter.
  */
 export type Manifest = { session: number, 
 /**

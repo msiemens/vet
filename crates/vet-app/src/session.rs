@@ -425,8 +425,9 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// against the current branch's tip.
     pub async fn open(git: G, store: S, name: String, repo: String, clock: UnixClock) -> Result<Self> {
         let acquisition = Arc::new(Acquisition::new(git, store));
+        let filter = acquisition.store.filter(repo.clone()).await?;
         if let Some(&id) = acquisition.store.open_sessions(repo.clone()).await?.last() {
-            if let Some(session) = Self::resume(&acquisition, id, &name, &repo, clock).await? {
+            if let Some(session) = Self::resume(&acquisition, id, filter.clone(), &name, &repo, clock).await? {
                 return Ok(session);
             }
             // Its start record or snapshots are gone: browse rather than fail to open.
@@ -446,7 +447,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let state = State {
             revision: 0,
             review: None,
-            filter: ReviewFilter::default(),
+            filter,
             base,
             base_choice,
             base_commit,
@@ -478,6 +479,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     async fn resume(
         acquisition: &Arc<Acquisition<G, S>>,
         id: SessionId,
+        filter: ReviewFilter,
         name: &str,
         repo: &str,
         clock: UnixClock,
@@ -515,7 +517,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
                 version: timeline.len().max(1) as u32,
                 updated_at: timeline.last().map_or(0, |v| v.at),
             }),
-            filter: stored.filter,
+            filter,
             base,
             base_choice: stored.base,
             base_commit,
@@ -568,9 +570,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             base: st.base.id,
             target: st.target.id,
         };
-        let id = store
-            .open_session(self.repo.clone(), pin.id, changeset, st.filter.clone())
-            .await?;
+        let id = store.open_session(self.repo.clone(), pin.id, changeset).await?;
         store
             .set_base(id, st.base.id, st.base_choice.clone(), st.base_commit.clone())
             .await?;
@@ -691,17 +691,19 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         })
     }
 
-    /// Replaces the review filter and bumps the revision; completion and the
-    /// excluded counts follow with the next manifest. Returns the revision.
+    /// Replaces the repository's review filter, stored whether or not a review
+    /// is open, and bumps the revision; completion and the excluded counts
+    /// follow with the next manifest. Returns the revision.
     pub async fn set_filter(&self, filter: ReviewFilter) -> Result<u32> {
         filter.validate().map_err(SessionError::Invalid)?;
         let mut st = self.state.lock().await;
         if st.filter == filter {
             return Ok(st.revision);
         }
-        if let Some(review) = &st.review {
-            self.acquisition.store.set_filter(review.id, filter.clone()).await?;
-        }
+        self.acquisition
+            .store
+            .set_filter(self.repo.clone(), filter.clone())
+            .await?;
         st.filter = filter;
         st.revision += 1;
         Ok(st.revision)

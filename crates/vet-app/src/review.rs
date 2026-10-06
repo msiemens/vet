@@ -3,7 +3,6 @@
 //! the base or the target blob id changes (the base case is `SeenAgainstOldBase`).
 
 use vet_core::content::{Changeset, FileEntry, NonTextKind, RepoPath, SnapshotId};
-use vet_core::filter::ReviewFilter;
 use vet_core::review::{ReviewedSpan, Thread};
 
 use crate::pin::{BaseChoice, CommitId, PinId};
@@ -38,7 +37,6 @@ pub struct Session {
     pub base: BaseChoice,
     /// The commit `changeset.base` is the tree of; `None` for the pin's `HEAD`.
     pub base_commit: Option<CommitId>,
-    pub filter: ReviewFilter,
     pub spans: Vec<RecordedSpan>,
     pub acks: Vec<NonTextAck>,
     pub threads: Vec<Thread>,

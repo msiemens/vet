@@ -19,7 +19,52 @@ impl MigratorTrait for Migrator {
             Box::new(SessionRepo),
             Box::new(ReviewLifecycle),
             Box::new(CloseUnstartedSessions),
+            Box::new(ProjectFilter),
         ]
+    }
+}
+
+struct ProjectFilter;
+
+impl MigrationName for ProjectFilter {
+    fn name(&self) -> &str {
+        "m0008_project_filter"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for ProjectFilter {
+    /// Each repository takes the filter of its most recent session; the
+    /// per-session filter storage is dropped. A fresh database has none of it:
+    /// `Initial` creates the current shape.
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        let schema = Schema::new(DbBackend::Sqlite);
+        manager
+            .create_table(schema.create_table_from_entity(project_filter::Entity))
+            .await?;
+        manager
+            .create_table(schema.create_table_from_entity(project_filter_item::Entity))
+            .await?;
+        if !manager.has_table("filter_item").await? {
+            return Ok(());
+        }
+        let db = manager.get_connection();
+        const LATEST: &str = "(SELECT MAX(id) FROM session WHERE repo IS NOT NULL GROUP BY repo)";
+        for sql in [
+            format!(
+                "INSERT INTO project_filter (repo, hide_binary) SELECT repo, hide_binary FROM session WHERE id IN {LATEST}"
+            ),
+            format!(
+                "INSERT INTO project_filter_item (repo, kind, value) \
+                 SELECT s.repo, f.kind, f.value FROM filter_item f JOIN session s ON s.id = f.session \
+                 WHERE s.id IN {LATEST} ORDER BY f.id"
+            ),
+            "DROP TABLE filter_item".to_owned(),
+            "ALTER TABLE session DROP COLUMN hide_binary".to_owned(),
+        ] {
+            db.execute_unprepared(&sql).await?;
+        }
+        Ok(())
     }
 }
 
@@ -164,7 +209,6 @@ impl MigrationTrait for Initial {
             tree_node::Entity,
             tree_child::Entity,
             session::Entity,
-            filter_item::Entity,
             timeline::Entity,
             anchor::Entity,
             span::Entity,

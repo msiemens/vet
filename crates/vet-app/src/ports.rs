@@ -261,7 +261,6 @@ pub trait ReviewStore {
         repo: String,
         pin: PinId,
         changeset: Changeset,
-        filter: ReviewFilter,
     ) -> impl Future<Output = Result<SessionId, StoreError>> + Send;
     /// `now` is unix seconds; `complete` is whether the review was complete.
     fn close_session(
@@ -273,7 +272,10 @@ pub trait ReviewStore {
     /// The open sessions of `repo`, oldest first.
     fn open_sessions(&self, repo: String) -> impl Future<Output = Result<Vec<SessionId>, StoreError>> + Send;
     fn session(&self, id: SessionId) -> impl Future<Output = Result<Option<Session>, StoreError>> + Send;
-    fn set_filter(&self, id: SessionId, filter: ReviewFilter) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// The review filter of the repository at `repo`, a project setting that
+    /// applies to every changeset of it; the default if none was stored.
+    fn filter(&self, repo: String) -> impl Future<Output = Result<ReviewFilter, StoreError>> + Send;
+    fn set_filter(&self, repo: String, filter: ReviewFilter) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Moves the session's changeset to the base snapshot `base`, the tree of
     /// `commit`, chosen as `choice`.
     fn set_base(

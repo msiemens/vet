@@ -145,7 +145,7 @@ impl Client {
     }
 
     async fn set_filter(&self, session: SessionId, filter: ReviewFilter) {
-        self.call(Request::SetFilter { session, filter }).await.unwrap();
+        self.call(Request::SetProjectFilter { session, filter }).await.unwrap();
     }
 
     /// A range thread on the target side at the current revision.

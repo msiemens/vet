@@ -378,20 +378,14 @@ impl ReviewStore for MemStore {
     async fn pin(&self, _: PinId) -> StoreResult<Option<Pin>> {
         Ok(self.0.lock().unwrap().pin.clone())
     }
-    async fn open_session(
-        &self,
-        repo: String,
-        _: PinId,
-        changeset: Changeset,
-        filter: ReviewFilter,
-    ) -> StoreResult<SessionId> {
+    async fn open_session(&self, repo: String, _: PinId, changeset: Changeset) -> StoreResult<SessionId> {
         let mut mem = self.0.lock().unwrap();
         *mem = Mem {
             blobs: std::mem::take(&mut mem.blobs),
             snapshots: std::mem::take(&mut mem.snapshots),
             pin: mem.pin.take(),
             opened: Some((repo, changeset)),
-            filter: Some(filter),
+            filter: mem.filter.take(),
             ..Default::default()
         };
         Ok(SessionId(1))
@@ -428,7 +422,6 @@ impl ReviewStore for MemStore {
             }),
             base_commit: commit,
             complete: mem.complete,
-            filter: mem.filter.clone().unwrap_or_default(),
             spans: mem
                 .spans
                 .iter()
@@ -442,7 +435,10 @@ impl ReviewStore for MemStore {
             closed_at: mem.closed.then_some(0),
         }))
     }
-    async fn set_filter(&self, _: SessionId, filter: ReviewFilter) -> StoreResult<()> {
+    async fn filter(&self, _: String) -> StoreResult<ReviewFilter> {
+        Ok(self.0.lock().unwrap().filter.clone().unwrap_or_default())
+    }
+    async fn set_filter(&self, _: String, filter: ReviewFilter) -> StoreResult<()> {
         self.0.lock().unwrap().filter = Some(filter);
         Ok(())
     }
@@ -1053,7 +1049,7 @@ async fn reopening_without_a_review_browses_again() {
 }
 
 #[tokio::test]
-async fn a_resumed_session_keeps_its_filter_base_and_refs() {
+async fn a_resumed_session_uses_the_repository_filter_and_keeps_its_base_and_refs() {
     let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
     let filter = ReviewFilter {
         hide_binary: true,
@@ -1067,6 +1063,47 @@ async fn a_resumed_session_keeps_its_filter_base_and_refs() {
     assert_eq!((&m.filter, base_of(&m).0), (&filter, &detached_head()));
     assert_eq!(base_of(&m).1, "head");
     assert_eq!(fx.git.refs.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_session_opens_with_the_repository_filter_and_keeps_it_across_reviews() {
+    let git = FakeGit::default();
+    *git.base.lock().unwrap() = Some(git.snapshot(&[("a.txt", "1\n"), ("docs/b.md", "1\n")]));
+    let dirty = git.snapshot(&[("a.txt", "2\n"), ("docs/b.md", "2\n")]);
+    git.scans.lock().unwrap().push(dirty);
+    let filter = ReviewFilter {
+        exclude: vec!["docs/**".into()],
+        ..Default::default()
+    };
+    let store = MemStore::default();
+    store.0.lock().unwrap().filter = Some(filter.clone());
+
+    let session = LiveSession::open(git, store.clone(), "test".into(), REPO.into(), clock)
+        .await
+        .unwrap();
+
+    let browsing = session.manifest().await.unwrap();
+    assert_eq!((&browsing.filter, browsing.files.len()), (&filter, 1));
+    session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    session.finish_review().await.unwrap();
+    assert_eq!(session.manifest().await.unwrap().filter, filter);
+    assert_eq!(store.0.lock().unwrap().filter, Some(filter));
+}
+
+#[tokio::test]
+async fn a_filter_set_while_browsing_is_stored_and_applies_to_the_review() {
+    let fx = Fixture::open(&[("a.txt", "1\n")], &[("a.txt", "2\n")]).await;
+    let filter = ReviewFilter {
+        hide_binary: true,
+        ..Default::default()
+    };
+    fx.session.set_filter(filter.clone()).await.unwrap();
+    assert_eq!(fx.store.0.lock().unwrap().filter, Some(filter.clone()));
+
+    fx.session.set_seen(1, "a.txt", &[0], true).await.unwrap();
+
+    assert_eq!(fx.session.manifest().await.unwrap().filter, filter);
+    assert_eq!(fx.store.0.lock().unwrap().filter, Some(filter));
 }
 
 #[tokio::test]

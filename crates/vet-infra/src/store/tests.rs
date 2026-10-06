@@ -72,14 +72,92 @@ fn message(body: &str) -> Message {
 async fn session(store: &SqliteStore, base: SnapshotId, target: SnapshotId) -> SessionId {
     let pin = store.put_pin(CommitId("abc123".into()), base).await.unwrap();
     store
-        .open_session(
-            "/repo".into(),
-            pin.id,
-            Changeset { base, target },
-            ReviewFilter::default(),
-        )
+        .open_session("/repo".into(), pin.id, Changeset { base, target })
         .await
         .unwrap()
+}
+
+fn sample_filter() -> ReviewFilter {
+    ReviewFilter {
+        roots: vec![RepoPath(b"crates".to_vec())],
+        include: vec!["*.rs".into()],
+        exclude: vec!["*.lock".into(), "gen/**".into()],
+        hide_binary: true,
+    }
+}
+
+#[tokio::test]
+async fn the_filter_is_stored_per_repository_and_replaced_as_a_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    assert_eq!(store.filter("/a".into()).await.unwrap(), ReviewFilter::default());
+
+    store.set_filter("/a".into(), sample_filter()).await.unwrap();
+    let other = ReviewFilter {
+        exclude: vec!["b".into()],
+        ..Default::default()
+    };
+    store.set_filter("/b".into(), other.clone()).await.unwrap();
+    let narrower = ReviewFilter {
+        exclude: vec!["x".into()],
+        ..Default::default()
+    };
+    store.set_filter("/a".into(), narrower.clone()).await.unwrap();
+    store.set_filter("/b".into(), other.clone()).await.unwrap();
+
+    drop(store);
+    let store = open(&dir).await;
+    assert_eq!(store.filter("/a".into()).await.unwrap(), narrower);
+    assert_eq!(store.filter("/b".into()).await.unwrap(), other);
+    assert_eq!(store.filter("/c".into()).await.unwrap(), ReviewFilter::default());
+
+    store.set_filter("/a".into(), sample_filter()).await.unwrap();
+    assert_eq!(store.filter("/a".into()).await.unwrap(), sample_filter());
+}
+
+#[tokio::test]
+async fn migrating_takes_each_repositorys_filter_from_its_latest_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let options = SqliteConnectOptions::new()
+        .filename(dir.path().join("vet.sqlite"))
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new().connect_with(options).await.unwrap();
+    let db = SqlxSqliteConnector::from_sqlx_sqlite_pool(pool);
+    // A database with the filter stored per session.
+    migration::Migrator::up(&db, Some(7)).await.unwrap();
+    for sql in [
+        "ALTER TABLE session ADD COLUMN hide_binary BOOLEAN NOT NULL DEFAULT 0",
+        "CREATE TABLE filter_item (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+         session INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE, kind INTEGER NOT NULL, value BLOB NOT NULL)",
+        "INSERT INTO pin (id, head, tree) VALUES (1, 'h', X'00')",
+        "INSERT INTO session (id, repo, pin, base, target, hide_binary) VALUES \
+         (1, '/a', 1, X'00', X'00', 1), (2, '/a', 1, X'00', X'00', 0), \
+         (3, '/b', 1, X'00', X'00', 1), (4, NULL, 1, X'00', X'00', 1)",
+        // kind: 0 root, 1 include, 2 exclude
+        "INSERT INTO filter_item (session, kind, value) VALUES \
+         (1, 2, X'6f6c64'), (2, 0, X'737263'), (2, 2, X'78'), (2, 1, X'2a2e7273'), (3, 2, X'62'), (4, 2, X'7a')",
+    ] {
+        db.execute_unprepared(sql).await.unwrap();
+    }
+    drop(db);
+
+    let store = open(&dir).await;
+
+    let a = store.filter("/a".into()).await.unwrap();
+    assert_eq!(
+        a,
+        ReviewFilter {
+            roots: vec![RepoPath(b"src".to_vec())],
+            include: vec!["*.rs".into()],
+            exclude: vec!["x".into()],
+            hide_binary: false,
+        }
+    );
+    let b = store.filter("/b".into()).await.unwrap();
+    assert_eq!((b.hide_binary, b.exclude), (true, vec!["b".to_string()]));
+    assert_eq!(store.filter("/c".into()).await.unwrap(), ReviewFilter::default());
+    assert_eq!(store.open_sessions("/a".into()).await.unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -216,18 +294,9 @@ async fn spans_and_threads_round_trip() {
     };
     store.acknowledge(id, other.clone()).await.unwrap();
 
-    let filter = ReviewFilter {
-        roots: vec![RepoPath(b"crates".to_vec())],
-        include: vec!["*.rs".into()],
-        exclude: vec!["*.lock".into()],
-        hide_binary: true,
-    };
-    store.set_filter(id, filter.clone()).await.unwrap();
-
     let loaded = store.session(id).await.unwrap().unwrap();
     assert_eq!(loaded.spans.iter().map(|r| r.span.clone()).collect::<Vec<_>>(), spans);
     assert_eq!(loaded.acks, vec![ack.clone(), other.clone()]);
-    assert_eq!(loaded.filter, filter);
     assert_eq!(loaded.threads.len(), 3);
     assert_eq!(loaded.threads[0].target, CommentTarget::Range(anchor(Side::Target, 2)));
     assert_eq!(loaded.threads[0].messages, vec![message("why?"), message("because")]);

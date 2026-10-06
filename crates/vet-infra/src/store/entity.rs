@@ -175,7 +175,6 @@ pub mod session {
         pub pin: i64,
         pub base: Vec<u8>,
         pub target: Vec<u8>,
-        pub hide_binary: bool,
         pub closed_at: Option<i64>,
         /// Whether the review was complete when it was finished.
         pub complete: Option<bool>,
@@ -213,22 +212,52 @@ pub mod session_base {
     child_of_session!();
 }
 
+/// A repository's review filter, keyed by the repository root like sessions are.
+/// No row means the default filter.
+pub mod project_filter {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "project_filter")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub repo: String,
+        pub hide_binary: bool,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 /// `kind`: 0 root, 1 include, 2 exclude. Order is the row id.
-pub mod filter_item {
+pub mod project_filter_item {
     use super::kinds::*;
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "filter_item")]
+    #[sea_orm(table_name = "project_filter_item")]
     pub struct Model {
         #[sea_orm(primary_key)]
         pub id: i64,
-        pub session: i64,
+        pub repo: String,
         pub kind: FilterKind,
         pub value: Vec<u8>,
     }
 
-    child_of_session!();
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::project_filter::Entity",
+            from = "Column::Repo",
+            to = "super::project_filter::Column::Repo",
+            on_delete = "Cascade"
+        )]
+        ProjectFilter,
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
 
 /// Settled snapshots of a session's tip; order is the row id.

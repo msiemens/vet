@@ -1110,7 +1110,7 @@ async fn a_branch_base_reports_how_far_the_branch_moved_on_until_chosen_again() 
 impl Client {
     async fn set_filter(&self, session: SessionId, filter: &ReviewFilter) -> Result<Response, String> {
         let filter = filter.clone();
-        self.call(Request::SetFilter { session, filter }).await
+        self.call(Request::SetProjectFilter { session, filter }).await
     }
 }
 
@@ -1151,6 +1151,48 @@ async fn the_filter_moves_completion_and_the_excluded_counts() {
     assert!(err.starts_with("invalid pattern \"src/[\""), "{err}");
     assert_eq!(client.manifest(session).await.revision, 1);
     assert!(client.no_event());
+}
+
+#[tokio::test]
+async fn the_project_filter_reaches_every_connection_and_outlives_the_session() {
+    let fx = fixture(
+        &[("a.txt", "1\n"), ("docs/b.md", "1\n")],
+        &[("a.txt", "2\n"), ("docs/b.md", "2\n")],
+    )
+    .await;
+    let mut first = Client::new(&fx.handler);
+    let mut second = Client::new(&fx.handler);
+    let session = open(&first, fx.repo.path()).await;
+    open(&second, fx.repo.path()).await;
+    let filter = ReviewFilter {
+        exclude: vec!["docs/**".into()],
+        ..Default::default()
+    };
+
+    first.set_filter(session, &filter).await.unwrap();
+
+    assert_eq!(first.settled().await, 1);
+    assert_eq!(second.settled().await, 1);
+    assert_eq!(second.manifest(session).await.filter, filter);
+    first.call(Request::CloseSession { session }).await.unwrap();
+    second.call(Request::CloseSession { session }).await.unwrap();
+
+    let restarted = std::sync::Arc::new(Orchestrator::new(
+        open_store(fx._data.path()).await.unwrap(),
+        Config {
+            debounce: Duration::from_millis(150),
+            poll: Duration::from_millis(300),
+            orphan_grace: Duration::from_secs(60),
+        },
+    ));
+    let third = Client::new(&restarted);
+    let session = open(&third, fx.repo.path()).await;
+    let m = third.manifest(session).await;
+    assert_eq!(
+        (&m.filter, m.files.len()),
+        (&filter, 1),
+        "browsing, with the project's filter"
+    );
 }
 
 const PACKAGE: &str = r#"{"scripts":{"hi":"echo hi"}}"#;
