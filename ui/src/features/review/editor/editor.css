@@ -197,9 +197,11 @@
 .file .cm-editor .cm-deletedChunk.vet-old::before {
   background: var(--old-base);
 }
-.file .cm-editor .vet-current {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
+/* The current stop (hunk or change card): its bar, so the lines keep their diff colours. */
+.vet-hunk.vet-hunk-current,
+.vet-card.vet-current > .vet-hunk {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-hunk));
+  box-shadow: inset 3px 0 var(--accent);
 }
 
 /* The bar of a collapsed unchanged region: "⋯ N unchanged lines", expands on click. */
@@ -340,10 +342,6 @@
   border: 1px dashed var(--line);
   border-radius: var(--radius);
   background: var(--bg-panel);
-}
-.vet-card.vet-current {
-  outline: 1px solid var(--accent);
-  outline-offset: -1px;
 }
 
 /* Inline decorations: changed symbol, reachability, notes (derived, §7.3/§7.4). */

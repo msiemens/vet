@@ -13,7 +13,6 @@ export const setStates = StateEffect.define<HunkState[]>();
 export const setCurrent = StateEffect.define<number | null>();
 
 const CLASS: Record<HunkState, string> = { unseen: "vet-unseen", seen: "vet-seen", seenAgainstOldBase: "vet-old" };
-const lineClass = (state: HunkState, current: boolean) => (current ? `${CLASS[state]} vet-current` : CLASS[state]);
 
 const markDeco: Record<MarkKind, Decoration> = {
   symbol: Decoration.mark({ class: "vet-m-symbol" }),
@@ -70,13 +69,13 @@ function build(state: Omit<ReviewState, "decos">, doc: Text, side: SideConfig): 
   state.spans.forEach((span, i) => {
     out.push(
       Decoration.widget({
-        widget: new HunkBar(i, side.headers[i], state.states[i], side.bar),
+        widget: new HunkBar(i, side.headers[i], state.states[i], state.current === i, side.bar),
         block: true,
         side: -2,
       }).range(span.at),
     );
     if (span.empty) return;
-    const deco = Decoration.line({ class: lineClass(state.states[i], state.current === i) });
+    const deco = Decoration.line({ class: CLASS[state.states[i]] });
     for (let pos = span.from; pos <= span.to;) {
       const line = doc.lineAt(pos);
       out.push(deco.range(line.from));
@@ -167,9 +166,9 @@ export function deletedChunkStyle(field: StateField<ReviewState>): Extension {
       `${view.dom.querySelector<HTMLElement>(".cm-gutters")?.offsetWidth ?? 0}px`,
     );
     for (const el of view.dom.querySelectorAll<HTMLElement>(".cm-deletedChunk")) {
-      el.classList.remove(...Object.values(CLASS), "vet-current");
+      el.classList.remove(...Object.values(CLASS));
       const i = byPos.get(view.posAtDOM(el));
-      if (i !== undefined) el.classList.add(...lineClass(state.states[i], state.current === i).split(" "));
+      if (i !== undefined) el.classList.add(CLASS[state.states[i]]);
     }
   };
   return ViewPlugin.define((view) => {

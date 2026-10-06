@@ -405,11 +405,18 @@ export class ChangesetView {
     return this.mount(fi);
   }
 
+  /** Scrolls the file's header to the top and makes its first card or hunk the current stop. */
   async goToFile(fi: number): Promise<Handle> {
     await this.load(fi);
     this.root.scrollTop = this.sections[fi].top;
     const handle = this.mountedHandle(fi);
     this.sync();
+    const { cards, file } = this.sections[fi];
+    if (cards.length + file.hunks.length) {
+      if (this.current >= 0) this.markCurrent(this.current, false);
+      this.current = this.stopStart[fi];
+      this.markCurrent(this.current, true);
+    }
     return handle;
   }
 

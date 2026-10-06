@@ -30,6 +30,8 @@ export class HunkBar extends WidgetType {
     readonly index: number,
     readonly text: string,
     readonly state: HunkState,
+    /** The view's current stop: hunk navigation and Space act on it. */
+    readonly current: boolean,
     readonly actions: BarActions | null,
   ) {
     super();
@@ -40,6 +42,7 @@ export class HunkBar extends WidgetType {
       other.index === this.index &&
       other.text === this.text &&
       other.state === this.state &&
+      other.current === this.current &&
       other.actions === this.actions
     );
   }
@@ -47,6 +50,7 @@ export class HunkBar extends WidgetType {
   toDOM(): HTMLElement {
     const bar = document.createElement("div");
     bar.className = `vet-hunk vet-hunk-${this.state}`;
+    if (this.current) bar.classList.add("vet-hunk-current");
     const text = document.createElement("span");
     text.className = "vet-hunk-text";
     text.textContent = this.text;
