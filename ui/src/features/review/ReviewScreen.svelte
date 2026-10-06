@@ -98,7 +98,7 @@
         selected={highlighted}
         excluded={{ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 }}
         onselect={select}
-        onopen={(path) => void controller.openPath(path)}
+        onopen={(path) => void controller.openSource(path)}
         onmenu={(path, x, y) => (menu = { path, x, y })}
       />
     {:else}

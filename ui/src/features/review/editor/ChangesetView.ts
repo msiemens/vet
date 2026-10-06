@@ -33,8 +33,10 @@ export interface Listeners {
   acknowledge(path: string, kind: NonTextKind, acknowledged: boolean): Promise<void>;
   /** Context menu on a file header. */
   fileMenu(path: string, x: number, y: number): void;
-  /** Absent in a view of a single file, which already is the file's tab. */
-  openFile?(path: string, line: number): void;
+  /** Jump to Source: the file's text at a 0-based target line. */
+  openSource(path: string, line: number): void;
+  /** The file's own diff tab; absent in a view of a single file, which already is that tab. */
+  openDiff?(path: string, line: number): void;
 }
 
 /** A view's current stop, as a position that survives a new revision. */
@@ -130,19 +132,19 @@ export class ChangesetView {
       dir.textContent = file.path.slice(0, slash);
       title.append(dir, file.path.slice(slash));
       title.title = file.path;
+      const firstLine = file.hunks[0]?.targetStart ?? 0;
+      header.addEventListener("dblclick", (e) => {
+        if (!(e.target instanceof Element && e.target.closest("button"))) listeners.openSource(file.path, firstLine);
+      });
       let open: HTMLButtonElement | undefined;
-      if (listeners.openFile) {
-        const openFile = () => listeners.openFile?.(file.path, file.hunks[0]?.targetStart ?? 0);
-        header.addEventListener("dblclick", (e) => {
-          if (!(e.target instanceof Element && e.target.closest("button"))) openFile();
-        });
+      if (listeners.openDiff) {
         open = document.createElement("button");
         open.className = "flat open";
         open.type = "button";
-        open.title = "Open in tab (F4)";
-        open.setAttribute("aria-label", "Open in tab");
+        open.title = "Open diff in tab";
+        open.setAttribute("aria-label", "Open diff in tab");
         open.innerHTML = iconSvg("file", 14, 1.6);
-        open.addEventListener("click", openFile);
+        open.addEventListener("click", () => listeners.openDiff?.(file.path, firstLine));
       }
       const { added, removed } = lineDelta([file]);
       const delta = document.createElement("span");
@@ -177,7 +179,7 @@ export class ChangesetView {
         comment: () => {
           // Comments are not wired up yet.
         },
-        openFile: listeners.openFile && ((h) => listeners.openFile?.(file.path, file.hunks[h].targetStart)),
+        openSource: (h) => listeners.openSource(file.path, file.hunks[h].targetStart),
       };
       this.sections.push({
         file,

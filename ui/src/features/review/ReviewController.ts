@@ -11,7 +11,7 @@ import { ChangesetView, type Listeners } from "./editor/ChangesetView";
 import type { Mode } from "./editor/mount";
 import { matches } from "../../lib/keymap";
 import { TextView } from "./editor/TextView";
-import { CHANGES, type TabId, Tabs, fileTab, kindOf, pathOf } from "./Tabs.svelte";
+import { CHANGES, type TabId, Tabs, fileTab, kindOf, pathOf, textTab } from "./Tabs.svelte";
 
 /** Live latencies for the dev HUD. */
 export interface Hud {
@@ -103,7 +103,7 @@ export class ReviewController {
     else if (matches("F4", e)) {
       // Jump to Source: the file of the Changes stream's caret, at its line.
       const caret = this.tabs.active === CHANGES ? view.caret() : undefined;
-      if (caret) run(() => void this.openFile(caret.path, caret.line));
+      if (caret) run(() => void this.openSource(caret.path, caret.line));
     } else if (BAIT.some((spec) => matches(spec, e))) run(() => this.hud.collision(++this.collisions));
   };
 
@@ -128,8 +128,9 @@ export class ReviewController {
       setSeen: (revision, path, hunks, seen) => changeset.setSeen(revision, path, hunks, seen),
       acknowledge: (path, kind, acknowledged) => changeset.acknowledge(path, kind, acknowledged),
       fileMenu: this.fileMenu,
-      // A file's own tab shows its hunks; only the Changes tab offers to open it.
-      openFile: id === CHANGES ? (path, line) => void this.openFile(path, line) : undefined,
+      openSource: (path, line) => void this.openSource(path, line),
+      // A diff tab shows its file's hunks; only the Changes tab offers to open one.
+      openDiff: id === CHANGES ? (path, line) => void this.openFile(path, line) : undefined,
     };
   }
 
@@ -187,14 +188,14 @@ export class ReviewController {
     };
   }
 
-  /** Opens a path in its own tab: the diff of a changed file, the text of any other. */
-  async openPath(path: string, line?: number) {
-    if (changeset.file(path)) return this.openFile(path, line);
+  /** Jump to Source: the file's text tab, at a 0-based target `line` if given. */
+  async openSource(path: string, line?: number) {
     this.tabs.showText(path);
-    await tick(); // the pane attaches and builds its view
+    await tick(); // a new tab's pane attaches and builds its view
+    if (line !== undefined) this.texts.get(textTab(path))?.goToLine(line);
   }
 
-  /** Opens the file's tab, or focuses it if it is open, and goes to a 0-based target `line` if given. */
+  /** Opens the file's diff tab, or focuses it if it is open, and goes to a 0-based target `line` if given. */
   async openFile(path: string, line?: number) {
     const id = fileTab(path);
     this.tabs.show(path);

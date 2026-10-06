@@ -8,8 +8,8 @@ import type { HunkState } from "../../../generated/HunkState";
 export interface BarActions {
   toggleSeen(hunk: number): void;
   comment(hunk: number): void;
-  /** Absent where the hunk is already in the file's own tab. */
-  openFile?(hunk: number): void;
+  /** Jump to Source at the hunk's first line. */
+  openSource(hunk: number): void;
 }
 
 export function hunkHeader(h: Hunk, symbol?: string): string {
@@ -63,8 +63,8 @@ export class HunkBar extends WidgetType {
     bar.append(spacer);
     const actions = this.actions;
     if (actions) {
-      if (actions.openFile) bar.append(this.button("Open file", "file", "", () => actions.openFile?.(this.index)));
       bar.append(
+        this.button("Jump to source (F4)", "file", "", () => actions.openSource(this.index)),
         this.button(LABEL[this.state], "check", `vet-seen-toggle`, () => actions.toggleSeen(this.index)),
         this.button("Comment", "comments", "", () => actions.comment(this.index)),
       );

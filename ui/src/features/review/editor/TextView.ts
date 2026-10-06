@@ -1,4 +1,4 @@
-// A read-only view of one file's text, for files the changeset does not change: a CodeMirror
+// A read-only view of one file's text in the target snapshot (Jump to Source): a CodeMirror
 // editor with syntax highlighting and line numbers, or a small placeholder when the file has no
 // text to show.
 
@@ -18,6 +18,8 @@ const NO_TEXT: Record<NoTextReason, string> = {
 export class TextView {
   private view?: EditorView;
   private destroyed = false;
+  /** The 0-based line to show once the text has arrived. */
+  private line?: number;
 
   /**
    * Fills `root` with the file's text as of `revision`. A reply of another revision is dropped:
@@ -49,6 +51,16 @@ export class TextView {
       doc: text,
       extensions: [lineNumbers(), syntax(path), EditorState.readOnly.of(true), EditorView.editable.of(false)],
     });
+    if (this.line !== undefined) this.goToLine(this.line);
+  }
+
+  /** Puts the caret on a 0-based line and centres it. */
+  goToLine(line: number) {
+    this.line = line;
+    const view = this.view;
+    if (!view) return;
+    const { from } = view.state.doc.line(Math.min(line + 1, view.state.doc.lines));
+    view.dispatch({ selection: { anchor: from }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
   }
 
   private placeholder(message: string) {
