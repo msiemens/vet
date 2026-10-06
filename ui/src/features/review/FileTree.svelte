@@ -37,7 +37,7 @@
     /** Double click or Enter. */
     onopen: (path: string) => void;
     /** Context menu on a file or folder row, at the pointer position. */
-    onmenu: (path: string, x: number, y: number) => void;
+    onmenu: (path: string, dir: boolean, x: number, y: number) => void;
   } = $props();
 
   let scope = $state<"changes" | "all">("changes");
@@ -61,9 +61,9 @@
     for (const below of descendants) collapsed.add(below);
   }
 
-  function menu(e: MouseEvent, path: string) {
+  function menu(e: MouseEvent, path: string, dir: boolean) {
     e.preventDefault();
-    onmenu(path, e.clientX, e.clientY);
+    onmenu(path, dir, e.clientX, e.clientY);
   }
 </script>
 
@@ -76,7 +76,7 @@
     style:padding-left="calc(8px + {depth} * var(--w-indent))"
     aria-expanded={open}
     onclick={ontoggle}
-    oncontextmenu={(e) => menu(e, path)}
+    oncontextmenu={(e) => menu(e, path, true)}
   >
     <span class="chev"><Icon name={open ? "open" : "closed"} size={10} /></span>
     <span class="name">{name}</span>
@@ -101,7 +101,7 @@
       e.preventDefault();
       onopen(path);
     }}
-    oncontextmenu={(e) => menu(e, path)}
+    oncontextmenu={(e) => menu(e, path, false)}
   >
     <span class="chev"></span>
     <span class="name">{name}</span>

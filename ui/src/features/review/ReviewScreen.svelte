@@ -9,7 +9,7 @@
   import type { Mode } from "./editor/mount";
   import "./editor/editor.css";
   import { type Hud, ReviewController } from "./ReviewController";
-  import { CHANGES, pathOf } from "./Tabs.svelte";
+  import { CHANGES, kindOf, pathOf } from "./Tabs.svelte";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
@@ -41,10 +41,10 @@
     onready: (controller: ReviewController, firstPaintMs: number) => void;
   } = $props();
 
-  let menu = $state<{ path: string; x: number; y: number }>();
+  let menu = $state<{ path: string; dir: boolean; x: number; y: number }>();
   // The backend is fixed for a mounted screen.
   // svelte-ignore state_referenced_locally
-  const controller = new ReviewController(backend, hud, (path, x, y) => (menu = { path, x, y }));
+  const controller = new ReviewController(backend, hud, (path, x, y) => (menu = { path, dir: false, x, y }));
   // svelte-ignore state_referenced_locally
   controller.mode = mode;
   const tabs = controller.tabs;
@@ -82,8 +82,10 @@
     void view.goToFile(view.indexOf(path));
   }
 
-  function copyPath(path: string) {
-    navigator.clipboard.writeText(path).catch(() => (changeset.notice = "Could not copy the path"));
+  function runMenu(id: string, { path, dir }: { path: string; dir: boolean }) {
+    if (id === "copy") navigator.clipboard.writeText(path).catch(() => (changeset.notice = "Could not copy the path"));
+    else if (id === "exclude") void changeset.excludePath(path, dir);
+    else if (id === "only") void changeset.reviewOnly(path);
   }
 </script>
 
@@ -99,7 +101,7 @@
         excluded={{ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 }}
         onselect={select}
         onopen={(path) => void controller.openSource(path)}
-        onmenu={(path, x, y) => (menu = { path, x, y })}
+        onmenu={(path, dir, x, y) => (menu = { path, dir, x, y })}
       />
     {:else}
       <p class="soon">This tool window is not available yet.</p>
@@ -111,7 +113,9 @@
   <div class="strip">
     <TabStrip {tabs} files={changeset.files} />
     <span class="grow"></span>
-    <ViewControls {mode} {onmode} onstep={(delta) => controller.stepHunk(delta)} />
+    {#if kindOf(tabs.active) !== "text"}
+      <ViewControls {mode} {onmode} onstep={(delta) => controller.stepHunk(delta)} />
+    {/if}
   </div>
   <div class="panes">
     {#each tabs.open as id (id)}
@@ -130,8 +134,12 @@
   <ContextMenu
     x={menu.x}
     y={menu.y}
-    items={[{ id: "copy", label: "Copy path" }]}
-    onselect={() => menu && copyPath(menu.path)}
+    items={[
+      { id: "copy", label: "Copy path" },
+      { id: "exclude", label: "Exclude from review" },
+      ...(menu.dir ? [{ id: "only", label: "Review only this folder" }] : []),
+    ]}
+    onselect={(id) => menu && runMenu(id, menu)}
     onclose={() => (menu = undefined)}
   />
 {/if}
