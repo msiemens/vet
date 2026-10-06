@@ -336,6 +336,40 @@ async fn binary_mode_and_symlink_changes_are_non_text_items() {
 }
 
 #[tokio::test]
+async fn added_and_deleted_empty_files_are_items_and_text_to_empty_stays_a_text_diff() {
+    let dir = repo();
+    write(dir.path(), "gone.txt", b"");
+    write(dir.path(), "emptied.txt", b"a\nb\n");
+    write(dir.path(), "filled.txt", b"");
+    commit(dir.path());
+    std::fs::remove_file(dir.path().join("gone.txt")).unwrap();
+    write(dir.path(), "new.txt", b"");
+    write(dir.path(), "emptied.txt", b"");
+    write(dir.path(), "filled.txt", b"x\n");
+    let repo = GixRepo::new(dir.path());
+    let (base, scan) = head_and_scan(dir.path(), &repo).await;
+    let diff = repo.diff(&MemStore::default(), &base, &scan.snapshot).await.unwrap();
+
+    let items: Vec<_> = diff
+        .non_text
+        .iter()
+        .map(|i| (i.path.clone(), i.kind, i.before.is_some(), i.after.is_some()))
+        .collect();
+    assert_eq!(
+        items,
+        vec![
+            (path("gone.txt"), NonTextKind::Empty, true, false),
+            (path("new.txt"), NonTextKind::Empty, false, true)
+        ]
+    );
+    let files: Vec<_> = diff.files.iter().map(|f| (f.new_path.clone(), f.hunks.len())).collect();
+    assert_eq!(
+        files,
+        vec![(Some(path("emptied.txt")), 1), (Some(path("filled.txt")), 1)]
+    );
+}
+
+#[tokio::test]
 async fn unchanged_tree_has_the_head_snapshot_id() {
     let dir = repo();
     write(dir.path(), "a/b.txt", b"x\n");

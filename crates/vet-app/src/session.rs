@@ -1073,7 +1073,10 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         }
         let wanted = match entry.kind {
             EntryKind::Symlink => true,
-            EntryKind::File => matches!(kind, NonTextKind::Binary | NonTextKind::Mode | NonTextKind::Rename),
+            EntryKind::File => matches!(
+                kind,
+                NonTextKind::Binary | NonTextKind::Mode | NonTextKind::Rename | NonTextKind::Empty
+            ),
             EntryKind::Submodule => false,
         };
         let mut blobs = BTreeMap::new();

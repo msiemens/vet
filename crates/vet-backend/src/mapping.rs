@@ -33,6 +33,7 @@ pub fn non_text_kind(kind: NonTextKind) -> p::NonTextKind {
         NonTextKind::Binary => p::NonTextKind::Binary,
         NonTextKind::ContentUnavailable => p::NonTextKind::ContentUnavailable,
         NonTextKind::Rename => p::NonTextKind::Rename,
+        NonTextKind::Empty => p::NonTextKind::Empty,
     }
 }
 
@@ -44,6 +45,7 @@ pub fn core_non_text_kind(kind: p::NonTextKind) -> NonTextKind {
         p::NonTextKind::Binary => NonTextKind::Binary,
         p::NonTextKind::ContentUnavailable => NonTextKind::ContentUnavailable,
         p::NonTextKind::Rename => NonTextKind::Rename,
+        p::NonTextKind::Empty => NonTextKind::Empty,
     }
 }
 

@@ -173,6 +173,8 @@ pub enum NonTextKind {
     ContentUnavailable,
     /// Same content at a new path.
     Rename,
+    /// An empty file added or deleted: it exists, but has no lines to review.
+    Empty,
 }
 
 /// A file-level change with no reviewable text. It is acknowledged as one item,

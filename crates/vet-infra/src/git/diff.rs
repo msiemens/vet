@@ -272,6 +272,11 @@ fn classify(change: Change, contents: &BTreeMap<BlobId, Vec<u8>>, out: &mut Snap
         out.non_text.push(item(NonTextKind::Binary, &change));
         return;
     }
+    // Added or deleted empty: no lines on either side. A file with text on one side keeps its text diff.
+    if before.is_empty() && after.is_empty() {
+        out.non_text.push(item(NonTextKind::Empty, &change));
+        return;
+    }
     out.files.push(FileDiff {
         old_path: change.old.as_ref().map(|(p, _)| p.clone()),
         new_path: change.new.as_ref().map(|(p, _)| p.clone()),

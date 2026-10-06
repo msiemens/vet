@@ -462,6 +462,49 @@ async fn non_text_changes_are_acknowledged_and_the_other_connection_is_told() {
 }
 
 #[tokio::test]
+async fn empty_files_are_non_text_items_and_can_be_acknowledged() {
+    let fx = fixture(
+        &[("gone.txt", ""), ("emptied.txt", &text(3, &[]))],
+        &[("new.txt", ""), ("emptied.txt", "")],
+    )
+    .await;
+    std::fs::remove_file(fx.repo.path().join("gone.txt")).unwrap();
+    let client = Client::new(&fx.handler);
+    let session = open(&client, fx.repo.path()).await;
+
+    let m = client.manifest(session).await;
+    let file = |path: &str| m.files.iter().find(|f| f.path == path).unwrap();
+    let (new, gone) = (file("new.txt"), file("gone.txt"));
+    assert_eq!(
+        (new.status, new.non_text.len(), new.non_text[0].kind),
+        (FileStatus::Added, 1, NonTextKind::Empty)
+    );
+    assert!(new.non_text[0].before.is_none() && new.non_text[0].after.is_some());
+    assert_eq!(
+        (gone.status, gone.non_text.len(), gone.non_text[0].kind),
+        (FileStatus::Deleted, 1, NonTextKind::Empty)
+    );
+    // A file with text on one side keeps its text diff and is not also an item.
+    let emptied = file("emptied.txt");
+    assert!(emptied.non_text.is_empty());
+    assert_eq!(emptied.review.hunks.len(), 1);
+    assert_eq!((m.completion.items, m.completion.acknowledged_items), (2, 0));
+
+    let request = Request::Acknowledge {
+        session,
+        revision: 0,
+        path: "new.txt".into(),
+        kind: NonTextKind::Empty,
+        acknowledged: true,
+    };
+    let Response::Review(update) = client.call(request).await.unwrap() else {
+        panic!("not a review update");
+    };
+    assert_eq!(update.review.acknowledged, [NonTextKind::Empty]);
+    assert_eq!(client.manifest(session).await.completion.acknowledged_items, 1);
+}
+
+#[tokio::test]
 async fn ignored_paths_do_not_settle_snapshots() {
     let fx = fixture(&[("a.txt", &text(5, &[]))], &[]).await;
     let mut client = Client::new(&fx.handler);

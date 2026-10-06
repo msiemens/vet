@@ -789,6 +789,8 @@ pub enum NonTextKind {
     ContentUnavailable,
     /// A rename without text changes.
     Rename,
+    /// An empty file added or deleted.
+    Empty,
 }
 
 /// Review state derived from the backend's spans (§5.2); the spans stay there.

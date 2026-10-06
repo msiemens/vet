@@ -24,7 +24,7 @@ pub mod kinds {
     int_enum!(BaseKind { MergeBase = 0, Commit = 1 });
     int_enum!(ChildKind { File = 0, Dir = 1 });
     int_enum!(PathFlag { Collision = 0, ContentUnavailable = 1 });
-    int_enum!(ChangeKind { Mode = 0, Symlink = 1, Submodule = 2, Binary = 3, ContentUnavailable = 4, Rename = 5 });
+    int_enum!(ChangeKind { Mode = 0, Symlink = 1, Submodule = 2, Binary = 3, ContentUnavailable = 4, Rename = 5, Empty = 6 });
 }
 
 macro_rules! child_of_session {

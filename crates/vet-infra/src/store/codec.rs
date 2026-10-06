@@ -63,7 +63,8 @@ twin!(
         Submodule,
         Binary,
         ContentUnavailable,
-        Rename
+        Rename,
+        Empty
     }
 );
 

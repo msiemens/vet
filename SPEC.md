@@ -184,7 +184,7 @@ Marking a hunk (or a selection) seen records one `ReviewedSpan` covering its lin
 
 This catches base changes **within the reviewed region only**. Semantic changes elsewhere surface through impact queries (§7.3), not review state. Losing review progress is acceptable; manufacturing false "already reviewed" confidence is not.
 
-**Non-text changes.** A file-level change with no reviewable text (mode, symlink target, submodule commit, binary or oversized content, a pure rename) is one review item, acknowledged like a hunk and stored the same way, keyed by the before and after entries.
+**Non-text changes.** A file-level change with no reviewable text (mode, symlink target, submodule commit, binary or oversized content, a pure rename, an added or deleted empty file) is one review item, acknowledged like a hunk and stored the same way, keyed by the before and after entries.
 
 **Completion** is relative to the active `ReviewFilter`: a changeset is complete when every changed line that passes the filter is covered by a `Seen` span and every non-text change that passes it is acknowledged. The UI always shows how many changes the filter excludes, so "complete" never implies every change was seen.
 
