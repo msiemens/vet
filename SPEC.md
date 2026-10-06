@@ -451,6 +451,8 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Edit and remove your own comments; removing the first comment removes its thread
 - Double-clicking a line in the Changes tab opens the file's tab at that line, highlighted
 - Project switcher: the project name in the title bar is a dropdown of recent projects, plus "Open…"
+- Loading screen while a project opens, naming the step it is at
+- Language-server status per server (starting, indexing with the server's progress, ready, failed, not installed), in the footer with details on click
 
 ### M2
 
