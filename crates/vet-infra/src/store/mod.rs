@@ -9,7 +9,7 @@ mod migration;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -24,7 +24,8 @@ use sea_orm_migration::MigratorTrait;
 use vet_app::acquisition::{CommitId, Pin, PinId};
 use vet_app::ports::{GcReport, ReviewStore, Store, StoreError};
 use vet_app::review::{NonTextAck, RecordedSpan, Session, SessionId, SpanId};
-use vet_core::content::{BlobId, Changeset, Hash, ReviewFilter, Snapshot, SnapshotId};
+use vet_core::content::{BlobId, Changeset, Hash, ReviewFilter, Snapshot, SnapshotId, SnapshotStatus};
+use vet_core::merkle::{self, TreeNode};
 use vet_core::platform::PlatformThread;
 use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Thread, ThreadId, ThreadStatus};
 
@@ -239,10 +240,32 @@ impl SqliteStore {
             snapshots_deleted += snapshot::Entity::delete_many().filter(snapshot::Column::Id.is_in(chunk.to_vec())).exec(&txn).await?.rows_affected as usize;
         }
 
-        let blobs: Vec<Vec<u8>> = snapshot_entry::Entity::find().select_only().column(snapshot_entry::Column::Blob).distinct().into_tuple().all(&txn).await?;
+        // Mark nodes reachable from the remaining roots, sweep the rest.
+        let roots: Vec<Vec<u8>> = snapshot::Entity::find().select_only().column(snapshot::Column::Id).into_tuple().all(&txn).await?;
+        let edges: Vec<(Vec<u8>, Vec<u8>)> =
+            tree_child::Entity::find().filter(tree_child::Column::Kind.eq(kinds::ChildKind::Dir)).select_only().column(tree_child::Column::Node).column(tree_child::Column::Dir).into_tuple().all(&txn).await?;
+        let mut children: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
+        for (node, dir) in edges {
+            children.entry(node).or_default().push(dir);
+        }
+        let mut reachable: HashSet<Vec<u8>> = HashSet::new();
+        let mut stack = roots;
+        while let Some(n) = stack.pop() {
+            if reachable.insert(n.clone()) {
+                stack.extend(children.remove(&n).unwrap_or_default());
+            }
+        }
+        let nodes: Vec<Vec<u8>> = tree_node::Entity::find().select_only().column(tree_node::Column::Id).into_tuple().all(&txn).await?;
+        let unreachable: Vec<Vec<u8>> = nodes.into_iter().filter(|n| !reachable.contains(n)).collect();
+        let mut nodes_deleted = 0;
+        for chunk in unreachable.chunks(1000) {
+            nodes_deleted += tree_node::Entity::delete_many().filter(tree_node::Column::Id.is_in(chunk.to_vec())).exec(&txn).await?.rows_affected as usize;
+        }
+
+        let blobs: Vec<Vec<u8>> = tree_child::Entity::find().filter(tree_child::Column::Blob.is_not_null()).select_only().column(tree_child::Column::Blob).distinct().into_tuple().all(&txn).await?;
         let blobs = blobs.iter().map(|b| hash(b).map(BlobId)).collect::<Res<HashSet<_>>>()?;
         txn.commit().await?;
-        Ok((GcReport { sessions_deleted, snapshots_deleted, blobs_deleted: 0 }, blobs))
+        Ok((GcReport { sessions_deleted, snapshots_deleted, nodes_deleted, blobs_deleted: 0 }, blobs))
     }
 }
 
@@ -255,24 +278,56 @@ impl Store for SqliteStore {
         self.blocking(move |c| c.get(id)).await
     }
 
-    async fn put_snapshot(&self, snapshot: Snapshot) -> Result<(), StoreError> {
+    async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus) -> Result<(), StoreError> {
+        let (root, nodes) = merkle::build(&snapshot.entries);
+        if root != snapshot.id {
+            return Err(StoreError("snapshot id does not match its entries".into()));
+        }
         let txn = self.db.begin().await?;
-        let key = snapshot.id.0.0.to_vec();
+        let key = root.0.0.to_vec();
         if snapshot::Entity::find_by_id(key.clone()).one(&txn).await?.is_none() {
             snapshot::ActiveModel { id: Set(key.clone()), created: Set(unix_now()) }.insert(&txn).await?;
-            insert_chunked(&txn, snapshot.entries.iter().map(|(p, e)| entry_row(&key, p, e)).collect()).await?;
+            insert_chunked(&txn, status_rows(&key, &status)).await?;
+
+            let hashes: Vec<Vec<u8>> = nodes.keys().map(|h| h.0.to_vec()).collect();
+            let mut present = HashSet::new();
+            for chunk in hashes.chunks(1000) {
+                present.extend(tree_node::Entity::find().filter(tree_node::Column::Id.is_in(chunk.to_vec())).all(&txn).await?.into_iter().map(|n| n.id));
+            }
+            let missing: Vec<_> = nodes.iter().filter(|(h, _)| !present.contains(h.0.as_slice())).collect();
+            insert_chunked(&txn, missing.iter().map(|(h, _)| tree_node::ActiveModel { id: Set(h.0.to_vec()) }).collect()).await?;
+            insert_chunked(&txn, missing.iter().flat_map(|(h, n)| child_rows(**h, n)).collect()).await?;
         }
         Ok(txn.commit().await?)
     }
 
-    async fn snapshot(&self, id: SnapshotId) -> Result<Option<Snapshot>, StoreError> {
+    async fn snapshot(&self, id: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
         let key = id.0.0.to_vec();
         if snapshot::Entity::find_by_id(key.clone()).one(&self.db).await?.is_none() {
             return Ok(None);
         }
-        let rows = snapshot_entry::Entity::find().filter(snapshot_entry::Column::Snapshot.eq(key)).all(&self.db).await?;
-        let entries = rows.into_iter().map(entry_from).collect::<Res<BTreeMap<_, _>>>()?;
-        Ok(Some(Snapshot { id, entries }))
+        // Load the tree level by level.
+        let mut nodes: HashMap<Hash, TreeNode> = HashMap::new();
+        let mut level = vec![id.0];
+        while !level.is_empty() {
+            let keys: Vec<Vec<u8>> = level.iter().map(|h| h.0.to_vec()).collect();
+            let mut rows: HashMap<Vec<u8>, Vec<tree_child::Model>> = HashMap::new();
+            for chunk in keys.chunks(1000) {
+                for row in tree_child::Entity::find().filter(tree_child::Column::Node.is_in(chunk.to_vec())).all(&self.db).await? {
+                    rows.entry(row.node.clone()).or_default().push(row);
+                }
+            }
+            let mut next = Vec::new();
+            for h in level {
+                let node = node_from(rows.remove(h.0.as_slice()).unwrap_or_default())?;
+                next.extend(node.dirs.values().copied());
+                nodes.insert(h, node);
+            }
+            level = next;
+        }
+        let entries = merkle::entries(id, &|h| nodes.get(&h).cloned()).ok_or_else(|| StoreError("snapshot tree is incomplete".into()))?;
+        let status = status_from(snapshot_path::Entity::find().filter(snapshot_path::Column::Snapshot.eq(key)).order_by_asc(snapshot_path::Column::Id).all(&self.db).await?);
+        Ok(Some((Snapshot { id, entries }, status)))
     }
 
     async fn append_timeline(&self, session: SessionId, snapshot: SnapshotId) -> Result<(), StoreError> {

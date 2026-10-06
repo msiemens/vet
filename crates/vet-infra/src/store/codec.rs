@@ -4,10 +4,11 @@
 use sea_orm::sea_query::{SimpleExpr, Value};
 use sea_orm::{ColumnTrait, DbErr, Set};
 use vet_app::review::NonTextAck;
-use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, LineRange, RepoPath, SnapshotId};
+use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, LineRange, RepoPath, SnapshotId, SnapshotStatus};
+use vet_core::merkle::TreeNode;
 use vet_core::review::{Anchor, CommentTarget, Side, SpanState, ThreadStatus};
 
-use super::entity::{ack, anchor, kinds, snapshot_entry, thread};
+use super::entity::{ack, anchor, kinds, snapshot_path, thread, tree_child};
 
 fn corrupt(what: &str) -> DbErr {
     DbErr::Custom(format!("corrupt row: {what}"))
@@ -65,20 +66,53 @@ pub fn anchor_from(m: &anchor::Model) -> Result<Anchor, DbErr> {
     })
 }
 
-pub fn entry_row(snapshot: &[u8], path: &RepoPath, e: &FileEntry) -> snapshot_entry::ActiveModel {
-    snapshot_entry::ActiveModel {
-        snapshot: Set(snapshot.to_vec()),
-        path: Set(path.0.clone()),
-        blob: Set(e.blob.0.0.to_vec()),
-        mode: Set(e.mode.into()),
-        kind: Set(e.kind.into()),
-        unfiltered: Set(e.unfiltered),
-    }
+pub fn child_rows(node: Hash, n: &TreeNode) -> Vec<tree_child::ActiveModel> {
+    let row = |name: &[u8], kind| tree_child::ActiveModel { node: Set(node.0.to_vec()), name: Set(name.to_vec()), kind: Set(kind), ..Default::default() };
+    let files = n.files.iter().map(|(name, e)| tree_child::ActiveModel {
+        blob: Set(Some(e.blob.0.0.to_vec())),
+        mode: Set(Some(e.mode.into())),
+        entry_kind: Set(Some(e.kind.into())),
+        unfiltered: Set(Some(e.unfiltered)),
+        ..row(name, kinds::ChildKind::File)
+    });
+    let dirs = n.dirs.iter().map(|(name, h)| tree_child::ActiveModel { dir: Set(Some(h.0.to_vec())), ..row(name, kinds::ChildKind::Dir) });
+    files.chain(dirs).collect()
 }
 
-pub fn entry_from(m: snapshot_entry::Model) -> Result<(RepoPath, FileEntry), DbErr> {
-    let entry = FileEntry { blob: BlobId(hash(&m.blob)?), mode: u32::try_from(m.mode).map_err(|_| corrupt("mode"))?, kind: m.kind.into(), unfiltered: m.unfiltered };
-    Ok((RepoPath(m.path), entry))
+pub fn node_from(rows: Vec<tree_child::Model>) -> Result<TreeNode, DbErr> {
+    let mut node = TreeNode::default();
+    for r in rows {
+        match r.kind {
+            kinds::ChildKind::Dir => {
+                node.dirs.insert(r.name, hash(&r.dir.ok_or_else(|| corrupt("dir child without hash"))?)?);
+            }
+            kinds::ChildKind::File => {
+                let (Some(blob), Some(mode), Some(kind), Some(unfiltered)) = (r.blob, r.mode, r.entry_kind, r.unfiltered) else {
+                    return Err(corrupt("file child without entry"));
+                };
+                let entry = FileEntry { blob: BlobId(hash(&blob)?), mode: u32::try_from(mode).map_err(|_| corrupt("mode"))?, kind: kind.into(), unfiltered };
+                node.files.insert(r.name, entry);
+            }
+        }
+    }
+    Ok(node)
+}
+
+pub fn status_rows(snapshot: &[u8], status: &SnapshotStatus) -> Vec<snapshot_path::ActiveModel> {
+    let row = |flag, p: &RepoPath| snapshot_path::ActiveModel { snapshot: Set(snapshot.to_vec()), flag: Set(flag), path: Set(p.0.clone()), ..Default::default() };
+    let collisions = status.path_collisions.iter().map(|p| row(kinds::PathFlag::Collision, p));
+    collisions.chain(status.content_unavailable.iter().map(|p| row(kinds::PathFlag::ContentUnavailable, p))).collect()
+}
+
+pub fn status_from(rows: Vec<snapshot_path::Model>) -> SnapshotStatus {
+    let mut status = SnapshotStatus::default();
+    for r in rows {
+        match r.flag {
+            kinds::PathFlag::Collision => status.path_collisions.push(RepoPath(r.path)),
+            kinds::PathFlag::ContentUnavailable => status.content_unavailable.push(RepoPath(r.path)),
+        }
+    }
+    status
 }
 
 /// The flattened columns of one side of an acknowledgement.

@@ -10,7 +10,7 @@ use tempfile::TempDir;
 use vet_app::acquisition::{Acquisition, PinId};
 use vet_app::ports::{Dirty, GcReport, GitRepo, Store, StoreError};
 use vet_app::review::SessionId;
-use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId};
+use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_infra::git::GixRepo;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -69,10 +69,10 @@ impl Store for MemStore {
     async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self.0.lock().unwrap().get(&id).cloned())
     }
-    async fn put_snapshot(&self, _: Snapshot) -> Result<(), StoreError> {
+    async fn put_snapshot(&self, _: Snapshot, _: SnapshotStatus) -> Result<(), StoreError> {
         unimplemented!()
     }
-    async fn snapshot(&self, _: SnapshotId) -> Result<Option<Snapshot>, StoreError> {
+    async fn snapshot(&self, _: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
         unimplemented!()
     }
     async fn append_timeline(&self, _: SessionId, _: SnapshotId) -> Result<(), StoreError> {

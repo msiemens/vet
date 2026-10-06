@@ -129,7 +129,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Waker};
 
-    use vet_core::content::{BlobId, Hash, SnapshotDiff};
+    use vet_core::content::{BlobId, Hash, SnapshotDiff, SnapshotStatus};
 
     use super::*;
     use crate::acquisition::CommitId;
@@ -268,10 +268,10 @@ mod tests {
         async fn blob(&self, _: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
             unreachable!()
         }
-        async fn put_snapshot(&self, _: Snapshot) -> Result<(), StoreError> {
+        async fn put_snapshot(&self, _: Snapshot, _: SnapshotStatus) -> Result<(), StoreError> {
             unreachable!()
         }
-        async fn snapshot(&self, _: SnapshotId) -> Result<Option<Snapshot>, StoreError> {
+        async fn snapshot(&self, _: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
             unreachable!()
         }
         async fn append_timeline(&self, _: SessionId, _: SnapshotId) -> Result<(), StoreError> {

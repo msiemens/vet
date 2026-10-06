@@ -36,7 +36,9 @@ impl MigrationTrait for Initial {
         create!(
             pin::Entity,
             snapshot::Entity,
-            snapshot_entry::Entity,
+            snapshot_path::Entity,
+            tree_node::Entity,
+            tree_child::Entity,
             session::Entity,
             filter_item::Entity,
             timeline::Entity,

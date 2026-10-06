@@ -94,6 +94,7 @@ impl<E: std::error::Error> From<E> for StoreError {
 pub struct GcReport {
     pub sessions_deleted: usize,
     pub snapshots_deleted: usize,
+    pub nodes_deleted: usize,
     pub blobs_deleted: usize,
 }
 
@@ -103,8 +104,9 @@ pub trait Store {
     /// Content-addressed by `BlobId::of`; durable (fsynced, renamed) on return.
     fn put_blob(&self, bytes: Vec<u8>) -> impl Future<Output = Result<BlobId, StoreError>> + Send;
     fn blob(&self, id: BlobId) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
-    fn put_snapshot(&self, snapshot: Snapshot) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn snapshot(&self, id: SnapshotId) -> impl Future<Output = Result<Option<Snapshot>, StoreError>> + Send;
+    /// Stored as shared Merkle nodes: only nodes not yet present are written.
+    fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn snapshot(&self, id: SnapshotId) -> impl Future<Output = Result<Option<(Snapshot, SnapshotStatus)>, StoreError>> + Send;
     /// Append a settled snapshot to the session's edit timeline (§3).
     fn append_timeline(&self, session: SessionId, snapshot: SnapshotId) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn timeline(&self, session: SessionId) -> impl Future<Output = Result<Vec<SnapshotId>, StoreError>> + Send;

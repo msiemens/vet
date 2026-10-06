@@ -21,6 +21,8 @@ pub mod kinds {
     int_enum!(ThreadKind { Range = 0, File = 1, Changeset = 2 });
     int_enum!(ThreadStatus { Open = 0, Resolved = 1 });
     int_enum!(FilterKind { Root = 0, Include = 1, Exclude = 2 });
+    int_enum!(ChildKind { File = 0, Dir = 1 });
+    int_enum!(PathFlag { Collision = 0, ContentUnavailable = 1 });
 }
 
 macro_rules! child_of_session {
@@ -71,27 +73,72 @@ pub mod snapshot {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-pub mod snapshot_entry {
+/// Facts about a snapshot that are not part of its identity (`SnapshotStatus`).
+pub mod snapshot_path {
     use super::kinds::*;
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "snapshot_entry")]
+    #[sea_orm(table_name = "snapshot_path")]
     pub struct Model {
-        #[sea_orm(primary_key, auto_increment = false)]
+        #[sea_orm(primary_key)]
+        pub id: i64,
         pub snapshot: Vec<u8>,
-        #[sea_orm(primary_key, auto_increment = false)]
+        pub flag: PathFlag,
         pub path: Vec<u8>,
-        pub blob: Vec<u8>,
-        pub mode: i64,
-        pub kind: EntryKind,
-        pub unfiltered: bool,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {
         #[sea_orm(belongs_to = "super::snapshot::Entity", from = "Column::Snapshot", to = "super::snapshot::Column::Id", on_delete = "Cascade")]
         Snapshot,
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// A Merkle directory node, keyed by its hash and shared between snapshots. A
+/// snapshot's id is its root node's hash.
+pub mod tree_node {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "tree_node")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub id: Vec<u8>,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// One entry of a node. A `Dir` row sets `dir`; a `File` row sets the entry fields.
+pub mod tree_child {
+    use super::kinds::*;
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "tree_child")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub node: Vec<u8>,
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub name: Vec<u8>,
+        pub kind: ChildKind,
+        pub dir: Option<Vec<u8>>,
+        pub blob: Option<Vec<u8>>,
+        pub mode: Option<i64>,
+        pub entry_kind: Option<EntryKind>,
+        pub unfiltered: Option<bool>,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(belongs_to = "super::tree_node::Entity", from = "Column::Node", to = "super::tree_node::Column::Id", on_delete = "Cascade")]
+        Node,
     }
 
     impl ActiveModelBehavior for ActiveModel {}
