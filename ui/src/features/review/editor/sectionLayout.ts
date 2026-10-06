@@ -3,7 +3,6 @@
 // between hunks become one bar each, mirroring `collapseUnchanged` of `@codemirror/merge`.
 
 import type { FileChange } from "../../../generated/FileChange";
-import type { Mode } from "./mount";
 
 /** Context kept around each hunk, and the smallest unchanged region worth a bar. */
 export const COLLAPSE = { margin: 3, minSize: 4 };
@@ -21,7 +20,8 @@ function unchanged(lines: number, context: number): { rows: number; bars: number
   return lines - context >= COLLAPSE.minSize ? { rows: context, bars: 1 } : { rows: Math.max(0, lines), bars: 0 };
 }
 
-export function sectionHeight(file: FileChange, mode: Mode, m: Metrics, collapse: boolean): number {
+/** `mode` is the editor's `Mode`; spelled out so this module needs no DOM or CodeMirror types. */
+export function sectionHeight(file: FileChange, mode: "unified" | "split", m: Metrics, collapse: boolean): number {
   const { margin } = COLLAPSE;
   let y = m.header;
   let end = 0; // where the previous hunk ends in the target, in lines

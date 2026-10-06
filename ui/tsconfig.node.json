@@ -15,5 +15,15 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.test.ts", "src/features/review/keymap.ts", "scripts/*.mjs", "*.js", "vite.config.ts"]
+  "include": [
+    "src/**/*.test.ts",
+    "src/generated/*.ts",
+    "src/features/review/keymap.ts",
+    "src/features/review/mock.ts",
+    "src/features/review/tree.ts",
+    "src/features/review/editor/sectionLayout.ts",
+    "scripts/*.mjs",
+    "*.js",
+    "vite.config.ts"
+  ]
 }
