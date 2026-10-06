@@ -20,7 +20,7 @@ Svelte 5 + CodeMirror 6, organised by feature under `src/`.
 - A feature imports another only through its `index.ts`. `app` composes features through snippets and props.
 - Components get data from props or stores. Only `state/backend.ts` talks to the connection.
 - Components use tokens (`var(--seen)`, `var(--h-row)`), never literal colours or sizes. The editor reads row heights from the tokens at construction.
-- `app/layering.test.ts` enforces these rules on the import graph (`pnpm test`).
+- `eslint.config.js` enforces the import rules and the editor's no-Svelte rule (`pnpm lint`), plus import cycles.
 - Events: `state/changeset.svelte.ts` subscribes to the backend's events (refetch on `snapshotSettled`, update one file on `reviewChanged`); views listen to the store, not the connection.
 - One component per file, named by what it is. No `utils`/`helpers`; put a function next to its user, or in `lib/` if shared.
 
