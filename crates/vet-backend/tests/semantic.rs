@@ -2,43 +2,18 @@
 //! needs a real rust-analyzer and is skipped without one; run it alone
 //! (`--test-threads=1`): it starts two servers.
 
-use std::path::Path;
+mod common;
+
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc::UnboundedReceiver;
-use vet_backend::{Config, Orchestrator, open_store};
+use common::{Client, config, find, git, repo_with, write};
+use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{
-    CallFate, Event, Reach, Request, Response, ServerInfo, ServerMessage, ServerState, SessionId, Side, SymbolChange,
-    SymbolId, UnavailableKind,
+    CallFate, Event, Reach, Request, Response, ServerMessage, ServerState, Side, SymbolChange, SymbolId,
+    UnavailableKind,
 };
-use vet_transport::{Events, Handler};
-
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .args([
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@t",
-            "-c",
-            "commit.gpgsign=false",
-        ])
-        .args(args)
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "git {args:?}");
-}
-
-fn write(dir: &Path, name: &str, content: &str) {
-    let path = dir.join(name);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, content).unwrap();
-}
 
 const BASE: &str = "\
 pub fn gone() -> u32 {
@@ -80,85 +55,6 @@ pub fn main() -> u32 {
     fresh()
 }
 ";
-
-/// Line and column of the `nth` occurrence of `needle`, `inside` columns in.
-fn find(text: &str, needle: &str, nth: usize, inside: u32) -> (u32, u32) {
-    let (line, col) = text
-        .lines()
-        .enumerate()
-        .flat_map(|(l, s)| s.match_indices(needle).map(move |(c, _)| (l, c)))
-        .nth(nth)
-        .expect("needle present");
-    (line as u32, col as u32 + inside)
-}
-
-struct Client {
-    handler: Arc<Orchestrator>,
-    events: Events,
-    inbox: UnboundedReceiver<ServerMessage>,
-}
-
-impl Client {
-    fn new(handler: &Arc<Orchestrator>) -> Self {
-        let (events, inbox) = Events::channel();
-        Self {
-            handler: handler.clone(),
-            events,
-            inbox,
-        }
-    }
-
-    async fn call(&self, request: Request) -> Result<Response, String> {
-        self.handler.handle(request, self.events.clone()).await
-    }
-
-    async fn open(&self, repo: &Path) -> SessionId {
-        let request = Request::OpenSession {
-            repo: repo.to_str().unwrap().into(),
-        };
-        match self.call(request).await.unwrap() {
-            Response::Session { session, .. } => session,
-            other => panic!("{other:?}"),
-        }
-    }
-
-    async fn revision(&self, session: SessionId) -> u32 {
-        match self.call(Request::Manifest { session }).await.unwrap() {
-            Response::Manifest(m) => m.revision,
-            other => panic!("{other:?}"),
-        }
-    }
-
-    async fn servers(&self, session: SessionId) -> Vec<ServerInfo> {
-        match self.call(Request::ListServers { session }).await.unwrap() {
-            Response::Servers { servers } => servers,
-            other => panic!("{other:?}"),
-        }
-    }
-}
-
-fn config() -> Config {
-    Config {
-        debounce: Duration::from_millis(150),
-        poll: Duration::from_millis(300),
-        orphan_grace: Duration::from_secs(60),
-    }
-}
-
-fn repo_with(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> tempfile::TempDir {
-    let repo = tempfile::tempdir().unwrap();
-    git(repo.path(), &["init", "-q", "-b", "main"]);
-    write(repo.path(), ".gitignore", "target/\n");
-    for (name, content) in base {
-        write(repo.path(), name, content);
-    }
-    git(repo.path(), &["add", "-A"]);
-    git(repo.path(), &["commit", "-q", "-m", "base"]);
-    for (name, content) in dirty {
-        write(repo.path(), name, content);
-    }
-    repo
-}
 
 fn name(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|s| (*s).to_owned()).collect()

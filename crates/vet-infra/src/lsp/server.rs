@@ -21,13 +21,16 @@ use vet_semantic::ports::{
     At, Diagnostic, LanguageServer, Location, Pos, QueryError, Severity, Span, Sym, SymbolInfo, Tree,
 };
 
+use super::QUIET;
 use super::capabilities::Diagnostics;
 use super::config::language_id;
-use super::rpc::Connection;
+use super::rpc::{Connection, State};
 
 /// Documents kept open at once; the oldest are closed beyond this.
 const MAX_OPEN_DOCS: usize = 64;
 const DIAGNOSTICS_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long a newly opened document may keep the server busy before a query goes ahead.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct Doc {
     file: RepoPath,
@@ -209,6 +212,10 @@ impl LspServer {
                     .await
                     .map_err(err)?;
             }
+            // Opening a file can start loading its project (tsserver), and
+            // answers before that finishes resolve nothing outside the file.
+            self.conn.with_state(State::touch);
+            self.conn.wait_for(OPEN_TIMEOUT, |s| s.is_idle(QUIET)).await;
             return Ok(true);
         };
         if docs[index].text == text {
