@@ -117,7 +117,13 @@ impl GitRepo for FakeGit {
             status: SnapshotStatus::default(),
         })
     }
-    async fn checkout(&self, _: &CommitId, _: &Snapshot, _: &Path) -> std::result::Result<(), GitError> {
+    async fn checkout<St: Store + Sync>(
+        &self,
+        _: &St,
+        _: &CommitId,
+        _: &Snapshot,
+        _: &Path,
+    ) -> std::result::Result<(), crate::ports::CheckoutError> {
         unreachable!()
     }
     async fn commit_snapshot(&self, _: &CommitId) -> std::result::Result<Snapshot, GitError> {

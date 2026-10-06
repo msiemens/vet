@@ -9,7 +9,6 @@ use std::sync::Mutex;
 
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
-use vet_app::pin::PinId;
 use vet_app::ports::{CheckoutError, GcReport, GitRepo, Store, StoreError};
 use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
@@ -104,7 +103,7 @@ fn read(root: &Path, name: &str) -> Vec<u8> {
 async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
     let dir = fixture();
     let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
-    let opened = acq.open_pin(PinId(1)).await.unwrap();
+    let opened = acq.open_pin().await.unwrap();
     acq.store
         .put_snapshot(opened.target.clone(), opened.status.clone())
         .await

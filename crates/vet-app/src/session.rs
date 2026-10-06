@@ -35,6 +35,7 @@ use vet_core::remap::{cut_recorded, remap_span};
 use vet_core::review::{FileRemapInput, ReviewedSpan};
 
 use crate::acquisition::Acquisition;
+use crate::pin::CommitId;
 use crate::ports::{Clock, Degraded, GitError, GitRepo, ReviewStore, Scan, Store, StoreError, Watcher};
 use crate::review::{NonTextAck, RecordedSpan, SessionId, SpanId};
 use crate::settle::Settling;
@@ -184,6 +185,8 @@ struct State {
 pub struct LiveSession<G, S> {
     pub id: SessionId,
     acquisition: Acquisition<G, S>,
+    /// The pinned commit every snapshot of the session is built on.
+    head: CommitId,
     name: String,
     /// Serializes everything that reads or edits review state.
     state: Mutex<State>,
@@ -215,7 +218,7 @@ fn is_binary(bytes: &[u8]) -> bool {
 impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// Pins the tree, records the session and its first snapshots (§6.1).
     pub async fn open(git: G, store: S, name: String) -> Result<Self> {
-        let acquisition = Acquisition { git, store };
+        let acquisition = Acquisition::new(git, store);
         let opened = acquisition.open_pin().await?;
         let store = &acquisition.store;
         store
@@ -248,6 +251,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         Ok(Self {
             id,
             acquisition,
+            head: opened.head,
             name,
             state: Mutex::new(state),
         })
@@ -286,6 +290,8 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let store = &self.acquisition.store;
         store.put_snapshot(scan.snapshot.clone(), scan.status).await?;
         store.append_timeline(self.id, scan.snapshot.id).await?;
+        // Older timeline snapshots stay materializable (§7.2).
+        self.acquisition.record_commit(scan.snapshot.id, self.head.clone());
         let mut st = self.state.lock().await;
         let old = std::mem::replace(&mut st.target, scan.snapshot);
         st.known.insert(old.id, old);
