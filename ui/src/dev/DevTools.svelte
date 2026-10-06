@@ -29,7 +29,7 @@
     if (!controller || running) return;
     running = true;
     rows = [];
-    const result = await runBenchmark(controller, controller.root, {
+    const result = await runBenchmark(controller, controller.changesRoot, {
       scrollSeconds: config.scrollSeconds,
       samples: 200,
       topology: config.topology,
@@ -61,8 +61,10 @@
 {#if open}
   <div class="bar">
     <strong>Dev</strong>
-    <button type="button" disabled={running} onclick={async () => benchmark(await benchConfig())}>Run benchmark</button>
-    <button type="button" onclick={() => (gallery = true)}>Change cards</button>
+    <button class="ctl" type="button" disabled={running} onclick={async () => benchmark(await benchConfig())}
+      >Run benchmark</button
+    >
+    <button class="ctl" type="button" onclick={() => (gallery = true)}>Change cards</button>
     <select value={theme} onchange={(e) => ontheme(e.currentTarget.value as Theme)} aria-label="Theme">
       <option value="system">System theme</option>
       <option value="light">Light</option>
@@ -82,7 +84,7 @@
 
 {#if rows.length}
   <section class="results">
-    <button type="button" onclick={() => (rows = [])}>Close</button>
+    <button class="ctl" type="button" onclick={() => (rows = [])}>Close</button>
     <table>
       <thead><tr><th>Metric</th><th>p95</th><th>Threshold</th><th>n</th><th>Result</th></tr></thead>
       <tbody>

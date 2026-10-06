@@ -54,3 +54,8 @@ void test("real Ctrl+Alt bindings still fire", () => {
   assert.ok(matches("Ctrl-Alt-s", key({ key: "s", code: "KeyS", ctrlKey: true, altKey: true })));
   assert.ok(!matches("Ctrl-Alt-s", key({ key: "s", code: "KeyS", ctrlKey: true })));
 });
+
+void test("F4 is Jump to Source, and only without modifiers", () => {
+  assert.ok(matches("F4", key({ key: "F4", code: "F4" })));
+  assert.ok(!matches("F4", key({ key: "F4", code: "F4", altKey: true })));
+});

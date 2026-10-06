@@ -13,15 +13,20 @@
   import Chip from "../../lib/ui/Chip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import Menu from "../../lib/ui/Menu.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
+  import Popover from "../../lib/ui/Popover.svelte";
 
   let {
     info,
     completion,
     filter,
     run,
+    onopenrepo,
   }: {
     info: HeaderInfo;
+    /** "Open repository…" in the project menu. */
+    onopenrepo: () => void;
     /** Share of changed lines seen and seen against an old base, in percent. */
     completion: { seenPct: number; oldPct: number; title?: string };
     /** The filter button with its popover. */
@@ -29,10 +34,22 @@
     /** The Run split button. */
     run?: Snippet;
   } = $props();
+  let projectMenu = $state(false);
 </script>
 
 <header>
-  <Chip bold>{info.project}</Chip>
+  <Popover bind:open={projectMenu}>
+    {#snippet trigger(toggle)}
+      <Chip bold onclick={toggle}>{info.project}</Chip>
+    {/snippet}
+    <Menu
+      items={[{ id: "open", label: "Open repository…" }]}
+      onselect={() => {
+        projectMenu = false;
+        onopenrepo();
+      }}
+    />
+  </Popover>
   <Chip>
     <Icon name="branch" />{info.changeset.label}<span class="dim">{info.changeset.branch}</span><Icon
       name="caret"

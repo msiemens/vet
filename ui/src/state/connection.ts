@@ -12,21 +12,25 @@ import type { ServerMessage } from "../generated/ServerMessage";
 // Must match PROTOCOL_VERSION in crates/vet-protocol.
 const PROTOCOL_VERSION = 1;
 
+/** The backend's `Ready` line and the repository to open; none shows the start screen. */
+type Address = Ready & { repo: string | null };
+
 /**
- * In Tauri the host spawned the backend and read its Ready line. In a plain
- * browser (development only, not a supported target) pass it in the URL hash:
- * `#port=1234&token=...`.
+ * In Tauri the host spawned the backend, read its Ready line and took the
+ * repository from its command line. In a plain browser (development only, not a
+ * supported target) pass both in the URL hash: `#port=1234&token=...&repo=/path`
+ * (without `repo`, the start screen asks for one).
  */
-async function backendAddress(): Promise<Ready> {
+async function backendAddress(): Promise<Address> {
   if ("__TAURI_INTERNALS__" in window) {
     const { invoke } = await import("@tauri-apps/api/core");
-    return invoke<Ready>("backend_connection");
+    return invoke<Address>("backend_connection");
   }
   const params = new URLSearchParams(location.hash.slice(1));
   const port = Number(params.get("port"));
   const token = params.get("token");
   if (!port || !token) throw new Error("open with #port=<port>&token=<token> outside Tauri");
-  return { port, token };
+  return { port, token, repo: params.get("repo") };
 }
 
 export class Connection {
@@ -34,13 +38,17 @@ export class Connection {
   private pending = new Map<number, { resolve: (r: Response) => void; reject: (e: Error) => void }>();
   private listeners = new Set<(event: ServerEvent) => void>();
 
-  private constructor(private socket: WebSocket) {
+  private constructor(
+    private socket: WebSocket,
+    /** The repository to open first, if one was named. */
+    readonly repo: string | null,
+  ) {
     socket.addEventListener("message", (event) => this.onMessage(JSON.parse(event.data as string) as ServerMessage));
     socket.addEventListener("close", () => this.failAll(new Error("connection closed")));
   }
 
   static async open(): Promise<Connection> {
-    const { port, token } = await backendAddress();
+    const { port, token, repo } = await backendAddress();
     const socket = new WebSocket(`ws://127.0.0.1:${port}`);
     await new Promise<void>((resolve, reject) => {
       socket.addEventListener("open", () => resolve(), { once: true });
@@ -61,7 +69,7 @@ export class Connection {
     const hello: ClientMessage = { type: "hello", token, protocolVersion: PROTOCOL_VERSION };
     socket.send(JSON.stringify(hello));
     await acknowledged;
-    return new Connection(socket);
+    return new Connection(socket, repo);
   }
 
   request(request: Request): Promise<Response> {

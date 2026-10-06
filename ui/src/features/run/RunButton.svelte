@@ -39,7 +39,7 @@
       ></span>{/if}
   {/snippet}
   {#snippet menuFooter()}
-    <button type="button" class="edit">Edit targets…</button>
+    <button type="button" class="flat edit">Edit targets…</button>
   {/snippet}
 </SplitButton>
 
@@ -57,14 +57,8 @@
   .edit {
     width: 100%;
     height: var(--h-row);
-    border: 0;
-    background: transparent;
     text-align: left;
     padding: 0 12px;
     font-size: var(--fs-ctl);
-    cursor: pointer;
-  }
-  .edit:hover {
-    background: var(--hov);
   }
 </style>

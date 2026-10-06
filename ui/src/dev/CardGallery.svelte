@@ -34,7 +34,7 @@
 </script>
 
 <section class="gallery">
-  <button type="button" onclick={onclose}>Close</button>
+  <button class="ctl" type="button" onclick={onclose}>Close</button>
   <div class="cards">
     {#each cards as c, i (c.path)}
       <ChangeCard

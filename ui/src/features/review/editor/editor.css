@@ -22,6 +22,10 @@
   font-weight: 600;
   color: var(--tx2);
 }
+.file > header .path.link:hover {
+  color: var(--acc);
+  text-decoration: underline;
+}
 .file > header .delta {
   font-size: var(--fs-mono-s);
 }
@@ -38,12 +42,7 @@
 }
 .file > header button {
   height: 20px;
-  padding: 0 8px;
-  border: 1px solid var(--ln);
-  border-radius: var(--radius);
-  background: var(--btn);
   font-size: var(--fs-mono-s);
-  cursor: pointer;
 }
 .file > .body {
   height: calc(100% - var(--h-section));
@@ -76,6 +75,9 @@
 .file .cm-editor .cm-activeLine,
 .file .cm-editor .cm-activeLineGutter {
   background: transparent;
+}
+.file .cm-editor.cm-focused {
+  outline: none;
 }
 .file .cm-editor .cm-cursor {
   border-left-color: var(--tx);
@@ -146,7 +148,32 @@
   outline-offset: -1px;
 }
 
+/* The bar of a collapsed unchanged region: "⋯ N unchanged lines", expands on click. */
+.file .cm-editor .cm-collapsedLines {
+  height: var(--h-collapsed);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  background: var(--hunk);
+  color: var(--tx3);
+  font-size: var(--fs-mono-s);
+  cursor: default;
+  user-select: none;
+}
+.file .cm-editor .cm-collapsedLines::before,
+.file .cm-editor .cm-collapsedLines::after {
+  content: none;
+}
+.file .cm-editor .cm-collapsedLines:hover {
+  background: var(--hov);
+}
+.file .cm-editor .cm-collapsedLines:active {
+  background: var(--press);
+}
+
 .vet-hunk {
+  user-select: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -171,15 +198,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 0;
-  padding: 0;
   border-radius: var(--radius);
-  background: transparent;
   color: var(--tx2);
-  cursor: pointer;
-}
-.vet-hunk-btn:hover {
-  background: var(--hov);
 }
 .vet-hunk-seen .vet-seen-toggle {
   color: var(--seen);
@@ -200,6 +220,7 @@
 }
 
 .vet-hover {
+  user-select: text;
   padding: 4px 8px;
   background: var(--sheet);
   color: var(--tx);

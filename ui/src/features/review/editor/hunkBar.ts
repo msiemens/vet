@@ -8,6 +8,8 @@ import type { HunkState } from "../../../generated/HunkState";
 export interface BarActions {
   toggleSeen(hunk: number): void;
   comment(hunk: number): void;
+  /** Absent where the hunk is already in the file's own tab. */
+  openFile?(hunk: number): void;
 }
 
 export function hunkHeader(h: Hunk, symbol?: string): string {
@@ -61,6 +63,7 @@ export class HunkBar extends WidgetType {
     bar.append(spacer);
     const actions = this.actions;
     if (actions) {
+      if (actions.openFile) bar.append(this.button("Open file", "file", "", () => actions.openFile?.(this.index)));
       bar.append(
         this.button(LABEL[this.state], "check", `vet-seen-toggle`, () => actions.toggleSeen(this.index)),
         this.button("Comment", "comments", "", () => actions.comment(this.index)),
@@ -69,10 +72,10 @@ export class HunkBar extends WidgetType {
     return bar;
   }
 
-  private button(label: string, icon: "check" | "comments", cls: string, onclick: () => void): HTMLElement {
+  private button(label: string, icon: "check" | "comments" | "file", cls: string, onclick: () => void): HTMLElement {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = `vet-hunk-btn ${cls}`;
+    b.className = `flat vet-hunk-btn ${cls}`;
     b.ariaLabel = label;
     b.title = label;
     b.innerHTML = iconSvg(icon, 13, icon === "check" ? 2 : 1.8);

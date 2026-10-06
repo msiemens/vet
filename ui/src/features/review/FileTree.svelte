@@ -3,28 +3,44 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
   import type { FileChange } from "../../generated/FileChange";
-  import { type FileRow, buildRows } from "./tree";
+  import { type DirRow, type FileRow, buildRows, buildTree } from "./tree";
 
   let {
     files,
     selected,
     excluded,
     onselect,
+    onopen,
+    onmenu,
   }: {
     files: FileChange[];
     selected?: string;
     /** Changes hidden by the review filter, collapsed into one group. */
     excluded?: { lines: number; items: number };
+    /** Single click. */
     onselect: (row: FileRow) => void;
+    /** Double click or Enter. */
+    onopen: (row: FileRow) => void;
+    /** Context menu on a file or folder row, at the pointer position. */
+    onmenu: (path: string, x: number, y: number) => void;
   } = $props();
 
   const collapsed = new SvelteSet<string>();
-  const rows = $derived(buildRows(files, collapsed));
+  const tree = $derived(buildTree(files));
+  const rows = $derived(buildRows(tree, collapsed));
 
   const STATUS = { M: "var(--old)", A: "var(--addt)", D: "var(--delt)", R: "var(--tx2)" } as const;
 
-  function toggle(path: string) {
-    if (!collapsed.delete(path)) collapsed.add(path);
+  /** Collapsing a folder collapses everything below it too; expanding opens only the folder. */
+  function toggle(row: DirRow) {
+    if (collapsed.delete(row.path)) return;
+    collapsed.add(row.path);
+    for (const path of row.descendants) collapsed.add(path);
+  }
+
+  function menu(e: MouseEvent, path: string) {
+    e.preventDefault();
+    onmenu(path, e.clientX, e.clientY);
   }
 </script>
 
@@ -33,17 +49,35 @@
   <div class="rows">
     {#each rows as row (row.path + row.kind)}
       {#if row.kind === "dir"}
-        <button class="tw dir" type="button" aria-expanded={!collapsed.has(row.path)} onclick={() => toggle(row.path)}>
-          <Icon name={collapsed.has(row.path) ? "closed" : "open"} size={10} />{row.path}
+        <button
+          class="flat tw dir"
+          type="button"
+          title={row.path}
+          style:padding-left="calc(8px + {row.depth} * var(--w-indent))"
+          aria-expanded={!collapsed.has(row.path)}
+          onclick={() => toggle(row)}
+          oncontextmenu={(e) => menu(e, row.path)}
+        >
+          <span class="chev"><Icon name={collapsed.has(row.path) ? "closed" : "open"} size={10} /></span>
+          <span class="name">{row.name}</span>
         </button>
       {:else}
         <button
-          class="tw file"
-          class:sel={row.path === selected}
-          class:nested={row.path.includes("/")}
+          class="flat tw"
+          class:on={row.path === selected}
           type="button"
+          title={row.path}
+          style:padding-left="calc(8px + {row.depth} * var(--w-indent))"
           onclick={() => onselect(row)}
+          ondblclick={() => onopen(row)}
+          onkeydown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            onopen(row);
+          }}
+          oncontextmenu={(e) => menu(e, row.path)}
         >
+          <span class="chev"></span>
           {#if row.build}<span class="build" title="Build file"><Icon name="build" size={12} stroke={2} /></span>{/if}
           <span class="name">{row.name}</span>
           {#if row.mode}<span class="mono x" title="File mode changed">{row.mode}</span>{/if}
@@ -63,9 +97,11 @@
         class="tw excluded"
         title="{excluded.lines} changed lines and {excluded.items} other changes excluded by the review filter"
       >
-        <Icon name="closed" size={10} /><Icon name="filter" size={11} stroke={2} />Excluded<span class="mono x"
-          >{excluded.lines}</span
-        >
+        <span class="chev"><Icon name="closed" size={10} /></span><Icon
+          name="filter"
+          size={11}
+          stroke={2}
+        />Excluded<span class="mono x">{excluded.lines}</span>
       </div>
     {/if}
   </div>
@@ -73,10 +109,8 @@
 
 <style>
   nav {
-    flex: 0 1 var(--w-tree);
-    min-width: 230px;
-    background: var(--panel);
-    border-right: 1px solid var(--ln);
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -111,28 +145,21 @@
     gap: 6px;
     height: var(--h-row);
     width: 100%;
-    padding: 0 10px 0 8px;
-    border: 0;
-    background: transparent;
+    padding-right: 10px;
     text-align: left;
     white-space: nowrap;
     font-size: var(--fs-ctl);
-    cursor: pointer;
     box-sizing: border-box;
   }
   .dir {
     color: var(--tx2);
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
-  .file.nested {
-    padding-left: 26px;
-  }
-  .file:hover {
-    background: var(--hov);
-  }
-  .file.sel {
-    background: var(--sel);
+  /* A fixed column, so names line up whether or not a row has a chevron. */
+  .chev {
+    flex: none;
+    width: var(--w-chev);
+    display: inline-flex;
+    justify-content: center;
   }
   .name {
     flex: 1;
@@ -141,19 +168,22 @@
     text-overflow: ellipsis;
   }
   .x {
+    flex: none;
     font-size: 11px;
     color: var(--tx2);
   }
   .status {
+    flex: none;
     width: 10px;
     font-size: 11px;
   }
   .build {
+    flex: none;
     display: inline-flex;
     color: var(--warn);
   }
   .excluded {
+    padding-left: 8px;
     color: var(--tx3);
-    cursor: default;
   }
 </style>

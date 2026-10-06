@@ -93,8 +93,9 @@ pnpm test       # keybinding tests
 pnpm build
 ```
 
-Outside Tauri, pass the backend's address in the URL hash:
-`http://localhost:1420/#port=<port>&token=<token>`.
+Outside Tauri, pass the backend's address and the repository in the URL hash:
+`http://localhost:1420/#port=<port>&token=<token>&repo=<path>`. Without `repo`
+the start screen asks for a path.
 
 ## Tauri shell
 
@@ -107,8 +108,15 @@ On NixOS, the GTK and webkit libraries come from `shell.nix`:
 `nix-shell --run "cd ui && pnpm tauri dev"`.
 
 The shell spawns the backend (`VET_BACKEND`, default
-`target/{debug,release}/vet-mock`) and kills it on exit; the backend also exits
-when the shell dies (`--exit-on-stdin-close`).
+`target/{debug,release}/vet-backend`; `vet-mock` when `VET_BENCH=1`) and kills it
+on exit; the backend also exits when the shell dies (`--exit-on-stdin-close`).
+`pnpm backend` (run by `pnpm tauri dev`) builds it.
+
+The repository comes from the command line or `VET_REPO`:
+`pnpm tauri dev -- -- /path/to/repo`. Without one the start screen offers
+"Open repository…" (a native folder dialog) and the recent repositories, which
+the shell keeps in its app config directory. "Open repository…" is also in the
+header's project menu.
 
 ### WSL split
 
@@ -116,21 +124,27 @@ Shell on Windows, backend in WSL (§4.1). In WSL, with the repo on the Linux
 filesystem (not `/mnt/*`):
 
 ```sh
-cargo build -p vet-mock && cargo run -p vet-mock -- --prepare
+cargo build -p vet-backend
 ```
+
+(For the benchmark: `cargo build -p vet-mock && cargo run -p vet-mock -- --prepare`,
+and `VET_BENCH=1` with `VET_BACKEND` pointing at `vet-mock`.)
 
 Then in PowerShell on Windows, from `ui\` of a Windows checkout of the same
 revision (the protocol must match):
 
 ```powershell
 $env:VET_WSL_DISTRO = "NixOS"                                     # wsl -l -q
-$env:VET_BACKEND = "/home/nixos/tmp/vet/target/debug/vet-mock"    # Linux path inside WSL
+$env:VET_BACKEND = "/home/nixos/tmp/vet/target/debug/vet-backend" # Linux path inside WSL
 pnpm tauri dev
 ```
 
 The host runs the backend through a login shell (`wsl.exe --exec /bin/sh -lc`,
 so PATH includes e.g. NixOS's per-user profile) and connects over WSL2 localhost
-forwarding. With `VET_WSL_DISTRO` set, nothing is built on Windows. If the shell
+forwarding. In the split, pass the repository as a Linux path (`VET_REPO` or the
+argument) or pick it under `\\wsl.localhost\<distro>\…` in the folder dialog; the
+shell translates it and refuses folders outside that distro and Windows drives.
+With `VET_WSL_DISTRO` set, nothing is built on Windows. If the shell
 cannot connect, check that `localhostForwarding` is not disabled in
 `%UserProfile%\.wslconfig`.
 

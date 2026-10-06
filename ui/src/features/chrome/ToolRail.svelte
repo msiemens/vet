@@ -1,20 +1,51 @@
-<script lang="ts">
-  import IconButton from "../../lib/ui/IconButton.svelte";
+<script module lang="ts">
   import type { IconName } from "../../lib/ui/icons";
 
-  const WINDOWS: { id: string; icon: IconName; label: string }[] = [
-    { id: "queue", icon: "queue", label: "Queue" },
-    { id: "files", icon: "files", label: "Files" },
-    { id: "timeline", icon: "timeline", label: "Timeline" },
-    { id: "comments", icon: "comments", label: "Comments" },
-  ];
-
-  let { active, onselect }: { active: string; onselect?: (id: string) => void } = $props();
+  const TOOLS: Record<"left" | "right", { id: string; icon: IconName; label: string }[]> = {
+    left: [
+      { id: "queue", icon: "queue", label: "Queue" },
+      { id: "files", icon: "files", label: "Files" },
+      { id: "timeline", icon: "timeline", label: "Timeline" },
+      { id: "comments", icon: "comments", label: "Comments" },
+    ],
+    right: [{ id: "symbol", icon: "module", label: "Symbol" }],
+  };
 </script>
 
-<nav aria-label="Tool windows">
-  {#each WINDOWS as w (w.id)}
-    <IconButton icon={w.icon} label={w.label} active={w.id === active} onclick={() => onselect?.(w.id)} />
+<script lang="ts">
+  import IconButton from "../../lib/ui/IconButton.svelte";
+
+  let {
+    side = "left",
+    active = $bindable(),
+    open = $bindable(true),
+  }: {
+    side?: "left" | "right";
+    /** The selected tool; it stays selected while its sidebar is hidden. */
+    active?: string;
+    /** Whether the selected tool's sidebar is shown. */
+    open?: boolean;
+  } = $props();
+
+  /** The active tool's icon shows or hides its sidebar; any other icon selects that tool and shows it. */
+  function select(id: string) {
+    if (id === active) {
+      open = !open;
+    } else {
+      active = id;
+      open = true;
+    }
+  }
+</script>
+
+<nav class={side} aria-label={side === "left" ? "Tool windows" : "Right tool windows"}>
+  {#each TOOLS[side] as tool (tool.id)}
+    <IconButton
+      icon={tool.icon}
+      label={tool.label}
+      active={open && tool.id === active}
+      onclick={() => select(tool.id)}
+    />
   {/each}
 </nav>
 
@@ -29,6 +60,11 @@
     padding: 6px 0;
     box-sizing: border-box;
     background: var(--win);
+  }
+  .left {
     border-right: 1px solid var(--ln);
+  }
+  .right {
+    border-left: 1px solid var(--ln);
   }
 </style>

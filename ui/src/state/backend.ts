@@ -16,16 +16,37 @@ function expect<T extends Response["type"]>(response: Response, type: T): Extrac
 }
 
 export class Backend {
+  /** The open session, if any; one at a time. */
+  session?: number;
+
   private constructor(
     private conn: Connection,
-    readonly session: number,
+    /** The repository the host (or the URL hash) named, if any. */
+    readonly initialRepo: string | null,
   ) {}
 
-  /** Connects and opens a session on the backend's current repository. */
   static async connect(): Promise<Backend> {
     const conn = await Connection.open();
-    const opened = expect(await conn.request({ type: "openSession", repo: "." }), "session");
-    return new Backend(conn, opened.session);
+    return new Backend(conn, conn.repo);
+  }
+
+  /** Opens a session on `repo`; resolves with the repository root the backend settled on. */
+  async open(repo: string): Promise<string> {
+    const opened = expect(await this.conn.request({ type: "openSession", repo }), "session");
+    this.session = opened.session;
+    // The backend resolves a subfolder to its repository root and reports it.
+    return (opened as { root?: string }).root ?? repo;
+  }
+
+  async close(): Promise<void> {
+    const session = this.session;
+    this.session = undefined;
+    if (session !== undefined) await this.conn.request({ type: "closeSession", session });
+  }
+
+  private get sid(): number {
+    if (this.session === undefined) throw new Error("no repository is open");
+    return this.session;
   }
 
   onEvent(listener: (event: ServerEvent) => void): () => void {
@@ -33,32 +54,30 @@ export class Backend {
   }
 
   async manifest(): Promise<Manifest> {
-    return expect(await this.conn.request({ type: "manifest", session: this.session }), "manifest");
+    return expect(await this.conn.request({ type: "manifest", session: this.sid }), "manifest");
   }
 
   fileContents(path: string): Promise<FileContents> {
-    return this.conn
-      .request({ type: "fileContents", session: this.session, path })
-      .then((r) => expect(r, "fileContents"));
+    return this.conn.request({ type: "fileContents", session: this.sid, path }).then((r) => expect(r, "fileContents"));
   }
 
   /** `revision` is the manifest's; the backend rejects a stale one. */
   async setSeen(revision: number, path: string, hunks: number[], seen: boolean): Promise<ReviewUpdate> {
     return expect(
-      await this.conn.request({ type: "setSeen", session: this.session, revision, path, hunks, seen }),
+      await this.conn.request({ type: "setSeen", session: this.sid, revision, path, hunks, seen }),
       "review",
     );
   }
 
   async acknowledge(revision: number, path: string, kind: NonTextKind, acknowledged: boolean): Promise<ReviewUpdate> {
     return expect(
-      await this.conn.request({ type: "acknowledge", session: this.session, revision, path, kind, acknowledged }),
+      await this.conn.request({ type: "acknowledge", session: this.sid, revision, path, kind, acknowledged }),
       "review",
     );
   }
 
   async hover(path: string, line: number, col: number): Promise<string> {
-    const response = await this.conn.request({ type: "hover", session: this.session, path, line, col });
+    const response = await this.conn.request({ type: "hover", session: this.sid, path, line, col });
     return response.type === "hover" ? response.text : "";
   }
 }

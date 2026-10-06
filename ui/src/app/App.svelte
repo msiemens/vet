@@ -6,11 +6,18 @@
   import { FilterPopover } from "../features/filter";
   import { ReviewScreen, type ReviewController } from "../features/review";
   import { RunButton } from "../features/run";
+  import { StartScreen } from "../features/start";
   import { SymbolPanel } from "../features/symbols";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
+  import Toast from "../lib/ui/Toast.svelte";
   import { changeset } from "../state/changeset.svelte";
+  import { canPickFolder, repoName } from "../state/host";
+  import { recent } from "../state/recent.svelte";
 
   let controller = $state.raw<ReviewController>();
+  // The selected tool of each rail, and whether its sidebar is shown.
+  const left = $state({ tool: "files", open: true });
+  const right = $state({ tool: "symbol", open: true });
   let tools: DevTools;
   let devOpen = $state(false);
   let status = $state("");
@@ -33,6 +40,11 @@
   });
   const footer = $derived({ ...mockFooter, snapshot: `#${changeset.manifest?.revision ?? 0}` });
 
+  // The controller belongs to the repository's screen.
+  $effect(() => {
+    if (!changeset.repo) controller = undefined;
+  });
+
   onMount(() => {
     applyTheme(theme);
     void changeset.connect();
@@ -40,26 +52,59 @@
 
   function ready(c: ReviewController, firstPaintMs: number) {
     controller = c;
-    status = `${changeset.manifest?.name}: ${changeset.files.length} files, ${c.openView.totalHunks} hunks; first hunk painted in ${firstPaintMs.toFixed(0)} ms`;
+    status = `${changeset.manifest?.name}: ${changeset.files.length} files, ${c.changes.totalHunks} hunks; first hunk painted in ${firstPaintMs.toFixed(0)} ms`;
     void tools.runIfRequested();
   }
 </script>
 
-<Header info={mockHeader} {completion}>
-  {#snippet filter()}<FilterPopover {excluded} />{/snippet}
-  {#snippet run()}<RunButton />{/snippet}
-</Header>
+{#if changeset.backend && changeset.repo}
+  <Header
+    info={{ ...mockHeader, project: repoName(changeset.repo) }}
+    {completion}
+    onopenrepo={() => void changeset.pickRepo()}
+  >
+    {#snippet filter()}<FilterPopover {excluded} />{/snippet}
+    {#snippet run()}<RunButton />{/snippet}
+  </Header>
 
-<div class="body">
-  <ToolRail active="files" />
-  {#if changeset.backend}
-    <ReviewScreen backend={changeset.backend} hud={hudListeners} onready={ready}>
-      {#snippet side()}<SymbolPanel />{/snippet}
+  <div class="body">
+    <ToolRail bind:active={left.tool} bind:open={left.open} />
+    <ReviewScreen
+      backend={changeset.backend}
+      hud={hudListeners}
+      leftTool={left.tool}
+      leftOpen={left.open}
+      rightTool={right.tool}
+      rightOpen={right.open}
+      onready={ready}
+    >
+      {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel />{/if}{/snippet}
     </ReviewScreen>
-  {:else}
-    <p class="message">{changeset.status}</p>
-  {/if}
-</div>
+    <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />
+  </div>
+{:else if changeset.backend}
+  <div class="body">
+    <StartScreen
+      recent={recent.list}
+      failed={changeset.openError}
+      canPick={canPickFolder}
+      onpick={() => void changeset.pickRepo()}
+      onopen={(path) => void changeset.openRepo(path)}
+      onforget={(path) => {
+        void recent.forget(path);
+        changeset.openError = undefined;
+      }}
+    />
+  </div>
+{:else}
+  <p class="message">{changeset.status}</p>
+{/if}
+
+{#if changeset.notice}
+  {#key changeset.notice}
+    <Toast message={changeset.notice} onclose={() => (changeset.notice = undefined)} />
+  {/key}
+{/if}
 
 <DevTools
   bind:this={tools}
@@ -71,7 +116,7 @@
 />
 
 <StatusFooter info={footer}>
-  {#snippet end()}<button class="dev" type="button" aria-pressed={devOpen} onclick={() => (devOpen = !devOpen)}
+  {#snippet end()}<button class="flat dev" type="button" aria-pressed={devOpen} onclick={() => (devOpen = !devOpen)}
       >Dev</button
     >{/snippet}
 </StatusFooter>
@@ -83,18 +128,15 @@
     min-height: 0;
   }
   .message {
+    flex: 1;
     margin: 16px;
     color: var(--tx2);
   }
   .dev {
-    border: 0;
-    background: transparent;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: var(--radius);
     color: var(--tx3);
     font-size: 11px;
-    cursor: pointer;
-    padding: 0;
-  }
-  .dev[aria-pressed="true"] {
-    color: var(--acc);
   }
 </style>

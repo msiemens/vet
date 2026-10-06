@@ -2,15 +2,16 @@
 
 Svelte 5 + CodeMirror 6, organised by feature under `src/`.
 
-| Folder                    | Holds                                                                                                                                                                               |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app/`                    | `App.svelte`: composition only. Wires features together, applies the theme.                                                                                                         |
-| `lib/theme/`              | `tokens.css` (the only place colours and dimensions are defined, light and dark via `light-dark()`), `global.css`, `theme.ts`.                                                      |
-| `lib/ui/`                 | Domain-free primitives (Icon, IconButton, Chip, Meter, Popover, SplitButton). Check here before adding one.                                                                         |
-| `features/<domain>/`      | One folder per domain: components, its own logic, `mock.ts` for data the protocol does not carry yet, and an `index.ts` as the public entry.                                        |
-| `features/review/editor/` | CodeMirror integration: framework-agnostic TS, no Svelte imports.                                                                                                                   |
-| `state/`                  | `connection.ts` (transport), `backend.ts` (typed API over it) and view-model stores. No product logic (SPEC I5): review state and completion are rendered as the backend sent them. |
-| `dev/`                    | Spike benchmark, metrics, HUD and a change-card gallery on fixtures, behind the "Dev" toggle in the footer.                                                                         |
+| Folder                    | Holds                                                                                                                                                                                                                                                                                  |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app/`                    | `App.svelte`: composition only. Wires features together, applies the theme, owns which tool of each rail is selected and whether its sidebar is shown.                                                                                                                                 |
+| `lib/theme/`              | `tokens.css` (the only place colours and dimensions are defined, light and dark via `light-dark()`), `global.css` (control states, text selection), `theme.ts`.                                                                                                                        |
+| `lib/ui/`                 | Domain-free primitives: Icon, IconButton, Chip, Meter, Popover, Menu, SplitButton, SideBar, ContextMenu, Tab, Toast. Check here before adding one.                                                                                                                                     |
+| `features/<domain>/`      | One folder per domain: components, its own logic, `mock.ts` for data the protocol does not carry yet, and an `index.ts` as the public entry.                                                                                                                                           |
+| `features/review/`        | The review screen: file tree, tab strip and panes, `ReviewController` (builds a view per tab), `Tabs.svelte.ts` (open tabs), `tree.ts` (tree rows).                                                                                                                                    |
+| `features/review/editor/` | CodeMirror integration: framework-agnostic TS, no Svelte imports. `ChangesetView` (a column of file sections, virtualized), `mount` (one file's editor), `sectionLayout` (section heights from the manifest), hunk bars and review decorations.                                        |
+| `state/`                  | `connection.ts` (transport), `backend.ts` (typed API over it), `host.ts` (the Tauri host's folder dialog and recent-repository commands) and view-model stores (`changeset`, `recent`). No product logic (SPEC I5): review state and completion are rendered as the backend sent them. |
+| `dev/`                    | Spike benchmark, metrics, HUD and a change-card gallery on fixtures, behind the "Dev" toggle in the footer.                                                                                                                                                                            |
 
 `generated/` (ts-rs output of `vet-protocol`) stays at the top level; never edit it by hand.
 
@@ -24,9 +25,38 @@ Svelte 5 + CodeMirror 6, organised by feature under `src/`.
 - Events: `state/changeset.svelte.ts` subscribes to the backend's events (refetch on `snapshotSettled`, update one file on `reviewChanged`); views listen to the store, not the connection.
 - One component per file, named by what it is. No `utils`/`helpers`; put a function next to its user, or in `lib/` if shared.
 
+## Controls and selection
+
+Controls behave like a desktop app (JetBrains-like): `cursor: default`, no transitions or shadows, a flat background on hover and while pressed, a distinct toggled state, and a focus ring only for keyboard focus (`:focus-visible`). The colours are tokens (`--hov`, `--press`, `--tog`, `--tog-hov`, `--tog-press`, `--focus`); `global.css` applies them to two classes:
+
+- `.flat`: borderless (icon buttons, rows, menu items).
+- `.ctl`: bordered (chips, text buttons). `.ctl-group` joins several; the right part owns the one border between parts.
+
+Toggled is `aria-pressed="true"` or `.on`. A new control takes one of the classes; it does not restyle hover or pressed itself. Editor widgets (hunk bars) use the same classes.
+
+Chrome is not selectable (`user-select: none` on `body`). Content meant to be copied opts in with `.selectable`: CodeMirror editors and their tooltips, comment bodies (when they exist), the Symbol panel's code and signature, the dev results table. Paths are not selectable text; tree rows and file headers have a "Copy path" context menu.
+
+## Opening a repository
+
+The host passes the repository from its command line or `VET_REPO` (a plain browser: `#repo=`); `changeset.connect()` opens it. Without one, `features/start` shows the start screen (to be replaced by M1's queue home): "Open repository…" and the recent list. "Open repository…" in the header's project menu does the same from a open repository: `changeset.openRepo` closes the session (`CloseSession`) and opens the chosen one in the same window. The folder dialog and the recent list (a JSON file in the host's app config dir, most recent first, at most 10, backend-side path strings) are Tauri commands behind `state/host.ts`; in the WSL split the host turns `\\wsl.localhost\<distro>\…` into the Linux path and refuses anything else with a message. A failed open shows the backend's message on the start screen, with "Remove from recent" if the entry is in the list.
+
+## Layout
+
+`App` has a tool rail on each side (`chrome/ToolRail`, `side="left" | "right"`). Clicking the selected tool's icon hides its sidebar and keeps the tool selected, so a second click restores it; another icon selects that tool and shows its sidebar. Each sidebar is a `lib/ui/SideBar`: resizable by dragging its splitter (limits `--w-side-min`/`--w-side-max`), reset by double-click, with the width stored per viewer in `localStorage` (every access in try/catch).
+
+## Tabs
+
+The Changes tab is fixed and cannot be closed: the whole changeset as one column of file sections (hunks plus context, unchanged regions collapsed). A file tab shows one file's full diff, without collapsing. A file opens from the tree (double click or Enter; a single click only scrolls the Changes tab to the file), from a section header's file name, from a hunk bar's "Open file", and with F4 (Jump to Source, bound in `keymap.ts`) at the caret of the Changes stream, scrolled to that line; opening an open file focuses its tab. Both tab titles show `+N −M`, computed by `editor/lineDelta.ts` over one file or all files. `Tabs.open` is the display order, so drag-to-reorder only has to move an entry.
+
+Each tab's pane hands its scroll root to `ReviewController.attach`, which builds a `ChangesetView` in it. Panes stay laid out when inactive (`visibility: hidden`), so scroll positions and editors survive switching. A new manifest revision rebuilds every view and keeps the scroll position and the nearest hunk of the same file as current; file tabs of files that left the changeset close.
+
+In the Changes tab unchanged regions collapse with `@codemirror/merge`'s `collapseUnchanged` (3 lines of context) in both modes. `editor/sectionLayout.ts` mirrors that rule to estimate a section's height from the manifest. CodeMirror's own height is not a reliable measure (it estimates what is off screen), so expanding a region grows the section by exactly the lines the bar hid, compensating the scroll position, and unmounting a section resets it to the estimate (the benchmark reports the estimate error of mounted sections).
+
 ## Where things go
 
 - New screen: `features/<name>/` with an `index.ts`; mount it from `app/App.svelte`.
-- New backend request: a method in `state/backend.ts`, then a store field if the UI displays it.
+- New backend request: a method in `state/backend.ts`, then a store field if the UI displays it. A request that can fail in a way the viewer should hear about goes through the store, which sets `notice` (shown as a `Toast` in `App`).
 - Placeholder data: `features/<name>/mock.ts`, passed in as props so wiring is a one-line change.
 - Colour or size: `lib/theme/tokens.css` (and a `dev` check in both themes).
+- New sidebar tool: an entry in `chrome/ToolRail`, its content as a snippet from `App`.
+- New tab kind: an id in `Tabs.svelte.ts`, a pane in `ReviewScreen`, and a case in `ReviewController.build`.

@@ -80,6 +80,14 @@ export interface Handle {
   destroy(): void;
 }
 
+/** Unchanged regions collapse to a bar that expands on click: `margin` lines of context stay around each hunk, and a bar hides at least `minSize` lines. */
+export interface Collapse {
+  margin: number;
+  minSize: number;
+}
+
+const barText = EditorState.phrases.of({ "$ unchanged lines": "⋯ $ unchanged lines" });
+
 export function mountFile(
   host: HTMLElement,
   path: string,
@@ -87,6 +95,8 @@ export function mountFile(
   review: Review,
   mode: Mode,
   hooks: Hooks,
+  /** Absent: show the whole file. */
+  collapseUnchanged?: Collapse,
 ): Handle {
   const targetField = reviewField(
     sideConfig(loaded.hunks, "target", review.symbols, hooks),
@@ -99,6 +109,7 @@ export function mountFile(
     targetField,
     lineNumbers(),
     syntax(path),
+    barText,
     EditorView.domEventHandlers({ keydown: (event) => (hooks.keydown(event), false) }),
     hoverTooltip(
       async (view, pos) => {
@@ -131,6 +142,7 @@ export function mountFile(
           mergeControls: false,
           gutter: true,
           highlightChanges: true,
+          collapseUnchanged,
           diffConfig,
         }),
         deletedChunkStyle(targetField),
@@ -142,6 +154,7 @@ export function mountFile(
     reviewField(sideConfig(loaded.hunks, "base", review.symbols, null), [], review.states),
     lineNumbers(),
     syntax(path),
+    barText,
     EditorState.readOnly.of(true),
     EditorView.editable.of(false),
   ];
@@ -151,6 +164,7 @@ export function mountFile(
     b: { doc: loaded.target, extensions: target },
     gutter: true,
     highlightChanges: true,
+    collapseUnchanged,
     diffConfig,
   });
   return handle(merge.b, [merge.a, merge.b], targetField, () => merge.destroy());

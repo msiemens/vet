@@ -72,10 +72,10 @@
     <span class="vet-hunk-text">{TITLE[kind]}</span>
     <span class="path mono">{path}</span>
     <span class="spacer"></span>
-    <button class="vet-hunk-btn vet-seen-toggle" type="button" aria-label={label} title={label} onclick={ontoggle}
+    <button class="flat vet-hunk-btn vet-seen-toggle" type="button" aria-label={label} title={label} onclick={ontoggle}
       ><Icon name="check" size={13} stroke={2} /></button
     >
-    <button class="vet-hunk-btn" type="button" aria-label="Comment" title="Comment"
+    <button class="flat vet-hunk-btn" type="button" aria-label="Comment" title="Comment"
       ><Icon name="comments" size={13} stroke={1.8} /></button
     >
   </div>

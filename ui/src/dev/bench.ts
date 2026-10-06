@@ -1,5 +1,6 @@
-// Automated benchmark for SPEC §12.0: drives each scenario in both views and
-// returns one row per metric (p95 against the threshold).
+// Automated benchmark for SPEC §12.0: drives each scenario in both views, on the
+// Changes tab (the whole changeset as one column), and returns one row per metric
+// (p95 against the threshold).
 
 import type { ReviewController as Shell } from "../features/review";
 import { nextPaint } from "../lib/nextPaint";
@@ -42,7 +43,7 @@ async function refreshInterval(): Promise<number> {
 
 /** Returns the dropped-frame ratio in percent. */
 async function scrollThrough(shell: Shell, root: HTMLElement, seconds: number, interval: number): Promise<number> {
-  const view = shell.openView;
+  const view = shell.changes;
   root.scrollTop = 0;
   view.sync();
   await nextPaint();
@@ -117,7 +118,7 @@ function framePaint(): Promise<{ frameStart: number; done: number }> {
  */
 async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Promise<{ rows: Row[]; tag: string }> {
   const tag = `[${shell.mode}]`;
-  const view = shell.openView;
+  const view = shell.changes;
   const files = view.sections;
   const biggest = files.reduce((best, s, i) => (s.file.targetLines > files[best].file.targetLines ? i : best), 0);
   const big = await view.goToFile(biggest);
@@ -177,6 +178,38 @@ async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Pro
   };
 }
 
+/**
+ * The two operations the tab model added, both diagnostic: expanding a collapsed
+ * unchanged region in the Changes tab, and opening the biggest file in its own tab.
+ */
+async function expandAndOpen(shell: Shell, tag: string): Promise<Row[]> {
+  const view = shell.changes;
+  const files = view.sections;
+  const biggest = files.reduce((best, s, i) => (s.file.targetLines > files[best].file.targetLines ? i : best), 0);
+  const label = `${files[biggest].file.targetLines}-line file ${tag}`;
+  const rows: Row[] = [];
+
+  const bars = [...(await view.goToFile(biggest)).view.dom.querySelectorAll<HTMLElement>(".cm-collapsedLines")];
+  const expands: number[] = [];
+  for (const bar of bars.slice(0, 5)) expands.push(await time(() => bar.click()));
+  rows.push(
+    expands.length
+      ? info(`Expand collapsed region → painted, p95, ${label}`, percentile95(expands), "ms", expands.length)
+      : check(`Expand collapsed region ${tag}`, false, "no collapsed region in the biggest file"),
+  );
+
+  const path = files[biggest].file.path;
+  const opens: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    opens.push(await time(() => shell.openFile(path, 0)));
+    shell.tabs.close(`file:${path}`);
+    await nextPaint();
+  }
+  shell.tabs.active = "changes";
+  rows.push(info(`Open file tab → first hunk painted, p95, ${label}`, percentile95(opens), "ms", opens.length));
+  return rows;
+}
+
 async function mode(
   shell: Shell,
   root: HTMLElement,
@@ -193,7 +226,7 @@ async function mode(
   for (let i = 0; i < 10; i++) opens.push(await shell.open(false));
   rows.push(row(`Open changeset → first hunk painted ${tag}`, opens, "ms", 300));
   await shell.open(true);
-  const view = shell.openView;
+  const view = shell.changes;
   const files = view.sections;
 
   o.progress(`${tag} hunk navigation`);
@@ -207,6 +240,9 @@ async function mode(
 
   o.progress(`${tag} keystroke`);
   rows.push(...(await typeSamples(shell, o, interval)).rows);
+
+  o.progress(`${tag} expand and file tab`);
+  rows.push(...(await expandAndOpen(shell, tag)));
 
   o.progress(`${tag} toggle Seen`);
   const near1000 = files.reduce(
@@ -240,7 +276,7 @@ async function mode(
   rows.push(
     row(`Sustained scroll, dropped frames (refresh ${interval.toFixed(1)} ms) ${tag}`, [dropped], "%", 5, "<="),
   );
-  rows.push(info(`Layout drift, max px ${tag}`, view.maxDrift(), "px"));
+  rows.push(info(`Section height estimate vs measured, max error px ${tag}`, view.maxDrift(), "px"));
   rows.push(info(`Merge chunks ≠ backend hunks, mounted files ${tag}`, view.chunkMismatches(), "files"));
 
   const [heap, rss] = [heapMb(), await o.memoryMb()];
@@ -271,7 +307,7 @@ async function mode(
 
 /** Hovers real lines with synthetic mouse moves and times query → painted tooltip. */
 async function hoverToTooltip(shell: Shell, o: BenchOptions): Promise<number[]> {
-  const editor = (await shell.openView.goToFile(0)).view;
+  const editor = (await shell.changes.goToFile(0)).view;
   const lines = [...editor.contentDOM.querySelectorAll<HTMLElement>(".cm-line")].filter((l) => l.textContent);
   shell.tooltipLatencies.length = 0;
   const move = (x: number, y: number) =>
@@ -289,6 +325,7 @@ async function hoverToTooltip(shell: Shell, o: BenchOptions): Promise<number[]> 
 }
 
 export async function runBenchmark(shell: Shell, root: HTMLElement, o: BenchOptions): Promise<Row[]> {
+  shell.tabs.active = "changes"; // the benchmark measures the Changes tab
   const interval = await refreshInterval();
   const rows: Row[] = [];
   rows.push(...(await mode(shell, root, "unified", o, interval)));

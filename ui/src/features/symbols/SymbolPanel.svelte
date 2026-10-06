@@ -43,8 +43,8 @@
 
 {#snippet signature()}
   <div class="block">
-    <code class="mono">{symbol.signature}</code>
-    {#if symbol.doc}<span class="doc">{symbol.doc}</span>{/if}
+    <code class="mono selectable">{symbol.signature}</code>
+    {#if symbol.doc}<span class="doc selectable">{symbol.doc}</span>{/if}
   </div>
 {/snippet}
 
@@ -80,8 +80,8 @@
 
 <aside aria-label="Symbol">
   <div class="head">
-    <span class="mono name">{symbol.name}</span>
-    <span class="mono qualified">{symbol.qualified}</span>
+    <span class="mono name selectable">{symbol.name}</span>
+    <span class="mono qualified selectable">{symbol.qualified}</span>
   </div>
   {@render section("Signature", undefined, false, signature)}
   {@render section("Callers", symbol.callers.length, true, callers)}
@@ -93,10 +93,8 @@
 
 <style>
   aside {
-    flex: 0 1 var(--w-symbols);
-    min-width: 280px;
-    background: var(--panel);
-    border-left: 1px solid var(--ln);
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     overflow: hidden auto;

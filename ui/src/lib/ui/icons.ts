@@ -24,6 +24,7 @@ export const ICONS = {
   lock: '<rect x="6" y="11" width="12" height="9" rx="2"/><path d="M9 11V8a3 3 0 016 0v3"/>',
   link: '<path d="M9 15l6-6M7 11l-2 2a3.5 3.5 0 005 5l2-2M17 13l2-2a3.5 3.5 0 00-5-5l-2 2"/>',
   module: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12L4 7.5M12 12v9"/>',
+  close: '<path d="M6 6l12 12M18 6L6 18"/>',
   key: '<circle cx="8" cy="15" r="3.5"/><path d="M11 12.5L20 4M16 8l2.5 2.5"/>',
 } as const;
 export const SOLID: ReadonlySet<string> = new Set(["play", "open", "closed", "more"]);

@@ -1,29 +1,37 @@
-// The whole changeset as one scrolling column of file sections. Section heights
-// are known up front (from the manifest), so scrolling never reflows; an editor
-// is mounted only for sections near the viewport.
+// A scrolling column of file sections: the whole changeset (the Changes tab) or one
+// file (a file tab). Section heights are estimated up front from the manifest, so
+// scrolling does not reflow, and corrected once the editor is mounted. An editor is
+// mounted only for sections near the viewport.
 
 import { EditorView } from "@codemirror/view";
 import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
-import type { Manifest } from "../../../generated/Manifest";
-import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
 import type { Backend } from "../../../state/backend";
 import type { BarActions } from "./hunkBar";
+import { lineDelta } from "./lineDelta";
 import { type Handle, type Hooks, type Loaded, type Mode, mountFile } from "./mount";
 import { setCurrent, setStates } from "./reviewState";
-
-/** Row heights come from the theme tokens, which are the only place they are defined. */
-interface Metrics {
-  line: number;
-  hunk: number;
-  header: number;
-}
+import { COLLAPSE, type Metrics, sectionHeight } from "./sectionLayout";
 
 const px = (style: CSSStyleDeclaration, name: string) => parseFloat(style.getPropertyValue(name));
 
 export interface Listeners {
-  /** The backend returned a file's new review state; the owner of the state applies it and calls `applyReview`. */
-  reviewed(update: ReviewUpdate): void;
+  /**
+   * Asks the owner of the review state to mark hunks seen or unseen at `revision`.
+   * Its new state comes back through `applyReview`.
+   */
+  setSeen(revision: number, path: string, hunks: number[], seen: boolean): Promise<void>;
+  /** Context menu on a file header. */
+  fileMenu(path: string, x: number, y: number): void;
+  /** Absent in a view of a single file, which already is the file's tab. */
+  openFile?(path: string, line: number): void;
+}
+
+/** A view's current hunk, as a position that survives a new revision. */
+export interface HunkAnchor {
+  path: string;
+  /** Target line where the hunk starts. */
+  line: number;
 }
 
 interface Section {
@@ -52,17 +60,26 @@ export class ChangesetView {
 
   constructor(
     private root: HTMLElement,
-    readonly manifest: Manifest,
+    /** The manifest revision the files are of. */
+    readonly revision: number,
+    files: FileChange[],
     private backend: Backend,
     public mode: Mode,
     private hooks: Omit<Hooks, keyof BarActions>,
     private listeners: Listeners,
+    /** Collapse unchanged regions (the Changes tab); otherwise the full file is shown. */
+    private collapse: boolean,
     symbolsOf: (path: string, hunks: number) => (string | undefined)[],
   ) {
     const style = getComputedStyle(root);
-    this.m = { line: px(style, "--h-line"), hunk: px(style, "--h-hunk"), header: px(style, "--h-section") };
+    this.m = {
+      line: px(style, "--h-line"),
+      hunk: px(style, "--h-hunk"),
+      header: px(style, "--h-section"),
+      collapsed: px(style, "--h-collapsed"),
+    };
     let hunks = 0;
-    for (const file of manifest.files) {
+    for (const file of files) {
       this.hunkStart.push(hunks);
       hunks += file.hunks.length;
       const el = document.createElement("section");
@@ -71,18 +88,28 @@ export class ChangesetView {
       const title = document.createElement("span");
       title.className = "path";
       title.textContent = file.path;
-      const [added, removed] = file.hunks.reduce(([a, r], h) => [a + h.targetLen, r + h.baseLen], [0, 0]);
+      if (listeners.openFile) {
+        title.classList.add("link");
+        title.title = "Open file";
+        title.addEventListener("click", () => listeners.openFile?.(file.path, file.hunks[0]?.targetStart ?? 0));
+      }
+      const { added, removed } = lineDelta([file]);
       const delta = document.createElement("span");
       delta.className = "delta mono";
       delta.innerHTML = `<span class="add">+${added}</span> <span class="del">−${removed}</span>`;
       const count = document.createElement("span");
       count.className = "count";
       const button = document.createElement("button");
+      button.className = "ctl";
       button.textContent = "Seen";
       button.title = "Toggle all hunks of this file seen (Ctrl-Alt-S)";
       const index = this.sections.length;
       button.addEventListener("click", () => void this.toggleSeen(index));
       header.append(title, delta, count, button);
+      header.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        this.listeners.fileMenu(file.path, e.clientX, e.clientY);
+      });
       const body = document.createElement("div");
       body.className = "body";
       el.append(header, body);
@@ -91,6 +118,7 @@ export class ChangesetView {
         comment: () => {
           // Comments are not wired up yet.
         },
+        openFile: listeners.openFile && ((h) => listeners.openFile?.(file.path, file.hunks[h].targetStart)),
       };
       this.sections.push({
         file,
@@ -108,10 +136,12 @@ export class ChangesetView {
     this.root.replaceChildren(...this.sections.map((s) => s.el));
     this.layout();
     this.root.addEventListener("scroll", this.onScroll, { passive: true });
+    this.root.addEventListener("click", this.onExpand, true);
   }
 
   destroy() {
     this.root.removeEventListener("scroll", this.onScroll);
+    this.root.removeEventListener("click", this.onExpand, true);
     for (const fi of this.mounted) this.sections[fi].handle?.destroy();
     this.mounted.clear();
     this.root.replaceChildren();
@@ -122,25 +152,46 @@ export class ChangesetView {
     return last ? last.top + last.height : 0;
   }
 
-  private sectionHeight(s: Section): number {
-    const { file } = s;
-    // Unified shows every deleted line as an extra row; side by side pads the shorter side of each hunk.
-    const extra = file.hunks.reduce(
-      (rows, h) => rows + (this.mode === "unified" ? h.baseLen : Math.max(0, h.baseLen - h.targetLen)),
-      0,
-    );
-    return this.m.header + (file.targetLines + extra) * this.m.line + file.hunks.length * this.m.hunk;
-  }
-
+  /** Estimates every section's height; the section's own bottom border is one more pixel. */
   private layout() {
     let top = 0;
     for (const s of this.sections) {
       s.top = top;
-      s.height = this.sectionHeight(s);
+      s.height = this.estimate(s);
       s.el.style.height = `${s.height}px`;
       top += s.height;
       this.updateCount(s);
     }
+  }
+
+  /** Sets a section's height; sections above the viewport shift what is shown, so the scroll position follows. */
+  private resize(s: Section, height: number) {
+    const delta = height - s.height;
+    if (Math.abs(delta) < 0.5) return;
+    const above = s.top + s.height <= this.root.scrollTop;
+    s.height = height;
+    s.el.style.height = `${height}px`;
+    let top = s.top + height;
+    for (const next of this.sections.slice(this.sections.indexOf(s) + 1)) {
+      next.top = top;
+      top += next.height;
+    }
+    if (above) this.root.scrollTop += delta;
+  }
+
+  /**
+   * Expanding a collapsed region reveals the lines the bar stood for, which is exact; the
+   * editor's own height is not a reliable measure, as CodeMirror estimates what is off screen.
+   */
+  private onExpand = (e: MouseEvent) => {
+    const bar = e.target instanceof Element ? e.target.closest(".cm-collapsedLines") : null;
+    const lines = Number(/\d+/.exec(bar?.textContent ?? "")?.[0]);
+    const s = this.sections.find((s) => s.el.contains(bar));
+    if (s && lines) this.resize(s, s.height + lines * this.m.line - this.m.collapsed);
+  };
+
+  private estimate(s: Section): number {
+    return sectionHeight(s.file, this.mode, this.m, this.collapse) + 1;
   }
 
   private updateCount(s: Section) {
@@ -148,21 +199,25 @@ export class ChangesetView {
     s.count.textContent = `${hunks.filter((h) => h === "seen").length}/${hunks.length} hunks seen`;
   }
 
+  /** Drops the editor; the regions it had expanded are collapsed again when it is mounted anew. */
+  private unmount(s: Section) {
+    s.handle?.destroy();
+    s.handle = undefined;
+    s.body.textContent = "";
+    this.resize(s, this.estimate(s));
+  }
+
   setMode(mode: Mode) {
     const fi = this.indexAt(this.root.scrollTop);
-    for (const i of this.mounted) this.sections[i].handle?.destroy();
+    for (const i of this.mounted) this.unmount(this.sections[i]);
     this.mounted.clear();
-    for (const s of this.sections) {
-      s.handle = undefined;
-      s.body.textContent = "";
-    }
     this.mode = mode;
     this.layout();
-    this.root.scrollTop = this.sections[fi].top;
+    if (this.sections.length) this.root.scrollTop = this.sections[fi].top;
     this.sync();
   }
 
-  /** Index of the file with this path, if it is in the changeset. */
+  /** Index of the file with this path, if it is in the view. */
   indexOf(path: string): number {
     return this.sections.findIndex((s) => s.file.path === path);
   }
@@ -181,7 +236,7 @@ export class ChangesetView {
   load(fi: number): Promise<Loaded> {
     const s = this.sections[fi];
     s.loading ??= this.backend.fileContents(s.file.path).then((r) => {
-      if (r.revision !== this.manifest.revision) throw new Error("stale revision");
+      if (r.revision !== this.revision) throw new Error("stale revision");
       s.loaded = { base: r.base ?? "", target: r.target ?? "", hunks: s.file.hunks, marks: r.marks };
       this.sync();
       return s.loaded;
@@ -204,9 +259,7 @@ export class ChangesetView {
     const far = [this.indexAt(Math.max(0, top - 3 * h)), this.indexAt(top + 4 * h)];
     for (const fi of [...this.mounted]) {
       if (fi < far[0] || fi > far[1]) {
-        this.sections[fi].handle?.destroy();
-        this.sections[fi].handle = undefined;
-        this.sections[fi].body.textContent = "";
+        this.unmount(this.sections[fi]);
         this.mounted.delete(fi);
       }
     }
@@ -220,6 +273,7 @@ export class ChangesetView {
         { states: s.review.hunks, symbols: s.symbols },
         this.mode,
         s.hooks,
+        this.collapse ? COLLAPSE : undefined,
       );
       this.mounted.add(fi);
       if (this.current >= this.hunkStart[fi] && this.current < this.hunkStart[fi] + s.file.hunks.length)
@@ -254,7 +308,6 @@ export class ChangesetView {
   async goToHunk(global: number): Promise<void> {
     global = Math.max(0, Math.min(this.totalHunks - 1, global));
     const [fi, hi] = this.locate(global);
-    const s = this.sections[fi];
     const loaded = await this.load(fi);
     const hunk = loaded.hunks[hi];
 
@@ -264,33 +317,69 @@ export class ChangesetView {
     }
     this.current = global;
 
-    // The row estimate scrolls close enough to mount the editor; CodeMirror then scrolls exactly.
-    let row = hunk.targetStart;
-    for (const h of loaded.hunks.slice(0, hi))
-      row += this.mode === "unified" ? h.baseLen : Math.max(0, h.baseLen - h.targetLen);
-    this.root.scrollTop = Math.max(
-      0,
-      s.top + this.m.header + row * this.m.line + (hi + 1) * this.m.hunk - this.root.clientHeight / 2,
-    );
+    const handle = this.reveal(fi, hunk.targetStart);
+    handle.dispatchAll(setCurrent.of(hi));
+  }
+
+  /** Scrolls to a 0-based target line of file `fi` and puts the caret there. */
+  async goToLine(fi: number, line: number): Promise<void> {
+    await this.load(fi);
+    this.reveal(fi, line);
+  }
+
+  /** The section's top mounts its editor; CodeMirror then scrolls to the line exactly. */
+  private reveal(fi: number, line: number): Handle {
+    this.root.scrollTop = this.sections[fi].top;
     this.sync();
     const handle = this.mountedHandle(fi);
     const doc = handle.view.state.doc;
-    const pos = doc.line(Math.min(hunk.targetStart + 1, doc.lines)).from;
-    handle.dispatchAll(setCurrent.of(hi));
+    const pos = doc.line(Math.min(line + 1, doc.lines)).from;
     handle.view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: "center" }) });
     this.sync();
+    return handle;
+  }
+
+  /** The file and 0-based target line of the focused editor's caret. */
+  caret(): { path: string; line: number } | undefined {
+    for (const fi of this.mounted) {
+      const { view } = this.sections[fi].handle ?? {};
+      if (view?.hasFocus)
+        return {
+          path: this.sections[fi].file.path,
+          line: view.state.doc.lineAt(view.state.selection.main.head).number - 1,
+        };
+    }
+    return undefined;
+  }
+
+  /** Where the current hunk is, so a view of a newer revision can keep it. */
+  currentAnchor(): HunkAnchor | undefined {
+    if (this.current < 0) return undefined;
+    const [fi, hi] = this.locate(this.current);
+    const file = this.sections[fi].file;
+    return { path: file.path, line: file.hunks[hi]?.targetStart ?? 0 };
+  }
+
+  /** Makes the hunk of the anchor's file nearest to its position the current one, without scrolling. */
+  keepCurrent(anchor: HunkAnchor | undefined) {
+    const fi = anchor ? this.indexOf(anchor.path) : -1;
+    if (!anchor || fi < 0) return;
+    const hunks = this.sections[fi].file.hunks;
+    let nearest = -1;
+    hunks.forEach((h, i) => {
+      if (nearest < 0 || Math.abs(h.targetStart - anchor.line) < Math.abs(hunks[nearest].targetStart - anchor.line))
+        nearest = i;
+    });
+    if (nearest >= 0) this.current = this.hunkStart[fi] + nearest;
   }
 
   /** The latest `toggleSeen`, so callers (the benchmark) can wait for the repaint. */
   pendingToggle: Promise<void> = Promise.resolve();
 
-  /** Asks the backend to mark the hunks seen or unseen; the returned state reaches the view through `applyReview` (I5: the view keeps none of its own). */
+  /** Asks for the hunks to be marked seen or unseen; the returned state reaches the view through `applyReview` (I5: the view keeps none of its own). */
   private setSeen(fi: number, hunks: number[], value: boolean): Promise<void> {
     const { file } = this.sections[fi];
-    const request = this.backend
-      .setSeen(this.manifest.revision, file.path, hunks, value)
-      .then((update) => this.listeners.reviewed(update));
-    return (this.pendingToggle = request);
+    return (this.pendingToggle = this.listeners.setSeen(this.revision, file.path, hunks, value));
   }
 
   /** Renders a file's review state. */
@@ -331,12 +420,12 @@ export class ChangesetView {
     return n;
   }
 
-  /** Largest difference between a mounted section's real height and its manifest-based height. */
+  /** Largest difference between a mounted section's real height and its estimate; expanded regions are accounted for. */
   maxDrift(): number {
     let drift = 0;
     for (const fi of this.mounted) {
-      const body = this.sections[fi].body;
-      drift = Math.max(drift, Math.abs(body.scrollHeight + this.m.header - this.sections[fi].height));
+      const s = this.sections[fi];
+      drift = Math.max(drift, Math.abs(s.body.scrollHeight + this.m.header + 1 - s.height));
     }
     return drift;
   }
