@@ -82,7 +82,7 @@
 </aside>
 
 <style>
-  aside { flex: 0 1 var(--w-symbols); min-width: 280px; background: var(--panel); border-left: 1px solid var(--ln); display: flex; flex-direction: column; overflow-y: auto; }
+  aside { flex: 0 1 var(--w-symbols); min-width: 280px; background: var(--panel); border-left: 1px solid var(--ln); display: flex; flex-direction: column; overflow: hidden auto; }
   .head { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--ln2); }
   .name { font-size: var(--fs-ctl); font-weight: 500; }
   .qualified { font-size: var(--fs-mono-s); color: var(--tx2); }

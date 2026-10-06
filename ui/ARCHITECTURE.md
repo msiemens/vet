@@ -10,7 +10,7 @@ Svelte 5 + CodeMirror 6, organised by feature under `src/`.
 | `features/<domain>/` | One folder per domain: components, its own logic, `mock.ts` for data the protocol does not carry yet, and an `index.ts` as the public entry. |
 | `features/review/editor/` | CodeMirror integration: framework-agnostic TS, no Svelte imports. |
 | `state/` | View-model stores and `backend.ts`, the typed API over `connection.ts`. No product logic (SPEC I5). |
-| `dev/` | Spike benchmark, metrics and HUD, shown behind the "Dev" toggle in the footer. |
+| `dev/` | Spike benchmark, metrics, HUD and a change-card gallery on fixtures, behind the "Dev" toggle in the footer. |
 
 `connection.ts` and `generated/` stay at the top level until the protocol work lands.
 
@@ -20,6 +20,8 @@ Svelte 5 + CodeMirror 6, organised by feature under `src/`.
 - A feature imports another only through its `index.ts`. `app` composes features through snippets and props.
 - Components get data from props or stores. Only `state/backend.ts` talks to the connection.
 - Components use tokens (`var(--seen)`, `var(--h-row)`), never literal colours or sizes. The editor reads row heights from the tokens at construction.
+- `app/layering.test.ts` enforces these rules on the import graph (`pnpm test`).
+- Events: `state/changeset.svelte.ts` subscribes to the backend's events (refetch on `snapshotSettled`, update one file on `reviewChanged`); views listen to the store, not the connection.
 - One component per file, named by what it is. No `utils`/`helpers`; put a function next to its user, or in `lib/` if shared.
 
 ## Where things go

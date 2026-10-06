@@ -3,9 +3,11 @@
 // is mounted only for sections near the viewport.
 
 import { EditorView } from "@codemirror/view";
+import type { FileChange } from "../../../generated/FileChange";
+import type { FileReview } from "../../../generated/FileReview";
+import type { Manifest } from "../../../generated/Manifest";
 import type { Backend } from "../../../state/backend";
-import type { FileState } from "../../../state/changeset.svelte";
-import type { BarActions, HunkState } from "./hunkBar";
+import type { BarActions } from "./hunkBar";
 import { type Handle, type Hooks, type Loaded, type Mode, mountFile } from "./mount";
 import { setCurrent, setStates } from "./reviewState";
 
@@ -19,14 +21,13 @@ interface Metrics {
 const px = (style: CSSStyleDeclaration, name: string) => parseFloat(style.getPropertyValue(name));
 
 export interface Listeners {
-  /** A file's seen state changed on the backend's say-so. */
-  seen(path: string, seen: boolean[], oldBase: boolean[]): void;
+  /** The backend returned a file's new review state; the owner of the state applies it and calls `applyReview`. */
+  reviewed(path: string, review: FileReview): void;
 }
 
 interface Section {
-  file: FileState;
-  seen: boolean[];
-  oldBase: boolean[];
+  file: FileChange;
+  review: FileReview;
   symbols: (string | undefined)[];
   el: HTMLElement;
   body: HTMLElement;
@@ -50,7 +51,7 @@ export class ChangesetView {
 
   constructor(
     private root: HTMLElement,
-    files: FileState[],
+    readonly manifest: Manifest,
     private backend: Backend,
     public mode: Mode,
     private hooks: Omit<Hooks, keyof BarActions>,
@@ -60,17 +61,16 @@ export class ChangesetView {
     const style = getComputedStyle(root);
     this.m = { line: px(style, "--h-line"), hunk: px(style, "--h-hunk"), header: px(style, "--h-section") };
     let hunks = 0;
-    for (const file of files) {
-      const { entry } = file;
+    for (const file of manifest.files) {
       this.hunkStart.push(hunks);
-      hunks += entry.hunks.length;
+      hunks += file.hunks.length;
       const el = document.createElement("section");
       el.className = "file";
       const header = document.createElement("header");
       const title = document.createElement("span");
       title.className = "path";
-      title.textContent = entry.path;
-      const [added, removed] = entry.hunks.reduce(([a, r], [base, target]) => [a + target, r + base], [0, 0]);
+      title.textContent = file.path;
+      const [added, removed] = file.hunks.reduce(([a, r], h) => [a + h.targetLen, r + h.baseLen], [0, 0]);
       const delta = document.createElement("span");
       delta.className = "delta mono";
       delta.innerHTML = `<span class="add">+${added}</span> <span class="del">−${removed}</span>`;
@@ -88,9 +88,8 @@ export class ChangesetView {
       const actions: BarActions = { toggleSeen: (h) => void this.toggleHunk(index, h), comment: () => {} };
       this.sections.push({
         file,
-        seen: [...file.seen],
-        oldBase: [...file.oldBase],
-        symbols: symbolsOf(entry.path, entry.hunks.length),
+        review: file.review,
+        symbols: symbolsOf(file.path, file.hunks.length),
         el,
         body,
         count,
@@ -114,14 +113,14 @@ export class ChangesetView {
 
   get totalHeight(): number {
     const last = this.sections[this.sections.length - 1];
-    return last.top + last.height;
+    return last ? last.top + last.height : 0;
   }
 
   private sectionHeight(s: Section): number {
-    const { entry } = s.file;
+    const { file } = s;
     // Unified shows every deleted line as an extra row; side by side pads the shorter side of each hunk.
-    const extra = entry.hunks.reduce((rows, [base, target]) => rows + (this.mode === "unified" ? base : Math.max(0, base - target)), 0);
-    return this.m.header + (entry.targetLines + extra) * this.m.line + entry.hunks.length * this.m.hunk;
+    const extra = file.hunks.reduce((rows, h) => rows + (this.mode === "unified" ? h.baseLen : Math.max(0, h.baseLen - h.targetLen)), 0);
+    return this.m.header + (file.targetLines + extra) * this.m.line + file.hunks.length * this.m.hunk;
   }
 
   private layout() {
@@ -136,11 +135,8 @@ export class ChangesetView {
   }
 
   private updateCount(s: Section) {
-    s.count.textContent = `${s.seen.filter(Boolean).length}/${s.seen.length} hunks seen`;
-  }
-
-  private states(s: Section): HunkState[] {
-    return s.seen.map((seen, i) => (s.oldBase[i] ? "oldBase" : seen ? "seen" : "unseen"));
+    const hunks = s.review.hunks;
+    s.count.textContent = `${hunks.filter((h) => h === "seen").length}/${hunks.length} hunks seen`;
   }
 
   setMode(mode: Mode) {
@@ -152,6 +148,11 @@ export class ChangesetView {
     this.layout();
     this.root.scrollTop = this.sections[fi].top;
     this.sync();
+  }
+
+  /** Index of the file with this path, if it is in the changeset. */
+  indexOf(path: string): number {
+    return this.sections.findIndex((s) => s.file.path === path);
   }
 
   private indexAt(y: number): number {
@@ -167,10 +168,11 @@ export class ChangesetView {
 
   load(fi: number): Promise<Loaded> {
     const s = this.sections[fi];
-    s.loading ??= this.backend.getFile(s.file.entry.path).then((r) => {
-      s.loaded = r;
+    s.loading ??= this.backend.fileContents(s.file.path).then((r) => {
+      if (r.revision !== this.manifest.revision) throw new Error("stale revision");
+      s.loaded = { base: r.base ?? "", target: r.target ?? "", hunks: s.file.hunks, marks: r.marks };
       this.sync();
-      return r;
+      return s.loaded;
     });
     return s.loading;
   }
@@ -199,9 +201,9 @@ export class ChangesetView {
     for (let fi = near[0]; fi <= near[1]; fi++) {
       const s = this.sections[fi];
       if (s.handle || !s.loaded) continue;
-      s.handle = mountFile(s.body, s.file.entry.path, s.loaded, { states: this.states(s), symbols: s.symbols }, this.mode, s.hooks);
+      s.handle = mountFile(s.body, s.file.path, s.loaded, { states: s.review.hunks, symbols: s.symbols }, this.mode, s.hooks);
       this.mounted.add(fi);
-      if (this.current >= this.hunkStart[fi] && this.current < this.hunkStart[fi] + s.file.entry.hunks.length) s.handle.dispatchAll(setCurrent.of(this.current - this.hunkStart[fi]));
+      if (this.current >= this.hunkStart[fi] && this.current < this.hunkStart[fi] + s.file.hunks.length) s.handle.dispatchAll(setCurrent.of(this.current - this.hunkStart[fi]));
     }
   }
 
@@ -217,7 +219,7 @@ export class ChangesetView {
   }
 
   private locate(global: number): [number, number] {
-    let fi = this.hunkStart.findIndex((start, i) => start + this.sections[i].file.entry.hunks.length > global);
+    let fi = this.hunkStart.findIndex((start, i) => start + this.sections[i].file.hunks.length > global);
     if (fi < 0) fi = this.sections.length - 1;
     return [fi, global - this.hunkStart[fi]];
   }
@@ -255,32 +257,31 @@ export class ChangesetView {
   /** The latest `toggleSeen`, so callers (the benchmark) can wait for the repaint. */
   pendingToggle: Promise<void> = Promise.resolve();
 
-  /**
-   * Asks the backend to mark the hunks seen, or unseen, and renders the state it
-   * returns (I5: the shell keeps none of its own). Re-confirming clears the old-base mark.
-   */
+  /** Asks the backend to mark the hunks seen or unseen; the returned state reaches the view through `applyReview` (I5: the view keeps none of its own). */
   private setSeen(fi: number, hunks: number[], value: boolean): Promise<void> {
-    const s = this.sections[fi];
-    const request = this.backend.setSeen(s.file.entry.path, hunks, value).then((seen) => {
-      s.seen = seen;
-      for (const h of hunks) s.oldBase[h] = false;
-      s.handle?.dispatchAll(setStates.of(this.states(s)));
-      this.updateCount(s);
-      this.listeners.seen(s.file.entry.path, s.seen, s.oldBase);
-    });
+    const { file } = this.sections[fi];
+    const request = this.backend.setSeen(this.manifest.revision, file.path, hunks, value).then((review) => this.listeners.reviewed(file.path, review));
     return (this.pendingToggle = request);
+  }
+
+  /** Renders a file's review state. */
+  applyReview(path: string, review: FileReview) {
+    const s = this.sections.find((s) => s.file.path === path);
+    if (!s) return;
+    s.review = review;
+    s.handle?.dispatchAll(setStates.of(review.hunks));
+    this.updateCount(s);
   }
 
   /** Marks all hunks of file `fi` seen, or unseen if they all already are. */
   toggleSeen(fi: number): Promise<void> {
-    const s = this.sections[fi];
-    return this.setSeen(fi, s.seen.map((_, i) => i), !s.seen.every(Boolean));
+    const { review } = this.sections[fi];
+    return this.setSeen(fi, review.hunks.map((_, i) => i), !review.hunks.every((h) => h === "seen"));
   }
 
   /** Unseen → seen, seen → unseen, seen against an old base → re-confirmed. */
   toggleHunk(fi: number, hi: number): Promise<void> {
-    const s = this.sections[fi];
-    return this.setSeen(fi, [hi], !s.seen[hi] || s.oldBase[hi]);
+    return this.setSeen(fi, [hi], this.sections[fi].review.hunks[hi] !== "seen");
   }
 
   currentFile(): number {
@@ -292,7 +293,7 @@ export class ChangesetView {
     let n = 0;
     for (const fi of this.mounted) {
       const s = this.sections[fi];
-      if (s.handle && s.handle.chunkCount() !== s.file.entry.hunks.length) n++;
+      if (s.handle && s.handle.chunkCount() !== s.file.hunks.length) n++;
     }
     return n;
   }

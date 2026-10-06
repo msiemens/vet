@@ -10,15 +10,15 @@
 <script lang="ts">
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
-  import { mockExcludedCount, mockFilter } from "./mock";
+  import { mockFilter } from "./mock";
 
   let {
     filter = $bindable(mockFilter),
-    excludedCount = mockExcludedCount,
+    excludedCount,
   }: {
     filter?: ReviewFilter;
     /** Files the filter currently excludes; the backend computes it. */
-    excludedCount?: number;
+    excludedCount: number;
   } = $props();
 
   let open = $state(false);

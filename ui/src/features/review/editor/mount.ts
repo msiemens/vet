@@ -8,7 +8,8 @@ import { minimalSetup } from "codemirror";
 import type { Hunk } from "../../../generated/Hunk";
 import type { Mark } from "../../../generated/Mark";
 import { nextPaint } from "../../../lib/nextPaint";
-import type { BarActions, HunkState } from "./hunkBar";
+import type { HunkState } from "../../../generated/HunkState";
+import type { BarActions } from "./hunkBar";
 import { syntax } from "./language";
 import { type ReviewState, deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
 

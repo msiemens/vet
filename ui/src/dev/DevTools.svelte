@@ -2,6 +2,7 @@
   import type { ReviewController } from "../features/review";
   import type { Theme } from "../lib/theme/theme";
   import { runBenchmark } from "./bench";
+  import CardGallery from "./CardGallery.svelte";
   import { hud } from "./hud.svelte";
   import { type BenchConfig, benchConfig, rendererMemoryMb, saveResults } from "./host";
   import { type Row, cells, formatTable } from "./metrics";
@@ -16,6 +17,7 @@
 
   let rows = $state<Row[]>([]);
   let running = $state(false);
+  let gallery = $state(false);
 
   async function benchmark(config: BenchConfig) {
     if (!controller || running) return;
@@ -50,6 +52,7 @@
   <div class="bar">
     <strong>Dev</strong>
     <button type="button" disabled={running} onclick={async () => benchmark(await benchConfig())}>Run benchmark</button>
+    <button type="button" onclick={() => (gallery = true)}>Change cards</button>
     <select value={theme} onchange={(e) => ontheme(e.currentTarget.value as Theme)} aria-label="Theme">
       <option value="system">System theme</option>
       <option value="light">Light</option>
@@ -61,6 +64,8 @@
     </span>
   </div>
 {/if}
+
+{#if gallery}<CardGallery onclose={() => (gallery = false)} />{/if}
 
 {#if rows.length}
   <section class="results">

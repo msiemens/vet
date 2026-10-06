@@ -3,7 +3,7 @@
   import DevTools from "../dev/DevTools.svelte";
   import { hudListeners } from "../dev/hud.svelte";
   import { Header, StatusFooter, ToolRail, mockFooter, mockHeader } from "../features/chrome";
-  import { FilterPopover, mockExcludedCount } from "../features/filter";
+  import { FilterPopover } from "../features/filter";
   import { ReviewScreen, type ReviewController } from "../features/review";
   import { RunButton } from "../features/run";
   import { SymbolPanel } from "../features/symbols";
@@ -17,9 +17,11 @@
   let theme = $state<Theme>(storedTheme());
 
   const completion = $derived.by(() => {
-    const c = changeset.coverage;
-    return { seenPct: c.seenPct, oldPct: c.oldPct, title: `${c.seen} of ${c.total} lines seen · ${c.old} lines against old base` };
+    const c = changeset.progress;
+    return { seenPct: c.seenPct, oldPct: c.oldPct, title: `${c.seen} of ${c.total} changed lines and other changes seen · ${c.old} against an old base` };
   });
+  const filteredOut = $derived(changeset.manifest?.filteredOut ?? 0);
+  const footer = $derived({ ...mockFooter, snapshot: `#${changeset.manifest?.revision ?? 0}` });
 
   onMount(() => {
     applyTheme(theme);
@@ -28,20 +30,20 @@
 
   function ready(c: ReviewController, firstPaintMs: number) {
     controller = c;
-    status = `${changeset.name}: ${changeset.files.length} files, ${c.view!.totalHunks} hunks; first hunk painted in ${firstPaintMs.toFixed(0)} ms`;
+    status = `${changeset.manifest?.name}: ${changeset.files.length} files, ${c.view!.totalHunks} hunks; first hunk painted in ${firstPaintMs.toFixed(0)} ms`;
     void tools.runIfRequested();
   }
 </script>
 
 <Header info={mockHeader} {completion}>
-  {#snippet filter()}<FilterPopover />{/snippet}
+  {#snippet filter()}<FilterPopover excludedCount={filteredOut} />{/snippet}
   {#snippet run()}<RunButton />{/snippet}
 </Header>
 
 <div class="body">
   <ToolRail active="files" />
   {#if changeset.backend}
-    <ReviewScreen backend={changeset.backend} hud={hudListeners} excluded={{ label: "docs", count: mockExcludedCount }} onready={ready}>
+    <ReviewScreen backend={changeset.backend} hud={hudListeners} onready={ready}>
       {#snippet side()}<SymbolPanel />{/snippet}
     </ReviewScreen>
   {:else}
@@ -51,7 +53,7 @@
 
 <DevTools bind:this={tools} {controller} bind:open={devOpen} bind:status {theme} ontheme={(t) => applyTheme((theme = t))} />
 
-<StatusFooter info={mockFooter}>
+<StatusFooter info={footer}>
   {#snippet end()}<button class="dev" type="button" aria-pressed={devOpen} onclick={() => (devOpen = !devOpen)}>Dev</button>{/snippet}
 </StatusFooter>
 

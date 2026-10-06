@@ -1,4 +1,4 @@
-// The filter is stored per session by the backend (SPEC §5.2, §10).
+// Editing the filter is not in the protocol yet; the manifest only reports how many files it hides.
 
 import type { ReviewFilter } from "./FilterPopover.svelte";
 
@@ -8,5 +8,3 @@ export const mockFilter: ReviewFilter = {
   include: [],
   exclude: ["docs/**", "**/*.lock"],
 };
-
-export const mockExcludedCount = 2;

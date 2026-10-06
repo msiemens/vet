@@ -30,8 +30,10 @@
 .file .cm-editor .vet-strip { min-width: 3px; width: 3px; }
 .file .cm-editor .vet-strip .vet-seen { background: var(--seen); }
 .file .cm-editor .vet-strip .vet-old { background: var(--old); }
-.file .cm-editor .cm-deletedChunk.vet-seen { box-shadow: inset 3px 0 0 var(--seen); }
-.file .cm-editor .cm-deletedChunk.vet-old { box-shadow: inset 3px 0 0 var(--old); }
+.file .cm-editor .cm-deletedChunk { position: relative; }
+.file .cm-editor .cm-deletedChunk.vet-seen::before, .file .cm-editor .cm-deletedChunk.vet-old::before { content: ""; position: absolute; top: 0; bottom: 0; left: calc(-1 * var(--vet-gutters, 0px)); width: 3px; z-index: 300; }
+.file .cm-editor .cm-deletedChunk.vet-seen::before { background: var(--seen); }
+.file .cm-editor .cm-deletedChunk.vet-old::before { background: var(--old); }
 .file .cm-editor .vet-current { outline: 1px solid var(--acc); outline-offset: -1px; }
 
 .vet-hunk { display: flex; align-items: center; gap: 8px; height: var(--h-hunk); box-sizing: border-box; padding: 0 8px 0 10px; background: var(--hunk); color: var(--tx2); font-family: var(--font-mono); }
@@ -40,7 +42,7 @@
 .vet-hunk-btn { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border: 0; padding: 0; border-radius: var(--radius); background: transparent; color: var(--tx2); cursor: pointer; }
 .vet-hunk-btn:hover { background: var(--hov); }
 .vet-hunk-seen .vet-seen-toggle { color: var(--seen); }
-.vet-hunk-oldBase .vet-seen-toggle { color: var(--old); }
+.vet-hunk-seenAgainstOldBase .vet-seen-toggle { color: var(--old); }
 
 /* Inline decorations: changed symbol, reachability, notes (derived, §7.3/§7.4). */
 .vet-m-symbol { border-bottom: 1px solid var(--fn); }

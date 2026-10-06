@@ -1,27 +1,23 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { onMount } from "svelte";
-  import type { Backend } from "../../state/backend";
+  import { onMount, untrack } from "svelte";
+  import type { Backend, NonTextDetail } from "../../state/backend";
   import { changeset } from "../../state/changeset.svelte";
   import ChangeCard from "./ChangeCard.svelte";
   import FileTree from "./FileTree.svelte";
   import type { Mode } from "./editor/mount";
-  import type { HunkState } from "./editor/hunkBar";
   import "./editor/editor.css";
-  import { mockNonText } from "./mock";
   import { type Hud, ReviewController } from "./ReviewController";
   import type { FileRow } from "./tree";
 
   let {
     backend,
     hud,
-    excluded,
     side,
     onready,
   }: {
     backend: Backend;
     hud: Hud;
-    excluded?: { label: string; count: number };
     /** The right-hand panel. */
     side?: Snippet;
     /** The changeset is open; `firstPaintMs` runs from the open request to the first hunk's paint. */
@@ -33,25 +29,37 @@
   let mode = $state<Mode>("unified");
   let selected = $state<string>();
   let showCards = $state(false);
-  let nonTextStates = $state<HunkState[]>(mockNonText.map(() => "unseen"));
+  let detail = $state.raw<{ path: string; value: NonTextDetail }>();
 
-  const nonText = $derived(mockNonText.map((change, i) => ({ change, state: nonTextStates[i] })));
-  const file = $derived(changeset.files.find((f) => f.entry.path === (selected ?? changeset.files[0]?.entry.path)));
+  const revision = $derived(changeset.manifest?.revision);
+  const file = $derived(changeset.files.find((f) => f.path === (selected ?? changeset.files[0]?.path)));
+  const cards = $derived(showCards && file && detail?.path === file.path ? detail.value : undefined);
 
   onMount(() => {
-    const c = new ReviewController(backend, root, {
-      ...hud,
-      opened: (name, files) => changeset.open(name, files),
-      seen: (path, seen, oldBase) => changeset.update(path, seen, oldBase),
-    });
+    const c = new ReviewController(backend, root, hud);
     controller = c;
     c.open(true).then((ms) => onready(c, ms), (e) => (changeset.status = (e as Error).message));
   });
 
-  function select(row: FileRow) {
+  // A settled snapshot moved the changeset to a new revision.
+  $effect(() => {
+    const manifest = untrack(() => changeset.manifest);
+    if (manifest && revision !== undefined && controller?.view && controller.view.manifest.revision !== revision) controller.show(manifest);
+  });
+
+  async function select(row: FileRow) {
     selected = row.path;
-    showCards = !!row.nonText;
-    if (row.index !== undefined) void controller?.view?.goToFile(row.index);
+    showCards = row.file.nonText.length > 0;
+    if (showCards) detail = { path: row.path, value: await backend.nonTextDetail(row.path) };
+    else showText();
+  }
+
+  function showText() {
+    if (!file) return;
+    showCards = false;
+    const view = controller?.view;
+    const index = view?.indexOf(file.path) ?? -1;
+    if (index >= 0) void view!.goToFile(index);
   }
 
   function setMode(next: Mode) {
@@ -59,18 +67,15 @@
     controller?.setMode(next);
   }
 
-  const toggleCard = (i: number) => (nonTextStates[i] = nonTextStates[i] === "seen" ? "unseen" : "seen");
   const hunk = (delta: number) => controller?.view && void controller.view.goToHunk(controller.view.current + delta);
 </script>
 
-<FileTree files={changeset.files} {nonText} {selected} {excluded} onselect={select} />
+<FileTree files={changeset.files} {selected} excluded={{ label: "filtered", count: changeset.manifest?.filteredOut ?? 0 }} onselect={select} />
 
 <main>
   <div class="strip">
-    {#if file && !showCards}
-      <span class="tab"><span>{file.entry.path.slice(file.entry.path.lastIndexOf("/") + 1)}</span></span>
-    {:else if showCards}
-      <span class="tab">Non-text changes</span>
+    {#if file}
+      <span class="tab">{showCards ? "Non-text changes" : file.path.slice(file.path.lastIndexOf("/") + 1)}</span>
     {/if}
     <span class="grow"></span>
     <div class="seg" role="group" aria-label="View">
@@ -83,11 +88,17 @@
     </div>
   </div>
   <div class="scroll" hidden={showCards} bind:this={root}></div>
-  {#if showCards}
+  {#if showCards && file}
     <div class="cards">
-      {#each nonText as { change, state }, i (change.path)}
-        <ChangeCard {change} {state} ontoggle={() => toggleCard(i)} />
-      {/each}
+      {#if cards}
+        {#each file.nonText as kind (kind)}
+          {@const acknowledged = file.review.acknowledged.includes(kind)}
+          <ChangeCard path={file.path} oldPath={file.oldPath} {kind} before={cards.before} after={cards.after} {acknowledged} ontoggle={() => changeset.acknowledge(file.path, kind, !acknowledged)} />
+        {/each}
+      {/if}
+      {#if file.hunks.length}
+        <button class="text" type="button" onclick={showText}>Show text changes ({file.hunks.length} hunks)</button>
+      {/if}
     </div>
   {/if}
 </main>
@@ -108,4 +119,5 @@
   .scroll { flex: 1; overflow-y: auto; min-height: 0; }
   .scroll[hidden] { display: none; }
   .cards { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .text { align-self: flex-start; height: var(--h-ctl); padding: 0 10px; border: 1px solid var(--ln); border-radius: var(--radius); background: var(--btn); font-size: var(--fs-ctl); cursor: pointer; }
 </style>

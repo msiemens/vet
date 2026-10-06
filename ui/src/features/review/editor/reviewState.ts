@@ -6,12 +6,13 @@ import { Decoration, type DecorationSet, EditorView, GutterMarker, ViewPlugin, g
 import type { Hunk } from "../../../generated/Hunk";
 import type { Mark } from "../../../generated/Mark";
 import type { MarkKind } from "../../../generated/MarkKind";
-import { type BarActions, HunkBar, type HunkState, hunkHeader } from "./hunkBar";
+import type { HunkState } from "../../../generated/HunkState";
+import { type BarActions, HunkBar, hunkHeader } from "./hunkBar";
 
 export const setStates = StateEffect.define<HunkState[]>();
 export const setCurrent = StateEffect.define<number | null>();
 
-const CLASS: Record<HunkState, string> = { unseen: "vet-unseen", seen: "vet-seen", oldBase: "vet-old" };
+const CLASS: Record<HunkState, string> = { unseen: "vet-unseen", seen: "vet-seen", seenAgainstOldBase: "vet-old" };
 const lineClass = (state: HunkState, current: boolean) => (current ? `${CLASS[state]} vet-current` : CLASS[state]);
 
 const markDeco: Record<MarkKind, Decoration> = {
@@ -139,6 +140,8 @@ export function deletedChunkStyle(field: StateField<ReviewState>): Extension {
   const style = (view: EditorView) => {
     const state = view.state.field(field);
     const byPos = new Map(state.spans.map((s, i) => [s.at, i]));
+    // The strip of a deleted block reaches back over the gutters to the editor's left edge.
+    view.dom.style.setProperty("--vet-gutters", `${view.dom.querySelector<HTMLElement>(".cm-gutters")?.offsetWidth ?? 0}px`);
     for (const el of view.dom.querySelectorAll<HTMLElement>(".cm-deletedChunk")) {
       el.classList.remove(...Object.values(CLASS), "vet-current");
       const i = byPos.get(view.posAtDOM(el));

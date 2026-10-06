@@ -3,8 +3,7 @@
 import { WidgetType } from "@codemirror/view";
 import { iconSvg } from "../../../lib/ui/icons";
 import type { Hunk } from "../../../generated/Hunk";
-
-export type HunkState = "unseen" | "seen" | "oldBase";
+import type { HunkState } from "../../../generated/HunkState";
 
 export interface BarActions {
   toggleSeen(hunk: number): void;
@@ -17,7 +16,7 @@ export function hunkHeader(h: Hunk, symbol?: string): string {
   return symbol ? `${text} ${symbol}` : text;
 }
 
-const LABEL: Record<HunkState, string> = { unseen: "Mark hunk seen", seen: "Mark hunk unseen", oldBase: "Re-confirm seen" };
+const LABEL: Record<HunkState, string> = { unseen: "Mark hunk seen", seen: "Mark hunk unseen", seenAgainstOldBase: "Re-confirm seen" };
 
 export class HunkBar extends WidgetType {
   /** `actions` is null on the base side of a side-by-side view, which only shows the header. */
@@ -41,7 +40,7 @@ export class HunkBar extends WidgetType {
     text.className = "vet-hunk-text";
     text.textContent = this.text;
     bar.append(text);
-    if (this.state === "oldBase") {
+    if (this.state === "seenAgainstOldBase") {
       const old = document.createElement("span");
       old.className = "vet-hunk-old";
       old.title = "Base changed since you marked this seen";

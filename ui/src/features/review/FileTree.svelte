@@ -1,20 +1,16 @@
 <script lang="ts">
   import Icon from "../../lib/ui/Icon.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
-  import type { FileState } from "../../state/changeset.svelte";
-  import type { NonTextChange } from "./ChangeCard.svelte";
-  import type { HunkState } from "./editor/hunkBar";
+  import type { FileChange } from "../../generated/FileChange";
   import { type FileRow, buildRows } from "./tree";
 
   let {
     files,
-    nonText,
     selected,
     excluded,
     onselect,
   }: {
-    files: FileState[];
-    nonText: { change: NonTextChange; state: HunkState }[];
+    files: FileChange[];
     selected?: string;
     /** Files hidden by the review filter, collapsed into one group. */
     excluded?: { label: string; count: number };
@@ -22,10 +18,9 @@
   } = $props();
 
   let collapsed = $state(new Set<string>());
-  const rows = $derived(buildRows(files, nonText, collapsed));
-  const count = $derived(files.length + nonText.length);
+  const rows = $derived(buildRows(files, collapsed));
 
-  const STATUS = { M: "var(--old)", A: "var(--addt)", D: "var(--delt)" } as const;
+  const STATUS = { M: "var(--old)", A: "var(--addt)", D: "var(--delt)", R: "var(--tx2)" } as const;
 
   function toggle(path: string) {
     const next = new Set(collapsed);
@@ -35,7 +30,7 @@
 </script>
 
 <nav aria-label="Changed files">
-  <div class="sh"><span>Files</span><span class="grow"></span><span class="mono count">{count}</span></div>
+  <div class="sh"><span>Files</span><span class="grow"></span><span class="mono count">{files.length}</span></div>
   <div class="rows">
     {#each rows as row (row.path + row.kind)}
       {#if row.kind === "dir"}
@@ -46,7 +41,7 @@
         <button class="tw file" class:sel={row.path === selected} class:nested={row.path.includes("/")} type="button" onclick={() => onselect(row)}>
           {#if row.build}<span class="build" title="Build file"><Icon name="build" size={12} stroke={2} /></span>{/if}
           <span class="name">{row.name}</span>
-          {#if row.executable}<span class="mono x">+x</span>{/if}
+          {#if row.executable}<span class="mono x" title="File mode changed">mode</span>{/if}
           <Meter width={22} segments={[{ value: row.seenPct, color: "var(--seen)" }, { value: row.oldPct, color: "var(--old)" }]} />
           <span class="mono status" style:color={STATUS[row.status]}>{row.status}</span>
         </button>

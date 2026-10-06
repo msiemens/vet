@@ -1,44 +1,65 @@
 <script module lang="ts">
-  export interface NonTextChange {
-    path: string;
-    kind: "mode" | "symlink" | "submodule" | "binary" | "unavailable";
-    before: string;
-    after: string;
-    /** Binary images: show a before/after preview. */
-    preview?: boolean;
-    reason?: string;
+  import type { EntryDesc } from "../../generated/EntryDesc";
+  import type { NonTextKind } from "../../generated/NonTextKind";
+
+  const TITLE: Record<NonTextKind, string> = { mode: "File mode", symlink: "Symlink target", submodule: "Submodule commit", binary: "Binary file", contentUnavailable: "Content unavailable", rename: "Renamed" };
+  const LABEL = { false: "Mark seen", true: "Mark unseen" } as const;
+  const IMAGE = /\.(png|jpe?g|gif|webp|bmp|ico|svg)$/i;
+
+  function size(bytes: number | null): string {
+    if (bytes === null) return "";
+    return bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
+  }
+
+  /** One side of the change as text. */
+  function describe(kind: NonTextKind, side: EntryDesc | null, path: string): string {
+    if (!side) return "(none)";
+    switch (kind) {
+      case "mode": return side.mode.toString(8);
+      case "symlink": return side.target ?? "";
+      case "submodule": return side.target?.slice(0, 7) ?? "";
+      case "binary": return size(side.size);
+      case "rename": return path;
+      default: return "";
+    }
   }
 </script>
 
 <script lang="ts">
   import Icon from "../../lib/ui/Icon.svelte";
-  import type { HunkState } from "./editor/hunkBar";
 
-  let { change, state, ontoggle }: { change: NonTextChange; state: HunkState; ontoggle: () => void } = $props();
+  let {
+    path,
+    oldPath,
+    kind,
+    before,
+    after,
+    acknowledged,
+    ontoggle,
+  }: { path: string; oldPath: string | null; kind: NonTextKind; before: EntryDesc | null; after: EntryDesc | null; acknowledged: boolean; ontoggle: () => void } = $props();
 
-  const TITLE = { mode: "File mode", symlink: "Symlink target", submodule: "Submodule commit", binary: "Binary file", unavailable: "Content unavailable" } as const;
-  const LABEL = { unseen: "Mark seen", seen: "Mark unseen", oldBase: "Re-confirm seen" } as const;
+  const state = $derived(acknowledged ? "seen" : "unseen");
+  const label = $derived(LABEL[String(acknowledged) as "true" | "false"]);
 </script>
 
 <article class="card">
   <div class="vet-hunk vet-hunk-{state}">
-    <span class="vet-hunk-text">{TITLE[change.kind]}</span>
-    {#if state === "oldBase"}<span class="vet-hunk-old" title="Base changed since you marked this seen"><Icon name="reconfirm" size={13} stroke={2} /></span>{/if}
-    <span class="path mono">{change.path}</span>
+    <span class="vet-hunk-text">{TITLE[kind]}</span>
+    <span class="path mono">{path}</span>
     <span class="spacer"></span>
-    <button class="vet-hunk-btn vet-seen-toggle" type="button" aria-label={LABEL[state]} title={LABEL[state]} onclick={ontoggle}><Icon name="check" size={13} stroke={2} /></button>
+    <button class="vet-hunk-btn vet-seen-toggle" type="button" aria-label={label} title={label} onclick={ontoggle}><Icon name="check" size={13} stroke={2} /></button>
     <button class="vet-hunk-btn" type="button" aria-label="Comment" title="Comment"><Icon name="comments" size={13} stroke={1.8} /></button>
   </div>
   <div class="body">
-    {#if change.kind === "unavailable"}
-      <span class="note"><Icon name="lock" size={14} />{change.reason}</span>
+    {#if kind === "contentUnavailable"}
+      <span class="note"><Icon name="lock" size={14} />The content of this file is not available.</span>
     {:else}
-      <div class="line del"><span class="sign">−</span><span class="mono">{change.before}</span></div>
-      <div class="line add"><span class="sign">+</span><span class="mono">{change.after}</span></div>
-      {#if change.preview}
+      <div class="line del"><span class="sign">−</span><span class="mono">{kind === "rename" ? (oldPath ?? "") : describe(kind, before, path)}</span></div>
+      <div class="line add"><span class="sign">+</span><span class="mono">{describe(kind, after, path)}</span></div>
+      {#if kind === "binary" && IMAGE.test(path)}
         <div class="previews">
-          {#each ["Before", "After"] as side}
-            <figure><div class="thumb"><Icon name="image" size={28} /></div><figcaption>{side}</figcaption></figure>
+          {#each [["Before", before], ["After", after]] as [side, entry]}
+            {#if entry}<figure><div class="thumb"><Icon name="image" size={28} /></div><figcaption>{side}</figcaption></figure>{/if}
           {/each}
         </div>
       {/if}
