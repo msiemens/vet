@@ -8,6 +8,7 @@ use vet_app::session::{
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineRange, NonTextKind, RepoPath};
+use vet_core::filter::ReviewFilter;
 use vet_core::review::{AnchorState, CommentTarget, Confidence, Location, Side, StaleReason, Strategy, ThreadStatus};
 use vet_protocol as p;
 
@@ -119,6 +120,28 @@ pub fn core_base_choice(choice: p::BaseChoice) -> BaseChoice {
     }
 }
 
+pub fn core_filter(f: p::ReviewFilter) -> ReviewFilter {
+    ReviewFilter {
+        roots: (f.roots.iter())
+            .map(|r| r.trim_matches('/'))
+            .filter(|r| !r.is_empty())
+            .map(|r| RepoPath(r.as_bytes().to_vec()))
+            .collect(),
+        include: f.include,
+        exclude: f.exclude,
+        hide_binary: f.hide_binary,
+    }
+}
+
+fn filter(f: &ReviewFilter) -> p::ReviewFilter {
+    p::ReviewFilter {
+        roots: f.roots.iter().map(path_str).collect(),
+        include: f.include.clone(),
+        exclude: f.exclude.clone(),
+        hide_binary: f.hide_binary,
+    }
+}
+
 pub fn base(b: &BaseView) -> p::Base {
     p::Base {
         choice: match &b.choice {
@@ -165,6 +188,7 @@ pub fn manifest(session: p::SessionId, m: &ManifestView) -> p::Manifest {
         revision: m.revision,
         name: m.name.clone(),
         base: base(&m.base),
+        filter: filter(&m.filter),
         files: m.files.iter().map(file).collect(),
         completion: completion(&m.completion),
         excluded_lines: m.completion.excluded_lines,

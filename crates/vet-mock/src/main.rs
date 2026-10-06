@@ -112,6 +112,7 @@ impl Handler for Mock {
                         commit: "0123456789abcdef0123456789abcdef01234567".into(),
                         label: "pin".into(),
                     },
+                    filter: Default::default(),
                     completion: total(files.iter().map(|f| f.completion)),
                     files,
                     excluded_lines: 0,
@@ -158,6 +159,7 @@ impl Handler for Mock {
             }
             Request::Acknowledge { .. } => Err("the corpus has no non-text items".into()),
             Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),
+            Request::SetFilter { .. } => Err("the corpus has no filter".into()),
             Request::ListDirectory { .. } | Request::FileText { .. } => Err("the corpus has no file tree".into()),
             Request::Threads { .. }
             | Request::CreateThread { .. }

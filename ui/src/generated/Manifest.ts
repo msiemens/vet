@@ -2,6 +2,7 @@
 import type { Base } from "./Base";
 import type { Completion } from "./Completion";
 import type { FileChange } from "./FileChange";
+import type { ReviewFilter } from "./ReviewFilter";
 import type { WatchDegraded } from "./WatchDegraded";
 
 /**
@@ -15,7 +16,7 @@ revision: number, name: string,
 /**
  * What the files are compared against.
  */
-base: Base, files: Array<FileChange>, 
+base: Base, filter: ReviewFilter, files: Array<FileChange>, 
 /**
  * Completion of the whole changeset.
  */

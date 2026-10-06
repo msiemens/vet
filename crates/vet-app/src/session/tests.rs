@@ -261,6 +261,7 @@ struct Mem {
     base: Option<(SnapshotId, BaseChoice)>,
     closed: bool,
     threads: Vec<Thread>,
+    filter: Option<ReviewFilter>,
 }
 
 impl Mem {
@@ -323,8 +324,9 @@ impl ReviewStore for MemStore {
     async fn session(&self, _: SessionId) -> StoreResult<Option<Session>> {
         unimplemented!()
     }
-    async fn set_filter(&self, _: SessionId, _: ReviewFilter) -> StoreResult<()> {
-        unimplemented!()
+    async fn set_filter(&self, _: SessionId, filter: ReviewFilter) -> StoreResult<()> {
+        self.0.lock().unwrap().filter = Some(filter);
+        Ok(())
     }
     async fn set_base(&self, _: SessionId, base: SnapshotId, choice: BaseChoice) -> StoreResult<()> {
         self.0.lock().unwrap().base = Some((base, choice));
@@ -923,6 +925,43 @@ async fn the_filter_excludes_files_and_directories_without_a_passing_file() {
         listing(&mixed),
         [("b.md", File, false, true), ("c.rs", File, false, false)]
     );
+}
+
+#[tokio::test]
+async fn setting_the_filter_persists_it_and_moves_the_counts() {
+    let base = [("a.txt", "1\n"), ("docs/b.md", "1\n")];
+    let dirty = [("a.txt", "2\n"), ("docs/b.md", "2\n")];
+    let fx = Fixture::open(&base, &dirty).await;
+    let m = fx.session.manifest().await.unwrap();
+    assert_eq!(
+        (m.files.len(), m.completion.lines, m.completion.excluded_lines),
+        (2, 4, 0)
+    );
+
+    let filter = ReviewFilter {
+        exclude: vec!["docs/**".into()],
+        ..Default::default()
+    };
+    assert_eq!(fx.session.set_filter(filter.clone()).await.unwrap(), 1);
+    let m = fx.session.manifest().await.unwrap();
+    assert_eq!((m.revision, m.filter.clone()), (1, filter.clone()));
+    assert_eq!(
+        (m.files.len(), m.completion.lines, m.completion.excluded_lines),
+        (1, 2, 2)
+    );
+    assert_eq!(fx.store.0.lock().unwrap().filter, Some(filter.clone()));
+
+    // The same filter again changes nothing.
+    assert_eq!(fx.session.set_filter(filter).await.unwrap(), 1);
+
+    // An invalid glob is refused and changes nothing.
+    let bad = ReviewFilter {
+        include: vec!["[".into()],
+        ..Default::default()
+    };
+    let err = fx.session.set_filter(bad).await.unwrap_err();
+    assert!(err.to_string().starts_with("invalid pattern \"[\""), "{err}");
+    assert_eq!(fx.session.revision().await, 1);
 }
 
 #[tokio::test]

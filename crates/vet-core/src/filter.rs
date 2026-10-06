@@ -13,6 +13,16 @@ pub struct ReviewFilter {
 }
 
 impl ReviewFilter {
+    /// The first invalid glob of `include` and `exclude`, as a message fit to show.
+    pub fn validate(&self) -> Result<(), String> {
+        for pattern in self.include.iter().chain(&self.exclude) {
+            if let Err(e) = GlobBuilder::new(pattern).literal_separator(true).build() {
+                return Err(format!("invalid pattern \"{pattern}\": {}", e.kind()));
+            }
+        }
+        Ok(())
+    }
+
     /// Compiles the globs once. Invalid patterns match nothing.
     pub fn compile(&self) -> CompiledFilter<'_> {
         CompiledFilter {
@@ -77,5 +87,25 @@ impl GlobList {
     fn is_match(&self, path: &str) -> bool {
         let name = path.rsplit('/').next().unwrap_or(path);
         self.path.is_match(path) || self.name.is_match(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_globs_are_named() {
+        let ok = ReviewFilter {
+            include: vec!["*.rs".into()],
+            exclude: vec!["**/gen/*".into()],
+            ..Default::default()
+        };
+        assert_eq!(ok.validate(), Ok(()));
+        let bad = ReviewFilter {
+            exclude: vec!["src/[a".into()],
+            ..Default::default()
+        };
+        assert!(bad.validate().unwrap_err().starts_with("invalid pattern \"src/[a\""));
     }
 }

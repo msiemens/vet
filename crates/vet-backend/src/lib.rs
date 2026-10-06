@@ -279,6 +279,18 @@ impl Handler for Orchestrator {
                 }
                 Ok(Response::Base(mapping::base(&base)))
             }
+            Request::SetFilter { session, filter } => {
+                let open = self.find(session).await?;
+                let revision = open
+                    .session
+                    .set_filter(mapping::core_filter(filter))
+                    .await
+                    .map_err(message)?;
+                for events in live(&open.subscribers).iter() {
+                    events.send(Event::SnapshotSettled { session, revision });
+                }
+                Ok(Response::Done)
+            }
             Request::ListBaseCandidates { session } => {
                 let candidates = self
                     .find(session)

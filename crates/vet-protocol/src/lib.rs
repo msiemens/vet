@@ -118,6 +118,14 @@ pub enum Request {
     ListBaseCandidates {
         session: SessionId,
     },
+    /// Replaces the session's review filter and persists it. The revision
+    /// increases and every subscriber, including the requester, gets
+    /// `SnapshotSettled`; fetch the manifest again. Fails with a message fit to
+    /// show if a glob is invalid, and then changes nothing. Answers with `Response::Done`.
+    SetFilter {
+        session: SessionId,
+        filter: ReviewFilter,
+    },
     /// The direct children of a directory of the current target snapshot.
     /// `path` is `""` for the root, else `a/b` without a trailing slash. Fails if
     /// the snapshot has nothing there.
@@ -317,6 +325,22 @@ pub struct Thread {
     /// The first one opened the thread.
     pub messages: Vec<ThreadMessage>,
     pub status: ThreadStatus,
+}
+
+/// What the review shows and counts (§5.2). A path passes if it is under one of
+/// `roots` (or there are none), matches `include` (or there is none) and does not
+/// match `exclude`. A glob without a `/` matches the file name at any depth; `*`
+/// and `?` stop at `/`, `**` does not.
+#[derive(Clone, Default, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReviewFilter {
+    /// Directories, `a/b` without a trailing slash.
+    pub roots: Vec<String>,
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+    /// Binary changes are neither shown nor counted.
+    pub hide_binary: bool,
 }
 
 /// How a session's base is chosen.
@@ -528,6 +552,7 @@ pub struct Manifest {
     pub name: String,
     /// What the files are compared against.
     pub base: Base,
+    pub filter: ReviewFilter,
     pub files: Vec<FileChange>,
     /// Completion of the whole changeset.
     pub completion: Completion,

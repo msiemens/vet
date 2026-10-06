@@ -10,8 +10,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
     AnchorState, Base, BaseChoice, Completion, DirEntry, DirEntryKind, Event, FileStatus, HunkState, LineLocation,
-    Manifest, NoTextReason, NonTextKind, Request, Response, ReviewUpdate, ServerMessage, SessionId, Side, TextContent,
-    Thread, ThreadStatus, ThreadTarget,
+    Manifest, NoTextReason, NonTextKind, Request, Response, ReviewFilter, ReviewUpdate, ServerMessage, SessionId, Side,
+    TextContent, Thread, ThreadStatus, ThreadTarget,
 };
 use vet_transport::{Events, Handler};
 
@@ -795,5 +795,51 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     let err = client.set_base(session, merge_base("unrelated")).await.unwrap_err();
     assert_eq!(err, "no common ancestor with unrelated");
     assert_eq!(client.manifest(session).await.revision, 4);
+    assert!(client.no_event());
+}
+
+impl Client {
+    async fn set_filter(&self, session: SessionId, filter: &ReviewFilter) -> Result<Response, String> {
+        let filter = filter.clone();
+        self.call(Request::SetFilter { session, filter }).await
+    }
+}
+
+#[tokio::test]
+async fn the_filter_moves_completion_and_the_excluded_counts() {
+    let fx = fixture(
+        &[("a.txt", "1\n"), ("docs/b.md", "1\n")],
+        &[("a.txt", "2\n"), ("docs/b.md", "2\n")],
+    )
+    .await;
+    let mut client = Client::new(&fx.handler);
+    let session = open(&client, fx.repo.path()).await;
+    let m = client.manifest(session).await;
+    assert_eq!((m.files.len(), m.completion.lines, m.excluded_lines), (2, 4, 0));
+    assert_eq!(m.filter, ReviewFilter::default());
+
+    let filter = ReviewFilter {
+        exclude: vec!["docs/**".into()],
+        ..Default::default()
+    };
+    assert!(matches!(
+        client.set_filter(session, &filter).await.unwrap(),
+        Response::Done
+    ));
+    assert_eq!(client.settled().await, 1);
+    let m = client.manifest(session).await;
+    assert_eq!((m.revision, &m.filter), (1, &filter));
+    assert_eq!((m.files.len(), m.completion.lines, m.excluded_lines), (1, 2, 2));
+    // Marking the one remaining file completes the review.
+    let update = client.set_seen(session, 1, &[0], true).await;
+    assert_eq!(lines(&update.changeset), (2, 2));
+
+    let bad = ReviewFilter {
+        include: vec!["src/[".into()],
+        ..Default::default()
+    };
+    let err = client.set_filter(session, &bad).await.unwrap_err();
+    assert!(err.starts_with("invalid pattern \"src/[\""), "{err}");
+    assert_eq!(client.manifest(session).await.revision, 1);
     assert!(client.no_event());
 }

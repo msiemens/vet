@@ -160,6 +160,7 @@ pub struct ManifestView {
     pub revision: u32,
     pub name: String,
     pub base: BaseView,
+    pub filter: ReviewFilter,
     pub files: Vec<FileView>,
     pub completion: Completion,
     /// Why the tree is polled instead of watched, if it is.
@@ -433,6 +434,20 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         Ok((base_view(&st), st.revision))
     }
 
+    /// Replaces the review filter and bumps the revision; completion and the
+    /// excluded counts follow with the next manifest. Returns the revision.
+    pub async fn set_filter(&self, filter: ReviewFilter) -> Result<u32> {
+        filter.validate().map_err(SessionError::Invalid)?;
+        let mut st = self.state.lock().await;
+        if st.filter == filter {
+            return Ok(st.revision);
+        }
+        self.acquisition.store.set_filter(self.id, filter.clone()).await?;
+        st.filter = filter;
+        st.revision += 1;
+        Ok(st.revision)
+    }
+
     /// Branches and recent commits to pick a base from.
     pub async fn base_candidates(&self) -> Result<BaseCandidates> {
         Ok(self.acquisition.git.base_candidates(MAX_BASE_COMMITS).await?)
@@ -557,6 +572,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             revision: st.revision,
             name: self.name.clone(),
             base: base_view(&st),
+            filter: st.filter.clone(),
             completion: cov.completion(&st.filter, &changes.diff.files, &changes.diff.non_text, &acked),
             files,
             degraded: st.degraded,
