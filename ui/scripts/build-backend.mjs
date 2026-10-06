@@ -8,7 +8,7 @@
 import { spawnSync } from "node:child_process";
 
 if (process.env.VET_WSL_DISTRO) {
-  console.log("VET_WSL_DISTRO is set: build vet-mock inside WSL (see "WSL split" in the README); skipping.");
+  console.log("VET_WSL_DISTRO is set: build vet-mock inside WSL (see 'WSL split' in the README); skipping.");
   process.exit(0);
 }
 
