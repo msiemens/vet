@@ -6,7 +6,12 @@ import type { RunChange } from "./RunChange";
  * One changed file of an approval prompt. A side is `None` if the file did not
  * exist there, has no text (binary) or is over the capture cap.
  */
-export type ApprovalFile = { path: string, change: RunChange, 
+export type ApprovalFile = { path: string, 
+/**
+ * The old path if git detected a rename; `base` is then the text there, and
+ * the removed file has no entry of its own.
+ */
+from?: string, change: RunChange, 
 /**
  * The last approved version.
  */

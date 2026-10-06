@@ -516,7 +516,9 @@ pub enum Response {
         /// if not zero.
         changed_since_review: u32,
     },
-    /// The answer to `RunApprovalDiff`, in the order of `RunNeedsApproval::changed`.
+    /// The answer to `RunApprovalDiff`, in the order of `RunNeedsApproval::changed`,
+    /// except that a renamed file takes the place of the added path and the
+    /// removed one is left out.
     RunApprovalDiff {
         files: Vec<ApprovalFile>,
     },
@@ -579,6 +581,11 @@ pub struct ApprovalChange {
 #[ts(export)]
 pub struct ApprovalFile {
     pub path: String,
+    /// The old path if git detected a rename; `base` is then the text there, and
+    /// the removed file has no entry of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub from: Option<String>,
     pub change: RunChange,
     /// The last approved version.
     pub base: Option<String>,

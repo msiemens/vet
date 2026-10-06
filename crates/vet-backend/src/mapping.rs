@@ -424,6 +424,7 @@ pub fn approval_files(files: &[ApprovalFile]) -> p::Response {
             .iter()
             .map(|f| p::ApprovalFile {
                 path: path_str(&f.path),
+                from: f.from.as_ref().map(path_str),
                 change: run_change(f.change),
                 base: f.old.clone(),
                 target: f.new.clone(),

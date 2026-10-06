@@ -11,7 +11,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Component, PathBuf};
 
-use vet_core::content::{BlobId, Hash, Hunk, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
+use vet_core::content::{
+    BlobId, Hash, Hunk, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
+};
 
 use crate::acquisition::Acquisition;
 use crate::ports::{BlobRead, Command, Dirty, GitError, GitRepo, ProcessRunner, RunStore, Store, StoreError};
@@ -48,6 +50,8 @@ pub struct ListedTarget {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ApprovalFile {
     pub path: RepoPath,
+    /// The old path, if git detected a rename; the removed file is not listed then.
+    pub from: Option<RepoPath>,
     pub change: Change,
     /// The last approved version; `None` if there was none, or it has no text.
     pub old: Option<String>,
@@ -178,22 +182,46 @@ impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<
     /// The files behind an approval prompt with their text, for display.
     pub async fn approval_files(&self, approval: &Approval) -> Result<Vec<ApprovalFile>, RunError> {
         let diff = self.diff(approval).await?;
+        let is = |path: &RepoPath, change| approval.changed.iter().any(|c| &c.path == path && c.change == change);
+        // New path to old path of the renames whose two sides are both in the prompt.
+        let renamed: BTreeMap<&RepoPath, &RepoPath> = diff
+            .renames
+            .0
+            .iter()
+            .filter(|(old, new)| is(old, Change::Removed) && is(new, Change::Added))
+            .map(|(old, new)| (new, old))
+            .collect();
         let mut files = Vec::new();
         for changed in &approval.changed {
+            if renamed.values().any(|old| **old == changed.path) {
+                continue;
+            }
             let found = diff
                 .files
                 .iter()
                 .find(|d| d.new_path.as_ref().or(d.old_path.as_ref()) == Some(&changed.path));
-            let (old, new, hunks) = match found {
-                Some(d) => (
-                    self.text(&changed.path, d.old_blob).await?,
-                    self.text(&changed.path, d.new_blob).await?,
-                    d.hunks.clone(),
-                ),
-                None => (None, None, Vec::new()),
+            let unchanged_rename = || {
+                let item = diff
+                    .non_text
+                    .iter()
+                    .find(|n| n.kind == NonTextKind::Rename && n.path == changed.path);
+                item.map(|n| (n.before.as_ref().map(|e| e.blob), n.after.as_ref().map(|e| e.blob)))
             };
+            let (old_blob, new_blob, hunks) = match found {
+                Some(d) => (d.old_blob, d.new_blob, d.hunks.clone()),
+                None => {
+                    let (old, new) = unchanged_rename().unwrap_or_default();
+                    (old, new, Vec::new())
+                }
+            };
+            let from = renamed.get(&changed.path).map(|old| (*old).clone());
+            let (old, new) = (
+                self.text(from.as_ref().unwrap_or(&changed.path), old_blob).await?,
+                self.text(&changed.path, new_blob).await?,
+            );
             files.push(ApprovalFile {
                 path: changed.path.clone(),
+                from,
                 change: changed.change,
                 old,
                 new,

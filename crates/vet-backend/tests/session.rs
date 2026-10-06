@@ -1072,6 +1072,54 @@ async fn a_run_needs_approval_once_then_streams_output_and_the_exit_code() {
     assert_eq!(client.call(unknown).await.unwrap_err(), "no run target nope");
 }
 
+#[tokio::test]
+async fn the_approval_diff_pairs_renamed_build_files() {
+    let make = "build:\n\techo one\n\techo two\n\techo three\n\techo four\n";
+    let just = "default:\n\techo a\n\techo b\n\techo c\n\techo d\n";
+    let fx = fixture(
+        &[("package.json", PACKAGE), ("Makefile", make), ("justfile", just)],
+        &[],
+    )
+    .await;
+    let client = Client::new(&fx.handler);
+    let session = open(&client, fx.repo.path()).await;
+    client.save_target(session, sh_target("t", "true")).await.unwrap();
+    let (hash, ..) = needs_approval(client.run(session, "t", None).await);
+    started(client.run(session, "t", Some(&hash)).await);
+
+    std::fs::remove_file(fx.repo.path().join("Makefile")).unwrap();
+    std::fs::remove_file(fx.repo.path().join("justfile")).unwrap();
+    let edited = make.replace("four", "five");
+    write(fx.repo.path(), "sub/Makefile", &edited);
+    write(fx.repo.path(), "sub/justfile", just);
+    let (hash, _, changed) = needs_approval(client.run(session, "t", None).await);
+    assert_eq!(changed.len(), 4);
+    let Response::RunApprovalDiff { files } = client.call(Request::RunApprovalDiff { session, hash }).await.unwrap()
+    else {
+        panic!("not a diff");
+    };
+    let summary: Vec<_> = files
+        .iter()
+        .map(|f| {
+            (
+                f.path.as_str(),
+                f.from.as_deref(),
+                f.base.as_deref(),
+                f.target.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("sub/Makefile", Some("Makefile"), Some(make), Some(edited.as_str())),
+            ("sub/justfile", Some("justfile"), Some(just), Some(just)),
+        ]
+    );
+    assert_eq!(files[0].hunks.len(), 1);
+    assert!(files[1].hunks.is_empty());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn run_output_is_bounded_and_the_process_is_not_blocked() {
