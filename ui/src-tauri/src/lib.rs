@@ -433,7 +433,9 @@ fn save_results(app: tauri::AppHandle, markdown: String, json: String, ok: bool)
 
 /// How long the page may take to accept the app-drawn title bar before the native frame is
 /// restored. The plugin's 5 s default is too short for a cold dev-server load on Windows.
-const DECORATION_TIMEOUT: Duration = Duration::from_secs(30);
+const DECORATION_TIMEOUT: Duration = Duration::from_secs(10);
+/// The window shows by then even while the app-drawn title bar is still activating.
+const SHOW_WITHIN: Duration = Duration::from_secs(2);
 
 /// Replaces the native title bar with the app header (window controls drawn by
 /// tauri-plugin-decoration, native traffic lights on macOS) and shows the window. If that
@@ -453,6 +455,15 @@ async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static str,
             .map_err(|e| format!("{cause}; restoring the native frame failed: {e}"))
     }
 
+    // Activation can stall until its deadline (the plugin's page handshake gets lost now and
+    // then); the window shows anyway, and the app-drawn title bar replaces the frame if it comes.
+    let shown = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(SHOW_WITHIN);
+        if let Err(e) = shown.show() {
+            eprintln!("cannot show the window: {e}");
+        }
+    });
     if let Err(e) = window.activate_decoration().await {
         return native(&window, e).await;
     }
