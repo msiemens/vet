@@ -1,0 +1,19 @@
+[package]
+name = "vet-mock"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Mock orchestrator for the shell spike (SPEC §12.0): the real transport and
+# handshake, answering from a real git changeset. It shells out to the `git`
+# CLI; the real backend uses gitoxide (§6.3). Depends only on the transport and
+# the protocol.
+[dependencies]
+vet-protocol.workspace = true
+vet-transport.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde_json = "1"
+similar = "3"
+
+[lints]
+workspace = true

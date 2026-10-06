@@ -1,0 +1,25 @@
+/* File sections: fixed height from the manifest, content clipped to it. */
+.file { overflow: hidden; border-bottom: 1px solid #444; box-sizing: border-box; }
+.file > header { height: 28px; box-sizing: border-box; display: flex; gap: 12px; align-items: center; padding: 0 10px; background: #2b2d30; font-family: monospace; }
+.file > header .count { flex: 1; opacity: 0.6; }
+.file > .body { height: calc(100% - 28px); overflow: hidden; }
+
+.cm-editor { font-family: "JetBrains Mono", Consolas, Menlo, monospace; font-size: 12px; background: #1e1f22; color: #ccc; }
+.cm-editor .cm-scroller { overflow: visible; line-height: 18px; }
+.cm-editor .cm-line { padding-right: 4px; }
+.cm-gutters { background: #2b2d30; color: #777; border: none; }
+.cm-activeLine { background: #ffffff0a; }
+.cm-cursor { border-left-color: #fff; }
+.cm-mergeView, .cm-mergeViewEditors { overflow: visible; }
+
+/* Review state on every changed line (SPEC §10), including unified view's deleted blocks. */
+.vet-unseen { box-shadow: inset 3px 0 0 #e0a030; }
+.vet-seen { box-shadow: inset 3px 0 0 #3fb950; opacity: 0.75; }
+.vet-current { outline: 1px solid #3574f0; outline-offset: -1px; }
+
+/* Inline decorations: changed symbol, reachability, notes (derived, §7.3/§7.4). */
+.vet-m-symbol { border-bottom: 1px solid #56a8f5; }
+.vet-m-reach { border-bottom: 1px dotted #5fb865; }
+.vet-m-note { border-bottom: 1px dashed #c77dbb; }
+
+.vet-hover { padding: 4px 8px; background: #2b2d30; color: #ddd; border: 1px solid #555; white-space: pre; font-size: 12px; }

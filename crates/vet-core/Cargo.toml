@@ -1,0 +1,11 @@
+[package]
+name = "vet-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Pure and synchronous: no IO, no git types, no async runtime (ci/check-deps.sh).
+[dependencies]
+
+[lints]
+workspace = true

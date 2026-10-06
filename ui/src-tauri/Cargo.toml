@@ -1,0 +1,26 @@
+[package]
+name = "vet-shell"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Built on its own (`pnpm tauri dev`), outside the main workspace: Tauri brings a
+# large dependency tree and needs the system webview (WebView2, WKWebView).
+# The shell is a thin client (I5): it spawns the backend, reads its Ready line,
+# and hands the address to the webview. No product logic lives here.
+[lib]
+name = "vet_shell_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+vet-protocol = { path = "../../crates/vet-protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+
+[lints.rust]
+unsafe_code = "forbid"

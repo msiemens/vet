@@ -1,0 +1,2 @@
+# `tauri dev` runs the shell in this directory, where the benchmark writes its results.
+bench-results.*

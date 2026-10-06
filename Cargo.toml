@@ -1,0 +1,34 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/vet-core",
+    "crates/vet-protocol",
+    "crates/vet-transport",
+    "crates/vet-mock",
+    "crates/vet-semantic",
+    "crates/vet-app",
+    "crates/vet-infra",
+    "crates/vet-backend",
+]
+
+# The Tauri host pulls in a large dependency tree and system webview libraries;
+# it is built on its own, with `pnpm tauri`.
+exclude = ["ui/src-tauri"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Dependency direction is enforced by ci/check-deps.sh; keep it in sync when
+# adding a path dependency here.
+[workspace.dependencies]
+vet-core = { path = "crates/vet-core" }
+vet-protocol = { path = "crates/vet-protocol" }
+vet-transport = { path = "crates/vet-transport" }
+vet-semantic = { path = "crates/vet-semantic" }
+vet-app = { path = "crates/vet-app" }
+vet-infra = { path = "crates/vet-infra" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

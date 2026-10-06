@@ -1,0 +1,13 @@
+[package]
+name = "vet-semantic"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# I1: depends on vet-core and nothing else in the workspace, so it cannot see
+# commits, refs, or provenance. Enforced by ci/check-deps.sh.
+[dependencies]
+vet-core.workspace = true
+
+[lints]
+workspace = true
