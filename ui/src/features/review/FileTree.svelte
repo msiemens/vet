@@ -5,7 +5,7 @@
   import type { FileChange } from "../../generated/FileChange";
   import Icon from "../../lib/ui/Icon.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
-  import Segmented from "../../lib/ui/Segmented.svelte";
+  import Tab from "../../lib/ui/Tab.svelte";
   import { AllFiles } from "./AllFiles.svelte";
   import { lineDelta } from "./editor/lineDelta";
   import { buildRows, buildTree, summarize } from "./tree";
@@ -123,18 +123,10 @@
 
 <nav aria-label="Files">
   <div class="sh">
-    <Segmented
-      small
-      label="Files shown"
-      value={scope}
-      onchange={(next: typeof scope) => {
-        scope = next;
-      }}
-      options={[
-        { id: "changes", label: "Changes" },
-        { id: "all", label: "All files" },
-      ]}
-    />
+    <div class="tabs" role="tablist" aria-label="Files shown">
+      <Tab selected={scope === "changes"} onselect={() => (scope = "changes")}>Changes</Tab>
+      <Tab selected={scope === "all"} onselect={() => (scope = "all")}>All files</Tab>
+    </div>
     <span class="grow"></span>
     {#if scope === "changes"}<span class="mono count">{paths.length}</span>{/if}
   </div>
@@ -188,15 +180,19 @@
     flex-direction: column;
     min-height: 0;
   }
+  /* Tabs of the header itself, like the editor's tab strip next to it. */
   .sh {
     display: flex;
     align-items: center;
-    gap: 6px;
-    height: var(--h-ctl);
-    padding: 0 8px;
+    height: var(--h-tab);
+    padding-right: 8px;
     font-size: 12px;
-    border-bottom: 1px solid var(--line-soft);
+    border-bottom: 1px solid var(--line);
     flex: none;
+  }
+  .tabs {
+    display: flex;
+    align-self: stretch;
   }
   .grow {
     flex: 1;

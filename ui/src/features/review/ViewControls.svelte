@@ -1,4 +1,5 @@
 <script lang="ts">
+  import IconButton from "../../lib/ui/IconButton.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import type { Mode } from "./editor/mount";
 
@@ -26,8 +27,8 @@
     ]}
   />
   <div class="ctl-group" role="group" aria-label="Hunk navigation">
-    <button class="ctl" type="button" title="Ctrl-Alt-Up" onclick={() => onstep(-1)}>Prev hunk</button>
-    <button class="ctl" type="button" title="Ctrl-Alt-Down" onclick={() => onstep(1)}>Next hunk</button>
+    <IconButton icon="up" label="Previous hunk (Ctrl-Alt-Up)" size={22} iconSize={14} onclick={() => onstep(-1)} />
+    <IconButton icon="down" label="Next hunk (Ctrl-Alt-Down)" size={22} iconSize={14} onclick={() => onstep(1)} />
   </div>
 </div>
 
@@ -37,9 +38,5 @@
     gap: 6px;
     padding: 0 6px;
     flex: none;
-  }
-  .ctl {
-    height: 22px;
-    font-size: 12px;
   }
 </style>
