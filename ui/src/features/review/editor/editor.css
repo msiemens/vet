@@ -102,6 +102,43 @@
   overflow: visible;
 }
 
+/* An unchanged file's text tab: one editor filling the pane, scrolling by itself. */
+.vet-text .cm-editor {
+  height: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  background: var(--bg-editor);
+  color: var(--text);
+}
+.vet-text .cm-editor.cm-focused {
+  outline: none;
+}
+.vet-text .cm-editor .cm-scroller {
+  line-height: var(--h-line);
+  font-family: inherit;
+}
+.vet-text .cm-editor .cm-gutters {
+  background: var(--bg-editor);
+  color: var(--text-3);
+  border: none;
+}
+.vet-text .cm-editor .cm-lineNumbers .cm-gutterElement {
+  min-width: 40px;
+  padding: 0 6px 0 8px;
+}
+.vet-text .cm-editor .cm-selectionBackground,
+.vet-text .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+  background: var(--select);
+}
+.vet-notext {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--text-2);
+  font-size: var(--fs-ctl);
+}
+
 /* Added and deleted lines (unified: target lines and deleted chunks; side by side: the two editors). */
 .file .cm-editor .cm-changedLine,
 .file .cm-editor .cm-insertedLine {

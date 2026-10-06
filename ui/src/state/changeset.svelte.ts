@@ -137,6 +137,16 @@ class ChangesetStore {
     }
   }
 
+  /** The children of a directory of the target snapshot; `undefined` after showing why it failed. */
+  async listDirectory(path: string) {
+    try {
+      return await this.connected().listDirectory(path);
+    } catch (error) {
+      this.notice = error instanceof Error ? error.message : String(error);
+      return undefined;
+    }
+  }
+
   /** What a base can be picked from; `undefined` after showing why it failed. */
   async baseCandidates(): Promise<BaseCandidates | undefined> {
     try {

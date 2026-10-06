@@ -10,7 +10,7 @@
   import type { Mode } from "./editor/mount";
   import "./editor/editor.css";
   import { type Hud, ReviewController } from "./ReviewController";
-  import { CHANGES, pathOf } from "./Tabs.svelte";
+  import { CHANGES, kindOf, pathOf } from "./Tabs.svelte";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
@@ -74,10 +74,15 @@
     });
   });
 
-  /** Shows the file in the Changes tab; a file with only non-text changes has nothing there, so it opens its own tab. */
+  /**
+   * Shows the file in the Changes tab. A file with only non-text changes has nothing there, so
+   * it opens its own tab; an unchanged file is only selected.
+   */
   function select(path: string) {
     selected = path;
-    if (!fileOf(path)?.hunks.length) {
+    const file = fileOf(path);
+    if (!file) return;
+    if (!file.hunks.length) {
       void controller.openFile(path);
       return;
     }
@@ -97,10 +102,12 @@
       <FileTree
         paths={changeset.paths}
         {fileOf}
+        {revision}
+        list={(path) => changeset.listDirectory(path)}
         selected={highlighted}
         excluded={{ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 }}
         onselect={select}
-        onopen={(path) => void controller.openFile(path)}
+        onopen={(path) => void controller.openPath(path)}
         onmenu={(path, x, y) => (menu = { path, x, y })}
       />
     {:else}
@@ -118,7 +125,7 @@
   <div class="panes">
     {#each tabs.open as id (id)}
       {@const path = pathOf(id)}
-      {@const file = path === undefined ? undefined : fileOf(path)}
+      {@const file = path === undefined || kindOf(id) !== "file" ? undefined : fileOf(path)}
       <div class="pane" class:active={tabs.active === id}>
         {#if file?.nonText.length}
           <div class="cards">

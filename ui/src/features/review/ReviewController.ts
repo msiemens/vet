@@ -10,7 +10,8 @@ import { changeset } from "../../state/changeset.svelte";
 import { ChangesetView, type Listeners } from "./editor/ChangesetView";
 import type { Mode } from "./editor/mount";
 import { matches } from "../../lib/keymap";
-import { CHANGES, type TabId, Tabs, fileTab, pathOf } from "./Tabs.svelte";
+import { TextView } from "./editor/TextView";
+import { CHANGES, type TabId, Tabs, fileTab, kindOf, pathOf } from "./Tabs.svelte";
 
 /** Live latencies for the dev HUD. */
 export interface Hud {
@@ -34,6 +35,8 @@ export class ReviewController {
   readonly tabs = new Tabs();
   /** The view of each attached tab; a file tab has none while its file is not in the changeset. */
   private views = new Map<TabId, ChangesetView>();
+  /** The view of each attached text tab. */
+  private texts = new Map<TabId, TextView>();
   private roots = new Map<TabId, HTMLElement>();
   mode: Mode = "unified";
   collisions = 0;
@@ -59,6 +62,8 @@ export class ReviewController {
     this.unsubscribe();
     for (const view of this.views.values()) view.destroy();
     this.views.clear();
+    for (const text of this.texts.values()) text.destroy();
+    this.texts.clear();
   }
 
   get files() {
@@ -135,6 +140,11 @@ export class ReviewController {
     const root = this.roots.get(id);
     if (!root) return;
     const path = pathOf(id);
+    if (kindOf(id) === "text" && path !== undefined) {
+      this.texts.get(id)?.destroy();
+      this.texts.set(id, new TextView(root, path, manifest.revision, () => this.backend.fileText(path)));
+      return;
+    }
     const files = path === undefined ? manifest.files : manifest.files.filter((f) => f.path === path);
     const anchor = previous?.currentAnchor();
     const top = root.scrollTop;
@@ -170,8 +180,17 @@ export class ReviewController {
     return () => {
       this.views.get(id)?.destroy();
       this.views.delete(id);
+      this.texts.get(id)?.destroy();
+      this.texts.delete(id);
       this.roots.delete(id);
     };
+  }
+
+  /** Opens a path in its own tab: the diff of a changed file, the text of any other. */
+  async openPath(path: string, line?: number) {
+    if (changeset.file(path)) return this.openFile(path, line);
+    this.tabs.showText(path);
+    await tick(); // the pane attaches and builds its view
   }
 
   /** Opens the file's tab, or focuses it if it is open, and goes to a 0-based target `line` if given. */

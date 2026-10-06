@@ -5,11 +5,13 @@ import type { Base } from "../generated/Base";
 import type { BaseChoice } from "../generated/BaseChoice";
 import type { BranchInfo } from "../generated/BranchInfo";
 import type { CommitInfo } from "../generated/CommitInfo";
+import type { DirEntry } from "../generated/DirEntry";
 import type { Event as ServerEvent } from "../generated/Event";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { Response } from "../generated/Response";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
+import type { TextContent } from "../generated/TextContent";
 import { Connection } from "./connection";
 
 export type FileContents = Extract<Response, { type: "fileContents" }>;
@@ -69,6 +71,24 @@ export class Backend {
 
   fileContents(path: string): Promise<FileContents> {
     return this.conn.request({ type: "fileContents", session: this.sid, path }).then((r) => expect(r, "fileContents"));
+  }
+
+  /** The direct children of a directory of the target snapshot (`""` is the root), as of `revision`. */
+  async listDirectory(path: string): Promise<{ revision: number; entries: DirEntry[] }> {
+    const { revision, entries } = expect(
+      await this.conn.request({ type: "listDirectory", session: this.sid, path }),
+      "directory",
+    );
+    return { revision, entries };
+  }
+
+  /** The target-side text of any path of the target snapshot, changed or not. */
+  async fileText(path: string): Promise<{ revision: number; content: TextContent }> {
+    const { revision, content } = expect(
+      await this.conn.request({ type: "fileText", session: this.sid, path }),
+      "fileText",
+    );
+    return { revision, content };
   }
 
   /** `revision` is the manifest's; the backend rejects a stale one. */
