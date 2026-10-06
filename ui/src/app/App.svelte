@@ -71,9 +71,14 @@
 
   onMount(() => {
     applyTheme(theme);
-    showWindow().catch((e: unknown) => {
-      console.error(e);
-    });
+    showWindow().then(
+      (frame) => {
+        if (frame === "native") console.warn("app-drawn title bar unavailable; the host log says why");
+      },
+      (e: unknown) => {
+        console.error(e);
+      },
+    );
     void changeset.connect();
     return mainMenu.listen(execute);
   });

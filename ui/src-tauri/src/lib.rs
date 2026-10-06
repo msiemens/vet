@@ -431,6 +431,10 @@ fn save_results(app: tauri::AppHandle, markdown: String, json: String, ok: bool)
     Ok(())
 }
 
+/// How long the page may take to accept the app-drawn title bar before the native frame is
+/// restored. The plugin's 5 s default is too short for a cold dev-server load on Windows.
+const DECORATION_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Replaces the native title bar with the app header (window controls drawn by
 /// tauri-plugin-decoration, native traffic lights on macOS) and shows the window. If that
 /// fails, the native frame is restored and shown instead. Returns "custom" or "native".
@@ -439,6 +443,7 @@ async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static str,
     use tauri_plugin_decoration::WebviewWindowExt;
 
     async fn native(window: &tauri::WebviewWindow, cause: impl std::fmt::Display) -> Result<&'static str, String> {
+        eprintln!("app-drawn title bar unavailable, using the native frame: {cause}");
         let restored = window.restore_decoration().await;
         window
             .show()
@@ -464,7 +469,11 @@ async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static str,
 
 pub fn run() {
     let app = tauri::Builder::default()
-        .plugin(tauri_plugin_decoration::init())
+        .plugin(
+            tauri_plugin_decoration::builder()
+                .activation_timeout(DECORATION_TIMEOUT)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         // Items of the native menu go to the UI, which owns what they do.
         .on_menu_event(|app, event| {
