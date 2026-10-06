@@ -69,7 +69,7 @@ The Files tool window has a scope switch. "Changes" is the changed-files tree. "
 
 Each tab's pane hands its scroll root to `ReviewController.attach`, which builds a `ChangesetView` in it. Panes stay laid out when inactive (`visibility: hidden`), so scroll positions and editors survive switching. A new manifest revision rebuilds every view and keeps the scroll position and the nearest hunk of the same file as current; file tabs of files that left the changeset close.
 
-In the Changes tab unchanged regions collapse with `@codemirror/merge`'s `collapseUnchanged` (3 lines of context) in both modes. `editor/sectionLayout.ts` mirrors that rule to estimate a section's height from the manifest. CodeMirror's own height is not a reliable measure (it estimates what is off screen), so expanding a region grows the section by exactly the lines the bar hid, compensating the scroll position, and unmounting a section resets it to the estimate (the benchmark reports the estimate error of mounted sections).
+In the Changes tab unchanged regions collapse with `@codemirror/merge`'s `collapseUnchanged` (3 lines of context) in both modes. `editor/sectionLayout.ts` mirrors that rule to estimate a section's height from the manifest, including the `--h-section-gap` that closes every section (the editor is clipped above it, and has no padding of its own). CodeMirror's own height is not a reliable measure (it estimates what is off screen), so expanding a region grows the section by exactly the lines the bar hid, compensating the scroll position, and unmounting a section resets it to the estimate (the benchmark reports the estimate error of mounted sections).
 
 ## Change cards
 

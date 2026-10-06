@@ -55,10 +55,15 @@
   height: 20px;
   font-size: var(--fs-mono-s);
 }
-/* `--vet-cards` is the height of the section's change cards, set by the view. */
+/* `--vet-cards` is the height of the section's change cards, set by the view. The editor is
+   clipped above the section's bottom gap, which also hides the empty last line of a file's text. */
 .file > .body {
-  height: calc(100% - var(--h-section) - var(--vet-cards, 0px));
+  height: calc(100% - var(--h-section) - var(--vet-cards, 0px) - var(--h-section-gap));
   overflow: clip;
+}
+/* Rows sit exactly where `sectionLayout` puts them: no padding above the first or below the last. */
+.file .cm-editor .cm-content {
+  padding: 0;
 }
 
 .file .cm-editor {

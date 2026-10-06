@@ -2,6 +2,7 @@
 // can be laid out before any text is loaded (SPEC §10). With `collapse`, unchanged regions
 // between hunks become one bar each, mirroring `collapseUnchanged` of `@codemirror/merge`.
 // Change cards for non-text items sit between the section header and the first hunk.
+// A fixed gap closes every section.
 
 import type { FileChange } from "../../../generated/FileChange";
 import type { NonTextItem } from "../../../generated/NonTextItem";
@@ -15,6 +16,8 @@ export interface Metrics {
   hunk: number;
   header: number;
   collapsed: number;
+  /** Empty space below a section's last row, so it does not touch the next header. */
+  gap: number;
   /** The before/after preview strip of an image card. */
   preview: number;
 }
@@ -77,5 +80,5 @@ export function sectionLayout(
     end = h.targetStart + h.targetLen;
   });
   gap(file.targetLines - end, file.hunks.length ? margin : 0);
-  return { height: y, cardTops, cardsHeight, hunkTops };
+  return { height: y + m.gap, cardTops, cardsHeight, hunkTops };
 }

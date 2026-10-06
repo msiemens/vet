@@ -73,6 +73,8 @@
   --h-row: 22px;
   --h-section: 26px;
   --h-hunk: 24px;
+  /* Empty space closing each file section. */
+  --h-section-gap: 8px;
   --h-line: 20px;
   /* The bar of a collapsed unchanged region; CodeMirror estimates 27px for it before measuring. */
   --h-collapsed: 27px;

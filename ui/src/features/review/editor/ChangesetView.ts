@@ -110,6 +110,7 @@ export class ChangesetView {
       hunk: px(style, "--h-hunk"),
       header: px(style, "--h-section"),
       collapsed: px(style, "--h-collapsed"),
+      gap: px(style, "--h-section-gap"),
       preview: px(style, "--h-preview"),
     };
     let hunks = 0;
@@ -605,7 +606,10 @@ export class ChangesetView {
     let drift = 0;
     for (const fi of this.mounted) {
       const s = this.sections[fi];
-      drift = Math.max(drift, Math.abs(s.body.scrollHeight + this.m.header + s.cardsHeight + 1 - s.height));
+      drift = Math.max(
+        drift,
+        Math.abs(s.body.scrollHeight + this.m.header + s.cardsHeight + this.m.gap + 1 - s.height),
+      );
     }
     return drift;
   }
