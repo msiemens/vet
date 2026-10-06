@@ -188,7 +188,10 @@ export class ReviewController {
   /** A refetched manifest may be of a newer revision than the views; rebuild them then. */
   update(manifest: Manifest) {
     const view = this.views.get(CHANGES);
-    if (view && view.revision !== manifest.revision) this.show(manifest);
+    if (!view || view.revision === manifest.revision) return;
+    this.show(manifest);
+    // The new views have loaded nothing; a newer revision replaces this load.
+    this.changes.loadAll().catch(() => undefined);
   }
 
   /** Fetches the manifest and renders it; resolves with the time to the Changes tab's first hunk paint. */

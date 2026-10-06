@@ -71,6 +71,7 @@ export class ChangesetView {
     this.settle = setTimeout(() => this.sync(), SETTLE_MS);
   };
   private settle?: ReturnType<typeof setTimeout>;
+  private destroyed = false;
   /** A frame request that continues mounting once a frame's budget is spent. */
   private later?: number;
 
@@ -171,6 +172,7 @@ export class ChangesetView {
   }
 
   destroy() {
+    this.destroyed = true;
     if (this.later !== undefined) cancelAnimationFrame(this.later);
     this.later = undefined;
     clearTimeout(this.settle);
@@ -281,10 +283,16 @@ export class ChangesetView {
     return s.loading;
   }
 
+  /** Loads every section, the ones nearest the viewport first. */
   async loadAll(concurrency = 8): Promise<void> {
+    const middle = this.root.scrollTop + this.root.clientHeight / 2;
+    const distance = (s: Section) => Math.abs(s.top + s.height / 2 - middle);
+    const order = this.sections
+      .map((s, i) => i)
+      .sort((a, b) => distance(this.sections[a]) - distance(this.sections[b]));
     let next = 0;
     const worker = async () => {
-      while (next < this.sections.length) await this.load(next++);
+      while (next < order.length) await this.load(order[next++]);
     };
     await Promise.all(Array.from({ length: concurrency }, worker));
   }
@@ -315,6 +323,7 @@ export class ChangesetView {
    * budget; the rest follow on later frames.
    */
   sync(wide = true) {
+    if (this.destroyed) return; // a load that finished after the view was replaced
     const top = this.root.scrollTop;
     const h = this.root.clientHeight;
     const near = wide
