@@ -23,11 +23,31 @@ A review-first IDE for the agentic coding age. See [SPEC.md](SPEC.md).
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets
+cargo fmt --all --check     # rustfmt.toml; also covers ui/src-tauri (see ci/check.sh)
 ./ci/check-deps.sh          # enforces the dependency direction between crates
+./ci/check-module-cycles.sh # fails on a module cycle inside a crate
 ```
 
 `ci/check-deps.sh` fails if a crate depends on one outside its allowlist, or if
 a pure crate pulls in an async runtime, git or IO.
+
+`ci/check-module-cycles.sh` needs `cargo install cargo-modules --locked`. It
+fails if the module graph of a library or binary has a cycle, ignoring edges to
+a module's own ancestors (`use super::X`). `cargo modules --acyclic` is not used
+directly: it counts every type and its methods as a cycle.
+
+## All checks
+
+```sh
+./ci/check.sh
+```
+
+Runs everything: rustfmt (both workspaces), clippy (`-D warnings`), tests,
+`check-deps.sh`, `check-module-cycles.sh`, then in `ui/` `pnpm check`, `lint`,
+`format:check`, `test` and `build`. Run it before committing.
+
+Formatting-only commits are listed in `.git-blame-ignore-revs`; enable them
+with `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
 
 ## Protocol types
 
@@ -54,6 +74,8 @@ cd ui
 pnpm install
 pnpm dev        # http://localhost:1420
 pnpm check      # svelte-check
+pnpm lint       # eslint, incl. the architecture boundaries of ui/ARCHITECTURE.md (lint:fix)
+pnpm format     # prettier (format:check in CI)
 pnpm test       # keybinding tests
 pnpm build
 ```
