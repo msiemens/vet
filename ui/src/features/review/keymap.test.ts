@@ -17,7 +17,7 @@ const key = (init: Partial<KeyLike>): KeyLike => ({
 const altGr = (k: string, code: string) =>
   key({ key: k, code, ctrlKey: true, altKey: true, getModifierState: (m) => m === "AltGraph" });
 
-test("AltGr characters never match Ctrl-Alt bindings", () => {
+void test("AltGr characters never match Ctrl-Alt bindings", () => {
   for (const [k, code, spec] of [
     ["@", "KeyQ", "Ctrl-Alt-q"],
     ["€", "KeyE", "Ctrl-Alt-e"],
@@ -34,22 +34,22 @@ test("AltGr characters never match Ctrl-Alt bindings", () => {
   }
 });
 
-test("AltGr is detected even without the AltGraph modifier (Ctrl+Alt only)", () => {
+void test("AltGr is detected even without the AltGraph modifier (Ctrl+Alt only)", () => {
   assert.ok(isTextInput(key({ key: "@", code: "KeyQ", ctrlKey: true, altKey: true })));
 });
 
-test("macOS Option characters are text", () => {
+void test("macOS Option characters are text", () => {
   assert.ok(isTextInput(key({ key: "{", code: "Digit8", altKey: true })));
   assert.ok(isTextInput(key({ key: "ß", code: "KeyS", altKey: true })));
 });
 
-test("dead keys and IME composition are text", () => {
+void test("dead keys and IME composition are text", () => {
   assert.ok(isTextInput(key({ key: "Dead", code: "Quote" })));
   assert.ok(isTextInput(key({ key: "Process", code: "KeyA", keyCode: 229 })));
   assert.ok(isTextInput(key({ key: "a", code: "KeyA", isComposing: true })));
 });
 
-test("real Ctrl+Alt bindings still fire", () => {
+void test("real Ctrl+Alt bindings still fire", () => {
   assert.ok(matches("Ctrl-Alt-ArrowDown", key({ key: "ArrowDown", code: "ArrowDown", ctrlKey: true, altKey: true })));
   assert.ok(matches("Ctrl-Alt-s", key({ key: "s", code: "KeyS", ctrlKey: true, altKey: true })));
   assert.ok(!matches("Ctrl-Alt-s", key({ key: "s", code: "KeyS", ctrlKey: true })));

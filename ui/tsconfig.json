@@ -9,9 +9,9 @@
     "isolatedModules": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    "allowJs": true,
     "skipLibCheck": true,
-    "types": ["svelte", "vite/client"]
+    "types": ["node", "svelte", "vite/client"]
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"],
-  "exclude": ["src/**/*.test.ts"]
+  "include": ["src/**/*.ts", "src/**/*.svelte", "scripts/*.mjs", "*.js", "vite.config.ts"]
 }

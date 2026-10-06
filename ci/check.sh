@@ -7,10 +7,18 @@ step() { printf '\n== %s\n' "$*"; }
 
 step "cargo fmt"
 cargo fmt --all --check
-# ui/src-tauri is outside the workspace; rustfmt follows its modules from the entry points.
-rustfmt --check ui/src-tauri/build.rs ui/src-tauri/src/main.rs
+cargo fmt --manifest-path ui/src-tauri/Cargo.toml --check
 step "cargo clippy"
 cargo clippy --workspace --all-targets -- -D warnings
+step "cargo clippy (ui/src-tauri)"
+tauri_clippy=(cargo clippy --manifest-path ui/src-tauri/Cargo.toml --all-targets -- -D warnings)
+if [[ $(uname) != Linux ]] || pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
+    "${tauri_clippy[@]}"
+elif command -v nix-shell >/dev/null; then
+    nix-shell --run "${tauri_clippy[*]}"
+else
+    echo "SKIPPED: the GTK/webkit libraries are missing and nix-shell is not available"
+fi
 step "cargo test"
 cargo test --workspace
 step "check-deps"

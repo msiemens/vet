@@ -13,6 +13,7 @@ if (process.env.VET_WSL_DISTRO) {
 }
 
 const release = process.argv.includes("--release") ? ["--release"] : [];
+/** @param {string[]} args */
 const cargo = (args) => {
   const result = spawnSync("cargo", args, { cwd: new URL("../..", import.meta.url), stdio: "inherit" });
   if (result.status !== 0) process.exit(result.status ?? 1);

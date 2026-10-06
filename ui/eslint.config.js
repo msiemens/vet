@@ -91,10 +91,6 @@ export default defineConfig(
       ],
     },
   },
-  {
-    files: ["**/*.js", "**/*.mjs", "**/*.test.ts"],
-    extends: [tseslint.configs.disableTypeChecked],
-  },
   prettier,
   svelte.configs.prettier,
 );
