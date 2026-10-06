@@ -291,3 +291,24 @@ async fn unchanged_tree_has_the_head_snapshot_id() {
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
     assert_eq!(scan.snapshot, base);
 }
+
+#[tokio::test]
+async fn repeated_scans_follow_edits_through_the_stat_cache() {
+    let dir = repo();
+    write(dir.path(), "tracked.txt", b"t\n");
+    commit(dir.path());
+    write(dir.path(), "new.txt", b"aaaa\n");
+    write(dir.path(), "tracked.txt", b"u\n");
+    let repo = GixRepo::new(dir.path());
+    let first = repo.scan(Dirty::All).await.unwrap().snapshot;
+    // Past the racy window, so the next scans may reuse the records.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    assert_eq!(first, repo.scan(Dirty::All).await.unwrap().snapshot);
+    assert_eq!(first, repo.scan(Dirty::All).await.unwrap().snapshot);
+
+    write(dir.path(), "new.txt", b"bbbb\n");
+    write(dir.path(), "tracked.txt", b"v\n");
+    let last = repo.scan(Dirty::All).await.unwrap().snapshot;
+    assert_eq!(last.entries[&path("new.txt")].blob, blob(b"bbbb\n"));
+    assert_eq!(last.entries[&path("tracked.txt")].blob, blob(b"v\n"));
+}

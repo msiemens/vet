@@ -11,6 +11,22 @@ impl Hash {
     pub fn of(bytes: &[u8]) -> Self {
         Self(*blake3::hash(bytes).as_bytes())
     }
+
+    /// BLAKE3 of everything `reader` yields, without holding it in memory.
+    pub fn of_reader(mut reader: impl std::io::Read) -> std::io::Result<Self> {
+        let mut hasher = blake3::Hasher::new();
+        let mut buf = [0; 64 * 1024];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => return Ok(Self(*hasher.finalize().as_bytes())),
+                Ok(n) => {
+                    hasher.update(&buf[..n]);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+    }
 }
 
 /// Identity of a file's content: the hash of its bytes.

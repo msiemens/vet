@@ -1,7 +1,7 @@
 //! Dirty-tree scan (§6.1, §6.3): index first, hashing only entries whose stat
 //! is uncertain, and only built-in content conversions.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -17,6 +17,7 @@ use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, RepoPath, Snapshot, 
 
 use vet_core::merkle;
 
+use super::stat_cache::{Record, StatCache, StatKey, file_stamp, now_secs};
 use super::{BlobCache, err};
 
 /// One worktree item, converted the way git would store it.
@@ -38,10 +39,15 @@ pub(crate) struct Worktree<'r> {
     stat: gix::index::entry::stat::Options,
     root: PathBuf,
     cap: u64,
+    stats: &'r StatCache,
+    prev: HashMap<RepoPath, Record>,
+    next: HashMap<RepoPath, Record>,
+    /// A `.gitattributes` file differs from the cached one.
+    pub attributes_changed: bool,
 }
 
 impl<'r> Worktree<'r> {
-    pub fn new(repo: &'r gix::Repository, blobs: &'r BlobCache, cap: u64) -> Result<Self, GitError> {
+    pub fn new(repo: &'r gix::Repository, blobs: &'r BlobCache, stats: &'r StatCache, cap: u64) -> Result<Self, GitError> {
         let index = repo.index_or_empty().map_err(err)?;
         let stack = repo.attributes_only(&index, Source::WorktreeThenIdMapping).map_err(err)?.detach();
         let (mut filter, attrs) = gix::filter::Pipeline::new(repo, stack).map_err(err)?.into_parts();
@@ -59,6 +65,10 @@ impl<'r> Worktree<'r> {
             stat: repo.stat_options().map_err(err)?,
             root: repo.workdir().ok_or_else(|| GitError("bare repository".into()))?.to_owned(),
             cap,
+            stats,
+            prev: HashMap::new(),
+            next: HashMap::new(),
+            attributes_changed: false,
         })
     }
 
@@ -109,19 +119,60 @@ impl<'r> Worktree<'r> {
             let bytes = if keep { self.blobs.odb_content(self.repo, blob, u64::MAX)? } else { None };
             return Ok(Some(Item { entry: entry(blob, false), unavailable: false, bytes }));
         }
-        if md.len() > self.cap {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update_reader(std::fs::File::open(&full).map_err(err)?).map_err(err)?;
-            let blob = BlobId(Hash(*hasher.finalize().as_bytes()));
-            return Ok(Some(Item { entry: entry(blob, false), unavailable: true, bytes: None }));
+        // Bytes are wanted for copying, so the cache cannot answer.
+        let key = (!keep).then(|| StatKey::of(&md, index_mode.map(|m| m.bits())));
+        let repo_path = RepoPath(path.to_vec());
+        let cached = self.prev.get(&repo_path);
+        if let (Some(key), Some(record)) = (&key, cached) {
+            if record.matches(key) {
+                let item = Item { entry: record.entry.clone(), unavailable: record.unavailable, bytes: None };
+                self.next.insert(repo_path, record.clone());
+                return Ok(Some(item));
+            }
+            self.attributes_changed |= path.ends_with(b".gitattributes");
         }
-        let raw = std::fs::read(&full).map_err(err)?;
+
+        let recorded_secs = now_secs();
+        let item = self.hash_file(path, &full, md.len(), keep, entry)?;
+        if let Some(key) = key {
+            self.next.insert(
+                repo_path,
+                Record { key, entry: item.entry.clone(), unavailable: item.unavailable, recorded_secs },
+            );
+        }
+        Ok(Some(item))
+    }
+
+    fn hash_file(&mut self, path: &BStr, full: &Path, len: u64, keep: bool, entry: impl Fn(BlobId, bool) -> FileEntry) -> Result<Item, GitError> {
+        if len > self.cap {
+            let blob = BlobId(Hash::of_reader(std::fs::File::open(full).map_err(err)?).map_err(err)?);
+            return Ok(Item { entry: entry(blob, false), unavailable: true, bytes: None });
+        }
+        let raw = std::fs::read(full).map_err(err)?;
         let (converted, custom_filter) = self.convert(path, &raw)?;
         let (bytes, unfiltered) = match (converted, custom_filter) {
             (_, true) | (None, _) => (raw, custom_filter),
             (Some(converted), false) => (converted, false),
         };
-        Ok(Some(Item { entry: entry(BlobId::of(&bytes), unfiltered), unavailable: false, bytes: keep.then_some(bytes) }))
+        Ok(Item { entry: entry(BlobId::of(&bytes), unfiltered), unavailable: false, bytes: keep.then_some(bytes) })
+    }
+
+    /// Start a scan that reuses and refreshes the stat cache. Other uses of the
+    /// worktree (diff, `read_blob`) neither read nor change it.
+    pub fn use_stat_cache(&mut self) {
+        let git_dir = self.repo.git_dir();
+        let config = [git_dir.join("config"), git_dir.join("info/attributes")].iter().map(|p| file_stamp(p)).collect();
+        self.prev = self.stats.take(config);
+    }
+
+    /// Drop cached entries; they may predate a change of conversion rules.
+    pub fn forget_cached(&mut self) {
+        self.prev.clear();
+    }
+
+    /// Hand the records of this scan back to the cache.
+    pub fn finish(&mut self) {
+        self.stats.put(std::mem::take(&mut self.next));
     }
 
     fn stat_matches(&self, tracked: &gix::index::Entry, full: &Path) -> bool {
@@ -168,11 +219,13 @@ impl<'r> Worktree<'r> {
     }
 }
 
-pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, cap: u64) -> Result<Scan, GitError> {
-    let mut wt = Worktree::new(repo, blobs, cap)?;
+pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache, cap: u64) -> Result<Scan, GitError> {
+    let mut wt = Worktree::new(repo, blobs, stats, cap)?;
+    wt.use_stat_cache();
     let index = repo.index_or_empty().map_err(err)?;
     let mut entries = BTreeMap::new();
     let mut unavailable = Vec::new();
+    let mut work: Vec<(BString, Option<gix::index::Entry>)> = Vec::new();
 
     for tracked in index.entries() {
         let path = tracked.path(&index);
@@ -180,18 +233,13 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, cap: u64) -> Resul
         if entries.contains_key(&key) {
             continue; // further conflict stages
         }
-        let entry = if tracked.mode == Mode::COMMIT || tracked.flags.contains(Flags::SKIP_WORKTREE) {
-            Some(tree_entry(repo, blobs, tracked.id, tracked.mode.bits())?)
+        if tracked.mode == Mode::COMMIT || tracked.flags.contains(Flags::SKIP_WORKTREE) {
+            entries.insert(key, tree_entry(repo, blobs, tracked.id, tracked.mode.bits())?);
         } else {
-            wt.item(path, Some(tracked), false)?.map(|item| {
-                if item.unavailable {
-                    unavailable.push(key.clone());
-                }
-                item.entry
-            })
-        };
-        entries.extend(entry.map(|e| (key, e)));
+            work.push((path.to_owned(), Some(tracked.clone())));
+        }
     }
+    let tracked_paths: BTreeSet<_> = work.iter().map(|(p, _)| p.clone()).collect();
 
     // The dirwalk only knows an index entry is tracked if it is flagged up to
     // date, so it may report tracked files too; those are skipped here.
@@ -202,17 +250,30 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, cap: u64) -> Resul
         if found.status != gix::dir::entry::Status::Untracked {
             continue;
         }
-        let key = RepoPath(found.rela_path.to_vec());
-        if entries.contains_key(&key) || !matches!(found.disk_kind, Some(gix::dir::entry::Kind::File | gix::dir::entry::Kind::Symlink)) {
-            continue;
+        let is_file = matches!(found.disk_kind, Some(gix::dir::entry::Kind::File | gix::dir::entry::Kind::Symlink));
+        if is_file && !tracked_paths.contains(&found.rela_path) && !entries.contains_key(&RepoPath(found.rela_path.to_vec())) {
+            work.push((found.rela_path, None));
         }
-        if let Some(item) = wt.item(found.rela_path.as_bstr(), None, false)? {
+    }
+
+    // Attribute files first: if one changed, cached entries may have been
+    // converted under other rules and must not be reused.
+    let is_attributes = |p: &BString| p.ends_with(b".gitattributes");
+    work.sort_by_key(|(p, _)| !is_attributes(p));
+    let attribute_files = work.iter().take_while(|(p, _)| is_attributes(p)).count();
+    for (i, (path, tracked)) in work.iter().enumerate() {
+        if i == attribute_files && wt.attributes_changed {
+            wt.forget_cached();
+        }
+        if let Some(item) = wt.item(path.as_bstr(), tracked.as_ref(), false)? {
+            let key = RepoPath(path.to_vec());
             if item.unavailable {
                 unavailable.push(key.clone());
             }
             entries.insert(key, item.entry);
         }
     }
+    wt.finish();
 
     let status = SnapshotStatus { path_collisions: collisions(entries.keys()), content_unavailable: unavailable };
     let id = merkle::snapshot_id(&entries);
