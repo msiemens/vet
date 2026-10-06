@@ -38,7 +38,7 @@
     controller = c;
     c.open(true).then(
       (ms) => onready(c, ms),
-      (e) => (changeset.status = (e as Error).message),
+      (e: unknown) => (changeset.status = e instanceof Error ? e.message : String(e)),
     );
     return () => c.destroy();
   });
@@ -61,7 +61,7 @@
     showCards = false;
     const view = controller?.view;
     const index = view?.indexOf(file.path) ?? -1;
-    if (index >= 0) void view!.goToFile(index);
+    if (view && index >= 0) void view.goToFile(index);
   }
 
   function setMode(next: Mode) {

@@ -41,8 +41,8 @@ export function isTextInput(e: KeyLike): boolean {
 export function matches(spec: string, e: KeyLike): boolean {
   if (isTextInput(e)) return false;
   const parts = spec.split("-");
-  const name = parts.pop()!;
-  const mods = new Set(parts);
+  const name = parts.at(-1) ?? "";
+  const mods = new Set(parts.slice(0, -1));
   if (
     mods.has("Ctrl") !== e.ctrlKey ||
     mods.has("Alt") !== e.altKey ||

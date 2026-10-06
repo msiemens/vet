@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from "svelte/reactivity";
   import Icon from "../../lib/ui/Icon.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
   import type { FileChange } from "../../generated/FileChange";
@@ -17,15 +18,13 @@
     onselect: (row: FileRow) => void;
   } = $props();
 
-  let collapsed = $state(new Set<string>());
+  const collapsed = new SvelteSet<string>();
   const rows = $derived(buildRows(files, collapsed));
 
   const STATUS = { M: "var(--old)", A: "var(--addt)", D: "var(--delt)", R: "var(--tx2)" } as const;
 
   function toggle(path: string) {
-    const next = new Set(collapsed);
-    if (!next.delete(path)) next.add(path);
-    collapsed = next;
+    if (!collapsed.delete(path)) collapsed.add(path);
   }
 </script>
 

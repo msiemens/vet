@@ -50,7 +50,7 @@
 
 {#snippet callers()}
   <ul>
-    {#each symbol.callers as c}<li class="tw">
+    {#each symbol.callers as c (c.name + c.at)}<li class="tw">
         <span class="mono s">{c.name}</span><span class="grow"></span><span class="mono at">{c.at}</span>
       </li>{/each}
   </ul>
@@ -58,7 +58,7 @@
 
 {#snippet reached()}
   <ol>
-    {#each symbol.reachedFrom as step, i}
+    {#each symbol.reachedFrom as step, i (i)}
       <li class="tw mono s" style:padding-left="{26 + i * 10}px" class:last={i === symbol.reachedFrom.length - 1}>
         {#if i > 0}<span class="at">└</span>{/if}{step}
       </li>
@@ -68,7 +68,7 @@
 
 {#snippet removed()}
   <ul>
-    {#each symbol.removed!.sites as site}
+    {#each symbol.removed?.sites ?? [] as site (site.at)}
       <li class="tw">
         <span class="mono s">{site.at}</span><span class="grow"></span>
         <span class="verdict" style:color={VERDICT[site.verdict]}>{site.verdict}</span>

@@ -45,7 +45,14 @@
     <ul role="menu">
       {#each items as item (item.id)}
         <li role="none">
-          <button role="menuitem" type="button" onclick={() => ((open = false), onselect(item.id))}>
+          <button
+            role="menuitem"
+            type="button"
+            onclick={() => {
+              open = false;
+              onselect(item.id);
+            }}
+          >
             <span>{item.label}</span>
             {#if item.detail}<span class="mono detail">{item.detail}</span>{/if}
           </button>

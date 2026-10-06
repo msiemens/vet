@@ -24,7 +24,7 @@
   } = $props();
 
   let selected = $state<string>();
-  const current = $derived(targets.find((t) => t.id === selected) ?? targets[0]);
+  const current = $derived<RunTarget | undefined>(targets.find((t) => t.id === selected) ?? targets[0]);
 </script>
 
 <SplitButton

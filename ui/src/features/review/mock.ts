@@ -1,7 +1,11 @@
 // Stand-ins for what the protocol does not carry yet: hunk symbols (semantic layer)
 // and the executor-relevant file list (backend configuration, SPEC §7.5).
 
-const hash = (s: string) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+const hash = (s: string) => {
+  let h = 7;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h;
+};
 
 const SYMBOLS = ["impl RetryPolicy", "fn next_delay", "fn should_retry", "struct Config", "mod tests"];
 

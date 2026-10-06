@@ -53,7 +53,10 @@ export class ReviewController {
   private onKey = (e: KeyboardEvent) => {
     const view = this.view;
     if (!view) return;
-    const run = (action: () => void) => (e.preventDefault(), action());
+    const run = (action: () => void) => {
+      e.preventDefault();
+      action();
+    };
     if (matches("Ctrl-Alt-ArrowDown", e)) run(() => void view.goToHunk(view.current + 1));
     else if (matches("Ctrl-Alt-ArrowUp", e)) run(() => void view.goToHunk(view.current - 1));
     else if (matches("Ctrl-Alt-s", e)) run(() => void view.toggleSeen(view.currentFile()));
@@ -76,11 +79,17 @@ export class ReviewController {
     keydown: this.keydown,
   };
 
+  /** The mounted view; throws before the first `show`. */
+  get openView(): ChangesetView {
+    if (!this.view) throw new Error("no changeset view is mounted");
+    return this.view;
+  }
+
   /** Renders `manifest`, keeping the scroll position (a new revision replaces the view). */
-  show(manifest: Manifest) {
+  show(manifest: Manifest): ChangesetView {
     const top = this.root.scrollTop;
     this.view?.destroy();
-    this.view = new ChangesetView(
+    const view = new ChangesetView(
       this.root,
       manifest,
       this.backend,
@@ -89,8 +98,10 @@ export class ReviewController {
       { reviewed: (update) => changeset.applyReview(update) },
       mockSymbols,
     );
+    this.view = view;
     this.root.scrollTop = top;
-    this.view.sync();
+    view.sync();
+    return view;
   }
 
   /** Fetches the manifest and renders it; resolves with the time to the first hunk's paint. */
@@ -98,8 +109,7 @@ export class ReviewController {
     const t0 = performance.now();
     this.view?.destroy();
     this.view = undefined;
-    this.show(await changeset.refresh());
-    const view = this.view!;
+    const view = this.show(await changeset.refresh());
     await view.goToHunk(0);
     await nextPaint();
     const elapsed = performance.now() - t0;

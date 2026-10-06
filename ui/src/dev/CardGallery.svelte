@@ -36,7 +36,7 @@
 <section class="gallery">
   <button type="button" onclick={onclose}>Close</button>
   <div class="cards">
-    {#each cards as c, i}
+    {#each cards as c, i (c.path)}
       <ChangeCard
         path={c.path}
         oldPath={c.oldPath ?? null}

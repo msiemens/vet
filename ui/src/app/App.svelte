@@ -40,7 +40,7 @@
 
   function ready(c: ReviewController, firstPaintMs: number) {
     controller = c;
-    status = `${changeset.manifest?.name}: ${changeset.files.length} files, ${c.view!.totalHunks} hunks; first hunk painted in ${firstPaintMs.toFixed(0)} ms`;
+    status = `${changeset.manifest?.name}: ${changeset.files.length} files, ${c.openView.totalHunks} hunks; first hunk painted in ${firstPaintMs.toFixed(0)} ms`;
     void tools.runIfRequested();
   }
 </script>

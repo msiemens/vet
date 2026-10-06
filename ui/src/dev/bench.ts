@@ -42,7 +42,7 @@ async function refreshInterval(): Promise<number> {
 
 /** Returns the dropped-frame ratio in percent. */
 async function scrollThrough(shell: Shell, root: HTMLElement, seconds: number, interval: number): Promise<number> {
-  const view = shell.view!;
+  const view = shell.openView;
   root.scrollTop = 0;
   view.sync();
   await nextPaint();
@@ -52,8 +52,12 @@ async function scrollThrough(shell: Shell, root: HTMLElement, seconds: number, i
     let start = 0;
     let last = 0;
     const frame = (now: number) => {
-      if (!start) start = last = now;
-      else (deltas.push(now - last), (last = now));
+      if (!start) {
+        start = last = now;
+      } else {
+        deltas.push(now - last);
+        last = now;
+      }
       const progress = Math.min(1, (now - start) / (seconds * 1000));
       root.scrollTop = distance * progress;
       if (progress < 1) requestAnimationFrame(frame);
@@ -113,7 +117,7 @@ function framePaint(): Promise<{ frameStart: number; done: number }> {
  */
 async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Promise<{ rows: Row[]; tag: string }> {
   const tag = `[${shell.mode}]`;
-  const view = shell.view!;
+  const view = shell.openView;
   const files = view.sections;
   const biggest = files.reduce((best, s, i) => (s.file.targetLines > files[best].file.targetLines ? i : best), 0);
   const big = await view.goToFile(biggest);
@@ -127,6 +131,7 @@ async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Pro
   for (let i = 0; i < o.samples; i++) {
     await sleep(Math.random() * interval);
     const t0 = performance.now();
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- the only way to synthesize DOM input into a contenteditable
     document.execCommand("insertText", false, "x");
     await Promise.resolve(); // CodeMirror's DOM observer runs in a microtask
     handling.push(performance.now() - t0);
@@ -188,7 +193,7 @@ async function mode(
   for (let i = 0; i < 10; i++) opens.push(await shell.open(false));
   rows.push(row(`Open changeset → first hunk painted ${tag}`, opens, "ms", 300));
   await shell.open(true);
-  const view = shell.view!;
+  const view = shell.openView;
   const files = view.sections;
 
   o.progress(`${tag} hunk navigation`);
@@ -266,9 +271,7 @@ async function mode(
 
 /** Hovers real lines with synthetic mouse moves and times query → painted tooltip. */
 async function hoverToTooltip(shell: Shell, o: BenchOptions): Promise<number[]> {
-  const view = shell.view!;
-  await view.goToFile(0);
-  const editor = view.handleOf(0)!.view;
+  const editor = (await shell.openView.goToFile(0)).view;
   const lines = [...editor.contentDOM.querySelectorAll<HTMLElement>(".cm-line")].filter((l) => l.textContent);
   shell.tooltipLatencies.length = 0;
   const move = (x: number, y: number) =>

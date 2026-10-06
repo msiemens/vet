@@ -35,7 +35,7 @@ export class Connection {
   private listeners = new Set<(event: ServerEvent) => void>();
 
   private constructor(private socket: WebSocket) {
-    socket.addEventListener("message", (event) => this.onMessage(JSON.parse(event.data) as ServerMessage));
+    socket.addEventListener("message", (event) => this.onMessage(JSON.parse(event.data as string) as ServerMessage));
     socket.addEventListener("close", () => this.failAll(new Error("connection closed")));
   }
 
@@ -50,7 +50,7 @@ export class Connection {
       socket.addEventListener(
         "message",
         (event) => {
-          const message = JSON.parse(event.data) as ServerMessage;
+          const message = JSON.parse(event.data as string) as ServerMessage;
           if (message.type === "helloAck") resolve();
           else reject(new Error("unexpected first message from backend"));
         },
@@ -68,7 +68,10 @@ export class Connection {
     const id = this.nextId++;
     const message: ClientMessage = { type: "request", id, request };
     return new Promise((resolve, reject) => {
-      if (this.socket.readyState !== WebSocket.OPEN) return reject(new Error("connection closed"));
+      if (this.socket.readyState !== WebSocket.OPEN) {
+        reject(new Error("connection closed"));
+        return;
+      }
       this.pending.set(id, { resolve, reject });
       this.socket.send(JSON.stringify(message));
     });
@@ -87,7 +90,10 @@ export class Connection {
       this.pending.get(message.id)?.resolve(message.response);
       this.pending.delete(message.id);
     } else if (message.type === "error") {
-      if (message.id === null) return console.error("backend:", message.message);
+      if (message.id === null) {
+        console.error("backend:", message.message);
+        return;
+      }
       this.pending.get(message.id)?.reject(new Error(message.message));
       this.pending.delete(message.id);
     }

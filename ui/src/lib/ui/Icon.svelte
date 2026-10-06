@@ -14,5 +14,6 @@
   stroke-width={stroke}
   aria-hidden="true"
 >
+  <!-- eslint-disable-next-line svelte/no-at-html-tags -- static markup from icons.ts, never user input -->
   {@html ICONS[name]}
 </svg>

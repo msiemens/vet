@@ -125,8 +125,13 @@ export function reviewField(side: SideConfig, marks: Mark[], states: HunkState[]
       }
       let rebuild = false;
       for (const effect of tr.effects) {
-        if (effect.is(setStates)) ((next = { ...next, states: effect.value }), (rebuild = true));
-        else if (effect.is(setCurrent)) ((next = { ...next, current: effect.value }), (rebuild = true));
+        if (effect.is(setStates)) {
+          next = { ...next, states: effect.value };
+          rebuild = true;
+        } else if (effect.is(setCurrent)) {
+          next = { ...next, current: effect.value };
+          rebuild = true;
+        }
       }
       return rebuild ? { ...next, decos: build(next, tr.state.doc, side) } : next;
     },

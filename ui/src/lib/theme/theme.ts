@@ -8,13 +8,17 @@ export function applyTheme(theme: Theme) {
   else root.setAttribute("data-theme", theme);
   try {
     localStorage.setItem(KEY, theme);
-  } catch {}
+  } catch {
+    // Storage may be unavailable; the theme then lasts for this session only.
+  }
 }
 
 export function storedTheme(): Theme {
   try {
     const value = localStorage.getItem(KEY);
     if (value === "light" || value === "dark") return value;
-  } catch {}
+  } catch {
+    // Storage may be unavailable; fall back to the system theme.
+  }
   return "system";
 }

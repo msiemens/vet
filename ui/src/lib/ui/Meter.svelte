@@ -5,7 +5,7 @@
 </script>
 
 <span class="meter" style:width="{width}px" {title}>
-  {#each segments as s}<span style:width="{s.value}%" style:background={s.color}></span>{/each}
+  {#each segments as s, i (i)}<span style:width="{s.value}%" style:background={s.color}></span>{/each}
 </span>
 
 <style>

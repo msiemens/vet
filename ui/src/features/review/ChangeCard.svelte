@@ -91,7 +91,7 @@
       <div class="line add"><span class="sign">+</span><span class="mono">{describe(kind, after, path)}</span></div>
       {#if kind === "binary" && IMAGE.test(path)}
         <div class="previews">
-          {#each [["Before", before], ["After", after]] as [side, entry]}
+          {#each [["Before", before], ["After", after]] as [side, entry] (side)}
             {#if entry}<figure>
                 <div class="thumb"><Icon name="image" size={28} /></div>
                 <figcaption>{side}</figcaption>

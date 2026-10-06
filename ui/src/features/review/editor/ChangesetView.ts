@@ -86,7 +86,12 @@ export class ChangesetView {
       const body = document.createElement("div");
       body.className = "body";
       el.append(header, body);
-      const actions: BarActions = { toggleSeen: (h) => void this.toggleHunk(index, h), comment: () => {} };
+      const actions: BarActions = {
+        toggleSeen: (h) => void this.toggleHunk(index, h),
+        comment: () => {
+          // Comments are not wired up yet.
+        },
+      };
       this.sections.push({
         file,
         review: file.review,
@@ -113,7 +118,7 @@ export class ChangesetView {
   }
 
   get totalHeight(): number {
-    const last = this.sections[this.sections.length - 1];
+    const last = this.sections.at(-1);
     return last ? last.top + last.height : 0;
   }
 
@@ -147,7 +152,10 @@ export class ChangesetView {
     const fi = this.indexAt(this.root.scrollTop);
     for (const i of this.mounted) this.sections[i].handle?.destroy();
     this.mounted.clear();
-    for (const s of this.sections) ((s.handle = undefined), (s.body.textContent = ""));
+    for (const s of this.sections) {
+      s.handle = undefined;
+      s.body.textContent = "";
+    }
     this.mode = mode;
     this.layout();
     this.root.scrollTop = this.sections[fi].top;
@@ -219,15 +227,18 @@ export class ChangesetView {
     }
   }
 
-  handleOf(fi: number): Handle | undefined {
-    return this.sections[fi].handle;
+  /** The editor of a loaded section near the viewport; throws if `sync` did not mount it. */
+  private mountedHandle(fi: number): Handle {
+    const handle = this.sections[fi].handle;
+    if (!handle) throw new Error(`file ${fi} is not mounted`);
+    return handle;
   }
 
   async goToFile(fi: number): Promise<Handle> {
     await this.load(fi);
     this.root.scrollTop = this.sections[fi].top;
     this.sync();
-    return this.sections[fi].handle!;
+    return this.mountedHandle(fi);
   }
 
   private locate(global: number): [number, number] {
@@ -262,7 +273,7 @@ export class ChangesetView {
       s.top + this.m.header + row * this.m.line + (hi + 1) * this.m.hunk - this.root.clientHeight / 2,
     );
     this.sync();
-    const handle = s.handle!;
+    const handle = this.mountedHandle(fi);
     const doc = handle.view.state.doc;
     const pos = doc.line(Math.min(hunk.targetStart + 1, doc.lines)).from;
     handle.dispatchAll(setCurrent.of(hi));
@@ -331,6 +342,8 @@ export class ChangesetView {
   }
 
   seenButton(fi: number): HTMLButtonElement {
-    return this.sections[fi].el.querySelector("button")!;
+    const button = this.sections[fi].el.querySelector("button");
+    if (!button) throw new Error(`file ${fi} has no Seen button`);
+    return button;
   }
 }

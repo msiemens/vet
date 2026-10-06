@@ -32,13 +32,20 @@ class ChangesetStore {
 
   /** Fetches the manifest again; the revision may have moved. */
   async refresh(): Promise<Manifest> {
-    const manifest = await this.backend!.manifest();
+    const manifest = await this.connected().manifest();
     this.manifest = manifest;
     return manifest;
   }
 
   async acknowledge(path: string, kind: NonTextKind, acknowledged: boolean) {
-    this.applyReview(await this.backend!.acknowledge(this.manifest!.revision, path, kind, acknowledged));
+    const backend = this.connected();
+    if (!this.manifest) throw new Error("no manifest loaded");
+    this.applyReview(await backend.acknowledge(this.manifest.revision, path, kind, acknowledged));
+  }
+
+  private connected(): Backend {
+    if (!this.backend) throw new Error("not connected to the backend");
+    return this.backend;
   }
 
   applyReview(update: ReviewUpdate) {

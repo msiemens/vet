@@ -46,7 +46,7 @@
       markdown,
       json,
       result.every((r) => r.pass !== false),
-    ).catch((e) => console.error(e));
+    ).catch((e: unknown) => console.error(e));
   }
 
   /** Runs the benchmark, and shows the bar, if the host asked for it at startup. */
@@ -86,9 +86,9 @@
     <table>
       <thead><tr><th>Metric</th><th>p95</th><th>Threshold</th><th>n</th><th>Result</th></tr></thead>
       <tbody>
-        {#each rows as r}
+        {#each rows as r, i (i)}
           <tr class={r.pass === null ? "manual" : r.pass ? "pass" : "fail"}>
-            {#each cells(r) as cell}<td>{cell}</td>{/each}
+            {#each cells(r) as cell, j (j)}<td>{cell}</td>{/each}
           </tr>
         {/each}
       </tbody>
