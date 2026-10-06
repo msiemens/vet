@@ -4,9 +4,10 @@
   import type { DirEntry } from "../../generated/DirEntry";
   import type { FileChange } from "../../generated/FileChange";
   import Icon from "../../lib/ui/Icon.svelte";
-  import Meter from "../../lib/ui/Meter.svelte";
+  import DiffBar from "../../lib/ui/DiffBar.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import { AllFiles } from "./AllFiles.svelte";
+  import { lineDelta } from "./editor/lineDelta";
   import { buildRows, buildTree, summarize } from "./tree";
 
   let {
@@ -105,13 +106,15 @@
     <span class="chev"></span>
     <span class="name">{name}</span>
     {#if s?.mode}<span class="mono x" title="File mode changed">{s.mode}</span>{/if}
-    {#if s}
-      <Meter
+    {#if s && file}
+      {@const { added, removed } = lineDelta([file])}
+      <DiffBar
         width={22}
-        segments={[
-          { value: s.seenPct, color: "var(--seen)" },
-          { value: s.oldPct, color: "var(--old-base)" },
-        ]}
+        {added}
+        {removed}
+        seen={s.seenPct}
+        old={s.oldPct}
+        title="+{added} −{removed}, {Math.round(s.seenPct + s.oldPct)}% seen"
       />
     {/if}
     <span class="mono status" style:color={s && STATUS[s.status]}>{s?.status}</span>
