@@ -12,7 +12,7 @@
   import Popover from "../../lib/ui/Popover.svelte";
 
   let {
-    // Editing the filter is not in the protocol yet; the manifest only reports how many changes it hides.
+    // Not wired to `SetFilter` / `Manifest.filter` yet.
     filter = $bindable({ roots: [], hideBinary: false, include: [], exclude: [] }),
     excluded,
   }: {
