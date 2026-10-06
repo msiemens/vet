@@ -4,12 +4,13 @@ use sea_orm::{DbBackend, Schema};
 use sea_orm_migration::prelude::*;
 
 use super::entity::*;
+use super::run::{run_approval, run_target};
 
 pub struct Migrator;
 
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(Initial)]
+        vec![Box::new(Initial), Box::new(RunState)]
     }
 }
 
@@ -46,9 +47,33 @@ impl MigrationTrait for Initial {
             span::Entity,
             ack::Entity,
             thread::Entity,
-            message::Entity,
-            run_approval::Entity
+            message::Entity
         );
+        Ok(())
+    }
+}
+
+struct RunState;
+
+impl MigrationName for RunState {
+    fn name(&self) -> &str {
+        "m0002_run_state"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for RunState {
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        let schema = Schema::new(DbBackend::Sqlite);
+        manager
+            .create_table(schema.create_table_from_entity(run_target::Entity))
+            .await?;
+        for index in schema.create_index_from_entity(run_target::Entity) {
+            manager.create_index(index).await?;
+        }
+        manager
+            .create_table(schema.create_table_from_entity(run_approval::Entity))
+            .await?;
         Ok(())
     }
 }

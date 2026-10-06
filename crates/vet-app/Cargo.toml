@@ -9,6 +9,8 @@ publish.workspace = true
 [dependencies]
 vet-core.workspace = true
 vet-semantic.workspace = true
+serde_json = "1.0"
+toml = { version = "1.1", default-features = false, features = ["parse", "serde"] }
 
 [lints]
 workspace = true

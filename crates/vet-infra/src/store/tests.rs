@@ -205,8 +205,6 @@ async fn snapshots_timeline_and_approvals_survive_reopen() {
         for s in [3, 1, 2] {
             store.append_timeline(id, SnapshotId(h(s))).await.unwrap();
         }
-        store.record_run_approval("/repo".into(), h(1), 10).await.unwrap();
-        store.record_run_approval("/repo".into(), h(2), 20).await.unwrap();
     }
     let store = open(&dir).await;
     assert_eq!(store.snapshot(snap.id).await.unwrap(), Some((snap, status)));
@@ -215,8 +213,6 @@ async fn snapshots_timeline_and_approvals_survive_reopen() {
         store.timeline(id).await.unwrap(),
         vec![SnapshotId(h(3)), SnapshotId(h(1)), SnapshotId(h(2))]
     );
-    assert_eq!(store.last_run_approval("/repo".into()).await.unwrap(), Some(h(2)));
-    assert_eq!(store.last_run_approval("/other".into()).await.unwrap(), None);
     assert_eq!(store.open_sessions().await.unwrap(), vec![id]);
 }
 

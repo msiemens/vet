@@ -6,6 +6,7 @@ mod codec;
 mod content;
 mod entity;
 mod migration;
+mod run;
 #[cfg(test)]
 mod tests;
 
@@ -367,6 +368,7 @@ impl SqliteStore {
                 .all(&txn)
                 .await?,
         );
+        live.extend(run::approved_baselines(&txn).await?);
         let candidates: Vec<Vec<u8>> = snapshot::Entity::find()
             .filter(snapshot::Column::Created.lte(grace))
             .select_only()
@@ -812,26 +814,5 @@ impl ReviewStore for SqliteStore {
             anchor::Entity::delete_by_id(a).exec(&txn).await?;
         }
         Ok(txn.commit().await?)
-    }
-
-    async fn record_run_approval(&self, repo: String, hash: Hash, at: i64) -> Result<(), StoreError> {
-        run_approval::ActiveModel {
-            repo: Set(repo),
-            hash: Set(hash.0.to_vec()),
-            at: Set(at),
-            ..Default::default()
-        }
-        .insert(&self.db)
-        .await?;
-        Ok(())
-    }
-
-    async fn last_run_approval(&self, repo: String) -> Result<Option<Hash>, StoreError> {
-        let row = run_approval::Entity::find()
-            .filter(run_approval::Column::Repo.eq(repo))
-            .order_by_desc(run_approval::Column::Id)
-            .one(&self.db)
-            .await?;
-        Ok(row.map(|r| hash(&r.hash)).transpose()?)
     }
 }

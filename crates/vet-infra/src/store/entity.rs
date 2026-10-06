@@ -343,23 +343,3 @@ pub mod message {
 
     impl ActiveModelBehavior for ActiveModel {}
 }
-
-pub mod run_approval {
-    use sea_orm::entity::prelude::*;
-
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "run_approval")]
-    pub struct Model {
-        #[sea_orm(primary_key)]
-        pub id: i64,
-        #[sea_orm(indexed)]
-        pub repo: String,
-        pub hash: Vec<u8>,
-        pub at: i64,
-    }
-
-    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {}
-
-    impl ActiveModelBehavior for ActiveModel {}
-}

@@ -11,6 +11,7 @@ use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadSta
 
 use crate::pin::{CommitId, Pin, PinId};
 use crate::review::{NonTextAck, Session, SessionId, SpanId};
+use crate::run::targets::RunTarget;
 
 /// Monotonic milliseconds.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -141,7 +142,7 @@ pub trait Store {
     fn gc(&self, now: i64) -> impl Future<Output = Result<GcReport, StoreError>> + Send;
 }
 
-/// Review state (§5.2, §7.5). Spans are replaced as a set because remapping is
+/// Review state (§5.2). Spans are replaced as a set because remapping is
 /// a partition.
 pub trait ReviewStore {
     fn put_pin(&self, head: CommitId, tree: SnapshotId) -> impl Future<Output = Result<Pin, StoreError>> + Send;
@@ -194,24 +195,57 @@ pub trait ReviewStore {
         platform: Option<PlatformThread>,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn delete_thread(&self, thread: ThreadId) -> impl Future<Output = Result<(), StoreError>> + Send;
-    /// Approving records the new executor-relevant hash for `repo` (§7.5).
+}
+
+/// Per-repo execution state (§7.5, §10); `repo` identifies the repository.
+pub trait RunStore {
+    /// User-edited and user-added targets, in insertion order.
+    fn run_targets(&self, repo: String) -> impl Future<Output = Result<Vec<RunTarget>, StoreError>> + Send;
+    /// Inserts, or replaces the target with the same id.
+    fn put_run_target(&self, repo: String, target: RunTarget) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn delete_run_target(&self, repo: String, id: String) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Approving records the executor-relevant hash for `repo` and the stored
+    /// snapshot of those files, so the next prompt can show what changed. The
+    /// store keeps that snapshot's content (§8).
     fn record_run_approval(
         &self,
         repo: String,
         hash: Hash,
+        baseline: SnapshotId,
         at: i64,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn last_run_approval(&self, repo: String) -> impl Future<Output = Result<Option<Hash>, StoreError>> + Send;
+    fn last_run_approval(
+        &self,
+        repo: String,
+    ) -> impl Future<Output = Result<Option<(Hash, SnapshotId)>, StoreError>> + Send;
 }
 
 pub struct Command {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: std::path::PathBuf,
+    pub env: Vec<(String, String)>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ProcessEvent {
+    Stdout(Vec<u8>),
+    Stderr(Vec<u8>),
+    /// The exit code, or `None` if the process was killed by a signal. Always
+    /// the last event.
+    Exit(Option<i32>),
 }
 
 pub trait ProcessRunner {
-    fn run(&self, command: &Command) -> impl Future<Output = Result<i32, String>> + Send;
+    type Process: RunningProcess;
+    fn spawn(&self, command: &Command) -> Result<Self::Process, String>;
+}
+
+pub trait RunningProcess {
+    /// Output as it arrives, then `Exit`; after that it yields `Exit` again.
+    fn next(&mut self) -> impl Future<Output = ProcessEvent> + Send;
+    /// Asks the process to die; `Exit` follows.
+    fn kill(&self);
 }
 
 /// Implemented by `vet-infra::platform` (an enum over GitHub and ADO). Core
