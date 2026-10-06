@@ -18,6 +18,9 @@ The repository comes from the command line or `VET_REPO`:
 "Open repository…" (a native folder dialog) and the recent repositories, which
 the shell keeps in its app config directory.
 
+`VET_DEVTOOLS=1` opens the webview's inspector with the window (debug builds
+only): `VET_DEVTOOLS=1 VET_BENCH=1 pnpm tauri dev`.
+
 ## WSL split
 
 Shell on Windows, backend in WSL (SPEC §4.1). In WSL, with the repo on the Linux

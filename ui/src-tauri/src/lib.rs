@@ -491,6 +491,10 @@ async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static str,
     if let Err(e) = window.set_traffic_lights_inset(16.0, 26.0).await {
         return native(&window, e).await;
     }
+    #[cfg(debug_assertions)]
+    if std::env::var_os("VET_DEVTOOLS").is_some() {
+        window.open_devtools();
+    }
     match window.show() {
         Ok(()) => Ok("custom"),
         Err(e) => native(&window, e).await,
