@@ -474,9 +474,10 @@ async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static str,
         eprintln!("app-drawn title bar, attempt {attempt} of {DECORATION_ATTEMPTS} failed: {e}");
         attempt += 1;
     }
-    // Centres the traffic lights in the 40px header.
+    // Centres the traffic lights in the 40px header: the plugin centres them in a titlebar of
+    // their own height (14pt) plus `y`, so `y` is what makes that titlebar 40pt tall.
     #[cfg(target_os = "macos")]
-    if let Err(e) = window.set_traffic_lights_inset(16.0, 20.0).await {
+    if let Err(e) = window.set_traffic_lights_inset(16.0, 26.0).await {
         return native(&window, e).await;
     }
     match window.show() {
