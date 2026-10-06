@@ -2,7 +2,9 @@
   import { onMount } from "svelte";
   import DevTools from "../dev/DevTools.svelte";
   import { hudListeners } from "../dev/hud.svelte";
-  import { AboutDialog, Header, StatusFooter, TOOLS, TitleBar, ToolRail } from "../features/chrome";
+  import type { WatchDegraded } from "../generated/WatchDegraded";
+  import Banner from "../lib/ui/Banner.svelte";
+  import { AboutDialog, Header, degradedMessage, StatusFooter, TOOLS, TitleBar, ToolRail } from "../features/chrome";
   import { FilterPopover } from "../features/filter";
   import { type Mode, ReviewScreen, type ReviewController } from "../features/review";
   import { RunButton } from "../features/run";
@@ -44,6 +46,8 @@
     lines: changeset.manifest?.excludedLines ?? 0,
     items: changeset.manifest?.excludedItems ?? 0,
   });
+  const degraded = $derived(changeset.manifest?.degraded);
+  let dismissedDegraded = $state<WatchDegraded>();
   const footer = $derived({ snapshot: `#${changeset.manifest?.revision ?? 0}` });
 
   // The controller belongs to the repository's screen.
@@ -160,6 +164,10 @@
     {/snippet}
     {#snippet run()}<RunButton />{/snippet}
   </Header>
+
+  {#if degraded && dismissedDegraded !== degraded}
+    <Banner message={degradedMessage[degraded]} ondismiss={() => (dismissedDegraded = degraded)} />
+  {/if}
 
   <div class="body">
     <ToolRail bind:active={left.tool} bind:open={left.open} />
