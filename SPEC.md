@@ -408,7 +408,7 @@ How the UI follows the traits:
 
 **Fallbacks:** if CM6 fails a threshold, try Monaco. If something fails only on WKWebView, rerun in Electron; if it passes there, Electron becomes the host on all platforms. **Timebox:** 5 working days.
 
-### POC — vertical slice (dirty tree, Rust + TS + Python, no hosts)
+### POC — vertical slice (dirty tree, Rust + TS + Python + C#, no hosts)
 
 **POC platforms:** macOS native, Windows native, and the WSL split.
 
