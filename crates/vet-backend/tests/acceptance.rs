@@ -111,7 +111,7 @@ impl Client {
 
     async fn manifest(&self, session: SessionId) -> Manifest {
         match self.call(Request::Manifest { session }).await.unwrap() {
-            Response::Manifest(m) => m,
+            Response::Manifest(m) => *m,
             other => panic!("{other:?}"),
         }
     }
@@ -241,7 +241,8 @@ fn merge_base(reference: &str) -> BaseChoice {
 async fn criterion1_amend_keeps_marks_and_comments() {
     let fx = fixture(&[("a.txt", &text(40, &[]))], &[("a.txt", &text(40, &[5]))]).await;
     let p = fx.repo.path();
-    // The agent committed once already; that commit is the session's pin.
+    // The agent committed once already; that commit is the branch's tip, which
+    // the review takes as its base when the first mark starts it.
     git(p, &["commit", "-q", "-a", "-m", "agent work"]);
     let pinned = git(p, &["rev-parse", "HEAD"]);
     write(p, "a.txt", &text(40, &[5, 30]));
@@ -260,7 +261,7 @@ async fn criterion1_amend_keeps_marks_and_comments() {
 
     assert_ne!(git(p, &["rev-parse", "HEAD"]), pinned);
     let m = client.manifest(session).await;
-    assert_eq!(m.base.commit, pinned);
+    assert_eq!(m.base.commit.id, pinned);
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Seen]);
     let thread = client.thread(session, comment.id).await;
     assert_eq!((thread.anchor, thread.location), (Some(EXACT), at("a.txt", 30, 1)));
@@ -663,10 +664,15 @@ fn colliding_repo() -> TempDir {
     repo
 }
 
+/// A session whose review has started, so that its snapshots are stored.
 async fn collision_session(repo: &Path) -> (LiveSession<GixRepo, SqliteStore>, SqliteStore, TempDir) {
     let data = tempfile::tempdir().unwrap();
     let store = open_store(data.path()).await.unwrap();
-    let session = LiveSession::open(GixRepo::new(repo), store.clone(), "t".into(), "/repo".into(), 0)
+    let session = LiveSession::open(GixRepo::new(repo), store.clone(), "t".into(), "/repo".into(), || 0)
+        .await
+        .unwrap();
+    session
+        .create_thread(0, vet_app::session::NewThread::Changeset, "start".into(), 0)
         .await
         .unwrap();
     (session, store, data)
@@ -1043,7 +1049,7 @@ impl Live {
         let data = tempfile::tempdir().unwrap();
         let store = open_store(data.path()).await.unwrap();
         let session = Arc::new(
-            Session::open(GixRepo::new(repo.path()), store, "t".into(), "/repo".into(), 0)
+            Session::open(GixRepo::new(repo.path()), store, "t".into(), "/repo".into(), || 0)
                 .await
                 .unwrap(),
         );

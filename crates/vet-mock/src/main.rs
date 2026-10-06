@@ -14,8 +14,8 @@ use std::sync::{Mutex, PoisonError};
 
 use corpus::{Config, Corpus};
 use vet_protocol::{
-    Base, BaseChoice, Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, Manifest, Request, Response,
-    ReviewUpdate, SessionId,
+    Base, BaseChoice, CommitInfo, Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, Manifest, Request,
+    Response, ReviewInfo, ReviewUpdate, SessionId, Target,
 };
 use vet_transport::{Events, Handler, Server};
 
@@ -103,14 +103,26 @@ impl Handler for Mock {
                         completion: completion(&f.hunks, seen),
                     })
                     .collect();
-                Ok(Response::Manifest(Manifest {
+                Ok(Response::Manifest(Box::new(Manifest {
                     session: SESSION,
                     revision: REVISION,
                     name: self.corpus.name.clone(),
+                    review: ReviewInfo::Browsing,
                     base: Base {
-                        choice: BaseChoice::Pin,
-                        commit: "0123456789abcdef0123456789abcdef01234567".into(),
-                        label: "pin".into(),
+                        choice: BaseChoice::Branch { name: "main".into() },
+                        commit: CommitInfo {
+                            id: "0123456789abcdef0123456789abcdef01234567".into(),
+                            short_id: "0123456".into(),
+                            subject: "Spike corpus".into(),
+                            author: "Vet".into(),
+                            time: 0,
+                        },
+                        name: "main".into(),
+                        behind: None,
+                    },
+                    target: Target {
+                        name: "Working tree".into(),
+                        branch: Some("main".into()),
                     },
                     filter: Default::default(),
                     completion: total(files.iter().map(|f| f.completion)),
@@ -119,7 +131,7 @@ impl Handler for Mock {
                     excluded_items: 0,
                     degraded: None,
                     restore_failures: Vec::new(),
-                }))
+                })))
             }
             Request::FileContents { path, .. } => {
                 let f = &self.corpus.files[position(&path)?];
@@ -161,6 +173,7 @@ impl Handler for Mock {
             Request::Acknowledge { .. } | Request::ItemBlob { .. } => Err("the corpus has no non-text items".into()),
             Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),
             Request::SetFilter { .. } => Err("the corpus has no filter".into()),
+            Request::FinishReview { .. } => Err("the corpus has no review to finish".into()),
             Request::ListRunTargets { .. }
             | Request::SaveRunTarget { .. }
             | Request::ResetRunTarget { .. }

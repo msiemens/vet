@@ -421,6 +421,18 @@ mod tests {
         async fn base_candidates(&self, _: usize) -> Result<crate::ports::BaseCandidates, GitError> {
             unreachable!()
         }
+        async fn branches(&self) -> Result<Vec<crate::ports::BranchInfo>, GitError> {
+            unreachable!()
+        }
+        async fn commit_info(&self, _: &CommitId) -> Result<crate::ports::CommitInfo, GitError> {
+            unreachable!()
+        }
+        async fn first_parent_distance(&self, _: &CommitId, _: &CommitId, _: usize) -> Result<Option<usize>, GitError> {
+            unreachable!()
+        }
+        async fn commits_behind(&self, _: &CommitId, _: &CommitId, _: usize) -> Result<usize, GitError> {
+            unreachable!()
+        }
         async fn set_session_ref(&self, _: SessionId, _: &str, _: &CommitId) -> Result<(), GitError> {
             unreachable!()
         }
@@ -477,10 +489,10 @@ mod tests {
             let s = self.0.lock().unwrap().snapshots.get(&id).cloned();
             Ok(s.map(|s| (s, SnapshotStatus::default())))
         }
-        async fn append_timeline(&self, _: SessionId, _: SnapshotId) -> Result<(), StoreError> {
+        async fn append_timeline(&self, _: SessionId, _: SnapshotId, _: i64) -> Result<(), StoreError> {
             unreachable!()
         }
-        async fn timeline(&self, _: SessionId) -> Result<Vec<SnapshotId>, StoreError> {
+        async fn timeline(&self, _: SessionId) -> Result<Vec<crate::review::Version>, StoreError> {
             unreachable!()
         }
         async fn gc(&self, _: i64) -> Result<GcReport, StoreError> {

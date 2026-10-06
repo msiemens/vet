@@ -1,17 +1,23 @@
-//! A live review session of a dirty tree (§5, §6.1, §6.2).
+//! A live session of a dirty tree (§5, §6.1, §6.2).
 //!
-//! **Changeset.** The session pins `HEAD` and dirty-at-open (§6.1) and stores
-//! the changeset `HEAD → dirty-at-open`, but what it displays is `HEAD → the
-//! latest settled snapshot`, from the session's base: the pin until
-//! `set_base` chooses another (§6.5). The review is of
-//! everything the agent has done to the tree, so reviewing the live part
-//! (`dirty-at-open → now`) alone would hide reviewed work behind a changeset
-//! that has no review state of its own. Marks recorded against earlier targets
-//! carry over by remapping (§5.2), so the live part is exactly what shows up
-//! as unseen. Showing it separately is an interdiff, which belongs to the
-//! timeline (M1).
+//! **Lifecycle.** A session starts out browsing: the live diff against the
+//! base, with nothing stored. The first review action (marking seen,
+//! acknowledging, a new thread) starts the review: it records the base, `HEAD`
+//! and the current target as version 1, and from then on every settled snapshot
+//! is the next version. Finishing releases the review's refs and returns to
+//! browsing (see SPEC "Session lifecycle").
 //!
-//! **Revision.** Starts at 0 and increases by one with each settled snapshot.
+//! **Changeset.** What it displays is `base → the latest settled snapshot`,
+//! the base being the one chosen with `set_base` (§6.5), by default the current
+//! branch's tip. The review is of everything the agent has done to the tree,
+//! so reviewing the live part (`previous version → now`) alone would hide
+//! reviewed work behind a changeset that has no review state of its own. Marks
+//! recorded against earlier targets carry over by remapping (§5.2), so the live
+//! part is exactly what shows up as unseen. Showing it separately is an
+//! interdiff, which belongs to the timeline (M1).
+//!
+//! **Revision.** Starts at 0 and increases by one with each settled snapshot,
+//! base or filter change, and finished review.
 //!
 //! **Review state.** Recorded spans stay as they were marked and are never
 //! remapped in place. Remapping starts from them whenever the target changes or
@@ -42,11 +48,13 @@ use vet_core::review::{
 };
 
 use crate::acquisition::{Acquisition, SharedAcquisition};
+use crate::base;
 use crate::execution::Execution;
 use crate::execution::check::RunCheckConfig;
 use crate::pin::{BaseChoice, CommitId};
 use crate::ports::{
-    BaseCandidates, BlobRead, Clock, Degraded, Dirty, GitError, GitRepo, ReviewStore, Scan, Store, StoreError, Watcher,
+    BaseCandidates, BlobRead, BranchInfo, Clock, CommitInfo, Degraded, Dirty, GitError, GitRepo, ReviewStore, Scan,
+    Store, StoreError, Watcher,
 };
 use crate::review::{NonTextAck, RecordedSpan, SessionId, SpanId};
 use crate::settle::Settling;
@@ -148,13 +156,36 @@ pub struct FileView {
     pub completion: Completion,
 }
 
-/// The session's base as chosen and as resolved.
+/// The session's base as chosen and as resolved, with what to show of it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BaseView {
     pub choice: BaseChoice,
-    pub commit: CommitId,
-    /// What the choice is, without the commit: `pin`, `merge-base <ref>`, `commit`.
-    pub label: String,
+    pub commit: CommitInfo,
+    /// What a person calls the commit: a branch, `branch~N` or the short hash.
+    pub name: String,
+    /// How many commits a chosen branch has gained since; `None` unless it moved.
+    pub behind: Option<u32>,
+}
+
+/// What the changes lead to.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct TargetView {
+    /// "Working tree".
+    pub name: String,
+    /// The checked-out branch, if any.
+    pub branch: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Lifecycle {
+    /// No review has started; the diff is live and nothing is kept.
+    Browsing,
+    Open {
+        /// Of the current snapshot: 1 is the review's start.
+        version: u32,
+        /// Unix seconds the version settled.
+        updated_at: i64,
+    },
 }
 
 /// The changeset through the review filter; hidden files are only counted in
@@ -163,7 +194,9 @@ pub struct BaseView {
 pub struct ManifestView {
     pub revision: u32,
     pub name: String,
+    pub lifecycle: Lifecycle,
     pub base: BaseView,
+    pub target: TargetView,
     pub filter: ReviewFilter,
     pub files: Vec<FileView>,
     pub completion: Completion,
@@ -309,14 +342,27 @@ struct Changes {
     items: Vec<ItemView>,
 }
 
+/// A started review.
+struct Review {
+    id: SessionId,
+    version: u32,
+    updated_at: i64,
+}
+
 struct State {
     revision: u32,
+    /// `None` while browsing.
+    review: Option<Review>,
     filter: ReviewFilter,
     base: Snapshot,
     base_choice: BaseChoice,
     /// The commit `base` is the tree of.
     base_commit: CommitId,
+    /// The commit target snapshots are built on: `HEAD`, as of the review's
+    /// start while one is open.
+    head: CommitId,
     target: Snapshot,
+    target_status: SnapshotStatus,
     /// Other snapshots that recorded spans refer to.
     known: HashMap<SnapshotId, Snapshot>,
     recorded: Vec<RecordedSpan>,
@@ -326,17 +372,18 @@ struct State {
     changes: Option<Changes>,
 }
 
+/// Unix seconds now.
+pub type UnixClock = fn() -> i64;
+
 pub struct LiveSession<G, S> {
-    pub id: SessionId,
     /// Author of the messages written here: git's `user.name`, else "You".
     author: String,
     /// Shared with the session's semantic pool, which materializes snapshots from it.
     acquisition: Arc<Acquisition<G, S>>,
-    /// The pinned commit every target snapshot of the session is built on.
-    head: CommitId,
-    /// The tree of `head`: the base while the choice is the pin.
-    pin_base: Snapshot,
     name: String,
+    /// The repository root, the key a review is stored under.
+    repo: String,
+    clock: UnixClock,
     /// Serializes everything that reads or edits review state.
     state: Mutex<State>,
 }
@@ -373,45 +420,39 @@ fn is_binary(bytes: &[u8]) -> bool {
 }
 
 impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
-    /// Resumes the open session of the repository at `repo` (the root, as the
-    /// key sessions are recorded under), or else pins the tree and records a
-    /// session with its first snapshots (§6.1). `now` is unix seconds, for
-    /// closing a session that cannot be resumed.
-    pub async fn open(git: G, store: S, name: String, repo: String, now: i64) -> Result<Self> {
+    /// Resumes the open review of the repository at `repo` (the root, as the
+    /// key reviews are recorded under), or else starts out browsing the tree
+    /// against the current branch's tip.
+    pub async fn open(git: G, store: S, name: String, repo: String, clock: UnixClock) -> Result<Self> {
         let acquisition = Arc::new(Acquisition::new(git, store));
         if let Some(&id) = acquisition.store.open_sessions(repo.clone()).await?.last() {
-            if let Some(session) = Self::resume(&acquisition, id, &name).await? {
+            if let Some(session) = Self::resume(&acquisition, id, &name, &repo, clock).await? {
                 return Ok(session);
             }
-            // Its pin or snapshots are gone: start over rather than fail to open.
+            // Its start record or snapshots are gone: browse rather than fail to open.
             acquisition.git.delete_session_refs(id).await?;
-            acquisition.store.close_session(id, now).await?;
+            acquisition.store.close_session(id, clock(), false).await?;
         }
-        let opened = acquisition.open_pin().await?;
-        let store = &acquisition.store;
-        store
-            .put_snapshot(opened.base.clone(), SnapshotStatus::of(&opened.base))
-            .await?;
-        store.put_snapshot(opened.target.clone(), opened.status).await?;
-        let pin = store.put_pin(opened.head.clone(), opened.target.id).await?;
-        let filter = ReviewFilter::default();
-        let changeset = Changeset {
-            base: opened.base.id,
-            target: opened.target.id,
-        };
-        let id = store.open_session(repo, pin.id, changeset, filter.clone()).await?;
-        store.append_timeline(id, opened.target.id).await?;
-        // Every snapshot of the session is built on the pinned commit.
-        for name in ["base", "target"] {
-            acquisition.git.set_session_ref(id, name, &opened.head).await?;
-        }
+        let git = &acquisition.git;
+        let head = git.head().await?;
+        let (base_choice, base_commit) = base::default_choice(&git.branches().await?, &head);
+        let base = git.commit_snapshot(&base_commit).await?;
+        let Scan {
+            snapshot: target,
+            status,
+        } = acquisition.reconcile(Dirty::All).await?;
+        acquisition.record_commit(base.id, base_commit.clone());
+        acquisition.record_commit(target.id, head.clone());
         let state = State {
             revision: 0,
-            filter,
-            base: opened.base.clone(),
-            base_choice: BaseChoice::Pin,
-            base_commit: opened.head.clone(),
-            target: opened.target,
+            review: None,
+            filter: ReviewFilter::default(),
+            base,
+            base_choice,
+            base_commit,
+            head,
+            target,
+            target_status: status,
             known: HashMap::new(),
             recorded: Vec::new(),
             acks: Vec::new(),
@@ -420,12 +461,11 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             changes: None,
         };
         Ok(Self {
-            id,
             author: author_of(&acquisition.git).await,
             acquisition,
-            head: opened.head,
-            pin_base: opened.base,
             name,
+            repo,
+            clock,
             state: Mutex::new(state),
         })
     }
@@ -433,8 +473,15 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// Loads the review state of the stored session `id` and settles the tree as
     /// it is now, so recorded spans and threads remap onto whatever changed
     /// while Vet was not running (I3). `None` if the session cannot be
-    /// reconstructed: its pin, its latest snapshot or the pinned commit is gone.
-    async fn resume(acquisition: &Arc<Acquisition<G, S>>, id: SessionId, name: &str) -> Result<Option<Self>> {
+    /// reconstructed: its start record, its latest snapshot or its base commit
+    /// is gone.
+    async fn resume(
+        acquisition: &Arc<Acquisition<G, S>>,
+        id: SessionId,
+        name: &str,
+        repo: &str,
+        clock: UnixClock,
+    ) -> Result<Option<Self>> {
         let store = &acquisition.store;
         let Some(stored) = store.session(id).await? else {
             return Ok(None);
@@ -443,30 +490,38 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             return Ok(None);
         };
         let timeline = store.timeline(id).await?;
-        let latest = timeline.last().copied().unwrap_or(stored.changeset.target);
-        let Some((target, _)) = store.snapshot(latest).await? else {
+        let latest = timeline.last().map_or(stored.changeset.target, |v| v.snapshot);
+        let Some((target, target_status)) = store.snapshot(latest).await? else {
             return Ok(None);
         };
-        let Ok(pin_base) = acquisition.git.commit_snapshot(&pin.head).await else {
+        let base_commit = stored.base_commit.unwrap_or_else(|| pin.head.clone());
+        let Ok(base) = acquisition.git.commit_snapshot(&base_commit).await else {
             return Ok(None);
         };
-        // The session keeps its pin however far `HEAD` has moved since: commits
-        // made while Vet was closed are part of what is under review, and
-        // re-pinning would turn every mark against the old base into
+        // The session keeps its base however far the branches have moved since:
+        // commits made while Vet was closed are part of what is under review,
+        // and re-resolving would turn every mark against the old base into
         // `SeenAgainstOldBase`. Moving the base is the user's call (§6.5).
-        for snapshot in timeline.iter().copied().chain([pin_base.id]) {
-            acquisition.record_commit(snapshot, pin.head.clone());
+        for version in &timeline {
+            acquisition.record_commit(version.snapshot, pin.head.clone());
         }
-        for name in ["base", "target"] {
-            acquisition.git.set_session_ref(id, name, &pin.head).await?;
-        }
+        acquisition.record_commit(base.id, base_commit.clone());
+        acquisition.git.set_session_ref(id, "base", &base_commit).await?;
+        acquisition.git.set_session_ref(id, "target", &pin.head).await?;
         let state = State {
             revision: 0,
+            review: Some(Review {
+                id,
+                version: timeline.len().max(1) as u32,
+                updated_at: timeline.last().map_or(0, |v| v.at),
+            }),
             filter: stored.filter,
-            base: pin_base.clone(),
-            base_choice: BaseChoice::Pin,
-            base_commit: pin.head.clone(),
+            base,
+            base_choice: stored.base,
+            base_commit,
+            head: pin.head,
             target,
+            target_status,
             known: HashMap::new(),
             recorded: stored.spans,
             acks: stored.acks,
@@ -475,19 +530,13 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             changes: None,
         };
         let session = Self {
-            id,
             author: author_of(&acquisition.git).await,
             acquisition: acquisition.clone(),
-            head: pin.head,
-            pin_base,
             name: name.to_owned(),
+            repo: repo.to_owned(),
+            clock,
             state: Mutex::new(state),
         };
-        // A merge base follows its reference as it is now; one that no longer
-        // resolves falls back to the pin.
-        if stored.base != BaseChoice::Pin && session.set_base(stored.base).await.is_err() {
-            store.set_base(id, session.pin_base.id, BaseChoice::Pin).await?;
-        }
         let scan = acquisition.reconcile(Dirty::All).await?;
         if scan.snapshot.id != session.settled_snapshot().await {
             let (revision, retained) = session.settled(scan).await?;
@@ -498,23 +547,100 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         Ok(Some(session))
     }
 
-    /// Releases the session's refs and records it closed. `now` is unix seconds.
-    pub async fn close(&self, now: i64) -> Result<()> {
-        self.acquisition.git.delete_session_refs(self.id).await?;
-        Ok(self.acquisition.store.close_session(self.id, now).await?)
+    /// Starts the review (SPEC "Session lifecycle"): records the base, `HEAD`
+    /// and the current target, which becomes version 1, copies the target's
+    /// dirty content into the store and takes the session refs. Does nothing
+    /// if a review is open.
+    async fn begin(&self, st: &mut State) -> Result<()> {
+        if st.review.is_some() {
+            return Ok(());
+        }
+        let acquisition = &self.acquisition;
+        let (git, store) = (&acquisition.git, &acquisition.store);
+        let head = git.head().await?;
+        acquisition.retain(&[&st.base], &st.target, &st.target_status).await?;
+        store
+            .put_snapshot(st.base.clone(), SnapshotStatus::of(&st.base))
+            .await?;
+        store.put_snapshot(st.target.clone(), st.target_status.clone()).await?;
+        let pin = store.put_pin(head.clone(), st.target.id).await?;
+        let changeset = Changeset {
+            base: st.base.id,
+            target: st.target.id,
+        };
+        let id = store
+            .open_session(self.repo.clone(), pin.id, changeset, st.filter.clone())
+            .await?;
+        store
+            .set_base(id, st.base.id, st.base_choice.clone(), st.base_commit.clone())
+            .await?;
+        let now = (self.clock)();
+        store.append_timeline(id, st.target.id, now).await?;
+        git.set_session_ref(id, "base", &st.base_commit).await?;
+        git.set_session_ref(id, "target", &head).await?;
+        acquisition.record_commit(st.target.id, head.clone());
+        st.head = head;
+        st.review = Some(Review {
+            id,
+            version: 1,
+            updated_at: now,
+        });
+        Ok(())
+    }
+
+    /// Whether a review is open, and its version.
+    pub async fn lifecycle(&self) -> Lifecycle {
+        lifecycle_of(&*self.state.lock().await)
+    }
+
+    /// Ends the review: releases its refs, records whether it was complete, and
+    /// goes back to browsing with no review state. Returns whether it was
+    /// complete. Fails if no review is open. Bumps the revision.
+    pub async fn finish_review(&self) -> Result<bool> {
+        let mut st = self.state.lock().await;
+        let Some(id) = st.review.as_ref().map(|r| r.id) else {
+            return Err(SessionError::Invalid("no review is open".into()));
+        };
+        self.ensure_changes(&mut st).await?;
+        let complete = {
+            let changes = st.changes.as_ref().expect("computed");
+            let acked = acknowledged(&st, &changes.diff);
+            Coverage::new(&changes.flat)
+                .completion(&st.filter, &changes.diff.files, &changes.diff.non_text, &acked)
+                .is_complete()
+        };
+        self.acquisition.git.delete_session_refs(id).await?;
+        self.acquisition
+            .store
+            .close_session(id, (self.clock)(), complete)
+            .await?;
+        st.review = None;
+        st.recorded.clear();
+        st.acks.clear();
+        st.threads.clear();
+        st.known.clear();
+        st.revision += 1;
+        st.changes = None;
+        Ok(complete)
     }
 
     /// Changes what the target is compared against; the target stays the live
-    /// tree. Moves the session's base ref, and bumps the revision unless nothing
-    /// changed. Recorded spans are untouched: the next manifest remaps them onto
-    /// the new base, so base-side changes in reviewed regions show as
-    /// `SeenAgainstOldBase` (§5.2), and choosing an earlier base again restores
-    /// the earlier coverage. Returns the revision.
+    /// tree. While a review is open, moves its base ref, and bumps the revision
+    /// unless nothing changed. Recorded spans are untouched: the next manifest
+    /// remaps them onto the new base, so base-side changes in reviewed regions
+    /// show as `SeenAgainstOldBase` (§5.2), and choosing an earlier base again
+    /// restores the earlier coverage. Returns the revision.
     pub async fn set_base(&self, choice: BaseChoice) -> Result<(BaseView, u32)> {
         let git = &self.acquisition.git;
         let base_err = |e: GitError| SessionError::Base(e.0);
         let (choice, commit) = match choice {
-            BaseChoice::Pin => (BaseChoice::Pin, self.head.clone()),
+            BaseChoice::Branch { name } => {
+                let commit = git
+                    .resolve_commit(&format!("refs/heads/{name}"))
+                    .await
+                    .map_err(|_| SessionError::Base(format!("unknown branch {name}")))?;
+                (BaseChoice::Branch { name }, commit)
+            }
             BaseChoice::MergeBase { reference } => {
                 let commit = git.merge_base(&reference).await.map_err(base_err)?;
                 (BaseChoice::MergeBase { reference }, commit)
@@ -524,30 +650,45 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
                 (BaseChoice::Commit { id: commit.clone() }, commit)
             }
         };
-        let snapshot = match choice {
-            BaseChoice::Pin => self.pin_base.clone(),
-            _ => git.commit_snapshot(&commit).await?,
-        };
+        let snapshot = git.commit_snapshot(&commit).await?;
 
         let mut st = self.state.lock().await;
-        if st.base_choice == choice && st.base.id == snapshot.id {
-            return Ok((base_view(&st), st.revision));
+        if st.base_choice != choice || st.base_commit != commit {
+            if let Some(review) = &st.review {
+                let store = &self.acquisition.store;
+                // Before the ref moves: git may drop the old base's objects afterwards.
+                self.retain_anchored(&st).await?;
+                store
+                    .put_snapshot(snapshot.clone(), SnapshotStatus::of(&snapshot))
+                    .await?;
+                git.set_session_ref(review.id, "base", &commit).await?;
+                store
+                    .set_base(review.id, snapshot.id, choice.clone(), commit.clone())
+                    .await?;
+            }
+            self.acquisition.record_commit(snapshot.id, commit.clone());
+            st.base = snapshot;
+            st.base_choice = choice;
+            st.base_commit = commit;
+            st.revision += 1;
+            st.changes = None;
         }
-        let store = &self.acquisition.store;
-        // Before the ref moves: git may drop the old base's objects afterwards.
-        self.retain_anchored(&st).await?;
-        store
-            .put_snapshot(snapshot.clone(), SnapshotStatus::of(&snapshot))
-            .await?;
-        git.set_session_ref(self.id, "base", &commit).await?;
-        self.acquisition.record_commit(snapshot.id, commit.clone());
-        store.set_base(self.id, snapshot.id, choice.clone()).await?;
-        st.base = snapshot;
-        st.base_choice = choice;
-        st.base_commit = commit;
-        st.revision += 1;
-        st.changes = None;
-        Ok((base_view(&st), st.revision))
+        Ok((self.base_view(&st, &git.branches().await?).await?, st.revision))
+    }
+
+    /// The base with its display facts; `branches` are the repository's.
+    async fn base_view(&self, st: &State, branches: &[BranchInfo]) -> Result<BaseView> {
+        let git = &self.acquisition.git;
+        let prefer = match &st.base_choice {
+            BaseChoice::Branch { name } => Some(name.as_str()),
+            _ => None,
+        };
+        Ok(BaseView {
+            choice: st.base_choice.clone(),
+            commit: git.commit_info(&st.base_commit).await?,
+            name: base::name_of(git, branches, prefer, &st.base_commit).await?,
+            behind: base::behind(git, branches, &st.base_choice, &st.base_commit).await?,
+        })
     }
 
     /// Replaces the review filter and bumps the revision; completion and the
@@ -558,7 +699,9 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         if st.filter == filter {
             return Ok(st.revision);
         }
-        self.acquisition.store.set_filter(self.id, filter.clone()).await?;
+        if let Some(review) = &st.review {
+            self.acquisition.store.set_filter(review.id, filter.clone()).await?;
+        }
         st.filter = filter;
         st.revision += 1;
         Ok(st.revision)
@@ -625,28 +768,36 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         self.state.lock().await.target.id
     }
 
-    /// Stores a settled snapshot, makes it the target and returns the new
-    /// revision. Review state is remapped when the next manifest is computed.
-    /// A failed copy of its content is not fatal: the diff then reads the
-    /// worktree, or shows the file as unavailable.
+    /// Makes a settled snapshot the target and returns the new revision. While a
+    /// review is open it is also the next version: its content is stored and
+    /// it joins the timeline. Review state is remapped when the next manifest
+    /// is computed. A failed copy of its content is not fatal: the diff then
+    /// reads the worktree, or shows the file as unavailable.
     pub async fn settled(&self, scan: Scan) -> Result<(u32, Option<GitError>)> {
-        let (base, previous) = {
-            let st = self.state.lock().await;
-            (st.base.clone(), st.target.clone())
-        };
-        let retained = self
-            .acquisition
-            .retain(&[&base, &previous], &scan.snapshot, &scan.status)
-            .await
-            .err();
-        let store = &self.acquisition.store;
-        store.put_snapshot(scan.snapshot.clone(), scan.status).await?;
-        store.append_timeline(self.id, scan.snapshot.id).await?;
+        let mut guard = self.state.lock().await;
+        let st = &mut *guard;
+        let mut retained = None;
+        if let Some(review) = &st.review {
+            retained = self
+                .acquisition
+                .retain(&[&st.base, &st.target], &scan.snapshot, &scan.status)
+                .await
+                .err();
+            let store = &self.acquisition.store;
+            store.put_snapshot(scan.snapshot.clone(), scan.status.clone()).await?;
+            store
+                .append_timeline(review.id, scan.snapshot.id, (self.clock)())
+                .await?;
+        }
         // Older timeline snapshots stay materializable (§7.2).
-        self.acquisition.record_commit(scan.snapshot.id, self.head.clone());
-        let mut st = self.state.lock().await;
+        self.acquisition.record_commit(scan.snapshot.id, st.head.clone());
         let old = std::mem::replace(&mut st.target, scan.snapshot);
-        st.known.insert(old.id, old);
+        st.target_status = scan.status;
+        if let Some(review) = &mut st.review {
+            st.known.insert(old.id, old);
+            review.version += 1;
+            review.updated_at = (self.clock)();
+        }
         st.revision += 1;
         st.changes = None;
         Ok((st.revision, retained))
@@ -684,6 +835,8 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     pub async fn manifest(&self) -> Result<ManifestView> {
         let mut st = self.state.lock().await;
         self.ensure_changes(&mut st).await?;
+        let branches = self.acquisition.git.branches().await?;
+        let base = self.base_view(&st, &branches).await?;
         let changes = st.changes.as_ref().expect("computed");
         let cov = Coverage::new(&changes.flat);
         let acked = acknowledged(&st, &changes.diff);
@@ -733,7 +886,12 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         Ok(ManifestView {
             revision: st.revision,
             name: self.name.clone(),
-            base: base_view(&st),
+            lifecycle: lifecycle_of(&st),
+            base,
+            target: TargetView {
+                name: "Working tree".into(),
+                branch: branches.iter().find(|b| b.current).map(|b| b.name.clone()),
+            },
             filter: st.filter.clone(),
             completion: cov.completion(&st.filter, &changes.diff.files, &changes.diff.non_text, &acked),
             files,
@@ -874,10 +1032,14 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     }
 
     /// Marks hunks (indices into the file's hunks at `revision`) seen or unseen.
+    /// Marking starts the review if none is open.
     pub async fn set_seen(&self, revision: u32, path: &str, hunks: &[u32], seen: bool) -> Result<ReviewUpdateView> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
+        if seen {
+            self.begin(&mut st).await?;
+        }
         let Prepared {
             inputs, spans: slots, ..
         } = self.prepare(&mut st).await?;
@@ -911,11 +1073,16 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             kept.extend(add);
             (remove, kept)
         };
-        let ids = self
-            .acquisition
-            .store
-            .edit_spans(self.id, remove.clone(), add.clone())
-            .await?;
+        // Without a review there is nothing to un-mark and nothing to store.
+        let ids = match &st.review {
+            Some(review) => {
+                self.acquisition
+                    .store
+                    .edit_spans(review.id, remove.clone(), add.clone())
+                    .await?
+            }
+            None => Vec::new(),
+        };
         st.recorded.retain(|r| !remove.contains(&r.id));
         st.recorded
             .extend(ids.into_iter().zip(add).map(|(id, span)| RecordedSpan { id, span }));
@@ -923,7 +1090,8 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         update_of(&st, path)
     }
 
-    /// Acknowledges or un-acknowledges one non-text item.
+    /// Acknowledges or un-acknowledges one non-text item. Acknowledging starts
+    /// the review if none is open.
     pub async fn acknowledge(
         &self,
         revision: u32,
@@ -934,6 +1102,9 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
+        if acknowledged {
+            self.begin(&mut st).await?;
+        }
         let change = {
             let diff = &st.changes.as_ref().expect("computed").diff;
             diff.non_text
@@ -943,14 +1114,17 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         };
         let ack = ack_of(change);
         let store = &self.acquisition.store;
-        if acknowledged {
-            store.acknowledge(self.id, ack.clone()).await?;
-            if !st.acks.contains(&ack) {
-                st.acks.push(ack);
+        if let Some(review) = &st.review {
+            if acknowledged {
+                store.acknowledge(review.id, ack.clone()).await?;
+            } else {
+                store.unacknowledge(review.id, ack.clone()).await?;
             }
-        } else {
-            store.unacknowledge(self.id, ack.clone()).await?;
+        }
+        if !acknowledged {
             st.acks.retain(|a| *a != ack);
+        } else if !st.acks.contains(&ack) {
+            st.acks.push(ack);
         }
         update_of(&st, path)
     }
@@ -997,7 +1171,8 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         })
     }
 
-    /// Opens a thread with its first message. `now` is unix seconds.
+    /// Opens a thread with its first message, and starts the review if none is
+    /// open. `now` is unix seconds.
     pub async fn create_thread(&self, revision: u32, target: NewThread, body: String, now: i64) -> Result<ThreadView> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
@@ -1015,10 +1190,12 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             }
             NewThread::Changeset => CommentTarget::Changeset,
         };
+        self.begin(&mut st).await?;
+        let review = st.review.as_ref().expect("begun").id;
         let id = self
             .acquisition
             .store
-            .add_thread(self.id, target.clone(), opener.clone())
+            .add_thread(review, target.clone(), opener.clone())
             .await?;
         st.threads.push(Thread {
             id,
@@ -1576,15 +1753,13 @@ fn thread_view(st: &State, t: &Thread) -> ThreadView {
     }
 }
 
-fn base_view(st: &State) -> BaseView {
-    BaseView {
-        label: match &st.base_choice {
-            BaseChoice::Pin => "pin".into(),
-            BaseChoice::MergeBase { reference } => format!("merge-base {reference}"),
-            BaseChoice::Commit { .. } => "commit".into(),
+fn lifecycle_of(st: &State) -> Lifecycle {
+    match &st.review {
+        None => Lifecycle::Browsing,
+        Some(r) => Lifecycle::Open {
+            version: r.version,
+            updated_at: r.updated_at,
         },
-        choice: st.base_choice.clone(),
-        commit: st.base_commit.clone(),
     }
 }
 

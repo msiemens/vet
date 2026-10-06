@@ -55,7 +55,7 @@ async fn a_failed_restore_limits_the_analysis_and_says_which_project() {
     let revision = client.revision(session).await;
     async fn manifest(client: &Client, session: u32) -> vet_protocol::Manifest {
         match client.call(Request::Manifest { session }).await.unwrap() {
-            Response::Manifest(m) => m,
+            Response::Manifest(m) => *m,
             other => panic!("{other:?}"),
         }
     }

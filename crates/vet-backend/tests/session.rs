@@ -11,8 +11,8 @@ use vet_backend::{Config, OUTPUT_CAP, Orchestrator, open_store};
 use vet_protocol::{
     AnchorState, ApprovalChange, Base, BaseChoice, BlobContent, Completion, DirEntry, DirEntryKind, EnvVar, Event,
     FileStatus, HunkState, LineLocation, Manifest, NoTextReason, NonTextKind, Request, Response, ReviewFilter,
-    ReviewUpdate, RunChange, RunStream, RunTarget, ServerMessage, SessionId, Side, TextContent, Thread, ThreadStatus,
-    ThreadTarget,
+    ReviewInfo, ReviewUpdate, RunChange, RunStream, RunTarget, ServerMessage, SessionId, Side, TextContent, Thread,
+    ThreadStatus, ThreadTarget,
 };
 use vet_transport::{Events, Handler};
 
@@ -59,6 +59,8 @@ struct Client {
     handler: std::sync::Arc<Orchestrator>,
     events: Events,
     inbox: UnboundedReceiver<ServerMessage>,
+    /// What `ReviewStarted` events said, which `event` and `no_event` skip.
+    started: Vec<ReviewInfo>,
 }
 
 impl Client {
@@ -68,6 +70,7 @@ impl Client {
             handler: handler.clone(),
             events,
             inbox,
+            started: Vec::new(),
         }
     }
 
@@ -77,7 +80,7 @@ impl Client {
 
     async fn manifest(&self, session: SessionId) -> Manifest {
         match self.call(Request::Manifest { session }).await.unwrap() {
-            Response::Manifest(m) => m,
+            Response::Manifest(m) => *m,
             other => panic!("{other:?}"),
         }
     }
@@ -96,16 +99,34 @@ impl Client {
         }
     }
 
-    /// The next event; panics if none arrives.
+    /// The next event other than `ReviewStarted`; panics if none arrives.
     async fn event(&mut self) -> Event {
-        let message = tokio::time::timeout(Duration::from_secs(10), self.inbox.recv())
-            .await
-            .expect("no event")
-            .expect("connection closed");
-        match message {
-            ServerMessage::Event { event } => event,
-            other => panic!("{other:?}"),
+        loop {
+            let message = tokio::time::timeout(Duration::from_secs(10), self.inbox.recv())
+                .await
+                .expect("no event")
+                .expect("connection closed");
+            match message {
+                ServerMessage::Event {
+                    event: Event::ReviewStarted { review, .. },
+                } => self.started.push(review),
+                ServerMessage::Event { event } => return event,
+                other => panic!("{other:?}"),
+            }
         }
+    }
+
+    /// The reviews that `ReviewStarted` events have announced so far.
+    fn started(&mut self) -> Vec<ReviewInfo> {
+        while let Ok(message) = self.inbox.try_recv() {
+            if let ServerMessage::Event {
+                event: Event::ReviewStarted { review, .. },
+            } = message
+            {
+                self.started.push(review);
+            }
+        }
+        self.started.clone()
     }
 
     async fn settled(&mut self) -> u32 {
@@ -115,8 +136,17 @@ impl Client {
         }
     }
 
+    /// Whether no event other than `ReviewStarted` is waiting.
     fn no_event(&mut self) -> bool {
-        self.inbox.try_recv().is_err()
+        while let Ok(message) = self.inbox.try_recv() {
+            match message {
+                ServerMessage::Event {
+                    event: Event::ReviewStarted { review, .. },
+                } => self.started.push(review),
+                _ => return false,
+            }
+        }
+        true
     }
 }
 
@@ -722,13 +752,14 @@ async fn reopening_a_repository_resumes_its_review_across_a_restart() {
     ));
     write(fx.repo.path(), "a.txt", &format!("new 1\nnew 2\n{dirty}"));
     let second = Client::new(&restarted);
-    assert_eq!(
-        open(&second, fx.repo.path()).await,
-        session,
-        "the open session is resumed"
-    );
+    let session = open(&second, fx.repo.path()).await;
 
     let m = second.manifest(session).await;
+    assert!(
+        matches!(m.review, ReviewInfo::Open { version: 2, .. }),
+        "{:?}",
+        m.review
+    );
     assert_eq!(m.revision, 1, "what is on disk now is a new settled snapshot");
     assert_eq!(
         hunk_states(&m),
@@ -746,6 +777,8 @@ async fn an_orphaned_session_is_released_but_stays_open_for_the_next_open() {
     let fx = fixture(&[("a.txt", &text(5, &[]))], &[("a.txt", &text(5, &[1]))]).await;
     let first = Client::new(&fx.handler);
     let session = open(&first, fx.repo.path()).await;
+    assert_eq!(session_refs(fx.repo.path()), "", "browsing holds nothing");
+    first.set_seen(session, 0, &[0], true).await;
     assert_eq!(
         session_refs(fx.repo.path()),
         format!("refs/vet/sessions/{session}/base\nrefs/vet/sessions/{session}/target\n")
@@ -767,7 +800,11 @@ async fn an_orphaned_session_is_released_but_stays_open_for_the_next_open() {
         session_refs(fx.repo.path()),
         format!("refs/vet/sessions/{session}/base\nrefs/vet/sessions/{session}/target\n")
     );
-    assert_eq!(open(&third, fx.repo.path()).await, session);
+    let resumed = open(&third, fx.repo.path()).await;
+    assert!(matches!(
+        third.manifest(resumed).await.review,
+        ReviewInfo::Open { version: 1, .. }
+    ));
 }
 
 #[tokio::test]
@@ -862,36 +899,45 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     let mut client = Client::new(&fx.handler);
     let session = open(&client, p).await;
 
-    // The pin: only the dirty edit.
+    // The current branch's tip: only the dirty edit.
     let m = client.manifest(session).await;
-    assert_eq!(m.base.choice, BaseChoice::Pin);
-    assert_eq!((m.base.commit.as_str(), m.base.label.as_str()), (two.as_str(), "pin"));
+    assert_eq!(m.base.choice, BaseChoice::Branch { name: "feature".into() });
+    assert_eq!(
+        (m.base.commit.id.as_str(), m.base.name.as_str()),
+        (two.as_str(), "feature")
+    );
+    assert_eq!(m.base.commit.subject, "edit a line");
+    assert_eq!(
+        (m.target.name.as_str(), m.target.branch.as_deref()),
+        ("Working tree", Some("feature"))
+    );
     assert_eq!(m.files[0].hunks.len(), 1);
     assert_eq!(lines(&m.completion), (2, 0));
 
-    // The merge base with main: the branch's change shows as well.
+    // Where feature branched off main: the branch's change shows as well.
     let base = client.set_base(session, merge_base("main")).await.unwrap();
-    assert_eq!(
-        (base.commit.as_str(), base.label.as_str()),
-        (main.as_str(), "merge-base main")
-    );
+    assert_eq!((base.commit.id.as_str(), base.name.as_str()), (main.as_str(), "main"));
     assert_eq!(client.settled().await, 1);
-    assert_eq!(session_base_ref(p, session), main);
+    assert!(session_refs(p).is_empty(), "browsing holds no refs");
     let m = client.manifest(session).await;
     assert_eq!((m.revision, &m.base), (1, &base));
     assert_eq!(hunk_states(&m), [HunkState::Unseen, HunkState::Unseen]);
     assert_eq!((m.files[0].base_lines, m.files[0].target_lines), (40, 39));
 
-    // Mark the branch's hunk.
+    // Marking the branch's hunk starts the review, which holds the base chosen so far.
     let update = client.set_seen(session, 1, &[0], true).await;
     assert_eq!(update.review.hunks, [HunkState::Seen, HunkState::Unseen]);
+    assert_eq!(session_base_ref(p, session), main);
 
     // Against the first branch commit, base lines of the marked hunk have changed.
     let base = client
         .set_base(session, BaseChoice::Commit { id: one[..10].into() })
         .await
         .unwrap();
-    assert_eq!((base.commit.as_str(), base.label.as_str()), (one.as_str(), "commit"));
+    assert_eq!(
+        (base.commit.id.as_str(), base.name.as_str()),
+        (one.as_str(), "feature~1")
+    );
     assert_eq!(base.choice, BaseChoice::Commit { id: one.clone() });
     assert_eq!(client.settled().await, 2);
     assert_eq!(session_base_ref(p, session), one);
@@ -912,9 +958,10 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     };
     assert_eq!((revision, shown), (2, Some(dropped)));
 
-    // Back to the pin; the mark lies outside what is left to review.
-    let base = client.set_base(session, BaseChoice::Pin).await.unwrap();
-    assert_eq!((base.commit.as_str(), base.label.as_str()), (two.as_str(), "pin"));
+    // Back to the branch's tip; the mark lies outside what is left to review.
+    let feature = BaseChoice::Branch { name: "feature".into() };
+    let base = client.set_base(session, feature).await.unwrap();
+    assert_eq!((base.commit.id.as_str(), base.name.as_str()), (two.as_str(), "feature"));
     assert_eq!(client.settled().await, 3);
     assert_eq!(session_base_ref(p, session), two);
     assert_eq!(hunk_states(&client.manifest(session).await), [HunkState::Unseen]);
@@ -950,6 +997,114 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     assert_eq!(err, "no common ancestor with unrelated");
     assert_eq!(client.manifest(session).await.revision, 4);
     assert!(client.no_event());
+}
+
+#[tokio::test]
+async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing() {
+    let dirty = text(30, &[3]);
+    let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;
+    let mut one = Client::new(&fx.handler);
+    let mut two = Client::new(&fx.handler);
+    let session = open(&one, fx.repo.path()).await;
+    open(&two, fx.repo.path()).await;
+    assert_eq!(one.manifest(session).await.review, ReviewInfo::Browsing);
+
+    // Looking around and un-marking start nothing.
+    one.set_seen(session, 0, &[0], false).await;
+    assert!(one.started().is_empty());
+
+    let update = one.set_seen(session, 0, &[0], true).await;
+    assert_eq!(update.review.hunks, [HunkState::Seen]);
+    let ReviewInfo::Open { version: 1, updated_at } = one.manifest(session).await.review else {
+        panic!("the review did not start");
+    };
+    assert!(updated_at > 1_600_000_000);
+    // Everyone is told, the requester too; a second mark says nothing more.
+    let started = ReviewInfo::Open { version: 1, updated_at };
+    assert_eq!(one.started(), [started]);
+    assert!(matches!(two.event().await, Event::ReviewChanged { .. }));
+    assert_eq!(two.started(), [started]);
+    one.set_seen(session, 0, &[0], false).await;
+    one.set_seen(session, 0, &[0], true).await;
+    assert_eq!(one.started().len(), 1);
+
+    // Each settled snapshot is the next version.
+    write(fx.repo.path(), "a.txt", &text(30, &[3, 20]));
+    assert_eq!(one.settled().await, 1);
+    assert!(matches!(
+        one.manifest(session).await.review,
+        ReviewInfo::Open { version: 2, .. }
+    ));
+
+    // Finishing with an unseen hunk left is allowed, and everyone refetches.
+    let Response::ReviewFinished { complete } = one.call(Request::FinishReview { session }).await.unwrap() else {
+        panic!("not finished");
+    };
+    assert!(!complete);
+    assert_eq!(one.settled().await, 2);
+    // The other connection still has the review changes queued before it.
+    let revision = loop {
+        match two.event().await {
+            Event::SnapshotSettled { revision, .. } if revision == 2 => break revision,
+            Event::ReviewChanged { .. } | Event::SnapshotSettled { .. } => {}
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(revision, 2);
+    let m = one.manifest(session).await;
+    assert_eq!(m.review, ReviewInfo::Browsing);
+    assert_eq!(hunk_states(&m), [HunkState::Unseen, HunkState::Unseen]);
+    assert_eq!(session_refs(fx.repo.path()), "");
+    assert!(one.call(Request::FinishReview { session }).await.is_err());
+
+    // The next review action starts a new review at version 1.
+    one.set_seen(session, 2, &[0], true).await;
+    assert!(matches!(
+        one.manifest(session).await.review,
+        ReviewInfo::Open { version: 1, .. }
+    ));
+}
+
+#[tokio::test]
+async fn reopening_without_a_started_review_browses_again() {
+    let fx = fixture(&[("a.txt", &text(5, &[]))], &[("a.txt", &text(5, &[1]))]).await;
+    let first = Client::new(&fx.handler);
+    let session = open(&first, fx.repo.path()).await;
+    first.call(Request::CloseSession { session }).await.unwrap();
+
+    let second = Client::new(&fx.handler);
+    let session = open(&second, fx.repo.path()).await;
+
+    assert_eq!(second.manifest(session).await.review, ReviewInfo::Browsing);
+}
+
+#[tokio::test]
+async fn a_branch_base_reports_how_far_the_branch_moved_on_until_chosen_again() {
+    let fx = fixture(&[("a.txt", &text(10, &[]))], &[("a.txt", &text(10, &[2]))]).await;
+    let p = fx.repo.path();
+    let first = git(p, &["rev-parse", "HEAD"]);
+    let mut client = Client::new(&fx.handler);
+    let session = open(&client, p).await;
+    let m = client.manifest(session).await;
+    assert_eq!((m.base.name.as_str(), m.base.behind), ("main", None));
+
+    // Two commits land on main; the working tree stays as it was.
+    git(p, &["commit", "-q", "-am", "edit"]);
+    git(p, &["commit", "-q", "--allow-empty", "-m", "empty"]);
+    let tip = git(p, &["rev-parse", "HEAD"]);
+
+    let m = client.manifest(session).await;
+    assert_eq!(m.base.commit.id, first);
+    assert_eq!((m.base.name.as_str(), m.base.behind), ("main~2", Some(2)));
+    assert_eq!(m.files[0].hunks.len(), 1, "the commits are still being reviewed");
+
+    let base = client
+        .set_base(session, BaseChoice::Branch { name: "main".into() })
+        .await
+        .unwrap();
+    assert_eq!((base.commit.id, base.name.as_str(), base.behind), (tip, "main", None));
+    client.settled().await;
+    assert!(client.manifest(session).await.files.is_empty());
 }
 
 impl Client {

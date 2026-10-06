@@ -9,6 +9,7 @@ mod semantic;
 pub use run::OUTPUT_CAP;
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -17,7 +18,7 @@ use vet_app::ignore::IgnoringWatcher;
 use vet_app::limits::{Limiting, RestoreLimits};
 use vet_app::semantics::Semantics;
 use vet_app::servers::Servers;
-use vet_app::session::{LiveSession, ThreadView};
+use vet_app::session::{Lifecycle, LiveSession, ThreadView};
 use vet_app::settle::Settling;
 use vet_core::review::ThreadId;
 use vet_infra::clock::TokioClock;
@@ -83,6 +84,8 @@ pub struct Orchestrator {
     sessions: Sessions,
     servers: Arc<LanguageServers>,
     backends: Arc<[Backend]>,
+    /// The protocol id of the next session opened; unrelated to the store's ids.
+    next_id: AtomicU32,
 }
 
 type Sessions = Arc<tokio::sync::Mutex<Vec<Arc<Open>>>>;
@@ -138,6 +141,7 @@ impl Orchestrator {
             store,
             config,
             sessions: Sessions::default(),
+            next_id: AtomicU32::new(1),
         }
     }
 
@@ -192,11 +196,11 @@ impl Orchestrator {
             .file_name()
             .map_or_else(|| repo.display().to_string(), |n| n.to_string_lossy().into_owned());
         let session = Arc::new(
-            Live::open(git.clone(), self.store.clone(), name, root.clone(), unix_now())
+            Live::open(git.clone(), self.store.clone(), name, root.clone(), unix_now)
                 .await
                 .map_err(message)?,
         );
-        let id = u32::try_from(session.id.0).map_err(message)?;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let subscribers: Subscribers = Arc::new(Mutex::new(vec![events]));
 
         let settling = Settling::new(
@@ -287,11 +291,20 @@ impl Handler for Orchestrator {
                 self.close(session, &events).await?;
                 Ok(Response::Done)
             }
+            Request::FinishReview { session } => {
+                let open = self.find(session).await?;
+                let complete = open.session.finish_review().await.map_err(message)?;
+                let revision = open.session.revision().await;
+                run::broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
+                Ok(Response::ReviewFinished { complete })
+            }
             Request::Manifest { session } => {
                 let open = self.find(session).await?;
                 let manifest = open.session.manifest().await.map_err(message)?;
                 let failures = open.semantics.restore_failures();
-                Ok(Response::Manifest(mapping::manifest(session, &manifest, &failures)))
+                Ok(Response::Manifest(Box::new(mapping::manifest(
+                    session, &manifest, &failures,
+                ))))
             }
             Request::FileContents { session, path } => {
                 let text = self
@@ -316,11 +329,13 @@ impl Handler for Orchestrator {
                 seen,
             } => {
                 let open = self.find(session).await?;
+                let before = open.session.lifecycle().await;
                 let update = open
                     .session
                     .set_seen(revision, &path, &hunks, seen)
                     .await
                     .map_err(message)?;
+                announce_start(&open, before).await;
                 Ok(Response::Review(review_changed(&open, &events, &update)))
             }
             Request::Acknowledge {
@@ -331,11 +346,13 @@ impl Handler for Orchestrator {
                 acknowledged,
             } => {
                 let open = self.find(session).await?;
+                let before = open.session.lifecycle().await;
                 let update = open
                     .session
                     .acknowledge(revision, &path, mapping::core_non_text_kind(kind), acknowledged)
                     .await
                     .map_err(message)?;
+                announce_start(&open, before).await;
                 Ok(Response::Review(review_changed(&open, &events, &update)))
             }
             Request::ItemBlob {
@@ -424,11 +441,13 @@ impl Handler for Orchestrator {
                 body,
             } => {
                 let open = self.find(session).await?;
+                let before = open.session.lifecycle().await;
                 let thread = open
                     .session
                     .create_thread(revision, mapping::new_thread(target), body, unix_now())
                     .await
                     .map_err(message)?;
+                announce_start(&open, before).await;
                 Ok(thread_changed(&open, &events, &thread).await)
             }
             Request::Reply { session, thread, body } => {
@@ -599,6 +618,21 @@ impl Handler for Orchestrator {
                 self.list_servers(&open).await
             }
         }
+    }
+}
+
+/// Tells every subscriber that the request which found the session as `before`
+/// started its review.
+async fn announce_start(open: &Open, before: Lifecycle) {
+    let now = open.session.lifecycle().await;
+    if before == Lifecycle::Browsing && now != before {
+        run::broadcast(
+            &open.subscribers,
+            Event::ReviewStarted {
+                session: open.id,
+                review: mapping::review_info(now),
+            },
+        );
     }
 }
 

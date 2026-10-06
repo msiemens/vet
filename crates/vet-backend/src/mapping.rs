@@ -6,10 +6,10 @@ use vet_app::execution::check::{Approval, Change};
 use vet_app::execution::targets::RunTarget;
 use vet_app::execution::{ApprovalFile, ListedTarget};
 use vet_app::pin::{BaseChoice, CommitId};
-use vet_app::ports::{BaseCandidates, Degraded};
+use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::session::{
-    BaseView, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemBlob, ItemView, ManifestView, NewThread,
-    NoText, ReviewUpdateView, ReviewView, TargetText, ThreadView, ThreadsView, path_str,
+    BaseView, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView,
+    NewThread, NoText, ReviewUpdateView, ReviewView, TargetText, ThreadView, ThreadsView, path_str,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineRange, NonTextKind, RepoPath};
@@ -122,7 +122,7 @@ fn file(f: &FileView) -> p::FileChange {
 
 pub fn core_base_choice(choice: p::BaseChoice) -> BaseChoice {
     match choice {
-        p::BaseChoice::Pin => BaseChoice::Pin,
+        p::BaseChoice::Branch { name } => BaseChoice::Branch { name },
         p::BaseChoice::MergeBase { reference } => BaseChoice::MergeBase { reference },
         p::BaseChoice::Commit { id } => BaseChoice::Commit { id: CommitId(id) },
     }
@@ -150,17 +150,42 @@ fn filter(f: &ReviewFilter) -> p::ReviewFilter {
     }
 }
 
+fn commit_info(c: &CommitInfo) -> p::CommitInfo {
+    p::CommitInfo {
+        id: c.id.0.clone(),
+        short_id: c.id.short().to_owned(),
+        subject: c.subject.clone(),
+        author: c.author.clone(),
+        time: unix_secs(c.time),
+    }
+}
+
+fn unix_secs(time: i64) -> u32 {
+    u32::try_from(time).unwrap_or(0)
+}
+
 pub fn base(b: &BaseView) -> p::Base {
     p::Base {
         choice: match &b.choice {
-            BaseChoice::Pin => p::BaseChoice::Pin,
+            BaseChoice::Branch { name } => p::BaseChoice::Branch { name: name.clone() },
             BaseChoice::MergeBase { reference } => p::BaseChoice::MergeBase {
                 reference: reference.clone(),
             },
             BaseChoice::Commit { id } => p::BaseChoice::Commit { id: id.0.clone() },
         },
-        commit: b.commit.0.clone(),
-        label: b.label.clone(),
+        commit: commit_info(&b.commit),
+        name: b.name.clone(),
+        behind: b.behind,
+    }
+}
+
+pub fn review_info(l: Lifecycle) -> p::ReviewInfo {
+    match l {
+        Lifecycle::Browsing => p::ReviewInfo::Browsing,
+        Lifecycle::Open { version, updated_at } => p::ReviewInfo::Open {
+            version,
+            updated_at: unix_secs(updated_at),
+        },
     }
 }
 
@@ -176,17 +201,7 @@ pub fn base_candidates(c: &BaseCandidates) -> p::Response {
                 default: b.default,
             })
             .collect(),
-        commits: c
-            .commits
-            .iter()
-            .map(|c| p::CommitInfo {
-                id: c.id.0.clone(),
-                short_id: c.id.0.chars().take(7).collect(),
-                subject: c.subject.clone(),
-                author: c.author.clone(),
-                time: u32::try_from(c.time).unwrap_or(0),
-            })
-            .collect(),
+        commits: c.commits.iter().map(commit_info).collect(),
     }
 }
 
@@ -195,7 +210,12 @@ pub fn manifest(session: p::SessionId, m: &ManifestView, restore_failures: &[Res
         session,
         revision: m.revision,
         name: m.name.clone(),
+        review: review_info(m.lifecycle),
         base: base(&m.base),
+        target: p::Target {
+            name: m.target.name.clone(),
+            branch: m.target.branch.clone(),
+        },
         filter: filter(&m.filter),
         files: m.files.iter().map(file).collect(),
         completion: completion(&m.completion),

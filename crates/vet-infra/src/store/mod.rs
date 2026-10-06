@@ -25,7 +25,7 @@ use sea_orm::{
 use sea_orm_migration::MigratorTrait;
 use vet_app::pin::{BaseChoice, CommitId, Pin, PinId};
 use vet_app::ports::{GcReport, ReviewStore, Store, StoreError};
-use vet_app::review::{NonTextAck, RecordedSpan, Session, SessionId, SpanId};
+use vet_app::review::{NonTextAck, RecordedSpan, Session, SessionId, SpanId, Version};
 use vet_core::content::{BlobId, Changeset, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::{self, TreeNode};
@@ -271,6 +271,21 @@ impl SqliteStore {
             })
             .collect::<Res<_>>()?;
 
+        let stored_base = session_base::Entity::find_by_id(sid).one(&self.db).await?;
+        let base_commit = stored_base.as_ref().and_then(|b| b.commit.clone()).map(CommitId);
+        let pin = pin::Entity::find_by_id(row.pin).one(&self.db).await?;
+        let base = match stored_base {
+            Some(b) => match b.kind {
+                BaseKind::Branch => BaseChoice::Branch { name: b.value },
+                BaseKind::MergeBase => BaseChoice::MergeBase { reference: b.value },
+                BaseKind::Commit => BaseChoice::Commit { id: CommitId(b.value) },
+            },
+            // Stored before branches: the base was the pin's `HEAD`.
+            None => BaseChoice::Commit {
+                id: CommitId(pin.map(|p| p.head).unwrap_or_default()),
+            },
+        };
+
         Ok(Some(Session {
             id,
             pin: PinId(row.pin as u64),
@@ -278,18 +293,14 @@ impl SqliteStore {
                 base: SnapshotId(hash(&row.base)?),
                 target: SnapshotId(hash(&row.target)?),
             },
-            base: match session_base::Entity::find_by_id(sid).one(&self.db).await? {
-                None => BaseChoice::Pin,
-                Some(b) => match b.kind {
-                    BaseKind::MergeBase => BaseChoice::MergeBase { reference: b.value },
-                    BaseKind::Commit => BaseChoice::Commit { id: CommitId(b.value) },
-                },
-            },
+            base,
+            base_commit,
             filter: read_filter(row.hide_binary, filter_items)?,
             spans,
             acks,
             threads,
             closed_at: row.closed_at,
+            complete: row.complete,
         }))
     }
 
@@ -559,10 +570,11 @@ impl Store for SqliteStore {
         Ok(Some((Snapshot { id, entries }, status)))
     }
 
-    async fn append_timeline(&self, session: SessionId, snapshot: SnapshotId) -> Result<(), StoreError> {
+    async fn append_timeline(&self, session: SessionId, snapshot: SnapshotId, at: i64) -> Result<(), StoreError> {
         timeline::ActiveModel {
             session: Set(session.0 as i64),
             snapshot: Set(snapshot.0.0.to_vec()),
+            at: Set(Some(at)),
             ..Default::default()
         }
         .insert(&self.db)
@@ -570,7 +582,7 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    async fn timeline(&self, session: SessionId) -> Result<Vec<SnapshotId>, StoreError> {
+    async fn timeline(&self, session: SessionId) -> Result<Vec<Version>, StoreError> {
         let rows = timeline::Entity::find()
             .filter(timeline::Column::Session.eq(session.0 as i64))
             .order_by_asc(timeline::Column::Id)
@@ -578,7 +590,12 @@ impl Store for SqliteStore {
             .await?;
         Ok(rows
             .iter()
-            .map(|r| hash(&r.snapshot).map(SnapshotId))
+            .map(|r| {
+                Ok(Version {
+                    snapshot: SnapshotId(hash(&r.snapshot)?),
+                    at: r.at.unwrap_or(0),
+                })
+            })
             .collect::<Res<_>>()?)
     }
 
@@ -641,10 +658,11 @@ impl ReviewStore for SqliteStore {
         Ok(SessionId(row.id as u64))
     }
 
-    async fn close_session(&self, id: SessionId, now: i64) -> Result<(), StoreError> {
+    async fn close_session(&self, id: SessionId, now: i64, complete: bool) -> Result<(), StoreError> {
         session::ActiveModel {
             id: Set(id.0 as i64),
             closed_at: Set(Some(now)),
+            complete: Set(Some(complete)),
             ..Default::default()
         }
         .update(&self.db)
@@ -687,7 +705,13 @@ impl ReviewStore for SqliteStore {
         Ok(txn.commit().await?)
     }
 
-    async fn set_base(&self, id: SessionId, base: SnapshotId, choice: BaseChoice) -> Result<(), StoreError> {
+    async fn set_base(
+        &self,
+        id: SessionId,
+        base: SnapshotId,
+        choice: BaseChoice,
+        commit: CommitId,
+    ) -> Result<(), StoreError> {
         let txn = self.db.begin().await?;
         let sid = id.0 as i64;
         session::ActiveModel {
@@ -699,19 +723,18 @@ impl ReviewStore for SqliteStore {
         .await?;
         session_base::Entity::delete_by_id(sid).exec(&txn).await?;
         let (kind, value) = match choice {
-            BaseChoice::Pin => (None, String::new()),
-            BaseChoice::MergeBase { reference } => (Some(BaseKind::MergeBase), reference),
-            BaseChoice::Commit { id } => (Some(BaseKind::Commit), id.0),
+            BaseChoice::Branch { name } => (BaseKind::Branch, name),
+            BaseChoice::MergeBase { reference } => (BaseKind::MergeBase, reference),
+            BaseChoice::Commit { id } => (BaseKind::Commit, id.0),
         };
-        if let Some(kind) = kind {
-            session_base::ActiveModel {
-                session: Set(sid),
-                kind: Set(kind),
-                value: Set(value),
-            }
-            .insert(&txn)
-            .await?;
+        session_base::ActiveModel {
+            session: Set(sid),
+            kind: Set(kind),
+            value: Set(value),
+            commit: Set(Some(commit.0)),
         }
+        .insert(&txn)
+        .await?;
         Ok(txn.commit().await?)
     }
 

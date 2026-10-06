@@ -12,7 +12,7 @@ use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::execution::targets::RunTarget;
 use crate::pin::{BaseChoice, CommitId, Pin, PinId};
-use crate::review::{NonTextAck, Session, SessionId, SpanId};
+use crate::review::{NonTextAck, Session, SessionId, SpanId, Version};
 
 /// Monotonic milliseconds.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -163,6 +163,24 @@ pub trait GitRepo {
     fn resolve_commit(&self, spec: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
     /// Local branches and up to `max_commits` commits reachable from `HEAD`, newest first.
     fn base_candidates(&self, max_commits: usize) -> impl Future<Output = Result<BaseCandidates, GitError>> + Send;
+    /// Local branches, by name.
+    fn branches(&self) -> impl Future<Output = Result<Vec<BranchInfo>, GitError>> + Send;
+    fn commit_info(&self, commit: &CommitId) -> impl Future<Output = Result<CommitInfo, GitError>> + Send;
+    /// How many first-parent steps lead from `tip` back to `commit`; `None` if
+    /// it is not on that history within `max` steps.
+    fn first_parent_distance(
+        &self,
+        tip: &CommitId,
+        commit: &CommitId,
+        max: usize,
+    ) -> impl Future<Output = Result<Option<usize>, GitError>> + Send;
+    /// How many commits are reachable from `tip` but not from `base`, counted up to `max`.
+    fn commits_behind(
+        &self,
+        tip: &CommitId,
+        base: &CommitId,
+        max: usize,
+    ) -> impl Future<Output = Result<usize, GitError>> + Send;
     /// Points `refs/vet/sessions/<session>/<name>` at `commit` so git keeps it
     /// (§6.1).
     fn set_session_ref(
@@ -217,13 +235,15 @@ pub trait Store {
         &self,
         id: SnapshotId,
     ) -> impl Future<Output = Result<Option<(Snapshot, SnapshotStatus)>, StoreError>> + Send;
-    /// Append a settled snapshot to the session's edit timeline (§3).
+    /// Append a settled snapshot to the session's edit timeline (§3); `at` is
+    /// unix seconds. The timeline's length is the review's version.
     fn append_timeline(
         &self,
         session: SessionId,
         snapshot: SnapshotId,
+        at: i64,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn timeline(&self, session: SessionId) -> impl Future<Output = Result<Vec<SnapshotId>, StoreError>> + Send;
+    fn timeline(&self, session: SessionId) -> impl Future<Output = Result<Vec<Version>, StoreError>> + Send;
     /// Delete expired closed sessions, then snapshots and content nothing
     /// retained refers to (§8). `now` is unix seconds.
     fn gc(&self, now: i64) -> impl Future<Output = Result<GcReport, StoreError>> + Send;
@@ -243,18 +263,25 @@ pub trait ReviewStore {
         changeset: Changeset,
         filter: ReviewFilter,
     ) -> impl Future<Output = Result<SessionId, StoreError>> + Send;
-    /// `now` is unix seconds.
-    fn close_session(&self, id: SessionId, now: i64) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// `now` is unix seconds; `complete` is whether the review was complete.
+    fn close_session(
+        &self,
+        id: SessionId,
+        now: i64,
+        complete: bool,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// The open sessions of `repo`, oldest first.
     fn open_sessions(&self, repo: String) -> impl Future<Output = Result<Vec<SessionId>, StoreError>> + Send;
     fn session(&self, id: SessionId) -> impl Future<Output = Result<Option<Session>, StoreError>> + Send;
     fn set_filter(&self, id: SessionId, filter: ReviewFilter) -> impl Future<Output = Result<(), StoreError>> + Send;
-    /// Moves the session's changeset to the base snapshot `base`, chosen as `choice`.
+    /// Moves the session's changeset to the base snapshot `base`, the tree of
+    /// `commit`, chosen as `choice`.
     fn set_base(
         &self,
         id: SessionId,
         base: SnapshotId,
         choice: BaseChoice,
+        commit: CommitId,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Recorded spans are the user's marks in the coordinates they were made
     /// in. They are never remapped in place: callers remap them per changeset

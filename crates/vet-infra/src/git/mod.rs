@@ -17,7 +17,9 @@ use std::sync::{Arc, Mutex};
 use gix::bstr::ByteSlice;
 use gix::objs::{Find, FindHeader};
 use vet_app::pin::CommitId;
-use vet_app::ports::{BaseCandidates, BlobRead, CheckoutError, Dirty, GitError, GitRepo, IgnoreRules, Scan, Store};
+use vet_app::ports::{
+    BaseCandidates, BlobRead, BranchInfo, CheckoutError, CommitInfo, Dirty, GitError, GitRepo, IgnoreRules, Scan, Store,
+};
 use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
 use vet_core::merkle;
@@ -233,6 +235,32 @@ impl GitRepo for GixRepo {
 
     async fn base_candidates(&self, max_commits: usize) -> Result<BaseCandidates, GitError> {
         self.blocking(move |i| base::candidates(&i.open()?, max_commits)).await
+    }
+
+    async fn branches(&self) -> Result<Vec<BranchInfo>, GitError> {
+        self.blocking(|i| base::branches(&i.open()?)).await
+    }
+
+    async fn commit_info(&self, commit: &CommitId) -> Result<CommitInfo, GitError> {
+        let commit = commit.clone();
+        self.blocking(move |i| base::commit_info(&i.open()?, &commit)).await
+    }
+
+    async fn first_parent_distance(
+        &self,
+        tip: &CommitId,
+        commit: &CommitId,
+        max: usize,
+    ) -> Result<Option<usize>, GitError> {
+        let (tip, commit) = (tip.clone(), commit.clone());
+        self.blocking(move |i| base::first_parent_distance(&i.open()?, &tip, &commit, max))
+            .await
+    }
+
+    async fn commits_behind(&self, tip: &CommitId, base: &CommitId, max: usize) -> Result<usize, GitError> {
+        let (tip, base) = (tip.clone(), base.clone());
+        self.blocking(move |i| base::commits_behind(&i.open()?, &tip, &base, max))
+            .await
     }
 
     async fn set_session_ref(&self, session: SessionId, name: &str, commit: &CommitId) -> Result<(), GitError> {

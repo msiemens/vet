@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vet_core::content::{
@@ -17,7 +18,7 @@ use vet_core::review::{
 use super::*;
 use crate::pin::{BaseChoice, CommitId, Pin, PinId};
 use crate::ports::{BlobRead, Dirty, GcReport};
-use crate::review::Session;
+use crate::review::{Session, Version};
 
 const REPO: &str = "/repo";
 
@@ -105,9 +106,32 @@ struct FakeGit {
     /// Renames `diff` reports, `old -> new`.
     renames: Arc<Mutex<Vec<(RepoPath, RepoPath)>>>,
     user: Arc<Mutex<Option<String>>>,
+    branches: Arc<Mutex<Vec<BranchInfo>>>,
+    /// First-parent history of a tip, the tip first.
+    history: Arc<Mutex<HashMap<CommitId, Vec<CommitId>>>>,
 }
 
+fn clock() -> i64 {
+    NOW.load(Ordering::Relaxed)
+}
+
+static NOW: AtomicI64 = AtomicI64::new(0);
+
 impl FakeGit {
+    /// A local branch at `tip` whose first-parent history is `history` after it.
+    fn add_branch(&self, name: &str, current: bool, tip: &str, history: &[&str]) {
+        let chain: Vec<CommitId> = [tip].iter().chain(history).map(|c| CommitId((*c).into())).collect();
+        self.history.lock().unwrap().insert(chain[0].clone(), chain.clone());
+        let mut branches = self.branches.lock().unwrap();
+        branches.push(BranchInfo {
+            name: name.into(),
+            commit: chain[0].clone(),
+            current,
+            default: false,
+        });
+        branches.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
     fn add_commit(&self, spec: &str, id: &str, files: &[(&str, &str)]) {
         let snapshot = self.snapshot(files);
         self.commits
@@ -194,6 +218,32 @@ impl GitRepo for FakeGit {
     async fn base_candidates(&self, _: usize) -> std::result::Result<crate::ports::BaseCandidates, GitError> {
         unreachable!()
     }
+    async fn branches(&self) -> std::result::Result<Vec<BranchInfo>, GitError> {
+        Ok(self.branches.lock().unwrap().clone())
+    }
+    async fn commit_info(&self, commit: &CommitId) -> std::result::Result<CommitInfo, GitError> {
+        Ok(CommitInfo {
+            id: commit.clone(),
+            subject: format!("subject of {}", commit.0),
+            author: "Ann".into(),
+            time: 100,
+        })
+    }
+    async fn first_parent_distance(
+        &self,
+        tip: &CommitId,
+        commit: &CommitId,
+        max: usize,
+    ) -> std::result::Result<Option<usize>, GitError> {
+        let history = self.history.lock().unwrap();
+        let chain = history.get(tip).map(Vec::as_slice).unwrap_or_default();
+        Ok(chain.iter().position(|c| c == commit).filter(|&n| n <= max))
+    }
+    async fn commits_behind(&self, tip: &CommitId, base: &CommitId, _: usize) -> std::result::Result<usize, GitError> {
+        let history = self.history.lock().unwrap();
+        let chain = history.get(tip).map(Vec::as_slice).unwrap_or_default();
+        Ok(chain.iter().position(|c| c == base).unwrap_or(chain.len()))
+    }
     async fn set_session_ref(&self, _: SessionId, name: &str, commit: &CommitId) -> std::result::Result<(), GitError> {
         let mut refs = self.refs.lock().unwrap();
         refs.retain(|(n, _)| n != name);
@@ -261,12 +311,14 @@ impl GitRepo for FakeGit {
 struct Mem {
     blobs: HashMap<BlobId, Vec<u8>>,
     snapshots: HashMap<SnapshotId, (Snapshot, SnapshotStatus)>,
-    timeline: Vec<SnapshotId>,
+    timeline: Vec<Version>,
     spans: Vec<(SpanId, ReviewedSpan)>,
     next_span: u64,
     acks: Vec<NonTextAck>,
-    base: Option<(SnapshotId, BaseChoice)>,
+    base: Option<(SnapshotId, BaseChoice, CommitId)>,
     closed: bool,
+    /// Whether the review was complete when it was closed.
+    complete: Option<bool>,
     threads: Vec<Thread>,
     filter: Option<ReviewFilter>,
     pin: Option<Pin>,
@@ -301,11 +353,11 @@ impl Store for MemStore {
     async fn snapshot(&self, id: SnapshotId) -> StoreResult<Option<(Snapshot, SnapshotStatus)>> {
         Ok(self.0.lock().unwrap().snapshots.get(&id).cloned())
     }
-    async fn append_timeline(&self, _: SessionId, snapshot: SnapshotId) -> StoreResult<()> {
-        self.0.lock().unwrap().timeline.push(snapshot);
+    async fn append_timeline(&self, _: SessionId, snapshot: SnapshotId, at: i64) -> StoreResult<()> {
+        self.0.lock().unwrap().timeline.push(Version { snapshot, at });
         Ok(())
     }
-    async fn timeline(&self, _: SessionId) -> StoreResult<Vec<SnapshotId>> {
+    async fn timeline(&self, _: SessionId) -> StoreResult<Vec<Version>> {
         Ok(self.0.lock().unwrap().timeline.clone())
     }
     async fn gc(&self, _: i64) -> StoreResult<GcReport> {
@@ -334,13 +386,20 @@ impl ReviewStore for MemStore {
         filter: ReviewFilter,
     ) -> StoreResult<SessionId> {
         let mut mem = self.0.lock().unwrap();
-        mem.opened = Some((repo, changeset));
-        mem.filter = Some(filter);
-        mem.closed = false;
+        *mem = Mem {
+            blobs: std::mem::take(&mut mem.blobs),
+            snapshots: std::mem::take(&mut mem.snapshots),
+            pin: mem.pin.take(),
+            opened: Some((repo, changeset)),
+            filter: Some(filter),
+            ..Default::default()
+        };
         Ok(SessionId(1))
     }
-    async fn close_session(&self, _: SessionId, _: i64) -> StoreResult<()> {
-        self.0.lock().unwrap().closed = true;
+    async fn close_session(&self, _: SessionId, _: i64, complete: bool) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        mem.closed = true;
+        mem.complete = Some(complete);
         Ok(())
     }
     async fn open_sessions(&self, repo: String) -> StoreResult<Vec<SessionId>> {
@@ -353,7 +412,10 @@ impl ReviewStore for MemStore {
         let Some((_, changeset)) = &mem.opened else {
             return Ok(None);
         };
-        let (base, choice) = mem.base.clone().unzip();
+        let (base, choice, commit) = match mem.base.clone() {
+            Some((base, choice, commit)) => (Some(base), Some(choice), Some(commit)),
+            None => (None, None, None),
+        };
         Ok(Some(Session {
             id,
             pin: PinId(1),
@@ -361,7 +423,11 @@ impl ReviewStore for MemStore {
                 base: base.unwrap_or(changeset.base),
                 target: changeset.target,
             },
-            base: choice.unwrap_or_default(),
+            base: choice.unwrap_or(BaseChoice::Commit {
+                id: CommitId("head".into()),
+            }),
+            base_commit: commit,
+            complete: mem.complete,
             filter: mem.filter.clone().unwrap_or_default(),
             spans: mem
                 .spans
@@ -380,8 +446,8 @@ impl ReviewStore for MemStore {
         self.0.lock().unwrap().filter = Some(filter);
         Ok(())
     }
-    async fn set_base(&self, _: SessionId, base: SnapshotId, choice: BaseChoice) -> StoreResult<()> {
-        self.0.lock().unwrap().base = Some((base, choice));
+    async fn set_base(&self, _: SessionId, base: SnapshotId, choice: BaseChoice, commit: CommitId) -> StoreResult<()> {
+        self.0.lock().unwrap().base = Some((base, choice, commit));
         Ok(())
     }
     async fn edit_spans(&self, _: SessionId, remove: Vec<SpanId>, add: Vec<ReviewedSpan>) -> StoreResult<Vec<SpanId>> {
@@ -462,10 +528,21 @@ impl Fixture {
         let first = git.snapshot(dirty);
         git.scans.lock().unwrap().push(first);
         let store = MemStore::default();
-        let session = LiveSession::open(git.clone(), store.clone(), "test".into(), REPO.into(), 0)
+        let session = LiveSession::open(git.clone(), store.clone(), "test".into(), REPO.into(), clock)
             .await
             .unwrap();
         Self { git, store, session }
+    }
+
+    /// Like `open`, with the review started.
+    async fn reviewing(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> Self {
+        let fx = Self::open(base, dirty).await;
+        fx.begin().await;
+        fx
+    }
+
+    async fn begin(&self) {
+        self.session.begin(&mut *self.session.state.lock().await).await.unwrap();
     }
 
     /// The tree settles at `files`.
@@ -486,11 +563,37 @@ impl Fixture {
 }
 
 #[tokio::test]
-async fn open_stores_the_pin_and_retains_dirty_content() {
+async fn browsing_keeps_nothing_and_settling_does_not_start_a_review() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
+
+    fx.settle(&[("a.txt", "three\n")]).await;
+    let m = fx.session.manifest().await.unwrap();
+
+    assert_eq!((m.revision, m.lifecycle), (1, Lifecycle::Browsing));
+    assert_eq!(m.files.len(), 1);
+    let mem = fx.store.0.lock().unwrap();
+    assert!(mem.opened.is_none() && mem.snapshots.is_empty() && mem.timeline.is_empty());
+    assert!(mem.blobs.is_empty());
+    assert!(fx.git.refs.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn the_first_mark_starts_the_review_at_version_1_and_retains_dirty_content() {
     let a = numbered(10, &[]);
     let b = numbered(10, &[3]);
     let fx = Fixture::open(&[("a.txt", &a)], &[("a.txt", &b), ("new.txt", "n\n")]).await;
 
+    // Un-marking is not a review action.
+    fx.session.set_seen(0, "a.txt", &[0], false).await.unwrap();
+    assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
+
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+
+    assert!(matches!(
+        fx.session.manifest().await.unwrap().lifecycle,
+        Lifecycle::Open { version: 1, .. }
+    ));
     let mem = fx.store.0.lock().unwrap();
     assert!(mem.blobs.contains_key(&BlobId::of(b.as_bytes())));
     assert!(mem.blobs.contains_key(&BlobId::of(b"n\n")));
@@ -500,6 +603,126 @@ async fn open_stores_the_pin_and_retains_dirty_content() {
     );
     assert_eq!(mem.snapshots.len(), 2);
     assert_eq!(mem.timeline.len(), 1);
+    assert_eq!(mem.spans.len(), 1);
+    assert_eq!(fx.git.refs.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn acknowledging_and_a_new_thread_also_start_the_review() {
+    let git = FakeGit::default();
+    let base = git.snapshot(&[("run.sh", "echo\n")]);
+    let mut dirty = base.clone();
+    dirty.entries.get_mut(&path("run.sh")).unwrap().mode = 0o100755;
+    dirty.id = merkle::snapshot_id(&dirty.entries);
+    *git.base.lock().unwrap() = Some(base);
+    git.scans.lock().unwrap().push(dirty);
+    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), clock)
+        .await
+        .unwrap();
+    session
+        .acknowledge(0, "run.sh", NonTextKind::Mode, false)
+        .await
+        .unwrap();
+    assert_eq!(session.lifecycle().await, Lifecycle::Browsing);
+
+    session.acknowledge(0, "run.sh", NonTextKind::Mode, true).await.unwrap();
+    assert!(matches!(session.lifecycle().await, Lifecycle::Open { version: 1, .. }));
+
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.session
+        .create_thread(0, NewThread::Changeset, "why".into(), 1)
+        .await
+        .unwrap();
+    assert!(matches!(
+        fx.session.lifecycle().await,
+        Lifecycle::Open { version: 1, .. }
+    ));
+}
+
+#[tokio::test]
+async fn each_settled_snapshot_of_an_open_review_is_the_next_version() {
+    // The only test that moves the clock.
+    NOW.store(100, Ordering::Relaxed);
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    assert_eq!(
+        fx.session.lifecycle().await,
+        Lifecycle::Open {
+            version: 1,
+            updated_at: 100
+        }
+    );
+    NOW.store(900, Ordering::Relaxed);
+
+    fx.settle(&[("a.txt", "three\n")]).await;
+    fx.settle(&[("a.txt", "four\n")]).await;
+
+    assert_eq!(
+        fx.session.lifecycle().await,
+        Lifecycle::Open {
+            version: 3,
+            updated_at: 900
+        }
+    );
+    // A base or filter change is not a version.
+    fx.session.set_filter(ReviewFilter::default()).await.unwrap();
+    fx.git.add_commit("c1", "c1-full", &[("a.txt", "zero\n")]);
+    fx.session
+        .set_base(BaseChoice::Commit {
+            id: CommitId("c1".into()),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        fx.session.lifecycle().await,
+        Lifecycle::Open { version: 3, .. }
+    ));
+    assert_eq!(fx.store.0.lock().unwrap().timeline.len(), 3);
+}
+
+#[tokio::test]
+async fn finishing_returns_to_browsing_and_a_later_action_starts_a_new_review() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    assert!(matches!(
+        fx.session.finish_review().await,
+        Err(SessionError::Invalid(_))
+    ));
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    fx.settle(&[("a.txt", "three\n")]).await;
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::Unseen]);
+
+    // Unseen changes may be left: the review is recorded as not complete.
+    assert!(!fx.session.finish_review().await.unwrap());
+
+    assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
+    assert!(fx.git.refs.lock().unwrap().is_empty());
+    {
+        let mem = fx.store.0.lock().unwrap();
+        assert_eq!((mem.closed, mem.complete), (true, Some(false)));
+    }
+    let m = fx.session.manifest().await.unwrap();
+    assert_eq!((m.revision, m.lifecycle), (2, Lifecycle::Browsing));
+    assert_eq!(m.files[0].review.hunks, [HunkState::Unseen]);
+    assert_eq!(m.completion.seen_lines, 0);
+
+    // Editing is browsing again; the next review action starts review number two.
+    fx.settle(&[("a.txt", "four\n")]).await;
+    assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
+    fx.session.set_seen(3, "a.txt", &[0], true).await.unwrap();
+    assert!(matches!(
+        fx.session.lifecycle().await,
+        Lifecycle::Open { version: 1, .. }
+    ));
+    let mem = fx.store.0.lock().unwrap();
+    assert_eq!((mem.closed, mem.timeline.len(), mem.spans.len()), (false, 1, 1));
+}
+
+#[tokio::test]
+async fn a_complete_review_is_recorded_as_complete_when_finished() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+
+    assert!(fx.session.finish_review().await.unwrap());
+    assert_eq!(fx.store.0.lock().unwrap().complete, Some(true));
 }
 
 #[tokio::test]
@@ -664,7 +887,7 @@ async fn a_mode_change_needs_acknowledging() {
     *git.base.lock().unwrap() = Some(base);
     git.scans.lock().unwrap().push(dirty);
     let store = MemStore::default();
-    let session = LiveSession::open(git, store.clone(), "t".into(), REPO.into(), 0)
+    let session = LiveSession::open(git, store.clone(), "t".into(), REPO.into(), clock)
         .await
         .unwrap();
 
@@ -694,7 +917,7 @@ async fn items_of_one_file_are_acknowledged_separately() {
     dirty.id = merkle::snapshot_id(&dirty.entries);
     *git.base.lock().unwrap() = Some(base);
     git.scans.lock().unwrap().push(dirty);
-    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), 0)
+    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), clock)
         .await
         .unwrap();
 
@@ -727,7 +950,7 @@ async fn submodule_changes_carry_both_commits() {
     };
     *git.base.lock().unwrap() = Some(tree(b"one"));
     git.scans.lock().unwrap().push(tree(b"two"));
-    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), 0)
+    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), clock)
         .await
         .unwrap();
 
@@ -741,9 +964,12 @@ async fn submodule_changes_carry_both_commits() {
 }
 
 #[tokio::test]
-async fn the_pinned_commit_is_held_while_the_session_is_open() {
+async fn the_commits_are_held_while_the_review_is_open() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
     let held = |fx: &Fixture| fx.git.refs.lock().unwrap().clone();
+    assert!(held(&fx).is_empty());
+
+    fx.begin().await;
     assert_eq!(
         held(&fx),
         [
@@ -752,7 +978,7 @@ async fn the_pinned_commit_is_held_while_the_session_is_open() {
         ]
     );
 
-    fx.session.close(0).await.unwrap();
+    fx.session.finish_review().await.unwrap();
 
     assert!(held(&fx).is_empty());
     assert!(fx.store.0.lock().unwrap().closed);
@@ -764,14 +990,14 @@ impl Fixture {
     async fn reopen(&self, dirty: &[(&str, &str)]) -> LiveSession<FakeGit, MemStore> {
         let scan = self.git.snapshot(dirty);
         self.git.scans.lock().unwrap().push(scan);
-        LiveSession::open(self.git.clone(), self.store.clone(), "test".into(), REPO.into(), 1)
+        LiveSession::open(self.git.clone(), self.store.clone(), "test".into(), REPO.into(), clock)
             .await
             .unwrap()
     }
 }
 
 #[tokio::test]
-async fn reopening_resumes_marks_and_threads_and_remaps_edits_made_while_closed() {
+async fn reopening_resumes_the_open_review_and_remaps_edits_made_while_closed() {
     let base = numbered(30, &[]);
     let dirty = numbered(30, &[3, 20]);
     let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &dirty)]).await;
@@ -791,9 +1017,9 @@ async fn reopening_resumes_marks_and_threads_and_remaps_edits_made_while_closed(
     let edited = dirty.replace("line 25", "changed 25");
     let session = fx.reopen(&[("a.txt", &edited)]).await;
 
-    assert_eq!(session.id, SessionId(1));
     let after = session.manifest().await.unwrap();
     assert_eq!(after.revision, 1, "the tree on disk is a new settled snapshot");
+    assert!(matches!(after.lifecycle, Lifecycle::Open { version: 2, .. }));
     assert_eq!(
         after.files[0].review.hunks,
         [HunkState::Seen, HunkState::Unseen, HunkState::Unseen]
@@ -807,16 +1033,28 @@ async fn reopening_resumes_marks_and_threads_and_remaps_edits_made_while_closed(
 
 #[tokio::test]
 async fn resuming_an_unchanged_tree_does_not_settle_again() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
     let session = fx.reopen(&[("a.txt", "two\n")]).await;
 
     assert_eq!(session.revision().await, 0);
+    assert!(matches!(session.lifecycle().await, Lifecycle::Open { version: 1, .. }));
     assert_eq!(fx.store.0.lock().unwrap().timeline.len(), 1);
 }
 
 #[tokio::test]
-async fn a_resumed_session_keeps_its_filter_pin_and_refs() {
+async fn reopening_without_a_review_browses_again() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.settle(&[("a.txt", "three\n")]).await;
+
+    let session = fx.reopen(&[("a.txt", "three\n")]).await;
+
+    assert_eq!(session.lifecycle().await, Lifecycle::Browsing);
+    assert_eq!(session.revision().await, 0);
+}
+
+#[tokio::test]
+async fn a_resumed_session_keeps_its_filter_base_and_refs() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
     let filter = ReviewFilter {
         hide_binary: true,
         ..Default::default()
@@ -826,59 +1064,142 @@ async fn a_resumed_session_keeps_its_filter_pin_and_refs() {
     let session = fx.reopen(&[("a.txt", "two\n")]).await;
 
     let m = session.manifest().await.unwrap();
-    assert_eq!((&m.filter, base_of(&m).0), (&filter, &BaseChoice::Pin));
+    assert_eq!((&m.filter, base_of(&m).0), (&filter, &detached_head()));
     assert_eq!(base_of(&m).1, "head");
     assert_eq!(fx.git.refs.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
-async fn a_merge_base_is_resolved_again_on_resume_and_falls_back_to_the_pin() {
+async fn a_resumed_review_keeps_its_base_commit_however_its_branch_moved() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.git.add_commit("merge-base main", "m1", &[("a.txt", "one\n")]);
-    let choice = BaseChoice::MergeBase {
-        reference: "main".into(),
-    };
+    fx.git.add_commit("refs/heads/main", "m1", &[("a.txt", "one\n")]);
+    let choice = BaseChoice::Branch { name: "main".into() };
     fx.session.set_base(choice.clone()).await.unwrap();
+    fx.begin().await;
 
-    fx.git.add_commit("merge-base main", "m2", &[("a.txt", "one\n")]);
+    fx.git.add_commit("refs/heads/main", "m2", &[("a.txt", "one\n")]);
     let session = fx.reopen(&[("a.txt", "two\n")]).await;
-    let m = session.manifest().await.unwrap();
-    assert_eq!((base_of(&m).0, base_of(&m).1), (&choice, "m2"));
 
-    fx.git.commits.lock().unwrap().remove("merge-base main");
-    let session = fx.reopen(&[("a.txt", "two\n")]).await;
     let m = session.manifest().await.unwrap();
-    assert_eq!((base_of(&m).0, base_of(&m).1), (&BaseChoice::Pin, "head"));
-    assert_eq!(
-        fx.store.0.lock().unwrap().base.as_ref().map(|b| b.1.clone()),
-        Some(BaseChoice::Pin)
-    );
+    assert_eq!((base_of(&m).0, base_of(&m).1), (&choice, "m1"));
 }
 
 #[tokio::test]
-async fn a_closed_session_is_not_resumed() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
-    fx.session.close(0).await.unwrap();
+async fn a_review_whose_snapshots_are_gone_is_closed_and_browsing_starts() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.store.0.lock().unwrap().snapshots.clear();
 
     let session = fx.reopen(&[("a.txt", "two\n")]).await;
 
+    assert_eq!(session.lifecycle().await, Lifecycle::Browsing);
+    assert!(fx.store.0.lock().unwrap().closed);
+}
+
+#[tokio::test]
+async fn a_finished_review_is_not_resumed() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    fx.session.finish_review().await.unwrap();
+
+    let session = fx.reopen(&[("a.txt", "two\n")]).await;
+
+    assert_eq!(session.lifecycle().await, Lifecycle::Browsing);
     assert_eq!(
         session.manifest().await.unwrap().files[0].review.hunks,
         [HunkState::Unseen]
     );
 }
 
+/// With no branches, the default base is `HEAD` itself.
+fn detached_head() -> BaseChoice {
+    BaseChoice::Commit {
+        id: CommitId("head".into()),
+    }
+}
+
 fn base_of(m: &ManifestView) -> (&BaseChoice, &str, &str) {
-    (&m.base.choice, &m.base.commit.0, &m.base.label)
+    (&m.base.choice, &m.base.commit.id.0, &m.base.name)
+}
+
+#[tokio::test]
+async fn the_default_base_is_the_current_branchs_tip() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    assert_eq!(fx.session.manifest().await.unwrap().base.name, "head");
+
+    let git = FakeGit::default();
+    *git.base.lock().unwrap() = Some(git.snapshot(&[("a.txt", "one\n")]));
+    let scan = git.snapshot(&[("a.txt", "two\n")]);
+    git.scans.lock().unwrap().push(scan);
+    git.add_branch("feature", true, "f3", &["f2", "f1"]);
+    git.add_branch("main", false, "m1", &[]);
+    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), clock)
+        .await
+        .unwrap();
+
+    let m = session.manifest().await.unwrap();
+    assert_eq!(
+        base_of(&m),
+        (&BaseChoice::Branch { name: "feature".into() }, "f3", "feature")
+    );
+    assert_eq!(m.base.behind, None);
+    assert_eq!(m.target.name, "Working tree");
+    assert_eq!(m.target.branch.as_deref(), Some("feature"));
+    assert_eq!(m.base.commit.subject, "subject of f3");
+}
+
+#[tokio::test]
+async fn a_base_is_named_by_its_branch_tip_then_branch_relative_then_by_hash() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.git.add_branch("feature", true, "f2", &["f1", "base"]);
+    fx.git.add_branch("main", false, "m2", &["base", "root"]);
+    for (commit, name) in [
+        ("m2", "main"),
+        ("f1", "feature~1"),
+        // On both histories: the current branch wins.
+        ("base", "feature~2"),
+        ("root", "main~2"),
+        ("0123456789abcdef", "0123456"),
+    ] {
+        fx.git.add_commit(commit, commit, &[("a.txt", "one\n")]);
+        fx.session
+            .set_base(BaseChoice::Commit {
+                id: CommitId(commit.into()),
+            })
+            .await
+            .unwrap();
+        assert_eq!(fx.session.manifest().await.unwrap().base.name, name, "{commit}");
+    }
+}
+
+#[tokio::test]
+async fn a_branch_base_counts_how_far_the_branch_moved_on_and_latest_catches_up() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.git.add_branch("main", true, "m1", &["m0"]);
+    fx.git.add_commit("refs/heads/main", "m1", &[("a.txt", "one\n")]);
+    let main = BaseChoice::Branch { name: "main".into() };
+    fx.session.set_base(main.clone()).await.unwrap();
+    assert_eq!(fx.session.manifest().await.unwrap().base.behind, None);
+
+    // Two commits on main since: the base stays where it was.
+    fx.git.add_branch("main", true, "m3", &["m2", "m1", "m0"]);
+    fx.git.branches.lock().unwrap().retain(|b| b.commit.0 != "m1");
+    let m = fx.session.manifest().await.unwrap();
+    assert_eq!((base_of(&m), m.base.behind), ((&main, "m1", "main~2"), Some(2)));
+
+    fx.git.add_commit("refs/heads/main", "m3", &[("a.txt", "one\n")]);
+    let (view, _) = fx.session.set_base(main).await.unwrap();
+    assert_eq!(
+        (view.commit.id.0.as_str(), view.name.as_str(), view.behind),
+        ("m3", "main", None)
+    );
 }
 
 #[tokio::test]
 async fn setting_the_base_moves_the_ref_and_bumps_the_revision() {
     let base = numbered(10, &[]);
-    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
+    let fx = Fixture::reviewing(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
     let m = fx.session.manifest().await.unwrap();
-    assert_eq!(base_of(&m), (&BaseChoice::Pin, "head", "pin"));
+    assert_eq!(base_of(&m), (&detached_head(), "head", "head"));
     assert_eq!(m.files[0].hunks.len(), 1);
 
     // The chosen commit already has the edit: nothing is left to review.
@@ -895,32 +1216,67 @@ async fn setting_the_base_moves_the_ref_and_bumps_the_revision() {
         id: CommitId("c1-full".into()),
     };
     assert_eq!(
-        (&view.choice, view.commit.0.as_str(), view.label.as_str()),
-        (&full, "c1-full", "commit")
+        (&view.choice, view.commit.id.0.as_str(), view.name.as_str()),
+        (&full, "c1-full", "c1-full")
     );
     let m = fx.session.manifest().await.unwrap();
-    assert_eq!((m.revision, base_of(&m)), (1, (&full, "c1-full", "commit")));
+    assert_eq!((m.revision, base_of(&m)), (1, (&full, "c1-full", "c1-full")));
     assert!(m.files.is_empty());
     let held = fx.git.refs.lock().unwrap().clone();
     assert!(held.contains(&("base".to_string(), CommitId("c1-full".into()))));
     assert!(held.contains(&("target".to_string(), CommitId("head".into()))));
     assert_eq!(fx.store.0.lock().unwrap().base.as_ref().unwrap().1, full);
 
-    // Back to the pin; asking again changes nothing.
-    let (view, revision) = fx.session.set_base(BaseChoice::Pin).await.unwrap();
-    assert_eq!(
-        (revision, view.commit.0.as_str(), view.label.as_str()),
-        (2, "head", "pin")
-    );
-    assert_eq!(fx.session.set_base(BaseChoice::Pin).await.unwrap().1, 2);
+    // Back to where it was; asking again changes nothing.
+    fx.git.add_commit("head", "head", &[("a.txt", &base)]);
+    let back = || BaseChoice::Commit {
+        id: CommitId("head".into()),
+    };
+    let (view, revision) = fx.session.set_base(back()).await.unwrap();
+    assert_eq!((revision, view.commit.id.0.as_str()), (2, "head"));
+    assert_eq!(fx.session.set_base(back()).await.unwrap().1, 2);
     assert_eq!(fx.session.manifest().await.unwrap().files[0].hunks.len(), 1);
-    assert_eq!(fx.store.0.lock().unwrap().base.as_ref().unwrap().1, BaseChoice::Pin);
+    assert_eq!(fx.store.0.lock().unwrap().base.as_ref().unwrap().1, back());
     assert!(
         fx.git
             .refs
             .lock()
             .unwrap()
             .contains(&("base".to_string(), CommitId("head".into())))
+    );
+}
+
+#[tokio::test]
+async fn a_base_chosen_while_browsing_is_carried_into_the_review() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.git.add_commit("c1", "c1-full", &[("a.txt", "zero\n")]);
+    let c1 = BaseChoice::Commit {
+        id: CommitId("c1-full".into()),
+    };
+    fx.session
+        .set_base(BaseChoice::Commit {
+            id: CommitId("c1".into()),
+        })
+        .await
+        .unwrap();
+    assert!(
+        fx.store.0.lock().unwrap().base.is_none(),
+        "nothing is stored while browsing"
+    );
+
+    fx.session.set_seen(1, "a.txt", &[0], true).await.unwrap();
+
+    let mem = fx.store.0.lock().unwrap();
+    assert_eq!(
+        mem.base.as_ref().map(|b| (b.1.clone(), b.2.clone())),
+        Some((c1, CommitId("c1-full".into())))
+    );
+    assert!(
+        fx.git
+            .refs
+            .lock()
+            .unwrap()
+            .contains(&("base".to_string(), CommitId("c1-full".into())))
     );
 }
 
@@ -943,8 +1299,9 @@ async fn a_changed_base_makes_marks_seen_against_an_old_base_until_it_is_chosen_
     assert_eq!((m.completion.seen_lines, m.completion.old_base_lines), (1, 2));
     assert!(!m.completion.is_complete());
 
-    // Choosing the pin again restores the coverage, and so does coming back.
-    fx.session.set_base(BaseChoice::Pin).await.unwrap();
+    // Choosing the first base again restores the coverage, and so does coming back.
+    fx.git.add_commit("head", "head", &[("a.txt", &base)]);
+    fx.session.set_base(detached_head()).await.unwrap();
     assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen]);
     fx.session.set_base(merge_base).await.unwrap();
     assert_eq!(fx.hunks("a.txt").await, [HunkState::SeenAgainstOldBase]);
@@ -1024,9 +1381,15 @@ async fn a_base_that_does_not_resolve_is_refused_and_changes_nothing() {
         .unwrap_err();
     assert_eq!(err.to_string(), "no common ancestor with dev");
 
+    let err = fx
+        .session
+        .set_base(BaseChoice::Branch { name: "gone".into() })
+        .await
+        .unwrap_err();
+    assert_eq!(err.to_string(), "unknown branch gone");
+
     assert_eq!(fx.session.revision().await, 0);
-    assert_eq!(fx.session.manifest().await.unwrap().base.choice, BaseChoice::Pin);
-    assert!(fx.store.0.lock().unwrap().base.is_none());
+    assert_eq!(fx.session.manifest().await.unwrap().base.choice, detached_head());
 }
 
 #[tokio::test]
@@ -1149,7 +1512,7 @@ async fn the_filter_excludes_files_and_directories_without_a_passing_file() {
 async fn setting_the_filter_persists_it_and_moves_the_counts() {
     let base = [("a.txt", "1\n"), ("docs/b.md", "1\n")];
     let dirty = [("a.txt", "2\n"), ("docs/b.md", "2\n")];
-    let fx = Fixture::open(&base, &dirty).await;
+    let fx = Fixture::reviewing(&base, &dirty).await;
     let m = fx.session.manifest().await.unwrap();
     assert_eq!(
         (m.files.len(), m.completion.lines, m.completion.excluded_lines),
@@ -1243,8 +1606,8 @@ async fn settling_moves_the_listing_to_the_new_revision() {
 }
 
 #[tokio::test]
-async fn settled_snapshots_are_stored_and_bump_the_revision() {
-    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+async fn settled_snapshots_of_an_open_review_are_stored_and_bump_the_revision() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
 
     assert_eq!(fx.settle(&[("a.txt", "three\n")]).await, 1);
 
@@ -1522,7 +1885,7 @@ async fn the_author_is_the_git_user_or_you() {
     let first = git.snapshot(&[("a.txt", "two\n")]);
     git.scans.lock().unwrap().push(first);
     *git.user.lock().unwrap() = Some("Ada".into());
-    let named = LiveSession::open(git.clone(), MemStore::default(), "t".into(), REPO.into(), 0)
+    let named = LiveSession::open(git.clone(), MemStore::default(), "t".into(), REPO.into(), clock)
         .await
         .unwrap();
     let anonymous = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;

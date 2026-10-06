@@ -1,6 +1,8 @@
 //! Materializing snapshots from real temporary repositories (§6.1, §7.2).
 //! `git` is used only to build fixtures.
 
+mod common;
+
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -67,10 +69,10 @@ impl Store for MemStore {
     async fn snapshot(&self, id: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
         Ok(self.snapshots.lock().unwrap().get(&id).cloned())
     }
-    async fn append_timeline(&self, _: SessionId, _: SnapshotId) -> Result<(), StoreError> {
+    async fn append_timeline(&self, _: SessionId, _: SnapshotId, _: i64) -> Result<(), StoreError> {
         unimplemented!()
     }
-    async fn timeline(&self, _: SessionId) -> Result<Vec<SnapshotId>, StoreError> {
+    async fn timeline(&self, _: SessionId) -> Result<Vec<vet_app::review::Version>, StoreError> {
         unimplemented!()
     }
     async fn gc(&self, _: i64) -> Result<GcReport, StoreError> {
@@ -103,7 +105,7 @@ fn read(root: &Path, name: &str) -> Vec<u8> {
 async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
     let dir = fixture();
     let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
-    let opened = acq.open_pin().await.unwrap();
+    let opened = common::start_at_head(&acq).await;
     acq.store
         .put_snapshot(opened.target.clone(), opened.status.clone())
         .await

@@ -21,7 +21,7 @@ pub mod kinds {
     int_enum!(ThreadKind { Range = 0, File = 1, Changeset = 2 });
     int_enum!(ThreadStatus { Open = 0, Resolved = 1 });
     int_enum!(FilterKind { Root = 0, Include = 1, Exclude = 2 });
-    int_enum!(BaseKind { MergeBase = 0, Commit = 1 });
+    int_enum!(BaseKind { MergeBase = 0, Commit = 1, Branch = 2 });
     int_enum!(ChildKind { File = 0, Dir = 1 });
     int_enum!(PathFlag { Collision = 0, ContentUnavailable = 1 });
     int_enum!(ChangeKind { Mode = 0, Symlink = 1, Submodule = 2, Binary = 3, ContentUnavailable = 4, Rename = 5, Empty = 6 });
@@ -177,6 +177,8 @@ pub mod session {
         pub target: Vec<u8>,
         pub hide_binary: bool,
         pub closed_at: Option<i64>,
+        /// Whether the review was complete when it was finished.
+        pub complete: Option<bool>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -192,8 +194,8 @@ pub mod session {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-/// How the session's base was chosen; no row means the pin. `value` is the
-/// reference or the commit id.
+/// How the session's base was chosen and the commit it resolved to; no row
+/// means the pin's `HEAD`. `value` is the branch, the reference or the commit id.
 pub mod session_base {
     use super::kinds::*;
     use sea_orm::entity::prelude::*;
@@ -205,6 +207,7 @@ pub mod session_base {
         pub session: i64,
         pub kind: BaseKind,
         pub value: String,
+        pub commit: Option<String>,
     }
 
     child_of_session!();
@@ -239,6 +242,8 @@ pub mod timeline {
         pub id: i64,
         pub session: i64,
         pub snapshot: Vec<u8>,
+        /// Unix seconds.
+        pub at: Option<i64>,
     }
 
     child_of_session!();

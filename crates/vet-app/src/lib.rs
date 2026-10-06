@@ -3,6 +3,7 @@
 //! launches, and settling reconciles before it declares a snapshot settled.
 
 pub mod acquisition;
+pub mod base;
 pub mod execution;
 pub mod ignore;
 pub mod limits;

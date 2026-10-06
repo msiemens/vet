@@ -17,7 +17,50 @@ impl MigratorTrait for Migrator {
             Box::new(SessionBase),
             Box::new(ServerPaths),
             Box::new(SessionRepo),
+            Box::new(ReviewLifecycle),
         ]
+    }
+}
+
+struct ReviewLifecycle;
+
+impl MigrationName for ReviewLifecycle {
+    fn name(&self) -> &str {
+        "m0006_review_lifecycle"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationTrait for ReviewLifecycle {
+    /// Sessions stored before keep their rows: a missing base commit is the
+    /// pin's `HEAD`, a missing time is 0.
+    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+        for (table, column, def) in [
+            (
+                "session",
+                "complete",
+                ColumnDef::new(Alias::new("complete")).boolean().null().to_owned(),
+            ),
+            (
+                "timeline",
+                "at",
+                ColumnDef::new(Alias::new("at")).big_integer().null().to_owned(),
+            ),
+            (
+                "session_base",
+                "commit",
+                ColumnDef::new(Alias::new("commit")).string().null().to_owned(),
+            ),
+        ] {
+            // A fresh database already has the columns, as in `SessionRepo`.
+            if manager.has_column(table, column).await? {
+                continue;
+            }
+            manager
+                .alter_table(Table::alter().table(Alias::new(table)).add_column(def).to_owned())
+                .await?;
+        }
+        Ok(())
     }
 }
 

@@ -4,7 +4,7 @@ use std::time::Duration;
 use sea_orm::PaginatorTrait;
 use tempfile::TempDir;
 use vet_app::ports::{ReviewStore, Store};
-use vet_app::review::NonTextAck;
+use vet_app::review::{NonTextAck, Version};
 use vet_core::content::{
     BlobId, Changeset, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId,
     SnapshotStatus,
@@ -91,26 +91,52 @@ async fn the_base_choice_and_snapshot_are_stored_and_survive_reopen() {
         let store = store.clone();
         async move { store.session(id).await.unwrap().unwrap() }
     };
-    assert_eq!(loaded(&store).await.base, BaseChoice::Pin);
+    // A session without a stored base choice was based on the pin's `HEAD`.
+    let s = loaded(&store).await;
+    assert_eq!(
+        (s.base, s.base_commit),
+        (
+            BaseChoice::Commit {
+                id: CommitId("abc123".into())
+            },
+            None
+        )
+    );
 
     let merge_base = BaseChoice::MergeBase {
         reference: "main".into(),
     };
-    store.set_base(id, SnapshotId(h(3)), merge_base.clone()).await.unwrap();
+    let at = CommitId("m1".into());
+    store
+        .set_base(id, SnapshotId(h(3)), merge_base.clone(), at.clone())
+        .await
+        .unwrap();
     let s = loaded(&store).await;
-    assert_eq!((s.base, s.changeset.base), (merge_base, SnapshotId(h(3))));
+    assert_eq!(
+        (s.base, s.base_commit, s.changeset.base),
+        (merge_base, Some(at), SnapshotId(h(3)))
+    );
 
     let commit = BaseChoice::Commit {
         id: CommitId("abc".into()),
     };
-    store.set_base(id, SnapshotId(h(4)), commit.clone()).await.unwrap();
+    store
+        .set_base(id, SnapshotId(h(4)), commit.clone(), CommitId("abc".into()))
+        .await
+        .unwrap();
     drop(store);
     let store = open(&dir).await;
     let s = loaded(&store).await;
     assert_eq!((s.base, s.changeset.base), (commit, SnapshotId(h(4))));
 
-    store.set_base(id, SnapshotId(h(1)), BaseChoice::Pin).await.unwrap();
-    assert_eq!(loaded(&store).await.base, BaseChoice::Pin);
+    let branch = BaseChoice::Branch { name: "main".into() };
+    let tip = CommitId("t1".into());
+    store
+        .set_base(id, SnapshotId(h(1)), branch.clone(), tip.clone())
+        .await
+        .unwrap();
+    let s = loaded(&store).await;
+    assert_eq!((s.base, s.base_commit), (branch, Some(tip)));
 }
 
 #[tokio::test]
@@ -248,23 +274,33 @@ async fn snapshots_timeline_and_approvals_survive_reopen() {
         id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
         store.put_snapshot(snap.clone(), status.clone()).await.unwrap();
         store.put_snapshot(snap.clone(), status.clone()).await.unwrap();
-        for s in [3, 1, 2] {
-            store.append_timeline(id, SnapshotId(h(s))).await.unwrap();
+        for (at, s) in [(10, 3), (20, 1), (30, 2)] {
+            store.append_timeline(id, SnapshotId(h(s)), at).await.unwrap();
         }
     }
     let store = open(&dir).await;
     assert_eq!(store.snapshot(snap.id).await.unwrap(), Some((snap, status)));
     assert_eq!(store.snapshot(SnapshotId(h(99))).await.unwrap(), None);
+    let version = |s: u8, at| Version {
+        snapshot: SnapshotId(h(s)),
+        at,
+    };
     assert_eq!(
         store.timeline(id).await.unwrap(),
-        vec![SnapshotId(h(3)), SnapshotId(h(1)), SnapshotId(h(2))]
+        vec![version(3, 10), version(1, 20), version(2, 30)]
     );
     assert_eq!(store.open_sessions("/repo".into()).await.unwrap(), vec![id]);
     assert!(store.open_sessions("/other".into()).await.unwrap().is_empty());
-    let pin = store.session(id).await.unwrap().unwrap().pin;
-    assert_eq!(store.pin(pin).await.unwrap().unwrap().head, CommitId("abc123".into()));
-    store.close_session(id, 1).await.unwrap();
+    let stored = store.session(id).await.unwrap().unwrap();
+    assert_eq!(stored.complete, None);
+    assert_eq!(
+        store.pin(stored.pin).await.unwrap().unwrap().head,
+        CommitId("abc123".into())
+    );
+    store.close_session(id, 1, true).await.unwrap();
     assert!(store.open_sessions("/repo".into()).await.unwrap().is_empty());
+    let closed = store.session(id).await.unwrap().unwrap();
+    assert_eq!((closed.closed_at, closed.complete), (Some(1), Some(true)));
 }
 
 #[tokio::test]
@@ -298,7 +334,7 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
     assert!(store.snapshot(snaps[2].id).await.unwrap().is_none());
 
     // Closed sessions are kept for the retention period.
-    store.close_session(id, now).await.unwrap();
+    store.close_session(id, now, false).await.unwrap();
     assert_eq!(store.gc(now + 29 * DAY).await.unwrap(), Default::default());
     assert!(store.session(id).await.unwrap().is_some());
 
@@ -395,13 +431,13 @@ async fn a_long_timeline_of_a_large_tree_stays_small() {
             entries: entries.clone(),
         };
         store.put_snapshot(snap.clone(), Default::default()).await.unwrap();
-        store.append_timeline(id, snap.id).await.unwrap();
+        store.append_timeline(id, snap.id, 0).await.unwrap();
     }
     // 101 nodes for the first snapshot (which includes edit 0), then a root and one directory per later edit.
     assert_eq!(node_count(&store).await, 101 + 2 * 49);
     let rows = tree_child::Entity::find().count(&store.db).await.unwrap();
     assert!(rows < 2000 + 100 + 50 * 125, "{rows} child rows");
-    let last = *store.timeline(id).await.unwrap().last().unwrap();
+    let last = store.timeline(id).await.unwrap().last().unwrap().snapshot;
     assert_eq!(store.snapshot(last).await.unwrap().unwrap().0.entries, entries);
 }
 

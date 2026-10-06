@@ -62,14 +62,23 @@ pub enum Request {
     Ping {
         payload: String,
     },
-    /// Opens a review of the dirty tree (`HEAD` to the working tree) of the
-    /// repository containing `repo`, which may be any folder inside it, and
-    /// subscribes this connection to the session's events. Fails if `repo` is
-    /// not inside a non-bare repository.
+    /// Opens the working tree of the repository containing `repo`, which may be
+    /// any folder inside it, against its current branch, and subscribes this
+    /// connection to the session's events. The repository's open review is
+    /// resumed; with none, the session is browsing (`ReviewInfo`). Fails if
+    /// `repo` is not inside a non-bare repository.
     OpenSession {
         repo: String,
     },
     CloseSession {
+        session: SessionId,
+    },
+    /// Ends the open review: its marks, acknowledgements and threads are kept
+    /// in the store but leave the session, which goes back to browsing. The
+    /// revision increases and every subscriber, including the requester, gets
+    /// `SnapshotSettled`; fetch the manifest again. Fails if no review is open.
+    /// Answers with `Response::ReviewFinished`.
+    FinishReview {
         session: SessionId,
     },
     /// The changeset as it is now, with review state.
@@ -490,25 +499,64 @@ pub struct ReviewFilter {
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
 pub enum BaseChoice {
-    /// `HEAD` at the time the session was opened.
-    Pin,
-    /// The merge base of `reference` (a branch or any revision) and `HEAD`.
+    /// The tip of a local branch as it is when chosen; the branch moving on
+    /// does not move the base (`Base::behind`), choosing it again does.
+    Branch { name: String },
+    /// Where `HEAD` branched off `reference` (a branch or any revision): their
+    /// merge base.
     MergeBase { reference: String },
     /// A commit: a full or abbreviated id, or any revision.
     Commit { id: String },
 }
 
-/// A base as resolved.
+/// A base as resolved, with what to show of it.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Base {
     /// A commit is reported by its full id.
     pub choice: BaseChoice,
-    /// The full id of the base commit.
-    pub commit: String,
-    /// What the choice is, without the commit: `pin`, `merge-base main`, `commit`.
-    pub label: String,
+    /// The base commit.
+    pub commit: CommitInfo,
+    /// What to call the commit: the branch if it is a branch tip, else
+    /// `branch~N` on a local branch's first-parent history (the chosen branch,
+    /// the current one, the default one, then the rest), else its short id.
+    pub name: String,
+    /// How many commits a chosen branch has gained since the base was chosen;
+    /// absent unless the choice is a branch that has moved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub behind: Option<u32>,
+}
+
+/// What the changes lead to: the live working tree.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Target {
+    /// "Working tree".
+    pub name: String,
+    /// The checked-out branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub branch: Option<String>,
+}
+
+/// Whether a review has started. It starts with the first review action (a
+/// mark, an acknowledgement, a new thread) and ends with `FinishReview`;
+/// before and after, the session is browsing: the live diff, nothing kept.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum ReviewInfo {
+    Browsing,
+    Open {
+        /// Of the current snapshot: 1 is the review's start snapshot, each
+        /// later settled snapshot adds one.
+        version: u32,
+        /// Unix seconds the version settled.
+        updated_at: u32,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -550,7 +598,8 @@ pub enum Response {
     },
     /// Acknowledges a request that has no result.
     Done,
-    Manifest(Manifest),
+    /// Boxed: it would make every response as large as the manifest.
+    Manifest(Box<Manifest>),
     /// `None` is a side the file does not have (added or deleted). The text and
     /// `marks` belong to `revision`; the hunks are in that revision's manifest.
     FileContents {
@@ -586,6 +635,10 @@ pub enum Response {
     },
     /// The base after `SetBase`.
     Base(Base),
+    /// After `FinishReview`: whether every change was seen when it ended.
+    ReviewFinished {
+        complete: bool,
+    },
     /// Local branches by name, and up to about 200 commits reachable from
     /// `HEAD`, newest first.
     BaseCandidates {
@@ -1137,6 +1190,9 @@ pub enum Event {
         revision: u32,
         update: ReviewUpdate,
     },
+    /// The first review action started a review. Sent to every subscriber,
+    /// the requester included; a finished review is `SnapshotSettled`.
+    ReviewStarted { session: SessionId, review: ReviewInfo },
     /// A thread was created, replied to, resolved, re-anchored or deleted by
     /// another connection; fetch the threads again. Not sent for a settled
     /// snapshot, which is `SnapshotSettled`: that also invalidates the threads.
@@ -1202,8 +1258,11 @@ pub struct Manifest {
     /// Increases whenever the changeset's target changes.
     pub revision: u32,
     pub name: String,
+    pub review: ReviewInfo,
     /// What the files are compared against.
     pub base: Base,
+    /// What the files lead to.
+    pub target: Target,
     pub filter: ReviewFilter,
     pub files: Vec<FileChange>,
     /// Completion of the whole changeset.

@@ -1,6 +1,8 @@
 //! Acquisition and line diff against real temporary repositories. `git` is used
 //! only to build fixtures.
 
+mod common;
+
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
@@ -84,10 +86,10 @@ impl Store for MemStore {
     async fn snapshot(&self, _: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
         unimplemented!()
     }
-    async fn append_timeline(&self, _: SessionId, _: SnapshotId) -> Result<(), StoreError> {
+    async fn append_timeline(&self, _: SessionId, _: SnapshotId, _: i64) -> Result<(), StoreError> {
         unimplemented!()
     }
-    async fn timeline(&self, _: SessionId) -> Result<Vec<SnapshotId>, StoreError> {
+    async fn timeline(&self, _: SessionId) -> Result<Vec<vet_app::review::Version>, StoreError> {
         unimplemented!()
     }
     async fn gc(&self, _: i64) -> Result<GcReport, StoreError> {
@@ -231,7 +233,7 @@ async fn files_over_the_cap_are_hashed_but_not_retained() {
     write(dir.path(), "big.txt", &big);
     let repo = GixRepo::new(dir.path()).with_cap(10);
     let acq = Acquisition::new(repo, MemStore::default());
-    let opened = acq.open_pin().await.unwrap();
+    let opened = common::start_at_head(&acq).await;
     assert_eq!(opened.status.content_unavailable, vec![path("big.txt")]);
     assert_eq!(opened.target.entries[&path("big.txt")].blob, blob(&big));
     assert!(acq.store.blob(blob(&big)).await.unwrap().is_none());
@@ -276,7 +278,7 @@ async fn pin_copies_dirty_content_and_diff_survives_later_edits() {
     write(dir.path(), "a.txt", b"1\nTWO\n3\n");
     write(dir.path(), "new.txt", b"n\n");
     let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
-    let opened = acq.open_pin().await.unwrap();
+    let opened = common::start_at_head(&acq).await;
     assert_eq!(opened.head, acq.git.head().await.unwrap());
     assert!(acq.store.blob(blob(b"1\nTWO\n3\n")).await.unwrap().is_some());
     assert!(acq.store.blob(blob(b"n\n")).await.unwrap().is_some());

@@ -117,14 +117,6 @@ pub struct Acquisition<G, S> {
     commits: Mutex<HashMap<SnapshotId, CommitId>>,
 }
 
-/// The initial changeset of a dirty-tree review: `HEAD` to dirty-at-open.
-pub struct Opened {
-    pub head: CommitId,
-    pub base: Snapshot,
-    pub target: Snapshot,
-    pub status: SnapshotStatus,
-}
-
 impl<G, S> Acquisition<G, S> {
     pub fn new(git: G, store: S) -> Self {
         Self {
@@ -143,27 +135,6 @@ impl<G, S> Acquisition<G, S> {
 }
 
 impl<G: GitRepo, S: Store> Acquisition<G, S> {
-    /// Review open (§6.1): `HEAD`, dirty-at-open, and a copy of every blob git
-    /// cannot be assumed to keep (anything not already in `HEAD`) in the store.
-    /// Recording the pin is up to the caller.
-    pub async fn open_pin(&self) -> Result<Opened, GitError> {
-        let head = self.git.head().await?;
-        let base = self.git.commit_snapshot(&head).await?;
-        let Scan {
-            snapshot: target,
-            status,
-        } = self.git.scan(Dirty::All).await?;
-        self.retain(&[&base], &target, &status).await?;
-        self.record_commit(base.id, head.clone());
-        self.record_commit(target.id, head.clone());
-        Ok(Opened {
-            head,
-            base,
-            target,
-            status,
-        })
-    }
-
     /// Copies the blobs of `target` that `known` snapshots do not already have
     /// (they are in git or were retained before) into the store, so the
     /// snapshot stays reconstructible (§6.1).
@@ -192,7 +163,7 @@ impl<G: GitRepo, S: Store> Acquisition<G, S> {
     }
 
     /// Authoritative reconciliation (§6.2): before declaring a snapshot settled,
-    /// at review open, on rescan signals, and before every launch.
+    /// at open, on rescan signals, and before every launch.
     pub async fn reconcile(&self, dirty: Dirty) -> Result<Scan, GitError> {
         self.git.scan(dirty).await
     }

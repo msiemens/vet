@@ -30,7 +30,60 @@ pub(super) fn merge_base(repo: &gix::Repository, reference: &str) -> Result<Comm
     Ok(CommitId(base.to_string()))
 }
 
-pub(super) fn candidates(repo: &gix::Repository, max_commits: usize) -> Result<BaseCandidates, GitError> {
+fn object_id(commit: &CommitId) -> Result<gix::ObjectId, GitError> {
+    gix::ObjectId::from_hex(commit.0.as_bytes()).map_err(err)
+}
+
+pub(super) fn commit_info(repo: &gix::Repository, commit: &CommitId) -> Result<CommitInfo, GitError> {
+    let found = repo.find_commit(object_id(commit)?).map_err(err)?;
+    let author = found.author().map_err(err)?;
+    Ok(CommitInfo {
+        id: commit.clone(),
+        subject: found.message().map_err(err)?.summary().to_string(),
+        author: author.name.to_string(),
+        time: author.time().map_err(err)?.seconds,
+    })
+}
+
+pub(super) fn first_parent_distance(
+    repo: &gix::Repository,
+    tip: &CommitId,
+    commit: &CommitId,
+    max: usize,
+) -> Result<Option<usize>, GitError> {
+    let (mut at, wanted) = (object_id(tip)?, object_id(commit)?);
+    for distance in 0..=max {
+        if at == wanted {
+            return Ok(Some(distance));
+        }
+        match repo.find_commit(at).map_err(err)?.parent_ids().next() {
+            Some(parent) => at = parent.detach(),
+            None => break,
+        }
+    }
+    Ok(None)
+}
+
+pub(super) fn commits_behind(
+    repo: &gix::Repository,
+    tip: &CommitId,
+    base: &CommitId,
+    max: usize,
+) -> Result<usize, GitError> {
+    let walk = repo
+        .rev_walk([object_id(tip)?])
+        .with_hidden([object_id(base)?])
+        .all()
+        .map_err(err)?;
+    let mut count = 0;
+    for info in walk.take(max) {
+        info.map_err(err)?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitError> {
     let current = repo.head_name().map_err(err)?;
     let default = repo
         .try_find_reference("refs/remotes/origin/HEAD")
@@ -53,7 +106,10 @@ pub(super) fn candidates(repo: &gix::Repository, max_commits: usize) -> Result<B
         });
     }
     branches.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(branches)
+}
 
+pub(super) fn candidates(repo: &gix::Repository, max_commits: usize) -> Result<BaseCandidates, GitError> {
     let mut commits = Vec::new();
     let head = repo.head_id().map_err(err)?;
     let walk = repo
@@ -62,15 +118,10 @@ pub(super) fn candidates(repo: &gix::Repository, max_commits: usize) -> Result<B
         .all()
         .map_err(err)?;
     for info in walk.take(max_commits) {
-        let id = info.map_err(err)?.id;
-        let commit = repo.find_commit(id).map_err(err)?;
-        let author = commit.author().map_err(err)?;
-        commits.push(CommitInfo {
-            id: CommitId(id.to_string()),
-            subject: commit.message().map_err(err)?.summary().to_string(),
-            author: author.name.to_string(),
-            time: author.time().map_err(err)?.seconds,
-        });
+        commits.push(commit_info(repo, &CommitId(info.map_err(err)?.id.to_string()))?);
     }
-    Ok(BaseCandidates { branches, commits })
+    Ok(BaseCandidates {
+        branches: branches(repo)?,
+        commits,
+    })
 }
