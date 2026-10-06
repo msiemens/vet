@@ -17,9 +17,12 @@ if ! cargo modules --help >/dev/null 2>&1; then
 fi
 
 FILTERS=(--no-externs --no-sysroot --no-fns --no-types --no-traits --no-owns)
+# Optional crate names restrict the check to those crates.
+only=" $* "
 
 status=0
 while IFS=$'\t' read -r crate kind target; do
+    [[ $# -eq 0 || $only == *" $crate "* ]] || continue
     if [[ $kind == lib ]]; then
         target_args=(--lib)
     else
