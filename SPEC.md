@@ -449,6 +449,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - App-drawn context menus in the code and the chrome instead of the webview's
 - Keyboard shortcuts for every action, shown in menus and tooltips, with a Keymap page in Settings (beyond the JetBrains-feel package's keymap import)
 - Edit and remove your own comments; removing the first comment removes its thread
+- Double-clicking a line in the Changes tab opens the file's tab at that line, highlighted
 
 ### M2
 
