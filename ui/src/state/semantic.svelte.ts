@@ -1,0 +1,126 @@
+// The semantic layer's answers for the views: hover, definition and diagnostics, with the
+// diagnostics count and the "no language server" notes the footer shows (SPEC §7.1, I6). Every
+// request carries the revision of the view that asks; a stale one is rejected by the backend and
+// dropped here, as the views are rebuilt when the new revision arrives.
+
+import { SvelteMap } from "svelte/reactivity";
+import type { Diagnostic } from "../generated/Diagnostic";
+import type { SemanticLocation } from "../generated/SemanticLocation";
+import type { Side } from "../generated/Side";
+import type { Unavailable } from "../generated/Unavailable";
+import { changeset } from "./changeset.svelte";
+import { type SemanticSummary, summarize } from "./semanticSummary";
+
+class SemanticStore {
+  private revision = -1;
+  /** Bumped when the cache is dropped, so an answer to an earlier question is not stored. */
+  private epoch = 0;
+  private pending = new Map<string, Promise<Diagnostic[]>>();
+  /** Diagnostics (hints excluded) per file asked about at `revision`. */
+  private counts = new SvelteMap<string, number>();
+  /** The files the backend could not answer for, and why. */
+  private missing = new SvelteMap<string, Unavailable>();
+
+  summary(path?: string): SemanticSummary {
+    return summarize(this.counts, this.missing, path);
+  }
+
+  /** The files of a new revision are asked afresh; `false` for a request of an older one. */
+  private enter(revision: number): boolean {
+    if (revision < this.revision) return false;
+    if (revision > this.revision) {
+      this.revision = revision;
+      this.invalidate();
+    }
+    return true;
+  }
+
+  /** A repository was opened: its revisions are numbered afresh. */
+  reset() {
+    this.revision = -1;
+    this.invalidate();
+  }
+
+  /** What the servers answered may differ now (a server was installed or its path changed). */
+  invalidate() {
+    this.epoch++;
+    this.pending.clear();
+    this.counts.clear();
+    this.missing.clear();
+  }
+
+  private note(revision: number, path: string, unavailable: Unavailable | undefined) {
+    if (unavailable && this.enter(revision)) this.missing.set(path, unavailable);
+  }
+
+  /** Markdown; empty if the server has nothing to say or the request is stale. */
+  async hover(revision: number, side: Side, path: string, line: number, col: number): Promise<string> {
+    const backend = changeset.backend;
+    if (!backend) return "";
+    try {
+      const r = await backend.hover(revision, side, path, line, col);
+      this.note(revision, path, r.unavailable);
+      return r.text;
+    } catch {
+      return "";
+    }
+  }
+
+  /** The definitions at the position, in `side`'s snapshot; `undefined` after telling the viewer why there are none. */
+  async definition(
+    revision: number,
+    side: Side,
+    path: string,
+    line: number,
+    col: number,
+  ): Promise<SemanticLocation[] | undefined> {
+    const backend = changeset.backend;
+    if (!backend) return undefined;
+    try {
+      const r = await backend.definition(revision, side, path, line, col);
+      this.note(revision, path, r.unavailable);
+      if (r.unavailable) changeset.notice = r.unavailable.message;
+      else if (!r.locations.length) changeset.notice = "No definition found";
+      else return r.locations;
+    } catch (error) {
+      // Normally a stale revision: the view is about to be replaced, so the action has to be repeated.
+      const current = changeset.manifest?.revision;
+      changeset.notice =
+        current !== undefined && current !== revision
+          ? "Changes arrived — try again"
+          : `Request failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    return undefined;
+  }
+
+  /** The target-side diagnostics of a file, asked once per revision; empty if unavailable or stale. */
+  diagnostics(revision: number, path: string): Promise<Diagnostic[]> {
+    if (!this.enter(revision)) return Promise.resolve([]);
+    let answer = this.pending.get(path);
+    if (!answer) {
+      answer = this.fetch(revision, path);
+      this.pending.set(path, answer);
+    }
+    return answer;
+  }
+
+  private async fetch(revision: number, path: string): Promise<Diagnostic[]> {
+    const backend = changeset.backend;
+    const epoch = this.epoch;
+    try {
+      const r = await backend?.diagnostics(revision, path);
+      if (!r || epoch !== this.epoch) return [];
+      if (r.unavailable) this.missing.set(path, r.unavailable);
+      else {
+        this.missing.delete(path);
+        this.counts.set(path, r.diagnostics.filter((d) => d.severity !== "hint").length);
+      }
+      return r.diagnostics;
+    } catch {
+      if (epoch === this.epoch) this.pending.delete(path); // stale: the next revision asks again
+      return [];
+    }
+  }
+}
+
+export const semantic = new SemanticStore();

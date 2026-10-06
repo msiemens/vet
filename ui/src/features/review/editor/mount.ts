@@ -3,13 +3,17 @@
 
 import { Change, MergeView, diff, getChunks, presentableDiff, unifiedMergeView } from "@codemirror/merge";
 import { EditorState, type Extension, type StateEffect, type StateField } from "@codemirror/state";
-import { EditorView, hoverTooltip, lineNumbers } from "@codemirror/view";
+import { EditorView, lineNumbers } from "@codemirror/view";
 import { minimalSetup } from "codemirror";
+import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Hunk } from "../../../generated/Hunk";
 import type { Mark } from "../../../generated/Mark";
-import { nextPaint } from "../../../lib/nextPaint";
 import type { HunkState } from "../../../generated/HunkState";
+import type { Side } from "../../../generated/Side";
+import type { TextSpan } from "../../../generated/TextSpan";
+import { deletedLines } from "./deletedLines";
 import type { BarActions } from "./hunkBar";
+import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { syntax } from "./language";
 import { type ReviewState, deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
 
@@ -22,8 +26,7 @@ export interface Loaded {
   marks: Mark[];
 }
 
-export interface Hooks extends BarActions {
-  hover(path: string, line: number, col: number): Promise<string>;
+export interface Hooks extends BarActions, SemanticHooks {
   /** A hover tooltip is on screen; `ms` runs from the start of the hover query to its paint. */
   hoverShown(ms: number): void;
   keydown(event: KeyboardEvent): void;
@@ -74,6 +77,10 @@ export interface Handle {
   view: EditorView;
   views: EditorView[];
   dispatchAll(effect: StateEffect<unknown>): void;
+  /** Replaces the target view's diagnostics. */
+  showDiagnostics(diagnostics: readonly Diagnostic[]): void;
+  /** Scrolls to and marks a span of `side`'s text; a base span has no editor of its own in a unified view and is left to the caller. */
+  revealSpan(side: Side, span: TextSpan): void;
   /** Review decorations (changed lines, marks, bars) on the target view; for integrity checks. */
   decorationCount(): number;
   chunkCount(): number;
@@ -104,6 +111,7 @@ export function mountFile(
     review.states,
   );
   const diffConfig = { override: backendDiff(loaded) };
+  const shown = (ms: number) => hooks.hoverShown(ms);
   const target: Extension[] = [
     minimalSetup,
     targetField,
@@ -111,25 +119,7 @@ export function mountFile(
     syntax(path),
     barText,
     EditorView.domEventHandlers({ keydown: (event) => (hooks.keydown(event), false) }),
-    hoverTooltip(
-      async (view, pos) => {
-        const started = performance.now();
-        const line = view.state.doc.lineAt(pos);
-        const text = await hooks.hover(path, line.number - 1, pos - line.from);
-        return {
-          pos,
-          above: true,
-          create: () => {
-            const dom = document.createElement("div");
-            dom.className = "vet-hover";
-            dom.textContent = text;
-            void nextPaint().then(() => hooks.hoverShown(performance.now() - started));
-            return { dom };
-          },
-        };
-      },
-      { hoverTime: 50 },
-    ),
+    ...semanticExtensions(path, "target", hooks, shown),
   ];
   if (mode === "unified") {
     const view = new EditorView({
@@ -146,6 +136,7 @@ export function mountFile(
           diffConfig,
         }),
         deletedChunkStyle(targetField),
+        deletedLines(path, hooks, shown),
       ],
     });
     return handle(view, [view], targetField);
@@ -157,6 +148,7 @@ export function mountFile(
     barText,
     EditorState.readOnly.of(true),
     EditorView.editable.of(false),
+    ...semanticExtensions(path, "base", hooks, shown),
   ];
   const merge = new MergeView({
     parent: host,
@@ -180,6 +172,11 @@ function handle(
     view,
     views,
     dispatchAll: (effect) => views.forEach((v) => v.dispatch({ effects: effect })),
+    showDiagnostics: (diagnostics) => showDiagnostics(view, diagnostics),
+    revealSpan: (side, span) => {
+      if (side === "target") revealSpan(view, span, true);
+      else if (views.length > 1) revealSpan(views[0], span, false);
+    },
     decorationCount: () => view.state.field(field).decos.size,
     chunkCount: () => getChunks(view.state)?.chunks.length ?? 0,
     destroy,

@@ -4,6 +4,8 @@
     snapshot: string;
     /** The rest is shown once something reports it: the semantic layer, the caret, the file. */
     languageServer?: string;
+    /** Why, as a tooltip of `languageServer`. */
+    languageServerTitle?: string;
     topology?: { label: string; ok: boolean };
     cursor?: string;
     eol?: string;
@@ -20,7 +22,7 @@
 
 <footer>
   <span class="mono small">{info.snapshot}</span>
-  {#if info.languageServer}<span>{info.languageServer}</span>{/if}
+  {#if info.languageServer}<span title={info.languageServerTitle}>{info.languageServer}</span>{/if}
   {#if info.topology}
     <span class="topology"><span class="dot" class:ok={info.topology.ok}></span>{info.topology.label}</span>
   {/if}

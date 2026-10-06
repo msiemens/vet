@@ -20,6 +20,7 @@
   import { mainMenu } from "../state/mainMenu.svelte";
   import { recent } from "../state/recent.svelte";
   import { runs } from "../state/runs.svelte";
+  import { semantic } from "../state/semantic.svelte";
 
   let controller = $state.raw<ReviewController>();
   // The selected tool of each rail, and whether its sidebar is shown.
@@ -49,7 +50,13 @@
   });
   const degraded = $derived(changeset.manifest?.degraded);
   let dismissedDegraded = $state<WatchDegraded>();
-  const footer = $derived({ snapshot: `#${changeset.manifest?.revision ?? 0}` });
+  const semanticSummary = $derived(semantic.summary(controller?.activePath));
+  const footer = $derived({
+    snapshot: `#${changeset.manifest?.revision ?? 0}`,
+    languageServer: semanticSummary.label,
+    languageServerTitle: semanticSummary.title,
+    diagnostics: semanticSummary.diagnostics,
+  });
 
   // The controller belongs to the repository's screen.
   $effect(() => {

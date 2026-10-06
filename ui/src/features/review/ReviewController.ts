@@ -4,11 +4,15 @@
 
 import { tick } from "svelte";
 import type { Manifest } from "../../generated/Manifest";
+import type { Side } from "../../generated/Side";
 import { nextPaint } from "../../lib/nextPaint";
 import type { Backend } from "../../state/backend";
 import { changeset } from "../../state/changeset.svelte";
-import { ChangesetView, type Listeners } from "./editor/ChangesetView";
+import { semantic } from "../../state/semantic.svelte";
+import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
 import type { Mode } from "./editor/mount";
+import { pickLocation } from "./editor/positions";
+import { bindRevision } from "./editor/semantic";
 import { matches } from "../../lib/keymap";
 import { TextView } from "./editor/TextView";
 import { CHANGES, type TabId, Tabs, fileTab, kindOf, pathOf, textTab } from "./Tabs.svelte";
@@ -49,17 +53,27 @@ export class ReviewController {
     private fileMenu: (path: string, x: number, y: number) => void,
   ) {
     window.addEventListener("keydown", this.onKey, true);
+    semantic.reset(); // the controller belongs to one repository's screen
     this.unsubscribe = changeset.onReview((u) => {
       for (const view of this.views.values()) view.applyReview(u.path, u.review);
+    });
+    // A server installed or reconfigured elsewhere may answer differently now.
+    this.unsubscribeEvents = backend.onEvent((event) => {
+      if (event.type !== "serversChanged" || event.session !== backend.session) return;
+      semantic.invalidate();
+      for (const view of this.views.values()) view.refreshDiagnostics();
+      for (const text of this.texts.values()) text.refreshDiagnostics();
     });
   }
 
   private unsubscribe: () => void;
+  private unsubscribeEvents: () => void;
 
   /** Detaches the controller from the window and the store, and tears down the views. */
   destroy() {
     window.removeEventListener("keydown", this.onKey, true);
     this.unsubscribe();
+    this.unsubscribeEvents();
     for (const view of this.views.values()) view.destroy();
     this.views.clear();
     for (const text of this.texts.values()) text.destroy();
@@ -112,16 +126,50 @@ export class ReviewController {
     void nextPaint().then(() => this.hud.keystroke(performance.now() - event.timeStamp));
   };
 
-  private hooks = {
-    hover: async (path: string, line: number, col: number) => {
+  private hooks: ViewHooks = {
+    hover: async (revision, side, path, line, col) => {
       const t0 = performance.now();
-      const text = await this.backend.hover(changeset.manifest?.revision ?? 0, path, line, col);
+      const text = await semantic.hover(revision, side, path, line, col);
       this.hud.hover(performance.now() - t0);
       return text;
     },
+    definition: (revision, side, path, line, col) => void this.goToDefinition(revision, side, path, line, col),
+    diagnostics: (revision, path) => semantic.diagnostics(revision, path),
     hoverShown: (ms: number) => this.tooltipLatencies.push(ms),
     keydown: this.keydown,
   };
+
+  /** The file of the focused file or text tab; none for the Changes tab. */
+  get activePath(): string | undefined {
+    return pathOf(this.tabs.active);
+  }
+
+  /**
+   * Opens the definition of the symbol at a position of `side`'s text. A location in a changed
+   * file opens its diff tab; an unchanged file (the same text on both sides) its read-only text
+   * tab. A base-side location lands in the base content: the base editor of a side-by-side view,
+   * or the target line of the unified view where the deleted lines are drawn.
+   */
+  private async goToDefinition(revision: number, side: Side, path: string, line: number, col: number) {
+    const found = await semantic.definition(revision, side, path, line, col);
+    const location = found && pickLocation(found);
+    if (!location) return;
+    if (location.external) {
+      changeset.notice = `Defined outside the repository: ${location.path}`;
+      return;
+    }
+    // A base path is the file's old path if it was renamed.
+    const file = this.files.find((f) => (side === "base" ? (f.oldPath ?? f.path) : f.path) === location.path);
+    if (file) {
+      this.tabs.show(file.path);
+      await tick();
+      await this.views.get(fileTab(file.path))?.goToSpan(0, side, location.span);
+    } else {
+      this.tabs.showText(location.path);
+      await tick();
+      this.texts.get(textTab(location.path))?.goToSpan(location.span);
+    }
+  }
 
   private listenersFor(id: TabId): Listeners {
     return {
@@ -144,7 +192,16 @@ export class ReviewController {
     const path = pathOf(id);
     if (kindOf(id) === "text" && path !== undefined) {
       this.texts.get(id)?.destroy();
-      this.texts.set(id, new TextView(root, path, manifest.revision, () => this.backend.fileText(path)));
+      this.texts.set(
+        id,
+        new TextView(
+          root,
+          path,
+          manifest.revision,
+          () => this.backend.fileText(path),
+          bindRevision(this.hooks, manifest.revision),
+        ),
+      );
       return;
     }
     const files = path === undefined ? manifest.files : manifest.files.filter((f) => f.path === path);

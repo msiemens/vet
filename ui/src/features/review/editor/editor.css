@@ -377,6 +377,31 @@
   background: var(--bg-sheet);
   color: var(--text);
   border: 1px solid var(--line);
-  white-space: pre;
+  white-space: pre-wrap;
+  max-width: 80ch;
+  max-height: 40vh;
+  overflow: auto;
+  font-size: var(--fs-mono);
+}
+/* The hover of a deleted line is not a CodeMirror tooltip: it sits above the pointer. */
+.vet-hover-floating {
+  position: fixed;
+  transform: translateY(-100%);
+  z-index: 1000;
+  font-family: var(--font-mono);
+}
+
+/* The span a go to definition reached. */
+.vet-goto {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* Diagnostics (@codemirror/lint): the squiggles and gutter markers are severity-coloured by the
+   extension; its tooltip follows the theme. */
+.cm-tooltip.cm-tooltip-lint {
+  background: var(--bg-sheet);
+  color: var(--text);
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
   font-size: var(--fs-mono);
 }

@@ -339,7 +339,7 @@ export async function runBenchmark(shell: Shell, root: HTMLElement, o: BenchOpti
   const path = shell.files[0].path;
   for (let i = 0; i < 200; i++) {
     const t0 = performance.now();
-    await shell.backend.hover(changeset.manifest?.revision ?? 0, path, i % 10, 0);
+    await shell.backend.hover(changeset.manifest?.revision ?? 0, "target", path, i % 10, 0);
     hover.push(performance.now() - t0);
   }
   rows.push(row(`Hover round trip, request → response (${topology})`, hover, "ms", 100, "<", note));

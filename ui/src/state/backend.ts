@@ -7,6 +7,7 @@ import type { BaseChoice } from "../generated/BaseChoice";
 import type { BlobContent } from "../generated/BlobContent";
 import type { BranchInfo } from "../generated/BranchInfo";
 import type { CommitInfo } from "../generated/CommitInfo";
+import type { Diagnostic } from "../generated/Diagnostic";
 import type { DirEntry } from "../generated/DirEntry";
 import type { Event as ServerEvent } from "../generated/Event";
 import type { Manifest } from "../generated/Manifest";
@@ -16,9 +17,11 @@ import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { RunTarget } from "../generated/RunTarget";
 import type { RunTargetEntry } from "../generated/RunTargetEntry";
+import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { ServerInfo } from "../generated/ServerInfo";
 import type { Side } from "../generated/Side";
 import type { TextContent } from "../generated/TextContent";
+import type { Unavailable } from "../generated/Unavailable";
 import { Connection } from "./connection";
 
 export type FileContents = Extract<Response, { type: "fileContents" }>;
@@ -141,18 +144,46 @@ export class Backend {
     return { branches, commits };
   }
 
-  /** Hover on the target side at `revision`, the manifest's; empty if the server has nothing to say. */
-  async hover(revision: number, path: string, line: number, col: number): Promise<string> {
-    const response = await this.conn.request({
-      type: "hover",
-      session: this.sid,
-      revision,
-      side: "target",
-      path,
-      line,
-      col,
-    });
-    return response.type === "hover" ? (response.text ?? "") : "";
+  /**
+   * Hover at a 0-based line and UTF-16 column of `side`'s text at `revision`, the manifest's (the
+   * backend rejects a stale one). `text` is empty if the server has nothing to say there.
+   */
+  async hover(
+    revision: number,
+    side: Side,
+    path: string,
+    line: number,
+    col: number,
+  ): Promise<{ text: string; unavailable?: Unavailable }> {
+    const r = expect(
+      await this.conn.request({ type: "hover", session: this.sid, revision, side, path, line, col }),
+      "hover",
+    );
+    return { text: r.text ?? "", unavailable: r.unavailable ?? undefined };
+  }
+
+  /** Where the symbol at the position is defined, in `side`'s snapshot; otherwise like `hover`. */
+  async definition(
+    revision: number,
+    side: Side,
+    path: string,
+    line: number,
+    col: number,
+  ): Promise<{ locations: SemanticLocation[]; unavailable?: Unavailable }> {
+    const r = expect(
+      await this.conn.request({ type: "definition", session: this.sid, revision, side, path, line, col }),
+      "definition",
+    );
+    return { locations: r.locations, unavailable: r.unavailable ?? undefined };
+  }
+
+  /** The diagnostics of a file of the target side; the language server may take seconds on a cold start. */
+  async diagnostics(revision: number, path: string): Promise<{ diagnostics: Diagnostic[]; unavailable?: Unavailable }> {
+    const r = expect(
+      await this.conn.request({ type: "diagnostics", session: this.sid, revision, path }),
+      "diagnostics",
+    );
+    return { diagnostics: r.diagnostics, unavailable: r.unavailable ?? undefined };
   }
 
   /** Each language's server as it resolves for the open repository. */

@@ -7,14 +7,18 @@ import { EditorView } from "@codemirror/view";
 import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
 import type { NonTextKind } from "../../../generated/NonTextKind";
+import type { Side } from "../../../generated/Side";
+import type { TextSpan } from "../../../generated/TextSpan";
 import { iconSvg } from "../../../lib/ui/icons";
 import type { Backend } from "../../../state/backend";
 import { type Card, changeCard } from "./changeCard";
 import type { BarActions } from "./hunkBar";
 import { lineDelta } from "./lineDelta";
 import { type Handle, type Hooks, type Loaded, type Mode, mountFile } from "./mount";
+import { baseLineToTarget } from "./positions";
 import { setCurrent, setStates } from "./reviewState";
 import { COLLAPSE, type Metrics, sectionLayout } from "./sectionLayout";
+import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
 
 /** Time a scroll frame may spend creating editors before the rest wait for the next frame. */
 const MOUNT_BUDGET_MS = 6;
@@ -22,6 +26,9 @@ const MOUNT_BUDGET_MS = 6;
 const SETTLE_MS = 120;
 
 const px = (style: CSSStyleDeclaration, name: string) => parseFloat(style.getPropertyValue(name));
+
+/** The editor hooks as the owner provides them: the semantic requests still name the view's revision. */
+export type ViewHooks = Omit<Hooks, keyof BarActions | keyof SemanticHooks> & SemanticSource;
 
 export interface Listeners {
   /**
@@ -102,7 +109,7 @@ export class ChangesetView {
     files: FileChange[],
     private backend: Backend,
     public mode: Mode,
-    private hooks: Omit<Hooks, keyof BarActions>,
+    private hooks: ViewHooks,
     private listeners: Listeners,
     /** Collapse unchanged regions (the Changes tab); otherwise the full file is shown. */
     private collapse: boolean,
@@ -198,7 +205,7 @@ export class ChangesetView {
         cardTops: [],
         cardsHeight: 0,
         hunkTops: [],
-        hooks: { ...hooks, ...actions },
+        hooks: { ...hooks, ...bindRevision(hooks, revision), ...actions },
       });
     }
     this.totalHunks = hunks;
@@ -366,7 +373,23 @@ export class ChangesetView {
     const first = this.stopStart[fi] + s.cards.length;
     if (this.current >= first && this.current < first + s.file.hunks.length)
       s.handle.dispatchAll(setCurrent.of(this.current - first));
+    this.showDiagnostics(s);
     return s.handle;
+  }
+
+  /** Asks for the file's diagnostics (answered from the store's cache after the first time) and shows them once they arrive. */
+  private showDiagnostics(s: Section) {
+    const { handle, file } = s;
+    // A file without target text has nothing a language server could check.
+    if (!handle || !file.targetLines) return;
+    void s.hooks.diagnostics(file.path).then((list) => {
+      if (s.handle === handle && !this.destroyed) handle.showDiagnostics(list);
+    });
+  }
+
+  /** The servers changed: asks again for the diagnostics of every mounted editor. */
+  refreshDiagnostics() {
+    for (const fi of this.mounted) this.showDiagnostics(this.sections[fi]);
   }
 
   /**
@@ -547,6 +570,17 @@ export class ChangesetView {
     handle.view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: "center" }) });
     this.sync();
     return handle;
+  }
+
+  /**
+   * Scrolls to a span of file `fi` as `side`'s text has it and marks it. A unified view has no
+   * base editor: a base line is shown at the target line the diff puts it at (a deleted line, at
+   * its hunk's deleted lines), and only the line is revealed.
+   */
+  async goToSpan(fi: number, side: Side, span: TextSpan): Promise<void> {
+    await this.load(fi);
+    const line = side === "base" ? baseLineToTarget(this.sections[fi].file.hunks, span.start.line) : span.start.line;
+    this.reveal(fi, line).revealSpan(side, span);
   }
 
   /** The file and 0-based target line of the focused editor's caret. */
