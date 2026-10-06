@@ -431,9 +431,11 @@ fn save_results(app: tauri::AppHandle, markdown: String, json: String, ok: bool)
     Ok(())
 }
 
-/// How long the page may take to accept the app-drawn title bar before the native frame is
-/// restored. The plugin's 5 s default is too short for a cold dev-server load on Windows.
-const DECORATION_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long one activation of the app-drawn title bar may take before the plugin restores the
+/// native frame. Now and then its page handshake gets lost and an attempt only ends here; a new
+/// attempt challenges the then-loaded page afresh.
+const DECORATION_TIMEOUT: Duration = Duration::from_secs(4);
+const DECORATION_ATTEMPTS: u32 = 3;
 /// The window shows by then even while the app-drawn title bar is still activating.
 const SHOW_WITHIN: Duration = Duration::from_secs(2);
 
@@ -455,8 +457,8 @@ async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static str,
             .map_err(|e| format!("{cause}; restoring the native frame failed: {e}"))
     }
 
-    // Activation can stall until its deadline (the plugin's page handshake gets lost now and
-    // then); the window shows anyway, and the app-drawn title bar replaces the frame if it comes.
+    // The window shows while activation is still pending; the app-drawn title bar replaces the
+    // frame once it comes.
     let shown = window.clone();
     std::thread::spawn(move || {
         std::thread::sleep(SHOW_WITHIN);
@@ -464,8 +466,13 @@ async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static str,
             eprintln!("cannot show the window: {e}");
         }
     });
-    if let Err(e) = window.activate_decoration().await {
-        return native(&window, e).await;
+    let mut attempt = 1;
+    while let Err(e) = window.activate_decoration().await {
+        if attempt == DECORATION_ATTEMPTS {
+            return native(&window, e).await;
+        }
+        eprintln!("app-drawn title bar, attempt {attempt} of {DECORATION_ATTEMPTS} failed: {e}");
+        attempt += 1;
     }
     // Centres the traffic lights in the 40px header.
     #[cfg(target_os = "macos")]
