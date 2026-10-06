@@ -123,6 +123,16 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> ServerLocator for Serve
     }
 }
 
+impl<T: ServerLocator + Send + Sync> ServerLocator for std::sync::Arc<T> {
+    fn locate(
+        &self,
+        config: &ServerConfig,
+        project: &Path,
+    ) -> impl Future<Output = Result<ServerCommand, String>> + Send {
+        T::locate(self, config, project)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

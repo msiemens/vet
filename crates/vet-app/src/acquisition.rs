@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use vet_core::content::{EntryKind, Snapshot, SnapshotId, SnapshotStatus};
@@ -240,6 +240,17 @@ impl<G: GitRepo + Sync, S: Store + Sync> Materializer for Acquisition<G, S> {
             Err(CheckoutError::MissingBlobs(blobs)) => Err(NotMaterializable::MissingBlobs(blobs)),
             Err(CheckoutError::Git(e)) => Err(other(e.0)),
         }
+    }
+}
+
+/// An acquisition that a pool can own while the session keeps using it.
+pub struct SharedAcquisition<G, S>(pub Arc<Acquisition<G, S>>);
+
+impl<G: GitRepo + Send + Sync, S: Store + Send + Sync> Materializer for SharedAcquisition<G, S> {
+    type Guard = DirGuard;
+
+    async fn materialize(&self, id: SnapshotId) -> Result<Materialized<DirGuard>, NotMaterializable> {
+        self.0.materialize(id).await
     }
 }
 

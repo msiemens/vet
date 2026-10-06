@@ -8,6 +8,7 @@ pub mod ignore;
 pub mod pin;
 pub mod ports;
 pub mod review;
+pub mod semantics;
 pub mod servers;
 pub mod session;
 pub mod settle;

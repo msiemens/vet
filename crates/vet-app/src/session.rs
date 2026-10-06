@@ -22,6 +22,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::{fmt, slice};
 
 use tokio::sync::Mutex;
@@ -40,7 +41,7 @@ use vet_core::review::{
     ThreadId, ThreadStatus,
 };
 
-use crate::acquisition::Acquisition;
+use crate::acquisition::{Acquisition, SharedAcquisition};
 use crate::execution::Execution;
 use crate::execution::check::RunCheckConfig;
 use crate::pin::{BaseChoice, CommitId};
@@ -246,6 +247,13 @@ pub enum ItemBlob {
     Unavailable,
 }
 
+/// The two snapshots of a revision.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SemanticSides {
+    pub base: SnapshotId,
+    pub target: SnapshotId,
+}
+
 /// What a new thread is attached to. Ranges are in the text of the revision the
 /// request names.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -322,7 +330,8 @@ pub struct LiveSession<G, S> {
     pub id: SessionId,
     /// Author of the messages written here: git's `user.name`, else "You".
     author: String,
-    acquisition: Acquisition<G, S>,
+    /// Shared with the session's semantic pool, which materializes snapshots from it.
+    acquisition: Arc<Acquisition<G, S>>,
     /// The pinned commit every target snapshot of the session is built on.
     head: CommitId,
     /// The tree of `head`: the base while the choice is the pin.
@@ -358,7 +367,7 @@ fn is_binary(bytes: &[u8]) -> bool {
 impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// Pins the tree, records the session and its first snapshots (§6.1).
     pub async fn open(git: G, store: S, name: String) -> Result<Self> {
-        let acquisition = Acquisition::new(git, store);
+        let acquisition = Arc::new(Acquisition::new(git, store));
         let opened = acquisition.open_pin().await?;
         let store = &acquisition.store;
         store
@@ -484,6 +493,30 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// The latest settled target: what the review last showed.
     pub async fn target_snapshot(&self) -> Snapshot {
         self.state.lock().await.target.clone()
+    }
+
+    /// What serves the session's snapshots to its language-server pool.
+    pub fn materializer(&self) -> SharedAcquisition<G, S> {
+        SharedAcquisition(self.acquisition.clone())
+    }
+
+    /// The snapshots of `revision`: what the semantic layer asks about. Fails
+    /// if `revision` is no longer current.
+    pub async fn semantic_sides(&self, revision: u32) -> Result<SemanticSides> {
+        let st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        Ok(SemanticSides {
+            base: st.base.id,
+            target: st.target.id,
+        })
+    }
+
+    /// The text diff of `revision`, for the analyses that map symbols to hunks.
+    pub async fn changed_files(&self, revision: u32) -> Result<Vec<FileDiff>> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        Ok(st.changes.as_ref().expect("computed").diff.files.clone())
     }
 
     /// Running in place and the run check, on the session's acquisition.
