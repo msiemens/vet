@@ -80,7 +80,15 @@ export class ReviewController {
   show(manifest: Manifest) {
     const top = this.root.scrollTop;
     this.view?.destroy();
-    this.view = new ChangesetView(this.root, manifest, this.backend, this.mode, this.hooks, { reviewed: (update) => changeset.applyReview(update) }, mockSymbols);
+    this.view = new ChangesetView(
+      this.root,
+      manifest,
+      this.backend,
+      this.mode,
+      this.hooks,
+      { reviewed: (update) => changeset.applyReview(update) },
+      mockSymbols,
+    );
     this.root.scrollTop = top;
     this.view.sync();
   }

@@ -10,4 +10,5 @@ export function mockSymbols(path: string, hunks: number): (string | undefined)[]
   return Array.from({ length: hunks }, (_, i) => (i % 4 === 3 ? undefined : SYMBOLS[(offset + i) % SYMBOLS.length]));
 }
 
-export const mockIsBuildFile = (path: string) => /(^|\/)(Cargo\.toml|build\.rs|package\.json|pyproject\.toml|setup\.py|[^/]+\.csproj)$/.test(path);
+export const mockIsBuildFile = (path: string) =>
+  /(^|\/)(Cargo\.toml|build\.rs|package\.json|pyproject\.toml|setup\.py|[^/]+\.csproj)$/.test(path);

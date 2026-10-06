@@ -70,8 +70,26 @@ function heapMb(): number | null {
   return memory ? memory.usedJSHeapSize / 1048576 : null;
 }
 
-const info = (metric: string, value: number | null, unit: string, n = 1): Row => ({ metric, p95: value, unit, threshold: 0, cmp: "<", n, pass: null, note: "diagnostic" });
-const check = (metric: string, pass: boolean, note?: string): Row => ({ metric, p95: null, unit: "", threshold: 0, cmp: "<", n: 1, pass, note });
+const info = (metric: string, value: number | null, unit: string, n = 1): Row => ({
+  metric,
+  p95: value,
+  unit,
+  threshold: 0,
+  cmp: "<",
+  n,
+  pass: null,
+  note: "diagnostic",
+});
+const check = (metric: string, pass: boolean, note?: string): Row => ({
+  metric,
+  p95: null,
+  unit: "",
+  threshold: 0,
+  cmp: "<",
+  n: 1,
+  pass,
+  note,
+});
 
 /** Start time of the next frame and the time its paint completed. */
 function framePaint(): Promise<{ frameStart: number; done: number }> {
@@ -136,14 +154,31 @@ async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Pro
               note: "synthetic insertText, not a trusted key event",
             },
             info(`Keystroke → paint incl. frame wait, p95, ${label}`, percentile95(keys), "ms", keys.length),
-            info(`Keystroke input handling (insertText → CodeMirror update), p95, ${label}`, percentile95(handling), "ms", handling.length),
+            info(
+              `Keystroke input handling (insertText → CodeMirror update), p95, ${label}`,
+              percentile95(handling),
+              "ms",
+              handling.length,
+            ),
             check(`Decorations intact after typing ${tag}`, intact),
           ]
-        : [check(`Keystroke → paint via DOM input ${tag}`, false, `insertText inserted ${typed} of ${o.samples} characters`)],
+        : [
+            check(
+              `Keystroke → paint via DOM input ${tag}`,
+              false,
+              `insertText inserted ${typed} of ${o.samples} characters`,
+            ),
+          ],
   };
 }
 
-async function mode(shell: Shell, root: HTMLElement, m: "unified" | "split", o: BenchOptions, interval: number): Promise<Row[]> {
+async function mode(
+  shell: Shell,
+  root: HTMLElement,
+  m: "unified" | "split",
+  o: BenchOptions,
+  interval: number,
+): Promise<Row[]> {
   const tag = `[${m}]`;
   const rows: Row[] = [];
   shell.mode = m;
@@ -169,7 +204,10 @@ async function mode(shell: Shell, root: HTMLElement, m: "unified" | "split", o: 
   rows.push(...(await typeSamples(shell, o, interval)).rows);
 
   o.progress(`${tag} toggle Seen`);
-  const near1000 = files.reduce((best, s, i) => (Math.abs(s.file.targetLines - 1000) < Math.abs(files[best].file.targetLines - 1000) ? i : best), 0);
+  const near1000 = files.reduce(
+    (best, s, i) => (Math.abs(s.file.targetLines - 1000) < Math.abs(files[best].file.targetLines - 1000) ? i : best),
+    0,
+  );
   await view.goToFile(near1000);
   await nextPaint();
   const button = view.seenButton(near1000);
@@ -183,11 +221,20 @@ async function mode(shell: Shell, root: HTMLElement, m: "unified" | "split", o: 
       }),
     );
   }
-  rows.push(row(`Toggle Seen (click → IPC → repaint), ${files[near1000].file.targetLines}-line file, ${files[near1000].file.hunks.length} hunks ${tag}`, toggles, "ms", 50));
+  rows.push(
+    row(
+      `Toggle Seen (click → IPC → repaint), ${files[near1000].file.targetLines}-line file, ${files[near1000].file.hunks.length} hunks ${tag}`,
+      toggles,
+      "ms",
+      50,
+    ),
+  );
 
   o.progress(`${tag} scroll (${o.scrollSeconds}s)`);
   const dropped = await scrollThrough(shell, root, o.scrollSeconds, interval);
-  rows.push(row(`Sustained scroll, dropped frames (refresh ${interval.toFixed(1)} ms) ${tag}`, [dropped], "%", 5, "<="));
+  rows.push(
+    row(`Sustained scroll, dropped frames (refresh ${interval.toFixed(1)} ms) ${tag}`, [dropped], "%", 5, "<="),
+  );
   rows.push(info(`Layout drift, max px ${tag}`, view.maxDrift(), "px"));
   rows.push(info(`Merge chunks ≠ backend hunks, mounted files ${tag}`, view.chunkMismatches(), "files"));
 
@@ -195,8 +242,24 @@ async function mode(shell: Shell, root: HTMLElement, m: "unified" | "split", o: 
   rows.push(info(`Renderer JS heap ${tag}`, heap, "MB"));
   rows.push(
     rss === null
-      ? { metric: `Renderer memory, full changeset open ${tag}`, p95: null, unit: "MB", threshold: 1024, cmp: "<", n: 0, pass: null, note: "the host cannot read this webview's process memory; use Activity Monitor / Task Manager" }
-      : row(`Renderer memory, webview process tree, full changeset open ${tag}`, [rss], "MB", 1024, "<", "summed over processes; shared pages count per process"),
+      ? {
+          metric: `Renderer memory, full changeset open ${tag}`,
+          p95: null,
+          unit: "MB",
+          threshold: 1024,
+          cmp: "<",
+          n: 0,
+          pass: null,
+          note: "the host cannot read this webview's process memory; use Activity Monitor / Task Manager",
+        }
+      : row(
+          `Renderer memory, webview process tree, full changeset open ${tag}`,
+          [rss],
+          "MB",
+          1024,
+          "<",
+          "summed over processes; shared pages count per process",
+        ),
   );
   return rows;
 }
@@ -208,7 +271,8 @@ async function hoverToTooltip(shell: Shell, o: BenchOptions): Promise<number[]> 
   const editor = view.handleOf(0)!.view;
   const lines = [...editor.contentDOM.querySelectorAll<HTMLElement>(".cm-line")].filter((l) => l.textContent);
   shell.tooltipLatencies.length = 0;
-  const move = (x: number, y: number) => editor.contentDOM.dispatchEvent(new MouseEvent("mousemove", { clientX: x, clientY: y, bubbles: true }));
+  const move = (x: number, y: number) =>
+    editor.contentDOM.dispatchEvent(new MouseEvent("mousemove", { clientX: x, clientY: y, bubbles: true }));
   for (let i = 0; i < Math.min(30, lines.length * 2); i++) {
     const rect = lines[i % lines.length].getBoundingClientRect();
     move(rect.left + 3, rect.top - 40); // away from the previous tooltip

@@ -60,7 +60,9 @@ function backendDiff(loaded: Loaded): (a: string, b: string) => readonly Change[
         const [fromB, toB] = [sb[h.targetStart] ?? b.length, sb[h.targetStart + h.targetLen] ?? b.length];
         if (!h.baseLen || !h.targetLen) return [new Change(fromA, toA, fromB, toB)];
         // The hunk's boundaries are the backend's; the changes inside it are CodeMirror's, for intra-line highlighting.
-        return presentableDiff(a.slice(fromA, toA), b.slice(fromB, toB)).map((c) => new Change(c.fromA + fromA, c.toA + fromA, c.fromB + fromB, c.toB + fromB));
+        return presentableDiff(a.slice(fromA, toA), b.slice(fromB, toB)).map(
+          (c) => new Change(c.fromA + fromA, c.toA + fromA, c.fromB + fromB, c.toB + fromB),
+        );
       });
     }
     return changes;
@@ -78,8 +80,19 @@ export interface Handle {
   destroy(): void;
 }
 
-export function mountFile(host: HTMLElement, path: string, loaded: Loaded, review: Review, mode: Mode, hooks: Hooks): Handle {
-  const targetField = reviewField(sideConfig(loaded.hunks, "target", review.symbols, hooks), loaded.marks, review.states);
+export function mountFile(
+  host: HTMLElement,
+  path: string,
+  loaded: Loaded,
+  review: Review,
+  mode: Mode,
+  hooks: Hooks,
+): Handle {
+  const targetField = reviewField(
+    sideConfig(loaded.hunks, "target", review.symbols, hooks),
+    loaded.marks,
+    review.states,
+  );
   const diffConfig = { override: backendDiff(loaded) };
   const target: Extension[] = [
     minimalSetup,
@@ -111,7 +124,17 @@ export function mountFile(host: HTMLElement, path: string, loaded: Loaded, revie
     const view = new EditorView({
       parent: host,
       doc: loaded.target,
-      extensions: [...target, unifiedMergeView({ original: loaded.base, mergeControls: false, gutter: true, highlightChanges: true, diffConfig }), deletedChunkStyle(targetField)],
+      extensions: [
+        ...target,
+        unifiedMergeView({
+          original: loaded.base,
+          mergeControls: false,
+          gutter: true,
+          highlightChanges: true,
+          diffConfig,
+        }),
+        deletedChunkStyle(targetField),
+      ],
     });
     return handle(view, [view], targetField);
   }
@@ -122,11 +145,23 @@ export function mountFile(host: HTMLElement, path: string, loaded: Loaded, revie
     EditorState.readOnly.of(true),
     EditorView.editable.of(false),
   ];
-  const merge = new MergeView({ parent: host, a: { doc: loaded.base, extensions: base }, b: { doc: loaded.target, extensions: target }, gutter: true, highlightChanges: true, diffConfig });
+  const merge = new MergeView({
+    parent: host,
+    a: { doc: loaded.base, extensions: base },
+    b: { doc: loaded.target, extensions: target },
+    gutter: true,
+    highlightChanges: true,
+    diffConfig,
+  });
   return handle(merge.b, [merge.a, merge.b], targetField, () => merge.destroy());
 }
 
-function handle(view: EditorView, views: EditorView[], field: StateField<ReviewState>, destroy = () => view.destroy()): Handle {
+function handle(
+  view: EditorView,
+  views: EditorView[],
+  field: StateField<ReviewState>,
+  destroy = () => view.destroy(),
+): Handle {
   return {
     view,
     views,

@@ -45,7 +45,12 @@ export interface SideConfig {
   bar: BarActions | null;
 }
 
-export function sideConfig(hunks: Hunk[], side: "base" | "target", symbols: (string | undefined)[], bar: BarActions | null): SideConfig {
+export function sideConfig(
+  hunks: Hunk[],
+  side: "base" | "target",
+  symbols: (string | undefined)[],
+  bar: BarActions | null,
+): SideConfig {
   return {
     lines: hunks.map((h) => (side === "base" ? [h.baseStart, h.baseLen] : [h.targetStart, h.targetLen])),
     headers: hunks.map((h, i) => hunkHeader(h, symbols[i])),
@@ -63,10 +68,16 @@ for (const cls of Object.values(CLASS)) {
 function build(state: Omit<ReviewState, "decos">, doc: Text, side: SideConfig): DecorationSet {
   const out: Range<Decoration>[] = [];
   state.spans.forEach((span, i) => {
-    out.push(Decoration.widget({ widget: new HunkBar(i, side.headers[i], state.states[i], side.bar), block: true, side: -2 }).range(span.at));
+    out.push(
+      Decoration.widget({
+        widget: new HunkBar(i, side.headers[i], state.states[i], side.bar),
+        block: true,
+        side: -2,
+      }).range(span.at),
+    );
     if (span.empty) return;
     const deco = Decoration.line({ class: lineClass(state.states[i], state.current === i) });
-    for (let pos = span.from; pos <= span.to; ) {
+    for (let pos = span.from; pos <= span.to;) {
       const line = doc.lineAt(pos);
       out.push(deco.range(line.from));
       pos = line.to + 1;
@@ -103,15 +114,19 @@ export function reviewField(side: SideConfig, marks: Mark[], states: HunkState[]
         const map = (pos: number, assoc: -1 | 1) => tr.changes.mapPos(pos, assoc);
         next = {
           ...next,
-          spans: next.spans.map((s) => ({ ...s, at: map(s.at, 1), ...(s.empty ? {} : { from: map(s.from, -1), to: map(s.to, 1) }) })),
+          spans: next.spans.map((s) => ({
+            ...s,
+            at: map(s.at, 1),
+            ...(s.empty ? {} : { from: map(s.from, -1), to: map(s.to, 1) }),
+          })),
           marks: next.marks.map((m) => ({ ...m, from: map(m.from, -1), to: map(m.to, 1) })),
           decos: next.decos.map(tr.changes),
         };
       }
       let rebuild = false;
       for (const effect of tr.effects) {
-        if (effect.is(setStates)) (next = { ...next, states: effect.value }), (rebuild = true);
-        else if (effect.is(setCurrent)) (next = { ...next, current: effect.value }), (rebuild = true);
+        if (effect.is(setStates)) ((next = { ...next, states: effect.value }), (rebuild = true));
+        else if (effect.is(setCurrent)) ((next = { ...next, current: effect.value }), (rebuild = true));
       }
       return rebuild ? { ...next, decos: build(next, tr.state.doc, side) } : next;
     },
@@ -120,7 +135,8 @@ export function reviewField(side: SideConfig, marks: Mark[], states: HunkState[]
       // The 3px review-state strip: the leftmost gutter, one marker per changed line.
       gutter({
         class: "vet-strip",
-        lineMarkerChange: (u) => u.transactions.some((tr) => tr.effects.some((e) => e.is(setStates) || e.is(setCurrent))),
+        lineMarkerChange: (u) =>
+          u.transactions.some((tr) => tr.effects.some((e) => e.is(setStates) || e.is(setCurrent))),
         lineMarker: (view, line) => {
           const state = view.state.field(f);
           const i = state.spans.findIndex((s) => !s.empty && s.from <= line.from && line.from <= s.to);
@@ -141,7 +157,10 @@ export function deletedChunkStyle(field: StateField<ReviewState>): Extension {
     const state = view.state.field(field);
     const byPos = new Map(state.spans.map((s, i) => [s.at, i]));
     // The strip of a deleted block reaches back over the gutters to the editor's left edge.
-    view.dom.style.setProperty("--vet-gutters", `${view.dom.querySelector<HTMLElement>(".cm-gutters")?.offsetWidth ?? 0}px`);
+    view.dom.style.setProperty(
+      "--vet-gutters",
+      `${view.dom.querySelector<HTMLElement>(".cm-gutters")?.offsetWidth ?? 0}px`,
+    );
     for (const el of view.dom.querySelectorAll<HTMLElement>(".cm-deletedChunk")) {
       el.classList.remove(...Object.values(CLASS), "vet-current");
       const i = byPos.get(view.posAtDOM(el));

@@ -17,20 +17,44 @@ import { tags as t } from "@lezer/highlight";
 function language(path: string): Extension {
   const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
   switch (ext) {
-    case "rs": return rust();
-    case "py": case "pyi": return python();
-    case "ts": case "mts": case "cts": return javascript({ typescript: true });
-    case "tsx": return javascript({ typescript: true, jsx: true });
-    case "js": case "mjs": case "cjs": return javascript();
-    case "jsx": return javascript({ jsx: true });
-    case "json": return json();
-    case "md": case "markdown": return markdown();
-    case "yaml": case "yml": return yaml();
-    case "toml": return StreamLanguage.define(toml);
-    case "sh": case "bash": return StreamLanguage.define(shell);
-    case "css": return css();
-    case "html": case "htm": case "svg": return html();
-    default: return [];
+    case "rs":
+      return rust();
+    case "py":
+    case "pyi":
+      return python();
+    case "ts":
+    case "mts":
+    case "cts":
+      return javascript({ typescript: true });
+    case "tsx":
+      return javascript({ typescript: true, jsx: true });
+    case "js":
+    case "mjs":
+    case "cjs":
+      return javascript();
+    case "jsx":
+      return javascript({ jsx: true });
+    case "json":
+      return json();
+    case "md":
+    case "markdown":
+      return markdown();
+    case "yaml":
+    case "yml":
+      return yaml();
+    case "toml":
+      return StreamLanguage.define(toml);
+    case "sh":
+    case "bash":
+      return StreamLanguage.define(shell);
+    case "css":
+      return css();
+    case "html":
+    case "htm":
+    case "svg":
+      return html();
+    default:
+      return [];
   }
 }
 

@@ -3,10 +3,19 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isTextInput, matches, type KeyLike } from "./keymap.ts";
 
-const key = (init: Partial<KeyLike>): KeyLike => ({ key: "", code: "", ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, ...init });
+const key = (init: Partial<KeyLike>): KeyLike => ({
+  key: "",
+  code: "",
+  ctrlKey: false,
+  altKey: false,
+  shiftKey: false,
+  metaKey: false,
+  ...init,
+});
 
 // German layout on Windows: AltGr is Ctrl+Alt and reports the AltGraph modifier.
-const altGr = (k: string, code: string) => key({ key: k, code, ctrlKey: true, altKey: true, getModifierState: (m) => m === "AltGraph" });
+const altGr = (k: string, code: string) =>
+  key({ key: k, code, ctrlKey: true, altKey: true, getModifierState: (m) => m === "AltGraph" });
 
 test("AltGr characters never match Ctrl-Alt bindings", () => {
   for (const [k, code, spec] of [

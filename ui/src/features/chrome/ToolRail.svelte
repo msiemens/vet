@@ -19,5 +19,16 @@
 </nav>
 
 <style>
-  nav { width: var(--w-rail); flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 0; box-sizing: border-box; background: var(--win); border-right: 1px solid var(--ln); }
+  nav {
+    width: var(--w-rail);
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 0;
+    box-sizing: border-box;
+    background: var(--win);
+    border-right: 1px solid var(--ln);
+  }
 </style>

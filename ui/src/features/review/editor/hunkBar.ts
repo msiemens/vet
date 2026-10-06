@@ -16,7 +16,11 @@ export function hunkHeader(h: Hunk, symbol?: string): string {
   return symbol ? `${text} ${symbol}` : text;
 }
 
-const LABEL: Record<HunkState, string> = { unseen: "Mark hunk seen", seen: "Mark hunk unseen", seenAgainstOldBase: "Re-confirm seen" };
+const LABEL: Record<HunkState, string> = {
+  unseen: "Mark hunk seen",
+  seen: "Mark hunk unseen",
+  seenAgainstOldBase: "Re-confirm seen",
+};
 
 export class HunkBar extends WidgetType {
   /** `actions` is null on the base side of a side-by-side view, which only shows the header. */
@@ -30,7 +34,12 @@ export class HunkBar extends WidgetType {
   }
 
   eq(other: HunkBar): boolean {
-    return other.index === this.index && other.text === this.text && other.state === this.state && other.actions === this.actions;
+    return (
+      other.index === this.index &&
+      other.text === this.text &&
+      other.state === this.state &&
+      other.actions === this.actions
+    );
   }
 
   toDOM(): HTMLElement {
@@ -52,7 +61,10 @@ export class HunkBar extends WidgetType {
     bar.append(spacer);
     const actions = this.actions;
     if (actions) {
-      bar.append(this.button(LABEL[this.state], "check", `vet-seen-toggle`, () => actions.toggleSeen(this.index)), this.button("Comment", "comments", "", () => actions.comment(this.index)));
+      bar.append(
+        this.button(LABEL[this.state], "check", `vet-seen-toggle`, () => actions.toggleSeen(this.index)),
+        this.button("Comment", "comments", "", () => actions.comment(this.index)),
+      );
     }
     return bar;
   }

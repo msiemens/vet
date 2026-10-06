@@ -47,7 +47,9 @@ class ChangesetStore {
     this.manifest = {
       ...manifest,
       completion: update.changeset,
-      files: manifest.files.map((f) => (f.path === update.path ? { ...f, review: update.review, completion: update.completion } : f)),
+      files: manifest.files.map((f) =>
+        f.path === update.path ? { ...f, review: update.review, completion: update.completion } : f,
+      ),
     };
     for (const listener of this.listeners) listener(update);
   }

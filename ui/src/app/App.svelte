@@ -27,7 +27,10 @@
       title: `${c.seenLines} of ${c.lines} lines · ${c.acknowledgedItems} of ${c.items} other changes · ${c.oldBaseLines} lines against an old base`,
     };
   });
-  const excluded = $derived({ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 });
+  const excluded = $derived({
+    lines: changeset.manifest?.excludedLines ?? 0,
+    items: changeset.manifest?.excludedItems ?? 0,
+  });
   const footer = $derived({ ...mockFooter, snapshot: `#${changeset.manifest?.revision ?? 0}` });
 
   onMount(() => {
@@ -58,15 +61,40 @@
   {/if}
 </div>
 
-<DevTools bind:this={tools} {controller} bind:open={devOpen} bind:status {theme} ontheme={(t) => applyTheme((theme = t))} />
+<DevTools
+  bind:this={tools}
+  {controller}
+  bind:open={devOpen}
+  bind:status
+  {theme}
+  ontheme={(t) => applyTheme((theme = t))}
+/>
 
 <StatusFooter info={footer}>
-  {#snippet end()}<button class="dev" type="button" aria-pressed={devOpen} onclick={() => (devOpen = !devOpen)}>Dev</button>{/snippet}
+  {#snippet end()}<button class="dev" type="button" aria-pressed={devOpen} onclick={() => (devOpen = !devOpen)}
+      >Dev</button
+    >{/snippet}
 </StatusFooter>
 
 <style>
-  .body { flex: 1; display: flex; min-height: 0; }
-  .message { margin: 16px; color: var(--tx2); }
-  .dev { border: 0; background: transparent; color: var(--tx3); font-size: 11px; cursor: pointer; padding: 0; }
-  .dev[aria-pressed="true"] { color: var(--acc); }
+  .body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+  .message {
+    margin: 16px;
+    color: var(--tx2);
+  }
+  .dev {
+    border: 0;
+    background: transparent;
+    color: var(--tx3);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 0;
+  }
+  .dev[aria-pressed="true"] {
+    color: var(--acc);
+  }
 </style>

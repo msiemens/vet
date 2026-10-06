@@ -30,10 +30,38 @@
 </footer>
 
 <style>
-  footer { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; min-height: var(--h-footer); padding: 0 10px; box-sizing: border-box; border-top: 1px solid var(--ln); background: var(--win); color: var(--tx2); font-size: 12px; flex: none; }
-  .small { font-size: var(--fs-mono-s); }
-  .grow { flex: 1; }
-  .topology { display: inline-flex; align-items: center; gap: 6px; }
-  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
-  .dot.ok { background: var(--ok); }
+  footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    min-height: var(--h-footer);
+    padding: 0 10px;
+    box-sizing: border-box;
+    border-top: 1px solid var(--ln);
+    background: var(--win);
+    color: var(--tx2);
+    font-size: 12px;
+    flex: none;
+  }
+  .small {
+    font-size: var(--fs-mono-s);
+  }
+  .grow {
+    flex: 1;
+  }
+  .topology {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--warn);
+  }
+  .dot.ok {
+    background: var(--ok);
+  }
 </style>

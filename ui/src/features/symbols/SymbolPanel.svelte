@@ -8,7 +8,10 @@
     /** Entry point first, the symbol last. */
     reachedFrom: string[];
     /** Call sites of a removed symbol, classified in the target (SPEC §7.3). */
-    removed?: { name: string; sites: { at: string; verdict: "unresolved" | "binding changed" | "gone" | "unknown"; detail?: string }[] };
+    removed?: {
+      name: string;
+      sites: { at: string; verdict: "unresolved" | "binding changed" | "gone" | "unknown"; detail?: string }[];
+    };
   }
 </script>
 
@@ -20,7 +23,12 @@
 
   let { symbol = mockSymbol }: { symbol?: SymbolInfo } = $props();
 
-  const VERDICT = { unresolved: "var(--delt)", "binding changed": "var(--old)", gone: "var(--tx3)", unknown: "var(--tx3)" } as const;
+  const VERDICT = {
+    unresolved: "var(--delt)",
+    "binding changed": "var(--old)",
+    gone: "var(--tx3)",
+    unknown: "var(--tx3)",
+  } as const;
 </script>
 
 {#snippet section(title: string, count: number | undefined, derived: boolean, body: Snippet)}
@@ -42,7 +50,9 @@
 
 {#snippet callers()}
   <ul>
-    {#each symbol.callers as c}<li class="tw"><span class="mono s">{c.name}</span><span class="grow"></span><span class="mono at">{c.at}</span></li>{/each}
+    {#each symbol.callers as c}<li class="tw">
+        <span class="mono s">{c.name}</span><span class="grow"></span><span class="mono at">{c.at}</span>
+      </li>{/each}
   </ul>
 {/snippet}
 
@@ -82,20 +92,90 @@
 </aside>
 
 <style>
-  aside { flex: 0 1 var(--w-symbols); min-width: 280px; background: var(--panel); border-left: 1px solid var(--ln); display: flex; flex-direction: column; overflow: hidden auto; }
-  .head { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--ln2); }
-  .name { font-size: var(--fs-ctl); font-weight: 500; }
-  .qualified { font-size: var(--fs-mono-s); color: var(--tx2); }
-  .sh { display: flex; align-items: center; gap: 6px; height: var(--h-ctl); padding: 0 10px; font-size: 12px; font-weight: 600; color: var(--tx2); flex: none; }
-  .n { font-weight: 400; color: var(--tx3); }
-  .grow { flex: 1; }
-  .block { display: flex; flex-direction: column; gap: 4px; padding: 0 10px 10px 26px; border-bottom: 1px solid var(--ln2); }
-  code { font-size: var(--fs-mono-s); white-space: pre-wrap; }
-  .doc { font-size: var(--fs-ctl); color: var(--tx2); }
-  ul, ol { margin: 0; padding: 0 0 6px; list-style: none; border-bottom: 1px solid var(--ln2); }
-  .tw { display: flex; align-items: center; gap: 6px; height: var(--h-row); padding: 0 10px 0 26px; white-space: nowrap; font-size: var(--fs-ctl); }
-  .s { font-size: var(--fs-mono-s); }
-  .at { font-size: 11px; color: var(--tx3); }
-  .last { font-weight: 500; }
-  .verdict { font-size: 12px; }
+  aside {
+    flex: 0 1 var(--w-symbols);
+    min-width: 280px;
+    background: var(--panel);
+    border-left: 1px solid var(--ln);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden auto;
+  }
+  .head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--ln2);
+  }
+  .name {
+    font-size: var(--fs-ctl);
+    font-weight: 500;
+  }
+  .qualified {
+    font-size: var(--fs-mono-s);
+    color: var(--tx2);
+  }
+  .sh {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: var(--h-ctl);
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--tx2);
+    flex: none;
+  }
+  .n {
+    font-weight: 400;
+    color: var(--tx3);
+  }
+  .grow {
+    flex: 1;
+  }
+  .block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0 10px 10px 26px;
+    border-bottom: 1px solid var(--ln2);
+  }
+  code {
+    font-size: var(--fs-mono-s);
+    white-space: pre-wrap;
+  }
+  .doc {
+    font-size: var(--fs-ctl);
+    color: var(--tx2);
+  }
+  ul,
+  ol {
+    margin: 0;
+    padding: 0 0 6px;
+    list-style: none;
+    border-bottom: 1px solid var(--ln2);
+  }
+  .tw {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: var(--h-row);
+    padding: 0 10px 0 26px;
+    white-space: nowrap;
+    font-size: var(--fs-ctl);
+  }
+  .s {
+    font-size: var(--fs-mono-s);
+  }
+  .at {
+    font-size: 11px;
+    color: var(--tx3);
+  }
+  .last {
+    font-weight: 500;
+  }
+  .verdict {
+    font-size: 12px;
+  }
 </style>

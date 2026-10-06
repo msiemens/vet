@@ -43,6 +43,12 @@ export function matches(spec: string, e: KeyLike): boolean {
   const parts = spec.split("-");
   const name = parts.pop()!;
   const mods = new Set(parts);
-  if (mods.has("Ctrl") !== e.ctrlKey || mods.has("Alt") !== e.altKey || mods.has("Shift") !== e.shiftKey || mods.has("Meta") !== e.metaKey) return false;
+  if (
+    mods.has("Ctrl") !== e.ctrlKey ||
+    mods.has("Alt") !== e.altKey ||
+    mods.has("Shift") !== e.shiftKey ||
+    mods.has("Meta") !== e.metaKey
+  )
+    return false;
   return name.length === 1 ? baseChar(e.code) === name.toLowerCase() : e.key === name;
 }

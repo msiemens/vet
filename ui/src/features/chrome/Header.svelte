@@ -34,17 +34,29 @@
 <header>
   <Chip bold>{info.project}</Chip>
   <Chip>
-    <Icon name="branch" />{info.changeset.label}<span class="dim">{info.changeset.branch}</span><Icon name="caret" size={10} stroke={2} />
+    <Icon name="branch" />{info.changeset.label}<span class="dim">{info.changeset.branch}</span><Icon
+      name="caret"
+      size={10}
+      stroke={2}
+    />
   </Chip>
   <span class="range">
     <Chip mono>{info.base}</Chip>
     <span class="arrow"><Icon name="arrow" stroke={1.8} /></span>
-    <Chip mono>{info.target.label}{#if info.target.settled}<span class="dot"></span>{/if}</Chip>
+    <Chip mono
+      >{info.target.label}{#if info.target.settled}<span class="dot"></span>{/if}</Chip
+    >
   </span>
   {#if filter}{@render filter()}{/if}
   <span class="grow"></span>
   <span class="completion" title={completion.title}>
-    <Meter width={96} segments={[{ value: completion.seenPct, color: "var(--seen)" }, { value: completion.oldPct, color: "var(--old)" }]} />
+    <Meter
+      width={96}
+      segments={[
+        { value: completion.seenPct, color: "var(--seen)" },
+        { value: completion.oldPct, color: "var(--old)" },
+      ]}
+    />
     <span class="mono pct">{Math.round(completion.seenPct + completion.oldPct)}%</span>
   </span>
   {#if run}{@render run()}{/if}
@@ -52,12 +64,47 @@
 </header>
 
 <style>
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; min-height: var(--h-header); box-sizing: border-box; background: var(--win); border-bottom: 1px solid var(--ln); flex: none; }
-  .dim { color: var(--tx2); }
-  .range { display: inline-flex; align-items: center; gap: 4px; margin-left: 4px; }
-  .arrow { display: inline-flex; color: var(--tx3); }
-  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
-  .grow { flex: 1 1 40px; }
-  .completion { display: inline-flex; align-items: center; gap: 8px; margin-right: 6px; }
-  .pct { font-size: var(--fs-mono); }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    min-height: var(--h-header);
+    box-sizing: border-box;
+    background: var(--win);
+    border-bottom: 1px solid var(--ln);
+    flex: none;
+  }
+  .dim {
+    color: var(--tx2);
+  }
+  .range {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 4px;
+  }
+  .arrow {
+    display: inline-flex;
+    color: var(--tx3);
+  }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ok);
+  }
+  .grow {
+    flex: 1 1 40px;
+  }
+  .completion {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-right: 6px;
+  }
+  .pct {
+    font-size: var(--fs-mono);
+  }
 </style>

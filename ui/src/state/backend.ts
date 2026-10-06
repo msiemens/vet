@@ -37,16 +37,24 @@ export class Backend {
   }
 
   fileContents(path: string): Promise<FileContents> {
-    return this.conn.request({ type: "fileContents", session: this.session, path }).then((r) => expect(r, "fileContents"));
+    return this.conn
+      .request({ type: "fileContents", session: this.session, path })
+      .then((r) => expect(r, "fileContents"));
   }
 
   /** `revision` is the manifest's; the backend rejects a stale one. */
   async setSeen(revision: number, path: string, hunks: number[], seen: boolean): Promise<ReviewUpdate> {
-    return expect(await this.conn.request({ type: "setSeen", session: this.session, revision, path, hunks, seen }), "review");
+    return expect(
+      await this.conn.request({ type: "setSeen", session: this.session, revision, path, hunks, seen }),
+      "review",
+    );
   }
 
   async acknowledge(revision: number, path: string, kind: NonTextKind, acknowledged: boolean): Promise<ReviewUpdate> {
-    return expect(await this.conn.request({ type: "acknowledge", session: this.session, revision, path, kind, acknowledged }), "review");
+    return expect(
+      await this.conn.request({ type: "acknowledge", session: this.session, revision, path, kind, acknowledged }),
+      "review",
+    );
   }
 
   async hover(path: string, line: number, col: number): Promise<string> {

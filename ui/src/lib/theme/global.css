@@ -1,8 +1,27 @@
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 
-html, body { margin: 0; height: 100%; background: var(--panel); color: var(--tx); font: var(--fs) var(--font-ui); }
-#app { height: 100%; display: flex; flex-direction: column; }
-button { font: inherit; color: inherit; }
-a { color: inherit; text-decoration: none; }
-.mono { font-family: var(--font-mono); }
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--panel);
+  color: var(--tx);
+  font: var(--fs) var(--font-ui);
+}
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+button {
+  font: inherit;
+  color: inherit;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+.mono {
+  font-family: var(--font-mono);
+}

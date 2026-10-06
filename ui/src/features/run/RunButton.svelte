@@ -34,7 +34,9 @@
   onselect={(id) => ((selected = id), onrun?.(id))}
 >
   {#snippet main()}
-    <span class="play"><Icon name="play" size={12} /></span>{current?.name ?? "Run"}{#if buildFilesChanged}<span class="dot"></span>{/if}
+    <span class="play"><Icon name="play" size={12} /></span>{current?.name ?? "Run"}{#if buildFilesChanged}<span
+        class="dot"
+      ></span>{/if}
   {/snippet}
   {#snippet menuFooter()}
     <button type="button" class="edit">Edit targets…</button>
@@ -42,8 +44,27 @@
 </SplitButton>
 
 <style>
-  .play { display: inline-flex; color: var(--ok); }
-  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
-  .edit { width: 100%; height: var(--h-row); border: 0; background: transparent; text-align: left; padding: 0 12px; font-size: var(--fs-ctl); cursor: pointer; }
-  .edit:hover { background: var(--hov); }
+  .play {
+    display: inline-flex;
+    color: var(--ok);
+  }
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--warn);
+  }
+  .edit {
+    width: 100%;
+    height: var(--h-row);
+    border: 0;
+    background: transparent;
+    text-align: left;
+    padding: 0 12px;
+    font-size: var(--fs-ctl);
+    cursor: pointer;
+  }
+  .edit:hover {
+    background: var(--hov);
+  }
 </style>

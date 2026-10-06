@@ -38,37 +38,123 @@
           <Icon name={collapsed.has(row.path) ? "closed" : "open"} size={10} />{row.path}
         </button>
       {:else}
-        <button class="tw file" class:sel={row.path === selected} class:nested={row.path.includes("/")} type="button" onclick={() => onselect(row)}>
+        <button
+          class="tw file"
+          class:sel={row.path === selected}
+          class:nested={row.path.includes("/")}
+          type="button"
+          onclick={() => onselect(row)}
+        >
           {#if row.build}<span class="build" title="Build file"><Icon name="build" size={12} stroke={2} /></span>{/if}
           <span class="name">{row.name}</span>
           {#if row.mode}<span class="mono x" title="File mode changed">{row.mode}</span>{/if}
-          <Meter width={22} segments={[{ value: row.seenPct, color: "var(--seen)" }, { value: row.oldPct, color: "var(--old)" }]} />
+          <Meter
+            width={22}
+            segments={[
+              { value: row.seenPct, color: "var(--seen)" },
+              { value: row.oldPct, color: "var(--old)" },
+            ]}
+          />
           <span class="mono status" style:color={STATUS[row.status]}>{row.status}</span>
         </button>
       {/if}
     {/each}
     {#if excluded && excluded.lines + excluded.items > 0}
-      <div class="tw excluded" title="{excluded.lines} changed lines and {excluded.items} other changes excluded by the review filter">
-        <Icon name="closed" size={10} /><Icon name="filter" size={11} stroke={2} />Excluded<span class="mono x">{excluded.lines}</span>
+      <div
+        class="tw excluded"
+        title="{excluded.lines} changed lines and {excluded.items} other changes excluded by the review filter"
+      >
+        <Icon name="closed" size={10} /><Icon name="filter" size={11} stroke={2} />Excluded<span class="mono x"
+          >{excluded.lines}</span
+        >
       </div>
     {/if}
   </div>
 </nav>
 
 <style>
-  nav { flex: 0 1 var(--w-tree); min-width: 230px; background: var(--panel); border-right: 1px solid var(--ln); display: flex; flex-direction: column; min-height: 0; }
-  .sh { display: flex; align-items: center; gap: 6px; height: var(--h-ctl); padding: 0 10px; font-size: 12px; font-weight: 600; color: var(--tx2); border-bottom: 1px solid var(--ln2); flex: none; }
-  .grow { flex: 1; }
-  .count { font-weight: 400; color: var(--tx3); }
-  .rows { padding: 4px 0; overflow: hidden auto; min-height: 0; }
-  .tw { display: flex; align-items: center; gap: 6px; height: var(--h-row); width: 100%; padding: 0 10px 0 8px; border: 0; background: transparent; text-align: left; white-space: nowrap; font-size: var(--fs-ctl); cursor: pointer; box-sizing: border-box; }
-  .dir { color: var(--tx2); overflow: hidden; text-overflow: ellipsis; }
-  .file.nested { padding-left: 26px; }
-  .file:hover { background: var(--hov); }
-  .file.sel { background: var(--sel); }
-  .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .x { font-size: 11px; color: var(--tx2); }
-  .status { width: 10px; font-size: 11px; }
-  .build { display: inline-flex; color: var(--warn); }
-  .excluded { color: var(--tx3); cursor: default; }
+  nav {
+    flex: 0 1 var(--w-tree);
+    min-width: 230px;
+    background: var(--panel);
+    border-right: 1px solid var(--ln);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .sh {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: var(--h-ctl);
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--tx2);
+    border-bottom: 1px solid var(--ln2);
+    flex: none;
+  }
+  .grow {
+    flex: 1;
+  }
+  .count {
+    font-weight: 400;
+    color: var(--tx3);
+  }
+  .rows {
+    padding: 4px 0;
+    overflow: hidden auto;
+    min-height: 0;
+  }
+  .tw {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: var(--h-row);
+    width: 100%;
+    padding: 0 10px 0 8px;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    white-space: nowrap;
+    font-size: var(--fs-ctl);
+    cursor: pointer;
+    box-sizing: border-box;
+  }
+  .dir {
+    color: var(--tx2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .file.nested {
+    padding-left: 26px;
+  }
+  .file:hover {
+    background: var(--hov);
+  }
+  .file.sel {
+    background: var(--sel);
+  }
+  .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .x {
+    font-size: 11px;
+    color: var(--tx2);
+  }
+  .status {
+    width: 10px;
+    font-size: 11px;
+  }
+  .build {
+    display: inline-flex;
+    color: var(--warn);
+  }
+  .excluded {
+    color: var(--tx3);
+    cursor: default;
+  }
 </style>

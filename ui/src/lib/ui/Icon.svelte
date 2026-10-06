@@ -5,6 +5,14 @@
   const solid = $derived(SOLID.has(name));
 </script>
 
-<svg width={size} height={size} viewBox="0 0 24 24" fill={solid ? "currentColor" : "none"} stroke={solid ? "none" : "currentColor"} stroke-width={stroke} aria-hidden="true">
+<svg
+  width={size}
+  height={size}
+  viewBox="0 0 24 24"
+  fill={solid ? "currentColor" : "none"}
+  stroke={solid ? "none" : "currentColor"}
+  stroke-width={stroke}
+  aria-hidden="true"
+>
   {@html ICONS[name]}
 </svg>

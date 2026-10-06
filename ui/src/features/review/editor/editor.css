@@ -1,52 +1,209 @@
 /* File sections: fixed height from the manifest, content clipped to it. */
-.file { overflow: hidden; border-bottom: 1px solid var(--ln); box-sizing: border-box; background: var(--ed); }
-.file > header { height: var(--h-section); box-sizing: border-box; display: flex; gap: 12px; align-items: center; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--ln2); font-size: var(--fs-ctl); }
-.file > header .path { font-family: var(--font-mono); font-size: var(--fs-mono); font-weight: 600; color: var(--tx2); }
-.file > header .delta { font-size: var(--fs-mono-s); }
-.file > header .delta .add { color: var(--addt); }
-.file > header .delta .del { color: var(--delt); }
-.file > header .count { flex: 1; color: var(--tx3); font-size: var(--fs-mono-s); }
-.file > header button { height: 20px; padding: 0 8px; border: 1px solid var(--ln); border-radius: var(--radius); background: var(--btn); font-size: var(--fs-mono-s); cursor: pointer; }
-.file > .body { height: calc(100% - var(--h-section)); overflow: hidden; }
+.file {
+  overflow: hidden;
+  border-bottom: 1px solid var(--ln);
+  box-sizing: border-box;
+  background: var(--ed);
+}
+.file > header {
+  height: var(--h-section);
+  box-sizing: border-box;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 0 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--ln2);
+  font-size: var(--fs-ctl);
+}
+.file > header .path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  font-weight: 600;
+  color: var(--tx2);
+}
+.file > header .delta {
+  font-size: var(--fs-mono-s);
+}
+.file > header .delta .add {
+  color: var(--addt);
+}
+.file > header .delta .del {
+  color: var(--delt);
+}
+.file > header .count {
+  flex: 1;
+  color: var(--tx3);
+  font-size: var(--fs-mono-s);
+}
+.file > header button {
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--ln);
+  border-radius: var(--radius);
+  background: var(--btn);
+  font-size: var(--fs-mono-s);
+  cursor: pointer;
+}
+.file > .body {
+  height: calc(100% - var(--h-section));
+  overflow: hidden;
+}
 
-.file .cm-editor { font-family: var(--font-mono); font-size: var(--fs-mono); background: var(--ed); color: var(--tx); }
-.file .cm-editor .cm-scroller { overflow: visible; line-height: var(--h-line); font-family: inherit; }
-.file .cm-editor .cm-line { padding-right: 4px; }
-.file .cm-editor .cm-gutters { background: var(--ed); color: var(--tx3); border: none; }
-.file .cm-editor .cm-lineNumbers .cm-gutterElement { min-width: 40px; padding: 0 6px 0 8px; }
-.file .cm-editor .cm-activeLine, .file .cm-editor .cm-activeLineGutter { background: transparent; }
-.file .cm-editor .cm-cursor { border-left-color: var(--tx); }
-.file .cm-editor .cm-selectionBackground, .file .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground { background: var(--sel); }
-.cm-mergeView, .cm-mergeViewEditors { overflow: visible; }
+.file .cm-editor {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  background: var(--ed);
+  color: var(--tx);
+}
+.file .cm-editor .cm-scroller {
+  overflow: visible;
+  line-height: var(--h-line);
+  font-family: inherit;
+}
+.file .cm-editor .cm-line {
+  padding-right: 4px;
+}
+.file .cm-editor .cm-gutters {
+  background: var(--ed);
+  color: var(--tx3);
+  border: none;
+}
+.file .cm-editor .cm-lineNumbers .cm-gutterElement {
+  min-width: 40px;
+  padding: 0 6px 0 8px;
+}
+.file .cm-editor .cm-activeLine,
+.file .cm-editor .cm-activeLineGutter {
+  background: transparent;
+}
+.file .cm-editor .cm-cursor {
+  border-left-color: var(--tx);
+}
+.file .cm-editor .cm-selectionBackground,
+.file .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+  background: var(--sel);
+}
+.cm-mergeView,
+.cm-mergeViewEditors {
+  overflow: visible;
+}
 
 /* Added and deleted lines (unified: target lines and deleted chunks; side by side: the two editors). */
-.file .cm-editor .cm-changedLine, .file .cm-editor .cm-insertedLine { background: var(--add); }
-.file .cm-editor .cm-deletedChunk, .file .cm-editor .cm-deletedLine, .file .cm-merge-a .cm-changedLine { background: var(--del); }
-.file .cm-editor .cm-changedText { background: color-mix(in srgb, var(--addt) 25%, transparent); }
-.file .cm-editor .cm-deletedChunk .cm-changedText, .file .cm-merge-a .cm-changedText { background: color-mix(in srgb, var(--delt) 25%, transparent); }
-.file .cm-editor .cm-changedLineGutter, .file .cm-editor .cm-deletedLineGutter { background: transparent; }
+.file .cm-editor .cm-changedLine,
+.file .cm-editor .cm-insertedLine {
+  background: var(--add);
+}
+.file .cm-editor .cm-deletedChunk,
+.file .cm-editor .cm-deletedLine,
+.file .cm-merge-a .cm-changedLine {
+  background: var(--del);
+}
+.file .cm-editor .cm-changedText {
+  background: color-mix(in srgb, var(--addt) 25%, transparent);
+}
+.file .cm-editor .cm-deletedChunk .cm-changedText,
+.file .cm-merge-a .cm-changedText {
+  background: color-mix(in srgb, var(--delt) 25%, transparent);
+}
+.file .cm-editor .cm-changedLineGutter,
+.file .cm-editor .cm-deletedLineGutter {
+  background: transparent;
+}
 
 /* Review state (SPEC §10): a 3px strip, blue seen, amber seen against an old base, none unseen. */
-.file .cm-editor .vet-strip { min-width: 3px; width: 3px; }
-.file .cm-editor .vet-strip .vet-seen { background: var(--seen); }
-.file .cm-editor .vet-strip .vet-old { background: var(--old); }
-.file .cm-editor .cm-deletedChunk { position: relative; }
-.file .cm-editor .cm-deletedChunk.vet-seen::before, .file .cm-editor .cm-deletedChunk.vet-old::before { content: ""; position: absolute; top: 0; bottom: 0; left: calc(-1 * var(--vet-gutters, 0px)); width: 3px; z-index: 300; }
-.file .cm-editor .cm-deletedChunk.vet-seen::before { background: var(--seen); }
-.file .cm-editor .cm-deletedChunk.vet-old::before { background: var(--old); }
-.file .cm-editor .vet-current { outline: 1px solid var(--acc); outline-offset: -1px; }
+.file .cm-editor .vet-strip {
+  min-width: 3px;
+  width: 3px;
+}
+.file .cm-editor .vet-strip .vet-seen {
+  background: var(--seen);
+}
+.file .cm-editor .vet-strip .vet-old {
+  background: var(--old);
+}
+.file .cm-editor .cm-deletedChunk {
+  position: relative;
+}
+.file .cm-editor .cm-deletedChunk.vet-seen::before,
+.file .cm-editor .cm-deletedChunk.vet-old::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--vet-gutters, 0px));
+  width: 3px;
+  z-index: 300;
+}
+.file .cm-editor .cm-deletedChunk.vet-seen::before {
+  background: var(--seen);
+}
+.file .cm-editor .cm-deletedChunk.vet-old::before {
+  background: var(--old);
+}
+.file .cm-editor .vet-current {
+  outline: 1px solid var(--acc);
+  outline-offset: -1px;
+}
 
-.vet-hunk { display: flex; align-items: center; gap: 8px; height: var(--h-hunk); box-sizing: border-box; padding: 0 8px 0 10px; background: var(--hunk); color: var(--tx2); font-family: var(--font-mono); }
-.vet-hunk-text { font-size: var(--fs-mono-s); white-space: pre; }
-.vet-hunk-old { display: inline-flex; color: var(--old); }
-.vet-hunk-btn { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border: 0; padding: 0; border-radius: var(--radius); background: transparent; color: var(--tx2); cursor: pointer; }
-.vet-hunk-btn:hover { background: var(--hov); }
-.vet-hunk-seen .vet-seen-toggle { color: var(--seen); }
-.vet-hunk-seenAgainstOldBase .vet-seen-toggle { color: var(--old); }
+.vet-hunk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--h-hunk);
+  box-sizing: border-box;
+  padding: 0 8px 0 10px;
+  background: var(--hunk);
+  color: var(--tx2);
+  font-family: var(--font-mono);
+}
+.vet-hunk-text {
+  font-size: var(--fs-mono-s);
+  white-space: pre;
+}
+.vet-hunk-old {
+  display: inline-flex;
+  color: var(--old);
+}
+.vet-hunk-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--tx2);
+  cursor: pointer;
+}
+.vet-hunk-btn:hover {
+  background: var(--hov);
+}
+.vet-hunk-seen .vet-seen-toggle {
+  color: var(--seen);
+}
+.vet-hunk-seenAgainstOldBase .vet-seen-toggle {
+  color: var(--old);
+}
 
 /* Inline decorations: changed symbol, reachability, notes (derived, §7.3/§7.4). */
-.vet-m-symbol { border-bottom: 1px solid var(--fn); }
-.vet-m-reach { border-bottom: 1px dotted var(--ok); }
-.vet-m-note { border-bottom: 1px dashed var(--note); }
+.vet-m-symbol {
+  border-bottom: 1px solid var(--fn);
+}
+.vet-m-reach {
+  border-bottom: 1px dotted var(--ok);
+}
+.vet-m-note {
+  border-bottom: 1px dashed var(--note);
+}
 
-.vet-hover { padding: 4px 8px; background: var(--sheet); color: var(--tx); border: 1px solid var(--ln); white-space: pre; font-size: var(--fs-mono); }
+.vet-hover {
+  padding: 4px 8px;
+  background: var(--sheet);
+  color: var(--tx);
+  border: 1px solid var(--ln);
+  white-space: pre;
+  font-size: var(--fs-mono);
+}

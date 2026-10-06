@@ -18,9 +18,25 @@ export interface Row {
   note?: string;
 }
 
-export function row(metric: string, samples: number[], unit: string, threshold: number, cmp: "<" | "<=" = "<", note?: string): Row {
+export function row(
+  metric: string,
+  samples: number[],
+  unit: string,
+  threshold: number,
+  cmp: "<" | "<=" = "<",
+  note?: string,
+): Row {
   const p95 = percentile95(samples);
-  return { metric, p95, unit, threshold, cmp, n: samples.length, pass: cmp === "<" ? p95 < threshold : p95 <= threshold, note };
+  return {
+    metric,
+    p95,
+    unit,
+    threshold,
+    cmp,
+    n: samples.length,
+    pass: cmp === "<" ? p95 < threshold : p95 <= threshold,
+    note,
+  };
 }
 
 /** Rows with unit "" are pass/fail checks without a number. */

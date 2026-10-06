@@ -120,7 +120,10 @@ export class ChangesetView {
   private sectionHeight(s: Section): number {
     const { file } = s;
     // Unified shows every deleted line as an extra row; side by side pads the shorter side of each hunk.
-    const extra = file.hunks.reduce((rows, h) => rows + (this.mode === "unified" ? h.baseLen : Math.max(0, h.baseLen - h.targetLen)), 0);
+    const extra = file.hunks.reduce(
+      (rows, h) => rows + (this.mode === "unified" ? h.baseLen : Math.max(0, h.baseLen - h.targetLen)),
+      0,
+    );
     return this.m.header + (file.targetLines + extra) * this.m.line + file.hunks.length * this.m.hunk;
   }
 
@@ -144,7 +147,7 @@ export class ChangesetView {
     const fi = this.indexAt(this.root.scrollTop);
     for (const i of this.mounted) this.sections[i].handle?.destroy();
     this.mounted.clear();
-    for (const s of this.sections) (s.handle = undefined), (s.body.textContent = "");
+    for (const s of this.sections) ((s.handle = undefined), (s.body.textContent = ""));
     this.mode = mode;
     this.layout();
     this.root.scrollTop = this.sections[fi].top;
@@ -202,9 +205,17 @@ export class ChangesetView {
     for (let fi = near[0]; fi <= near[1]; fi++) {
       const s = this.sections[fi];
       if (s.handle || !s.loaded) continue;
-      s.handle = mountFile(s.body, s.file.path, s.loaded, { states: s.review.hunks, symbols: s.symbols }, this.mode, s.hooks);
+      s.handle = mountFile(
+        s.body,
+        s.file.path,
+        s.loaded,
+        { states: s.review.hunks, symbols: s.symbols },
+        this.mode,
+        s.hooks,
+      );
       this.mounted.add(fi);
-      if (this.current >= this.hunkStart[fi] && this.current < this.hunkStart[fi] + s.file.hunks.length) s.handle.dispatchAll(setCurrent.of(this.current - this.hunkStart[fi]));
+      if (this.current >= this.hunkStart[fi] && this.current < this.hunkStart[fi] + s.file.hunks.length)
+        s.handle.dispatchAll(setCurrent.of(this.current - this.hunkStart[fi]));
     }
   }
 
@@ -244,8 +255,12 @@ export class ChangesetView {
 
     // The row estimate scrolls close enough to mount the editor; CodeMirror then scrolls exactly.
     let row = hunk.targetStart;
-    for (const h of loaded.hunks.slice(0, hi)) row += this.mode === "unified" ? h.baseLen : Math.max(0, h.baseLen - h.targetLen);
-    this.root.scrollTop = Math.max(0, s.top + this.m.header + row * this.m.line + (hi + 1) * this.m.hunk - this.root.clientHeight / 2);
+    for (const h of loaded.hunks.slice(0, hi))
+      row += this.mode === "unified" ? h.baseLen : Math.max(0, h.baseLen - h.targetLen);
+    this.root.scrollTop = Math.max(
+      0,
+      s.top + this.m.header + row * this.m.line + (hi + 1) * this.m.hunk - this.root.clientHeight / 2,
+    );
     this.sync();
     const handle = s.handle!;
     const doc = handle.view.state.doc;
@@ -261,7 +276,9 @@ export class ChangesetView {
   /** Asks the backend to mark the hunks seen or unseen; the returned state reaches the view through `applyReview` (I5: the view keeps none of its own). */
   private setSeen(fi: number, hunks: number[], value: boolean): Promise<void> {
     const { file } = this.sections[fi];
-    const request = this.backend.setSeen(this.manifest.revision, file.path, hunks, value).then((update) => this.listeners.reviewed(update));
+    const request = this.backend
+      .setSeen(this.manifest.revision, file.path, hunks, value)
+      .then((update) => this.listeners.reviewed(update));
     return (this.pendingToggle = request);
   }
 
@@ -277,7 +294,11 @@ export class ChangesetView {
   /** Marks all hunks of file `fi` seen, or unseen if they all already are. */
   toggleSeen(fi: number): Promise<void> {
     const { review } = this.sections[fi];
-    return this.setSeen(fi, review.hunks.map((_, i) => i), !review.hunks.every((h) => h === "seen"));
+    return this.setSeen(
+      fi,
+      review.hunks.map((_, i) => i),
+      !review.hunks.every((h) => h === "seen"),
+    );
   }
 
   /** Unseen → seen, seen → unseen, seen against an old base → re-confirmed. */
