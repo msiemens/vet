@@ -27,3 +27,10 @@ tauri-plugin-dialog = "2"
 
 [lints.rust]
 unsafe_code = "forbid"
+
+# Debug info dominates link time: file:line backtraces for our crates, none for dependencies.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
