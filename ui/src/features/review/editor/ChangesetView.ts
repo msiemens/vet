@@ -321,9 +321,13 @@ export class ChangesetView {
 
   load(fi: number): Promise<Loaded> {
     const s = this.sections[fi];
-    s.loading ??= this.backend.fileContents(s.file.path).then((r) => {
+    const { file } = s;
+    // A file without text lines (binary, content unavailable) has nothing to fetch; the backend refuses it.
+    if (!s.loading && !file.hunks.length && !file.baseLines && !file.targetLines)
+      s.loading = Promise.resolve((s.loaded = { base: "", target: "", hunks: [], marks: [] }));
+    s.loading ??= this.backend.fileContents(file.path).then((r) => {
       if (r.revision !== this.revision) throw new Error("stale revision");
-      s.loaded = { base: r.base ?? "", target: r.target ?? "", hunks: s.file.hunks, marks: r.marks };
+      s.loaded = { base: r.base ?? "", target: r.target ?? "", hunks: file.hunks, marks: r.marks };
       this.sync();
       return s.loaded;
     });
@@ -392,8 +396,11 @@ export class ChangesetView {
       return Math.abs(s.top + s.height / 2 - middle);
     };
     const pending: number[] = [];
-    for (let fi = near[0]; fi <= near[1]; fi++)
-      if (!this.sections[fi].handle && this.sections[fi].loaded) pending.push(fi);
+    for (let fi = near[0]; fi <= near[1]; fi++) {
+      const { handle, loaded, file } = this.sections[fi];
+      // A file without text lines has no editor to show.
+      if (!handle && loaded && (file.hunks.length || file.baseLines || file.targetLines)) pending.push(fi);
+    }
     pending.sort((a, b) => distance(a) - distance(b));
     const started = performance.now();
     for (const [i, fi] of pending.entries()) {
