@@ -50,6 +50,7 @@ fn site(path: &str, line: u32) -> Location {
             start: Pos { line, col: 4 },
             end: Pos { line, col: 9 },
         },
+        external: false,
     }
 }
 

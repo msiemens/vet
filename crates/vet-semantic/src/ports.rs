@@ -138,8 +138,12 @@ pub struct At {
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Location {
+    /// Inside the root, repository-relative. If `external`, an absolute path.
     pub file: RepoPath,
     pub span: Span,
+    /// Outside the root: a dependency or toolchain source. Where something
+    /// resolves to matters even when Vet has no snapshot of it.
+    pub external: bool,
 }
 
 /// A symbol, identified by its file and container chain (outermost first).

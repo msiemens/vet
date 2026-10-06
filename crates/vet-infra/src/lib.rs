@@ -13,9 +13,7 @@ pub mod clock;
 
 pub mod store;
 
-/// `vet_semantic::ports::ServerLauncher` and `LanguageServer`: one concrete
-/// stdio LSP client, plus the `ServerCapabilities` assertion on start.
-pub mod lsp {}
+pub mod lsp;
 
 /// `vet_app::ports::ProcessRunner`.
 pub mod exec;
