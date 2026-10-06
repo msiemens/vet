@@ -23,7 +23,6 @@
     loadBase,
     onbase,
     completion,
-    filter,
     run,
     onopenrepo,
     onfinish,
@@ -44,8 +43,6 @@
     onfinish: () => void;
     /** Share of changed lines seen and seen against an old base, in percent. */
     completion: { seenPct: number; oldPct: number; title?: string };
-    /** The filter button with its popover. */
-    filter?: Snippet;
     /** The Run split button. */
     run?: Snippet;
   } = $props();
@@ -75,7 +72,6 @@
       <VersionLabel version={review.version} updatedAt={review.updatedAt} />
     {/if}
   </span>
-  {#if filter}{@render filter()}{/if}
   <span class="grow" data-tauri-drag-region></span>
   <span class="completion" title={completion.title} data-tauri-drag-region>
     <Meter

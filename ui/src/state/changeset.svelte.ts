@@ -160,12 +160,12 @@ class ChangesetStore {
   }
 
   /**
-   * Replaces the review filter. The backend pushes `snapshotSettled`, which fetches the new
+   * Replaces the repository's review filter. The backend pushes `snapshotSettled`, which fetches the new
    * manifest. Resolves with the backend's message if it refused the filter (a bad glob).
    */
   async setFilter(filter: ReviewFilter): Promise<string | undefined> {
     try {
-      await this.connected().setFilter(filter);
+      await this.connected().setProjectFilter(filter);
       return undefined;
     } catch (error) {
       return error instanceof Error ? error.message : String(error);

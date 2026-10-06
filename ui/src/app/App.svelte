@@ -15,7 +15,6 @@
     TitleBar,
     ToolRail,
   } from "../features/chrome";
-  import { FilterPopover } from "../features/filter";
   import { type Mode, ReviewScreen, type ReviewController } from "../features/review";
   import { RunButton, RunDialogs, RunPanel } from "../features/run";
   import { SettingsDialog } from "../features/settings";
@@ -54,10 +53,6 @@
       oldPct: pct(c.oldBaseLines),
       title: `${c.seenLines} of ${c.lines} lines · ${c.acknowledgedItems} of ${c.items} other changes · ${c.oldBaseLines} lines against an old base`,
     };
-  });
-  const excluded = $derived({
-    lines: changeset.manifest?.excludedLines ?? 0,
-    items: changeset.manifest?.excludedItems ?? 0,
   });
   const degraded = $derived(changeset.manifest?.degraded);
   let dismissedDegraded = $state<WatchDegraded>();
@@ -216,11 +211,6 @@
     onopenrepo={() => void changeset.pickRepo()}
     onfinish={() => (dialog = "finish")}
   >
-    {#snippet filter()}
-      {#if changeset.manifest}
-        <FilterPopover filter={changeset.manifest.filter} {excluded} onsave={(f) => changeset.setFilter(f)} />
-      {/if}
-    {/snippet}
     {#snippet run()}<RunButton />{/snippet}
   </Header>
 
@@ -298,6 +288,8 @@
     ontheme={(t) => applyTheme((theme = t))}
     onclose={() => (dialog = undefined)}
     backend={changeset.repo ? changeset.backend : undefined}
+    project={changeset.repo ? changeset.manifest : undefined}
+    onfilter={(f) => changeset.setFilter(f)}
   />
 {:else if dialog === "about"}
   <AboutDialog onclose={() => (dialog = undefined)} />

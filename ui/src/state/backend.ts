@@ -141,9 +141,9 @@ export class Backend {
     return expect(await this.conn.request({ type: "setBase", session: this.sid, base }), "base");
   }
 
-  /** Replaces the review filter; every subscriber, this one included, then gets `snapshotSettled`. Rejects with the backend's message for an invalid glob. */
-  async setFilter(filter: ReviewFilter): Promise<void> {
-    expect(await this.conn.request({ type: "setFilter", session: this.sid, filter }), "done");
+  /** Replaces the open repository's review filter; every subscriber, this one included, then gets `snapshotSettled`. Rejects with the backend's message for an invalid glob. */
+  async setProjectFilter(filter: ReviewFilter): Promise<void> {
+    expect(await this.conn.request({ type: "setProjectFilter", session: this.sid, filter }), "done");
   }
 
   /** Ends the open review; every subscriber, this one included, then gets `snapshotSettled`. Resolves with whether it was complete. */

@@ -1,47 +1,44 @@
 <script lang="ts">
   import type { ReviewFilter } from "../../generated/ReviewFilter";
-  import IconButton from "../../lib/ui/IconButton.svelte";
-  import Popover from "../../lib/ui/Popover.svelte";
+  import { parseLines } from "./filterText";
 
   let {
     filter,
     excluded,
     onsave,
   }: {
-    /** The session's filter, as the manifest carries it. */
-    filter: ReviewFilter;
+    /** The repository's filter, as the manifest carries it; undefined without an open repository. */
+    filter: ReviewFilter | undefined;
     /** Changes the filter currently excludes; the backend computes them. */
     excluded: { lines: number; items: number };
     /** Saves a changed filter; resolves with the backend's message if it refused it. */
     onsave: (filter: ReviewFilter) => Promise<string | undefined>;
   } = $props();
 
-  let open = $state(false);
   let error = $state<string>();
-  const lines = (text: string) =>
-    text
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean);
 
   /** A refused edit stays in its field with the message below; an accepted one comes back as the new manifest's filter. */
   async function save(change: Partial<ReviewFilter>) {
-    error = await onsave({ ...filter, ...change });
+    if (filter) error = await onsave({ ...filter, ...change });
   }
 </script>
 
-<Popover bind:open>
-  {#snippet trigger(toggle)}
-    <IconButton icon="filter" label="Review filter" active={open} onclick={toggle} />
-  {/snippet}
+{#if !filter}
+  <p class="empty">Open a repository to edit its review filter.</p>
+{:else}
   <form onsubmit={(e) => e.preventDefault()}>
+    <p class="hint">
+      What a review shows and counts in this repository. It applies to every changeset of it and never changes review
+      state.
+    </p>
     <label>
       <span>Review roots</span>
       <textarea
         class="mono"
         rows="2"
+        aria-label="Review roots, one folder per line"
         value={filter.roots.join("\n")}
-        onchange={(e) => save({ roots: lines(e.currentTarget.value) })}></textarea>
+        onchange={(e) => save({ roots: parseLines(e.currentTarget.value) })}></textarea>
     </label>
     <label class="check"
       ><input
@@ -55,16 +52,18 @@
       <textarea
         class="mono"
         rows="2"
+        aria-label="Include globs, one per line"
         value={filter.include.join("\n")}
-        onchange={(e) => save({ include: lines(e.currentTarget.value) })}></textarea>
+        onchange={(e) => save({ include: parseLines(e.currentTarget.value) })}></textarea>
     </label>
     <label>
       <span>Exclude globs</span>
       <textarea
         class="mono"
         rows="3"
+        aria-label="Exclude globs, one per line"
         value={filter.exclude.join("\n")}
-        onchange={(e) => save({ exclude: lines(e.currentTarget.value) })}></textarea>
+        onchange={(e) => save({ exclude: parseLines(e.currentTarget.value) })}></textarea>
     </label>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <p class="count">
@@ -72,13 +71,10 @@
       excluded
     </p>
   </form>
-</Popover>
+{/if}
 
 <style>
   form {
-    width: 320px;
-    padding: 12px;
-    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -105,12 +101,20 @@
     font-size: var(--fs-mono);
     padding: 4px 8px;
   }
-  .error {
+  p {
     margin: 0;
+  }
+  .hint {
+    color: var(--text-3);
+    font-size: 12px;
+  }
+  .empty {
+    color: var(--text-3);
+  }
+  .error {
     color: var(--del-text);
   }
   .count {
-    margin: 0;
     padding-top: 8px;
     border-top: 1px solid var(--line-soft);
     color: var(--text-2);

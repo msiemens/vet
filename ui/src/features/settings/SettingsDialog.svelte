@@ -1,8 +1,11 @@
 <script lang="ts">
+  import type { Manifest } from "../../generated/Manifest";
+  import type { ReviewFilter } from "../../generated/ReviewFilter";
   import type { Theme } from "../../lib/theme/theme";
   import Dialog from "../../lib/ui/Dialog.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import type { Backend } from "../../state/backend";
+  import ProjectPage from "./ProjectPage.svelte";
   import ServersPage from "./ServersPage.svelte";
 
   let {
@@ -10,15 +13,21 @@
     ontheme,
     onclose,
     backend,
+    project,
+    onfilter,
   }: {
     theme: Theme;
     ontheme: (theme: Theme) => void;
     onclose: () => void;
     /** The language servers belong to the open repository's session, if there is one. */
     backend?: Backend;
+    /** The open repository's current manifest, which carries its review filter. */
+    project?: Manifest;
+    /** Saves the repository's review filter; resolves with the backend's message if it refused it. */
+    onfilter: (filter: ReviewFilter) => Promise<string | undefined>;
   } = $props();
 
-  type Page = "general" | "servers";
+  type Page = "general" | "project" | "servers";
   let page = $state<Page>("general");
 </script>
 
@@ -32,11 +41,18 @@
       }}
       options={[
         { id: "general", label: "General" },
+        { id: "project", label: "Review filter" },
         { id: "servers", label: "Language servers" },
       ]}
     />
   </div>
-  {#if page === "servers"}
+  {#if page === "project"}
+    <ProjectPage
+      filter={project?.filter}
+      excluded={{ lines: project?.excludedLines ?? 0, items: project?.excludedItems ?? 0 }}
+      onsave={onfilter}
+    />
+  {:else if page === "servers"}
     <ServersPage {backend} />
   {:else}
     <section>
