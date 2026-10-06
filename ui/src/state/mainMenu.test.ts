@@ -6,6 +6,7 @@ import { type MenuContext, buildMenu, parseCommand } from "./mainMenu.ts";
 const context: MenuContext = {
   mac: false,
   repoOpen: true,
+  reviewOpen: true,
   canQuit: true,
   recent: [{ path: "/a/vet", name: "vet" }],
   mode: "split",
@@ -50,6 +51,12 @@ void test("state shows as checks and enabled flags", () => {
   assert.equal(find(menu, "theme:dark")?.checked, true);
   assert.equal(find(menu, "recent")?.enabled, false);
   assert.equal(find(menu, "tools")?.enabled, false);
+});
+
+void test("Finish Review is offered only while a review is open", () => {
+  assert.equal(find(buildMenu(context), "finishReview")?.enabled, true);
+  assert.equal(find(buildMenu({ ...context, reviewOpen: false }), "finishReview")?.enabled, false);
+  assert.deepEqual(parseCommand("finishReview"), { type: "finishReview" });
 });
 
 void test("commands carry their argument, including paths with colons", () => {

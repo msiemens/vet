@@ -1,16 +1,9 @@
-<script module lang="ts">
-  export interface HeaderInfo {
-    project: string;
-    /** "Working tree", a PR, a commit range. */
-    changeset: string;
-    target: string;
-  }
-</script>
-
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { Base } from "../../generated/Base";
   import type { BaseChoice } from "../../generated/BaseChoice";
+  import type { ReviewInfo } from "../../generated/ReviewInfo";
+  import type { Target } from "../../generated/Target";
   import Chip from "../../lib/ui/Chip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -20,25 +13,35 @@
   import type { BaseCandidates } from "../../state/backend";
   import BaseChip from "./BaseChip.svelte";
   import TitleBar from "./TitleBar.svelte";
+  import VersionLabel from "./VersionLabel.svelte";
 
   let {
-    info,
+    project,
     base,
+    target,
+    review,
     loadBase,
     onbase,
     completion,
     filter,
     run,
     onopenrepo,
+    onfinish,
   }: {
-    info: HeaderInfo;
+    project: string;
     /** What the changes are compared against. */
     base?: Base;
+    /** What they lead to: the working tree. */
+    target?: Target;
+    /** Whether a review has started; its version shows only while it is open. */
+    review?: ReviewInfo;
     /** Lists the branches and commits the base can be picked from. */
     loadBase: () => Promise<BaseCandidates | undefined>;
     onbase: (choice: BaseChoice) => void;
     /** "Open repository…" in the project menu. */
     onopenrepo: () => void;
+    /** "Finish review", offered while a review is open. */
+    onfinish: () => void;
     /** Share of changed lines seen and seen against an old base, in percent. */
     completion: { seenPct: number; oldPct: number; title?: string };
     /** The filter button with its popover. */
@@ -52,7 +55,7 @@
 <TitleBar>
   <Popover bind:open={projectMenu}>
     {#snippet trigger(toggle)}
-      <Chip bold onclick={toggle}>{info.project}</Chip>
+      <Chip bold onclick={toggle}>{project}</Chip>
     {/snippet}
     <Menu
       items={[{ id: "open", label: "Open repository…" }]}
@@ -62,13 +65,15 @@
       }}
     />
   </Popover>
-  <Chip>
-    <Icon name="branch" />{info.changeset}
-  </Chip>
   <span class="range" data-tauri-drag-region>
-    <BaseChip {base} load={loadBase} onpick={onbase} />
+    <BaseChip {base} branch={target?.branch} load={loadBase} onpick={onbase} />
     <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
-    <Chip mono>{info.target}</Chip>
+    <span class="target" title={target?.branch && `On ${target.branch}`} data-tauri-drag-region
+      >{target?.name ?? "…"}</span
+    >
+    {#if review?.state === "open"}
+      <VersionLabel version={review.version} updatedAt={review.updatedAt} />
+    {/if}
   </span>
   {#if filter}{@render filter()}{/if}
   <span class="grow" data-tauri-drag-region></span>
@@ -82,6 +87,14 @@
     />
     <span class="mono pct">{Math.round(completion.seenPct + completion.oldPct)}%</span>
   </span>
+  {#if review?.state === "open"}
+    <button
+      class="ctl finish"
+      type="button"
+      title="End this review; edits are browsed until the next mark"
+      onclick={onfinish}>Finish review</button
+    >
+  {/if}
   {#if run}{@render run()}{/if}
   <IconButton icon="search" label="Search everywhere" />
 </TitleBar>
@@ -96,6 +109,13 @@
   .arrow {
     display: inline-flex;
     color: var(--text-3);
+  }
+  .target {
+    padding: 0 4px;
+    color: var(--text-2);
+  }
+  .finish {
+    margin-right: 6px;
   }
   .grow {
     flex: 1 1 40px;

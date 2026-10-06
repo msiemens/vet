@@ -4,6 +4,8 @@ import type { Completion } from "./Completion";
 import type { FileChange } from "./FileChange";
 import type { RestoreFailure } from "./RestoreFailure";
 import type { ReviewFilter } from "./ReviewFilter";
+import type { ReviewInfo } from "./ReviewInfo";
+import type { Target } from "./Target";
 import type { WatchDegraded } from "./WatchDegraded";
 
 /**
@@ -13,11 +15,15 @@ export type Manifest = { session: number,
 /**
  * Increases whenever the changeset's target changes.
  */
-revision: number, name: string, 
+revision: number, name: string, review: ReviewInfo, 
 /**
  * What the files are compared against.
  */
-base: Base, filter: ReviewFilter, files: Array<FileChange>, 
+base: Base, 
+/**
+ * What the files lead to.
+ */
+target: Target, filter: ReviewFilter, files: Array<FileChange>, 
 /**
  * Completion of the whole changeset.
  */

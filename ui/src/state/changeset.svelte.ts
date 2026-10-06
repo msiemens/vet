@@ -62,6 +62,8 @@ class ChangesetStore {
         if (event.type === "snapshotSettled") void this.refresh();
         else if (event.type === "reviewChanged" && event.revision === this.manifest?.revision)
           this.applyReview(event.update);
+        else if (event.type === "reviewStarted" && this.manifest)
+          this.manifest = { ...this.manifest, review: event.review };
         else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
       });
       this.backend = backend;
@@ -139,6 +141,19 @@ class ChangesetStore {
   async setBase(choice: BaseChoice) {
     try {
       await this.connected().setBase(choice);
+    } catch (error) {
+      this.notice = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  /**
+   * Ends the open review and says how it ended. The backend pushes `snapshotSettled`, which
+   * fetches the manifest again, back to browsing.
+   */
+  async finishReview() {
+    try {
+      const complete = await this.connected().finishReview();
+      this.notice = complete ? "Review finished: everything was seen" : "Review finished with unseen changes left";
     } catch (error) {
       this.notice = error instanceof Error ? error.message : String(error);
     }

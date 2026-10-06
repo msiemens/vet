@@ -9,6 +9,8 @@ export interface MenuContext {
   mac: boolean;
   /** A repository is open: its view and tool windows exist. */
   repoOpen: boolean;
+  /** A review has started and can be finished. */
+  reviewOpen: boolean;
   canQuit: boolean;
   /** Backend-side paths with their display names, most recent first. */
   recent: { path: string; name: string }[];
@@ -21,6 +23,7 @@ export interface MenuContext {
 export type Command =
   | { type: "open" }
   | { type: "openRecent"; path: string }
+  | { type: "finishReview" }
   | { type: "settings" }
   | { type: "about" }
   | { type: "quit" }
@@ -53,6 +56,8 @@ export function buildMenu(c: MenuContext): MenuItem[] {
       enabled: c.recent.length > 0,
       children: c.recent.map(({ path, name }) => ({ id: `recent:${path}`, label: name, detail: path })),
     },
+    separator,
+    { id: "finishReview", label: "Finish Review…", enabled: c.reviewOpen },
     ...(c.mac ? [] : [separator, settings, separator, quit]),
   ];
   const view: MenuItem[] = [
@@ -96,6 +101,7 @@ export function parseCommand(id: string): Command | undefined {
     case "settings":
     case "about":
     case "quit":
+    case "finishReview":
       return { type: kind };
     case "devPanel":
       return { type: "devPanel" };

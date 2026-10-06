@@ -3,4 +3,4 @@
 /**
  * How a session's base is chosen.
  */
-export type BaseChoice = { "type": "pin" } | { "type": "mergeBase", reference: string, } | { "type": "commit", id: string, };
+export type BaseChoice = { "type": "branch", name: string, } | { "type": "mergeBase", reference: string, } | { "type": "commit", id: string, };

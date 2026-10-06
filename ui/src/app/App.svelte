@@ -6,6 +6,7 @@
   import Banner from "../lib/ui/Banner.svelte";
   import {
     AboutDialog,
+    FinishDialog,
     Header,
     degradedMessage,
     limitedMessage,
@@ -40,7 +41,8 @@
   let status = $state("");
   let theme = $state<Theme>(storedTheme());
   let mode = $state<Mode>("unified");
-  let dialog = $state<"settings" | "about">();
+  let dialog = $state<"settings" | "about" | "finish">();
+  const reviewOpen = $derived(changeset.manifest?.review.state === "open");
 
   const completion = $derived.by(() => {
     const c = changeset.manifest?.completion;
@@ -116,6 +118,7 @@
     mainMenu.update({
       mac: isMac,
       repoOpen: !!changeset.repo,
+      reviewOpen,
       canQuit,
       recent: recent.list.map((path) => ({ path, name: repoName(path) })),
       mode,
@@ -149,6 +152,9 @@
         break;
       case "openRecent":
         void changeset.openRepo(command.path);
+        break;
+      case "finishReview":
+        if (reviewOpen) dialog = "finish";
         break;
       case "settings":
       case "about":
@@ -201,16 +207,15 @@
 
 {#if changeset.backend && changeset.repo}
   <Header
-    info={{
-      project: repoName(changeset.repo),
-      changeset: "Working tree",
-      target: `#${changeset.manifest?.revision ?? 0}`,
-    }}
+    project={repoName(changeset.repo)}
     base={changeset.manifest?.base}
+    target={changeset.manifest?.target}
+    review={changeset.manifest?.review}
     loadBase={() => changeset.baseCandidates()}
     onbase={(choice) => void changeset.setBase(choice)}
     {completion}
     onopenrepo={() => void changeset.pickRepo()}
+    onfinish={() => (dialog = "finish")}
   >
     {#snippet filter()}
       {#if changeset.manifest}
@@ -297,6 +302,14 @@
   />
 {:else if dialog === "about"}
   <AboutDialog onclose={() => (dialog = undefined)} />
+{:else if dialog === "finish"}
+  <FinishDialog
+    onclose={() => (dialog = undefined)}
+    onfinish={() => {
+      dialog = undefined;
+      void changeset.finishReview();
+    }}
+  />
 {/if}
 
 <DevTools bind:this={tools} {controller} bind:open={devOpen} bind:status />

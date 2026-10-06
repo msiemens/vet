@@ -146,6 +146,11 @@ export class Backend {
     expect(await this.conn.request({ type: "setFilter", session: this.sid, filter }), "done");
   }
 
+  /** Ends the open review; every subscriber, this one included, then gets `snapshotSettled`. Resolves with whether it was complete. */
+  async finishReview(): Promise<boolean> {
+    return expect(await this.conn.request({ type: "finishReview", session: this.sid }), "reviewFinished").complete;
+  }
+
   /** The branches and recent commits a base can be picked from. */
   async baseCandidates(): Promise<BaseCandidates> {
     const { branches, commits } = expect(
