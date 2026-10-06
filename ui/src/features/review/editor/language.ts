@@ -9,6 +9,7 @@ import { python } from "@codemirror/lang-python";
 import { rust } from "@codemirror/lang-rust";
 import { yaml } from "@codemirror/lang-yaml";
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
+import { csharp } from "@codemirror/legacy-modes/mode/clike";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { toml } from "@codemirror/legacy-modes/mode/toml";
 import type { Extension } from "@codemirror/state";
@@ -47,6 +48,9 @@ function language(path: string): Extension {
     case "sh":
     case "bash":
       return StreamLanguage.define(shell);
+    case "cs":
+    case "csx":
+      return StreamLanguage.define(csharp);
     case "css":
       return css();
     case "html":
@@ -61,7 +65,7 @@ function language(path: string): Extension {
 const highlightStyle = HighlightStyle.define([
   { tag: [t.keyword, t.operatorKeyword, t.modifier], color: "var(--syn-keyword)" },
   { tag: [t.string, t.special(t.string)], color: "var(--syn-string)" },
-  { tag: [t.number, t.bool, t.null], color: "var(--syn-number)" },
+  { tag: [t.number, t.bool, t.null, t.atom], color: "var(--syn-number)" },
   { tag: [t.comment, t.docComment], color: "var(--text-3)", fontStyle: "italic" },
   { tag: [t.typeName, t.className, t.namespace], color: "var(--syn-type)" },
   { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: "var(--syn-function)" },
