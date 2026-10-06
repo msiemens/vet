@@ -2,7 +2,15 @@
 // the unified view), hunk header bars and inline marks from the backend (SPEC §10).
 
 import { StateEffect, StateField, type Extension, type Range, type Text } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, GutterMarker, ViewPlugin, gutter } from "@codemirror/view";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  GutterMarker,
+  ViewPlugin,
+  type ViewUpdate,
+  gutter,
+} from "@codemirror/view";
 import type { Hunk } from "../../../generated/Hunk";
 import type { Mark } from "../../../generated/Mark";
 import type { MarkKind } from "../../../generated/MarkKind";
@@ -175,6 +183,13 @@ export function deletedChunkStyle(field: StateField<ReviewState>): Extension {
     // Widgets are created after plugin updates, so style them in the measure phase.
     const schedule = () => view.requestMeasure({ read: () => null, write: () => style(view), key: field });
     schedule();
-    return { update: schedule };
+    return {
+      // Not on height-only updates: the measure phase sends those itself, and asking for
+      // another measure from one restarts the measure loop until CodeMirror gives up.
+      update: (u: ViewUpdate) => {
+        if (u.docChanged || u.viewportChanged || u.transactions.some((tr) => tr.effects.some((e) => e.is(setStates))))
+          schedule();
+      },
+    };
   });
 }
