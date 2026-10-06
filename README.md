@@ -44,7 +44,16 @@ directly: it counts every type and its methods as a cycle.
 
 Runs everything: rustfmt (both workspaces), clippy (`-D warnings`), tests,
 `check-deps.sh`, `check-module-cycles.sh`, then in `ui/` `pnpm check`, `lint`,
-`format:check`, `test` and `build`. Run it before committing.
+`format:check`, `test` and `build`. Run it before merging.
+
+`./ci/quick.sh [BASE]` checks only what changed since `BASE` (default: the merge
+base with `main`): rustfmt on changed files, clippy/tests/module cycles for the
+changed crates and their dependents, and svelte-check, eslint, prettier and unit
+tests for changed UI files.
+
+`./ci/chromium.sh [args…]` runs headless Chromium for screenshots or CDP: it is
+killed after `VET_CHROMIUM_TIMEOUT` seconds (default 600) or when the script
+exits, and its profile is deleted.
 
 Formatting-only commits are listed in `.git-blame-ignore-revs`; enable them
 with `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
