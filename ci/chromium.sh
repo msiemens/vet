@@ -21,8 +21,9 @@ fi
 if $windows; then
     # From a Windows working directory, or cmd.exe complains about the UNC path.
     temp=$(cd /mnt/c && wslpath -u "$(/mnt/c/Windows/System32/cmd.exe /c 'echo %TEMP%' 2>/dev/null | tr -d '\r')")
-    # Profiles Edge still held when an earlier run tried to delete them.
-    find "$temp" -maxdepth 1 -name 'vet-edge.*' -mmin +10 -exec rm -rf {} + 2>/dev/null || true
+    # Profiles Edge still held when an earlier run tried to delete them; in the background,
+    # since listing the Windows temp dir from WSL is slow.
+    (find "$temp" -maxdepth 1 -name 'vet-edge.*' -mmin +10 -exec rm -rf {} + 2>/dev/null &)
     profile=$(mktemp -d "$temp/vet-edge.XXXXXX")
     profile_arg=$(wslpath -w "$profile")
 else
