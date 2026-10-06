@@ -214,21 +214,31 @@ impl fmt::Display for QueryError {
 
 /// The required operations (§7.1). Whether the server's answers come from the
 /// live worktree or an immutable snapshot is the pool's concern, not this trait's.
-pub trait LanguageServer: Send {
-    fn document_symbols(&mut self, file: &RepoPath)
-    -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
-    fn definition(&mut self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
+///
+/// Methods take `&self`: the pool lets several callers use one server at once.
+pub trait LanguageServer: Send + Sync {
+    fn document_symbols(&self, file: &RepoPath) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
+    fn definition(&self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
     /// Without the declaration itself.
-    fn references(&mut self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
-    fn hover(&mut self, at: &At) -> impl Future<Output = Result<Option<String>, QueryError>> + Send;
+    fn references(&self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
+    fn hover(&self, at: &At) -> impl Future<Output = Result<Option<String>, QueryError>> + Send;
     /// Callers of the symbol at `at` that are inside the root.
-    fn incoming_calls(&mut self, at: &At) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
-    fn outgoing_calls(&mut self, at: &At) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
+    fn incoming_calls(&self, at: &At) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
+    fn outgoing_calls(&self, at: &At) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     /// Matches inside the root.
-    fn workspace_symbols(&mut self, query: &str) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
-    fn diagnostics(&mut self, file: &RepoPath) -> impl Future<Output = Result<Vec<Diagnostic>, QueryError>> + Send;
+    fn workspace_symbols(&self, query: &str) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
+    fn diagnostics(&self, file: &RepoPath) -> impl Future<Output = Result<Vec<Diagnostic>, QueryError>> + Send;
     /// Ask the server to exit. It is killed if it does not.
-    fn shutdown(&mut self) -> impl Future<Output = ()> + Send;
+    fn shutdown(&self) -> impl Future<Output = ()> + Send;
+}
+
+/// Whether the files a server sees can change under it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tree {
+    /// The dirty worktree: the server must follow edits on disk.
+    Live,
+    /// A materialized snapshot: files never change.
+    Immutable,
 }
 
 /// Implemented by `vet-infra::lsp`. The pool needs a launcher, not a server
@@ -240,6 +250,7 @@ pub trait ServerLauncher {
     fn start(
         &self,
         root: &std::path::Path,
+        tree: Tree,
         backend: &Backend,
         policy: AnalysisPolicy,
     ) -> impl Future<Output = Result<Self::Server, LaunchError>> + Send;

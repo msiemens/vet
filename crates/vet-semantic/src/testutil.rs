@@ -1,5 +1,6 @@
 //! Test-only executor: the fakes never block, so a no-op waker is enough.
 
+use std::future::poll_fn;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
@@ -11,4 +12,19 @@ pub fn block_on<T>(fut: impl Future<Output = T>) -> T {
             return v;
         }
     }
+}
+
+/// Pending once, so another future gets polled in between.
+pub async fn yield_once() {
+    let mut yielded = false;
+    poll_fn(|cx| {
+        if yielded {
+            Poll::Ready(())
+        } else {
+            yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    })
+    .await;
 }

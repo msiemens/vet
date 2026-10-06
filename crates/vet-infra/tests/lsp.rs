@@ -9,7 +9,7 @@ use tempfile::TempDir;
 use vet_core::content::RepoPath;
 use vet_infra::lsp::{LspLauncher, config};
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{At, LanguageServer, Pos, ServerLauncher};
+use vet_semantic::ports::{At, LanguageServer, Pos, ServerLauncher, Tree};
 
 const LIB: &str = "\
 pub struct Counter {
@@ -80,9 +80,10 @@ async fn rust_analyzer_answers_the_primitive_queries() {
     let launcher = LspLauncher {
         ready_timeout: Duration::from_secs(120),
     };
-    let mut server = launcher
+    let server = launcher
         .start(
             dir.path(),
+            Tree::Live,
             &config::rust_analyzer(),
             AnalysisPolicy { allow_executing: true },
         )
@@ -167,9 +168,10 @@ async fn typescript_language_server_answers_the_primitive_queries() {
     )
     .unwrap();
     std::fs::write(dir.path().join("a.ts"), src).unwrap();
-    let mut server = LspLauncher::default()
+    let server = LspLauncher::default()
         .start(
             dir.path(),
+            Tree::Immutable,
             &config::typescript(),
             AnalysisPolicy { allow_executing: false },
         )
@@ -185,6 +187,10 @@ async fn typescript_language_server_answers_the_primitive_queries() {
         .collect();
     names.sort();
     assert_eq!(names, ["entry", "helper"]);
+
+    // Snapshot files are immutable, so an open document is not re-read.
+    std::fs::write(dir.path().join("a.ts"), format!("{src}export function late() {{}}\n")).unwrap();
+    assert_eq!(server.document_symbols(&file).await.unwrap().len(), 2);
     let call = At {
         file: file.clone(),
         pos: find(src, "helper()", 0, 1),

@@ -115,9 +115,9 @@ where
         for backend in &self.backends {
             let id = backend.config().backend.clone();
             let result = match self.lease(side, backend).await {
-                Ok(mut lease) => {
+                Ok(lease) => {
                     let r = lease.workspace_symbols(query).await;
-                    self.pool.release(lease).await;
+                    lease.release().await;
                     r.map_err(SemanticError::Query)
                 }
                 Err(e) => Err(e),
@@ -127,7 +127,7 @@ where
         results
     }
 
-    async fn lease(&self, side: &Side, backend: &Backend) -> Result<Lease<L::Server, M::Guard>, SemanticError> {
+    async fn lease(&self, side: &Side, backend: &Backend) -> Result<Lease<'_, M, L>, SemanticError> {
         let key = PoolKey {
             target: side.target,
             backend: backend.config().backend.clone(),
@@ -136,7 +136,7 @@ where
         self.pool.lease(&key, backend).await.map_err(SemanticError::Pool)
     }
 
-    async fn lease_for(&self, side: &Side, file: &RepoPath) -> Result<Lease<L::Server, M::Guard>, SemanticError> {
+    async fn lease_for(&self, side: &Side, file: &RepoPath) -> Result<Lease<'_, M, L>, SemanticError> {
         let backend = backend_for(&self.backends, file).ok_or_else(|| SemanticError::NoBackend(file.clone()))?;
         self.lease(side, backend).await
     }
@@ -160,9 +160,9 @@ impl<M: Materializer, L: ServerLauncher> Pair<'_, M, L> {
 
 macro_rules! ask {
     ($self:ident, $which:ident, $file:expr, $method:ident($($arg:expr),*)) => {{
-        let mut lease = $self.semantic.lease_for($self.side($which), $file).await?;
+        let lease = $self.semantic.lease_for($self.side($which), $file).await?;
         let answer = lease.$method($($arg),*).await;
-        $self.semantic.pool.release(lease).await;
+        lease.release().await;
         answer.map_err(SemanticError::Query)
     }};
 }

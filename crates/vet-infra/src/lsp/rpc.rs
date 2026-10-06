@@ -45,7 +45,7 @@ struct Shared {
 }
 
 pub(super) struct Connection {
-    child: Child,
+    child: tokio::sync::Mutex<Child>,
     stdin: Arc<tokio::sync::Mutex<ChildStdin>>,
     next_id: AtomicI64,
     shared: Arc<Shared>,
@@ -80,7 +80,7 @@ impl Connection {
         tokio::spawn(read_loop(stdout, shared.clone(), stdin.clone()));
         tokio::spawn(collect_stderr(stderr, shared.clone()));
         Ok(Self {
-            child,
+            child: tokio::sync::Mutex::new(child),
             stdin,
             next_id: AtomicI64::new(1),
             shared,
@@ -176,16 +176,17 @@ impl Connection {
     }
 
     /// `shutdown` then `exit`; kills the process if it lingers.
-    pub async fn close(mut self) {
+    pub async fn close(&self) {
         let _ = self
             .request_with_timeout::<lsp_types::request::Shutdown>((), Duration::from_secs(5))
             .await;
         let _ = self.notify::<lsp_types::notification::Exit>(()).await;
-        if tokio::time::timeout(Duration::from_secs(3), self.child.wait())
+        let mut child = self.child.lock().await;
+        if tokio::time::timeout(Duration::from_secs(3), child.wait())
             .await
             .is_err()
         {
-            let _ = self.child.kill().await;
+            let _ = child.kill().await;
         }
     }
 }

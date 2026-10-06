@@ -38,22 +38,7 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
-    use crate::testutil::block_on;
-
-    /// Pending once, so the first future can only finish if the second is polled.
-    async fn yield_once() {
-        let mut yielded = false;
-        poll_fn(|cx| {
-            if yielded {
-                Poll::Ready(())
-            } else {
-                yielded = true;
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
-        })
-        .await;
-    }
+    use crate::testutil::{block_on, yield_once};
 
     #[test]
     fn both_futures_make_progress_before_either_finishes() {

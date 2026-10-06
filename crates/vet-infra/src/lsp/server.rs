@@ -17,7 +17,9 @@ use lsp_types::request::{
     DocumentSymbolRequest, GotoDefinition, HoverRequest, References, WorkspaceSymbolRequest,
 };
 use vet_core::content::RepoPath;
-use vet_semantic::ports::{At, Diagnostic, LanguageServer, Location, Pos, QueryError, Severity, Span, Sym, SymbolInfo};
+use vet_semantic::ports::{
+    At, Diagnostic, LanguageServer, Location, Pos, QueryError, Severity, Span, Sym, SymbolInfo, Tree,
+};
 
 use super::capabilities::Diagnostics;
 use super::config::language_id;
@@ -34,12 +36,15 @@ struct Doc {
     text: String,
 }
 
+/// Shared by concurrent callers: requests go straight to the connection;
+/// only document sync is serialized.
 pub struct LspServer {
-    conn: Option<Connection>,
+    conn: Connection,
     /// Canonical, so server URIs can be mapped back to repository paths.
     root: PathBuf,
+    tree: Tree,
     diagnostics: Diagnostics,
-    docs: Vec<Doc>,
+    docs: tokio::sync::Mutex<Vec<Doc>>,
 }
 
 fn err(e: impl std::fmt::Display) -> QueryError {
@@ -73,17 +78,18 @@ fn contains(s: Span, p: Pos) -> bool {
 }
 
 impl LspServer {
-    pub(super) fn new(conn: Connection, root: PathBuf, diagnostics: Diagnostics) -> Self {
+    pub(super) fn new(conn: Connection, root: PathBuf, tree: Tree, diagnostics: Diagnostics) -> Self {
         Self {
-            conn: Some(conn),
+            conn,
             root,
+            tree,
             diagnostics,
-            docs: Vec::new(),
+            docs: tokio::sync::Mutex::new(Vec::new()),
         }
     }
 
     fn conn(&self) -> Result<&Connection, QueryError> {
-        self.conn.as_ref().ok_or_else(|| err("language server was shut down"))
+        Ok(&self.conn)
     }
 
     fn path_of(&self, file: &RepoPath) -> Result<PathBuf, QueryError> {
@@ -137,26 +143,34 @@ impl LspServer {
         }
     }
 
-    /// Mirrors `file` and every open document from disk. `true` if `file` was
-    /// opened or changed.
-    async fn sync(&mut self, file: &RepoPath) -> Result<bool, QueryError> {
-        let open: Vec<_> = self.docs.iter().map(|d| d.file.clone()).collect();
-        for other in open.into_iter().filter(|f| f != file) {
-            self.refresh(&other).await?;
+    /// Makes the server see `file`; on the live tree also mirrors every open
+    /// document from disk. `true` if `file` was opened or changed. Snapshot
+    /// files never change, so they are opened once and left alone.
+    async fn sync(&self, file: &RepoPath) -> Result<bool, QueryError> {
+        let mut docs = self.docs.lock().await;
+        if self.tree == Tree::Immutable {
+            if docs.iter().any(|d| &d.file == file) {
+                return Ok(false);
+            }
+            return self.refresh(&mut docs, file).await;
         }
-        self.refresh(file).await
+        let open: Vec<_> = docs.iter().map(|d| d.file.clone()).collect();
+        for other in open.into_iter().filter(|f| f != file) {
+            self.refresh(&mut docs, &other).await?;
+        }
+        self.refresh(&mut docs, file).await
     }
 
-    async fn refresh(&mut self, file: &RepoPath) -> Result<bool, QueryError> {
+    async fn refresh(&self, docs: &mut Vec<Doc>, file: &RepoPath) -> Result<bool, QueryError> {
         let path = self.path_of(file)?;
         let text = tokio::fs::read(&path)
             .await
             .map(|b| String::from_utf8_lossy(&b).into_owned());
-        let index = self.docs.iter().position(|d| &d.file == file);
+        let index = docs.iter().position(|d| &d.file == file);
         let text = match (text, index) {
             (Ok(text), _) => text,
             (Err(_), Some(index)) => {
-                let doc = self.docs.remove(index);
+                let doc = docs.remove(index);
                 self.conn()?
                     .notify::<DidCloseTextDocument>(lsp::DidCloseTextDocumentParams {
                         text_document: lsp::TextDocumentIdentifier { uri: doc.uri },
@@ -180,14 +194,14 @@ impl LspServer {
                 })
                 .await
                 .map_err(err)?;
-            self.docs.push(Doc {
+            docs.push(Doc {
                 file: file.clone(),
                 uri,
                 version: 1,
                 text,
             });
-            if self.docs.len() > MAX_OPEN_DOCS {
-                let doc = self.docs.remove(0);
+            if docs.len() > MAX_OPEN_DOCS {
+                let doc = docs.remove(0);
                 self.conn()?
                     .notify::<DidCloseTextDocument>(lsp::DidCloseTextDocumentParams {
                         text_document: lsp::TextDocumentIdentifier { uri: doc.uri },
@@ -197,10 +211,10 @@ impl LspServer {
             }
             return Ok(true);
         };
-        if self.docs[index].text == text {
+        if docs[index].text == text {
             return Ok(false);
         }
-        let doc = &mut self.docs[index];
+        let doc = &mut docs[index];
         doc.version += 1;
         doc.text = text.clone();
         let params = lsp::DidChangeTextDocumentParams {
@@ -221,11 +235,7 @@ impl LspServer {
         Ok(true)
     }
 
-    async fn symbols_cached(
-        &mut self,
-        cache: &mut HashMap<RepoPath, Vec<SymbolInfo>>,
-        file: &RepoPath,
-    ) -> Vec<SymbolInfo> {
+    async fn symbols_cached(&self, cache: &mut HashMap<RepoPath, Vec<SymbolInfo>>, file: &RepoPath) -> Vec<SymbolInfo> {
         if !cache.contains_key(file) {
             let symbols = self.document_symbols(file).await.unwrap_or_default();
             cache.insert(file.clone(), symbols);
@@ -236,7 +246,7 @@ impl LspServer {
     /// The symbol a server item refers to, with the container-qualified name
     /// from `documentSymbol`. `None` outside the root.
     async fn resolve(
-        &mut self,
+        &self,
         cache: &mut HashMap<RepoPath, Vec<SymbolInfo>>,
         uri: &Uri,
         name: &str,
@@ -263,7 +273,7 @@ impl LspServer {
         }))
     }
 
-    async fn prepare_calls(&mut self, at: &At) -> Result<Vec<lsp::CallHierarchyItem>, QueryError> {
+    async fn prepare_calls(&self, at: &At) -> Result<Vec<lsp::CallHierarchyItem>, QueryError> {
         self.sync(&at.file).await?;
         let params = lsp::CallHierarchyPrepareParams {
             text_document_position_params: self.position_params(at)?,
@@ -338,7 +348,7 @@ fn convert_diagnostic(d: lsp::Diagnostic) -> Diagnostic {
 }
 
 impl LanguageServer for LspServer {
-    async fn document_symbols(&mut self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
+    async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
         self.sync(file).await?;
         let params = lsp::DocumentSymbolParams {
             text_document: self.id(file)?,
@@ -374,7 +384,7 @@ impl LanguageServer for LspServer {
         Ok(out)
     }
 
-    async fn definition(&mut self, at: &At) -> Result<Vec<Location>, QueryError> {
+    async fn definition(&self, at: &At) -> Result<Vec<Location>, QueryError> {
         self.sync(&at.file).await?;
         let params = lsp::GotoDefinitionParams {
             text_document_position_params: self.position_params(at)?,
@@ -393,7 +403,7 @@ impl LanguageServer for LspServer {
         })
     }
 
-    async fn references(&mut self, at: &At) -> Result<Vec<Location>, QueryError> {
+    async fn references(&self, at: &At) -> Result<Vec<Location>, QueryError> {
         self.sync(&at.file).await?;
         let params = lsp::ReferenceParams {
             text_document_position: self.position_params(at)?,
@@ -411,7 +421,7 @@ impl LanguageServer for LspServer {
             .collect())
     }
 
-    async fn hover(&mut self, at: &At) -> Result<Option<String>, QueryError> {
+    async fn hover(&self, at: &At) -> Result<Option<String>, QueryError> {
         self.sync(&at.file).await?;
         let params = lsp::HoverParams {
             text_document_position_params: self.position_params(at)?,
@@ -421,7 +431,7 @@ impl LanguageServer for LspServer {
         Ok(response.map(|h| flatten_hover(h.contents)))
     }
 
-    async fn incoming_calls(&mut self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+    async fn incoming_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
         let mut cache = HashMap::new();
         let mut out: Vec<SymbolInfo> = Vec::new();
         for item in self.prepare_calls(at).await? {
@@ -454,7 +464,7 @@ impl LanguageServer for LspServer {
         Ok(out)
     }
 
-    async fn outgoing_calls(&mut self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+    async fn outgoing_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
         let mut cache = HashMap::new();
         let mut out: Vec<SymbolInfo> = Vec::new();
         for item in self.prepare_calls(at).await? {
@@ -481,7 +491,7 @@ impl LanguageServer for LspServer {
         Ok(out)
     }
 
-    async fn workspace_symbols(&mut self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
+    async fn workspace_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
         let params = lsp::WorkspaceSymbolParams {
             query: query.to_owned(),
             work_done_progress_params: Default::default(),
@@ -523,7 +533,7 @@ impl LanguageServer for LspServer {
         Ok(out)
     }
 
-    async fn diagnostics(&mut self, file: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
+    async fn diagnostics(&self, file: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
         let key = self.uri_of(file)?.as_str().to_owned();
         let generation = |conn: &Connection| conn.with_state(|s| s.diagnostics.get(&key).map_or(0, |d| d.generation));
         let before = generation(self.conn()?);
@@ -567,9 +577,7 @@ impl LanguageServer for LspServer {
         Ok(items.into_iter().map(convert_diagnostic).collect())
     }
 
-    async fn shutdown(&mut self) {
-        if let Some(conn) = self.conn.take() {
-            conn.close().await;
-        }
+    async fn shutdown(&self) {
+        self.conn.close().await;
     }
 }

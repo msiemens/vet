@@ -15,7 +15,7 @@ use lsp_types as lsp;
 use lsp_types::request::Initialize;
 use serde_json::json;
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{Backend, LaunchError, ServerConfig, ServerLauncher};
+use vet_semantic::ports::{Backend, LaunchError, ServerConfig, ServerLauncher, Tree};
 
 use rpc::Connection;
 
@@ -40,7 +40,13 @@ impl Default for LspLauncher {
 impl ServerLauncher for LspLauncher {
     type Server = LspServer;
 
-    async fn start(&self, root: &Path, backend: &Backend, _policy: AnalysisPolicy) -> Result<LspServer, LaunchError> {
+    async fn start(
+        &self,
+        root: &Path,
+        tree: Tree,
+        backend: &Backend,
+        _policy: AnalysisPolicy,
+    ) -> Result<LspServer, LaunchError> {
         let config = backend.config();
         let root = std::fs::canonicalize(root).map_err(|e| LaunchError::Spawn(format!("{}: {e}", root.display())))?;
         let folders = workspace_folders(&root, config);
@@ -90,7 +96,7 @@ impl ServerLauncher for LspLauncher {
                 self.ready_timeout.as_secs()
             ))));
         }
-        Ok(LspServer::new(conn, root, diagnostics))
+        Ok(LspServer::new(conn, root, tree, diagnostics))
     }
 }
 
