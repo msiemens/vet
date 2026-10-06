@@ -55,7 +55,8 @@ class ChangesetStore {
       backend.onEvent((event) => {
         if (event.session !== backend.session) return;
         if (event.type === "snapshotSettled") void this.refresh();
-        else if (event.revision === this.manifest?.revision) this.applyReview(event.update);
+        else if (event.type === "reviewChanged" && event.revision === this.manifest?.revision)
+          this.applyReview(event.update);
       });
       this.backend = backend;
       await recent.load();
