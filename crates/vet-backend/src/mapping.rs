@@ -381,6 +381,7 @@ pub fn threads(v: &ThreadsView) -> p::Response {
 pub fn core_run_target(t: p::RunTarget) -> RunTarget {
     RunTarget {
         id: t.id,
+        source: t.source,
         label: t.label,
         program: t.program,
         args: t.args,
@@ -396,6 +397,7 @@ pub fn run_targets(listed: &[ListedTarget]) -> p::Response {
             .map(|l| p::RunTargetEntry {
                 target: p::RunTarget {
                     id: l.target.id.clone(),
+                    source: l.target.source.clone(),
                     label: l.target.label.clone(),
                     program: l.target.program.clone(),
                     args: l.target.args.clone(),

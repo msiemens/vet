@@ -76,6 +76,7 @@ fn target_from(m: run_target::Model) -> Result<RunTarget, DbErr> {
     let json = |e: serde_json::Error| DbErr::Custom(format!("corrupt run target: {e}"));
     Ok(RunTarget {
         id: m.target_id,
+        source: None,
         label: m.label,
         program: m.program,
         args: serde_json::from_str(&m.args).map_err(json)?,
@@ -187,6 +188,7 @@ mod tests {
     fn target(id: &str, program: &str) -> RunTarget {
         RunTarget {
             id: id.into(),
+            source: None,
             label: format!("label {id}"),
             program: program.into(),
             args: vec!["run".into(), "a b".into()],

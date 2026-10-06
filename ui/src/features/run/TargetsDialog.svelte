@@ -2,7 +2,7 @@
   import type { RunTarget } from "../../generated/RunTarget";
   import Dialog from "../../lib/ui/Dialog.svelte";
   import { runs } from "../../state/runs.svelte";
-  import { formatCommand, parseCommand, sourceOf } from "./command";
+  import { formatCommand, parseCommand } from "./command";
 
   interface Draft {
     label: string;
@@ -45,7 +45,7 @@
     const bad = env.find((e) => e.at < 1);
     return bad ? `Not NAME=value: ${bad.line}` : undefined;
   });
-  const custom = $derived(id !== undefined && sourceOf(id) === "custom");
+  const custom = $derived(id !== undefined && !entry?.target.source);
 
   select(runs.primary?.target.id);
 
@@ -65,6 +65,7 @@
     const { program, args } = parseCommand(draft.command);
     const target: RunTarget = {
       id,
+      source: entry?.target.source ?? null,
       label: draft.label.trim(),
       program,
       args,
@@ -104,9 +105,7 @@
             onclick={() => select(target.id)}
           >
             <span class="name">{target.label}</span>
-            <span class="mono src"
-              >{stored && sourceOf(target.id) !== "custom" ? "edited · " : ""}{sourceOf(target.id)}</span
-            >
+            <span class="mono src">{stored && target.source ? "edited · " : ""}{target.source ?? "custom"}</span>
           </button>
         {/each}
         {#if id !== undefined && !entry}

@@ -2,7 +2,9 @@
 //! that finds and invokes external programs.
 
 mod program;
+mod tree;
 
+use std::convert::Infallible;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -60,6 +62,9 @@ pub async fn capture(
         .map_err(|_| format!("{program} did not finish within {}s", timeout.as_secs()))?
 }
 
+/// How long a stopped run gets to wind down before its tree is killed.
+const STOP_GRACE: Duration = Duration::from_secs(3);
+
 /// Must be called from within a tokio runtime.
 pub struct TokioRunner;
 
@@ -74,36 +79,48 @@ impl ProcessRunner for TokioRunner {
 
     fn spawn(&self, command: &Command) -> Result<Process, String> {
         let (program, args) = invocation(&command.program, &command.args);
-        let mut child = TokioCommand::new(program)
+        let mut spawn = TokioCommand::new(program);
+        spawn
             .args(args)
             .current_dir(&command.cwd)
             .envs(command.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| format!("{}: {e}", command.program))?;
+            .kill_on_drop(true);
+        tree::prepare(&mut spawn);
+        let mut child = spawn.spawn().map_err(|e| format!("{}: {e}", command.program))?;
+        // On failure `child` drops and takes the leader with it.
+        let tree = tree::Tree::attach(&child).map_err(|e| format!("{}: {e}", command.program))?;
         let stdout = child.stdout.take().expect("piped");
         let stderr = child.stderr.take().expect("piped");
         let (tx, events) = mpsc::unbounded_channel();
         let kill = Arc::new(Notify::new());
         let killed = kill.clone();
         tokio::spawn(async move {
-            let wait = async {
-                tokio::select! {
-                    status = child.wait() => status,
-                    () = killed.notified() => {
-                        let _ = child.kill().await;
-                        child.wait().await
-                    }
-                }
+            let run = async {
+                let (_, _, status) = tokio::join!(
+                    pump(stdout, &tx, ProcessEvent::Stdout),
+                    pump(stderr, &tx, ProcessEvent::Stderr),
+                    child.wait()
+                );
+                status
             };
-            let (_, _, status) = tokio::join!(
-                pump(stdout, &tx, ProcessEvent::Stdout),
-                pump(stderr, &tx, ProcessEvent::Stderr),
-                wait
-            );
+            // Stop is not tied to the leader: descendants can keep the output pipes
+            // open after it exited, and the run is not over until they close.
+            let stop = async {
+                killed.notified().await;
+                tree.terminate();
+                tokio::time::sleep(STOP_GRACE).await;
+                tree.kill();
+                std::future::pending::<Infallible>().await
+            };
+            let status = tokio::select! {
+                status = run => status,
+                never = stop => match never {},
+            };
+            // Whatever the run left behind ends with it, by `tree` dropping.
+            drop(tree);
             let _ = tx.send(ProcessEvent::Exit(status.ok().and_then(|s| s.code())));
         });
         Ok(Process {

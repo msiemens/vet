@@ -31,7 +31,7 @@ vet-app = { path = "crates/vet-app" }
 vet-infra = { path = "crates/vet-infra" }
 
 # `deny`, not `forbid`: a forbidden lint cannot be re-allowed, and the Windows watcher
-# module in vet-infra needs a narrow `#![allow(unsafe_code)]`. It is the only one.
+# and job-object modules in vet-infra need a narrow `#![allow(unsafe_code)]`. They are the only ones.
 [workspace.lints.rust]
 unsafe_code = "deny"
 

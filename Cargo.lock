@@ -4096,6 +4096,7 @@ dependencies = [
  "gix",
  "lsp-types",
  "notify",
+ "rustix",
  "sea-orm",
  "sea-orm-migration",
  "serde_json",

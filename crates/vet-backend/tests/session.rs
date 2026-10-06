@@ -946,6 +946,7 @@ const PACKAGE: &str = r#"{"scripts":{"hi":"echo hi"}}"#;
 fn sh_target(id: &str, script: &str) -> RunTarget {
     RunTarget {
         id: id.into(),
+        source: None,
         label: id.into(),
         program: "sh".into(),
         args: vec!["-c".into(), script.into()],

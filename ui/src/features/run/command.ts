@@ -39,13 +39,3 @@ export function parseCommand(line: string): { program: string; args: string[] } 
   if (word !== undefined) words.push(word);
   return { program: words[0] ?? "", args: words.slice(1) };
 }
-
-const MANIFESTS: Record<string, string> = { cargo: "Cargo.toml", script: "package.json", python: "pyproject.toml" };
-
-/** Where a target came from, read off its id (`kind:dir:name`): the manifest, or "custom". */
-export function sourceOf(id: string): string {
-  const [kind, dir = ""] = id.split(":");
-  const manifest = MANIFESTS[kind];
-  if (!manifest) return "custom";
-  return dir ? `${dir}/${manifest}` : manifest;
-}

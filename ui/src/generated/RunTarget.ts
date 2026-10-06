@@ -8,7 +8,13 @@ export type RunTarget = {
 /**
  * Stable across snapshots, so an edit made to a discovered target keeps applying.
  */
-id: string, label: string, program: string, args: Array<string>, 
+id: string, 
+/**
+ * The manifest it was discovered from, relative to the repository root;
+ * `None` for a target the user added. The backend ignores it in
+ * `SaveRunTarget`: discovery decides.
+ */
+source: string | null, label: string, program: string, args: Array<string>, 
 /**
  * Relative to the repository root; empty for the root.
  */

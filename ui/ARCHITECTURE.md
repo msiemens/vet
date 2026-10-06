@@ -77,7 +77,7 @@ A file's non-text items (mode, symlink target, submodule commit, binary, content
 
 ## Running
 
-`features/run` over `state/runs.svelte.ts`. The Run split button (`RunButton`) lists the targets of `ListRunTargets` (reloaded when the manifest revision moves) with their manifest as detail, read off the target id (`kind:dir:name`, `command.ts`); the main button runs the last-used target (remembered per repository in `localStorage`) or the first. "Edit targets…" opens `TargetsDialog` (command as one line, working directory, `NAME=value` lines; `SaveRunTarget`, `ResetRunTarget`, which also deletes a custom target).
+`features/run` over `state/runs.svelte.ts`. The Run split button (`RunButton`) lists the targets of `ListRunTargets` (reloaded when the manifest revision moves) with their manifest (`source`, null for a custom target) as detail; the main button runs the last-used target (remembered per repository in `localStorage`) or the first. "Edit targets…" opens `TargetsDialog` (command as one line, working directory, `NAME=value` lines; `SaveRunTarget`, `ResetRunTarget`, which also deletes a custom target).
 
 `Run` answers with an approval or a start. `runs.approval` holds the answer; `ApprovalDialog` (`RunDialogs`, mounted by `App`) shows why, the changed files and each file's hunks with two lines of context (`approvalRows.ts`; a rename shows "old → new"). Run approves with the hash, Cancel drops it.
 

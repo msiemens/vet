@@ -2,14 +2,13 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import SplitButton from "../../lib/ui/SplitButton.svelte";
   import { runs } from "../../state/runs.svelte";
-  import { sourceOf } from "./command";
 
   const primary = $derived(runs.primary?.target);
 </script>
 
 <SplitButton
   label="Run"
-  items={runs.targets.map(({ target }) => ({ id: target.id, label: target.label, detail: sourceOf(target.id) }))}
+  items={runs.targets.map(({ target }) => ({ id: target.id, label: target.label, detail: target.source ?? "custom" }))}
   onmain={() => (primary ? void runs.start(primary.id) : (runs.editing = true))}
   onselect={(id) => void runs.start(id)}
 >

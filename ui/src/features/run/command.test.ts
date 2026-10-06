@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatCommand, parseCommand, sourceOf } from "./command.ts";
+import { formatCommand, parseCommand } from "./command.ts";
 
 void test("a plain command round-trips", () => {
   const line = formatCommand("cargo", ["run", "--bin", "app"]);
@@ -19,11 +19,4 @@ void test("single quotes group literally, runs of blanks separate once", () => {
 
 void test("an empty line has no program", () => {
   assert.deepEqual(parseCommand("  "), { program: "", args: [] });
-});
-
-void test("the source names the manifest the id came from", () => {
-  assert.equal(sourceOf("cargo::app"), "Cargo.toml");
-  assert.equal(sourceOf("script:ui:test:unit"), "ui/package.json");
-  assert.equal(sourceOf("python::serve"), "pyproject.toml");
-  assert.equal(sourceOf("custom:1"), "custom");
 });

@@ -8,6 +8,9 @@ use vet_core::content::{BlobSource, EntryKind, RepoPath, Snapshot};
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RunTarget {
     pub id: String,
+    /// The manifest the target was discovered from, relative to the repository
+    /// root; `None` for one the user added. Not stored: discovery supplies it.
+    pub source: Option<String>,
     pub label: String,
     pub program: String,
     pub args: Vec<String>,
@@ -35,9 +38,9 @@ pub fn discover(snapshot: &Snapshot, blobs: &dyn BlobSource) -> Vec<RunTarget> {
             continue;
         };
         match name {
-            "Cargo.toml" => cargo(snapshot, dir, text, &mut out),
-            "package.json" => package_json(snapshot, dir, text, &mut out),
-            _ => pyproject(dir, text, &mut out),
+            "Cargo.toml" => cargo(snapshot, path, dir, text, &mut out),
+            "package.json" => package_json(snapshot, path, dir, text, &mut out),
+            _ => pyproject(path, dir, text, &mut out),
         }
     }
     out
@@ -50,7 +53,10 @@ pub fn merge(discovered: Vec<RunTarget>, stored: Vec<RunTarget>) -> Vec<RunTarge
     let mut out: Vec<RunTarget> = discovered
         .into_iter()
         .map(|d| match stored.iter().position(|s| s.id == d.id) {
-            Some(i) => stored.remove(i),
+            Some(i) => RunTarget {
+                source: d.source,
+                ..stored.remove(i)
+            },
             None => d,
         })
         .collect();
@@ -70,9 +76,10 @@ fn has(snapshot: &Snapshot, path: &str) -> bool {
     snapshot.entries.contains_key(&RepoPath(path.as_bytes().to_vec()))
 }
 
-fn target(kind: &str, dir: &str, name: &str, program: &str, args: &[&str]) -> RunTarget {
+fn target(source: &str, kind: &str, dir: &str, name: &str, program: &str, args: &[&str]) -> RunTarget {
     RunTarget {
         id: format!("{kind}:{dir}:{name}"),
+        source: Some(source.to_string()),
         label: if dir.is_empty() {
             format!("{kind}: {name}")
         } else {
@@ -85,7 +92,7 @@ fn target(kind: &str, dir: &str, name: &str, program: &str, args: &[&str]) -> Ru
     }
 }
 
-fn cargo(snapshot: &Snapshot, dir: &str, text: &str, out: &mut Vec<RunTarget>) {
+fn cargo(snapshot: &Snapshot, source: &str, dir: &str, text: &str, out: &mut Vec<RunTarget>) {
     let Ok(manifest) = text.parse::<toml::Table>() else {
         return;
     };
@@ -122,13 +129,13 @@ fn cargo(snapshot: &Snapshot, dir: &str, text: &str, out: &mut Vec<RunTarget>) {
     let mut seen = Vec::new();
     for bin in bins {
         if !seen.contains(&bin) {
-            out.push(target("cargo", dir, &bin, "cargo", &["run", "--bin", &bin]));
+            out.push(target(source, "cargo", dir, &bin, "cargo", &["run", "--bin", &bin]));
             seen.push(bin);
         }
     }
 }
 
-fn package_json(snapshot: &Snapshot, dir: &str, text: &str, out: &mut Vec<RunTarget>) {
+fn package_json(snapshot: &Snapshot, source: &str, dir: &str, text: &str, out: &mut Vec<RunTarget>) {
     let Ok(manifest) = serde_json::from_str::<serde_json::Value>(text) else {
         return;
     };
@@ -144,14 +151,14 @@ fn package_json(snapshot: &Snapshot, dir: &str, text: &str, out: &mut Vec<RunTar
     };
     for (name, command) in scripts {
         if command.is_string() {
-            out.push(target("script", dir, name, manager, &["run", name]));
+            out.push(target(source, "script", dir, name, manager, &["run", name]));
         }
     }
 }
 
 /// `[project.scripts]` entries are console scripts, which exist only once the
 /// project is installed, so the target runs the script by name.
-fn pyproject(dir: &str, text: &str, out: &mut Vec<RunTarget>) {
+fn pyproject(source: &str, dir: &str, text: &str, out: &mut Vec<RunTarget>) {
     let Ok(manifest) = text.parse::<toml::Table>() else {
         return;
     };
@@ -161,7 +168,7 @@ fn pyproject(dir: &str, text: &str, out: &mut Vec<RunTarget>) {
         .into_iter()
         .flatten();
     for (name, _) in scripts {
-        out.push(target("python", dir, name, name, &[]));
+        out.push(target(source, "python", dir, name, name, &[]));
     }
 }
 
@@ -249,6 +256,8 @@ mod tests {
         let targets = discover(&s, &b);
         assert_eq!(ids(&targets), ["script::start", "script:ui:build", "script:ui:dev"]);
         assert_eq!(targets[0].program, "npm");
+        assert_eq!(targets[0].source.as_deref(), Some("package.json"));
+        assert_eq!(targets[2].source.as_deref(), Some("ui/package.json"));
         assert_eq!(targets[2].program, "pnpm");
         assert_eq!(targets[2].args, ["run", "dev"]);
     }

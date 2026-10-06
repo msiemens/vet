@@ -673,6 +673,7 @@ mod tests {
         let reviewed = fake.0.lock().unwrap().tree.clone().unwrap();
         let target = |id: &str, program: &str, cwd: &str| RunTarget {
             id: id.into(),
+            source: None,
             label: "mine".into(),
             program: program.into(),
             args: vec![],
