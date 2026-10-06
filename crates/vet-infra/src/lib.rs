@@ -1,7 +1,6 @@
 //! Adapters. No business logic: each module implements one port.
 
-/// `vet_app::ports::GitRepo` over gitoxide. Checkout plus store overlay and the
-/// persisted stat-to-hash cache are still to come.
+/// `vet_app::ports::GitRepo` over gitoxide.
 pub mod git;
 
 /// `vet_app::ports::Watcher`: FSEvents, `ReadDirectoryChangesW`, inotify, and
