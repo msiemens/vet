@@ -51,6 +51,15 @@ impl Server {
         Ok(Ready { port: self.listener.local_addr()?.port(), token: self.token.clone() })
     }
 
+    /// Prints the `Ready` line to stdout for the shell, and to stderr the
+    /// address a plain browser needs during development.
+    pub fn announce(&self) -> io::Result<()> {
+        let ready = self.ready()?;
+        println!("{}", serde_json::to_string(&ready).expect("ready serializes"));
+        eprintln!("dev UI: http://localhost:1420/#port={}&token={}", ready.port, ready.token);
+        Ok(())
+    }
+
     pub async fn serve<H: Handler>(self, handler: H) -> io::Result<()> {
         let handler = Arc::new(handler);
         let token: Arc<str> = self.token.into();

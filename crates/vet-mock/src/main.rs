@@ -126,6 +126,6 @@ async fn main() -> std::io::Result<()> {
     let index = corpus.files.iter().enumerate().map(|(i, f)| (f.path.clone(), i)).collect();
     let seen = Mutex::new(corpus.files.iter().map(|f| vec![false; f.hunks.len()]).collect());
     let server = Server::bind().await?;
-    println!("{}", serde_json::to_string(&server.ready()?).expect("ready serializes"));
+    server.announce()?;
     server.serve(Mock { corpus, index, seen }).await
 }

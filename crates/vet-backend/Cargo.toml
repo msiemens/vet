@@ -13,7 +13,6 @@ vet-semantic.workspace = true
 vet-app.workspace = true
 vet-infra.workspace = true
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros"] }
-serde_json = "1.0.151"
 
 [lints]
 workspace = true

@@ -22,6 +22,6 @@ async fn main() -> std::io::Result<()> {
         vet_transport::exit_when_stdin_closes();
     }
     let server = Server::bind().await?;
-    println!("{}", serde_json::to_string(&server.ready()?).expect("ready serializes"));
+    server.announce()?;
     server.serve(Orchestrator).await
 }
