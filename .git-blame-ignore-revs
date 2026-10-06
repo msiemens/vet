@@ -1,5 +1,7 @@
 # Pure formatting commits. Use with: git config blame.ignoreRevsFile .git-blame-ignore-revs
 # style: format Rust with rustfmt
-0440344c366f81d0de284d767353bb181566f101
+aa7502e9b3ab5415649b3d475e0fc1405de91d32
 # style(ui): format with prettier
-b1e7824822b0e25f8e2233b0820d443a528d2715
+809f25fa5f75b2c2091191af9d243861110ffbb1
+# style(tauri): format ui/src-tauri/src/lib.rs with rustfmt
+4a284dbd2e59b30bccf2aa740c688a3ed78648cd
