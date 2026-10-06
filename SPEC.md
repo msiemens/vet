@@ -442,6 +442,12 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - JetBrains-feel package
 - Diagnostics on the changeset
 - Line highlight in the editor: the clicked line stays highlighted
+- Go to definition shows its target: the symbol under the pointer is underlined while Cmd/Ctrl is held
+- Find usages: a list of a symbol's references, any symbol, not only changed ones
+- Syntax highlighting in hover popups (the server's Markdown rendered, code blocks highlighted)
+- File structure view: the symbols of the current file as a tree
+- App-drawn context menus in the code and the chrome instead of the webview's
+- Keyboard shortcuts for every action, shown in menus and tooltips, with a Keymap page in Settings (beyond the JetBrains-feel package's keymap import)
 
 ### M2
 
@@ -451,6 +457,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Review-questions assistant (read-only; answers cite hunks)
 - Worktree groups
 - Export annotations as agent task files
+- Problems panel: the diagnostics of the whole changeset in one list
 
 ### Later
 
