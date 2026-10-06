@@ -19,9 +19,14 @@
   --tx3: light-dark(#6a707a, #8e939b);
   --sel: light-dark(#d4e3fb, #2e436e);
 
-  /* Control states: hover, pressed, toggled on (and toggled on while hovered or pressed). */
-  --hov: light-dark(#e4e6ea, #383b42);
-  --press: light-dark(#d4d7dd, #444851);
+  /* Control states. Borderless controls (`.flat`, `.tool`) get a tinted background on hover
+     and a darker one while pressed; bordered push buttons (`.ctl`) only shift their fill
+     slightly, the border stays. Toggled on (and toggled on while hovered or pressed). */
+  /* Overlays, so borderless controls read the same on every surface. */
+  --hov: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.07));
+  --press: light-dark(rgba(0, 0, 0, 0.11), rgba(255, 255, 255, 0.12));
+  --ctl-hov: light-dark(#f5f6f7, #393c42);
+  --ctl-press: light-dark(#e9ebee, #42454c);
   --tog: light-dark(#d4e3fb, #2e436e);
   --tog-hov: light-dark(#c6dafa, #35508a);
   --tog-press: light-dark(#b6cff6, #3d5c9c);

@@ -56,11 +56,25 @@ button {
   outline-offset: -1px;
 }
 
-/* `.flat`: borderless (icon buttons, rows, menu items). `.ctl`: bordered (chips, text buttons). */
+/* `.flat`: borderless (icon buttons, rows, menu items). `.tool`: borderless toolbar widget with
+   text. `.ctl`: bordered push button (dialogs, forms, segmented groups). */
 .flat {
   border: 0;
   background: transparent;
   padding: 0;
+}
+.tool {
+  height: var(--h-ctl);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--tx);
+  font-size: var(--fs-ctl);
+  white-space: nowrap;
 }
 .ctl {
   height: var(--h-ctl);
@@ -76,23 +90,29 @@ button {
   box-sizing: border-box;
   white-space: nowrap;
 }
-:is(.flat, .ctl):enabled:hover {
+:is(.flat, .tool):enabled:hover {
   background: var(--hov);
 }
-:is(.flat, .ctl):enabled:active {
+:is(.flat, .tool):enabled:active {
   background: var(--press);
 }
-:is(.flat, .ctl):disabled {
+.ctl:enabled:hover {
+  background: var(--ctl-hov);
+}
+.ctl:enabled:active {
+  background: var(--ctl-press);
+}
+:is(.flat, .tool, .ctl):disabled {
   opacity: 0.5;
 }
-:is(.flat, .ctl):is(.on, [aria-pressed="true"]) {
+:is(.flat, .tool, .ctl):is(.on, [aria-pressed="true"]) {
   background: var(--tog);
   color: var(--acc);
 }
-:is(.flat, .ctl):enabled:is(.on, [aria-pressed="true"]):hover {
+:is(.flat, .tool, .ctl):enabled:is(.on, [aria-pressed="true"]):hover {
   background: var(--tog-hov);
 }
-:is(.flat, .ctl):enabled:is(.on, [aria-pressed="true"]):active {
+:is(.flat, .tool, .ctl):enabled:is(.on, [aria-pressed="true"]):active {
   background: var(--tog-press);
 }
 

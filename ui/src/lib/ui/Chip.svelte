@@ -16,7 +16,7 @@
   } = $props();
 </script>
 
-<button class="ctl" class:mono class:bold type="button" {title} {onclick}>{@render children()}</button>
+<button class="tool" class:mono class:bold type="button" {title} {onclick}>{@render children()}</button>
 
 <style>
   .mono {
