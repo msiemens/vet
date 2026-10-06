@@ -4,8 +4,8 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-# Adapters: one module per port. Dependencies (gix, rusqlite, notify, an HTTP
-# client) arrive with their module, behind features where they are heavy.
+# Adapters: one module per port. Dependencies (gix, notify, an HTTP client)
+# arrive with their module, behind features where they are heavy.
 [features]
 default = []
 # GitHub and Azure DevOps adapters (M2).
@@ -17,6 +17,9 @@ vet-semantic.workspace = true
 vet-app.workspace = true
 notify = "8.2.0"
 tokio = { version = "1.53.2", features = ["sync", "time", "macros", "rt"] }
+dirs = "7.0.0"
+sea-orm = { version = "2.0.4", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
+sea-orm-migration = { version = "2.0.4", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
 
 [lints]
 workspace = true

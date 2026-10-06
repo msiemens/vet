@@ -1,0 +1,450 @@
+//! `vet_app::ports::Store` and `ReviewStore`: a content directory plus one
+//! SQLite file (WAL) accessed through SeaORM, both under the backend side's
+//! data directory (§8).
+
+mod codec;
+mod content;
+mod entity;
+mod migration;
+#[cfg(test)]
+mod tests;
+
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use sea_orm::{
+    ActiveModelBehavior, ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, QuerySelect, QueryTrait,
+    Set, SqlxSqliteConnector, TransactionTrait,
+};
+use sea_orm_migration::MigratorTrait;
+use vet_app::acquisition::{CommitId, Pin, PinId};
+use vet_app::ports::{GcReport, ReviewStore, Store, StoreError};
+use vet_app::review::{NonTextAck, Session, SessionId};
+use vet_core::content::{BlobId, Changeset, Hash, ReviewFilter, Snapshot, SnapshotId};
+use vet_core::platform::PlatformThread;
+use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Thread, ThreadId, ThreadStatus};
+
+use codec::*;
+use content::ContentStore;
+use entity::*;
+
+type Res<T> = Result<T, DbErr>;
+
+#[derive(Clone, Copy, Debug)]
+pub struct StoreConfig {
+    /// How long a closed session is kept (§8).
+    pub closed_retention: Duration,
+    /// Content and snapshots younger than this are never collected, so a blob
+    /// written just before the metadata that references it survives a GC.
+    pub gc_grace: Duration,
+}
+
+impl Default for StoreConfig {
+    fn default() -> Self {
+        Self { closed_retention: Duration::from_secs(30 * 24 * 3600), gc_grace: Duration::from_secs(3600) }
+    }
+}
+
+#[derive(Clone)]
+pub struct SqliteStore {
+    db: DatabaseConnection,
+    content: Arc<ContentStore>,
+    config: StoreConfig,
+}
+
+/// Unix seconds.
+pub fn unix_now() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+}
+
+fn db_err(e: impl std::fmt::Display) -> DbErr {
+    DbErr::Custom(e.to_string())
+}
+
+/// SQLite allows 32766 bound variables per statement.
+async fn insert_chunked<A>(db: &impl ConnectionTrait, rows: Vec<A>) -> Res<()>
+where
+    A: ActiveModelTrait + ActiveModelBehavior + Clone + Send,
+    <A::Entity as EntityTrait>::Model: IntoActiveModel<A>,
+{
+    for chunk in rows.chunks(1000) {
+        A::Entity::insert_many(chunk.to_vec()).exec(db).await?;
+    }
+    Ok(())
+}
+
+async fn put_anchor(db: &impl ConnectionTrait, session: i64, anchor: Option<&Anchor>) -> Res<Option<i64>> {
+    match anchor {
+        Some(a) => Ok(Some(anchor_row(session, a).insert(db).await?.id)),
+        None => Ok(None),
+    }
+}
+
+async fn write_filter(db: &impl ConnectionTrait, session: i64, filter: &ReviewFilter) -> Res<()> {
+    let item = |kind: i64, value: Vec<u8>| filter_item::ActiveModel { session: Set(session), kind: Set(kind), value: Set(value), ..Default::default() };
+    let rows = filter
+        .roots
+        .iter()
+        .map(|r| item(0, r.0.clone()))
+        .chain(filter.include.iter().map(|s| item(1, s.clone().into_bytes())))
+        .chain(filter.exclude.iter().map(|s| item(2, s.clone().into_bytes())))
+        .collect();
+    insert_chunked(db, rows).await
+}
+
+fn read_filter(hide_binary: bool, items: Vec<filter_item::Model>) -> Res<ReviewFilter> {
+    let mut filter = ReviewFilter { hide_binary, ..Default::default() };
+    for item in items {
+        let text = |v: Vec<u8>| String::from_utf8(v).map_err(db_err);
+        match item.kind {
+            0 => filter.roots.push(vet_core::content::RepoPath(item.value)),
+            1 => filter.include.push(text(item.value)?),
+            _ => filter.exclude.push(text(item.value)?),
+        }
+    }
+    Ok(filter)
+}
+
+impl SqliteStore {
+    /// The per-platform data directory; in WSL the Linux home, never `/mnt/*`.
+    pub fn default_dir() -> Option<PathBuf> {
+        dirs::data_dir().map(|d| d.join("vet"))
+    }
+
+    pub async fn open(dir: &Path, config: StoreConfig) -> Result<Self, StoreError> {
+        std::fs::create_dir_all(dir)?;
+        let options = SqliteConnectOptions::new()
+            .filename(dir.join("vet.sqlite"))
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .foreign_keys(true)
+            .busy_timeout(Duration::from_secs(5));
+        // One connection serializes writers; WAL readers would not need it, but
+        // nothing here is read-heavy.
+        let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await.map_err(db_err)?;
+        let db = SqlxSqliteConnector::from_sqlx_sqlite_pool(pool);
+        migration::Migrator::up(&db, None).await?;
+        let content = ContentStore::open(dir.join("content"))?;
+        Ok(Self { db, content: Arc::new(content), config })
+    }
+
+    async fn blocking<T: Send + 'static>(&self, f: impl FnOnce(&ContentStore) -> io::Result<T> + Send + 'static) -> Result<T, StoreError> {
+        let content = self.content.clone();
+        Ok(tokio::task::spawn_blocking(move || f(&content)).await.map_err(db_err)??)
+    }
+
+    async fn load_session(&self, id: SessionId) -> Res<Option<Session>> {
+        let sid = id.0 as i64;
+        let Some(row) = session::Entity::find_by_id(sid).one(&self.db).await? else { return Ok(None) };
+        let filter_items = filter_item::Entity::find().filter(filter_item::Column::Session.eq(sid)).order_by_asc(filter_item::Column::Id).all(&self.db).await?;
+        let anchors: HashMap<i64, anchor::Model> = anchor::Entity::find().filter(anchor::Column::Session.eq(sid)).all(&self.db).await?.into_iter().map(|a| (a.id, a)).collect();
+        let anchor_of = |id: Option<i64>| id.and_then(|i| anchors.get(&i)).map(anchor_from).transpose();
+
+        let spans = span::Entity::find()
+            .filter(span::Column::Session.eq(sid))
+            .order_by_asc(span::Column::Id)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|s| Ok(ReviewedSpan { base: anchor_of(s.base_anchor)?, target: anchor_of(s.target_anchor)?, state: span_state_from(s.state)? }))
+            .collect::<Res<_>>()?;
+        let acks = ack::Entity::find().filter(ack::Column::Session.eq(sid)).order_by_asc(ack::Column::Id).all(&self.db).await?.into_iter().map(ack_from).collect::<Res<_>>()?;
+
+        let mut messages: HashMap<i64, Vec<Message>> = HashMap::new();
+        let thread_ids = thread::Entity::find().filter(thread::Column::Session.eq(sid)).select_only().column(thread::Column::Id);
+        for m in message::Entity::find().filter(message::Column::Thread.in_subquery(thread_ids.into_query())).order_by_asc(message::Column::Id).all(&self.db).await? {
+            messages.entry(m.thread).or_default().push(Message { author: m.author, body: m.body, at: m.at });
+        }
+        let threads = thread::Entity::find()
+            .filter(thread::Column::Session.eq(sid))
+            .order_by_asc(thread::Column::Id)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(|t| {
+                let platform = t.remote_id.clone().map(|remote_id| PlatformThread {
+                    remote_id,
+                    remote_status: t.remote_status.clone(),
+                    resolvable: t.remote_resolvable.unwrap_or(false),
+                    blocks_merge: t.remote_blocks_merge.unwrap_or(false),
+                });
+                Ok(Thread {
+                    id: ThreadId(t.id as u64),
+                    target: target_from(&t, t.anchor.and_then(|a| anchors.get(&a)))?,
+                    messages: messages.remove(&t.id).unwrap_or_default(),
+                    status: status_from(t.status)?,
+                    platform,
+                })
+            })
+            .collect::<Res<_>>()?;
+
+        Ok(Some(Session {
+            id,
+            pin: PinId(row.pin as u64),
+            changeset: Changeset { base: SnapshotId(hash(&row.base)?), target: SnapshotId(hash(&row.target)?) },
+            filter: read_filter(row.hide_binary, filter_items)?,
+            spans,
+            acks,
+            threads,
+            closed_at: row.closed_at,
+        }))
+    }
+
+    async fn find_thread(db: &impl ConnectionTrait, id: ThreadId) -> Res<thread::Model> {
+        thread::Entity::find_by_id(id.0 as i64).one(db).await?.ok_or_else(|| DbErr::RecordNotFound(format!("thread {}", id.0)))
+    }
+
+    async fn gc_metadata(&self, now: i64) -> Res<(GcReport, HashSet<BlobId>)> {
+        let cutoff = now - self.config.closed_retention.as_secs() as i64;
+        let grace = now - self.config.gc_grace.as_secs() as i64;
+        let txn = self.db.begin().await?;
+
+        // Expired closed sessions, unless an open thread keeps them.
+        let expired: Vec<i64> = session::Entity::find().filter(session::Column::ClosedAt.lte(cutoff)).select_only().column(session::Column::Id).into_tuple().all(&txn).await?;
+        let kept: HashSet<i64> = thread::Entity::find()
+            .filter(thread::Column::Session.is_in(expired.clone()))
+            .filter(thread::Column::Status.eq(OPEN))
+            .select_only()
+            .column(thread::Column::Session)
+            .into_tuple()
+            .all(&txn)
+            .await?
+            .into_iter()
+            .collect();
+        let dead: Vec<i64> = expired.into_iter().filter(|id| !kept.contains(id)).collect();
+        let sessions_deleted = session::Entity::delete_many().filter(session::Column::Id.is_in(dead)).exec(&txn).await?.rows_affected as usize;
+
+        let pins: Vec<i64> = session::Entity::find().select_only().column(session::Column::Pin).into_tuple().all(&txn).await?;
+        pin::Entity::delete_many().filter(pin::Column::Id.is_not_in(pins)).exec(&txn).await?;
+
+        // Snapshots nothing retained refers to.
+        let mut live: HashSet<Vec<u8>> = HashSet::new();
+        live.extend(session::Entity::find().select_only().column(session::Column::Base).into_tuple::<Vec<u8>>().all(&txn).await?);
+        live.extend(session::Entity::find().select_only().column(session::Column::Target).into_tuple::<Vec<u8>>().all(&txn).await?);
+        live.extend(pin::Entity::find().select_only().column(pin::Column::Tree).into_tuple::<Vec<u8>>().all(&txn).await?);
+        live.extend(timeline::Entity::find().select_only().column(timeline::Column::Snapshot).into_tuple::<Vec<u8>>().all(&txn).await?);
+        live.extend(anchor::Entity::find().select_only().column(anchor::Column::Snapshot).into_tuple::<Vec<u8>>().all(&txn).await?);
+        let candidates: Vec<Vec<u8>> = snapshot::Entity::find().filter(snapshot::Column::Created.lte(grace)).select_only().column(snapshot::Column::Id).into_tuple().all(&txn).await?;
+        let unreferenced: Vec<Vec<u8>> = candidates.into_iter().filter(|id| !live.contains(id)).collect();
+        let mut snapshots_deleted = 0;
+        for chunk in unreferenced.chunks(1000) {
+            snapshots_deleted += snapshot::Entity::delete_many().filter(snapshot::Column::Id.is_in(chunk.to_vec())).exec(&txn).await?.rows_affected as usize;
+        }
+
+        let blobs: Vec<Vec<u8>> = snapshot_entry::Entity::find().select_only().column(snapshot_entry::Column::Blob).distinct().into_tuple().all(&txn).await?;
+        let blobs = blobs.iter().map(|b| hash(b).map(BlobId)).collect::<Res<HashSet<_>>>()?;
+        txn.commit().await?;
+        Ok((GcReport { sessions_deleted, snapshots_deleted, blobs_deleted: 0 }, blobs))
+    }
+}
+
+impl Store for SqliteStore {
+    async fn put_blob(&self, bytes: Vec<u8>) -> Result<BlobId, StoreError> {
+        self.blocking(move |c| c.put(&bytes)).await
+    }
+
+    async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
+        self.blocking(move |c| c.get(id)).await
+    }
+
+    async fn put_snapshot(&self, snapshot: Snapshot) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        let key = snapshot.id.0.0.to_vec();
+        if snapshot::Entity::find_by_id(key.clone()).one(&txn).await?.is_none() {
+            snapshot::ActiveModel { id: Set(key.clone()), created: Set(unix_now()) }.insert(&txn).await?;
+            insert_chunked(&txn, snapshot.entries.iter().map(|(p, e)| entry_row(&key, p, e)).collect()).await?;
+        }
+        Ok(txn.commit().await?)
+    }
+
+    async fn snapshot(&self, id: SnapshotId) -> Result<Option<Snapshot>, StoreError> {
+        let key = id.0.0.to_vec();
+        if snapshot::Entity::find_by_id(key.clone()).one(&self.db).await?.is_none() {
+            return Ok(None);
+        }
+        let rows = snapshot_entry::Entity::find().filter(snapshot_entry::Column::Snapshot.eq(key)).all(&self.db).await?;
+        let entries = rows.into_iter().map(entry_from).collect::<Res<BTreeMap<_, _>>>()?;
+        Ok(Some(Snapshot { id, entries }))
+    }
+
+    async fn append_timeline(&self, session: SessionId, snapshot: SnapshotId) -> Result<(), StoreError> {
+        timeline::ActiveModel { session: Set(session.0 as i64), snapshot: Set(snapshot.0.0.to_vec()), ..Default::default() }.insert(&self.db).await?;
+        Ok(())
+    }
+
+    async fn timeline(&self, session: SessionId) -> Result<Vec<SnapshotId>, StoreError> {
+        let rows = timeline::Entity::find().filter(timeline::Column::Session.eq(session.0 as i64)).order_by_asc(timeline::Column::Id).all(&self.db).await?;
+        Ok(rows.iter().map(|r| hash(&r.snapshot).map(SnapshotId)).collect::<Res<_>>()?)
+    }
+
+    async fn gc(&self, now: i64) -> Result<GcReport, StoreError> {
+        let (mut report, live) = self.gc_metadata(now).await?;
+        let at = UNIX_EPOCH + Duration::from_secs(now.max(0) as u64);
+        let grace = self.config.gc_grace;
+        report.blobs_deleted = self.blocking(move |c| c.sweep(&live, at, grace)).await?;
+        Ok(report)
+    }
+}
+
+impl ReviewStore for SqliteStore {
+    async fn put_pin(&self, head: CommitId, tree: SnapshotId) -> Result<Pin, StoreError> {
+        let row = pin::ActiveModel { head: Set(head.0.clone()), tree: Set(tree.0.0.to_vec()), ..Default::default() }.insert(&self.db).await?;
+        Ok(Pin { id: PinId(row.id as u64), head, tree })
+    }
+
+    async fn open_session(&self, pin: PinId, changeset: Changeset, filter: ReviewFilter) -> Result<SessionId, StoreError> {
+        let txn = self.db.begin().await?;
+        let row = session::ActiveModel {
+            pin: Set(pin.0 as i64),
+            base: Set(changeset.base.0.0.to_vec()),
+            target: Set(changeset.target.0.0.to_vec()),
+            hide_binary: Set(filter.hide_binary),
+            ..Default::default()
+        }
+        .insert(&txn)
+        .await?;
+        write_filter(&txn, row.id, &filter).await?;
+        txn.commit().await?;
+        Ok(SessionId(row.id as u64))
+    }
+
+    async fn close_session(&self, id: SessionId, now: i64) -> Result<(), StoreError> {
+        session::ActiveModel { id: Set(id.0 as i64), closed_at: Set(Some(now)), ..Default::default() }.update(&self.db).await?;
+        Ok(())
+    }
+
+    async fn open_sessions(&self) -> Result<Vec<SessionId>, StoreError> {
+        let ids: Vec<i64> = session::Entity::find().filter(session::Column::ClosedAt.is_null()).order_by_asc(session::Column::Id).select_only().column(session::Column::Id).into_tuple().all(&self.db).await?;
+        Ok(ids.into_iter().map(|i| SessionId(i as u64)).collect())
+    }
+
+    async fn session(&self, id: SessionId) -> Result<Option<Session>, StoreError> {
+        Ok(self.load_session(id).await?)
+    }
+
+    async fn set_filter(&self, id: SessionId, filter: ReviewFilter) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        let sid = id.0 as i64;
+        session::ActiveModel { id: Set(sid), hide_binary: Set(filter.hide_binary), ..Default::default() }.update(&txn).await?;
+        filter_item::Entity::delete_many().filter(filter_item::Column::Session.eq(sid)).exec(&txn).await?;
+        write_filter(&txn, sid, &filter).await?;
+        Ok(txn.commit().await?)
+    }
+
+    async fn replace_spans(&self, id: SessionId, spans: Vec<ReviewedSpan>) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        let sid = id.0 as i64;
+        // Anchors are owned by their spans, so they go with them.
+        let old = span::Entity::find().filter(span::Column::Session.eq(sid)).all(&txn).await?;
+        let old_anchors: Vec<i64> = old.iter().flat_map(|s| [s.base_anchor, s.target_anchor]).flatten().collect();
+        span::Entity::delete_many().filter(span::Column::Session.eq(sid)).exec(&txn).await?;
+        anchor::Entity::delete_many().filter(anchor::Column::Id.is_in(old_anchors)).exec(&txn).await?;
+        for s in &spans {
+            span::ActiveModel {
+                session: Set(sid),
+                state: Set(span_state_to(s.state)),
+                base_anchor: Set(put_anchor(&txn, sid, s.base.as_ref()).await?),
+                target_anchor: Set(put_anchor(&txn, sid, s.target.as_ref()).await?),
+                ..Default::default()
+            }
+            .insert(&txn)
+            .await?;
+        }
+        Ok(txn.commit().await?)
+    }
+
+    async fn acknowledge(&self, id: SessionId, ack: NonTextAck) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        let sid = id.0 as i64;
+        let existing = ack::Entity::find().filter(ack::Column::Session.eq(sid)).filter(ack_filter(&ack)).one(&txn).await?;
+        if existing.is_none() {
+            ack_row(sid, &ack).insert(&txn).await?;
+        }
+        Ok(txn.commit().await?)
+    }
+
+    async fn unacknowledge(&self, id: SessionId, ack: NonTextAck) -> Result<(), StoreError> {
+        ack::Entity::delete_many().filter(ack::Column::Session.eq(id.0 as i64)).filter(ack_filter(&ack)).exec(&self.db).await?;
+        Ok(())
+    }
+
+    async fn add_thread(&self, id: SessionId, target: CommentTarget, opener: Message) -> Result<ThreadId, StoreError> {
+        let txn = self.db.begin().await?;
+        let sid = id.0 as i64;
+        let anchor = match &target {
+            CommentTarget::Range(a) => put_anchor(&txn, sid, Some(a)).await?,
+            _ => None,
+        };
+        let mut row = thread::ActiveModel { session: Set(sid), status: Set(status_to(ThreadStatus::Open)), ..Default::default() };
+        set_target(&mut row, &target, anchor);
+        let thread = row.insert(&txn).await?.id;
+        message::ActiveModel { thread: Set(thread), author: Set(opener.author), body: Set(opener.body), at: Set(opener.at), ..Default::default() }.insert(&txn).await?;
+        txn.commit().await?;
+        Ok(ThreadId(thread as u64))
+    }
+
+    async fn add_message(&self, thread: ThreadId, m: Message) -> Result<(), StoreError> {
+        Self::find_thread(&self.db, thread).await?;
+        message::ActiveModel { thread: Set(thread.0 as i64), author: Set(m.author), body: Set(m.body), at: Set(m.at), ..Default::default() }.insert(&self.db).await?;
+        Ok(())
+    }
+
+    async fn set_thread_status(&self, thread: ThreadId, status: ThreadStatus) -> Result<(), StoreError> {
+        thread::ActiveModel { id: Set(thread.0 as i64), status: Set(status_to(status)), ..Default::default() }.update(&self.db).await?;
+        Ok(())
+    }
+
+    async fn set_thread_target(&self, thread: ThreadId, target: CommentTarget) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        let old = Self::find_thread(&txn, thread).await?;
+        if let Some(a) = old.anchor {
+            anchor::Entity::delete_by_id(a).exec(&txn).await?;
+        }
+        let anchor = match &target {
+            CommentTarget::Range(a) => put_anchor(&txn, old.session, Some(a)).await?,
+            _ => None,
+        };
+        let mut row = thread::ActiveModel { id: Set(old.id), ..Default::default() };
+        set_target(&mut row, &target, anchor);
+        row.update(&txn).await?;
+        Ok(txn.commit().await?)
+    }
+
+    async fn set_thread_platform(&self, thread: ThreadId, platform: Option<PlatformThread>) -> Result<(), StoreError> {
+        thread::ActiveModel {
+            id: Set(thread.0 as i64),
+            remote_id: Set(platform.as_ref().map(|p| p.remote_id.clone())),
+            remote_status: Set(platform.as_ref().and_then(|p| p.remote_status.clone())),
+            remote_resolvable: Set(platform.as_ref().map(|p| p.resolvable)),
+            remote_blocks_merge: Set(platform.as_ref().map(|p| p.blocks_merge)),
+            ..Default::default()
+        }
+        .update(&self.db)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_thread(&self, thread: ThreadId) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        let old = Self::find_thread(&txn, thread).await?;
+        thread::Entity::delete_by_id(old.id).exec(&txn).await?;
+        if let Some(a) = old.anchor {
+            anchor::Entity::delete_by_id(a).exec(&txn).await?;
+        }
+        Ok(txn.commit().await?)
+    }
+
+    async fn record_run_approval(&self, repo: String, hash: Hash, at: i64) -> Result<(), StoreError> {
+        run_approval::ActiveModel { repo: Set(repo), hash: Set(hash.0.to_vec()), at: Set(at), ..Default::default() }.insert(&self.db).await?;
+        Ok(())
+    }
+
+    async fn last_run_approval(&self, repo: String) -> Result<Option<Hash>, StoreError> {
+        let row = run_approval::Entity::find().filter(run_approval::Column::Repo.eq(repo)).order_by_desc(run_approval::Column::Id).one(&self.db).await?;
+        Ok(row.map(|r| hash(&r.hash)).transpose()?)
+    }
+}

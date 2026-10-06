@@ -4,10 +4,12 @@
 
 use std::path::Path;
 
-use vet_core::content::{BlobId, FileDiff, RenameMap, RepoPath, Snapshot, SnapshotStatus};
-use vet_core::platform::PlatformTraits;
+use vet_core::content::{BlobId, Changeset, FileDiff, Hash, RenameMap, RepoPath, ReviewFilter, Snapshot, SnapshotId, SnapshotStatus};
+use vet_core::platform::{PlatformThread, PlatformTraits};
+use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 
-use crate::acquisition::CommitId;
+use crate::acquisition::{CommitId, Pin, PinId};
+use crate::review::{NonTextAck, Session, SessionId};
 
 /// Monotonic milliseconds.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -74,16 +76,60 @@ pub trait GitRepo {
 #[derive(Debug)]
 pub struct StoreError(pub String);
 
-/// One store for content and review data: they share a SQLite file, and GC must
-/// check references across sessions, spans and comments together. Review tables
-/// join this trait when Review is implemented.
+/// Lets adapters use `?` on their own error types; `StoreError` must never
+/// implement `Error` itself, or this overlaps `From<T> for T`.
+impl<E: std::error::Error> From<E> for StoreError {
+    fn from(e: E) -> Self {
+        Self(e.to_string())
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct GcReport {
+    pub sessions_deleted: usize,
+    pub snapshots_deleted: usize,
+    pub blobs_deleted: usize,
+}
+
+/// Content and snapshots (§8). One implementation backs this and
+/// [`ReviewStore`]: GC checks references across sessions, spans and comments.
 pub trait Store {
-    fn put_blob(&self, bytes: &[u8]) -> impl Future<Output = Result<BlobId, StoreError>> + Send;
+    /// Content-addressed by `BlobId::of`; durable (fsynced, renamed) on return.
+    fn put_blob(&self, bytes: Vec<u8>) -> impl Future<Output = Result<BlobId, StoreError>> + Send;
     fn blob(&self, id: BlobId) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
-    /// Merkle directory nodes are content-addressed here, so timeline snapshots
-    /// share structure instead of storing full entry maps.
-    fn put_tree_node(&self, bytes: &[u8]) -> impl Future<Output = Result<vet_core::content::Hash, StoreError>> + Send;
-    fn tree_node(&self, id: vet_core::content::Hash) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
+    fn put_snapshot(&self, snapshot: Snapshot) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn snapshot(&self, id: SnapshotId) -> impl Future<Output = Result<Option<Snapshot>, StoreError>> + Send;
+    /// Append a settled snapshot to the session's edit timeline (§3).
+    fn append_timeline(&self, session: SessionId, snapshot: SnapshotId) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn timeline(&self, session: SessionId) -> impl Future<Output = Result<Vec<SnapshotId>, StoreError>> + Send;
+    /// Delete expired closed sessions, then snapshots and content nothing
+    /// retained refers to (§8). `now` is unix seconds.
+    fn gc(&self, now: i64) -> impl Future<Output = Result<GcReport, StoreError>> + Send;
+}
+
+/// Review state (§5.2, §7.5). Spans are replaced as a set because remapping is
+/// a partition.
+pub trait ReviewStore {
+    fn put_pin(&self, head: CommitId, tree: SnapshotId) -> impl Future<Output = Result<Pin, StoreError>> + Send;
+    fn open_session(&self, pin: PinId, changeset: Changeset, filter: ReviewFilter) -> impl Future<Output = Result<SessionId, StoreError>> + Send;
+    /// `now` is unix seconds.
+    fn close_session(&self, id: SessionId, now: i64) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn open_sessions(&self) -> impl Future<Output = Result<Vec<SessionId>, StoreError>> + Send;
+    fn session(&self, id: SessionId) -> impl Future<Output = Result<Option<Session>, StoreError>> + Send;
+    fn set_filter(&self, id: SessionId, filter: ReviewFilter) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn replace_spans(&self, id: SessionId, spans: Vec<ReviewedSpan>) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn acknowledge(&self, id: SessionId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn unacknowledge(&self, id: SessionId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn add_thread(&self, id: SessionId, target: CommentTarget, opener: Message) -> impl Future<Output = Result<ThreadId, StoreError>> + Send;
+    fn add_message(&self, thread: ThreadId, message: Message) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn set_thread_status(&self, thread: ThreadId, status: ThreadStatus) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Re-anchor a thread (attach, confirm a moved anchor).
+    fn set_thread_target(&self, thread: ThreadId, target: CommentTarget) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn set_thread_platform(&self, thread: ThreadId, platform: Option<PlatformThread>) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn delete_thread(&self, thread: ThreadId) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Approving records the new executor-relevant hash for `repo` (§7.5).
+    fn record_run_approval(&self, repo: String, hash: Hash, at: i64) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn last_run_approval(&self, repo: String) -> impl Future<Output = Result<Option<Hash>, StoreError>> + Send;
 }
 
 pub struct Command {

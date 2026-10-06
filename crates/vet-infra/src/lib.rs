@@ -12,9 +12,7 @@ pub mod watch;
 /// `vet_app::ports::Clock` over tokio time.
 pub mod clock;
 
-/// `vet_app::ports::Store`: content-addressed files (temp, fsync, rename) and
-/// SQLite in WAL mode.
-pub mod store {}
+pub mod store;
 
 /// `vet_semantic::ports::ServerLauncher` and `LanguageServer`: one concrete
 /// stdio LSP client, plus the `ServerCapabilities` assertion on start.

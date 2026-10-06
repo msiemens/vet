@@ -133,7 +133,8 @@ mod tests {
 
     use super::*;
     use crate::acquisition::CommitId;
-    use crate::ports::{Scan, StoreError};
+    use crate::ports::{GcReport, Scan, StoreError};
+    use crate::review::SessionId;
 
     fn path(name: &str) -> RepoPath {
         RepoPath(name.as_bytes().to_vec())
@@ -255,16 +256,25 @@ mod tests {
     }
 
     impl Store for FakeStore {
-        async fn put_blob(&self, _: &[u8]) -> Result<BlobId, StoreError> {
+        async fn put_blob(&self, _: Vec<u8>) -> Result<BlobId, StoreError> {
             unreachable!()
         }
         async fn blob(&self, _: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
             unreachable!()
         }
-        async fn put_tree_node(&self, _: &[u8]) -> Result<Hash, StoreError> {
+        async fn put_snapshot(&self, _: Snapshot) -> Result<(), StoreError> {
             unreachable!()
         }
-        async fn tree_node(&self, _: Hash) -> Result<Option<Vec<u8>>, StoreError> {
+        async fn snapshot(&self, _: SnapshotId) -> Result<Option<Snapshot>, StoreError> {
+            unreachable!()
+        }
+        async fn append_timeline(&self, _: SessionId, _: SnapshotId) -> Result<(), StoreError> {
+            unreachable!()
+        }
+        async fn timeline(&self, _: SessionId) -> Result<Vec<SnapshotId>, StoreError> {
+            unreachable!()
+        }
+        async fn gc(&self, _: i64) -> Result<GcReport, StoreError> {
             unreachable!()
         }
     }
