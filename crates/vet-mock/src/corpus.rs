@@ -347,6 +347,8 @@ mod tests {
         let status = Command::new("git")
             .arg("-C")
             .arg(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .args(["-c", "user.name=t", "-c", "user.email=t@t"])
             .args(args)
             .status()
