@@ -20,7 +20,7 @@
 //! coordinates: lines such a span lost to earlier edits stay in it and come back
 //! when the edit is reverted.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::{fmt, slice};
 
 use tokio::sync::Mutex;
@@ -174,9 +174,52 @@ pub struct FileText {
     pub target: Option<String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DirEntryKind {
+    File,
+    Dir,
+    Symlink,
+    Submodule,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct DirItem {
+    pub name: String,
+    pub kind: DirEntryKind,
+    /// The path, or anything below a directory, is in the changeset.
+    pub changed: bool,
+    /// The review filter excludes the path, or everything below a directory.
+    pub excluded: bool,
+}
+
+/// Directories first, then the others, each by name in byte order.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct DirListing {
+    pub revision: u32,
+    pub entries: Vec<DirItem>,
+}
+
+/// Why a file has no text to show.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NoText {
+    Binary,
+    /// Over the capture cap, or not readable any more.
+    Unavailable,
+    /// A symlink or a submodule.
+    NotAFile,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct TargetText {
+    pub revision: u32,
+    pub content: std::result::Result<String, NoText>,
+}
+
 /// What the current revision's diff needs, computed on first use.
 struct Changes {
     diff: SnapshotDiff,
+    /// Every path the diff mentions, on either side.
+    changed: BTreeSet<RepoPath>,
     /// Text of the diffed files and of what recorded spans were marked in.
     blobs: BTreeMap<BlobId, Vec<u8>>,
     /// Recorded spans as they are now.
@@ -485,9 +528,9 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let mut result = Ok(());
         for (text, side) in texts.iter_mut().zip([old, new]) {
             let Some((p, b)) = side else { continue };
-            match self.load(&mut blobs, &p, b).await {
-                Ok(true) if !is_binary(&blobs[&b]) => *text = Some(String::from_utf8_lossy(&blobs[&b]).into_owned()),
-                Ok(_) => result = Err(SessionError::NotText(path_str(&p))),
+            match self.text_of(&mut blobs, &p, b).await {
+                Ok(Ok(t)) => *text = Some(t),
+                Ok(Err(_)) => result = Err(SessionError::NotText(path_str(&p))),
                 Err(e) => result = Err(e),
             }
             if result.is_err() {
@@ -501,6 +544,94 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             revision: st.revision,
             base,
             target,
+        })
+    }
+
+    /// The children of `path` (`""` is the root) in the target snapshot.
+    pub async fn list_directory(&self, path: &str) -> Result<DirListing> {
+        let mut st = self.state.lock().await;
+        self.ensure_changes(&mut st).await?;
+        let changes = st.changes.as_ref().expect("computed");
+        let compiled = st.filter.compile();
+        let prefix = if path.is_empty() {
+            String::new()
+        } else {
+            format!("{path}/")
+        };
+        let prefix = prefix.as_bytes();
+        let has_prefix = |p: &RepoPath, below: &[u8]| p.0.starts_with(below);
+
+        let mut entries = Vec::new();
+        let mut next = RepoPath(prefix.to_vec());
+        while let Some((key, entry)) = st.target.entries.range(next.clone()..).next() {
+            let Some(rest) = key.0.strip_prefix(prefix) else { break };
+            let (name, below) = match rest.iter().position(|&b| b == b'/') {
+                None => {
+                    // Skips to the first key after this one.
+                    next = RepoPath([key.0.as_slice(), &[0]].concat());
+                    let kind = match entry.kind {
+                        EntryKind::File => DirEntryKind::File,
+                        EntryKind::Symlink => DirEntryKind::Symlink,
+                        EntryKind::Submodule => DirEntryKind::Submodule,
+                    };
+                    entries.push(DirItem {
+                        name: String::from_utf8_lossy(rest).into_owned(),
+                        kind,
+                        changed: changes.changed.contains(key),
+                        excluded: !compiled.passes(key),
+                    });
+                    continue;
+                }
+                Some(i) => (&rest[..i], [&key.0[..prefix.len() + i], b"/"].concat()),
+            };
+            // Skips everything below the directory: `0` is the byte after `/`.
+            next = RepoPath([&below[..below.len() - 1], b"0"].concat());
+            let below = RepoPath(below);
+            entries.push(DirItem {
+                name: String::from_utf8_lossy(name).into_owned(),
+                kind: DirEntryKind::Dir,
+                changed: changes
+                    .changed
+                    .range(below.clone()..)
+                    .next()
+                    .is_some_and(|p| has_prefix(p, &below.0)),
+                excluded: st
+                    .target
+                    .entries
+                    .range(below.clone()..)
+                    .take_while(|(p, _)| has_prefix(p, &below.0))
+                    .all(|(p, _)| !compiled.passes(p)),
+            });
+        }
+        if entries.is_empty() && !path.is_empty() {
+            return Err(SessionError::NotFound(format!("directory {path}")));
+        }
+        entries.sort_by(|a, b| {
+            let key = |i: &DirItem| (i.kind != DirEntryKind::Dir, i.name.clone().into_bytes());
+            key(a).cmp(&key(b))
+        });
+        Ok(DirListing {
+            revision: st.revision,
+            entries,
+        })
+    }
+
+    /// The text of any file of the target snapshot, changed or not.
+    pub async fn target_text(&self, path: &str) -> Result<TargetText> {
+        let st = self.state.lock().await;
+        let key = RepoPath(path.as_bytes().to_vec());
+        let entry = st
+            .target
+            .entries
+            .get(&key)
+            .ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
+        let content = match entry.kind {
+            EntryKind::File => self.text_of(&mut BTreeMap::new(), &key, entry.blob).await?,
+            EntryKind::Symlink | EntryKind::Submodule => Err(NoText::NotAFile),
+        };
+        Ok(TargetText {
+            revision: st.revision,
+            content,
         })
     }
 
@@ -610,8 +741,22 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
                 after: self.describe(&n.path, n.after.as_ref(), n.kind).await,
             });
         }
+        let changed = diff
+            .files
+            .iter()
+            .flat_map(|d| [&d.old_path, &d.new_path])
+            .flatten()
+            .chain(
+                diff.non_text
+                    .iter()
+                    .flat_map(|n| [Some(&n.path), n.from.as_ref()])
+                    .flatten(),
+            )
+            .cloned()
+            .collect();
         st.changes = Some(Changes {
             diff,
+            changed,
             blobs,
             remapped: Vec::new(),
             flat: Vec::new(),
@@ -657,6 +802,22 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             None => self.acquisition.git.read_blob(path, blob).await?,
         };
         Ok(bytes.map(|b| blobs.insert(blob, b)).is_some())
+    }
+
+    /// The text of a blob loaded by [`Self::load`], or why there is none.
+    async fn text_of(
+        &self,
+        blobs: &mut BTreeMap<BlobId, Vec<u8>>,
+        path: &RepoPath,
+        blob: BlobId,
+    ) -> Result<std::result::Result<String, NoText>> {
+        Ok(if !self.load(blobs, path, blob).await? {
+            Err(NoText::Unavailable)
+        } else if is_binary(&blobs[&blob]) {
+            Err(NoText::Binary)
+        } else {
+            Ok(String::from_utf8_lossy(&blobs[&blob]).into_owned())
+        })
     }
 
     /// Remaps every recorded span onto the current changeset (§5.2).

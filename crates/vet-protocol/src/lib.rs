@@ -118,6 +118,19 @@ pub enum Request {
     ListBaseCandidates {
         session: SessionId,
     },
+    /// The direct children of a directory of the current target snapshot.
+    /// `path` is `""` for the root, else `a/b` without a trailing slash. Fails if
+    /// the snapshot has nothing there.
+    ListDirectory {
+        session: SessionId,
+        path: String,
+    },
+    /// The target-side text of any path of the current target snapshot, changed
+    /// or not.
+    FileText {
+        session: SessionId,
+        path: String,
+    },
 }
 
 /// How a session's base is chosen.
@@ -207,6 +220,59 @@ pub enum Response {
         branches: Vec<BranchInfo>,
         commits: Vec<CommitInfo>,
     },
+    /// Directories first, then the others, each by name in byte order. `revision`
+    /// is the one the listing belongs to.
+    Directory {
+        revision: u32,
+        entries: Vec<DirEntry>,
+    },
+    /// The answer to `FileText`, at `revision`.
+    FileText {
+        revision: u32,
+        content: TextContent,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum DirEntryKind {
+    File,
+    Dir,
+    Symlink,
+    Submodule,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DirEntry {
+    pub name: String,
+    pub kind: DirEntryKind,
+    /// The path, or for a directory anything below it, is changed in the
+    /// changeset (whatever the review filter says).
+    pub changed: bool,
+    /// The review filter excludes the path, or for a directory everything below it.
+    pub excluded: bool,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum TextContent {
+    Text { text: String },
+    NoText { reason: NoTextReason },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum NoTextReason {
+    Binary,
+    /// Over the capture cap, or its content could not be read.
+    Unavailable,
+    /// A symlink or a submodule.
+    NotAFile,
 }
 
 /// A file's new review state with the completion it implies, so a shell never

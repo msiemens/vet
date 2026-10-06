@@ -3,7 +3,8 @@
 use vet_app::pin::{BaseChoice, CommitId};
 use vet_app::ports::{BaseCandidates, Degraded};
 use vet_app::session::{
-    BaseView, EntryInfo, FileStatus, FileView, ItemView, ManifestView, ReviewUpdateView, ReviewView, path_str,
+    BaseView, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemView, ManifestView, NoText,
+    ReviewUpdateView, ReviewView, TargetText, path_str,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, NonTextKind};
@@ -171,6 +172,43 @@ pub fn manifest(session: p::SessionId, m: &ManifestView) -> p::Manifest {
             Degraded::MountedWindowsDrive => p::WatchDegraded::MountedWindowsDrive,
             Degraded::WatchLimit => p::WatchDegraded::WatchLimit,
         }),
+    }
+}
+
+pub fn directory(l: &DirListing) -> p::Response {
+    p::Response::Directory {
+        revision: l.revision,
+        entries: l
+            .entries
+            .iter()
+            .map(|e| p::DirEntry {
+                name: e.name.clone(),
+                kind: match e.kind {
+                    DirEntryKind::File => p::DirEntryKind::File,
+                    DirEntryKind::Dir => p::DirEntryKind::Dir,
+                    DirEntryKind::Symlink => p::DirEntryKind::Symlink,
+                    DirEntryKind::Submodule => p::DirEntryKind::Submodule,
+                },
+                changed: e.changed,
+                excluded: e.excluded,
+            })
+            .collect(),
+    }
+}
+
+pub fn target_text(t: &TargetText) -> p::Response {
+    p::Response::FileText {
+        revision: t.revision,
+        content: match &t.content {
+            Ok(text) => p::TextContent::Text { text: text.clone() },
+            Err(reason) => p::TextContent::NoText {
+                reason: match reason {
+                    NoText::Binary => p::NoTextReason::Binary,
+                    NoText::Unavailable => p::NoTextReason::Unavailable,
+                    NoText::NotAFile => p::NoTextReason::NotAFile,
+                },
+            },
+        },
     }
 }
 

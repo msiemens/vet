@@ -2,12 +2,14 @@
 import type { Base } from "./Base";
 import type { BranchInfo } from "./BranchInfo";
 import type { CommitInfo } from "./CommitInfo";
+import type { DirEntry } from "./DirEntry";
 import type { Manifest } from "./Manifest";
 import type { Mark } from "./Mark";
 import type { ReviewUpdate } from "./ReviewUpdate";
+import type { TextContent } from "./TextContent";
 
 export type Response = { "type": "pong", payload: string, } | { "type": "session", session: number, 
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", text: string, } | { "type": "base" } & Base | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, };
+root: string, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", text: string, } | { "type": "base" } & Base | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, };

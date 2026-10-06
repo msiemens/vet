@@ -288,6 +288,26 @@ impl Handler for Orchestrator {
                     .map_err(message)?;
                 Ok(mapping::base_candidates(&candidates))
             }
+            Request::ListDirectory { session, path } => {
+                let listing = self
+                    .find(session)
+                    .await?
+                    .session
+                    .list_directory(&path)
+                    .await
+                    .map_err(message)?;
+                Ok(mapping::directory(&listing))
+            }
+            Request::FileText { session, path } => {
+                let text = self
+                    .find(session)
+                    .await?
+                    .session
+                    .target_text(&path)
+                    .await
+                    .map_err(message)?;
+                Ok(mapping::target_text(&text))
+            }
             Request::Hover { .. } => Err("hover is not implemented yet".into()),
         }
     }

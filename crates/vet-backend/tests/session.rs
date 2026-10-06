@@ -9,8 +9,8 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    Base, BaseChoice, Completion, Event, FileStatus, HunkState, Manifest, NonTextKind, Request, Response, ReviewUpdate,
-    ServerMessage, SessionId,
+    Base, BaseChoice, Completion, DirEntry, DirEntryKind, Event, FileStatus, HunkState, Manifest, NoTextReason,
+    NonTextKind, Request, Response, ReviewUpdate, ServerMessage, SessionId, TextContent,
 };
 use vet_transport::{Events, Handler};
 
@@ -345,6 +345,94 @@ async fn ignored_paths_do_not_settle_snapshots() {
     assert_eq!(client.settled().await, 1);
     let m = client.manifest(session).await;
     assert_eq!(m.files.len(), 1);
+}
+
+impl Client {
+    async fn list(&self, session: SessionId, path: &str) -> Result<(u32, Vec<DirEntry>), String> {
+        match self
+            .call(Request::ListDirectory {
+                session,
+                path: path.into(),
+            })
+            .await?
+        {
+            Response::Directory { revision, entries } => Ok((revision, entries)),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    async fn file_text(&self, session: SessionId, path: &str) -> Result<TextContent, String> {
+        match self
+            .call(Request::FileText {
+                session,
+                path: path.into(),
+            })
+            .await?
+        {
+            Response::FileText { content, .. } => Ok(content),
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+fn names(entries: &[DirEntry]) -> Vec<(&str, DirEntryKind, bool)> {
+    entries.iter().map(|e| (e.name.as_str(), e.kind, e.changed)).collect()
+}
+
+#[tokio::test]
+async fn the_whole_snapshot_can_be_browsed_and_read() {
+    use DirEntryKind::{Dir, File};
+    let fx = fixture(
+        &[
+            ("src/a/deep/f.rs", "fn f() {}\n"),
+            ("src/lib.rs", "// lib\n"),
+            ("blob.bin", "x\0y"),
+            ("README.md", "hello\n"),
+        ],
+        &[
+            ("src/a/deep/f.rs", "fn f() { 1; }\n"),
+            ("src/new.rs", "// new\n"),
+            ("target/debug/out", "ignored\n"),
+            (".pnpm-store/v11/x", "store\n"),
+            ("pkg/.pnpm-store/v11/y", "store\n"),
+        ],
+    )
+    .await;
+    let client = Client::new(&fx.handler);
+    let session = open(&client, fx.repo.path()).await;
+
+    let (revision, root) = client.list(session, "").await.unwrap();
+    assert_eq!(revision, 0);
+    // No `target/`, `.pnpm-store/` or `pkg/` (which holds only a tool store).
+    assert_eq!(
+        names(&root),
+        [
+            ("src", Dir, true),
+            (".gitignore", File, false),
+            ("README.md", File, false),
+            ("blob.bin", File, false)
+        ]
+    );
+    let (_, src) = client.list(session, "src").await.unwrap();
+    assert_eq!(
+        names(&src),
+        [("a", Dir, true), ("lib.rs", File, false), ("new.rs", File, true)]
+    );
+    let (_, deep) = client.list(session, "src/a/deep").await.unwrap();
+    assert_eq!(names(&deep), [("f.rs", File, true)]);
+    assert!(client.list(session, "target").await.is_err());
+    assert!(client.list(session, ".pnpm-store").await.is_err());
+
+    let text = |text: &str| TextContent::Text { text: text.into() };
+    assert_eq!(client.file_text(session, "src/lib.rs").await.unwrap(), text("// lib\n"));
+    assert_eq!(client.file_text(session, "src/new.rs").await.unwrap(), text("// new\n"));
+    assert_eq!(
+        client.file_text(session, "blob.bin").await.unwrap(),
+        TextContent::NoText {
+            reason: NoTextReason::Binary
+        }
+    );
+    assert!(client.file_text(session, "target/debug/out").await.is_err());
 }
 
 fn session_refs(repo: &Path) -> String {

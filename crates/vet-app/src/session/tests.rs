@@ -787,6 +787,152 @@ async fn file_text_returns_both_sides() {
     ));
 }
 
+fn listing(l: &DirListing) -> Vec<(&str, DirEntryKind, bool, bool)> {
+    l.entries
+        .iter()
+        .map(|e| (e.name.as_str(), e.kind, e.changed, e.excluded))
+        .collect()
+}
+
+#[tokio::test]
+async fn directories_list_first_in_byte_order_with_changed_below() {
+    use DirEntryKind::{Dir, File};
+    let base = [
+        ("src/a/deep/x.rs", "x\n"),
+        ("src/a-b/y.rs", "y\n"),
+        ("src/b.rs", "b\n"),
+        ("Z.md", "z\n"),
+        ("a.md", "a\n"),
+    ];
+    let mut dirty = base;
+    dirty[0].1 = "changed\n";
+    let fx = Fixture::open(&base, &dirty).await;
+
+    let root = fx.session.list_directory("").await.unwrap();
+    assert_eq!(
+        listing(&root),
+        [
+            ("src", Dir, true, false),
+            ("Z.md", File, false, false),
+            ("a.md", File, false, false)
+        ]
+    );
+    let src = fx.session.list_directory("src").await.unwrap();
+    assert_eq!(
+        listing(&src),
+        [
+            ("a", Dir, true, false),
+            ("a-b", Dir, false, false),
+            ("b.rs", File, false, false)
+        ]
+    );
+    let deep = fx.session.list_directory("src/a/deep").await.unwrap();
+    assert_eq!(listing(&deep), [("x.rs", File, true, false)]);
+    assert_eq!(deep.revision, 0);
+    assert!(matches!(
+        fx.session.list_directory("src/nope").await,
+        Err(SessionError::NotFound(_))
+    ));
+    assert!(matches!(
+        fx.session.list_directory("a.md").await,
+        Err(SessionError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn deleted_and_added_files_flag_their_directories() {
+    let fx = Fixture::open(
+        &[("gone/f.txt", "f\n"), ("keep/k.txt", "k\n")],
+        &[("keep/k.txt", "k\n"), ("new/n.txt", "n\n")],
+    )
+    .await;
+
+    let root = fx.session.list_directory("").await.unwrap();
+    // `gone` has no files left in the target, so it is not listed.
+    assert_eq!(
+        listing(&root),
+        [
+            ("keep", DirEntryKind::Dir, false, false),
+            ("new", DirEntryKind::Dir, true, false)
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_filter_excludes_files_and_directories_without_a_passing_file() {
+    use DirEntryKind::{Dir, File};
+    let files = [
+        ("docs/a.md", "a\n"),
+        ("mixed/b.md", "b\n"),
+        ("mixed/c.rs", "c\n"),
+        ("d.rs", "d\n"),
+    ];
+    let fx = Fixture::open(&files, &files).await;
+    fx.session.state.lock().await.filter.include = vec!["*.rs".into()];
+
+    let root = fx.session.list_directory("").await.unwrap();
+    assert_eq!(
+        listing(&root),
+        [
+            ("docs", Dir, false, true),
+            ("mixed", Dir, false, false),
+            ("d.rs", File, false, false)
+        ]
+    );
+    let mixed = fx.session.list_directory("mixed").await.unwrap();
+    assert_eq!(
+        listing(&mixed),
+        [("b.md", File, false, true), ("c.rs", File, false, false)]
+    );
+}
+
+#[tokio::test]
+async fn target_text_reads_unchanged_files_and_explains_missing_text() {
+    let fx = Fixture::open(
+        &[("a.txt", "one\n"), ("bin", "x\0y"), ("link", "a.txt")],
+        &[("a.txt", "one\n"), ("bin", "x\0y"), ("link", "a.txt")],
+    )
+    .await;
+    // The target is a plain file; make `link` a symlink entry.
+    let mut st = fx.session.state.lock().await;
+    st.target.entries.get_mut(&path("link")).unwrap().kind = EntryKind::Symlink;
+    drop(st);
+
+    let text = fx.session.target_text("a.txt").await.unwrap();
+    assert_eq!((text.revision, text.content), (0, Ok("one\n".into())));
+    assert_eq!(
+        fx.session.target_text("bin").await.unwrap().content,
+        Err(NoText::Binary)
+    );
+    assert_eq!(
+        fx.session.target_text("link").await.unwrap().content,
+        Err(NoText::NotAFile)
+    );
+    // Content no source has any more.
+    fx.git.blobs.lock().unwrap().clear();
+    fx.store.0.lock().unwrap().blobs.clear();
+    assert_eq!(
+        fx.session.target_text("a.txt").await.unwrap().content,
+        Err(NoText::Unavailable)
+    );
+    assert!(matches!(
+        fx.session.target_text("nope").await,
+        Err(SessionError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn settling_moves_the_listing_to_the_new_revision() {
+    let fx = Fixture::open(&[("a/x.txt", "x\n")], &[("a/x.txt", "x\n")]).await;
+    assert!(!fx.session.list_directory("a").await.unwrap().entries[0].changed);
+
+    fx.settle(&[("a/x.txt", "y\n")]).await;
+
+    let after = fx.session.list_directory("").await.unwrap();
+    assert_eq!(after.revision, 1);
+    assert!(after.entries[0].changed);
+}
+
 #[tokio::test]
 async fn settled_snapshots_are_stored_and_bump_the_revision() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
