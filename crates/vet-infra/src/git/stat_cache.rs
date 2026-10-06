@@ -29,7 +29,13 @@ impl StatKey {
         };
         #[cfg(not(unix))]
         let (ctime, ino) = ((0, 0), 0);
-        Self { size: md.len(), mtime: md.modified().map_or((0, 0), stamp), ctime, ino, index_mode }
+        Self {
+            size: md.len(),
+            mtime: md.modified().map_or((0, 0), stamp),
+            ctime,
+            ino,
+            index_mode,
+        }
     }
 }
 

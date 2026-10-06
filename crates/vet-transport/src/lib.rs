@@ -43,12 +43,18 @@ pub struct Server {
 impl Server {
     pub async fn bind() -> io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
-        Ok(Self { listener, token: random_token()? })
+        Ok(Self {
+            listener,
+            token: random_token()?,
+        })
     }
 
     /// The line the backend prints to stdout for the shell to read.
     pub fn ready(&self) -> io::Result<Ready> {
-        Ok(Ready { port: self.listener.local_addr()?.port(), token: self.token.clone() })
+        Ok(Ready {
+            port: self.listener.local_addr()?.port(),
+            token: self.token.clone(),
+        })
     }
 
     /// Prints the `Ready` line to stdout for the shell, and to stderr the
@@ -56,7 +62,10 @@ impl Server {
     pub fn announce(&self) -> io::Result<()> {
         let ready = self.ready()?;
         println!("{}", serde_json::to_string(&ready).expect("ready serializes"));
-        eprintln!("dev UI: http://localhost:1420/#port={}&token={}", ready.port, ready.token);
+        eprintln!(
+            "dev UI: http://localhost:1420/#port={}&token={}",
+            ready.port, ready.token
+        );
         Ok(())
     }
 
@@ -101,17 +110,31 @@ fn frame(message: &ServerMessage) -> Message {
     Message::text(serde_json::to_string(message).expect("server messages serialize"))
 }
 
-async fn connection<H: Handler>(stream: TcpStream, token: &str, handler: Arc<H>) -> Result<(), Box<dyn std::error::Error>> {
+async fn connection<H: Handler>(
+    stream: TcpStream,
+    token: &str,
+    handler: Arc<H>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (mut sink, mut source) = tokio_tungstenite::accept_async(stream).await?.split();
 
-    let first = tokio::time::timeout(HELLO_TIMEOUT, source.next()).await.map_err(|_| "no hello")?.ok_or("closed before hello")??;
-    let Message::Text(text) = first else { return Err("first frame must be a text Hello".into()) };
+    let first = tokio::time::timeout(HELLO_TIMEOUT, source.next())
+        .await
+        .map_err(|_| "no hello")?
+        .ok_or("closed before hello")??;
+    let Message::Text(text) = first else {
+        return Err("first frame must be a text Hello".into());
+    };
     match serde_json::from_str::<ClientMessage>(text.as_str()) {
-        Ok(ClientMessage::Hello { token: presented, protocol_version })
-            if token_matches(&presented, token) && protocol_version == PROTOCOL_VERSION => {}
+        Ok(ClientMessage::Hello {
+            token: presented,
+            protocol_version,
+        }) if token_matches(&presented, token) && protocol_version == PROTOCOL_VERSION => {}
         _ => return Err("bad hello".into()),
     }
-    sink.send(frame(&ServerMessage::HelloAck { protocol_version: PROTOCOL_VERSION })).await?;
+    sink.send(frame(&ServerMessage::HelloAck {
+        protocol_version: PROTOCOL_VERSION,
+    }))
+    .await?;
 
     // One writer owns the sink; request tasks send their replies through it.
     let (replies, mut outbox) = mpsc::unbounded_channel::<ServerMessage>();
@@ -137,10 +160,16 @@ async fn connection<H: Handler>(stream: TcpStream, token: &str, handler: Arc<H>)
                 });
             }
             Ok(ClientMessage::Hello { .. }) => {
-                let _ = replies.send(ServerMessage::Error { id: None, message: "already authenticated".into() });
+                let _ = replies.send(ServerMessage::Error {
+                    id: None,
+                    message: "already authenticated".into(),
+                });
             }
             Err(error) => {
-                let _ = replies.send(ServerMessage::Error { id: None, message: format!("malformed message: {error}") });
+                let _ = replies.send(ServerMessage::Error {
+                    id: None,
+                    message: format!("malformed message: {error}"),
+                });
             }
         }
     }

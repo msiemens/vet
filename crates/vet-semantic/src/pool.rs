@@ -76,7 +76,10 @@ mod tests {
     fn untrusted_policy_refuses_executing_backends_only() {
         let untrusted = AnalysisPolicy { allow_executing: false };
         let trusted = AnalysisPolicy { allow_executing: true };
-        assert!(matches!(admit(&backend(true), untrusted), Err(PoolError::AnalysisLimited(_))));
+        assert!(matches!(
+            admit(&backend(true), untrusted),
+            Err(PoolError::AnalysisLimited(_))
+        ));
         assert!(admit(&backend(false), untrusted).is_ok());
         assert!(admit(&backend(true), trusted).is_ok());
     }

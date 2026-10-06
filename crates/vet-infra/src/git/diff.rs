@@ -4,15 +4,19 @@
 use std::collections::{BTreeMap, HashMap};
 use std::convert::Infallible;
 
+use gix::ObjectId;
 use gix::bstr::ByteSlice;
 use gix::diff::blob::{Algorithm, Diff, InternedInput, sources::byte_lines};
 use gix::diff::rewrites::{Tracker, tracker::ChangeKind};
 use gix::diff::tree::visit::Action;
-use gix::objs::{Find, FindHeader, Kind, tree::{EntryKind as GitKind, EntryMode}};
-use gix::ObjectId;
+use gix::objs::{
+    Find, FindHeader, Kind,
+    tree::{EntryKind as GitKind, EntryMode},
+};
 use vet_app::ports::GitError;
-use vet_core::content::{BlobSource, 
-    BlobId, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextChange, NonTextKind, RenameMap, RepoPath, Snapshot, SnapshotDiff,
+use vet_core::content::{
+    BlobId, BlobSource, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextChange, NonTextKind, RenameMap,
+    RepoPath, Snapshot, SnapshotDiff,
 };
 
 use super::scan::Worktree;
@@ -34,7 +38,10 @@ pub(crate) fn changes(old: &Snapshot, new: &Snapshot) -> Vec<Change> {
     paths
         .into_iter()
         .filter(|p| old.entries.get(*p) != new.entries.get(*p))
-        .map(|p| Change { old: side(old, p), new: side(new, p) })
+        .map(|p| Change {
+            old: side(old, p),
+            new: side(new, p),
+        })
         .collect()
 }
 
@@ -71,13 +78,23 @@ pub(crate) fn diff(
 
     let renames = detect_renames(repo, &changes, &contents)?;
     for (from, to) in &renames {
-        let old_side = take(&mut changes, |c| c.new.is_none() && c.old.as_ref().is_some_and(|(p, _)| p == from));
-        let new_side = take(&mut changes, |c| c.old.is_none() && c.new.as_ref().is_some_and(|(p, _)| p == to));
-        changes.push(Change { old: old_side.and_then(|c| c.old), new: new_side.and_then(|c| c.new) });
+        let old_side = take(&mut changes, |c| {
+            c.new.is_none() && c.old.as_ref().is_some_and(|(p, _)| p == from)
+        });
+        let new_side = take(&mut changes, |c| {
+            c.old.is_none() && c.new.as_ref().is_some_and(|(p, _)| p == to)
+        });
+        changes.push(Change {
+            old: old_side.and_then(|c| c.old),
+            new: new_side.and_then(|c| c.new),
+        });
     }
     changes.sort_by(|a, b| key(a).cmp(key(b)));
 
-    let mut out = SnapshotDiff { renames: RenameMap(renames.into_iter().collect()), ..Default::default() };
+    let mut out = SnapshotDiff {
+        renames: RenameMap(renames.into_iter().collect()),
+        ..Default::default()
+    };
     for change in changes {
         classify(change, &contents, &mut out);
     }
@@ -93,7 +110,14 @@ fn take(changes: &mut Vec<Change>, f: impl Fn(&Change) -> bool) -> Option<Change
 }
 
 /// Git first, then the worktree if the file still hashes to `id`.
-fn local_blob(repo: &gix::Repository, wt: &mut Worktree, blobs: &BlobCache, cap: u64, path: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
+fn local_blob(
+    repo: &gix::Repository,
+    wt: &mut Worktree,
+    blobs: &BlobCache,
+    cap: u64,
+    path: &RepoPath,
+    blob: BlobId,
+) -> Result<Option<Vec<u8>>, GitError> {
     if let Some(bytes) = blobs.odb_content(repo, blob, cap)? {
         return Ok(Some(bytes));
     }
@@ -141,11 +165,18 @@ impl Find for Contents<'_> {
 
 impl FindHeader for Contents<'_> {
     fn try_header(&self, id: &gix::oid) -> gix::ExnResult<Option<gix::objs::Header>> {
-        Ok(self.0.get(id).map(|bytes| gix::objs::Header { kind: Kind::Blob, size: bytes.len() as u64 }))
+        Ok(self.0.get(id).map(|bytes| gix::objs::Header {
+            kind: Kind::Blob,
+            size: bytes.len() as u64,
+        }))
     }
 }
 
-fn detect_renames(repo: &gix::Repository, changes: &[Change], contents: &BTreeMap<BlobId, Vec<u8>>) -> Result<Vec<(RepoPath, RepoPath)>, GitError> {
+fn detect_renames(
+    repo: &gix::Repository,
+    changes: &[Change],
+    contents: &BTreeMap<BlobId, Vec<u8>>,
+) -> Result<Vec<(RepoPath, RepoPath)>, GitError> {
     let mut tracker = Tracker::new(gix::diff::Rewrites::default());
     let mut git_contents = HashMap::new();
     for change in changes {
@@ -154,12 +185,25 @@ fn detect_renames(repo: &gix::Repository, changes: &[Change], contents: &BTreeMa
             (None, Some(new)) => (ChangeKind::Addition, new),
             _ => continue,
         };
-        let Some(bytes) = contents.blob(entry.blob).filter(|_| entry.kind == EntryKind::File) else { continue };
+        let Some(bytes) = contents.blob(entry.blob).filter(|_| entry.kind == EntryKind::File) else {
+            continue;
+        };
         // The tracker compares git object ids.
         let id = gix::objs::compute_hash(repo.object_hash(), Kind::Blob, bytes).map_err(err)?;
         git_contents.insert(id, bytes);
-        let mode = if entry.mode & 0o111 != 0 { GitKind::BlobExecutable } else { GitKind::Blob };
-        tracker.try_push_change(Ch { id, kind, mode: mode.into() }, path.0.as_bstr());
+        let mode = if entry.mode & 0o111 != 0 {
+            GitKind::BlobExecutable
+        } else {
+            GitKind::Blob
+        };
+        tracker.try_push_change(
+            Ch {
+                id,
+                kind,
+                mode: mode.into(),
+            },
+            path.0.as_bstr(),
+        );
     }
 
     let mut found = Vec::new();
@@ -200,7 +244,10 @@ fn classify(change: Change, contents: &BTreeMap<BlobId, Vec<u8>>, out: &mut Snap
         return;
     }
 
-    let (old_blob, new_blob) = (change.old.as_ref().map(|(_, e)| e.blob), change.new.as_ref().map(|(_, e)| e.blob));
+    let (old_blob, new_blob) = (
+        change.old.as_ref().map(|(_, e)| e.blob),
+        change.new.as_ref().map(|(_, e)| e.blob),
+    );
     if let (Some((_, o)), Some((_, n))) = (&change.old, &change.new) {
         if o.mode != n.mode {
             out.non_text.push(item(NonTextKind::Mode, &change));
@@ -248,6 +295,14 @@ pub fn line_hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
     let input = InternedInput::new(byte_lines(old), byte_lines(new));
     let mut diff = Diff::compute(Algorithm::Histogram, &input);
     diff.postprocess_lines(&input);
-    let range = |r: std::ops::Range<u32>| LineRange { start: r.start, end: r.end };
-    diff.hunks().map(|h| Hunk { old: range(h.before), new: range(h.after) }).collect()
+    let range = |r: std::ops::Range<u32>| LineRange {
+        start: r.start,
+        end: r.end,
+    };
+    diff.hunks()
+        .map(|h| Hunk {
+            old: range(h.before),
+            new: range(h.after),
+        })
+        .collect()
 }

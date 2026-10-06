@@ -25,11 +25,7 @@ const MARGIN: u32 = 50;
 /// its recorded snapshot. `file` is the anchor's file there; `changed` are the
 /// changed files on that side (it may include `file`), searched for moved
 /// content.
-pub fn resolve_anchor(
-    anchor: &Anchor,
-    file: &PreparedFile,
-    changed: &[PreparedFile],
-) -> Resolution {
+pub fn resolve_anchor(anchor: &Anchor, file: &PreparedFile, changed: &[PreparedFile]) -> Resolution {
     let path = file.input.new_path.as_ref();
     if let (Some(new), Some(path)) = (&file.new, path)
         && let Some((range, whitespace_changed)) = exact(anchor, file, new)
@@ -169,9 +165,7 @@ impl ContextHits {
     fn new(context: &[Hash], hashes: &[Hash]) -> Self {
         let (lead_ctx, trail_ctx) = context.split_at(CONTEXT.min(context.len()));
         let real = |c: &[Hash]| c.iter().filter(|&&h| h != NO_LINE).count() as u32;
-        let hit = |want: Hash, at: Option<usize>| {
-            want != NO_LINE && at.and_then(|i| hashes.get(i)) == Some(&want)
-        };
+        let hit = |want: Hash, at: Option<usize>| want != NO_LINE && at.and_then(|i| hashes.get(i)) == Some(&want);
         let lead = (0..=hashes.len())
             .map(|i| {
                 (lead_ctx.iter().enumerate())
@@ -253,10 +247,7 @@ fn infer(mut candidates: Vec<Candidate>, file_deleted: bool) -> Resolution {
         Strategy::CrossFileMove
     };
     Resolution {
-        state: AnchorState::Inferred {
-            strategy,
-            confidence,
-        },
+        state: AnchorState::Inferred { strategy, confidence },
         location: Some(best.location.clone()),
     }
 }

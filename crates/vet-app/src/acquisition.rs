@@ -66,7 +66,10 @@ impl<G: GitRepo, S: Store> Acquisition<G, S> {
     pub async fn open_pin(&self, id: PinId) -> Result<Opened, GitError> {
         let head = self.git.head().await?;
         let base = self.git.commit_snapshot(&head).await?;
-        let Scan { snapshot: target, status } = self.git.scan(Dirty::All).await?;
+        let Scan {
+            snapshot: target,
+            status,
+        } = self.git.scan(Dirty::All).await?;
         for (path, entry) in &target.entries {
             let in_head = base.entries.get(path).is_some_and(|b| b.blob == entry.blob);
             if in_head || entry.kind == EntryKind::Submodule || status.content_unavailable.contains(path) {
@@ -79,8 +82,17 @@ impl<G: GitRepo, S: Store> Acquisition<G, S> {
                 .ok_or_else(|| GitError("worktree changed while pinning".into()))?;
             self.store.put_blob(bytes).await.map_err(|e| GitError(e.0))?;
         }
-        let pin = Pin { id, head, tree: target.id };
-        Ok(Opened { pin, base, target, status })
+        let pin = Pin {
+            id,
+            head,
+            tree: target.id,
+        };
+        Ok(Opened {
+            pin,
+            base,
+            target,
+            status,
+        })
     }
 
     /// Authoritative reconciliation (§6.2): before declaring a snapshot settled,

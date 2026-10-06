@@ -47,9 +47,17 @@ pub(crate) struct Worktree<'r> {
 }
 
 impl<'r> Worktree<'r> {
-    pub fn new(repo: &'r gix::Repository, blobs: &'r BlobCache, stats: &'r StatCache, cap: u64) -> Result<Self, GitError> {
+    pub fn new(
+        repo: &'r gix::Repository,
+        blobs: &'r BlobCache,
+        stats: &'r StatCache,
+        cap: u64,
+    ) -> Result<Self, GitError> {
         let index = repo.index_or_empty().map_err(err)?;
-        let stack = repo.attributes_only(&index, Source::WorktreeThenIdMapping).map_err(err)?.detach();
+        let stack = repo
+            .attributes_only(&index, Source::WorktreeThenIdMapping)
+            .map_err(err)?
+            .detach();
         let (mut filter, attrs) = gix::filter::Pipeline::new(repo, stack).map_err(err)?.into_parts();
         let options = filter.options_mut();
         // Custom drivers are never run (§6.3).
@@ -63,7 +71,10 @@ impl<'r> Worktree<'r> {
             attrs,
             caps: repo.filesystem_options().map_err(err)?,
             stat: repo.stat_options().map_err(err)?,
-            root: repo.workdir().ok_or_else(|| GitError("bare repository".into()))?.to_owned(),
+            root: repo
+                .workdir()
+                .ok_or_else(|| GitError("bare repository".into()))?
+                .to_owned(),
             cap,
             stats,
             prev: HashMap::new(),
@@ -78,7 +89,12 @@ impl<'r> Worktree<'r> {
     }
 
     /// The item at `path`, or `None` if it is gone or cannot be tracked.
-    pub fn item(&mut self, path: &BStr, tracked: Option<&gix::index::Entry>, keep: bool) -> Result<Option<Item>, GitError> {
+    pub fn item(
+        &mut self,
+        path: &BStr,
+        tracked: Option<&gix::index::Entry>,
+        keep: bool,
+    ) -> Result<Option<Item>, GitError> {
         let full = self.root.join(gix::path::from_bstr(path));
         let md = match std::fs::symlink_metadata(&full) {
             Ok(md) => md,
@@ -90,7 +106,11 @@ impl<'r> Worktree<'r> {
             EntryKind::Symlink
         } else if md.is_file() {
             // Without symlink support a link is checked out as a file holding its target.
-            if index_mode == Some(Mode::SYMLINK) && !self.caps.symlink { EntryKind::Symlink } else { EntryKind::File }
+            if index_mode == Some(Mode::SYMLINK) && !self.caps.symlink {
+                EntryKind::Symlink
+            } else {
+                EntryKind::File
+            }
         } else {
             return Ok(None);
         };
@@ -103,21 +123,40 @@ impl<'r> Worktree<'r> {
             _ if gix::fs::is_executable(&md) => 0o100755,
             _ => 0o100644,
         };
-        let entry = |blob, unfiltered| FileEntry { blob, mode, kind, unfiltered };
+        let entry = |blob, unfiltered| FileEntry {
+            blob,
+            mode,
+            kind,
+            unfiltered,
+        };
 
         if kind == EntryKind::Symlink {
             let bytes = if md.is_symlink() {
-                gix::path::into_bstr(std::fs::read_link(&full).map_err(err)?).into_owned().into()
+                gix::path::into_bstr(std::fs::read_link(&full).map_err(err)?)
+                    .into_owned()
+                    .into()
             } else {
                 std::fs::read(&full).map_err(err)?
             };
-            return Ok(Some(Item { entry: entry(BlobId::of(&bytes), false), unavailable: false, bytes: keep.then_some(bytes) }));
+            return Ok(Some(Item {
+                entry: entry(BlobId::of(&bytes), false),
+                unavailable: false,
+                bytes: keep.then_some(bytes),
+            }));
         }
 
         if let Some(t) = tracked.filter(|t| self.stat_matches(t, &full)) {
             let blob = self.blobs.blob_id(self.repo, t.id)?;
-            let bytes = if keep { self.blobs.odb_content(self.repo, blob, u64::MAX)? } else { None };
-            return Ok(Some(Item { entry: entry(blob, false), unavailable: false, bytes }));
+            let bytes = if keep {
+                self.blobs.odb_content(self.repo, blob, u64::MAX)?
+            } else {
+                None
+            };
+            return Ok(Some(Item {
+                entry: entry(blob, false),
+                unavailable: false,
+                bytes,
+            }));
         }
         // Bytes are wanted for copying, so the cache cannot answer.
         let key = (!keep).then(|| StatKey::of(&md, index_mode.map(|m| m.bits())));
@@ -125,7 +164,11 @@ impl<'r> Worktree<'r> {
         let cached = self.prev.get(&repo_path);
         if let (Some(key), Some(record)) = (&key, cached) {
             if record.matches(key) {
-                let item = Item { entry: record.entry.clone(), unavailable: record.unavailable, bytes: None };
+                let item = Item {
+                    entry: record.entry.clone(),
+                    unavailable: record.unavailable,
+                    bytes: None,
+                };
                 self.next.insert(repo_path, record.clone());
                 return Ok(Some(item));
             }
@@ -137,16 +180,32 @@ impl<'r> Worktree<'r> {
         if let Some(key) = key {
             self.next.insert(
                 repo_path,
-                Record { key, entry: item.entry.clone(), unavailable: item.unavailable, recorded_secs },
+                Record {
+                    key,
+                    entry: item.entry.clone(),
+                    unavailable: item.unavailable,
+                    recorded_secs,
+                },
             );
         }
         Ok(Some(item))
     }
 
-    fn hash_file(&mut self, path: &BStr, full: &Path, len: u64, keep: bool, entry: impl Fn(BlobId, bool) -> FileEntry) -> Result<Item, GitError> {
+    fn hash_file(
+        &mut self,
+        path: &BStr,
+        full: &Path,
+        len: u64,
+        keep: bool,
+        entry: impl Fn(BlobId, bool) -> FileEntry,
+    ) -> Result<Item, GitError> {
         if len > self.cap {
             let blob = BlobId(Hash::of_reader(std::fs::File::open(full).map_err(err)?).map_err(err)?);
-            return Ok(Item { entry: entry(blob, false), unavailable: true, bytes: None });
+            return Ok(Item {
+                entry: entry(blob, false),
+                unavailable: true,
+                bytes: None,
+            });
         }
         let raw = std::fs::read(full).map_err(err)?;
         let (converted, custom_filter) = self.convert(path, &raw)?;
@@ -154,14 +213,21 @@ impl<'r> Worktree<'r> {
             (_, true) | (None, _) => (raw, custom_filter),
             (Some(converted), false) => (converted, false),
         };
-        Ok(Item { entry: entry(BlobId::of(&bytes), unfiltered), unavailable: false, bytes: keep.then_some(bytes) })
+        Ok(Item {
+            entry: entry(BlobId::of(&bytes), unfiltered),
+            unavailable: false,
+            bytes: keep.then_some(bytes),
+        })
     }
 
     /// Start a scan that reuses and refreshes the stat cache. Other uses of the
     /// worktree (diff, `read_blob`) neither read nor change it.
     pub fn use_stat_cache(&mut self) {
         let git_dir = self.repo.git_dir();
-        let config = [git_dir.join("config"), git_dir.join("info/attributes")].iter().map(|p| file_stamp(p)).collect();
+        let config = [git_dir.join("config"), git_dir.join("info/attributes")]
+            .iter()
+            .map(|p| file_stamp(p))
+            .collect();
         self.prev = self.stats.take(config);
     }
 
@@ -197,12 +263,19 @@ impl<'r> Worktree<'r> {
                 &mut |_, attrs| {
                     platform.matching_attributes(attrs);
                     custom_filter = attrs.iter_selected().any(|m| {
-                        m.assignment.name.as_str() == "filter" && matches!(m.assignment.state, gix::attrs::StateRef::Value(_))
+                        m.assignment.name.as_str() == "filter"
+                            && matches!(m.assignment.state, gix::attrs::StateRef::Value(_))
                     });
                 },
                 &mut |buf| {
-                    let Some(entry) = index.entry_by_path(path) else { return Ok(None) };
-                    Ok(repo.objects.try_find(&entry.id, buf)?.filter(|o| o.kind == gix::objs::Kind::Blob).map(|_| ()))
+                    let Some(entry) = index.entry_by_path(path) else {
+                        return Ok(None);
+                    };
+                    Ok(repo
+                        .objects
+                        .try_find(&entry.id, buf)?
+                        .filter(|o| o.kind == gix::objs::Kind::Blob)
+                        .map(|_| ()))
                 },
             )
             .map_err(err)?;
@@ -245,13 +318,26 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache,
     // date, so it may report tracked files too; those are skipped here.
     let mut delegate = gix::dir::walk::delegate::Collect::default();
     let options = repo.dirwalk_options().map_err(err)?;
-    repo.dirwalk(&index, Vec::<BString>::new(), &AtomicBool::new(false), options, &mut delegate).map_err(err)?;
+    repo.dirwalk(
+        &index,
+        Vec::<BString>::new(),
+        &AtomicBool::new(false),
+        options,
+        &mut delegate,
+    )
+    .map_err(err)?;
     for (found, _) in delegate.into_entries_by_path() {
         if found.status != gix::dir::entry::Status::Untracked {
             continue;
         }
-        let is_file = matches!(found.disk_kind, Some(gix::dir::entry::Kind::File | gix::dir::entry::Kind::Symlink));
-        if is_file && !tracked_paths.contains(&found.rela_path) && !entries.contains_key(&RepoPath(found.rela_path.to_vec())) {
+        let is_file = matches!(
+            found.disk_kind,
+            Some(gix::dir::entry::Kind::File | gix::dir::entry::Kind::Symlink)
+        );
+        if is_file
+            && !tracked_paths.contains(&found.rela_path)
+            && !entries.contains_key(&RepoPath(found.rela_path.to_vec()))
+        {
             work.push((found.rela_path, None));
         }
     }
@@ -275,9 +361,15 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache,
     }
     wt.finish();
 
-    let status = SnapshotStatus { path_collisions: collisions(entries.keys()), content_unavailable: unavailable };
+    let status = SnapshotStatus {
+        path_collisions: collisions(entries.keys()),
+        content_unavailable: unavailable,
+    };
     let id = merkle::snapshot_id(&entries);
-    Ok(Scan { snapshot: Snapshot { id, entries }, status })
+    Ok(Scan {
+        snapshot: Snapshot { id, entries },
+        status,
+    })
 }
 
 /// Paths that differ only in case or Unicode normalization.
@@ -290,17 +382,32 @@ fn collisions<'a>(paths: impl Iterator<Item = &'a RepoPath>) -> Vec<RepoPath> {
         };
         groups.entry(key).or_default().push(path);
     }
-    let colliding: BTreeSet<_> = groups.into_values().filter(|g| g.len() > 1).flatten().cloned().collect();
+    let colliding: BTreeSet<_> = groups
+        .into_values()
+        .filter(|g| g.len() > 1)
+        .flatten()
+        .cloned()
+        .collect();
     colliding.into_iter().collect()
 }
 
 /// The entry for `oid` as recorded in a tree or index, with no worktree
 /// involved. A submodule's blob is the hash of its pinned commit id.
-pub(crate) fn tree_entry(repo: &gix::Repository, blobs: &BlobCache, oid: gix::ObjectId, mode: u32) -> Result<FileEntry, GitError> {
+pub(crate) fn tree_entry(
+    repo: &gix::Repository,
+    blobs: &BlobCache,
+    oid: gix::ObjectId,
+    mode: u32,
+) -> Result<FileEntry, GitError> {
     let (kind, blob) = match mode & 0o170000 {
         0o160000 => (EntryKind::Submodule, BlobId::of(oid.as_bytes())),
         0o120000 => (EntryKind::Symlink, blobs.blob_id(repo, oid)?),
         _ => (EntryKind::File, blobs.blob_id(repo, oid)?),
     };
-    Ok(FileEntry { blob, mode, kind, unfiltered: false })
+    Ok(FileEntry {
+        blob,
+        mode,
+        kind,
+        unfiltered: false,
+    })
 }

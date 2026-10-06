@@ -18,7 +18,14 @@ fn git(dir: &Path, args: &[&str]) {
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+        ])
         .args(args)
         .status()
         .unwrap();
@@ -95,7 +102,10 @@ async fn crlf_worktree_matches_head_under_autocrlf() {
     write(dir.path(), "a.txt", b"one\r\ntwo\r\n");
     let repo = GixRepo::new(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
-    assert_eq!(scan.snapshot.entries[&path("a.txt")].blob, base.entries[&path("a.txt")].blob);
+    assert_eq!(
+        scan.snapshot.entries[&path("a.txt")].blob,
+        base.entries[&path("a.txt")].blob
+    );
     assert_eq!(scan.snapshot.id, base.id);
 }
 
@@ -167,7 +177,10 @@ async fn untracked_files_are_included_and_ignored_ones_are_not() {
     let repo = GixRepo::new(dir.path());
     let scan = repo.scan(Dirty::All).await.unwrap();
     let paths: Vec<_> = scan.snapshot.entries.keys().cloned().collect();
-    assert_eq!(paths, vec![path(".gitignore"), path("tracked.txt"), path("untracked.txt")]);
+    assert_eq!(
+        paths,
+        vec![path(".gitignore"), path("tracked.txt"), path("untracked.txt")]
+    );
     assert_eq!(scan.snapshot.entries[&path("untracked.txt")].mode, 0o100644);
 }
 
@@ -178,7 +191,14 @@ async fn custom_filter_paths_are_raw_and_never_run() {
     write(dir.path(), ".gitattributes", b"*.dat filter=probe\n");
     write(dir.path(), "a.dat", b"clean\n");
     commit(dir.path());
-    git(dir.path(), &["config", "filter.probe.clean", &format!("touch {}; cat", marker.display())]);
+    git(
+        dir.path(),
+        &[
+            "config",
+            "filter.probe.clean",
+            &format!("touch {}; cat", marker.display()),
+        ],
+    );
     write(dir.path(), "a.dat", b"edited\n");
     let repo = GixRepo::new(dir.path());
     let scan = repo.scan(Dirty::All).await.unwrap();
@@ -196,7 +216,10 @@ async fn files_over_the_cap_are_hashed_but_not_retained() {
     let big = vec![b'x'; 100];
     write(dir.path(), "big.txt", &big);
     let repo = GixRepo::new(dir.path()).with_cap(10);
-    let acq = Acquisition { git: repo, store: MemStore::default() };
+    let acq = Acquisition {
+        git: repo,
+        store: MemStore::default(),
+    };
     let opened = acq.open_pin(PinId(1)).await.unwrap();
     assert_eq!(opened.status.content_unavailable, vec![path("big.txt")]);
     assert_eq!(opened.target.entries[&path("big.txt")].blob, blob(&big));
@@ -215,7 +238,10 @@ async fn pin_copies_dirty_content_and_diff_survives_later_edits() {
     commit(dir.path());
     write(dir.path(), "a.txt", b"1\nTWO\n3\n");
     write(dir.path(), "new.txt", b"n\n");
-    let acq = Acquisition { git: GixRepo::new(dir.path()), store: MemStore::default() };
+    let acq = Acquisition {
+        git: GixRepo::new(dir.path()),
+        store: MemStore::default(),
+    };
     let opened = acq.open_pin(PinId(1)).await.unwrap();
     assert_eq!(opened.pin.tree, opened.target.id);
     assert!(acq.store.blob(blob(b"1\nTWO\n3\n")).await.unwrap().is_some());
@@ -243,7 +269,11 @@ async fn renames_are_detected_with_their_edits() {
     commit(dir.path());
     std::fs::remove_file(dir.path().join("old.txt")).unwrap();
     std::fs::remove_file(dir.path().join("pure.txt")).unwrap();
-    write(dir.path(), "dir/new.txt", body.replace("line 5\n", "line five\n").as_bytes());
+    write(
+        dir.path(),
+        "dir/new.txt",
+        body.replace("line 5\n", "line five\n").as_bytes(),
+    );
     write(dir.path(), "dir/pure2.txt", b"pure rename content\nmore\n");
     let repo = GixRepo::new(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
@@ -277,7 +307,11 @@ async fn binary_mode_and_symlink_changes_are_non_text_items() {
     let kinds: Vec<_> = diff.non_text.iter().map(|i| (i.path.clone(), i.kind)).collect();
     assert_eq!(
         kinds,
-        vec![(path("img.bin"), NonTextKind::Binary), (path("link"), NonTextKind::Symlink), (path("run.sh"), NonTextKind::Mode)]
+        vec![
+            (path("img.bin"), NonTextKind::Binary),
+            (path("link"), NonTextKind::Symlink),
+            (path("run.sh"), NonTextKind::Mode)
+        ]
     );
 }
 

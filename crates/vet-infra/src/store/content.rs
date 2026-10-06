@@ -36,7 +36,11 @@ impl ContentStore {
         if dest.exists() {
             return Ok(id);
         }
-        let tmp = self.root.join("tmp").join(format!("{}-{}", std::process::id(), TMP_COUNTER.fetch_add(1, Ordering::Relaxed)));
+        let tmp = self.root.join("tmp").join(format!(
+            "{}-{}",
+            std::process::id(),
+            TMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
         let mut file = File::create(&tmp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
@@ -73,10 +77,18 @@ impl ContentStore {
         let mut deleted = 0;
         for dir in fs::read_dir(&self.root)? {
             let dir = dir?.path();
-            let Some(prefix) = dir.file_name().and_then(|n| n.to_str()).filter(|n| n.len() == 2) else { continue };
+            let Some(prefix) = dir.file_name().and_then(|n| n.to_str()).filter(|n| n.len() == 2) else {
+                continue;
+            };
             for file in fs::read_dir(&dir)? {
                 let path = file?.path();
-                let Some(id) = path.file_name().and_then(|n| n.to_str()).and_then(|rest| parse_id(prefix, rest)) else { continue };
+                let Some(id) = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .and_then(|rest| parse_id(prefix, rest))
+                else {
+                    continue;
+                };
                 if !live.contains(&id) && old(&path)? {
                     fs::remove_file(path)?;
                     deleted += 1;
@@ -146,7 +158,9 @@ mod tests {
         fs::write(dir.path().join("tmp").join("crashed"), b"partial").unwrap();
         let live = HashSet::from([id(1)]);
 
-        let young = store.sweep(&live, SystemTime::now(), Duration::from_secs(3600)).unwrap();
+        let young = store
+            .sweep(&live, SystemTime::now(), Duration::from_secs(3600))
+            .unwrap();
         assert_eq!(young, 0);
         assert!(store.get(id(2)).unwrap().is_some());
 

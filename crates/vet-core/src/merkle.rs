@@ -47,7 +47,9 @@ impl TreeNode {
                 b'f' => {
                     let (blob, rest) = rest.split_first_chunk::<32>()?;
                     let (mode, rest) = rest.split_first_chunk::<4>()?;
-                    let [kind, unfiltered, rest @ ..] = rest else { return None };
+                    let [kind, unfiltered, rest @ ..] = rest else {
+                        return None;
+                    };
                     let kind = match kind {
                         0 => EntryKind::File,
                         1 => EntryKind::Symlink,
@@ -157,11 +159,19 @@ mod tests {
     use super::*;
 
     fn entry(n: u8) -> FileEntry {
-        FileEntry { blob: BlobId::of(&[n]), mode: 0o100644, kind: EntryKind::File, unfiltered: false }
+        FileEntry {
+            blob: BlobId::of(&[n]),
+            mode: 0o100644,
+            kind: EntryKind::File,
+            unfiltered: false,
+        }
     }
 
     fn snapshot(files: &[(&str, u8)]) -> BTreeMap<RepoPath, FileEntry> {
-        files.iter().map(|(p, n)| (RepoPath(p.as_bytes().to_vec()), entry(*n))).collect()
+        files
+            .iter()
+            .map(|(p, n)| (RepoPath(p.as_bytes().to_vec()), entry(*n)))
+            .collect()
     }
 
     #[test]
@@ -174,7 +184,10 @@ mod tests {
 
     #[test]
     fn directory_structure_matters() {
-        assert_ne!(snapshot_id(&snapshot(&[("a_b", 1)])), snapshot_id(&snapshot(&[("a/b", 1)])));
+        assert_ne!(
+            snapshot_id(&snapshot(&[("a_b", 1)])),
+            snapshot_id(&snapshot(&[("a/b", 1)]))
+        );
     }
 
     #[test]
@@ -184,7 +197,10 @@ mod tests {
         let new: Vec<_> = after.1.keys().filter(|h| !before.1.contains_key(h)).collect();
         // root, `a` and `a/b`; `c` is shared.
         assert_eq!(new.len(), 3);
-        assert_eq!(before.1.len() - after.1.keys().filter(|h| before.1.contains_key(h)).count(), 3);
+        assert_eq!(
+            before.1.len() - after.1.keys().filter(|h| before.1.contains_key(h)).count(),
+            3
+        );
     }
 
     #[test]

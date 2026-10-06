@@ -31,13 +31,23 @@ pub enum ClientMessage {
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
 pub enum ServerMessage {
-    HelloAck { protocol_version: u32 },
-    Response { id: u32, response: Response },
+    HelloAck {
+        protocol_version: u32,
+    },
+    Response {
+        id: u32,
+        response: Response,
+    },
     /// `id` is `None` when the failure is not attributable to a request.
-    Error { id: Option<u32>, message: String },
+    Error {
+        id: Option<u32>,
+        message: String,
+    },
     /// Pushed without a request. A connection receives the events of the sessions
     /// it opened, until it closes them or disconnects; there is no other subscription.
-    Event { event: Event },
+    Event {
+        event: Event,
+    },
 }
 
 /// Assigned by the backend in [`Response::Session`].
@@ -48,40 +58,79 @@ pub type SessionId = u32;
 #[ts(export)]
 pub enum Request {
     /// Round-trip probe, used to measure transport latency.
-    Ping { payload: String },
+    Ping {
+        payload: String,
+    },
     /// Opens a review of the dirty tree of the repository at `repo` (`HEAD` to the
     /// working tree) and subscribes this connection to the session's events.
-    OpenSession { repo: String },
-    CloseSession { session: SessionId },
+    OpenSession {
+        repo: String,
+    },
+    CloseSession {
+        session: SessionId,
+    },
     /// The changeset as it is now, with review state.
-    Manifest { session: SessionId },
+    Manifest {
+        session: SessionId,
+    },
     /// Both sides of one text file at the current revision.
-    FileContents { session: SessionId, path: String },
+    FileContents {
+        session: SessionId,
+        path: String,
+    },
     /// Marks hunks (indices into the manifest of `revision`) seen or unseen.
     /// Fails if `revision` is no longer current.
-    SetSeen { session: SessionId, revision: u32, path: String, hunks: Vec<u32>, seen: bool },
+    SetSeen {
+        session: SessionId,
+        revision: u32,
+        path: String,
+        hunks: Vec<u32>,
+        seen: bool,
+    },
     /// Acknowledges or un-acknowledges one non-text item. Fails if `revision` is
     /// no longer current.
-    Acknowledge { session: SessionId, revision: u32, path: String, kind: NonTextKind, acknowledged: bool },
+    Acknowledge {
+        session: SessionId,
+        revision: u32,
+        path: String,
+        kind: NonTextKind,
+        acknowledged: bool,
+    },
     /// Hover at a target-side position.
-    Hover { session: SessionId, path: String, line: u32, col: u32 },
+    Hover {
+        session: SessionId,
+        path: String,
+        line: u32,
+        col: u32,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
 pub enum Response {
-    Pong { payload: String },
-    Session { session: SessionId },
+    Pong {
+        payload: String,
+    },
+    Session {
+        session: SessionId,
+    },
     /// Acknowledges a request that has no result.
     Done,
     Manifest(Manifest),
     /// `None` is a side the file does not have (added or deleted). The text and
     /// `marks` belong to `revision`; the hunks are in that revision's manifest.
-    FileContents { revision: u32, base: Option<String>, target: Option<String>, marks: Vec<Mark> },
+    FileContents {
+        revision: u32,
+        base: Option<String>,
+        target: Option<String>,
+        marks: Vec<Mark>,
+    },
     /// The file's review state after `SetSeen` or `Acknowledge`.
     Review(ReviewUpdate),
-    Hover { text: String },
+    Hover {
+        text: String,
+    },
 }
 
 /// A file's new review state with the completion it implies, so a shell never
@@ -122,7 +171,11 @@ pub enum Event {
     /// manifest, with review state remapped onto it, is stale: fetch it again.
     SnapshotSettled { session: SessionId, revision: u32 },
     /// Review state of one file changed at the current `revision`.
-    ReviewChanged { session: SessionId, revision: u32, update: ReviewUpdate },
+    ReviewChanged {
+        session: SessionId,
+        revision: u32,
+        update: ReviewUpdate,
+    },
 }
 
 /// The changeset as displayed through the session's review filter.

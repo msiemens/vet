@@ -116,13 +116,7 @@ pub struct ReviewedSpan {
 
 impl Anchor {
     /// Anchors `range` of `text`; `None` if the range is empty or out of bounds.
-    pub fn from_text(
-        side: Side,
-        snapshot: SnapshotId,
-        file: RepoPath,
-        text: &[u8],
-        range: LineRange,
-    ) -> Option<Self> {
+    pub fn from_text(side: Side, snapshot: SnapshotId, file: RepoPath, text: &[u8], range: LineRange) -> Option<Self> {
         Text::new(text).anchor(side, snapshot, file, range)
     }
 }

@@ -27,14 +27,10 @@ pub fn remap_span(
     target: Option<&PreparedFile>,
 ) -> Vec<ReviewedSpan> {
     let b = span.base.as_ref().map(|a| remap_side(a, base, to.base));
-    let t = span
-        .target
-        .as_ref()
-        .map(|a| remap_side(a, target, to.target));
+    let t = span.target.as_ref().map(|a| remap_side(a, target, to.target));
 
     if b.iter().chain(&t).all(|s| s.full) {
-        let one =
-            |s: Option<Side>| s.map(|s| s.runs.into_iter().next().expect("full side has a run"));
+        let one = |s: Option<Side>| s.map(|s| s.runs.into_iter().next().expect("full side has a run"));
         return vec![ReviewedSpan {
             base: one(b),
             target: one(t),
@@ -48,8 +44,7 @@ pub fn remap_span(
     } else {
         span.state
     };
-    let pieces =
-        |s: Option<Side>, state| s.into_iter().flat_map(|s| s.runs).map(move |a| (a, state));
+    let pieces = |s: Option<Side>, state| s.into_iter().flat_map(|s| s.runs).map(move |a| (a, state));
     let base_pieces = pieces(b, span.state).map(|(a, state)| ReviewedSpan {
         base: Some(a),
         target: None,
@@ -69,8 +64,7 @@ fn remap_side(anchor: &Anchor, file: Option<&PreparedFile>, snapshot: SnapshotId
         full: false,
     };
     let Some(file) = file else { return none };
-    let (Some(path), Some(old), Some(new), Some(map)) =
-        (&file.input.new_path, &file.old, &file.new, file.raw_map())
+    let (Some(path), Some(old), Some(new), Some(map)) = (&file.input.new_path, &file.old, &file.new, file.raw_map())
     else {
         return none;
     };

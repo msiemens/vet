@@ -29,7 +29,12 @@ macro_rules! child_of_session {
     () => {
         #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
         pub enum Relation {
-            #[sea_orm(belongs_to = "super::session::Entity", from = "Column::Session", to = "super::session::Column::Id", on_delete = "Cascade")]
+            #[sea_orm(
+                belongs_to = "super::session::Entity",
+                from = "Column::Session",
+                to = "super::session::Column::Id",
+                on_delete = "Cascade"
+            )]
             Session,
         }
 
@@ -90,7 +95,12 @@ pub mod snapshot_path {
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {
-        #[sea_orm(belongs_to = "super::snapshot::Entity", from = "Column::Snapshot", to = "super::snapshot::Column::Id", on_delete = "Cascade")]
+        #[sea_orm(
+            belongs_to = "super::snapshot::Entity",
+            from = "Column::Snapshot",
+            to = "super::snapshot::Column::Id",
+            on_delete = "Cascade"
+        )]
         Snapshot,
     }
 
@@ -137,7 +147,12 @@ pub mod tree_child {
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {
-        #[sea_orm(belongs_to = "super::tree_node::Entity", from = "Column::Node", to = "super::tree_node::Column::Id", on_delete = "Cascade")]
+        #[sea_orm(
+            belongs_to = "super::tree_node::Entity",
+            from = "Column::Node",
+            to = "super::tree_node::Column::Id",
+            on_delete = "Cascade"
+        )]
         Node,
     }
 
@@ -161,7 +176,11 @@ pub mod session {
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {
-        #[sea_orm(belongs_to = "super::pin::Entity", from = "Column::Pin", to = "super::pin::Column::Id")]
+        #[sea_orm(
+            belongs_to = "super::pin::Entity",
+            from = "Column::Pin",
+            to = "super::pin::Column::Id"
+        )]
         Pin,
     }
 
@@ -313,7 +332,12 @@ pub mod message {
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
     pub enum Relation {
-        #[sea_orm(belongs_to = "super::thread::Entity", from = "Column::Thread", to = "super::thread::Column::Id", on_delete = "Cascade")]
+        #[sea_orm(
+            belongs_to = "super::thread::Entity",
+            from = "Column::Thread",
+            to = "super::thread::Column::Id",
+            on_delete = "Cascade"
+        )]
         Thread,
     }
 

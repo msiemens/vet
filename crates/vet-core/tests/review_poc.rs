@@ -12,8 +12,7 @@ use vet_core::prepared::PreparedFile;
 use vet_core::remap::remap_span;
 use vet_core::resolve::{Resolution, resolve_anchor};
 use vet_core::review::{
-    Anchor, AnchorState, Confidence, FileRemapInput, Location, ReviewedSpan, Side, SpanState,
-    StaleReason, Strategy,
+    Anchor, AnchorState, Confidence, FileRemapInput, Location, ReviewedSpan, Side, SpanState, StaleReason, Strategy,
 };
 
 const RECORDED: SnapshotId = SnapshotId(Hash([1; 32]));
@@ -64,10 +63,7 @@ fn input(path_: &str, old: BlobId, new: BlobId) -> FileRemapInput {
 }
 
 fn resolve(a: &Anchor, file: &FileRemapInput, changed: &[FileRemapInput], fx: &Fix) -> Resolution {
-    let changed: Vec<_> = changed
-        .iter()
-        .map(|c| PreparedFile::new(c, &fx.0))
-        .collect();
+    let changed: Vec<_> = changed.iter().map(|c| PreparedFile::new(c, &fx.0)).collect();
     resolve_anchor(a, &PreparedFile::new(file, &fx.0), &changed)
 }
 
@@ -78,12 +74,7 @@ fn remap(
     fx: &Fix,
 ) -> Vec<ReviewedSpan> {
     let prepare = |i| PreparedFile::new(i, &fx.0);
-    remap_span(
-        span,
-        NOW,
-        base.map(prepare).as_ref(),
-        target.map(prepare).as_ref(),
-    )
+    remap_span(span, NOW, base.map(prepare).as_ref(), target.map(prepare).as_ref())
 }
 
 fn target_span(a: Anchor) -> ReviewedSpan {
@@ -121,10 +112,7 @@ fn split_seen_region_around_an_edit() {
     let got = ranges(&out, Side::Target);
     assert_eq!(
         got,
-        vec![
-            (range(10, 19), SpanState::Seen),
-            (range(22, 30), SpanState::Seen)
-        ]
+        vec![(range(10, 19), SpanState::Seen), (range(22, 30), SpanState::Seen)]
     );
     assert_eq!(out[0].target.as_ref().unwrap().snapshot, NOW.target);
 }
@@ -142,10 +130,7 @@ fn revert_restores_coverage() {
     assert_eq!(ranges(&during, Side::Target).len(), 2);
 
     let after = remap(&span, None, Some(&input("a.rs", o, o)), &fx);
-    assert_eq!(
-        ranges(&after, Side::Target),
-        vec![(range(10, 30), SpanState::Seen)]
-    );
+    assert_eq!(ranges(&after, Side::Target), vec![(range(10, 30), SpanState::Seen)]);
 }
 
 #[test]
@@ -159,10 +144,7 @@ fn lines_inserted_above_shift_the_span() {
 
     let out = remap(&span, None, Some(&input("a.rs", o, n)), &fx);
 
-    assert_eq!(
-        ranges(&out, Side::Target),
-        vec![(range(12, 32), SpanState::Seen)]
-    );
+    assert_eq!(ranges(&out, Side::Target), vec![(range(12, 32), SpanState::Seen)]);
 }
 
 #[test]
@@ -183,12 +165,7 @@ fn base_change_marks_seen_against_old_base() {
         state: SpanState::Seen,
     };
 
-    let out = remap(
-        &span,
-        Some(&input("a.rs", bo, bn)),
-        Some(&input("a.rs", t, t)),
-        &fx,
-    );
+    let out = remap(&span, Some(&input("a.rs", bo, bn)), Some(&input("a.rs", t, t)), &fx);
 
     assert_eq!(
         ranges(&out, Side::Target),
@@ -217,10 +194,7 @@ fn seen_pure_deletion_survives_unrelated_change() {
 
     let out = remap(&span, Some(&input("a.rs", o, n)), None, &fx);
 
-    assert_eq!(
-        ranges(&out, Side::Base),
-        vec![(range(6, 9), SpanState::Seen)]
-    );
+    assert_eq!(ranges(&out, Side::Base), vec![(range(6, 9), SpanState::Seen)]);
 }
 
 #[test]
@@ -538,10 +512,7 @@ fn repeated_line_with_rewritten_context_is_unseen() {
     let unrelated = "fn a() {\n    return 0;\n}\nfn b() {\n    return 1;\n}\n";
     let u = fx.blob(unrelated);
     let out = remap(&span, None, Some(&input("a.rs", o, u)), &fx);
-    assert_eq!(
-        ranges(&out, Side::Target),
-        vec![(range(1, 2), SpanState::Seen)]
-    );
+    assert_eq!(ranges(&out, Side::Target), vec![(range(1, 2), SpanState::Seen)]);
 }
 
 fn diff(path_: &str, hunks: &[(LineRange, LineRange)]) -> FileDiff {
@@ -633,10 +604,7 @@ fn mode_only_change_needs_acknowledgement() {
     let f = ReviewFilter::default();
 
     let c = completion(&f, &[], std::slice::from_ref(&change), &[], &[]);
-    assert_eq!(
-        (c.items, c.acknowledged_items, c.is_complete()),
-        (1, 0, false)
-    );
+    assert_eq!((c.items, c.acknowledged_items, c.is_complete()), (1, 0, false));
 
     let c = completion(
         &f,

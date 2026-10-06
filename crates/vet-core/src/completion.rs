@@ -49,9 +49,7 @@ pub struct CompiledFilter<'a> {
 impl CompiledFilter<'_> {
     pub fn passes(&self, path: &RepoPath) -> bool {
         let p = path.0.as_slice();
-        let under = |root: &RepoPath| {
-            p.starts_with(&root.0) && (p.len() == root.0.len() || p[root.0.len()] == b'/')
-        };
+        let under = |root: &RepoPath| p.starts_with(&root.0) && (p.len() == root.0.len() || p[root.0.len()] == b'/');
         let text = String::from_utf8_lossy(p);
         (self.roots.is_empty() || self.roots.iter().any(under))
             && self.include.as_ref().is_none_or(|g| g.is_match(&text))
@@ -101,9 +99,7 @@ pub fn completion(
     let mut seen: BTreeMap<(&RepoPath, bool), Vec<LineRange>> = BTreeMap::new();
     for s in spans.iter().filter(|s| s.state == SpanState::Seen) {
         for a in s.base.iter().chain(&s.target) {
-            seen.entry((&a.file, a.side == Side::Base))
-                .or_default()
-                .push(a.range);
+            seen.entry((&a.file, a.side == Side::Base)).or_default().push(a.range);
         }
     }
     seen.values_mut().for_each(|v| v.sort_by_key(|r| r.start));

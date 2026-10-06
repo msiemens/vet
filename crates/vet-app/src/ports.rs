@@ -4,7 +4,9 @@
 
 use std::path::Path;
 
-use vet_core::content::{BlobId, Changeset, Hash, RepoPath, ReviewFilter, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
+use vet_core::content::{
+    BlobId, Changeset, Hash, RepoPath, ReviewFilter, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
+};
 use vet_core::platform::{PlatformThread, PlatformTraits};
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 
@@ -69,14 +71,28 @@ pub trait GitRepo {
     fn scan(&self, dirty: Dirty) -> impl Future<Output = Result<Scan, GitError>> + Send;
     /// Check out `commit` into `root` and overlay content-store blobs for
     /// everything git cannot reconstruct (§7.2).
-    fn checkout(&self, commit: &CommitId, snapshot: &Snapshot, root: &Path) -> impl Future<Output = Result<(), GitError>> + Send;
+    fn checkout(
+        &self,
+        commit: &CommitId,
+        snapshot: &Snapshot,
+        root: &Path,
+    ) -> impl Future<Output = Result<(), GitError>> + Send;
     /// The snapshot of a commit's tree.
     fn commit_snapshot(&self, commit: &CommitId) -> impl Future<Output = Result<Snapshot, GitError>> + Send;
     /// Content of `blob` as git would store it: from the object database, else
     /// from the worktree file at `path` if it still hashes to `blob`.
-    fn read_blob(&self, path: &RepoPath, blob: BlobId) -> impl Future<Output = Result<Option<Vec<u8>>, GitError>> + Send;
+    fn read_blob(
+        &self,
+        path: &RepoPath,
+        blob: BlobId,
+    ) -> impl Future<Output = Result<Option<Vec<u8>>, GitError>> + Send;
     /// Content comes from `store` first, then as in `read_blob`.
-    fn diff<S: Store + Sync>(&self, store: &S, old: &Snapshot, new: &Snapshot) -> impl Future<Output = Result<SnapshotDiff, GitError>> + Send;
+    fn diff<S: Store + Sync>(
+        &self,
+        store: &S,
+        old: &Snapshot,
+        new: &Snapshot,
+    ) -> impl Future<Output = Result<SnapshotDiff, GitError>> + Send;
 }
 
 #[derive(Debug)]
@@ -105,10 +121,21 @@ pub trait Store {
     fn put_blob(&self, bytes: Vec<u8>) -> impl Future<Output = Result<BlobId, StoreError>> + Send;
     fn blob(&self, id: BlobId) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
     /// Stored as shared Merkle nodes: only nodes not yet present are written.
-    fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn snapshot(&self, id: SnapshotId) -> impl Future<Output = Result<Option<(Snapshot, SnapshotStatus)>, StoreError>> + Send;
+    fn put_snapshot(
+        &self,
+        snapshot: Snapshot,
+        status: SnapshotStatus,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn snapshot(
+        &self,
+        id: SnapshotId,
+    ) -> impl Future<Output = Result<Option<(Snapshot, SnapshotStatus)>, StoreError>> + Send;
     /// Append a settled snapshot to the session's edit timeline (§3).
-    fn append_timeline(&self, session: SessionId, snapshot: SnapshotId) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn append_timeline(
+        &self,
+        session: SessionId,
+        snapshot: SnapshotId,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn timeline(&self, session: SessionId) -> impl Future<Output = Result<Vec<SnapshotId>, StoreError>> + Send;
     /// Delete expired closed sessions, then snapshots and content nothing
     /// retained refers to (§8). `now` is unix seconds.
@@ -119,7 +146,12 @@ pub trait Store {
 /// a partition.
 pub trait ReviewStore {
     fn put_pin(&self, head: CommitId, tree: SnapshotId) -> impl Future<Output = Result<Pin, StoreError>> + Send;
-    fn open_session(&self, pin: PinId, changeset: Changeset, filter: ReviewFilter) -> impl Future<Output = Result<SessionId, StoreError>> + Send;
+    fn open_session(
+        &self,
+        pin: PinId,
+        changeset: Changeset,
+        filter: ReviewFilter,
+    ) -> impl Future<Output = Result<SessionId, StoreError>> + Send;
     /// `now` is unix seconds.
     fn close_session(&self, id: SessionId, now: i64) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn open_sessions(&self) -> impl Future<Output = Result<Vec<SessionId>, StoreError>> + Send;
@@ -131,18 +163,45 @@ pub trait ReviewStore {
     /// only in memory. Marking adds spans; un-marking removes the recorded
     /// spans that cover the lines and adds back the uncovered remainder.
     /// Atomic; returns the ids of the added spans.
-    fn edit_spans(&self, id: SessionId, remove: Vec<SpanId>, add: Vec<ReviewedSpan>) -> impl Future<Output = Result<Vec<SpanId>, StoreError>> + Send;
+    fn edit_spans(
+        &self,
+        id: SessionId,
+        remove: Vec<SpanId>,
+        add: Vec<ReviewedSpan>,
+    ) -> impl Future<Output = Result<Vec<SpanId>, StoreError>> + Send;
     fn acknowledge(&self, id: SessionId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn unacknowledge(&self, id: SessionId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn add_thread(&self, id: SessionId, target: CommentTarget, opener: Message) -> impl Future<Output = Result<ThreadId, StoreError>> + Send;
+    fn add_thread(
+        &self,
+        id: SessionId,
+        target: CommentTarget,
+        opener: Message,
+    ) -> impl Future<Output = Result<ThreadId, StoreError>> + Send;
     fn add_message(&self, thread: ThreadId, message: Message) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn set_thread_status(&self, thread: ThreadId, status: ThreadStatus) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn set_thread_status(
+        &self,
+        thread: ThreadId,
+        status: ThreadStatus,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Re-anchor a thread (attach, confirm a moved anchor).
-    fn set_thread_target(&self, thread: ThreadId, target: CommentTarget) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn set_thread_platform(&self, thread: ThreadId, platform: Option<PlatformThread>) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn set_thread_target(
+        &self,
+        thread: ThreadId,
+        target: CommentTarget,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn set_thread_platform(
+        &self,
+        thread: ThreadId,
+        platform: Option<PlatformThread>,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn delete_thread(&self, thread: ThreadId) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Approving records the new executor-relevant hash for `repo` (§7.5).
-    fn record_run_approval(&self, repo: String, hash: Hash, at: i64) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn record_run_approval(
+        &self,
+        repo: String,
+        hash: Hash,
+        at: i64,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn last_run_approval(&self, repo: String) -> impl Future<Output = Result<Option<Hash>, StoreError>> + Send;
 }
 

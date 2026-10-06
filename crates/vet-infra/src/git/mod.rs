@@ -38,14 +38,27 @@ struct Inner {
 
 impl GixRepo {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self(Arc::new(Inner { root: root.into(), cap: DEFAULT_CAP, blobs: BlobCache::default(), stats: StatCache::default() }))
+        Self(Arc::new(Inner {
+            root: root.into(),
+            cap: DEFAULT_CAP,
+            blobs: BlobCache::default(),
+            stats: StatCache::default(),
+        }))
     }
 
     pub fn with_cap(self, cap: u64) -> Self {
-        Self(Arc::new(Inner { root: self.0.root.clone(), cap, blobs: BlobCache::default(), stats: StatCache::default() }))
+        Self(Arc::new(Inner {
+            root: self.0.root.clone(),
+            cap,
+            blobs: BlobCache::default(),
+            stats: StatCache::default(),
+        }))
     }
 
-    async fn blocking<T: Send + 'static>(&self, f: impl FnOnce(&Inner) -> Result<T, GitError> + Send + 'static) -> Result<T, GitError> {
+    async fn blocking<T: Send + 'static>(
+        &self,
+        f: impl FnOnce(&Inner) -> Result<T, GitError> + Send + 'static,
+    ) -> Result<T, GitError> {
         let inner = self.0.clone();
         tokio::task::spawn_blocking(move || f(&inner)).await.map_err(err)?
     }
@@ -66,7 +79,10 @@ impl Inner {
             let entry = scan::tree_entry(&repo, &self.blobs, e.id, e.mode.bits())?;
             entries.insert(RepoPath(e.path(&index).to_vec()), entry);
         }
-        Ok(Snapshot { id: merkle::snapshot_id(&entries), entries })
+        Ok(Snapshot {
+            id: merkle::snapshot_id(&entries),
+            entries,
+        })
     }
 
     fn read_blob(&self, path: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
@@ -74,11 +90,17 @@ impl Inner {
         if let Some(bytes) = self.blobs.odb_content(&repo, blob, u64::MAX)? {
             return Ok(Some(bytes));
         }
-        let item = scan::Worktree::new(&repo, &self.blobs, &self.stats, self.cap)?.item_by_path(path.0.as_bstr(), true)?;
+        let item =
+            scan::Worktree::new(&repo, &self.blobs, &self.stats, self.cap)?.item_by_path(path.0.as_bstr(), true)?;
         Ok(item.filter(|i| i.entry.blob == blob).and_then(|i| i.bytes))
     }
 
-    fn diff(&self, stored: BTreeMap<BlobId, Vec<u8>>, old: &Snapshot, new: &Snapshot) -> Result<SnapshotDiff, GitError> {
+    fn diff(
+        &self,
+        stored: BTreeMap<BlobId, Vec<u8>>,
+        old: &Snapshot,
+        new: &Snapshot,
+    ) -> Result<SnapshotDiff, GitError> {
         let repo = self.open()?;
         let mut wt = scan::Worktree::new(&repo, &self.blobs, &self.stats, self.cap)?;
         diff::diff(&repo, &mut wt, &self.blobs, self.cap, stored, old, new)
@@ -87,13 +109,15 @@ impl Inner {
 
 impl GitRepo for GixRepo {
     async fn head(&self) -> Result<CommitId, GitError> {
-        self.blocking(|i| Ok(CommitId(i.open()?.head_id().map_err(err)?.to_string()))).await
+        self.blocking(|i| Ok(CommitId(i.open()?.head_id().map_err(err)?.to_string())))
+            .await
     }
 
     /// Always a full reconciliation, but only entries whose stat changed are
     /// read and hashed.
     async fn scan(&self, _dirty: Dirty) -> Result<Scan, GitError> {
-        self.blocking(|i| scan::scan(&i.open()?, &i.blobs, &i.stats, i.cap)).await
+        self.blocking(|i| scan::scan(&i.open()?, &i.blobs, &i.stats, i.cap))
+            .await
     }
 
     async fn checkout(&self, _commit: &CommitId, _snapshot: &Snapshot, _root: &Path) -> Result<(), GitError> {
@@ -143,7 +167,10 @@ impl BlobCache {
             return Ok(*id);
         }
         let mut buf = Vec::new();
-        repo.objects.try_find(&oid, &mut buf).map_err(err)?.ok_or_else(|| GitError(format!("missing object {oid}")))?;
+        repo.objects
+            .try_find(&oid, &mut buf)
+            .map_err(err)?
+            .ok_or_else(|| GitError(format!("missing object {oid}")))?;
         let id = BlobId::of(&buf);
         let mut ids = self.ids.lock().expect("not poisoned");
         ids.by_oid.insert(oid, id);

@@ -21,7 +21,12 @@ pub struct Settler {
 
 impl Settler {
     pub fn new(debounce_ms: u64) -> Self {
-        Self { debounce_ms, all: false, paths: BTreeSet::new(), last_change: None }
+        Self {
+            debounce_ms,
+            all: false,
+            paths: BTreeSet::new(),
+            last_change: None,
+        }
     }
 
     pub fn record(&mut self, dirty: Dirty, now: Millis) {
@@ -44,7 +49,11 @@ impl Settler {
         }
         self.last_change = None;
         let paths = std::mem::take(&mut self.paths);
-        Some(if std::mem::take(&mut self.all) { Dirty::All } else { Dirty::Paths(paths.into_iter().collect()) })
+        Some(if std::mem::take(&mut self.all) {
+            Dirty::All
+        } else {
+            Dirty::Paths(paths.into_iter().collect())
+        })
     }
 }
 
@@ -67,7 +76,13 @@ pub struct Settling<W, C> {
 
 impl<W: Watcher, C: Clock> Settling<W, C> {
     pub fn new(watcher: W, clock: C, debounce_ms: u64, settled: Option<SnapshotId>) -> Self {
-        Self { watcher, clock, settler: Settler::new(debounce_ms), settled, candidate: None }
+        Self {
+            watcher,
+            clock,
+            settler: Settler::new(debounce_ms),
+            settled,
+            candidate: None,
+        }
     }
 
     pub fn degraded(&self) -> Option<Degraded> {
@@ -75,7 +90,10 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
     }
 
     /// Resolves with the next settled snapshot that differs from the previous one.
-    pub async fn next_settled<G: GitRepo, S: Store>(&mut self, acquisition: &Acquisition<G, S>) -> Result<Snapshot, GitError> {
+    pub async fn next_settled<G: GitRepo, S: Store>(
+        &mut self,
+        acquisition: &Acquisition<G, S>,
+    ) -> Result<Snapshot, GitError> {
         loop {
             match self.wake().await {
                 Wake::Event(WatchEvent::Dirty(paths)) => self.settler.record(Dirty::Paths(paths), self.clock.now()),
@@ -87,7 +105,9 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
                     }
                 }
                 Wake::Deadline => {
-                    let Some(dirty) = self.settler.take_settled(self.clock.now()) else { continue };
+                    let Some(dirty) = self.settler.take_settled(self.clock.now()) else {
+                        continue;
+                    };
                     let snapshot = acquisition.reconcile(dirty.clone()).await?;
                     if self.candidate.is_some_and(|candidate| candidate != snapshot.id) {
                         self.candidate = Some(snapshot.id);
@@ -106,7 +126,10 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
 
     async fn wake(&mut self) -> Wake {
         let mut event = pin!(self.watcher.next());
-        let mut timer = self.settler.deadline().map(|deadline| Box::pin(self.clock.sleep_until(deadline)));
+        let mut timer = self
+            .settler
+            .deadline()
+            .map(|deadline| Box::pin(self.clock.sleep_until(deadline)));
         std::future::poll_fn(|cx| {
             if let Poll::Ready(event) = event.as_mut().poll(cx) {
                 return Poll::Ready(Wake::Event(event));
@@ -151,7 +174,10 @@ mod tests {
         settler.record(Dirty::Paths(vec![path("b.rs")]), Millis(1000));
         assert_eq!(settler.take_settled(Millis(2000)), None, "b.rs touched 1000 ms ago");
         assert_eq!(settler.deadline(), Some(Millis(2500)));
-        assert_eq!(settler.take_settled(Millis(2500)), Some(Dirty::Paths(vec![path("a.rs"), path("b.rs")])));
+        assert_eq!(
+            settler.take_settled(Millis(2500)),
+            Some(Dirty::Paths(vec![path("a.rs"), path("b.rs")]))
+        );
         assert_eq!(settler.take_settled(Millis(9999)), None, "nothing pending");
     }
 
@@ -214,7 +240,10 @@ mod tests {
         }
         fn sleep_until(&self, deadline: Millis) -> impl Future<Output = ()> + Send {
             self.0.lock().unwrap().deadline = Some(deadline.0);
-            Sleep { sim: self.0.clone(), deadline: deadline.0 }
+            Sleep {
+                sim: self.0.clone(),
+                deadline: deadline.0,
+            }
         }
     }
 
@@ -226,7 +255,10 @@ mod tests {
             let sim = self.0.clone();
             std::future::poll_fn(move |_| {
                 let mut sim = sim.lock().unwrap();
-                let due = sim.script.front().is_some_and(|(at, _)| sim.deadline.is_none_or(|deadline| *at < deadline));
+                let due = sim
+                    .script
+                    .front()
+                    .is_some_and(|(at, _)| sim.deadline.is_none_or(|deadline| *at < deadline));
                 if !due {
                     return Poll::Pending;
                 }
@@ -245,7 +277,13 @@ mod tests {
             let mut sim = self.0.lock().unwrap();
             sim.scanned.push(dirty);
             let id = sim.scans.pop_front().expect("unexpected scan");
-            Ok(Scan { snapshot: Snapshot { id, entries: Default::default() }, status: Default::default() })
+            Ok(Scan {
+                snapshot: Snapshot {
+                    id,
+                    entries: Default::default(),
+                },
+                status: Default::default(),
+            })
         }
         async fn checkout(&self, _: &CommitId, _: &Snapshot, _: &Path) -> Result<(), GitError> {
             unreachable!()
@@ -292,10 +330,17 @@ mod tests {
     }
 
     fn harness(script: Vec<(u64, WatchEvent)>, scans: Vec<SnapshotId>, settled: Option<SnapshotId>) -> Harness {
-        let sim = Arc::new(Mutex::new(Sim { script: script.into(), scans: scans.into(), ..Sim::default() }));
+        let sim = Arc::new(Mutex::new(Sim {
+            script: script.into(),
+            scans: scans.into(),
+            ..Sim::default()
+        }));
         Harness {
             settling: Settling::new(FakeWatcher(sim.clone()), FakeClock(sim.clone()), 1500, settled),
-            acquisition: Acquisition { git: FakeGit(sim.clone()), store: FakeStore },
+            acquisition: Acquisition {
+                git: FakeGit(sim.clone()),
+                store: FakeStore,
+            },
             sim,
         }
     }
@@ -335,14 +380,22 @@ mod tests {
 
     #[test]
     fn an_unchanged_snapshot_is_not_reported() {
-        let mut h = harness(vec![(0, dirty("a.rs")), (5000, WatchEvent::MustRescan)], vec![id(1), id(1)], Some(id(1)));
+        let mut h = harness(
+            vec![(0, dirty("a.rs")), (5000, WatchEvent::MustRescan)],
+            vec![id(1), id(1)],
+            Some(id(1)),
+        );
         assert!(run(h.settling.next_settled(&h.acquisition)).is_none());
         assert!(h.sim.lock().unwrap().scans.is_empty());
     }
 
     #[test]
     fn a_rescan_signal_reconciles_immediately() {
-        let mut h = harness(vec![(0, WatchEvent::Degraded(Degraded::WatchLimit))], vec![id(1), id(1)], None);
+        let mut h = harness(
+            vec![(0, WatchEvent::Degraded(Degraded::WatchLimit))],
+            vec![id(1), id(1)],
+            None,
+        );
         run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap();
         assert_eq!(h.sim.lock().unwrap().scanned, vec![Dirty::All, Dirty::All]);
     }

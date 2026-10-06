@@ -33,7 +33,9 @@ mod tests {
 
     #[test]
     fn a_new_push_voids_trust() {
-        let trust = Trust::Contributor { trusted_head: Some(commit("a")) };
+        let trust = Trust::Contributor {
+            trusted_head: Some(commit("a")),
+        };
         assert!(analysis_policy(&trust, &commit("a")).allow_executing);
         assert!(!analysis_policy(&trust, &commit("b")).allow_executing);
         assert!(!analysis_policy(&Trust::Contributor { trusted_head: None }, &commit("a")).allow_executing);

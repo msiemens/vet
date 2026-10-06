@@ -75,13 +75,7 @@ impl<'a> Text<'a> {
             .collect()
     }
 
-    pub fn anchor(
-        &self,
-        side: Side,
-        snapshot: SnapshotId,
-        file: RepoPath,
-        range: LineRange,
-    ) -> Option<Anchor> {
+    pub fn anchor(&self, side: Side, snapshot: SnapshotId, file: RepoPath, range: LineRange) -> Option<Anchor> {
         Some(Anchor {
             side,
             snapshot,

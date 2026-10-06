@@ -1,11 +1,14 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use sea_orm::PaginatorTrait;
 use tempfile::TempDir;
 use vet_app::ports::{ReviewStore, Store};
 use vet_app::review::NonTextAck;
-use sea_orm::PaginatorTrait;
-use vet_core::content::{BlobId, Changeset, EntryKind, FileEntry, Hash, LineRange, RepoPath, ReviewFilter, Snapshot, SnapshotId, SnapshotStatus};
+use vet_core::content::{
+    BlobId, Changeset, EntryKind, FileEntry, Hash, LineRange, RepoPath, ReviewFilter, Snapshot, SnapshotId,
+    SnapshotStatus,
+};
 use vet_core::platform::PlatformThread;
 use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanState, ThreadStatus};
 
@@ -18,17 +21,31 @@ fn h(n: u8) -> Hash {
 }
 
 async fn open(dir: &TempDir) -> SqliteStore {
-    let config = StoreConfig { gc_grace: Duration::ZERO, ..Default::default() };
+    let config = StoreConfig {
+        gc_grace: Duration::ZERO,
+        ..Default::default()
+    };
     SqliteStore::open(dir.path(), config).await.unwrap()
 }
 
 fn file_entry(blob: u8) -> FileEntry {
-    FileEntry { blob: BlobId::of(&[blob]), mode: 0o100644, kind: EntryKind::File, unfiltered: false }
+    FileEntry {
+        blob: BlobId::of(&[blob]),
+        mode: 0o100644,
+        kind: EntryKind::File,
+        unfiltered: false,
+    }
 }
 
 fn snapshot(files: &[(&str, u8)]) -> Snapshot {
-    let entries = files.iter().map(|(p, b)| (RepoPath(p.as_bytes().to_vec()), file_entry(*b))).collect::<BTreeMap<_, _>>();
-    Snapshot { id: merkle::snapshot_id(&entries), entries }
+    let entries = files
+        .iter()
+        .map(|(p, b)| (RepoPath(p.as_bytes().to_vec()), file_entry(*b)))
+        .collect::<BTreeMap<_, _>>();
+    Snapshot {
+        id: merkle::snapshot_id(&entries),
+        entries,
+    }
 }
 
 fn anchor(side: Side, snapshot: u8) -> Anchor {
@@ -44,12 +61,19 @@ fn anchor(side: Side, snapshot: u8) -> Anchor {
 }
 
 fn message(body: &str) -> Message {
-    Message { author: "me".into(), body: body.into(), at: 1_700_000_000 }
+    Message {
+        author: "me".into(),
+        body: body.into(),
+        at: 1_700_000_000,
+    }
 }
 
 async fn session(store: &SqliteStore, base: SnapshotId, target: SnapshotId) -> SessionId {
     let pin = store.put_pin(CommitId("abc123".into()), base).await.unwrap();
-    store.open_session(pin.id, Changeset { base, target }, ReviewFilter::default()).await.unwrap()
+    store
+        .open_session(pin.id, Changeset { base, target }, ReviewFilter::default())
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -67,26 +91,67 @@ async fn spans_and_threads_round_trip() {
     let id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
 
     let spans = vec![
-        ReviewedSpan { base: Some(anchor(Side::Base, 1)), target: Some(anchor(Side::Target, 2)), state: SpanState::Seen },
-        ReviewedSpan { base: None, target: Some(anchor(Side::Target, 2)), state: SpanState::SeenAgainstOldBase },
-        ReviewedSpan { base: Some(anchor(Side::Base, 1)), target: None, state: SpanState::Seen },
+        ReviewedSpan {
+            base: Some(anchor(Side::Base, 1)),
+            target: Some(anchor(Side::Target, 2)),
+            state: SpanState::Seen,
+        },
+        ReviewedSpan {
+            base: None,
+            target: Some(anchor(Side::Target, 2)),
+            state: SpanState::SeenAgainstOldBase,
+        },
+        ReviewedSpan {
+            base: Some(anchor(Side::Base, 1)),
+            target: None,
+            state: SpanState::Seen,
+        },
     ];
     let ids = store.edit_spans(id, vec![], spans.clone()).await.unwrap();
     assert_eq!(ids.len(), 3);
 
-    let range = store.add_thread(id, CommentTarget::Range(anchor(Side::Target, 2)), message("why?")).await.unwrap();
-    let file = store.add_thread(id, CommentTarget::File { side: Side::Base, path: RepoPath(b"a/b".to_vec()) }, message("file")).await.unwrap();
-    let whole = store.add_thread(id, CommentTarget::Changeset, message("overall")).await.unwrap();
+    let range = store
+        .add_thread(id, CommentTarget::Range(anchor(Side::Target, 2)), message("why?"))
+        .await
+        .unwrap();
+    let file = store
+        .add_thread(
+            id,
+            CommentTarget::File {
+                side: Side::Base,
+                path: RepoPath(b"a/b".to_vec()),
+            },
+            message("file"),
+        )
+        .await
+        .unwrap();
+    let whole = store
+        .add_thread(id, CommentTarget::Changeset, message("overall"))
+        .await
+        .unwrap();
     store.add_message(range, message("because")).await.unwrap();
     store.set_thread_status(file, ThreadStatus::Resolved).await.unwrap();
-    let platform = PlatformThread { remote_id: "r1".into(), remote_status: Some("Won't fix".into()), resolvable: true, blocks_merge: false };
+    let platform = PlatformThread {
+        remote_id: "r1".into(),
+        remote_status: Some("Won't fix".into()),
+        resolvable: true,
+        blocks_merge: false,
+    };
     store.set_thread_platform(whole, Some(platform.clone())).await.unwrap();
 
-    let ack = NonTextAck { before: Some((RepoPath(b"x".to_vec()), file_entry(5))), after: None };
+    let ack = NonTextAck {
+        before: Some((RepoPath(b"x".to_vec()), file_entry(5))),
+        after: None,
+    };
     store.acknowledge(id, ack.clone()).await.unwrap();
     store.acknowledge(id, ack.clone()).await.unwrap();
 
-    let filter = ReviewFilter { roots: vec![RepoPath(b"crates".to_vec())], include: vec!["*.rs".into()], exclude: vec!["*.lock".into()], hide_binary: true };
+    let filter = ReviewFilter {
+        roots: vec![RepoPath(b"crates".to_vec())],
+        include: vec!["*.rs".into()],
+        exclude: vec!["*.lock".into()],
+        hide_binary: true,
+    };
     store.set_filter(id, filter.clone()).await.unwrap();
 
     let loaded = store.session(id).await.unwrap().unwrap();
@@ -97,17 +162,29 @@ async fn spans_and_threads_round_trip() {
     assert_eq!(loaded.threads[0].target, CommentTarget::Range(anchor(Side::Target, 2)));
     assert_eq!(loaded.threads[0].messages, vec![message("why?"), message("because")]);
     assert_eq!(loaded.threads[1].status, ThreadStatus::Resolved);
-    assert_eq!(loaded.threads[1].target, CommentTarget::File { side: Side::Base, path: RepoPath(b"a/b".to_vec()) });
+    assert_eq!(
+        loaded.threads[1].target,
+        CommentTarget::File {
+            side: Side::Base,
+            path: RepoPath(b"a/b".to_vec())
+        }
+    );
     assert_eq!(loaded.threads[2].target, CommentTarget::Changeset);
     assert_eq!(loaded.threads[2].platform, Some(platform));
 
-    let moved = CommentTarget::Range(Anchor { range: LineRange { start: 20, end: 25 }, ..anchor(Side::Target, 2) });
+    let moved = CommentTarget::Range(Anchor {
+        range: LineRange { start: 20, end: 25 },
+        ..anchor(Side::Target, 2)
+    });
     store.set_thread_target(range, moved.clone()).await.unwrap();
     store.delete_thread(file).await.unwrap();
     store.unacknowledge(id, ack).await.unwrap();
     store.edit_spans(id, ids, vec![]).await.unwrap();
     let loaded = store.session(id).await.unwrap().unwrap();
-    assert_eq!(loaded.threads.iter().map(|t| &t.target).collect::<Vec<_>>(), vec![&moved, &CommentTarget::Changeset]);
+    assert_eq!(
+        loaded.threads.iter().map(|t| &t.target).collect::<Vec<_>>(),
+        vec![&moved, &CommentTarget::Changeset]
+    );
     assert!(loaded.spans.is_empty() && loaded.acks.is_empty());
 }
 
@@ -116,7 +193,10 @@ async fn snapshots_timeline_and_approvals_survive_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let id;
     let snap = snapshot(&[("a", 1), ("b/c/d", 2), ("b/e", 3)]);
-    let status = SnapshotStatus { path_collisions: vec![RepoPath(b"A".to_vec())], content_unavailable: vec![RepoPath(b"big".to_vec())] };
+    let status = SnapshotStatus {
+        path_collisions: vec![RepoPath(b"A".to_vec())],
+        content_unavailable: vec![RepoPath(b"big".to_vec())],
+    };
     {
         let store = open(&dir).await;
         id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
@@ -131,7 +211,10 @@ async fn snapshots_timeline_and_approvals_survive_reopen() {
     let store = open(&dir).await;
     assert_eq!(store.snapshot(snap.id).await.unwrap(), Some((snap, status)));
     assert_eq!(store.snapshot(SnapshotId(h(99))).await.unwrap(), None);
-    assert_eq!(store.timeline(id).await.unwrap(), vec![SnapshotId(h(3)), SnapshotId(h(1)), SnapshotId(h(2))]);
+    assert_eq!(
+        store.timeline(id).await.unwrap(),
+        vec![SnapshotId(h(3)), SnapshotId(h(1)), SnapshotId(h(2))]
+    );
     assert_eq!(store.last_run_approval("/repo".into()).await.unwrap(), Some(h(2)));
     assert_eq!(store.last_run_approval("/other".into()).await.unwrap(), None);
     assert_eq!(store.open_sessions().await.unwrap(), vec![id]);
@@ -152,7 +235,15 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
     let now = unix_now();
 
     let report = store.gc(now).await.unwrap();
-    assert_eq!((report.sessions_deleted, report.snapshots_deleted, report.nodes_deleted, report.blobs_deleted), (0, 1, 1, 2));
+    assert_eq!(
+        (
+            report.sessions_deleted,
+            report.snapshots_deleted,
+            report.nodes_deleted,
+            report.blobs_deleted
+        ),
+        (0, 1, 1, 2)
+    );
     assert!(store.blob(BlobId::of(&[21])).await.unwrap().is_some());
     assert!(store.blob(BlobId::of(&[22])).await.unwrap().is_some());
     assert_eq!(store.blob(BlobId::of(&[23])).await.unwrap(), None);
@@ -165,12 +256,23 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
     assert!(store.session(id).await.unwrap().is_some());
 
     // An open thread keeps an expired session.
-    let thread = store.add_thread(id, CommentTarget::Changeset, message("todo")).await.unwrap();
+    let thread = store
+        .add_thread(id, CommentTarget::Changeset, message("todo"))
+        .await
+        .unwrap();
     assert_eq!(store.gc(now + 31 * DAY).await.unwrap(), Default::default());
     store.set_thread_status(thread, ThreadStatus::Resolved).await.unwrap();
 
     let report = store.gc(now + 31 * DAY).await.unwrap();
-    assert_eq!((report.sessions_deleted, report.snapshots_deleted, report.nodes_deleted, report.blobs_deleted), (1, 2, 2, 2));
+    assert_eq!(
+        (
+            report.sessions_deleted,
+            report.snapshots_deleted,
+            report.nodes_deleted,
+            report.blobs_deleted
+        ),
+        (1, 2, 2, 2)
+    );
     assert!(store.session(id).await.unwrap().is_none());
     assert_eq!(store.blob(BlobId::of(&[21])).await.unwrap(), None);
 }
@@ -180,7 +282,10 @@ async fn gc_grace_protects_fresh_content() {
     let dir = tempfile::tempdir().unwrap();
     let store = SqliteStore::open(dir.path(), StoreConfig::default()).await.unwrap();
     store.put_blob(vec![1]).await.unwrap();
-    store.put_snapshot(snapshot(&[("a", 1)]), Default::default()).await.unwrap();
+    store
+        .put_snapshot(snapshot(&[("a", 1)]), Default::default())
+        .await
+        .unwrap();
     assert_eq!(store.gc(unix_now()).await.unwrap(), Default::default());
     assert!(store.blob(BlobId::of(&[1])).await.unwrap().is_some());
 }
@@ -225,12 +330,23 @@ async fn gc_drops_a_node_only_when_no_retained_root_reaches_it() {
 async fn a_long_timeline_of_a_large_tree_stays_small() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
-    let mut entries: BTreeMap<RepoPath, FileEntry> = (0..2000).map(|i| (RepoPath(format!("d{:02}/f{i}", i % 100).into_bytes()), file_entry(0))).collect();
+    let mut entries: BTreeMap<RepoPath, FileEntry> = (0..2000)
+        .map(|i| (RepoPath(format!("d{:02}/f{i}", i % 100).into_bytes()), file_entry(0)))
+        .collect();
     let id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
     for i in 0..50u32 {
         let path = RepoPath(format!("d{:02}/f{}", (i * 7) % 100, (i * 7) % 100).into_bytes());
-        entries.insert(path, FileEntry { blob: BlobId::of(&i.to_le_bytes()), ..file_entry(0) });
-        let snap = Snapshot { id: merkle::snapshot_id(&entries), entries: entries.clone() };
+        entries.insert(
+            path,
+            FileEntry {
+                blob: BlobId::of(&i.to_le_bytes()),
+                ..file_entry(0)
+            },
+        );
+        let snap = Snapshot {
+            id: merkle::snapshot_id(&entries),
+            entries: entries.clone(),
+        };
         store.put_snapshot(snap.clone(), Default::default()).await.unwrap();
         store.append_timeline(id, snap.id).await.unwrap();
     }
@@ -248,30 +364,67 @@ async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
     use vet_core::remap::remap_span;
     use vet_core::review::FileRemapInput;
 
-    let text = |line15: &str| -> String { (0..40).map(|i| if i == 15 { format!("{line15}\n") } else { format!("line {i}\n") }).collect() };
+    let text = |line15: &str| -> String {
+        (0..40)
+            .map(|i| {
+                if i == 15 {
+                    format!("{line15}\n")
+                } else {
+                    format!("line {i}\n")
+                }
+            })
+            .collect()
+    };
     let (original, edited) = (text("line 15"), text("changed"));
     let (o, e) = (BlobId::of(original.as_bytes()), BlobId::of(edited.as_bytes()));
     let blobs = BTreeMap::from([(o, original.clone().into_bytes()), (e, edited.into_bytes())]);
     let path = || Some(RepoPath(b"a.rs".to_vec()));
-    let input = |new| FileRemapInput { old_path: path(), new_path: path(), old_blob: Some(o), new_blob: Some(new) };
-    let now = Changeset { base: SnapshotId(h(2)), target: SnapshotId(h(3)) };
+    let input = |new| FileRemapInput {
+        old_path: path(),
+        new_path: path(),
+        old_blob: Some(o),
+        new_blob: Some(new),
+    };
+    let now = Changeset {
+        base: SnapshotId(h(2)),
+        target: SnapshotId(h(3)),
+    };
 
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
     let id = session(&store, SnapshotId(h(2)), SnapshotId(h(3))).await;
-    let recorded = Anchor::from_text(Side::Target, SnapshotId(h(1)), path().unwrap(), original.as_bytes(), LineRange { start: 10, end: 30 }).unwrap();
-    let span = ReviewedSpan { base: None, target: Some(recorded), state: SpanState::Seen };
+    let recorded = Anchor::from_text(
+        Side::Target,
+        SnapshotId(h(1)),
+        path().unwrap(),
+        original.as_bytes(),
+        LineRange { start: 10, end: 30 },
+    )
+    .unwrap();
+    let span = ReviewedSpan {
+        base: None,
+        target: Some(recorded),
+        state: SpanState::Seen,
+    };
     let ids = store.edit_spans(id, vec![], vec![span.clone()]).await.unwrap();
 
     let remapped = async |new| {
         let session = store.session(id).await.unwrap().unwrap();
         let input = input(new);
         let target = PreparedFile::new(&input, &blobs);
-        session.spans.iter().flat_map(|r| remap_span(&r.span, now, None, Some(&target))).count()
+        session
+            .spans
+            .iter()
+            .flat_map(|r| remap_span(&r.span, now, None, Some(&target)))
+            .count()
     };
     assert_eq!(remapped(e).await, 2, "the edited line splits the span");
     assert_eq!(remapped(o).await, 1, "reverted: full coverage again");
-    assert_eq!(store.session(id).await.unwrap().unwrap().spans[0].span, span, "nothing was overwritten");
+    assert_eq!(
+        store.session(id).await.unwrap().unwrap().spans[0].span,
+        span,
+        "nothing was overwritten"
+    );
 
     store.edit_spans(id, ids, vec![]).await.unwrap();
     assert_eq!(remapped(o).await, 0, "un-marked");

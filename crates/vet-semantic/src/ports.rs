@@ -81,13 +81,19 @@ pub struct QueryError(pub String);
 /// The required operations (§7.1). Whether the server's answers come from the
 /// live worktree or an immutable snapshot is the pool's concern, not this trait's.
 pub trait LanguageServer: Send {
-    fn document_symbols(&mut self, file: &RepoPath) -> impl Future<Output = Result<Vec<(Sym, LineRange)>, QueryError>> + Send;
+    fn document_symbols(
+        &mut self,
+        file: &RepoPath,
+    ) -> impl Future<Output = Result<Vec<(Sym, LineRange)>, QueryError>> + Send;
     fn definition(&mut self, at: &Location) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
     fn references(&mut self, sym: &Sym) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
     fn hover(&mut self, at: &Location) -> impl Future<Output = Result<Option<String>, QueryError>> + Send;
     fn incoming_calls(&mut self, sym: &Sym) -> impl Future<Output = Result<Vec<Sym>, QueryError>> + Send;
     fn outgoing_calls(&mut self, sym: &Sym) -> impl Future<Output = Result<Vec<Sym>, QueryError>> + Send;
-    fn workspace_symbols(&mut self, query: &str) -> impl Future<Output = Result<Vec<(Sym, Location)>, QueryError>> + Send;
+    fn workspace_symbols(
+        &mut self,
+        query: &str,
+    ) -> impl Future<Output = Result<Vec<(Sym, Location)>, QueryError>> + Send;
     fn diagnostics(&mut self, file: &RepoPath) -> impl Future<Output = Result<Vec<String>, QueryError>> + Send;
 }
 

@@ -29,10 +29,14 @@ pub struct Derived<T> {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Reach {
     /// Path from the changed symbol to the entry point.
-    Reached { path: Vec<Sym> },
+    Reached {
+        path: Vec<Sym>,
+    },
     UnreachedWithinBound,
     /// Backend gaps (DI, reflection, serialization).
-    Unknown { gaps: Vec<String> },
+    Unknown {
+        gaps: Vec<String>,
+    },
 }
 
 /// Bounded incoming-call search from `start`, stopping at the first entry point
@@ -44,7 +48,11 @@ pub fn reachability(
     is_entry: impl Fn(&Sym) -> bool,
     bounds: Bounds,
 ) -> Derived<Reach> {
-    let mut inputs = Inputs { analysis: "reachability", bounds: Some(bounds), primitives: Vec::new() };
+    let mut inputs = Inputs {
+        analysis: "reachability",
+        bounds: Some(bounds),
+        primitives: Vec::new(),
+    };
     let mut gaps = Vec::new();
     let mut parent: HashMap<Sym, Option<Sym>> = HashMap::from([(start.clone(), None)]);
     let mut frontier = VecDeque::from([(start.clone(), 0u32)]);
@@ -58,7 +66,10 @@ pub fn reachability(
                 at = up;
             }
             path.reverse();
-            return Derived { value: Reach::Reached { path }, inputs };
+            return Derived {
+                value: Reach::Reached { path },
+                inputs,
+            };
         }
         if depth >= bounds.max_depth {
             continue;
@@ -77,7 +88,11 @@ pub fn reachability(
         }
     }
 
-    let value = if gaps.is_empty() { Reach::UnreachedWithinBound } else { Reach::Unknown { gaps } };
+    let value = if gaps.is_empty() {
+        Reach::UnreachedWithinBound
+    } else {
+        Reach::Unknown { gaps }
+    };
     Derived { value, inputs }
 }
 
@@ -90,31 +105,64 @@ mod tests {
     }
 
     fn graph(edges: &[(&str, &[&str])]) -> impl FnMut(&Sym) -> Result<Vec<Sym>, String> {
-        let map: HashMap<String, Vec<Sym>> =
-            edges.iter().map(|(k, v)| (k.to_string(), v.iter().map(|s| sym(s)).collect())).collect();
+        let map: HashMap<String, Vec<Sym>> = edges
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.iter().map(|s| sym(s)).collect()))
+            .collect();
         move |s| Ok(map.get(&s.0).cloned().unwrap_or_default())
     }
 
-    const BOUNDS: Bounds = Bounds { max_depth: 4, max_nodes: 100 };
+    const BOUNDS: Bounds = Bounds {
+        max_depth: 4,
+        max_nodes: 100,
+    };
 
     #[test]
     fn reached_reports_the_path_and_the_queries_it_used() {
-        let result = reachability(&sym("leaf"), graph(&[("leaf", &["mid"]), ("mid", &["main"])]), |s| s.0 == "main", BOUNDS);
-        assert_eq!(result.value, Reach::Reached { path: vec![sym("leaf"), sym("mid"), sym("main")] });
-        assert_eq!(result.inputs.primitives, ["incoming_calls(leaf)", "incoming_calls(mid)"]);
+        let result = reachability(
+            &sym("leaf"),
+            graph(&[("leaf", &["mid"]), ("mid", &["main"])]),
+            |s| s.0 == "main",
+            BOUNDS,
+        );
+        assert_eq!(
+            result.value,
+            Reach::Reached {
+                path: vec![sym("leaf"), sym("mid"), sym("main")]
+            }
+        );
+        assert_eq!(
+            result.inputs.primitives,
+            ["incoming_calls(leaf)", "incoming_calls(mid)"]
+        );
     }
 
     #[test]
     fn depth_bound_gives_unreached_not_reached() {
         let bounds = Bounds { max_depth: 1, ..BOUNDS };
-        let result = reachability(&sym("leaf"), graph(&[("leaf", &["mid"]), ("mid", &["main"])]), |s| s.0 == "main", bounds);
+        let result = reachability(
+            &sym("leaf"),
+            graph(&[("leaf", &["mid"]), ("mid", &["main"])]),
+            |s| s.0 == "main",
+            bounds,
+        );
         assert_eq!(result.value, Reach::UnreachedWithinBound);
         assert_eq!(result.inputs.bounds, Some(bounds));
     }
 
     #[test]
     fn backend_errors_surface_as_unknown() {
-        let result = reachability(&sym("leaf"), |_| Err("no call hierarchy".to_string()), |_| false, BOUNDS);
-        assert_eq!(result.value, Reach::Unknown { gaps: vec!["no call hierarchy".into()] });
+        let result = reachability(
+            &sym("leaf"),
+            |_| Err("no call hierarchy".to_string()),
+            |_| false,
+            BOUNDS,
+        );
+        assert_eq!(
+            result.value,
+            Reach::Unknown {
+                gaps: vec!["no call hierarchy".into()]
+            }
+        );
     }
 }

@@ -59,7 +59,13 @@ impl FsWatcher {
     }
 
     fn polling(root: &Path, poll: Duration, reason: Degraded) -> Self {
-        Self { root: root.to_owned(), native: None, tick: Some(ticker(poll)), poll, degraded: Some(reason) }
+        Self {
+            root: root.to_owned(),
+            native: None,
+            tick: Some(ticker(poll)),
+            poll,
+            degraded: Some(reason),
+        }
     }
 }
 
@@ -121,7 +127,9 @@ impl Watcher for FsWatcher {
 fn translate(root: &Path, res: NotifyResult) -> Option<WatchEvent> {
     let event = match res {
         Ok(event) => event,
-        Err(e) if matches!(e.kind, ErrorKind::MaxFilesWatch) => return Some(WatchEvent::Degraded(Degraded::WatchLimit)),
+        Err(e) if matches!(e.kind, ErrorKind::MaxFilesWatch) => {
+            return Some(WatchEvent::Degraded(Degraded::WatchLimit));
+        }
         Err(_) => return Some(WatchEvent::MustRescan),
     };
     if event.need_rescan() || event.info() == Some("root changed") {
@@ -132,8 +140,13 @@ fn translate(root: &Path, res: NotifyResult) -> Option<WatchEvent> {
     }
     let mut dirty = Vec::new();
     for path in &event.paths {
-        let Ok(relative) = path.strip_prefix(root) else { return Some(WatchEvent::MustRescan) };
-        let parts: Vec<&[u8]> = relative.components().map(|part| part.as_os_str().as_encoded_bytes()).collect();
+        let Ok(relative) = path.strip_prefix(root) else {
+            return Some(WatchEvent::MustRescan);
+        };
+        let parts: Vec<&[u8]> = relative
+            .components()
+            .map(|part| part.as_os_str().as_encoded_bytes())
+            .collect();
         if parts.first() == Some(&b".git".as_slice()) {
             // Branch switches and commits change snapshot identity without touching the worktree.
             if matches!(parts.get(1).copied(), Some(b"HEAD" | b"index")) {
@@ -177,14 +190,18 @@ mod tests {
 
     #[test]
     fn fsevents_root_change_requires_reconciliation() {
-        let root_changed = notify::Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::From))).set_info("root changed");
+        let root_changed =
+            notify::Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::From))).set_info("root changed");
         assert_eq!(translated(root_changed), Some(WatchEvent::MustRescan));
     }
 
     #[test]
     fn errors_require_reconciliation_and_watch_limit_degrades() {
         let limit = Err(notify::Error::new(ErrorKind::MaxFilesWatch));
-        assert_eq!(translate(Path::new(ROOT), limit), Some(WatchEvent::Degraded(Degraded::WatchLimit)));
+        assert_eq!(
+            translate(Path::new(ROOT), limit),
+            Some(WatchEvent::Degraded(Degraded::WatchLimit))
+        );
         let other = Err(notify::Error::generic("handle invalidated"));
         assert_eq!(translate(Path::new(ROOT), other), Some(WatchEvent::MustRescan));
     }
@@ -192,14 +209,26 @@ mod tests {
     #[test]
     fn changes_become_repo_relative_paths() {
         let modified = event(EventKind::Modify(ModifyKind::Any), &["src/a.rs"]);
-        assert_eq!(translated(modified), Some(WatchEvent::Dirty(vec![RepoPath(b"src/a.rs".to_vec())])));
-        assert_eq!(translated(event(EventKind::Access(AccessKind::Any), &["src/a.rs"])), None);
+        assert_eq!(
+            translated(modified),
+            Some(WatchEvent::Dirty(vec![RepoPath(b"src/a.rs".to_vec())]))
+        );
+        assert_eq!(
+            translated(event(EventKind::Access(AccessKind::Any), &["src/a.rs"])),
+            None
+        );
     }
 
     #[test]
     fn git_state_changes_rescan_and_the_rest_of_git_is_ignored() {
-        assert_eq!(translated(event(EventKind::Any, &[".git/HEAD"])), Some(WatchEvent::MustRescan));
-        assert_eq!(translated(event(EventKind::Any, &[".git/index"])), Some(WatchEvent::MustRescan));
+        assert_eq!(
+            translated(event(EventKind::Any, &[".git/HEAD"])),
+            Some(WatchEvent::MustRescan)
+        );
+        assert_eq!(
+            translated(event(EventKind::Any, &[".git/index"])),
+            Some(WatchEvent::MustRescan)
+        );
         assert_eq!(translated(event(EventKind::Any, &[".git/objects/ab/cd"])), None);
     }
 
@@ -212,14 +241,24 @@ mod tests {
     #[test]
     fn mnt_inside_wsl_is_degraded() {
         let wsl = Some("5.15.0-microsoft-standard-WSL2");
-        assert_eq!(topology_degraded(Path::new("/mnt/c/work"), wsl), Some(Degraded::MountedWindowsDrive));
+        assert_eq!(
+            topology_degraded(Path::new("/mnt/c/work"), wsl),
+            Some(Degraded::MountedWindowsDrive)
+        );
         assert_eq!(topology_degraded(Path::new("/home/u/work"), wsl), None);
-        assert_eq!(topology_degraded(Path::new("/mnt/data/work"), Some("6.1.0-generic")), None);
+        assert_eq!(
+            topology_degraded(Path::new("/mnt/data/work"), Some("6.1.0-generic")),
+            None
+        );
     }
 
     #[tokio::test]
     async fn polling_ticks_a_rescan() {
-        let mut watcher = FsWatcher::polling(Path::new(ROOT), Duration::from_millis(10), Degraded::MountedWindowsDrive);
+        let mut watcher = FsWatcher::polling(
+            Path::new(ROOT),
+            Duration::from_millis(10),
+            Degraded::MountedWindowsDrive,
+        );
         assert_eq!(watcher.degraded(), Some(Degraded::MountedWindowsDrive));
         assert_eq!(watcher.next().await, WatchEvent::MustRescan);
         assert_eq!(watcher.next().await, WatchEvent::MustRescan);

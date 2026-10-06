@@ -13,7 +13,10 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use corpus::{Config, Corpus};
-use vet_protocol::{Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, Manifest, Request, Response, ReviewUpdate, SessionId};
+use vet_protocol::{
+    Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, Manifest, Request, Response, ReviewUpdate,
+    SessionId,
+};
 use vet_transport::{Events, Handler, Server};
 
 struct Mock {
@@ -27,7 +30,13 @@ const SESSION: SessionId = 0;
 const REVISION: u32 = 0;
 
 fn review(seen: &[bool]) -> FileReview {
-    FileReview { hunks: seen.iter().map(|&s| if s { HunkState::Seen } else { HunkState::Unseen }).collect(), acknowledged: vec![] }
+    FileReview {
+        hunks: seen
+            .iter()
+            .map(|&s| if s { HunkState::Seen } else { HunkState::Unseen })
+            .collect(),
+        acknowledged: vec![],
+    }
 }
 
 /// Changed lines are counted on both sides; the corpus has no non-text items or old-base state.
@@ -55,7 +64,12 @@ fn total(parts: impl Iterator<Item = Completion>) -> Completion {
 
 impl Handler for Mock {
     async fn handle(&self, request: Request, _events: Events) -> Result<Response, String> {
-        let position = |path: &str| self.index.get(path).copied().ok_or_else(|| format!("no such file: {path}"));
+        let position = |path: &str| {
+            self.index
+                .get(path)
+                .copied()
+                .ok_or_else(|| format!("no such file: {path}"))
+        };
         let seen = || self.seen.lock().unwrap_or_else(PoisonError::into_inner);
         let current = |session: SessionId, revision: u32| match (session == SESSION, revision == REVISION) {
             (true, true) => Ok(()),
@@ -98,9 +112,20 @@ impl Handler for Mock {
             }
             Request::FileContents { path, .. } => {
                 let f = &self.corpus.files[position(&path)?];
-                Ok(Response::FileContents { revision: REVISION, base: Some(f.base.clone()), target: Some(f.target.clone()), marks: f.marks.clone() })
+                Ok(Response::FileContents {
+                    revision: REVISION,
+                    base: Some(f.base.clone()),
+                    target: Some(f.target.clone()),
+                    marks: f.marks.clone(),
+                })
             }
-            Request::SetSeen { session, revision, path, hunks, seen: value } => {
+            Request::SetSeen {
+                session,
+                revision,
+                path,
+                hunks,
+                seen: value,
+            } => {
                 current(session, revision)?;
                 let i = position(&path)?;
                 let mut all = seen();
@@ -108,13 +133,30 @@ impl Handler for Mock {
                     *all[i].get_mut(hunk as usize).ok_or("no such hunk")? = value;
                 }
                 let file = completion(&self.corpus.files[i].hunks, &all[i]);
-                let changeset = total(self.corpus.files.iter().zip(all.iter()).map(|(f, s)| completion(&f.hunks, s)));
-                Ok(Response::Review(ReviewUpdate { path, review: review(&all[i]), completion: file, changeset }))
+                let changeset = total(
+                    self.corpus
+                        .files
+                        .iter()
+                        .zip(all.iter())
+                        .map(|(f, s)| completion(&f.hunks, s)),
+                );
+                Ok(Response::Review(ReviewUpdate {
+                    path,
+                    review: review(&all[i]),
+                    completion: file,
+                    changeset,
+                }))
             }
             Request::Acknowledge { .. } => Err("the corpus has no non-text items".into()),
             Request::Hover { path, line, col, .. } => {
                 position(&path)?;
-                Ok(Response::Hover { text: format!("{path}:{}:{}\n\nmock hover (derived: reachable from 2 entry points)", line + 1, col + 1) })
+                Ok(Response::Hover {
+                    text: format!(
+                        "{path}:{}:{}\n\nmock hover (derived: reachable from 2 entry points)",
+                        line + 1,
+                        col + 1
+                    ),
+                })
             }
         }
     }
@@ -152,7 +194,12 @@ async fn main() -> std::io::Result<()> {
         std::process::exit(i32::from(!problems.is_empty()));
     }
 
-    let index = corpus.files.iter().enumerate().map(|(i, f)| (f.path.clone(), i)).collect();
+    let index = corpus
+        .files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.path.clone(), i))
+        .collect();
     let seen = Mutex::new(corpus.files.iter().map(|f| vec![false; f.hunks.len()]).collect());
     let server = Server::bind().await?;
     server.announce()?;

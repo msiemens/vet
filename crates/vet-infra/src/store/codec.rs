@@ -15,7 +15,9 @@ fn corrupt(what: &str) -> DbErr {
 }
 
 pub fn hash(bytes: &[u8]) -> Result<Hash, DbErr> {
-    <[u8; 32]>::try_from(bytes).map(Hash).map_err(|_| corrupt("hash is not 32 bytes"))
+    <[u8; 32]>::try_from(bytes)
+        .map(Hash)
+        .map_err(|_| corrupt("hash is not 32 bytes"))
 }
 
 /// Infallible conversions between a `vet-core` enum and its stored twin.
@@ -35,8 +37,21 @@ macro_rules! twin {
 }
 
 twin!(Side, Side { Base, Target });
-twin!(EntryKind, EntryKind { File, Symlink, Submodule });
-twin!(SpanState, SpanState { Seen, SeenAgainstOldBase });
+twin!(
+    EntryKind,
+    EntryKind {
+        File,
+        Symlink,
+        Submodule
+    }
+);
+twin!(
+    SpanState,
+    SpanState {
+        Seen,
+        SeenAgainstOldBase
+    }
+);
 twin!(ThreadStatus, ThreadStatus { Open, Resolved });
 
 pub fn anchor_row(session: i64, a: &Anchor) -> anchor::ActiveModel {
@@ -59,7 +74,10 @@ pub fn anchor_from(m: &anchor::Model) -> Result<Anchor, DbErr> {
         side: m.side.into(),
         snapshot: SnapshotId(hash(&m.snapshot)?),
         file: RepoPath(m.file.clone()),
-        range: LineRange { start: u32::try_from(m.start).map_err(|_| corrupt("range"))?, end: u32::try_from(m.end).map_err(|_| corrupt("range"))? },
+        range: LineRange {
+            start: u32::try_from(m.start).map_err(|_| corrupt("range"))?,
+            end: u32::try_from(m.end).map_err(|_| corrupt("range"))?,
+        },
         content_hash_raw: hash(&m.raw)?,
         content_hash_norm: hash(&m.norm)?,
         context_hashes: m.context.chunks(32).map(hash).collect::<Result<_, _>>()?,
@@ -67,7 +85,12 @@ pub fn anchor_from(m: &anchor::Model) -> Result<Anchor, DbErr> {
 }
 
 pub fn child_rows(node: Hash, n: &TreeNode) -> Vec<tree_child::ActiveModel> {
-    let row = |name: &[u8], kind| tree_child::ActiveModel { node: Set(node.0.to_vec()), name: Set(name.to_vec()), kind: Set(kind), ..Default::default() };
+    let row = |name: &[u8], kind| tree_child::ActiveModel {
+        node: Set(node.0.to_vec()),
+        name: Set(name.to_vec()),
+        kind: Set(kind),
+        ..Default::default()
+    };
     let files = n.files.iter().map(|(name, e)| tree_child::ActiveModel {
         blob: Set(Some(e.blob.0.0.to_vec())),
         mode: Set(Some(e.mode.into())),
@@ -75,7 +98,10 @@ pub fn child_rows(node: Hash, n: &TreeNode) -> Vec<tree_child::ActiveModel> {
         unfiltered: Set(Some(e.unfiltered)),
         ..row(name, kinds::ChildKind::File)
     });
-    let dirs = n.dirs.iter().map(|(name, h)| tree_child::ActiveModel { dir: Set(Some(h.0.to_vec())), ..row(name, kinds::ChildKind::Dir) });
+    let dirs = n.dirs.iter().map(|(name, h)| tree_child::ActiveModel {
+        dir: Set(Some(h.0.to_vec())),
+        ..row(name, kinds::ChildKind::Dir)
+    });
     files.chain(dirs).collect()
 }
 
@@ -84,13 +110,21 @@ pub fn node_from(rows: Vec<tree_child::Model>) -> Result<TreeNode, DbErr> {
     for r in rows {
         match r.kind {
             kinds::ChildKind::Dir => {
-                node.dirs.insert(r.name, hash(&r.dir.ok_or_else(|| corrupt("dir child without hash"))?)?);
+                node.dirs
+                    .insert(r.name, hash(&r.dir.ok_or_else(|| corrupt("dir child without hash"))?)?);
             }
             kinds::ChildKind::File => {
-                let (Some(blob), Some(mode), Some(kind), Some(unfiltered)) = (r.blob, r.mode, r.entry_kind, r.unfiltered) else {
+                let (Some(blob), Some(mode), Some(kind), Some(unfiltered)) =
+                    (r.blob, r.mode, r.entry_kind, r.unfiltered)
+                else {
                     return Err(corrupt("file child without entry"));
                 };
-                let entry = FileEntry { blob: BlobId(hash(&blob)?), mode: u32::try_from(mode).map_err(|_| corrupt("mode"))?, kind: kind.into(), unfiltered };
+                let entry = FileEntry {
+                    blob: BlobId(hash(&blob)?),
+                    mode: u32::try_from(mode).map_err(|_| corrupt("mode"))?,
+                    kind: kind.into(),
+                    unfiltered,
+                };
                 node.files.insert(r.name, entry);
             }
         }
@@ -99,9 +133,24 @@ pub fn node_from(rows: Vec<tree_child::Model>) -> Result<TreeNode, DbErr> {
 }
 
 pub fn status_rows(snapshot: &[u8], status: &SnapshotStatus) -> Vec<snapshot_path::ActiveModel> {
-    let row = |flag, p: &RepoPath| snapshot_path::ActiveModel { snapshot: Set(snapshot.to_vec()), flag: Set(flag), path: Set(p.0.clone()), ..Default::default() };
-    let collisions = status.path_collisions.iter().map(|p| row(kinds::PathFlag::Collision, p));
-    collisions.chain(status.content_unavailable.iter().map(|p| row(kinds::PathFlag::ContentUnavailable, p))).collect()
+    let row = |flag, p: &RepoPath| snapshot_path::ActiveModel {
+        snapshot: Set(snapshot.to_vec()),
+        flag: Set(flag),
+        path: Set(p.0.clone()),
+        ..Default::default()
+    };
+    let collisions = status
+        .path_collisions
+        .iter()
+        .map(|p| row(kinds::PathFlag::Collision, p));
+    collisions
+        .chain(
+            status
+                .content_unavailable
+                .iter()
+                .map(|p| row(kinds::PathFlag::ContentUnavailable, p)),
+        )
+        .collect()
 }
 
 pub fn status_from(rows: Vec<snapshot_path::Model>) -> SnapshotStatus {
@@ -128,14 +177,27 @@ pub struct AckSide {
 impl AckSide {
     fn new(entry: Option<&(RepoPath, FileEntry)>) -> Self {
         let Some((path, e)) = entry else { return Self::default() };
-        Self { path: Some(path.0.clone()), blob: Some(e.blob.0.0.to_vec()), mode: Some(e.mode.into()), kind: Some(e.kind.into()), unfiltered: Some(e.unfiltered) }
+        Self {
+            path: Some(path.0.clone()),
+            blob: Some(e.blob.0.0.to_vec()),
+            mode: Some(e.mode.into()),
+            kind: Some(e.kind.into()),
+            unfiltered: Some(e.unfiltered),
+        }
     }
 
     fn entry(self) -> Result<Option<(RepoPath, FileEntry)>, DbErr> {
-        let (Some(path), Some(blob), Some(mode), Some(kind), Some(unfiltered)) = (self.path, self.blob, self.mode, self.kind, self.unfiltered) else {
+        let (Some(path), Some(blob), Some(mode), Some(kind), Some(unfiltered)) =
+            (self.path, self.blob, self.mode, self.kind, self.unfiltered)
+        else {
             return Ok(None);
         };
-        let entry = FileEntry { blob: BlobId(hash(&blob)?), mode: u32::try_from(mode).map_err(|_| corrupt("mode"))?, kind: kind.into(), unfiltered };
+        let entry = FileEntry {
+            blob: BlobId(hash(&blob)?),
+            mode: u32::try_from(mode).map_err(|_| corrupt("mode"))?,
+            kind: kind.into(),
+            unfiltered,
+        };
         Ok(Some((RepoPath(path), entry)))
     }
 }
@@ -183,9 +245,24 @@ pub fn ack_filter(a: &NonTextAck) -> sea_orm::Condition {
 }
 
 pub fn ack_from(m: ack::Model) -> Result<NonTextAck, DbErr> {
-    let before = AckSide { path: m.before_path, blob: m.before_blob, mode: m.before_mode, kind: m.before_kind, unfiltered: m.before_unfiltered };
-    let after = AckSide { path: m.after_path, blob: m.after_blob, mode: m.after_mode, kind: m.after_kind, unfiltered: m.after_unfiltered };
-    Ok(NonTextAck { before: before.entry()?, after: after.entry()? })
+    let before = AckSide {
+        path: m.before_path,
+        blob: m.before_blob,
+        mode: m.before_mode,
+        kind: m.before_kind,
+        unfiltered: m.before_unfiltered,
+    };
+    let after = AckSide {
+        path: m.after_path,
+        blob: m.after_blob,
+        mode: m.after_mode,
+        kind: m.after_kind,
+        unfiltered: m.after_unfiltered,
+    };
+    Ok(NonTextAck {
+        before: before.entry()?,
+        after: after.entry()?,
+    })
 }
 
 /// Sets the target columns; `anchor` is the row id of a `Range` target's anchor.
@@ -203,7 +280,9 @@ pub fn set_target(row: &mut thread::ActiveModel, target: &CommentTarget, anchor:
 
 pub fn target_from(m: &thread::Model, anchor: Option<&anchor::Model>) -> Result<CommentTarget, DbErr> {
     match m.kind {
-        kinds::ThreadKind::Range => Ok(CommentTarget::Range(anchor_from(anchor.ok_or_else(|| corrupt("range thread without anchor"))?)?)),
+        kinds::ThreadKind::Range => Ok(CommentTarget::Range(anchor_from(
+            anchor.ok_or_else(|| corrupt("range thread without anchor"))?,
+        )?)),
         kinds::ThreadKind::File => Ok(CommentTarget::File {
             side: m.file_side.ok_or_else(|| corrupt("file thread without side"))?.into(),
             path: RepoPath(m.file_path.clone().ok_or_else(|| corrupt("file thread without path"))?),
