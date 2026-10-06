@@ -33,9 +33,8 @@ impl MigrationName for CloseUnstartedSessions {
 
 #[async_trait::async_trait]
 impl MigrationTrait for CloseUnstartedSessions {
-    /// Before the lifecycle every open created a session; one without a mark,
-    /// an acknowledgement or a thread never had a review, so it would resume as
-    /// one that did. Its session refs stay in git.
+    /// An open session without a mark, an acknowledgement or a thread never had
+    /// a review and must not resume as one. Its session refs stay in git.
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         manager
             .get_connection()
