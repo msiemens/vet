@@ -8,6 +8,8 @@ publish = false
 # large dependency tree and needs the system webview (WebView2, WKWebView).
 # The shell is a thin client (I5): it spawns the backend, reads its Ready line,
 # and hands the address to the webview. No product logic lives here.
+[workspace]
+
 [lib]
 name = "vet_shell_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
