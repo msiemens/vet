@@ -49,15 +49,17 @@ LogicalTip        an evolving tip (the dirty tree, a branch, a PR) whose value i
 Changeset         (base: SnapshotId, target: SnapshotId)
 ReviewFilter      review roots + include/exclude patterns. A VIEW over a changeset;
                   never part of snapshot identity.
-Pin               recorded {head, tree_hash} at review open; dirty-at-open content
-                  copied into the content store
+Pin               recorded {head, tree_hash} when a review starts (version 1); the
+                  dirty content of that snapshot copied into the content store
 Anchor            content anchor for one range on one side (I3); used by threads
 Thread            a comment thread on a line range, a file, or the whole changeset;
                   optionally linked to a platform thread
 ReviewedSpan      the durable unit of review coverage: a range of content the user
                   marked seen, on one or both sides. Hunks are a display concept;
                   "hunk seen" is derived from spans. Flags and concerns are comments.
-Session           an open review of one Changeset; owns its pin and review state
+Session           a working tree on view against a base: browsing until a review
+                  starts (§5.3), then an open review of one Changeset that owns
+                  its pin, versions and review state
 ```
 
 **Provenance separation (I1):** snapshots are pure content. Origin, `base_head`, branch/PR metadata, and timeline order live in the acquisition layer, keyed by `SnapshotId`.
@@ -188,6 +190,13 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 
 **Completion** is relative to the active `ReviewFilter`: a changeset is complete when every changed line that passes the filter is covered by a `Seen` span and every non-text change that passes it is acknowledged. The UI always shows how many changes the filter excludes, so "complete" never implies every change was seen.
 
+### 5.3 Session lifecycle
+
+- **Browsing:** opening a repository shows the live working tree against the base, and nothing is recorded: no versions, no retained content, no session refs. The base is a view setting.
+- **Open:** a review starts implicitly with the first review action: marking something seen (span, hunk or file), acknowledging a non-text change, or creating a thread. Un-marking, reading and run approvals (§7.5, per repository) do not start one. The snapshot current at that moment is **version 1**, the review's start snapshot; the pin records its `HEAD` and tree, and the chosen base and filter carry over. Each later settled snapshot is the next version (v2, v3, …). Content retention and session refs (§6.1) apply from the start. A complete review (§5.2) stays open and keeps tracking.
+- **Closed:** "Finish review" is an explicit action, allowed with changes still unseen; it records whether the review was complete. It releases the session refs and stops versioning. Further edits are browsing again until the next review action starts a new review. Closed sessions follow the retention rule (§8).
+- **Resume:** opening a repository with an open review resumes it (the tree settles as the next version and review state remaps, §5.2); with none, it opens browsing.
+
 ---
 
 ## 6. Acquisition layer
@@ -196,16 +205,16 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 
 - **Snapshot contents:** a file is in a snapshot iff it is under the repository root **and** (tracked by git **or** untracked and not git-ignored). Files over the capture size cap (default 50 MB) are still hashed in full, so snapshot identity stays exact, but their content is not retained and they appear as `content unavailable`. Ignored paths can be opted in explicitly. The untracked contents of folders a tool owns by name (`.pnpm-store/`) are never part of a snapshot; this list is explicit and fixed. No relevance inference of any kind (I4). Executable-bit and symlink changes are first-class `(mode, kind)` entries. Submodules are recorded as pinned commits; descent is opt-in.
 - **Review filter:** review roots, binary hiding, and user patterns are a `ReviewFilter` applied when *displaying* a changeset. Changing it never changes snapshot identity, so it never disturbs anchors or review state.
-- **Pin on review open:** record `{head, tree_hash}` and copy dirty and untracked content into Vet's content store. Dirty content is **never** written into the git object database, so untracked secrets never become pushable objects. The initial changeset is `HEAD → dirty-at-open`; the live changeset is `dirty-at-open → now`.
-- **Content retention:** when a snapshot settles while a session is open, every blob of it that git cannot reconstruct (dirty and untracked content) is copied into the content store, so every snapshot on the session's timeline stays reconstructible. In addition, every blob that appears on either side of a displayed diff, or under an anchor or span, is copied when first displayed, so review state and anchors never depend on git keeping old objects alive.
-- **Session refs:** while a session is open, it holds `refs/vet/sessions/<session-id>/{base,target}` on the commits its snapshots are built from, so they stay materializable. The refs are deleted when the session closes.
+- **Pin at review start (§5.3):** record `{head, tree_hash}` of version 1 and copy its dirty and untracked content into Vet's content store. Dirty content is **never** written into the git object database, so untracked secrets never become pushable objects. The changeset is the base to the latest settled snapshot; version 1 is the one current when the review started.
+- **Content retention:** when a snapshot settles while a review is open, every blob of it that git cannot reconstruct (dirty and untracked content) is copied into the content store, so every snapshot on the session's timeline stays reconstructible. In addition, every blob that appears on either side of a displayed diff, or under an anchor or span, is copied when first displayed, so review state and anchors never depend on git keeping old objects alive.
+- **Session refs:** while a review is open, it holds `refs/vet/sessions/<session-id>/{base,target}` on the commits its snapshots are built from, so they stay materializable. The refs are deleted when the review is finished.
 - **Availability:** a snapshot is *materializable* only while every one of its blobs is available (from git or the content store). After that, semantic queries on it are disabled with a visible reason. Vet never starts a server on a partial tree.
 
 ### 6.2 Watcher, settling, and reconciliation
 
 - **Watcher = latency optimization, never authority.** Filesystem events drive incremental re-hashing.
 - **Settling:** after a write burst, a snapshot is *settled* once the touched files' size and mtime stay stable across a debounce window (about 1–2 s). Each settled snapshot is appended to its `LogicalTip`; this sequence is the edit timeline. Same-file concurrent edits within one window are unresolvable by design.
-- **Authoritative reconciliation** runs at review open, on watcher overflow or rescan signals (§6.4), on resume or restart, before declaring a snapshot settled, and before every launch (§9). It must *establish correct snapshot identity*, metadata-first (filesystem stat, git index, cached hashes), hashing only uncertain entries. Dropped or coalesced events can never corrupt review state, only delay it.
+- **Authoritative reconciliation** runs at open, on watcher overflow or rescan signals (§6.4), on resume or restart, before declaring a snapshot settled, and before every launch (§9). It must *establish correct snapshot identity*, metadata-first (filesystem stat, git index, cached hashes), hashing only uncertain entries. Dropped or coalesced events can never corrupt review state, only delay it.
 
 ### 6.3 Platform-faithful entries
 
@@ -226,7 +235,7 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 ### 6.5 History and base resolution
 
 - **Audit trail:** Vet's own timeline of settled snapshots is the durable record of what happened. The reflog is supplementary provenance (which commit a snapshot came from, interdiffs across amends and rebases) and may be expired by git.
-- **Base resolution:** session pin (default), merge-base, or an explicit commit or reflog entry. This is pure UI over stored pins.
+- **Base resolution:** the default is the tip of the current branch. A base is chosen as a branch's latest, as where the current branch branched off another (merge-base), or as an explicit commit or reflog entry. A branch base is its tip when chosen: the branch moving on does not move the base, it only shows how far behind it is, and choosing the branch again catches up. The base is a view setting while browsing and part of the session once a review is open (§5.3). For display, the backend names a base commit as the branch if it is a tip, else `branch~N` on a local branch's first-parent history (the chosen branch, the current one, the default one, the rest), else its short hash.
 
 ---
 
@@ -328,6 +337,7 @@ One keystroke from review to run/debug.
 - **Home = queue.** Changesets ordered by blocking status, then recency, with executor-relevant changes flagged. Each shows completion against the active filter plus the count of changes the filter excludes (§5.2). Review state survives rebases and force-pushes.
 - **Visual design:** light and dark themes from the design tokens (`ui/src/lib/theme/tokens.css`), with desktop-style controls (hover, pressed and toggled states, no text selection outside content).
 - **Editor tabs** (titled with their `+N −M` line counts): a fixed "Changes" tab streams the whole changeset as hunks with a few lines of context, unchanged regions collapsed and expandable; diff tabs (closable) show one file's full diff, opened from the file header's tab button; source tabs (closable, read-only) show the file's text. Jump to Source opens a source tab: double-click or Enter in the tree, double-click on a file header in the Changes stream, a hunk header's button, or F4 at the caret (same line). Hunk navigation (Ctrl+Alt+Down/Up) and marking seen (Space) work in both. Settings open with Ctrl+Alt+S (⌘, on macOS).
+- **Header:** `project  ⎇ base → target · vN`. The base chip names the base commit as in §6.5, with its hash, subject, author and age in the tooltip, and offers a one-click move to the latest when its branch has moved on; `vN` shows only while a review is open (§5.3).
 - **Tool windows** on left and right rails, resizable; clicking the active tool's icon hides its window and keeps the tool selected.
 - **Hunk view** with decorations: review state from spans (including `SeenAgainstOldBase`), coverage of changed lines, changed-symbol reachability (labeled derived), executor-relevant changes highlighted, whitespace-only anchor notes, diagnostics as gutter markers with a count in the status footer. Marking seen is a toggle: a seen hunk can be un-marked.
 - **Non-text changes** (mode, symlink target, submodule commit, binary, content unavailable) render as a change card with a hunk-style header: same "mark seen" action and key, included in hunk navigation, images with a before/after preview. A file with both kinds shows its card above the first hunk.
@@ -498,6 +508,6 @@ Targets apply to supported topologies; the `/mnt/*` WSL topology is exempt.
 
 1. **Reachability tuning:** per-language entry-point configs and search bounds are ongoing craft.
 2. **Comment sync conflicts:** local-wins policy; confirm against real PR flow.
-3. **Base-resolution UX:** pin vs. merge-base defaults, tuned against the actual harness mix.
+3. **Base-resolution UX:** current-branch tip vs. merge-base defaults, tuned against the actual harness mix.
 4. **Risk ordering:** whether the queue should rank changesets by a risk model, and what signals it would use.
 5. **Base-server cost:** if materializing and starting a second server per session proves too slow for some backend (likely Roslyn on large solutions), consider loading base-side files as overlays into the target server for that backend only.
