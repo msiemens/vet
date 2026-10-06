@@ -13,6 +13,8 @@ use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_infra::git::GixRepo;
 
+const EMPTY_BLOB: &str = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
+
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
         .current_dir(dir)
@@ -112,6 +114,9 @@ async fn crlf_worktree_matches_head_under_autocrlf() {
 #[tokio::test]
 async fn crlf_without_conversion_is_a_change() {
     let dir = repo();
+    // gix honours the user's global config like git does, so pin the setting
+    // this test is about instead of inheriting e.g. `core.autocrlf=input`.
+    git(dir.path(), &["config", "core.autocrlf", "false"]);
     write(dir.path(), "a.txt", b"one\ntwo\n");
     commit(dir.path());
     write(dir.path(), "a.txt", b"one\r\ntwo\r\n");
@@ -157,9 +162,18 @@ async fn symlink_stays_a_symlink_when_symlinks_are_off() {
 #[tokio::test]
 async fn case_only_differences_are_flagged() {
     let dir = repo();
+    // A case-insensitive filesystem keeps one of the two files; the index keeps
+    // both, as after checking out a commit made elsewhere.
     write(dir.path(), "Foo.txt", b"1\n");
     write(dir.path(), "foo.txt", b"2\n");
     write(dir.path(), "other.txt", b"3\n");
+    for name in ["Foo.txt", "foo.txt"] {
+        let entry = format!("100644,{EMPTY_BLOB},{name}");
+        git(
+            dir.path(),
+            &["update-index", "--add", "--info-only", "--cacheinfo", &entry],
+        );
+    }
     let repo = GixRepo::new(dir.path());
     let scan = repo.scan(Dirty::All).await.unwrap();
     assert_eq!(scan.status.path_collisions, vec![path("Foo.txt"), path("foo.txt")]);
