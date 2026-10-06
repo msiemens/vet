@@ -453,6 +453,8 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Project switcher: the project name in the title bar is a dropdown of recent projects, plus "Open…"
 - Loading screen while a project opens, naming the step it is at
 - Language-server status per server (starting, indexing with the server's progress, ready, failed, not installed), in the footer with details on click
+- Soft wrap, toggled per view and on by default for prose (Markdown, reStructuredText, plain text); a changed line that runs past the visible width is marked whether or not it wraps
+- Resizable dialogs (Settings first), keeping their size
 
 ### M2
 
