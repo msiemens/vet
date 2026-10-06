@@ -14,13 +14,25 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
-use vet_protocol::{ClientMessage, PROTOCOL_VERSION, Ready, Request, Response, ServerMessage};
+use vet_protocol::{ClientMessage, Event, PROTOCOL_VERSION, Ready, Request, Response, ServerMessage};
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Pushes events to the connection a request arrived on. A handler that opens a
+/// session keeps a clone and sends that session's events through it; sends after
+/// the connection closed are dropped.
+#[derive(Clone)]
+pub struct Events(mpsc::UnboundedSender<ServerMessage>);
+
+impl Events {
+    pub fn send(&self, event: Event) {
+        let _ = self.0.send(ServerMessage::Event { event });
+    }
+}
+
 /// What sits behind the transport: the real orchestrator or the spike's mock.
 pub trait Handler: Send + Sync + 'static {
-    fn handle(&self, request: Request) -> impl Future<Output = Result<Response, String>> + Send;
+    fn handle(&self, request: Request, events: Events) -> impl Future<Output = Result<Response, String>> + Send;
 }
 
 pub struct Server {
@@ -108,7 +120,7 @@ async fn connection<H: Handler>(stream: TcpStream, token: &str, handler: Arc<H>)
             Ok(ClientMessage::Request { id, request }) => {
                 let (handler, replies) = (handler.clone(), replies.clone());
                 tokio::spawn(async move {
-                    let reply = match handler.handle(request).await {
+                    let reply = match handler.handle(request, Events(replies.clone())).await {
                         Ok(response) => ServerMessage::Response { id, response },
                         Err(message) => ServerMessage::Error { id: Some(id), message },
                     };
@@ -123,7 +135,7 @@ async fn connection<H: Handler>(stream: TcpStream, token: &str, handler: Arc<H>)
             }
         }
     }
-    drop(replies);
-    let _ = writer.await;
+    // A handler may still hold an `Events` clone, so the outbox never closes by itself.
+    writer.abort();
     Ok(())
 }

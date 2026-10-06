@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use corpus::{Config, Corpus};
-use vet_protocol::{FileEntry, Request, Response};
-use vet_transport::{Handler, Server};
+use vet_protocol::{FileChange, FileReview, FileStatus, HunkState, Manifest, Request, Response, SessionId};
+use vet_transport::{Events, Handler, Server};
 
 struct Mock {
     corpus: Corpus,
@@ -23,45 +23,67 @@ struct Mock {
     seen: Mutex<Vec<Vec<bool>>>,
 }
 
+const SESSION: SessionId = 0;
+const REVISION: u32 = 0;
+
+fn review(seen: &[bool]) -> FileReview {
+    FileReview { hunks: seen.iter().map(|&s| if s { HunkState::Seen } else { HunkState::Unseen }).collect(), acknowledged: vec![] }
+}
+
 impl Handler for Mock {
-    async fn handle(&self, request: Request) -> Result<Response, String> {
+    async fn handle(&self, request: Request, _events: Events) -> Result<Response, String> {
         let position = |path: &str| self.index.get(path).copied().ok_or_else(|| format!("no such file: {path}"));
         let seen = || self.seen.lock().unwrap_or_else(PoisonError::into_inner);
+        let current = |session: SessionId, revision: u32| match (session == SESSION, revision == REVISION) {
+            (true, true) => Ok(()),
+            (true, false) => Err("stale revision".to_string()),
+            _ => Err("no such session".to_string()),
+        };
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
-            Request::OpenChangeset => {
+            // The mock has one session over its corpus; `repo` is ignored.
+            Request::OpenSession { .. } => Ok(Response::Session { session: SESSION }),
+            Request::CloseSession { .. } => Ok(Response::Done),
+            Request::Manifest { .. } => {
                 let seen = seen();
-                Ok(Response::Changeset {
+                Ok(Response::Manifest(Manifest {
+                    session: SESSION,
+                    revision: REVISION,
                     name: self.corpus.name.clone(),
                     files: self
                         .corpus
                         .files
                         .iter()
                         .zip(seen.iter())
-                        .map(|(f, seen)| FileEntry {
+                        .map(|(f, seen)| FileChange {
                             path: f.path.clone(),
+                            old_path: None,
+                            status: FileStatus::Modified,
                             base_lines: corpus::line_count(&f.base) as u32,
                             target_lines: corpus::line_count(&f.target) as u32,
-                            hunks: f.hunks.iter().map(|h| (h.base_len, h.target_len)).collect(),
-                            seen: seen.clone(),
+                            hunks: f.hunks.clone(),
+                            non_text: vec![],
+                            review: review(seen),
                         })
                         .collect(),
-                })
+                    filtered_out: 0,
+                }))
             }
-            Request::GetFile { path } => {
-                let i = position(&path)?;
-                let f = &self.corpus.files[i];
-                Ok(Response::File { path, base: f.base.clone(), target: f.target.clone(), hunks: f.hunks.clone(), marks: f.marks.clone() })
+            Request::FileContents { path, .. } => {
+                let f = &self.corpus.files[position(&path)?];
+                Ok(Response::FileContents { revision: REVISION, base: Some(f.base.clone()), target: Some(f.target.clone()), hunks: f.hunks.clone(), marks: f.marks.clone() })
             }
-            Request::SetSeen { path, hunks, seen: value } => {
+            Request::SetSeen { session, revision, path, hunks, seen: value } => {
+                current(session, revision)?;
                 let i = position(&path)?;
                 let mut all = seen();
                 for hunk in hunks {
                     *all[i].get_mut(hunk as usize).ok_or("no such hunk")? = value;
                 }
-                Ok(Response::Seen { path, seen: all[i].clone() })
+                Ok(Response::Review { path, review: review(&all[i]) })
             }
-            Request::Hover { path, line, col } => {
+            Request::NonTextDetail { .. } | Request::Acknowledge { .. } => Err("the corpus has no non-text items".into()),
+            Request::Hover { path, line, col, .. } => {
                 position(&path)?;
                 Ok(Response::Hover { text: format!("{path}:{}:{}\n\nmock hover (derived: reachable from 2 entry points)", line + 1, col + 1) })
             }

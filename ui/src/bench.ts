@@ -233,7 +233,7 @@ export async function runBenchmark(shell: Shell, root: HTMLElement, o: BenchOpti
   const path = shell.entries[0].path;
   for (let i = 0; i < 200; i++) {
     const t0 = performance.now();
-    await shell.conn.request({ type: "hover", path, line: i % 10, col: 0 });
+    await shell.conn.request({ type: "hover", session: shell.session, path, line: i % 10, col: 0 });
     hover.push(performance.now() - t0);
   }
   rows.push(row(`Hover round trip, request → response (${topology})`, hover, "ms", 100, "<", note));

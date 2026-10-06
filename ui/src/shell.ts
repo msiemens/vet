@@ -3,7 +3,7 @@
 
 import type { Connection } from "./connection";
 import type { Mode } from "./editor";
-import type { FileEntry } from "./generated/FileEntry";
+import type { FileChange } from "./generated/FileChange";
 import { matches } from "./keymap";
 import { nextPaint } from "./metrics";
 import { ChangesetView } from "./view";
@@ -20,7 +20,8 @@ const BAIT = ["Ctrl-Alt-q", "Ctrl-Alt-e", "Ctrl-Alt-7", "Ctrl-Alt-8", "Ctrl-Alt-
 
 export class Shell {
   name = "";
-  entries: FileEntry[] = [];
+  session = 0;
+  entries: FileChange[] = [];
   view?: ChangesetView;
   mode: Mode = "unified";
   collisions = 0;
@@ -52,7 +53,7 @@ export class Shell {
   private hooks = {
     hover: async (path: string, line: number, col: number) => {
       const t0 = performance.now();
-      const response = await this.conn.request({ type: "hover", path, line, col });
+      const response = await this.conn.request({ type: "hover", session: this.session, path, line, col });
       this.hud.hover(performance.now() - t0);
       return response.type === "hover" ? response.text : "";
     },
@@ -65,11 +66,14 @@ export class Shell {
     const t0 = performance.now();
     this.view?.destroy();
     this.view = undefined;
-    const response = await this.conn.request({ type: "openChangeset" });
-    if (response.type !== "changeset") throw new Error("unexpected response");
+    const opened = await this.conn.request({ type: "openSession", repo: "." });
+    if (opened.type !== "session") throw new Error("unexpected response");
+    this.session = opened.session;
+    const response = await this.conn.request({ type: "manifest", session: opened.session });
+    if (response.type !== "manifest") throw new Error("unexpected response");
     this.name = response.name;
     this.entries = response.files;
-    const view = (this.view = new ChangesetView(this.root, this.entries, this.conn, this.mode, this.hooks));
+    const view = (this.view = new ChangesetView(this.root, response, this.conn, this.mode, this.hooks));
     await view.goToHunk(0);
     await nextPaint();
     const elapsed = performance.now() - t0;

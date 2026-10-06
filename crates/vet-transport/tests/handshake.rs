@@ -1,14 +1,18 @@
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
-use vet_protocol::{ClientMessage, PROTOCOL_VERSION, Request, Response, ServerMessage};
-use vet_transport::{Handler, Server};
+use vet_protocol::{ClientMessage, Event, PROTOCOL_VERSION, Request, Response, ServerMessage};
+use vet_transport::{Events, Handler, Server};
 
 struct Echo;
 
 impl Handler for Echo {
-    async fn handle(&self, request: Request) -> Result<Response, String> {
+    async fn handle(&self, request: Request, events: Events) -> Result<Response, String> {
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
+            Request::OpenSession { .. } => {
+                events.send(Event::SnapshotSettled { session: 3, revision: 1 });
+                Ok(Response::Session { session: 3 })
+            }
             _ => Err("unsupported".into()),
         }
     }
@@ -51,6 +55,20 @@ async fn valid_token_allows_requests() {
 
     send(&mut socket, &ClientMessage::Request { id: 7, request: Request::Ping { payload: "hi".into() } }).await;
     assert_eq!(receive(&mut socket).await, Some(ServerMessage::Response { id: 7, response: Response::Pong { payload: "hi".into() } }));
+}
+
+#[tokio::test]
+async fn handlers_push_events_to_the_connection() {
+    let (port, token) = start().await;
+    let mut socket = connect(port).await;
+    send(&mut socket, &hello(&token)).await;
+    receive(&mut socket).await;
+
+    send(&mut socket, &ClientMessage::Request { id: 1, request: Request::OpenSession { repo: ".".into() } }).await;
+    let mut got = [receive(&mut socket).await.unwrap(), receive(&mut socket).await.unwrap()];
+    got.sort_by_key(|m| matches!(m, ServerMessage::Event { .. }));
+    assert_eq!(got[0], ServerMessage::Response { id: 1, response: Response::Session { session: 3 } });
+    assert_eq!(got[1], ServerMessage::Event { event: Event::SnapshotSettled { session: 3, revision: 1 } });
 }
 
 #[tokio::test]

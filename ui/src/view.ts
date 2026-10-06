@@ -4,20 +4,21 @@
 
 import { EditorView } from "@codemirror/view";
 import { type Handle, type Hooks, type Loaded, type Mode, mountFile, setCurrent, setSeen } from "./editor";
-import type { FileEntry } from "./generated/FileEntry";
+import type { FileChange } from "./generated/FileChange";
+import type { Manifest } from "./generated/Manifest";
 import type { Connection } from "./connection";
 
 export const LINE_H = 18;
 const HEADER_H = 28;
 
-export function sectionHeight(entry: FileEntry, mode: Mode): number {
+export function sectionHeight(entry: FileChange, mode: Mode): number {
   // Unified shows every deleted line as an extra row; side by side pads the shorter side of each hunk.
-  const extra = entry.hunks.reduce((rows, [base, target]) => rows + (mode === "unified" ? base : Math.max(0, base - target)), 0);
+  const extra = entry.hunks.reduce((rows, h) => rows + (mode === "unified" ? h.baseLen : Math.max(0, h.baseLen - h.targetLen)), 0);
   return HEADER_H + (entry.targetLines + extra) * LINE_H;
 }
 
 interface Section {
-  entry: FileEntry;
+  entry: FileChange;
   seen: boolean[];
   el: HTMLElement;
   body: HTMLElement;
@@ -39,13 +40,13 @@ export class ChangesetView {
 
   constructor(
     private root: HTMLElement,
-    entries: FileEntry[],
+    private manifest: Manifest,
     private conn: Connection,
     public mode: Mode,
     private hooks: Hooks,
   ) {
     let hunks = 0;
-    for (const entry of entries) {
+    for (const entry of manifest.files) {
       this.hunkStart.push(hunks);
       hunks += entry.hunks.length;
       const el = document.createElement("section");
@@ -64,7 +65,7 @@ export class ChangesetView {
       const body = document.createElement("div");
       body.className = "body";
       el.append(header, body);
-      this.sections.push({ entry, seen: [...entry.seen], el, body, count, top: 0, height: 0 });
+      this.sections.push({ entry, seen: entry.review.hunks.map((s) => s === "seen"), el, body, count, top: 0, height: 0 });
     }
     this.totalHunks = hunks;
     this.root.replaceChildren(...this.sections.map((s) => s.el));
@@ -123,11 +124,12 @@ export class ChangesetView {
 
   load(fi: number): Promise<Loaded> {
     const s = this.sections[fi];
-    s.loading ??= this.conn.request({ type: "getFile", path: s.entry.path }).then((r) => {
-      if (r.type !== "file") throw new Error("unexpected response");
-      s.loaded = r;
+    const { session } = this.manifest;
+    s.loading ??= this.conn.request({ type: "fileContents", session, path: s.entry.path }).then((r) => {
+      if (r.type !== "fileContents" || r.revision !== this.manifest.revision) throw new Error("unexpected response");
+      s.loaded = { base: r.base ?? "", target: r.target ?? "", hunks: r.hunks, marks: r.marks };
       this.sync();
-      return r;
+      return s.loaded;
     });
     return s.loading;
   }
@@ -219,9 +221,10 @@ export class ChangesetView {
   toggleSeen(fi: number): Promise<void> {
     const s = this.sections[fi];
     const value = !s.seen.every(Boolean);
-    const request = this.conn.request({ type: "setSeen", path: s.entry.path, hunks: s.seen.map((_, i) => i), seen: value }).then((r) => {
-      if (r.type !== "seen") throw new Error("unexpected response");
-      s.seen = r.seen;
+    const { session, revision } = this.manifest;
+    const request = this.conn.request({ type: "setSeen", session, revision, path: s.entry.path, hunks: s.seen.map((_, i) => i), seen: value }).then((r) => {
+      if (r.type !== "review") throw new Error("unexpected response");
+      s.seen = r.review.hunks.map((h) => h === "seen");
       s.handle?.dispatchAll(setSeen.of(s.seen));
       this.updateCount(s);
     });

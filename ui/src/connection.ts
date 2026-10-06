@@ -3,13 +3,14 @@
 // builds on this; it contains no product logic.
 
 import type { ClientMessage } from "./generated/ClientMessage";
+import type { Event as ServerEvent } from "./generated/Event";
 import type { Ready } from "./generated/Ready";
 import type { Request } from "./generated/Request";
 import type { Response } from "./generated/Response";
 import type { ServerMessage } from "./generated/ServerMessage";
 
 // Must match PROTOCOL_VERSION in crates/vet-protocol.
-const PROTOCOL_VERSION = 0;
+const PROTOCOL_VERSION = 1;
 
 /**
  * In Tauri the host spawned the backend and read its Ready line. In a plain
@@ -31,6 +32,7 @@ async function backendAddress(): Promise<Ready> {
 export class Connection {
   private nextId = 0;
   private pending = new Map<number, { resolve: (r: Response) => void; reject: (e: Error) => void }>();
+  private listeners = new Set<(event: ServerEvent) => void>();
 
   private constructor(private socket: WebSocket) {
     socket.addEventListener("message", (event) => this.onMessage(JSON.parse(event.data) as ServerMessage));
@@ -72,8 +74,16 @@ export class Connection {
     });
   }
 
+  /** Events of the sessions opened on this connection; returns the unsubscribe function. */
+  onEvent(listener: (event: ServerEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   private onMessage(message: ServerMessage) {
-    if (message.type === "response") {
+    if (message.type === "event") {
+      for (const listener of this.listeners) listener(message.event);
+    } else if (message.type === "response") {
       this.pending.get(message.id)?.resolve(message.response);
       this.pending.delete(message.id);
     } else if (message.type === "error") {

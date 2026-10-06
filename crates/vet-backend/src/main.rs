@@ -3,15 +3,15 @@
 //! the adapters in vet-infra are not wired in yet.
 
 use vet_protocol::{Request, Response};
-use vet_transport::{Handler, Server};
+use vet_transport::{Events, Handler, Server};
 
 struct Orchestrator;
 
 impl Handler for Orchestrator {
-    async fn handle(&self, request: Request) -> Result<Response, String> {
+    async fn handle(&self, request: Request, _events: Events) -> Result<Response, String> {
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
-            _ => Err("not implemented; the shell spike runs against vet-mock".into()),
+            _ => Err("not implemented; the UI runs against vet-mock".into()),
         }
     }
 }
