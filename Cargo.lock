@@ -4106,6 +4106,7 @@ dependencies = [
  "vet-app",
  "vet-core",
  "vet-semantic",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

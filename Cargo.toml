@@ -30,8 +30,10 @@ vet-semantic = { path = "crates/vet-semantic" }
 vet-app = { path = "crates/vet-app" }
 vet-infra = { path = "crates/vet-infra" }
 
+# `deny`, not `forbid`: a forbidden lint cannot be re-allowed, and the Windows watcher
+# module in vet-infra needs a narrow `#![allow(unsafe_code)]`. It is the only one.
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 # Debug info dominates link time: file:line backtraces for our crates, none for dependencies.
 [profile.dev]
