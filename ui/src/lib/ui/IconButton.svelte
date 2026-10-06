@@ -7,25 +7,25 @@
     label,
     size = 26,
     iconSize = 16,
-    active = false,
+    active,
     onclick,
   }: {
     icon: IconName;
     label: string;
     size?: number;
     iconSize?: number;
+    /** Makes it a toggle button; `undefined` is a plain action. */
     active?: boolean;
     onclick?: (e: MouseEvent) => void;
   } = $props();
 </script>
 
 <button
-  class="ib"
-  class:active
+  class="flat ib"
   type="button"
   aria-label={label}
   title={label}
-  aria-pressed={active || undefined}
+  aria-pressed={active}
   style:width="{size}px"
   style:height="{size}px"
   {onclick}
@@ -38,19 +38,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 0;
-    background: transparent;
     border-radius: var(--radius);
     color: var(--tx2);
-    padding: 0;
-    cursor: pointer;
     flex: none;
-  }
-  .ib:hover {
-    background: var(--hov);
-  }
-  .ib.active {
-    background: var(--sel);
-    color: var(--acc);
   }
 </style>

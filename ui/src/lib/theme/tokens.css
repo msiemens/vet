@@ -18,7 +18,15 @@
   --tx2: light-dark(#575d67, #a9aeb6);
   --tx3: light-dark(#6a707a, #8e939b);
   --sel: light-dark(#d4e3fb, #2e436e);
-  --hov: light-dark(#eceef0, #30333a);
+
+  /* Control states: hover, pressed, toggled on (and toggled on while hovered or pressed). */
+  --hov: light-dark(#e4e6ea, #383b42);
+  --press: light-dark(#d4d7dd, #444851);
+  --tog: light-dark(#d4e3fb, #2e436e);
+  --tog-hov: light-dark(#c6dafa, #35508a);
+  --tog-press: light-dark(#b6cff6, #3d5c9c);
+  --focus: light-dark(#2d6fd8, #6b9cf7);
+  --focus-w: 2px;
 
   --acc: light-dark(#2d6fd8, #6b9cf7);
   --shadow: 0 14px 40px light-dark(rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.5));
@@ -60,9 +68,17 @@
   --h-section: 26px;
   --h-hunk: 24px;
   --h-line: 20px;
+  /* The bar of a collapsed unchanged region; CodeMirror estimates 27px for it before measuring. */
+  --h-collapsed: 27px;
+  --h-tab: 32px;
   --w-rail: 34px;
   --w-tree: 270px;
   --w-symbols: 330px;
+  --w-side-min: 180px;
+  --w-side-max: 640px;
+  --w-splitter: 5px;
+  --w-chev: 14px;
+  --w-indent: 12px;
   --radius: 5px;
 }
 
