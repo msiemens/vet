@@ -121,7 +121,7 @@ export function changeCard(
   comment.innerHTML = iconSvg("comments", 13, 1.8);
   comment.addEventListener("click", () => actions.comment());
   bar.append(el("span", "vet-hunk-text", TITLE[item.kind]), el("span", "vet-card-path mono", path), el("span", "grow"));
-  bar.append(toggle, comment);
+  bar.append(comment, toggle);
   root.append(bar);
 
   if (item.kind === "contentUnavailable") {

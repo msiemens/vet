@@ -69,8 +69,8 @@ export class HunkBar extends WidgetType {
     if (actions) {
       bar.append(
         this.button("Jump to source (F4)", "file", "", () => actions.openSource(this.index)),
-        this.button(LABEL[this.state], "check", `vet-seen-toggle`, () => actions.toggleSeen(this.index)),
         this.button("Comment", "comments", "", () => actions.comment(this.index)),
+        this.button(LABEL[this.state], "check", `vet-seen-toggle`, () => actions.toggleSeen(this.index)),
       );
     }
     return bar;

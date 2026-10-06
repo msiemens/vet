@@ -197,7 +197,7 @@ export class ChangesetView {
       button.addEventListener("click", () => void this.toggleSeen(index));
       const tools = document.createElement("span");
       tools.className = "tools";
-      tools.append(...(open ? [open] : []), button, comment);
+      tools.append(...(open ? [open] : []), comment, button);
       header.append(title, delta, count, tools);
       header.addEventListener("contextmenu", (e) => {
         e.preventDefault();
