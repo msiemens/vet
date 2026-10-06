@@ -2,7 +2,8 @@
 // The view feeds them with `setThreadCards`; building and measuring the cards is the host's.
 
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, ViewPlugin, WidgetType } from "@codemirror/view";
+import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
+import { gutterWidth } from "./gutterWidth";
 import type { CardData, InlineCard } from "./threadPlacement";
 
 /** What the owner of the editor provides for its cards. */
@@ -50,18 +51,6 @@ class CardWidget extends WidgetType {
   }
 }
 
-/** A card spans the view from its left edge, so it reaches back over the gutters (`--vet-card-inset`). */
-const gutterInset = ViewPlugin.define((view) => {
-  const measure = () =>
-    view.requestMeasure({
-      read: () => view.dom.querySelector<HTMLElement>(".cm-gutters")?.offsetWidth ?? 0,
-      write: (width) => view.dom.style.setProperty("--vet-card-inset", `${width}px`),
-      key: gutterInset,
-    });
-  measure();
-  return { update: measure };
-});
-
 export function threadCards(host: CardHost): Extension {
   const cards = StateField.define<DecorationSet>({
     create: () => Decoration.none,
@@ -83,5 +72,5 @@ export function threadCards(host: CardHost): Extension {
     },
     provide: (field) => EditorView.decorations.from(field),
   });
-  return [cards, gutterInset];
+  return [cards, gutterWidth];
 }

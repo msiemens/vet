@@ -13,9 +13,9 @@
   left: 0;
   z-index: 201;
   width: 100cqw;
-  margin-left: calc(-1 * var(--vet-card-inset, 0px));
+  margin-left: calc(-1 * var(--vet-gutters, 0px));
   box-sizing: border-box;
-  padding: 6px 10px 6px calc(var(--vet-card-inset, 0px) + 6px);
+  padding: 6px 10px 6px calc(var(--vet-gutters, 0px) + 6px);
   background: var(--bg-sheet);
   border-top: 1px solid var(--line-soft);
   border-bottom: 1px solid var(--line-soft);

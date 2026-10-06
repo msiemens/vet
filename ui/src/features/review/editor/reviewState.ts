@@ -15,6 +15,7 @@ import type { Hunk } from "../../../generated/Hunk";
 import type { Mark } from "../../../generated/Mark";
 import type { MarkKind } from "../../../generated/MarkKind";
 import type { HunkState } from "../../../generated/HunkState";
+import { gutterWidth } from "./gutterWidth";
 import { type BarActions, HunkBar, hunkHeader } from "./hunkBar";
 
 export const setStates = StateEffect.define<HunkState[]>();
@@ -168,18 +169,13 @@ export function deletedChunkStyle(field: StateField<ReviewState>): Extension {
   const style = (view: EditorView) => {
     const state = view.state.field(field);
     const byPos = new Map(state.spans.map((s, i) => [s.at, i]));
-    // The strip of a deleted block reaches back over the gutters to the editor's left edge.
-    view.dom.style.setProperty(
-      "--vet-gutters",
-      `${view.dom.querySelector<HTMLElement>(".cm-gutters")?.offsetWidth ?? 0}px`,
-    );
     for (const el of view.dom.querySelectorAll<HTMLElement>(".cm-deletedChunk")) {
       el.classList.remove(...Object.values(CLASS));
       const i = byPos.get(view.posAtDOM(el));
       if (i !== undefined) el.classList.add(CLASS[state.states[i]]);
     }
   };
-  return ViewPlugin.define((view) => {
+  const plugin = ViewPlugin.define((view) => {
     // Widgets are created after plugin updates, so style them in the measure phase.
     const schedule = () => view.requestMeasure({ read: () => null, write: () => style(view), key: field });
     schedule();
@@ -192,4 +188,5 @@ export function deletedChunkStyle(field: StateField<ReviewState>): Extension {
       },
     };
   });
+  return [plugin, gutterWidth];
 }

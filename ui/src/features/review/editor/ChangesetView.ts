@@ -278,11 +278,15 @@ export class ChangesetView {
     }
   }
 
-  /** Sets a section's height; sections above the viewport shift what is shown, so the scroll position follows. */
-  private resize(s: Section, height: number) {
+  /**
+   * Sets a section's height; sections above the viewport shift what is shown, so the scroll position follows.
+   * `scrollTop` is the caller's reading of it: a read after the height writes of a loop forces a layout each time.
+   * Returns how far the scroll position moved.
+   */
+  private resize(s: Section, height: number, scrollTop = this.root.scrollTop): number {
     const delta = height - s.height;
-    if (Math.abs(delta) < 0.5) return;
-    const above = s.top + s.height <= this.root.scrollTop;
+    if (Math.abs(delta) < 0.5) return 0;
+    const above = s.top + s.height <= scrollTop;
     s.height = height;
     s.el.style.height = `${height}px`;
     let top = s.top + height;
@@ -290,7 +294,8 @@ export class ChangesetView {
       next.top = top;
       top += next.height;
     }
-    if (above) this.root.scrollTop += delta;
+    if (above) this.root.scrollTop = scrollTop + delta;
+    return above ? delta : 0;
   }
 
   /**
@@ -327,11 +332,11 @@ export class ChangesetView {
   }
 
   /** Drops the editor; the regions it had expanded are collapsed again when it is mounted anew. */
-  private unmount(s: Section) {
+  private unmount(s: Section, scrollTop = this.root.scrollTop): number {
     s.handle?.destroy();
     s.handle = undefined;
     s.body.textContent = "";
-    this.resize(s, this.estimate(s));
+    return this.resize(s, this.estimate(s), scrollTop);
   }
 
   setMode(mode: Mode) {
@@ -435,7 +440,7 @@ export class ChangesetView {
    */
   sync(wide = true) {
     if (this.destroyed) return; // a load that finished after the view was replaced
-    const top = this.root.scrollTop;
+    let top = this.root.scrollTop;
     const h = this.root.clientHeight;
     const near = wide
       ? [this.indexAt(Math.max(0, top - h)), this.indexAt(top + 2 * h)]
@@ -443,7 +448,7 @@ export class ChangesetView {
     const far = [this.indexAt(Math.max(0, top - 2 * h)), this.indexAt(top + 3 * h)];
     for (const fi of [...this.mounted]) {
       if (fi < far[0] || fi > far[1]) {
-        this.unmount(this.sections[fi]);
+        top += this.unmount(this.sections[fi], top);
         this.mounted.delete(fi);
       }
     }
