@@ -437,10 +437,11 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Changeset queue home
 - Change decomposition (mechanical vs. logic clusters)
 - Interdiffs; snapshot timeline
-- C#/Svelte/Angular backends (config entries + capability assert)
+- Svelte/Angular backends (config entries + capability assert); C# is in the POC
 - Throwaway-worktree execution
 - JetBrains-feel package
 - Diagnostics on the changeset
+- Line highlight in the editor: the clicked line stays highlighted
 
 ### M2
 
