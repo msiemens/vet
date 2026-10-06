@@ -65,8 +65,7 @@
         >
           <span class="chev"><Icon name={open ? "open" : "closed"} size={10} /></span>
           <span class="path"
-            >{#if file?.from}<span class="from">{file.from}</span> →
-            {/if}{entry.path}</span
+            >{#if file?.from}<span class="from">{file.from}</span><span class="arrow">→</span>{/if}{entry.path}</span
           >
           <span class="kind">{file?.from ? "renamed" : verb[entry.change]}</span>
           {#if counts}
@@ -79,6 +78,8 @@
           {@const shown = approvalRows(file)}
           {#if !shown}
             <p class="none">No text to compare.</p>
+          {:else if !shown.rows.length}
+            <p class="none">{file.from ? "Moved without changes to its content." : "No line changes."}</p>
           {:else}
             <div class="diff selectable">
               {#each shown.rows as row, r (r)}
@@ -170,6 +171,10 @@
     white-space: nowrap;
   }
   .from {
+    color: var(--text-3);
+  }
+  .arrow {
+    margin: 0 6px;
     color: var(--text-3);
   }
   .kind {

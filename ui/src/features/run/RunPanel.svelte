@@ -13,7 +13,7 @@
   const dot = (r: Run) => (!r.exit ? "ok" : r.exit.code === 0 ? "done" : "bad");
 
   function status(r: Run): string {
-    if (!r.exit) return "Running";
+    if (!r.exit) return r.stopping ? "Stopping…" : "Running";
     return r.exit.code === null ? "Stopped" : `Exited with code ${r.exit.code}`;
   }
 
@@ -32,7 +32,7 @@
     {/each}
     <span class="grow"></span>
     {#if run && !run.exit}
-      <button class="ctl stop" type="button" onclick={() => void runs.stop(run.id)}>
+      <button class="ctl stop" type="button" disabled={run.stopping} onclick={() => void runs.stop(run.id)}>
         <Icon name="stop" size={10} />Stop
       </button>
     {/if}

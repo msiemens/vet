@@ -104,7 +104,9 @@
             onclick={() => select(target.id)}
           >
             <span class="name">{target.label}</span>
-            <span class="mono src">{stored ? "edited · " : ""}{sourceOf(target.id)}</span>
+            <span class="mono src"
+              >{stored && sourceOf(target.id) !== "custom" ? "edited · " : ""}{sourceOf(target.id)}</span
+            >
           </button>
         {/each}
         {#if id !== undefined && !entry}
@@ -227,6 +229,7 @@
     color: var(--text-2);
   }
   em {
+    margin-left: 6px;
     font-style: normal;
     color: var(--text-3);
   }

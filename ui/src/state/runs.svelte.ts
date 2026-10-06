@@ -20,6 +20,8 @@ export interface Run {
   /** The tree that runs, as a snapshot id. */
   snapshot?: string;
   changedSinceReview?: number;
+  /** `StopRun` was sent; the exit follows. */
+  stopping?: boolean;
   /** Set by `RunExited`; `code` is `null` when a signal ended the process. */
   exit?: { code: number | null; droppedBytes: number };
 }
@@ -112,6 +114,8 @@ class RunStore {
   }
 
   async stop(runId: number) {
+    const run = this.byId.get(runId);
+    if (run) this.byId.set(runId, { ...run, stopping: true });
     try {
       await this.backend.stopRun(runId);
     } catch (error) {

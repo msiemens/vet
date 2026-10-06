@@ -75,11 +75,19 @@ In the Changes tab unchanged regions collapse with `@codemirror/merge`'s `collap
 
 A file's non-text items (mode, symlink target, submodule commit, binary, content unavailable, rename) are change cards inside its section in every `ChangesetView` (the Changes stream and file tabs), between the section header and the first hunk. A card is plain DOM from `editor/changeCard.ts` with a fixed height (a hunk-style bar, one or two rows, and a preview strip for an image), so `sectionLayout` adds exactly that height (the strip's images come from `ItemBlob`, fetched for sections near the viewport and dropped, object URLs revoked, when far away or on destroy; an SVG is only an `<img>` source) and the section's body is offset by it (`--vet-cards`); nothing is measured and no editor is needed for a card to show. Hunk navigation (Ctrl+Alt+Down/Up, Prev/Next hunk) stops on every card and every hunk, a file's cards first. Space and the card's check button acknowledge it (`Acknowledge` through the store, the new state coming back through `applyReview`); the section header's Seen button toggles hunks and cards together. `ChangeCard.svelte` wraps the same DOM for the dev gallery.
 
+## Running
+
+`features/run` over `state/runs.svelte.ts`. The Run split button (`RunButton`) lists the targets of `ListRunTargets` (reloaded when the manifest revision moves) with their manifest as detail, read off the target id (`kind:dir:name`, `command.ts`); the main button runs the last-used target (remembered per repository in `localStorage`) or the first. "Edit targets…" opens `TargetsDialog` (command as one line, working directory, `NAME=value` lines; `SaveRunTarget`, `ResetRunTarget`, which also deletes a custom target).
+
+`Run` answers with an approval or a start. `runs.approval` holds the answer; `ApprovalDialog` (`RunDialogs`, mounted by `App`) shows why, the changed files and each file's hunks with two lines of context (`approvalRows.ts`; a rename shows "old → new"). Run approves with the hash, Cancel drops it.
+
+A run's state is created when its id is first seen, by output or by the `Run` answer, which attaches the target, snapshot and "N files changed since review". The store keeps every running run and the latest run of each target. `RunPanel` (the `bottom` snippet of `ReviewScreen`) shows one run: stdout and stderr, exit code or "Stopped", the backend's dropped-bytes notice, Stop. Output is decoded per stream as UTF-8 with replacement into a `RunLog` (`state/runLog.ts`, not reactive, 1 MB / 20,000 pieces of scrollback) and drawn by `LogView`, which appends to the DOM once per frame; a chunk never invalidates Svelte state.
+
 ## Where things go
 
 - New screen: `features/<name>/` with an `index.ts`; mount it from `app/App.svelte`.
 - New backend request: a method in `state/backend.ts`, then a store field if the UI displays it. A request that can fail in a way the viewer should hear about goes through the store, which sets `notice` (shown as a `Toast` in `App`).
-- Data the protocol does not carry yet (symbols, run targets, footer details) is an optional prop whose absence renders a neutral empty state; fixtures for it live in `dev/` (the gallery) and never reach a production code path.
+- Data the protocol does not carry yet (symbols, footer details) is an optional prop whose absence renders a neutral empty state; fixtures for it live in `dev/` (the gallery) and never reach a production code path.
 - Colour or size: `lib/theme/tokens.css` (and a `dev` check in both themes).
 - New sidebar tool: an entry in `chrome/ToolRail`, its content as a snippet from `App`.
 - New tab kind: an id in `Tabs.svelte.ts`, a pane in `ReviewScreen`, and a case in `ReviewController.build`.
