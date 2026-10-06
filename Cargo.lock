@@ -4086,6 +4086,7 @@ dependencies = [
  "blake3",
  "globset",
  "similar",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -4104,7 +4105,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
- "unicode-normalization",
  "url",
  "vet-app",
  "vet-core",

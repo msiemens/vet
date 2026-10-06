@@ -11,7 +11,6 @@ use gix::filter::plumbing::pipeline::{CrlfRoundTripCheck, convert::ToGitOutcome}
 use gix::index::entry::{Flags, Mode, Stat};
 use gix::objs::Find;
 use gix::worktree::stack::state::attributes::Source;
-use unicode_normalization::UnicodeNormalization;
 use vet_app::ports::{GitError, Scan};
 use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, RepoPath, Snapshot, SnapshotStatus};
 
@@ -417,40 +416,19 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache,
     }
     wt.finish();
 
-    let status = SnapshotStatus {
-        path_collisions: collisions(entries.keys()),
-        content_unavailable: unavailable,
-    };
     let id = merkle::snapshot_id(&entries);
-    Ok(Scan {
-        snapshot: Snapshot { id, entries },
-        status,
-    })
+    let snapshot = Snapshot { id, entries };
+    let status = SnapshotStatus {
+        content_unavailable: unavailable,
+        ..SnapshotStatus::of(&snapshot)
+    };
+    Ok(Scan { snapshot, status })
 }
 
 /// The commit a checked-out submodule is at; `None` if it is not checked out.
 fn submodule_head(repo: &gix::Repository, path: &BStr) -> Option<gix::ObjectId> {
     let dir = repo.workdir()?.join(gix::path::from_bstr(path));
     Some(gix::open(dir).ok()?.head_id().ok()?.detach())
-}
-
-/// Paths that differ only in case or Unicode normalization.
-fn collisions<'a>(paths: impl Iterator<Item = &'a RepoPath>) -> Vec<RepoPath> {
-    let mut groups: BTreeMap<Vec<u8>, Vec<&RepoPath>> = BTreeMap::new();
-    for path in paths {
-        let key = match std::str::from_utf8(&path.0) {
-            Ok(s) => s.nfc().collect::<String>().to_lowercase().into_bytes(),
-            Err(_) => path.0.clone(),
-        };
-        groups.entry(key).or_default().push(path);
-    }
-    let colliding: BTreeSet<_> = groups
-        .into_values()
-        .filter(|g| g.len() > 1)
-        .flatten()
-        .cloned()
-        .collect();
-    colliding.into_iter().collect()
 }
 
 /// The entry for `oid` as recorded in a tree or index, with no worktree

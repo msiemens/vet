@@ -221,7 +221,8 @@ impl<G: GitRepo + Sync, S: Store + Sync> Materializer for Acquisition<G, S> {
                 if snapshot.id != id {
                     return Err(other("the snapshot is not in the store".into()));
                 }
-                (snapshot, SnapshotStatus::default())
+                let status = SnapshotStatus::of(&snapshot);
+                (snapshot, status)
             }
         };
         if !status.path_collisions.is_empty() && cfg!(any(windows, target_os = "macos")) {

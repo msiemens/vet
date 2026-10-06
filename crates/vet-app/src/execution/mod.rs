@@ -254,7 +254,7 @@ impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<
             }
         }
         store
-            .put_snapshot(approval.current.clone(), SnapshotStatus::default())
+            .put_snapshot(approval.current.clone(), SnapshotStatus::of(&approval.current))
             .await?;
         store
             .record_run_approval(self.repo.clone(), approval.hash, approval.current.id, now)

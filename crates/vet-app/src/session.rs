@@ -371,7 +371,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let opened = acquisition.open_pin().await?;
         let store = &acquisition.store;
         store
-            .put_snapshot(opened.base.clone(), SnapshotStatus::default())
+            .put_snapshot(opened.base.clone(), SnapshotStatus::of(&opened.base))
             .await?;
         store.put_snapshot(opened.target.clone(), opened.status).await?;
         let pin = store.put_pin(opened.head.clone(), opened.target.id).await?;
@@ -455,7 +455,9 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let store = &self.acquisition.store;
         // Before the ref moves: git may drop the old base's objects afterwards.
         self.retain_anchored(&st).await?;
-        store.put_snapshot(snapshot.clone(), SnapshotStatus::default()).await?;
+        store
+            .put_snapshot(snapshot.clone(), SnapshotStatus::of(&snapshot))
+            .await?;
         git.set_session_ref(self.id, "base", &commit).await?;
         self.acquisition.record_commit(snapshot.id, commit.clone());
         store.set_base(self.id, snapshot.id, choice.clone()).await?;

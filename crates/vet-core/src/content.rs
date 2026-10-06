@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use unicode_normalization::UnicodeNormalization;
+
 /// A 32-byte content hash.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Hash(pub [u8; 32]);
@@ -114,6 +116,36 @@ pub struct SnapshotStatus {
     pub path_collisions: Vec<RepoPath>,
     /// Blobs over the capture size cap: hashed, but content not retained.
     pub content_unavailable: Vec<RepoPath>,
+}
+
+impl SnapshotStatus {
+    /// The status every snapshot has regardless of origin: collisions are a pure
+    /// function of the paths, so a commit's tree is flagged like a worktree scan.
+    pub fn of(snapshot: &Snapshot) -> Self {
+        Self {
+            path_collisions: path_collisions(snapshot.entries.keys()),
+            content_unavailable: Vec::new(),
+        }
+    }
+}
+
+/// Paths that differ only in case or Unicode normalization (§6.3), sorted.
+pub fn path_collisions<'a>(paths: impl IntoIterator<Item = &'a RepoPath>) -> Vec<RepoPath> {
+    let mut groups: BTreeMap<Vec<u8>, Vec<&RepoPath>> = BTreeMap::new();
+    for path in paths {
+        let key = match std::str::from_utf8(&path.0) {
+            Ok(s) => s.nfc().collect::<String>().to_lowercase().into_bytes(),
+            Err(_) => path.0.clone(),
+        };
+        groups.entry(key).or_default().push(path);
+    }
+    let colliding: std::collections::BTreeSet<_> = groups
+        .into_values()
+        .filter(|g| g.len() > 1)
+        .flatten()
+        .cloned()
+        .collect();
+    colliding.into_iter().collect()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -237,5 +269,48 @@ mod tests {
         assert_eq!(Hash::from_hex(&hex), Some(hash));
         assert_eq!(Hash::from_hex(&hex[1..]), None);
         assert_eq!(Hash::from_hex(&format!("+{}", &hex[1..])), None);
+    }
+
+    #[test]
+    fn paths_differing_only_in_case_or_normalization_collide() {
+        let paths: Vec<_> = [
+            "Foo.txt",
+            "foo.txt",
+            "caf\u{e9}",
+            "cafe\u{301}",
+            "other",
+            "dir/a",
+            "dir/b",
+        ]
+        .map(|p| RepoPath(p.as_bytes().to_vec()))
+        .into();
+        let colliding: Vec<_> = path_collisions(&paths).into_iter().map(|p| p.0).collect();
+        let expected: Vec<Vec<u8>> = ["Foo.txt", "cafe\u{301}", "caf\u{e9}", "foo.txt"]
+            .map(|p| p.as_bytes().to_vec())
+            .into();
+        assert_eq!(colliding, expected);
+    }
+
+    #[test]
+    fn a_snapshot_status_flags_collisions_of_its_entries() {
+        let entry = FileEntry {
+            blob: BlobId::of(b""),
+            mode: 0o100644,
+            kind: EntryKind::File,
+            unfiltered: false,
+        };
+        let entries = ["A", "a", "b"]
+            .map(|p| (RepoPath(p.as_bytes().to_vec()), entry.clone()))
+            .into();
+        let snapshot = Snapshot {
+            id: SnapshotId(Hash::of(b"")),
+            entries,
+        };
+        let status = SnapshotStatus::of(&snapshot);
+        assert_eq!(
+            status.path_collisions,
+            [RepoPath(b"A".to_vec()), RepoPath(b"a".to_vec())]
+        );
+        assert!(status.content_unavailable.is_empty());
     }
 }

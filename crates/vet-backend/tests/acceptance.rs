@@ -706,9 +706,6 @@ async fn criterion1_windows_filesystem_case_only_paths_in_the_worktree_are_flagg
 }
 
 #[tokio::test]
-#[ignore = "bug: a snapshot built from a commit (the session's base) is stored with a default SnapshotStatus, so its \
-            case-only paths are never flagged PathCollision and it is materialized (merged) on macOS and Windows; \
-            Acquisition::open_pin, LiveSession::set_base and Acquisition::materialize all use SnapshotStatus::default()"]
 async fn criterion1_windows_filesystem_case_only_paths_in_a_commit_are_flagged_and_not_materialized_where_they_merge() {
     use vet_app::ports::Store;
     let repo = colliding_repo();
