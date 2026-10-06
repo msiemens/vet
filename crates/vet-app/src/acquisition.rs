@@ -271,7 +271,8 @@ mod tests {
     #[test]
     fn this_launch_directory_is_locked_and_survives_a_sweep() {
         let dir = launch_dir().unwrap();
-        assert_eq!(sweep_in(dir.parent().unwrap(), Some(dir)), 0);
+        // Even without being excluded by name, the held lock protects it.
+        sweep_in(dir.parent().unwrap(), None);
         assert!(dir.exists());
     }
 }

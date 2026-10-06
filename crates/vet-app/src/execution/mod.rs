@@ -186,7 +186,7 @@ mod tests {
 
     use super::*;
     use crate::pin::CommitId;
-    use crate::ports::{GcReport, ProcessEvent, RunningProcess, Scan};
+    use crate::ports::{CheckoutError, GcReport, ProcessEvent, RunningProcess, Scan};
     use crate::review::SessionId;
 
     fn snapshot(files: &[(&str, &str)]) -> (Snapshot, HashMap<BlobId, Vec<u8>>) {
@@ -241,7 +241,13 @@ mod tests {
                 status: Default::default(),
             })
         }
-        async fn checkout(&self, _: &CommitId, _: &Snapshot, _: &Path) -> Result<(), GitError> {
+        async fn checkout<S: Store + Sync>(
+            &self,
+            _: &S,
+            _: &CommitId,
+            _: &Snapshot,
+            _: &Path,
+        ) -> Result<(), CheckoutError> {
             unreachable!()
         }
         async fn commit_snapshot(&self, _: &CommitId) -> Result<Snapshot, GitError> {
@@ -344,10 +350,7 @@ mod tests {
     #[test]
     fn launch_asks_once_then_runs_until_a_build_file_changes() {
         let fake = Fake::default();
-        let acquisition = Acquisition {
-            git: fake.clone(),
-            store: fake.clone(),
-        };
+        let acquisition = Acquisition::new(fake.clone(), fake.clone());
         let exec = Execution {
             acquisition: &acquisition,
             runner: &fake,
