@@ -157,7 +157,7 @@ impl Handler for Mock {
                     changeset,
                 }))
             }
-            Request::Acknowledge { .. } => Err("the corpus has no non-text items".into()),
+            Request::Acknowledge { .. } | Request::ItemBlob { .. } => Err("the corpus has no non-text items".into()),
             Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),
             Request::SetFilter { .. } => Err("the corpus has no filter".into()),
             Request::ListRunTargets { .. }

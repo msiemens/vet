@@ -273,6 +273,27 @@ impl Handler for Orchestrator {
                     .map_err(message)?;
                 Ok(Response::Review(review_changed(&open, &events, &update)))
             }
+            Request::ItemBlob {
+                session,
+                revision,
+                path,
+                kind,
+                side,
+            } => {
+                let blob = self
+                    .find(session)
+                    .await?
+                    .session
+                    .item_blob(
+                        revision,
+                        &path,
+                        mapping::core_non_text_kind(kind),
+                        mapping::core_side(side),
+                    )
+                    .await
+                    .map_err(message)?;
+                Ok(mapping::item_blob(blob))
+            }
             Request::SetBase { session, base } => {
                 let open = self.find(session).await?;
                 let (base, revision) = open

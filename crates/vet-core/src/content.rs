@@ -198,9 +198,36 @@ pub struct SnapshotDiff {
     pub renames: RenameMap,
 }
 
+/// The media type of a common image format, from the file extension (any case).
+pub fn image_media_type(path: &RepoPath) -> Option<&'static str> {
+    let name = path.0.rsplit(|&b| b == b'/').next().unwrap_or_default();
+    let extension = name.rsplit(|&b| b == b'.').next().filter(|_| name.contains(&b'.'))?;
+    Some(match extension.to_ascii_lowercase().as_slice() {
+        b"png" => "image/png",
+        b"jpg" | b"jpeg" => "image/jpeg",
+        b"gif" => "image/gif",
+        b"webp" => "image/webp",
+        b"bmp" => "image/bmp",
+        b"ico" => "image/x-icon",
+        b"svg" => "image/svg+xml",
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_media_types_come_from_the_extension() {
+        let media = |p: &str| image_media_type(&RepoPath(p.as_bytes().to_vec()));
+        assert_eq!(media("a/b.PNG"), Some("image/png"));
+        assert_eq!(media("x.jpeg"), Some("image/jpeg"));
+        assert_eq!(media("x.svg"), Some("image/svg+xml"));
+        assert_eq!(media("x.txt"), None);
+        assert_eq!(media("png"), None);
+        assert_eq!(media("dir.png/file"), None);
+    }
 
     #[test]
     fn a_hash_round_trips_through_hex() {

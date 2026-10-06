@@ -2,6 +2,7 @@
 import type { ApprovalChange } from "./ApprovalChange";
 import type { ApprovalFile } from "./ApprovalFile";
 import type { Base } from "./Base";
+import type { BlobContent } from "./BlobContent";
 import type { BranchInfo } from "./BranchInfo";
 import type { CommitInfo } from "./CommitInfo";
 import type { DirEntry } from "./DirEntry";
@@ -16,7 +17,7 @@ export type Response = { "type": "pong", payload: string, } | { "type": "session
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", text: string, } | { "type": "base" } & Base | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "thread" } & Thread | { "type": "runTargets", targets: Array<RunTargetEntry>, } | { "type": "runNeedsApproval", hash: string, 
+root: string, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", text: string, } | { "type": "base" } & Base | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob" } & BlobContent | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "thread" } & Thread | { "type": "runTargets", targets: Array<RunTargetEntry>, } | { "type": "runNeedsApproval", hash: string, 
 /**
  * No run was ever approved in this repository.
  */

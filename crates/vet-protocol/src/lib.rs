@@ -139,6 +139,18 @@ pub enum Request {
         session: SessionId,
         path: String,
     },
+    /// The bytes of one side of a non-text item's file, to preview an image. The
+    /// item is found by `path` and `kind` as in `Acknowledge`; `Base` is the file
+    /// before (at its old path for a rename), `Target` the file after. Fails if
+    /// `revision` is no longer current or there is no such item. Answers with
+    /// `Response::ItemBlob`.
+    ItemBlob {
+        session: SessionId,
+        revision: u32,
+        path: String,
+        kind: NonTextKind,
+        side: Side,
+    },
     /// The run targets of the current target snapshot (§10): discovered from its
     /// manifests, with the user's edits applied, then the targets the user added.
     /// Answers with `Response::RunTargets`.
@@ -487,6 +499,8 @@ pub enum Response {
         revision: u32,
         content: TextContent,
     },
+    /// The answer to `ItemBlob`.
+    ItemBlob(BlobContent),
     /// The answer to `Threads`, at `revision`, in creation order.
     Threads {
         revision: u32,
@@ -522,6 +536,27 @@ pub enum Response {
     RunApprovalDiff {
         files: Vec<ApprovalFile>,
     },
+}
+
+/// One side of a non-text item's file.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum BlobContent {
+    Bytes {
+        /// Set for png, jpeg, gif, webp, bmp, ico and svg files, by extension.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        media_type: Option<String>,
+        /// Base64 (standard alphabet, padded) of the file.
+        bytes: String,
+    },
+    /// The item has no file on this side.
+    Absent,
+    /// Over the size the backend returns (8 MiB), or over the capture cap.
+    TooLarge,
+    /// A symlink or submodule, or content that is not readable any more.
+    Unavailable,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

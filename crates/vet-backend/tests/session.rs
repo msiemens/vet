@@ -9,9 +9,10 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, OUTPUT_CAP, Orchestrator, open_store};
 use vet_protocol::{
-    AnchorState, ApprovalChange, Base, BaseChoice, Completion, DirEntry, DirEntryKind, EnvVar, Event, FileStatus,
-    HunkState, LineLocation, Manifest, NoTextReason, NonTextKind, Request, Response, ReviewFilter, ReviewUpdate,
-    RunChange, RunStream, RunTarget, ServerMessage, SessionId, Side, TextContent, Thread, ThreadStatus, ThreadTarget,
+    AnchorState, ApprovalChange, Base, BaseChoice, BlobContent, Completion, DirEntry, DirEntryKind, EnvVar, Event,
+    FileStatus, HunkState, LineLocation, Manifest, NoTextReason, NonTextKind, Request, Response, ReviewFilter,
+    ReviewUpdate, RunChange, RunStream, RunTarget, ServerMessage, SessionId, Side, TextContent, Thread, ThreadStatus,
+    ThreadTarget,
 };
 use vet_transport::{Events, Handler};
 
@@ -502,6 +503,70 @@ async fn empty_files_are_non_text_items_and_can_be_acknowledged() {
     };
     assert_eq!(update.review.acknowledged, [NonTextKind::Empty]);
     assert_eq!(client.manifest(session).await.completion.acknowledged_items, 1);
+}
+
+#[tokio::test]
+async fn binary_items_serve_the_bytes_of_either_side() {
+    let big = format!("\0{}", "x".repeat(8 * 1024 * 1024));
+    let fx = fixture(
+        &[("logo.PNG", "\0old"), ("gone.gif", "\0gone")],
+        &[("logo.PNG", "\0new")],
+    )
+    .await;
+    write(fx.repo.path(), "new.ico", "\0ico");
+    write(fx.repo.path(), "big.bin", &big);
+    std::fs::remove_file(fx.repo.path().join("gone.gif")).unwrap();
+    let client = Client::new(&fx.handler);
+    let session = open(&client, fx.repo.path()).await;
+    let blob = |revision, path: &str, side| {
+        let request = Request::ItemBlob {
+            session,
+            revision,
+            path: path.into(),
+            kind: NonTextKind::Binary,
+            side,
+        };
+        client.call(request)
+    };
+    let bytes = |media_type: &str, content: &[u8]| {
+        use base64::Engine;
+        Response::ItemBlob(BlobContent::Bytes {
+            media_type: Some(media_type.into()),
+            bytes: base64::engine::general_purpose::STANDARD.encode(content),
+        })
+    };
+    let absent = Response::ItemBlob(BlobContent::Absent);
+
+    assert_eq!(
+        blob(0, "logo.PNG", Side::Base).await.unwrap(),
+        bytes("image/png", b"\0old")
+    );
+    assert_eq!(
+        blob(0, "logo.PNG", Side::Target).await.unwrap(),
+        bytes("image/png", b"\0new")
+    );
+    assert_eq!(blob(0, "new.ico", Side::Base).await.unwrap(), absent);
+    assert_eq!(
+        blob(0, "new.ico", Side::Target).await.unwrap(),
+        bytes("image/x-icon", b"\0ico")
+    );
+    assert_eq!(
+        blob(0, "gone.gif", Side::Base).await.unwrap(),
+        bytes("image/gif", b"\0gone")
+    );
+    assert_eq!(blob(0, "gone.gif", Side::Target).await.unwrap(), absent);
+    assert_eq!(
+        blob(0, "big.bin", Side::Target).await.unwrap(),
+        Response::ItemBlob(BlobContent::TooLarge)
+    );
+
+    assert!(
+        blob(1, "logo.PNG", Side::Base)
+            .await
+            .unwrap_err()
+            .starts_with("stale revision")
+    );
+    assert!(blob(0, "a.txt", Side::Base).await.is_err());
 }
 
 #[tokio::test]

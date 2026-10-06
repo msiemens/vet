@@ -6,8 +6,8 @@ use vet_app::execution::{ApprovalFile, ListedTarget};
 use vet_app::pin::{BaseChoice, CommitId};
 use vet_app::ports::{BaseCandidates, Degraded};
 use vet_app::session::{
-    BaseView, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemView, ManifestView, NewThread, NoText,
-    ReviewUpdateView, ReviewView, TargetText, ThreadView, ThreadsView, path_str,
+    BaseView, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemBlob, ItemView, ManifestView, NewThread,
+    NoText, ReviewUpdateView, ReviewView, TargetText, ThreadView, ThreadsView, path_str,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineRange, NonTextKind, RepoPath};
@@ -242,6 +242,19 @@ pub fn target_text(t: &TargetText) -> p::Response {
     }
 }
 
+pub fn item_blob(blob: ItemBlob) -> p::Response {
+    use base64::Engine;
+    p::Response::ItemBlob(match blob {
+        ItemBlob::Bytes { media_type, bytes } => p::BlobContent::Bytes {
+            media_type: media_type.map(String::from),
+            bytes: base64::engine::general_purpose::STANDARD.encode(bytes),
+        },
+        ItemBlob::Absent => p::BlobContent::Absent,
+        ItemBlob::TooLarge => p::BlobContent::TooLarge,
+        ItemBlob::Unavailable => p::BlobContent::Unavailable,
+    })
+}
+
 fn side(s: Side) -> p::Side {
     match s {
         Side::Base => p::Side::Base,
@@ -249,7 +262,7 @@ fn side(s: Side) -> p::Side {
     }
 }
 
-fn core_side(s: p::Side) -> Side {
+pub fn core_side(s: p::Side) -> Side {
     match s {
         p::Side::Base => Side::Base,
         p::Side::Target => Side::Target,

@@ -28,7 +28,7 @@ use tokio::sync::Mutex;
 use vet_core::completion::{Completion, Coverage, HunkState};
 use vet_core::content::{
     BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextChange, NonTextKind, RepoPath, Snapshot,
-    SnapshotDiff, SnapshotId, SnapshotStatus,
+    SnapshotDiff, SnapshotId, SnapshotStatus, image_media_type,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::marking::{hunk_regions, hunk_span};
@@ -225,6 +225,25 @@ pub enum NoText {
 pub struct TargetText {
     pub revision: u32,
     pub content: std::result::Result<String, NoText>,
+}
+
+/// Largest file `item_blob` returns.
+pub const MAX_ITEM_BLOB: usize = 8 * 1024 * 1024;
+
+/// One side of a non-text item's file.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ItemBlob {
+    Bytes {
+        /// Only for common image formats.
+        media_type: Option<&'static str>,
+        bytes: Vec<u8>,
+    },
+    /// The item has no file on this side.
+    Absent,
+    /// Over [`MAX_ITEM_BLOB`] or the capture cap.
+    TooLarge,
+    /// A symlink or submodule, or content that is not readable any more.
+    Unavailable,
 }
 
 /// What a new thread is attached to. Ranges are in the text of the revision the
@@ -818,6 +837,38 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             st.acks.retain(|a| *a != ack);
         }
         update_of(&st, path)
+    }
+
+    /// The bytes of one side of a non-text item's file at `revision`.
+    pub async fn item_blob(&self, revision: u32, path: &str, kind: NonTextKind, side: Side) -> Result<ItemBlob> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        let change = (st.changes.as_ref().expect("computed").diff.non_text.iter())
+            .find(|n| n.kind == kind && path_str(&n.path) == path)
+            .ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?;
+        let (file, entry) = match side {
+            Side::Base => (change.from.as_ref().unwrap_or(&change.path), &change.before),
+            Side::Target => (&change.path, &change.after),
+        };
+        let Some(entry) = entry else {
+            return Ok(ItemBlob::Absent);
+        };
+        if entry.kind != EntryKind::File {
+            return Ok(ItemBlob::Unavailable);
+        }
+        let read = match self.acquisition.store.blob(entry.blob).await? {
+            Some(bytes) => BlobRead::Found(bytes),
+            None => self.acquisition.git.read_blob_capped(file, entry.blob).await?,
+        };
+        Ok(match read {
+            BlobRead::Found(bytes) if bytes.len() <= MAX_ITEM_BLOB => ItemBlob::Bytes {
+                media_type: image_media_type(file),
+                bytes,
+            },
+            BlobRead::Found(_) | BlobRead::TooLarge => ItemBlob::TooLarge,
+            BlobRead::Missing => ItemBlob::Unavailable,
+        })
     }
 
     /// Every thread, with range anchors resolved at the current revision.
