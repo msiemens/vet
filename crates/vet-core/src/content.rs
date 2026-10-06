@@ -131,3 +131,38 @@ pub struct FileDiff {
 /// Git-detected renames between two snapshots, as `old -> new`.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct RenameMap(pub BTreeMap<RepoPath, RepoPath>);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NonTextKind {
+    Mode,
+    /// Symlink target change, or a change between file and symlink.
+    Symlink,
+    /// Pinned commit change.
+    Submodule,
+    Binary,
+    /// Content over the capture cap or otherwise not retained.
+    ContentUnavailable,
+    /// Same content at a new path.
+    Rename,
+}
+
+/// A file-level change with no reviewable text. It is acknowledged as one item,
+/// keyed by its before and after entries (§5.2).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct NonTextChange {
+    /// The new path, or the old one for a deletion.
+    pub path: RepoPath,
+    /// The old path of a rename.
+    pub from: Option<RepoPath>,
+    pub kind: NonTextKind,
+    pub before: Option<FileEntry>,
+    pub after: Option<FileEntry>,
+}
+
+/// Everything that differs between two snapshots.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct SnapshotDiff {
+    pub files: Vec<FileDiff>,
+    pub non_text: Vec<NonTextChange>,
+    pub renames: RenameMap,
+}

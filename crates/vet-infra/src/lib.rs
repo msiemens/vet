@@ -1,9 +1,8 @@
 //! Adapters. No business logic: each module implements one port.
 
-/// `vet_app::ports::GitRepo` over gitoxide: built-in-only content conversion,
-/// git blob hashing, the persisted stat-to-hash cache (racy mtimes are
-/// re-hashed), incremental Merkle `SnapshotId`, and checkout plus store overlay.
-pub mod git {}
+/// `vet_app::ports::GitRepo` over gitoxide. Checkout plus store overlay and the
+/// persisted stat-to-hash cache are still to come.
+pub mod git;
 
 /// `vet_app::ports::Watcher`: FSEvents, `ReadDirectoryChangesW`, inotify, and
 /// polling for `/mnt/*`.

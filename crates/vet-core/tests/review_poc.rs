@@ -3,9 +3,9 @@
 
 use std::collections::BTreeMap;
 
-use vet_core::completion::{NonTextChange, completion};
+use vet_core::completion::completion;
 use vet_core::content::{
-    BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hash, Hunk, LineRange, RepoPath,
+    BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hash, Hunk, LineRange, NonTextChange, NonTextKind, RepoPath,
     ReviewFilter, SnapshotId,
 };
 use vet_core::remap::remap_span;
@@ -519,7 +519,8 @@ fn mode_only_change_needs_acknowledgement() {
         path: path("run.sh"),
         before: Some(entry(0o100644)),
         after: Some(entry(0o100755)),
-        binary: false,
+        from: None,
+        kind: NonTextKind::Mode,
     };
     let f = ReviewFilter::default();
 
@@ -556,7 +557,8 @@ fn filter_roots_globs_and_binary() {
         path: path("src/img.rs"),
         before: None,
         after: None,
-        binary: true,
+        from: None,
+        kind: NonTextKind::Binary,
     };
     let c = completion(&f, &[], &[bin], &[], &[]);
     assert_eq!((c.items, c.excluded_items), (0, 1));

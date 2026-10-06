@@ -2,19 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::content::{FileDiff, FileEntry, LineRange, RepoPath, ReviewFilter};
+use crate::content::{FileDiff, LineRange, NonTextChange, NonTextKind, RepoPath, ReviewFilter};
 use crate::review::{ReviewedSpan, Side, SpanState};
-
-/// A file-level change with no reviewable text (mode, symlink target, submodule
-/// commit, binary or oversized content, pure rename). It is acknowledged as one
-/// item, keyed by its before and after entries.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct NonTextChange {
-    pub path: RepoPath,
-    pub before: Option<FileEntry>,
-    pub after: Option<FileEntry>,
-    pub binary: bool,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Completion {
@@ -113,7 +102,7 @@ pub fn completion(
         }
     }
     for n in non_text {
-        if !filter.passes(&n.path) || (filter.hide_binary && n.binary) {
+        if !filter.passes(&n.path) || (filter.hide_binary && n.kind == NonTextKind::Binary) {
             c.excluded_items += 1;
         } else {
             c.items += 1;

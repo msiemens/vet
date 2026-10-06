@@ -3,10 +3,10 @@
 
 use std::path::PathBuf;
 
-use vet_core::content::{Snapshot, SnapshotId};
+use vet_core::content::{EntryKind, Snapshot, SnapshotId, SnapshotStatus};
 use vet_semantic::ports::{Materialized, Materializer, NotMaterializable};
 
-use crate::ports::{Dirty, GitError, GitRepo, Store};
+use crate::ports::{Dirty, GitError, GitRepo, Scan, Store};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct CommitId(pub String);
@@ -51,7 +51,38 @@ pub struct Acquisition<G, S> {
     pub store: S,
 }
 
+/// The initial changeset of a dirty-tree review: `HEAD` to dirty-at-open.
+pub struct Opened {
+    pub pin: Pin,
+    pub base: Snapshot,
+    pub target: Snapshot,
+    pub status: SnapshotStatus,
+}
+
 impl<G: GitRepo, S: Store> Acquisition<G, S> {
+    /// Pin on review open (§6.1): record `{head, dirty-at-open}` and copy every
+    /// blob git cannot be assumed to keep (anything not already in `HEAD`)
+    /// into the store.
+    pub async fn open_pin(&self, id: PinId) -> Result<Opened, GitError> {
+        let head = self.git.head().await?;
+        let base = self.git.commit_snapshot(&head).await?;
+        let Scan { snapshot: target, status } = self.git.scan(Dirty::All).await?;
+        for (path, entry) in &target.entries {
+            let in_head = base.entries.get(path).is_some_and(|b| b.blob == entry.blob);
+            if in_head || entry.kind == EntryKind::Submodule || status.content_unavailable.contains(path) {
+                continue;
+            }
+            let bytes = self
+                .git
+                .read_blob(path, entry.blob)
+                .await?
+                .ok_or_else(|| GitError("worktree changed while pinning".into()))?;
+            self.store.put_blob(&bytes).await.map_err(|e| GitError(e.0))?;
+        }
+        let pin = Pin { id, head, tree: target.id };
+        Ok(Opened { pin, base, target, status })
+    }
+
     /// Authoritative reconciliation (§6.2): before declaring a snapshot settled,
     /// at review open, on rescan signals, and before every launch.
     pub async fn reconcile(&self, dirty: Dirty) -> Result<Snapshot, GitError> {

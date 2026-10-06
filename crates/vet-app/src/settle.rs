@@ -129,7 +129,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Waker};
 
-    use vet_core::content::{BlobId, FileDiff, Hash, RenameMap};
+    use vet_core::content::{BlobId, Hash, SnapshotDiff};
 
     use super::*;
     use crate::acquisition::CommitId;
@@ -250,7 +250,13 @@ mod tests {
         async fn checkout(&self, _: &CommitId, _: &Snapshot, _: &Path) -> Result<(), GitError> {
             unreachable!()
         }
-        async fn diff(&self, _: &Snapshot, _: &Snapshot) -> Result<(Vec<FileDiff>, RenameMap), GitError> {
+        async fn commit_snapshot(&self, _: &CommitId) -> Result<Snapshot, GitError> {
+            unreachable!()
+        }
+        async fn read_blob(&self, _: &RepoPath, _: BlobId) -> Result<Option<Vec<u8>>, GitError> {
+            unreachable!()
+        }
+        async fn diff<S: Store + Sync>(&self, _: &S, _: &Snapshot, _: &Snapshot) -> Result<SnapshotDiff, GitError> {
             unreachable!()
         }
     }

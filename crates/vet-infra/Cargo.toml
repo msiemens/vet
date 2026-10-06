@@ -20,6 +20,9 @@ tokio = { version = "1.53.2", features = ["sync", "time", "macros", "rt"] }
 dirs = "7.0.0"
 sea-orm = { version = "2.0.4", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
 sea-orm-migration = { version = "2.0.4", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+gix = { version = "0.88", default-features = false, features = ["sha1", "index", "dirwalk", "excludes", "attributes", "blob-diff", "worktree-mutation"] }
+blake3 = "1"
+unicode-normalization = "0.1"
 
 [lints]
 workspace = true

@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use vet_core::content::{BlobId, Changeset, FileDiff, Hash, RenameMap, RepoPath, ReviewFilter, Snapshot, SnapshotId, SnapshotStatus};
+use vet_core::content::{BlobId, Changeset, Hash, RepoPath, ReviewFilter, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
 use vet_core::platform::{PlatformThread, PlatformTraits};
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 
@@ -70,7 +70,13 @@ pub trait GitRepo {
     /// Check out `commit` into `root` and overlay content-store blobs for
     /// everything git cannot reconstruct (§7.2).
     fn checkout(&self, commit: &CommitId, snapshot: &Snapshot, root: &Path) -> impl Future<Output = Result<(), GitError>> + Send;
-    fn diff(&self, old: &Snapshot, new: &Snapshot) -> impl Future<Output = Result<(Vec<FileDiff>, RenameMap), GitError>> + Send;
+    /// The snapshot of a commit's tree.
+    fn commit_snapshot(&self, commit: &CommitId) -> impl Future<Output = Result<Snapshot, GitError>> + Send;
+    /// Content of `blob` as git would store it: from the object database, else
+    /// from the worktree file at `path` if it still hashes to `blob`.
+    fn read_blob(&self, path: &RepoPath, blob: BlobId) -> impl Future<Output = Result<Option<Vec<u8>>, GitError>> + Send;
+    /// Content comes from `store` first, then as in `read_blob`.
+    fn diff<S: Store + Sync>(&self, store: &S, old: &Snapshot, new: &Snapshot) -> impl Future<Output = Result<SnapshotDiff, GitError>> + Send;
 }
 
 #[derive(Debug)]
