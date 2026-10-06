@@ -1,8 +1,6 @@
 <script module lang="ts">
   export interface FooterInfo {
-    /** Settled snapshot id and its age. */
-    snapshot: string;
-    /** The rest is shown once something reports it: the semantic layer, the caret, the file. */
+    /** Each part is shown once something reports it: the semantic layer, the caret, the file. */
     languageServer?: string;
     /** Why, as a tooltip of `languageServer`. */
     languageServerTitle?: string;
@@ -21,7 +19,6 @@
 </script>
 
 <footer>
-  <span class="mono small">{info.snapshot}</span>
   {#if info.languageServer}<span title={info.languageServerTitle}>{info.languageServer}</span>{/if}
   {#if info.topology}
     <span class="topology"><span class="dot" class:ok={info.topology.ok}></span>{info.topology.label}</span>

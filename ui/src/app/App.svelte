@@ -70,7 +70,6 @@
   });
   const semanticSummary = $derived(semantic.summary(controller?.activePath));
   const footer = $derived({
-    snapshot: `#${changeset.manifest?.revision ?? 0}`,
     languageServer: semanticSummary.label,
     languageServerTitle: semanticSummary.title,
     diagnostics: semanticSummary.diagnostics,
