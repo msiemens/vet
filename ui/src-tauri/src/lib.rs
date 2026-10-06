@@ -16,7 +16,123 @@ const READY_TIMEOUT: Duration = Duration::from_secs(180);
 
 struct Backend {
     ready: Ready,
+    /// The repository named on the command line or in `VET_REPO`; none shows the start screen.
+    repo: Option<String>,
     child: Mutex<Child>,
+}
+
+/// What the webview needs to connect: the backend's `Ready` line and the repository to open.
+#[derive(serde::Serialize)]
+struct Connection {
+    #[serde(flatten)]
+    ready: Ready,
+    repo: Option<String>,
+}
+
+/// The backend runs in WSL, so Windows paths mean nothing to it.
+fn wsl_distro() -> Option<String> {
+    std::env::var("VET_WSL_DISTRO").ok().filter(|_| cfg!(windows))
+}
+
+/// The repository to review: the first command-line argument that is not a flag, else
+/// `VET_REPO`. The benchmark opens `vet-mock`, which ignores it, without asking.
+fn repo_path() -> Option<String> {
+    pick_repo(std::env::args().skip(1), std::env::var("VET_REPO").ok())
+        .or_else(|| bench_requested().then(|| ".".to_owned()))
+}
+
+fn pick_repo(mut args: impl Iterator<Item = String>, env: Option<String>) -> Option<String> {
+    args.find(|arg| !arg.starts_with('-'))
+        .or(env.filter(|value| !value.is_empty()))
+}
+
+/// The backend-side path of a folder the native dialog returned. In the WSL split the
+/// dialog shows `\\wsl.localhost\<distro>\…` (or `\\wsl$\<distro>\…`), which is the Linux
+/// path `/…` inside that distro; anything else cannot be opened by the backend.
+fn backend_path(picked: &str, distro: Option<&str>) -> Result<String, String> {
+    let Some(distro) = distro else {
+        return Ok(picked.to_owned());
+    };
+    let normalized = picked.replace('\\', "/");
+    let rest = normalized
+        .strip_prefix("//wsl.localhost/")
+        .or_else(|| normalized.strip_prefix("//wsl$/"));
+    match rest {
+        Some(rest) => {
+            let (from, path) = rest.split_once('/').unwrap_or((rest, ""));
+            if from.eq_ignore_ascii_case(distro) {
+                Ok(format!("/{path}"))
+            } else {
+                Err(format!(
+                    "{picked} is in the WSL distro {from}, but the backend runs in {distro}; pick a folder inside {distro}"
+                ))
+            }
+        }
+        None => Err(format!(
+            "{picked} is not inside the WSL distro {distro}, where the backend runs (a Windows drive is not visible to it); pick a folder under \\\\wsl.localhost\\{distro}"
+        )),
+    }
+}
+
+const RECENT_LIMIT: usize = 10;
+
+/// `path` first, without duplicates, at most `RECENT_LIMIT` entries.
+fn with_recent(mut list: Vec<String>, path: String) -> Vec<String> {
+    list.retain(|entry| *entry != path);
+    list.insert(0, path);
+    list.truncate(RECENT_LIMIT);
+    list
+}
+
+/// Recently opened repositories as the backend sees their paths, in the app config directory.
+fn recent_file(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("recent-repositories.json"))
+}
+
+fn read_recent(app: &tauri::AppHandle) -> Vec<String> {
+    recent_file(app)
+        .ok()
+        .and_then(|file| std::fs::read_to_string(file).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write_recent(app: &tauri::AppHandle, list: &[String]) -> Result<(), String> {
+    let file = recent_file(app)?;
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
+    std::fs::write(&file, text).map_err(|e| format!("cannot write {}: {e}", file.display()))
+}
+
+#[tauri::command]
+fn recent_repositories(app: tauri::AppHandle) -> Vec<String> {
+    read_recent(&app)
+}
+
+#[tauri::command]
+fn remember_repository(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    write_recent(&app, &with_recent(read_recent(&app), path))
+}
+
+#[tauri::command]
+fn forget_repository(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let mut list = read_recent(&app);
+    list.retain(|entry| *entry != path);
+    write_recent(&app, &list)
+}
+
+/// The native folder dialog; `None` if the user cancelled.
+#[tauri::command]
+async fn pick_repository(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let path = folder.into_path().map_err(|e| e.to_string())?;
+    backend_path(&path.to_string_lossy(), wsl_distro().as_deref()).map(Some)
 }
 
 /// Makes the backend exit when this process dies (it holds the child's stdin open).
@@ -32,15 +148,16 @@ const CORPUS_ENV: [&str; 4] = [
 
 /// The command that starts the backend, and the binary path it runs.
 ///
-/// - `VET_BACKEND`: backend binary; defaults to the workspace's `vet-mock` build.
+/// - `VET_BACKEND`: backend binary; defaults to the workspace's `vet-backend` build, or
+///   `vet-mock` when `VET_BENCH=1` (the benchmark needs the spike's corpus).
 /// - `VET_WSL_DISTRO` (Windows only): run it in that WSL2 distro via `wsl.exe`
 ///   (the split topology). `VET_BACKEND` is then required and must be a Linux
 ///   path inside the distro.
 fn backend_command() -> Result<(Command, String), String> {
     let configured = std::env::var("VET_BACKEND").ok();
-    let (mut command, binary) = match std::env::var("VET_WSL_DISTRO") {
-        Ok(distro) if cfg!(windows) => {
-            let binary = configured.ok_or("VET_WSL_DISTRO is set: set VET_BACKEND to the backend's Linux path inside WSL, e.g. /home/me/vet/target/debug/vet-mock")?;
+    let (mut command, binary) = match wsl_distro() {
+        Some(distro) => {
+            let binary = configured.ok_or("VET_WSL_DISTRO is set: set VET_BACKEND to the backend's Linux path inside WSL, e.g. /home/me/vet/target/debug/vet-backend")?;
             let mut command = Command::new("wsl.exe");
             // `--exec` skips the login environment, so PATH lacks e.g. NixOS's per-user profile (git).
             command.args([
@@ -92,7 +209,12 @@ fn backend_command() -> Result<(Command, String), String> {
 
 fn default_backend() -> String {
     let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
-    let exe = if cfg!(windows) { "vet-mock.exe" } else { "vet-mock" };
+    let name = if bench_requested() { "vet-mock" } else { "vet-backend" };
+    let exe = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
+    };
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target")
         .join(profile)
@@ -128,6 +250,7 @@ fn start_backend() -> Result<Backend, String> {
     match serde_json::from_str::<Ready>(&line) {
         Ok(ready) => Ok(Backend {
             ready,
+            repo: repo_path(),
             child: Mutex::new(child),
         }),
         Err(error) => Err(abort(child, format!("malformed Ready line {line:?}: {error}"))),
@@ -140,8 +263,11 @@ fn abort(mut child: Child, message: String) -> String {
 }
 
 #[tauri::command]
-fn backend_connection(backend: tauri::State<Backend>) -> Ready {
-    backend.ready.clone()
+fn backend_connection(backend: tauri::State<Backend>) -> Connection {
+    Connection {
+        ready: backend.ready.clone(),
+        repo: backend.repo.clone(),
+    }
 }
 
 /// Benchmark mode (SPEC §12.0): `VET_BENCH=1` runs it on startup and exits with the verdict.
@@ -153,19 +279,19 @@ struct BenchConfig {
     topology: &'static str,
 }
 
+fn bench_requested() -> bool {
+    std::env::var("VET_BENCH").is_ok_and(|v| v == "1")
+}
+
 #[tauri::command]
 fn bench_config() -> BenchConfig {
     BenchConfig {
-        auto: std::env::var("VET_BENCH").is_ok_and(|v| v == "1"),
+        auto: bench_requested(),
         scroll_seconds: std::env::var("VET_BENCH_SCROLL_SECONDS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(20),
-        topology: if cfg!(windows) && std::env::var_os("VET_WSL_DISTRO").is_some() {
-            "wsl-split"
-        } else {
-            "native"
-        },
+        topology: if wsl_distro().is_some() { "wsl-split" } else { "native" },
     }
 }
 
@@ -222,6 +348,7 @@ fn save_results(app: tauri::AppHandle, markdown: String, json: String, ok: bool)
 
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(start_backend()?);
             Ok(())
@@ -229,6 +356,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             backend_connection,
             bench_config,
+            forget_repository,
+            pick_repository,
+            recent_repositories,
+            remember_repository,
             renderer_memory,
             save_results
         ])
@@ -243,4 +374,52 @@ pub fn run() {
             let _ = child.kill();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{backend_path, pick_repo, with_recent};
+
+    fn pick(args: &[&str], env: Option<&str>) -> Option<String> {
+        pick_repo(args.iter().map(ToString::to_string), env.map(ToOwned::to_owned))
+    }
+
+    #[test]
+    fn argument_beats_environment_and_neither_shows_the_start_screen() {
+        assert_eq!(pick(&["--flag", "/a"], Some("/b")).as_deref(), Some("/a"));
+        assert_eq!(pick(&["--flag"], Some("/b")).as_deref(), Some("/b"));
+        assert_eq!(pick(&[], Some("")), None);
+        assert_eq!(pick(&[], None), None);
+    }
+
+    #[test]
+    fn wsl_paths_become_linux_paths() {
+        let wsl = Some("NixOS");
+        assert_eq!(
+            backend_path(r"\\wsl.localhost\NixOS\home\me\vet", wsl).as_deref(),
+            Ok("/home/me/vet")
+        );
+        assert_eq!(backend_path(r"\\wsl$\nixos\home\me", wsl).as_deref(), Ok("/home/me"));
+        assert_eq!(backend_path(r"\\wsl.localhost\NixOS", wsl).as_deref(), Ok("/"));
+        assert_eq!(backend_path("/home/me", None).as_deref(), Ok("/home/me"));
+    }
+
+    #[test]
+    fn paths_the_wsl_backend_cannot_see_are_refused() {
+        let wsl = Some("NixOS");
+        let other = backend_path(r"\\wsl.localhost\Ubuntu\home", wsl).unwrap_err();
+        assert!(other.contains("Ubuntu") && other.contains("NixOS"), "{other}");
+        let drive = backend_path(r"C:\src\vet", wsl).unwrap_err();
+        assert!(drive.contains("Windows drive"), "{drive}");
+    }
+
+    #[test]
+    fn recent_list_is_most_recent_first_without_duplicates_and_capped() {
+        let list: Vec<String> = (0..10).map(|i| format!("/r{i}")).collect();
+        let list = with_recent(list, "/r5".to_owned());
+        assert_eq!(list[0], "/r5");
+        assert_eq!(list.len(), 10);
+        assert_eq!(list.iter().filter(|p| *p == "/r5").count(), 1);
+        assert_eq!(with_recent(list, "/new".to_owned()).len(), 10);
+    }
 }
