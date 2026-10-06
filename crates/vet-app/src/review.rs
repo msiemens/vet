@@ -2,8 +2,8 @@
 //! than the pin itself. Remapping runs per changed file, triggered when either
 //! the base or the target blob id changes (the base case is `SeenAgainstOldBase`).
 
-use vet_core::completion::ReviewFilter;
 use vet_core::content::{Changeset, FileEntry, RepoPath};
+use vet_core::filter::ReviewFilter;
 use vet_core::review::{ReviewedSpan, Thread};
 
 use crate::pin::PinId;

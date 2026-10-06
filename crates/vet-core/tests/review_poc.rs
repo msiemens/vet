@@ -3,11 +3,12 @@
 
 use std::collections::BTreeMap;
 
-use vet_core::completion::{ReviewFilter, completion};
+use vet_core::completion::completion;
 use vet_core::content::{
     BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hash, Hunk, LineRange, NonTextChange, NonTextKind, RepoPath,
     SnapshotId,
 };
+use vet_core::filter::ReviewFilter;
 use vet_core::prepared::PreparedFile;
 use vet_core::remap::remap_span;
 use vet_core::resolve::{Resolution, resolve_anchor};
