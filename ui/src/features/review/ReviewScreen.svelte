@@ -25,6 +25,7 @@
     mode,
     onmode,
     onready,
+    onfile,
   }: {
     backend: Backend;
     hud: Hud;
@@ -42,6 +43,8 @@
     bottom?: Snippet;
     /** The changeset is open; `firstPaintMs` runs from the open request to the first hunk's paint. */
     onready: (controller: ReviewController, firstPaintMs: number) => void;
+    /** The file the review shows (the active file tab, else the one selected in the tree) changed. */
+    onfile?: (path: string | undefined) => void;
   } = $props();
 
   let menu = $state<{ path: string; dir: boolean; x: number; y: number }>();
@@ -56,6 +59,7 @@
   const revision = $derived(changeset.manifest?.revision);
   const highlighted = $derived(pathOf(tabs.active) ?? selected);
   const fileOf = (path: string) => changeset.file(path);
+  $effect(() => onfile?.(highlighted));
 
   onMount(() => {
     controller.open(true).then(

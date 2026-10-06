@@ -6,12 +6,16 @@ import type { Base } from "../generated/Base";
 import type { BaseChoice } from "../generated/BaseChoice";
 import type { BlobContent } from "../generated/BlobContent";
 import type { BranchInfo } from "../generated/BranchInfo";
+import type { ChangedSymbols } from "../generated/ChangedSymbols";
 import type { CommitInfo } from "../generated/CommitInfo";
 import type { Diagnostic } from "../generated/Diagnostic";
 import type { DirEntry } from "../generated/DirEntry";
 import type { Event as ServerEvent } from "../generated/Event";
+import type { Impact } from "../generated/Impact";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
+import type { Reachability } from "../generated/Reachability";
+import type { RemovalImpact } from "../generated/RemovalImpact";
 import type { Response } from "../generated/Response";
 import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
@@ -20,6 +24,7 @@ import type { RunTargetEntry } from "../generated/RunTargetEntry";
 import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { ServerInfo } from "../generated/ServerInfo";
 import type { Side } from "../generated/Side";
+import type { SymbolId } from "../generated/SymbolId";
 import type { TextContent } from "../generated/TextContent";
 import type { Unavailable } from "../generated/Unavailable";
 import { Connection } from "./connection";
@@ -231,5 +236,31 @@ export class Backend {
 
   async stopRun(runId: number): Promise<void> {
     expect(await this.conn.request({ type: "stopRun", session: this.sid, runId }), "done");
+  }
+
+  /** The symbols the changeset touches, as of `revision` (the manifest's; a stale one is rejected). */
+  async changedSymbols(revision: number): Promise<ChangedSymbols> {
+    return expect(await this.conn.request({ type: "changedSymbols", session: this.sid, revision }), "changedSymbols");
+  }
+
+  /** References and callers of an added or modified changed symbol; may take a while on a cold server. */
+  async impact(revision: number, symbol: SymbolId): Promise<Impact> {
+    return expect(await this.conn.request({ type: "impact", session: this.sid, revision, symbol }), "impact");
+  }
+
+  /** What became of the references to a removed changed symbol. */
+  async removalImpact(revision: number, symbol: SymbolId): Promise<RemovalImpact> {
+    return expect(
+      await this.conn.request({ type: "removalImpact", session: this.sid, revision, symbol }),
+      "removalImpact",
+    );
+  }
+
+  /** Whether an added or modified changed symbol is reached from an entry point. */
+  async reachability(revision: number, symbol: SymbolId): Promise<Reachability> {
+    return expect(
+      await this.conn.request({ type: "reachability", session: this.sid, revision, symbol }),
+      "reachability",
+    );
   }
 }

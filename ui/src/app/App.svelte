@@ -10,7 +10,7 @@
   import { RunButton, RunDialogs, RunPanel } from "../features/run";
   import { SettingsDialog } from "../features/settings";
   import { StartScreen } from "../features/start";
-  import { SymbolPanel } from "../features/symbols";
+  import { type OpenLocation, SymbolPanel, symbols } from "../features/symbols";
   import { matches } from "../lib/keymap";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import Toast from "../lib/ui/Toast.svelte";
@@ -60,8 +60,22 @@
 
   // The controller belongs to the repository's screen.
   $effect(() => {
-    if (!changeset.repo) controller = undefined;
+    if (!changeset.repo) {
+      controller = undefined;
+      symbols.reset();
+    }
   });
+
+  // The changed symbols belong to a revision; another one replaces them.
+  $effect(() => {
+    const backend = changeset.backend;
+    const revision = changeset.manifest?.revision;
+    if (backend && revision !== undefined) untrack(() => void symbols.load(backend, revision));
+  });
+
+  // A base-side line has no place in the diff views yet, so a changed file opens as its diff.
+  const openLocation: OpenLocation = (path, line, side) =>
+    side === "base" && changeset.file(path) ? void controller?.openFile(path) : void controller?.openSource(path, line);
 
   // Runs and targets belong to the open repository.
   $effect(() => {
@@ -206,8 +220,11 @@
       {mode}
       onmode={setMode}
       onready={ready}
+      onfile={(path) => {
+        symbols.file = path;
+      }}
     >
-      {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel />{/if}{/snippet}
+      {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel onopen={openLocation} />{/if}{/snippet}
       {#snippet bottom()}{#if runs.panel}<RunPanel />{/if}{/snippet}
     </ReviewScreen>
     <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />

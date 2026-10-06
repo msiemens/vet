@@ -1,104 +1,22 @@
-<script module lang="ts">
-  export interface SymbolInfo {
-    name: string;
-    qualified: string;
-    signature: string;
-    doc?: string;
-    callers: { name: string; at: string }[];
-    /** Entry point first, the symbol last. */
-    reachedFrom: string[];
-    /** Call sites of a removed symbol, classified in the target (SPEC §7.3). */
-    removed?: {
-      name: string;
-      sites: { at: string; verdict: "unresolved" | "binding changed" | "gone" | "unknown"; detail?: string }[];
-    };
-  }
-</script>
-
 <script lang="ts">
-  import type { Snippet } from "svelte";
-  import Icon from "../../lib/ui/Icon.svelte";
-  import IconButton from "../../lib/ui/IconButton.svelte";
+  import SymbolDetail from "./SymbolDetail.svelte";
+  import SymbolList from "./SymbolList.svelte";
+  import type { OpenLocation } from "./symbolList";
+  import { symbols } from "./symbols.svelte";
 
-  /** The symbol at the caret; none until the semantic layer answers (SPEC §7.3). */
-  let { symbol }: { symbol?: SymbolInfo } = $props();
-
-  const VERDICT = {
-    unresolved: "var(--del-text)",
-    "binding changed": "var(--old-base)",
-    gone: "var(--text-3)",
-    unknown: "var(--text-3)",
-  } as const;
+  /** The panel shows what `symbols` holds; the owner loads it per revision and says where a location opens. */
+  let { onopen }: { onopen: OpenLocation } = $props();
 </script>
-
-{#snippet section(
-  title: string,
-  count: number | undefined,
-  derived: boolean,
-  body: Snippet<[SymbolInfo]>,
-  symbol: SymbolInfo,
-)}
-  <div class="sh">
-    <Icon name="open" size={10} />{title}
-    {#if count !== undefined}<span class="mono n">{count}</span>{/if}
-    <span class="grow"></span>
-    {#if derived}<IconButton icon="derived" label="Derived — show inputs" size={20} iconSize={13} />{/if}
-  </div>
-  {@render body(symbol)}
-{/snippet}
-
-{#snippet signature(symbol: SymbolInfo)}
-  <div class="block">
-    <code class="mono selectable">{symbol.signature}</code>
-    {#if symbol.doc}<span class="doc selectable">{symbol.doc}</span>{/if}
-  </div>
-{/snippet}
-
-{#snippet callers(symbol: SymbolInfo)}
-  <ul>
-    {#each symbol.callers as c (c.name + c.at)}<li class="tw">
-        <span class="mono s">{c.name}</span><span class="grow"></span><span class="mono at">{c.at}</span>
-      </li>{/each}
-  </ul>
-{/snippet}
-
-{#snippet reached(symbol: SymbolInfo)}
-  <ol>
-    {#each symbol.reachedFrom as step, i (i)}
-      <li class="tw mono s" style:padding-left="{26 + i * 10}px" class:last={i === symbol.reachedFrom.length - 1}>
-        {#if i > 0}<span class="at">└</span>{/if}{step}
-      </li>
-    {/each}
-  </ol>
-{/snippet}
-
-{#snippet removed(symbol: SymbolInfo)}
-  <ul>
-    {#each symbol.removed?.sites ?? [] as site (site.at)}
-      <li class="tw">
-        <span class="mono s">{site.at}</span><span class="grow"></span>
-        <span class="verdict" style:color={VERDICT[site.verdict]}>{site.verdict}</span>
-        {#if site.detail}<span class="mono at">{site.detail}</span>{/if}
-      </li>
-    {/each}
-  </ul>
-{/snippet}
 
 <aside aria-label="Symbol">
-  {#if symbol}
-    <div class="head">
-      <span class="mono name selectable">{symbol.name}</span>
-      <span class="mono qualified selectable">{symbol.qualified}</span>
-    </div>
-    {@render section("Signature", undefined, false, signature, symbol)}
-    {@render section("Callers", symbol.callers.length, true, callers, symbol)}
-    {@render section("Reached from", undefined, true, reached, symbol)}
-    {#if symbol.removed}
-      {@render section(symbol.removed.name, symbol.removed.sites.length, true, removed, symbol)}
+  <div class="top"><SymbolList /></div>
+  <div class="detail">
+    {#if symbols.selected}
+      <SymbolDetail symbol={symbols.selected} {onopen} />
+    {:else}
+      <p class="empty">No symbol selected</p>
     {/if}
-  {:else}
-    <p class="empty">No symbol selected</p>
-  {/if}
+  </div>
 </aside>
 
 <style>
@@ -107,87 +25,21 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+  }
+  .top {
+    display: flex;
+    flex-direction: column;
+    flex: 0 1 40%;
+    min-height: 90px;
+  }
+  .detail {
+    flex: 1;
+    min-height: 0;
     overflow: hidden auto;
   }
   .empty {
     margin: 12px 10px;
     color: var(--text-3);
-  }
-  .head {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .name {
-    font-size: var(--fs-ctl);
-    font-weight: 500;
-  }
-  .qualified {
-    font-size: var(--fs-mono-s);
-    color: var(--text-2);
-  }
-  .sh {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: var(--h-ctl);
-    padding: 0 10px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-2);
-    flex: none;
-  }
-  .n {
-    font-weight: 400;
-    color: var(--text-3);
-  }
-  .grow {
-    flex: 1;
-  }
-  .block {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 0 10px 10px 26px;
-    border-bottom: 1px solid var(--line-soft);
-  }
-  code {
-    font-size: var(--fs-mono-s);
-    white-space: pre-wrap;
-  }
-  .doc {
-    font-size: var(--fs-ctl);
-    color: var(--text-2);
-  }
-  ul,
-  ol {
-    margin: 0;
-    padding: 0 0 6px;
-    list-style: none;
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .tw {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: var(--h-row);
-    padding: 0 10px 0 26px;
-    white-space: nowrap;
-    font-size: var(--fs-ctl);
-  }
-  .s {
-    font-size: var(--fs-mono-s);
-  }
-  .at {
-    font-size: 11px;
-    color: var(--text-3);
-  }
-  .last {
-    font-weight: 500;
-  }
-  .verdict {
-    font-size: 12px;
   }
 </style>

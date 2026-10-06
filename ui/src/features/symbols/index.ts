@@ -1,1 +1,3 @@
-export { default as SymbolPanel, type SymbolInfo } from "./SymbolPanel.svelte";
+export { default as SymbolPanel } from "./SymbolPanel.svelte";
+export { symbols } from "./symbols.svelte";
+export type { OpenLocation } from "./symbolList";
