@@ -2,7 +2,6 @@
 
 use crate::content::{BlobId, Hash, LineRange, RepoPath, SnapshotId};
 use crate::platform::PlatformThread;
-use crate::text::Text;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Side {
@@ -112,13 +111,6 @@ pub struct ReviewedSpan {
     /// `None` for pure deletions.
     pub target: Option<Anchor>,
     pub state: SpanState,
-}
-
-impl Anchor {
-    /// Anchors `range` of `text`; `None` if the range is empty or out of bounds.
-    pub fn from_text(side: Side, snapshot: SnapshotId, file: RepoPath, text: &[u8], range: LineRange) -> Option<Self> {
-        Text::new(text).anchor(side, snapshot, file, range)
-    }
 }
 
 /// One file on one side of a changeset, from the snapshot an anchor or span was

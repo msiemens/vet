@@ -4,13 +4,12 @@
 
 use std::path::Path;
 
-use vet_core::content::{
-    BlobId, Changeset, Hash, RepoPath, ReviewFilter, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
-};
+use vet_core::completion::ReviewFilter;
+use vet_core::content::{BlobId, Changeset, Hash, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
 use vet_core::platform::{PlatformThread, PlatformTraits};
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 
-use crate::acquisition::{CommitId, Pin, PinId};
+use crate::pin::{CommitId, Pin, PinId};
 use crate::review::{NonTextAck, Session, SessionId, SpanId};
 
 /// Monotonic milliseconds.

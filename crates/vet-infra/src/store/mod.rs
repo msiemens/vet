@@ -21,10 +21,11 @@ use sea_orm::{
     IntoActiveModel, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Set, SqlxSqliteConnector, TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait;
-use vet_app::acquisition::{CommitId, Pin, PinId};
+use vet_app::pin::{CommitId, Pin, PinId};
 use vet_app::ports::{GcReport, ReviewStore, Store, StoreError};
 use vet_app::review::{NonTextAck, RecordedSpan, Session, SessionId, SpanId};
-use vet_core::content::{BlobId, Changeset, Hash, ReviewFilter, Snapshot, SnapshotId, SnapshotStatus};
+use vet_core::completion::ReviewFilter;
+use vet_core::content::{BlobId, Changeset, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::merkle::{self, TreeNode};
 use vet_core::platform::PlatformThread;
 use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Thread, ThreadId, ThreadStatus};

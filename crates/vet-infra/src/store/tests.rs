@@ -5,9 +5,9 @@ use sea_orm::PaginatorTrait;
 use tempfile::TempDir;
 use vet_app::ports::{ReviewStore, Store};
 use vet_app::review::NonTextAck;
+use vet_core::completion::ReviewFilter;
 use vet_core::content::{
-    BlobId, Changeset, EntryKind, FileEntry, Hash, LineRange, RepoPath, ReviewFilter, Snapshot, SnapshotId,
-    SnapshotStatus,
+    BlobId, Changeset, EntryKind, FileEntry, Hash, LineRange, RepoPath, Snapshot, SnapshotId, SnapshotStatus,
 };
 use vet_core::platform::PlatformThread;
 use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanState, ThreadStatus};

@@ -88,6 +88,13 @@ impl<'a> Text<'a> {
     }
 }
 
+impl Anchor {
+    /// Anchors `range` of `text`; `None` if the range is empty or out of bounds.
+    pub fn from_text(side: Side, snapshot: SnapshotId, file: RepoPath, text: &[u8], range: LineRange) -> Option<Self> {
+        Text::new(text).anchor(side, snapshot, file, range)
+    }
+}
+
 /// Old line index to new line index for every line the diff leaves unchanged.
 pub(crate) fn diff_map(old: &[&[u8]], new: &[&[u8]]) -> Vec<Option<usize>> {
     let mut map = vec![None; old.len()];

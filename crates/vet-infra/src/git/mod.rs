@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use gix::bstr::ByteSlice;
 use gix::objs::Find;
-use vet_app::acquisition::CommitId;
+use vet_app::pin::CommitId;
 use vet_app::ports::{Dirty, GitError, GitRepo, Scan, Store};
 use vet_core::content::{BlobId, RepoPath, Snapshot, SnapshotDiff};
 use vet_core::merkle;

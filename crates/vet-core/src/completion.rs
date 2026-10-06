@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
-use crate::content::{FileDiff, LineRange, NonTextChange, NonTextKind, RepoPath, ReviewFilter};
+use crate::content::{FileDiff, LineRange, NonTextChange, NonTextKind, RepoPath};
 use crate::review::{ReviewedSpan, Side, SpanState};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -23,6 +23,15 @@ impl Completion {
     pub fn is_complete(&self) -> bool {
         self.seen_lines == self.lines && self.acknowledged_items == self.items
     }
+}
+
+/// A view over a changeset; never part of snapshot identity (§3).
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct ReviewFilter {
+    pub roots: Vec<RepoPath>,
+    pub include: Vec<String>,
+    pub exclude: Vec<String>,
+    pub hide_binary: bool,
 }
 
 impl ReviewFilter {

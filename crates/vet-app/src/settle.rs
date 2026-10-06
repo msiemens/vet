@@ -155,7 +155,7 @@ mod tests {
     use vet_core::content::{BlobId, Hash, SnapshotDiff, SnapshotStatus};
 
     use super::*;
-    use crate::acquisition::CommitId;
+    use crate::pin::CommitId;
     use crate::ports::{GcReport, Scan, StoreError};
     use crate::review::SessionId;
 

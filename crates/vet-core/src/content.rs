@@ -100,15 +100,6 @@ pub struct Changeset {
     pub target: SnapshotId,
 }
 
-/// A view over a changeset; never part of snapshot identity (§3).
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct ReviewFilter {
-    pub roots: Vec<RepoPath>,
-    pub include: Vec<String>,
-    pub exclude: Vec<String>,
-    pub hide_binary: bool,
-}
-
 /// A line range, 0-based, end exclusive.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct LineRange {
