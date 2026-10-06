@@ -422,6 +422,8 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             return Ok((base_view(&st), st.revision));
         }
         let store = &self.acquisition.store;
+        // Before the ref moves: git may drop the old base's objects afterwards.
+        self.retain_anchored(&st).await?;
         store.put_snapshot(snapshot.clone(), SnapshotStatus::default()).await?;
         git.set_session_ref(self.id, "base", &commit).await?;
         self.acquisition.record_commit(snapshot.id, commit.clone());
@@ -923,6 +925,48 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         edit_thread(st, thread, |t| t.target = target);
         self.remap(st).await?;
         thread_by_id(st, thread)
+    }
+
+    /// Copies into the store the content that recorded spans and range threads
+    /// are anchored in and only git holds, so their coverage survives git
+    /// dropping the objects of a base the session left, and a restart.
+    async fn retain_anchored(&self, st: &State) -> Result<()> {
+        let thread_anchors = st.threads.iter().filter_map(|t| match &t.target {
+            CommentTarget::Range(a) => Some(a),
+            _ => None,
+        });
+        let anchors = (st.recorded.iter())
+            .flat_map(|r| r.span.base.iter().chain(&r.span.target))
+            .chain(thread_anchors);
+        let wanted: BTreeSet<(SnapshotId, &RepoPath)> = anchors.map(|a| (a.snapshot, &a.file)).collect();
+        let store = &self.acquisition.store;
+        let mut stored: HashMap<SnapshotId, Option<Snapshot>> = HashMap::new();
+        for (id, file) in wanted {
+            let snapshot = if id == st.base.id {
+                Some(&st.base)
+            } else if id == st.target.id {
+                Some(&st.target)
+            } else if let Some(known) = st.known.get(&id) {
+                Some(known)
+            } else {
+                if let std::collections::hash_map::Entry::Vacant(v) = stored.entry(id) {
+                    v.insert(store.snapshot(id).await?.map(|(s, _)| s));
+                }
+                stored[&id].as_ref()
+            };
+            let Some(entry) = snapshot
+                .and_then(|s| s.entries.get(file))
+                .filter(|e| e.kind == EntryKind::File)
+            else {
+                continue;
+            };
+            if store.blob(entry.blob).await?.is_none()
+                && let Some(bytes) = self.acquisition.git.read_blob(file, entry.blob).await?
+            {
+                store.put_blob(bytes).await?;
+            }
+        }
+        Ok(())
     }
 
     /// An anchor on `range` of `path` in the current snapshot of `side`.

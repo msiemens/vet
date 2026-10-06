@@ -114,6 +114,11 @@ impl FakeGit {
             .insert(spec.into(), (CommitId(id.into()), snapshot));
     }
 
+    /// Git drops the object, as it may once no ref reaches its commit.
+    fn forget(&self, text: &str) {
+        self.blobs.lock().unwrap().remove(&BlobId::of(text.as_bytes()));
+    }
+
     fn snapshot(&self, files: &[(&str, &str)]) -> Snapshot {
         let mut blobs = self.blobs.lock().unwrap();
         for (_, text) in files {
@@ -783,6 +788,55 @@ async fn a_changed_base_makes_marks_seen_against_an_old_base_until_it_is_chosen_
     // Re-confirming marks the hunk against the new base.
     fx.session.set_seen(3, "a.txt", &[0], true).await.unwrap();
     assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen]);
+}
+
+#[tokio::test]
+async fn coverage_survives_git_dropping_the_old_base() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3, 4]))]).await;
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    let held = |fx: &Fixture| {
+        fx.store
+            .0
+            .lock()
+            .unwrap()
+            .blobs
+            .contains_key(&BlobId::of(base.as_bytes()))
+    };
+    assert!(!held(&fx), "git holds the base");
+
+    fx.git
+        .add_commit("c1", "c1-full", &[("a.txt", &base.replace("line 4\n", ""))]);
+    let c1 = BaseChoice::Commit {
+        id: CommitId("c1".into()),
+    };
+    fx.session.set_base(c1).await.unwrap();
+    assert!(held(&fx), "copied when the base changes");
+
+    fx.git.forget(&base);
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::SeenAgainstOldBase]);
+}
+
+#[tokio::test]
+async fn the_content_of_base_side_threads_is_copied_when_the_base_changes() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
+    let thread = NewThread::Range {
+        side: Side::Base,
+        path: path("a.txt"),
+        range: LineRange { start: 5, end: 7 },
+    };
+    fx.session.create_thread(0, thread, "why".into(), 1).await.unwrap();
+
+    fx.git
+        .add_commit("c1", "c1-full", &[("a.txt", &base.replace("line 0\n", ""))]);
+    let c1 = BaseChoice::Commit {
+        id: CommitId("c1".into()),
+    };
+    fx.session.set_base(c1).await.unwrap();
+
+    let mem = fx.store.0.lock().unwrap();
+    assert!(mem.blobs.contains_key(&BlobId::of(base.as_bytes())));
 }
 
 #[tokio::test]
