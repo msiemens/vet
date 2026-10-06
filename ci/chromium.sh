@@ -7,6 +7,9 @@
 # of a Linux Chromium; this needs WSL's mirrored networking, so localhost is shared.
 # VET_BROWSER=linux forces the Linux Chromium.
 #
+# One-off use only. For anything repeated (screenshots, benchmarks) use the shared
+# browser instead: ci/browser.sh and ci/cdp.mjs.
+#
 # Usage: ci/chromium.sh [chromium args...]
 #   ci/chromium.sh --screenshot=out.png --window-size=1440,900 'http://localhost:1420/#…'
 #   ci/chromium.sh --remote-debugging-port=9333 about:blank   (drive via CDP)

@@ -51,9 +51,22 @@ base with `main`): rustfmt on changed files, clippy/tests/module cycles for the
 changed crates and their dependents, and svelte-check, eslint, prettier and unit
 tests for changed UI files.
 
-`./ci/chromium.sh [args…]` runs headless Chromium for screenshots or CDP: it is
-killed after `VET_CHROMIUM_TIMEOUT` seconds (default 600) or when the script
-exits, and its profile is deleted.
+Screenshots and benchmarks use one shared headless browser (Windows Edge in WSL,
+else Chromium; `VET_BROWSER=linux` forces Chromium). `ci/browser.sh` starts it if
+needed and prints its CDP port (`VET_BROWSER_PORT`, default 9222); a watchdog
+closes it after `VET_BROWSER_IDLE` seconds (default 600) without a page. Clients
+use `ci/cdp.mjs`, which gives each run an isolated browser context:
+
+```sh
+node ci/cdp.mjs screenshot 'http://localhost:1430/#port=…&token=…&repo=/path' out.png [--wait ms] [--theme light|dark]
+```
+
+Scripts import `withTab(fn)` (screenshots, `evaluate`, `mouse`, console capture)
+and `withBenchLock(fn)` (exclusive, so parallel benchmarks do not skew each other).
+
+`./ci/chromium.sh [args…]` is for one-off use only: it runs its own headless
+Chromium, killed after `VET_CHROMIUM_TIMEOUT` seconds (default 600) or when the
+script exits, and deletes its profile.
 
 Formatting-only commits are listed in `.git-blame-ignore-revs`; enable them
 with `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
