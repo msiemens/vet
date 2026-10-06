@@ -171,7 +171,7 @@ export class ChangesetView {
         open.type = "button";
         open.title = "Open diff in tab";
         open.setAttribute("aria-label", "Open diff in tab");
-        open.innerHTML = iconSvg("file", 14, 1.6);
+        open.innerHTML = iconSvg("file", 13, 1.8);
         open.addEventListener("click", () => listeners.openDiff?.(file.path, firstLine));
       }
       const comment = document.createElement("button");
@@ -179,7 +179,7 @@ export class ChangesetView {
       comment.type = "button";
       comment.title = "Comment on this file";
       comment.setAttribute("aria-label", "Comment on this file");
-      comment.innerHTML = iconSvg("comments", 14, 1.6);
+      comment.innerHTML = iconSvg("comments", 13, 1.8);
       const index = this.sections.length;
       comment.addEventListener("click", () => this.threads.commentOnFile(this.sections[index]));
       const { added, removed } = lineDelta([file]);
@@ -193,9 +193,12 @@ export class ChangesetView {
       button.type = "button";
       button.title = "Toggle everything in this file seen";
       button.setAttribute("aria-label", button.title);
-      button.innerHTML = iconSvg("check", 14, 2);
+      button.innerHTML = iconSvg("check", 13, 2);
       button.addEventListener("click", () => void this.toggleSeen(index));
-      header.append(title, delta, count, ...(open ? [open] : []), button, comment);
+      const tools = document.createElement("span");
+      tools.className = "tools";
+      tools.append(...(open ? [open] : []), button, comment);
+      header.append(title, delta, count, tools);
       header.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         this.listeners.fileMenu(file.path, e.clientX, e.clientY);
