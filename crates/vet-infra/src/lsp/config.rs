@@ -42,9 +42,25 @@ pub fn pyright() -> Backend {
     )
 }
 
+/// MSBuild design-time builds run project code. The solution or projects to load
+/// are found by [`super::dotnet`], so there are no root markers.
+pub fn roslyn() -> Backend {
+    let Backend::GenericLsp(config) = entry(
+        "csharp",
+        "roslyn-language-server",
+        &["--stdio", "--logLevel", "Warning"],
+        &["cs"],
+        &[],
+        true,
+    ) else {
+        unreachable!("entry builds a generic backend")
+    };
+    Backend::Roslyn(config)
+}
+
 /// The POC languages.
 pub fn defaults() -> Vec<Backend> {
-    vec![rust_analyzer(), typescript(), pyright()]
+    vec![rust_analyzer(), typescript(), pyright(), roslyn()]
 }
 
 /// The LSP `languageId` for a file extension.
@@ -56,6 +72,32 @@ pub(super) fn language_id(extension: &str) -> &'static str {
         "js" | "mjs" | "cjs" => "javascript",
         "jsx" => "javascriptreact",
         "py" | "pyi" => "python",
+        "cs" => "csharp",
         _ => "plaintext",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use vet_core::content::RepoPath;
+    use vet_semantic::ports::backend_for;
+
+    use super::*;
+
+    #[test]
+    fn every_poc_language_serves_its_files() {
+        let backends = defaults();
+        let language = |file: &str| {
+            backend_for(&backends, &RepoPath(file.as_bytes().to_vec())).map(|b| b.config().backend.0.clone())
+        };
+        assert_eq!(language("src/lib.rs").as_deref(), Some("rust"));
+        assert_eq!(language("ui/a.tsx").as_deref(), Some("typescript"));
+        assert_eq!(language("tools/a.py").as_deref(), Some("python"));
+        assert_eq!(language("src/Program.cs").as_deref(), Some("csharp"));
+        assert!(matches!(
+            backend_for(&backends, &RepoPath(b"a.cs".to_vec())),
+            Some(Backend::Roslyn(_))
+        ));
+        assert_eq!(language("README.md"), None);
     }
 }

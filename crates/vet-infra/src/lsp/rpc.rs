@@ -31,6 +31,8 @@ pub(super) struct State {
     quiescent: Option<bool>,
     last_activity: Option<Instant>,
     pub diagnostics: HashMap<String, DiagnosticsState>,
+    /// `workspace/projectInitializationComplete`, which roslyn sends once it has loaded the projects it was told to.
+    pub projects_loaded: bool,
     exited: bool,
 }
 
@@ -123,14 +125,16 @@ impl Connection {
     }
 
     pub async fn notify<N: Notification>(&self, params: N::Params) -> Result<(), String> {
-        let message = json!({
-            "jsonrpc": "2.0",
-            "method": N::METHOD,
-            "params": serde_json::to_value(params).map_err(|e| e.to_string())?,
-        });
+        self.notify_raw(N::METHOD, serde_json::to_value(params).map_err(|e| e.to_string())?)
+            .await
+    }
+
+    /// A notification outside the LSP types, such as a server's own extension.
+    pub async fn notify_raw(&self, method: &str, params: Value) -> Result<(), String> {
+        let message = json!({"jsonrpc": "2.0", "method": method, "params": params});
         write_message(&self.stdin, &message)
             .await
-            .map_err(|e| self.describe(format!("{}: {e}", N::METHOD)))
+            .map_err(|e| self.describe(format!("{method}: {e}")))
     }
 
     /// Adds the server's last stderr lines to an error.
@@ -308,6 +312,10 @@ fn notification(shared: &Shared, method: &str, params: &Value) {
                 }
                 _ => {}
             }
+            state.touch();
+        }
+        "workspace/projectInitializationComplete" => {
+            state.projects_loaded = true;
             state.touch();
         }
         "experimental/serverStatus" => {

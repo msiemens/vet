@@ -120,6 +120,71 @@ async fn typescript_installs_and_uses_the_project_typescript() {
 }
 
 #[tokio::test]
+async fn csharp_installs_and_starts() {
+    if !wanted("csharp") {
+        return;
+    }
+    let setup = setup().await;
+    let project = tempfile::tempdir().unwrap();
+    let program = "namespace App;\n\npublic static class Helper\n{\n    public static int One() => 1;\n}\n\npublic static class Program\n{\n    public static int Main() => Helper.One();\n}\n";
+    std::fs::write(
+        project.path().join("App.csproj"),
+        "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Library</OutputType>\n  </PropertyGroup>\n</Project>\n",
+    )
+    .unwrap();
+    std::fs::write(project.path().join("Program.cs"), program).unwrap();
+    let restore = std::process::Command::new("dotnet")
+        .arg("restore")
+        .current_dir(project.path())
+        .output()
+        .unwrap();
+    assert!(restore.status.success(), "{}", String::from_utf8_lossy(&restore.stdout));
+    install(&setup, project.path(), "csharp").await;
+
+    let launcher = LspLauncher::new(servers(&setup));
+    let server = launcher
+        .start(
+            project.path(),
+            Tree::Live,
+            &config::roslyn(),
+            AnalysisPolicy { allow_executing: true },
+        )
+        .await
+        .expect("the installed server starts and has every required capability");
+    let file = path("Program.cs");
+    let names: Vec<String> = server
+        .document_symbols(&file)
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.sym.name.join("::"))
+        .collect();
+    assert!(names.iter().any(|n| n.contains("Helper")), "{names:?}");
+    let call = At {
+        file: file.clone(),
+        pos: Pos { line: 9, col: 40 },
+    };
+    assert!(server.hover(&call).await.unwrap().is_some());
+    assert_eq!(server.definition(&call).await.unwrap().len(), 1);
+    let decl = At {
+        file: file.clone(),
+        pos: Pos { line: 4, col: 23 },
+    };
+    assert_eq!(server.references(&decl).await.unwrap().len(), 1);
+    let callers: Vec<String> = server
+        .incoming_calls(&decl)
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.sym.name.last().cloned().unwrap_or_default())
+        .collect();
+    assert!(callers.iter().any(|c| c.contains("Main")), "{callers:?}");
+    assert!(!server.workspace_symbols("Helper").await.unwrap().is_empty());
+    assert!(server.diagnostics(&file).await.unwrap().is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn python_installs_and_starts() {
     if !wanted("python") {
         return;

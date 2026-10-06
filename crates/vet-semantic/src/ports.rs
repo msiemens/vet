@@ -60,12 +60,16 @@ pub struct ServerConfig {
 #[derive(Clone, Debug)]
 pub enum Backend {
     GenericLsp(ServerConfig),
+    /// `roslyn-language-server`: told which solution or projects to load with
+    /// its own `solution/open` and `project/open` notifications, and ready when
+    /// it sends `workspace/projectInitializationComplete`.
+    Roslyn(ServerConfig),
 }
 
 impl Backend {
     pub fn config(&self) -> &ServerConfig {
         match self {
-            Backend::GenericLsp(config) => config,
+            Backend::GenericLsp(config) | Backend::Roslyn(config) => config,
         }
     }
 }

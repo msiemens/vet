@@ -5,6 +5,7 @@
 
 mod capabilities;
 pub mod config;
+mod dotnet;
 mod rpc;
 mod server;
 
@@ -111,6 +112,16 @@ impl<L: ServerLocator + Sync> ServerLauncher for LspLauncher<L> {
             .await
             .map_err(LaunchError::Protocol)?;
 
+        if matches!(backend, Backend::Roslyn(_)) {
+            load_dotnet_projects(&conn, &root).await?;
+            if !conn.wait_for(self.ready_timeout, |s| s.projects_loaded).await {
+                return Err(LaunchError::NotReady(conn.describe(format!(
+                    "{} did not load the projects within {}s",
+                    config.binary,
+                    self.ready_timeout.as_secs()
+                ))));
+            }
+        }
         conn.with_state(rpc::State::touch);
         if !conn.wait_for(self.ready_timeout, |s| s.is_idle(QUIET)).await {
             return Err(LaunchError::NotReady(conn.describe(format!(
@@ -121,6 +132,28 @@ impl<L: ServerLocator + Sync> ServerLauncher for LspLauncher<L> {
         }
         Ok(LspServer::new(conn, root, tree, diagnostics))
     }
+}
+
+/// Tells roslyn what to load: it does not discover projects itself.
+async fn load_dotnet_projects(conn: &Connection, root: &Path) -> Result<(), LaunchError> {
+    let uri = |path: &Path| {
+        url::Url::from_file_path(path)
+            .map(String::from)
+            .map_err(|()| LaunchError::Protocol(format!("{} is not an absolute path", path.display())))
+    };
+    let (method, params) = match dotnet::find(root) {
+        Some(dotnet::Load::Solution(solution)) => ("solution/open", json!({"solution": uri(&solution)?})),
+        Some(dotnet::Load::Projects(projects)) => {
+            let uris = projects.iter().map(|p| uri(p)).collect::<Result<Vec<_>, _>>()?;
+            ("project/open", json!({"projects": uris}))
+        }
+        None => {
+            return Err(LaunchError::Protocol(
+                "no solution or C# project found in the repository".into(),
+            ));
+        }
+    };
+    conn.notify_raw(method, params).await.map_err(LaunchError::Protocol)
 }
 
 /// The root if it holds a root marker (or the config has none); else the
