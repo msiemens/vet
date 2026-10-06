@@ -1,6 +1,8 @@
-/* File sections: fixed height from the manifest, content clipped to it. */
+/* File sections: fixed height from the manifest, content clipped to it. `clip`, not `hidden`:
+   it is not a scroll container, so focusing or scrolling into view never shifts the content
+   under the header. */
 .file {
-  overflow: hidden;
+  overflow: clip;
   border-bottom: 1px solid var(--line);
   box-sizing: border-box;
   background: var(--bg-editor);
@@ -55,7 +57,7 @@
 }
 .file > .body {
   height: calc(100% - var(--h-section));
-  overflow: hidden;
+  overflow: clip;
 }
 
 .file .cm-editor {
