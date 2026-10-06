@@ -71,6 +71,10 @@ Each tab's pane hands its scroll root to `ReviewController.attach`, which builds
 
 In the Changes tab unchanged regions collapse with `@codemirror/merge`'s `collapseUnchanged` (3 lines of context) in both modes. `editor/sectionLayout.ts` mirrors that rule to estimate a section's height from the manifest. CodeMirror's own height is not a reliable measure (it estimates what is off screen), so expanding a region grows the section by exactly the lines the bar hid, compensating the scroll position, and unmounting a section resets it to the estimate (the benchmark reports the estimate error of mounted sections).
 
+## Change cards
+
+A file's non-text items (mode, symlink target, submodule commit, binary, content unavailable, rename) are change cards inside its section in every `ChangesetView` (the Changes stream and file tabs), between the section header and the first hunk. A card is plain DOM from `editor/changeCard.ts` with a fixed height (a hunk-style bar, one or two rows, and a preview strip for an image), so `sectionLayout` adds exactly that height and the section's body is offset by it (`--vet-cards`); nothing is measured and no editor is needed for a card to show. Hunk navigation (Ctrl+Alt+Down/Up, Prev/Next hunk) stops on every card and every hunk, a file's cards first. Space and the card's check button acknowledge it (`Acknowledge` through the store, the new state coming back through `applyReview`); the section header's Seen button toggles hunks and cards together. `ChangeCard.svelte` wraps the same DOM for the dev gallery.
+
 ## Where things go
 
 - New screen: `features/<name>/` with an `index.ts`; mount it from `app/App.svelte`.

@@ -76,6 +76,8 @@
   --h-line: 20px;
   /* The bar of a collapsed unchanged region; CodeMirror estimates 27px for it before measuring. */
   --h-collapsed: 27px;
+  /* The before/after preview strip of an image change card. */
+  --h-preview: 116px;
   --h-tab: 32px;
   --w-rail: 34px;
   --w-tree: 270px;

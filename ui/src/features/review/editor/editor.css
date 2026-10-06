@@ -55,8 +55,9 @@
   height: 20px;
   font-size: var(--fs-mono-s);
 }
+/* `--vet-cards` is the height of the section's change cards, set by the view. */
 .file > .body {
-  height: calc(100% - var(--h-section));
+  height: calc(100% - var(--h-section) - var(--vet-cards, 0px));
   overflow: clip;
 }
 
@@ -254,6 +255,90 @@
 }
 .vet-hunk-seenAgainstOldBase .vet-seen-toggle {
   color: var(--old-base);
+}
+
+/* Change cards (non-text items): heights add up from tokens, see `cardHeight`. */
+.vet-card {
+  background: var(--bg-editor);
+  overflow: clip;
+}
+.vet-card .grow {
+  flex: 1;
+}
+.vet-card-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-mono-s);
+  color: var(--text);
+}
+.vet-card-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--h-line);
+  box-sizing: border-box;
+  padding: 0 10px;
+  font-size: var(--fs-mono);
+  white-space: nowrap;
+}
+.vet-card-line .text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vet-card-line .sign {
+  flex: none;
+  width: 14px;
+  text-align: center;
+}
+.vet-card-line.add {
+  background: var(--add-bg);
+}
+.vet-card-line.add .sign {
+  color: var(--add-text);
+}
+.vet-card-line.del {
+  background: var(--del-bg);
+}
+.vet-card-line.del .sign {
+  color: var(--del-text);
+}
+.vet-card-line.note {
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ctl);
+}
+.vet-card-previews {
+  display: flex;
+  gap: 16px;
+  height: var(--h-preview);
+  box-sizing: border-box;
+  padding: 8px 10px;
+}
+.vet-card-figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  color: var(--text-3);
+  font-size: var(--fs-mono-s);
+}
+.vet-card-thumb {
+  width: 120px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+}
+.vet-card.vet-current {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 /* Inline decorations: changed symbol, reachability, notes (derived, §7.3/§7.4). */

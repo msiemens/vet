@@ -6,8 +6,10 @@
 import { EditorView } from "@codemirror/view";
 import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
+import type { NonTextKind } from "../../../generated/NonTextKind";
 import { iconSvg } from "../../../lib/ui/icons";
 import type { Backend } from "../../../state/backend";
+import { type Card, changeCard } from "./changeCard";
 import type { BarActions } from "./hunkBar";
 import { lineDelta } from "./lineDelta";
 import { type Handle, type Hooks, type Loaded, type Mode, mountFile } from "./mount";
@@ -27,17 +29,21 @@ export interface Listeners {
    * Its new state comes back through `applyReview`.
    */
   setSeen(revision: number, path: string, hunks: number[], seen: boolean): Promise<void>;
+  /** The same for a non-text item. */
+  acknowledge(path: string, kind: NonTextKind, acknowledged: boolean): Promise<void>;
   /** Context menu on a file header. */
   fileMenu(path: string, x: number, y: number): void;
   /** Absent in a view of a single file, which already is the file's tab. */
   openFile?(path: string, line: number): void;
 }
 
-/** A view's current hunk, as a position that survives a new revision. */
+/** A view's current stop, as a position that survives a new revision. */
 export interface HunkAnchor {
   path: string;
   /** Target line where the hunk starts. */
   line: number;
+  /** Set when the stop is a change card rather than a hunk. */
+  card?: NonTextKind;
 }
 
 interface Section {
@@ -47,8 +53,13 @@ interface Section {
   el: HTMLElement;
   body: HTMLElement;
   count: HTMLElement;
+  /** One per non-text item of the file, above the first hunk. */
+  cards: Card[];
   top: number;
   height: number;
+  /** Offset of each card from the top of the section. */
+  cardTops: number[];
+  cardsHeight: number;
   /** Estimated offset of each hunk bar from the top of the section. */
   hunkTops: number[];
   hooks: Hooks;
@@ -59,8 +70,13 @@ interface Section {
 
 export class ChangesetView {
   readonly sections: Section[] = [];
-  private hunkStart: number[] = [];
+  /**
+   * Hunk navigation stops at every change card and every hunk; a file's stops are its cards
+   * first, then its hunks. `stopStart[fi]` is the number of stops before file `fi`.
+   */
+  private stopStart: number[] = [];
   readonly totalHunks: number;
+  readonly totalStops: number;
   private mounted = new Set<number>();
   private m: Metrics;
   current = -1;
@@ -94,11 +110,14 @@ export class ChangesetView {
       hunk: px(style, "--h-hunk"),
       header: px(style, "--h-section"),
       collapsed: px(style, "--h-collapsed"),
+      preview: px(style, "--h-preview"),
     };
     let hunks = 0;
+    let stops = 0;
     for (const file of files) {
-      this.hunkStart.push(hunks);
+      this.stopStart.push(stops);
       hunks += file.hunks.length;
+      stops += file.nonText.length + file.hunks.length;
       const el = document.createElement("section");
       el.className = "file";
       const header = document.createElement("header");
@@ -133,7 +152,7 @@ export class ChangesetView {
       const button = document.createElement("button");
       button.className = "ctl";
       button.textContent = "Seen";
-      button.title = "Toggle all hunks of this file seen";
+      button.title = "Toggle everything in this file seen";
       const index = this.sections.length;
       button.addEventListener("click", () => void this.toggleSeen(index));
       header.append(title, delta, count, ...(open ? [open] : []), button);
@@ -143,7 +162,15 @@ export class ChangesetView {
       });
       const body = document.createElement("div");
       body.className = "body";
-      el.append(header, body);
+      const cards = file.nonText.map((item, ci) =>
+        changeCard(file.path, file.oldPath, item, file.review.acknowledged.includes(item.kind), {
+          toggle: () => void this.toggleCard(index, ci),
+          comment: () => {
+            // Comments are not wired up yet.
+          },
+        }),
+      );
+      el.append(header, ...cards.map((c) => c.el), body);
       const actions: BarActions = {
         toggleSeen: (h) => void this.toggleHunk(index, h),
         comment: () => {
@@ -158,13 +185,17 @@ export class ChangesetView {
         el,
         body,
         count,
+        cards,
         top: 0,
         height: 0,
+        cardTops: [],
+        cardsHeight: 0,
         hunkTops: [],
         hooks: { ...hooks, ...actions },
       });
     }
     this.totalHunks = hunks;
+    this.totalStops = stops;
     this.root.replaceChildren(...this.sections.map((s) => s.el));
     this.layout();
     this.root.addEventListener("scroll", this.onScroll, { passive: true });
@@ -230,12 +261,19 @@ export class ChangesetView {
   private estimate(s: Section): number {
     const layout = sectionLayout(s.file, this.mode, this.m, this.collapse);
     s.hunkTops = layout.hunkTops;
+    s.cardTops = layout.cardTops;
+    s.cardsHeight = layout.cardsHeight;
+    s.el.style.setProperty("--vet-cards", `${layout.cardsHeight}px`);
     return layout.height + 1;
   }
 
   private updateCount(s: Section) {
-    const hunks = s.review.hunks;
-    s.count.textContent = `${hunks.filter((h) => h === "seen").length}/${hunks.length} hunks seen`;
+    const { hunks, acknowledged } = s.review;
+    const parts: string[] = [];
+    if (hunks.length || !s.cards.length)
+      parts.push(`${hunks.filter((h) => h === "seen").length}/${hunks.length} hunks seen`);
+    if (s.cards.length) parts.push(`${acknowledged.length}/${s.cards.length} other`);
+    s.count.textContent = parts.join(" · ");
   }
 
   /** Drops the editor; the regions it had expanded are collapsed again when it is mounted anew. */
@@ -312,8 +350,9 @@ export class ChangesetView {
       this.collapse ? COLLAPSE : undefined,
     );
     this.mounted.add(fi);
-    if (this.current >= this.hunkStart[fi] && this.current < this.hunkStart[fi] + s.file.hunks.length)
-      s.handle.dispatchAll(setCurrent.of(this.current - this.hunkStart[fi]));
+    const first = this.stopStart[fi] + s.cards.length;
+    if (this.current >= first && this.current < first + s.file.hunks.length)
+      s.handle.dispatchAll(setCurrent.of(this.current - first));
     return s.handle;
   }
 
@@ -371,27 +410,53 @@ export class ChangesetView {
     return handle;
   }
 
-  private locate(global: number): [number, number] {
-    let fi = this.hunkStart.findIndex((start, i) => start + this.sections[i].file.hunks.length > global);
-    if (fi < 0) fi = this.sections.length - 1;
-    return [fi, global - this.hunkStart[fi]];
+  /** The file of a stop, and the stop's index among that file's stops: below its card count it is a card, else a hunk. */
+  private locate(stop: number): [number, number] {
+    const end = (i: number) => this.stopStart[i] + this.sections[i].cards.length + this.sections[i].file.hunks.length;
+    let [lo, hi] = [0, this.sections.length - 1];
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (end(mid) > stop) hi = mid;
+      else lo = mid + 1;
+    }
+    return [lo, stop - this.stopStart[lo]];
   }
 
+  /** The stop of file `fi`'s first hunk. */
   firstHunkOf(fi: number): number {
-    return this.hunkStart[fi];
+    return this.stopStart[fi] + this.sections[fi].cards.length;
   }
 
-  async goToHunk(global: number): Promise<void> {
-    global = Math.max(0, Math.min(this.totalHunks - 1, global));
-    const [fi, hi] = this.locate(global);
+  /** Shows a stop as current or not: a card outlines itself, a hunk is the editor's. */
+  private markCurrent(stop: number, on: boolean) {
+    const [fi, si] = this.locate(stop);
+    const s = this.sections[fi];
+    if (si < s.cards.length) s.cards[si].setCurrent(on);
+    else s.handle?.dispatchAll(setCurrent.of(on ? si - s.cards.length : null));
+  }
+
+  /** Goes to the stop with this index over all files' cards and hunks (a card, then the file's hunks). */
+  async goToHunk(stop: number): Promise<void> {
+    if (!this.totalStops) return;
+    stop = Math.max(0, Math.min(this.totalStops - 1, stop));
+    const [fi, si] = this.locate(stop);
+    const s = this.sections[fi];
+    const cards = s.cards.length;
+    if (si < cards) {
+      if (this.current >= 0 && this.current !== stop) this.markCurrent(this.current, false);
+      this.current = stop;
+      // A card's position is exact, whether or not the section's editor is mounted.
+      this.root.scrollTop = Math.max(0, s.top + s.cardTops[si] - this.root.clientHeight / 2);
+      this.sync();
+      this.markCurrent(stop, true);
+      return;
+    }
+    const hi = si - cards;
     const loaded = await this.load(fi);
     const hunk = loaded.hunks[hi];
 
-    if (this.current >= 0) {
-      const [pf, ph] = this.locate(this.current);
-      if (!(pf === fi && ph === hi)) this.sections[pf].handle?.dispatchAll(setCurrent.of(null));
-    }
-    this.current = global;
+    if (this.current >= 0 && this.current !== stop) this.markCurrent(this.current, false);
+    this.current = stop;
 
     const handle = this.reveal(fi, hunk.targetStart, hi);
     handle.dispatchAll(setCurrent.of(hi));
@@ -430,25 +495,36 @@ export class ChangesetView {
     return undefined;
   }
 
-  /** Where the current hunk is, so a view of a newer revision can keep it. */
+  /** Where the current stop is, so a view of a newer revision can keep it. */
   currentAnchor(): HunkAnchor | undefined {
-    if (this.current < 0) return undefined;
-    const [fi, hi] = this.locate(this.current);
-    const file = this.sections[fi].file;
-    return { path: file.path, line: file.hunks[hi]?.targetStart ?? 0 };
+    if (this.current < 0 || !this.totalStops) return undefined;
+    const [fi, si] = this.locate(this.current);
+    const { file, cards } = this.sections[fi];
+    if (si < cards.length) return { path: file.path, line: 0, card: file.nonText[si].kind };
+    return { path: file.path, line: file.hunks[si - cards.length]?.targetStart ?? 0 };
   }
 
-  /** Makes the hunk of the anchor's file nearest to its position the current one, without scrolling. */
+  /**
+   * Makes the stop of the anchor's file nearest to it the current one, without scrolling: the same
+   * card, else the hunk nearest to the anchor's line, else the file's first stop.
+   */
   keepCurrent(anchor: HunkAnchor | undefined) {
     const fi = anchor ? this.indexOf(anchor.path) : -1;
     if (!anchor || fi < 0) return;
-    const hunks = this.sections[fi].file.hunks;
+    const { file, cards } = this.sections[fi];
+    const card = anchor.card ? file.nonText.findIndex((i) => i.kind === anchor.card) : -1;
+    if (card >= 0) {
+      this.current = this.stopStart[fi] + card;
+      return;
+    }
+    const hunks = file.hunks;
     let nearest = -1;
     hunks.forEach((h, i) => {
       if (nearest < 0 || Math.abs(h.targetStart - anchor.line) < Math.abs(hunks[nearest].targetStart - anchor.line))
         nearest = i;
     });
-    if (nearest >= 0) this.current = this.hunkStart[fi] + nearest;
+    if (nearest >= 0) this.current = this.stopStart[fi] + cards.length + nearest;
+    else if (cards.length) this.current = this.stopStart[fi];
   }
 
   /** The latest `toggleSeen`, so callers (the benchmark) can wait for the repaint. */
@@ -466,17 +542,29 @@ export class ChangesetView {
     if (!s) return;
     s.review = review;
     s.handle?.dispatchAll(setStates.of(review.hunks));
+    s.cards.forEach((card, i) => card.setAcknowledged(review.acknowledged.includes(s.file.nonText[i].kind)));
     this.updateCount(s);
   }
 
-  /** Marks all hunks of file `fi` seen, or unseen if they all already are. */
+  /** Marks everything in file `fi` (hunks and change cards) seen, or unseen if it all already is. */
   toggleSeen(fi: number): Promise<void> {
-    const { review } = this.sections[fi];
-    return this.setSeen(
-      fi,
-      review.hunks.map((_, i) => i),
-      !review.hunks.every((h) => h === "seen"),
+    const { review, file } = this.sections[fi];
+    const value = !(
+      review.hunks.every((h) => h === "seen") && file.nonText.every((i) => review.acknowledged.includes(i.kind))
     );
+    const jobs: Promise<void>[] = [];
+    if (review.hunks.length)
+      jobs.push(
+        this.setSeen(
+          fi,
+          review.hunks.map((_, i) => i),
+          value,
+        ),
+      );
+    for (const item of file.nonText)
+      if (review.acknowledged.includes(item.kind) !== value)
+        jobs.push(this.listeners.acknowledge(file.path, item.kind, value));
+    return (this.pendingToggle = Promise.all(jobs).then(() => undefined));
   }
 
   /** Unseen → seen, seen → unseen, seen against an old base → re-confirmed. */
@@ -484,10 +572,18 @@ export class ChangesetView {
     return this.setSeen(fi, [hi], this.sections[fi].review.hunks[hi] !== "seen");
   }
 
-  /** Toggles the current hunk. */
+  /** Acknowledges the file's `ci`-th change card, or takes it back. */
+  toggleCard(fi: number, ci: number): Promise<void> {
+    const { file, review } = this.sections[fi];
+    const { kind } = file.nonText[ci];
+    return (this.pendingToggle = this.listeners.acknowledge(file.path, kind, !review.acknowledged.includes(kind)));
+  }
+
+  /** Toggles the current stop: a hunk is marked seen or unseen, a card acknowledged or not. */
   toggleCurrent(): Promise<void> {
-    const [fi, hi] = this.locate(this.current);
-    return this.toggleHunk(fi, hi);
+    const [fi, si] = this.locate(this.current);
+    const cards = this.sections[fi].cards.length;
+    return si < cards ? this.toggleCard(fi, si) : this.toggleHunk(fi, si - cards);
   }
 
   currentFile(): number {
@@ -509,7 +605,7 @@ export class ChangesetView {
     let drift = 0;
     for (const fi of this.mounted) {
       const s = this.sections[fi];
-      drift = Math.max(drift, Math.abs(s.body.scrollHeight + this.m.header + 1 - s.height));
+      drift = Math.max(drift, Math.abs(s.body.scrollHeight + this.m.header + s.cardsHeight + 1 - s.height));
     }
     return drift;
   }

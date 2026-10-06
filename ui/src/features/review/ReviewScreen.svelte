@@ -5,12 +5,11 @@
   import SideBar from "../../lib/ui/SideBar.svelte";
   import type { Backend } from "../../state/backend";
   import { changeset } from "../../state/changeset.svelte";
-  import ChangeCard from "./ChangeCard.svelte";
   import FileTree from "./FileTree.svelte";
   import type { Mode } from "./editor/mount";
   import "./editor/editor.css";
   import { type Hud, ReviewController } from "./ReviewController";
-  import { CHANGES, kindOf, pathOf } from "./Tabs.svelte";
+  import { CHANGES, pathOf } from "./Tabs.svelte";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
@@ -74,18 +73,10 @@
     });
   });
 
-  /**
-   * Shows the file in the Changes tab. A file with only non-text changes has nothing there, so
-   * it opens its own tab; an unchanged file is only selected.
-   */
+  /** Shows the file in the Changes tab; an unchanged file is only selected. */
   function select(path: string) {
     selected = path;
-    const file = fileOf(path);
-    if (!file) return;
-    if (!file.hunks.length) {
-      void controller.openFile(path);
-      return;
-    }
+    if (!fileOf(path)) return;
     tabs.active = CHANGES;
     const view = controller.changes;
     void view.goToFile(view.indexOf(path));
@@ -124,25 +115,7 @@
   </div>
   <div class="panes">
     {#each tabs.open as id (id)}
-      {@const path = pathOf(id)}
-      {@const file = path === undefined || kindOf(id) !== "file" ? undefined : fileOf(path)}
       <div class="pane" class:active={tabs.active === id}>
-        {#if file?.nonText.length}
-          <div class="cards">
-            {#each file.nonText as item (item.kind)}
-              {@const acknowledged = file.review.acknowledged.includes(item.kind)}
-              <ChangeCard
-                path={file.path}
-                oldPath={file.oldPath}
-                kind={item.kind}
-                before={item.before}
-                after={item.after}
-                {acknowledged}
-                ontoggle={() => changeset.acknowledge(file.path, item.kind, !acknowledged)}
-              />
-            {/each}
-          </div>
-        {/if}
         <div class="scroll" {@attach (root) => controller.attach(id, root)}></div>
       </div>
     {/each}
@@ -203,16 +176,6 @@
     overflow-y: auto;
     min-height: 0;
     overflow-anchor: none;
-  }
-  .cards {
-    flex: none;
-    max-height: 40%;
-    overflow-y: auto;
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    border-bottom: 1px solid var(--line);
   }
   .soon {
     margin: 12px 10px;

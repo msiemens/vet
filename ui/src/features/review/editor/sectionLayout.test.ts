@@ -1,29 +1,39 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FileChange } from "../../../generated/FileChange.ts";
+import type { NonTextItem } from "../../../generated/NonTextItem.ts";
 import { sectionLayout } from "./sectionLayout.ts";
 
-const metrics = { line: 20, hunk: 24, header: 26, collapsed: 27 };
+const metrics = { line: 20, hunk: 24, header: 26, collapsed: 27, preview: 100 };
 const hunk = (targetStart: number, baseLen: number, targetLen: number) => ({
   baseStart: targetStart,
   baseLen,
   targetStart,
   targetLen,
 });
-const file = (targetLines: number, hunks: ReturnType<typeof hunk>[]) => ({ targetLines, hunks }) as FileChange;
+const file = (targetLines: number, hunks: ReturnType<typeof hunk>[], nonText: NonTextItem[] = [], path = "a.rs") =>
+  ({ path, targetLines, hunks, nonText }) as FileChange;
 const layout = (f: FileChange, mode: "unified" | "split", collapse = true) => sectionLayout(f, mode, metrics, collapse);
+const entry = { kind: "file", mode: 0o100644, target: null, size: 1 } as const;
+const item = (kind: NonTextItem["kind"]): NonTextItem => ({ kind, before: entry, after: entry });
 
 void test("unchanged regions collapse to one bar each, keeping 3 lines of context", () => {
   const f = file(100, [hunk(50, 2, 3)]);
   // header, 3 lines + bar, hunk bar, 2 deleted + 3 added lines, 3 lines + bar.
-  assert.deepEqual(layout(f, "unified"), { height: 26 + 87 + 24 + 100 + 87, hunkTops: [113] });
+  assert.deepEqual(layout(f, "unified"), {
+    height: 26 + 87 + 24 + 100 + 87,
+    cardTops: [],
+    cardsHeight: 0,
+    hunkTops: [113],
+  });
   // Side by side pads the shorter side: 3 rows instead of 5.
   assert.equal(layout(f, "split").height, 26 + 87 + 24 + 60 + 87);
 });
 
 void test("a gap too small to hide lines stays open", () => {
   const l = layout(file(30, [hunk(10, 1, 1), hunk(17, 1, 1)]), "unified");
-  assert.deepEqual(l, { height: 448, hunkTops: [113, 297] });
+  assert.deepEqual(l.hunkTops, [113, 297]);
+  assert.equal(l.height, 448);
 });
 
 void test("a file without hunks is one bar, or just the header when empty", () => {
@@ -34,5 +44,23 @@ void test("a file without hunks is one bar, or just the header when empty", () =
 void test("without collapsing every line is a row", () => {
   const l = layout(file(100, [hunk(50, 2, 3)]), "unified", false);
   // header, 100 target lines, 2 deleted lines, one hunk bar; the bar sits after 50 lines.
-  assert.deepEqual(l, { height: 26 + 100 * 20 + 2 * 20 + 24, hunkTops: [26 + 50 * 20] });
+  assert.deepEqual(l.hunkTops, [26 + 50 * 20]);
+  assert.equal(l.height, 26 + 100 * 20 + 2 * 20 + 24);
+});
+
+void test("cards sit between the header and the first hunk and push everything down", () => {
+  const cards = [item("mode"), { kind: "contentUnavailable", before: null, after: null } as NonTextItem];
+  const plain = layout(file(100, [hunk(50, 2, 3)]), "unified");
+  const l = layout(file(100, [hunk(50, 2, 3)], cards), "unified");
+  // A card is a bar and two rows; a card with nothing to compare is a bar and one row.
+  assert.deepEqual(l.cardTops, [26, 26 + 64]);
+  assert.equal(l.cardsHeight, 64 + 44);
+  assert.deepEqual(l.hunkTops, [113 + 108]);
+  assert.equal(l.height, plain.height + 108);
+});
+
+void test("an image card has a preview strip, other binaries do not", () => {
+  const png = layout(file(0, [], [item("binary")], "logo.png"), "unified");
+  assert.equal(png.cardsHeight, 24 + 40 + 100);
+  assert.equal(layout(file(0, [], [item("binary")], "data.bin"), "unified").cardsHeight, 24 + 40);
 });

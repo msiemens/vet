@@ -126,6 +126,7 @@ export class ReviewController {
   private listenersFor(id: TabId): Listeners {
     return {
       setSeen: (revision, path, hunks, seen) => changeset.setSeen(revision, path, hunks, seen),
+      acknowledge: (path, kind, acknowledged) => changeset.acknowledge(path, kind, acknowledged),
       fileMenu: this.fileMenu,
       // A file's own tab shows its hunks; only the Changes tab offers to open it.
       openFile: id === CHANGES ? (path, line) => void this.openFile(path, line) : undefined,
