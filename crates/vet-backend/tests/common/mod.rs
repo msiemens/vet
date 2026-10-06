@@ -13,11 +13,14 @@ use vet_protocol::{
 };
 use vet_transport::{Events, Handler};
 
-pub fn git(dir: &Path, args: &[&str]) {
+/// Git as the tests use it: nothing of the user's configuration (identity,
+/// signing, hooks, autocrlf, templates) leaks in. Returns trimmed stdout.
+pub fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .current_dir(dir)
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
         .args([
             "-c",
             "user.name=t",
@@ -25,11 +28,29 @@ pub fn git(dir: &Path, args: &[&str]) {
             "user.email=t@t",
             "-c",
             "commit.gpgsign=false",
+            "-c",
+            "tag.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
         ])
         .args(args)
         .output()
         .unwrap();
-    assert!(output.status.success(), "git {args:?}");
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// `git init` plus the repository-local settings that keep Vet itself, which reads
+/// the user's global git configuration in-process, from seeing it: a global
+/// `core.autocrlf` or `core.excludesFile` would change snapshots.
+pub fn init(dir: &Path) {
+    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["config", "core.autocrlf", "false"]);
+    git(dir, &["config", "core.excludesFile", "/dev/null"]);
 }
 
 pub fn write(dir: &Path, name: &str, content: &str) {
@@ -224,7 +245,7 @@ pub async fn handler() -> (Arc<Orchestrator>, tempfile::TempDir) {
 /// A repository whose `main` commit holds `base`, with `dirty` written on top.
 pub fn repo_with(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> tempfile::TempDir {
     let repo = tempfile::tempdir().unwrap();
-    git(repo.path(), &["init", "-q", "-b", "main"]);
+    init(repo.path());
     write(repo.path(), ".gitignore", "target/\n");
     for (name, content) in base {
         write(repo.path(), name, content);
