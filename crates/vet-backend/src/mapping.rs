@@ -246,7 +246,7 @@ pub fn target_text(t: &TargetText) -> p::Response {
 
 pub fn item_blob(blob: ItemBlob) -> p::Response {
     use base64::Engine;
-    p::Response::ItemBlob(match blob {
+    let content = match blob {
         ItemBlob::Bytes { media_type, bytes } => p::BlobContent::Bytes {
             media_type: media_type.map(String::from),
             bytes: base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -254,7 +254,8 @@ pub fn item_blob(blob: ItemBlob) -> p::Response {
         ItemBlob::Absent => p::BlobContent::Absent,
         ItemBlob::TooLarge => p::BlobContent::TooLarge,
         ItemBlob::Unavailable => p::BlobContent::Unavailable,
-    })
+    };
+    p::Response::ItemBlob { content }
 }
 
 fn side(s: Side) -> p::Side {

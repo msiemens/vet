@@ -16,7 +16,7 @@ impl ReviewFilter {
     /// The first invalid glob of `include` and `exclude`, as a message fit to show.
     pub fn validate(&self) -> Result<(), String> {
         for pattern in self.include.iter().chain(&self.exclude) {
-            if let Err(e) = GlobBuilder::new(pattern).literal_separator(true).build() {
+            if let Err(e) = GlobBuilder::new(anchored(pattern)).literal_separator(true).build() {
                 return Err(format!("invalid pattern \"{pattern}\": {}", e.kind()));
             }
         }
@@ -35,7 +35,8 @@ impl ReviewFilter {
 }
 
 /// A [`ReviewFilter`] with its globs compiled. `*` and `?` stop at `/`, `**`
-/// does not, and a pattern without `/` matches the file name at any depth.
+/// does not, a pattern without `/` matches the file name at any depth, and a
+/// leading `/` anchors a pattern at the root (as in `.gitignore`).
 /// Paths are matched as UTF-8 with invalid bytes replaced by U+FFFD.
 pub struct CompiledFilter<'a> {
     roots: &'a [RepoPath],
@@ -61,6 +62,11 @@ impl CompiledFilter<'_> {
     }
 }
 
+/// The pattern to compile: paths are relative, so a root anchor is dropped.
+fn anchored(pattern: &str) -> &str {
+    pattern.strip_prefix('/').unwrap_or(pattern)
+}
+
 /// Patterns with a `/` match the whole path, the others the file name.
 struct GlobList {
     path: GlobSet,
@@ -72,7 +78,7 @@ impl GlobList {
         let set = |with_slash: bool| {
             let mut b = GlobSetBuilder::new();
             for p in patterns.iter().filter(|p| p.contains('/') == with_slash) {
-                if let Ok(g) = GlobBuilder::new(p).literal_separator(true).build() {
+                if let Ok(g) = GlobBuilder::new(anchored(p)).literal_separator(true).build() {
                     b.add(g);
                 }
             }
@@ -107,5 +113,19 @@ mod tests {
             ..Default::default()
         };
         assert!(bad.validate().unwrap_err().starts_with("invalid pattern \"src/[a\""));
+    }
+
+    #[test]
+    fn a_leading_slash_anchors_at_the_root() {
+        let path = |p: &str| RepoPath(p.as_bytes().to_vec());
+        let filter = ReviewFilter {
+            exclude: vec!["/top.txt".into(), "any.txt".into()],
+            ..Default::default()
+        };
+        let compiled = filter.compile();
+        assert!(!compiled.passes(&path("top.txt")));
+        assert!(compiled.passes(&path("src/top.txt")));
+        assert!(!compiled.passes(&path("src/any.txt")));
+        assert_eq!(filter.validate(), Ok(()));
     }
 }

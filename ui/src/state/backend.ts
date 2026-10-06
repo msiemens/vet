@@ -94,22 +94,10 @@ export class Backend {
     return { revision, content };
   }
 
-  /**
-   * One side of a non-text item's file, as of `revision`. The reply's own `type` is the
-   * content's: the wire has both the response tag and the content tag under that key and the
-   * last one wins, so the generated `Response` variant is not what arrives.
-   */
+  /** One side of a non-text item's file, as of `revision`. */
   async itemBlob(revision: number, path: string, kind: NonTextKind, side: Side): Promise<BlobContent> {
-    const reply: { type: string } = await this.conn.request({
-      type: "itemBlob",
-      session: this.sid,
-      revision,
-      path,
-      kind,
-      side,
-    });
-    if (!["bytes", "absent", "tooLarge", "unavailable"].includes(reply.type)) throw new Error("unexpected response");
-    return reply as BlobContent;
+    const request = { type: "itemBlob", session: this.sid, revision, path, kind, side } as const;
+    return expect(await this.conn.request(request), "itemBlob").content;
   }
 
   /** `revision` is the manifest's; the backend rejects a stale one. */

@@ -3,8 +3,8 @@
 /**
  * What the review shows and counts (§5.2). A path passes if it is under one of
  * `roots` (or there are none), matches `include` (or there is none) and does not
- * match `exclude`. A glob without a `/` matches the file name at any depth; `*`
- * and `?` stop at `/`, `**` does not.
+ * match `exclude`. A glob without a `/` matches the file name at any depth, a
+ * leading `/` anchors it at the root; `*` and `?` stop at `/`, `**` does not.
  */
 export type ReviewFilter = { 
 /**

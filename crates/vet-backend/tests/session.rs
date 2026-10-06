@@ -530,12 +530,16 @@ async fn binary_items_serve_the_bytes_of_either_side() {
     };
     let bytes = |media_type: &str, content: &[u8]| {
         use base64::Engine;
-        Response::ItemBlob(BlobContent::Bytes {
-            media_type: Some(media_type.into()),
-            bytes: base64::engine::general_purpose::STANDARD.encode(content),
-        })
+        Response::ItemBlob {
+            content: BlobContent::Bytes {
+                media_type: Some(media_type.into()),
+                bytes: base64::engine::general_purpose::STANDARD.encode(content),
+            },
+        }
     };
-    let absent = Response::ItemBlob(BlobContent::Absent);
+    let absent = Response::ItemBlob {
+        content: BlobContent::Absent,
+    };
 
     assert_eq!(
         blob(0, "logo.PNG", Side::Base).await.unwrap(),
@@ -557,7 +561,9 @@ async fn binary_items_serve_the_bytes_of_either_side() {
     assert_eq!(blob(0, "gone.gif", Side::Target).await.unwrap(), absent);
     assert_eq!(
         blob(0, "big.bin", Side::Target).await.unwrap(),
-        Response::ItemBlob(BlobContent::TooLarge)
+        Response::ItemBlob {
+            content: BlobContent::TooLarge
+        }
     );
 
     assert!(
