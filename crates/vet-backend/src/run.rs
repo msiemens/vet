@@ -22,6 +22,10 @@ use super::{Open, Subscribers, live, mapping, message};
 
 static RUNNER: TokioRunner = TokioRunner;
 
+/// Bytes of output one run sends to clients, both streams together. Later output
+/// is drained and dropped; `RunExited::dropped_bytes` says how much.
+pub const OUTPUT_CAP: usize = 4 * 1024 * 1024;
+
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -123,6 +127,8 @@ impl Open {
         let (session, subscribers) = (self.id, self.subscribers.clone());
         tokio::spawn(async move {
             let mut stopping = false;
+            let mut sent = 0;
+            let mut dropped = 0usize;
             let code = loop {
                 let event = tokio::select! {
                     event = process.next() => event,
@@ -137,7 +143,13 @@ impl Open {
                     ProcessEvent::Stderr(bytes) => (RunStream::Stderr, bytes),
                     ProcessEvent::Exit(code) => break code,
                 };
-                let bytes = STANDARD.encode(bytes);
+                let keep = bytes.len().min(OUTPUT_CAP - sent);
+                sent += keep;
+                dropped += bytes.len() - keep;
+                if keep == 0 {
+                    continue;
+                }
+                let bytes = STANDARD.encode(&bytes[..keep]);
                 broadcast(
                     &subscribers,
                     Event::RunOutput {
@@ -149,7 +161,13 @@ impl Open {
                 );
             };
             locked(&running).remove(&run_id);
-            broadcast(&subscribers, Event::RunExited { session, run_id, code });
+            let exited = Event::RunExited {
+                session,
+                run_id,
+                code,
+                dropped_bytes: u32::try_from(dropped).unwrap_or(u32::MAX),
+            };
+            broadcast(&subscribers, exited);
         });
     }
 }

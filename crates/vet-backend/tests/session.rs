@@ -7,7 +7,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use tokio::sync::mpsc::UnboundedReceiver;
-use vet_backend::{Config, Orchestrator, open_store};
+use vet_backend::{Config, OUTPUT_CAP, Orchestrator, open_store};
 use vet_protocol::{
     AnchorState, ApprovalChange, Base, BaseChoice, Completion, DirEntry, DirEntryKind, EnvVar, Event, FileStatus,
     HunkState, LineLocation, Manifest, NoTextReason, NonTextKind, Request, Response, ReviewFilter, ReviewUpdate,
@@ -926,6 +926,13 @@ impl Client {
 
     /// Output until the exit, whatever else is pushed meanwhile.
     async fn output(&mut self, run: u32) -> (String, String, Option<i32>) {
+        let (out, err, code, dropped) = self.output_bounded(run).await;
+        assert_eq!(dropped, 0);
+        (String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap(), code)
+    }
+
+    /// Like `output`, with raw bytes and the dropped count.
+    async fn output_bounded(&mut self, run: u32) -> (Vec<u8>, Vec<u8>, Option<i32>, u32) {
         use base64::Engine;
         let (mut out, mut err) = (Vec::new(), Vec::new());
         loop {
@@ -940,9 +947,14 @@ impl Client {
                         RunStream::Stderr => err.extend(bytes),
                     }
                 }
-                Event::RunExited { run_id, code, .. } => {
+                Event::RunExited {
+                    run_id,
+                    code,
+                    dropped_bytes,
+                    ..
+                } => {
                     assert_eq!(run_id, run);
-                    return (String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap(), code);
+                    return (out, err, code, dropped_bytes);
                 }
                 Event::SnapshotSettled { .. } => {}
                 other => panic!("{other:?}"),
@@ -1058,6 +1070,24 @@ async fn a_run_needs_approval_once_then_streams_output_and_the_exit_code() {
         approved_hash: None,
     };
     assert_eq!(client.call(unknown).await.unwrap_err(), "no run target nope");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn run_output_is_bounded_and_the_process_is_not_blocked() {
+    let fx = fixture(&[("package.json", PACKAGE)], &[]).await;
+    let mut client = Client::new(&fx.handler);
+    let session = open(&client, fx.repo.path()).await;
+    let total = OUTPUT_CAP + 1_000_000;
+    let script = format!("head -c {total} /dev/zero; echo done >&2; exit 7");
+    client.save_target(session, sh_target("loud", &script)).await.unwrap();
+    let (hash, ..) = needs_approval(client.run(session, "loud", None).await);
+
+    let (run, _) = started(client.run(session, "loud", Some(&hash)).await);
+    let (out, err, code, dropped) = client.output_bounded(run).await;
+    assert_eq!(code, Some(7));
+    assert_eq!(out.len() + err.len(), OUTPUT_CAP);
+    assert_eq!(dropped as usize, total + "done\n".len() - OUTPUT_CAP);
 }
 
 fn pid_is_gone(pid: &str) -> bool {

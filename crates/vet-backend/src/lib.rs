@@ -5,6 +5,8 @@
 mod mapping;
 mod run;
 
+pub use run::OUTPUT_CAP;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;

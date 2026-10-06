@@ -696,11 +696,14 @@ pub enum Event {
         bytes: String,
     },
     /// The last event of a run. `code` is `None` if a signal ended the process,
-    /// as `StopRun` does.
+    /// as `StopRun` does. A run sends a bounded amount of output; the process is
+    /// not slowed, but output past the bound is dropped and `dropped_bytes` counts
+    /// it (saturating).
     RunExited {
         session: SessionId,
         run_id: u32,
         code: Option<i32>,
+        dropped_bytes: u32,
     },
 }
 
