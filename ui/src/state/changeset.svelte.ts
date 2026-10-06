@@ -10,7 +10,7 @@ import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { BaseChoice } from "../generated/BaseChoice";
 import { Backend, type BaseCandidates } from "./backend";
-import { canPickFolder, pickRepository } from "./host";
+import { hasNativeDialogs, pickRepository } from "./host";
 import { recent } from "./recent.svelte";
 
 type ReviewListener = (update: ReviewUpdate) => void;
@@ -83,7 +83,7 @@ class ChangesetStore {
 
   /** Asks the host's folder dialog for a repository and opens it. Without a dialog (a plain browser) this goes to the start screen. */
   async pickRepo() {
-    if (!canPickFolder) {
+    if (!hasNativeDialogs) {
       await this.closeRepo();
       return;
     }

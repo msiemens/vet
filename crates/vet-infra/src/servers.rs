@@ -50,6 +50,8 @@ enum Install {
 
 struct Spec {
     language: &'static str,
+    /// The server's name as a person knows it.
+    display_name: &'static str,
     /// The executable's name, on `PATH` and in the install directory.
     binary: &'static str,
     install: Install,
@@ -60,12 +62,14 @@ struct Spec {
 const SPECS: [Spec; 4] = [
     Spec {
         language: "rust",
+        display_name: "rust-analyzer",
         binary: "rust-analyzer",
         install: Install::No,
         version_flag: Some("--version"),
     },
     Spec {
         language: "typescript",
+        display_name: "typescript-language-server",
         binary: "typescript-language-server",
         install: Install::Npm {
             packages: &[
@@ -77,6 +81,7 @@ const SPECS: [Spec; 4] = [
     },
     Spec {
         language: "python",
+        display_name: "Pyright",
         binary: "pyright-langserver",
         install: Install::Npm {
             packages: &[("pyright", PYRIGHT_VERSION)],
@@ -85,6 +90,7 @@ const SPECS: [Spec; 4] = [
     },
     Spec {
         language: "csharp",
+        display_name: "roslyn-language-server",
         binary: "roslyn-language-server",
         install: Install::DotnetTool {
             package: "roslyn-language-server",
@@ -303,6 +309,10 @@ impl ServerResolver for ToolResolver {
             version,
             notes,
         })
+    }
+
+    fn display_name(&self, language: &BackendId) -> String {
+        Self::spec(language).map_or_else(|| language.0.clone(), |s| s.display_name.to_owned())
     }
 
     fn pinned(&self, language: &BackendId) -> Option<String> {

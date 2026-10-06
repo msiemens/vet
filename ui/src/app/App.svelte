@@ -15,7 +15,7 @@
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import Toast from "../lib/ui/Toast.svelte";
   import { changeset } from "../state/changeset.svelte";
-  import { canPickFolder, canQuit, isMac, quit, repoName, showWindow } from "../state/host";
+  import { canQuit, hasNativeDialogs, isMac, quit, repoName, showWindow } from "../state/host";
   import type { Command } from "../state/mainMenu";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { recent } from "../state/recent.svelte";
@@ -211,7 +211,7 @@
     <StartScreen
       recent={recent.list}
       failed={changeset.openError}
-      canPick={canPickFolder}
+      canPick={hasNativeDialogs}
       onpick={() => void changeset.pickRepo()}
       onopen={(path) => void changeset.openRepo(path)}
       onforget={(path) => {
@@ -234,7 +234,12 @@
 <RunDialogs />
 
 {#if dialog === "settings"}
-  <SettingsDialog {theme} ontheme={(t) => applyTheme((theme = t))} onclose={() => (dialog = undefined)} />
+  <SettingsDialog
+    {theme}
+    ontheme={(t) => applyTheme((theme = t))}
+    onclose={() => (dialog = undefined)}
+    backend={changeset.repo ? changeset.backend : undefined}
+  />
 {:else if dialog === "about"}
   <AboutDialog onclose={() => (dialog = undefined)} />
 {/if}

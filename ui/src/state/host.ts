@@ -5,8 +5,8 @@ import type { MenuItem } from "../lib/ui/menuItem";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
-/** Whether a native folder dialog exists. */
-export const canPickFolder = inTauri;
+/** Whether native folder and file dialogs exist. */
+export const hasNativeDialogs = inTauri;
 
 async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
@@ -49,6 +49,11 @@ export const repoName = (path: string): string => path.split(/[/\\]/).filter(Boo
 /** The native folder dialog; `null` if cancelled. Rejects with a message for a folder the backend cannot open. */
 export async function pickRepository(): Promise<string | null> {
   return inTauri ? invoke<string | null>("pick_repository") : null;
+}
+
+/** The native file dialog; `null` if cancelled. Rejects with a message for a file the backend cannot see. */
+export async function pickFile(): Promise<string | null> {
+  return inTauri ? invoke<string | null>("pick_file") : null;
 }
 
 /** Backend-side paths, most recent first. */

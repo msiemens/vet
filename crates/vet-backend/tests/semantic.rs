@@ -428,6 +428,7 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
     assert_eq!(languages, ["rust", "typescript", "python", "csharp"]);
     let python = listed.iter().find(|s| s.language == "python").unwrap();
     assert!(python.pinned_version.is_some());
+    assert_eq!(python.server, "Pyright");
     assert_eq!(python.custom_path, None);
     assert!(
         listed

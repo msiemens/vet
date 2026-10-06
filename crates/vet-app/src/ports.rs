@@ -394,6 +394,8 @@ pub trait ServerResolver {
         project: &Path,
         custom: Option<&str>,
     ) -> impl Future<Output = ServerState> + Send;
+    /// The server's name as a person knows it, e.g. "Pyright".
+    fn display_name(&self, language: &BackendId) -> String;
     /// The version `install` puts in place; `None` if Vet cannot install the language's server.
     fn pinned(&self, language: &BackendId) -> Option<String>;
     /// Why `install` cannot run now (a tool it needs is missing), if so.

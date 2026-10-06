@@ -260,6 +260,7 @@ pub fn servers(all: &[ServerStatus]) -> p::Response {
             .iter()
             .map(|s| p::ServerInfo {
                 language: s.language.0.clone(),
+                server: s.server.clone(),
                 state: server_state(&s.state),
                 custom_path: s.custom_path.clone(),
                 pinned_version: s.pinned.clone(),

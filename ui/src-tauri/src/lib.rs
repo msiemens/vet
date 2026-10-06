@@ -136,6 +136,17 @@ async fn pick_repository(app: tauri::AppHandle) -> Result<Option<String>, String
     backend_path(&path.to_string_lossy(), wsl_distro().as_deref()).map(Some)
 }
 
+/// The native file dialog (a language server's executable); `None` if the user cancelled.
+#[tauri::command]
+async fn pick_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(file) = app.dialog().file().blocking_pick_file() else {
+        return Ok(None);
+    };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    backend_path(&path.to_string_lossy(), wsl_distro().as_deref()).map(Some)
+}
+
 /// One entry of the main menu the UI defines (`MenuItem` in `ui/src/lib/ui/menuItem.ts`).
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -509,6 +520,7 @@ pub fn run() {
             backend_connection,
             bench_config,
             forget_repository,
+            pick_file,
             pick_repository,
             quit,
             recent_repositories,

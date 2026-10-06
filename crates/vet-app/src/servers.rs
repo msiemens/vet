@@ -12,6 +12,8 @@ use crate::ports::{ServerCommand, ServerLocator, ServerResolver, ServerSettings,
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ServerStatus {
     pub language: BackendId,
+    /// The server's name as a person knows it, e.g. "Pyright".
+    pub server: String,
     pub state: ServerState,
     pub custom_path: Option<String>,
     /// The version `install` provides; `None` if Vet cannot install this language's server.
@@ -77,6 +79,7 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
             let state = self.resolver.resolve(language, project, custom_path.as_deref()).await;
             all.push(ServerStatus {
                 language: language.clone(),
+                server: self.resolver.display_name(language),
                 state,
                 custom_path,
                 pinned: self.resolver.pinned(language),
@@ -180,6 +183,10 @@ mod tests {
             }
         }
 
+        fn display_name(&self, language: &BackendId) -> String {
+            format!("{}-server", language.0)
+        }
+
         fn pinned(&self, language: &BackendId) -> Option<String> {
             (language.0 == "typescript").then(|| "1.0.0".into())
         }
@@ -242,6 +249,7 @@ mod tests {
         let pinned: Vec<_> = status.iter().map(|s| s.pinned.clone()).collect();
         assert_eq!(pinned, [None, Some("1.0.0".into()), None]);
         assert_eq!(status[2].install_blocker.as_deref(), Some("npm is missing"));
+        assert_eq!(status[0].server, "rust-server");
     }
 
     #[tokio::test]

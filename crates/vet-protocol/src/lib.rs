@@ -958,6 +958,8 @@ pub enum ServerState {
 pub struct ServerInfo {
     /// `rust`, `typescript`, `python` or `csharp`.
     pub language: String,
+    /// The server's name as a person knows it, e.g. "Pyright".
+    pub server: String,
     pub state: ServerState,
     /// The path the user set; it is what `state` was resolved from if present.
     pub custom_path: Option<String>,

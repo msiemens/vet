@@ -16,6 +16,7 @@ import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { RunTarget } from "../generated/RunTarget";
 import type { RunTargetEntry } from "../generated/RunTargetEntry";
+import type { ServerInfo } from "../generated/ServerInfo";
 import type { Side } from "../generated/Side";
 import type { TextContent } from "../generated/TextContent";
 import { Connection } from "./connection";
@@ -152,6 +153,22 @@ export class Backend {
       col,
     });
     return response.type === "hover" ? (response.text ?? "") : "";
+  }
+
+  /** Each language's server as it resolves for the open repository. */
+  async listServers(): Promise<ServerInfo[]> {
+    return expect(await this.conn.request({ type: "listServers", session: this.sid }), "servers").servers;
+  }
+
+  /** Installs the pinned server; output arrives as `serverInstallOutput` events. Rejects with the tool's output tail. */
+  async installServer(language: string): Promise<ServerInfo[]> {
+    return expect(await this.conn.request({ type: "installServer", session: this.sid, language }), "servers").servers;
+  }
+
+  /** `null` removes the custom path: automatic resolution again. The path is not checked; `listServers` says whether it works. */
+  async setServerPath(language: string, path: string | null): Promise<ServerInfo[]> {
+    return expect(await this.conn.request({ type: "setServerPath", session: this.sid, language, path }), "servers")
+      .servers;
   }
 
   /** Discovered from the target snapshot's manifests, with the stored edits applied. */

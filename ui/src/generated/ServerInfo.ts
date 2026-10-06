@@ -5,7 +5,11 @@ export type ServerInfo = {
 /**
  * `rust`, `typescript`, `python` or `csharp`.
  */
-language: string, state: ServerState, 
+language: string, 
+/**
+ * The server's name as a person knows it, e.g. "Pyright".
+ */
+server: string, state: ServerState, 
 /**
  * The path the user set; it is what `state` was resolved from if present.
  */
