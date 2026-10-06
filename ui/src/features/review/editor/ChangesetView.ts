@@ -433,10 +433,16 @@ export class ChangesetView {
     const s = this.sections[fi];
     if (!(e.target instanceof Node) || s.cards.length + s.file.hunks.length === 0) return;
     const ci = s.cards.findIndex((c) => c.el.contains(e.target as Node));
-    if (ci >= 0) return this.select(this.stopStart[fi] + ci);
+    if (ci >= 0) {
+      this.select(this.stopStart[fi] + ci);
+      return;
+    }
     const views = s.handle?.views ?? [];
     const view = views.find((v) => v.dom.contains(e.target as Node));
-    if (!view || !s.file.hunks.length) return this.select(this.stopStart[fi]);
+    if (!view || !s.file.hunks.length) {
+      this.select(this.stopStart[fi]);
+      return;
+    }
     const pos = view.posAtCoords({ x: e.clientX, y: e.clientY }, false);
     const line = view.state.doc.lineAt(pos).number - 1;
     const base = view !== s.handle?.view;
