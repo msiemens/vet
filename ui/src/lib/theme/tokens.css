@@ -1,4 +1,4 @@
-/* Design tokens, colours from "Vet UI Proposal.html". Components reference these, never literal
+/* Design tokens. Components reference these, never literal
    colours or sizes. Theme: `data-theme="light|dark"` on <html> forces one; without it the system
    preference applies. */
 
