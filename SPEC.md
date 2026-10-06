@@ -450,6 +450,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Keyboard shortcuts for every action, shown in menus and tooltips, with a Keymap page in Settings (beyond the JetBrains-feel package's keymap import)
 - Edit and remove your own comments; removing the first comment removes its thread
 - Double-clicking a line in the Changes tab opens the file's tab at that line, highlighted
+- Project switcher: the project name in the title bar is a dropdown of recent projects, plus "Open…"
 
 ### M2
 
