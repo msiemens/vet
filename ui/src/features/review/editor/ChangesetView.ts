@@ -189,9 +189,11 @@ export class ChangesetView {
       const count = document.createElement("span");
       count.className = "count";
       const button = document.createElement("button");
-      button.className = "ctl";
-      button.textContent = "Seen";
+      button.className = "flat open seen";
+      button.type = "button";
       button.title = "Toggle everything in this file seen";
+      button.setAttribute("aria-label", button.title);
+      button.innerHTML = iconSvg("check", 14, 2);
       button.addEventListener("click", () => void this.toggleSeen(index));
       header.append(title, delta, count, comment, ...(open ? [open] : []), button);
       header.addEventListener("contextmenu", (e) => {
@@ -318,6 +320,7 @@ export class ChangesetView {
       parts.push(`${hunks.filter((h) => h === "seen").length}/${hunks.length} hunks seen`);
     if (s.cards.length) parts.push(`${acknowledged.length}/${s.cards.length} other`);
     s.count.textContent = parts.join(" · ");
+    s.el.classList.toggle("all-seen", hunks.every((h) => h === "seen") && acknowledged.length === s.cards.length);
   }
 
   /** Drops the editor; the regions it had expanded are collapsed again when it is mounted anew. */
@@ -792,7 +795,7 @@ export class ChangesetView {
   }
 
   seenButton(fi: number): HTMLButtonElement {
-    const button = this.sections[fi].el.querySelector<HTMLButtonElement>("header .ctl");
+    const button = this.sections[fi].el.querySelector<HTMLButtonElement>("header .seen");
     if (!button) throw new Error(`file ${fi} has no Seen button`);
     return button;
   }

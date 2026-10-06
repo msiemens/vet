@@ -51,9 +51,8 @@
   border-radius: var(--radius);
   color: var(--text-2);
 }
-.file > header .ctl {
-  height: 20px;
-  font-size: var(--fs-mono-s);
+.file.all-seen > header .seen {
+  color: var(--seen);
 }
 /* `--vet-cards` is the height of the section's change cards and `--vet-threads` that of its file
    comments, set by the view. The editor is clipped above the section's bottom gap, which also
