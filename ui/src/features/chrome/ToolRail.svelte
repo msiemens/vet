@@ -1,7 +1,7 @@
 <script module lang="ts">
   import type { IconName } from "../../lib/ui/icons";
 
-  const TOOLS: Record<"left" | "right", { id: string; icon: IconName; label: string }[]> = {
+  export const TOOLS: Record<"left" | "right", { id: string; icon: IconName; label: string }[]> = {
     left: [
       { id: "queue", icon: "queue", label: "Queue" },
       { id: "files", icon: "files", label: "Files" },

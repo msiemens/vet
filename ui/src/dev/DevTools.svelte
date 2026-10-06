@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { ReviewController } from "../features/review";
-  import type { Theme } from "../lib/theme/theme";
   import { runBenchmark } from "./bench";
   import CardGallery from "./CardGallery.svelte";
   import { hud } from "./hud.svelte";
@@ -11,14 +10,10 @@
     controller,
     open = $bindable(false),
     status = $bindable(""),
-    theme,
-    ontheme,
   }: {
     controller?: ReviewController;
     open?: boolean;
     status?: string;
-    theme: Theme;
-    ontheme: (t: Theme) => void;
   } = $props();
 
   let rows = $state<Row[]>([]);
@@ -65,11 +60,6 @@
       >Run benchmark</button
     >
     <button class="ctl" type="button" onclick={() => (gallery = true)}>Change cards</button>
-    <select value={theme} onchange={(e) => ontheme(e.currentTarget.value as Theme)} aria-label="Theme">
-      <option value="system">System theme</option>
-      <option value="light">Light</option>
-      <option value="dark">Dark</option>
-    </select>
     <span class="status">{status}</span>
     <span
       class="hud mono"

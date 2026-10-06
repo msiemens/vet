@@ -1,6 +1,8 @@
 // The Tauri host's commands for choosing and remembering repositories. A plain browser
 // (development only) has none: no dialog, and nothing is remembered.
 
+import type { MenuItem } from "../lib/ui/menuItem";
+
 const inTauri = "__TAURI_INTERNALS__" in window;
 
 /** Whether a native folder dialog exists. */
@@ -17,6 +19,28 @@ async function invoke<T>(command: string, args?: Record<string, unknown>): Promi
  */
 export async function showWindow(): Promise<"custom" | "native" | "browser"> {
   return inTauri ? invoke<"custom" | "native">("activate_and_show") : "browser";
+}
+
+/** macOS has a native menu bar, drawn by the host from `setNativeMenu`; elsewhere the window shows the menu itself. */
+export const isMac = navigator.userAgent.includes("Mac");
+export const hasNativeMenu = inTauri && isMac;
+
+/** Only the host's window can be closed from inside. */
+export const canQuit = inTauri;
+
+/** Replaces the native menu bar. The host reports a chosen item through `onNativeMenu`. */
+export async function setNativeMenu(items: MenuItem[]): Promise<void> {
+  await invoke("set_menu", { items });
+}
+
+/** Calls `listener` with the id of each item chosen in the native menu bar; resolves with the unsubscribe function. */
+export async function onNativeMenu(listener: (id: string) => void): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<string>("vet-menu", (event) => listener(event.payload));
+}
+
+export async function quit(): Promise<void> {
+  await invoke("quit");
 }
 
 /** The last folder of a backend-side path, for display. */

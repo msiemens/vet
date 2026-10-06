@@ -1,12 +1,18 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { mainMenu } from "../../state/mainMenu.svelte";
+  import MainMenuButton from "./MainMenuButton.svelte";
 
   let { children }: { children?: Snippet } = $props();
 </script>
 
 <!-- The window's title bar: empty space drags the window, and the platform's window
-     controls (drawn over it by the host) get the clearance they publish. -->
-<header data-tauri-drag-region>{@render children?.()}</header>
+     controls (drawn over it by the host) get the clearance they publish. Without a native
+     menu bar the main menu is its first button. -->
+<header data-tauri-drag-region>
+  {#if !mainMenu.native}<MainMenuButton />{/if}
+  {@render children?.()}
+</header>
 
 <style>
   header {

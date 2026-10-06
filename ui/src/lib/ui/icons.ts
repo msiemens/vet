@@ -1,5 +1,6 @@
 // 24x24 icons from the proposal. `fill` icons are solid shapes, the rest are strokes.
 export const ICONS = {
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   queue: '<path d="M4 6h16M4 12h16M4 18h10"/>',
   files: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
   timeline: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',

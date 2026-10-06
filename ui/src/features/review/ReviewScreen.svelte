@@ -22,10 +22,15 @@
     rightTool,
     rightOpen,
     side,
+    mode,
+    onmode,
     onready,
   }: {
     backend: Backend;
     hud: Hud;
+    /** Unified or side by side; the owner applies a change to the controller. */
+    mode: Mode;
+    onmode: (mode: Mode) => void;
     /** The left tool window and whether its sidebar is shown. */
     leftTool: string;
     leftOpen: boolean;
@@ -41,8 +46,9 @@
   // The backend is fixed for a mounted screen.
   // svelte-ignore state_referenced_locally
   const controller = new ReviewController(backend, hud, (path, x, y) => (menu = { path, x, y }));
+  // svelte-ignore state_referenced_locally
+  controller.mode = mode;
   const tabs = controller.tabs;
-  let mode = $state<Mode>("unified");
   let selected = $state<string>();
 
   const revision = $derived(changeset.manifest?.revision);
@@ -80,11 +86,6 @@
     void view.goToFile(view.indexOf(path));
   }
 
-  function setMode(next: Mode) {
-    mode = next;
-    controller.setMode(next);
-  }
-
   function copyPath(path: string) {
     navigator.clipboard.writeText(path).catch(() => (changeset.notice = "Could not copy the path"));
   }
@@ -112,7 +113,7 @@
   <div class="strip">
     <TabStrip {tabs} files={changeset.files} />
     <span class="grow"></span>
-    <ViewControls {mode} onmode={setMode} onstep={(delta) => controller.stepHunk(delta)} />
+    <ViewControls {mode} {onmode} onstep={(delta) => controller.stepHunk(delta)} />
   </div>
   <div class="panes">
     {#each tabs.open as id (id)}

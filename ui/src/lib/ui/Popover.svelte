@@ -10,17 +10,27 @@
   let root: HTMLElement;
 
   const toggle = () => (open = !open);
+
+  /** Fixed below the trigger, so a clipping parent (the title bar) cannot cut it off; kept inside the window. */
+  function place(sheet: HTMLElement) {
+    const anchor = root.getBoundingClientRect();
+    const width = sheet.offsetWidth;
+    const left = align === "right" ? anchor.right - width : anchor.left;
+    sheet.style.top = `${anchor.bottom + 4}px`;
+    sheet.style.left = `${Math.max(4, Math.min(left, window.innerWidth - width - 4))}px`;
+  }
 </script>
 
 <svelte:window
   onpointerdown={(e) => open && !root.contains(e.target as Node) && (open = false)}
   onkeydown={(e) => open && e.key === "Escape" && (open = false)}
+  onresize={() => (open = false)}
 />
 
 <span class="pop" bind:this={root}>
   {@render trigger(toggle)}
   {#if open}
-    <div class="sheet" class:right={align === "right"} role="dialog">{@render children()}</div>
+    <div class="sheet" role="dialog" {@attach place}>{@render children()}</div>
   {/if}
 </span>
 
@@ -30,18 +40,12 @@
     display: inline-flex;
   }
   .sheet {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
+    position: fixed;
     z-index: 20;
     min-width: 220px;
     background: var(--bg-sheet);
     border: 1px solid var(--line);
     border-radius: 8px;
     box-shadow: var(--shadow);
-  }
-  .sheet.right {
-    left: auto;
-    right: 0;
   }
 </style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Segmented from "../../lib/ui/Segmented.svelte";
   import type { Mode } from "./editor/mount";
 
   let {
@@ -14,14 +15,16 @@
 </script>
 
 <div class="controls">
-  <div class="ctl-group" role="group" aria-label="View">
-    <button class="ctl" type="button" aria-pressed={mode === "unified"} onclick={() => onmode("unified")}
-      >Unified</button
-    >
-    <button class="ctl" type="button" aria-pressed={mode === "split"} onclick={() => onmode("split")}>
-      Side by side
-    </button>
-  </div>
+  <Segmented
+    small
+    label="View"
+    value={mode}
+    onchange={onmode}
+    options={[
+      { id: "unified", label: "Unified" },
+      { id: "split", label: "Side by side" },
+    ]}
+  />
   <div class="ctl-group" role="group" aria-label="Hunk navigation">
     <button class="ctl" type="button" title="Ctrl-Alt-Up" onclick={() => onstep(-1)}>Prev hunk</button>
     <button class="ctl" type="button" title="Ctrl-Alt-Down" onclick={() => onstep(1)}>Next hunk</button>

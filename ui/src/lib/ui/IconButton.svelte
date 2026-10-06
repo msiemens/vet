@@ -8,6 +8,7 @@
     size = 26,
     iconSize = 16,
     active,
+    button = $bindable(),
     onclick,
   }: {
     icon: IconName;
@@ -16,11 +17,14 @@
     iconSize?: number;
     /** Makes it a toggle button; `undefined` is a plain action. */
     active?: boolean;
+    /** The element, for focusing it. */
+    button?: HTMLButtonElement;
     onclick?: (e: MouseEvent) => void;
   } = $props();
 </script>
 
 <button
+  bind:this={button}
   class="flat ib"
   type="button"
   aria-label={label}

@@ -132,7 +132,7 @@ export class ChangesetView {
       const button = document.createElement("button");
       button.className = "ctl";
       button.textContent = "Seen";
-      button.title = "Toggle all hunks of this file seen (Ctrl-Alt-S)";
+      button.title = "Toggle all hunks of this file seen";
       const index = this.sections.length;
       button.addEventListener("click", () => void this.toggleSeen(index));
       header.append(title, delta, count, ...(open ? [open] : []), button);
@@ -473,6 +473,12 @@ export class ChangesetView {
   /** Unseen → seen, seen → unseen, seen against an old base → re-confirmed. */
   toggleHunk(fi: number, hi: number): Promise<void> {
     return this.setSeen(fi, [hi], this.sections[fi].review.hunks[hi] !== "seen");
+  }
+
+  /** Toggles the current hunk. */
+  toggleCurrent(): Promise<void> {
+    const [fi, hi] = this.locate(this.current);
+    return this.toggleHunk(fi, hi);
   }
 
   currentFile(): number {

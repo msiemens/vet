@@ -2,16 +2,29 @@
   import { onMount } from "svelte";
   import DevTools from "../dev/DevTools.svelte";
   import { hudListeners } from "../dev/hud.svelte";
-  import { Header, StatusFooter, TitleBar, ToolRail, mockFooter, mockHeader } from "../features/chrome";
+  import {
+    AboutDialog,
+    Header,
+    StatusFooter,
+    TOOLS,
+    TitleBar,
+    ToolRail,
+    mockFooter,
+    mockHeader,
+  } from "../features/chrome";
   import { FilterPopover } from "../features/filter";
-  import { ReviewScreen, type ReviewController } from "../features/review";
+  import { type Mode, ReviewScreen, type ReviewController } from "../features/review";
   import { RunButton } from "../features/run";
+  import { SettingsDialog } from "../features/settings";
   import { StartScreen } from "../features/start";
   import { SymbolPanel } from "../features/symbols";
+  import { matches } from "../lib/keymap";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import Toast from "../lib/ui/Toast.svelte";
   import { changeset } from "../state/changeset.svelte";
-  import { canPickFolder, repoName, showWindow } from "../state/host";
+  import { canPickFolder, canQuit, isMac, quit, repoName, showWindow } from "../state/host";
+  import type { Command } from "../state/mainMenu";
+  import { mainMenu } from "../state/mainMenu.svelte";
   import { recent } from "../state/recent.svelte";
 
   let controller = $state.raw<ReviewController>();
@@ -22,6 +35,8 @@
   let devOpen = $state(false);
   let status = $state("");
   let theme = $state<Theme>(storedTheme());
+  let mode = $state<Mode>("unified");
+  let dialog = $state<"settings" | "about">();
 
   const completion = $derived.by(() => {
     const c = changeset.manifest?.completion;
@@ -45,13 +60,74 @@
     if (!changeset.repo) controller = undefined;
   });
 
+  // The main menu follows the state it shows.
+  $effect(() => {
+    const shown = (side: typeof left, id: string) => side.open && side.tool === id;
+    mainMenu.update({
+      mac: isMac,
+      repoOpen: !!changeset.repo,
+      canQuit,
+      recent: recent.list.map((path) => ({ path, name: repoName(path) })),
+      mode,
+      theme,
+      tools: [
+        ...TOOLS.left.map((t) => ({ id: t.id, label: t.label, shown: shown(left, t.id) })),
+        ...TOOLS.right.map((t) => ({ id: t.id, label: t.label, shown: shown(right, t.id) })),
+      ],
+      devPanel: devOpen,
+    });
+  });
+
   onMount(() => {
     applyTheme(theme);
     showWindow().catch((e: unknown) => {
       console.error(e);
     });
     void changeset.connect();
+    return mainMenu.listen(execute);
   });
+
+  function execute(command: Command) {
+    switch (command.type) {
+      case "open":
+        void changeset.pickRepo();
+        break;
+      case "openRecent":
+        void changeset.openRepo(command.path);
+        break;
+      case "settings":
+      case "about":
+        dialog = command.type;
+        break;
+      case "quit":
+        void quit();
+        break;
+      case "mode":
+        setMode(command.mode);
+        break;
+      case "tool":
+        toggleTool(command.id);
+        break;
+      case "theme":
+        applyTheme((theme = command.theme));
+        break;
+      case "devPanel":
+        devOpen = !devOpen;
+        break;
+    }
+  }
+
+  function setMode(next: Mode) {
+    mode = next;
+    controller?.setMode(next);
+  }
+
+  /** Like the rail's icon: the selected tool's window hides or shows, another tool is selected and shown. */
+  function toggleTool(id: string) {
+    const side = TOOLS.left.some((t) => t.id === id) ? left : right;
+    if (side.tool === id) side.open = !side.open;
+    else [side.tool, side.open] = [id, true];
+  }
 
   function ready(c: ReviewController, firstPaintMs: number) {
     controller = c;
@@ -59,6 +135,14 @@
     void tools.runIfRequested();
   }
 </script>
+
+<svelte:window
+  onkeydowncapture={(e) => {
+    if (!matches("Ctrl-Alt-s", e)) return;
+    e.preventDefault();
+    dialog = "settings";
+  }}
+/>
 
 {#if changeset.backend && changeset.repo}
   <Header
@@ -79,6 +163,8 @@
       leftOpen={left.open}
       rightTool={right.tool}
       rightOpen={right.open}
+      {mode}
+      onmode={setMode}
       onready={ready}
     >
       {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel />{/if}{/snippet}
@@ -111,14 +197,13 @@
   {/key}
 {/if}
 
-<DevTools
-  bind:this={tools}
-  {controller}
-  bind:open={devOpen}
-  bind:status
-  {theme}
-  ontheme={(t) => applyTheme((theme = t))}
-/>
+{#if dialog === "settings"}
+  <SettingsDialog {theme} ontheme={(t) => applyTheme((theme = t))} onclose={() => (dialog = undefined)} />
+{:else if dialog === "about"}
+  <AboutDialog onclose={() => (dialog = undefined)} />
+{/if}
+
+<DevTools bind:this={tools} {controller} bind:open={devOpen} bind:status />
 
 <StatusFooter info={footer}>
   {#snippet end()}<button class="flat dev" type="button" aria-pressed={devOpen} onclick={() => (devOpen = !devOpen)}

@@ -22,6 +22,8 @@
   --select: light-dark(#d4e3fb, #2e436e);
   --accent: light-dark(#2d6fd8, #6b9cf7);
   --shadow: 0 14px 40px light-dark(rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.5));
+  /* Behind a modal dialog. */
+  --scrim: light-dark(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.45));
 
   /* Control states. Borderless controls (`.flat`, `.tool`) get a translucent overlay on hover and
      a stronger one while pressed, so they read the same on every surface. Bordered push buttons

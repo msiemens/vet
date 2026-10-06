@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
-  import Menu, { type MenuItem } from "./Menu.svelte";
+  import Menu from "./Menu.svelte";
+  import type { MenuItem } from "./menuItem";
   import Popover from "./Popover.svelte";
 
   let {

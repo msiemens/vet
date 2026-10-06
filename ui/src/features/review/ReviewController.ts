@@ -9,7 +9,7 @@ import type { Backend } from "../../state/backend";
 import { changeset } from "../../state/changeset.svelte";
 import { ChangesetView, type Listeners } from "./editor/ChangesetView";
 import type { Mode } from "./editor/mount";
-import { matches } from "./keymap";
+import { matches } from "../../lib/keymap";
 import { mockSymbols } from "./mock";
 import { CHANGES, type TabId, Tabs, fileTab, pathOf } from "./Tabs.svelte";
 
@@ -23,6 +23,10 @@ export interface Hud {
 
 /** Bound only to count collisions in the manual input check: AltGr types these keys on a German layout. */
 const BAIT = ["Ctrl-Alt-q", "Ctrl-Alt-e", "Ctrl-Alt-7", "Ctrl-Alt-8", "Ctrl-Alt-9", "Ctrl-Alt-0", "Ctrl-Alt-m"];
+
+/** Space types in a field or editor and presses a focused control; it marks the current item only when none of those has the focus. */
+const takesSpace = (el: Element | null) =>
+  !!el?.closest("button, a, input, textarea, select, [contenteditable], [tabindex], [role=menuitem], [role=tab]");
 
 export class ReviewController {
   readonly tabs = new Tabs();
@@ -87,7 +91,8 @@ export class ReviewController {
     };
     if (matches("Ctrl-Alt-ArrowDown", e)) run(() => void view.goToHunk(view.current + 1));
     else if (matches("Ctrl-Alt-ArrowUp", e)) run(() => void view.goToHunk(view.current - 1));
-    else if (matches("Ctrl-Alt-s", e)) run(() => void view.toggleSeen(view.currentFile()));
+    else if (matches("Space", e) && view.current >= 0 && !takesSpace(document.activeElement))
+      run(() => void view.toggleCurrent());
     else if (matches("F4", e)) {
       // Jump to Source: the file of the Changes stream's caret, at its line.
       const caret = this.tabs.active === CHANGES ? view.caret() : undefined;
