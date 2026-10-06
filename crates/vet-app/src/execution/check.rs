@@ -20,6 +20,9 @@ impl Default for RunCheckConfig {
             // Rust
             "build.rs",
             "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain",
+            "rust-toolchain.toml",
             "**/.cargo/config.toml",
             "**/.cargo/config",
             // TypeScript and JavaScript
@@ -32,10 +35,20 @@ impl Default for RunCheckConfig {
             "yarn.lock",
             "bun.lock",
             "bun.lockb",
+            // Tool configs are code that runs on dev, build and test.
+            "*.config.js",
+            "*.config.cjs",
+            "*.config.mjs",
+            "*.config.ts",
+            "*.config.cts",
+            "*.config.mts",
             // Python
             "setup.py",
             "setup.cfg",
             "pyproject.toml",
+            "conftest.py",
+            "noxfile.py",
+            "tox.ini",
             // C#
             "*.csproj",
             "*.targets",
@@ -56,6 +69,12 @@ impl Default for RunCheckConfig {
             "Dockerfile",
             "build.*",
             "ci/**",
+            // Toolchain and environment
+            ".envrc",
+            "shell.nix",
+            "flake.nix",
+            "flake.lock",
+            ".tool-versions",
         ];
         Self {
             executor_files: patterns.map(String::from).to_vec(),
