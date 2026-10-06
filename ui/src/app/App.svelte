@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import DevTools from "../dev/DevTools.svelte";
   import { hudListeners } from "../dev/hud.svelte";
   import type { WatchDegraded } from "../generated/WatchDegraded";
@@ -7,7 +7,7 @@
   import { AboutDialog, Header, degradedMessage, StatusFooter, TOOLS, TitleBar, ToolRail } from "../features/chrome";
   import { FilterPopover } from "../features/filter";
   import { type Mode, ReviewScreen, type ReviewController } from "../features/review";
-  import { RunButton } from "../features/run";
+  import { RunButton, RunDialogs, RunPanel } from "../features/run";
   import { SettingsDialog } from "../features/settings";
   import { StartScreen } from "../features/start";
   import { SymbolPanel } from "../features/symbols";
@@ -19,6 +19,7 @@
   import type { Command } from "../state/mainMenu";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { recent } from "../state/recent.svelte";
+  import { runs } from "../state/runs.svelte";
 
   let controller = $state.raw<ReviewController>();
   // The selected tool of each rail, and whether its sidebar is shown.
@@ -53,6 +54,23 @@
   // The controller belongs to the repository's screen.
   $effect(() => {
     if (!changeset.repo) controller = undefined;
+  });
+
+  // Runs and targets belong to the open repository.
+  $effect(() => {
+    const repo = changeset.repo;
+    untrack(() => runs.forRepo(repo));
+  });
+  $effect(() => {
+    const backend = changeset.backend;
+    return backend?.onEvent((event) => {
+      if (event.session === backend.session) runs.onEvent(event);
+    });
+  });
+  // Targets are discovered from the target snapshot, which a new revision replaces.
+  const revision = $derived(changeset.manifest?.revision);
+  $effect(() => {
+    if (revision !== undefined) untrack(() => void runs.loadTargets());
   });
 
   // The main menu follows the state it shows.
@@ -183,6 +201,7 @@
       onready={ready}
     >
       {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel />{/if}{/snippet}
+      {#snippet bottom()}{#if runs.panel}<RunPanel />{/if}{/snippet}
     </ReviewScreen>
     <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />
   </div>
@@ -211,6 +230,8 @@
     <Toast message={changeset.notice} onclose={() => (changeset.notice = undefined)} />
   {/key}
 {/if}
+
+<RunDialogs />
 
 {#if dialog === "settings"}
   <SettingsDialog {theme} ontheme={(t) => applyTheme((theme = t))} onclose={() => (dialog = undefined)} />

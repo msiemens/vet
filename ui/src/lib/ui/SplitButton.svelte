@@ -20,7 +20,8 @@
     onselect: (id: string) => void;
     label: string;
     main: Snippet;
-    menuFooter?: Snippet;
+    /** Below the items; gets a function that closes the menu. */
+    menuFooter?: Snippet<[close: () => void]>;
   } = $props();
   let open = $state(false);
 </script>
@@ -47,7 +48,7 @@
         onselect(id);
       }}
     />
-    {#if menuFooter}<div class="footer">{@render menuFooter()}</div>{/if}
+    {#if menuFooter}<div class="footer">{@render menuFooter(() => (open = false))}</div>{/if}
   </Popover>
 </span>
 

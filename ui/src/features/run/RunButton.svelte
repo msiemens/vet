@@ -1,46 +1,30 @@
-<script module lang="ts">
-  export interface RunTarget {
-    id: string;
-    name: string;
-    /** Where the manifest scan found it (Cargo bin, package script, pyproject script). */
-    source: string;
-  }
-</script>
-
 <script lang="ts">
   import Icon from "../../lib/ui/Icon.svelte";
   import SplitButton from "../../lib/ui/SplitButton.svelte";
+  import { runs } from "../../state/runs.svelte";
+  import { sourceOf } from "./command";
 
-  let {
-    targets = [],
-    buildFilesChanged = false,
-    onrun,
-  }: {
-    /** Discovered from the repository's manifests; none until the backend reports them. */
-    targets?: RunTarget[];
-    /** Executor-relevant files changed since the last approved run (SPEC §7.5). */
-    buildFilesChanged?: boolean;
-    onrun?: (id: string) => void;
-  } = $props();
-
-  let selected = $state<string>();
-  const current = $derived<RunTarget | undefined>(targets.find((t) => t.id === selected) ?? targets[0]);
+  const primary = $derived(runs.primary?.target);
 </script>
 
 <SplitButton
-  disabled={!targets.length}
-  label={buildFilesChanged ? "Run, build files changed" : "Run"}
-  items={targets.map((t) => ({ id: t.id, label: t.name, detail: t.source }))}
-  onmain={() => current && onrun?.(current.id)}
-  onselect={(id) => ((selected = id), onrun?.(id))}
+  label="Run"
+  items={runs.targets.map(({ target }) => ({ id: target.id, label: target.label, detail: sourceOf(target.id) }))}
+  onmain={() => (primary ? void runs.start(primary.id) : (runs.editing = true))}
+  onselect={(id) => void runs.start(id)}
 >
   {#snippet main()}
-    <span class="play"><Icon name="play" size={12} /></span>{current?.name ?? "Run"}{#if buildFilesChanged}<span
-        class="dot"
-      ></span>{/if}
+    <span class="play"><Icon name="play" size={12} /></span>{primary?.label ?? "Run"}
   {/snippet}
-  {#snippet menuFooter()}
-    <button type="button" class="flat edit">Edit targets…</button>
+  {#snippet menuFooter(close)}
+    <button
+      type="button"
+      class="flat edit"
+      onclick={() => {
+        close();
+        runs.editing = true;
+      }}>Edit targets…</button
+    >
   {/snippet}
 </SplitButton>
 
@@ -48,12 +32,6 @@
   .play {
     display: inline-flex;
     color: var(--ok);
-  }
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--warn);
   }
   .edit {
     width: 100%;

@@ -17,6 +17,7 @@ export const ICONS = {
   build: '<path d="M14.7 6.3a4 4 0 00-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 005.4-5.4l-2.6 2.6-2.8-.6-.6-2.8z"/>',
   more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   play: '<path d="M7 4l13 8-13 8z"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
   open: '<path d="M6 8l6 8 6-8z"/>',
   closed: '<path d="M9 6l8 6-8 6z"/>',
   file: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/>',
@@ -28,7 +29,7 @@ export const ICONS = {
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   key: '<circle cx="8" cy="15" r="3.5"/><path d="M11 12.5L20 4M16 8l2.5 2.5"/>',
 } as const;
-export const SOLID: ReadonlySet<string> = new Set(["play", "open", "closed", "more"]);
+export const SOLID: ReadonlySet<string> = new Set(["play", "stop", "open", "closed", "more"]);
 
 export type IconName = keyof typeof ICONS;
 

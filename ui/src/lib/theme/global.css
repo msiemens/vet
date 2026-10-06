@@ -116,6 +116,18 @@ button {
   background: var(--toggle-press);
 }
 
+.ctl.primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.ctl.primary:enabled:hover {
+  background: var(--primary-hover);
+}
+.ctl.primary:enabled:active {
+  background: var(--primary-press);
+}
+
 /* Window controls drawn by tauri-plugin-decoration (Windows): the full header height, and the
    theme's colours instead of the OS colour scheme; close turns red on hover, as on Windows. */
 :root {

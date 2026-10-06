@@ -21,6 +21,7 @@
     rightTool,
     rightOpen,
     side,
+    bottom,
     mode,
     onmode,
     onready,
@@ -37,6 +38,8 @@
     rightOpen: boolean;
     /** The right sidebar's content for a tool. */
     side: Snippet<[tool: string]>;
+    /** A panel below the tabs, e.g. the run output. */
+    bottom?: Snippet;
     /** The changeset is open; `firstPaintMs` runs from the open request to the first hunk's paint. */
     onready: (controller: ReviewController, firstPaintMs: number) => void;
   } = $props();
@@ -124,6 +127,7 @@
       </div>
     {/each}
   </div>
+  {@render bottom?.()}
 </main>
 
 {#if rightOpen}
