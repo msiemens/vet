@@ -120,8 +120,17 @@ export class Backend {
     return { branches, commits };
   }
 
-  async hover(path: string, line: number, col: number): Promise<string> {
-    const response = await this.conn.request({ type: "hover", session: this.sid, path, line, col });
-    return response.type === "hover" ? response.text : "";
+  /** Hover on the target side at `revision`, the manifest's; empty if the server has nothing to say. */
+  async hover(revision: number, path: string, line: number, col: number): Promise<string> {
+    const response = await this.conn.request({
+      type: "hover",
+      session: this.sid,
+      revision,
+      side: "target",
+      path,
+      line,
+      col,
+    });
+    return response.type === "hover" ? (response.text ?? "") : "";
   }
 }

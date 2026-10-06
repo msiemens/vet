@@ -172,7 +172,7 @@ impl Open {
     }
 }
 
-fn broadcast(subscribers: &Subscribers, event: Event) {
+pub(super) fn broadcast(subscribers: &Subscribers, event: Event) {
     for events in live(subscribers).iter() {
         events.send(event.clone());
     }

@@ -1,0 +1,616 @@
+//! Semantic and language server requests through the handler. The Rust test
+//! needs a real rust-analyzer and is skipped without one; run it alone
+//! (`--test-threads=1`): it starts two servers.
+
+use std::path::Path;
+use std::process::Command;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::mpsc::UnboundedReceiver;
+use vet_backend::{Config, Orchestrator, open_store};
+use vet_protocol::{
+    CallFate, Event, Reach, Request, Response, ServerInfo, ServerMessage, ServerState, SessionId, Side, SymbolChange,
+    SymbolId, UnavailableKind,
+};
+use vet_transport::{Events, Handler};
+
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}");
+}
+
+fn write(dir: &Path, name: &str, content: &str) {
+    let path = dir.join(name);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, content).unwrap();
+}
+
+const BASE: &str = "\
+pub fn gone() -> u32 {
+    1
+}
+
+pub fn keep() -> u32 {
+    2
+}
+
+pub fn caller() -> u32 {
+    gone()
+}
+
+pub fn main() -> u32 {
+    keep()
+}
+";
+
+const DIRTY: &str = "\
+pub fn keep() -> u32 {
+    3
+}
+
+pub fn fresh() -> u32 {
+    keep()
+}
+
+pub fn broken() -> u32 {
+    let x: u32 = \"x\";
+    x
+}
+
+pub fn caller() -> u32 {
+    gone()
+}
+
+pub fn main() -> u32 {
+    fresh()
+}
+";
+
+/// Line and column of the `nth` occurrence of `needle`, `inside` columns in.
+fn find(text: &str, needle: &str, nth: usize, inside: u32) -> (u32, u32) {
+    let (line, col) = text
+        .lines()
+        .enumerate()
+        .flat_map(|(l, s)| s.match_indices(needle).map(move |(c, _)| (l, c)))
+        .nth(nth)
+        .expect("needle present");
+    (line as u32, col as u32 + inside)
+}
+
+struct Client {
+    handler: Arc<Orchestrator>,
+    events: Events,
+    inbox: UnboundedReceiver<ServerMessage>,
+}
+
+impl Client {
+    fn new(handler: &Arc<Orchestrator>) -> Self {
+        let (events, inbox) = Events::channel();
+        Self {
+            handler: handler.clone(),
+            events,
+            inbox,
+        }
+    }
+
+    async fn call(&self, request: Request) -> Result<Response, String> {
+        self.handler.handle(request, self.events.clone()).await
+    }
+
+    async fn open(&self, repo: &Path) -> SessionId {
+        let request = Request::OpenSession {
+            repo: repo.to_str().unwrap().into(),
+        };
+        match self.call(request).await.unwrap() {
+            Response::Session { session, .. } => session,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    async fn revision(&self, session: SessionId) -> u32 {
+        match self.call(Request::Manifest { session }).await.unwrap() {
+            Response::Manifest(m) => m.revision,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    async fn servers(&self, session: SessionId) -> Vec<ServerInfo> {
+        match self.call(Request::ListServers { session }).await.unwrap() {
+            Response::Servers { servers } => servers,
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+fn config() -> Config {
+    Config {
+        debounce: Duration::from_millis(150),
+        poll: Duration::from_millis(300),
+        orphan_grace: Duration::from_secs(60),
+    }
+}
+
+fn repo_with(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> tempfile::TempDir {
+    let repo = tempfile::tempdir().unwrap();
+    git(repo.path(), &["init", "-q", "-b", "main"]);
+    write(repo.path(), ".gitignore", "target/\n");
+    for (name, content) in base {
+        write(repo.path(), name, content);
+    }
+    git(repo.path(), &["add", "-A"]);
+    git(repo.path(), &["commit", "-q", "-m", "base"]);
+    for (name, content) in dirty {
+        write(repo.path(), name, content);
+    }
+    repo
+}
+
+fn name(parts: &[&str]) -> Vec<String> {
+    parts.iter().map(|s| (*s).to_owned()).collect()
+}
+
+#[tokio::test]
+async fn rust_semantics_through_the_protocol() {
+    if Command::new("rust-analyzer").arg("--version").output().is_err() {
+        eprintln!("skipped: rust-analyzer is not installed");
+        return;
+    }
+    let repo = tempfile::tempdir().unwrap();
+    git(repo.path(), &["init", "-q", "-b", "main"]);
+    write(repo.path(), ".gitignore", "target/\n");
+    write(
+        repo.path(),
+        "Cargo.toml",
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write(repo.path(), "src/lib.rs", BASE);
+    let lock = Command::new("cargo")
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(repo.path())
+        .output()
+        .unwrap();
+    assert!(lock.status.success(), "{}", String::from_utf8_lossy(&lock.stderr));
+    git(repo.path(), &["add", "-A"]);
+    git(repo.path(), &["commit", "-q", "-m", "base"]);
+    write(repo.path(), "src/lib.rs", DIRTY);
+
+    let data = tempfile::tempdir().unwrap();
+    let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
+    let client = Client::new(&handler);
+    let session = client.open(repo.path()).await;
+    let revision = client.revision(session).await;
+    let path = "src/lib.rs";
+
+    let (line, col) = find(DIRTY, "keep()", 1, 1);
+    let hover = client
+        .call(Request::Hover {
+            session,
+            revision,
+            side: Side::Target,
+            path: path.into(),
+            line,
+            col,
+        })
+        .await
+        .unwrap();
+    let Response::Hover {
+        revision: answered,
+        side,
+        text,
+        unavailable,
+    } = hover
+    else {
+        panic!("{hover:?}");
+    };
+    assert_eq!((answered, side, unavailable), (revision, Side::Target, None));
+    assert!(text.unwrap().contains("fn keep"));
+
+    let Response::Definition(defs) = client
+        .call(Request::Definition {
+            session,
+            revision,
+            side: Side::Target,
+            path: path.into(),
+            line,
+            col,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not a definition");
+    };
+    assert_eq!((defs.revision, defs.side), (revision, Side::Target));
+    assert_eq!(defs.locations.len(), 1);
+    assert_eq!(defs.locations[0].path, path);
+    assert_eq!(defs.locations[0].span.start.line, 0);
+    assert!(!defs.locations[0].external);
+
+    let (line, col) = find(DIRTY, "keep", 0, 1);
+    let Response::References(refs) = client
+        .call(Request::References {
+            session,
+            revision,
+            side: Side::Target,
+            path: path.into(),
+            line,
+            col,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not references");
+    };
+    assert_eq!(refs.locations.len(), 1, "{refs:?}");
+    assert_eq!(refs.locations[0].span.start.line, find(DIRTY, "keep()", 1, 0).0);
+
+    // The base side is a different tree: `gone` only exists there.
+    let (line, col) = find(BASE, "gone()", 1, 1);
+    let Response::Hover { text, side, .. } = client
+        .call(Request::Hover {
+            session,
+            revision,
+            side: Side::Base,
+            path: path.into(),
+            line,
+            col,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not a hover");
+    };
+    assert_eq!(side, Side::Base);
+    assert!(text.unwrap().contains("fn gone"));
+
+    let Response::Diagnostics {
+        diagnostics,
+        unavailable,
+        ..
+    } = client
+        .call(Request::Diagnostics {
+            session,
+            revision,
+            path: path.into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not diagnostics");
+    };
+    assert_eq!(unavailable, None);
+    assert!(
+        diagnostics.iter().any(|d| d.message.contains("expected u32")),
+        "{diagnostics:?}"
+    );
+
+    let Response::ChangedSymbols(changed) = client
+        .call(Request::ChangedSymbols { session, revision })
+        .await
+        .unwrap()
+    else {
+        panic!("not changed symbols");
+    };
+    assert_eq!(changed.revision, revision);
+    let change_of = |symbol: &str| {
+        changed
+            .symbols
+            .iter()
+            .find(|c| c.symbol.id.name == name(&[symbol]))
+            .unwrap_or_else(|| panic!("{symbol} in {:?}", changed.symbols))
+            .change
+    };
+    assert_eq!(change_of("gone"), SymbolChange::Removed);
+    assert_eq!(change_of("keep"), SymbolChange::Modified);
+    assert_eq!(change_of("fresh"), SymbolChange::Added);
+    assert_eq!(change_of("main"), SymbolChange::Modified);
+    assert!(changed.gaps.is_empty() && changed.unsupported.is_empty(), "{changed:?}");
+    assert_eq!(changed.inputs.analysis, "changed symbols");
+    assert!(
+        changed
+            .inputs
+            .primitives
+            .iter()
+            .any(|p| p.starts_with("document_symbols(base:"))
+    );
+    assert!(!changed.inputs.hunks.is_empty());
+
+    let id = |symbol: &str| SymbolId {
+        path: path.into(),
+        name: name(&[symbol]),
+    };
+    let Response::Impact(impact) = client
+        .call(Request::Impact {
+            session,
+            revision,
+            symbol: id("keep"),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not an impact");
+    };
+    assert_eq!(impact.revision, revision);
+    assert_eq!(impact.references.len(), 1, "{impact:?}");
+    let callers: Vec<_> = impact.callers.iter().map(|c| c.id.name.clone()).collect();
+    assert_eq!(callers, [name(&["fresh"])]);
+    assert!(impact.gaps.is_empty());
+    assert!(
+        impact
+            .inputs
+            .primitives
+            .iter()
+            .any(|p| p.starts_with("references(target:"))
+    );
+
+    let Response::RemovalImpact(removal) = client
+        .call(Request::RemovalImpact {
+            session,
+            revision,
+            symbol: id("gone"),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not a removal impact");
+    };
+    assert_eq!(removal.gap, None);
+    assert_eq!(removal.call_sites.len(), 1, "{removal:?}");
+    assert_eq!(removal.call_sites[0].fate, CallFate::LikelyBroken);
+    assert_eq!(removal.call_sites[0].base.span.start.line, find(BASE, "gone()", 1, 0).0);
+    assert!(
+        removal
+            .inputs
+            .primitives
+            .iter()
+            .any(|p| p.starts_with("references(base:"))
+    );
+
+    let Response::Reachability(reach) = client
+        .call(Request::Reachability {
+            session,
+            revision,
+            symbol: id("fresh"),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not a reachability");
+    };
+    let Reach::Reached { path: via } = &reach.reach else {
+        panic!("{reach:?}");
+    };
+    assert_eq!(
+        via.iter().map(|s| s.name[0].as_str()).collect::<Vec<_>>(),
+        ["fresh", "main"]
+    );
+    assert_eq!(reach.inputs.bounds.map(|b| b.max_depth), Some(8));
+    assert!(reach.inputs.config.iter().any(|c| c.contains("main")));
+
+    // Kinds are not interchangeable, and stale revisions are refused.
+    let wrong = client
+        .call(Request::Impact {
+            session,
+            revision,
+            symbol: id("gone"),
+        })
+        .await;
+    assert!(wrong.unwrap_err().contains("removed"));
+    let wrong = client
+        .call(Request::RemovalImpact {
+            session,
+            revision,
+            symbol: id("keep"),
+        })
+        .await;
+    assert!(wrong.is_err());
+    let unknown = client
+        .call(Request::Reachability {
+            session,
+            revision,
+            symbol: id("nothing"),
+        })
+        .await;
+    assert!(unknown.unwrap_err().contains("changed symbol"));
+    for request in [
+        Request::Hover {
+            session,
+            revision: revision + 1,
+            side: Side::Target,
+            path: path.into(),
+            line: 0,
+            col: 0,
+        },
+        Request::ChangedSymbols {
+            session,
+            revision: revision + 1,
+        },
+        Request::Diagnostics {
+            session,
+            revision: revision + 1,
+            path: path.into(),
+        },
+    ] {
+        let error = client.call(request).await.unwrap_err();
+        assert!(error.contains("stale revision"), "{error}");
+    }
+    client.call(Request::CloseSession { session }).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_language_without_a_server_degrades_and_never_fails_the_session() {
+    let repo = repo_with(
+        &[("a.py", "def f():\n    return 1\n"), ("notes.md", "x\n")],
+        &[("a.py", "def f():\n    return 2\n")],
+    );
+    let data = tempfile::tempdir().unwrap();
+    let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
+    let client = Client::new(&handler);
+    let session = client.open(repo.path()).await;
+    let revision = client.revision(session).await;
+
+    // A path that is not a file: the custom path wins over everything, so the server is missing.
+    client
+        .call(Request::SetServerPath {
+            session,
+            language: "python".into(),
+            path: Some("/no/such/pyright-langserver".into()),
+        })
+        .await
+        .unwrap();
+    let hover = |path: &str| Request::Hover {
+        session,
+        revision,
+        side: Side::Target,
+        path: path.into(),
+        line: 1,
+        col: 4,
+    };
+    let Response::Hover { text, unavailable, .. } = client.call(hover("a.py")).await.unwrap() else {
+        panic!("not a hover");
+    };
+    let unavailable = unavailable.expect("degraded");
+    assert_eq!(text, None);
+    assert_eq!(unavailable.kind, UnavailableKind::ServerMissing);
+    assert_eq!(unavailable.language.as_deref(), Some("python"));
+    assert!(
+        unavailable.message.contains("/no/such/pyright-langserver"),
+        "{}",
+        unavailable.message
+    );
+
+    let Response::Hover { unavailable, .. } = client.call(hover("notes.md")).await.unwrap() else {
+        panic!("not a hover");
+    };
+    let unavailable = unavailable.unwrap();
+    assert_eq!(
+        (unavailable.kind, unavailable.language),
+        (UnavailableKind::Unsupported, None)
+    );
+
+    // Derived results report the gap instead of failing.
+    let Response::ChangedSymbols(changed) = client
+        .call(Request::ChangedSymbols { session, revision })
+        .await
+        .unwrap()
+    else {
+        panic!("not changed symbols");
+    };
+    assert!(changed.symbols.is_empty());
+    assert_eq!(changed.gaps.len(), 1, "{changed:?}");
+    assert_eq!(changed.gaps[0].path, "a.py");
+    assert!(changed.gaps[0].reason.contains("/no/such/pyright-langserver"));
+
+    // The session itself is fine.
+    assert_eq!(client.revision(session).await, revision);
+}
+
+#[tokio::test]
+async fn servers_are_listed_and_custom_paths_persist_and_notify() {
+    let repo = repo_with(&[("a.txt", "x\n")], &[]);
+    let data = tempfile::tempdir().unwrap();
+    let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
+    let mut first = Client::new(&handler);
+    let session = first.open(repo.path()).await;
+
+    let listed = first.servers(session).await;
+    let languages: Vec<_> = listed.iter().map(|s| s.language.as_str()).collect();
+    assert_eq!(languages, ["rust", "typescript", "python", "csharp"]);
+    let python = listed.iter().find(|s| s.language == "python").unwrap();
+    assert!(python.pinned_version.is_some());
+    assert_eq!(python.custom_path, None);
+    assert!(
+        listed
+            .iter()
+            .find(|s| s.language == "rust")
+            .unwrap()
+            .pinned_version
+            .is_none()
+    );
+
+    // A second connection sets a path; the first is told, the setter is not.
+    let second = Client::new(&handler);
+    assert_eq!(second.open(repo.path()).await, session);
+    let tool = data.path().join("my-pyright");
+    std::fs::write(&tool, "").unwrap();
+    let path = tool.to_str().unwrap().to_owned();
+    let Response::Servers { servers } = second
+        .call(Request::SetServerPath {
+            session,
+            language: "python".into(),
+            path: Some(path.clone()),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not servers");
+    };
+    let python = servers.iter().find(|s| s.language == "python").unwrap();
+    assert_eq!(python.custom_path.as_deref(), Some(path.as_str()));
+    let ServerState::Found { path: found, .. } = &python.state else {
+        panic!("{python:?}");
+    };
+    assert_eq!(found, &path);
+    let message = tokio::time::timeout(Duration::from_secs(5), first.inbox.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        message,
+        ServerMessage::Event {
+            event: Event::ServersChanged { .. }
+        }
+    ));
+
+    let unknown = second
+        .call(Request::SetServerPath {
+            session,
+            language: "cobol".into(),
+            path: None,
+        })
+        .await;
+    assert!(unknown.unwrap_err().contains("unknown language"));
+
+    // A new backend on the same data directory still has the path.
+    drop((first, second));
+    let again = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
+    let client = Client::new(&again);
+    let session = client.open(repo.path()).await;
+    let python = client
+        .servers(session)
+        .await
+        .into_iter()
+        .find(|s| s.language == "python")
+        .unwrap();
+    assert_eq!(python.custom_path.as_deref(), Some(path.as_str()));
+
+    client
+        .call(Request::SetServerPath {
+            session,
+            language: "python".into(),
+            path: None,
+        })
+        .await
+        .unwrap();
+    let python = client
+        .servers(session)
+        .await
+        .into_iter()
+        .find(|s| s.language == "python")
+        .unwrap();
+    assert_eq!(python.custom_path, None);
+}

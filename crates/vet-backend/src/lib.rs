@@ -4,6 +4,7 @@
 
 mod mapping;
 mod run;
+mod semantic;
 
 pub use run::OUTPUT_CAP;
 
@@ -13,14 +14,19 @@ use std::time::Duration;
 
 use tokio::task::AbortHandle;
 use vet_app::ignore::IgnoringWatcher;
+use vet_app::semantics::Semantics;
+use vet_app::servers::Servers;
 use vet_app::session::{LiveSession, ThreadView};
 use vet_app::settle::Settling;
 use vet_core::review::ThreadId;
 use vet_infra::clock::TokioClock;
 use vet_infra::git::{GixRepo, find_root};
+use vet_infra::lsp::{LspLauncher, config as lsp_config};
+use vet_infra::servers::ToolResolver;
 use vet_infra::store::{SqliteStore, unix_now};
 use vet_infra::watch::FsWatcher;
 use vet_protocol::{Event, Request, Response, SessionId};
+use vet_semantic::ports::{Backend, BackendId};
 use vet_transport::{Events, Handler};
 
 pub struct Config {
@@ -44,6 +50,8 @@ impl Default for Config {
 }
 
 type Live = LiveSession<GixRepo, SqliteStore>;
+type LanguageServers = Servers<ToolResolver, SqliteStore>;
+type Semantic = Semantics<GixRepo, SqliteStore, LspLauncher<Arc<LanguageServers>>>;
 
 /// The connections that opened a session. Sessions are one per repository:
 /// opening an open repository subscribes to the existing one.
@@ -53,6 +61,8 @@ struct Open {
     id: SessionId,
     repo: PathBuf,
     session: Arc<Live>,
+    semantics: Semantic,
+    backends: Arc<[Backend]>,
     subscribers: Subscribers,
     settling: AbortHandle,
     reaper: AbortHandle,
@@ -69,15 +79,19 @@ pub struct Orchestrator {
     store: SqliteStore,
     config: Config,
     sessions: Sessions,
+    servers: Arc<LanguageServers>,
+    backends: Arc<[Backend]>,
 }
 
 type Sessions = Arc<tokio::sync::Mutex<Vec<Arc<Open>>>>;
 
 impl Open {
-    /// Stops watching, kills the session's runs, deletes its refs and records it closed.
+    /// Stops watching, kills the session's runs and language servers, deletes
+    /// its refs and records it closed.
     async fn shut(&self) -> Result<(), String> {
         self.settling.abort();
         self.runs.stop_all();
+        self.semantics.shutdown().await;
         self.session.close(unix_now()).await.map_err(message)
     }
 }
@@ -114,11 +128,38 @@ fn message(error: impl std::fmt::Display) -> String {
 
 impl Orchestrator {
     pub fn new(store: SqliteStore, config: Config) -> Self {
+        let backends: Arc<[Backend]> = lsp_config::defaults().into();
+        let languages = backends.iter().map(|b| b.config().backend.clone()).collect();
+        let resolver = ToolResolver::new(store.dir().to_owned());
         Self {
+            servers: Arc::new(Servers::new(resolver, store.clone(), languages)),
+            backends,
             store,
             config,
             sessions: Sessions::default(),
         }
+    }
+
+    /// Restarts the language's running servers in every session: their
+    /// executable changed.
+    async fn restart_language(&self, language: &str) {
+        let language = BackendId(language.to_owned());
+        let sessions: Vec<_> = self.sessions.lock().await.clone();
+        for open in sessions {
+            open.semantics.restart(&language).await;
+        }
+    }
+
+    /// Tells the other connections of every session that server settings changed.
+    async fn servers_changed(&self, from: &Events) {
+        for open in self.sessions.lock().await.iter() {
+            Self::notify_others(open, from, Event::ServersChanged { session: open.id });
+        }
+    }
+
+    async fn list_servers(&self, open: &Open) -> Result<Response, String> {
+        let all = self.servers.status(&open.repo).await.map_err(message)?;
+        Ok(mapping::semantic::servers(&all))
     }
 
     async fn find(&self, id: SessionId) -> Result<Arc<Open>, String> {
@@ -176,10 +217,18 @@ impl Orchestrator {
             })
         };
         let reaper = tokio::spawn(reap(self.sessions.clone(), id, self.config.orphan_grace));
+        let semantics = Semantics::new(
+            &session,
+            LspLauncher::new(self.servers.clone()),
+            repo.clone(),
+            self.backends.to_vec(),
+        );
         sessions.push(Arc::new(Open {
             id,
             repo,
             session,
+            semantics,
+            backends: self.backends.clone(),
             subscribers,
             settling: task.abort_handle(),
             reaper: reaper.abort_handle(),
@@ -447,7 +496,92 @@ impl Handler for Orchestrator {
                 self.find(session).await?.stop_run(run_id);
                 Ok(Response::Done)
             }
-            Request::Hover { .. } => Err("hover is not implemented yet".into()),
+            Request::Hover {
+                session,
+                revision,
+                side,
+                path,
+                line,
+                col,
+            } => {
+                let open = self.find(session).await?;
+                open.hover(revision, side, &path, line, col).await
+            }
+            Request::Definition {
+                session,
+                revision,
+                side,
+                path,
+                line,
+                col,
+            } => {
+                let open = self.find(session).await?;
+                open.definition(revision, side, &path, line, col).await
+            }
+            Request::References {
+                session,
+                revision,
+                side,
+                path,
+                line,
+                col,
+            } => {
+                let open = self.find(session).await?;
+                open.references(revision, side, &path, line, col).await
+            }
+            Request::Diagnostics {
+                session,
+                revision,
+                path,
+            } => self.find(session).await?.diagnostics(revision, &path).await,
+            Request::ChangedSymbols { session, revision } => self.find(session).await?.changed_symbols(revision).await,
+            Request::Impact {
+                session,
+                revision,
+                symbol,
+            } => self.find(session).await?.impact(revision, &symbol).await,
+            Request::RemovalImpact {
+                session,
+                revision,
+                symbol,
+            } => self.find(session).await?.removal_impact(revision, &symbol).await,
+            Request::Reachability {
+                session,
+                revision,
+                symbol,
+            } => self.find(session).await?.reachability(revision, &symbol).await,
+            Request::ListServers { session } => {
+                let open = self.find(session).await?;
+                self.list_servers(&open).await
+            }
+            Request::InstallServer { session, language } => {
+                let open = self.find(session).await?;
+                let progress = |line: &str| {
+                    run::broadcast(
+                        &open.subscribers,
+                        Event::ServerInstallOutput {
+                            session,
+                            language: language.clone(),
+                            line: line.to_owned(),
+                        },
+                    );
+                };
+                self.servers.install(&language, &progress).await.map_err(message)?;
+                self.restart_language(&language).await;
+                self.servers_changed(&events).await;
+                self.list_servers(&open).await
+            }
+            Request::SetServerPath {
+                session,
+                language,
+                path,
+            } => {
+                let open = self.find(session).await?;
+                self.servers.set_custom_path(&language, path).await.map_err(message)?;
+                self.restart_language(&language).await;
+                self.servers_changed(&events).await;
+                self.list_servers(&open).await
+            }
         }
     }
 }

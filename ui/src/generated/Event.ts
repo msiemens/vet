@@ -6,4 +6,4 @@ import type { RunStream } from "./RunStream";
  * Events are invalidations or small state updates; the client re-requests
  * whatever it displays.
  */
-export type Event = { "type": "snapshotSettled", session: number, revision: number, } | { "type": "reviewChanged", session: number, revision: number, update: ReviewUpdate, } | { "type": "threadsChanged", session: number, revision: number, } | { "type": "runOutput", session: number, runId: number, stream: RunStream, bytes: string, } | { "type": "runExited", session: number, runId: number, code: number | null, droppedBytes: number, };
+export type Event = { "type": "snapshotSettled", session: number, revision: number, } | { "type": "reviewChanged", session: number, revision: number, update: ReviewUpdate, } | { "type": "threadsChanged", session: number, revision: number, } | { "type": "serverInstallOutput", session: number, language: string, line: string, } | { "type": "serversChanged", session: number, } | { "type": "runOutput", session: number, runId: number, stream: RunStream, bytes: string, } | { "type": "runExited", session: number, runId: number, code: number | null, droppedBytes: number, };

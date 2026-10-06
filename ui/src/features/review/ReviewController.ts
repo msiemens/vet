@@ -115,7 +115,7 @@ export class ReviewController {
   private hooks = {
     hover: async (path: string, line: number, col: number) => {
       const t0 = performance.now();
-      const text = await this.backend.hover(path, line, col);
+      const text = await this.backend.hover(changeset.manifest?.revision ?? 0, path, line, col);
       this.hud.hover(performance.now() - t0);
       return text;
     },

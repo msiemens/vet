@@ -1,5 +1,7 @@
 //! vet-app views to protocol DTOs, and back for the request enums.
 
+pub mod semantic;
+
 use vet_app::execution::check::{Approval, Change};
 use vet_app::execution::targets::RunTarget;
 use vet_app::execution::{ApprovalFile, ListedTarget};

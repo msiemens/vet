@@ -62,6 +62,7 @@ pub struct SqliteStore {
     db: DatabaseConnection,
     content: Arc<ContentStore>,
     config: StoreConfig,
+    dir: PathBuf,
 }
 
 /// Unix seconds.
@@ -165,7 +166,13 @@ impl SqliteStore {
             db,
             content: Arc::new(content),
             config,
+            dir: dir.to_owned(),
         })
+    }
+
+    /// The data directory the store lives in.
+    pub fn dir(&self) -> &Path {
+        &self.dir
     }
 
     async fn blocking<T: Send + 'static>(

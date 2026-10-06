@@ -756,23 +756,6 @@ async fn paths_outside_a_repository_and_bare_repositories_are_rejected() {
     );
 }
 
-#[tokio::test]
-async fn hover_is_not_implemented() {
-    let fx = fixture(&[("a.txt", "x\n")], &[]).await;
-    let client = Client::new(&fx.handler);
-    assert!(
-        client
-            .call(Request::Hover {
-                session: 1,
-                path: "a".into(),
-                line: 0,
-                col: 0
-            })
-            .await
-            .is_err()
-    );
-}
-
 impl Client {
     async fn set_base(&self, session: SessionId, base: BaseChoice) -> Result<Base, String> {
         match self.call(Request::SetBase { session, base }).await? {

@@ -174,16 +174,37 @@ impl Handler for Mock {
             | Request::DeleteThread { .. }
             | Request::ConfirmAnchor { .. }
             | Request::AttachAnchor { .. } => Err("the corpus has no threads".into()),
-            Request::Hover { path, line, col, .. } => {
+            Request::Hover {
+                session,
+                revision,
+                side,
+                path,
+                line,
+                col,
+            } => {
+                current(session, revision)?;
                 position(&path)?;
                 Ok(Response::Hover {
-                    text: format!(
+                    revision,
+                    side,
+                    text: Some(format!(
                         "{path}:{}:{}\n\nmock hover (derived: reachable from 2 entry points)",
                         line + 1,
                         col + 1
-                    ),
+                    )),
+                    unavailable: None,
                 })
             }
+            Request::Definition { .. }
+            | Request::References { .. }
+            | Request::Diagnostics { .. }
+            | Request::ChangedSymbols { .. }
+            | Request::Impact { .. }
+            | Request::RemovalImpact { .. }
+            | Request::Reachability { .. }
+            | Request::ListServers { .. }
+            | Request::InstallServer { .. }
+            | Request::SetServerPath { .. } => Err("the corpus has no language servers".into()),
         }
     }
 }
