@@ -8,8 +8,9 @@ use std::sync::Mutex;
 
 use tempfile::TempDir;
 use vet_app::acquisition::{Acquisition, PinId};
-use vet_app::ports::{Dirty, GitRepo, Store, StoreError};
-use vet_core::content::{BlobId, EntryKind, Hash, NonTextKind, RepoPath, Snapshot};
+use vet_app::ports::{Dirty, GcReport, GitRepo, Store, StoreError};
+use vet_app::review::SessionId;
+use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId};
 use vet_infra::git::GixRepo;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -60,19 +61,28 @@ async fn head_and_scan(dir: &Path, repo: &GixRepo) -> (Snapshot, vet_app::ports:
 struct MemStore(Mutex<HashMap<BlobId, Vec<u8>>>);
 
 impl Store for MemStore {
-    async fn put_blob(&self, bytes: &[u8]) -> Result<BlobId, StoreError> {
-        let id = blob(bytes);
-        self.0.lock().unwrap().insert(id, bytes.to_vec());
+    async fn put_blob(&self, bytes: Vec<u8>) -> Result<BlobId, StoreError> {
+        let id = blob(&bytes);
+        self.0.lock().unwrap().insert(id, bytes);
         Ok(id)
     }
     async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self.0.lock().unwrap().get(&id).cloned())
     }
-    async fn put_tree_node(&self, bytes: &[u8]) -> Result<Hash, StoreError> {
-        Ok(Hash::of(bytes))
+    async fn put_snapshot(&self, _: Snapshot) -> Result<(), StoreError> {
+        unimplemented!()
     }
-    async fn tree_node(&self, _: Hash) -> Result<Option<Vec<u8>>, StoreError> {
-        Ok(None)
+    async fn snapshot(&self, _: SnapshotId) -> Result<Option<Snapshot>, StoreError> {
+        unimplemented!()
+    }
+    async fn append_timeline(&self, _: SessionId, _: SnapshotId) -> Result<(), StoreError> {
+        unimplemented!()
+    }
+    async fn timeline(&self, _: SessionId) -> Result<Vec<SnapshotId>, StoreError> {
+        unimplemented!()
+    }
+    async fn gc(&self, _: i64) -> Result<GcReport, StoreError> {
+        unimplemented!()
     }
 }
 

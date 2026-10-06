@@ -2,7 +2,6 @@
 //! fsmonitor, or filter and diff drivers (§6.3).
 
 mod diff;
-mod merkle;
 mod scan;
 
 use std::collections::{BTreeMap, HashMap};
@@ -15,9 +14,9 @@ use gix::objs::Find;
 use vet_app::acquisition::CommitId;
 use vet_app::ports::{Dirty, GitError, GitRepo, Scan, Store};
 use vet_core::content::{BlobId, RepoPath, Snapshot, SnapshotDiff};
+use vet_core::merkle;
 
 pub use diff::line_hunks;
-pub use merkle::snapshot_id;
 
 /// Default capture size cap (§6.1).
 pub const DEFAULT_CAP: u64 = 50 * 1024 * 1024;
@@ -52,7 +51,7 @@ impl GixRepo {
             let entry = scan::tree_entry(&repo, &self.blobs, e.id, e.mode.bits())?;
             entries.insert(RepoPath(e.path(&index).to_vec()), entry);
         }
-        Ok(Snapshot { id: snapshot_id(&entries), entries })
+        Ok(Snapshot { id: merkle::snapshot_id(&entries), entries })
     }
 
     fn read_blob_sync(&self, path: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {

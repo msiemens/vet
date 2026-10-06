@@ -77,7 +77,7 @@ impl<G: GitRepo, S: Store> Acquisition<G, S> {
                 .read_blob(path, entry.blob)
                 .await?
                 .ok_or_else(|| GitError("worktree changed while pinning".into()))?;
-            self.store.put_blob(&bytes).await.map_err(|e| GitError(e.0))?;
+            self.store.put_blob(bytes).await.map_err(|e| GitError(e.0))?;
         }
         let pin = Pin { id, head, tree: target.id };
         Ok(Opened { pin, base, target, status })

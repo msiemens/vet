@@ -4,6 +4,7 @@
 
 pub mod completion;
 pub mod content;
+pub mod merkle;
 pub mod platform;
 pub mod remap;
 pub mod resolve;

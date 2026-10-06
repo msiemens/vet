@@ -15,7 +15,9 @@ use unicode_normalization::UnicodeNormalization;
 use vet_app::ports::{GitError, Scan};
 use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, RepoPath, Snapshot, SnapshotStatus};
 
-use super::{BlobCache, err, merkle};
+use vet_core::merkle;
+
+use super::{BlobCache, err};
 
 /// One worktree item, converted the way git would store it.
 pub(crate) struct Item {
