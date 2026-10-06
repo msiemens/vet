@@ -461,6 +461,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Worktree groups
 - Export annotations as agent task files
 - Problems panel: the diagnostics of the whole changeset in one list
+- Minimap
 
 ### Later
 
