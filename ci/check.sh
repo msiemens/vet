@@ -37,5 +37,15 @@ step "pnpm test"
 pnpm test
 step "pnpm build"
 pnpm build
+cd ..
+
+# cargo never removes the artifacts of earlier builds; keep each target directory under a cap.
+step "cargo sweep"
+if command -v cargo-sweep >/dev/null; then
+    cargo sweep --maxsize 10GB
+    cargo sweep --maxsize 10GB ui/src-tauri
+else
+    echo "SKIPPED: cargo-sweep is not installed (cargo install cargo-sweep)"
+fi
 
 printf '\nall checks passed\n'
