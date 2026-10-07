@@ -33,14 +33,7 @@ pub enum BaseChoice {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ChangesetId(pub u64);
 
-/// A remote repository as its URL names it: `host/owner/repo` for GitHub,
-/// `host/org/project/repo` for Azure DevOps, parsed from the URL and never from
-/// the platform's name.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub struct RemoteKey {
-    pub host: String,
-    pub path: String,
-}
+pub use crate::platform::RemoteKey;
 
 /// Where a changeset's target comes from. With the repository root it names the
 /// changeset: it is stable across versions, rebases and restarts.
