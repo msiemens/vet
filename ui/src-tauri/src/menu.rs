@@ -1,9 +1,15 @@
-//! The native menu bar, which the UI defines.
+//! The native menu bar and context menus, which the UI defines.
 
-use tauri::menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, Submenu, SubmenuBuilder};
-use tauri::{AppHandle, Wry};
+use std::sync::Mutex;
+use std::sync::mpsc;
 
-/// One entry of the main menu the UI defines (`MenuItem` in `ui/src/lib/ui/menuItem.ts`).
+use tauri::menu::{
+    CheckMenuItemBuilder, ContextMenu, IsMenuItem, Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, Submenu,
+    SubmenuBuilder,
+};
+use tauri::{AppHandle, LogicalPosition, Manager, State, Window, Wry};
+
+/// One entry of a menu the UI defines (`MenuItem` in `ui/src/lib/ui/menuItem.ts`).
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MenuEntry {
@@ -11,8 +17,10 @@ pub struct MenuEntry {
     label: String,
     /// Secondary text; a native menu has no column for it, so it follows the label.
     detail: Option<String>,
-    /// An accelerator such as `Cmd+,`.
+    /// Display text of the key that runs the item in the window; the menu shows it and registers nothing.
     shortcut: Option<String>,
+    /// A key the menu registers and handles itself, such as `Cmd+,`.
+    accelerator: Option<String>,
     enabled: Option<bool>,
     checked: Option<bool>,
     #[serde(default)]
@@ -20,37 +28,55 @@ pub struct MenuEntry {
     children: Option<Vec<MenuEntry>>,
 }
 
-fn submenu(app: &AppHandle, label: &str, enabled: bool, entries: &[MenuEntry]) -> tauri::Result<Submenu<Wry>> {
-    let mut builder = SubmenuBuilder::new(app, label).enabled(enabled);
-    for entry in entries {
-        if entry.separator {
-            builder = builder.separator();
-        } else if let Some(children) = &entry.children {
-            builder = builder.item(&submenu(app, &entry.label, entry.enabled.unwrap_or(true), children)?);
-        } else {
-            let text = match &entry.detail {
-                Some(detail) => format!("{}  —  {detail}", entry.label),
-                None => entry.label.clone(),
-            };
-            let enabled = entry.enabled.unwrap_or(true);
-            if let Some(checked) = entry.checked {
-                let mut item = CheckMenuItemBuilder::with_id(&entry.id, text)
-                    .checked(checked)
-                    .enabled(enabled);
-                if let Some(shortcut) = &entry.shortcut {
-                    item = item.accelerator(shortcut);
-                }
-                builder = builder.item(&item.build(app)?);
-            } else {
-                let mut item = MenuItemBuilder::with_id(&entry.id, text).enabled(enabled);
-                if let Some(shortcut) = &entry.shortcut {
-                    item = item.accelerator(shortcut);
-                }
-                builder = builder.item(&item.build(app)?);
-            }
-        }
+/// The text of an item: its label, the detail after it, and the display shortcut where the item has
+/// no accelerator of its own (a registered accelerator draws itself).
+fn item_text(entry: &MenuEntry) -> String {
+    let mut text = entry.label.clone();
+    if let Some(detail) = &entry.detail {
+        text = format!("{text}  —  {detail}");
     }
-    builder.build()
+    if let (Some(shortcut), None) = (&entry.shortcut, &entry.accelerator) {
+        // Windows menus align text after a tab as the shortcut column.
+        let gap = if cfg!(windows) { "\t" } else { "    " };
+        text = format!("{text}{gap}{shortcut}");
+    }
+    text
+}
+
+fn item(app: &AppHandle, entry: &MenuEntry) -> tauri::Result<Box<dyn IsMenuItem<Wry>>> {
+    if entry.separator {
+        return Ok(Box::new(PredefinedMenuItem::separator(app)?));
+    }
+    let enabled = entry.enabled.unwrap_or(true);
+    if let Some(children) = &entry.children {
+        return Ok(Box::new(submenu(app, &entry.label, enabled, children)?));
+    }
+    let text = item_text(entry);
+    Ok(if let Some(checked) = entry.checked {
+        let mut item = CheckMenuItemBuilder::with_id(&entry.id, text)
+            .checked(checked)
+            .enabled(enabled);
+        if let Some(accelerator) = &entry.accelerator {
+            item = item.accelerator(accelerator);
+        }
+        Box::new(item.build(app)?)
+    } else {
+        let mut item = MenuItemBuilder::with_id(&entry.id, text).enabled(enabled);
+        if let Some(accelerator) = &entry.accelerator {
+            item = item.accelerator(accelerator);
+        }
+        Box::new(item.build(app)?)
+    })
+}
+
+fn items(app: &AppHandle, entries: &[MenuEntry]) -> tauri::Result<Vec<Box<dyn IsMenuItem<Wry>>>> {
+    entries.iter().map(|entry| item(app, entry)).collect()
+}
+
+fn submenu(app: &AppHandle, label: &str, enabled: bool, entries: &[MenuEntry]) -> tauri::Result<Submenu<Wry>> {
+    let built = items(app, entries)?;
+    let refs: Vec<&dyn IsMenuItem<Wry>> = built.iter().map(|i| i.as_ref()).collect();
+    Submenu::with_items(app, label, enabled, &refs)
 }
 
 /// Replaces the menu bar (macOS) with the UI's definition. The Edit menu is the host's: without
@@ -82,19 +108,113 @@ pub fn set_menu(app: AppHandle, items: Vec<MenuEntry>) -> Result<(), String> {
     build().map_err(|e| e.to_string())
 }
 
+/// Who waits for the choice in the context menu that is open: the item chosen, or `None` once the
+/// menu closed without one.
+#[derive(Default)]
+pub struct ContextMenuChoice(Mutex<Option<mpsc::Sender<Option<String>>>>);
+
+impl ContextMenuChoice {
+    fn begin(&self) -> mpsc::Receiver<Option<String>> {
+        let (tx, rx) = mpsc::channel();
+        // A menu still pending is abandoned: its receiver sees the channel close.
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+        rx
+    }
+
+    /// Answers the waiting context menu; `false` if none is open.
+    fn answer(&self, choice: Option<String>) -> bool {
+        let sender = self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+        sender.is_some_and(|tx| tx.send(choice).is_ok())
+    }
+}
+
+/// Hands an item chosen in a native menu to the context menu that is open, if there is one.
+/// Answers whether it did; otherwise the item belongs to the menu bar.
+pub fn answer_context_menu(app: &AppHandle, id: &str) -> bool {
+    app.state::<ContextMenuChoice>().answer(Some(id.to_owned()))
+}
+
+/// Pops up a context menu at `x`, `y` (CSS pixels from the window's top left) and answers the id of
+/// the item chosen, or `None` if the menu closed without one.
+#[tauri::command]
+pub async fn show_context_menu(
+    app: AppHandle,
+    window: Window,
+    state: State<'_, ContextMenuChoice>,
+    items: Vec<MenuEntry>,
+    x: f64,
+    y: f64,
+) -> Result<Option<String>, String> {
+    let choice = state.begin();
+    let popup = move || -> tauri::Result<()> {
+        let built = self::items(&app, &items)?;
+        let refs: Vec<&dyn IsMenuItem<Wry>> = built.iter().map(|i| i.as_ref()).collect();
+        let menu = Menu::with_items(&app, &refs)?;
+        // Blocks until the menu closes.
+        menu.popup_at(window, LogicalPosition::new(x, y))?;
+        // A chosen item reaches the event loop before this task does, so what is still waiting then
+        // was dismissed.
+        let handle = app.clone();
+        app.run_on_main_thread(move || {
+            handle.state::<ContextMenuChoice>().answer(None);
+        })
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        popup().map_err(|e| e.to_string())?;
+        Ok(choice.recv().unwrap_or(None))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
-    use super::MenuEntry;
+    use super::{ContextMenuChoice, MenuEntry, item_text};
+
+    fn entries(json: &str) -> Vec<MenuEntry> {
+        serde_json::from_str(json).unwrap()
+    }
 
     #[test]
     fn menu_entries_read_the_uis_definition() {
-        let json = r#"[{"id":"file","label":"File","children":[
+        let items = entries(
+            r#"[{"id":"file","label":"File","children":[
             {"id":"-","label":"","separator":true},
-            {"id":"open","label":"Open","shortcut":"Cmd+O","enabled":false,"checked":true,"detail":"/x"}]}]"#;
-        let items: Vec<MenuEntry> = serde_json::from_str(json).unwrap();
+            {"id":"open","label":"Open","accelerator":"Cmd+O","shortcut":"Ctrl+O","enabled":false,"checked":true,"detail":"/x"}]}]"#,
+        );
         let children = items[0].children.as_deref().unwrap();
-        assert!(children[0].separator && children[0].shortcut.is_none());
-        assert_eq!(children[1].shortcut.as_deref(), Some("Cmd+O"));
+        assert!(children[0].separator && children[0].accelerator.is_none());
+        assert_eq!(children[1].accelerator.as_deref(), Some("Cmd+O"));
         assert_eq!((children[1].enabled, children[1].checked), (Some(false), Some(true)));
+    }
+
+    #[test]
+    fn a_shortcut_is_shown_as_text_unless_the_item_registers_an_accelerator() {
+        let items = entries(
+            r#"[{"id":"a","label":"Copy path","shortcut":"Ctrl+C"},
+            {"id":"b","label":"Open","detail":"/x","shortcut":"Ctrl+O"},
+            {"id":"c","label":"Quit","accelerator":"Cmd+Q","shortcut":"Ctrl+Q"},
+            {"id":"d","label":"Plain"}]"#,
+        );
+        let texts: Vec<String> = items.iter().map(item_text).collect();
+        assert!(texts[0].starts_with("Copy path") && texts[0].ends_with("Ctrl+C"));
+        assert!(texts[1].contains("/x") && texts[1].ends_with("Ctrl+O"));
+        assert_eq!(texts[2], "Quit");
+        assert_eq!(texts[3], "Plain");
+    }
+
+    #[test]
+    fn a_context_menu_gets_one_answer() {
+        let state = ContextMenuChoice::default();
+        let first = state.begin();
+        assert!(state.answer(Some("a".into())));
+        assert!(!state.answer(None));
+        assert_eq!(first.recv().unwrap(), Some("a".into()));
+
+        let abandoned = state.begin();
+        let second = state.begin();
+        assert!(abandoned.recv().is_err());
+        assert!(state.answer(None));
+        assert_eq!(second.recv().unwrap(), None);
     }
 }

@@ -26,8 +26,12 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
-        // Items of the native menu go to the UI, which owns what they do.
+        // An item of a context menu answers the request that popped it up; one of the menu bar goes
+        // to the UI, which owns what it does.
         .on_menu_event(|app, event| {
+            if menu::answer_context_menu(app, &event.id().0) {
+                return;
+            }
             if let Err(e) = app.emit("vet-menu", event.id().0.clone()) {
                 eprintln!("cannot forward menu event: {e}");
             }
@@ -35,6 +39,7 @@ pub fn run() {
         .on_window_event(geometry::on_window_event)
         .setup(|app| {
             app.manage(Bench::from_env());
+            app.manage(menu::ContextMenuChoice::default());
             app.manage(Startup::new());
             geometry::init(app.handle(), &app.state::<Bench>())?;
             startup::show_splash(app.handle());
@@ -57,7 +62,8 @@ pub fn run() {
             window::quit,
             bench::renderer_memory,
             bench::save_results,
-            menu::set_menu
+            menu::set_menu,
+            menu::show_context_menu
         ])
         .build(tauri::generate_context!())
         .expect("error while building the Vet shell");

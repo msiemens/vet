@@ -4,8 +4,10 @@ export interface MenuItem {
   label: string;
   /** Secondary text, e.g. the path behind a recent repository's name. */
   detail?: string;
-  /** Display text of the key binding, e.g. `Ctrl+Alt+S`. */
+  /** Display text of the key binding, e.g. `Ctrl+Alt+S`. The menu only shows it; the window's key handler runs it. */
   shortcut?: string;
+  /** A key the native menu bar registers and handles itself, e.g. `Cmd+,`; it needs no `shortcut` text. */
+  accelerator?: string;
   /** Default true. */
   enabled?: boolean;
   /** Shows a check mark. */

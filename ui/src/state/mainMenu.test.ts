@@ -57,9 +57,9 @@ void test("the macOS menu bar has an app menu; elsewhere Settings and Exit are i
     mac.map((m) => m.id),
     ["app", "file", "view", "help"],
   );
-  assert.equal(find(mac, "app.settings")?.shortcut, "Cmd+,");
+  assert.equal(find(mac, "app.settings")?.accelerator, "Cmd+,");
   assert.equal(find(mac, "app.quit")?.label, "Quit Vet");
-  assert.equal(find(mac, "app.quit")?.shortcut, "Cmd+Q");
+  assert.equal(find(mac, "app.quit")?.accelerator, "Cmd+Q");
   const other = menu();
   assert.deepEqual(
     other.map((m) => m.id),

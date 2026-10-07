@@ -210,7 +210,11 @@ void test("menu items take label, shortcut and enabled state from the registry",
     { id: "-", label: "", separator: true },
     { id: "pick:x", label: "Pick x", checked: true },
   ]);
-  assert.equal(resolveMenu(r, [{ command: "next" }], { open: true }, true)[0].shortcut, "Cmd+J");
+  const [native] = resolveMenu(r, [{ command: "next" }], { open: true }, true);
+  assert.equal(native.accelerator, "Cmd+J");
+  assert.equal(native.shortcut, undefined);
+  const [bare] = resolveMenu(r, [{ command: "pick" }], { open: true }, true);
+  assert.equal(bare.accelerator, undefined);
 });
 
 void test("a submenu is disabled when none of its items is enabled, and commands that are not registered are left out", () => {

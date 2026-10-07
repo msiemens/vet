@@ -36,7 +36,7 @@ export function resolveMenu<C extends object>(
   registry: CommandRegistry<C>,
   spec: MenuSpec,
   context: C,
-  /** The host draws the menu: items show their native accelerator, not the window's binding. */
+  /** The host draws the menu bar: an item with a native accelerator carries it instead of the window's binding as text. */
   native = false,
 ): MenuItem[] {
   const items: MenuItem[] = [];
@@ -52,12 +52,14 @@ export function resolveMenu<C extends object>(
       if (!command) continue;
       const id = entry.arg === undefined ? command.id : `${command.id}:${entry.arg}`;
       const enabled = entry.enabled !== false && registry.isEnabled(id, context);
-      const shortcut = native ? command.accelerator : registry.binding(command.id)?.label;
+      const accelerator = native ? command.accelerator : undefined;
+      const shortcut = accelerator === undefined ? registry.binding(command.id)?.label : undefined;
       items.push({
         id,
         label: entry.label ?? command.label,
         ...(entry.detail === undefined ? {} : { detail: entry.detail }),
         ...(shortcut === undefined ? {} : { shortcut }),
+        ...(accelerator === undefined ? {} : { accelerator }),
         ...(enabled ? {} : { enabled: false }),
         ...(entry.checked === undefined ? {} : { checked: entry.checked }),
       });
