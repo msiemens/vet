@@ -105,6 +105,11 @@
   /* The before/after preview strip of an image change card. */
   --h-preview: 116px;
   --h-tab: 32px;
+  /* A progress bar, and the footer's one for the newest background task. */
+  --h-progress: 3px;
+  --w-progress: 96px;
+  /* The sheet listing the running background tasks. */
+  --w-tasks: 360px;
   --w-rail: 34px;
   --w-welcome-side: 240px;
   --h-welcome-row: 52px;

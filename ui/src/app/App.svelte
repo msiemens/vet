@@ -9,6 +9,7 @@
     Header,
     StatusFooter,
     TOOLS,
+    TaskProgress,
     TitleBar,
     ToolRail,
     toggleTool,
@@ -26,6 +27,7 @@
   import { appCommands } from "../state/appCommands";
   import { commands } from "../state/commands";
   import { mainMenu } from "../state/mainMenu.svelte";
+  import { progress as backgroundTasks } from "../state/progress.svelte";
   import { recent } from "../state/recent.svelte";
   import { semantic } from "../state/semantic.svelte";
   import { session } from "../state/session.svelte";
@@ -219,6 +221,7 @@
 <DevTools bind:this={tools} {controller} bind:open={devOpen} />
 
 <StatusFooter info={footer}>
+  {#snippet progress()}<TaskProgress tasks={backgroundTasks.tasks} />{/snippet}
   {#snippet end()}<button class="flat dev" type="button" aria-pressed={devOpen} onclick={() => (devOpen = !devOpen)}
       >Dev</button
     >{/snippet}

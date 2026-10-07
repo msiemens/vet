@@ -9,8 +9,8 @@ import type { TaskState } from "./TaskState";
  */
 export type Task = { session: number, 
 /**
- * Unique among the tasks of the backend process, and the same in every
- * announcement of the task.
+ * Unique among the tasks of the session, and the same in every announcement
+ * of the task.
  */
 id: number, kind: TaskKind, 
 /**

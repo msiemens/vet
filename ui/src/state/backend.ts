@@ -26,6 +26,7 @@ import type { ServerInfo } from "../generated/ServerInfo";
 import type { Side } from "../generated/Side";
 import type { SymbolId } from "../generated/SymbolId";
 import type { SymbolSignature } from "../generated/SymbolSignature";
+import type { Task } from "../generated/Task";
 import type { TextContent } from "../generated/TextContent";
 import type { Thread } from "../generated/Thread";
 import type { ThreadStatus } from "../generated/ThreadStatus";
@@ -142,6 +143,11 @@ export class Backend {
   /** Forgets the personal access token of a host; resolves with the accounts left. */
   async removeCredentials(host: string): Promise<Account[]> {
     return expect(await this.conn.request({ type: "removeCredentials", host }), "accounts").accounts;
+  }
+
+  /** The background tasks of the open session that are running now. */
+  async tasks(): Promise<Task[]> {
+    return expect(await this.conn.request({ type: "tasks", session: this.sid }), "tasks").tasks;
   }
 
   async manifest(): Promise<Manifest> {

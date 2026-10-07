@@ -18,6 +18,7 @@ class SessionStore {
   /** Why the last attempt to open a repository failed. */
   openError = $state<{ path: string; message: string }>();
   private connectListeners = new Set<(backend: Backend) => void>();
+  private openListeners = new Set<(backend: Backend) => void>();
   private closeListeners = new Set<() => void>();
   private opener = new RepoOpener({
     release: () => this.release(),
@@ -26,6 +27,7 @@ class SessionStore {
     opened: (repo) => {
       this.repo = repo;
       void recent.remember(this.connected(), repo);
+      for (const listener of this.openListeners) listener(this.connected());
     },
     failed: (path, error) => (this.openError = { path, message: errorText(error) }),
   });
@@ -45,6 +47,14 @@ class SessionStore {
   /** Called with the backend once it is connected, before anything is opened. */
   onConnect(listener: (backend: Backend) => void) {
     this.connectListeners.add(listener);
+  }
+
+  /**
+   * Called when a repository is open on the backend and the window shows it, which is before the
+   * backend has read it: events about it may have arrived already.
+   */
+  onOpen(listener: (backend: Backend) => void) {
+    this.openListeners.add(listener);
   }
 
   /** Called when the open repository is closed, before the backend is told. */
@@ -90,6 +100,16 @@ class SessionStore {
   async closeRepo() {
     await this.release();
     await setWindowMode("welcome");
+  }
+
+  /**
+   * The open repository turned out not to be readable (the backend opens before it reads): back to
+   * the welcome screen, which says why.
+   */
+  async abandon(error: unknown) {
+    const path = this.repo ?? "";
+    await this.closeRepo();
+    this.openError = { path, message: errorText(error) };
   }
 
   /** Closes the open repository without touching the window, for a caller that opens another. */

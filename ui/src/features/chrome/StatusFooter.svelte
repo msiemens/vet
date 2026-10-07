@@ -15,7 +15,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
 
-  let { info, end }: { info: FooterInfo; end?: Snippet } = $props();
+  let { info, progress, end }: { info: FooterInfo; progress?: Snippet; end?: Snippet } = $props();
 </script>
 
 <footer>
@@ -24,6 +24,7 @@
     <span class="topology"><span class="dot" class:ok={info.topology.ok}></span>{info.topology.label}</span>
   {/if}
   <span class="grow"></span>
+  {#if progress}{@render progress()}{/if}
   {#if info.diagnostics !== undefined}<span title="Diagnostics">{info.diagnostics} diagnostics</span>{/if}
   {#if info.cursor}<span class="mono small">{info.cursor}</span>{/if}
   {#if info.eol}<span>{info.eol}</span>{/if}

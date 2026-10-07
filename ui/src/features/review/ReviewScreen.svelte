@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { onMount, untrack } from "svelte";
-  import { errorText } from "../../lib/errorText";
   import type { MenuSpec } from "../../lib/commandMenu";
   import ContextMenu from "../../lib/ui/ContextMenu.svelte";
   import type { MenuItem } from "../../lib/ui/menuItem";
@@ -105,7 +104,7 @@
     );
     controller.open(true).then(
       (ms) => onready(controller, ms),
-      (e: unknown) => (session.status = errorText(e)),
+      (e: unknown) => void session.abandon(e),
     );
     return () => {
       stopThreads();

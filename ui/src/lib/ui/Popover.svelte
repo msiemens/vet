@@ -4,19 +4,28 @@
   let {
     open = $bindable(false),
     align = "left",
+    above = false,
     trigger,
     children,
-  }: { open?: boolean; align?: "left" | "right"; trigger: Snippet<[toggle: () => void]>; children: Snippet } = $props();
+  }: {
+    open?: boolean;
+    align?: "left" | "right";
+    /** Opens upwards, for a trigger at the bottom of the window. */
+    above?: boolean;
+    trigger: Snippet<[toggle: () => void]>;
+    children: Snippet;
+  } = $props();
   let root: HTMLElement;
 
   const toggle = () => (open = !open);
 
-  /** Fixed below the trigger, so a clipping parent (the title bar) cannot cut it off; kept inside the window. */
+  /** Fixed beside the trigger, so a clipping parent (the title bar) cannot cut it off; kept inside the window. */
   function place(sheet: HTMLElement) {
     const anchor = root.getBoundingClientRect();
     const width = sheet.offsetWidth;
     const left = align === "right" ? anchor.right - width : anchor.left;
-    sheet.style.top = `${anchor.bottom + 4}px`;
+    if (above) sheet.style.bottom = `${window.innerHeight - anchor.top + 4}px`;
+    else sheet.style.top = `${anchor.bottom + 4}px`;
     sheet.style.left = `${Math.max(4, Math.min(left, window.innerWidth - width - 4))}px`;
   }
 </script>

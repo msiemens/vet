@@ -45,8 +45,8 @@ pub enum TaskState {
 #[ts(export)]
 pub struct Task {
     pub session: SessionId,
-    /// Unique among the tasks of the backend process, and the same in every
-    /// announcement of the task.
+    /// Unique among the tasks of the session, and the same in every announcement
+    /// of the task.
     pub id: u32,
     pub kind: TaskKind,
     /// Fit to show: names the step, like "Indexing rust-analyzer".
