@@ -48,6 +48,8 @@ Chrome is not selectable (`user-select: none` on `body`); content meant to be co
 
 At launch the host opens a splash window (`splash.html` and `src/splash.ts`, a second Vite entry; `features/splash/`) and starts the backend on a thread, reporting each step to it (`state/host.ts`: `onStartupProgress`, `startupProgress`, `retryStartup`). The main window loads hidden meanwhile; `App` shows it once its backend connection is up, or failed with its own error, and the host then closes the splash. A failed start keeps the splash with Retry and Quit.
 
+One window shows either the welcome screen or a project, and keeps a position and size for each (`src-tauri/src/geometry.rs`, saved as `window-geometry.json` in the app config dir; a saved place on a display that is gone falls back to the default). The host places the hidden window for its first mode before showing it; `session.svelte.ts` switches the mode (`setWindowMode`) before the content changes, so the window moves once.
+
 The host passes the repository to open (command line or `VET_REPO`; in a plain browser `#repo=`). The folder dialog and the file picker are Tauri commands behind `state/host.ts`; the recent list is the backend's (`state/recent.svelte.ts`, each project with when it was last opened); the app version comes from the host (`appVersion`); paths stay backend-side strings (in the WSL split the host turns `\\wsl.localhost\<distro>\…` into the Linux path).
 
 ## Views
