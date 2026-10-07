@@ -10,6 +10,8 @@ export interface AppActions {
   pickProject(): void;
   openProject(path: string): void;
   finishReview(): void;
+  /** Fetches the open project's remotes. */
+  fetch(): void;
   showDialog(dialog: "settings" | "about"): void;
   quit(): void;
   setMode(mode: Mode): void;
@@ -33,6 +35,7 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
       },
     },
     { id: "review.finish", label: "Finish Review…", enabled: (c) => c.reviewOpen, run: () => a.finishReview() },
+    { id: "git.fetch", label: "Fetch", enabled: repoOpen, run: () => a.fetch() },
     {
       id: "app.settings",
       label: "Settings…",

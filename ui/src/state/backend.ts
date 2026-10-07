@@ -217,6 +217,11 @@ export class Backend {
     return expect(await this.conn.request({ type: "finishReview", project: this.pid }), "reviewFinished").complete;
   }
 
+  /** Fetches the repository's remotes and resolves when that ended; a fetch that failed shows as a failed task, not here. Every subscriber then gets `baseChanged`. */
+  async fetch(): Promise<void> {
+    expect(await this.conn.request({ type: "fetch", project: this.pid }), "done");
+  }
+
   /** The branches and recent commits a base can be picked from. */
   async baseCandidates(): Promise<BaseCandidates> {
     const { branches, commits } = expect(

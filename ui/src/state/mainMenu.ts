@@ -36,6 +36,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     },
     "-",
     { command: "review.finish" },
+    { command: "git.fetch" },
     ...(s.native ? [] : (["-", settings, "-", quit] as MenuSpec)),
   ];
   const view: MenuSpec = [

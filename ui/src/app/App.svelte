@@ -63,6 +63,7 @@
       pickProject: () => void pickProject(),
       openProject,
       finishReview: () => (dialog = "finish"),
+      fetch: () => void changeset.fetch(),
       showDialog: (d) => (dialog = d),
       quit: () => void quit(),
       setMode,

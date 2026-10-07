@@ -58,6 +58,7 @@ class ChangesetStore {
         else if (event.type === "reviewStarted" && this.manifest)
           this.manifest = { ...this.manifest, review: event.review };
         else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
+        else if (event.type === "baseChanged" && this.manifest) this.manifest = { ...this.manifest, base: event.base };
       }),
     );
     session.onClose(() => {
@@ -100,6 +101,15 @@ class ChangesetStore {
   async setBase(choice: BaseChoice) {
     try {
       await session.connected().setBase(choice);
+    } catch (error) {
+      session.notice = errorText(error);
+    }
+  }
+
+  /** Fetches the remotes. The footer shows the task; the base's `behind` follows with `baseChanged`. */
+  async fetch() {
+    try {
+      await session.connected().fetch();
     } catch (error) {
       session.notice = errorText(error);
     }

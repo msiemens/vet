@@ -23,6 +23,7 @@ const actions: AppActions = {
   pickProject: () => calls.push("pick"),
   openProject: (path) => calls.push(`open ${path}`),
   finishReview: () => calls.push("finish"),
+  fetch: () => calls.push("fetch"),
   showDialog: (d) => calls.push(`dialog ${d}`),
   quit: () => calls.push("quit"),
   setMode: (mode) => calls.push(`mode ${mode}`),
@@ -88,6 +89,16 @@ void test("Finish Review is offered only while a review is open", () => {
   calls.length = 0;
   assert.equal(registry.run("review.finish", { ...open, reviewOpen: false }), false);
   assert.deepEqual(calls, []);
+});
+
+void test("Fetch is offered in the File menu while a project is open", () => {
+  const file = menu().find((m) => m.id === "file");
+  assert.ok(file?.children?.some((i) => i.id === "git.fetch"));
+  assert.equal(find(menu({}, { repoOpen: false }), "git.fetch")?.enabled, false);
+  calls.length = 0;
+  assert.equal(registry.run("git.fetch", { ...open, repoOpen: false }), false);
+  assert.equal(registry.run("git.fetch", open), true);
+  assert.deepEqual(calls, ["fetch"]);
 });
 
 void test("items carry their argument, including paths with colons", () => {
