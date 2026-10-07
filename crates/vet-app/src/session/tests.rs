@@ -15,10 +15,18 @@ use vet_core::review::{
     ThreadStatus,
 };
 
+use vet_core::completion::HunkState;
+
+use super::blobs::image_media_type;
+use super::manifest::{old_path_of, update_of};
+use super::state::{check_revision, outcome};
 use super::*;
 use crate::pin::{BaseChoice, CommitId, Pin, PinId};
-use crate::ports::{BlobRead, BlobReader, Checkout, Differ, Dirty, History, Scanner, SessionRefs};
-use crate::review::{Session, Version};
+use crate::ports::{
+    BlobRead, BlobReader, BranchInfo, Checkout, CommitInfo, Differ, Dirty, GitError, History, ReviewStore, Scan,
+    Scanner, SessionRefs, Store, StoreError,
+};
+use crate::review::{NonTextAck, RecordedSpan, Session, SpanId, Version};
 
 const REPO: &str = "/repo";
 
