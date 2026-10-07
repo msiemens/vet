@@ -6,17 +6,18 @@
 //! snapshot settles.
 
 use std::marker::PhantomData;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use tokio::sync::OnceCell;
+use tokio::sync::{OnceCell, watch};
 use vet_core::content::{FileDiff, RepoPath};
 use vet_core::review::Side;
 use vet_semantic::derived::{
     BaseTexts, Bounds, Change, Changes, Derived, EntryPoints, Reach, RemovalImpact, SymbolImpact, changed_symbols,
     impact, reachability, removal_impact,
 };
-use vet_semantic::join::{bounded, join};
+use vet_semantic::join::{Either, bounded, join, race};
 use vet_semantic::pool::{Pool, Target};
 use vet_semantic::ports::{
     At, Backend, BackendId, Diagnostic, Location, Materializer, Provenance, RestoreFailure, ServerLauncher, Severity,
@@ -79,6 +80,46 @@ pub fn countable(diagnostics: &[Diagnostic]) -> u32 {
 
 type ChangesCell = OnceCell<Arc<Derived<Changes>>>;
 
+/// The newest revision known. Semantic work for an older one is worth nothing: its
+/// positions and results cannot be shown against the newer revision, and the viewer
+/// asks again. Dropping it also stops what it waits for, such as requests to servers.
+pub struct Revisions(watch::Sender<u32>);
+
+impl Default for Revisions {
+    fn default() -> Self {
+        Self(watch::channel(0).0)
+    }
+}
+
+impl Revisions {
+    /// Records that `revision` exists; an older one than is known changes nothing.
+    pub fn advance(&self, revision: u32) {
+        self.0.send_if_modified(|newest| {
+            let newer = revision > *newest;
+            if newer {
+                *newest = revision;
+            }
+            newer
+        });
+    }
+
+    /// The result of `work`, unless a revision newer than `revision` is or becomes known
+    /// first: then `work` is dropped and the newer revision is returned.
+    pub async fn until_superseded<T>(&self, revision: u32, work: impl Future<Output = T>) -> Result<T, u32> {
+        self.advance(revision);
+        let mut newest = self.0.subscribe();
+        let superseded = async {
+            // The sender lives as long as `self`, so waiting never fails.
+            let current = newest.wait_for(|newest| *newest > revision).await.map(|newest| *newest);
+            current.unwrap_or(revision)
+        };
+        match race(superseded, work).await {
+            Either::Left(current) => Err(current),
+            Either::Right(done) => Ok(done),
+        }
+    }
+}
+
 pub struct Semantics<G, S, L, M>
 where
     G: GitRepo + Send + Sync,
@@ -91,6 +132,7 @@ where
     /// The changed symbols of one revision, which every derived analysis starts
     /// from. Computed once, however many callers ask while it runs.
     changes: Mutex<Option<(u32, Arc<ChangesCell>)>>,
+    revisions: Revisions,
     /// Kept current by the launcher's restorer (`Limiting`).
     limits: RestoreLimits,
     trust: Trust,
@@ -153,6 +195,7 @@ where
             semantic: Semantic::new(pool, backends),
             _session: PhantomData,
             changes: Mutex::new(None),
+            revisions: Revisions::default(),
             limits,
             trust,
             tasks,
@@ -174,6 +217,22 @@ where
         Ok(self.semantic.pair(base, target))
     }
 
+    /// Tells that the session has moved on to `revision`: semantic work in flight for an
+    /// older one is dropped, as is any that is asked for later.
+    pub fn revision_moved(&self, revision: u32) {
+        self.revisions.advance(revision);
+    }
+
+    /// Runs the work of a request for `revision`, which fails as stale, with the work
+    /// dropped, as soon as a newer revision is known. Callers box the work, so that a
+    /// request does not carry the size of every analysis in its own future.
+    async fn current<T>(&self, revision: u32, work: Pin<Box<impl Future<Output = Fallible<T>>>>) -> Fallible<T> {
+        match self.revisions.until_superseded(revision, work).await {
+            Ok(done) => done,
+            Err(current) => Err(SessionError::Stale { current }),
+        }
+    }
+
     pub async fn hover(
         &self,
         session: &LiveSession<G, S>,
@@ -181,8 +240,14 @@ where
         side: Side,
         at: &At,
     ) -> Fallible<Answer<Option<String>>> {
-        let pair = self.pair(session, revision).await?;
-        Ok(Answer::of(revision, pair.hover(side, at).await))
+        self.current(
+            revision,
+            Box::pin(async move {
+                let pair = self.pair(session, revision).await?;
+                Ok(Answer::of(revision, pair.hover(side, at).await))
+            }),
+        )
+        .await
     }
 
     pub async fn definition(
@@ -192,14 +257,20 @@ where
         side: Side,
         at: &At,
     ) -> Fallible<Answer<Vec<Location>>> {
-        let pair = self.pair(session, revision).await?;
-        let asked = pair.definition(side, at).await.map(|answered| {
-            answered.map(|mut found| {
-                prefer_openable(&mut found);
-                found
-            })
-        });
-        Ok(Answer::of(revision, asked))
+        self.current(
+            revision,
+            Box::pin(async move {
+                let pair = self.pair(session, revision).await?;
+                let asked = pair.definition(side, at).await.map(|answered| {
+                    answered.map(|mut found| {
+                        prefer_openable(&mut found);
+                        found
+                    })
+                });
+                Ok(Answer::of(revision, asked))
+            }),
+        )
+        .await
     }
 
     pub async fn references(
@@ -209,8 +280,14 @@ where
         side: Side,
         at: &At,
     ) -> Fallible<Answer<Vec<Location>>> {
-        let pair = self.pair(session, revision).await?;
-        Ok(Answer::of(revision, pair.references(side, at).await))
+        self.current(
+            revision,
+            Box::pin(async move {
+                let pair = self.pair(session, revision).await?;
+                Ok(Answer::of(revision, pair.references(side, at).await))
+            }),
+        )
+        .await
     }
 
     /// Diagnostics of a file of the target side.
@@ -220,8 +297,14 @@ where
         revision: u32,
         file: &RepoPath,
     ) -> Fallible<Answer<Vec<Diagnostic>>> {
-        let pair = self.pair(session, revision).await?;
-        Ok(Answer::of(revision, pair.diagnostics(Side::Target, file).await))
+        self.current(
+            revision,
+            Box::pin(async move {
+                let pair = self.pair(session, revision).await?;
+                Ok(Answer::of(revision, pair.diagnostics(Side::Target, file).await))
+            }),
+        )
+        .await
     }
 
     /// Starts the servers for every language among the revision's changed
@@ -288,6 +371,11 @@ where
     /// The symbols the revision's diff touches, on both sides of each changed
     /// file. Callers asking for the same revision share one computation.
     pub async fn changed_symbols(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<Arc<Derived<Changes>>> {
+        self.current(revision, Box::pin(self.shared_changes(session, revision)))
+            .await
+    }
+
+    async fn shared_changes(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<Arc<Derived<Changes>>> {
         let pair = self.pair(session, revision).await?;
         let computation = {
             let mut slot = self.changes.lock().expect("not poisoned");
@@ -363,27 +451,37 @@ where
         revision: u32,
         sym: &Sym,
     ) -> Fallible<Answer<Option<Signature>>> {
-        let started = Instant::now();
-        let changed = self.changed(session, revision, "signature", sym).await?;
-        let side = if changed.change == Change::Removed {
-            Side::Base
-        } else {
-            Side::Target
-        };
-        let pair = self.pair(session, revision).await?;
-        let signed = signature(&pair, side, &changed.symbol).await;
-        trace::log(
-            || format!("signature {sym} (hover on the {side:?} side; the symbol's detail if the hover has none)"),
-            started,
-        );
-        Ok(match signed {
-            Ok((signature, provenance)) => Answer {
-                revision,
-                result: Ok(signature),
-                provenance,
-            },
-            Err(e) => Answer::of(revision, Err(e)),
-        })
+        self.current(
+            revision,
+            Box::pin(async move {
+                let started = Instant::now();
+                let changed = self.changed(session, revision, "signature", sym).await?;
+                let side = if changed.change == Change::Removed {
+                    Side::Base
+                } else {
+                    Side::Target
+                };
+                let pair = self.pair(session, revision).await?;
+                let signed = signature(&pair, side, &changed.symbol).await;
+                trace::log(
+                    || {
+                        format!(
+                            "signature {sym} (hover on the {side:?} side; the symbol's detail if the hover has none)"
+                        )
+                    },
+                    started,
+                );
+                Ok(match signed {
+                    Ok((signature, provenance)) => Answer {
+                        revision,
+                        result: Ok(signature),
+                        provenance,
+                    },
+                    Err(e) => Answer::of(revision, Err(e)),
+                })
+            }),
+        )
+        .await
     }
 
     /// References and callers of an added or modified symbol, on the target side.
@@ -393,21 +491,27 @@ where
         revision: u32,
         sym: &Sym,
     ) -> Fallible<Derived<SymbolImpact>> {
-        let started = Instant::now();
-        let changed = self.changed(session, revision, "impact", sym).await?;
-        if changed.change == Change::Removed {
-            return Err(SessionError::Invalid(
-                "the symbol was removed; ask for its removal impact".into(),
-            ));
-        }
-        let pair = self.pair(session, revision).await?;
-        let Derived { mut value, inputs } = impact(&pair, &[changed]).await;
-        let value = value.pop().expect("one symbol in, one impact out");
-        trace::log(
-            || format!("impact {sym} (target: references, then incoming calls, one after the other)"),
-            started,
-        );
-        Ok(Derived { value, inputs })
+        self.current(
+            revision,
+            Box::pin(async move {
+                let started = Instant::now();
+                let changed = self.changed(session, revision, "impact", sym).await?;
+                if changed.change == Change::Removed {
+                    return Err(SessionError::Invalid(
+                        "the symbol was removed; ask for its removal impact".into(),
+                    ));
+                }
+                let pair = self.pair(session, revision).await?;
+                let Derived { mut value, inputs } = impact(&pair, &[changed]).await;
+                let value = value.pop().expect("one symbol in, one impact out");
+                trace::log(
+                    || format!("impact {sym} (target: references, then incoming calls, one after the other)"),
+                    started,
+                );
+                Ok(Derived { value, inputs })
+            }),
+        )
+        .await
     }
 
     /// What became of the remaining references of a removed symbol.
@@ -417,17 +521,23 @@ where
         revision: u32,
         sym: &Sym,
     ) -> Fallible<Derived<RemovalImpact>> {
-        let started = Instant::now();
-        let changed = self.changed(session, revision, "removal impact", sym).await?;
-        if changed.change != Change::Removed {
-            return Err(SessionError::Invalid("the symbol was not removed".into()));
-        }
-        let files = session.changed_files(revision).await?;
-        let pair = self.pair(session, revision).await?;
-        let Derived { mut value, inputs } = removal_impact(&pair, &[changed], &files).await;
-        let value = value.pop().expect("one symbol in, one impact out");
-        trace::log(|| format!("removal impact {sym}"), started);
-        Ok(Derived { value, inputs })
+        self.current(
+            revision,
+            Box::pin(async move {
+                let started = Instant::now();
+                let changed = self.changed(session, revision, "removal impact", sym).await?;
+                if changed.change != Change::Removed {
+                    return Err(SessionError::Invalid("the symbol was not removed".into()));
+                }
+                let files = session.changed_files(revision).await?;
+                let pair = self.pair(session, revision).await?;
+                let Derived { mut value, inputs } = removal_impact(&pair, &[changed], &files).await;
+                let value = value.pop().expect("one symbol in, one impact out");
+                trace::log(|| format!("removal impact {sym}"), started);
+                Ok(Derived { value, inputs })
+            }),
+        )
+        .await
     }
 
     /// Whether an added or modified symbol is reached from an entry point; the
@@ -438,23 +548,26 @@ where
         revision: u32,
         sym: &Sym,
     ) -> Fallible<(SymbolInfo, Derived<Reach>)> {
-        let started = Instant::now();
-        let changed = self.changed(session, revision, "reachability", sym).await?;
-        if changed.change == Change::Removed {
-            return Err(SessionError::Invalid("a removed symbol has nothing to reach".into()));
-        }
-        let pair = self.pair(session, revision).await?;
-        let derived = reachability(&pair, &changed.symbol, &EntryPoints::default(), REACH_BOUNDS).await;
-        trace::log(
-            || {
-                format!(
-                    "reachability {sym} (target: incoming calls level by level, one after the other, at most {} deep)",
-                    REACH_BOUNDS.max_depth
-                )
-            },
-            started,
-        );
-        Ok((changed.symbol, derived))
+        self.current(revision, Box::pin(async move {
+            let started = Instant::now();
+            let changed = self.changed(session, revision, "reachability", sym).await?;
+            if changed.change == Change::Removed {
+                return Err(SessionError::Invalid("a removed symbol has nothing to reach".into()));
+            }
+            let pair = self.pair(session, revision).await?;
+            let derived = reachability(&pair, &changed.symbol, &EntryPoints::default(), REACH_BOUNDS).await;
+            trace::log(
+                || {
+                    format!(
+                        "reachability {sym} (target: incoming calls level by level, one after the other, at most {} deep)",
+                        REACH_BOUNDS.max_depth
+                    )
+                },
+                started,
+            );
+            Ok((changed.symbol, derived))
+        }))
+        .await
     }
 
     /// Drops the servers of `language`: their executable or settings changed.
@@ -553,6 +666,20 @@ mod tests {
         live_symbol_requests: AtomicUsize,
         /// Symbol requests for a text under a file's name.
         text_symbol_requests: AtomicUsize,
+        /// Hovers are asked and never answered.
+        hang_hover: std::sync::atomic::AtomicBool,
+        hovers_asked: AtomicUsize,
+        /// Hovers asked and given up on.
+        hovers_dropped: AtomicUsize,
+    }
+
+    /// Counts a hover as given up on when its request is dropped.
+    struct HoverAsked(Arc<Counters>);
+
+    impl Drop for HoverAsked {
+        fn drop(&mut self) {
+            self.0.hovers_dropped.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     struct FakeLauncher(Arc<Counters>);
@@ -638,6 +765,11 @@ mod tests {
             Ok(vec![])
         }
         async fn hover(&self, _: &At) -> Result<Option<String>, QueryError> {
+            if self.0.hang_hover.load(Ordering::SeqCst) {
+                self.0.hovers_asked.fetch_add(1, Ordering::SeqCst);
+                let _asked = HoverAsked(self.0.clone());
+                std::future::pending::<()>().await;
+            }
             Ok(None)
         }
         async fn incoming_calls(&self, _: &At) -> Result<Vec<SymbolInfo>, QueryError> {
@@ -821,6 +953,45 @@ mod tests {
                 "document_symbols(target:c.md)",
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn work_for_a_revision_is_dropped_with_its_server_request_when_the_session_moves_on() {
+        let (fx, semantics, counters) = semantics().await;
+        counters.hang_hover.store(true, Ordering::SeqCst);
+        let at = At {
+            file: RepoPath(b"a.rs".to_vec()),
+            pos: Pos { line: 0, col: 0 },
+        };
+        let hover = semantics.hover(&fx.session, 0, Side::Target, &at);
+        let moved = async {
+            while counters.hovers_asked.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+            semantics.revision_moved(1);
+        };
+        let (hover, ()) = join(hover, moved).await;
+        assert!(matches!(hover, Err(SessionError::Stale { current: 1 })), "{hover:?}");
+        assert_eq!(counters.hovers_dropped.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn derived_work_for_an_older_revision_is_refused_without_asking_a_server() {
+        let (fx, semantics, counters) = semantics().await;
+        semantics.revision_moved(3);
+        let stale = semantics.changed_symbols(&fx.session, 0).await;
+        assert!(matches!(stale, Err(SessionError::Stale { current: 3 })));
+        assert_eq!(counters.started.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn revisions_run_work_to_the_end_while_nothing_newer_is_known() {
+        let revisions = Revisions::default();
+        assert_eq!(revisions.until_superseded(2, async { "done" }).await, Ok("done"));
+        // Older news changes nothing.
+        revisions.advance(1);
+        assert_eq!(revisions.until_superseded(2, async { "again" }).await, Ok("again"));
+        assert_eq!(revisions.until_superseded(1, async { "late" }).await, Err(2));
     }
 
     #[tokio::test]

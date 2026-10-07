@@ -34,6 +34,31 @@ pub async fn join<A: Future, B: Future>(a: A, b: B) -> (A::Output, B::Output) {
     )
 }
 
+/// Which of two raced futures finished first.
+#[derive(PartialEq, Eq, Debug)]
+pub enum Either<A, B> {
+    Left(A),
+    Right(B),
+}
+
+/// Polls both futures on the caller's task until one finishes, and drops the
+/// other, which stops whatever it was waiting for. If both are ready at once,
+/// `a` wins.
+pub async fn race<A: Future, B: Future>(a: A, b: B) -> Either<A::Output, B::Output> {
+    let mut a = pin!(a);
+    let mut b = pin!(b);
+    poll_fn(|cx| {
+        if let Poll::Ready(v) = a.as_mut().poll(cx) {
+            return Poll::Ready(Either::Left(v));
+        }
+        if let Poll::Ready(v) = b.as_mut().poll(cx) {
+            return Poll::Ready(Either::Right(v));
+        }
+        Poll::Pending
+    })
+    .await
+}
+
 /// Runs `f` over `items` with at most `limit` futures in flight, polled on the
 /// caller's task. The outputs come back in the order of `items`.
 pub async fn bounded<T, F: Future>(
@@ -106,6 +131,37 @@ mod tests {
     fn bounded_over_nothing_is_empty() {
         let out = block_on(bounded(3, Vec::<u8>::new(), |n| async move { n }));
         assert!(out.is_empty());
+    }
+
+    /// Sets a flag when dropped.
+    struct Dropped<'a>(&'a Cell<bool>);
+
+    impl Drop for Dropped<'_> {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    #[test]
+    fn the_first_to_finish_wins_and_the_other_is_dropped_unfinished() {
+        let dropped = Cell::new(false);
+        let slow = async {
+            let _guard = Dropped(&dropped);
+            loop {
+                yield_once().await;
+            }
+        };
+        let quick = async {
+            yield_once().await;
+            "quick"
+        };
+        assert_eq!(block_on(race(slow, quick)), Either::Right("quick"));
+        assert!(dropped.get());
+    }
+
+    #[test]
+    fn a_future_that_is_ready_at_once_wins_over_one_that_is_too() {
+        assert_eq!(block_on(race(async { 1 }, async { 2 })), Either::Left(1));
     }
 
     #[test]

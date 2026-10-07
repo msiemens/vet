@@ -942,6 +942,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_query_superseded_by_a_newer_revision_is_dropped_and_cancelled_at_the_server() {
+        let (server, fake, _dir) = live_server(&[("a.rs", "x")], |_| Reply::Hold);
+        let revisions = vet_app::semantics::Revisions::default();
+        let at = At {
+            file: path("a.rs"),
+            pos: Pos { line: 0, col: 0 },
+        };
+        let superseding = async {
+            fake.until("the hover", |log| {
+                log.iter().any(|m| m["method"] == "textDocument/hover")
+            })
+            .await;
+            revisions.advance(2);
+        };
+        let (answer, ()) =
+            vet_semantic::join::join(revisions.until_superseded(1, server.hover(&at)), superseding).await;
+        assert_eq!(answer.map(|_| ()), Err(2));
+
+        fake.until("the cancellation", |log| {
+            log.iter().any(|m| m["method"] == "$/cancelRequest")
+        })
+        .await;
+        let hover = &fake.messages("textDocument/hover")[0];
+        assert_eq!(fake.messages("$/cancelRequest")[0]["params"]["id"], hover["id"]);
+    }
+
+    #[tokio::test]
     async fn the_retry_of_a_request_the_server_dropped_syncs_the_document_again() {
         for code in [CONTENT_MODIFIED, SERVER_CANCELLED] {
             let dir = tempfile::tempdir().unwrap();
