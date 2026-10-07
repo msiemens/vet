@@ -11,7 +11,7 @@ mod server;
 mod uri;
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use lsp_types as lsp;
 use lsp_types::request::Initialize;
@@ -78,6 +78,36 @@ struct Prepared {
     command: ServerCommand,
     restored: Restored,
     folders: Vec<lsp::WorkspaceFolder>,
+    /// How long each step took, in order.
+    phases: Phases,
+}
+
+/// How long each phase of a server start took, for `VET_TIMING`.
+#[derive(Default)]
+struct Phases(Vec<(&'static str, Duration)>);
+
+impl Phases {
+    /// Runs `step`, recording how long it took as `name`.
+    async fn run<T>(&mut self, name: &'static str, step: impl Future<Output = T>) -> T {
+        let started = Instant::now();
+        let out = step.await;
+        self.mark(name, started);
+        out
+    }
+
+    /// Records the time since `started` as `name`.
+    fn mark(&mut self, name: &'static str, started: Instant) {
+        self.0.push((name, started.elapsed()));
+    }
+
+    fn describe(&self) -> String {
+        let phases: Vec<_> = self
+            .0
+            .iter()
+            .map(|(name, took)| format!("{name} {} ms", took.as_millis()))
+            .collect();
+        phases.join(", ")
+    }
 }
 
 impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
@@ -93,16 +123,21 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
         policy: AnalysisPolicy,
     ) -> Result<Prepared, LaunchError> {
         let config = backend.config();
+        let mut phases = Phases::default();
         let restored = match tree {
-            Tree::Immutable => self.restorer.restore(root, backend, policy).await,
+            Tree::Immutable => {
+                phases
+                    .run("restore", self.restorer.restore(root, backend, policy))
+                    .await
+            }
             Tree::Live => Restored::default(),
         };
-        let command = self
-            .locator
-            .locate(config, root)
+        let command = phases
+            .run("locate binary", self.locator.locate(config, root))
             .await
             .map_err(LaunchError::NotInstalled)?;
-        let folders = workspace_folders(root, config)
+        let folders = phases
+            .run("workspace folders", workspace_folders(root, config))
             .await
             .iter()
             .filter_map(|dir| {
@@ -119,6 +154,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
             command,
             restored,
             folders,
+            phases,
         })
     }
 }
@@ -133,22 +169,26 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
         backend: &Backend,
         policy: AnalysisPolicy,
     ) -> Result<LspServer, LaunchError> {
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let config = backend.config();
         let root = std::fs::canonicalize(root).map_err(|e| LaunchError::Spawn(format!("{}: {e}", root.display())))?;
         let Prepared {
             command,
             restored,
             folders,
+            mut phases,
         } = self.prepare(&root, tree, backend, policy).await?;
         let folders_json = serde_json::to_value(&folders).map_err(|e| LaunchError::Protocol(e.to_string()))?;
+        let phase = Instant::now();
         let conn = Connection::spawn(&command.program, &config.args, &root, &restored.env, folders_json)
             .map_err(LaunchError::Spawn)?;
 
         let options = initialization_options(config, &command);
         let diagnostics = handshake(&conn, &root, folders, options).await?;
+        phases.mark("spawn and handshake", phase);
 
         if matches!(backend, Backend::Roslyn(_)) {
+            let phase = Instant::now();
             load_dotnet_projects(&conn, &root).await?;
             if !conn.wait_for(self.ready_timeout, |s| s.projects_loaded).await {
                 return Err(LaunchError::NotReady(conn.describe(format!(
@@ -157,7 +197,9 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
                     self.ready_timeout.as_secs()
                 ))));
             }
+            phases.mark("project load", phase);
         }
+        let phase = Instant::now();
         conn.with_state(rpc::State::touch);
         if !conn.wait_for(self.ready_timeout, |s| s.is_idle(QUIET)).await {
             return Err(LaunchError::NotReady(conn.describe(format!(
@@ -166,8 +208,16 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
                 self.ready_timeout.as_secs()
             ))));
         }
+        phases.mark("ready wait", phase);
         crate::timing::log(
-            || format!("starting {} on {} ({tree:?})", config.binary, root.display()),
+            || {
+                format!(
+                    "starting {} on {} ({tree:?}: {})",
+                    config.binary,
+                    root.display(),
+                    phases.describe()
+                )
+            },
             started.elapsed(),
         );
         Ok(LspServer::new(conn, root, tree, diagnostics))
