@@ -1,17 +1,24 @@
 // A read-only view of one file's text in the target snapshot (Jump to Source): a CodeMirror
-// editor with syntax highlighting, line numbers and the semantic layer (hover, go to definition,
-// diagnostics), or a small placeholder when the file has no text to show.
+// editor with syntax highlighting, line numbers, the semantic layer (hover, go to definition,
+// diagnostics) and, for a changed file, marks on the changed lines, or a small placeholder when
+// the file has no text to show.
 
-import { EditorState } from "@codemirror/state";
+import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
+import type { FileChange } from "../../../generated/FileChange";
+import type { HunkState } from "../../../generated/HunkState";
 import type { NoTextReason } from "../../../generated/NoTextReason";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { errorText } from "../../../lib/errorText";
 import { decodeHighlights } from "../../../lib/highlights";
 import { iconSvg } from "../../../lib/ui/icons";
+import { changeMarks, setMarkStates } from "./changeMarks";
 import { currentLine } from "./currentLine";
 import { type FileSource, StaleRevision } from "./fileSource";
 import { highlightExtension } from "./highlightExtension";
+import { type HunkActions, closeHunkPopover, openHunkPopover } from "./hunkPopover";
+import { oldLines } from "./markedLines";
+import type { Loaded } from "./mount";
 import { lineOf, lineStart } from "./positions";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { softWrap, wrapsByDefault } from "./softWrap";
@@ -29,6 +36,8 @@ export class TextView {
   private line?: number;
   /** The span to show once the text has arrived. */
   private span?: TextSpan;
+  /** The review state of each of the file's hunks, as the backend last sent it. */
+  private states: HunkState[];
 
   /**
    * Fills `root` with the file's text from `source`. A reply of another revision is dropped:
@@ -37,9 +46,12 @@ export class TextView {
   constructor(
     private root: HTMLElement,
     private path: string,
-    source: FileSource,
+    private source: FileSource,
     private hooks: SemanticHooks,
+    /** The changeset's change to the file, if it changes it: its lines are marked, and a mark offers the hunk's actions. */
+    private changes?: { file: FileChange; actions: HunkActions },
   ) {
+    this.states = changes?.file.review.hunks ?? [];
     root.replaceChildren();
     root.classList.add("vet-text");
     source.text(path).then(
@@ -60,6 +72,7 @@ export class TextView {
       doc: text,
       extensions: [
         softWrap(wrapsByDefault(this.path)),
+        ...this.markExtension(),
         lineNumbers(),
         currentLine,
         highlightExtension(decodeHighlights(highlights)),
@@ -71,6 +84,34 @@ export class TextView {
     if (this.span) this.goToSpan(this.span);
     else if (this.line !== undefined) this.goToLine(this.line);
     this.refreshDiagnostics();
+  }
+
+  private markExtension(): Extension[] {
+    const changes = this.changes;
+    if (!changes?.file.hunks.length) return [];
+    const { file, actions } = changes;
+    let contents: Promise<Loaded> | undefined;
+    return [
+      changeMarks(file.hunks, this.states, (index, mark) => {
+        const hunk = file.hunks[index];
+        openHunkPopover(
+          mark,
+          {
+            index,
+            hunk,
+            state: this.states[index],
+            oldLines: async () => oldLines((await (contents ??= this.source.contents(file))).base, hunk),
+          },
+          actions,
+        );
+      }),
+    ];
+  }
+
+  /** The hunks' review states changed. */
+  applyReview(states: HunkState[]) {
+    this.states = states;
+    this.view?.dispatch({ effects: setMarkStates.of(states) });
   }
 
   /** Asks for the file's diagnostics again (the first time, or after the servers changed). */
@@ -113,6 +154,7 @@ export class TextView {
 
   destroy() {
     this.destroyed = true;
+    closeHunkPopover();
     this.view?.destroy();
     this.root.classList.remove("vet-text");
     this.root.replaceChildren();

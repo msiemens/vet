@@ -3,6 +3,7 @@
 // the tab's view in it.
 
 import { tick } from "svelte";
+import type { FileChange } from "../../generated/FileChange";
 import type { Manifest } from "../../generated/Manifest";
 import type { Side } from "../../generated/Side";
 import type { TextSpan } from "../../generated/TextSpan";
@@ -20,6 +21,7 @@ import type { ViewProbe } from "./editor/viewProbe";
 import { bindRevision, focusedEditor } from "./editor/semantic";
 import type { Mode } from "../../lib/viewMode";
 import { type CommandContext, commands } from "../../state/commands";
+import type { HunkActions } from "./editor/hunkPopover";
 import { TextView } from "./editor/TextView";
 import { type SavedView, restoredTabs } from "./changesetViews";
 import { keyId } from "../../state/changesetKey";
@@ -109,6 +111,7 @@ export class ReviewController {
     semantic.reset(); // the controller belongs to one repository's screen
     const offReview = changeset.onReview((u) => {
       for (const view of this.views.values()) view.applyReview(u);
+      for (const [id, text] of this.texts) if (pathOf(id) === u.path) text.applyReview(u.review.hunks);
     });
     const offThreads = threads.onChange(() => this.showThreads());
     const offCommands = commands.register(...viewCommands(this.viewActions()));
@@ -358,11 +361,13 @@ export class ReviewController {
     const path = pathOf(id);
     if (kindOf(id) === "text" && path !== undefined) {
       this.texts.get(id)?.destroy();
+      const file = manifest.files.find((f) => f.path === path);
       const text = new TextView(
         root,
         path,
         fileSource(this.backend, manifest.revision, this.changeset.view),
         bindRevision(this.hooks, manifest.revision),
+        file && { file, actions: this.hunkActions(file, manifest.revision) },
       );
       this.texts.set(id, text);
       return;
@@ -457,6 +462,29 @@ export class ReviewController {
     this.tabs.showText(path);
     await tick(); // a new tab's pane attaches and builds its view
     if (line !== undefined) this.texts.get(textTab(path))?.goToLine(line);
+  }
+
+  /** What a change mark in the file's text tab offers for the file's hunks. */
+  private hunkActions(file: FileChange, revision: number): HunkActions {
+    return {
+      toggleSeen: (hunk) =>
+        void this.editing(
+          () => this.changeset.toggleHunk(revision, file.path, hunk),
+          () => undefined,
+        ),
+      comment: (hunk) => void this.openHunk(file, hunk, true),
+      openInDiff: (hunk) => void this.openHunk(file, hunk, false),
+    };
+  }
+
+  /** Opens the file's diff tab at its `hunk`-th hunk, with the form for a comment on it if asked. */
+  private async openHunk(file: FileChange, hunk: number, comment: boolean) {
+    this.tabs.show(file.path);
+    await tick(); // a new tab's pane attaches and builds its view
+    const view = this.views.get(fileTab(file.path));
+    if (!view) return;
+    await view.goToHunk(file.nonText.length + hunk);
+    if (comment) view.commentOnHunk(hunk);
   }
 
   /** Opens the file's diff tab, or focuses it if it is open, and goes to a 0-based target `line` if given. */

@@ -697,6 +697,11 @@ export class ChangesetView {
     return true;
   }
 
+  /** Opens the form for a comment on the `hunk`-th hunk of a one-file view. */
+  commentOnHunk(hunk: number) {
+    this.threads.commentOnHunk(this.sections[0], hunk);
+  }
+
   /** Scrolls to where a thread is shown; answers whether it is in this view. */
   async goToThread(thread: Thread): Promise<boolean> {
     const at = this.threads.find(thread);

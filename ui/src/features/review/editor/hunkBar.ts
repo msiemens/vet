@@ -31,7 +31,8 @@ export function hunkHeader(h: Hunk): string {
   return `@@ −${start(h.baseStart, h.baseLen)},${h.baseLen} +${start(h.targetStart, h.targetLen)},${h.targetLen} @@`;
 }
 
-const LABEL: Record<HunkState, string> = {
+/** What the seen toggle does to a hunk in each state. */
+export const LABEL: Record<HunkState, string> = {
   unseen: "Mark hunk seen",
   seen: "Mark hunk unseen",
   seenAgainstOldBase: "Re-confirm",
