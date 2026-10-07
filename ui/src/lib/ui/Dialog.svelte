@@ -19,75 +19,51 @@
     actions?: Snippet;
   } = $props();
 
-  let sheet: HTMLElement;
+  let sheet: HTMLDialogElement;
 
   onMount(() => {
     const opener = document.activeElement as HTMLElement | null;
+    sheet.showModal();
     sheet.focus();
     return () => opener?.focus();
   });
-
-  /** Modal: Escape closes, and Tab stays inside the sheet. */
-  function onkeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      onclose();
-    } else if (e.key === "Tab") {
-      const focusable = [
-        ...sheet.querySelectorAll<HTMLElement>("button:enabled, input, select, textarea, [tabindex='0']"),
-      ];
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const at = document.activeElement;
-      if (e.shiftKey && (at === first || at === sheet)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && at === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    }
-  }
 </script>
 
-<!-- The scrim closes the dialog on a press outside the sheet. -->
-<div class="scrim" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && onclose()}>
-  <div
-    class="surface sheet"
-    role="dialog"
-    aria-modal="true"
-    aria-label={title}
-    tabindex="-1"
-    bind:this={sheet}
-    style:width
-    {onkeydown}
-  >
-    <header>
-      <h2>{title}</h2>
-      <IconButton icon="close" label="Close" size={22} iconSize={12} onclick={onclose} />
-    </header>
-    <div class="content">{@render children()}</div>
-    {#if actions}<footer>{@render actions()}</footer>{/if}
-  </div>
-</div>
+<!-- The browser makes the page behind inert, traps Tab and turns Escape into `cancel`. A press
+     on the backdrop lands on the dialog element itself, which has no padding. -->
+<dialog
+  class="surface sheet"
+  aria-label={title}
+  tabindex="-1"
+  bind:this={sheet}
+  style:width
+  oncancel={(e) => {
+    e.preventDefault();
+    onclose();
+  }}
+  onpointerdown={(e) => e.target === e.currentTarget && onclose()}
+>
+  <header>
+    <h2>{title}</h2>
+    <IconButton icon="close" label="Close" size={22} iconSize={12} onclick={onclose} />
+  </header>
+  <div class="content">{@render children()}</div>
+  {#if actions}<footer>{@render actions()}</footer>{/if}
+</dialog>
 
 <style>
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding-top: 12vh;
-    background: var(--scrim);
-  }
   .sheet {
+    margin: 12vh auto auto;
+    padding: 0;
+    color: inherit;
+    overflow: visible;
     max-width: calc(100vw - 32px);
     max-height: 76vh;
     display: flex;
     flex-direction: column;
+  }
+  .sheet::backdrop {
+    background: var(--scrim);
   }
   .sheet:focus-visible {
     outline: none;
