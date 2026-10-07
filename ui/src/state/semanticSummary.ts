@@ -12,8 +12,8 @@ export interface SemanticSummary {
 }
 
 /**
- * `path` is the focused file tab's file; without it (the Changes tab) the summary covers every
- * file asked about.
+ * `path` is the focused file tab's file; without it (the Changes tab) the diagnostics cover every
+ * file asked about and no language server is named.
  */
 export function summarize(
   counts: ReadonlyMap<string, number>,
@@ -22,9 +22,8 @@ export function summarize(
 ): SemanticSummary {
   const paths = path === undefined ? [...counts.keys()] : counts.has(path) ? [path] : [];
   const diagnostics = paths.length ? paths.reduce((sum, p) => sum + (counts.get(p) ?? 0), 0) : undefined;
-  const missing = path === undefined ? [...unavailable.values()] : [unavailable.get(path)].filter((u) => !!u);
-  const first = missing.at(0);
-  if (!first) return { diagnostics };
-  const files = missing.length > 1 ? ` · ${missing.length} files` : "";
-  return { diagnostics, label: first.label + files, title: first.message };
+  // The Changes tab holds many files, so no one language's status applies there.
+  const missing = path === undefined ? undefined : unavailable.get(path);
+  if (!missing) return { diagnostics };
+  return { diagnostics, label: missing.label, title: missing.message };
 }

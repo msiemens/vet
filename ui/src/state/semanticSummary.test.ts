@@ -43,10 +43,10 @@ void test("a missing server is named by the backend's label, with its message as
   assert.equal(summarize(new Map(), unavailable, "b.rs").label, undefined);
 });
 
-void test("several files without a server are counted", () => {
+void test("the Changes tab names no language server, however many files lack one", () => {
   const unavailable = new Map([
     ["a.txt", missing("unsupported")],
     ["b.rs", missing("serverMissing")],
   ]);
-  assert.equal(summarize(new Map(), unavailable).label, "label of unsupported · 2 files");
+  assert.deepEqual(summarize(new Map(), unavailable), { diagnostics: undefined });
 });
