@@ -469,6 +469,7 @@ Grouped by area; areas and the items within each are in priority order.
 - Materialized base snapshots and their dependency restore are kept between launches, keyed by snapshot, so reopening a review with the same base starts its servers without copying or restoring again
 - Semantic results track what they depend on (file contents, the project, server version), so a new revision recomputes only what its changes affect instead of discarding everything
 - Svelte/Angular backends (config entries + capability assert); C# is in the POC
+- The language-server client's JSON-RPC transport uses `async-lsp` instead of its own framing, and cancels requests whose answer is no longer wanted (a hover the pointer left, a query for an outdated revision)
 
 #### Search and keyboard
 
