@@ -156,6 +156,12 @@ pub struct Location {
     pub external: bool,
 }
 
+/// Puts the locations inside the root, the only ones that can be opened, before the others; each
+/// group keeps the server's order. The first is then the one to go to.
+pub fn prefer_openable(locations: &mut [Location]) {
+    locations.sort_by_key(|l| l.external);
+}
+
 /// A symbol, identified by its file and container chain (outermost first).
 /// Moves and renames change the identity; Vet does not infer them (§7.3).
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -326,6 +332,32 @@ mod tests {
         assert!(backend_for(&backends, &path("README.md")).is_none());
         assert!(backend_for(&backends, &path("dir.rs/Makefile")).is_none());
         assert!(backend_for(&backends, &path("rs")).is_none());
+    }
+
+    #[test]
+    fn definitions_inside_the_root_come_first_in_the_servers_order() {
+        let at = |file: &str, external| Location {
+            file: RepoPath(file.as_bytes().to_vec()),
+            span: Span {
+                start: Pos { line: 0, col: 0 },
+                end: Pos { line: 0, col: 1 },
+            },
+            external,
+        };
+        let mut found = vec![
+            at("/dep/a.rs", true),
+            at("b.rs", false),
+            at("/dep/c.rs", true),
+            at("d.rs", false),
+        ];
+        prefer_openable(&mut found);
+        let files: Vec<_> = found
+            .iter()
+            .map(|l| String::from_utf8_lossy(&l.file.0).into_owned())
+            .collect();
+        assert_eq!(files, ["b.rs", "d.rs", "/dep/a.rs", "/dep/c.rs"]);
+        // Nothing to prefer, nothing to do.
+        prefer_openable(&mut []);
     }
 
     #[test]

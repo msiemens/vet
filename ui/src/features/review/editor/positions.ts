@@ -3,7 +3,6 @@
 
 import type { Hunk } from "../../../generated/Hunk";
 import type { Position } from "../../../generated/Position";
-import type { SemanticLocation } from "../../../generated/SemanticLocation";
 
 /** What of CodeMirror's `Text` is needed: 1-based lines. */
 export interface LineDoc {
@@ -31,9 +30,4 @@ export function baseLineToTarget(hunks: readonly Hunk[], baseLine: number): numb
     delta = h.targetStart + h.targetLen - (h.baseStart + h.baseLen);
   }
   return baseLine + delta;
-}
-
-/** Several definitions: one inside the repository wins, as only that one can be opened. */
-export function pickLocation(locations: readonly SemanticLocation[]): SemanticLocation | undefined {
-  return locations.find((l) => !l.external) ?? locations[0];
 }

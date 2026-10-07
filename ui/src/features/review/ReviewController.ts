@@ -13,7 +13,6 @@ import { threads } from "../../state/threads.svelte";
 import type { Thread } from "../../generated/Thread";
 import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
 import type { Mode } from "./editor/mount";
-import { pickLocation } from "./editor/positions";
 import { bindRevision } from "./editor/semantic";
 import { matches } from "../../lib/keymap";
 import { TextView } from "./editor/TextView";
@@ -162,7 +161,7 @@ export class ReviewController {
    */
   private async goToDefinition(revision: number, side: Side, path: string, line: number, col: number) {
     const found = await semantic.definition(revision, side, path, line, col);
-    const location = found && pickLocation(found);
+    const location = found?.[0];
     if (!location) return;
     if (location.external) {
       changeset.notice = `Defined outside the repository: ${location.path}`;

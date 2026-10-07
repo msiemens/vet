@@ -15,7 +15,7 @@ use vet_semantic::derived::{
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::pool::{Pool, Target};
 use vet_semantic::ports::{
-    At, Backend, BackendId, Diagnostic, Location, RestoreFailure, ServerLauncher, Sym, SymbolInfo,
+    At, Backend, BackendId, Diagnostic, Location, RestoreFailure, ServerLauncher, Sym, SymbolInfo, prefer_openable,
 };
 use vet_semantic::query::{Primitives, Semantic, SemanticError, Side, Which};
 use vet_semantic::signature::{Signature, signature};
@@ -131,7 +131,10 @@ where
         let pair = self.pair(session, revision).await?;
         Ok(Answer {
             revision,
-            result: pair.definition(which, at).await,
+            result: pair.definition(which, at).await.map(|mut found| {
+                prefer_openable(&mut found);
+                found
+            }),
         })
     }
 

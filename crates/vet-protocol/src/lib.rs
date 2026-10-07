@@ -120,8 +120,9 @@ pub enum Request {
         line: u32,
         col: u32,
     },
-    /// Where the symbol at the position is defined. Answers with `Response::Definition`;
-    /// otherwise like `Hover`.
+    /// Where the symbol at the position is defined. The locations are ordered so that
+    /// the first is the one to go to: those inside the repository, which can be opened,
+    /// come before the others. Answers with `Response::Definition`; otherwise like `Hover`.
     Definition {
         session: SessionId,
         revision: u32,

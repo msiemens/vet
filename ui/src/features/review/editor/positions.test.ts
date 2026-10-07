@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { SemanticLocation } from "../../../generated/SemanticLocation.ts";
-import { type LineDoc, baseLineToTarget, offsetAt, pickLocation } from "./positions.ts";
+import { type LineDoc, baseLineToTarget, offsetAt } from "./positions.ts";
 
 /** "ab\n\ncde": lines at 0..2, 3..3, 4..7. */
 const doc: LineDoc = {
@@ -48,16 +47,4 @@ void test("base lines between and after hunks shift by what the hunks before the
   assert.equal(baseLineToTarget(hunks, 8), 10); // after the insertion at target line 9
   assert.equal(baseLineToTarget(hunks, 16), 17);
   assert.equal(baseLineToTarget([], 5), 5);
-});
-
-const at = (path: string, external: boolean): SemanticLocation => ({
-  path,
-  span: { start: { line: 0, col: 0 }, end: { line: 0, col: 1 } },
-  external,
-});
-
-void test("a location inside the repository is preferred", () => {
-  assert.equal(pickLocation([at("/dep.rs", true), at("a.rs", false)])?.path, "a.rs");
-  assert.equal(pickLocation([at("/dep.rs", true)])?.path, "/dep.rs");
-  assert.equal(pickLocation([]), undefined);
 });
