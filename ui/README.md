@@ -15,7 +15,8 @@ pnpm build
 
 In a plain browser, pass the backend's address and the repository in the URL hash:
 `http://localhost:1420/#port=<port>&token=<token>&repo=<path>`. Without `repo` the
-start screen asks for a path. Start the backend with `cargo run -p vet-backend`; it
+welcome screen lists the recent projects; type a path into its search field and press
+Enter to open one. Start the backend with `cargo run -p vet-backend`; it
 prints `{"port":…,"token":"…"}` on its first line.
 
 The TS types in `src/generated` are generated from `vet-protocol`; after changing

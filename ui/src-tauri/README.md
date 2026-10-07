@@ -14,9 +14,9 @@ on exit; the backend also exits when the shell dies (`--exit-on-stdin-close`).
 `pnpm backend` (run by `pnpm tauri dev`) builds it.
 
 The repository comes from the command line or `VET_REPO`:
-`pnpm tauri dev -- -- /path/to/repo`. Without one the start screen offers
-"Open repository…" (a native folder dialog) and the recent repositories, which
-the shell keeps in its app config directory.
+`pnpm tauri dev -- -- /path/to/repo`. Without one the welcome screen offers
+"Open…" (a native folder dialog) and the recent projects, which the backend keeps
+in its store.
 
 The benchmark: `VET_BENCH=1` runs it on startup and quits with the verdict;
 `VET_BENCH=manual` opens its corpus and waits for "Run benchmark" in the Dev panel
