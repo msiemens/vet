@@ -469,6 +469,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - The file icon of a file in the Changes tab opens the file's tab, like the hunk bar's; a changed file's tab switches between file and diff view
 - Git fetch (in-process, read-only): on demand and periodically, so remote branches and how far a base is behind are current; Vet never pulls, merges or rebases
 - The split between the right sidebar's panels can be dragged, keeping its position
+- While a file's tab is active, the changed-symbols panel lists only that file's symbols
 - Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
 - A changed file's file view marks its added, changed and removed lines (removed ones where they were)
 - The Changes tab marks the file the viewer is in (in the tab and the file tree), and reopens the review at the scroll position it was left at
