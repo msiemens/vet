@@ -8,18 +8,20 @@
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
-use vet_core::content::RepoPath;
+use tokio::sync::OnceCell;
+use vet_core::content::{FileDiff, RepoPath};
 use vet_core::review::Side;
 use vet_semantic::derived::{
     Bounds, Change, Changes, Derived, EntryPoints, Reach, RemovalImpact, SymbolImpact, changed_symbols, impact,
     reachability, removal_impact,
 };
+use vet_semantic::join::{bounded, join};
 use vet_semantic::pool::{Pool, Target};
 use vet_semantic::ports::{
     At, Backend, BackendId, Diagnostic, Location, Materializer, RestoreFailure, ServerLauncher, Sym, SymbolInfo,
     prefer_openable,
 };
-use vet_semantic::query::{Primitives, Semantic, SemanticError, Served};
+use vet_semantic::query::{Pair, Primitives, Semantic, SemanticError, Served};
 use vet_semantic::signature::{Signature, signature};
 
 use crate::limits::RestoreLimits;
@@ -46,6 +48,8 @@ pub struct Answer<T> {
 
 type Fallible<T> = Result<T, SessionError>;
 
+type ChangesCell = OnceCell<Arc<Derived<Changes>>>;
+
 pub struct Semantics<G, S, L, M>
 where
     G: GitRepo + Send + Sync,
@@ -55,8 +59,9 @@ where
 {
     semantic: Semantic<M, L>,
     _session: PhantomData<fn(&LiveSession<G, S>)>,
-    /// The changed symbols of one revision, which every derived analysis starts from.
-    changes: Mutex<Option<(u32, Arc<Derived<Changes>>)>>,
+    /// The changed symbols of one revision, which every derived analysis starts
+    /// from. Computed once, however many callers ask while it runs.
+    changes: Mutex<Option<(u32, Arc<ChangesCell>)>>,
     /// Kept current by the launcher's restorer (`Limiting`).
     limits: RestoreLimits,
     trust: Trust,
@@ -181,18 +186,67 @@ where
         })
     }
 
-    /// The symbols the revision's diff touches, on both sides of each changed file.
+    /// Starts the servers for every language among the revision's changed
+    /// files, on both sides, all at once, and returns when they are running.
+    /// A server that fails to start is not reported here: the query that needs
+    /// it reports it.
+    pub async fn start_servers(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<()> {
+        let pair = self.pair(session, revision).await?;
+        let files = session.changed_files(revision).await?;
+        self.start_servers_for(&pair, &files).await;
+        Ok(())
+    }
+
+    async fn start_servers_for(&self, pair: &Pair<'_, M, L>, files: &[FileDiff]) {
+        let mut wanted: Vec<(&Served, &RepoPath)> = Vec::new();
+        let mut languages: Vec<(Side, &BackendId)> = Vec::new();
+        for file in files.iter().filter(|f| !f.hunks.is_empty()) {
+            for (side, served, path) in [
+                (Side::Base, &pair.base, &file.old_path),
+                (Side::Target, &pair.target, &file.new_path),
+            ] {
+                let Some(path) = path else { continue };
+                let Some(language) = self.language_of(path) else {
+                    continue;
+                };
+                if !languages.contains(&(side, language)) {
+                    languages.push((side, language));
+                    wanted.push((served, path));
+                }
+            }
+        }
+        // Servers beyond what the pool keeps warm would only evict each other.
+        wanted.truncate(POOL_CAPACITY);
+        let _ = bounded(POOL_CAPACITY, 0..wanted.len(), |at| {
+            let (served, file) = wanted[at];
+            self.semantic.start_for(served, file)
+        })
+        .await;
+    }
+
+    /// The symbols the revision's diff touches, on both sides of each changed
+    /// file. Callers asking for the same revision share one computation.
     pub async fn changed_symbols(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<Arc<Derived<Changes>>> {
         let pair = self.pair(session, revision).await?;
-        if let Some((cached, changes)) = &*self.changes.lock().expect("not poisoned")
-            && *cached == revision
-        {
-            return Ok(changes.clone());
-        }
-        let files = session.changed_files(revision).await?;
-        let changes = Arc::new(changed_symbols(&pair, &files).await);
-        *self.changes.lock().expect("not poisoned") = Some((revision, changes.clone()));
-        Ok(changes)
+        let computation = {
+            let mut slot = self.changes.lock().expect("not poisoned");
+            match &*slot {
+                Some((cached, computation)) if *cached == revision => computation.clone(),
+                _ => {
+                    let computation = Arc::default();
+                    *slot = Some((revision, Arc::clone(&computation)));
+                    computation
+                }
+            }
+        };
+        computation
+            .get_or_try_init(|| async {
+                let files = session.changed_files(revision).await?;
+                let (_, changes) = join(self.start_servers_for(&pair, &files), changed_symbols(&pair, &files)).await;
+                Ok::<_, SessionError>(Arc::new(changes))
+            })
+            .await
+            .cloned()
     }
 
     /// The changed symbol `sym` and whether it was added, modified or removed.
@@ -298,10 +352,19 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use vet_core::content::{Hash, SnapshotId};
+    use vet_semantic::policy::AnalysisPolicy;
+    use vet_semantic::ports::{
+        Diagnostic, LanguageServer, LaunchError, Materialized, NotMaterializable, Pos, QueryError, ServerConfig, Span,
+        Tree,
+    };
 
     use super::*;
     use crate::pin::CommitId;
+    use crate::session::tests::{FakeGit, Fixture, MemStore};
 
     fn sides() -> SemanticSides {
         SemanticSides {
@@ -330,5 +393,156 @@ mod tests {
         let (_, target) = served(&Trust::Contributor { trusted_head: None }, &sides());
         assert!(!target.policy.allow_executing);
         assert_eq!(target.target, Target::Live);
+    }
+
+    #[derive(Default)]
+    struct Counters {
+        starting: AtomicUsize,
+        peak_starting: AtomicUsize,
+        started: AtomicUsize,
+        /// Symbol requests on the live side, which no cache answers.
+        live_symbol_requests: AtomicUsize,
+    }
+
+    struct FakeLauncher(Arc<Counters>);
+
+    struct FakeServer(Arc<Counters>, Tree);
+
+    impl ServerLauncher for FakeLauncher {
+        type Server = FakeServer;
+
+        /// Slow, so starts that overlap are seen to.
+        async fn start(&self, _: &Path, tree: Tree, _: &Backend, _: AnalysisPolicy) -> Result<FakeServer, LaunchError> {
+            let c = &self.0;
+            let now = c.starting.fetch_add(1, Ordering::SeqCst) + 1;
+            c.peak_starting.fetch_max(now, Ordering::SeqCst);
+            for _ in 0..5 {
+                tokio::task::yield_now().await;
+            }
+            c.starting.fetch_sub(1, Ordering::SeqCst);
+            c.started.fetch_add(1, Ordering::SeqCst);
+            Ok(FakeServer(c.clone(), tree))
+        }
+    }
+
+    impl LanguageServer for FakeServer {
+        async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
+            if self.1 == Tree::Live {
+                self.0.live_symbol_requests.fetch_add(1, Ordering::SeqCst);
+            }
+            for _ in 0..5 {
+                tokio::task::yield_now().await;
+            }
+            Ok(vec![SymbolInfo {
+                sym: Sym {
+                    file: file.clone(),
+                    name: vec!["f".into()],
+                },
+                span: Span {
+                    start: Pos { line: 0, col: 0 },
+                    end: Pos { line: 5, col: 0 },
+                },
+                at: Pos { line: 0, col: 0 },
+                detail: None,
+            }])
+        }
+        async fn definition(&self, _: &At) -> Result<Vec<Location>, QueryError> {
+            Ok(vec![])
+        }
+        async fn references(&self, _: &At) -> Result<Vec<Location>, QueryError> {
+            Ok(vec![])
+        }
+        async fn hover(&self, _: &At) -> Result<Option<String>, QueryError> {
+            Ok(None)
+        }
+        async fn incoming_calls(&self, _: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+            Ok(vec![])
+        }
+        async fn outgoing_calls(&self, _: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+            Ok(vec![])
+        }
+        async fn workspace_symbols(&self, _: &str) -> Result<Vec<SymbolInfo>, QueryError> {
+            Ok(vec![])
+        }
+        async fn diagnostics(&self, _: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
+            Ok(vec![])
+        }
+        async fn shutdown(&self) {}
+    }
+
+    /// Serves every snapshot from one fixed directory.
+    struct FakeMaterializer;
+
+    impl Materializer for FakeMaterializer {
+        type Guard = ();
+
+        async fn materialize(&self, _: SnapshotId) -> Result<Materialized<()>, NotMaterializable> {
+            Ok(Materialized {
+                root: "/snap".into(),
+                guard: (),
+            })
+        }
+    }
+
+    fn backend(id: &str, extension: &str) -> Backend {
+        Backend::GenericLsp(ServerConfig {
+            backend: BackendId(id.into()),
+            binary: id.into(),
+            args: vec![],
+            filetypes: vec![extension.into()],
+            root_markers: vec![],
+            executes_project_code_during_analysis: false,
+        })
+    }
+
+    /// Changes in a Rust, a Python and a Markdown file; Markdown has no server.
+    async fn semantics() -> (
+        Fixture,
+        Semantics<FakeGit, MemStore, FakeLauncher, FakeMaterializer>,
+        Arc<Counters>,
+    ) {
+        let fx = Fixture::open(
+            &[("a.rs", "one\n"), ("b.py", "one\n"), ("c.md", "one\n")],
+            &[("a.rs", "two\n"), ("b.py", "two\n"), ("c.md", "two\n")],
+        )
+        .await;
+        let counters = Arc::new(Counters::default());
+        let semantics = Semantics::new(
+            FakeMaterializer,
+            FakeLauncher(counters.clone()),
+            "/live".into(),
+            vec![backend("rust", "rs"), backend("python", "py")],
+            RestoreLimits::default(),
+            Trust::Local,
+        );
+        (fx, semantics, counters)
+    }
+
+    #[tokio::test]
+    async fn the_servers_of_every_language_and_side_start_at_once() {
+        let (fx, semantics, counters) = semantics().await;
+        semantics.start_servers(&fx.session, 0).await.unwrap();
+        assert_eq!(counters.started.load(Ordering::SeqCst), 4);
+        assert_eq!(counters.peak_starting.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn concurrent_callers_share_one_computation_of_the_changed_symbols() {
+        let (fx, semantics, counters) = semantics().await;
+        let (first, second) = join(
+            semantics.changed_symbols(&fx.session, 0),
+            semantics.changed_symbols(&fx.session, 0),
+        )
+        .await;
+        let (first, second) = (first.unwrap(), second.unwrap());
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(first.value.symbols.len(), 2);
+        assert_eq!(first.value.unsupported.len(), 1);
+        // One request per live file, not one per caller.
+        assert_eq!(counters.live_symbol_requests.load(Ordering::SeqCst), 2);
+        assert_eq!(counters.started.load(Ordering::SeqCst), 4);
+
+        let third = semantics.changed_symbols(&fx.session, 0).await.unwrap();
+        assert!(Arc::ptr_eq(&first, &third));
     }
 }

@@ -92,7 +92,7 @@ fn hunk(old: &str, new: &str) -> Option<Hunk> {
 
 /// Git and worktree in one: every blob any snapshot refers to.
 #[derive(Clone, Default)]
-struct FakeGit {
+pub(crate) struct FakeGit {
     blobs: Arc<Mutex<HashMap<BlobId, Vec<u8>>>>,
     base: Arc<Mutex<Option<Snapshot>>>,
     scans: Arc<Mutex<Vec<Snapshot>>>,
@@ -171,7 +171,7 @@ impl Checkout for FakeGit {
         _: &Snapshot,
         _: &Path,
     ) -> std::result::Result<(), crate::ports::CheckoutError> {
-        unreachable!()
+        Ok(())
     }
 }
 
@@ -350,7 +350,7 @@ impl Mem {
 }
 
 #[derive(Clone, Default)]
-struct MemStore(Arc<Mutex<Mem>>);
+pub(crate) struct MemStore(Arc<Mutex<Mem>>);
 
 type StoreResult<T> = std::result::Result<T, StoreError>;
 
@@ -524,14 +524,14 @@ fn numbered(n: usize, edited: &[usize]) -> String {
         .collect()
 }
 
-struct Fixture {
-    git: FakeGit,
+pub(crate) struct Fixture {
+    pub(crate) git: FakeGit,
     store: MemStore,
-    session: LiveSession<FakeGit, MemStore>,
+    pub(crate) session: LiveSession<FakeGit, MemStore>,
 }
 
 impl Fixture {
-    async fn open(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> Self {
+    pub(crate) async fn open(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> Self {
         let git = FakeGit::default();
         *git.base.lock().unwrap() = Some(git.snapshot(base));
         let first = git.snapshot(dirty);

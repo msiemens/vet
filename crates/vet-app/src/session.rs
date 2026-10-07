@@ -1940,4 +1940,4 @@ fn find_non_text<'a>(diff: &'a SnapshotDiff, kind: NonTextKind, path: &str) -> O
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

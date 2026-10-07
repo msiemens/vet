@@ -136,6 +136,14 @@ where
         let backend = backend_for(&self.backends, file).ok_or_else(|| SemanticError::NoBackend(file.clone()))?;
         self.lease(served, backend).await
     }
+
+    /// Starts the server that serves `file` on `served`, or waits for its start
+    /// to finish, so a later query finds it running. The server is not kept
+    /// beyond what the pool keeps warm.
+    pub async fn start_for(&self, served: &Served, file: &RepoPath) -> Result<(), SemanticError> {
+        self.lease_for(served, file).await?.release().await;
+        Ok(())
+    }
 }
 
 /// The two sides of a changeset.

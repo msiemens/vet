@@ -17,6 +17,13 @@ impl Open {
         self.semantics.language_of(file).map(|language| language.0.clone())
     }
 
+    /// Starts the servers the current revision's changed files need. A server
+    /// that fails to start is reported by the query that needs it.
+    pub async fn start_servers(&self) {
+        let revision = self.session.revision().await;
+        let _ = self.semantics.start_servers(&self.session, revision).await;
+    }
+
     pub async fn hover(&self, revision: u32, side: Side, path: &str, line: u32, col: u32) -> Result<Response, String> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)

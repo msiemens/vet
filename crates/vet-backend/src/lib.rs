@@ -250,7 +250,7 @@ impl Orchestrator {
             limits,
             Trust::Local,
         );
-        sessions.push(Arc::new(Open {
+        let open = Arc::new(Open {
             id,
             repo,
             session,
@@ -259,7 +259,10 @@ impl Orchestrator {
             settling: task.abort_handle(),
             reaper: reaper.abort_handle(),
             runs: Default::default(),
-        }));
+        });
+        sessions.push(open.clone());
+        // The language servers take long to start; the first query should find them running.
+        tokio::spawn(async move { open.start_servers().await });
         Ok((id, root))
     }
 
