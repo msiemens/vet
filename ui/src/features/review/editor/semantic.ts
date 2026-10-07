@@ -5,13 +5,14 @@
 
 import { type Diagnostic as LintDiagnostic, lintGutter, setDiagnostics } from "@codemirror/lint";
 import { type Extension, Facet, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, tooltips } from "@codemirror/view";
+import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, tooltips } from "@codemirror/view";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { nextPaint } from "../../../lib/nextPaint";
 import type { HoverText } from "../../../state/backend";
 import { isMac } from "../../../state/host";
+import { type Span, outsideHidden } from "./hiddenRanges";
 import { hoverContent } from "./hoverContent";
 import { type HoverAnchor, hoverPopups } from "./hoverDom";
 import { wordRange } from "./hoverPopup";
@@ -127,21 +128,82 @@ export function revealSpan(view: EditorView, span: TextSpan, select: boolean) {
   }, MARK_MS);
 }
 
-/** Replaces the editor's diagnostics: gutter markers and underlines, with the message in a tooltip. */
-export function showDiagnostics(view: EditorView, diagnostics: readonly Diagnostic[]) {
+const setDiagnosticList = StateEffect.define<readonly Diagnostic[]>();
+/** The diagnostics the server gave, whole: the ones drawn are those outside the collapsed regions of the moment. */
+const diagnosticList = StateField.define<readonly Diagnostic[]>({
+  create: () => [],
+  update(list, tr) {
+    for (const e of tr.effects) if (e.is(setDiagnosticList)) return e.value;
+    return list;
+  },
+});
+
+/** `type` of the bar `@codemirror/merge` puts over a collapsed region. */
+const COLLAPSED_BAR = "collapsed-unchanged-code";
+
+/** The regions hidden behind an "N unchanged lines" bar. */
+function collapsedRegions(view: EditorView): Span[] {
+  const regions: Span[] = [];
+  for (const source of view.state.facet(EditorView.decorations)) {
+    const set = typeof source === "function" ? source(view) : source;
+    set.between(0, view.state.doc.length, (from, to, deco) => {
+      const widget = (deco.spec as { widget?: { type?: string } }).widget;
+      if (widget?.type === COLLAPSED_BAR) regions.push({ from, to });
+    });
+  }
+  return regions;
+}
+
+/** Draws the stored diagnostics: gutter markers and underlines, with the message in a tooltip, but nothing in or on a collapsed region. */
+function drawDiagnostics(view: EditorView, stored: readonly Diagnostic[], store: boolean) {
   const { doc } = view.state;
-  const lint = diagnostics.map((d): LintDiagnostic => {
+  const hidden = collapsedRegions(view);
+  const lint = stored.flatMap((d): LintDiagnostic[] => {
     const from = offsetAt(doc, d.span.start);
-    return {
-      from,
-      to: Math.max(from, offsetAt(doc, d.span.end)),
+    const span = { from, to: Math.max(from, offsetAt(doc, d.span.end)) };
+    return outsideHidden(span, hidden).map((piece) => ({
+      ...piece,
       severity: d.severity,
       message: d.message,
       source: [d.source, d.code].filter(Boolean).join(" ") || undefined,
-    };
+    }));
   });
-  view.dispatch(setDiagnostics(view.state, lint));
+  view.dispatch(setDiagnostics(view.state, lint), store ? { effects: setDiagnosticList.of(stored) } : {});
 }
+
+/** Replaces the editor's diagnostics. */
+export function showDiagnostics(view: EditorView, diagnostics: readonly Diagnostic[]) {
+  drawDiagnostics(view, diagnostics, true);
+}
+
+/** Draws the diagnostics again when a region collapses or expands. */
+const diagnosticsFollowCollapse = ViewPlugin.fromClass(
+  class {
+    private key: string;
+
+    constructor(view: EditorView) {
+      this.key = this.keyOf(view);
+    }
+
+    private keyOf(view: EditorView) {
+      return collapsedRegions(view)
+        .map((r) => `${r.from}-${r.to}`)
+        .join();
+    }
+
+    update(u: ViewUpdate) {
+      if (!u.transactions.length) return;
+      const key = this.keyOf(u.view);
+      if (key === this.key) return;
+      this.key = key;
+      u.view.requestMeasure({
+        read: () => null,
+        write: (_, view) => drawDiagnostics(view, view.state.field(diagnosticList), false),
+        key: this,
+      });
+    }
+  },
+);
 
 /** What an editor shows and who answers for it, so commands can act on the editor that has the focus. */
 interface SemanticTarget {
@@ -229,6 +291,6 @@ export function semanticExtensions(
         }),
     }),
     semanticTarget.of({ side, path, hooks }),
-    ...(side === "target" ? [lintGutter()] : []),
+    ...(side === "target" ? [lintGutter(), diagnosticList, diagnosticsFollowCollapse] : []),
   ];
 }
