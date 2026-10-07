@@ -5,7 +5,7 @@
 
 import { type Diagnostic as LintDiagnostic, lintGutter, setDiagnostics } from "@codemirror/lint";
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, hoverTooltip, keymap } from "@codemirror/view";
+import { Decoration, type DecorationSet, EditorView, hoverTooltip, keymap, tooltips } from "@codemirror/view";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
@@ -161,6 +161,8 @@ export function semanticExtensions(
   };
   return [
     targetField,
+    // A side by side pane clips what it contains; the tooltips of hover and diagnostics live in the body.
+    tooltips({ parent: document.body }),
     hoverTooltip(
       async (view, pos) => {
         const create = await queryHover(hooks, side, path, at(view, pos), hoverShown);
