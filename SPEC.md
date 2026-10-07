@@ -378,7 +378,7 @@ struct PlatformTraits {
 | `blocking` | UnresolvedThreads (if required) | UnresolvedThreads (if policy) | UnresolvedThreads (if setting) | OpenTasks | Labels, UnresolvedThreads |
 | `revision_scoped` | no | no | no | no | yes |
 
-GitHub and ADO ship in M2; the other columns show the model covers them, and are adapter work only. Platform details (especially merge checks) are verified against each platform's API when its adapter is built.
+GitHub and ADO ship in M1; the other columns show the model covers them, and are adapter work only. Platform details (especially merge checks) are verified against each platform's API when its adapter is built.
 
 How the UI follows the traits:
 
@@ -459,9 +459,11 @@ Grouped by area; areas and the items within each are in priority order.
 #### Changesets and history
 
 - GitHub + ADO adapters (§11): pull requests as changesets, their threads synced both ways, CI per commit
-  - Login reuses a signed-in CLI (`gh auth token`; `az account get-access-token` for Azure DevOps), else a device-code login (GitHub OAuth device flow; Microsoft Entra), else a personal access token (also for GitHub Enterprise hosts). Tokens live in the OS keychain, never in Vet's store; in the WSL split the shell keeps them and hands them to the backend
+  - Login reuses a signed-in CLI (`gh auth token`; `az account get-access-token` for Azure DevOps), else a personal access token (also for GitHub Enterprise hosts); no OAuth or device-code login. Tokens live in the OS keychain, never in Vet's store; in the WSL split the shell keeps them and hands them to the backend
   - The pull-request list is per project (the repository's remote): "Waiting for me" by default (review requested from the viewer or their team, not reviewed since the last push), then Mine, Assigned, All open, with filters for author, label, draft and CI state. Each row shows title, author, branch → target, CI state, unresolved threads, the viewer's review state ("new pushes since your review") and when it was updated
-- Committed changesets (per-commit / pseudo-commit / squash lenses)
+  - Thread sync: the viewer's status change wins over the platform's if made since the last sync; an edit to a posted comment is pushed at once, and if the comment also changed on the platform since the last sync both texts are shown for the viewer to choose; a thread deleted on the platform is removed from Vet (a local draft reply in it is dropped with a notice); drafts are posted on Submit as one review (GitHub) or one by one (ADO), never as a pending review on the platform
+- Committed changesets (branches and pull requests), shown as all changes at once (the squash, the default and what completion counts) or by commit. By commit, a clean merge of the target branch is a collapsed marker with nothing to review, and a merge with conflict resolutions shows only the resolution (as `git show --remerge-diff`)
+- One changeset on view per project; switching to another changeset and back restores its open tabs, scroll positions and current file
 - Interdiffs; snapshot timeline, as a bottom panel (not a sidebar tool window). A changeset has versions (a local session's snapshots, a pull request's pushes); an interdiff compares any two, opened as a tab from the timeline. "Changes since my last review" is the default action on a changeset and carries the seen marks over. When the base moved (a rebase), the interdiff leaves out what the base move explains, as `git range-diff` does per commit
 - Git fetch (in-process, read-only): on demand and periodically, so remote branches and how far a base is behind are current; Vet never pulls, merges or rebases
 - Changeset queue home, reached through a Queue / Review toggle in the app header (not a sidebar tool window): pull requests waiting for the viewer and local branches, with more metadata and filtering than the title bar's changeset switcher, of which it is the full-page view
@@ -550,7 +552,7 @@ Targets apply to supported topologies; the `/mnt/*` WSL topology is exempt.
 ## 14. Open questions
 
 1. **Reachability tuning:** per-language entry-point configs and search bounds are ongoing craft.
-2. **Comment sync conflicts:** local-wins policy; confirm against real PR flow.
+2. **Comment sync conflicts:** the M1 policy (Changesets and history); confirm against real PR flow.
 3. **Base-resolution UX:** current-branch tip vs. merge-base defaults, tuned against the actual harness mix.
 4. **Risk ordering:** whether the queue should rank changesets by a risk model, and what signals it would use.
 5. **Base-server cost:** if materializing and starting a second server per session proves too slow for some backend (likely Roslyn on large solutions), consider loading base-side files as overlays into the target server for that backend only.
