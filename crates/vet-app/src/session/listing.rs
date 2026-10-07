@@ -1,13 +1,10 @@
 //! The changesets the repository offers to put on view: the working tree and the local
-//! branches worth reviewing, each with what Vet knows of its review.
+//! branches, each with what Vet knows of its review.
 
 use super::{LiveSession, Result};
 use crate::changeset::{CommitId, Source};
 use crate::ports::{BranchInfo, GitRepo, LiveStore};
 
-/// A branch whose latest commit is older than this many days is not offered, unless it is
-/// checked out, on view or has a review open.
-const RECENT_DAYS: i64 = 30;
 /// Commits counted for how far a branch is from the default one.
 const MAX_COUNT: usize = 10_000;
 
@@ -55,20 +52,11 @@ pub struct ChangesetList {
     pub rows: Vec<ChangesetRow>,
 }
 
-/// Whether a branch is offered: it has commits the default branch lacks and was committed to
-/// recently, or it is one the viewer is at (checked out, on view, or with a review open).
-fn offered(divergence: Option<Divergence>, age_days: i64, keep: bool) -> bool {
-    keep || (divergence.is_none_or(|d| d.ahead > 0) && age_days <= RECENT_DAYS)
-}
-
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
-    /// The working tree and the branches worth reviewing (SPEC "Changeset queue home"):
-    /// those with commits not on the default branch that were committed to in the last 30 days,
-    /// and always the checked-out one, the one on view and any with a review open.
+    /// The working tree and every branch the repository has.
     pub async fn changesets(&self) -> Result<ChangesetList> {
         let on_view = self.state.lock().await.source.clone();
         let git = &self.acquisition.git;
-        let now = (self.clock)();
         let default = match git.default_reference().await? {
             Some(reference) => git.resolve_commit(&reference).await.ok(),
             None => None,
@@ -92,18 +80,14 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 None => None,
             };
             let last_commit = git.commit_info(&branch.commit).await?.time;
-            let age_days = now.saturating_sub(last_commit) / (24 * 60 * 60);
-            let keep = branch.current || source == on_view || matches!(review, RowReview::Open { .. });
-            if offered(divergence, age_days, keep) {
-                branches.push(ChangesetRow {
-                    title: branch.name,
-                    checked_out: branch.current,
-                    source,
-                    divergence,
-                    last_commit: Some(last_commit),
-                    review,
-                });
-            }
+            branches.push(ChangesetRow {
+                title: branch.name,
+                checked_out: branch.current,
+                source,
+                divergence,
+                last_commit: Some(last_commit),
+                review,
+            });
         }
         branches.sort_by_key(|b| std::cmp::Reverse(b.last_commit));
         rows.extend(branches);
@@ -139,36 +123,5 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 complete: review.complete.unwrap_or(false),
             },
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const AHEAD: Option<Divergence> = Some(Divergence { ahead: 2, behind: 5 });
-    const MERGED: Option<Divergence> = Some(Divergence { ahead: 0, behind: 5 });
-
-    #[test]
-    fn a_recent_branch_with_commits_of_its_own_is_offered() {
-        assert!(offered(AHEAD, 3, false));
-        assert!(offered(AHEAD, RECENT_DAYS, false));
-    }
-
-    #[test]
-    fn a_stale_branch_or_one_with_nothing_beyond_the_default_branch_is_not() {
-        assert!(!offered(AHEAD, RECENT_DAYS + 1, false));
-        assert!(!offered(MERGED, 1, false));
-    }
-
-    #[test]
-    fn without_a_default_branch_recency_alone_decides() {
-        assert!(offered(None, 1, false));
-        assert!(!offered(None, 90, false));
-    }
-
-    #[test]
-    fn the_branch_the_viewer_is_at_is_offered_whatever_it_is() {
-        assert!(offered(MERGED, 90, true));
     }
 }

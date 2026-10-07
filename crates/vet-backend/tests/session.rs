@@ -1346,6 +1346,48 @@ async fn a_branch_is_listed_opened_as_the_changeset_on_view_and_left_again_for_e
     assert_eq!(m.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.txt"]);
 }
 
+#[tokio::test]
+async fn every_local_branch_is_listed_however_old_and_whatever_its_name() {
+    let fx = fixture(&[("a.txt", &text(10, &[]))], &[]).await;
+    let p = fx.repo.path();
+    for (i, name) in ["feature/rework-docs", "ostafen-master", "patch/1/deep"]
+        .iter()
+        .enumerate()
+    {
+        git(p, &["checkout", "-q", "-b", name, "main"]);
+        write(p, &format!("b{i}.txt"), "old work\n");
+        git(p, &["add", "-A"]);
+        git(p, &["commit", "-q", "--date", "2020-01-01T00:00:00", "-m", "old work"]);
+    }
+    git(p, &["checkout", "-q", "main"]);
+    git(p, &["branch", "merged"]);
+    let client = Client::new(&fx.handler);
+    let project = open(&client, p).await;
+
+    let Response::Changesets { rows, .. } = client.call(Request::ListChangesets { project }).await.unwrap() else {
+        panic!("not a list")
+    };
+
+    let mut names: Vec<_> = rows
+        .iter()
+        .filter_map(|r| match &r.key {
+            ChangesetKey::Branch { name } => Some(name.as_str()),
+            ChangesetKey::WorkingTree => None,
+        })
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "feature/rework-docs",
+            "main",
+            "merged",
+            "ostafen-master",
+            "patch/1/deep"
+        ]
+    );
+}
+
 impl Client {
     async fn set_filter(&self, project: ProjectId, filter: &ReviewFilter) -> Result<Response, String> {
         let filter = filter.clone();

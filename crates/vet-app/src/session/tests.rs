@@ -2995,7 +2995,7 @@ async fn opening_a_branch_that_does_not_exist_changes_nothing() {
 }
 
 #[tokio::test]
-async fn the_list_has_the_working_tree_first_then_the_branches_worth_reviewing() {
+async fn the_list_has_the_working_tree_first_then_every_branch_the_most_recent_first() {
     const DAY: i64 = 24 * 60 * 60;
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
     fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "two\n")]);
@@ -3015,11 +3015,11 @@ async fn the_list_has_the_working_tree_first_then_the_branches_worth_reviewing()
     let titles: Vec<_> = list.rows.iter().map(|r| r.title.as_str()).collect();
     assert_eq!(
         titles,
-        ["Working tree", "main", "feature", "older"],
-        "merged has nothing of its own, stale is too old; main is checked out; the most recent first"
+        ["Working tree", "main", "merged", "feature", "older", "stale"],
+        "branches with nothing of their own or long untouched are listed too; the most recent first"
     );
     assert_eq!(list.on_view, Source::WorkingTree);
-    let feature = &list.rows[2];
+    let feature = &list.rows[3];
     assert_eq!(feature.divergence, Some(Divergence { ahead: 1, behind: 1 }));
     assert_eq!(feature.last_commit, Some(-DAY));
     assert!(list.rows[1].checked_out);
