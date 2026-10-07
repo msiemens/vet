@@ -64,8 +64,15 @@ export function changeCard(
   const root = el("article", "vet-card");
   const thumbs: { thumb: HTMLElement; side: Side }[] = [];
   const bar = el("div", "vet-hunk");
-  const toggle = iconButton("Mark seen", "check", () => actions.toggle(), "vet-icon-btn vet-seen-toggle", 13, 2);
-  const comment = iconButton("Comment", "comments", () => actions.comment());
+  const toggle = iconButton(
+    "Mark seen",
+    "check",
+    () => actions.toggle(),
+    "vet-icon-btn vet-seen-toggle vet-review-action",
+    13,
+    2,
+  );
+  const comment = iconButton("Comment", "comments", () => actions.comment(), "vet-icon-btn vet-review-action");
   const content = cardContent(item, path, oldPath);
   bar.append(el("span", "vet-hunk-text", content.title), el("span", "vet-card-path mono", path), el("span", "grow"));
   bar.append(comment, toggle);

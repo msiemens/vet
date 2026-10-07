@@ -8,12 +8,15 @@ import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { session } from "./session.svelte";
+import { rangeKey } from "./timelineRange";
 
 class ThreadStore {
   /** In creation order, resolved at `revision`. Immutable snapshots, replaced as a whole. */
   items = $state.raw<Thread[]>([]);
   /** The manifest revision the anchors in `items` belong to. */
   revision = $state<number>();
+  /** The range the threads were read in (see `rangeKey`): an interdiff shows the new side's threads only. */
+  key = "";
   private backend?: Backend;
   /** Only the latest reload counts. */
   private seq = 0;
@@ -40,9 +43,10 @@ class ThreadStore {
     const backend = this.backend;
     if (!backend) return;
     const seq = ++this.seq;
+    const { range, view } = changeset;
     try {
-      const { revision, threads } = await backend.threads();
-      if (seq === this.seq) this.set(threads, revision);
+      const { revision, threads } = await backend.threads(view);
+      if (seq === this.seq) this.set(threads, revision, rangeKey(range));
     } catch (error) {
       if (seq === this.seq) session.notice = `Could not load comments: ${errorText(error)}`;
     }
@@ -50,7 +54,7 @@ class ThreadStore {
 
   /** Opens a thread; resolves whether it went through. */
   async create(revision: number, target: ThreadTarget, body: string): Promise<boolean> {
-    return this.change(this.backend?.createThread(revision, target, body), revision);
+    return this.change(this.backend?.createThread(revision, target, body, changeset.view), revision);
   }
 
   async reply(thread: number, body: string): Promise<boolean> {
@@ -113,9 +117,10 @@ class ThreadStore {
     }
   }
 
-  private set(items: Thread[], revision: number | undefined) {
+  private set(items: Thread[], revision: number | undefined, key = this.key) {
     this.items = items;
     this.revision = revision;
+    this.key = key;
     for (const listener of this.listeners) listener();
   }
 

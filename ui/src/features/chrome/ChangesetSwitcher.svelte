@@ -10,6 +10,7 @@
   let {
     name,
     title,
+    live = false,
     load,
     onpick,
     open = $bindable(false),
@@ -17,6 +18,8 @@
     /** What the changeset on view is called; unknown until the manifest arrives. */
     name?: string;
     title?: string;
+    /** It follows the working tree: a new settled version moves what is shown forward. */
+    live?: boolean;
     /** The changesets on offer and the one on view; `undefined` if they could not be listed. */
     load: () => Promise<{ rows: ChangesetRow[]; onView: ChangesetKey } | undefined>;
     onpick: (key: ChangesetKey) => void;
@@ -37,7 +40,9 @@
 
 <Popover bind:open>
   {#snippet trigger(toggle)}
-    <Chip active={open} {title} onclick={toggle}>{name ?? "…"}</Chip>
+    <Chip active={open} {title} onclick={toggle}>
+      {name ?? "…"}{#if live}<span class="live-dot" aria-label="Follows the working tree"></span>{/if}
+    </Chip>
   {/snippet}
   {#if listed}
     <Menu

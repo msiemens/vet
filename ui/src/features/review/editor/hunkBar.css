@@ -80,6 +80,10 @@
   border-radius: var(--radius);
   color: var(--text-2);
 }
+/* A view that cannot be marked or commented on (a range that does not end at the latest version). */
+.readonly .vet-review-action {
+  display: none;
+}
 .vet-hunk-seen .vet-seen-toggle {
   color: var(--seen);
 }

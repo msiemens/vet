@@ -96,12 +96,12 @@ export class HunkBar extends WidgetType {
         iconButton(commands.tooltip("review.jumpToSource", "Jump to source"), "file", () =>
           actions.openSource(this.index),
         ),
-        iconButton("Comment", "comments", () => actions.comment(this.index)),
+        iconButton("Comment", "comments", () => actions.comment(this.index), "vet-icon-btn vet-review-action"),
         iconButton(
           LABEL[this.state],
           "check",
           () => actions.toggleSeen(this.index),
-          "vet-icon-btn vet-seen-toggle",
+          "vet-icon-btn vet-seen-toggle vet-review-action",
           13,
           2,
         ),

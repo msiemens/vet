@@ -12,6 +12,7 @@ import type { Changeset } from "../../state/changeset.svelte";
 import { semantic } from "../../state/semantic.svelte";
 import { session } from "../../state/session.svelte";
 import { threads } from "../../state/threads.svelte";
+import { rangeKey } from "../../state/timelineRange";
 import type { Thread } from "../../generated/Thread";
 import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
@@ -44,8 +45,13 @@ const takesSpace = (el: Element | null) =>
 /** What the controller reads of the open changeset and asks of it. */
 export type ChangesetSource = Pick<
   Changeset,
-  "files" | "onReview" | "toggleHunk" | "toggleItem" | "toggleFileSeen" | "currentManifest" | "refresh"
+  "files" | "view" | "onReview" | "toggleHunk" | "toggleItem" | "toggleFileSeen" | "currentManifest" | "refresh"
 >;
+
+const NO_HOVER = { text: "", code: [] };
+
+/** Said when a mark or a comment is asked for in a range that does not end at the latest version. */
+export const READ_ONLY_NOTE = "This range does not end at the latest version: marks and comments are off";
 
 export class ReviewController {
   readonly tabs = new Tabs();
@@ -58,6 +64,8 @@ export class ReviewController {
   private hooks: ViewHooks;
   /** The changeset on view, by `keyId`; unknown before the first manifest. */
   private key?: string;
+  /** The range the views show, if they show one. */
+  private shown?: { from: number; to: number; revision: number };
   /** What each changeset that is not on view had open, for when it comes back. */
   private parked = new Map<string, SavedView>();
   /** Scroll positions and the current hunk the next builds restore, instead of carrying the old views' over. */
@@ -70,10 +78,15 @@ export class ReviewController {
     private fileMenu: (path: string, x: number, y: number) => void,
     private probe?: Probe,
   ) {
+    // The semantic layer reads the changeset's snapshots: in a range only the new side of the latest version is one.
     const hooks: ViewHooks = {
-      hover: (revision, side, path, line, col) => semantic.hover(revision, side, path, line, col),
-      definition: (revision, side, path, line, col) => void this.goToDefinition(revision, side, path, line, col),
-      diagnostics: (revision, path) => semantic.diagnostics(revision, path),
+      hover: (revision, side, path, line, col) =>
+        this.analysable(side) ? semantic.hover(revision, side, path, line, col) : Promise.resolve(NO_HOVER),
+      definition: (revision, side, path, line, col) => {
+        if (this.analysable(side)) void this.goToDefinition(revision, side, path, line, col);
+      },
+      diagnostics: (revision, path) =>
+        this.analysable("target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
     };
     this.hooks = probe ? probe.hooks(hooks) : hooks;
     semantic.reset(); // the controller belongs to one repository's screen
@@ -113,6 +126,24 @@ export class ReviewController {
 
   get files() {
     return this.changeset.files;
+  }
+
+  /** The manifest shows a range that does not end at the latest version: nothing can be marked or commented. */
+  private get readOnly(): boolean {
+    return this.changeset.currentManifest()?.interdiff?.markable === false;
+  }
+
+  /** Whether the semantic layer has `side` of what the view shows. */
+  private analysable(side: Side): boolean {
+    const range = this.changeset.currentManifest()?.interdiff;
+    return !range || (range.markable && side === "target");
+  }
+
+  /** Runs a request that marks or comments, unless the view is read-only: then it says so and `refuse` answers. */
+  private async editing<T>(request: () => Promise<T>, refuse: () => T): Promise<T> {
+    if (!this.readOnly) return request();
+    session.notice = READ_ONLY_NOTE;
+    return refuse();
   }
 
   /** The Changes tab's scroll root. */
@@ -224,16 +255,38 @@ export class ReviewController {
 
   private listenersFor(id: TabId): Listeners {
     const listeners: Listeners = {
-      toggleHunk: (revision, path, hunk) => this.changeset.toggleHunk(revision, path, hunk),
-      toggleItem: (revision, path, kind) => this.changeset.toggleItem(revision, path, kind),
-      toggleFileSeen: (revision, path) => this.changeset.toggleFileSeen(revision, path),
+      toggleHunk: (revision, path, hunk) =>
+        this.editing(
+          () => this.changeset.toggleHunk(revision, path, hunk),
+          () => undefined,
+        ),
+      toggleItem: (revision, path, kind) =>
+        this.editing(
+          () => this.changeset.toggleItem(revision, path, kind),
+          () => undefined,
+        ),
+      toggleFileSeen: (revision, path) =>
+        this.editing(
+          () => this.changeset.toggleFileSeen(revision, path),
+          () => undefined,
+        ),
       fileMenu: this.fileMenu,
       openSource: (path, line) => void this.openSource(path, line),
       // A diff tab shows its file's hunks; only the Changes tab offers to open one.
       openDiff: id === CHANGES ? (path, line) => void this.openFile(path, line) : undefined,
       threads: {
-        create: (revision, target, body) => threads.create(revision, target, body),
-        commentTarget: (revision, path, at) => this.backend.commentTarget(revision, path, at),
+        create: (revision, target, body) =>
+          this.editing(
+            () => threads.create(revision, target, body),
+            () => false,
+          ),
+        commentTarget: (revision, path, at) =>
+          this.editing(
+            () => this.backend.commentTarget(revision, path, at, this.changeset.view),
+            () => {
+              throw new Error(READ_ONLY_NOTE);
+            },
+          ),
         reply: (thread, body) => threads.reply(thread, body),
         setStatus: (thread, status) => threads.setStatus(thread, status),
         remove: (thread) => threads.remove(thread),
@@ -243,9 +296,15 @@ export class ReviewController {
     return this.probe ? this.probe.listeners(listeners) : listeners;
   }
 
-  /** Gives every view the threads, if they are of the view's revision. */
+  /** The threads were read for the revision and the range `manifest` is of. */
+  private threadsFit(manifest: Manifest): boolean {
+    return threads.revision === manifest.revision && threads.key === rangeKey(manifest.interdiff);
+  }
+
+  /** Gives every view the threads, if they are of the view's revision and range. */
   private showThreads() {
-    if (threads.revision === undefined) return;
+    const manifest = this.changeset.currentManifest();
+    if (threads.revision === undefined || !manifest || !this.threadsFit(manifest)) return;
     for (const view of this.views.values()) view.setThreads(threads.items, threads.revision);
   }
 
@@ -268,7 +327,7 @@ export class ReviewController {
       const text = new TextView(
         root,
         path,
-        fileSource(this.backend, manifest.revision),
+        fileSource(this.backend, manifest.revision, this.changeset.view),
         bindRevision(this.hooks, manifest.revision),
       );
       this.texts.set(id, text);
@@ -289,7 +348,7 @@ export class ReviewController {
       root,
       manifest.revision,
       files,
-      fileSource(this.backend, manifest.revision),
+      fileSource(this.backend, manifest.revision, this.changeset.view),
       this.mode,
       this.hooks,
       this.listenersFor(id),
@@ -297,7 +356,7 @@ export class ReviewController {
       this.probe && ((probe) => this.probe?.view(id, probe)),
     );
     this.views.set(id, view);
-    if (threads.revision === manifest.revision) view.setThreads(threads.items, threads.revision);
+    if (this.threadsFit(manifest)) view.setThreads(threads.items, manifest.revision);
     root.scrollTop = top;
     view.keepCurrent(anchor);
     view.sync();
@@ -354,12 +413,31 @@ export class ReviewController {
     if (switching) this.switchTo(key, paths);
     else this.tabs.keepOnly(paths);
     this.key = key;
+    const rangeChanged = this.rangeChanged(manifest);
     const view = this.views.get(CHANGES);
-    if (!view || view.revision === manifest.revision) return;
+    if (!view || (view.revision === manifest.revision && !rangeChanged)) return;
+    // Another range is another set of files: its views start at the top.
+    if (rangeChanged && !switching) {
+      const tabs = this.tabs.open.filter((tab) => kindOf(tab) !== "text");
+      this.restore = { scroll: new Map(tabs.map((tab) => [tab, 0])) };
+    }
     this.show(manifest);
-    if (firstVisit) void this.changes.goToHunk(0);
+    if (firstVisit || rangeChanged) void this.changes.goToHunk(0);
     // The new views have loaded nothing; a newer revision replaces this load.
     this.changes.loadAll().catch(() => undefined);
+  }
+
+  /**
+   * Whether `manifest` shows another range than the last one did: no range and a range differ, and
+   * so do ranges that start at another version. A live range whose end moved with a new revision
+   * is the same range.
+   */
+  private rangeChanged(manifest: Manifest): boolean {
+    const now = manifest.interdiff;
+    const was = this.shown;
+    this.shown = now && { from: now.from, to: now.to, revision: manifest.revision };
+    if (!now || !was) return !now !== !was;
+    return now.from !== was.from || (now.to !== was.to && manifest.revision === was.revision);
   }
 
   /** Parks the changeset on view and sets the tabs of `next` and what the builds restore. */
@@ -392,6 +470,7 @@ export class ReviewController {
     this.views.delete(CHANGES);
     const manifest = await this.changeset.refresh();
     this.key = keyId(manifest.target.changeset);
+    this.rangeChanged(manifest);
     this.show(manifest);
     const view = this.changes;
     await view.goToHunk(0);

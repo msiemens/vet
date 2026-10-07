@@ -10,7 +10,6 @@ import type { View } from "../../../generated/View";
 import { NO_HIGHLIGHTS, decodeHighlights } from "../../../lib/highlights.ts";
 import type { Backend } from "../../../state/backend";
 import { atRevision } from "../../../state/revision.ts";
-import { CHANGESET } from "../../../state/view.ts";
 import type { Loaded } from "./mount";
 
 /** The reply belonged to another revision than the view that asked. */
@@ -32,7 +31,7 @@ export interface FileSource {
 }
 
 /** The source of the files of `view` (the changeset, or an interdiff) at `revision`. */
-export function fileSource(backend: Backend, revision: number, view: View = CHANGESET): FileSource {
+export function fileSource(backend: Backend, revision: number, view: View): FileSource {
   return {
     async contents(file) {
       // A file without text lines (binary, content unavailable) has nothing to fetch; the backend refuses it.

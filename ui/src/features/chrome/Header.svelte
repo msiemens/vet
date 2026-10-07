@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type { Base } from "../../generated/Base";
   import type { BaseChoice } from "../../generated/BaseChoice";
   import type { ChangesetKey } from "../../generated/ChangesetKey";
@@ -32,6 +33,8 @@
     switcherOpen = $bindable(false),
     completion,
     onfinish,
+    chips,
+    back,
   }: {
     project: string;
     /** What the changes are compared against. */
@@ -53,6 +56,10 @@
     onfinish: () => void;
     /** The changeset's progress. */
     completion?: Completion;
+    /** While the review view shows a range of versions: its ends, in place of the base and the progress. */
+    chips?: Snippet;
+    /** The way back to the changeset, at the right end. */
+    back?: Snippet;
   } = $props();
   let projectMenu = $state(false);
   const seen = $derived(completion?.seenPercent ?? 0);
@@ -78,37 +85,46 @@
     />
   </Popover>
   <span class="range" data-tauri-drag-region>
-    <BaseChip {base} branch={target?.branch} load={loadBase} onpick={onbase} />
-    <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
+    {#if !chips}
+      <BaseChip {base} branch={target?.branch} load={loadBase} onpick={onbase} />
+      <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
+    {/if}
     <ChangesetSwitcher
       name={target?.name}
       title={target?.branch && `On ${target.branch}`}
+      live={target?.changeset.type === "workingTree"}
       load={loadChangesets}
       onpick={onchangeset}
       bind:open={switcherOpen}
     />
-    {#if review?.state === "open"}
+    {#if chips}
+      {@render chips()}
+    {:else if review?.state === "open"}
       <VersionLabel version={review.version} updatedAt={review.updatedAt} />
     {/if}
   </span>
   <span class="grow" data-tauri-drag-region></span>
-  <span class="completion" {title} data-tauri-drag-region>
-    <Meter
-      width={96}
-      segments={[
-        { value: seen, color: "var(--seen)" },
-        { value: oldBase, color: "var(--old-base)" },
-      ]}
-    />
-    <span class="mono pct">{Math.round(seen + oldBase)}%</span>
-  </span>
-  {#if review?.state === "open"}
-    <button
-      class="ctl finish"
-      type="button"
-      title="End this review; edits are browsed until the next mark"
-      onclick={onfinish}>Finish review</button
-    >
+  {#if chips}
+    {@render back?.()}
+  {:else}
+    <span class="completion" {title} data-tauri-drag-region>
+      <Meter
+        width={96}
+        segments={[
+          { value: seen, color: "var(--seen)" },
+          { value: oldBase, color: "var(--old-base)" },
+        ]}
+      />
+      <span class="mono pct">{Math.round(seen + oldBase)}%</span>
+    </span>
+    {#if review?.state === "open"}
+      <button
+        class="ctl finish"
+        type="button"
+        title="End this review; edits are browsed until the next mark"
+        onclick={onfinish}>Finish review</button
+      >
+    {/if}
   {/if}
   <IconButton icon="search" label="Search everywhere" />
 </TitleBar>

@@ -11,6 +11,7 @@
   import { session } from "../../state/session.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import { threads } from "../../state/threads.svelte";
+  import { versions } from "../../state/versions.svelte";
   import { CommentsPanel } from "../comments";
   import FileTree from "./FileTree.svelte";
   import "./editor/section.css";
@@ -34,6 +35,7 @@
     rightTool,
     rightOpen,
     side,
+    bottom,
     mode,
     onmode,
     onready,
@@ -54,6 +56,8 @@
     rightOpen: boolean;
     /** The right sidebar's content for a tool. */
     side: Snippet<[tool: string]>;
+    /** A panel under the editors; `selected` is the file the review is at, and `select` goes to one. */
+    bottom?: Snippet<[view: { selected?: string; select: (path: string) => void }]>;
     /** The changeset is open; `firstPaintMs` runs from the open request to the first hunk's paint. */
     onready: (controller: ReviewController, firstPaintMs: number) => void;
     /** The screen is torn down; its controller is gone. */
@@ -87,6 +91,7 @@
 
   onMount(() => {
     const stopThreads = threads.start(backend);
+    const stopVersions = versions.start(backend);
     const stopCommands = commands.register(
       ...fileCommands({
         copyText: (text) =>
@@ -103,15 +108,28 @@
     );
     return () => {
       stopThreads();
+      stopVersions();
       stopCommands();
       controller.destroy();
       onclose?.();
     };
   });
 
-  // A settled snapshot moved the changeset to a new revision, or another changeset is on view.
+  const range = $derived(changeset.manifest?.interdiff);
+  const readOnly = $derived(range?.markable === false);
+  // A range shows the threads of its new side: they are read again for each range.
+  $effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the range a dependency
+    changeset.viewKey;
+    untrack(() => void threads.reload());
+  });
+
+  // A settled snapshot moved the changeset to a new revision, another changeset is on view, or
+  // the review view shows another range.
   $effect(() => {
     if (revision === undefined) return;
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the range a dependency
+    changeset.viewKey;
     untrack(() => {
       const manifest = changeset.currentManifest();
       if (!manifest) return;
@@ -170,15 +188,21 @@
       diff={kindOf(tabs.active) !== "text"}
     />
   </div>
+  {#if range && readOnly}
+    <p class="note" role="status">
+      Read-only: marks and comments only work in a range that ends at the latest version.
+    </p>
+  {/if}
   <!-- The handler only replaces the webview's menu inside an editor. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="panes" oncontextmenu={paneMenu}>
+  <div class="panes" class:readonly={readOnly} oncontextmenu={paneMenu}>
     {#each tabs.open as id (id)}
       <div class="pane" class:active={tabs.active === id}>
         <div class="scroll" {@attach (root) => controller.attach(id, root)}></div>
       </div>
     {/each}
   </div>
+  {@render bottom?.({ selected: highlighted, select })}
 </main>
 
 {#if rightOpen}
@@ -203,6 +227,15 @@
   }
   .grow {
     flex: 1;
+  }
+  .note {
+    flex: none;
+    margin: 0;
+    padding: 4px 12px;
+    background: color-mix(in srgb, var(--old-base) 14%, var(--bg-panel));
+    border-bottom: 1px solid var(--line);
+    font-size: var(--fs-ctl);
+    color: var(--text-2);
   }
   /* The editors stack their layers up to z-index 1000; isolated, those stay inside the panes and
      the header's popovers (z-index 20) lie above them. */

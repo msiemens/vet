@@ -11,9 +11,11 @@ import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { BaseChoice } from "../generated/BaseChoice";
 import type { ChangesetKey } from "../generated/ChangesetKey";
+import type { View } from "../generated/View";
 import { errorText } from "../lib/errorText";
 import type { BaseCandidates } from "./backend";
 import { session } from "./session.svelte";
+import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
 
 type ReviewListener = (update: ReviewUpdate) => void;
 
@@ -29,6 +31,18 @@ class ChangesetStore {
   /** The current state of each file, one reactive cell per path: a review update invalidates only its file. */
   private cells = new SvelteMap<string, FileChange>();
   private listeners = new Set<ReviewListener>();
+
+  /**
+   * The versions the review view compares instead of showing the changeset; none for the changeset.
+   * Set it with `setRange`.
+   */
+  range = $state.raw<Range>();
+  /** What requests about the files read: the interdiff of `range`, or the changeset. */
+  get view(): View {
+    return rangeView(this.range);
+  }
+  /** The range the manifest is of, as a string; empty for the changeset. */
+  viewKey = $derived(rangeKey(this.manifest?.interdiff));
 
   files = $derived(this.manifest?.files ?? []);
   /** The lines the shown files add and remove. */
@@ -53,8 +67,13 @@ class ChangesetStore {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
-        if (event.type === "snapshotSettled" || event.type === "changesetOpened") void this.refresh();
-        else if (event.type === "reviewChanged" && event.revision === this.manifest?.revision)
+        if (event.type === "changesetOpened") {
+          // Versions are the changeset's own.
+          this.range = undefined;
+          void this.refresh();
+        } else if (event.type === "snapshotSettled") void this.refresh();
+        // A mark made in a range is announced as that of the changeset's file, which the range does not show.
+        else if (event.type === "reviewChanged" && !this.range && event.revision === this.manifest?.revision)
           this.applyReview(event.update);
         else if (event.type === "reviewStarted" && this.manifest)
           this.manifest = { ...this.manifest, review: event.review };
@@ -64,6 +83,7 @@ class ChangesetStore {
     );
     session.onClose(() => {
       this.manifest = undefined;
+      this.range = undefined;
       this.restoreFailures = [];
       this.cells.clear();
     });
@@ -71,7 +91,7 @@ class ChangesetStore {
 
   /** Fetches the manifest again; the revision may have moved. */
   async refresh(): Promise<Manifest> {
-    const manifest = await session.connected().manifest();
+    const manifest = await this.fetchManifest();
     this.cells.clear();
     for (const file of manifest.files) this.cells.set(file.path, file);
     this.manifest = manifest;
@@ -79,19 +99,59 @@ class ChangesetStore {
     return manifest;
   }
 
+  /**
+   * The manifest of the view. A live range is moved to the latest version first, which only the
+   * manifest says; a range the backend refuses (its versions are gone) gives way to the changeset.
+   */
+  private async fetchManifest(): Promise<Manifest> {
+    const backend = session.connected();
+    for (let attempt = 0; ; attempt++) {
+      const range = this.range;
+      let manifest: Manifest;
+      try {
+        manifest = await backend.manifest(rangeView(range));
+      } catch (error) {
+        if (!range) throw error;
+        this.range = undefined;
+        session.notice = errorText(error);
+        continue;
+      }
+      const latest = manifest.review.state === "open" ? manifest.review.version : undefined;
+      if (range?.live && latest !== undefined && range.to !== latest && attempt < 3) {
+        this.range = followed(range, latest);
+        continue;
+      }
+      return manifest;
+    }
+  }
+
+  /**
+   * Shows the interdiff of `range`, or the changeset for none, and fetches its manifest. Only the
+   * working tree has a live end: a committed changeset's latest version does not follow anything.
+   */
+  async setRange(range: Range | undefined) {
+    const follows = this.manifest?.target.changeset.type === "workingTree";
+    this.range = range && { ...range, live: range.live && follows };
+    try {
+      await this.refresh();
+    } catch (error) {
+      session.notice = errorText(error);
+    }
+  }
+
   /** Flips one hunk. `revision` is the manifest the caller displays; the backend rejects a stale one. */
   async toggleHunk(revision: number, path: string, hunk: number) {
-    await this.review(revision, session.connected().toggleHunk(revision, path, hunk));
+    await this.review(revision, session.connected().toggleHunk(revision, path, hunk, this.view));
   }
 
   /** Flips the acknowledgement of one non-text item. */
   async toggleItem(revision: number, path: string, kind: NonTextKind) {
-    await this.review(revision, session.connected().toggleItem(revision, path, kind));
+    await this.review(revision, session.connected().toggleItem(revision, path, kind, this.view));
   }
 
   /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
   async toggleFileSeen(revision: number, path: string) {
-    await this.review(revision, session.connected().toggleFileSeen(revision, path));
+    await this.review(revision, session.connected().toggleFileSeen(revision, path, this.view));
   }
 
   /** The changesets on offer and the one on view; `undefined` after showing why they could not be listed. */
@@ -141,6 +201,7 @@ class ChangesetStore {
    */
   async finishReview() {
     try {
+      this.range = undefined;
       const complete = await session.connected().finishReview();
       session.notice = complete ? "Review finished: everything was seen" : "Review finished with unseen changes left";
     } catch (error) {

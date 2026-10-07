@@ -16,8 +16,14 @@ class VersionStore {
     void this.reload(backend);
     const off = backend.onEvent((event) => {
       if (event.project !== backend.project) return;
-      // A settled snapshot or a base move adds a version; a mark changes where the review last was.
-      if (event.type === "snapshotSettled" || event.type === "reviewStarted" || event.type === "reviewChanged")
+      // A settled snapshot or a base move adds a version; a mark changes where the review last was;
+      // another changeset has versions of its own.
+      if (
+        event.type === "snapshotSettled" ||
+        event.type === "reviewStarted" ||
+        event.type === "reviewChanged" ||
+        event.type === "changesetOpened"
+      )
         void this.reload(backend);
     });
     return () => {

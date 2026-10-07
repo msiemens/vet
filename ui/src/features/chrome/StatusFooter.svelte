@@ -1,5 +1,7 @@
 <script module lang="ts">
   export interface FooterInfo {
+    /** The range of versions the review shows, e.g. `v14 → v17`. */
+    range?: string;
     /** Each part is shown once something reports it: the semantic layer, the caret, the file. */
     languageServer?: string;
     /** Why, as a tooltip of `languageServer`. */
@@ -19,6 +21,7 @@
 </script>
 
 <footer>
+  {#if info.range}<span class="mono small" title="The versions the review shows">{info.range}</span>{/if}
   {#if info.languageServer}<span title={info.languageServerTitle}>{info.languageServer}</span>{/if}
   {#if info.topology}
     <span class="topology"><span class="dot" class:ok={info.topology.ok}></span>{info.topology.label}</span>

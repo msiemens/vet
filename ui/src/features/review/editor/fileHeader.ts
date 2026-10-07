@@ -48,7 +48,12 @@ export function fileHeader(file: FileChange, actions: HeaderActions): FileHeader
     if (!(e.target instanceof Element && e.target.closest("button"))) actions.openSource(firstLine);
   });
   const open = actions.openDiff && iconButton("Open diff in tab", "file", () => actions.openDiff?.(firstLine));
-  const comment = iconButton("Comment on this file", "comments", () => actions.comment());
+  const comment = iconButton(
+    "Comment on this file",
+    "comments",
+    () => actions.comment(),
+    "vet-icon-btn vet-review-action",
+  );
   const delta = el("span", "delta mono");
   delta.innerHTML = `<span class="add">+${file.delta.added}</span> <span class="del">−${file.delta.removed}</span>`;
   const count = el("span", "count");
@@ -56,7 +61,7 @@ export function fileHeader(file: FileChange, actions: HeaderActions): FileHeader
     "Toggle everything in this file seen",
     "check",
     () => actions.toggleSeen(),
-    "vet-icon-btn seen",
+    "vet-icon-btn seen vet-review-action",
     13,
     2,
   );

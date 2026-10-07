@@ -18,12 +18,18 @@
     side = "left",
     active = $bindable(),
     open = $bindable(true),
+    timeline = false,
+    ontimeline,
   }: {
     side?: "left" | "right";
     /** The selected tool; it stays selected while its sidebar is hidden. */
     active?: string;
     /** Whether the selected tool's sidebar is shown. */
     open?: boolean;
+    /** The timeline panel is shown. */
+    timeline?: boolean;
+    /** The left rail's icon at the bottom shows or hides the timeline. */
+    ontimeline?: () => void;
   } = $props();
 
   /** The active tool's icon shows or hides its sidebar; any other icon selects that tool and shows it. */
@@ -42,6 +48,9 @@
       onclick={() => select(tool.id)}
     />
   {/each}
+  {#if ontimeline}
+    <span class="bottom"><IconButton icon="timeline" label="Timeline" active={timeline} onclick={ontimeline} /></span>
+  {/if}
 </nav>
 
 <style>
@@ -55,6 +64,9 @@
     padding: 6px 0;
     box-sizing: border-box;
     background: var(--bg-window);
+  }
+  .bottom {
+    margin-top: auto;
   }
   .left {
     border-right: 1px solid var(--line);

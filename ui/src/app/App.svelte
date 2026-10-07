@@ -14,9 +14,10 @@
     ToolRail,
     toggleTool,
   } from "../features/chrome";
-  import { ReviewScreen, type ReviewController } from "../features/review";
+  import { ReviewScreen, type ReviewController, summarize } from "../features/review";
   import { SettingsDialog } from "../features/settings";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
+  import { type RangeFile, RangeChips, TimelinePanel } from "../features/timeline";
   import { WelcomeScreen } from "../features/welcome";
   import { repoName } from "../lib/paths";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
@@ -34,6 +35,8 @@
   import { recent } from "../state/recent.svelte";
   import { semantic } from "../state/semantic.svelte";
   import { session } from "../state/session.svelte";
+  import { defaultRange } from "../state/timelineRange";
+  import { versions } from "../state/versions.svelte";
 
   let controller = $state.raw<ReviewController>();
   // The selected tool of each rail, and whether its sidebar is shown.
@@ -41,6 +44,7 @@
   const right = $state({ tool: "symbol", open: true });
   let tools: DevTools;
   let devOpen = $state(false);
+  let timelineOpen = $state(false);
   let theme = $state<Theme>(storedTheme());
   let mode = $state<Mode>("unified");
   let dialog = $state<"settings" | "about" | "finish">();
@@ -50,7 +54,12 @@
   const reviewOpen = $derived(changeset.manifest?.review.state === "open");
 
   const semanticSummary = $derived(semantic.summary(controller?.activePath));
+  const range = $derived(changeset.range);
+  const rangeFiles = $derived<RangeFile[]>(
+    range ? changeset.files.map((f) => ({ path: f.path, delta: f.delta, mode: summarize(f).mode })) : [],
+  );
   const footer = $derived({
+    range: range && `v${range.from} → v${range.to}`,
     languageServer: semanticSummary.label,
     languageServerTitle: semanticSummary.title,
     diagnostics: semanticSummary.diagnostics,
@@ -146,6 +155,12 @@
     if (path) openProject(path);
   }
 
+  /** Opening the timeline compares the last reviewed version with the latest. */
+  function toggleTimeline() {
+    timelineOpen = !timelineOpen;
+    if (timelineOpen) void changeset.setRange(defaultRange(versions.items));
+  }
+
   function setMode(next: Mode) {
     mode = next;
     controller?.setMode(next);
@@ -153,7 +168,25 @@
 </script>
 
 {#if session.backend && session.repo}
+  {#snippet rangeChips()}
+    {#if range}
+      <RangeChips {range} versions={versions.items} onrange={(r) => void changeset.setRange(r)} />
+    {/if}
+  {/snippet}
+  {#snippet backToChangeset()}
+    {@const base = changeset.manifest?.base.name}
+    {@const latest = versions.items.at(-1)?.n}
+    <button
+      class="ctl back"
+      type="button"
+      title="Show the whole changeset again"
+      onclick={() => void changeset.setRange(undefined)}
+      >Back to {base ?? "…"}{latest === undefined ? "" : ` → v${latest}`}</button
+    >
+  {/snippet}
   <Header
+    chips={range ? rangeChips : undefined}
+    back={backToChangeset}
     project={repoName(session.repo)}
     base={changeset.manifest?.base}
     target={changeset.manifest?.target}
@@ -170,7 +203,7 @@
   <Banners degraded={changeset.manifest?.degraded} failures={changeset.restoreFailures} />
 
   <div class="body">
-    <ToolRail bind:active={left.tool} bind:open={left.open} />
+    <ToolRail bind:active={left.tool} bind:open={left.open} timeline={timelineOpen} ontimeline={toggleTimeline} />
     <ReviewScreen
       backend={session.backend}
       {changeset}
@@ -188,6 +221,19 @@
       onclose={() => (controller = undefined)}
     >
       {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel onopen={openLocation} />{/if}{/snippet}
+      {#snippet bottom({ selected, select })}
+        {#if timelineOpen}
+          <TimelinePanel
+            versions={versions.items}
+            {range}
+            files={rangeFiles}
+            {selected}
+            onrange={(r) => void changeset.setRange(r)}
+            onselect={select}
+            onclose={() => (timelineOpen = false)}
+          />
+        {/if}
+      {/snippet}
     </ReviewScreen>
     <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />
   </div>
