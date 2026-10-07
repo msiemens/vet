@@ -20,10 +20,51 @@ fn has(pieces: &[(String, Kind)], text: &str, kind: Kind) -> bool {
     pieces.iter().any(|(t, k)| t == text && *k == kind)
 }
 
+/// The text of a file of the repository, relative to this crate.
+fn repository_file(path: &str) -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// The protocol's documentation of the wire numbers and the UI's list of style classes are
+/// written by hand: this ties them to `Kind`, whose variant names (in lower case) they use.
 #[test]
-fn kinds_have_their_wire_numbers() {
-    let all = [Keyword, Str, Number, Comment, Type, Function, Attribute, Heading, Link];
-    assert_eq!(all.map(|k| k as u8), [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+fn the_protocol_docs_and_the_ui_list_the_kinds_in_wire_order() {
+    let mut kinds = [Keyword, Str, Number, Comment, Type, Function, Attribute, Heading, Link];
+    kinds.sort_by_key(|&k| k as u8);
+    assert!(
+        kinds.iter().enumerate().all(|(i, &k)| k as usize == i),
+        "wire numbers have gaps"
+    );
+    let names = kinds.map(|k| format!("{k:?}").to_lowercase());
+
+    let protocol = repository_file("../vet-protocol/src/lib.rs");
+    let docs = protocol
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("///"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let docs = docs.split_whitespace().collect::<Vec<_>>().join(" ");
+    let numbered: Vec<_> = names.iter().enumerate().map(|(i, n)| format!("{i} {n}")).collect();
+    let numbered = numbered.join(", ");
+    assert!(
+        docs.contains(&format!("({numbered})")),
+        "the docs of `Highlights` do not say: {numbered}"
+    );
+
+    let ui = repository_file("../../ui/src/lib/highlights.ts");
+    let list = ui
+        .split("const CLASSES = [")
+        .nth(1)
+        .and_then(|rest| rest.split(']').next());
+    let classes: Vec<_> = list
+        .unwrap_or_default()
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(classes, names.map(|n| format!("syn-{n}")));
 }
 
 #[test]
