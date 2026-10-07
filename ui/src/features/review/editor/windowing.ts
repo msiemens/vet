@@ -28,6 +28,8 @@ export function windowRanges(indexAt: (y: number) => number, top: number, h: num
 export interface WindowHost {
   /** Creates the editor of a loaded section. */
   mount(fi: number): void;
+  /** The root scrolled. */
+  scrolled(): void;
   /** Drops a section's editor; returns how far the scroll position moved. */
   unmount(s: Section, scrollTop: number): number;
 }
@@ -81,6 +83,7 @@ export class Windowing {
     // `measureVisible` asks the visible ones for one measure in this frame's batch instead.
     e.stopImmediatePropagation();
     this.scrolling = true;
+    this.host.scrolled();
     this.measureVisible();
     // Editors mounted here measure in this frame's batch. The pass is this frame's: a continuation
     // that is due in it gives way (see `syncNextFrame`).

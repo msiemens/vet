@@ -21,13 +21,29 @@
   font-size: var(--fs-mono-s);
   white-space: pre;
 }
-/* An editor is as wide as its longest line and so is the bar; its buttons stay at the right edge
-   of what is visible, level with the file header's. */
 .vet-hunk-tools {
-  position: sticky;
-  right: 8px;
   display: flex;
   gap: 8px;
+}
+/* The current hunk's bar pinned under the file's pinned header (`stickyHunk.ts`). The box clips
+   the bar while the next hunk's bar pushes it up; the bar starts right of the gutters like the
+   editor's own. A side by side view pins one bar per side. */
+.vet-pin {
+  position: absolute;
+  top: var(--h-section);
+  left: 0;
+  right: 0;
+  height: var(--h-hunk);
+  overflow: clip;
+  background: var(--bg-editor);
+}
+.vet-pin-bars {
+  display: flex;
+}
+.vet-pin-bars > .vet-hunk {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-left: var(--vet-gutters, 0px);
 }
 .vet-hunk-old {
   display: inline-flex;

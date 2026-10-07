@@ -20,6 +20,7 @@ import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
 import { lineOf, lineStart } from "./positions";
 import { type ReviewRequests, ReviewActions, renderReview } from "./reviewActions";
 import { setCurrent } from "./reviewState";
+import { StickyHunk } from "./stickyHunk";
 import { Stops, hunkAt } from "./stops";
 import type { Section } from "./section";
 import { SectionHeights, readMetrics } from "./sectionHeights";
@@ -62,6 +63,7 @@ export class ChangesetView {
   current = -1;
   private destroyed = false;
   private threads: ThreadLayer;
+  private pin: StickyHunk;
 
   constructor(
     private root: HTMLElement,
@@ -96,6 +98,7 @@ export class ChangesetView {
     this.heights = new SectionHeights(root, this.sections, metrics, this.threads, mode, collapse);
     this.windowing = new Windowing(root, this.sections, this.heights, {
       mount: (fi) => void this.mount(fi),
+      scrolled: () => this.pin.update(this.root.scrollTop),
       unmount: (s, scrollTop) => this.unmount(s, scrollTop),
     });
     let hunks = 0;
@@ -134,6 +137,7 @@ export class ChangesetView {
         review: file.review,
         completion: file.completion,
         el,
+        header: header.el,
         body,
         count: header.count,
         cards,
@@ -148,6 +152,11 @@ export class ChangesetView {
     }
     this.totalHunks = hunks;
     this.stops = new Stops(this.sections.map((s) => ({ cards: s.cards.length, hunks: s.file.hunks.length })));
+    this.pin = new StickyHunk(this.sections, metrics, {
+      mode: () => this.heights.mode,
+      current: (fi, hi) => this.current === this.stopOf(fi, hi),
+      press: (fi, hi) => this.select(this.stopOf(fi, hi)),
+    });
     this.root.replaceChildren(...(this.threads.lead ? [this.threads.lead] : []), ...this.sections.map((s) => s.el));
     for (const s of this.sections) renderCount(s, s.completion);
     this.heights.layout();
@@ -161,6 +170,7 @@ export class ChangesetView {
   destroy() {
     this.destroyed = true;
     this.windowing.destroy();
+    this.pin.destroy();
     this.root.removeEventListener("click", this.heights.onExpand, true);
     for (const fi of this.windowing.mounted) this.sections[fi].handle?.destroy();
     this.windowing.mounted.clear();
@@ -183,6 +193,8 @@ export class ChangesetView {
     this.heights.mode = mode;
     this.heights.layout();
     if (this.sections.length) this.root.scrollTop = this.sections[fi].top;
+    this.pin.update(this.root.scrollTop);
+    this.pin.refresh();
     this.sync();
   }
 
@@ -230,11 +242,15 @@ export class ChangesetView {
       this.heights.m.hunk,
       s.hooks,
       this.collapse ? COLLAPSE : undefined,
-      [this.threads.extension(s)],
+      // The pinned header and bar cover the top of the view: a caret scrolled into view stays below them.
+      [
+        this.threads.extension(s),
+        EditorView.scrollMargins.of(() => ({ top: this.heights.m.header + this.heights.m.hunk })),
+      ],
     );
     this.threads.mounted(s);
     this.windowing.mounted.add(fi);
-    const first = this.stops.start(fi) + s.cards.length;
+    const first = this.stopOf(fi, 0);
     if (this.current >= first && this.current < first + s.file.hunks.length)
       s.handle.dispatchAll(setCurrent.of(this.current - first));
     this.showDiagnostics(s);
@@ -278,6 +294,12 @@ export class ChangesetView {
     if (this.current >= 0) this.markCurrent(this.current, false);
     this.current = stop;
     this.markCurrent(stop, true);
+    this.pin.refresh();
+  }
+
+  /** The stop of hunk `hi` of file `fi`. */
+  private stopOf(fi: number, hi: number): number {
+    return this.stops.start(fi) + this.sections[fi].cards.length + hi;
   }
 
   /**
@@ -335,6 +357,7 @@ export class ChangesetView {
       this.root.scrollTop = Math.max(0, s.top + s.cardTops[si] - this.root.clientHeight / 2);
       this.sync();
       this.markCurrent(stop, true);
+      this.pin.refresh();
       return;
     }
     const hi = si - cards;
@@ -346,6 +369,7 @@ export class ChangesetView {
 
     const handle = this.reveal(fi, hunk.targetStart, hi);
     handle.dispatchAll(setCurrent.of(hi));
+    this.pin.refresh();
   }
 
   /** Scrolls to a 0-based target line of file `fi` and puts the caret there. */
@@ -419,7 +443,9 @@ export class ChangesetView {
   /** Renders a file's review state and progress as the backend sent them. */
   applyReview(update: ReviewUpdate) {
     const s = this.sections.find((s) => s.file.path === update.path);
-    if (s) renderReview(s, update);
+    if (!s) return;
+    renderReview(s, update);
+    this.pin.refresh();
   }
 
   /** Asks the backend to flip the current stop: a hunk or a card. */

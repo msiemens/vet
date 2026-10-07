@@ -29,6 +29,7 @@ export interface Section extends ThreadState {
   review: FileReview;
   completion: Completion;
   el: HTMLElement;
+  header: HTMLElement;
   body: HTMLElement;
   count: HTMLElement;
   /** One per non-text item of the file, above the first hunk. */

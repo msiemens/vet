@@ -1,13 +1,18 @@
 /* File sections: fixed height from the manifest, content clipped to it. `clip`, not `hidden`:
    it is not a scroll container, so focusing or scrolling into view never shifts the content
-   under the header. */
+   under the header, and the header can stick to the view's top. */
 .file {
   overflow: clip;
   border-bottom: 1px solid var(--line);
   box-sizing: border-box;
   background: var(--bg-editor);
 }
+/* The header stays at the top of the view until the next section pushes it out. It is above
+   everything an editor stacks (selection layer 100, gutters 200, deleted-block strip 300). */
 .file > header {
+  position: sticky;
+  top: 0;
+  z-index: 400;
   height: var(--h-section);
   box-sizing: border-box;
   display: flex;

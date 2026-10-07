@@ -63,6 +63,7 @@ function column(msPerMount: number, viewport = 200) {
       windowing.mounted.add(fi);
       clock += msPerMount;
     },
+    scrolled: () => undefined,
     unmount: () => 0,
   });
   windowing.start();
