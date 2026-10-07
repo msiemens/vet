@@ -10,7 +10,9 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use super::cli;
-use super::credentials::{Credential, CredentialSource, CredentialValidator, Token, ValidationError};
+use super::credentials::{
+    Credential, CredentialProvider, CredentialSource, CredentialValidator, Token, ValidationError,
+};
 use super::host::{PlatformKind, normalize_host};
 use crate::ports::{Command, ProcessEvent, ProcessRunner, RunningProcess};
 
@@ -357,6 +359,17 @@ where
             }
         };
         succeeded.then(|| String::from_utf8(stdout).ok()).flatten()
+    }
+}
+
+impl<R, V> CredentialProvider for Accounts<R, V>
+where
+    R: ProcessRunner + Sync,
+    R::Process: Send,
+    V: CredentialValidator + Sync,
+{
+    fn credential(&self, host: &str, now: i64) -> impl Future<Output = Option<Credential>> + Send {
+        Accounts::credential(self, host, now)
     }
 }
 

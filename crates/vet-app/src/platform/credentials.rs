@@ -50,6 +50,13 @@ pub enum ValidationError {
     Unreachable(String),
 }
 
+/// Where a platform adapter gets the credential for a host; [`super::Accounts`] is the
+/// one implementation.
+pub trait CredentialProvider {
+    /// The credential to use against `host` at `now` (unix seconds), if there is one.
+    fn credential(&self, host: &str, now: i64) -> impl Future<Output = Option<Credential>> + Send;
+}
+
 /// Asks a platform whom a credential belongs to; implemented over HTTP by `vet-infra`.
 pub trait CredentialValidator {
     /// The platform's name for the credential's owner.
