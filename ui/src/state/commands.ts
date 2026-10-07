@@ -3,6 +3,7 @@
 // the menus and the tooltips read it.
 
 import type { Side } from "../generated/Side";
+import type { Thread } from "../generated/Thread";
 import { CommandRegistry } from "../lib/commands";
 import { type MenuSpec, resolveMenu } from "../lib/commandMenu";
 import { isMac } from "./host";
@@ -38,6 +39,8 @@ export interface CommandContext {
   editor?: FocusedEditor;
   /** The file or folder a context menu was opened on. */
   target?: { path: string; dir: boolean };
+  /** The comment thread a context menu was opened on. */
+  thread?: Thread;
 }
 
 const NONE: CommandContext = { repoOpen: false, reviewOpen: false, canQuit: false, diffView: false, hunk: -1 };

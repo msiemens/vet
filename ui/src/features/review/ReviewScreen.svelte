@@ -2,13 +2,12 @@
   import type { Snippet } from "svelte";
   import { onMount, untrack } from "svelte";
   import type { MenuSpec } from "../../lib/commandMenu";
-  import ContextMenu from "../../lib/ui/ContextMenu.svelte";
-  import type { MenuItem } from "../../lib/ui/menuItem";
   import SideBar from "../../lib/ui/SideBar.svelte";
   import type { Mode } from "../../lib/viewMode";
   import type { Backend } from "../../state/backend";
   import type { Changeset } from "../../state/changeset.svelte";
-  import { type CommandContext, commands, menuFor } from "../../state/commands";
+  import { type CommandContext, commands } from "../../state/commands";
+  import { contextMenus } from "../../state/contextMenu.svelte";
   import { session } from "../../state/session.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -61,13 +60,9 @@
     onclose?: () => void;
   } = $props();
 
-  // An open context menu: its items, and the context its choice runs in.
-  let menu = $state.raw<{ x: number; y: number; items: MenuItem[]; context: CommandContext }>();
-
   /** Opens the context menu `spec` describes at the pointer; `subject` is what it was opened on. */
-  function openMenu(spec: MenuSpec, x: number, y: number, subject?: Partial<CommandContext>) {
-    menu = { x, y, ...menuFor(spec, subject) };
-  }
+  const openMenu = (spec: MenuSpec, x: number, y: number, subject?: Partial<CommandContext>) =>
+    void contextMenus.open(spec, x, y, subject);
 
   // The backend and the changeset are fixed for a mounted screen.
   // svelte-ignore state_referenced_locally
@@ -131,10 +126,10 @@
     void controller.revealInChanges(path);
   }
 
-  /** The webview's menu stays on fields and links; inside an editor the app's own replaces it. */
+  /** Inside an editor the app's own menu replaces the webview's, except in a text field. */
   function paneMenu(e: MouseEvent) {
     const target = e.target instanceof Element ? e.target : undefined;
-    if (e.defaultPrevented || !target?.closest(".cm-content") || target.closest("input, textarea, a")) return;
+    if (e.defaultPrevented || !target?.closest(".cm-content") || target.closest("input, textarea")) return;
     e.preventDefault();
     openMenu(editorMenu, e.clientX, e.clientY);
   }
@@ -186,16 +181,6 @@
 
 {#if rightOpen}
   <SideBar side="right" defaultWidth="var(--w-symbols)">{@render side(rightTool)}</SideBar>
-{/if}
-
-{#if menu}
-  <ContextMenu
-    x={menu.x}
-    y={menu.y}
-    items={menu.items}
-    onselect={(id) => menu && commands.run(id, menu.context)}
-    onclose={() => (menu = undefined)}
-  />
 {/if}
 
 <style>

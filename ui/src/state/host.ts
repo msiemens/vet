@@ -46,6 +46,17 @@ export async function setNativeMenu(items: MenuItem[]): Promise<void> {
   await invoke("set_menu", { items });
 }
 
+/** The host pops up native context menus; a plain browser draws them in the page. */
+export const hasNativeContextMenu = inTauri;
+
+/**
+ * Pops up a context menu of the host at the viewport position `x`, `y` and resolves with the id of
+ * the item chosen, or `null` when it closed without one.
+ */
+export async function popUpNativeMenu(items: MenuItem[], x: number, y: number): Promise<string | null> {
+  return invoke<string | null>("show_context_menu", { items, x, y });
+}
+
 /** Calls `listener` with the id of each item chosen in the native menu bar; resolves with the unsubscribe function. */
 export async function onNativeMenu(listener: (id: string) => void): Promise<() => void> {
   const { listen } = await import("@tauri-apps/api/event");

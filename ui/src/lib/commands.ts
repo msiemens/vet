@@ -17,6 +17,8 @@ export interface Command<C> {
   accelerator?: string;
   /** Also runs while a text field has the focus; otherwise its key belongs to the field. */
   inFields?: boolean;
+  /** Only a menu item carries the argument it needs, so no key runs it. */
+  argument?: boolean;
   /** Default: always. `arg` is the argument a menu item carries (`id:arg`). */
   enabled?(context: C, arg?: string): boolean;
   /** Answers `false` when it found nothing to do: its key then goes on to the page. */

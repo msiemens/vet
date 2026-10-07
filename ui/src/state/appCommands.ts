@@ -26,6 +26,7 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     {
       id: "file.openRecent",
       label: "Open recent",
+      argument: true,
       run: (_, path) => {
         if (path === undefined) return false;
         a.openProject(path);
@@ -45,6 +46,7 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     {
       id: "view.mode",
       label: "View mode",
+      argument: true,
       enabled: repoOpen,
       run: (_, id) => {
         const mode = MODES.find((m) => m.id === id);
@@ -55,6 +57,7 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     {
       id: "view.tool",
       label: "Tool window",
+      argument: true,
       enabled: repoOpen,
       run: (_, id) => {
         if (id === undefined) return false;
@@ -64,6 +67,7 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     {
       id: "view.theme",
       label: "Theme",
+      argument: true,
       run: (_, id) => {
         const theme = THEMES.find((t) => t.id === id);
         if (!theme) return false;

@@ -20,12 +20,14 @@
   import { WelcomeScreen } from "../features/welcome";
   import { repoName } from "../lib/paths";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
+  import ContextMenu from "../lib/ui/ContextMenu.svelte";
   import Toast from "../lib/ui/Toast.svelte";
   import type { Mode } from "../lib/viewMode";
   import { changeset } from "../state/changeset.svelte";
   import { appVersion, canQuit, hasNativeDialogs, hasNativeMenu, inTauri, quit, showWindow } from "../state/host";
   import { appCommands } from "../state/appCommands";
   import { commands } from "../state/commands";
+  import { contextMenus } from "../state/contextMenu.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { progress as backgroundTasks } from "../state/progress.svelte";
   import { recent } from "../state/recent.svelte";
@@ -96,6 +98,11 @@
       e.preventDefault();
     };
     window.addEventListener("keydown", onkeydown, true);
+    // The webview's own menu stays on text fields; elsewhere a handler opened the app's menu, or there is none.
+    const onContextMenu = (e: MouseEvent) => {
+      if (!(e.target instanceof Element && e.target.closest("input, textarea"))) e.preventDefault();
+    };
+    window.addEventListener("contextmenu", onContextMenu);
     applyTheme(theme);
     // The splash covers the start until the backend is connected (or the connection failed, which
     // the window then shows), so the window never shows empty.
@@ -117,6 +124,7 @@
     return () => {
       stopMenu();
       window.removeEventListener("keydown", onkeydown, true);
+      window.removeEventListener("contextmenu", onContextMenu);
       stopContext();
       stopCommands();
     };
@@ -215,6 +223,17 @@
       dialog = undefined;
       void changeset.finishReview();
     }}
+  />
+{/if}
+
+{#if contextMenus.drawn}
+  {@const request = contextMenus.drawn}
+  <ContextMenu
+    x={request.x}
+    y={request.y}
+    items={request.items}
+    onselect={(id) => request.onselect(id)}
+    onclose={() => contextMenus.close()}
   />
 {/if}
 

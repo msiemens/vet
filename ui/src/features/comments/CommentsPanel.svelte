@@ -1,13 +1,15 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import type { Thread } from "../../generated/Thread";
   import { canSubmit, isSubmitKey } from "../../lib/composer";
   import { movedTitle } from "../../lib/movedTitle";
-  import ContextMenu from "../../lib/ui/ContextMenu.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import { commands } from "../../state/commands";
+  import { contextMenus } from "../../state/contextMenu.svelte";
   import { threads } from "../../state/threads.svelte";
-  import { candidateLabel, candidates, detachedReason, groupThreads, placeLabel, preview } from "./groups";
+  import { attachMenu, threadCommands } from "./commentCommands";
+  import { candidates, detachedReason, groupThreads, placeLabel, preview } from "./groups";
 
   let { onselect }: { onselect: (thread: Thread) => void } = $props();
 
@@ -17,8 +19,8 @@
   let composing = $state(false);
   let body = $state("");
   let sending = $state(false);
-  /** "Attach to N" lists the candidates of `thread` at the pointer. */
-  let menu = $state<{ thread: Thread; x: number; y: number }>();
+
+  onMount(() => commands.register(...threadCommands({ attach: (thread, at) => void threads.attach(thread, at) })));
 
   async function post() {
     if (threads.revision === undefined || !canSubmit(body, sending)) return;
@@ -63,7 +65,11 @@
       <span class="reason">{detachedReason(thread)}</span>
       <span class="grow"></span>
       {#if candidates(thread).length}
-        <button class="ctl small" type="button" onclick={(e) => (menu = { thread, x: e.clientX, y: e.clientY })}>
+        <button
+          class="ctl small"
+          type="button"
+          onclick={(e) => void contextMenus.open(attachMenu(thread), e.clientX, e.clientY, { thread })}
+        >
           Attach to {candidates(thread).length}
         </button>
       {/if}
@@ -133,16 +139,6 @@
     {@render group(file.path, file.threads, false, `file:${file.path}`)}
   {/each}
 </aside>
-
-{#if menu}
-  <ContextMenu
-    x={menu.x}
-    y={menu.y}
-    items={candidates(menu.thread).map((at, i) => ({ id: String(i), label: candidateLabel(at) }))}
-    onselect={(id) => menu && void threads.attach(menu.thread.id, Number(id))}
-    onclose={() => (menu = undefined)}
-  />
-{/if}
 
 <style>
   aside {
