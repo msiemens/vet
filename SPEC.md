@@ -455,6 +455,7 @@ Also included: fetch-only restore with shared caches.
 - Language-server answers that depend only on a file's text (its symbols) are cached across restarts, keyed by language, server version and content
 - Materialized base snapshots and their dependency restore are kept between launches, keyed by snapshot, so reopening a review with the same base starts its servers without copying or restoring again
 - Semantic results track what they depend on (file contents, the project, server version), so a new revision recomputes only what its changes affect instead of discarding everything
+- For a changed symbol: its changed callers (recursively, through changed symbols only) and changed callees, and its unchanged direct callers flagged as possibly affected; the list says what the server's call hierarchy cannot see (dynamic dispatch, reflection)
 - Jump to Source (F4) from the changed-symbols list opens the selected symbol's definition
 - Clicking into a changed symbol in any editor (Changes, a diff or file tab) selects it in the changed-symbols panel
 - Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
