@@ -68,7 +68,9 @@ export class HunkBar extends WidgetType {
     bar.append(spacer);
     const actions = this.actions;
     if (actions) {
-      bar.append(
+      const tools = document.createElement("span");
+      tools.className = "vet-hunk-tools";
+      tools.append(
         iconButton(`Jump to source (${KEYS.jumpToSource.label})`, "file", () => actions.openSource(this.index)),
         iconButton("Comment", "comments", () => actions.comment(this.index)),
         iconButton(
@@ -80,6 +82,7 @@ export class HunkBar extends WidgetType {
           2,
         ),
       );
+      bar.append(tools);
     }
     return bar;
   }

@@ -21,6 +21,14 @@
   font-size: var(--fs-mono-s);
   white-space: pre;
 }
+/* An editor is as wide as its longest line and so is the bar; its buttons stay at the right edge
+   of what is visible, level with the file header's. */
+.vet-hunk-tools {
+  position: sticky;
+  right: 8px;
+  display: flex;
+  gap: 8px;
+}
 .vet-hunk-old {
   display: inline-flex;
   color: var(--old-base);
