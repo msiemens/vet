@@ -25,6 +25,7 @@ import { SectionHeights, readMetrics } from "./sectionHeights";
 import { COLLAPSE } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
 import { type ThreadListeners, ThreadLayer, threadState } from "./threadLayer";
+import { type ViewProbe, viewProbe } from "./viewProbe";
 import { Windowing } from "./windowing";
 
 /** The editor hooks as the owner provides them: the semantic requests still name the view's revision. */
@@ -50,7 +51,7 @@ export interface HunkAnchor {
 }
 
 export class ChangesetView {
-  readonly sections: Section[] = [];
+  private sections: Section[] = [];
   /** Hunk navigation stops at every change card and every hunk. */
   private stops: Stops;
   readonly totalHunks: number;
@@ -72,6 +73,8 @@ export class ChangesetView {
     private listeners: Listeners,
     /** Collapse unchanged regions (the Changes tab); otherwise the full file is shown. */
     private collapse: boolean,
+    /** Hands the dev tools what they measure; production owners leave it out. */
+    inspect?: (probe: ViewProbe) => void,
   ) {
     // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
     root.style.containerType = "inline-size";
@@ -149,6 +152,9 @@ export class ChangesetView {
     this.heights.layout();
     this.windowing.start();
     this.root.addEventListener("click", this.heights.onExpand, true);
+    inspect?.(
+      viewProbe({ sections: this.sections, mounted: this.windowing.mounted, heights: this.heights, stops: this.stops }),
+    );
   }
 
   destroy() {
@@ -159,10 +165,6 @@ export class ChangesetView {
     this.windowing.mounted.clear();
     this.threads.destroy();
     this.root.replaceChildren();
-  }
-
-  get totalHeight(): number {
-    return this.heights.total;
   }
 
   /** Drops the editor; the regions it had expanded are collapsed again when it is mounted anew. */
@@ -303,11 +305,6 @@ export class ChangesetView {
     this.select(this.stops.start(fi) + s.cards.length + hunk);
   }
 
-  /** The stop of file `fi`'s first hunk. */
-  firstHunkOf(fi: number): number {
-    return this.stops.start(fi) + this.sections[fi].cards.length;
-  }
-
   /** Shows a stop as current or not: a card outlines itself, a hunk is the editor's. */
   private markCurrent(stop: number, on: boolean) {
     const [fi, si] = this.stops.locate(stop);
@@ -411,11 +408,6 @@ export class ChangesetView {
     this.current = this.stops.nearest(fi, cards.length, card, hunks, anchor.line) ?? this.current;
   }
 
-  /** The latest toggle, so callers (the benchmark) can wait for the repaint. */
-  get pendingToggle(): Promise<void> {
-    return this.actions.pending;
-  }
-
   /** Renders a file's review state and progress as the backend sent them. */
   applyReview(update: ReviewUpdate) {
     const s = this.sections.find((s) => s.file.path === update.path);
@@ -427,31 +419,6 @@ export class ChangesetView {
     const [fi, si] = this.stops.locate(this.current);
     const s = this.sections[fi];
     return si < s.cards.length ? this.actions.card(s, si) : this.actions.hunk(s, si - s.cards.length);
-  }
-
-  /** Mounted files whose merge chunk count differs from the backend's hunk count (a diagnostic). */
-  chunkMismatches(): number {
-    let n = 0;
-    for (const fi of this.windowing.mounted) {
-      const s = this.sections[fi];
-      if (s.handle && s.handle.chunkCount() !== s.file.hunks.length) n++;
-    }
-    return n;
-  }
-
-  /** Largest difference between a mounted section's real height and its estimate; expanded regions are accounted for. */
-  maxDrift(): number {
-    let drift = 0;
-    for (const fi of this.windowing.mounted) {
-      const s = this.sections[fi];
-      drift = Math.max(
-        drift,
-        Math.abs(
-          s.body.scrollHeight + this.heights.m.header + s.cardsHeight + s.block + this.heights.m.gap + 1 - s.height,
-        ),
-      );
-    }
-    return drift;
   }
 
   /**
@@ -482,11 +449,5 @@ export class ChangesetView {
     else if (at.line !== undefined) await this.goToLine(at.index, at.line);
     else await this.goToFile(at.index);
     return true;
-  }
-
-  seenButton(fi: number): HTMLButtonElement {
-    const button = this.sections[fi].el.querySelector<HTMLButtonElement>("header .seen");
-    if (!button) throw new Error(`file ${fi} has no Seen button`);
-    return button;
   }
 }

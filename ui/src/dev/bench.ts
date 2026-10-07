@@ -6,7 +6,7 @@ import type { ReviewController as Shell } from "../features/review";
 import { nextPaint } from "../lib/nextPaint";
 import { changeset } from "../state/changeset.svelte";
 import { type Row, percentile95, row } from "./metrics";
-import { tooltipLatencies } from "./probe.svelte";
+import { toggling, tooltipLatencies, views } from "./probe.svelte";
 
 export interface BenchOptions {
   /** Seconds the full-changeset scroll takes (the speed follows from the height). */
@@ -49,7 +49,7 @@ async function scrollThrough(shell: Shell, root: HTMLElement, seconds: number, i
   root.scrollTop = 0;
   view.sync();
   await nextPaint();
-  const distance = view.totalHeight - root.clientHeight;
+  const distance = changesProbe().totalHeight() - root.clientHeight;
   const deltas: number[] = [];
   await new Promise<void>((resolve) => {
     let start = 0;
@@ -98,6 +98,13 @@ const check = (metric: string, pass: boolean, note?: string): Row => ({
   note,
 });
 
+/** What the Changes tab's current view lets the benchmark read. */
+function changesProbe() {
+  const probe = views.changes;
+  if (!probe) throw new Error("the Changes view has no probe: the benchmark needs the dev probe on the controller");
+  return probe;
+}
+
 /** The index of the section with the most target lines. */
 const biggestFile = (sections: readonly { file: { targetLines: number } }[]): number =>
   sections.reduce((best, s, i) => (s.file.targetLines > sections[best].file.targetLines ? i : best), 0);
@@ -114,10 +121,11 @@ const biggestFile = (sections: readonly { file: { targetLines: number } }[]): nu
 async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Promise<{ rows: Row[]; tag: string }> {
   const tag = `[${shell.mode}]`;
   const view = shell.changes;
-  const files = view.sections;
+  const probe = changesProbe();
+  const files = probe.sections;
   const biggest = biggestFile(files);
   const big = await view.goToFile(biggest);
-  await view.goToHunk(view.firstHunkOf(biggest) + (files[biggest].file.hunks.length >> 1));
+  await view.goToHunk(probe.firstHunkOf(biggest) + (files[biggest].file.hunks.length >> 1));
   const editor = big.view;
   editor.focus();
   const [at, length, decorations] = [editor.state.selection.main.head, editor.state.doc.length, big.decorationCount()];
@@ -180,7 +188,7 @@ async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Pro
  */
 async function expandAndOpen(shell: Shell, tag: string): Promise<Row[]> {
   const view = shell.changes;
-  const files = view.sections;
+  const files = changesProbe().sections;
   const biggest = biggestFile(files);
   const label = `${files[biggest].file.targetLines}-line file ${tag}`;
   const rows: Row[] = [];
@@ -223,7 +231,8 @@ async function mode(
   rows.push(row(`Open changeset → first hunk painted ${tag}`, opens, "ms", 300));
   await shell.open(true);
   const view = shell.changes;
-  const files = view.sections;
+  const probe = changesProbe();
+  const files = probe.sections;
 
   o.progress(`${tag} hunk navigation`);
   const nav: number[] = [];
@@ -247,14 +256,14 @@ async function mode(
   );
   await view.goToFile(near1000);
   await nextPaint();
-  const button = view.seenButton(near1000);
+  const button = probe.seenButton(near1000);
   const toggles: number[] = [];
   // Click, IPC round trip to the backend, repaint of the returned state.
   for (let i = 0; i < Math.min(o.samples, 50); i++) {
     toggles.push(
       await time(async () => {
         button.click();
-        await view.pendingToggle;
+        await toggling.pending;
       }),
     );
   }
@@ -272,8 +281,8 @@ async function mode(
   rows.push(
     row(`Sustained scroll, dropped frames (refresh ${interval.toFixed(1)} ms) ${tag}`, [dropped], "%", 5, "<="),
   );
-  rows.push(info(`Section height estimate vs measured, max error px ${tag}`, view.maxDrift(), "px"));
-  rows.push(info(`Merge chunks ≠ backend hunks, mounted files ${tag}`, view.chunkMismatches(), "files"));
+  rows.push(info(`Section height estimate vs measured, max error px ${tag}`, probe.maxDrift(), "px"));
+  rows.push(info(`Merge chunks ≠ backend hunks, mounted files ${tag}`, probe.chunkMismatches(), "files"));
 
   const [heap, rss] = [heapMb(), await o.memoryMb()];
   rows.push(info(`Renderer JS heap ${tag}`, heap, "MB"));

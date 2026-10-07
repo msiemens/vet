@@ -21,9 +21,6 @@ export interface ReviewRequests {
 }
 
 export class ReviewActions {
-  /** The latest toggle, so callers (the benchmark) can wait for the repaint. */
-  pending: Promise<void> = Promise.resolve();
-
   constructor(
     private revision: number,
     private requests: ReviewRequests,
@@ -31,17 +28,17 @@ export class ReviewActions {
 
   /** Asks the backend to mark everything in the file (hunks and change cards) seen, or unseen if it all already is. */
   file({ file }: Section): Promise<void> {
-    return (this.pending = this.requests.toggleFileSeen(this.revision, file.path));
+    return this.requests.toggleFileSeen(this.revision, file.path);
   }
 
   /** Asks the backend to flip the file's `hi`-th hunk. */
   hunk({ file }: Section, hi: number): Promise<void> {
-    return (this.pending = this.requests.toggleHunk(this.revision, file.path, hi));
+    return this.requests.toggleHunk(this.revision, file.path, hi);
   }
 
   /** Asks the backend to flip the acknowledgement of the file's `ci`-th change card. */
   card({ file }: Section, ci: number): Promise<void> {
-    return (this.pending = this.requests.toggleItem(this.revision, file.path, file.nonText[ci].kind));
+    return this.requests.toggleItem(this.revision, file.path, file.nonText[ci].kind);
   }
 }
 

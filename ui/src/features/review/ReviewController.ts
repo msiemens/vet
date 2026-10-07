@@ -14,6 +14,7 @@ import { threads } from "../../state/threads.svelte";
 import type { Thread } from "../../generated/Thread";
 import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
+import type { ViewProbe } from "./editor/viewProbe";
 import { bindRevision } from "./editor/semantic";
 import { KEYS, matches } from "../../lib/keymap";
 import type { Mode } from "../../lib/viewMode";
@@ -24,6 +25,10 @@ import { CHANGES, type TabId, Tabs, fileTab, kindOf, pathOf, textTab } from "./T
 export interface Probe {
   /** The hooks to give the editors, in place of the controller's own (to time the ones it wraps). */
   hooks(hooks: ViewHooks): ViewHooks;
+  /** The listeners to give the views, in place of the controller's own (to see the requests they make). */
+  listeners(listeners: Listeners): Listeners;
+  /** A view was built for the tab `tab`. */
+  view(tab: TabId, view: ViewProbe): void;
   /** A key reached the window and no binding took it; true if the probe did. */
   key(event: KeyboardEvent): boolean;
 }
@@ -180,7 +185,7 @@ export class ReviewController {
   }
 
   private listenersFor(id: TabId): Listeners {
-    return {
+    const listeners: Listeners = {
       toggleHunk: (revision, path, hunk) => changeset.toggleHunk(revision, path, hunk),
       toggleItem: (revision, path, kind) => changeset.toggleItem(revision, path, kind),
       toggleFileSeen: (revision, path) => changeset.toggleFileSeen(revision, path),
@@ -197,6 +202,7 @@ export class ReviewController {
         confirm: (thread) => threads.confirm(thread),
       },
     };
+    return this.probe ? this.probe.listeners(listeners) : listeners;
   }
 
   /** Gives every view the threads, if they are of the view's revision. */
@@ -247,6 +253,7 @@ export class ReviewController {
       this.hooks,
       this.listenersFor(id),
       id === CHANGES, // only the Changes tab collapses unchanged regions
+      this.probe && ((probe) => this.probe?.view(id, probe)),
     );
     this.views.set(id, view);
     if (threads.revision === manifest.revision) view.setThreads(threads.items, threads.revision);
