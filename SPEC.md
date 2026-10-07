@@ -470,6 +470,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Git fetch (in-process, read-only): on demand and periodically, so remote branches and how far a base is behind are current; Vet never pulls, merges or rebases
 - The split between the right sidebar's panels can be dragged, keeping its position
 - While a file's tab is active, the changed-symbols panel lists only that file's symbols
+- The changed-symbols panel shows its progress while it loads (files done of files to analyse) and lists symbols as their files are done
 - Jump to Source (F4) from the changed-symbols list opens the selected symbol's definition
 - Clicking into a changed symbol in any editor (Changes, a diff or file tab) selects it in the changed-symbols panel
 - Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
