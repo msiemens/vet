@@ -196,7 +196,7 @@ export class ChangesetView {
     s.loading ??= this.source.contents(s.file).then((loaded) => {
       s.loaded = loaded;
       // Mounting waits for the next frame, so a large reply's parse and an editor's creation never share one.
-      this.windowing.syncNextFrame(true);
+      this.windowing.syncNextFrame();
       return loaded;
     });
     return s.loading;

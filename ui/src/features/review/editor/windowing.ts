@@ -1,12 +1,12 @@
 // Which sections of a `ChangesetView` have an editor: only those near the viewport. Creating an
-// editor is the expensive step, so a scroll frame mounts only as many as fit a time budget and the
-// rest follow on later frames.
+// editor is the expensive step, so a frame mounts only as many as fit a time budget and the rest
+// follow on later frames. A frame has one such pass.
 
 import { closeHoverTooltips, showTooltip } from "@codemirror/view";
 import type { Section } from "./section.ts";
 import type { SectionHeights } from "./sectionHeights.ts";
 
-/** Time a scroll frame may spend creating editors before the rest wait for the next frame. */
+/** Time a frame may spend creating editors before the rest wait for the next frame. */
 const MOUNT_BUDGET_MS = 6;
 /** Scrolling counts as stopped after this long without a scroll event. */
 const SETTLE_MS = 120;
@@ -38,7 +38,12 @@ export class Windowing {
   /** Sections whose cards show their image previews. */
   private previewing = new Set<number>();
   private settle?: ReturnType<typeof setTimeout>;
-  /** A frame request that continues mounting once a frame's budget is spent. */
+  /** Set from a scroll event until scrolling settles. */
+  private scrolling = false;
+  /** A scroll event ran this frame's pass. */
+  private passed = false;
+  private endOfPass?: number;
+  /** The frame request that continues mounting once a frame's budget is spent. */
   private later?: number;
   private destroyed = false;
   private root: HTMLElement;
@@ -61,7 +66,8 @@ export class Windowing {
   destroy() {
     this.destroyed = true;
     if (this.later !== undefined) cancelAnimationFrame(this.later);
-    this.later = undefined;
+    if (this.endOfPass !== undefined) cancelAnimationFrame(this.endOfPass);
+    this.later = this.endOfPass = undefined;
     clearTimeout(this.settle);
     this.root.removeEventListener("scroll", this.onScroll);
     for (const fi of this.previewing) this.sections[fi].cards.forEach((c) => c.setPreview(false));
@@ -74,15 +80,26 @@ export class Windowing {
     // listener is registered before any editor mounts, so it runs first and keeps them from it;
     // `measureVisible` asks the visible ones for one measure in this frame's batch instead.
     e.stopImmediatePropagation();
-    this.sync(false);
+    this.scrolling = true;
     this.measureVisible();
+    // Editors mounted here measure in this frame's batch. The pass is this frame's: a continuation
+    // that is due in it gives way (see `syncNextFrame`).
+    this.passed = true;
+    this.sync(false);
+    this.endOfPass ??= requestAnimationFrame(() => {
+      this.endOfPass = undefined;
+      this.passed = false;
+    });
     clearTimeout(this.settle);
-    this.settle = setTimeout(() => this.sync(), SETTLE_MS);
+    this.settle = setTimeout(() => {
+      this.scrolling = false;
+      this.sync();
+    }, SETTLE_MS);
   };
 
   /**
    * Unmounts far sections and mounts loaded near ones, the ones in view first, as far as the frame's
-   * budget goes.
+   * budget goes; the rest follows in the next frames.
    */
   sync(wide = true) {
     if (this.destroyed) return; // a load that finished after the view was replaced
@@ -112,17 +129,22 @@ export class Windowing {
     const started = performance.now();
     for (const [i, fi] of pending.entries()) {
       if (i > 0 && performance.now() - started > MOUNT_BUDGET_MS) {
-        this.syncNextFrame(wide);
+        this.syncNextFrame();
         return;
       }
       this.host.mount(fi);
     }
   }
 
-  syncNextFrame(wide: boolean) {
+  /**
+   * Continues mounting in a later frame. A frame has one pass: when a scroll event already ran it,
+   * the continuation due in the same frame waits for the next.
+   */
+  syncNextFrame() {
     this.later ??= requestAnimationFrame(() => {
       this.later = undefined;
-      this.sync(wide);
+      if (this.passed) this.syncNextFrame();
+      else this.sync(!this.scrolling);
     });
   }
 
