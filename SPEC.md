@@ -481,7 +481,7 @@ Grouped by area; areas and the items within each are in priority order.
 
 - Loading screen while a project opens, naming the step it is at
 - Project switcher: the project name in the title bar is a dropdown of recent projects, plus "Open…"
-- App-drawn context menus in the code and the chrome instead of the webview's
+- Native context menus (the OS's, through the host's menu API) everywhere the app has one: the file tree, the editors and diff views, tabs, the changed-symbols list; they replace the webview's default menu and show each item's shortcut. Without a host (plain browser) the app draws the same items
 - The split between the right sidebar's panels can be dragged, keeping its position
 - The window reopens at its last position and size (falling back to the default when that display is gone)
 - Resizable dialogs (Settings first), keeping their size
