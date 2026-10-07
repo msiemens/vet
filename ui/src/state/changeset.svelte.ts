@@ -77,21 +77,19 @@ class ChangesetStore {
     return manifest;
   }
 
-  /** `revision` is the manifest the caller displays; the backend rejects a stale one. */
-  async setSeen(revision: number, path: string, hunks: number[], seen: boolean) {
-    await this.review(revision, session.connected().setSeen(revision, path, hunks, seen));
+  /** Flips one hunk. `revision` is the manifest the caller displays; the backend rejects a stale one. */
+  async toggleHunk(revision: number, path: string, hunk: number) {
+    await this.review(revision, session.connected().toggleHunk(revision, path, hunk));
+  }
+
+  /** Flips the acknowledgement of one non-text item. */
+  async toggleItem(revision: number, path: string, kind: NonTextKind) {
+    await this.review(revision, session.connected().toggleItem(revision, path, kind));
   }
 
   /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
   async toggleFileSeen(revision: number, path: string) {
-    await this.review(revision, this.connected().toggleFileSeen(revision, path));
-  }
-
-  async acknowledge(path: string, kind: NonTextKind, acknowledged: boolean) {
-    const backend = session.connected();
-    if (!this.manifest) throw new Error("no manifest loaded");
-    const { revision } = this.manifest;
-    await this.review(revision, backend.acknowledge(revision, path, kind, acknowledged));
+    await this.review(revision, session.connected().toggleFileSeen(revision, path));
   }
 
   /**

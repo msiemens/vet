@@ -226,6 +226,19 @@ impl Handler for Mock {
                 }
                 Ok(self.review_update(i, &all))
             }
+            Request::ToggleHunk {
+                session,
+                revision,
+                path,
+                hunk,
+            } => {
+                current(session, revision)?;
+                let i = position(&path)?;
+                let mut all = seen();
+                let flag = all[i].get_mut(hunk as usize).ok_or("no such hunk")?;
+                *flag = !*flag;
+                Ok(self.review_update(i, &all))
+            }
             Request::ToggleFileSeen {
                 session,
                 revision,
@@ -238,7 +251,9 @@ impl Handler for Mock {
                 all[i].fill(value);
                 Ok(self.review_update(i, &all))
             }
-            Request::Acknowledge { .. } | Request::ItemBlob { .. } => Err("the corpus has no non-text items".into()),
+            Request::Acknowledge { .. } | Request::ToggleItem { .. } | Request::ItemBlob { .. } => {
+                Err("the corpus has no non-text items".into())
+            }
             Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),
             Request::SetProjectFilter { .. } | Request::ExcludePath { .. } => Err("the corpus has no filter".into()),
             Request::FinishReview { .. } => Err("the corpus has no review to finish".into()),

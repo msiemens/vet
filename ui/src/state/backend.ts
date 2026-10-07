@@ -138,19 +138,14 @@ export class Backend {
     return expect(await this.conn.request(request), "itemBlob").content;
   }
 
-  /** `revision` is the manifest's; the backend rejects a stale one. */
-  async setSeen(revision: number, path: string, hunks: number[], seen: boolean): Promise<ReviewUpdate> {
-    return expect(
-      await this.conn.request({ type: "setSeen", session: this.sid, revision, path, hunks, seen }),
-      "review",
-    );
+  /** Flips one hunk: seen becomes unseen, anything else seen. `revision` is the manifest's; the backend rejects a stale one. */
+  async toggleHunk(revision: number, path: string, hunk: number): Promise<ReviewUpdate> {
+    return expect(await this.conn.request({ type: "toggleHunk", session: this.sid, revision, path, hunk }), "review");
   }
 
-  async acknowledge(revision: number, path: string, kind: NonTextKind, acknowledged: boolean): Promise<ReviewUpdate> {
-    return expect(
-      await this.conn.request({ type: "acknowledge", session: this.sid, revision, path, kind, acknowledged }),
-      "review",
-    );
+  /** Flips the acknowledgement of one non-text item. */
+  async toggleItem(revision: number, path: string, kind: NonTextKind): Promise<ReviewUpdate> {
+    return expect(await this.conn.request({ type: "toggleItem", session: this.sid, revision, path, kind }), "review");
   }
 
   /** Marks everything of a file seen, or takes every mark back if it all is seen already. */

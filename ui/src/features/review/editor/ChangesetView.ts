@@ -39,13 +39,13 @@ export type ViewHooks = Omit<Hooks, keyof BarActions | keyof SemanticHooks> & Se
 
 export interface Listeners {
   /**
-   * Asks the owner of the review state to mark hunks seen or unseen at `revision`.
-   * Its new state comes back through `applyReview`.
+   * Asks the owner of the review state to flip a hunk's seen state at `revision`; the backend
+   * decides the direction. Its new state comes back through `applyReview`.
    */
-  setSeen(revision: number, path: string, hunks: number[], seen: boolean): Promise<void>;
-  /** The same for a non-text item. */
-  acknowledge(path: string, kind: NonTextKind, acknowledged: boolean): Promise<void>;
-  /** The same for everything in a file: the owner's backend decides whether that marks or unmarks it. */
+  toggleHunk(revision: number, path: string, hunk: number): Promise<void>;
+  /** The same for the acknowledgement of a non-text item. */
+  toggleItem(revision: number, path: string, kind: NonTextKind): Promise<void>;
+  /** The same for everything in a file. */
   toggleFileSeen(revision: number, path: string): Promise<void>;
   /** Context menu on a file header. */
   fileMenu(path: string, x: number, y: number): void;
@@ -708,14 +708,8 @@ export class ChangesetView {
     else if (cards.length) this.current = this.stopStart[fi];
   }
 
-  /** The latest `toggleSeen`, so callers (the benchmark) can wait for the repaint. */
+  /** The latest toggle, so callers (the benchmark) can wait for the repaint. */
   pendingToggle: Promise<void> = Promise.resolve();
-
-  /** Asks for the hunks to be marked seen or unseen; the returned state reaches the view through `applyReview` (I5: the view keeps none of its own). */
-  private setSeen(fi: number, hunks: number[], value: boolean): Promise<void> {
-    const { file } = this.sections[fi];
-    return (this.pendingToggle = this.listeners.setSeen(this.revision, file.path, hunks, value));
-  }
 
   /** Renders a file's review state and progress as the backend sent them. */
   applyReview({ path, review, completion }: ReviewUpdate) {
@@ -734,19 +728,19 @@ export class ChangesetView {
     return (this.pendingToggle = this.listeners.toggleFileSeen(this.revision, file.path));
   }
 
-  /** Unseen → seen, seen → unseen, seen against an old base → re-confirmed. */
+  /** Asks the backend to flip the file's `hi`-th hunk. */
   toggleHunk(fi: number, hi: number): Promise<void> {
-    return this.setSeen(fi, [hi], this.sections[fi].review.hunks[hi] !== "seen");
+    const { file } = this.sections[fi];
+    return (this.pendingToggle = this.listeners.toggleHunk(this.revision, file.path, hi));
   }
 
-  /** Acknowledges the file's `ci`-th change card, or takes it back. */
+  /** Asks the backend to flip the acknowledgement of the file's `ci`-th change card. */
   toggleCard(fi: number, ci: number): Promise<void> {
-    const { file, review } = this.sections[fi];
-    const { kind } = file.nonText[ci];
-    return (this.pendingToggle = this.listeners.acknowledge(file.path, kind, !review.acknowledged.includes(kind)));
+    const { file } = this.sections[fi];
+    return (this.pendingToggle = this.listeners.toggleItem(this.revision, file.path, file.nonText[ci].kind));
   }
 
-  /** Toggles the current stop: a hunk is marked seen or unseen, a card acknowledged or not. */
+  /** Asks the backend to flip the current stop: a hunk or a card. */
   toggleCurrent(): Promise<void> {
     const [fi, si] = this.locate(this.current);
     const cards = this.sections[fi].cards.length;

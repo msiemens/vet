@@ -180,8 +180,8 @@ export class ReviewController {
 
   private listenersFor(id: TabId): Listeners {
     return {
-      setSeen: (revision, path, hunks, seen) => changeset.setSeen(revision, path, hunks, seen),
-      acknowledge: (path, kind, acknowledged) => changeset.acknowledge(path, kind, acknowledged),
+      toggleHunk: (revision, path, hunk) => changeset.toggleHunk(revision, path, hunk),
+      toggleItem: (revision, path, kind) => changeset.toggleItem(revision, path, kind),
       toggleFileSeen: (revision, path) => changeset.toggleFileSeen(revision, path),
       fileMenu: this.fileMenu,
       openSource: (path, line) => void this.openSource(path, line),

@@ -385,6 +385,32 @@ impl Orchestrator {
                 announce_start(&open, update.started);
                 Ok(Response::Review(review_changed(&open, &events, &update)))
             }
+            Request::ToggleHunk {
+                session,
+                revision,
+                path,
+                hunk,
+            } => {
+                let open = self.find(session).await?;
+                let update = open.session.toggle_hunk(revision, &path, hunk).await.map_err(message)?;
+                announce_start(&open, update.started);
+                Ok(Response::Review(review_changed(&open, &events, &update)))
+            }
+            Request::ToggleItem {
+                session,
+                revision,
+                path,
+                kind,
+            } => {
+                let open = self.find(session).await?;
+                let update = open
+                    .session
+                    .toggle_item(revision, &path, mapping::core_non_text_kind(kind))
+                    .await
+                    .map_err(message)?;
+                announce_start(&open, update.started);
+                Ok(Response::Review(review_changed(&open, &events, &update)))
+            }
             Request::ToggleFileSeen {
                 session,
                 revision,

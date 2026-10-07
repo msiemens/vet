@@ -982,6 +982,51 @@ async fn toggling_a_file_marks_all_of_it_and_toggling_again_takes_it_back() {
 }
 
 #[tokio::test]
+async fn toggling_a_hunk_flips_what_is_stored_and_a_hunk_seen_against_an_old_base_becomes_seen() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3, 4]))]).await;
+
+    let update = fx.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
+    assert!(matches!(update.started, Some(Lifecycle::Open { .. })));
+    assert_eq!(update.review.hunks, [HunkState::Seen]);
+    let update = fx.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
+    assert_eq!(
+        (update.review.hunks.clone(), update.started),
+        (vec![HunkState::Unseen], None)
+    );
+
+    fx.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
+    let other = base.replace("line 4\n", "");
+    fx.git.add_commit("merge-base main", "mb", &[("a.txt", &other)]);
+    fx.session
+        .set_base(BaseChoice::MergeBase {
+            reference: "main".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::SeenAgainstOldBase]);
+    let update = fx.session.toggle_hunk(1, "a.txt", 0).await.unwrap();
+    assert_eq!(update.review.hunks, [HunkState::Seen]);
+
+    let missing = fx.session.toggle_hunk(1, "a.txt", 3).await;
+    assert!(matches!(missing, Err(SessionError::NotFound(_))));
+}
+
+#[tokio::test]
+async fn toggling_an_item_flips_its_acknowledgement() {
+    let (session, store) = edited_script().await;
+
+    let update = session.toggle_item(0, "run.sh", NonTextKind::Mode).await.unwrap();
+    assert_eq!(update.review.acknowledged, [NonTextKind::Mode]);
+    assert!(matches!(update.started, Some(Lifecycle::Open { .. })));
+    assert_eq!(store.0.lock().unwrap().acks.len(), 1);
+
+    let update = session.toggle_item(0, "run.sh", NonTextKind::Mode).await.unwrap();
+    assert!(update.review.acknowledged.is_empty());
+    assert!(store.0.lock().unwrap().acks.is_empty());
+}
+
+#[tokio::test]
 async fn toggling_a_file_with_only_a_mode_change_acknowledges_it_and_starts_the_review() {
     let git = FakeGit::default();
     let base = git.snapshot(&[("run.sh", "echo\n")]);

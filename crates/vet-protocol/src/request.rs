@@ -72,6 +72,23 @@ pub enum Request {
         kind: NonTextKind,
         acknowledged: bool,
     },
+    /// Flips one hunk (an index into the manifest of `revision`): seen becomes unseen, an
+    /// unseen one or one seen against an old base becomes seen. Fails if `revision` is no
+    /// longer current. Answers with `Response::Review`.
+    ToggleHunk {
+        session: SessionId,
+        revision: u32,
+        path: String,
+        hunk: u32,
+    },
+    /// Flips the acknowledgement of one non-text item. Fails if `revision` is no longer
+    /// current. Answers with `Response::Review`.
+    ToggleItem {
+        session: SessionId,
+        revision: u32,
+        path: String,
+        kind: NonTextKind,
+    },
     /// Marks everything of a file seen: all its hunks and non-text items. If it all
     /// is seen already, takes every mark back instead. Fails if `revision` is no
     /// longer current. Answers with `Response::Review`.
