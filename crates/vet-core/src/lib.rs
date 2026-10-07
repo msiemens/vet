@@ -5,6 +5,7 @@
 pub mod completion;
 pub mod content;
 pub mod filter;
+pub mod hunks;
 pub mod inline;
 pub mod marking;
 pub mod merkle;
@@ -13,4 +14,4 @@ pub mod prepared;
 pub mod remap;
 pub mod resolve;
 pub mod review;
-mod text;
+pub mod text;

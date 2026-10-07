@@ -4284,6 +4284,7 @@ dependencies = [
  "tree-sitter-toml-ng",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
+ "vet-core",
 ]
 
 [[package]]
@@ -4315,6 +4316,7 @@ version = "0.0.0"
 dependencies = [
  "similar",
  "tokio",
+ "vet-app",
  "vet-core",
  "vet-highlight",
  "vet-protocol",

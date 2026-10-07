@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use corpus::{Config, Corpus};
+use vet_app::editor::{line_count, text_changes};
 use vet_core::content::LineRange;
-use vet_core::inline::text_changes;
 use vet_highlight::{Cache, Language};
 use vet_protocol::{
     Base, BaseChoice, CommitInfo, Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, LineDelta, Manifest,
@@ -121,8 +121,8 @@ impl Handler for Mock {
                         path: f.path.clone(),
                         old_path: None,
                         status: FileStatus::Modified,
-                        base_lines: corpus::line_count(&f.base) as u32,
-                        target_lines: corpus::line_count(&f.target) as u32,
+                        base_lines: line_count(f.base.as_bytes()),
+                        target_lines: line_count(f.target.as_bytes()),
                         hunks: f.hunks.clone(),
                         delta: delta(&f.hunks),
                         non_text: vec![],

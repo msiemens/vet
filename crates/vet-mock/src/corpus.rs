@@ -9,8 +9,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use similar::{Algorithm, DiffTag, TextDiff};
+use vet_app::editor::line_count;
 use vet_core::content::LineRange;
-use vet_core::inline::join_close_hunks;
+use vet_core::hunks::join_close_hunks;
 use vet_protocol::{Hunk, Mark, MarkKind};
 
 pub const MIN_FILES: usize = 300;
@@ -99,7 +100,10 @@ impl Corpus {
         let biggest = self
             .files
             .iter()
-            .map(|f| (f.path.clone(), line_count(&f.target).max(line_count(&f.base))))
+            .map(|f| {
+                let lines = line_count(f.target.as_bytes()).max(line_count(f.base.as_bytes()));
+                (f.path.clone(), lines as usize)
+            })
             .max_by_key(|f| f.1);
         Stats {
             files: self.files.len(),
@@ -121,10 +125,6 @@ fn hunk_mark_lines(hunk: &Hunk, total: u32) -> (u32, u32) {
             (hunk.target_start + 3).min(total),
         )
     }
-}
-
-pub fn line_count(text: &str) -> usize {
-    text.matches('\n').count() + 1
 }
 
 fn git(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {

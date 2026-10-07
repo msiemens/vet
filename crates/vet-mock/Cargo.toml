@@ -6,9 +6,10 @@ publish.workspace = true
 
 # Mock orchestrator for the shell spike (SPEC §12.0): the real transport and
 # handshake, answering from a real git changeset. It shells out to the `git`
-# CLI; the real backend uses gitoxide (§6.3). Depends only on the transport and
-# the protocol and the text diff of `vet-core`.
+# CLI; the real backend uses gitoxide (§6.3). Depends only on the transport, the
+# protocol, `vet-core` and the view shaping of `vet-app`.
 [dependencies]
+vet-app.workspace = true
 vet-core.workspace = true
 vet-highlight.workspace = true
 vet-protocol.workspace = true

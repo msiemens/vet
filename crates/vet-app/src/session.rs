@@ -38,7 +38,7 @@ use vet_core::content::{
     RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus, image_media_type,
 };
 use vet_core::filter::ReviewFilter;
-use vet_core::inline::{TextChange, text_changes};
+use vet_core::inline::TextChange;
 use vet_core::marking::{hunk_regions, hunk_span};
 use vet_core::prepared::PreparedFile;
 use vet_core::remap::{cut_recorded, remap_span};
@@ -50,6 +50,7 @@ use vet_core::review::{
 
 use crate::acquisition::{Acquisition, SharedAcquisition};
 use crate::base;
+use crate::editor::{self, last_text_line, line_count};
 use crate::execution::Execution;
 use crate::execution::check::RunCheckConfig;
 use crate::pin::{BaseChoice, CommitId};
@@ -418,11 +419,6 @@ async fn author_of<G: GitRepo>(git: &G) -> String {
 
 fn diff_path(d: &FileDiff) -> &RepoPath {
     d.new_path.as_ref().or(d.old_path.as_ref()).expect("a diff has a path")
-}
-
-/// Lines as an editor numbers them: a final line break is followed by one more, empty line.
-fn line_count(bytes: &[u8]) -> u32 {
-    bytes.iter().filter(|&&b| b == b'\n').count() as u32 + 1
 }
 
 fn is_binary(bytes: &[u8]) -> bool {
@@ -966,7 +962,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         st.changes.as_mut().expect("computed").blobs = blobs;
         result?;
         let [base, target] = texts;
-        let changes = text_changes(
+        let changes = editor::text_changes(
             base.as_deref().unwrap_or_default(),
             target.as_deref().unwrap_or_default(),
             &hunks,
@@ -1806,12 +1802,12 @@ fn card_line(changes: &Changes, side: Side, location: &Location) -> u32 {
     let line = target_line(hunks, side, last);
     // A deleted file has no target text; an unchanged one is not in the diff and cannot overrun.
     // The empty line after a final line break holds no text, so no card sits below it.
-    let lines = diff.map(|d| {
+    let last = diff.map(|d| {
         d.new_blob
             .and_then(|b| changes.blobs.get(&b))
-            .map_or(0, |t| line_count(t) - u32::from(t.last() == Some(&b'\n')))
+            .map_or(0, |t| last_text_line(t))
     });
-    lines.map_or(line, |lines| line.min(lines.saturating_sub(1)))
+    last.map_or(line, |last| line.min(last))
 }
 
 fn lifecycle_of(st: &State) -> Lifecycle {

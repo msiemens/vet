@@ -622,7 +622,8 @@ pub enum Response {
         revision: u32,
         base: Option<String>,
         target: Option<String>,
-        /// The hunks' changed ranges, down to the words that differ within a replaced region.
+        /// The changed ranges of the hunks in order, down to the words that differ within a
+        /// replaced region: line-snapped, one block per hunk (see [`TextChange`]).
         changes: Vec<TextChange>,
         /// The syntax highlighting of `base`, empty for a side without one or without a
         /// known language (see [`Highlights`]).
@@ -1502,8 +1503,14 @@ pub struct Hunk {
 /// UTF-16 units of the text with `\r\n` counted as one unit, as for [`TextChange`].
 pub type Highlights = Vec<u32>;
 
-/// A changed range of the base and target text. Offsets are UTF-16 units of the
-/// text with `\r\n` counted as one unit, as CodeMirror counts its document.
+/// A changed range of the base and target text, as a view that draws changes by whole lines needs
+/// it. Offsets are UTF-16 units of the text with `\r\n` counted as one unit.
+///
+/// The changes of a file are line-snapped: a line-based view that snaps a change to the lines it
+/// touches and groups the changes that touch shows exactly one block for each hunk, covering the
+/// hunk's lines. The first change of a block starts in the hunk's first line and the last one ends
+/// in its last line. Lines are counted as in `FileChange::base_lines`: a final line break starts
+/// one more, empty line.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

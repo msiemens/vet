@@ -30,7 +30,8 @@ export type Response = { "type": "pong", payload: string, } | { "type": "session
  */
 root: string, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
 /**
- * The hunks' changed ranges, down to the words that differ within a replaced region.
+ * The changed ranges of the hunks in order, down to the words that differ within a
+ * replaced region: line-snapped, one block per hunk (see [`TextChange`]).
  */
 changes: Array<TextChange>, 
 /**

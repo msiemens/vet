@@ -1,22 +1,21 @@
 //! Syntax highlighting: a text and its language in, the ranges to colour out. The grammars are
 //! tree-sitter's; a range's kind is one of the few [`Kind`]s the theme has colours for.
 //!
-//! Offsets are UTF-16 units of the text with `\r\n` (and a lone `\r`) counted as one unit, as
-//! CodeMirror counts its document, so a client applies them without looking at the text.
+//! Offsets are in the units of [`vet_core::text`], so a client applies them without looking at the
+//! text.
 
 mod cache;
 mod kind;
 mod language;
 mod markdown;
-mod units;
 
 use tree_sitter_highlight::{HighlightEvent, Highlighter};
+use vet_core::text::Units;
 
 pub use cache::Cache;
 pub use kind::Kind;
 pub use language::Language;
 pub use markdown::code_blocks;
-use units::Units;
 
 /// Texts over this size are not highlighted: parsing them would cost more than the colour is worth.
 pub const MAX_BYTES: usize = 2 << 20;

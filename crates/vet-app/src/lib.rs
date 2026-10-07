@@ -4,6 +4,7 @@
 
 pub mod acquisition;
 pub mod base;
+pub mod editor;
 pub mod execution;
 pub mod gc;
 pub mod ignore;

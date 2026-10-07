@@ -1,4 +1,8 @@
-//! Line splitting, range hashing and exact line mapping between two texts.
+//! Line splitting, range hashing and exact line mapping between two texts, and offsets in UTF-16
+//! units.
+//!
+//! A text's offsets are UTF-16 units with `\r\n` counted as one unit, which is how an editor
+//! counts its document, so a client applies offsets without looking at the text.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -7,6 +11,88 @@ use similar::{Algorithm, DiffOp, capture_diff_slices};
 
 use crate::content::{Hash, LineRange, RepoPath, SnapshotId};
 use crate::review::{Anchor, Side};
+
+/// Converts byte offsets of a text to offsets in units. Queries mostly ascend, so it walks forward
+/// from the last one.
+pub struct Units<'a> {
+    text: &'a str,
+    byte: usize,
+    unit: u32,
+}
+
+impl<'a> Units<'a> {
+    pub fn new(text: &'a str) -> Self {
+        Self { text, byte: 0, unit: 0 }
+    }
+
+    /// The offset in units of the character containing `byte`, or the text's length.
+    pub fn at(&mut self, byte: usize) -> u32 {
+        if byte < self.byte {
+            (self.byte, self.unit) = (0, 0);
+        }
+        let bytes = self.text.as_bytes();
+        for c in self.text[self.byte..].chars() {
+            if self.byte >= byte {
+                break;
+            }
+            // The `\r` of `\r\n` is part of the break the `\n` counts.
+            if !(c == '\r' && bytes.get(self.byte + 1) == Some(&b'\n')) {
+                self.unit += c.len_utf16() as u32;
+            }
+            self.byte += c.len_utf8();
+        }
+        self.unit
+    }
+}
+
+/// Length of `text` in units.
+pub fn unit_len(text: &str) -> u32 {
+    Units::new(text).at(text.len())
+}
+
+/// A text split into `\n`-terminated lines, with each line's byte and unit offset.
+pub struct Lines<'a> {
+    text: &'a str,
+    bytes: Vec<usize>,
+    units: Vec<u32>,
+}
+
+impl<'a> Lines<'a> {
+    pub fn new(text: &'a str) -> Self {
+        let (mut bytes, mut units) = (vec![0], vec![0]);
+        for line in text.split_inclusive('\n') {
+            bytes.push(bytes[bytes.len() - 1] + line.len());
+            units.push(units[units.len() - 1] + unit_len(line));
+        }
+        Self { text, bytes, units }
+    }
+
+    pub fn text(&self) -> &'a str {
+        self.text
+    }
+
+    /// The offset of each line's start, then the text's length. A line past the end of the text
+    /// starts at its length.
+    pub fn starts(&self) -> &[u32] {
+        &self.units
+    }
+
+    /// The offset of the start of `line`.
+    pub fn offset(&self, line: u32) -> u32 {
+        self.units[(line as usize).min(self.units.len() - 1)]
+    }
+
+    /// The text's length in units.
+    pub fn total(&self) -> u32 {
+        self.units[self.units.len() - 1]
+    }
+
+    /// The text of the lines in `range`.
+    pub fn slice(&self, range: LineRange) -> &'a str {
+        let at = |line: u32| self.bytes[(line as usize).min(self.bytes.len() - 1)];
+        &self.text[at(range.start)..at(range.end)]
+    }
+}
 
 /// Lines of context hashed on each side of an anchor.
 pub(crate) const CONTEXT: usize = 3;

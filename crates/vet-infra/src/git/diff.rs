@@ -18,7 +18,7 @@ use vet_core::content::{
     BlobId, BlobSource, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextChange, NonTextKind, RenameMap,
     RepoPath, Snapshot, SnapshotDiff,
 };
-use vet_core::inline::join_close_hunks;
+use vet_core::hunks::join_close_hunks;
 
 use super::scan::Worktree;
 use super::{BlobCache, err};
