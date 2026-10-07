@@ -6,7 +6,7 @@
   import SideBar from "../../lib/ui/SideBar.svelte";
   import type { Mode } from "../../lib/viewMode";
   import type { Backend } from "../../state/backend";
-  import { changeset } from "../../state/changeset.svelte";
+  import type { Changeset } from "../../state/changeset.svelte";
   import { session } from "../../state/session.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -25,6 +25,7 @@
 
   let {
     backend,
+    changeset,
     probe,
     leftTool,
     leftOpen,
@@ -37,6 +38,8 @@
     onclose,
   }: {
     backend: Backend;
+    /** What the backend sent about the open changeset. */
+    changeset: Changeset;
     /** The dev tools' measurements of the editors, if they are on. */
     probe?: Probe;
     /** Unified or side by side; the owner applies a change to the controller. */
@@ -56,9 +59,14 @@
   } = $props();
 
   let menu = $state<{ path: string; dir: boolean; x: number; y: number }>();
-  // The backend is fixed for a mounted screen.
+  // The backend and the changeset are fixed for a mounted screen.
   // svelte-ignore state_referenced_locally
-  const controller = new ReviewController(backend, (path, x, y) => (menu = { path, dir: false, x, y }), probe);
+  const controller = new ReviewController(
+    backend,
+    changeset,
+    (path, x, y) => (menu = { path, dir: false, x, y }),
+    probe,
+  );
   // svelte-ignore state_referenced_locally
   controller.mode = mode;
   const tabs = controller.tabs;

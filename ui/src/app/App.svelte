@@ -150,6 +150,7 @@
     <ToolRail bind:active={left.tool} bind:open={left.open} />
     <ReviewScreen
       backend={session.backend}
+      {changeset}
       {probe}
       leftTool={left.tool}
       leftOpen={left.open}

@@ -209,4 +209,6 @@ class ChangesetStore {
   }
 }
 
+export type Changeset = ChangesetStore;
+
 export const changeset = new ChangesetStore();

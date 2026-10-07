@@ -7,7 +7,7 @@ import type { Side } from "../../generated/Side";
 import type { TextSpan } from "../../generated/TextSpan";
 import { nextPaint } from "../../lib/nextPaint";
 import type { Backend } from "../../state/backend";
-import { changeset } from "../../state/changeset.svelte";
+import type { Changeset } from "../../state/changeset.svelte";
 import { semantic } from "../../state/semantic.svelte";
 import { session } from "../../state/session.svelte";
 import { threads } from "../../state/threads.svelte";
@@ -37,6 +37,12 @@ export interface Probe {
 const takesSpace = (el: Element | null) =>
   !!el?.closest("button, a, input, textarea, select, [contenteditable], [tabindex], [role=menuitem], [role=tab]");
 
+/** What the controller reads of the open changeset and asks of it. */
+export type ChangesetSource = Pick<
+  Changeset,
+  "files" | "onReview" | "toggleHunk" | "toggleItem" | "toggleFileSeen" | "currentManifest" | "refresh"
+>;
+
 export class ReviewController {
   readonly tabs = new Tabs();
   /** The view of each attached tab; a file tab has none while its file is not in the changeset. */
@@ -49,6 +55,7 @@ export class ReviewController {
 
   constructor(
     readonly backend: Backend,
+    private changeset: ChangesetSource,
     /** Context menu on a file's header in a view. */
     private fileMenu: (path: string, x: number, y: number) => void,
     private probe?: Probe,
@@ -93,7 +100,7 @@ export class ReviewController {
   }
 
   get files() {
-    return changeset.files;
+    return this.changeset.files;
   }
 
   /** The Changes tab's scroll root. */
@@ -186,9 +193,9 @@ export class ReviewController {
 
   private listenersFor(id: TabId): Listeners {
     const listeners: Listeners = {
-      toggleHunk: (revision, path, hunk) => changeset.toggleHunk(revision, path, hunk),
-      toggleItem: (revision, path, kind) => changeset.toggleItem(revision, path, kind),
-      toggleFileSeen: (revision, path) => changeset.toggleFileSeen(revision, path),
+      toggleHunk: (revision, path, hunk) => this.changeset.toggleHunk(revision, path, hunk),
+      toggleItem: (revision, path, kind) => this.changeset.toggleItem(revision, path, kind),
+      toggleFileSeen: (revision, path) => this.changeset.toggleFileSeen(revision, path),
       fileMenu: this.fileMenu,
       openSource: (path, line) => void this.openSource(path, line),
       // A diff tab shows its file's hunks; only the Changes tab offers to open one.
@@ -269,7 +276,7 @@ export class ReviewController {
   attach(id: TabId, root: HTMLElement): () => void {
     this.roots.set(id, root);
     // The Changes tab is built by `open`, which fetches the manifest first.
-    const manifest = changeset.currentManifest();
+    const manifest = this.changeset.currentManifest();
     if (id !== CHANGES && manifest) this.build(id, manifest);
     return () => {
       this.views.get(id)?.destroy();
@@ -314,7 +321,7 @@ export class ReviewController {
     const t0 = performance.now();
     this.views.get(CHANGES)?.destroy();
     this.views.delete(CHANGES);
-    this.show(await changeset.refresh());
+    this.show(await this.changeset.refresh());
     const view = this.changes;
     await view.goToHunk(0);
     await nextPaint();
