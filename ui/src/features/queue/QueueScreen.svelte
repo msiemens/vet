@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { ChangesetRow } from "../../generated/ChangesetRow";
   import type { Thread } from "../../generated/Thread";
   import Icon from "../../lib/ui/Icon.svelte";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
@@ -8,13 +7,19 @@
   import { keyId } from "../../state/changesetKey";
   import { queue } from "../../state/queue.svelte";
   import { threads } from "../../state/threads.svelte";
+  import ChangesetName from "./ChangesetName.svelte";
   import { detailGroups } from "./details";
   import {
+    type QueueRow,
     type QueueTab,
     TABS,
+    ciIcon,
+    commentCount,
     filterRows,
+    labelOf,
+    queueRows,
     reviewedOf,
-    showsOwnLines,
+    shownLines,
     sourceText,
     tabCounts,
     updatedText,
@@ -28,6 +33,7 @@
     onopen,
     onopenfile,
     onopenthread,
+    onsignin,
   }: {
     /** Shows the review of the changeset on view. */
     onopen: () => void;
@@ -35,27 +41,32 @@
     onopenfile: (path: string) => void;
     /** … at a thread. */
     onopenthread: (thread: Thread) => void;
+    /** Opens Settings at the accounts, for a repository that has none of the credential it needs. */
+    onsignin: () => void;
   } = $props();
 
   let tab = $state<QueueTab>("all");
   let query = $state("");
   let panel = $state<"details" | "files" | "comments">("details");
 
-  const counts = $derived(tabCounts(queue.rows));
-  const shown = $derived(filterRows(queue.rows, tab, query));
+  const rows = $derived(queueRows(queue.local, queue.pullRequests));
+  const counts = $derived(tabCounts(rows));
+  const shown = $derived(filterRows(rows, tab, query));
+  /** The repositories whose pull requests could not be listed. */
+  const unlisted = $derived(tab === "all" || tab === "prs" ? queue.sources.filter((s) => s.error !== undefined) : []);
   const manifest = $derived(changeset.manifest);
   const onViewId = $derived(queue.onView && keyId(queue.onView));
-  const current = $derived(queue.rows.find((r) => keyId(r.key) === onViewId));
+  const current = $derived(rows.find((r) => keyId(r.key) === onViewId));
   /** The changeset's own numbers; a range of versions is not them. */
   const own = $derived(manifest && !manifest.interdiff ? manifest : undefined);
 
-  onMount(() => void queue.load());
+  onMount(() => void queue.loadAll());
 
   /** What the table knows of a row's lines: only the changeset on view has them. */
-  const ownOf = (row: ChangesetRow) => (keyId(row.key) === onViewId ? own : undefined);
+  const ownOf = (row: QueueRow) => (keyId(row.key) === onViewId ? own : undefined);
 
   /** The selected row is the changeset on view: choosing one puts it on view. */
-  function select(row: ChangesetRow) {
+  function select(row: QueueRow) {
     if (keyId(row.key) !== onViewId) void changeset.openChangeset(row.key);
   }
 
@@ -102,6 +113,9 @@
       {#each shown as row, index (keyId(row.key))}
         {@const id = keyId(row.key)}
         {@const numbers = ownOf(row)}
+        {@const lines = shownLines(row, numbers?.delta)}
+        {@const ci = ciIcon(row.pullRequest?.ci)}
+        {@const comments = commentCount(row)}
         <button
           class="flat row"
           class:on={id === onViewId}
@@ -114,24 +128,35 @@
           }}
           onkeydown={(e) => move(e, index)}
         >
-          <span class="title">{row.title}</span>
+          <span class="title"><ChangesetName label={labelOf(row)} /></span>
           <span class="source">{sourceText(row)}</span>
           <span class="mono delta">
-            {#if numbers && showsOwnLines(row)}<span class="add">+{numbers.delta.added}</span>
-              <span class="del">−{numbers.delta.removed}</span>{/if}
+            {#if lines}<span class="add">+{lines.added}</span>
+              <span class="del">−{lines.removed}</span>{/if}
           </span>
           <span><ReviewedCell reviewed={reviewedOf(row.review, numbers?.completion)} /></span>
           <span class="icons">
-            {#if row.openThreads > 0}
-              <span class="threads" title="{row.openThreads} open {row.openThreads === 1 ? 'thread' : 'threads'}"
-                ><Icon name="comments" size={13} />{row.openThreads}</span
+            {#if ci}<span class="ci {ci.tone}" title={ci.title}><Icon name={ci.icon} size={13} /></span>{/if}
+            {#if comments > 0}
+              <span
+                class="threads"
+                title={row.pullRequest
+                  ? `${comments} ${comments === 1 ? "comment" : "comments"}`
+                  : `${comments} open ${comments === 1 ? "thread" : "threads"}`}
+                ><Icon name="comments" size={13} />{comments}</span
               >
             {/if}
           </span>
           <span class="right when">{updatedText(row)}</span>
         </button>
       {:else}
-        <p class="empty">{queue.rows.length ? "No matching changesets" : "No changesets"}</p>
+        {#if !unlisted.length}<p class="empty">{rows.length ? "No matching changesets" : "No changesets"}</p>{/if}
+      {/each}
+      {#each unlisted as source (source.remote)}
+        <p class="unlisted">
+          {source.remote}: {source.error}
+          {#if source.signedOut}<button class="link" type="button" onclick={onsignin}>Sign in…</button>{/if}
+        </p>
       {/each}
     </div>
   </div>
@@ -264,6 +289,37 @@
     gap: 3px;
     color: var(--accent);
     font-size: var(--fs-mono-s);
+  }
+  .icons {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ci {
+    display: inline-flex;
+  }
+  .ci.ok {
+    color: var(--add-text);
+  }
+  .ci.failing {
+    color: var(--del-text);
+  }
+  .ci.running {
+    color: var(--old-base);
+  }
+  .unlisted {
+    margin: 8px 16px;
+    color: var(--text-3);
+    font-size: var(--fs-ctl);
+  }
+  .link {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
   }
   .panel {
     flex: none;

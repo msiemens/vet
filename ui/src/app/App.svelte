@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { type ComponentProps, onMount } from "svelte";
   import DevTools from "../dev/DevTools.svelte";
   import { probe } from "../dev/probe.svelte";
   import {
@@ -15,7 +15,7 @@
     type Screen,
     toggleTool,
   } from "../features/chrome";
-  import { ChangesetSwitcher, QueueScreen } from "../features/queue";
+  import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, targetLabel } from "../features/queue";
   import { ReviewScreen, type ReviewController, summarize } from "../features/review";
   import { SettingsDialog } from "../features/settings";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
@@ -60,7 +60,8 @@
   let timelineOpen = $state(false);
   let theme = $state<Theme>(storedTheme());
   let mode = $state<Mode>("unified");
-  let dialog = $state<"settings" | "about" | "finish">();
+  let dialog = $state<"settings" | "about" | "finish" | "pullRequest">();
+  let settingsPage = $state<ComponentProps<typeof SettingsDialog>["page"]>("appearance");
   let switcherOpen = $state(false);
   // The queue is the project's home; the review screen stays mounted behind it, so its views survive.
   let screen = $state<Screen>("queue");
@@ -97,7 +98,8 @@
         screen = "review";
         switcherOpen = true;
       },
-      showDialog: (d) => (dialog = d),
+      openPullRequest: () => void openPullRequest(),
+      showDialog: (d) => showDialog(d),
       quit: () => void quit(),
       setMode,
       toggleTool: (id) => {
@@ -167,6 +169,18 @@
       stopCommands();
     };
   });
+
+  function showDialog(d: "settings" | "about", page: typeof settingsPage = "appearance") {
+    settingsPage = page;
+    dialog = d;
+  }
+
+  /** Asks for a pull request by its number, in the repository the project has on GitHub. */
+  async function openPullRequest() {
+    if (!queue.sources.length) await queue.loadPullRequests();
+    if (queue.sources.length) dialog = "pullRequest";
+    else session.notice = "This project has no GitHub remote to open a pull request from";
+  }
 
   /** Every way of opening a project (recent list, menu, folder dialog, typed path) ends here. */
   function openProject(path: string) {
@@ -239,11 +253,14 @@
     {/if}
   {/snippet}
   {#snippet changesetSwitcher()}
+    {@const target = changeset.manifest?.target}
     <ChangesetSwitcher
-      name={changeset.manifest?.target.name}
-      title={changeset.manifest?.target.branch && `On ${changeset.manifest.target.branch}`}
+      label={target && targetLabel(target)}
+      draft={target?.draft}
+      title={target?.branch && `On ${target.branch}`}
       onpick={(key) => void changeset.openChangeset(key)}
       onqueue={() => (screen = "queue")}
+      onopenpullrequest={() => void openPullRequest()}
       bind:open={switcherOpen}
     />
   {/snippet}
@@ -269,7 +286,12 @@
 
   <div class="body">
     {#if screen === "queue"}
-      <QueueScreen onopen={() => (screen = "review")} onopenfile={openFile} onopenthread={openThread} />
+      <QueueScreen
+        onopen={() => (screen = "review")}
+        onopenfile={openFile}
+        onopenthread={openThread}
+        onsignin={() => showDialog("settings", "accounts")}
+      />
     {/if}
     <div class="review" class:away={screen !== "review"} inert={screen !== "review"}>
       <ToolRail bind:active={left.tool} bind:open={left.open} timeline={timelineOpen} ontimeline={toggleTimeline} />
@@ -317,7 +339,7 @@
       onpick={() => void pickProject()}
       onopen={openProject}
       onforget={(path) => void session.forget(path)}
-      onsettings={() => (dialog = "settings")}
+      onsettings={() => showDialog("settings")}
     />
   </div>
 {:else}
@@ -333,6 +355,7 @@
 
 {#if dialog === "settings"}
   <SettingsDialog
+    bind:page={settingsPage}
     {theme}
     ontheme={(t) => applyTheme((theme = t))}
     onclose={() => (dialog = undefined)}
@@ -347,6 +370,15 @@
     onfinish={() => {
       dialog = undefined;
       void changeset.finishReview();
+    }}
+  />
+{:else if dialog === "pullRequest"}
+  <OpenPullRequestDialog
+    remotes={queue.sources.map((s) => s.remote)}
+    onclose={() => (dialog = undefined)}
+    onopen={(remote, number) => {
+      dialog = undefined;
+      void changeset.openChangeset({ type: "pullRequest", remote, number });
     }}
   />
 {/if}

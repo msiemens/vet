@@ -22,6 +22,8 @@ export interface AppActions {
   showQueue(): void;
   /** Opens the changeset switcher. */
   showChangesets(): void;
+  /** Asks for a pull request by its number. */
+  openPullRequest(): void;
   showDialog(dialog: "settings" | "about"): void;
   quit(): void;
   setMode(mode: Mode): void;
@@ -46,6 +48,13 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     },
     { id: "view.queue", label: "Open Queue", binding: "Mod-1", enabled: repoOpen, run: () => a.showQueue() },
     { id: "changeset.switch", label: "Switch Changeset…", enabled: repoOpen, run: () => a.showChangesets() },
+    {
+      id: "changeset.openPullRequest",
+      label: "Open Pull Request…",
+      binding: "Mod-Shift-o",
+      enabled: repoOpen,
+      run: () => a.openPullRequest(),
+    },
     {
       id: "changeset.open",
       label: "Open changeset",

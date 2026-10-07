@@ -29,6 +29,7 @@ const actions: AppActions = {
   openChangeset: (key) => calls.push(`changeset ${keyId(key)}`),
   showQueue: () => calls.push("queue"),
   showChangesets: () => calls.push("changesets"),
+  openPullRequest: () => calls.push("pullRequest"),
   showDialog: (d) => calls.push(`dialog ${d}`),
   quit: () => calls.push("quit"),
   setMode: (mode) => calls.push(`mode ${mode}`),

@@ -15,7 +15,10 @@
     onclose,
     project,
     onfilter,
+    page = $bindable("appearance"),
   }: {
+    /** The page shown; the viewer's choice of another is passed back. */
+    page?: Page;
     theme: Theme;
     ontheme: (theme: Theme) => void;
     onclose: () => void;
@@ -34,7 +37,6 @@
     { id: "accounts", label: "Accounts" },
   ] as const;
   type Page = (typeof PAGES)[number]["id"];
-  let page = $state<Page>(PAGES[0].id);
 </script>
 
 <Dialog title="Settings" {onclose} width="780px" padded={false}>

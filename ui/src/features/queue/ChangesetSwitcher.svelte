@@ -9,31 +9,42 @@
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
   import { queue } from "../../state/queue.svelte";
+  import ChangesetName from "./ChangesetName.svelte";
   import {
+    type Label,
     type QueueTab,
     SWITCHER_FILTERS,
+    commentCount,
     filterRows,
+    labelOf,
+    queueRows,
     reviewedOf,
-    showsOwnLines,
+    shownLines,
     sourceText,
     updatedText,
   } from "./queueRows";
   import ReviewedCell from "./ReviewedCell.svelte";
 
   let {
-    name,
+    label,
+    draft = false,
     title,
     open = $bindable(false),
     onpick,
     onqueue,
+    onopenpullrequest,
   }: {
     /** What the changeset on view is called; unknown until the manifest arrives. */
-    name?: string;
+    label?: Label;
+    /** The changeset on view is a draft pull request. */
+    draft?: boolean;
     title?: string;
     open?: boolean;
     onpick: (key: ChangesetKey) => void;
     /** Shows the queue. */
     onqueue: () => void;
+    /** Asks for a pull request by its number. */
+    onopenpullrequest: () => void;
   } = $props();
 
   let query = $state("");
@@ -41,7 +52,8 @@
   let cursor = $state(0);
   let list = $state<HTMLElement>();
 
-  const shown = $derived(filterRows(queue.rows, filter, query));
+  const rows = $derived(queueRows(queue.local, queue.pullRequests));
+  const shown = $derived(filterRows(rows, filter, query));
   const onViewId = $derived(queue.onView && keyId(queue.onView));
   const own = $derived(changeset.manifest && !changeset.manifest.interdiff ? changeset.manifest : undefined);
 
@@ -49,7 +61,7 @@
   $effect(() => {
     if (!open) return;
     [query, filter, cursor] = ["", "all", 0];
-    untrack(() => void queue.load());
+    untrack(() => void queue.loadAll());
   });
 
   const focus = (node: HTMLElement) => node.focus();
@@ -81,7 +93,8 @@
 <Popover bind:open>
   {#snippet trigger(toggle)}
     <Chip active={open} {title} onclick={toggle}>
-      <Icon name="branch" />{name ?? "…"}
+      <Icon name="branch" />{#if label}<span class="current"><ChangesetName {label} /></span>{:else}…{/if}
+      {#if draft}<span class="badge">Draft</span>{/if}
     </Chip>
   {/snippet}
   <div class="switcher">
@@ -114,7 +127,8 @@
       {#each shown as row, index (keyId(row.key))}
         {@const id = keyId(row.key)}
         {@const numbers = id === onViewId ? own : undefined}
-        {@const lines = numbers && showsOwnLines(row) ? numbers : undefined}
+        {@const lines = shownLines(row, numbers?.delta)}
+        {@const comments = commentCount(row)}
         <li>
           <button
             class="flat row"
@@ -125,25 +139,24 @@
             onclick={() => pick(index)}
           >
             <span class="line">
-              <span class="name">{row.title}</span>
+              <span class="name"><ChangesetName label={labelOf(row)} /></span>
               <ReviewedCell reviewed={reviewedOf(row.review, numbers?.completion)} width={48} />
             </span>
             <span class="line sub">
               <span class="detail">
                 {sourceText(row)}
                 {#if lines}<span class="mono"
-                    ><span class="add">+{lines.delta.added}</span>
-                    <span class="del">−{lines.delta.removed}</span></span
+                    ><span class="add">+{lines.added}</span>
+                    <span class="del">−{lines.removed}</span></span
                   >{/if}
-                {#if row.openThreads > 0}<span class="threads"><Icon name="comments" size={11} />{row.openThreads}</span
-                  >{/if}
+                {#if comments > 0}<span class="threads"><Icon name="comments" size={11} />{comments}</span>{/if}
               </span>
               <span>{updatedText(row)}</span>
             </span>
           </button>
         </li>
       {:else}
-        <li class="empty">{queue.rows.length ? "No matching changesets" : "No changesets"}</li>
+        <li class="empty">{rows.length ? "No matching changesets" : "No changesets"}</li>
       {/each}
     </ul>
     <div class="foot">
@@ -154,6 +167,14 @@
           open = false;
           onqueue();
         }}>Open queue <span class="key">{commands.binding("view.queue")?.label}</span></button
+      >
+      <button
+        class="flat"
+        type="button"
+        onclick={() => {
+          open = false;
+          onopenpullrequest();
+        }}>Open pull request… <span class="key">{commands.binding("changeset.openPullRequest")?.label}</span></button
       >
     </div>
   </div>
@@ -254,19 +275,27 @@
     font-size: var(--fs-ctl);
   }
   .foot {
+    display: flex;
     padding: 4px;
     border-top: 1px solid var(--line-soft);
   }
   .foot button {
-    width: 100%;
+    flex: 1;
     box-sizing: border-box;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     height: var(--h-row);
     padding: 0 8px;
     border-radius: var(--radius);
     font-size: var(--fs-ctl);
+  }
+  .current {
+    display: block;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .key {
     color: var(--text-3);

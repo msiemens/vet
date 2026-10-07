@@ -1,6 +1,7 @@
 // The queue's Details tab: three titled groups about the selected changeset. A group appears when
 // there is something to say, and a fact appears only when it is known.
 
+import type { ChangesetKey } from "../../generated/ChangesetKey";
 import type { ChangesetRow } from "../../generated/ChangesetRow";
 import type { Manifest } from "../../generated/Manifest";
 import type { ReviewFilter } from "../../generated/ReviewFilter";
@@ -30,13 +31,25 @@ export function filterText(filter: ReviewFilter): string {
   return parts.length ? parts.join(", ") : "all files";
 }
 
+/** What the changes lead to: the live working tree, a pull request's head, or a branch's tip. */
+function targetText(key: ChangesetKey, title: string): string {
+  switch (key.type) {
+    case "workingTree":
+      return "live";
+    case "pullRequest":
+      return `#${key.number}`;
+    case "branch":
+      return title;
+  }
+}
+
 function changesetFacts(row: ChangesetRow, manifest: Manifest): Fact[] {
   const version = row.review.state === "open" ? ` · v${row.review.version}` : "";
   const behind = behindText(manifest.base);
   return [
     { label: "Base", value: manifest.base.commit.shortId },
     ...(behind ? [{ value: behind }] : []),
-    { label: "Target", value: `${row.key.type === "workingTree" ? "live" : row.title}${version}` },
+    { label: "Target", value: `${targetText(row.key, row.title)}${version}` },
     { label: "Filter", value: filterText(manifest.filter) },
   ];
 }

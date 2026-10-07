@@ -162,6 +162,16 @@ class ChangesetStore {
     }
   }
 
+  /** The open pull requests on offer; `undefined` after showing why they could not be listed. */
+  async listPullRequests() {
+    try {
+      return await session.connected().listPullRequests();
+    } catch (error) {
+      session.notice = errorText(error);
+      return undefined;
+    }
+  }
+
   /** Puts a changeset on view. The backend pushes `changesetOpened`, which fetches its manifest. */
   async openChangeset(key: ChangesetKey) {
     try {

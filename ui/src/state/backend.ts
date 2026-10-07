@@ -17,6 +17,8 @@ import type { Event as ServerEvent } from "../generated/Event";
 import type { Impact } from "../generated/Impact";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
+import type { PullRequestRow } from "../generated/PullRequestRow";
+import type { PullRequestSource } from "../generated/PullRequestSource";
 import type { Reachability } from "../generated/Reachability";
 import type { RecentProject } from "../generated/RecentProject";
 import type { RemovalImpact } from "../generated/RemovalImpact";
@@ -47,6 +49,13 @@ export type SessionEvent = Exclude<ServerEvent, { type: "credentialsNeeded" }>;
 export interface HoverText {
   text: string;
   code: number[][];
+}
+
+export interface PullRequestList {
+  /** Most recently updated first. */
+  rows: PullRequestRow[];
+  /** One per GitHub repository of the project, with the reason its pull requests could not be listed. */
+  sources: PullRequestSource[];
 }
 
 export interface BaseCandidates {
@@ -224,7 +233,22 @@ export class Backend {
     return { rows, onView };
   }
 
-  /** Puts a changeset on view; every subscriber, this one included, then gets `changesetOpened`. */
+  /**
+   * The open pull requests of the project's GitHub repositories that wait for the viewer or are theirs,
+   * the one on view too, and how asking each repository went. Asks the platform, so it takes a moment.
+   */
+  async listPullRequests(): Promise<PullRequestList> {
+    const { rows, sources } = expect(
+      await this.conn.request({ type: "listPullRequests", project: this.pid }),
+      "pullRequests",
+    );
+    return { rows, sources };
+  }
+
+  /**
+   * Puts a changeset on view; every subscriber, this one included, then gets `changesetOpened`. A pull
+   * request is fetched first, so this waits for the network and rejects with the reason it could not.
+   */
   async openChangeset(changeset: ChangesetKey): Promise<void> {
     expect(await this.conn.request({ type: "openChangeset", project: this.pid, changeset }), "done");
   }

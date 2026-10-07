@@ -53,6 +53,14 @@ void test("the changeset on view has all three groups", () => {
   ]);
 });
 
+void test("a pull request's target is its number, not its title", () => {
+  const key = { type: "pullRequest", remote: "github.com/acme/app", number: 482 } as const;
+  const row: ChangesetRow = { ...open, key, title: "Add idempotency keys", review: { state: "none" } };
+  const viewed = { ...manifest, target: { changeset: key, name: "#482" } } as Manifest;
+  const target = detailGroups(row, viewed, NOW)[0].facts.find((f) => f.label === "Target");
+  assert.equal(target?.value, "#482");
+});
+
 void test("a base that its remote has moved on from says so after the base", () => {
   const behind = {
     ...manifest,
