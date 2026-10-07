@@ -1,4 +1,4 @@
-//! Use cases (SPEC §6, §5, §9, §11) over ports. Modules call each other directly,
+//! Use cases (SPEC §6, §5, §11) over ports. Modules call each other directly,
 //! so ordering guarantees are plain awaits: settling reconciles before it
 //! declares a snapshot settled.
 

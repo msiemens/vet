@@ -8,8 +8,7 @@ Vet is a **review-first IDE** for the agentic coding age. The unit of work is th
 
 1. Review changesets (dirty trees, local commits, stacks, PRs)
 2. Verify semantics (navigation, impact, reachability, base-vs-target queries)
-3. Verify behavior (run/debug the target, one keystroke)
-4. Close the loop (annotations → platform comments or agent task files)
+3. Close the loop (annotations → platform comments or agent task files)
 
 **Permanent non-goals:**
 
@@ -18,7 +17,7 @@ Vet is a **review-first IDE** for the agentic coding age. The unit of work is th
 - Being a general-purpose authoring IDE
 - Multi-user/team collaboration (personal tool)
 
-**Threat model:** agents are non-adversarial but fallible. Vet guards against *accidents* (running code you haven't looked at), not against attacks. The one exception is contributor PRs, which Vet neither runs nor analyzes with code-executing backends until you choose to trust them (§7.5).
+**Threat model:** agents are non-adversarial but fallible. Vet guards against *accidents*, not against attacks. The one exception is contributor PRs, which Vet does not analyze with code-executing backends until you choose to trust them (§7.5).
 
 **Platforms:** macOS, Windows, and WSL2, including the split where the shell runs on Windows and the backend runs in WSL (§4.1).
 
@@ -83,8 +82,6 @@ Session           a working tree on view against a base: browsing until a review
 │  │ materializer │               │             │ │
 │  └──────────────┴───────────────┴─────────────┘ │
 │  ┌────────────────────────────────────────────┐ │
-│  │ Execution: run/debug, approval, worktrees  │ │
-│  ├────────────────────────────────────────────┤ │
 │  │ Platform adapters: GitHub, ADO (sync out)  │ │
 │  ├────────────────────────────────────────────┤ │
 │  │ Storage: content store + SQLite (§8)       │ │
@@ -193,7 +190,7 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 ### 5.3 Session lifecycle
 
 - **Browsing:** opening a repository shows the live working tree against the base, and nothing is recorded: no versions, no retained content, no session refs. The base is a view setting.
-- **Open:** a review starts implicitly with the first review action: marking something seen (span, hunk or file), acknowledging a non-text change, or creating a thread. Un-marking, reading and run approvals (§7.5, per repository) do not start one. The snapshot current at that moment is **version 1**, the review's start snapshot; the pin records its `HEAD` and tree, and the chosen base carries over. Each later settled snapshot is the next version (v2, v3, …). Content retention and session refs (§6.1) apply from the start. A complete review (§5.2) stays open and keeps tracking.
+- **Open:** a review starts implicitly with the first review action: marking something seen (span, hunk or file), acknowledging a non-text change, or creating a thread. Un-marking and reading do not start one. The snapshot current at that moment is **version 1**, the review's start snapshot; the pin records its `HEAD` and tree, and the chosen base carries over. Each later settled snapshot is the next version (v2, v3, …). Content retention and session refs (§6.1) apply from the start. A complete review (§5.2) stays open and keeps tracking.
 - **Closed:** "Finish review" is an explicit action, allowed with changes still unseen; it records whether the review was complete. It releases the session refs and stops versioning. Further edits are browsing again until the next review action starts a new review. Closed sessions follow the retention rule (§8).
 - **Resume:** opening a repository with an open review resumes it (the tree settles as the next version and review state remaps, §5.2); with none, it opens browsing.
 
@@ -214,7 +211,7 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 
 - **Watcher = latency optimization, never authority.** Filesystem events drive incremental re-hashing.
 - **Settling:** after a write burst, a snapshot is *settled* once the touched files' size and mtime stay stable across a debounce window (about 1–2 s). Each settled snapshot is appended to its `LogicalTip`; this sequence is the edit timeline. Same-file concurrent edits within one window are unresolvable by design.
-- **Authoritative reconciliation** runs at open, on watcher overflow or rescan signals (§6.4), on resume or restart, before declaring a snapshot settled, and before every launch (§9). It must *establish correct snapshot identity*, metadata-first (filesystem stat, git index, cached hashes), hashing only uncertain entries. Dropped or coalesced events can never corrupt review state, only delay it.
+- **Authoritative reconciliation** runs at open, on watcher overflow or rescan signals (§6.4), on resume or restart, and before declaring a snapshot settled. It must *establish correct snapshot identity*, metadata-first (filesystem stat, git index, cached hashes), hashing only uncertain entries. Dropped or coalesced events can never corrupt review state, only delay it.
 
 ### 6.3 Platform-faithful entries
 
@@ -275,8 +272,7 @@ Adding a language means adding a config entry plus a one-time manual check that 
 - **The live target** (the dirty tree) is served by a server running on the worktree itself. Its answers are never cached.
 - **Any other snapshot** (a pinned base, an older timeline entry, a PR's base or head) is served by a server on a directory obtained from Acquisition via `materialize(SnapshotId) → root`. The semantic layer never sees how the directory was produced (I1). Acquisition builds it from the snapshot's commit plus the content store, and refuses if the snapshot is not materializable (§6.1).
 - **Pool:** servers are keyed by `(SnapshotId or live worktree, backend)`, kept warm while in use, and evicted LRU. A server on an immutable snapshot caches its answers in memory; the cache dies with the server. Changing backend settings restarts the affected servers. Materialized directories are deleted with their server.
-- **Restore:** a materialized snapshot needs installed dependencies for its server to work. Fetch-without-execution is the default and covers documentation needs (cargo registry, `.d.ts`, typeshed, NuGet XML docs). Executing restores count as runs and go through the run check (§7.5).
-
+- **Restore:** a materialized snapshot needs installed dependencies for its server to work. Fetch-without-execution is the default and covers documentation needs (cargo registry, `.d.ts`, typeshed, NuGet XML docs).
 ### 7.3 Queries
 
 Primitive rows pass backend answers through. Derived rows combine primitives with the diff; per I6 they are labeled derived in the UI and show their inputs.
@@ -301,13 +297,11 @@ The reviewer's question is "is this new or changed code actually reached?" Vet a
 
 Whole-repo dead code is not a Vet analysis; it appears only when a language server itself reports it as a diagnostic (for example rustc's `dead_code` via rust-analyzer).
 
-### 7.5 Run check
+### 7.5 Trust
 
-A guard against accidentally running build changes you haven't looked at, not a security boundary.
+What analysis may execute project code. Not a security boundary.
 
-- **Rule:** before a run, debug, test, or executing restore, Vet checks whether any executor-relevant file changed since the last run you approved in this repo (a hash over those files' snapshot entries). If so, it shows those changes and asks "run anyway?" Approving records the new hash.
-- **Executor-relevant files** (a fixed list in the POC): Rust `build.rs`, `.cargo/config.toml`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain(.toml)`; TS/JS `package.json`, `.npmrc`, lockfiles, tool configs that are code (`*.config.{js,ts,…}`); Python `setup.py`, `pyproject.toml`, `conftest.py`, `noxfile.py`, `tox.ini`; C# `.csproj`/`.targets`/`.props`, `Directory.Build.*`; CI configs; build-tool files (`Makefile`, `justfile`, `Dockerfile`); toolchain and environment files (`.envrc`, `shell.nix`, `flake.nix`, `.tool-versions`).
-- **Contributor PRs** (head on a fork or a remote not marked trusted): no run button, fetch-only restores, and only servers with `executes_project_code_during_analysis = false` start; other languages show a visible "analysis limited" marker. One action ("Trust this PR") lifts this for the PR's **current head commit**. Any new push to the PR voids the trust and restores the restrictions.
+- **Contributor PRs** (head on a fork or a remote not marked trusted): fetch-only restores, and only servers with `executes_project_code_during_analysis = false` start; other languages show a visible "analysis limited" marker. One action ("Trust this PR") lifts this for the PR's **current head commit**. Any new push to the PR voids the trust and restores the restrictions.
 - **Analysis on trusted code** runs normally: language servers may execute project code (build scripts, proc macros, MSBuild design-time builds) without asking.
 
 ---
@@ -316,34 +310,22 @@ A guard against accidentally running build changes you haven't looked at, not a 
 
 - **Location:** the backend side's native filesystem (in WSL, the Linux home directory, never `/mnt/*`), in standard per-platform data directories.
 - **Content store:** content-addressed files written temp → fsync → rename, referenced from metadata only once durable.
-- **SQLite (WAL mode):** snapshots and their timeline order, sessions, reviewed spans, comments, run approvals, and PR trust.
+- **SQLite (WAL mode):** snapshots and their timeline order, sessions, reviewed spans, comments, and PR trust.
 - **Retention:** content is kept while any open session, unresolved or unsynced comment, or reviewed span references it; closed sessions are kept 30 days (configurable). Unreferenced content is garbage-collected.
-
----
-
-## 9. Execution
-
-One keystroke from review to run/debug.
-
-- A dirty tree runs in place.
-- A committed changeset or PR runs in a throwaway worktree (the materialized snapshot from §7.2, when one exists).
-
-**Launch:** reconcile (§6.2), apply the run check (§7.5), start the process. If the snapshot at launch differs from the last reviewed target, the run panel says "running snapshot X — N files changed since review."
 
 ---
 
 ## 10. Review UX
 
-- **Home = queue.** Changesets ordered by blocking status, then recency, with executor-relevant changes flagged. Each shows completion against the active filter plus the count of changes the filter excludes (§5.2). Review state survives rebases and force-pushes.
+- **Home = queue.** Changesets ordered by blocking status, then recency. Each shows completion against the active filter plus the count of changes the filter excludes (§5.2). Review state survives rebases and force-pushes.
 - **Visual design:** light and dark themes from the design tokens (`ui/src/lib/theme/tokens.css`), with desktop-style controls (hover, pressed and toggled states, no text selection outside content).
 - **Editor tabs** (titled with their `+N −M` line counts): a fixed "Changes" tab streams the whole changeset as hunks with a few lines of context, unchanged regions collapsed and expandable; diff tabs (closable) show one file's full diff, opened from the file header's tab button; source tabs (closable, read-only) show the file's text. Jump to Source opens a source tab: double-click or Enter in the tree, double-click on a file header in the Changes stream, a hunk header's button, or F4 at the caret (same line). Hunk navigation (Ctrl+Alt+Down/Up) and marking seen (Space) work in both. Go to definition is Cmd+click or Cmd+B (Ctrl off macOS), on either side; a new comment is Ctrl+Alt+C on the selection, else the current hunk. Settings open with Ctrl+Alt+S (⌘, on macOS).
 - **Header:** `project  ⎇ base → target · vN`. The base chip names the base commit as in §6.5, with its hash, subject, author and age in the tooltip, and offers a one-click move to the latest when its branch has moved on; `vN` shows only while a review is open (§5.3).
 - **Tool windows** on left and right rails, resizable; clicking the active tool's icon hides its window and keeps the tool selected.
-- **Hunk view** with decorations: review state from spans (including `SeenAgainstOldBase`), coverage of changed lines, changed-symbol reachability (labeled derived), executor-relevant changes highlighted, whitespace-only anchor notes, diagnostics as gutter markers with a count in the status footer. Marking seen is a toggle: a seen hunk can be un-marked.
+- **Hunk view** with decorations: review state from spans (including `SeenAgainstOldBase`), coverage of changed lines, changed-symbol reachability (labeled derived), whitespace-only anchor notes, diagnostics as gutter markers with a count in the status footer. Marking seen is a toggle: a seen hunk can be un-marked.
 - **Non-text changes** (mode, symlink target, submodule commit, binary, content unavailable) render as a change card with a hunk-style header: same "mark seen" action and key, included in hunk navigation, images with a before/after preview. A file with both kinds shows its card above the first hunk.
 - **Inferred anchors** show a neutral "moved" badge with the confidence; the tooltip names the strategy and the original location. "Confirm" re-anchors at the current position (→ `Exact`). Low-confidence ones are also grouped under "Moved" in the comments tool window.
 - **Review filter** is edited in the project's settings (review roots, hide binary, include/exclude globs, live excluded count) and from the file tree ("Exclude from review", "Review only this folder" change the project's filter). Excluded files collapse into one group in the file tree, which shows the excluded count.
-- **Run targets:** the Run control is a split button. Targets are discovered by reading manifests (Cargo bins, `package.json` scripts, `pyproject` scripts), never by executing tools, and can be edited (command, working directory, env); stored per repo.
 - **Timeline:** the `LogicalTip`'s settled snapshots, with interdiffs between any two.
 - **Semantic diff is a projection, never the canonical representation.** The byte-level diff is the source of truth; normalization, move detection, and formatting-churn suppression are views over it, and every normalized-away change is one click away.
 - **Annotations** sync to platforms or export as agent task files. A full editor is retained for small fixes (fixup commits / suggestion blocks).
@@ -435,11 +417,10 @@ How the UI follows the traits:
    - **mode only:** a changeset whose only change is `100644 → 100755` is not complete until that change is acknowledged;
    - **Windows filesystem:** with `core.filemode=false` / `core.symlinks=false`, mode and kind come from the index (§6.3); paths differing only in case are flagged `PathCollision` and not materialized.
 2. **Semantics:** after an agent edit settles, hover, references and diagnostics reflect it. Base-side go-to-definition works side by side with target for a dirty-tree session. Impact and reachability are shown for changed symbols; a removed function's remaining call sites are found and classified. An older timeline snapshot from an open session can be materialized and queried.
-3. **Run check:** an agent edit to `package.json` scripts → prompt before running; no build-file changes → runs without asking.
 4. **Reconciliation:** simulate dropped watcher events (kill, inotify overflow, FSEvents `MustScanSubDirs`, `ReadDirectoryChangesW` buffer overflow) → the rescan produces the correct snapshot, and review state is never silently wrong. A Windows-side write into the WSL worktree is observed or reconciled.
 5. **Shell and topology:** the POC meets the spike's thresholds with real orchestrator data on every POC platform; the WSL split works end to end over the authenticated transport.
 
-Also included: run-target-in-place; fetch-only restore with shared caches.
+Also included: fetch-only restore with shared caches.
 
 ### M1 — daily driver
 
@@ -448,7 +429,6 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Change decomposition (mechanical vs. logic clusters)
 - Interdiffs; snapshot timeline
 - Svelte/Angular backends (config entries + capability assert); C# is in the POC
-- Throwaway-worktree execution
 - JetBrains-feel package
 - Diagnostics on the changeset
 - Line highlight in the editor: the clicked line stays highlighted
@@ -483,7 +463,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 ### M2
 
 - GitHub + ADO adapters
-- Contributor-PR trust (§7.5): no run and limited analysis until trusted; a new push voids trust
+- Contributor-PR trust (§7.5): limited analysis until trusted; a new push voids trust
 - Semantic-graph diff
 - Review-questions assistant (read-only; answers cite hunks)
 - Worktree groups
@@ -512,7 +492,6 @@ Targets apply to supported topologies; the `/mnt/*` WSL topology is exempt.
 | Impact queries (`references` + incoming calls), 50-symbol changeset | < 10 s p50, async; slow symbols shown as pending |
 | Reconciliation establishes correct snapshot identity | < 1 s, excluding time to hash changed bytes |
 | Hashing changed bytes (read + hash, files in OS cache) | ≥ 1 GB/s |
-| Launch (reconcile + run check) | < 1 s, excluding time to hash changed bytes |
 
 **Benchmark corpus:** your own repos, your own hardware, on each POC topology.
 
