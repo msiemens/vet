@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{BaseChoice, NonTextKind, ReviewFilter, SessionId, Side, SymbolId, ThreadStatus, ThreadTarget};
+use crate::{BaseChoice, CommentAt, NonTextKind, ReviewFilter, SessionId, Side, SymbolId, ThreadStatus, ThreadTarget};
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -243,6 +243,18 @@ pub enum Request {
         side: Side,
         path: String,
         line: u32,
+    },
+    /// What a comment on a part of the changeset file `path` (its current path) attaches
+    /// to: the side and the path on that side. A file is commented on at its target
+    /// side, a deleted one at its base; a hunk at its target lines, a pure deletion at
+    /// its base lines; lines at the side the request names. Fails if `revision` is no
+    /// longer current, or if the file or hunk does not exist. Answers with
+    /// `Response::CommentTarget`, whose target goes to `CreateThread`.
+    CommentTarget {
+        session: SessionId,
+        revision: u32,
+        path: String,
+        at: CommentAt,
     },
     /// Opens a thread with its first message. The lines of a range target are in
     /// the text of `revision`. Fails if `revision` is no longer current, or if the

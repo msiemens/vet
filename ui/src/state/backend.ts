@@ -6,6 +6,7 @@ import type { BaseChoice } from "../generated/BaseChoice";
 import type { BlobContent } from "../generated/BlobContent";
 import type { BranchInfo } from "../generated/BranchInfo";
 import type { ChangedSymbols } from "../generated/ChangedSymbols";
+import type { CommentAt } from "../generated/CommentAt";
 import type { CommitInfo } from "../generated/CommitInfo";
 import type { Diagnostic } from "../generated/Diagnostic";
 import type { DirEntry } from "../generated/DirEntry";
@@ -287,6 +288,20 @@ export class Backend {
   async targetLine(revision: number, side: Side, path: string, line: number): Promise<number> {
     const request = { type: "targetLine", session: this.sid, revision, side, path, line } as const;
     return expect(await this.conn.request(request), "targetLine").line;
+  }
+
+  /**
+   * Where a comment on a part of the changeset file at `path` attaches, as of `revision`, the manifest's
+   * (a stale one is rejected); `line` is the target line the form of a range target goes below.
+   */
+  async commentTarget(
+    revision: number,
+    path: string,
+    at: CommentAt,
+  ): Promise<{ target: ThreadTarget; line: number | null }> {
+    const request = { type: "commentTarget", session: this.sid, revision, path, at } as const;
+    const { target, line } = expect(await this.conn.request(request), "commentTarget");
+    return { target, line };
   }
 
   /** `revision` is the manifest's; lines of a range target are in its text. */

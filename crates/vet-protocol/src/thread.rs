@@ -25,6 +25,19 @@ pub enum ThreadTarget {
     Changeset,
 }
 
+/// What a comment is about, in the terms of a changeset file's view.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum CommentAt {
+    /// The file as a whole.
+    File,
+    /// The hunk with this index in the file's manifest entry.
+    Hunk { index: u32 },
+    /// `len` lines from line `start` (0-based) of `side`'s text of the file.
+    Lines { side: Side, start: u32, len: u32 },
+}
+
 /// Lines `start..start + len` (0-based) of a file.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

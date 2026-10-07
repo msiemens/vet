@@ -5,8 +5,8 @@ pub mod semantic;
 use vet_app::pin::{BaseChoice, CommitId};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::session::{
-    BaseView, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView,
-    NewThread, NoText, ReviewUpdateView, ReviewView, TargetText, ThreadView, ThreadsView,
+    BaseView, CommentAt, CommentSpot, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemBlob, ItemView,
+    Lifecycle, ManifestView, NewThread, NoText, ReviewUpdateView, ReviewView, TargetText, ThreadView, ThreadsView,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
@@ -346,6 +346,38 @@ pub fn new_thread(t: p::ThreadTarget) -> NewThread {
             path: RepoPath::from(path),
         },
         p::ThreadTarget::Changeset => NewThread::Changeset,
+    }
+}
+
+pub fn core_comment_at(at: p::CommentAt) -> CommentAt {
+    match at {
+        p::CommentAt::File => CommentAt::File,
+        p::CommentAt::Hunk { index } => CommentAt::Hunk(index),
+        p::CommentAt::Lines { side, start, len } => CommentAt::Lines {
+            side: core_side(side),
+            start,
+            len,
+        },
+    }
+}
+
+pub fn comment_spot(spot: &CommentSpot) -> p::Response {
+    let target = match &spot.target {
+        NewThread::Range { side: s, path, range } => p::ThreadTarget::Range {
+            side: side(*s),
+            path: path.to_string_lossy(),
+            start: range.start,
+            len: range.len(),
+        },
+        NewThread::File { side: s, path } => p::ThreadTarget::File {
+            side: side(*s),
+            path: path.to_string_lossy(),
+        },
+        NewThread::Changeset => p::ThreadTarget::Changeset,
+    };
+    p::Response::CommentTarget {
+        target,
+        line: spot.line,
     }
 }
 

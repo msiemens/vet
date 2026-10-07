@@ -327,6 +327,30 @@ pub enum NewThread {
     Changeset,
 }
 
+/// What a comment is about, in the terms of a changeset file's view.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CommentAt {
+    File,
+    /// The hunk with this index among the file's hunks.
+    Hunk(u32),
+    /// `len` lines from line `start` of one side's text.
+    Lines {
+        side: Side,
+        start: u32,
+        len: u32,
+    },
+}
+
+/// Where a comment attaches, and where its form is drawn.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CommentSpot {
+    /// A file at its target side, a deleted file at its base; a hunk at its target lines, a
+    /// pure deletion at its base lines.
+    pub target: NewThread,
+    /// For a range: the target line a unified diff shows the range's last line at.
+    pub line: Option<u32>,
+}
+
 /// The result of a request that can start the review.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Outcome<T> {
@@ -918,10 +942,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             let hunks = diff.map(|d| d.hunks.clone()).unwrap_or_default();
             files.push(FileView {
                 path: path.clone(),
-                old_path: diff
-                    .and_then(|d| d.old_path.clone())
-                    .or_else(|| items.iter().find_map(|n| n.from.clone()))
-                    .filter(|old| old != path),
+                old_path: old_path_of(path, diff, &items),
                 status: status_of(diff, &items),
                 base_lines: lines(diff, diff.and_then(|d| d.old_blob)),
                 target_lines: lines(diff, diff.and_then(|d| d.new_blob)),
@@ -1278,6 +1299,77 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             },
         };
         Ok(card_line(st.changes.as_ref().expect("computed"), side, &location))
+    }
+
+    /// What a comment on part of the changeset file at `path` attaches to (see [`CommentSpot`]).
+    /// Fails if `revision` is no longer current, or the file or hunk is not in the changeset.
+    pub async fn comment_target(&self, revision: u32, path: &str, at: CommentAt) -> Result<CommentSpot> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        let changes = st.changes.as_ref().expect("computed");
+        let diff = find_diff(&changes.diff, path);
+        let items = shown_items(&changes.diff, &st.filter, path);
+        if diff.is_none() && items.is_empty() {
+            return Err(SessionError::NotFound(format!("file {path}")));
+        }
+        let now = RepoPath::from(path);
+        let before = old_path_of(&now, diff, &items).unwrap_or_else(|| now.clone());
+        let on = |side| {
+            if side == Side::Base {
+                before.clone()
+            } else {
+                now.clone()
+            }
+        };
+        let (side, range) = match at {
+            CommentAt::File => {
+                let side = if status_of(diff, &items) == FileStatus::Deleted {
+                    Side::Base
+                } else {
+                    Side::Target
+                };
+                return Ok(CommentSpot {
+                    target: NewThread::File { side, path: on(side) },
+                    line: None,
+                });
+            }
+            CommentAt::Hunk(index) => {
+                let hunk = diff
+                    .and_then(|d| d.hunks.get(index as usize))
+                    .ok_or_else(|| SessionError::NotFound(format!("hunk {index}")))?;
+                if !hunk.new.is_empty() {
+                    (Side::Target, hunk.new)
+                } else {
+                    (Side::Base, hunk.old)
+                }
+            }
+            CommentAt::Lines { side, start, len } if len > 0 => (
+                side,
+                LineRange {
+                    start,
+                    end: start.saturating_add(len),
+                },
+            ),
+            CommentAt::Lines { .. } => return Err(SessionError::Invalid("no lines are selected".into())),
+        };
+        let file = on(side);
+        let line = card_line(
+            changes,
+            side,
+            &Location {
+                file: file.clone(),
+                range,
+            },
+        );
+        Ok(CommentSpot {
+            target: NewThread::Range {
+                side,
+                path: file,
+                range,
+            },
+            line: Some(line),
+        })
     }
 
     /// Opens a thread with its first message, and starts the review if none is
@@ -1879,6 +1971,13 @@ fn acknowledged(st: &State, diff: &SnapshotDiff) -> Vec<NonTextChange> {
         .filter(|n| st.acks.contains(&ack_of(n)))
         .cloned()
         .collect()
+}
+
+/// The base path of a file that is at `path` now and was somewhere else.
+fn old_path_of(path: &RepoPath, diff: Option<&FileDiff>, items: &[NonTextChange]) -> Option<RepoPath> {
+    diff.and_then(|d| d.old_path.clone())
+        .or_else(|| items.iter().find_map(|n| n.from.clone()))
+        .filter(|old| old != path)
 }
 
 fn status_of(diff: Option<&FileDiff>, items: &[NonTextChange]) -> FileStatus {

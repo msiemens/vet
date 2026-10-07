@@ -257,6 +257,7 @@ impl Handler for Mock {
                 Ok(Response::TargetLine { revision, line })
             }
             Request::Threads { .. }
+            | Request::CommentTarget { .. }
             | Request::CreateThread { .. }
             | Request::Reply { .. }
             | Request::SetThreadStatus { .. }

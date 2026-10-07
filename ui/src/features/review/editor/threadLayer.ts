@@ -5,6 +5,7 @@
 
 import { type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import type { CommentAt } from "../../../generated/CommentAt";
 import type { FileChange } from "../../../generated/FileChange";
 import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
@@ -27,8 +28,8 @@ import { type CardHost, setThreadCards, threadCards } from "./threadWidgets";
 /** What the owner asks for; each resolves whether the request went through. `revision` is the view's. */
 export type ThreadListeners = Omit<ThreadActions, "create" | "cancelDraft" | "toggle"> & {
   create(revision: number, target: ThreadTarget, body: string): Promise<boolean>;
-  /** The target line of a diff that `line` of `side` of the file at `path` is shown at. */
-  targetLine(revision: number, side: Side, path: string, line: number): Promise<number>;
+  /** Where a comment on a part of the file at `path` attaches, and the target line its form sits below. */
+  commentTarget(revision: number, path: string, at: CommentAt): Promise<{ target: ThreadTarget; line: number | null }>;
 };
 
 /** The part of a section the layer keeps. */
@@ -303,34 +304,25 @@ export class ThreadLayer {
   }
 
   commentOnFile(s: ThreadSection) {
-    const { file } = s;
-    const side = file.status === "deleted" ? "base" : "target";
-    this.setDraft({
-      path: file.path,
-      target: { type: "file", side, path: side === "base" ? (file.oldPath ?? file.path) : file.path },
-    });
+    this.commentOn(s, { type: "file" });
   }
 
-  /** A hunk's target lines, or its base lines for a pure deletion. */
-  commentOnHunk(s: ThreadSection, hunk: number) {
-    const h = s.file.hunks[hunk];
-    if (h.targetLen > 0) this.commentOnLines(s, "target", h.targetStart, h.targetLen);
-    else this.commentOnLines(s, "base", h.baseStart, h.baseLen);
+  commentOnHunk(s: ThreadSection, index: number) {
+    this.commentOn(s, { type: "hunk", index });
   }
 
-  /** `len` lines from line `start` (0-based) of a side, kept inside the file. */
-  commentOnLines(s: ThreadSection, side: "base" | "target", start: number, len: number) {
-    const { file } = s;
-    const lines = side === "base" ? file.baseLines : file.targetLines;
-    if (lines <= 0) return;
-    start = Math.min(start, lines - 1);
-    len = Math.max(1, Math.min(len, lines - start));
-    const path = side === "base" ? (file.oldPath ?? file.path) : file.path;
+  /** `len` lines from line `start` (0-based) of a side. */
+  commentOnLines(s: ThreadSection, side: Side, start: number, len: number) {
+    this.commentOn(s, { type: "lines", side, start, len });
+  }
+
+  /** Opens the form for a comment where the backend says it attaches. */
+  private commentOn({ file }: ThreadSection, at: CommentAt) {
     // A newer revision replaces the view, and the request fails then.
-    void this.listeners.targetLine(this.host.revision, side, path, start + len - 1).then(
-      (line) => {
-        if (!this.destroyed)
-          this.setDraft({ path: file.path, target: { type: "range", side, path, start, len }, line });
+    void this.listeners.commentTarget(this.host.revision, file.path, at).then(
+      ({ target, line }) => {
+        if (!this.destroyed && target.type !== "changeset")
+          this.setDraft({ path: file.path, target, line: line ?? undefined });
       },
       () => undefined,
     );

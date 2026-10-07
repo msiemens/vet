@@ -486,6 +486,18 @@ impl Orchestrator {
                     .map_err(message)?;
                 Ok(Response::TargetLine { revision, line })
             }
+            Request::CommentTarget {
+                session,
+                revision,
+                path,
+                at,
+            } => {
+                let spot = (self.find(session).await?.session)
+                    .comment_target(revision, &path, mapping::core_comment_at(at))
+                    .await
+                    .map_err(message)?;
+                Ok(mapping::comment_spot(&spot))
+            }
             Request::CreateThread {
                 session,
                 revision,

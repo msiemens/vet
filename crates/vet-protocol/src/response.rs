@@ -6,7 +6,7 @@ use ts_rs::TS;
 use crate::{
     Base, BlobContent, BranchInfo, ChangedSymbols, CommitInfo, Diagnostic, DirEntry, Highlights, Impact, Locations,
     Manifest, Reachability, RemovalImpact, ReviewUpdate, ServerInfo, SessionId, Side, SymbolSignature, TextChange,
-    TextContent, Thread, Unavailable,
+    TextContent, Thread, ThreadTarget, Unavailable,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -113,6 +113,13 @@ pub enum Response {
     TargetLine {
         revision: u32,
         line: u32,
+    },
+    /// The answer to `CommentTarget`. For a range target, `line` is the line (0-based) of
+    /// the target text that a unified diff shows the range's last line at, where a form for
+    /// the comment goes (the rule of `Thread::target_line`).
+    CommentTarget {
+        target: ThreadTarget,
+        line: Option<u32>,
     },
     /// One thread after a change, resolved at the current revision.
     Thread(Thread),

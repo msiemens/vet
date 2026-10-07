@@ -2080,6 +2080,103 @@ async fn range_and_file_threads_follow_a_rename() {
     assert_eq!((view.state, view.path), (Some(EXACT), Some(path("b.txt"))));
 }
 
+impl Fixture {
+    async fn comment_spot(&self, file: &str, at: CommentAt) -> CommentSpot {
+        let revision = self.session.revision().await;
+        self.session.comment_target(revision, file, at).await.unwrap()
+    }
+}
+
+#[tokio::test]
+async fn a_comment_on_a_hunk_targets_its_target_lines_or_for_a_pure_deletion_its_base_lines() {
+    let base = numbered(12, &[]);
+    // Line 3 is replaced by two lines.
+    let replaced = base.replace("line 3\n", "new a\nnew b\n");
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &replaced)]).await;
+    let spot = fx.comment_spot("a.txt", CommentAt::Hunk(0)).await;
+    assert_eq!(spot.target, on("a.txt", 3, 5));
+    // The form sits below the last line of the range.
+    assert_eq!(spot.line, Some(4));
+    let revision = fx.session.revision().await;
+    let missing = fx.session.comment_target(revision, "a.txt", CommentAt::Hunk(1)).await;
+    assert!(matches!(missing, Err(SessionError::NotFound(_))));
+
+    // Lines 7 and 8 are deleted: nothing is left to comment on in the target.
+    let deleted = base.replace("line 7\nline 8\n", "");
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &deleted)]).await;
+    let spot = fx.comment_spot("a.txt", CommentAt::Hunk(0)).await;
+    assert_eq!(spot.target, on_base("a.txt", 7, 9));
+    assert_eq!(spot.line, Some(7));
+}
+
+#[tokio::test]
+async fn a_comment_on_a_file_targets_the_target_side_but_a_deleted_file_has_only_its_base() {
+    let fx = Fixture::open(&[("a.txt", "one\n"), ("gone.txt", "x\ny\n")], &[("a.txt", "two\n")]).await;
+
+    let spot = fx.comment_spot("a.txt", CommentAt::File).await;
+    assert_eq!(
+        (spot.target, spot.line),
+        (
+            NewThread::File {
+                side: Side::Target,
+                path: path("a.txt")
+            },
+            None
+        )
+    );
+    let spot = fx.comment_spot("gone.txt", CommentAt::File).await;
+    assert_eq!(
+        spot.target,
+        NewThread::File {
+            side: Side::Base,
+            path: path("gone.txt")
+        }
+    );
+    // A deleted file's hunk is all deletion.
+    let spot = fx.comment_spot("gone.txt", CommentAt::Hunk(0)).await;
+    assert_eq!(spot.target, on_base("gone.txt", 0, 2));
+}
+
+#[tokio::test]
+async fn a_comment_on_lines_targets_the_side_asked_for_and_is_checked() {
+    let fx = Fixture::open(&[("a.txt", &numbered(10, &[]))], &[("a.txt", &numbered(10, &[4]))]).await;
+    let lines = |side, start, len| CommentAt::Lines { side, start, len };
+
+    let spot = fx.comment_spot("a.txt", lines(Side::Base, 2, 3)).await;
+    assert_eq!(spot.target, on_base("a.txt", 2, 5));
+    assert_eq!(
+        fx.comment_spot("a.txt", lines(Side::Target, 2, 3)).await.target,
+        on("a.txt", 2, 5)
+    );
+
+    let revision = fx.session.revision().await;
+    let none = fx
+        .session
+        .comment_target(revision, "a.txt", lines(Side::Target, 2, 0))
+        .await;
+    assert!(matches!(none, Err(SessionError::Invalid(_))));
+    let stale = fx.session.comment_target(revision + 1, "a.txt", CommentAt::File).await;
+    assert!(matches!(stale, Err(SessionError::Stale { .. })));
+    let unknown = fx.session.comment_target(revision, "nope.txt", CommentAt::File).await;
+    assert!(matches!(unknown, Err(SessionError::NotFound(_))));
+}
+
+#[test]
+fn a_renamed_files_base_path_is_its_old_path() {
+    let diff = |old: &str, new: &str| FileDiff {
+        old_path: Some(path(old)),
+        new_path: Some(path(new)),
+        old_blob: None,
+        new_blob: None,
+        hunks: Vec::new(),
+    };
+    assert_eq!(
+        old_path_of(&path("b.txt"), Some(&diff("a.txt", "b.txt")), &[]),
+        Some(path("a.txt"))
+    );
+    assert_eq!(old_path_of(&path("a.txt"), Some(&diff("a.txt", "a.txt")), &[]), None);
+}
+
 #[tokio::test]
 async fn replies_status_and_deletion_are_persisted() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
