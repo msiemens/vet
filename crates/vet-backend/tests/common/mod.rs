@@ -232,6 +232,7 @@ pub fn config() -> Config {
         debounce: Duration::from_millis(150),
         poll: Duration::from_millis(300),
         orphan_grace: Duration::from_secs(60),
+        ..Config::default()
     }
 }
 

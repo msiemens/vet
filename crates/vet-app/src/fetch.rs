@@ -14,6 +14,11 @@ use crate::progress::{TaskKind, Tasks};
 /// How often a project's remotes are fetched while it is open.
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
+/// Where a fetch finds the platform credential for the host of an HTTPS remote.
+pub trait Credentials {
+    fn credential(&self, host: &str) -> impl Future<Output = Option<Credential>> + Send;
+}
+
 pub struct Fetch<G> {
     git: G,
     tasks: Tasks,
@@ -31,13 +36,13 @@ impl<G: Fetcher> Fetch<G> {
     }
 
     /// Fetches every remote, one after the other, as one task; a remote that fails does not
-    /// stop the others. `credential` yields the platform credential for an HTTPS host.
-    /// Answers with the message the task failed with, if it did.
-    pub async fn run(&self, credential: impl AsyncFn(&str) -> Option<Credential>) -> Result<(), String> {
+    /// stop the others. Answers whether there was anything to fetch, or the message the task
+    /// failed with.
+    pub async fn run(&self, credentials: &(impl Credentials + Sync)) -> Result<bool, String> {
         let _only_one = self.running.lock().await;
         let remotes = self.git.remotes().await.map_err(|e| e.0)?;
         if remotes.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let task = self.tasks.start(TaskKind::Fetch, title(&remotes));
         let total = remotes.len() as u32;
@@ -45,7 +50,7 @@ impl<G: Fetcher> Fetch<G> {
         for (done, remote) in remotes.iter().enumerate() {
             task.report(Some((done as u32, total)), Some(remote.name.clone()));
             let auth = match &remote.https_host {
-                Some(host) => credential(host).await.map(|credential| FetchAuth {
+                Some(host) => credentials.credential(host).await.map(|credential| FetchAuth {
                     host: host.clone(),
                     kind: PlatformKind::of_host(host),
                     credential,
@@ -58,7 +63,7 @@ impl<G: Fetcher> Fetch<G> {
         }
         if failures.is_empty() {
             task.finish();
-            Ok(())
+            Ok(true)
         } else {
             let message = failures.join("; ");
             task.fail(message.clone());
@@ -75,7 +80,7 @@ fn title(remotes: &[RemoteInfo]) -> String {
 }
 
 /// Calls `tick` now and then every `interval` after the previous call ended, for ever.
-pub async fn every(interval: Duration, mut tick: impl AsyncFnMut()) {
+pub async fn every<F: Future<Output = ()>>(interval: Duration, mut tick: impl FnMut() -> F) {
     loop {
         tick().await;
         tokio::time::sleep(interval).await;
@@ -124,11 +129,16 @@ mod tests {
         }
     }
 
-    fn token(host: &str) -> Option<Credential> {
-        Some(Credential {
-            token: Token::new(&format!("token-for-{host}")).unwrap(),
-            source: CredentialSource::Pat,
-        })
+    /// A signed-in account on `github.com` only.
+    struct GitHubOnly;
+
+    impl Credentials for GitHubOnly {
+        async fn credential(&self, host: &str) -> Option<Credential> {
+            (host == "github.com").then(|| Credential {
+                token: Token::new("token-for-github.com").unwrap(),
+                source: CredentialSource::Pat,
+            })
+        }
     }
 
     fn fetching(
@@ -151,7 +161,7 @@ mod tests {
     async fn a_remote_that_fails_fails_the_task_with_its_message_and_the_others_are_still_fetched() {
         let (fetch, heard, fetched) = fetching(vec![remote("origin", None), remote("backup", None)], vec!["origin"]);
 
-        let result = fetch.run(async |_| None).await;
+        let result = fetch.run(&GitHubOnly).await;
 
         assert_eq!(result, Err("origin: connection refused".into()));
         let names: Vec<_> = fetched.lock().unwrap().iter().map(|(n, _)| n.clone()).collect();
@@ -172,11 +182,9 @@ mod tests {
             vec![],
         );
 
-        let result = fetch
-            .run(async |host| if host == "github.com" { token(host) } else { None })
-            .await;
+        let result = fetch.run(&GitHubOnly).await;
 
-        assert_eq!(result, Ok(()));
+        assert_eq!(result, Ok(true));
         assert_eq!(
             *fetched.lock().unwrap(),
             [
@@ -192,7 +200,7 @@ mod tests {
     async fn a_repository_without_remotes_has_nothing_to_report() {
         let (fetch, heard, _) = fetching(vec![], vec![]);
 
-        assert_eq!(fetch.run(async |_| None).await, Ok(()));
+        assert_eq!(fetch.run(&GitHubOnly).await, Ok(false));
         assert!(heard.lock().unwrap().is_empty());
     }
 }

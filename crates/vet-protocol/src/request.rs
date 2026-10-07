@@ -222,6 +222,12 @@ pub enum Request {
     ListBaseCandidates {
         project: ProjectId,
     },
+    /// Fetches the repository's remotes now, as a `Fetch` task, and answers with
+    /// `Response::Done` when it ended. A fetch that fails (offline, refused) fails its
+    /// task, not this request. Every subscriber then gets `BaseChanged`.
+    Fetch {
+        project: ProjectId,
+    },
     /// Replaces the review filter of the repository `project` has open and
     /// persists it: a project setting, not part of the review (`project` is
     /// only the handle to its repository). The revision increases and every

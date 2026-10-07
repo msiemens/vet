@@ -13,6 +13,7 @@ use std::time::{Duration, SystemTime};
 
 use tokio::sync::OnceCell;
 use tokio::task::AbortHandle;
+use vet_app::fetch::Fetch;
 use vet_app::ignore::IgnoringWatcher;
 use vet_app::limits::{Limiting, RestoreLimits};
 use vet_app::progress::Tasks;
@@ -33,7 +34,10 @@ use vet_protocol::{Event, ProjectId, Response};
 use vet_semantic::ports::Backend;
 
 use crate::events::{Connection, settled};
-use crate::{LanguageServers, Live, Open, Orchestrator, Semantic, message, start_servers_in_background};
+use crate::fetch::fetch_periodically;
+use crate::{
+    LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, message, start_servers_in_background,
+};
 
 /// The least time between two progress announcements of one task, so a step that
 /// reports per file reaches the UI a few times a second.
@@ -64,9 +68,13 @@ struct Plan {
 pub struct Wired {
     /// The background work of the project, announced to its subscribers.
     pub tasks: Tasks,
+    pub fetch: Fetch<GixRepo>,
+    /// Where `fetch` finds the credentials of the hosting platforms.
+    pub accounts: Arc<PlatformAccounts>,
     plan: Plan,
     booted: OnceCell<Result<Arc<Booted>, String>>,
     settling: Mutex<Option<AbortHandle>>,
+    fetching: Mutex<Option<AbortHandle>>,
     closed: AtomicBool,
     trees: Arc<KeptTrees>,
 }
@@ -86,6 +94,11 @@ impl Wired {
     /// The session if it has scanned successfully already.
     pub fn booted_now(&self) -> Option<&Arc<Booted>> {
         self.booted.get()?.as_ref().ok()
+    }
+
+    /// Hands over the task that fetches periodically, which ends with the session.
+    pub fn keep_fetching(&self, task: AbortHandle) {
+        *self.fetching.lock().unwrap_or_else(PoisonError::into_inner) = Some(task);
     }
 
     async fn boot(&self) -> Result<Arc<Booted>, String> {
@@ -163,6 +176,9 @@ impl Wired {
 impl Resident for Wired {
     async fn shut(&self) {
         self.closed.store(true, Ordering::SeqCst);
+        if let Some(fetching) = self.fetching.lock().unwrap_or_else(PoisonError::into_inner).take() {
+            fetching.abort();
+        }
         if let Some(settling) = self.settling.lock().unwrap_or_else(PoisonError::into_inner).take() {
             settling.abort();
         }
@@ -230,6 +246,7 @@ impl Orchestrator {
             let (projects, id, grace) = (self.projects.clone(), open.id, self.config.orphan_grace);
             tokio::spawn(async move { projects.reap(id, grace, &TokioClock::new()).await });
             start_servers_in_background(open.clone());
+            fetch_periodically(&open, self.config.fetch_interval);
         }
         Ok((open.id, root))
     }
@@ -253,6 +270,8 @@ impl Orchestrator {
             Box::new(move |task| announced.broadcast(Event::Task(mapping::progress::task(id, &task)))),
         );
         Ok(Wired {
+            fetch: Fetch::new(GixRepo::new(&repo), tasks.clone()),
+            accounts: self.accounts.clone(),
             tasks,
             plan: Plan {
                 id,
@@ -268,6 +287,7 @@ impl Orchestrator {
             },
             booted: OnceCell::new(),
             settling: Mutex::new(None),
+            fetching: Mutex::new(None),
             closed: AtomicBool::new(false),
             trees: self.trees.clone(),
         })

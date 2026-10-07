@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate, Task};
+use crate::{Base, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate, Task};
 
 /// Events are invalidations or small state updates; the client re-requests
 /// whatever it displays.
@@ -47,6 +47,9 @@ pub enum Event {
         project: ProjectId,
         failures: Vec<RestoreFailure>,
     },
+    /// A fetch ended: the base is where it was, and `base` says how far its branch has
+    /// moved on now. Sent to every subscriber, whether the fetch was asked for or periodic.
+    BaseChanged { project: ProjectId, base: Base },
     /// Background work of the project started, progressed or ended. Sent to every
     /// subscriber; a task that ended (`Finished` or `Failed`) is not announced again.
     Task(Task),

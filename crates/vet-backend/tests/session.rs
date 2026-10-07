@@ -182,6 +182,7 @@ async fn fixture(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> Fixture {
         debounce: Duration::from_millis(150),
         poll: Duration::from_millis(300),
         orphan_grace: Duration::from_millis(400),
+        ..Config::default()
     };
     Fixture {
         repo,
@@ -843,6 +844,7 @@ async fn reopening_a_repository_resumes_its_review_across_a_restart() {
             debounce: Duration::from_millis(150),
             poll: Duration::from_millis(300),
             orphan_grace: Duration::from_secs(60),
+            ..Config::default()
         },
     ));
     write(fx.repo.path(), "a.txt", &format!("new 1\nnew 2\n{dirty}"));
@@ -1280,6 +1282,7 @@ async fn the_project_filter_reaches_every_connection_and_outlives_the_project() 
             debounce: Duration::from_millis(150),
             poll: Duration::from_millis(300),
             orphan_grace: Duration::from_secs(60),
+            ..Config::default()
         },
     ));
     let third = Client::new(&restarted);

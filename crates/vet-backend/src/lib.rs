@@ -4,6 +4,7 @@
 
 mod accounts;
 mod events;
+mod fetch;
 mod highlight;
 mod open;
 mod references;
@@ -51,6 +52,8 @@ pub struct Config {
     /// How long a project without subscribers stays open, so a reloading
     /// shell finds it again.
     pub orphan_grace: Duration,
+    /// How often an open session's remotes are fetched, after the fetch at open.
+    pub fetch_interval: Duration,
 }
 
 impl Default for Config {
@@ -59,6 +62,7 @@ impl Default for Config {
             debounce: Duration::from_millis(1500),
             poll: Duration::from_secs(2),
             orphan_grace: Duration::from_secs(15),
+            fetch_interval: vet_app::fetch::DEFAULT_INTERVAL,
         }
     }
 }
@@ -77,6 +81,7 @@ type Semantic = Semantics<
 /// `Orchestrator::ready`.
 type Open = Entry<Connection, Wired>;
 type Projects = Registry<Connection, Wired>;
+type PlatformAccounts = Accounts<TokioRunner, HttpValidator>;
 
 pub struct Orchestrator {
     store: SqliteStore,
@@ -89,7 +94,7 @@ pub struct Orchestrator {
     /// The materialized snapshots kept between launches (§8).
     trees: Arc<KeptTrees>,
     /// Credentials for hosting platforms: per host and app-wide, not per project.
-    accounts: Accounts<TokioRunner, HttpValidator>,
+    accounts: Arc<PlatformAccounts>,
     /// The connections that asked for `Accounts`, which is where the events that belong
     /// to the process go.
     process_subscribers: Subscribers<Connection>,
@@ -121,14 +126,14 @@ impl Orchestrator {
         let trees = KeptTrees::new(store.dir().join("materialized"), Limits::default(), referenced);
         let process_subscribers = Subscribers::<Connection>::default();
         let needed = process_subscribers.clone();
-        let accounts = Accounts::new(
+        let accounts = Arc::new(Accounts::new(
             TokioRunner,
             HttpValidator::default(),
             std::env::temp_dir(),
             move |host| {
                 needed.broadcast(Event::CredentialsNeeded { host: host.to_owned() });
             },
-        );
+        ));
         Self {
             accounts,
             process_subscribers,
@@ -239,6 +244,7 @@ impl Orchestrator {
                 directory,
             } => self.exclude_path(project, &path, directory).await,
             Request::ListBaseCandidates { project } => self.list_base_candidates(project).await,
+            Request::Fetch { project } => self.fetch(project).await,
             Request::ListDirectory { project, path } => self.list_directory(project, &path).await,
             Request::FileText { project, path } => self.file_text(project, &path).await,
             Request::TargetLine {
