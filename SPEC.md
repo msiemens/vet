@@ -489,6 +489,7 @@ Grouped by area; areas and the items within each are in priority order.
 ### M2
 
 - GitHub + ADO adapters
+- Several projects open at once, each in its own window, with the welcome screen as a window of its own (until then one window switches between the welcome screen and a project, keeping a position and size for each)
 - Contributor-PR trust (§7.5): limited analysis until trusted; a new push voids trust
 - Semantic-graph diff
 - Review-questions assistant (read-only; answers cite hunks)
