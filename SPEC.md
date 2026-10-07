@@ -441,6 +441,7 @@ Grouped by area; areas and the items within each are in priority order.
 
 #### Changesets and history
 
+- GitHub + ADO adapters (§11): pull requests as changesets, their threads synced both ways, CI per commit
 - Committed and stacked changesets (per-commit / pseudo-commit / squash lenses)
 - Interdiffs; snapshot timeline, as a bottom panel (not a sidebar tool window)
 - Git fetch (in-process, read-only): on demand and periodically, so remote branches and how far a base is behind are current; Vet never pulls, merges or rebases
@@ -490,7 +491,6 @@ Grouped by area; areas and the items within each are in priority order.
 
 ### M2
 
-- GitHub + ADO adapters
 - Themes and colour schemes as two settings, as in IntelliJ: an app theme (light, dark, Darcula, following the system) for the chrome, and an editor colour scheme (Default, Darcula, Solarized light and dark, high contrast) for syntax, diff and review-state colours. Syntax highlighting grows to the categories a scheme needs (comment, constant, variable, parameter, property, operator, punctuation, attribute, namespace, tag, …). Custom schemes by importing IntelliJ colour schemes and VS Code themes into an editable scheme file; no in-app colour editor
 - Several projects open at once, each in its own window, with the welcome screen as a window of its own (until then one window switches between the welcome screen and a project, keeping a position and size for each)
 - Contributor-PR trust (§7.5): limited analysis until trusted; a new push voids trust
