@@ -64,7 +64,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 "nothing in this file was seen against an old base".into(),
             ));
         }
-        self.mark_hunks(&mut st, path, &hunks, true).await?;
+        self.mark_hunks(&mut st, View::Changeset, path, &hunks, true).await?;
         Ok(outcome(&st, update_in(&st, View::Changeset, path)?, false))
     }
 

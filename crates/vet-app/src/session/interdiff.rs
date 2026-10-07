@@ -155,6 +155,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             behind: None,
             contained_in: None,
         };
+        let facts = self.lens_facts(st).await?;
         let conflicts = (id.hunks.values().flatten()).any(|h| h.flags.conflict);
         let mut limits = vec![if id.markable {
             format!(
@@ -186,6 +187,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             delta: files.iter().map(|f| f.delta).sum(),
             files,
             degraded: self.degraded_for(&st.source),
+            lens: facts.lens,
+            commits: facts.commits,
+            changeset_files: facts.files,
+            changeset_completion: facts.completion,
             interdiff: Some(InterdiffView {
                 from,
                 to,
@@ -410,7 +415,7 @@ impl<'a> Lens<'a> {
     }
 }
 
-fn empty_completion() -> Completion {
+pub(super) fn empty_completion() -> Completion {
     Completion {
         lines: 0,
         seen_lines: 0,

@@ -12,10 +12,12 @@ import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { ChangesetRow } from "../generated/ChangesetRow";
 import type { CommentAt } from "../generated/CommentAt";
 import type { CommitInfo } from "../generated/CommitInfo";
+import type { CommitUnit } from "../generated/CommitUnit";
 import type { Diagnostic } from "../generated/Diagnostic";
 import type { DirEntry } from "../generated/DirEntry";
 import type { Event as ServerEvent } from "../generated/Event";
 import type { Impact } from "../generated/Impact";
+import type { Lens } from "../generated/Lens";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { PullRequestRow } from "../generated/PullRequestRow";
@@ -169,7 +171,17 @@ export class Backend {
     return expect(await this.conn.request({ type: "versions", project: this.pid }), "versions").versions;
   }
 
-  /** The changeset, or with another `view` an interdiff of two of its versions. */
+  /** The commits of the changeset on view with their own progress, oldest first; none for the working tree. */
+  async commits(): Promise<CommitUnit[]> {
+    return expect(await this.conn.request({ type: "commits", project: this.pid }), "commits").commits;
+  }
+
+  /** Remembers the lens the changeset on view is reviewed in. The next manifest says it. */
+  async setLens(lens: Lens): Promise<void> {
+    expect(await this.conn.request({ type: "setLens", project: this.pid, lens }), "done");
+  }
+
+  /** The changeset, or with another `view` an interdiff of two of its versions or one commit. */
   async manifest(view: View): Promise<Manifest> {
     return expect(await this.conn.request({ type: "manifest", project: this.pid, view }), "manifest");
   }

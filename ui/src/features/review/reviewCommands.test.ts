@@ -26,6 +26,7 @@ const view: ViewActions = {
   reconfirm: () => (calls.push("reconfirm"), reconfirmFinds),
   comment: () => (calls.push("comment"), commentFinds),
   jumpToSource: () => (calls.push("jump"), caretFinds),
+  stepCommit: (delta) => (calls.push(`commit ${delta}`), true),
 };
 const files: FileActions = {
   copyText: (text) => calls.push(`copy ${text}`),
@@ -119,6 +120,21 @@ void test("Ctrl+Alt+C comments, but not in a text field and not for AltGr+C", ()
   const altGr = ctrlAlt("©", "KeyC", { getModifierState: (m: string) => m === "AltGraph" });
   assert.equal(r.dispatch(altGr), false);
   assert.deepEqual(calls, ["comment"]);
+});
+
+void test("[ and ] go to the previous and next commit, and only while reviewing by commit", () => {
+  const open = key({ key: "[", code: "BracketLeft" });
+  const close = key({ key: "]", code: "BracketRight" });
+  const r = setup({ ...inChanges, byCommit: true });
+  assert.equal(r.dispatch(open), true);
+  assert.equal(r.dispatch(close), true);
+  assert.deepEqual(calls, ["commit -1", "commit 1"]);
+
+  const squash = setup(inChanges);
+  const event = key({ key: "]", code: "BracketRight" });
+  assert.equal(squash.dispatch(event), false);
+  assert.equal(event.prevented, false);
+  assert.deepEqual(calls, []);
 });
 
 void test("F4 jumps to source from the Changes tab only, and only when there is a caret", () => {

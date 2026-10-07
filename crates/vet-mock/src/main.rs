@@ -199,9 +199,13 @@ impl Handler for Mock {
                     filter: ReviewFilter::default(),
                     delta: files.iter().map(|f| f.delta).sum(),
                     completion: Mock::completion(&coverage, &self.diffs),
+                    changeset_completion: Mock::completion(&coverage, &self.diffs),
                     files,
                     degraded: None,
                     interdiff: None,
+                    lens: vet_app::changeset::Lens::Squash,
+                    commits: 0,
+                    changeset_files: self.corpus.files.len() as u32,
                 };
                 Ok(Response::Manifest(Box::new(vet_mapping::manifest(PROJECT, &view, &[]))))
             }

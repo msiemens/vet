@@ -3,6 +3,7 @@ import type { Base } from "./Base";
 import type { Completion } from "./Completion";
 import type { FileChange } from "./FileChange";
 import type { InterdiffInfo } from "./InterdiffInfo";
+import type { Lens } from "./Lens";
 import type { LineDelta } from "./LineDelta";
 import type { RestoreFailure } from "./RestoreFailure";
 import type { ReviewFilter } from "./ReviewFilter";
@@ -52,4 +53,20 @@ restoreFailures: Array<RestoreFailure>,
 /**
  * Set for the manifest of an interdiff view.
  */
-interdiff?: InterdiffInfo, };
+interdiff?: InterdiffInfo, 
+/**
+ * The lens the changeset is reviewed in; `PerCommit` only for a changeset of several commits.
+ */
+lens: Lens, 
+/**
+ * How many commits lie between the base and the tip; none for the working tree.
+ */
+commits: number, 
+/**
+ * How many files the changeset as a whole changes, whatever view this manifest is of.
+ */
+changesetFiles: number, 
+/**
+ * The completion of the changeset as a whole, whatever view this manifest is of.
+ */
+changesetCompletion: Completion, };

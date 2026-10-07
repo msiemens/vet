@@ -17,6 +17,8 @@ export interface ViewActions {
   comment(): boolean;
   /** Opens the file of the Changes stream's caret at its line; answers whether there was a caret. */
   jumpToSource(): boolean;
+  /** Shows the commit `delta` away from the one on view; answers whether there was one. */
+  stepCommit(delta: number): boolean;
 }
 
 export function viewCommands(a: ViewActions): Command<CommandContext>[] {
@@ -37,6 +39,20 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       inFields: true,
       enabled: inView,
       run: () => a.step(-1),
+    },
+    {
+      id: "review.previousCommit",
+      label: "Previous commit",
+      binding: "[",
+      enabled: (c) => !!c.byCommit,
+      run: () => a.stepCommit(-1),
+    },
+    {
+      id: "review.nextCommit",
+      label: "Next commit",
+      binding: "]",
+      enabled: (c) => !!c.byCommit,
+      run: () => a.stepCommit(1),
     },
     { id: "review.toggleSeen", label: "Toggle seen", binding: "Space", enabled: inView, run: () => a.toggleSeen() },
     { id: "review.reconfirm", label: "Re-confirm", binding: "r", enabled: inView, run: () => a.reconfirm() },

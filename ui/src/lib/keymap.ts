@@ -85,9 +85,9 @@ export function specOf(e: KeyLike): string | null {
 }
 
 /**
- * Matches `spec` like `Ctrl-Alt-ArrowDown`, `Alt-s`, `F3` or `Space`. Letters and digits
- * match the physical key (`code`), so layouts do not matter; named keys match
- * `key`. Modifiers must match exactly. Text input never matches.
+ * Matches `spec` like `Ctrl-Alt-ArrowDown`, `Alt-s`, `F3`, `Space` or `[`. Letters and digits
+ * match the physical key (`code`), so layouts do not matter; named keys and punctuation
+ * match `key`, the character the layout types. Modifiers must match exactly. Text input never matches.
  */
 export function matches(spec: string, e: KeyLike): boolean {
   if (isTextInput(e)) return false;
@@ -101,6 +101,6 @@ export function matches(spec: string, e: KeyLike): boolean {
     mods.has("Meta") !== e.metaKey
   )
     return false;
-  if (name.length === 1) return baseChar(e.code) === name.toLowerCase();
+  if (name.length === 1 && /[a-z0-9]/i.test(name)) return baseChar(e.code) === name.toLowerCase();
   return e.key === (name === "Space" ? " " : name);
 }

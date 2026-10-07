@@ -36,6 +36,8 @@ export interface CommandContext {
   diffView: boolean;
   /** Index of the current hunk in the active view, -1 for none. */
   hunk: number;
+  /** The review view shows one commit of a changeset that is reviewed by commit. */
+  byCommit?: boolean;
   /** The editor with the focus, if one has it. */
   editor?: FocusedEditor;
   /** The file or folder a context menu was opened on. */

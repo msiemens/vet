@@ -80,6 +80,8 @@
   );
   const footer = $derived({
     range: range && `v${range.from} → v${range.to}`,
+    commit:
+      changeset.shownCommit === undefined ? undefined : `${changeset.shownCommit + 1} / ${changeset.commits.length}`,
     languageServer: serverLine(controller?.activePath, serverList.servers, backgroundTasks.tasks, semanticSummary),
     diagnostics: semanticSummary.diagnostics,
   });
@@ -291,7 +293,9 @@
     review={changeset.manifest?.review}
     loadBase={() => changeset.baseCandidates()}
     onbase={(choice) => void changeset.setBase(choice)}
-    completion={changeset.manifest?.completion}
+    completion={changeset.shownCommit === undefined
+      ? changeset.manifest?.completion
+      : (changeset.manifest?.changesetCompletion ?? changeset.manifest?.completion)}
     onfinish={() => (dialog = "finish")}
     refreshing={queue.refreshing}
     onrefresh={() => void queue.refresh()}

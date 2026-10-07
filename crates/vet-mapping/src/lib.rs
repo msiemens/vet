@@ -10,9 +10,8 @@ use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
 use vet_app::session::{
     BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView, DirEntryKind,
-    DirListing, EntryInfo,
-    FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView,
-    ReviewView, RowReview, TargetText, ThreadView, ThreadsView, VersionView, View,
+    DirListing, EntryInfo, FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread,
+    NoText, ReviewUpdateView, ReviewView, RowReview, TargetText, ThreadView, ThreadsView, VersionView, View,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
@@ -86,13 +85,17 @@ pub fn core_lens(lens: p::Lens) -> Lens {
     }
 }
 
+fn lens(lens: Lens) -> p::Lens {
+    match lens {
+        Lens::Squash => p::Lens::Squash,
+        Lens::PerCommit => p::Lens::PerCommit,
+    }
+}
+
 pub fn commits(list: &CommitsView) -> p::Response {
     p::Response::Commits {
         revision: list.revision,
-        lens: match list.lens {
-            Lens::Squash => p::Lens::Squash,
-            Lens::PerCommit => p::Lens::PerCommit,
-        },
+        lens: lens(list.lens),
         commits: list
             .commits
             .iter()
@@ -500,6 +503,10 @@ pub fn manifest(project: p::ProjectId, m: &ManifestView, restore_failures: &[Res
             markable: i.markable,
             limits: i.limits.clone(),
         }),
+        lens: lens(m.lens),
+        commits: m.commits,
+        changeset_files: m.changeset_files,
+        changeset_completion: completion(&m.changeset_completion),
     }
 }
 

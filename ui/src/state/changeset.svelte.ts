@@ -13,10 +13,14 @@ import type { NonTextKind } from "../generated/NonTextKind";
 import type { BaseChoice } from "../generated/BaseChoice";
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { View } from "../generated/View";
+import type { CommitUnit } from "../generated/CommitUnit";
+import type { Lens } from "../generated/Lens";
 import { errorText } from "../lib/errorText";
 import type { BaseCandidates } from "./backend";
+import { commitToShow, neighbour } from "./commitLens";
 import { session } from "./session.svelte";
 import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
+import { commitView } from "./view";
 
 type ReviewListener = (update: ReviewUpdate) => void;
 
@@ -38,12 +42,26 @@ class ChangesetStore {
    * Set it with `setRange`.
    */
   range = $state.raw<Range>();
-  /** What requests about the files read: the interdiff of `range`, or the changeset. */
+  /**
+   * The commit the review view shows while the changeset is reviewed by commit: the index into
+   * `commits`. A range takes its place, and the changeset's lens brings it back.
+   */
+  commitIndex = $state<number>();
+  /** The commit the manifest is of; `commitIndex` moves first and this follows with the manifest. */
+  shownCommit = $state<number>();
+  /** The commit that was on view last, which by commit shows again. */
+  private lastCommit = 0;
+  /** The commits with their own progress, oldest first; loaded only while the changeset is reviewed by commit. */
+  commits = $state.raw<CommitUnit[]>([]);
+  private commitsSeq = 0;
+  /** What requests about the files read: the interdiff of `range`, a commit, or the changeset. */
   get view(): View {
-    return rangeView(this.range);
+    return this.range || this.commitIndex === undefined ? rangeView(this.range) : commitView(this.commitIndex);
   }
-  /** The range the manifest is of, as a string; empty for the changeset. */
-  viewKey = $derived(rangeKey(this.manifest?.interdiff));
+  /** The range or commit the manifest is of, as a string; empty for the changeset. */
+  viewKey = $derived(
+    rangeKey(this.manifest?.interdiff) + (this.shownCommit === undefined ? "" : `c${this.shownCommit}`),
+  );
 
   /**
    * While the review view shows only the files that had hunks seen against an old base when it was
@@ -75,15 +93,18 @@ class ChangesetStore {
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
         if (event.type === "changesetOpened") {
-          // Versions and what was seen against an old base are the changeset's own.
+          // Versions, commits and what was seen against an old base are the changeset's own.
           this.range = undefined;
           this.baseChanged = undefined;
+          this.commitIndex = undefined;
+          this.lastCommit = 0;
           void this.refresh();
         } else if (event.type === "snapshotSettled") void this.refresh();
-        // A mark made in a range is announced as that of the changeset's file, which the range does not show.
-        else if (event.type === "reviewChanged" && !this.range && event.revision === this.manifest?.revision)
-          this.applyReview(event.update);
-        else if (event.type === "reviewStarted" && this.manifest)
+        // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
+        else if (event.type === "reviewChanged" && event.revision === this.manifest?.revision) {
+          if (this.shownCommit !== undefined) this.applyTotals(event.update);
+          else if (!this.range) this.applyReview(event.update);
+        } else if (event.type === "reviewStarted" && this.manifest)
           this.manifest = { ...this.manifest, review: event.review };
         else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
         else if (event.type === "baseChanged" && this.manifest) this.manifest = { ...this.manifest, base: event.base };
@@ -93,6 +114,9 @@ class ChangesetStore {
       this.manifest = undefined;
       this.range = undefined;
       this.baseChanged = undefined;
+      this.commitIndex = this.shownCommit = undefined;
+      this.lastCommit = 0;
+      this.commits = [];
       this.restoreFailures = [];
       this.cells.clear();
     });
@@ -100,28 +124,35 @@ class ChangesetStore {
 
   /** Fetches the manifest again; the revision may have moved. */
   async refresh(): Promise<Manifest> {
-    const manifest = await this.fetchManifest();
+    const { manifest, commit } = await this.fetchManifest();
     this.cells.clear();
     for (const file of manifest.files) this.cells.set(file.path, file);
     this.manifest = manifest;
+    this.shownCommit = commit;
     this.restoreFailures = manifest.restoreFailures;
+    if (manifest.lens === "perCommit" && manifest.commits > 1) void this.loadCommits();
+    else this.commits = [];
     return manifest;
   }
 
   /**
    * The manifest of the view. A live range is moved to the latest version first, which only the
-   * manifest says; a range the backend refuses (its versions are gone) gives way to the changeset.
+   * manifest says, and the commit the lens asks for is shown instead of the changeset, as the
+   * manifest says too. A range or commit the backend refuses (its versions or commit are gone) gives
+   * way to the changeset.
    */
-  private async fetchManifest(): Promise<Manifest> {
+  private async fetchManifest(): Promise<{ manifest: Manifest; commit: number | undefined }> {
     const backend = session.connected();
     for (let attempt = 0; ; attempt++) {
       const range = this.range;
+      const commit = range ? undefined : this.commitIndex;
       let manifest: Manifest;
       try {
-        manifest = await backend.manifest(rangeView(range));
+        manifest = await backend.manifest(this.view);
       } catch (error) {
-        if (!range) throw error;
-        this.range = undefined;
+        if (!range && commit === undefined) throw error;
+        if (range) this.range = undefined;
+        else this.commitIndex = undefined;
         session.notice = errorText(error);
         continue;
       }
@@ -130,18 +161,79 @@ class ChangesetStore {
         this.range = followed(range, latest);
         continue;
       }
-      return manifest;
+      if (!range) {
+        const wanted = commitToShow(manifest.lens, manifest.commits, this.lastCommit);
+        if (wanted !== commit && attempt < 3) {
+          this.commitIndex = wanted;
+          continue;
+        }
+      }
+      return { manifest, commit };
+    }
+  }
+
+  /** Reads the commits again, with their progress. Only the latest reading counts. */
+  async loadCommits() {
+    const seq = ++this.commitsSeq;
+    try {
+      const commits = await session.connected().commits();
+      if (seq === this.commitsSeq) this.commits = commits;
+    } catch (error) {
+      if (seq === this.commitsSeq) session.notice = `Could not load the commits: ${errorText(error)}`;
+    }
+  }
+
+  /** Shows what the commit at `index` changed, and fetches its manifest. */
+  async showCommit(index: number) {
+    this.lastCommit = index;
+    this.range = undefined;
+    this.commitIndex = index;
+    try {
+      await this.refresh();
+    } catch (error) {
+      session.notice = errorText(error);
     }
   }
 
   /**
-   * Shows the interdiff of `range`, or the changeset for none, and fetches its manifest. Only the
-   * working tree has a live end: a committed changeset's latest version does not follow anything.
+   * Goes to the commit `delta` away from the one on view, if there is one; answers whether it did.
+   * It does not wrap around: the first and the last commit are the ends.
+   */
+  stepCommit(delta: number): boolean {
+    if (this.shownCommit === undefined) return false;
+    const to = neighbour(this.shownCommit, delta, this.manifest?.commits ?? 0);
+    if (to === undefined) return false;
+    void this.showCommit(to);
+    return true;
+  }
+
+  /** Reviews the changeset in `lens`, which the backend remembers for it, and shows the view that goes with it. */
+  async showLens(lens: Lens) {
+    try {
+      await session.connected().setLens(lens);
+    } catch (error) {
+      session.notice = errorText(error);
+      return;
+    }
+    this.range = undefined;
+    this.commitIndex = lens === "perCommit" ? this.lastCommit : undefined;
+    try {
+      await this.refresh();
+    } catch (error) {
+      session.notice = errorText(error);
+    }
+  }
+
+  /**
+   * Shows the interdiff of `range`, or the changeset (or its lens's commit) for none, and fetches its
+   * manifest. Only the working tree has a live end: a committed changeset's latest version does not
+   * follow anything.
    */
   async setRange(range: Range | undefined) {
     if (range) this.baseChanged = undefined;
     const follows = this.manifest?.target.changeset.type === "workingTree";
     this.range = range && { ...range, live: range.live && follows };
+    if (range) this.commitIndex = undefined;
     try {
       await this.refresh();
     } catch (error) {
@@ -361,8 +453,22 @@ class ChangesetStore {
     if (!manifest) return;
     const file = this.cells.get(update.path);
     if (file) this.cells.set(update.path, { ...file, review: update.review, completion: update.completion });
-    this.manifest = { ...manifest, completion: update.changeset };
+    this.manifest = {
+      ...manifest,
+      completion: update.changeset,
+      // Only the changeset's own view says how far the changeset as a whole is.
+      changesetCompletion:
+        this.shownCommit === undefined && !this.range ? update.changeset : manifest.changesetCompletion,
+    };
     for (const listener of this.listeners) listener(update);
+    if (manifest.lens === "perCommit" && manifest.commits > 1) void this.loadCommits();
+  }
+
+  /** A mark in the changeset's file, which the view on screen does not show: the changeset's progress and the commits' follow. */
+  private applyTotals(update: ReviewUpdate) {
+    if (!this.manifest) return;
+    this.manifest = { ...this.manifest, changesetCompletion: update.changeset };
+    void this.loadCommits();
   }
 
   /** Called after each review update, whether it came from a request or an event. */

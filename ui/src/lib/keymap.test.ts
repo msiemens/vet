@@ -68,6 +68,13 @@ void test("Space toggles the current item, and only on its own", () => {
   assert.ok(!matches("Space", key({ key: "s", code: "KeyS" })));
 });
 
+void test("punctuation matches the character the layout types, on its own", () => {
+  assert.ok(matches("[", key({ key: "[", code: "BracketLeft" })));
+  assert.ok(!matches("[", key({ key: "]", code: "BracketRight" })));
+  assert.ok(!matches("[", key({ key: "[", code: "BracketLeft", ctrlKey: true })));
+  assert.equal(bindingOf("]", "Ctrl").label, "]");
+});
+
 void test("a recorded key reads back as the spec that matches it, however the layout types it", () => {
   const events = [
     key({ key: "ß", code: "KeyS", ctrlKey: true, shiftKey: true }),

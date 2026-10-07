@@ -11,10 +11,11 @@ use vet_core::completion::{Completion, Coverage};
 use vet_core::content::{LineDelta, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::merkle;
 
+use super::interdiff::empty_completion;
 use super::manifest::{changeset_completion, file_completion, file_views, review_of, target_view};
 use super::remap::Frame;
 use super::state::{Changes, State, acknowledged, commits, lifecycle_of};
-use super::views::{BaseView, ManifestView, ReviewUpdateView};
+use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{BaseChoice, CommitId, Lens, Source};
 use crate::ports::{CommitDetail, CommitInfo, GitRepo, LiveStore};
@@ -30,6 +31,18 @@ pub(super) struct CommitUnit {
     pub(super) old: Snapshot,
     pub(super) new: Snapshot,
     pub(super) changes: Changes,
+}
+
+/// What a manifest says about the lenses, whatever view it is of.
+pub(super) struct LensFacts {
+    /// The lens the changeset is reviewed in.
+    pub(super) lens: Lens,
+    /// How many commits lie between the base and the tip.
+    pub(super) commits: u32,
+    /// How many files the changeset as a whole changes.
+    pub(super) files: u32,
+    /// The completion of the changeset as a whole.
+    pub(super) completion: Completion,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -137,6 +150,41 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             .set_lens(self.repo.clone(), st.source.clone(), lens)
             .await?;
         Ok(())
+    }
+
+    /// What every manifest says about the lenses and the changeset as a whole.
+    pub(super) async fn lens_facts(&self, st: &State) -> Result<LensFacts> {
+        let git = &self.acquisition.git;
+        let (lens, commits) = match &st.source {
+            Source::WorkingTree => (Lens::Squash, 0),
+            source => (
+                (self.acquisition.store.lens(self.repo.clone(), source.clone()).await?).unwrap_or_default(),
+                git.first_parent_range(&st.base_commit, &st.head).await?.len() as u32,
+            ),
+        };
+        let changes = st.changes.as_ref().expect("computed");
+        let files = file_views(changes, &st.filter, |_, _| {
+            (
+                ReviewView {
+                    hunks: Vec::new(),
+                    acknowledged: Vec::new(),
+                    old_base_lines: Vec::new(),
+                },
+                empty_completion(),
+            )
+        });
+        let completion = changeset_completion(
+            &Coverage::new(&changes.flat),
+            &st.filter,
+            &changes.diff,
+            &acknowledged(st, &changes.diff),
+        );
+        Ok(LensFacts {
+            lens,
+            commits,
+            files: files.len() as u32,
+            completion,
+        })
     }
 
     /// Computes the commits of the changeset, each with its own diff, if that is not done.
@@ -255,11 +303,13 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let git = &self.acquisition.git;
         let own = &unit.detail.info.id;
         let parent = unit.detail.parents.first().unwrap_or(own);
+        let facts = self.lens_facts(st).await?;
         let base = BaseView {
             choice: BaseChoice::Commit { id: parent.clone() },
             commit: git.commit_info(parent).await?,
             name: parent.short().to_owned(),
             behind: None,
+            contained_in: None,
         };
         Ok(ManifestView {
             revision: st.revision,
@@ -273,6 +323,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             files,
             degraded: None,
             interdiff: None,
+            lens: facts.lens,
+            commits: facts.commits,
+            changeset_files: facts.files,
+            changeset_completion: facts.completion,
         })
     }
 }

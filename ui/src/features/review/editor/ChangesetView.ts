@@ -480,6 +480,11 @@ export class ChangesetView {
     else s.handle?.dispatchAll(setCurrent.of(on ? si - s.cards.length : null));
   }
 
+  /** How many stops the view has: its cards and hunks, over all files. */
+  get stopCount(): number {
+    return this.stops.total;
+  }
+
   /** Goes to the stop with this index over all files' cards and hunks (a card, then the file's hunks). */
   async goToHunk(stop: number): Promise<void> {
     if (!this.stops.total) return;

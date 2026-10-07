@@ -4,6 +4,8 @@
   export interface FooterInfo {
     /** The range of versions the review shows, e.g. `v14 → v17`. */
     range?: string;
+    /** The commit on view of those the changeset is reviewed by, e.g. `2 / 5`. */
+    commit?: string;
     /** Each part is shown once something reports it: the semantic layer, the caret, the file. */
     languageServer?: ServerLine;
     topology?: { label: string; ok: boolean };
@@ -33,6 +35,7 @@
 
 <footer>
   {#if info.range}<span class="mono small" title="The versions the review shows">{info.range}</span>{/if}
+  {#if info.commit}<span class="mono small" title="The commit on view">{info.commit}</span>{/if}
   {#if info.languageServer}
     {@const server = info.languageServer}
     <button class="flat server" type="button" title={server.title ?? "Language servers"} onclick={onserver}

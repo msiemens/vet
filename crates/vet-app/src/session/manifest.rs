@@ -27,6 +27,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         }
         let branches = self.acquisition.git.branches().await?;
         let base = self.base_view(&st, &branches).await?;
+        let facts = self.lens_facts(&st).await?;
         let changes = st.changes.as_ref().expect("computed");
         let cov = Coverage::new(&changes.flat);
         let acked = acknowledged(&st, &changes.diff);
@@ -48,6 +49,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             files,
             degraded: self.degraded_for(&st.source),
             interdiff: None,
+            lens: facts.lens,
+            commits: facts.commits,
+            changeset_files: facts.files,
+            changeset_completion: facts.completion,
         })
     }
 }

@@ -8,11 +8,14 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
+  import type { CommitUnit } from "../../generated/CommitUnit";
+  import type { Lens } from "../../generated/Lens";
+  import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
-  import Tab from "../../lib/ui/Tab.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { AllFiles } from "./AllFiles.svelte";
+  import CommitList from "./CommitList.svelte";
   import { buildRows, buildTree, filterRows, summarize } from "./tree";
 
   let {
@@ -22,12 +25,33 @@
     list,
     selected,
     excluded,
+    lens = "squash",
+    changes,
+    commitCount = 0,
+    commits = [],
+    commit,
+    onlens,
+    oncommit,
     onselect,
     onopen,
     onmenu,
   }: {
     /** Changes only with the changeset's revision, so the tree is built once per revision. */
     paths: string[];
+    /** The lens the changeset is reviewed in: by commit, the tree lists the files of the commit selected. */
+    lens?: Lens;
+    /** The number after "Changes": how many files the changeset changes. */
+    changes: number;
+    /** How many commits the changeset has; the Commits tab is there for more than one. */
+    commitCount?: number;
+    /** The commits with their progress, while the changeset is reviewed by commit. */
+    commits?: CommitUnit[];
+    /** The index of the commit on view, by commit. */
+    commit?: number;
+    /** Reviews the changeset in this lens, which the Changes and Commits tabs stand for. */
+    onlens: (lens: Lens) => void;
+    /** Shows the commit at this index of `commits`. */
+    oncommit: (index: number) => void;
     /** A file's current state; reading it subscribes to that file alone. */
     fileOf: (path: string) => FileChange | undefined;
     /** The manifest revision; "All files" reloads when it moves. */
@@ -51,7 +75,52 @@
     ranges?: Range[];
   }
 
-  let scope = $state<"changes" | "all">("changes");
+  /** All files is shown instead of the changes; the lens stays as it is. */
+  let showAll = $state(false);
+  const byCommit = $derived(lens === "perCommit" && commitCount > 1);
+  const tab = $derived<"changes" | "commits" | "all">(showAll ? "all" : byCommit ? "commits" : "changes");
+  const scope = $derived(tab === "all" ? "all" : "changes");
+  const tabs = $derived([
+    { id: "changes" as const, label: "Changes", count: changes },
+    ...(commitCount > 1 ? [{ id: "commits" as const, label: "Commits", count: commitCount }] : []),
+    { id: "all" as const, label: "All files" },
+  ]);
+
+  function showTab(to: "changes" | "commits" | "all") {
+    search.clear();
+    cursor = -1;
+    showAll = to === "all";
+    if (to === "commits" && lens !== "perCommit") onlens("perCommit");
+    else if (to === "changes" && lens !== "squash") onlens("squash");
+  }
+
+  /** The height of the commit list above the files of the commit, which the divider moves. */
+  let listHeight = $state(180);
+  const MIN_LIST = 60;
+  const MIN_TREE = 80;
+  let nav = $state<HTMLElement>();
+
+  function dragDivider(e: PointerEvent) {
+    const start = { y: e.clientY, height: listHeight };
+    const room = () => (nav?.clientHeight ?? 400) - MIN_TREE;
+    const move = (m: PointerEvent) => {
+      listHeight = Math.max(MIN_LIST, Math.min(room(), start.height + m.clientY - start.y));
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    e.preventDefault();
+  }
+
+  function nudgeDivider(e: KeyboardEvent) {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    listHeight = Math.max(MIN_LIST, listHeight + (e.key === "ArrowDown" ? 16 : -16));
+  }
+
   const collapsed = new SvelteSet<string>();
   const unfolded: ReadonlySet<string> = new Set();
   const tree = $derived(buildTree(paths));
@@ -111,12 +180,6 @@
   function menu(e: MouseEvent, path: string, dir: boolean) {
     e.preventDefault();
     onmenu(path, dir, e.clientX, e.clientY);
-  }
-
-  function showScope(to: "changes" | "all") {
-    search.clear();
-    cursor = -1;
-    scope = to;
   }
 
   /** Indices of the rows shown that match, in order. */
@@ -246,15 +309,30 @@
   </button>
 {/snippet}
 
-<nav aria-label="Files">
+<nav aria-label="Files" bind:this={nav}>
   <div class="sh">
-    <div class="tabs" role="tablist" aria-label="Files shown">
-      <Tab selected={scope === "changes"} onselect={() => showScope("changes")}>Changes</Tab>
-      <Tab selected={scope === "all"} onselect={() => showScope("all")}>All files</Tab>
-    </div>
-    <span class="grow"></span>
-    {#if scope === "changes"}<span class="mono count">{paths.length}</span>{/if}
+    <PanelTabs label="Files shown" value={tab} onchange={showTab} {tabs} />
   </div>
+  {#if tab === "commits"}
+    <div class="commits" style:height="{listHeight}px">
+      {#if commits.length}
+        <CommitList {commits} selected={commit} onselect={oncommit} />
+      {:else}
+        <p class="note">Loading the commits…</p>
+      {/if}
+    </div>
+    <!-- A focusable separator is a widget (WAI-ARIA window splitter). -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+    <div
+      class="divider"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize the commit list"
+      tabindex="0"
+      onpointerdown={dragDivider}
+      onkeydown={nudgeDivider}
+    ></div>
+  {/if}
   <div class="body" role="presentation" tabindex="-1" bind:this={body} {onkeydown} {...search.attributes}>
     {#if search.active}<SpeedSearchField query={search.query} found={!!hits?.size} />{/if}
     {#if scope === "changes"}
@@ -326,25 +404,38 @@
     flex-direction: column;
     min-height: 0;
   }
-  /* Tabs of the header itself, like the editor's tab strip next to it. */
   .sh {
     display: flex;
-    align-items: center;
-    height: var(--h-tab);
-    padding-right: 8px;
+    align-items: stretch;
     font-size: 12px;
     border-bottom: 1px solid var(--line);
     flex: none;
   }
-  .tabs {
+  /* The commit list above the files of the commit selected, its height set by the divider. */
+  .commits {
+    flex: none;
     display: flex;
-    align-self: stretch;
+    flex-direction: column;
+    min-height: 0;
   }
-  .grow {
-    flex: 1;
-  }
-  .count {
+  .note {
+    margin: 0;
+    padding: 8px 10px;
     color: var(--text-3);
+  }
+  .divider {
+    flex: none;
+    height: 5px;
+    margin: -2px 0;
+    position: relative;
+    z-index: 1;
+    cursor: row-resize;
+    border-top: 1px solid var(--line);
+    box-sizing: content-box;
+  }
+  .divider:hover,
+  .divider:focus-visible {
+    background: var(--toggle-press);
   }
   .body {
     flex: 1;

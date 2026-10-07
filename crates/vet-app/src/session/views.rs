@@ -5,7 +5,7 @@ use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{FileEntry, Hunk, LineDelta, NonTextKind, RepoPath, SnapshotId};
 use vet_core::filter::ReviewFilter;
 
-use crate::changeset::{BaseChoice, CommitId, Source};
+use crate::changeset::{BaseChoice, CommitId, Lens, Source};
 use crate::ports::{CommitInfo, Degraded};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -134,6 +134,14 @@ pub struct ManifestView {
     pub degraded: Option<Degraded>,
     /// Set when the manifest is of an interdiff.
     pub interdiff: Option<InterdiffView>,
+    /// The lens the changeset is reviewed in.
+    pub lens: Lens,
+    /// How many commits lie between the base and the tip; none for the working tree.
+    pub commits: u32,
+    /// How many files the changeset as a whole changes, whatever view the manifest is of.
+    pub changeset_files: u32,
+    /// The completion of the changeset as a whole, whatever view the manifest is of.
+    pub changeset_completion: Completion,
 }
 
 /// What an interdiff view says about itself beyond its files.

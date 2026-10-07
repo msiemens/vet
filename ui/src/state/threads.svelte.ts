@@ -9,6 +9,7 @@ import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { session } from "./session.svelte";
 import { rangeKey } from "./timelineRange";
+import { CHANGESET } from "./view";
 
 class ThreadStore {
   /** In creation order, resolved at `revision`. Immutable snapshots, replaced as a whole. */
@@ -43,7 +44,9 @@ class ThreadStore {
     const backend = this.backend;
     if (!backend) return;
     const seq = ++this.seq;
-    const { range, view } = changeset;
+    // A commit has no threads of its own: the comments are the changeset's, as the Comments tool window shows them.
+    const { range } = changeset;
+    const view = range ? changeset.view : CHANGESET;
     try {
       const { revision, threads } = await backend.threads(view);
       if (seq === this.seq) this.set(threads, revision, rangeKey(range));

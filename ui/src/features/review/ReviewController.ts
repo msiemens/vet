@@ -51,6 +51,8 @@ export type ChangesetSource = Pick<
   | "files"
   | "baseChanged"
   | "view"
+  | "shownCommit"
+  | "stepCommit"
   | "onReview"
   | "toggleHunk"
   | "toggleItem"
@@ -84,6 +86,8 @@ export class ReviewController {
   private shown?: { from: number; to: number; revision: number };
   /** The files the Changes tab was limited to when it was built, if it was. */
   private filtered?: ReadonlySet<string>;
+  /** The commit the views show, if they show one. */
+  private shownCommit?: number;
   /** What each changeset that is not on view had open, for when it comes back. */
   private parked = new Map<string, SavedView>();
   /** Scroll positions and the current hunk the next builds restore, instead of carrying the old views' over. */
@@ -155,10 +159,16 @@ export class ReviewController {
     return this.changeset.currentManifest()?.interdiff?.markable === false;
   }
 
-  /** Whether the semantic layer has `side` of what the view shows. */
+  /** Whether the semantic layer has `side` of what the view shows: not in a commit, whose snapshots are not the changeset's. */
   private analysable(side: Side): boolean {
+    if (this.changeset.shownCommit !== undefined) return false;
     const range = this.changeset.currentManifest()?.interdiff;
     return !range || (range.markable && side === "target");
+  }
+
+  /** The threads the views show: those of the changeset, and none in a commit, where they would sit in the wrong place. */
+  private shownThreads(): Thread[] {
+    return this.changeset.shownCommit === undefined ? threads.items : [];
   }
 
   /** Runs a request that marks or comments, unless the view is read-only: then it says so and `refuse` answers. */
@@ -194,6 +204,7 @@ export class ReviewController {
     return {
       tab: { kind: kindOf(id), path: pathOf(id) },
       diffView: view !== undefined,
+      byCommit: this.changeset.shownCommit !== undefined,
       hunk: view?.current ?? -1,
       editor: focusedEditor(document.activeElement),
     };
@@ -217,6 +228,7 @@ export class ReviewController {
         void this.openSource(caret.path, caret.line);
         return true;
       },
+      stepCommit: (delta) => this.changeset.stepCommit(delta),
     };
   }
 
@@ -342,7 +354,7 @@ export class ReviewController {
   private showThreads() {
     const manifest = this.changeset.currentManifest();
     if (threads.revision === undefined || !manifest || !this.threadsFit(manifest)) return;
-    for (const view of this.views.values()) view.setThreads(threads.items, threads.revision);
+    for (const view of this.views.values()) view.setThreads(this.shownThreads(), threads.revision);
   }
 
   /** Shows a thread in the Changes tab: its card, or its file or the changeset's top. */
@@ -399,7 +411,7 @@ export class ReviewController {
       this.probe && ((probe) => this.probe?.view(id, probe)),
     );
     this.views.set(id, view);
-    if (this.threadsFit(manifest)) view.setThreads(threads.items, manifest.revision);
+    if (this.threadsFit(manifest)) view.setThreads(this.shownThreads(), manifest.revision);
     root.scrollTop = top;
     view.keepCurrent(anchor);
     view.sync();
@@ -513,7 +525,8 @@ export class ReviewController {
     if (switching) this.switchTo(key, paths);
     else this.tabs.keepOnly(paths);
     this.key = key;
-    const rangeChanged = this.rangeChanged(manifest);
+    const commitChanged = this.commitChanged();
+    const rangeChanged = this.rangeChanged(manifest) || commitChanged;
     const filterChanged = this.filtered !== this.changeset.baseChanged;
     this.filtered = this.changeset.baseChanged;
     const view = this.views.get(CHANGES);
@@ -541,6 +554,14 @@ export class ReviewController {
     this.shown = now && { from: now.from, to: now.to, revision: manifest.revision };
     if (!now || !was) return !now !== !was;
     return now.from !== was.from || (now.to !== was.to && manifest.revision === was.revision);
+  }
+
+  /** Whether the views show another commit than they did, or one where there was none or none where there was one. */
+  private commitChanged(): boolean {
+    const now = this.changeset.shownCommit;
+    const was = this.shownCommit;
+    this.shownCommit = now;
+    return now !== was;
   }
 
   /** Parks the changeset on view and sets the tabs of `next` and what the builds restore. */
@@ -577,6 +598,7 @@ export class ReviewController {
     this.key = keyId(manifest.target.changeset);
     this.rangeChanged(manifest);
     this.filtered = this.changeset.baseChanged;
+    this.commitChanged();
     this.show(manifest);
     const view = this.changes;
     const saved = manifest.interdiff ? undefined : this.savedPosition();
@@ -595,6 +617,10 @@ export class ReviewController {
   /** Goes to the hunk `delta` away from the current one in the focused tab. */
   stepHunk(delta: number) {
     const view = this.active;
-    if (view) void view.goToHunk(view.current + delta);
+    if (!view) return;
+    // By commit, the next hunk after a commit's last one is the next commit's first.
+    const last = this.tabs.active === CHANGES && delta > 0 && view.current >= view.stopCount - 1;
+    if (last && this.changeset.stepCommit(1)) return;
+    void view.goToHunk(view.current + delta);
   }
 }

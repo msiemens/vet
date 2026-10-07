@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{ChangesetKey, FileChange, FileReview, InterdiffInfo, LineDelta, ProjectId, RestoreFailure};
+use crate::{ChangesetKey, FileChange, FileReview, InterdiffInfo, Lens, LineDelta, ProjectId, RestoreFailure};
 
 /// A side of the changeset.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -244,6 +244,14 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub interdiff: Option<InterdiffInfo>,
+    /// The lens the changeset is reviewed in; `PerCommit` only for a changeset of several commits.
+    pub lens: Lens,
+    /// How many commits lie between the base and the tip; none for the working tree.
+    pub commits: u32,
+    /// How many files the changeset as a whole changes, whatever view this manifest is of.
+    pub changeset_files: u32,
+    /// The completion of the changeset as a whole, whatever view this manifest is of.
+    pub changeset_completion: Completion,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

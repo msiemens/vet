@@ -24,7 +24,8 @@
   import { focusedEditor } from "./editor/semantic";
   import { type Probe, ReviewController } from "./ReviewController";
   import { editorMenu, fileCommands, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
-  import { kindOf, pathOf, tabOf } from "./Tabs.svelte";
+  import CommitHeader from "./CommitHeader.svelte";
+  import { CHANGES, kindOf, pathOf, tabOf } from "./Tabs.svelte";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
@@ -88,6 +89,8 @@
   const revision = $derived(changeset.manifest?.revision);
   /** The chosen target when it already contains the changeset, so there is nothing to show. */
   const containedIn = $derived(changeset.files.length ? undefined : changeset.manifest?.base.containedIn);
+  /** The commit on view, while the changeset is reviewed by commit. */
+  const commit = $derived(changeset.shownCommit === undefined ? undefined : changeset.commits[changeset.shownCommit]);
   const highlighted = $derived(pathOf(tabs.active) ?? selected);
   // The tree marks the file the viewer is in: a file tab's, else the one picked in the tree, else
   // the file at the top of the Changes tab, which follows its scrolling.
@@ -188,6 +191,15 @@
         list={(path) => changeset.listDirectory(path)}
         selected={marked}
         excluded={{ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 }}
+        lens={changeset.manifest?.lens}
+        changes={changeset.shownCommit === undefined
+          ? changeset.files.length
+          : (changeset.manifest?.changesetFiles ?? 0)}
+        commitCount={changeset.manifest?.commits}
+        commits={changeset.commits}
+        commit={changeset.commitIndex}
+        onlens={(lens) => void changeset.showLens(lens)}
+        oncommit={(index) => void changeset.showCommit(index)}
         onselect={select}
         onopen={(path) => void controller.openSource(path)}
         onmenu={(path, dir, x, y) => openMenu(treeMenu(dir), x, y, { target: { path, dir } })}
@@ -201,6 +213,7 @@
     <TabStrip
       {tabs}
       files={changeset.shownFiles}
+      {commit}
       onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: pathOf(id) } })}
     />
     <span class="grow"></span>
@@ -218,6 +231,7 @@
       Read-only: marks and comments only work in a range that ends at the latest version.
     </p>
   {/if}
+  {#if commit && tabs.active === CHANGES}<CommitHeader {commit} />{/if}
   <!-- The handler only replaces the webview's menu inside an editor. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="panes" class:readonly={readOnly} oncontextmenu={paneMenu}>
