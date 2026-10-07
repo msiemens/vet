@@ -60,8 +60,9 @@ pub async fn name_of<G: History>(
     Ok(commit.short().to_owned())
 }
 
-/// How many commits the chosen branch has gained since `base`; `None` unless
-/// the choice is a branch and it has moved.
+/// How many commits the chosen branch has gained since `base`, on its own or on
+/// the remote as of the last fetch; `None` unless the choice is a branch and it
+/// has moved.
 pub async fn behind<G: History>(
     git: &G,
     branches: &[BranchInfo],
@@ -74,6 +75,9 @@ pub async fn behind<G: History>(
     let Some(branch) = branches.iter().find(|b| b.name == *name) else {
         return Ok(None);
     };
-    let count = git.commits_behind(&branch.commit, base, MAX_BEHIND).await?;
+    let mut count = git.commits_behind(&branch.commit, base, MAX_BEHIND).await?;
+    if let Some(upstream) = &branch.upstream {
+        count = count.max(git.commits_behind(upstream, base, MAX_BEHIND).await?);
+    }
     Ok((count > 0).then_some(count as u32))
 }

@@ -1,11 +1,13 @@
 //! `vet_app::ports::GitRepo` over gitoxide. No git subprocesses, hooks,
-//! fsmonitor, or filter and diff drivers (§6.3). All filesystem, hashing and
-//! gix work runs on the blocking pool.
+//! fsmonitor, or filter and diff drivers (§6.3); a fetch runs the credential
+//! helpers the user configured and, over SSH, the system `ssh`. All filesystem,
+//! hashing and gix work runs on the blocking pool.
 
 mod base;
 mod blob_cache;
 mod checkout;
 mod diff;
+mod fetch;
 mod ignore;
 mod scan;
 mod stat_cache;
@@ -20,7 +22,7 @@ use gix::bstr::ByteSlice;
 use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
     BaseCandidates, BlobRead, BlobReader, BranchInfo, ChangesetRefs, Checkout, CheckoutError, CommitInfo, Differ,
-    Dirty, GitError, History, IgnoreRules, Scan, Scanner, Store,
+    Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RemoteInfo, Scan, Scanner, Store,
 };
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
@@ -296,6 +298,17 @@ impl History for GixRepo {
         let (tip, base) = (tip.clone(), base.clone());
         self.blocking(move |i| base::commits_behind(&i.open()?, &tip, &base, max))
             .await
+    }
+}
+
+impl Fetcher for GixRepo {
+    async fn remotes(&self) -> Result<Vec<RemoteInfo>, GitError> {
+        self.blocking(|i| fetch::remotes(&i.open()?)).await
+    }
+
+    async fn fetch(&self, remote: &str, auth: Option<FetchAuth>) -> Result<usize, GitError> {
+        let remote = remote.to_owned();
+        self.blocking(move |i| fetch::fetch(i.open()?, &remote, auth)).await
     }
 }
 

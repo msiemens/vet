@@ -478,6 +478,13 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         Ok((self.base_view(&st, &git.branches().await?).await?, st.revision))
     }
 
+    /// The base as it displays now. How far its branch has moved on is read again, so the answer
+    /// changes after a fetch while the base itself stays where it is.
+    pub async fn base(&self) -> Result<BaseView> {
+        let st = self.state.lock().await;
+        self.base_view(&st, &self.acquisition.git.branches().await?).await
+    }
+
     /// The base with its display facts; `branches` are the repository's.
     async fn base_view(&self, st: &State, branches: &[BranchInfo]) -> Result<BaseView> {
         let git = &self.acquisition.git;

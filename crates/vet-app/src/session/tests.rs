@@ -136,6 +136,7 @@ impl FakeGit {
             commit: chain[0].clone(),
             current,
             default: false,
+            upstream: None,
         });
         branches.sort_by(|a, b| a.name.cmp(&b.name));
     }

@@ -21,6 +21,8 @@ pub enum TaskKind {
     ServerIndex,
     /// Finding the symbols the changes touch.
     Analyse,
+    /// Fetching the repository's remotes.
+    Fetch,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

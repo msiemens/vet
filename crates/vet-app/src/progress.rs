@@ -18,6 +18,7 @@ pub enum TaskKind {
     ServerStart,
     ServerIndex,
     Analyse,
+    Fetch,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

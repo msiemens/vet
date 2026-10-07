@@ -6,6 +6,7 @@ pub mod acquisition;
 pub mod base;
 pub mod changeset;
 pub mod editor;
+pub mod fetch;
 pub mod gc;
 pub mod ignore;
 pub mod limits;

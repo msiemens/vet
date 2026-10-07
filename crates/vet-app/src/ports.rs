@@ -11,6 +11,7 @@ use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version};
 use crate::gc::{GcFacts, GcPlan};
+use crate::platform::{Credential, PlatformKind};
 use crate::review::{ChangesetThread, NonTextAck, Review, ReviewId, SpanId};
 
 /// Monotonic milliseconds.
@@ -91,6 +92,8 @@ pub struct BranchInfo {
     pub current: bool,
     /// The remote's default branch (`origin/HEAD`), if the repository has one.
     pub default: bool,
+    /// Where the branch's remote-tracking ref points: what the remote had at the last fetch.
+    pub upstream: Option<CommitId>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -211,6 +214,35 @@ pub trait History {
         base: &CommitId,
         max: usize,
     ) -> impl Future<Output = Result<usize, GitError>> + Send;
+}
+
+/// A remote a repository fetches from.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RemoteInfo {
+    pub name: String,
+    /// Fit to show.
+    pub url: String,
+    /// `host[:port]`, lower case, when the remote is fetched over HTTPS: what an account is held under.
+    pub https_host: Option<String>,
+}
+
+/// The credential to present to the host of an HTTPS remote.
+#[derive(Clone, Debug)]
+pub struct FetchAuth {
+    pub host: String,
+    pub kind: PlatformKind,
+    pub credential: Credential,
+}
+
+/// Brings in what remotes have. Read-only: it writes objects and remote-tracking
+/// refs and touches no other ref, the index or the worktree.
+pub trait Fetcher {
+    /// The remotes that have a fetch URL.
+    fn remotes(&self) -> impl Future<Output = Result<Vec<RemoteInfo>, GitError>> + Send;
+    /// Fetches `remote` as its refspecs say, authenticating with `auth` where the host matches;
+    /// otherwise with git's credential helpers, else anonymously. Never prompts. Answers with how
+    /// many refs were updated. The error is fit to show.
+    fn fetch(&self, remote: &str, auth: Option<FetchAuth>) -> impl Future<Output = Result<usize, GitError>> + Send;
 }
 
 /// The refs that keep a changeset's commits alive.

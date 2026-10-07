@@ -2,6 +2,7 @@
 //! recent commits a base can be picked from.
 
 use gix::bstr::ByteSlice;
+use gix::remote::Direction;
 use gix::revision::walk::Sorting;
 use gix::traverse::commit::simple::CommitTimeOrder;
 use vet_app::changeset::CommitId;
@@ -79,6 +80,21 @@ pub(super) fn commits_behind(
     Ok(count)
 }
 
+/// Where the remote had the local branch `name` at the last fetch: the remote-tracking ref the
+/// branch is configured to track, else the default remote's branch of the same name.
+fn upstream(repo: &gix::Repository, name: &gix::refs::FullNameRef) -> Option<CommitId> {
+    let tracking = repo
+        .branch_remote_tracking_ref_name(name, Direction::Fetch)
+        .and_then(Result::ok)
+        .map(|tracking| tracking.to_string())
+        .or_else(|| {
+            let remote = repo.remote_default_name(Direction::Fetch)?;
+            Some(format!("refs/remotes/{remote}/{}", name.shorten()))
+        })?;
+    let mut tracked = repo.try_find_reference(tracking.as_str()).ok()??;
+    Some(CommitId(tracked.peel_to_id().ok()?.to_string()))
+}
+
 pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitError> {
     let current = repo.head_name().map_err(err)?;
     let default = repo
@@ -97,6 +113,7 @@ pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitErr
         branches.push(BranchInfo {
             current: current.as_ref().is_some_and(|c| c.as_ref() == reference.name()),
             default: default.as_deref() == Some(name.as_str()),
+            upstream: upstream(repo, reference.name()),
             name,
             commit: CommitId(commit.to_string()),
         });
