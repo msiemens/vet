@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use subtle::ConstantTimeEq;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -93,13 +94,12 @@ impl Server {
 fn random_token() -> io::Result<String> {
     let mut bytes = [0u8; 32];
     getrandom::fill(&mut bytes).map_err(io::Error::other)?;
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+    Ok(hex::encode(bytes))
 }
 
 /// Compares without short-circuiting on the first differing byte.
 fn token_matches(presented: &str, expected: &str) -> bool {
-    let (a, b) = (presented.as_bytes(), expected.as_bytes());
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |diff, (x, y)| diff | (x ^ y)) == 0
+    presented.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 
 fn frame(message: &ServerMessage) -> Message {
