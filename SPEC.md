@@ -442,11 +442,11 @@ Grouped by area; areas and the items within each are in priority order.
 #### Changesets and history
 
 - GitHub + ADO adapters (§11): pull requests as changesets, their threads synced both ways, CI per commit
-- Committed and stacked changesets (per-commit / pseudo-commit / squash lenses)
+- Committed changesets (per-commit / pseudo-commit / squash lenses)
 - Interdiffs; snapshot timeline, as a bottom panel (not a sidebar tool window)
 - Git fetch (in-process, read-only): on demand and periodically, so remote branches and how far a base is behind are current; Vet never pulls, merges or rebases
 - Change decomposition (mechanical vs. logic clusters)
-- Changeset queue home, reached through a Queue / Review toggle in the app header (not a sidebar tool window)
+- Changeset queue home, reached through a Queue / Review toggle in the app header (not a sidebar tool window): pull requests waiting for the viewer and local branches, with more metadata and filtering than the title bar's changeset switcher, of which it is the full-page view
 
 #### Semantics and navigation
 
@@ -457,7 +457,7 @@ Grouped by area; areas and the items within each are in priority order.
 - The changed-symbols panel shows its progress while it loads (files done of files to analyse) and lists symbols as their files are done
 - Jump to Source (F4) from the changed-symbols list opens the selected symbol's definition
 - The changed-symbols panel's file headers show the file name in the normal text style and the folder path before it de-emphasized
-- Find usages: a list of a symbol's references, any symbol, not only changed ones
+- Find usages: a list of a symbol's references, any symbol, not only changed ones, in the bottom panel
 - Go to definition shows its target: the symbol under the pointer is underlined while Cmd/Ctrl is held
 - Hover popups styled as part of the app: the design tokens' sheet surface, border, radius and shadow, a readable maximum width and height with scrolling, consistent spacing between signature, docs and diagnostics, in both themes
 - Syntax highlighting in hover popups (the server's Markdown rendered, code blocks highlighted)
@@ -481,7 +481,7 @@ Grouped by area; areas and the items within each are in priority order.
 
 #### App shell
 
-- Loading screen while a project opens, naming the step it is at
+- Background work is visible, as in JetBrains IDEs: a progress indicator in the footer while a project opens and while work runs (scanning, diffing, servers starting and indexing, restores), naming the step, with the details on click; the review shows as early as it can instead of behind a loading screen
 - Project switcher and changeset switcher in the title bar, redesigned (design to follow): the project switcher lists recent projects plus "Open…"; the changeset switcher picks what is under review
 - File-type icons for files and folders in the file tree and on tabs, by extension and well-known names (a folder's icon open or closed)
 - Native context menus (the OS's, through the host's menu API) everywhere the app has one: the file tree, the editors and diff views, tabs, the changed-symbols list; they replace the webview's default menu and show each item's shortcut. Without a host (plain browser) the app draws the same items
@@ -491,6 +491,7 @@ Grouped by area; areas and the items within each are in priority order.
 
 ### M2
 
+- Stacked changesets: branch stacks (each branch building on the one before) reviewed as a stack
 - Themes and colour schemes as two settings, as in IntelliJ: an app theme (light, dark, Darcula, following the system) for the chrome, and an editor colour scheme (Default, Darcula, Solarized light and dark, high contrast) for syntax, diff and review-state colours. Syntax highlighting grows to the categories a scheme needs (comment, constant, variable, parameter, property, operator, punctuation, attribute, namespace, tag, …). Custom schemes by importing IntelliJ colour schemes and VS Code themes into an editable scheme file; no in-app colour editor
 - Several projects open at once, each in its own window, with the welcome screen as a window of its own (until then one window switches between the welcome screen and a project, keeping a position and size for each)
 - Contributor-PR trust (§7.5): limited analysis until trusted; a new push voids trust
