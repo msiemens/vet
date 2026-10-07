@@ -479,6 +479,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Export annotations as agent task files
 - Problems panel: the diagnostics of the whole changeset in one list
 - Minimap
+- CI annotations on lines: the platform's check annotations (path, lines, severity, message) shown in the hunk view like diagnostics, anchored to the commit they were produced for
 - Narrowing the project's review filter for one review from the file tree ("Review only this folder", "Exclude from review"), shown in the tree with a reset
 
 ### Later
