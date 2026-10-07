@@ -27,7 +27,7 @@ export type Response = { "type": "pong", payload: string, } | { "type": "session
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
+root: string, } | { "type": "done" } | { "type": "recentProjects", paths: Array<string>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
 /**
  * The changed ranges of the hunks in order, down to the words that differ within a
  * replaced region: line-snapped, one block per hunk (see [`TextChange`]).

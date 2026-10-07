@@ -11,6 +11,7 @@ pub mod ignore;
 pub mod limits;
 pub mod pin;
 pub mod ports;
+pub mod recent;
 pub mod review;
 pub mod semantics;
 pub mod servers;

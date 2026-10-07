@@ -6,7 +6,6 @@ mod backend;
 mod bench;
 mod dialog;
 mod menu;
-mod recent;
 mod window;
 
 use tauri::{Emitter, Manager, RunEvent};
@@ -38,12 +37,9 @@ pub fn run() {
             window::activate_and_show,
             backend::backend_connection,
             bench::bench_config,
-            recent::forget_repository,
             dialog::pick_file,
             dialog::pick_repository,
             window::quit,
-            recent::recent_repositories,
-            recent::remember_repository,
             bench::renderer_memory,
             bench::save_results,
             menu::set_menu

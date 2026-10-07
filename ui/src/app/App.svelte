@@ -251,6 +251,7 @@
     <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />
   </div>
 {:else if changeset.backend}
+  {@const backend = changeset.backend}
   <TitleBar />
   <div class="body">
     <StartScreen
@@ -260,7 +261,7 @@
       onpick={() => void changeset.pickRepo()}
       onopen={(path) => void changeset.openRepo(path)}
       onforget={(path) => {
-        void recent.forget(path);
+        void recent.forget(backend, path);
         changeset.openError = undefined;
       }}
     />

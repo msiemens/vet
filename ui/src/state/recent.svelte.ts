@@ -1,22 +1,27 @@
-// The recently opened repositories, kept by the host (not the backend).
+// The recently opened repositories, kept by the backend.
 
-import { forgetRepository, recentRepositories, rememberRepository } from "./host";
+import type { Backend } from "./backend";
 
 class RecentRepositories {
+  /** Backend-side paths, most recent first. */
   list = $state<string[]>([]);
 
-  async load() {
-    this.list = await recentRepositories().catch(() => []);
+  async load(backend: Backend) {
+    this.list = await backend.recentProjects().catch(() => []);
   }
 
-  async remember(path: string) {
-    await rememberRepository(path).catch((e: unknown) => console.error(e));
-    await this.load();
+  async remember(backend: Backend, path: string) {
+    this.list = await backend.recordRecentProject(path).catch((e: unknown) => {
+      console.error(e);
+      return this.list;
+    });
   }
 
-  async forget(path: string) {
-    await forgetRepository(path).catch((e: unknown) => console.error(e));
-    await this.load();
+  async forget(backend: Backend, path: string) {
+    this.list = await backend.forgetRecentProject(path).catch((e: unknown) => {
+      console.error(e);
+      return this.list;
+    });
   }
 }
 

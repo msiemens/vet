@@ -1,5 +1,5 @@
-// The Tauri host's commands for choosing and remembering repositories. A plain browser
-// (development only) has none: no dialog, and nothing is remembered.
+// The Tauri host's commands: the window, the native menu and the file dialogs. A plain browser
+// (development only) has none.
 
 import type { MenuItem } from "../lib/ui/menuItem";
 
@@ -56,17 +56,4 @@ export async function pickRepository(): Promise<string | null> {
 /** The native file dialog; `null` if cancelled. Rejects with a message for a file the backend cannot see. */
 export async function pickFile(): Promise<string | null> {
   return inTauri ? invoke<string | null>("pick_file") : null;
-}
-
-/** Backend-side paths, most recent first. */
-export async function recentRepositories(): Promise<string[]> {
-  return inTauri ? invoke<string[]>("recent_repositories") : [];
-}
-
-export async function rememberRepository(path: string): Promise<void> {
-  if (inTauri) await invoke("remember_repository", { path });
-}
-
-export async function forgetRepository(path: string): Promise<void> {
-  if (inTauri) await invoke("forget_repository", { path });
 }

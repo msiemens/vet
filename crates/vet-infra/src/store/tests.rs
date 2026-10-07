@@ -136,7 +136,7 @@ async fn a_database_of_another_version_is_recreated_and_one_of_this_version_is_k
     // What an earlier version left behind: its migrations and a differently shaped session table.
     for sql in [
         "CREATE TABLE seaql_migrations (version VARCHAR NOT NULL PRIMARY KEY, applied_at BIGINT NOT NULL)",
-        "INSERT INTO seaql_migrations VALUES ('m0001_initial', 1), ('m0002_run_state', 2)",
+        "INSERT INTO seaql_migrations VALUES ('schema_0000000000000000', 1)",
         "CREATE TABLE session (id INTEGER PRIMARY KEY, repo TEXT)",
         "INSERT INTO session VALUES (1, '/old')",
     ] {

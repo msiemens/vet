@@ -490,6 +490,14 @@ pub trait ServerLocator {
     ) -> impl Future<Output = Result<ServerCommand, String>> + Send;
 }
 
+/// The recently opened repositories, kept across launches.
+pub trait RecentStore {
+    /// The paths as recorded, most recent first.
+    fn recent_projects(&self) -> impl Future<Output = Result<Vec<String>, StoreError>> + Send;
+    /// Replaces the whole list; `paths` is most recent first.
+    fn set_recent_projects(&self, paths: Vec<String>) -> impl Future<Output = Result<(), StoreError>> + Send;
+}
+
 /// The custom server path per language, kept across launches.
 pub trait ServerSettings {
     fn custom_server_path(&self, language: String) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;

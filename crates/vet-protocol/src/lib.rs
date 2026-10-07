@@ -62,6 +62,19 @@ pub enum Request {
     Ping {
         payload: String,
     },
+    /// The recently opened repositories, as the paths they were recorded with, most
+    /// recent first. They belong to the backend, not to a session. Answers with
+    /// `Response::RecentProjects`.
+    RecentProjects,
+    /// Puts `path` at the top of the recent list, dropping its earlier entry and the
+    /// oldest ones beyond ten. Answers with `Response::RecentProjects`.
+    RecordRecentProject {
+        path: String,
+    },
+    /// Removes `path` from the recent list. Answers with `Response::RecentProjects`.
+    ForgetRecentProject {
+        path: String,
+    },
     /// Opens the working tree of the repository containing `repo`, which may be
     /// any folder inside it, against its current branch, and subscribes this
     /// connection to the session's events. The repository's open review is
@@ -624,6 +637,10 @@ pub enum Response {
     },
     /// Acknowledges a request that has no result.
     Done,
+    /// The recent list after the request, most recent first.
+    RecentProjects {
+        paths: Vec<String>,
+    },
     /// Boxed: it would make every response as large as the manifest.
     Manifest(Box<Manifest>),
     /// `None` is a side the file does not have (added or deleted). The text and

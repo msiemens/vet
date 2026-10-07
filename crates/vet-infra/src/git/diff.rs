@@ -14,9 +14,7 @@ use gix::objs::{
 };
 use vet_app::ports::GitError;
 use vet_core::classify::{Change, changes, classify, text_blobs};
-use vet_core::content::{
-    BlobId, BlobSource, EntryKind, FileDiff, RenameMap, RepoPath, Snapshot, SnapshotDiff,
-};
+use vet_core::content::{BlobId, BlobSource, EntryKind, FileDiff, RenameMap, RepoPath, Snapshot, SnapshotDiff};
 use vet_core::hunks::line_hunks;
 
 use super::scan::Worktree;

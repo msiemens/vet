@@ -17,6 +17,7 @@ use tokio::task::AbortHandle;
 use vet_app::gc::Retention;
 use vet_app::ignore::IgnoringWatcher;
 use vet_app::limits::{Limiting, RestoreLimits};
+use vet_app::recent::RecentProjects;
 use vet_app::semantics::Semantics;
 use vet_app::servers::Servers;
 use vet_app::session::{Lifecycle, LiveSession, ThreadView};
@@ -88,6 +89,7 @@ fn live(subscribers: &Subscribers) -> std::sync::MutexGuard<'_, Vec<Events>> {
 
 pub struct Orchestrator {
     store: SqliteStore,
+    recent: RecentProjects<SqliteStore>,
     config: Config,
     sessions: Sessions,
     servers: Arc<LanguageServers>,
@@ -148,6 +150,7 @@ impl Orchestrator {
             servers: Arc::new(Servers::new(resolver, store.clone(), languages)),
             backends,
             highlighter: Default::default(),
+            recent: RecentProjects::new(store.clone()),
             store,
             config,
             sessions: Sessions::default(),
@@ -305,6 +308,15 @@ impl Orchestrator {
     async fn answer(&self, request: Request, events: Events) -> Result<Response, String> {
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
+            Request::RecentProjects => Ok(Response::RecentProjects {
+                paths: self.recent.list().await.map_err(|e| e.0)?,
+            }),
+            Request::RecordRecentProject { path } => Ok(Response::RecentProjects {
+                paths: self.recent.record(path).await.map_err(|e| e.0)?,
+            }),
+            Request::ForgetRecentProject { path } => Ok(Response::RecentProjects {
+                paths: self.recent.forget(&path).await.map_err(|e| e.0)?,
+            }),
             Request::OpenSession { repo } => {
                 let (session, root) = self.open(&repo, events).await?;
                 Ok(Response::Session { session, root })

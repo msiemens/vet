@@ -1,12 +1,15 @@
 //! Schema migrations; sea-orm-migration records applied ones in `seaql_migrations`.
-//! The schema is created whole from the entities. A database that applied
-//! migrations this build does not have comes from another version of Vet and
-//! is not upgraded: `SqliteStore::open` recreates it.
+//! The schema is created whole from the entities, and its one migration is
+//! named after a hash of the statements that create it. A database that
+//! applied another migration has another schema, from another version of Vet,
+//! and is not upgraded: `SqliteStore::open` recreates it.
 
 use std::collections::HashSet;
+use std::sync::OnceLock;
 
 use sea_orm::{DbBackend, Schema};
 use sea_orm_migration::prelude::*;
+use vet_core::content::Hash;
 
 use super::entity::*;
 
@@ -25,46 +28,60 @@ pub async fn is_foreign(db: &impl ConnectionTrait) -> Result<bool, DbErr> {
     Ok(applied.iter().any(|m| !known.contains(&m.version)))
 }
 
+/// The SQL that creates every table and index.
+fn statements() -> Vec<String> {
+    let schema = Schema::new(DbBackend::Sqlite);
+    let mut out = Vec::new();
+    macro_rules! create {
+        ($($entity:path),+) => {$(
+            out.push(schema.create_table_from_entity($entity).to_string(SqliteQueryBuilder));
+            for index in schema.create_index_from_entity($entity) {
+                out.push(index.to_string(SqliteQueryBuilder));
+            }
+        )+};
+    }
+    create!(
+        pin::Entity,
+        snapshot::Entity,
+        snapshot_path::Entity,
+        tree_node::Entity,
+        tree_child::Entity,
+        session::Entity,
+        session_base::Entity,
+        project_filter::Entity,
+        project_filter_item::Entity,
+        timeline::Entity,
+        anchor::Entity,
+        span::Entity,
+        ack::Entity,
+        thread::Entity,
+        message::Entity,
+        run_target::Entity,
+        run_approval::Entity,
+        server_path::Entity,
+        recent_project::Entity
+    );
+    out
+}
+
 struct Initial;
 
 impl MigrationName for Initial {
     fn name(&self) -> &str {
-        "m0001_schema"
+        static NAME: OnceLock<String> = OnceLock::new();
+        NAME.get_or_init(|| {
+            let hex = Hash::of(statements().join(";\n").as_bytes()).to_hex();
+            format!("schema_{}", &hex[..16])
+        })
     }
 }
 
 #[async_trait::async_trait]
 impl MigrationTrait for Initial {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        let schema = Schema::new(DbBackend::Sqlite);
-        macro_rules! create {
-            ($($entity:path),+) => {$(
-                manager.create_table(schema.create_table_from_entity($entity)).await?;
-                for index in schema.create_index_from_entity($entity) {
-                    manager.create_index(index).await?;
-                }
-            )+};
+        for sql in statements() {
+            manager.get_connection().execute_unprepared(&sql).await?;
         }
-        create!(
-            pin::Entity,
-            snapshot::Entity,
-            snapshot_path::Entity,
-            tree_node::Entity,
-            tree_child::Entity,
-            session::Entity,
-            session_base::Entity,
-            project_filter::Entity,
-            project_filter_item::Entity,
-            timeline::Entity,
-            anchor::Entity,
-            span::Entity,
-            ack::Entity,
-            thread::Entity,
-            message::Entity,
-            run_target::Entity,
-            run_approval::Entity,
-            server_path::Entity
-        );
         Ok(())
     }
 }

@@ -70,7 +70,7 @@ class ChangesetStore {
         else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
       });
       this.backend = backend;
-      await recent.load();
+      await recent.load(backend);
       if (backend.initialRepo) await this.openRepo(backend.initialRepo);
     } catch (error) {
       this.status = errorText(error);
@@ -84,7 +84,7 @@ class ChangesetStore {
     await this.closeRepo();
     try {
       this.repo = await backend.open(path);
-      void recent.remember(this.repo);
+      void recent.remember(backend, this.repo);
     } catch (error) {
       this.openError = { path, message: errorText(error) };
     }

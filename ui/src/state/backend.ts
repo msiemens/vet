@@ -73,6 +73,21 @@ export class Backend {
     return new Backend(conn, conn.repo);
   }
 
+  /** The recently opened repositories, most recent first. They belong to the backend, not to a session. */
+  async recentProjects(): Promise<string[]> {
+    return expect(await this.conn.request({ type: "recentProjects" }), "recentProjects").paths;
+  }
+
+  /** Puts `path` at the top of the recent list; resolves with the list. */
+  async recordRecentProject(path: string): Promise<string[]> {
+    return expect(await this.conn.request({ type: "recordRecentProject", path }), "recentProjects").paths;
+  }
+
+  /** Resolves with the recent list without `path`. */
+  async forgetRecentProject(path: string): Promise<string[]> {
+    return expect(await this.conn.request({ type: "forgetRecentProject", path }), "recentProjects").paths;
+  }
+
   /** Opens a session on `repo`; resolves with the repository root the backend settled on. */
   async open(repo: string): Promise<string> {
     const opened = expect(await this.conn.request({ type: "openSession", repo }), "session");
