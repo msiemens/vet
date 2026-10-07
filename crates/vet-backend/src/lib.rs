@@ -3,7 +3,6 @@
 //! to protocol messages.
 
 mod highlight;
-mod mapping;
 mod run;
 mod semantic;
 
@@ -32,6 +31,7 @@ use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
 use vet_infra::watch::FsWatcher;
+use vet_mapping as mapping;
 use vet_protocol::{Event, Request, Response, SessionId};
 use vet_semantic::ports::{Backend, BackendId};
 use vet_transport::{Events, Handler};

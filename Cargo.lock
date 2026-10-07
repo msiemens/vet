@@ -4250,6 +4250,7 @@ dependencies = [
  "vet-core",
  "vet-highlight",
  "vet-infra",
+ "vet-mapping",
  "vet-protocol",
  "vet-semantic",
  "vet-transport",
@@ -4309,6 +4310,17 @@ dependencies = [
  "vet-core",
  "vet-semantic",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "vet-mapping"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "vet-app",
+ "vet-core",
+ "vet-protocol",
+ "vet-semantic",
 ]
 
 [[package]]

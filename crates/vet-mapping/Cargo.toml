@@ -1,0 +1,17 @@
+[package]
+name = "vet-mapping"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# The conversions between the application's views and the protocol's messages,
+# shared by the backend and the mock backend.
+[dependencies]
+vet-core.workspace = true
+vet-protocol.workspace = true
+vet-semantic.workspace = true
+vet-app.workspace = true
+base64 = "0.22"
+
+[lints]
+workspace = true
