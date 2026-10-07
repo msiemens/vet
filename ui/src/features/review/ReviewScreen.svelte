@@ -8,6 +8,7 @@
   import type { Backend } from "../../state/backend";
   import { changeset } from "../../state/changeset.svelte";
   import { session } from "../../state/session.svelte";
+  import { symbols } from "../../state/symbols.svelte";
   import { threads } from "../../state/threads.svelte";
   import { CommentsPanel } from "../comments";
   import FileTree from "./FileTree.svelte";
@@ -33,7 +34,7 @@
     mode,
     onmode,
     onready,
-    onfile,
+    onclose,
   }: {
     backend: Backend;
     /** The dev tools' measurements of the editors, if they are on. */
@@ -50,8 +51,8 @@
     side: Snippet<[tool: string]>;
     /** The changeset is open; `firstPaintMs` runs from the open request to the first hunk's paint. */
     onready: (controller: ReviewController, firstPaintMs: number) => void;
-    /** The file the review shows (the active file tab, else the one selected in the tree) changed. */
-    onfile?: (path: string | undefined) => void;
+    /** The screen is torn down; its controller is gone. */
+    onclose?: () => void;
   } = $props();
 
   let menu = $state<{ path: string; dir: boolean; x: number; y: number }>();
@@ -66,7 +67,10 @@
   const revision = $derived(changeset.manifest?.revision);
   const highlighted = $derived(pathOf(tabs.active) ?? selected);
   const fileOf = (path: string) => changeset.file(path);
-  $effect(() => onfile?.(highlighted));
+  // The Symbol panel lists the file the review shows (the active file tab, else the one selected in the tree) first.
+  $effect(() => {
+    symbols.file = highlighted;
+  });
 
   onMount(() => {
     const stopThreads = threads.start(backend);
@@ -77,6 +81,7 @@
     return () => {
       stopThreads();
       controller.destroy();
+      onclose?.();
     };
   });
 

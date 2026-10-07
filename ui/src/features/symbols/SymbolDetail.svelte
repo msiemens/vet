@@ -7,9 +7,9 @@
   import type { RemovalImpact } from "../../generated/RemovalImpact";
   import type { Side } from "../../generated/Side";
   import { codeBlock } from "../../lib/codeBlock";
+  import { symbols } from "../../state/symbols.svelte";
   import DerivedSection from "./DerivedSection.svelte";
   import { containerOf, describeFate, nameOf, type OpenLocation, place } from "./symbolList";
-  import { symbols } from "./symbols.svelte";
 
   let { symbol, onopen }: { symbol: ChangedSymbol; onopen: OpenLocation } = $props();
 

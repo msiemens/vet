@@ -1,10 +1,10 @@
 <script lang="ts">
+  import { symbols } from "../../state/symbols.svelte";
   import SymbolDetail from "./SymbolDetail.svelte";
   import SymbolList from "./SymbolList.svelte";
   import type { OpenLocation } from "./symbolList";
-  import { symbols } from "./symbols.svelte";
 
-  /** The panel shows what `symbols` holds; the owner loads it per revision and says where a location opens. */
+  /** The panel shows what `symbols` holds; the owner says where a location opens. */
   let { onopen }: { onopen: OpenLocation } = $props();
 </script>
 

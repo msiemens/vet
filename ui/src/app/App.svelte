@@ -1,15 +1,12 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount } from "svelte";
   import DevTools from "../dev/DevTools.svelte";
   import { probe } from "../dev/probe.svelte";
-  import type { WatchDegraded } from "../generated/WatchDegraded";
-  import Banner from "../lib/ui/Banner.svelte";
   import {
     AboutDialog,
+    Banners,
     FinishDialog,
     Header,
-    degradedMessage,
-    limitedMessage,
     StatusFooter,
     TOOLS,
     TitleBar,
@@ -19,7 +16,7 @@
   import { ReviewScreen, type ReviewController } from "../features/review";
   import { SettingsDialog } from "../features/settings";
   import { StartScreen } from "../features/start";
-  import { type OpenLocation, SymbolPanel, symbols } from "../features/symbols";
+  import { type OpenLocation, SymbolPanel } from "../features/symbols";
   import { percentages } from "../lib/completion";
   import { KEYS, matches } from "../lib/keymap";
   import { repoName } from "../lib/paths";
@@ -40,7 +37,6 @@
   const right = $state({ tool: "symbol", open: true });
   let tools: DevTools;
   let devOpen = $state(false);
-  let status = $state("");
   let theme = $state<Theme>(storedTheme());
   let mode = $state<Mode>("unified");
   let dialog = $state<"settings" | "about" | "finish">();
@@ -54,35 +50,11 @@
       title: `${c.seenLines} of ${c.lines} lines · ${c.acknowledgedItems} of ${c.items} other changes · ${c.oldBaseLines} lines against an old base`,
     };
   });
-  const degraded = $derived(changeset.manifest?.degraded);
-  let dismissedDegraded = $state<WatchDegraded>();
-  const failures = $derived(changeset.restoreFailures);
-  // How many failures the viewer dismissed: a longer list is news again, and a shorter one
-  // (a project got fixed) lowers it so a failure that comes back is shown.
-  let dismissedFailures = $state(0);
-  $effect(() => {
-    if (failures.length < untrack(() => dismissedFailures)) dismissedFailures = failures.length;
-  });
   const semanticSummary = $derived(semantic.summary(controller?.activePath));
   const footer = $derived({
     languageServer: semanticSummary.label,
     languageServerTitle: semanticSummary.title,
     diagnostics: semanticSummary.diagnostics,
-  });
-
-  // The controller belongs to the repository's screen.
-  $effect(() => {
-    if (!session.repo) {
-      controller = undefined;
-      symbols.reset();
-    }
-  });
-
-  // The changed symbols belong to a revision; another one replaces them.
-  $effect(() => {
-    const backend = session.backend;
-    const revision = changeset.manifest?.revision;
-    if (backend && revision !== undefined) untrack(() => void symbols.load(backend, revision));
   });
 
   const openLocation: OpenLocation = (path, line, side) => void controller?.openLocation(path, line, side);
@@ -159,12 +131,6 @@
     mode = next;
     controller?.setMode(next);
   }
-
-  function ready(c: ReviewController, firstPaintMs: number) {
-    controller = c;
-    status = `${changeset.manifest?.name}: ${changeset.files.length} files, ${c.changes.totalHunks} hunks; first hunk painted in ${firstPaintMs.toFixed(0)} ms`;
-    void tools.runIfRequested();
-  }
 </script>
 
 <svelte:window
@@ -187,24 +153,7 @@
     onfinish={() => (dialog = "finish")}
   />
 
-  {#if degraded && dismissedDegraded !== degraded}
-    <Banner message={degradedMessage[degraded]} ondismiss={() => (dismissedDegraded = degraded)} />
-  {/if}
-
-  {#if failures.length > dismissedFailures}
-    <Banner message={limitedMessage(failures)} ondismiss={() => (dismissedFailures = failures.length)}>
-      {#snippet details()}
-        <ul class="failures">
-          {#each failures as failure (failure.project + failure.tool + failure.message)}
-            <li>
-              <strong>{failure.project}</strong> ({failure.tool}):
-              <pre>{failure.message}</pre>
-            </li>
-          {/each}
-        </ul>
-      {/snippet}
-    </Banner>
-  {/if}
+  <Banners degraded={changeset.manifest?.degraded} failures={changeset.restoreFailures} />
 
   <div class="body">
     <ToolRail bind:active={left.tool} bind:open={left.open} />
@@ -217,10 +166,11 @@
       rightOpen={right.open}
       {mode}
       onmode={setMode}
-      onready={ready}
-      onfile={(path) => {
-        symbols.file = path;
+      onready={(c, firstPaintMs) => {
+        controller = c;
+        void tools.ready(firstPaintMs);
       }}
+      onclose={() => (controller = undefined)}
     >
       {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel onopen={openLocation} />{/if}{/snippet}
     </ReviewScreen>
@@ -270,7 +220,7 @@
   />
 {/if}
 
-<DevTools bind:this={tools} {controller} bind:open={devOpen} bind:status />
+<DevTools bind:this={tools} {controller} bind:open={devOpen} />
 
 <StatusFooter info={footer}>
   {#snippet end()}<button class="flat dev" type="button" aria-pressed={devOpen} onclick={() => (devOpen = !devOpen)}
@@ -283,16 +233,6 @@
     flex: 1;
     display: flex;
     min-height: 0;
-  }
-  .failures {
-    margin: 0;
-    padding-left: 16px;
-  }
-  .failures pre {
-    margin: 2px 0 6px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    white-space: pre-wrap;
   }
   .message {
     flex: 1;

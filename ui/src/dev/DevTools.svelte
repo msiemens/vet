@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ReviewController } from "../features/review";
+  import { changeset } from "../state/changeset.svelte";
   import { runBenchmark } from "./bench";
   import CardGallery from "./CardGallery.svelte";
   import { hud } from "./probe.svelte";
@@ -9,13 +10,12 @@
   let {
     controller,
     open = $bindable(false),
-    status = $bindable(""),
   }: {
     controller?: ReviewController;
     open?: boolean;
-    status?: string;
   } = $props();
 
+  let status = $state("");
   let rows = $state<Row[]>([]);
   let running = $state(false);
   let gallery = $state(false);
@@ -44,8 +44,12 @@
     ).catch((e: unknown) => console.error(e));
   }
 
-  /** Runs the benchmark, and shows the bar, if the host asked for it at startup. */
-  export async function runIfRequested() {
+  /**
+   * The changeset is open in `controller`, its first hunk painted `firstPaintMs` after the open
+   * request. Runs the benchmark, and shows the bar, if the host asked for it at startup.
+   */
+  export async function ready(firstPaintMs: number) {
+    status = `${changeset.manifest?.name}: ${changeset.files.length} files, ${controller?.changes.totalHunks} hunks; first hunk painted in ${firstPaintMs.toFixed(0)} ms`;
     const config = await benchConfig();
     if (!config.auto) return;
     open = true;

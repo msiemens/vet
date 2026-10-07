@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol.ts";
 import type { SymbolChange } from "../../generated/SymbolChange.ts";
-import { describeFate, fileEntries, groupByFile, keyOf, symbolAt } from "./symbolList.ts";
+import { describeFate, fileEntries, groupByFile, symbolAt } from "./symbolList.ts";
 
 const sym = (path: string, name: string[], from: number, to: number, change: SymbolChange): ChangedSymbol => ({
   symbol: {
@@ -59,11 +59,6 @@ void test("a removed symbol is found on the base side only", () => {
   const all = [sym("a.rs", ["gone"], 3, 6, "removed"), sym("a.rs", ["kept"], 3, 6, "modified")];
   assert.deepEqual(symbolAt(all, "a.rs", "base", 4, 0)?.symbol.id.name, ["gone"]);
   assert.deepEqual(symbolAt(all, "a.rs", "target", 4, 0)?.symbol.id.name, ["kept"]);
-});
-
-void test("keys tell container chains apart", () => {
-  assert.notEqual(keyOf({ path: "a.rs", name: ["A", "f"] }), keyOf({ path: "a.rs", name: ["B", "f"] }));
-  assert.notEqual(keyOf({ path: "a.rs", name: ["A", "f"] }), keyOf({ path: "a.rs", name: ["A\0f"] }));
 });
 
 void test("fates read as words, the broken one as the bad tone", () => {

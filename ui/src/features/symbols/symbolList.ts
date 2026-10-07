@@ -19,9 +19,6 @@ export interface FileSymbols {
   note?: string;
 }
 
-/** A stable key for maps and each blocks: the file and container chain identify a symbol (SPEC §7.3). */
-export const keyOf = (id: SymbolId): string => JSON.stringify([id.path, ...id.name]);
-
 /** The symbol's own name. */
 export const nameOf = (id: SymbolId): string => id.name[id.name.length - 1] ?? id.path;
 

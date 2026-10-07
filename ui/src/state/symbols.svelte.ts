@@ -1,18 +1,21 @@
 // The Symbol panel's state: the changeset's changed symbols, the selected one and the
 // answers about it. The backend derives them (SPEC §7.3, I5); this loads and holds them,
-// each one on its own, since an impact query may take a server's cold start.
+// each one on its own, since an impact query may take a server's cold start. The changed
+// symbols belong to a revision of the open repository: the store follows both.
 
-import type { ChangedSymbol } from "../../generated/ChangedSymbol";
-import type { ChangedSymbols } from "../../generated/ChangedSymbols";
-import type { Impact } from "../../generated/Impact";
-import type { Reachability } from "../../generated/Reachability";
-import type { RemovalImpact } from "../../generated/RemovalImpact";
-import type { Side } from "../../generated/Side";
-import type { SymbolSignature } from "../../generated/SymbolSignature";
-import type { Unavailable } from "../../generated/Unavailable";
-import { errorText } from "../../lib/errorText";
-import type { Backend } from "../../state/backend";
-import { keyOf, symbolAt } from "./symbolList";
+import { untrack } from "svelte";
+import type { ChangedSymbol } from "../generated/ChangedSymbol";
+import type { ChangedSymbols } from "../generated/ChangedSymbols";
+import type { Impact } from "../generated/Impact";
+import type { Reachability } from "../generated/Reachability";
+import type { RemovalImpact } from "../generated/RemovalImpact";
+import type { SymbolSignature } from "../generated/SymbolSignature";
+import type { Unavailable } from "../generated/Unavailable";
+import { errorText } from "../lib/errorText";
+import type { Backend } from "./backend";
+import { changeset } from "./changeset.svelte";
+import { session } from "./session.svelte";
+import { keyOf } from "./symbolKey";
 
 export type Load<T> = { state: "loading" } | { state: "done"; value: T } | { state: "failed"; message: string };
 
@@ -42,8 +45,21 @@ class SymbolsState {
   private listRun = 0;
   private detailRun = 0;
 
-  /** Back to nothing: another repository was opened. */
-  reset() {
+  constructor() {
+    $effect.root(() => {
+      $effect(() => {
+        const { backend, repo } = session;
+        const revision = changeset.manifest?.revision;
+        untrack(() => {
+          if (repo === undefined) this.reset();
+          else if (backend && revision !== undefined) void this.load(backend, revision);
+        });
+      });
+    });
+  }
+
+  /** Back to nothing: no repository is open. */
+  private reset() {
     this.listRun++;
     this.backend = this.revision = undefined;
     this.changed = undefined;
@@ -51,7 +67,7 @@ class SymbolsState {
   }
 
   /** Loads the changed symbols of `revision`, keeping the selection if its symbol is still changed. */
-  async load(backend: Backend, revision: number) {
+  private async load(backend: Backend, revision: number) {
     if (this.backend === backend && this.revision === revision) return;
     this.backend = backend;
     this.revision = revision;
@@ -70,17 +86,6 @@ class SymbolsState {
       loaded.state === "done" ? loaded.value.symbols.find((s) => keyOf(s.symbol.id) === previous) : undefined;
     if (kept) this.select(kept);
     else this.clearSelection();
-  }
-
-  get symbols(): readonly ChangedSymbol[] {
-    return this.changed?.state === "done" ? this.changed.value.symbols : [];
-  }
-
-  /** Selects the changed symbol whose definition contains the position of `side`, if any; resolves with it. */
-  selectSymbolAt(path: string, side: Side, line: number, col: number): ChangedSymbol | undefined {
-    const found = symbolAt(this.symbols, path, side, line, col);
-    if (found) this.select(found);
-    return found;
   }
 
   select(symbol: ChangedSymbol) {

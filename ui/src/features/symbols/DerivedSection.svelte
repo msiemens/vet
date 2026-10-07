@@ -4,7 +4,7 @@
   import type { Snippet } from "svelte";
   import type { DerivedInputs } from "../../generated/DerivedInputs";
   import Icon from "../../lib/ui/Icon.svelte";
-  import type { Load } from "./symbols.svelte";
+  import type { Load } from "../../state/symbols.svelte";
 
   let {
     title,

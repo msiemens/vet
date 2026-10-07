@@ -1,8 +1,9 @@
 <script lang="ts">
   // The changed symbols by file, with the current file's group in view.
   import { tick } from "svelte";
-  import { containerOf, fileEntries, keyOf, nameOf } from "./symbolList";
-  import { symbols } from "./symbols.svelte";
+  import { keyOf } from "../../state/symbolKey";
+  import { symbols } from "../../state/symbols.svelte";
+  import { containerOf, fileEntries, nameOf } from "./symbolList";
 
   let list = $state<HTMLElement>();
 
