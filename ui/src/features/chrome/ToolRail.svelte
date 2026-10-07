@@ -3,9 +3,7 @@
 
   export const TOOLS: Record<"left" | "right", { id: string; icon: IconName; label: string }[]> = {
     left: [
-      { id: "queue", icon: "queue", label: "Queue" },
       { id: "files", icon: "files", label: "Files" },
-      { id: "timeline", icon: "timeline", label: "Timeline" },
       { id: "comments", icon: "comments", label: "Comments" },
     ],
     right: [{ id: "symbol", icon: "module", label: "Symbol" }],

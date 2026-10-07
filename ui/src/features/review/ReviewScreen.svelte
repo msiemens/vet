@@ -119,7 +119,9 @@
 
 {#if leftOpen}
   <SideBar side="left" defaultWidth="var(--w-tree)">
-    {#if leftTool === "files"}
+    {#if leftTool === "comments"}
+      <CommentsPanel onselect={(thread) => void controller.goToThread(thread)} />
+    {:else}
       <FileTree
         paths={changeset.paths}
         {fileOf}
@@ -131,10 +133,6 @@
         onopen={(path) => void controller.openSource(path)}
         onmenu={(path, dir, x, y) => (menu = { path, dir, x, y })}
       />
-    {:else if leftTool === "comments"}
-      <CommentsPanel onselect={(thread) => void controller.goToThread(thread)} />
-    {:else}
-      <p class="soon">This tool window is not available yet.</p>
     {/if}
   </SideBar>
 {/if}
@@ -214,9 +212,5 @@
     overflow-y: auto;
     min-height: 0;
     overflow-anchor: none;
-  }
-  .soon {
-    margin: 12px 10px;
-    color: var(--text-3);
   }
 </style>
