@@ -7,6 +7,7 @@
     title,
     onselect,
     onclose,
+    onmenu,
     children,
   }: {
     selected: boolean;
@@ -14,6 +15,8 @@
     onselect: () => void;
     /** Absent for a tab that cannot be closed. */
     onclose?: () => void;
+    /** Context menu on the tab, at the pointer position. */
+    onmenu?: (x: number, y: number) => void;
     children: Snippet;
   } = $props();
 </script>
@@ -22,6 +25,11 @@
   class="tab"
   class:selected
   role="presentation"
+  oncontextmenu={(e) => {
+    if (!onmenu) return;
+    e.preventDefault();
+    onmenu(e.clientX, e.clientY);
+  }}
   onmousedown={(e) => {
     // Desktop tabs select on press; the middle button is reserved for closing.
     if (e.button === 0 && !(e.target instanceof Element && e.target.closest(".close"))) onselect();

@@ -1,8 +1,8 @@
 // The hunk header bar: `@@ −40,5 +40,7 @@`, a seen toggle and a comment button.
 
 import { WidgetType } from "@codemirror/view";
-import { KEYS } from "../../../lib/keymap";
 import { iconSvg } from "../../../lib/ui/icons";
+import { commands } from "../../../state/commands";
 import type { Hunk } from "../../../generated/Hunk";
 import type { HunkState } from "../../../generated/HunkState";
 import { iconButton } from "./dom";
@@ -71,7 +71,9 @@ export class HunkBar extends WidgetType {
       const tools = document.createElement("span");
       tools.className = "vet-hunk-tools";
       tools.append(
-        iconButton(`Jump to source (${KEYS.jumpToSource.label})`, "file", () => actions.openSource(this.index)),
+        iconButton(commands.tooltip("review.jumpToSource", "Jump to source"), "file", () =>
+          actions.openSource(this.index),
+        ),
         iconButton("Comment", "comments", () => actions.comment(this.index)),
         iconButton(
           LABEL[this.state],

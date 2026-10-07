@@ -2,11 +2,14 @@
   import type { Snippet } from "svelte";
   import { onMount, untrack } from "svelte";
   import { errorText } from "../../lib/errorText";
+  import type { MenuSpec } from "../../lib/commandMenu";
   import ContextMenu from "../../lib/ui/ContextMenu.svelte";
+  import type { MenuItem } from "../../lib/ui/menuItem";
   import SideBar from "../../lib/ui/SideBar.svelte";
   import type { Mode } from "../../lib/viewMode";
   import type { Backend } from "../../state/backend";
   import type { Changeset } from "../../state/changeset.svelte";
+  import { type CommandContext, commands, menuFor } from "../../state/commands";
   import { session } from "../../state/session.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -19,7 +22,8 @@
   import "./editor/hover.css";
   import "./editor/threadCard.css";
   import { type Probe, ReviewController } from "./ReviewController";
-  import { kindOf, pathOf } from "./Tabs.svelte";
+  import { editorMenu, fileCommands, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
+  import { kindOf, pathOf, tabOf } from "./Tabs.svelte";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
@@ -58,13 +62,20 @@
     onclose?: () => void;
   } = $props();
 
-  let menu = $state<{ path: string; dir: boolean; x: number; y: number }>();
+  // An open context menu: its items, and the context its choice runs in.
+  let menu = $state.raw<{ x: number; y: number; items: MenuItem[]; context: CommandContext }>();
+
+  /** Opens the context menu `spec` describes at the pointer; `subject` is what it was opened on. */
+  function openMenu(spec: MenuSpec, x: number, y: number, subject?: Partial<CommandContext>) {
+    menu = { x, y, ...menuFor(spec, subject) };
+  }
+
   // The backend and the changeset are fixed for a mounted screen.
   // svelte-ignore state_referenced_locally
   const controller = new ReviewController(
     backend,
     changeset,
-    (path, x, y) => (menu = { path, dir: false, x, y }),
+    (path, x, y) => openMenu(fileHeaderMenu, x, y, { target: { path, dir: false } }),
     probe,
   );
   // svelte-ignore state_referenced_locally
@@ -82,12 +93,23 @@
 
   onMount(() => {
     const stopThreads = threads.start(backend);
+    const stopCommands = commands.register(
+      ...fileCommands({
+        copyText: (text) =>
+          void navigator.clipboard.writeText(text).catch(() => (session.notice = "Could not copy to the clipboard")),
+        excludePath: (path, dir) => void changeset.excludePath(path, dir),
+        reviewOnly: (path) => void changeset.reviewOnly(path),
+        closeTab: (kind, path) => tabs.close(tabOf(kind, path)),
+        closeOtherTabs: (kind, path) => tabs.closeOthers(tabOf(kind, path)),
+      }),
+    );
     controller.open(true).then(
       (ms) => onready(controller, ms),
       (e: unknown) => (session.status = errorText(e)),
     );
     return () => {
       stopThreads();
+      stopCommands();
       controller.destroy();
       onclose?.();
     };
@@ -110,10 +132,12 @@
     void controller.revealInChanges(path);
   }
 
-  function runMenu(id: string, { path, dir }: { path: string; dir: boolean }) {
-    if (id === "copy") navigator.clipboard.writeText(path).catch(() => (session.notice = "Could not copy the path"));
-    else if (id === "exclude") void changeset.excludePath(path, dir);
-    else if (id === "only") void changeset.reviewOnly(path);
+  /** The webview's menu stays on fields and links; inside an editor the app's own replaces it. */
+  function paneMenu(e: MouseEvent) {
+    const target = e.target instanceof Element ? e.target : undefined;
+    if (e.defaultPrevented || !target?.closest(".cm-content") || target.closest("input, textarea, a")) return;
+    e.preventDefault();
+    openMenu(editorMenu, e.clientX, e.clientY);
   }
 </script>
 
@@ -131,7 +155,7 @@
         excluded={{ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 }}
         onselect={select}
         onopen={(path) => void controller.openSource(path)}
-        onmenu={(path, dir, x, y) => (menu = { path, dir, x, y })}
+        onmenu={(path, dir, x, y) => openMenu(treeMenu(dir), x, y, { target: { path, dir } })}
       />
     {/if}
   </SideBar>
@@ -139,13 +163,20 @@
 
 <main>
   <div class="strip">
-    <TabStrip {tabs} files={changeset.files} delta={changeset.delta} />
+    <TabStrip
+      {tabs}
+      files={changeset.files}
+      delta={changeset.delta}
+      onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: pathOf(id) } })}
+    />
     <span class="grow"></span>
     {#if kindOf(tabs.active) !== "text"}
       <ViewControls {mode} {onmode} onstep={(delta) => controller.stepHunk(delta)} />
     {/if}
   </div>
-  <div class="panes">
+  <!-- The handler only replaces the webview's menu inside an editor. -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="panes" oncontextmenu={paneMenu}>
     {#each tabs.open as id (id)}
       <div class="pane" class:active={tabs.active === id}>
         <div class="scroll" {@attach (root) => controller.attach(id, root)}></div>
@@ -162,12 +193,8 @@
   <ContextMenu
     x={menu.x}
     y={menu.y}
-    items={[
-      { id: "copy", label: "Copy path" },
-      { id: "exclude", label: "Exclude from review" },
-      ...(menu.dir ? [{ id: "only", label: "Review only this folder" }] : []),
-    ]}
-    onselect={(id) => menu && runMenu(id, menu)}
+    items={menu.items}
+    onselect={(id) => menu && commands.run(id, menu.context)}
     onclose={() => (menu = undefined)}
   />
 {/if}

@@ -4,9 +4,10 @@
 
 import type { EditorView } from "@codemirror/view";
 import type { ReviewController as Shell } from "../features/review";
-import { KEYS } from "../lib/keymap";
+import type { Binding } from "../lib/keymap";
 import { nextPaint } from "../lib/nextPaint";
 import { changeset } from "../state/changeset.svelte";
+import { commands } from "../state/commands";
 import { type Row, percentile95, row } from "./metrics";
 import { toggling, tooltipLatencies, views } from "./probe.svelte";
 
@@ -110,6 +111,13 @@ function changesProbe() {
 /** The index of the section with the most target lines. */
 const biggestFile = (sections: readonly { file: { targetLines: number } }[]): number =>
   sections.reduce((best, s, i) => (s.file.targetLines > sections[best].file.targetLines ? i : best), 0);
+
+/** The key that runs a command, which the benchmark presses for the window's key handler to resolve. */
+function keyOf(command: string): Binding {
+  const binding = commands.binding(command);
+  if (!binding) throw new Error(`the command ${command} has no key: the benchmark needs the review screen's commands`);
+  return binding;
+}
 
 /** The keydown that a binding's spec (`Ctrl-Alt-ArrowDown`, `Space`, `Home`) matches. */
 function keydownOf(spec: string): KeyboardEventInit {
@@ -258,13 +266,13 @@ async function navigationKeys(shell: Shell, o: BenchOptions, interval: number, t
     target: () => document.activeElement ?? document.body,
     key: (i) =>
       goesForward(i, 20, view.current === 0, view.current === probe.stopCount - 1)
-        ? KEYS.nextHunk.spec
-        : KEYS.previousHunk.spec,
+        ? keyOf("review.nextHunk").spec
+        : keyOf("review.previousHunk").spec,
     state: () => view.current,
   };
   rows.push(
     ...keyRows(
-      `${KEYS.nextHunk.label} / ${KEYS.previousHunk.label}`,
+      `${keyOf("review.nextHunk").label} / ${keyOf("review.previousHunk").label}`,
       `${probe.stopCount}-stop changeset ${tag}`,
       await keySamples(hunks, o, interval),
     ),
@@ -308,7 +316,7 @@ async function spaceToggles(shell: Shell, o: BenchOptions, tag: string, biggest:
     const [state, count] = [section.review.hunks[hunk], section.count.textContent];
     toggling.pending = Promise.resolve();
     const t0 = performance.now();
-    press(editor().contentDOM, KEYS.toggleCurrent.spec);
+    press(editor().contentDOM, keyOf("review.toggleSeen").spec);
     await toggling.pending;
     toReply.push(performance.now() - t0);
     await nextPaint();

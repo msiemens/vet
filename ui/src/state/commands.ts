@@ -1,0 +1,54 @@
+// The window's one command registry, and the facts commands read to decide whether they apply.
+// Features register their commands with it and contribute the facts they own; the key handler,
+// the menus and the tooltips read it.
+
+import type { Side } from "../generated/Side";
+import { CommandRegistry } from "../lib/commands";
+import { type MenuSpec, resolveMenu } from "../lib/commandMenu";
+import { isMac } from "./host";
+
+export type TabKind = "changes" | "file" | "text";
+
+/** The editor that has the focus. */
+export interface FocusedEditor {
+  /** Which text it shows: the target, or the base of a side-by-side view. */
+  side: Side;
+  path: string;
+  /** Some text is selected. */
+  selection: boolean;
+  selectedText(): string;
+  /** Goes to the definition of the symbol at the caret. */
+  goToDefinition(): void;
+}
+
+/** What a command can ask about the window when it is offered or run. */
+export interface CommandContext {
+  /** A project is open: its views and tool windows exist. */
+  repoOpen: boolean;
+  /** A review has started and can be finished. */
+  reviewOpen: boolean;
+  canQuit: boolean;
+  /** The tab commands apply to: the active one, or the one a tab's context menu was opened on. */
+  tab?: { kind: TabKind; path?: string };
+  /** The active tab shows a diff view, whose hunks the commands step through. */
+  diffView: boolean;
+  /** Index of the current hunk in the active view, -1 for none. */
+  hunk: number;
+  /** The editor with the focus, if one has it. */
+  editor?: FocusedEditor;
+  /** The file or folder a context menu was opened on. */
+  target?: { path: string; dir: boolean };
+}
+
+const NONE: CommandContext = { repoOpen: false, reviewOpen: false, canQuit: false, diffView: false, hunk: -1 };
+
+export const commands = new CommandRegistry<CommandContext>(NONE, isMac ? "Meta" : "Ctrl");
+
+/**
+ * The items of a menu description for the context of now plus `extra` (a context menu's subject),
+ * as the window draws them. Choosing one runs `commands.run(id, context)` with the same context.
+ */
+export function menuFor(spec: MenuSpec, extra?: Partial<CommandContext>) {
+  const context = commands.context(extra);
+  return { items: resolveMenu(commands, spec, context), context };
+}

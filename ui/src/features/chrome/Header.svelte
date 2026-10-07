@@ -11,8 +11,8 @@
   import Meter from "../../lib/ui/Meter.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import type { BaseCandidates } from "../../state/backend";
+  import { commands, menuFor } from "../../state/commands";
   import { openItem } from "../../state/mainMenu";
-  import { mainMenu } from "../../state/mainMenu.svelte";
   import BaseChip from "./BaseChip.svelte";
   import TitleBar from "./TitleBar.svelte";
   import VersionLabel from "./VersionLabel.svelte";
@@ -57,10 +57,10 @@
       <Chip bold onclick={toggle}>{project}</Chip>
     {/snippet}
     <Menu
-      items={[openItem]}
+      items={menuFor(openItem).items}
       onselect={(id) => {
         projectMenu = false;
-        mainMenu.run(id);
+        commands.run(id);
       }}
     />
   </Popover>

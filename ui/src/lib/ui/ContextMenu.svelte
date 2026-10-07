@@ -18,6 +18,9 @@
   } = $props();
 
   let sheet = $state<HTMLElement>();
+  // The menu takes the focus; a choice runs, and Escape ends, where the focus was.
+  const previous = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+  const restoreFocus = () => previous?.focus({ preventScroll: true });
 
   // Keep the menu inside the viewport once its size is known.
   const left = $derived(sheet ? Math.max(0, Math.min(x, window.innerWidth - sheet.offsetWidth)) : x);
@@ -26,7 +29,11 @@
 
 <svelte:window
   onpointerdown={(e) => !sheet?.contains(e.target as Node) && onclose()}
-  onkeydown={(e) => e.key === "Escape" && onclose()}
+  onkeydown={(e) => {
+    if (e.key !== "Escape") return;
+    restoreFocus();
+    onclose();
+  }}
   onblur={onclose}
   onresize={onclose}
 />
@@ -35,6 +42,7 @@
   <Menu
     {items}
     onselect={(id) => {
+      restoreFocus();
       onselect(id);
       onclose();
     }}

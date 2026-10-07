@@ -3,10 +3,16 @@
   import type { LineDelta } from "../../generated/LineDelta";
   import { basename } from "../../lib/paths";
   import Tab from "../../lib/ui/Tab.svelte";
-  import { CHANGES, type Tabs, pathOf } from "./Tabs.svelte";
+  import { CHANGES, type TabId, type Tabs, pathOf } from "./Tabs.svelte";
 
-  /** `delta` is the changeset's. */
-  let { tabs, files, delta }: { tabs: Tabs; files: FileChange[]; delta: LineDelta } = $props();
+  /** `delta` is the changeset's; `onmenu` opens the context menu of a tab. */
+  let {
+    tabs,
+    files,
+    delta,
+    onmenu,
+  }: { tabs: Tabs; files: FileChange[]; delta: LineDelta; onmenu: (id: TabId, x: number, y: number) => void } =
+    $props();
 
   const byPath = $derived(new Map(files.map((f) => [f.path, f])));
 </script>
@@ -24,6 +30,7 @@
       title={path ?? "Every changed file"}
       onselect={() => (tabs.active = id)}
       onclose={id === CHANGES ? undefined : () => tabs.close(id)}
+      onmenu={(x, y) => onmenu(id, x, y)}
     >
       {#if path === undefined}
         Changes {@render counts(delta)}

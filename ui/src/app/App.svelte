@@ -17,14 +17,14 @@
   import { SettingsDialog } from "../features/settings";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
   import { WelcomeScreen } from "../features/welcome";
-  import { KEYS, matches } from "../lib/keymap";
   import { repoName } from "../lib/paths";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import Toast from "../lib/ui/Toast.svelte";
   import type { Mode } from "../lib/viewMode";
   import { changeset } from "../state/changeset.svelte";
   import { appVersion, canQuit, hasNativeDialogs, hasNativeMenu, inTauri, quit, showWindow } from "../state/host";
-  import type { Command } from "../state/mainMenu";
+  import { appCommands } from "../state/appCommands";
+  import { commands } from "../state/commands";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { recent } from "../state/recent.svelte";
   import { semantic } from "../state/semantic.svelte";
@@ -52,14 +52,30 @@
 
   const openLocation: OpenLocation = (path, line, side) => void controller?.openLocation(path, line, side);
 
+  // Registered before the first render, so the menu below is built from them.
+  const stopCommands = commands.register(
+    ...appCommands({
+      pickProject: () => void pickProject(),
+      openProject,
+      finishReview: () => (dialog = "finish"),
+      showDialog: (d) => (dialog = d),
+      quit: () => void quit(),
+      setMode,
+      toggleTool: (id) => {
+        const side = TOOLS.left.some((t) => t.id === id) ? left : right;
+        Object.assign(side, toggleTool(side, id));
+      },
+      setTheme: (t) => applyTheme((theme = t)),
+      toggleDevPanel: () => (devOpen = !devOpen),
+    }),
+  );
+  const stopContext = commands.provide(() => ({ repoOpen: !!session.repo, reviewOpen, canQuit }));
+
   // The main menu follows the state it shows.
   $effect(() => {
     const shown = (side: typeof left, id: string) => side.open && side.tool === id;
     mainMenu.update({
       native: hasNativeMenu,
-      repoOpen: !!session.repo,
-      reviewOpen,
-      canQuit,
       recent: recent.list.map(({ path }) => ({ path, name: repoName(path) })),
       mode,
       theme,
@@ -72,6 +88,12 @@
   });
 
   onMount(() => {
+    // Capturing, so a command's key reaches it before any control or editor handles the key.
+    const onkeydown = (e: KeyboardEvent) => {
+      if (commands.dispatch(e) || !probe.key(e)) return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onkeydown, true);
     applyTheme(theme);
     // The splash covers the start until the backend is connected (or the connection failed, which
     // the window then shows), so the window never shows empty.
@@ -89,43 +111,14 @@
     if (inTauri) void appVersion().then((v) => (version = v));
     session.onConnect(reveal);
     void session.connect().then(reveal);
-    return mainMenu.listen(execute);
+    const stopMenu = mainMenu.listen();
+    return () => {
+      stopMenu();
+      window.removeEventListener("keydown", onkeydown, true);
+      stopContext();
+      stopCommands();
+    };
   });
-
-  function execute(command: Command) {
-    switch (command.type) {
-      case "open":
-        void pickProject();
-        break;
-      case "openRecent":
-        openProject(command.path);
-        break;
-      case "finishReview":
-        if (reviewOpen) dialog = "finish";
-        break;
-      case "settings":
-      case "about":
-        dialog = command.type;
-        break;
-      case "quit":
-        void quit();
-        break;
-      case "mode":
-        setMode(command.mode);
-        break;
-      case "tool": {
-        const side = TOOLS.left.some((t) => t.id === command.id) ? left : right;
-        Object.assign(side, toggleTool(side, command.id));
-        break;
-      }
-      case "theme":
-        applyTheme((theme = command.theme));
-        break;
-      case "devPanel":
-        devOpen = !devOpen;
-        break;
-    }
-  }
 
   /** Every way of opening a project (recent list, menu, folder dialog, typed path) ends here. */
   function openProject(path: string) {
@@ -142,14 +135,6 @@
     controller?.setMode(next);
   }
 </script>
-
-<svelte:window
-  onkeydowncapture={(e) => {
-    if (!matches(KEYS.settings.spec, e)) return;
-    e.preventDefault();
-    dialog = "settings";
-  }}
-/>
 
 {#if session.backend && session.repo}
   <Header

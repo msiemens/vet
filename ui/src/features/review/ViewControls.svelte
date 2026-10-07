@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { KEYS } from "../../lib/keymap";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
+  import { commands } from "../../state/commands";
   import { MODES, type Mode } from "../../lib/viewMode";
 
   let {
@@ -21,14 +21,14 @@
   <div class="ctl-group" role="group" aria-label="Hunk navigation">
     <IconButton
       icon="up"
-      label="Previous hunk ({KEYS.previousHunk.label})"
+      label={commands.tooltip("review.previousHunk")}
       size={22}
       iconSize={14}
       onclick={() => onstep(-1)}
     />
     <IconButton
       icon="down"
-      label="Next hunk ({KEYS.nextHunk.label})"
+      label={commands.tooltip("review.nextHunk")}
       size={22}
       iconSize={14}
       onclick={() => onstep(1)}

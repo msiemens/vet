@@ -1,11 +1,11 @@
 <script lang="ts">
   import type { Thread } from "../../generated/Thread";
   import { canSubmit, isSubmitKey } from "../../lib/composer";
-  import { KEYS } from "../../lib/keymap";
   import { movedTitle } from "../../lib/movedTitle";
   import ContextMenu from "../../lib/ui/ContextMenu.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import { commands } from "../../state/commands";
   import { threads } from "../../state/threads.svelte";
   import { candidateLabel, candidates, detachedReason, groupThreads, placeLabel, preview } from "./groups";
 
@@ -122,7 +122,8 @@
   {/if}
   {#if empty && !composing}
     <p class="empty">
-      No comments yet. Select lines and press {KEYS.commentHere.label}, or use a hunk's comment button.
+      No comments yet. Select lines and press {commands.binding("review.comment")?.label}, or use a hunk's comment
+      button.
     </p>
   {/if}
   {#if groups.detached.length}{@render group("Detached", groups.detached, true, "detached")}{/if}

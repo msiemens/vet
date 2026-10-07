@@ -23,23 +23,19 @@ export interface Binding {
   label: string;
 }
 
-const binding = (spec: string): Binding => ({
-  spec,
-  label: spec
-    .split("-")
-    .map((part) => (part.length === 1 ? part.toUpperCase() : part.replace(/^Arrow/, "")))
-    .join("+"),
-});
+/** The modifier `Mod` stands for in a spec: Cmd on macOS, Ctrl elsewhere. */
+export type ModKey = "Ctrl" | "Meta";
 
-/** Every keyboard command of the window: the handlers match `spec`, menus and hints show `label`. */
-export const KEYS = {
-  settings: binding("Ctrl-Alt-s"),
-  nextHunk: binding("Ctrl-Alt-ArrowDown"),
-  previousHunk: binding("Ctrl-Alt-ArrowUp"),
-  commentHere: binding("Ctrl-Alt-c"),
-  toggleCurrent: binding("Space"),
-  jumpToSource: binding("F4"),
-};
+/** A spec with `Mod` replaced by the platform's modifier, as `matches` reads it. */
+export function bindingOf(spec: string, mod: ModKey): Binding {
+  const parts = spec.split("-").map((part) => (part === "Mod" ? mod : part));
+  return {
+    spec: parts.join("-"),
+    label: parts
+      .map((part) => (part.length === 1 ? part.toUpperCase() : part === "Meta" ? "Cmd" : part.replace(/^Arrow/, "")))
+      .join("+"),
+  };
+}
 
 /** The character a letter or digit key types without modifiers, if `code` is one. */
 function baseChar(code: string): string | null {

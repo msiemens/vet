@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { KEYS } from "../lib/keymap.ts";
+import { resolveMenu } from "../lib/commandMenu.ts";
+import { CommandRegistry } from "../lib/commands.ts";
 import type { MenuItem } from "../lib/ui/menuItem.ts";
-import { type MenuContext, buildMenu, parseCommand } from "./mainMenu.ts";
+import { type AppActions, appCommands } from "./appCommands.ts";
+import type { CommandContext } from "./commands.ts";
+import { type MenuState, mainMenuSpec } from "./mainMenu.ts";
 
-const context: MenuContext = {
+const state: MenuState = {
   native: false,
-  repoOpen: true,
-  reviewOpen: true,
-  canQuit: true,
   recent: [{ path: "/a/vet", name: "vet" }],
   mode: "split",
   theme: "dark",
@@ -16,52 +16,84 @@ const context: MenuContext = {
   devPanel: false,
 };
 
+const open: CommandContext = { repoOpen: true, reviewOpen: true, canQuit: true, diffView: false, hunk: -1 };
+
+const calls: string[] = [];
+const actions: AppActions = {
+  pickProject: () => calls.push("pick"),
+  openProject: (path) => calls.push(`open ${path}`),
+  finishReview: () => calls.push("finish"),
+  showDialog: (d) => calls.push(`dialog ${d}`),
+  quit: () => calls.push("quit"),
+  setMode: (mode) => calls.push(`mode ${mode}`),
+  toggleTool: (id) => calls.push(`tool ${id}`),
+  setTheme: (theme) => calls.push(`theme ${theme}`),
+  toggleDevPanel: () => calls.push("dev"),
+};
+
+const registry = new CommandRegistry<CommandContext>(open, "Ctrl");
+registry.register(...appCommands(actions));
+
+const menu = (s: Partial<MenuState> = {}, context: Partial<CommandContext> = {}): MenuItem[] =>
+  resolveMenu(registry, mainMenuSpec({ ...state, ...s }), { ...open, ...context }, s.native ?? false);
+
 const flatten = (items: MenuItem[]): MenuItem[] => items.flatMap((i) => [i, ...flatten(i.children ?? [])]);
 const find = (items: MenuItem[], id: string) => flatten(items).find((i) => i.id === id);
 
-void test("every leaf id parses to a command", () => {
+void test("every leaf item runs a command", () => {
   for (const native of [false, true]) {
-    const menu = buildMenu({ ...context, native });
-    for (const item of flatten(menu)) {
+    for (const item of flatten(menu({ native }))) {
       if (item.children || item.separator) continue;
-      assert.ok(parseCommand(item.id), item.id);
+      calls.length = 0;
+      assert.ok(registry.run(item.id, open), item.id);
+      assert.equal(calls.length, 1, item.id);
     }
   }
 });
 
 void test("the macOS menu bar has an app menu; elsewhere Settings and Exit are in File", () => {
-  const mac = buildMenu({ ...context, native: true });
+  const mac = menu({ native: true });
   assert.deepEqual(
     mac.map((m) => m.id),
     ["app", "file", "view", "help"],
   );
-  assert.equal(find(mac, "settings")?.shortcut, "Cmd+,");
-  const other = buildMenu(context);
+  assert.equal(find(mac, "app.settings")?.shortcut, "Cmd+,");
+  assert.equal(find(mac, "app.quit")?.label, "Quit Vet");
+  assert.equal(find(mac, "app.quit")?.shortcut, "Cmd+Q");
+  const other = menu();
   assert.deepEqual(
     other.map((m) => m.id),
     ["file", "view", "help"],
   );
-  assert.equal(find(other, "settings")?.shortcut, KEYS.settings.label);
-  assert.ok(other[0].children?.some((i) => i.id === "settings"));
+  assert.equal(find(other, "app.settings")?.shortcut, "Ctrl+Alt+S");
+  assert.equal(find(other, "app.quit")?.label, "Exit");
+  assert.equal(find(other, "app.quit")?.shortcut, undefined);
+  assert.ok(other[0].children?.some((i) => i.id === "app.settings"));
 });
 
 void test("state shows as checks and enabled flags", () => {
-  const menu = buildMenu({ ...context, recent: [], repoOpen: false });
-  assert.equal(find(menu, "mode:split")?.checked, true);
-  assert.equal(find(menu, "mode:unified")?.checked, false);
-  assert.equal(find(menu, "theme:dark")?.checked, true);
-  assert.equal(find(menu, "recent")?.enabled, false);
-  assert.equal(find(menu, "tools")?.enabled, false);
+  const items = menu({ recent: [] }, { repoOpen: false });
+  assert.equal(find(items, "view.mode:split")?.checked, true);
+  assert.equal(find(items, "view.mode:unified")?.checked, false);
+  assert.equal(find(items, "view.theme:dark")?.checked, true);
+  assert.equal(find(items, "recent")?.enabled, false);
+  assert.equal(find(items, "tools")?.enabled, false);
+  assert.equal(find(items, "view.mode:split")?.enabled, false);
+  assert.equal(find(items, "theme")?.enabled, undefined);
 });
 
 void test("Finish Review is offered only while a review is open", () => {
-  assert.equal(find(buildMenu(context), "finishReview")?.enabled, true);
-  assert.equal(find(buildMenu({ ...context, reviewOpen: false }), "finishReview")?.enabled, false);
-  assert.deepEqual(parseCommand("finishReview"), { type: "finishReview" });
+  assert.equal(find(menu(), "review.finish")?.enabled, undefined);
+  assert.equal(find(menu({}, { reviewOpen: false }), "review.finish")?.enabled, false);
+  calls.length = 0;
+  assert.equal(registry.run("review.finish", { ...open, reviewOpen: false }), false);
+  assert.deepEqual(calls, []);
 });
 
-void test("commands carry their argument, including paths with colons", () => {
-  assert.deepEqual(parseCommand("recent:C:/src/vet"), { type: "openRecent", path: "C:/src/vet" });
-  assert.deepEqual(parseCommand("theme:light"), { type: "theme", theme: "light" });
-  assert.equal(parseCommand("theme:neon"), undefined);
+void test("items carry their argument, including paths with colons", () => {
+  calls.length = 0;
+  registry.run("file.openRecent:C:/src/vet", open);
+  registry.run("view.theme:light", open);
+  assert.equal(registry.run("view.theme:neon", open), false);
+  assert.deepEqual(calls, ["open C:/src/vet", "theme light"]);
 });

@@ -1,20 +1,16 @@
-// The main menu, defined once. `buildMenu` returns the top-level menus; the host draws them
-// as the native menu bar (macOS), the title bar's ☰ button shows them elsewhere. Both report
-// a chosen item by its id, which `parseCommand` turns back into what to do.
+// The main menu, defined once as a description of which commands it offers (see `lib/commandMenu`).
+// Labels, shortcuts and enabled state come from the command registry. The host draws the result
+// as the native menu bar (macOS), the title bar's ☰ button shows it elsewhere. Both report a chosen
+// item by its id, which `commands.run` executes.
 
-import { KEYS } from "../lib/keymap.ts";
+import type { MenuSpec } from "../lib/commandMenu.ts";
 import { THEMES, type Theme } from "../lib/theme/theme.ts";
-import { type MenuItem, separator } from "../lib/ui/menuItem.ts";
 import { MODES, type Mode } from "../lib/viewMode.ts";
 
-export interface MenuContext {
+/** What the menu shows that is not a command's own: the lists it offers and what is checked in them. */
+export interface MenuState {
   /** The host draws the macOS menu bar, with its app menu and its own key accelerators. */
   native: boolean;
-  /** A repository is open: its view and tool windows exist. */
-  repoOpen: boolean;
-  /** A review has started and can be finished. */
-  reviewOpen: boolean;
-  canQuit: boolean;
   /** Backend-side paths with their display names, most recent first. */
   recent: { path: string; name: string }[];
   mode: Mode;
@@ -23,106 +19,45 @@ export interface MenuContext {
   devPanel: boolean;
 }
 
-export type Command =
-  | { type: "open" }
-  | { type: "openRecent"; path: string }
-  | { type: "finishReview" }
-  | { type: "settings" }
-  | { type: "about" }
-  | { type: "quit" }
-  | { type: "mode"; mode: Mode }
-  | { type: "tool"; id: string }
-  | { type: "theme"; theme: Theme }
-  | { type: "devPanel" };
-
 /** Also offered by the project chip's menu. */
-export const openItem: MenuItem = { id: "open", label: "Open repository…" };
+export const openItem: MenuSpec = [{ command: "file.open" }];
 
-export function buildMenu(c: MenuContext): MenuItem[] {
-  // The native menu bar's accelerator reports the item like a click; the window's own binding is `KEYS.settings`.
-  const settings: MenuItem = {
-    id: "settings",
-    label: "Settings…",
-    shortcut: c.native ? "Cmd+," : KEYS.settings.label,
-  };
-  const about: MenuItem = { id: "about", label: "About Vet" };
-  const quit: MenuItem = {
-    id: "quit",
-    label: c.native ? "Quit Vet" : "Exit",
-    enabled: c.canQuit,
-    shortcut: c.native ? "Cmd+Q" : undefined,
-  };
+export function mainMenuSpec(s: MenuState): MenuSpec {
+  const settings = { command: "app.settings" };
+  const about = { command: "app.about" };
+  const quit = { command: "app.quit", label: s.native ? "Quit Vet" : undefined };
 
-  const file: MenuItem[] = [
-    openItem,
+  const file: MenuSpec = [
+    ...openItem,
     {
       id: "recent",
       label: "Open Recent",
-      enabled: c.recent.length > 0,
-      children: c.recent.map(({ path, name }) => ({ id: `recent:${path}`, label: name, detail: path })),
+      items: s.recent.map(({ path, name }) => ({ command: "file.openRecent", arg: path, label: name, detail: path })),
     },
-    separator,
-    { id: "finishReview", label: "Finish Review…", enabled: c.reviewOpen },
-    ...(c.native ? [] : [separator, settings, separator, quit]),
+    "-",
+    { command: "review.finish" },
+    ...(s.native ? [] : (["-", settings, "-", quit] as MenuSpec)),
   ];
-  const view: MenuItem[] = [
-    ...MODES.map(({ id, label }) => ({
-      id: `mode:${id}`,
-      label,
-      checked: c.mode === id,
-      enabled: c.repoOpen,
-    })),
-    separator,
+  const view: MenuSpec = [
+    ...MODES.map(({ id, label }) => ({ command: "view.mode", arg: id, label, checked: s.mode === id })),
+    "-",
     {
       id: "tools",
       label: "Tool Windows",
-      enabled: c.repoOpen,
-      children: c.tools.map((t) => ({ id: `tool:${t.id}`, label: t.label, checked: t.shown })),
+      items: s.tools.map((t) => ({ command: "view.tool", arg: t.id, label: t.label, checked: t.shown })),
     },
     {
       id: "theme",
       label: "Theme",
-      children: THEMES.map(({ id, label }) => ({ id: `theme:${id}`, label, checked: c.theme === id })),
+      items: THEMES.map(({ id, label }) => ({ command: "view.theme", arg: id, label, checked: s.theme === id })),
     },
   ];
-  const help: MenuItem[] = [
-    ...(c.native ? [] : [about]),
-    { id: "devPanel", label: "Developer Panel", checked: c.devPanel },
-  ];
+  const help: MenuSpec = [...(s.native ? [] : [about]), { command: "dev.panel", checked: s.devPanel }];
 
   return [
-    ...(c.native ? [{ id: "app", label: "Vet", children: [about, separator, settings, separator, quit] }] : []),
-    { id: "file", label: "File", children: file },
-    { id: "view", label: "View", children: view },
-    { id: "help", label: "Help", children: help },
+    ...(s.native ? [{ id: "app", label: "Vet", items: [about, "-", settings, "-", quit] as MenuSpec }] : []),
+    { id: "file", label: "File", items: file },
+    { id: "view", label: "View", items: view },
+    { id: "help", label: "Help", items: help },
   ];
-}
-
-export function parseCommand(id: string): Command | undefined {
-  const [kind, ...rest] = id.split(":");
-  const arg = rest.join(":");
-  switch (kind) {
-    case "open":
-    case "settings":
-    case "about":
-    case "quit":
-    case "finishReview":
-      return { type: kind };
-    case "devPanel":
-      return { type: "devPanel" };
-    case "recent":
-      return { type: "openRecent", path: arg };
-    case "mode": {
-      const mode = MODES.find((m) => m.id === arg);
-      return mode && { type: "mode", mode: mode.id };
-    }
-    case "tool":
-      return { type: "tool", id: arg };
-    case "theme": {
-      const theme = THEMES.find((t) => t.id === arg);
-      return theme && { type: "theme", theme: theme.id };
-    }
-    default:
-      return undefined;
-  }
 }

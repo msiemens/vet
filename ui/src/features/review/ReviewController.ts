@@ -1,5 +1,6 @@
-// Ties the backend, the views of the open tabs and the keybindings together. Each tab's
-// pane hands its scroll root to `attach`; the controller builds the tab's view in it.
+// Ties the backend and the views of the open tabs together, and registers the commands that act
+// on the active view. Each tab's pane hands its scroll root to `attach`; the controller builds
+// the tab's view in it.
 
 import { tick } from "svelte";
 import type { Manifest } from "../../generated/Manifest";
@@ -15,10 +16,11 @@ import type { Thread } from "../../generated/Thread";
 import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
 import type { ViewProbe } from "./editor/viewProbe";
-import { bindRevision } from "./editor/semantic";
-import { KEYS, matches } from "../../lib/keymap";
+import { bindRevision, focusedEditor } from "./editor/semantic";
 import type { Mode } from "../../lib/viewMode";
+import { type CommandContext, commands } from "../../state/commands";
 import { TextView } from "./editor/TextView";
+import { type ViewActions, viewCommands } from "./reviewCommands";
 import { CHANGES, type TabId, Tabs, fileTab, kindOf, pathOf, textTab } from "./Tabs.svelte";
 
 /** How the dev tools measure and test the controller's editors; the controller itself records nothing. */
@@ -29,7 +31,7 @@ export interface Probe {
   listeners(listeners: Listeners): Listeners;
   /** A view was built for the tab `tab`. */
   view(tab: TabId, view: ViewProbe): void;
-  /** A key reached the window and no binding took it; true if the probe did. */
+  /** A key reached the window and no command took it; true if the probe did. */
   key(event: KeyboardEvent): boolean;
 }
 
@@ -66,15 +68,18 @@ export class ReviewController {
       diagnostics: (revision, path) => semantic.diagnostics(revision, path),
     };
     this.hooks = probe ? probe.hooks(hooks) : hooks;
-    window.addEventListener("keydown", this.onKey, true);
     semantic.reset(); // the controller belongs to one repository's screen
     const offReview = changeset.onReview((u) => {
       for (const view of this.views.values()) view.applyReview(u);
     });
     const offThreads = threads.onChange(() => this.showThreads());
+    const offCommands = commands.register(...viewCommands(this.viewActions()));
+    const offContext = commands.provide(() => this.facts());
     this.unsubscribe = () => {
       offReview();
       offThreads();
+      offCommands();
+      offContext();
     };
     // A server installed or reconfigured elsewhere may answer differently now.
     this.unsubscribeEvents = backend.onEvent((event) => {
@@ -90,7 +95,6 @@ export class ReviewController {
 
   /** Detaches the controller from the window and the store, and tears down the views. */
   destroy() {
-    window.removeEventListener("keydown", this.onKey, true);
     this.unsubscribe();
     this.unsubscribeEvents();
     for (const view of this.views.values()) view.destroy();
@@ -122,25 +126,34 @@ export class ReviewController {
     return this.views.get(this.tabs.active);
   }
 
-  private onKey = (e: KeyboardEvent) => {
-    const view = this.active;
-    if (!view) return;
-    const run = (action: () => void) => {
-      e.preventDefault();
-      action();
+  /** The facts about the review screen that commands read. */
+  private facts(): Partial<CommandContext> {
+    const id = this.tabs.active;
+    const view = this.views.get(id);
+    return {
+      tab: { kind: kindOf(id), path: pathOf(id) },
+      diffView: view !== undefined,
+      hunk: view?.current ?? -1,
+      editor: focusedEditor(document.activeElement),
     };
-    if (matches(KEYS.nextHunk.spec, e)) run(() => void view.goToHunk(view.current + 1));
-    else if (matches(KEYS.previousHunk.spec, e)) run(() => void view.goToHunk(view.current - 1));
-    else if (matches(KEYS.toggleCurrent.spec, e) && this.toggleBySpace(view)) e.preventDefault();
-    else if (matches(KEYS.commentHere.spec, e) && !document.activeElement?.closest("input, textarea")) {
-      // Comment on the selection, else on the current hunk.
-      if (view.commentHere()) e.preventDefault();
-    } else if (matches(KEYS.jumpToSource.spec, e)) {
-      // Jump to Source: the file of the Changes stream's caret, at its line.
-      const caret = this.tabs.active === CHANGES ? view.caret() : undefined;
-      if (caret) run(() => void this.openSource(caret.path, caret.line));
-    } else if (this.probe?.key(e)) e.preventDefault();
-  };
+  }
+
+  private viewActions(): ViewActions {
+    return {
+      step: (delta) => this.stepHunk(delta),
+      toggleSeen: () => {
+        const view = this.active;
+        return !!view && this.toggleBySpace(view);
+      },
+      comment: () => this.active?.commentHere() ?? false,
+      jumpToSource: () => {
+        const caret = this.tabs.active === CHANGES ? this.active?.caret() : undefined;
+        if (!caret) return false;
+        void this.openSource(caret.path, caret.line);
+        return true;
+      },
+    };
+  }
 
   /**
    * Space in a diff view: with an editor focused it flips the hunk at the caret; otherwise the

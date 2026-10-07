@@ -1,0 +1,151 @@
+// The commands of the window: what each is called, which key runs it, when it is available and
+// what it does. Menus, tooltips and the key handler all read this one table, so a command
+// shows the shortcut that runs it and a disabled command is disabled everywhere.
+//
+// The registry is generic over the context the commands read (`C`), which the application
+// defines: `lib/` knows nothing of the domain.
+
+import { type Binding, type KeyLike, type ModKey, bindingOf, isTextInput, matches } from "./keymap.ts";
+
+export interface Command<C> {
+  /** Stable, free of `:`. A menu item or a context menu names the command by it. */
+  id: string;
+  label: string;
+  /** The default key, as `matches` reads it (`Ctrl-Alt-s`); `Mod` is Cmd on macOS and Ctrl elsewhere. */
+  binding?: string;
+  /** Key the native menu bar shows and handles itself, where the window's own binding is not used. */
+  accelerator?: string;
+  /** Also runs while a text field has the focus; otherwise its key belongs to the field. */
+  inFields?: boolean;
+  /** Default: always. `arg` is the argument a menu item carries (`id:arg`). */
+  enabled?(context: C, arg?: string): boolean;
+  /** Answers `false` when it found nothing to do: its key then goes on to the page. */
+  run(context: C, arg?: string): unknown;
+}
+
+/** A keydown as the dispatcher reads it. */
+export type KeyEventLike = KeyLike & { target?: EventTarget | null; preventDefault(): void };
+
+/** Whether the key's target is in a text field; the window and the document are not elements. */
+const inField = (target: EventTarget | null | undefined) =>
+  (target as { closest?: (selector: string) => unknown } | null | undefined)?.closest?.("input, textarea") != null;
+
+/** Splits a menu item's id into its command and the argument after the first `:`. */
+const splitId = (id: string): [string, string | undefined] => {
+  const at = id.indexOf(":");
+  return at < 0 ? [id, undefined] : [id.slice(0, at), id.slice(at + 1)];
+};
+
+export class CommandRegistry<C extends object> {
+  private commands = new Map<string, Command<C>>();
+  private sources = new Set<() => Partial<C>>();
+  /** Bindings that replace the defaults, by command id; `null` unbinds. */
+  private overrides: Record<string, string | null> = {};
+  private bound: { binding: Binding; command: Command<C> }[] = [];
+
+  /** `base` is the context where no source says otherwise. */
+  private base: C;
+  private mod: ModKey;
+
+  constructor(base: C, mod: ModKey) {
+    this.base = base;
+    this.mod = mod;
+  }
+
+  /** Adds the commands; the returned function removes them. */
+  register(...added: Command<C>[]): () => void {
+    for (const command of added) {
+      if (command.id.includes(":")) throw new Error(`command id "${command.id}" contains ":"`);
+      if (this.commands.has(command.id)) throw new Error(`command "${command.id}" is registered twice`);
+      this.commands.set(command.id, command);
+    }
+    this.rebind();
+    return () => {
+      for (const command of added) this.commands.delete(command.id);
+      this.rebind();
+    };
+  }
+
+  /** Adds a source of context facts; the returned function removes it. */
+  provide(source: () => Partial<C>): () => void {
+    this.sources.add(source);
+    return () => void this.sources.delete(source);
+  }
+
+  /** The current context: the base, what the sources say, then `extra` (the subject of a context menu). */
+  context(extra?: Partial<C>): C {
+    const context: C = { ...this.base };
+    for (const source of this.sources) Object.assign(context, source());
+    return Object.assign(context, extra);
+  }
+
+  /** Replaces the default bindings of the given commands; a null spec leaves the command without a key. */
+  setBindings(overrides: Record<string, string | null>) {
+    this.overrides = overrides;
+    this.rebind();
+  }
+
+  private rebind() {
+    this.bound = [];
+    for (const command of this.commands.values()) {
+      const spec = command.id in this.overrides ? this.overrides[command.id] : command.binding;
+      if (spec) this.bound.push({ binding: bindingOf(spec, this.mod), command });
+    }
+  }
+
+  find(id: string): Command<C> | undefined {
+    return this.commands.get(splitId(id)[0]);
+  }
+
+  /** The key that runs the command. */
+  binding(id: string): Binding | undefined {
+    return this.bound.find((b) => b.command.id === id)?.binding;
+  }
+
+  /** `text`, or the command's label, followed by its shortcut in parentheses if it has one. */
+  tooltip(id: string, text?: string): string {
+    const shortcut = this.binding(id)?.label;
+    const label = text ?? this.find(id)?.label ?? "";
+    return shortcut ? `${label} (${shortcut})` : label;
+  }
+
+  isEnabled(id: string, context: C = this.context()): boolean {
+    const [, arg] = splitId(id);
+    const command = this.find(id);
+    return !!command && (command.enabled?.(context, arg) ?? true);
+  }
+
+  /** Runs the command named by a menu item's id (`id` or `id:arg`); answers whether it ran. */
+  run(id: string, context: C = this.context()): boolean {
+    const [, arg] = splitId(id);
+    const command = this.find(id);
+    if (!command || !this.isEnabled(id, context)) return false;
+    return this.execute(command, context, arg);
+  }
+
+  private execute(command: Command<C>, context: C, arg?: string): boolean {
+    const result = command.run(context, arg);
+    if (result instanceof Promise) result.catch((e: unknown) => console.error(e));
+    return result !== false;
+  }
+
+  /**
+   * Runs the command bound to the key, if one is enabled in the current context, and takes the
+   * event. Text input and a text field's own keys never reach a command. Only a key that matches a
+   * binding costs more than the match.
+   */
+  dispatch(event: KeyEventLike): boolean {
+    if (isTextInput(event)) return false;
+    let context: C | undefined;
+    for (const { binding, command } of this.bound) {
+      if (!matches(binding.spec, event)) continue;
+      if (!command.inFields && inField(event.target)) continue;
+      context ??= this.context();
+      if (command.enabled && !command.enabled(context)) continue;
+      if (!this.execute(command, context)) continue;
+      event.preventDefault();
+      return true;
+    }
+    return false;
+  }
+}

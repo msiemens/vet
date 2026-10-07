@@ -1,19 +1,11 @@
-// The semantic layer in an editor (SPEC §7): hover, go to definition (Mod+click and Mod+B, as in
-// the JetBrains keymap) and diagnostics. The editor shows one side's text; `side` says which
+// The semantic layer in an editor (SPEC §7): hover, go to definition (Mod+click, and Mod+B as the
+// `review.goToDefinition` command, as in the JetBrains keymap) and diagnostics. The editor shows one side's text; `side` says which
 // snapshot its positions are in (the target editor, or the base editor of a side-by-side view).
 // Diagnostics exist for the target side only.
 
 import { type Diagnostic as LintDiagnostic, lintGutter, setDiagnostics } from "@codemirror/lint";
-import { type Extension, StateEffect, StateField } from "@codemirror/state";
-import {
-  Decoration,
-  type DecorationSet,
-  EditorView,
-  ViewPlugin,
-  hoverTooltip,
-  keymap,
-  tooltips,
-} from "@codemirror/view";
+import { type Extension, Facet, StateEffect, StateField } from "@codemirror/state";
+import { Decoration, type DecorationSet, EditorView, ViewPlugin, hoverTooltip, tooltips } from "@codemirror/view";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
@@ -152,8 +144,44 @@ export function showDiagnostics(view: EditorView, diagnostics: readonly Diagnost
   view.dispatch(setDiagnostics(view.state, lint));
 }
 
+/** What an editor shows and who answers for it, so commands can act on the editor that has the focus. */
+interface SemanticTarget {
+  side: Side;
+  path: string;
+  hooks: SemanticHooks;
+}
+const semanticTarget = Facet.define<SemanticTarget, SemanticTarget | undefined>({ combine: (values) => values[0] });
+
+const at = (view: EditorView, pos: number): TextPosition => {
+  const { doc } = view.state;
+  const line = lineOf(doc, pos);
+  return { line, col: pos - lineStart(doc, line) };
+};
+
+/** The editor with the focus, if `active` (the document's active element) is one with the semantic layer. */
+export function focusedEditor(active: Element | null) {
+  if (!(active instanceof HTMLElement) || !active.classList.contains("cm-content")) return undefined;
+  const view = EditorView.findFromDOM(active);
+  const target = view?.state.facet(semanticTarget);
+  if (!view || !target) return undefined;
+  return {
+    side: target.side,
+    path: target.path,
+    selection: !view.state.selection.main.empty,
+    selectedText() {
+      const { from, to } = view.state.selection.main;
+      return view.state.sliceDoc(from, to);
+    },
+    /** Goes to the definition of the symbol at the caret. */
+    goToDefinition() {
+      const { line, col } = at(view, view.state.selection.main.head);
+      target.hooks.definition(target.side, target.path, line, col);
+    },
+  };
+}
+
 /**
- * Hover, Mod+click and Mod+B on `side` of `path`, plus the diagnostics gutter on the target side.
+ * Hover and Mod+click on `side` of `path`, plus the diagnostics gutter on the target side.
  * `hoverShown` reports the time from the start of a hover query to its tooltip's paint.
  */
 export function semanticExtensions(
@@ -162,11 +190,6 @@ export function semanticExtensions(
   hooks: SemanticHooks,
   hoverShown?: (ms: number) => void,
 ): Extension[] {
-  const at = (view: EditorView, pos: number): TextPosition => {
-    const { doc } = view.state;
-    const line = lineOf(doc, pos);
-    return { line, col: pos - lineStart(doc, line) };
-  };
   // `hoverTooltip` asks for the start of a block widget (a deleted chunk, a thread card) under the
   // pointer, and for the line start when the pointer is on the line numbers; neither is text to hover.
   const pointer = ViewPlugin.define((view) => {
@@ -200,16 +223,7 @@ export function semanticExtensions(
           return pos === null ? undefined : at(view, pos);
         }),
     }),
-    keymap.of([
-      {
-        key: "Mod-b",
-        run: (view) => {
-          const { line, col } = at(view, view.state.selection.main.head);
-          hooks.definition(side, path, line, col);
-          return true;
-        },
-      },
-    ]),
+    semanticTarget.of({ side, path, hooks }),
     ...(side === "target" ? [lintGutter()] : []),
   ];
 }

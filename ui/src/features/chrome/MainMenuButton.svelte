@@ -2,6 +2,7 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
+  import { commands } from "../../state/commands";
   import { mainMenu } from "../../state/mainMenu.svelte";
 
   let open = $state(false);
@@ -45,7 +46,7 @@
       items={mainMenu.items}
       onselect={(id) => {
         open = false;
-        mainMenu.run(id);
+        commands.run(id);
       }}
     />
   </Popover>

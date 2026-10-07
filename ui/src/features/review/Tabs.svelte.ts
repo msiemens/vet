@@ -2,13 +2,18 @@
 // text tab per opened unchanged file, in display order. The order is the array's, so
 // drag-to-reorder only has to move an entry of `open`.
 
+import type { TabKind } from "../../state/commands";
+
 export type TabId = "changes" | `file:${string}` | `text:${string}`;
-export type TabKind = "changes" | "file" | "text";
 
 export const CHANGES: TabId = "changes";
 
 export const fileTab = (path: string): TabId => `file:${path}`;
 export const textTab = (path: string): TabId => `text:${path}`;
+
+/** The tab of a kind (and, but for the Changes tab, a file). */
+export const tabOf = (kind: TabKind, path?: string): TabId =>
+  kind === "changes" || path === undefined ? CHANGES : kind === "file" ? fileTab(path) : textTab(path);
 
 export const kindOf = (id: TabId): TabKind => (id === CHANGES ? "changes" : id.startsWith("file:") ? "file" : "text");
 
@@ -40,6 +45,12 @@ export class Tabs {
     if (id === CHANGES || index < 0) return;
     this.open.splice(index, 1);
     if (this.active === id) this.active = this.open[Math.min(index, this.open.length - 1)];
+  }
+
+  /** Closes every tab but the Changes tab and `id`, and focuses `id`. */
+  closeOthers(id: TabId) {
+    this.open = this.open.filter((tab) => tab === CHANGES || tab === id);
+    this.active = id;
   }
 
   /** Closes the diff tabs whose file the changeset no longer contains. */
