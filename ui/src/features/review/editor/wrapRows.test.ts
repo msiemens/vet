@@ -11,6 +11,14 @@ void test("a line takes one row for every full width of columns it fills", () =>
   assert.equal(rows.extra(0, 2), 0);
 });
 
+void test("lines break after spaces: a word that does not fit starts a new row, and one longer than a row breaks inside", () => {
+  // 20 columns would fit two rows of 10, but each word is followed by one that does not fit.
+  assert.equal(new WrapRows("aaaaaa bbbbbb cccccc", 10).extra(0, 1), 2);
+  // The long word starts a row of its own, and fills three.
+  assert.equal(new WrapRows(`ab ${"x".repeat(25)}`, 10).extra(0, 1), 3);
+  assert.equal(new WrapRows("aaaa bbbb cc", 10).extra(0, 1), 1);
+});
+
 void test("a range counts only its own lines, and lines past the end have no extra rows", () => {
   const rows = new WrapRows(`${"x".repeat(30)}\nshort\n${"x".repeat(30)}`, 10);
   assert.equal(rows.extra(1, 3), 2);

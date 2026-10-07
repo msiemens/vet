@@ -24,7 +24,7 @@ import { setCurrent } from "./reviewState";
 import { StickyHunk } from "./stickyHunk";
 import { Stops, hunkAt } from "./stops";
 import type { Section } from "./section";
-import { SectionHeights, readCharWidth, readMetrics } from "./sectionHeights";
+import { SectionHeights, charWidth, readFont, readMetrics } from "./sectionHeights";
 import { COLLAPSE, type WrappedSides } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
 import { wrapsByDefault } from "./softWrap";
@@ -67,7 +67,8 @@ export class ChangesetView {
   private destroyed = false;
   private threads: ThreadLayer;
   private pin: StickyHunk;
-  /** The width of a character, and the view's width: what lines wrap at. */
+  /** The editor's font, the width of a character of it and the view's width: what lines wrap at. */
+  private font: string;
   private char: number;
   private width: number;
   private widths: ResizeObserver;
@@ -94,7 +95,10 @@ export class ChangesetView {
     // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
     root.style.containerType = "inline-size";
     const metrics = readMetrics(root);
-    this.char = readCharWidth(root);
+    this.font = readFont(root);
+    this.char = charWidth(this.font);
+    // A font that is not loaded yet measures as its fallback; the lines wrap by the real one.
+    void document.fonts.load(this.font).then(() => this.onChar());
     this.width = root.clientWidth;
     this.widths = new ResizeObserver(() => this.onWidth());
     this.threads = new ThreadLayer(
@@ -111,6 +115,7 @@ export class ChangesetView {
     );
     this.actions = new ReviewActions(revision, listeners);
     this.heights = new SectionHeights(root, this.sections, metrics, this.threads, mode, collapse);
+    this.publishPane();
     this.windowing = new Windowing(root, this.sections, this.heights, {
       mount: (fi) => void this.mount(fi),
       scrolled: () => this.pin.update(this.root.scrollTop),
@@ -210,8 +215,15 @@ export class ChangesetView {
   setMode(mode: Mode) {
     this.remount(() => {
       this.heights.mode = mode;
+      this.publishPane();
       this.measureWraps();
     });
+  }
+
+  /** The width of one editor, which the bars inside it size themselves to (`hunkBar.css`). */
+  private publishPane() {
+    const pane = this.heights.mode === "split" ? this.width / 2 : this.width;
+    this.root.style.setProperty("--vet-pane", `${pane}px`);
   }
 
   /** Whether the view wraps long lines: as set, else if every file does by its kind. */
@@ -266,6 +278,20 @@ export class ChangesetView {
     const width = this.root.clientWidth;
     if (Math.abs(width - this.width) < 1) return;
     this.width = width;
+    this.publishPane();
+    this.rewrap();
+  }
+
+  /** The font was loaded: the characters may be wider than they were measured. */
+  private onChar() {
+    const char = charWidth(this.font);
+    if (this.destroyed || Math.abs(char - this.char) < 0.01) return;
+    this.char = char;
+    this.rewrap();
+  }
+
+  /** Lines wrap elsewhere: the limit of the marks moves, and the sections without an editor are estimated again. */
+  private rewrap() {
     for (const fi of this.windowing.mounted) {
       const s = this.sections[fi];
       s.handle?.dispatchAll(setColumns.of(this.columnsOf(s)));

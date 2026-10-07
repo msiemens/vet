@@ -24,14 +24,18 @@ export function readMetrics(root: HTMLElement): Metrics {
   };
 }
 
-/** The width in px of a character of the editor's font, as `root` has it. */
-export function readCharWidth(root: HTMLElement): number {
+/** The editor's font as `root` has it, in the form of a canvas or `document.fonts` font. */
+export function readFont(root: HTMLElement): string {
   const style = getComputedStyle(root);
-  const size = px(style, "--fs-mono");
+  return `${px(style, "--fs-mono")}px ${style.getPropertyValue("--font-mono")}`;
+}
+
+/** The width in px of a character of `font`, which is a monospace font: as wide as it is when loaded, a fallback's before. */
+export function charWidth(font: string): number {
   const context = document.createElement("canvas").getContext("2d");
-  if (!context) return size * 0.6;
-  context.font = `${size}px ${style.getPropertyValue("--font-mono")}`;
-  return context.measureText("0").width || size * 0.6;
+  if (!context) return parseFloat(font) * 0.6;
+  context.font = font;
+  return context.measureText("0").width || parseFloat(font) * 0.6;
 }
 
 /** The index of the last section starting at or above `y` (the first one above all of them). */

@@ -128,8 +128,8 @@
 .cm-mergeViewEditors {
   overflow: visible;
 }
-/* Each pane of a side by side editor scrolls its long lines by itself; it is the container the
-   bars and thread cards size themselves to (`hunkBar.css`, `threadCard.css`), not the whole view. */
+/* Each pane of a side by side editor scrolls its long lines by itself; it is the container thread
+   cards size themselves to (`threadCard.css`), not the whole view. */
 .file .cm-mergeViewEditor {
   container-type: inline-size;
 }
@@ -214,7 +214,7 @@
 .file .cm-editor .cm-collapsedLines {
   position: sticky;
   left: var(--vet-gutters, 0px);
-  width: calc(100cqw - var(--vet-gutters, 0px));
+  width: calc(var(--vet-pane) - var(--vet-gutters, 0px));
   height: var(--h-collapsed);
   box-sizing: border-box;
   display: flex;
