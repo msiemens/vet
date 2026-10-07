@@ -16,8 +16,9 @@ use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, RepoPath, Snapshot, 
 
 use vet_core::merkle;
 
-use super::stat_cache::{Record, StatCache, StatKey, file_stamp, now_secs};
+use super::stat_cache::{Record, StatCache, StatKey, file_stamp};
 use super::{BlobCache, err, in_tool_store};
+use crate::clock::unix_now;
 
 /// One worktree item, converted the way git would store it.
 pub(crate) struct Item {
@@ -198,7 +199,7 @@ impl<'r> Worktree<'r> {
             self.attributes_changed |= path.ends_with(b".gitattributes");
         }
 
-        let recorded_secs = now_secs();
+        let recorded_secs = unix_now();
         let item = self.hash_file(path, &full, md.len(), keep, entry)?;
         if let Some(key) = key {
             self.next.insert(

@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sea_orm::{
@@ -63,13 +63,6 @@ pub struct SqliteStore {
     content: Arc<ContentStore>,
     config: StoreConfig,
     dir: PathBuf,
-}
-
-/// Unix seconds.
-pub fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
 }
 
 fn db_err(e: impl std::fmt::Display) -> DbErr {
@@ -485,7 +478,7 @@ impl Store for SqliteStore {
         self.blocking(move |c| c.get(id)).await
     }
 
-    async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus) -> Result<(), StoreError> {
+    async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus, at: i64) -> Result<(), StoreError> {
         let (root, nodes) = merkle::build(&snapshot.entries);
         if root != snapshot.id {
             return Err(StoreError("snapshot id does not match its entries".into()));
@@ -495,7 +488,7 @@ impl Store for SqliteStore {
         if snapshot::Entity::find_by_id(key.clone()).one(&txn).await?.is_none() {
             snapshot::ActiveModel {
                 id: Set(key.clone()),
-                created: Set(unix_now()),
+                created: Set(at),
             }
             .insert(&txn)
             .await?;

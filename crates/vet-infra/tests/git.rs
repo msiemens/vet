@@ -80,7 +80,7 @@ impl Store for MemStore {
     async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self.0.lock().unwrap().get(&id).cloned())
     }
-    async fn put_snapshot(&self, _: Snapshot, _: SnapshotStatus) -> Result<(), StoreError> {
+    async fn put_snapshot(&self, _: Snapshot, _: SnapshotStatus, _: i64) -> Result<(), StoreError> {
         unimplemented!()
     }
     async fn snapshot(&self, _: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {

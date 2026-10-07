@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
-use vet_core::content::BlobId;
+use vet_core::content::{BlobId, Hash};
 
 static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -22,7 +22,7 @@ impl ContentStore {
     }
 
     fn path(&self, id: BlobId) -> PathBuf {
-        let hex = hex(&id.0.0);
+        let hex = id.0.to_hex();
         self.root.join(&hex[..2]).join(&hex[2..])
     }
 
@@ -85,7 +85,8 @@ impl ContentStore {
                 let Some(id) = path
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .and_then(|rest| parse_id(prefix, rest))
+                    .and_then(|rest| Hash::from_hex(&format!("{prefix}{rest}")))
+                    .map(BlobId)
                 else {
                     continue;
                 };
@@ -97,22 +98,6 @@ impl ContentStore {
         }
         Ok(deleted)
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn parse_id(prefix: &str, rest: &str) -> Option<BlobId> {
-    let full = format!("{prefix}{rest}");
-    if full.len() != 64 {
-        return None;
-    }
-    let mut bytes = [0u8; 32];
-    for (i, b) in bytes.iter_mut().enumerate() {
-        *b = u8::from_str_radix(full.get(2 * i..2 * i + 2)?, 16).ok()?;
-    }
-    Some(BlobId(vet_core::content::Hash(bytes)))
 }
 
 #[cfg(unix)]
@@ -129,7 +114,6 @@ fn sync_dir(_dir: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vet_core::content::Hash;
 
     fn id(n: u8) -> BlobId {
         BlobId(Hash([n; 32]))

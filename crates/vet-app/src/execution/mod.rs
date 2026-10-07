@@ -255,7 +255,7 @@ impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<
             }
         }
         store
-            .put_snapshot(approval.current.clone(), SnapshotStatus::of(&approval.current))
+            .put_snapshot(approval.current.clone(), SnapshotStatus::of(&approval.current), now)
             .await?;
         store
             .record_run_approval(self.repo.clone(), approval.hash, approval.current.id, now)
@@ -485,7 +485,7 @@ mod tests {
         async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
             Ok(self.0.lock().unwrap().blobs.get(&id).cloned())
         }
-        async fn put_snapshot(&self, s: Snapshot, _: SnapshotStatus) -> Result<(), StoreError> {
+        async fn put_snapshot(&self, s: Snapshot, _: SnapshotStatus, _: i64) -> Result<(), StoreError> {
             self.0.lock().unwrap().snapshots.insert(s.id, s);
             Ok(())
         }

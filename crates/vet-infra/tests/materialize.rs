@@ -62,7 +62,7 @@ impl Store for MemStore {
     async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self.blobs.lock().unwrap().get(&id).cloned())
     }
-    async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus) -> Result<(), StoreError> {
+    async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus, _: i64) -> Result<(), StoreError> {
         self.snapshots.lock().unwrap().insert(snapshot.id, (snapshot, status));
         Ok(())
     }
@@ -107,7 +107,7 @@ async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
     let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
     let opened = common::start_at_head(&acq).await;
     acq.store
-        .put_snapshot(opened.target.clone(), opened.status.clone())
+        .put_snapshot(opened.target.clone(), opened.status.clone(), 0)
         .await
         .unwrap();
 
@@ -155,7 +155,7 @@ async fn snapshot_with_unavailable_blobs_is_refused_naming_them() {
     let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
     let scan = acq.git.scan(vet_app::ports::Dirty::All).await.unwrap();
     acq.store
-        .put_snapshot(scan.snapshot.clone(), scan.status)
+        .put_snapshot(scan.snapshot.clone(), scan.status, 0)
         .await
         .unwrap();
     acq.record_commit(scan.snapshot.id, acq.git.head().await.unwrap());

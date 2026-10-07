@@ -356,7 +356,7 @@ mod tests {
         async fn blob(&self, _: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
             unreachable!()
         }
-        async fn put_snapshot(&self, _: Snapshot, _: SnapshotStatus) -> Result<(), StoreError> {
+        async fn put_snapshot(&self, _: Snapshot, _: SnapshotStatus, _: i64) -> Result<(), StoreError> {
             unreachable!()
         }
         async fn snapshot(&self, _: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {

@@ -16,6 +16,8 @@ use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanS
 use super::*;
 
 const DAY: i64 = 24 * 3600;
+/// A fixed "now", so retention and grace are deterministic.
+const T0: i64 = 1_700_000_000;
 
 fn h(n: u8) -> Hash {
     Hash([n; 32])
@@ -221,7 +223,7 @@ async fn the_base_choice_and_snapshot_are_stored_and_survive_reopen() {
 async fn database_is_in_wal_mode() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
-    store.put_snapshot(snapshot(&[]), Default::default()).await.unwrap();
+    store.put_snapshot(snapshot(&[]), Default::default(), T0).await.unwrap();
     assert!(dir.path().join("vet.sqlite-wal").exists());
 }
 
@@ -341,8 +343,8 @@ async fn snapshots_timeline_and_approvals_survive_reopen() {
     {
         let store = open(&dir).await;
         id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
-        store.put_snapshot(snap.clone(), status.clone()).await.unwrap();
-        store.put_snapshot(snap.clone(), status.clone()).await.unwrap();
+        store.put_snapshot(snap.clone(), status.clone(), T0).await.unwrap();
+        store.put_snapshot(snap.clone(), status.clone(), T0).await.unwrap();
         for (at, s) in [(10, 3), (20, 1), (30, 2)] {
             store.append_timeline(id, SnapshotId(h(s)), at).await.unwrap();
         }
@@ -378,13 +380,13 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
     let store = open(&dir).await;
     let snaps = [21u8, 22, 23].map(|n| snapshot(&[("a", n)]));
     for s in &snaps {
-        store.put_snapshot(s.clone(), Default::default()).await.unwrap();
+        store.put_snapshot(s.clone(), Default::default(), T0).await.unwrap();
     }
     for n in [21, 22, 23, 24] {
         store.put_blob(vec![n]).await.unwrap();
     }
     let id = session(&store, snaps[0].id, snaps[1].id).await;
-    let now = unix_now();
+    let now = T0;
 
     let report = store.gc(now).await.unwrap();
     assert_eq!(
@@ -435,11 +437,14 @@ async fn gc_grace_protects_fresh_content() {
     let store = SqliteStore::open(dir.path(), StoreConfig::default()).await.unwrap();
     store.put_blob(vec![1]).await.unwrap();
     store
-        .put_snapshot(snapshot(&[("a", 1)]), Default::default())
+        .put_snapshot(snapshot(&[("a", 1)]), Default::default(), T0)
         .await
         .unwrap();
-    assert_eq!(store.gc(unix_now()).await.unwrap(), Default::default());
+    assert_eq!(store.gc(T0).await.unwrap(), Default::default());
     assert!(store.blob(BlobId::of(&[1])).await.unwrap().is_some());
+    assert!(store.snapshot(snapshot(&[("a", 1)]).id).await.unwrap().is_some());
+
+    assert_eq!(store.gc(T0 + 3600).await.unwrap().snapshots_deleted, 1);
 }
 
 async fn node_count(store: &SqliteStore) -> u64 {
@@ -452,9 +457,9 @@ async fn snapshots_that_differ_in_one_file_share_all_other_nodes() {
     let store = open(&dir).await;
     let before = snapshot(&[("a/x", 1), ("b/y", 2), ("c/d/z", 3)]);
     let after = snapshot(&[("a/x", 9), ("b/y", 2), ("c/d/z", 3)]);
-    store.put_snapshot(before.clone(), Default::default()).await.unwrap();
+    store.put_snapshot(before.clone(), Default::default(), T0).await.unwrap();
     assert_eq!(node_count(&store).await, 5); // root, a, b, c, c/d
-    store.put_snapshot(after.clone(), Default::default()).await.unwrap();
+    store.put_snapshot(after.clone(), Default::default(), T0).await.unwrap();
     assert_eq!(node_count(&store).await, 7); // plus a new root and a new `a`
     assert_eq!(store.snapshot(before.id).await.unwrap().unwrap().0, before);
     assert_eq!(store.snapshot(after.id).await.unwrap().unwrap().0, after);
@@ -467,12 +472,12 @@ async fn gc_drops_a_node_only_when_no_retained_root_reaches_it() {
     let kept = snapshot(&[("a/x", 1), ("b/y", 2)]);
     let other = snapshot(&[("a/x", 9), ("b/y", 2)]);
     for s in [&kept, &other] {
-        store.put_snapshot(s.clone(), Default::default()).await.unwrap();
+        store.put_snapshot(s.clone(), Default::default(), T0).await.unwrap();
     }
     assert_eq!(node_count(&store).await, 5);
     session(&store, kept.id, kept.id).await;
 
-    let report = store.gc(unix_now()).await.unwrap();
+    let report = store.gc(T0).await.unwrap();
     assert_eq!((report.snapshots_deleted, report.nodes_deleted), (1, 2)); // other's root and `a`; `b` is shared
     assert_eq!(node_count(&store).await, 3);
     assert_eq!(store.snapshot(kept.id).await.unwrap().unwrap().0, kept);
@@ -499,7 +504,7 @@ async fn a_long_timeline_of_a_large_tree_stays_small() {
             id: merkle::snapshot_id(&entries),
             entries: entries.clone(),
         };
-        store.put_snapshot(snap.clone(), Default::default()).await.unwrap();
+        store.put_snapshot(snap.clone(), Default::default(), T0).await.unwrap();
         store.append_timeline(id, snap.id, 0).await.unwrap();
     }
     // 101 nodes for the first snapshot (which includes edit 0), then a root and one directory per later edit.

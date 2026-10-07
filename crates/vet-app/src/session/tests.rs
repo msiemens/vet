@@ -346,7 +346,7 @@ impl Store for MemStore {
     async fn blob(&self, id: BlobId) -> StoreResult<Option<Vec<u8>>> {
         Ok(self.0.lock().unwrap().blobs.get(&id).cloned())
     }
-    async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus) -> StoreResult<()> {
+    async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus, _: i64) -> StoreResult<()> {
         self.0.lock().unwrap().snapshots.insert(snapshot.id, (snapshot, status));
         Ok(())
     }

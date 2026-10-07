@@ -571,10 +571,13 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let (git, store) = (&acquisition.git, &acquisition.store);
         let head = git.head().await?;
         acquisition.retain(&[&st.base], &st.target, &st.target_status).await?;
+        let now = (self.clock)();
         store
-            .put_snapshot(st.base.clone(), SnapshotStatus::of(&st.base))
+            .put_snapshot(st.base.clone(), SnapshotStatus::of(&st.base), now)
             .await?;
-        store.put_snapshot(st.target.clone(), st.target_status.clone()).await?;
+        store
+            .put_snapshot(st.target.clone(), st.target_status.clone(), now)
+            .await?;
         let pin = store.put_pin(head.clone(), st.target.id).await?;
         let changeset = Changeset {
             base: st.base.id,
@@ -584,7 +587,6 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         store
             .set_base(id, st.base.id, st.base_choice.clone(), st.base_commit.clone())
             .await?;
-        let now = (self.clock)();
         store.append_timeline(id, st.target.id, now).await?;
         git.set_session_ref(id, "base", &st.base_commit).await?;
         git.set_session_ref(id, "target", &head).await?;
@@ -669,7 +671,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
                 // Before the ref moves: git may drop the old base's objects afterwards.
                 self.retain_anchored(&st).await?;
                 store
-                    .put_snapshot(snapshot.clone(), SnapshotStatus::of(&snapshot))
+                    .put_snapshot(snapshot.clone(), SnapshotStatus::of(&snapshot), (self.clock)())
                     .await?;
                 git.set_session_ref(review.id, "base", &commit).await?;
                 store
@@ -796,10 +798,11 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
                 .await
                 .err();
             let store = &self.acquisition.store;
-            store.put_snapshot(scan.snapshot.clone(), scan.status.clone()).await?;
+            let now = (self.clock)();
             store
-                .append_timeline(review.id, scan.snapshot.id, (self.clock)())
+                .put_snapshot(scan.snapshot.clone(), scan.status.clone(), now)
                 .await?;
+            store.append_timeline(review.id, scan.snapshot.id, now).await?;
         }
         // Older timeline snapshots stay materializable (§7.2).
         self.acquisition.record_commit(scan.snapshot.id, st.head.clone());

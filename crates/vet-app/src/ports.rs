@@ -226,10 +226,12 @@ pub trait Store {
     fn put_blob(&self, bytes: Vec<u8>) -> impl Future<Output = Result<BlobId, StoreError>> + Send;
     fn blob(&self, id: BlobId) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
     /// Stored as shared Merkle nodes: only nodes not yet present are written.
+    /// `at` is unix seconds; GC spares snapshots younger than its grace period.
     fn put_snapshot(
         &self,
         snapshot: Snapshot,
         status: SnapshotStatus,
+        at: i64,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn snapshot(
         &self,

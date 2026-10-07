@@ -8,6 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use vet_core::content::{FileEntry, RepoPath};
 
+use crate::clock::unix_secs;
+
 /// What identifies a file's content without reading it. `index_mode` is part of
 /// it because the recorded mode depends on the index when the filesystem cannot
 /// represent it.
@@ -40,14 +42,7 @@ impl StatKey {
 }
 
 fn stamp(t: SystemTime) -> (i64, u32) {
-    match t.duration_since(UNIX_EPOCH) {
-        Ok(d) => (d.as_secs() as i64, d.subsec_nanos()),
-        Err(e) => (-(e.duration().as_secs() as i64), 0),
-    }
-}
-
-pub(crate) fn now_secs() -> i64 {
-    stamp(SystemTime::now()).0
+    (unix_secs(t), t.duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos()))
 }
 
 #[derive(Clone)]

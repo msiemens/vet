@@ -15,7 +15,8 @@ use vet_app::ports::{ProcessEvent, RunningProcess};
 use vet_core::content::Hash;
 use vet_infra::exec::{Process, TokioRunner};
 use vet_infra::git::GixRepo;
-use vet_infra::store::{SqliteStore, unix_now};
+use vet_infra::clock::unix_now;
+use vet_infra::store::SqliteStore;
 use vet_protocol::{Event, Response, RunStream};
 
 use super::{Open, Subscribers, live, mapping, message};

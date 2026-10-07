@@ -236,7 +236,7 @@ mod tests {
         };
         let (old, new) = (snapshot(1), snapshot(2));
         for s in [&old, &new] {
-            store.put_snapshot(s.clone(), Default::default()).await.unwrap();
+            store.put_snapshot(s.clone(), Default::default(), 0).await.unwrap();
         }
         store
             .record_run_approval("/r".into(), old.id.0, old.id, 1)
