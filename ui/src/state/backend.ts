@@ -1,7 +1,6 @@
 // Typed requests over the connection. The only module besides `connection.ts` that
 // knows the wire protocol, so a protocol change lands here.
 
-import type { ApprovalFile } from "../generated/ApprovalFile";
 import type { Base } from "../generated/Base";
 import type { BaseChoice } from "../generated/BaseChoice";
 import type { BlobContent } from "../generated/BlobContent";
@@ -19,8 +18,6 @@ import type { RemovalImpact } from "../generated/RemovalImpact";
 import type { Response } from "../generated/Response";
 import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
-import type { RunTarget } from "../generated/RunTarget";
-import type { RunTargetEntry } from "../generated/RunTargetEntry";
 import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { ServerInfo } from "../generated/ServerInfo";
 import type { Side } from "../generated/Side";
@@ -34,9 +31,6 @@ import type { Unavailable } from "../generated/Unavailable";
 import { Connection } from "./connection";
 
 export type FileContents = Extract<Response, { type: "fileContents" }>;
-export type RunNeedsApproval = Extract<Response, { type: "runNeedsApproval" }>;
-export type RunStarted = Extract<Response, { type: "runStarted" }>;
-export type RunAnswer = RunNeedsApproval | RunStarted;
 
 /** A language server's Markdown, with the highlights of each of its fenced code blocks, in order. */
 export interface HoverText {
@@ -238,37 +232,6 @@ export class Backend {
   async setServerPath(language: string, path: string | null): Promise<ServerInfo[]> {
     return expect(await this.conn.request({ type: "setServerPath", session: this.sid, language, path }), "servers")
       .servers;
-  }
-
-  /** Discovered from the target snapshot's manifests, with the stored edits applied. */
-  async runTargets(): Promise<RunTargetEntry[]> {
-    return expect(await this.conn.request({ type: "listRunTargets", session: this.sid }), "runTargets").targets;
-  }
-
-  async saveRunTarget(target: RunTarget): Promise<void> {
-    expect(await this.conn.request({ type: "saveRunTarget", session: this.sid, target }), "done");
-  }
-
-  /** Drops the stored edit of a discovered target, or deletes a custom one. */
-  async resetRunTarget(id: string): Promise<void> {
-    expect(await this.conn.request({ type: "resetRunTarget", session: this.sid, id }), "done");
-  }
-
-  /** Runs a target; without `approvedHash` the answer may ask for approval first. */
-  async run(targetId: string, approvedHash?: string): Promise<RunAnswer> {
-    const response = await this.conn.request({ type: "run", session: this.sid, targetId, approvedHash });
-    if (response.type === "runNeedsApproval") return response;
-    return expect(response, "runStarted");
-  }
-
-  /** The files behind a pending approval, with their text. */
-  async runApprovalDiff(hash: string): Promise<ApprovalFile[]> {
-    return expect(await this.conn.request({ type: "runApprovalDiff", session: this.sid, hash }), "runApprovalDiff")
-      .files;
-  }
-
-  async stopRun(runId: number): Promise<void> {
-    expect(await this.conn.request({ type: "stopRun", session: this.sid, runId }), "done");
   }
 
   /** The symbols the changeset touches, as of `revision` (the manifest's; a stale one is rejected). */

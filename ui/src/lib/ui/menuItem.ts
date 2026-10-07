@@ -2,7 +2,7 @@
 export interface MenuItem {
   id: string;
   label: string;
-  /** Secondary text, e.g. where a run target came from. */
+  /** Secondary text, e.g. the path behind a recent repository's name. */
   detail?: string;
   /** Display text of the key binding, e.g. `Ctrl+Alt+S`. */
   shortcut?: string;

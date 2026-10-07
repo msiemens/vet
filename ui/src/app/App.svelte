@@ -17,7 +17,6 @@
     toggleTool,
   } from "../features/chrome";
   import { ReviewScreen, type ReviewController } from "../features/review";
-  import { RunButton, RunDialogs, RunPanel } from "../features/run";
   import { SettingsDialog } from "../features/settings";
   import { StartScreen } from "../features/start";
   import { type OpenLocation, SymbolPanel, symbols } from "../features/symbols";
@@ -32,7 +31,6 @@
   import type { Command } from "../state/mainMenu";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { recent } from "../state/recent.svelte";
-  import { runs } from "../state/runs.svelte";
   import { semantic } from "../state/semantic.svelte";
 
   let controller = $state.raw<ReviewController>();
@@ -89,23 +87,6 @@
   // A base-side line has no place in the diff views yet, so a changed file opens as its diff.
   const openLocation: OpenLocation = (path, line, side) =>
     side === "base" && changeset.file(path) ? void controller?.openFile(path) : void controller?.openSource(path, line);
-
-  // Runs and targets belong to the open repository.
-  $effect(() => {
-    const repo = changeset.repo;
-    untrack(() => runs.forRepo(repo));
-  });
-  $effect(() => {
-    const backend = changeset.backend;
-    return backend?.onEvent((event) => {
-      if (event.session === backend.session) runs.onEvent(event);
-    });
-  });
-  // Targets are discovered from the target snapshot, which a new revision replaces.
-  const revision = $derived(changeset.manifest?.revision);
-  $effect(() => {
-    if (revision !== undefined) untrack(() => void runs.loadTargets());
-  });
 
   // The main menu follows the state it shows.
   $effect(() => {
@@ -206,9 +187,7 @@
     {completion}
     onopenrepo={() => void changeset.pickRepo()}
     onfinish={() => (dialog = "finish")}
-  >
-    {#snippet run()}<RunButton />{/snippet}
-  </Header>
+  />
 
   {#if degraded && dismissedDegraded !== degraded}
     <Banner message={degradedMessage[degraded]} ondismiss={() => (dismissedDegraded = degraded)} />
@@ -246,7 +225,6 @@
       }}
     >
       {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel onopen={openLocation} />{/if}{/snippet}
-      {#snippet bottom()}{#if runs.panel}<RunPanel />{/if}{/snippet}
     </ReviewScreen>
     <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />
   </div>
@@ -276,8 +254,6 @@
     <Toast message={changeset.notice} onclose={() => (changeset.notice = undefined)} />
   {/key}
 {/if}
-
-<RunDialogs />
 
 {#if dialog === "settings"}
   <SettingsDialog

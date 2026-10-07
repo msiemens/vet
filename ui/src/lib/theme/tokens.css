@@ -86,8 +86,6 @@
   /* The before/after preview strip of an image change card. */
   --h-preview: 116px;
   --h-tab: 32px;
-  /* The run output panel below the editor. */
-  --h-run: 220px;
   --w-rail: 34px;
   --w-tree: 270px;
   --w-symbols: 330px;

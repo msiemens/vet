@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { Snippet } from "svelte";
   import type { Base } from "../../generated/Base";
   import type { BaseChoice } from "../../generated/BaseChoice";
   import type { ReviewInfo } from "../../generated/ReviewInfo";
@@ -23,7 +22,6 @@
     loadBase,
     onbase,
     completion,
-    run,
     onopenrepo,
     onfinish,
   }: {
@@ -43,8 +41,6 @@
     onfinish: () => void;
     /** Share of changed lines seen and seen against an old base, in percent. */
     completion: { seenPct: number; oldPct: number; title?: string };
-    /** The Run split button. */
-    run?: Snippet;
   } = $props();
   let projectMenu = $state(false);
 </script>
@@ -91,7 +87,6 @@
       onclick={onfinish}>Finish review</button
     >
   {/if}
-  {#if run}{@render run()}{/if}
   <IconButton icon="search" label="Search everywhere" />
 </TitleBar>
 
