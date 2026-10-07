@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { KEYS } from "../../lib/keymap";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
-  import type { Mode } from "./editor/mount";
+  import { MODES, type Mode } from "../../lib/viewMode";
 
   let {
     mode,
@@ -16,19 +17,22 @@
 </script>
 
 <div class="controls">
-  <Segmented
-    small
-    label="View"
-    value={mode}
-    onchange={onmode}
-    options={[
-      { id: "unified", label: "Unified" },
-      { id: "split", label: "Side by side" },
-    ]}
-  />
+  <Segmented small label="View" value={mode} onchange={onmode} options={MODES} />
   <div class="ctl-group" role="group" aria-label="Hunk navigation">
-    <IconButton icon="up" label="Previous hunk (Ctrl-Alt-Up)" size={22} iconSize={14} onclick={() => onstep(-1)} />
-    <IconButton icon="down" label="Next hunk (Ctrl-Alt-Down)" size={22} iconSize={14} onclick={() => onstep(1)} />
+    <IconButton
+      icon="up"
+      label="Previous hunk ({KEYS.previousHunk.label})"
+      size={22}
+      iconSize={14}
+      onclick={() => onstep(-1)}
+    />
+    <IconButton
+      icon="down"
+      label="Next hunk ({KEYS.nextHunk.label})"
+      size={22}
+      iconSize={14}
+      onclick={() => onstep(1)}
+    />
   </div>
 </div>
 

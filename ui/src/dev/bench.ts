@@ -97,16 +97,9 @@ const check = (metric: string, pass: boolean, note?: string): Row => ({
   note,
 });
 
-/** Start time of the next frame and the time its paint completed. */
-function framePaint(): Promise<{ frameStart: number; done: number }> {
-  return new Promise((resolve) =>
-    requestAnimationFrame((frameStart) => {
-      const channel = new MessageChannel();
-      channel.port1.onmessage = () => resolve({ frameStart, done: performance.now() });
-      channel.port2.postMessage(null);
-    }),
-  );
-}
+/** The index of the section with the most target lines. */
+const biggestFile = (sections: readonly { file: { targetLines: number } }[]): number =>
+  sections.reduce((best, s, i) => (s.file.targetLines > sections[best].file.targetLines ? i : best), 0);
 
 /**
  * Types one character at a time through the DOM input path: an `insertText`
@@ -121,7 +114,7 @@ async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Pro
   const tag = `[${shell.mode}]`;
   const view = shell.changes;
   const files = view.sections;
-  const biggest = files.reduce((best, s, i) => (s.file.targetLines > files[best].file.targetLines ? i : best), 0);
+  const biggest = biggestFile(files);
   const big = await view.goToFile(biggest);
   await view.goToHunk(view.firstHunkOf(biggest) + (files[biggest].file.hunks.length >> 1));
   const editor = big.view;
@@ -137,7 +130,8 @@ async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Pro
     document.execCommand("insertText", false, "x");
     await Promise.resolve(); // CodeMirror's DOM observer runs in a microtask
     handling.push(performance.now() - t0);
-    const { frameStart, done } = await framePaint();
+    const frameStart = await nextPaint();
+    const done = performance.now();
     keys.push(done - t0);
     if (frameStart - t0 > 1.5 * interval || done - frameStart > 1.5 * interval) missed++;
   }
@@ -186,7 +180,7 @@ async function typeSamples(shell: Shell, o: BenchOptions, interval: number): Pro
 async function expandAndOpen(shell: Shell, tag: string): Promise<Row[]> {
   const view = shell.changes;
   const files = view.sections;
-  const biggest = files.reduce((best, s, i) => (s.file.targetLines > files[best].file.targetLines ? i : best), 0);
+  const biggest = biggestFile(files);
   const label = `${files[biggest].file.targetLines}-line file ${tag}`;
   const rows: Row[] = [];
 

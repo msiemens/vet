@@ -12,9 +12,9 @@ import { semantic } from "../../state/semantic.svelte";
 import { threads } from "../../state/threads.svelte";
 import type { Thread } from "../../generated/Thread";
 import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
-import type { Mode } from "./editor/mount";
 import { bindRevision } from "./editor/semantic";
-import { matches } from "../../lib/keymap";
+import { KEYS, matches } from "../../lib/keymap";
+import type { Mode } from "../../lib/viewMode";
 import { TextView } from "./editor/TextView";
 import { CHANGES, type TabId, Tabs, fileTab, kindOf, pathOf, textTab } from "./Tabs.svelte";
 
@@ -116,14 +116,14 @@ export class ReviewController {
       e.preventDefault();
       action();
     };
-    if (matches("Ctrl-Alt-ArrowDown", e)) run(() => void view.goToHunk(view.current + 1));
-    else if (matches("Ctrl-Alt-ArrowUp", e)) run(() => void view.goToHunk(view.current - 1));
-    else if (matches("Space", e) && view.current >= 0 && !takesSpace(document.activeElement))
+    if (matches(KEYS.nextHunk.spec, e)) run(() => void view.goToHunk(view.current + 1));
+    else if (matches(KEYS.previousHunk.spec, e)) run(() => void view.goToHunk(view.current - 1));
+    else if (matches(KEYS.toggleCurrent.spec, e) && view.current >= 0 && !takesSpace(document.activeElement))
       run(() => void view.toggleCurrent());
-    else if (matches("Ctrl-Alt-c", e) && !document.activeElement?.closest("input, textarea")) {
+    else if (matches(KEYS.commentHere.spec, e) && !document.activeElement?.closest("input, textarea")) {
       // Comment on the selection, else on the current hunk.
       if (view.commentHere()) e.preventDefault();
-    } else if (matches("F4", e)) {
+    } else if (matches(KEYS.jumpToSource.spec, e)) {
       // Jump to Source: the file of the Changes stream's caret, at its line.
       const caret = this.tabs.active === CHANGES ? view.caret() : undefined;
       if (caret) run(() => void this.openSource(caret.path, caret.line));

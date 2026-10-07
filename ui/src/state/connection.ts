@@ -8,6 +8,7 @@ import type { Ready } from "../generated/Ready";
 import type { Request } from "../generated/Request";
 import type { Response } from "../generated/Response";
 import type { ServerMessage } from "../generated/ServerMessage";
+import { hashParams, inTauri, invoke } from "./host";
 
 // Must match PROTOCOL_VERSION in crates/vet-protocol.
 const PROTOCOL_VERSION = 1;
@@ -22,11 +23,8 @@ type Address = Ready & { repo: string | null };
  * (without `repo`, the start screen asks for one).
  */
 async function backendAddress(): Promise<Address> {
-  if ("__TAURI_INTERNALS__" in window) {
-    const { invoke } = await import("@tauri-apps/api/core");
-    return invoke<Address>("backend_connection");
-  }
-  const params = new URLSearchParams(location.hash.slice(1));
+  if (inTauri) return invoke<Address>("backend_connection");
+  const params = hashParams();
   const port = Number(params.get("port"));
   const token = params.get("token");
   if (!port || !token) throw new Error("open with #port=<port>&token=<token> outside Tauri");

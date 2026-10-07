@@ -78,7 +78,7 @@ export class Backend {
     const opened = expect(await this.conn.request({ type: "openSession", repo }), "session");
     this.session = opened.session;
     // The backend resolves a subfolder to its repository root and reports it.
-    return (opened as { root?: string }).root ?? repo;
+    return opened.root;
   }
 
   async close(): Promise<void> {

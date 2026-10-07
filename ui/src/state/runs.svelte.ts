@@ -7,6 +7,8 @@ import type { ApprovalFile } from "../generated/ApprovalFile";
 import type { Event as ServerEvent } from "../generated/Event";
 import type { RunTarget } from "../generated/RunTarget";
 import type { RunTargetEntry } from "../generated/RunTargetEntry";
+import { errorText } from "../lib/errorText";
+import { readStored, writeStored } from "../lib/storage";
 import type { Backend, RunStarted } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { RunLog } from "./runLog";
@@ -38,8 +40,6 @@ export interface Approval {
   failed?: string;
 }
 
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
 class RunStore {
   targets = $state.raw<RunTargetEntry[]>([]);
   /** Waiting for the viewer's decision. */
@@ -58,9 +58,12 @@ class RunStore {
   /** In start order. */
   runs = $derived([...this.byId.values()].sort((a, b) => a.id - b.id));
   current = $derived(this.shown === undefined ? undefined : this.byId.get(this.shown));
-  primary = $derived<RunTargetEntry | undefined>(
-    this.targets.find((t) => t.target.id === this.last) ?? this.targets[0],
-  );
+  primary = $derived<RunTargetEntry | undefined>(this.target(this.last) ?? this.targets[0]);
+
+  /** The target with this id, if it is still among the loaded ones. */
+  target(id: string | undefined): RunTargetEntry | undefined {
+    return this.targets.find((t) => t.target.id === id);
+  }
 
   private get backend(): Backend {
     if (!changeset.backend) throw new Error("not connected to the backend");
@@ -83,7 +86,7 @@ class RunStore {
   async loadTargets() {
     try {
       this.targets = await this.backend.runTargets();
-      this.last ??= this.stored();
+      this.last ??= readStored(this.key());
     } catch (error) {
       changeset.notice = errorText(error);
     }
@@ -198,21 +201,9 @@ class RunStore {
 
   private key = () => `vet.run.last:${this.repo ?? ""}`;
 
-  private stored(): string | undefined {
-    try {
-      return localStorage.getItem(this.key()) ?? undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
   private remember(targetId: string) {
     this.last = targetId;
-    try {
-      localStorage.setItem(this.key(), targetId);
-    } catch {
-      // Not remembered across sessions.
-    }
+    writeStored(this.key(), targetId);
   }
 }
 

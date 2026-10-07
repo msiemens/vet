@@ -1,7 +1,7 @@
 // Run with `pnpm test` (node's built-in runner).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isTextInput, matches, type KeyLike } from "./keymap.ts";
+import { isTextInput, KEYS, matches, type KeyLike } from "./keymap.ts";
 
 const key = (init: Partial<KeyLike>): KeyLike => ({
   key: "",
@@ -56,8 +56,15 @@ void test("real Ctrl+Alt bindings still fire", () => {
 });
 
 void test("Ctrl-Alt-S is Settings", () => {
-  assert.ok(matches("Ctrl-Alt-s", key({ key: "s", code: "KeyS", ctrlKey: true, altKey: true })));
-  assert.ok(!matches("Ctrl-Alt-s", altGr("ß", "KeyS")));
+  assert.ok(matches(KEYS.settings.spec, key({ key: "s", code: "KeyS", ctrlKey: true, altKey: true })));
+  assert.ok(!matches(KEYS.settings.spec, altGr("ß", "KeyS")));
+});
+
+void test("a binding's label shows the keys its spec matches", () => {
+  assert.equal(KEYS.settings.label, "Ctrl+Alt+S");
+  assert.equal(KEYS.nextHunk.label, "Ctrl+Alt+Down");
+  assert.equal(KEYS.toggleCurrent.label, "Space");
+  assert.equal(KEYS.jumpToSource.label, "F4");
 });
 
 void test("Space toggles the current item, and only on its own", () => {

@@ -11,7 +11,7 @@
   let expanded = $state<Record<string, boolean>>({});
   let busy = $state(false);
 
-  const target = $derived(runs.targets.find((t) => t.target.id === approval.targetId)?.target);
+  const target = $derived(runs.target(approval.targetId)?.target);
   // The diff replaces the plain list: it pairs a rename into one entry.
   const entries = $derived<{ file?: ApprovalFile; path: string; change: RunChange }[]>(
     approval.files?.map((file) => ({ file, path: file.path, change: file.change })) ?? approval.changed,

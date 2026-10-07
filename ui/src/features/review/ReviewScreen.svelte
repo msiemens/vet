@@ -1,14 +1,15 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { onMount, untrack } from "svelte";
+  import { errorText } from "../../lib/errorText";
   import ContextMenu from "../../lib/ui/ContextMenu.svelte";
   import SideBar from "../../lib/ui/SideBar.svelte";
+  import type { Mode } from "../../lib/viewMode";
   import type { Backend } from "../../state/backend";
   import { changeset } from "../../state/changeset.svelte";
   import { threads } from "../../state/threads.svelte";
   import { CommentsPanel } from "../comments";
   import FileTree from "./FileTree.svelte";
-  import type { Mode } from "./editor/mount";
   import "./editor/editor.css";
   import "./editor/threadCard.css";
   import { type Hud, ReviewController } from "./ReviewController";
@@ -68,7 +69,7 @@
     const stopThreads = threads.start(backend);
     controller.open(true).then(
       (ms) => onready(controller, ms),
-      (e: unknown) => (changeset.status = e instanceof Error ? e.message : String(e)),
+      (e: unknown) => (changeset.status = errorText(e)),
     );
     return () => {
       stopThreads();

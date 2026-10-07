@@ -4,6 +4,7 @@
 import type { Thread } from "../generated/Thread";
 import type { ThreadStatus } from "../generated/ThreadStatus";
 import type { ThreadTarget } from "../generated/ThreadTarget";
+import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
 
@@ -41,14 +42,13 @@ class ThreadStore {
       const { revision, threads } = await backend.threads();
       if (seq === this.seq) this.set(threads, revision);
     } catch (error) {
-      if (seq === this.seq)
-        changeset.notice = `Could not load comments: ${error instanceof Error ? error.message : String(error)}`;
+      if (seq === this.seq) changeset.notice = `Could not load comments: ${errorText(error)}`;
     }
   }
 
   /** Opens a thread; resolves whether it went through. */
   async create(revision: number, target: ThreadTarget, body: string): Promise<boolean> {
-    return this.change(this.backend?.createThread(revision, target, body));
+    return this.change(this.backend?.createThread(revision, target, body), revision);
   }
 
   async reply(thread: number, body: string): Promise<boolean> {
@@ -76,14 +76,16 @@ class ThreadStore {
 
   /** Re-anchors a moved thread where it is now. */
   async confirm(thread: number): Promise<boolean> {
-    return this.revision === undefined ? false : this.change(this.backend?.confirmAnchor(this.revision, thread));
+    return this.revision === undefined
+      ? false
+      : this.change(this.backend?.confirmAnchor(this.revision, thread), this.revision);
   }
 
   /** Re-anchors an ambiguous thread at one of its candidates. */
   async attach(thread: number, candidate: number): Promise<boolean> {
     return this.revision === undefined
       ? false
-      : this.change(this.backend?.attachAnchor(this.revision, thread, candidate));
+      : this.change(this.backend?.attachAnchor(this.revision, thread, candidate), this.revision);
   }
 
   /** Called after every change of `items`. */
@@ -92,8 +94,8 @@ class ThreadStore {
     return () => this.listeners.delete(listener);
   }
 
-  /** Puts the thread a request returned into the list. */
-  private async change(request?: Promise<Thread>): Promise<boolean> {
+  /** Puts the thread a request returned into the list. `sent` is the revision the request named, if it did. */
+  private async change(request?: Promise<Thread>, sent?: number): Promise<boolean> {
     if (!request) return false;
     try {
       const thread = await request;
@@ -104,7 +106,7 @@ class ThreadStore {
       );
       return true;
     } catch (error) {
-      this.fail(error);
+      this.fail(error, sent);
       return false;
     }
   }
@@ -116,8 +118,8 @@ class ThreadStore {
   }
 
   /** A rejected request is normally a stale revision: the threads are fetched again and the viewer repeats the action. */
-  private fail(error: unknown) {
-    changeset.notice = `Request failed: ${error instanceof Error ? error.message : String(error)}`;
+  private fail(error: unknown, sent?: number) {
+    changeset.reportFailure(error, sent);
     void this.reload();
   }
 }

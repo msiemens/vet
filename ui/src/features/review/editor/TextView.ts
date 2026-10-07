@@ -7,7 +7,9 @@ import { EditorView, lineNumbers } from "@codemirror/view";
 import type { NoTextReason } from "../../../generated/NoTextReason";
 import type { TextContent } from "../../../generated/TextContent";
 import type { TextSpan } from "../../../generated/TextSpan";
+import { errorText } from "../../../lib/errorText";
 import { iconSvg } from "../../../lib/ui/icons";
+import { atRevision } from "../../../state/revision";
 import { highlightExtension } from "./highlightExtension";
 import { decodeHighlights } from "./highlights";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
@@ -41,12 +43,13 @@ export class TextView {
     root.classList.add("vet-text");
     fetch().then(
       (reply) => {
-        if (this.destroyed || reply.revision !== revision) return;
-        if (reply.content.type === "text") this.mountEditor(reply.content.text, reply.content.highlights);
-        else this.placeholder(NO_TEXT[reply.content.reason]);
+        const text = atRevision(revision, reply);
+        if (this.destroyed || !text) return;
+        if (text.content.type === "text") this.mountEditor(text.content.text, text.content.highlights);
+        else this.placeholder(NO_TEXT[text.content.reason]);
       },
       (error: unknown) => {
-        if (!this.destroyed) this.placeholder(error instanceof Error ? error.message : String(error));
+        if (!this.destroyed) this.placeholder(errorText(error));
       },
     );
   }

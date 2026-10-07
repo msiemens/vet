@@ -10,6 +10,7 @@ import type { RestoreFailure } from "../generated/RestoreFailure";
 import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { BaseChoice } from "../generated/BaseChoice";
+import { errorText } from "../lib/errorText";
 import { Backend, type BaseCandidates } from "./backend";
 import { hasNativeDialogs, pickRepository } from "./host";
 import { recent } from "./recent.svelte";
@@ -72,7 +73,7 @@ class ChangesetStore {
       await recent.load();
       if (backend.initialRepo) await this.openRepo(backend.initialRepo);
     } catch (error) {
-      this.status = (error as Error).message;
+      this.status = errorText(error);
     }
   }
 
@@ -85,7 +86,7 @@ class ChangesetStore {
       this.repo = await backend.open(path);
       void recent.remember(this.repo);
     } catch (error) {
-      this.openError = { path, message: error instanceof Error ? error.message : String(error) };
+      this.openError = { path, message: errorText(error) };
     }
   }
 
@@ -100,7 +101,7 @@ class ChangesetStore {
       if (path) await this.openRepo(path);
     } catch (error) {
       // The host refuses folders the backend cannot see (the WSL split) with a message.
-      this.openError = { path: "", message: error instanceof Error ? error.message : String(error) };
+      this.openError = { path: "", message: errorText(error) };
     }
   }
 
@@ -144,7 +145,7 @@ class ChangesetStore {
     try {
       await this.connected().setBase(choice);
     } catch (error) {
-      this.notice = error instanceof Error ? error.message : String(error);
+      this.notice = errorText(error);
     }
   }
 
@@ -157,7 +158,7 @@ class ChangesetStore {
       const complete = await this.connected().finishReview();
       this.notice = complete ? "Review finished: everything was seen" : "Review finished with unseen changes left";
     } catch (error) {
-      this.notice = error instanceof Error ? error.message : String(error);
+      this.notice = errorText(error);
     }
   }
 
@@ -170,7 +171,7 @@ class ChangesetStore {
       await this.connected().setProjectFilter(filter);
       return undefined;
     } catch (error) {
-      return error instanceof Error ? error.message : String(error);
+      return errorText(error);
     }
   }
 
@@ -199,7 +200,7 @@ class ChangesetStore {
     try {
       return await this.connected().listDirectory(path);
     } catch (error) {
-      this.notice = error instanceof Error ? error.message : String(error);
+      this.notice = errorText(error);
       return undefined;
     }
   }
@@ -209,7 +210,7 @@ class ChangesetStore {
     try {
       return await this.connected().baseCandidates();
     } catch (error) {
-      this.notice = error instanceof Error ? error.message : String(error);
+      this.notice = errorText(error);
       return undefined;
     }
   }
@@ -222,12 +223,21 @@ class ChangesetStore {
     try {
       this.applyReview(await request);
     } catch (error) {
-      const manifest = await this.refresh().catch(() => undefined);
-      this.notice =
-        manifest && manifest.revision !== sent
-          ? "Changes arrived — try again"
-          : `Request failed: ${error instanceof Error ? error.message : String(error)}`;
+      await this.refresh().catch(() => undefined);
+      this.reportFailure(error, sent);
     }
+  }
+
+  /**
+   * Tells the viewer why a request failed. When the manifest has moved on from the revision the
+   * request was sent for, the views are about to be replaced and the action has to be repeated.
+   */
+  reportFailure(error: unknown, sent?: number) {
+    const current = this.manifest?.revision;
+    this.notice =
+      sent !== undefined && current !== undefined && current !== sent
+        ? "Changes arrived — try again"
+        : `Request failed: ${errorText(error)}`;
   }
 
   private connected(): Backend {

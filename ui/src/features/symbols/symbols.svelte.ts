@@ -10,6 +10,7 @@ import type { RemovalImpact } from "../../generated/RemovalImpact";
 import type { Side } from "../../generated/Side";
 import type { SymbolSignature } from "../../generated/SymbolSignature";
 import type { Unavailable } from "../../generated/Unavailable";
+import { errorText } from "../../lib/errorText";
 import type { Backend } from "../../state/backend";
 import { keyOf, symbolAt } from "./symbolList";
 
@@ -20,8 +21,6 @@ export interface Signature {
   signature?: SymbolSignature;
   unavailable?: Unavailable;
 }
-
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 class SymbolsState {
   changed = $state.raw<Load<ChangedSymbols>>();

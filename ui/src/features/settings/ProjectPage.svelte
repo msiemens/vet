@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { ReviewFilter } from "../../generated/ReviewFilter";
-  import { parseLines } from "./filterText";
+  import { parseLines } from "../../lib/parseLines";
 
   let {
     filter,

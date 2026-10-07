@@ -14,6 +14,7 @@
 
 <script lang="ts">
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import { toggleTool } from "./toggleTool";
 
   let {
     side = "left",
@@ -29,12 +30,8 @@
 
   /** The active tool's icon shows or hides its sidebar; any other icon selects that tool and shows it. */
   function select(id: string) {
-    if (id === active) {
-      open = !open;
-    } else {
-      active = id;
-      open = true;
-    }
+    const next = toggleTool({ tool: active ?? "", open }, id);
+    [active, open] = [next.tool, next.open];
   }
 </script>
 

@@ -86,12 +86,7 @@ class SemanticStore {
       else if (!r.locations.length) changeset.notice = "No definition found";
       else return r.locations;
     } catch (error) {
-      // Normally a stale revision: the view is about to be replaced, so the action has to be repeated.
-      const current = changeset.manifest?.revision;
-      changeset.notice =
-        current !== undefined && current !== revision
-          ? "Changes arrived — try again"
-          : `Request failed: ${error instanceof Error ? error.message : String(error)}`;
+      changeset.reportFailure(error, revision);
     }
     return undefined;
   }

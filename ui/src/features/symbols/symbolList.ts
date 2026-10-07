@@ -86,6 +86,9 @@ export function symbolAt(
   return best;
 }
 
+/** `path:line` with a 1-based line, as editors print it. */
+export const place = (path: string, at: Position): string => `${path}:${at.line + 1}`;
+
 export type FateTone = "bad" | "warn" | "mute";
 
 /** What became of a reference to a removed symbol, in words; `likelyBroken` is the one that needs attention. */
@@ -101,12 +104,9 @@ export function describeFate(fate: CallFate): { label: string; tone: FateTone; d
       return {
         label: "binds elsewhere now",
         tone: "warn",
-        detail: fate.now.map((l) => `${l.path}:${l.span.start.line + 1}`).join(", ") || undefined,
+        detail: fate.now.map((l) => place(l.path, l.span.start)).join(", ") || undefined,
       };
     case "unknown":
       return { label: "unknown", tone: "mute", detail: fate.reason };
   }
 }
-
-/** `path:line` with a 1-based line, as editors print it. */
-export const place = (path: string, at: Position): string => `${path}:${at.line + 1}`;

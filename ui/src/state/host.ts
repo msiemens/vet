@@ -3,15 +3,20 @@
 
 import type { MenuItem } from "../lib/ui/menuItem";
 
-const inTauri = "__TAURI_INTERNALS__" in window;
+/** The window belongs to the Tauri host. */
+export const inTauri = "__TAURI_INTERNALS__" in window;
 
 /** Whether native folder and file dialogs exist. */
 export const hasNativeDialogs = inTauri;
 
-async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+/** Calls a command of the Tauri host; only meaningful when `inTauri`. */
+export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<T>(command, args);
 }
+
+/** The `#key=value&…` parameters a plain browser passes to the app in development. */
+export const hashParams = (): URLSearchParams => new URLSearchParams(location.hash.slice(1));
 
 /**
  * Shows the window once the app header can act as its title bar. "native" means the host

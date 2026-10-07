@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { readStored, writeStored } from "../storage";
 
   let {
     side,
@@ -17,21 +18,12 @@
   const storageKey = (s: string) => `vet.sidebar.${s}`;
 
   function storedWidth(s: string): number | undefined {
-    try {
-      const width = Number(localStorage.getItem(storageKey(s)));
-      return width > 0 ? width : undefined;
-    } catch {
-      return undefined; // Storage may be unavailable; the width then lasts for this session only.
-    }
+    const width = Number(readStored(storageKey(s)));
+    return width > 0 ? width : undefined;
   }
 
   function store(s: string, width: number | undefined) {
-    try {
-      if (width === undefined) localStorage.removeItem(storageKey(s));
-      else localStorage.setItem(storageKey(s), String(width));
-    } catch {
-      // See `storedWidth`.
-    }
+    writeStored(storageKey(s), width === undefined ? undefined : String(width));
   }
 
   let panel: HTMLElement;

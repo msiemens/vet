@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Thread } from "../../generated/Thread";
+  import { KEYS } from "../../lib/keymap";
   import ContextMenu from "../../lib/ui/ContextMenu.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -117,7 +118,9 @@
     </div>
   {/if}
   {#if empty && !composing}
-    <p class="empty">No comments yet. Select lines and press Ctrl+Alt+C, or use a hunk's comment button.</p>
+    <p class="empty">
+      No comments yet. Select lines and press {KEYS.commentHere.label}, or use a hunk's comment button.
+    </p>
   {/if}
   {#if groups.detached.length}{@render group("Detached", groups.detached, true, "detached")}{/if}
   {#if groups.moved.length}{@render group("Moved", groups.moved, true, "moved")}{/if}

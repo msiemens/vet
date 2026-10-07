@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { RunTarget } from "../../generated/RunTarget";
+  import { parseLines } from "../../lib/parseLines";
   import Dialog from "../../lib/ui/Dialog.svelte";
   import { runs } from "../../state/runs.svelte";
 
@@ -23,7 +24,7 @@
   let draft = $state<Draft>(structuredClone(empty));
   let busy = $state(false);
 
-  const entry = $derived(runs.targets.find((t) => t.target.id === id));
+  const entry = $derived(runs.target(id));
   const original = $derived(entry ? draftOf(entry.target) : empty);
   const dirty = $derived(
     draft.label !== original.label ||
@@ -31,13 +32,7 @@
       draft.cwd !== original.cwd ||
       draft.env !== original.env,
   );
-  const env = $derived(
-    draft.env
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .map((l) => ({ line: l, at: l.indexOf("=") })),
-  );
+  const env = $derived(parseLines(draft.env).map((l) => ({ line: l, at: l.indexOf("=") })));
   const problem = $derived.by(() => {
     if (!draft.label.trim()) return "A target needs a name.";
     if (!draft.command.trim()) return "A target needs a command.";
@@ -50,7 +45,7 @@
 
   function select(next: string | undefined) {
     id = next;
-    const target = runs.targets.find((t) => t.target.id === next)?.target;
+    const target = runs.target(next)?.target;
     draft = structuredClone(target ? draftOf(target) : empty);
   }
 

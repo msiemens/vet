@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Manifest } from "../../generated/Manifest";
   import type { ReviewFilter } from "../../generated/ReviewFilter";
-  import type { Theme } from "../../lib/theme/theme";
+  import { THEMES, type Theme } from "../../lib/theme/theme";
   import Dialog from "../../lib/ui/Dialog.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import type { Backend } from "../../state/backend";
@@ -62,16 +62,7 @@
           <span>Theme</span>
           <span class="hint">System follows the operating system's light or dark setting.</span>
         </div>
-        <Segmented
-          label="Theme"
-          value={theme}
-          onchange={ontheme}
-          options={[
-            { id: "system", label: "System" },
-            { id: "light", label: "Light" },
-            { id: "dark", label: "Dark" },
-          ]}
-        />
+        <Segmented label="Theme" value={theme} onchange={ontheme} options={THEMES} />
       </div>
     </section>
   {/if}

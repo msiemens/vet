@@ -12,11 +12,13 @@ import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { basename } from "../../../lib/paths";
 import { iconSvg } from "../../../lib/ui/icons";
+import type { Mode } from "../../../lib/viewMode";
 import type { Backend } from "../../../state/backend";
+import { atRevision } from "../../../state/revision";
 import { type Card, changeCard } from "./changeCard";
 import type { BarActions } from "./hunkBar";
 import { NO_HIGHLIGHTS, decodeHighlights } from "./highlights";
-import { type Handle, type Hooks, type Loaded, type Mode, mountFile } from "./mount";
+import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
 import { targetLine } from "./positions";
 import { setCurrent, setStates } from "./reviewState";
 import { COLLAPSE, type Metrics, sectionLayout } from "./sectionLayout";
@@ -387,8 +389,9 @@ export class ChangesetView {
           marks: [],
         }),
       );
-    s.loading ??= this.backend.fileContents(file.path).then((r) => {
-      if (r.revision !== this.revision) throw new Error("stale revision");
+    s.loading ??= this.backend.fileContents(file.path).then((reply) => {
+      const r = atRevision(this.revision, reply);
+      if (!r) throw new Error("stale revision");
       s.loaded = {
         base: r.base ?? "",
         target: r.target ?? "",

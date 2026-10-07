@@ -6,6 +6,7 @@
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import type { DirEntry } from "../../generated/DirEntry";
 import { joinPath } from "../../lib/paths";
+import { atRevision } from "../../state/revision";
 import { type AllRow, buildAllRows, onlyDirectory } from "./allFilesRows";
 
 type List = (path: string) => Promise<{ revision: number; entries: DirEntry[] } | undefined>;
@@ -34,8 +35,8 @@ export class AllFiles {
   /** Lists `path`; a directory whose only child is a directory also lists that, so the chain can show as one row. */
   private async load(path: string): Promise<void> {
     const revision = this.revision;
-    const reply = await this.list(path);
-    if (!reply || reply.revision !== revision) return;
+    const reply = atRevision(revision, await this.list(path));
+    if (!reply) return;
     this.listings.set(path, reply.entries);
     const only = onlyDirectory(reply.entries);
     if (path !== "" && only !== undefined) await this.load(joinPath(path, only));

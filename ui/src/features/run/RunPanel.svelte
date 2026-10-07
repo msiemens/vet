@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatBytes } from "../../lib/formatBytes";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Tab from "../../lib/ui/Tab.svelte";
@@ -9,17 +10,12 @@
   // The view belongs to the log; a state change of the run keeps it.
   const log = $derived(run?.log);
 
-  const label = (r: Run) => runs.targets.find((t) => t.target.id === r.targetId)?.target.label ?? `Run ${r.id}`;
+  const label = (r: Run) => runs.target(r.targetId)?.target.label ?? `Run ${r.id}`;
   const dot = (r: Run) => (!r.exit ? "ok" : r.exit.code === 0 ? "done" : "bad");
 
   function status(r: Run): string {
     if (!r.exit) return r.stopping ? "Stopping…" : "Running";
     return r.exit.code === null ? "Stopped" : `Exited with code ${r.exit.code}`;
-  }
-
-  function size(bytes: number): string {
-    if (bytes < 1024) return `${bytes} bytes`;
-    return bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
   }
 </script>
 
@@ -53,7 +49,7 @@
     </div>
     {#if run.exit?.droppedBytes}
       <p class="notice">
-        Output past the backend's limit was dropped: {size(run.exit.droppedBytes)} are missing from the end.
+        Output past the backend's limit was dropped: {formatBytes(run.exit.droppedBytes)} are missing from the end.
       </p>
     {/if}
   {/if}

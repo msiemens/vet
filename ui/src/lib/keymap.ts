@@ -17,6 +17,30 @@ export interface KeyLike {
   getModifierState?(modifier: string): boolean;
 }
 
+/** A key binding as `matches` reads it, with the text that shows it to the viewer. */
+export interface Binding {
+  spec: string;
+  label: string;
+}
+
+const binding = (spec: string): Binding => ({
+  spec,
+  label: spec
+    .split("-")
+    .map((part) => (part.length === 1 ? part.toUpperCase() : part.replace(/^Arrow/, "")))
+    .join("+"),
+});
+
+/** Every keyboard command of the window: the handlers match `spec`, menus and hints show `label`. */
+export const KEYS = {
+  settings: binding("Ctrl-Alt-s"),
+  nextHunk: binding("Ctrl-Alt-ArrowDown"),
+  previousHunk: binding("Ctrl-Alt-ArrowUp"),
+  commentHere: binding("Ctrl-Alt-c"),
+  toggleCurrent: binding("Space"),
+  jumpToSource: binding("F4"),
+};
+
 /** The character a letter or digit key types without modifiers, if `code` is one. */
 function baseChar(code: string): string | null {
   if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();

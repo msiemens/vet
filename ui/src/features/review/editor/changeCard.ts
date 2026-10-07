@@ -8,6 +8,7 @@ import type { EntryDesc } from "../../../generated/EntryDesc";
 import type { NonTextItem } from "../../../generated/NonTextItem";
 import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { Side } from "../../../generated/Side";
+import { formatBytes } from "../../../lib/formatBytes";
 import { iconSvg } from "../../../lib/ui/icons";
 import { hasPreview } from "./sectionLayout";
 
@@ -21,14 +22,7 @@ const TITLE: Record<NonTextKind, string> = {
   empty: "Empty file",
 };
 
-const size = (bytes: number | null): string =>
-  bytes === null
-    ? ""
-    : bytes < 1024
-      ? `${bytes} B`
-      : bytes < 1048576
-        ? `${(bytes / 1024).toFixed(1)} KB`
-        : `${(bytes / 1048576).toFixed(1)} MB`;
+const size = (bytes: number | null): string => (bytes === null ? "" : formatBytes(bytes));
 
 /** One side of the change as text. */
 function describe(kind: NonTextKind, side: EntryDesc | null, path: string): string {

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { KEYS } from "../lib/keymap.ts";
 import type { MenuItem } from "../lib/ui/menuItem.ts";
 import { type MenuContext, buildMenu, parseCommand } from "./mainMenu.ts";
 
 const context: MenuContext = {
-  mac: false,
+  native: false,
   repoOpen: true,
   reviewOpen: true,
   canQuit: true,
@@ -19,8 +20,8 @@ const flatten = (items: MenuItem[]): MenuItem[] => items.flatMap((i) => [i, ...f
 const find = (items: MenuItem[], id: string) => flatten(items).find((i) => i.id === id);
 
 void test("every leaf id parses to a command", () => {
-  for (const mac of [false, true]) {
-    const menu = buildMenu({ ...context, mac });
+  for (const native of [false, true]) {
+    const menu = buildMenu({ ...context, native });
     for (const item of flatten(menu)) {
       if (item.children || item.separator) continue;
       assert.ok(parseCommand(item.id), item.id);
@@ -29,7 +30,7 @@ void test("every leaf id parses to a command", () => {
 });
 
 void test("the macOS menu bar has an app menu; elsewhere Settings and Exit are in File", () => {
-  const mac = buildMenu({ ...context, mac: true });
+  const mac = buildMenu({ ...context, native: true });
   assert.deepEqual(
     mac.map((m) => m.id),
     ["app", "file", "view", "help"],
@@ -40,7 +41,7 @@ void test("the macOS menu bar has an app menu; elsewhere Settings and Exit are i
     other.map((m) => m.id),
     ["file", "view", "help"],
   );
-  assert.equal(find(other, "settings")?.shortcut, "Ctrl+Alt+S");
+  assert.equal(find(other, "settings")?.shortcut, KEYS.settings.label);
   assert.ok(other[0].children?.some((i) => i.id === "settings"));
 });
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { ServerInfo } from "../../generated/ServerInfo";
+  import { errorText } from "../../lib/errorText";
   import type { Backend } from "../../state/backend";
   import { hasNativeDialogs, pickFile } from "../../state/host";
   import { appendLog, serverRow, type InstallProgress } from "./serverRows";
@@ -23,8 +24,6 @@
 
   const rows = $derived(servers.map((info) => serverRow(info, installs[info.language])));
 
-  const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
   async function load() {
     if (!backend) return;
     loading = true;
@@ -32,7 +31,7 @@
       servers = await backend.listServers();
       loadError = undefined;
     } catch (e) {
-      loadError = message(e);
+      loadError = errorText(e);
     } finally {
       loading = false;
     }
@@ -59,7 +58,7 @@
       servers = await backend.installServer(language);
       installs = { ...installs, [language]: { running: false } };
     } catch (e) {
-      installs = { ...installs, [language]: { running: false, error: message(e) } };
+      installs = { ...installs, [language]: { running: false, error: errorText(e) } };
     }
   }
 
@@ -78,7 +77,7 @@
       editing = undefined;
       pathError = undefined;
     } catch (e) {
-      pathError = { language, message: message(e) };
+      pathError = { language, message: errorText(e) };
     }
   }
 
@@ -87,7 +86,7 @@
       const picked = await pickFile();
       if (picked) draft = picked;
     } catch (e) {
-      if (editing) pathError = { language: editing, message: message(e) };
+      if (editing) pathError = { language: editing, message: errorText(e) };
     }
   }
 </script>

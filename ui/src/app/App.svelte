@@ -14,19 +14,21 @@
     TOOLS,
     TitleBar,
     ToolRail,
+    toggleTool,
   } from "../features/chrome";
-  import { type Mode, ReviewScreen, type ReviewController } from "../features/review";
+  import { ReviewScreen, type ReviewController } from "../features/review";
   import { RunButton, RunDialogs, RunPanel } from "../features/run";
   import { SettingsDialog } from "../features/settings";
   import { StartScreen } from "../features/start";
   import { type OpenLocation, SymbolPanel, symbols } from "../features/symbols";
   import { percentages } from "../lib/completion";
-  import { matches } from "../lib/keymap";
+  import { KEYS, matches } from "../lib/keymap";
   import { repoName } from "../lib/paths";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import Toast from "../lib/ui/Toast.svelte";
+  import type { Mode } from "../lib/viewMode";
   import { changeset } from "../state/changeset.svelte";
-  import { canQuit, hasNativeDialogs, isMac, quit, showWindow } from "../state/host";
+  import { canQuit, hasNativeDialogs, hasNativeMenu, quit, showWindow } from "../state/host";
   import type { Command } from "../state/mainMenu";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { recent } from "../state/recent.svelte";
@@ -109,7 +111,7 @@
   $effect(() => {
     const shown = (side: typeof left, id: string) => side.open && side.tool === id;
     mainMenu.update({
-      mac: isMac,
+      native: hasNativeMenu,
       repoOpen: !!changeset.repo,
       reviewOpen,
       canQuit,
@@ -159,9 +161,11 @@
       case "mode":
         setMode(command.mode);
         break;
-      case "tool":
-        toggleTool(command.id);
+      case "tool": {
+        const side = TOOLS.left.some((t) => t.id === command.id) ? left : right;
+        Object.assign(side, toggleTool(side, command.id));
         break;
+      }
       case "theme":
         applyTheme((theme = command.theme));
         break;
@@ -176,13 +180,6 @@
     controller?.setMode(next);
   }
 
-  /** Like the rail's icon: the selected tool's window hides or shows, another tool is selected and shown. */
-  function toggleTool(id: string) {
-    const side = TOOLS.left.some((t) => t.id === id) ? left : right;
-    if (side.tool === id) side.open = !side.open;
-    else [side.tool, side.open] = [id, true];
-  }
-
   function ready(c: ReviewController, firstPaintMs: number) {
     controller = c;
     status = `${changeset.manifest?.name}: ${changeset.files.length} files, ${c.changes.totalHunks} hunks; first hunk painted in ${firstPaintMs.toFixed(0)} ms`;
@@ -192,7 +189,7 @@
 
 <svelte:window
   onkeydowncapture={(e) => {
-    if (!matches("Ctrl-Alt-s", e)) return;
+    if (!matches(KEYS.settings.spec, e)) return;
     e.preventDefault();
     dialog = "settings";
   }}

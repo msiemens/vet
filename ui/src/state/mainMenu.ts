@@ -2,11 +2,14 @@
 // as the native menu bar (macOS), the title bar's ☰ button shows them elsewhere. Both report
 // a chosen item by its id, which `parseCommand` turns back into what to do.
 
-import type { Theme } from "../lib/theme/theme";
+import { KEYS } from "../lib/keymap.ts";
+import { THEMES, type Theme } from "../lib/theme/theme.ts";
 import { type MenuItem, separator } from "../lib/ui/menuItem.ts";
+import { MODES, type Mode } from "../lib/viewMode.ts";
 
 export interface MenuContext {
-  mac: boolean;
+  /** The host draws the macOS menu bar, with its app menu and its own key accelerators. */
+  native: boolean;
   /** A repository is open: its view and tool windows exist. */
   repoOpen: boolean;
   /** A review has started and can be finished. */
@@ -14,7 +17,7 @@ export interface MenuContext {
   canQuit: boolean;
   /** Backend-side paths with their display names, most recent first. */
   recent: { path: string; name: string }[];
-  mode: "unified" | "split";
+  mode: Mode;
   theme: Theme;
   tools: { id: string; label: string; shown: boolean }[];
   devPanel: boolean;
@@ -27,25 +30,24 @@ export type Command =
   | { type: "settings" }
   | { type: "about" }
   | { type: "quit" }
-  | { type: "mode"; mode: MenuContext["mode"] }
+  | { type: "mode"; mode: Mode }
   | { type: "tool"; id: string }
   | { type: "theme"; theme: Theme }
   | { type: "devPanel" };
 
-const THEMES: [Theme, string][] = [
-  ["system", "System"],
-  ["light", "Light"],
-  ["dark", "Dark"],
-];
-
 export function buildMenu(c: MenuContext): MenuItem[] {
-  const settings: MenuItem = { id: "settings", label: "Settings…", shortcut: c.mac ? "Cmd+," : "Ctrl+Alt+S" };
+  // The native menu bar's accelerator reports the item like a click; the window's own binding is `KEYS.settings`.
+  const settings: MenuItem = {
+    id: "settings",
+    label: "Settings…",
+    shortcut: c.native ? "Cmd+," : KEYS.settings.label,
+  };
   const about: MenuItem = { id: "about", label: "About Vet" };
   const quit: MenuItem = {
     id: "quit",
-    label: c.mac ? "Quit Vet" : "Exit",
+    label: c.native ? "Quit Vet" : "Exit",
     enabled: c.canQuit,
-    shortcut: c.mac ? "Cmd+Q" : undefined,
+    shortcut: c.native ? "Cmd+Q" : undefined,
   };
 
   const file: MenuItem[] = [
@@ -58,13 +60,13 @@ export function buildMenu(c: MenuContext): MenuItem[] {
     },
     separator,
     { id: "finishReview", label: "Finish Review…", enabled: c.reviewOpen },
-    ...(c.mac ? [] : [separator, settings, separator, quit]),
+    ...(c.native ? [] : [separator, settings, separator, quit]),
   ];
   const view: MenuItem[] = [
-    ...(["unified", "split"] as const).map((mode) => ({
-      id: `mode:${mode}`,
-      label: mode === "unified" ? "Unified" : "Side by side",
-      checked: c.mode === mode,
+    ...MODES.map(({ id, label }) => ({
+      id: `mode:${id}`,
+      label,
+      checked: c.mode === id,
       enabled: c.repoOpen,
     })),
     separator,
@@ -77,16 +79,16 @@ export function buildMenu(c: MenuContext): MenuItem[] {
     {
       id: "theme",
       label: "Theme",
-      children: THEMES.map(([theme, label]) => ({ id: `theme:${theme}`, label, checked: c.theme === theme })),
+      children: THEMES.map(({ id, label }) => ({ id: `theme:${id}`, label, checked: c.theme === id })),
     },
   ];
   const help: MenuItem[] = [
-    ...(c.mac ? [] : [about]),
+    ...(c.native ? [] : [about]),
     { id: "devPanel", label: "Developer Panel", checked: c.devPanel },
   ];
 
   return [
-    ...(c.mac ? [{ id: "app", label: "Vet", children: [about, separator, settings, separator, quit] }] : []),
+    ...(c.native ? [{ id: "app", label: "Vet", children: [about, separator, settings, separator, quit] }] : []),
     { id: "file", label: "File", children: file },
     { id: "view", label: "View", children: view },
     { id: "help", label: "Help", children: help },
@@ -107,12 +109,16 @@ export function parseCommand(id: string): Command | undefined {
       return { type: "devPanel" };
     case "recent":
       return { type: "openRecent", path: arg };
-    case "mode":
-      return arg === "unified" || arg === "split" ? { type: "mode", mode: arg } : undefined;
+    case "mode": {
+      const mode = MODES.find((m) => m.id === arg);
+      return mode && { type: "mode", mode: mode.id };
+    }
     case "tool":
       return { type: "tool", id: arg };
-    case "theme":
-      return arg === "system" || arg === "light" || arg === "dark" ? { type: "theme", theme: arg } : undefined;
+    case "theme": {
+      const theme = THEMES.find((t) => t.id === arg);
+      return theme && { type: "theme", theme: theme.id };
+    }
     default:
       return undefined;
   }
