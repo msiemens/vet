@@ -514,6 +514,26 @@ async function mode(
   return rows;
 }
 
+/** The middle of the first word of a line, in viewport coordinates, if it has one. */
+function firstWordPoint(line: HTMLElement): { x: number; y: number } | undefined {
+  const word = /[\p{L}\p{N}_$]+/u.exec(line.textContent);
+  if (!word) return undefined;
+  const middle = word.index + Math.floor(word[0].length / 2);
+  const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+  for (let offset = 0, node = walker.nextNode(); node; node = walker.nextNode()) {
+    const end = offset + (node.nodeValue?.length ?? 0);
+    if (middle < end) {
+      const range = document.createRange();
+      range.setStart(node, middle - offset);
+      range.setEnd(node, middle - offset + 1);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+    offset = end;
+  }
+  return undefined;
+}
+
 /** Hovers real lines with synthetic mouse moves and times query → painted tooltip. */
 async function hoverToTooltip(shell: Shell, o: BenchOptions): Promise<number[]> {
   const editor = (await shell.changes.goToFile(0)).view;
@@ -521,7 +541,7 @@ async function hoverToTooltip(shell: Shell, o: BenchOptions): Promise<number[]> 
   // Lines in view: a pointer event goes to what is painted under it.
   const lines = [...editor.contentDOM.querySelectorAll<HTMLElement>(".cm-line")].filter((l) => {
     const { top, bottom } = l.getBoundingClientRect();
-    return l.textContent && top >= root.top && bottom <= root.bottom;
+    return top >= root.top && bottom <= root.bottom && firstWordPoint(l);
   });
   tooltipLatencies.length = 0;
   // As a real pointer's, the event targets the element under it: the editor hovers only a line's text.
@@ -532,10 +552,11 @@ async function hoverToTooltip(shell: Shell, o: BenchOptions): Promise<number[]> 
   const gutter = editor.dom.getBoundingClientRect().left + 2;
   for (let i = 0; i < Math.min(30, lines.length * 2); i++) {
     const rect = lines[i % lines.length].getBoundingClientRect();
-    move(gutter, rect.top + rect.height / 2); // off the text, which closes the previous tooltip
-    await sleep(80);
+    move(gutter, rect.top + rect.height / 2); // off the text, which closes the previous tooltip after its grace period
+    await sleep(500); // longer than a popup outlives its symbol
     const before = tooltipLatencies.length;
-    move(rect.left + 12 + ((i * 11) % 60), rect.top + rect.height / 2);
+    const word = firstWordPoint(lines[i % lines.length]);
+    if (word) move(word.x, word.y);
     for (let waited = 0; tooltipLatencies.length === before && waited < 2000; waited += 20) await sleep(20);
   }
   o.progress(`hover: ${tooltipLatencies.length} tooltips`);

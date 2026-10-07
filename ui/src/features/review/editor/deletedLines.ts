@@ -1,10 +1,13 @@
 // Hover and Mod+click on the deleted lines of a unified diff: base-side text. `unifiedMergeView`
-// draws them as block widgets outside the editor's document, so CodeMirror's own hover and
-// position lookups do not see them; this maps the pointer to a base line and column from the DOM.
+// draws them as block widgets outside the editor's document, so CodeMirror's own position lookups
+// do not see them; this maps the pointer to a base line and column from the DOM.
 
 import { getChunks, getOriginalDoc } from "@codemirror/merge";
+import { type Extension } from "@codemirror/state";
 import { type EditorView, ViewPlugin } from "@codemirror/view";
-import { HOVER_MS, type SemanticHooks, type TextPosition, gotoOnClick, queryHover } from "./semantic";
+import { type HoverAnchor, hoverPopups } from "./hoverDom";
+import { wordRange } from "./hoverPopup";
+import { type SemanticHooks, type TextPosition, gotoOnClick, queryHover } from "./semantic";
 
 /** The text position under a point; Safari only has the older `caretRangeFromPoint`. */
 function caretAt(x: number, y: number): { node: Node; offset: number } | undefined {
@@ -18,8 +21,8 @@ function caretAt(x: number, y: number): { node: Node; offset: number } | undefin
   return r ? { node: r.startContainer, offset: r.startOffset } : undefined;
 }
 
-/** The base-side 0-based line and UTF-16 column under the pointer, if it is on a deleted line. */
-function baseAt(view: EditorView, event: MouseEvent): TextPosition | undefined {
+/** The base-side 0-based line and UTF-16 column under the pointer, and the line's element, if it is on a deleted line. */
+function baseAt(view: EditorView, event: MouseEvent): (TextPosition & { lineEl: Element }) | undefined {
   const target = event.target instanceof Element ? event.target : null;
   const lineEl = target?.closest(".cm-deletedLine");
   const chunkEl = lineEl?.closest(".cm-deletedChunk");
@@ -32,62 +35,57 @@ function baseAt(view: EditorView, event: MouseEvent): TextPosition | undefined {
   const range = document.createRange();
   range.selectNodeContents(lineEl);
   range.setEnd(caret.node, caret.offset);
-  return { line: getOriginalDoc(view.state).lineAt(chunk.fromA).number - 1 + index, col: range.toString().length };
+  return {
+    line: getOriginalDoc(view.state).lineAt(chunk.fromA).number - 1 + index,
+    col: range.toString().length,
+    lineEl,
+  };
 }
 
-export function deletedLines(path: string, hooks: SemanticHooks, hoverShown: (ms: number) => void) {
-  return ViewPlugin.fromClass(
-    class {
-      timer?: ReturnType<typeof setTimeout>;
-      tip?: HTMLElement;
-      /** Identifies the latest pointer position, so a slow answer for an earlier one is dropped. */
-      seq = 0;
+/** The viewport rectangle of the text between two offsets of an element's text. */
+function textRect(el: Element, from: number, to: number) {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  let offset = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const end = offset + (node.nodeValue?.length ?? 0);
+    if (from >= offset && from < end) range.setStart(node, from - offset);
+    if (to > offset && to <= end) {
+      range.setEnd(node, to - offset);
+      break;
+    }
+    offset = end;
+  }
+  const { left, right, top, bottom } = range.getBoundingClientRect();
+  return { left, right, top, bottom };
+}
 
+/** The word of a deleted line under the pointer. */
+function deletedWordAt(view: EditorView, event: MouseEvent): (HoverAnchor & { at: TextPosition }) | undefined {
+  const base = baseAt(view, event);
+  const word = base && wordRange(base.lineEl.textContent, base.col);
+  if (!base || !word) return undefined;
+  const rect = textRect(base.lineEl, word.from, word.to);
+  const { clientX: x, clientY: y } = event;
+  if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return undefined;
+  return { key: `base:${base.line}:${word.from}-${word.to}`, rect, at: { line: base.line, col: word.from } };
+}
+
+export function deletedLines(path: string, hooks: SemanticHooks, hoverShown: (ms: number) => void): Extension {
+  const goto = ViewPlugin.fromClass(
+    class {
       constructor(readonly view: EditorView) {
-        view.dom.addEventListener("mousemove", this.move);
-        view.dom.addEventListener("mouseleave", this.hide);
         view.dom.addEventListener("mousedown", this.down, true);
       }
 
-      hide = () => {
-        clearTimeout(this.timer);
-        this.seq++;
-        this.tip?.remove();
-        this.tip = undefined;
-      };
-
-      move = (event: MouseEvent) => {
-        this.hide();
-        if (!(event.target instanceof Element && event.target.closest(".cm-deletedLine"))) return;
-        const { clientX: x, clientY: y } = event;
-        const seq = this.seq;
-        this.timer = setTimeout(() => void this.show(event, x, y, seq), HOVER_MS);
-      };
-
-      async show(event: MouseEvent, x: number, y: number, seq: number) {
-        const at = baseAt(this.view, event);
-        if (!at) return;
-        const create = await queryHover(hooks, "base", path, at, hoverShown);
-        if (!create || seq !== this.seq) return;
-        const tip = create();
-        tip.classList.add("cm-tooltip", "vet-hover-floating");
-        tip.style.left = `${x}px`;
-        tip.style.top = `${y - 8}px`;
-        document.body.append(tip);
-        this.tip = tip;
-      }
-
       down = (event: MouseEvent) => {
-        this.hide();
         if (gotoOnClick(event, hooks, "base", path, () => baseAt(this.view, event))) event.stopPropagation();
       };
 
       destroy() {
-        this.hide();
-        this.view.dom.removeEventListener("mousemove", this.move);
-        this.view.dom.removeEventListener("mouseleave", this.hide);
         this.view.dom.removeEventListener("mousedown", this.down, true);
       }
     },
   );
+  return [goto, hoverPopups(deletedWordAt, (anchor) => queryHover(hooks, "base", path, anchor.at, hoverShown))];
 }

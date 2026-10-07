@@ -5,7 +5,7 @@
 
 import { type Diagnostic as LintDiagnostic, lintGutter, setDiagnostics } from "@codemirror/lint";
 import { type Extension, Facet, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, ViewPlugin, hoverTooltip, tooltips } from "@codemirror/view";
+import { Decoration, type DecorationSet, EditorView, tooltips } from "@codemirror/view";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
@@ -13,6 +13,8 @@ import { nextPaint } from "../../../lib/nextPaint";
 import type { HoverText } from "../../../state/backend";
 import { isMac } from "../../../state/host";
 import { hoverContent } from "./hoverContent";
+import { type HoverAnchor, hoverPopups } from "./hoverDom";
+import { wordRange } from "./hoverPopup";
 import { lineOf, lineStart, offsetAt } from "./positions";
 
 /** What an editor asks of its owner, which knows the view's revision and what to do with an answer. */
@@ -40,9 +42,6 @@ export function bindRevision(source: SemanticSource, revision: number): Semantic
     diagnostics: (path) => source.diagnostics(revision, path),
   };
 }
-
-/** How long the pointer rests on a position before the hover query is sent. */
-export const HOVER_MS = 50;
 
 /** A 0-based line and UTF-16 column of a side's text. */
 export interface TextPosition {
@@ -158,6 +157,33 @@ const at = (view: EditorView, pos: number): TextPosition => {
   return { line, col: pos - lineStart(doc, line) };
 };
 
+/**
+ * The word of the document under the pointer, if it is on text: a hover over a block widget (a
+ * deleted chunk, a thread card), the line numbers or blank space is none.
+ */
+function wordUnderPointer(view: EditorView, event: MouseEvent): (HoverAnchor & { at: TextPosition }) | undefined {
+  if (!(event.target instanceof Element && event.target.closest(".cm-line"))) return undefined;
+  const { clientX: x, clientY: y } = event;
+  const pos = view.posAtCoords({ x, y });
+  const edge = pos === null ? null : view.coordsAtPos(pos);
+  if (pos === null || !edge) return undefined;
+  const hovered = Math.max(x < edge.left ? pos - 1 : pos, 0);
+  const line = view.state.doc.lineAt(hovered);
+  const word = wordRange(line.text, hovered - line.from);
+  const start = word && view.coordsAtPos(line.from + word.from, 1);
+  const end = word && view.coordsAtPos(line.from + word.to, -1);
+  if (!word || !start || !end) return undefined;
+  const rect = {
+    left: Math.min(start.left, end.left),
+    right: Math.max(start.right, end.right),
+    top: Math.min(start.top, end.top),
+    bottom: Math.max(start.bottom, end.bottom),
+  };
+  if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return undefined;
+  const lineIndex = line.number - 1;
+  return { key: `${lineIndex}:${word.from}-${word.to}`, rect, at: { line: lineIndex, col: word.from } };
+}
+
 /** The editor with the focus, if `active` (the document's active element) is one with the semantic layer. */
 export function focusedEditor(active: Element | null) {
   if (!(active instanceof HTMLElement) || !active.classList.contains("cm-content")) return undefined;
@@ -190,32 +216,11 @@ export function semanticExtensions(
   hooks: SemanticHooks,
   hoverShown?: (ms: number) => void,
 ): Extension[] {
-  // `hoverTooltip` asks for the start of a block widget (a deleted chunk, a thread card) under the
-  // pointer, and for the line start when the pointer is on the line numbers; neither is text to hover.
-  const pointer = ViewPlugin.define((view) => {
-    const state = {
-      overText: false,
-      move: (event: MouseEvent) => {
-        state.overText = event.target instanceof Element && event.target.closest(".cm-line") !== null;
-      },
-      destroy: () => view.dom.removeEventListener("mousemove", state.move),
-    };
-    view.dom.addEventListener("mousemove", state.move);
-    return state;
-  });
   return [
     targetField,
-    // A side by side pane clips what it contains; the tooltips of hover and diagnostics live in the body.
+    // A side by side pane clips what it contains; the tooltips of diagnostics live in the body.
     tooltips({ parent: document.body }),
-    pointer,
-    hoverTooltip(
-      async (view, pos) => {
-        if (!view.plugin(pointer)?.overText) return null;
-        const create = await queryHover(hooks, side, path, at(view, pos), hoverShown);
-        return create ? { pos, above: true, create: () => ({ dom: create() }) } : null;
-      },
-      { hoverTime: HOVER_MS },
-    ),
+    hoverPopups(wordUnderPointer, (anchor) => queryHover(hooks, side, path, anchor.at, hoverShown)),
     EditorView.domEventHandlers({
       mousedown: (event, view) =>
         gotoOnClick(event, hooks, side, path, () => {
