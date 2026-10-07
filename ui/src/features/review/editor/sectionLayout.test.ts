@@ -15,7 +15,13 @@ const file = (targetLines: number, hunks: ReturnType<typeof hunk>[], nonText: No
   ({ path, targetLines, hunks, nonText }) as FileChange;
 const layout = (f: FileChange, mode: "unified" | "split", collapse = true) => sectionLayout(f, mode, metrics, collapse);
 const entry = { kind: "file", mode: 0o100644, target: null, size: 1 } as const;
-const item = (kind: NonTextItem["kind"]): NonTextItem => ({ kind, before: entry, after: entry });
+const item = (kind: NonTextItem["kind"], hasPreview = false): NonTextItem => ({
+  kind,
+  before: entry,
+  after: entry,
+  hasPreview,
+  modeChange: null,
+});
 
 void test("unchanged regions collapse to one bar each, keeping 3 lines of context", () => {
   const f = file(100, [hunk(50, 2, 3)]);
@@ -62,7 +68,7 @@ void test("without collapsing every line is a row", () => {
 });
 
 void test("cards sit between the header and the first hunk and push everything down", () => {
-  const cards = [item("mode"), { kind: "contentUnavailable", before: null, after: null } as NonTextItem];
+  const cards = [item("mode"), { ...item("contentUnavailable"), before: null, after: null }];
   const plain = layout(file(100, [hunk(50, 2, 3)]), "unified");
   const l = layout(file(100, [hunk(50, 2, 3)], cards), "unified");
   // A card is a bar and two rows; a card with nothing to compare is a bar and one row.
@@ -118,8 +124,7 @@ void test("a bar knows how many lines it hides, on either side", () => {
   assert.equal(hiddenAt(file(40, []), true, "target", 5), 40);
 });
 
-void test("an image card has a preview strip, other binaries do not", () => {
-  const png = layout(file(0, [], [item("binary")], "logo.png"), "unified");
-  assert.equal(png.cardsHeight, 24 + 40 + 100);
-  assert.equal(layout(file(0, [], [item("binary")], "data.bin"), "unified").cardsHeight, 24 + 40);
+void test("a card the backend says has a preview gets a preview strip", () => {
+  assert.equal(layout(file(0, [], [item("binary", true)]), "unified").cardsHeight, 24 + 40 + 100);
+  assert.equal(layout(file(0, [], [item("binary")]), "unified").cardsHeight, 24 + 40);
 });

@@ -1001,6 +1001,49 @@ async fn toggling_a_file_with_only_a_mode_change_acknowledges_it_and_starts_the_
 }
 
 #[tokio::test]
+async fn only_a_binary_image_has_a_preview_and_a_mode_item_says_how_the_mode_changed() {
+    let git = FakeGit::default();
+    let mut base = git.snapshot(&[
+        ("pic.png", "a\0"),
+        ("data.bin", "a\0"),
+        ("gained.sh", "echo\n"),
+        ("lost.sh", "echo\n"),
+        ("other.txt", "echo\n"),
+    ]);
+    base.entries.get_mut(&path("lost.sh")).unwrap().mode = 0o100755;
+    base.id = merkle::snapshot_id(&base.entries);
+    let mut dirty = git.snapshot(&[
+        ("pic.png", "b\0"),
+        ("data.bin", "b\0"),
+        ("gained.sh", "echo\n"),
+        ("lost.sh", "echo\n"),
+        ("other.txt", "echo\n"),
+    ]);
+    dirty.entries.get_mut(&path("gained.sh")).unwrap().mode = 0o100755;
+    dirty.entries.get_mut(&path("other.txt")).unwrap().mode = 0o100664;
+    dirty.id = merkle::snapshot_id(&dirty.entries);
+    *git.base.lock().unwrap() = Some(base);
+    git.scans.lock().unwrap().push(dirty);
+    let session = LiveSession::open(git, MemStore::default(), REPO.into(), clock)
+        .await
+        .unwrap();
+
+    let m = session.manifest().await.unwrap();
+
+    let item = |file: &str, kind| {
+        let file = m.files.iter().find(|f| f.path == path(file)).unwrap();
+        file.non_text.iter().find(|i| i.kind == kind).unwrap().clone()
+    };
+    assert!(item("pic.png", NonTextKind::Binary).has_preview);
+    assert!(!item("data.bin", NonTextKind::Binary).has_preview);
+    let change = |file| item(file, NonTextKind::Mode).mode_change;
+    assert_eq!(change("gained.sh"), Some(ModeChange::GainedExecutable));
+    assert_eq!(change("lost.sh"), Some(ModeChange::LostExecutable));
+    assert_eq!(change("other.txt"), Some(ModeChange::Other));
+    assert_eq!(item("pic.png", NonTextKind::Binary).mode_change, None);
+}
+
+#[tokio::test]
 async fn submodule_changes_carry_both_commits() {
     let git = FakeGit::default();
     let sub = |commit: &[u8]| FileEntry {

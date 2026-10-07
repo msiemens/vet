@@ -7,6 +7,7 @@
 import type { FileChange } from "../../../generated/FileChange";
 import type { NonTextItem } from "../../../generated/NonTextItem";
 import type { Side } from "../../../generated/Side";
+import { cardContent } from "./cardContent.ts";
 
 /** Context kept around each hunk, and the smallest unchanged region worth a bar. */
 export const COLLAPSE = { margin: 3, minSize: 4 };
@@ -35,18 +36,9 @@ export interface SectionLayout {
   drawn: boolean[];
 }
 
-const IMAGE = /\.(png|jpe?g|gif|webp|bmp|ico|svg)$/i;
-
-/** Text rows of a card: the before and after line, or one note when there is nothing to compare. */
-export const cardRows = (item: NonTextItem): number => (item.kind === "contentUnavailable" ? 1 : 2);
-
-/** Image files show a before/after preview below the lines. */
-export const hasPreview = (item: NonTextItem, path: string): boolean =>
-  item.kind === "binary" && IMAGE.test(path) && (item.before !== null || item.after !== null);
-
 /** A card is a header bar like a hunk's, its rows, and the preview strip if it has one. */
-export const cardHeight = (item: NonTextItem, path: string, m: Metrics): number =>
-  m.hunk + cardRows(item) * m.line + (hasPreview(item, path) ? m.preview : 0);
+const cardHeight = (item: NonTextItem, file: FileChange, m: Metrics): number =>
+  m.hunk + cardContent(item, file.path, file.oldPath).rows.length * m.line + (item.hasPreview ? m.preview : 0);
 
 /** Comment threads that add height to a section (see `threadPlacement.ts`). */
 export interface ThreadSpace {
@@ -109,7 +101,7 @@ export function sectionLayout(
   let y = m.header;
   for (const item of file.nonText) {
     cardTops.push(y);
-    y += cardHeight(item, file.path, m);
+    y += cardHeight(item, file, m);
   }
   const cardsHeight = y - m.header;
   y += threads.block;

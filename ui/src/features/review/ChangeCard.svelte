@@ -1,24 +1,19 @@
 <script lang="ts">
   // A change card on its own, outside a section (the dev gallery). The card itself is DOM built by
   // `editor/changeCard.ts`, the same code the Changes stream uses.
-  import type { EntryDesc } from "../../generated/EntryDesc";
-  import type { NonTextKind } from "../../generated/NonTextKind";
+  import type { NonTextItem } from "../../generated/NonTextItem";
   import { changeCard } from "./editor/changeCard";
 
   let {
     path,
     oldPath,
-    kind,
-    before,
-    after,
+    item,
     acknowledged,
     ontoggle,
   }: {
     path: string;
     oldPath: string | null;
-    kind: NonTextKind;
-    before: EntryDesc | null;
-    after: EntryDesc | null;
+    item: NonTextItem;
     acknowledged: boolean;
     ontoggle: () => void;
   } = $props();
@@ -27,7 +22,7 @@
 <div
   class="host"
   {@attach (host) => {
-    const card = changeCard(path, oldPath, { kind, before, after }, acknowledged, {
+    const card = changeCard(path, oldPath, item, acknowledged, {
       toggle: ontoggle,
       comment: () => undefined,
       // The gallery has no backend, so its previews stay placeholders.

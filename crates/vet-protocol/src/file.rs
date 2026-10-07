@@ -114,6 +114,24 @@ pub struct NonTextItem {
     pub kind: NonTextKind,
     pub before: Option<EntryDesc>,
     pub after: Option<EntryDesc>,
+    /// The item is an image that can be previewed: `ItemBlob` answers with its bytes and
+    /// media type for a side that has a file.
+    pub has_preview: bool,
+    /// What a `Mode` item changes; none for the other kinds.
+    pub mode_change: Option<ModeChange>,
+}
+
+/// How a file's mode changed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ModeChange {
+    /// An executable bit was set that no bit was before.
+    GainedExecutable,
+    /// The last executable bit was cleared.
+    LostExecutable,
+    /// Any other change of the mode.
+    Other,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

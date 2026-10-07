@@ -6,7 +6,8 @@ use vet_app::pin::{BaseChoice, CommitId};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::session::{
     BaseView, CommentAt, CommentSpot, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemBlob, ItemView,
-    Lifecycle, ManifestView, NewThread, NoText, ReviewUpdateView, ReviewView, TargetText, ThreadView, ThreadsView,
+    Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, TargetText, ThreadView,
+    ThreadsView,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
@@ -115,6 +116,12 @@ fn item(i: &ItemView) -> p::NonTextItem {
         kind: non_text_kind(i.kind),
         before: i.before.as_ref().map(entry),
         after: i.after.as_ref().map(entry),
+        has_preview: i.has_preview,
+        mode_change: i.mode_change.map(|c| match c {
+            ModeChange::GainedExecutable => p::ModeChange::GainedExecutable,
+            ModeChange::LostExecutable => p::ModeChange::LostExecutable,
+            ModeChange::Other => p::ModeChange::Other,
+        }),
     }
 }
 

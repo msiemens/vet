@@ -4,46 +4,11 @@
 // `cardHeight`, so a section can account for it before anything is measured.
 
 import type { BlobContent } from "../../../generated/BlobContent";
-import type { EntryDesc } from "../../../generated/EntryDesc";
 import type { NonTextItem } from "../../../generated/NonTextItem";
-import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { Side } from "../../../generated/Side";
-import { formatBytes } from "../../../lib/formatBytes";
 import { iconSvg } from "../../../lib/ui/icons";
+import { cardContent } from "./cardContent";
 import { el, iconButton } from "./dom";
-import { hasPreview } from "./sectionLayout";
-
-const TITLE: Record<NonTextKind, string> = {
-  mode: "File mode",
-  symlink: "Symlink target",
-  submodule: "Submodule commit",
-  binary: "Binary file",
-  contentUnavailable: "Content unavailable",
-  rename: "Renamed",
-  empty: "Empty file",
-};
-
-const size = (bytes: number | null): string => (bytes === null ? "" : formatBytes(bytes));
-
-/** One side of the change as text. */
-function describe(kind: NonTextKind, side: EntryDesc | null, path: string): string {
-  if (!side) return "(none)";
-  switch (kind) {
-    case "mode":
-      return side.mode.toString(8);
-    case "symlink":
-      return side.target ?? "";
-    case "submodule":
-      return side.target?.slice(0, 7) ?? "";
-    case "binary":
-    case "empty":
-      return size(side.size);
-    case "rename":
-      return path;
-    default:
-      return "";
-  }
-}
 
 function line(sign: "−" | "+", text: string): HTMLElement {
   const row = el("div", `vet-card-line ${sign === "+" ? "add" : "del"}`);
@@ -101,35 +66,34 @@ export function changeCard(
   const bar = el("div", "vet-hunk");
   const toggle = iconButton("Mark seen", "check", () => actions.toggle(), "vet-icon-btn vet-seen-toggle", 13, 2);
   const comment = iconButton("Comment", "comments", () => actions.comment());
-  bar.append(el("span", "vet-hunk-text", TITLE[item.kind]), el("span", "vet-card-path mono", path), el("span", "grow"));
+  const content = cardContent(item, path, oldPath);
+  bar.append(el("span", "vet-hunk-text", content.title), el("span", "vet-card-path mono", path), el("span", "grow"));
   bar.append(comment, toggle);
   root.append(bar);
 
-  if (item.kind === "contentUnavailable") {
-    const note = el("div", "vet-card-line note");
-    note.innerHTML = iconSvg("lock", 14, 1.6);
-    note.append("The content of this file is not available.");
-    root.append(note);
-  } else {
-    root.append(
-      line("−", item.kind === "rename" ? (oldPath ?? "") : describe(item.kind, item.before, path)),
-      line("+", describe(item.kind, item.after, path)),
-    );
-    if (hasPreview(item, path)) {
-      const previews = el("div", "vet-card-previews");
-      for (const [label, side, entry] of [
-        ["Before", "base", item.before],
-        ["After", "target", item.after],
-      ] as const) {
-        if (!entry) continue;
-        const figure = el("figure", "vet-card-figure");
-        const thumb = el("div", "vet-card-thumb");
-        figure.append(thumb, el("figcaption", "", label));
-        previews.append(figure);
-        thumbs.push({ thumb, side });
-      }
-      root.append(previews);
+  for (const row of content.rows) {
+    if (row.type === "change") root.append(line(row.sign, row.text));
+    else {
+      const note = el("div", "vet-card-line note");
+      note.innerHTML = iconSvg("lock", 14, 1.6);
+      note.append(row.text);
+      root.append(note);
     }
+  }
+  if (item.hasPreview) {
+    const previews = el("div", "vet-card-previews");
+    for (const [label, side, entry] of [
+      ["Before", "base", item.before],
+      ["After", "target", item.after],
+    ] as const) {
+      if (!entry) continue;
+      const figure = el("figure", "vet-card-figure");
+      const thumb = el("div", "vet-card-thumb");
+      figure.append(thumb, el("figcaption", "", label));
+      previews.append(figure);
+      thumbs.push({ thumb, side });
+    }
+    root.append(previews);
   }
   const placeholder = (thumb: HTMLElement) => {
     thumb.className = "vet-card-thumb";

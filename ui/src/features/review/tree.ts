@@ -5,6 +5,7 @@
 
 import type { FileChange } from "../../generated/FileChange";
 import type { FileStatus } from "../../generated/FileStatus";
+import type { ModeChange } from "../../generated/ModeChange";
 import { basename, compactChain, dirname } from "../../lib/paths.ts";
 
 export interface DirRow {
@@ -47,11 +48,15 @@ interface DirNode {
 
 const LETTER: Record<FileStatus, FileSummary["status"]> = { modified: "M", added: "A", deleted: "D", renamed: "R" };
 
+const MODE: Record<ModeChange, NonNullable<FileSummary["mode"]>> = {
+  gainedExecutable: "+x",
+  lostExecutable: "-x",
+  other: "mode",
+};
+
 function modeChange(file: FileChange): FileSummary["mode"] {
-  const item = file.nonText.find((i) => i.kind === "mode");
-  if (!item) return undefined;
-  const [before, after] = [(item.before?.mode ?? 0) & 0o111, (item.after?.mode ?? 0) & 0o111];
-  return after && !before ? "+x" : before && !after ? "-x" : "mode";
+  const change = file.nonText.find((i) => i.kind === "mode")?.modeChange;
+  return change ? MODE[change] : undefined;
 }
 
 // One collator: `localeCompare` creates one per call.

@@ -144,6 +144,29 @@ pub struct ItemView {
     pub kind: NonTextKind,
     pub before: Option<EntryInfo>,
     pub after: Option<EntryInfo>,
+    /// An image with a side to show: a card previews it.
+    pub has_preview: bool,
+    /// For a `Mode` item.
+    pub mode_change: Option<ModeChange>,
+}
+
+/// How a file's mode changed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ModeChange {
+    GainedExecutable,
+    LostExecutable,
+    Other,
+}
+
+impl ModeChange {
+    fn of(before: Option<&FileEntry>, after: Option<&FileEntry>) -> Self {
+        let executable = |e: Option<&FileEntry>| e.is_some_and(|e| e.mode & 0o111 != 0);
+        match (executable(before), executable(after)) {
+            (false, true) => Self::GainedExecutable,
+            (true, false) => Self::LostExecutable,
+            _ => Self::Other,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -1569,6 +1592,10 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
                 kind: n.kind,
                 before: self.describe(before_path, n.before.as_ref(), n.kind).await,
                 after: self.describe(&n.path, n.after.as_ref(), n.kind).await,
+                has_preview: n.kind == NonTextKind::Binary
+                    && image_media_type(&n.path).is_some()
+                    && (n.before.is_some() || n.after.is_some()),
+                mode_change: (n.kind == NonTextKind::Mode).then(|| ModeChange::of(n.before.as_ref(), n.after.as_ref())),
             });
         }
         let changed = diff

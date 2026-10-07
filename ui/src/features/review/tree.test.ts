@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FileChange } from "../../generated/FileChange.ts";
+import type { ModeChange } from "../../generated/ModeChange.ts";
 import { buildRows, buildTree, summarize } from "./tree.ts";
 
 const labels = (paths: string[], collapsed: string[] = []) =>
@@ -41,6 +42,20 @@ void test("collapsing a folder hides its rows, and its descendants stay collapse
     buildRows(buildTree(paths), collapsed).map((r) => r.path),
     ["a", "a/b", "a/c", "a/x.rs"],
   );
+});
+
+void test("a file's mode badge follows the backend's classification of its mode item", () => {
+  const file = (modeChange: ModeChange | null) =>
+    ({
+      path: "run.sh",
+      status: "modified",
+      nonText: [{ kind: "mode", modeChange }],
+      completion: { seenPercent: 0, oldBasePercent: 0 },
+    }) as unknown as FileChange;
+  assert.equal(summarize(file("gainedExecutable")).mode, "+x");
+  assert.equal(summarize(file("lostExecutable")).mode, "-x");
+  assert.equal(summarize(file("other")).mode, "mode");
+  assert.equal(summarize({ ...file(null), nonText: [] }).mode, undefined);
 });
 
 void test("a file's progress comes from its summary, not from the tree", () => {
