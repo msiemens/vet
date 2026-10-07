@@ -4,11 +4,7 @@
 
 import { getChunks, getOriginalDoc } from "@codemirror/merge";
 import { type EditorView, ViewPlugin } from "@codemirror/view";
-import { nextPaint } from "../../../lib/nextPaint";
-import { hoverContent } from "./hoverContent";
-import { isGotoClick, type SemanticHooks } from "./semantic";
-
-const HOVER_MS = 50;
+import { HOVER_MS, type SemanticHooks, type TextPosition, gotoOnClick, queryHover } from "./semantic";
 
 /** The text position under a point; Safari only has the older `caretRangeFromPoint`. */
 function caretAt(x: number, y: number): { node: Node; offset: number } | undefined {
@@ -23,7 +19,7 @@ function caretAt(x: number, y: number): { node: Node; offset: number } | undefin
 }
 
 /** The base-side 0-based line and UTF-16 column under the pointer, if it is on a deleted line. */
-function baseAt(view: EditorView, event: MouseEvent): { line: number; col: number } | undefined {
+function baseAt(view: EditorView, event: MouseEvent): TextPosition | undefined {
   const target = event.target instanceof Element ? event.target : null;
   const lineEl = target?.closest(".cm-deletedLine");
   const chunkEl = lineEl?.closest(".cm-deletedChunk");
@@ -71,27 +67,19 @@ export function deletedLines(path: string, hooks: SemanticHooks, hoverShown: (ms
       async show(event: MouseEvent, x: number, y: number, seq: number) {
         const at = baseAt(this.view, event);
         if (!at) return;
-        const started = performance.now();
-        const hover = await hooks.hover("base", path, at.line, at.col);
-        if (!hover.text || seq !== this.seq) return;
-        const tip = document.createElement("div");
-        tip.className = "cm-tooltip vet-hover vet-hover-floating";
-        tip.append(hoverContent(hover));
+        const create = await queryHover(hooks, "base", path, at, hoverShown);
+        if (!create || seq !== this.seq) return;
+        const tip = create();
+        tip.classList.add("cm-tooltip", "vet-hover-floating");
         tip.style.left = `${x}px`;
         tip.style.top = `${y - 8}px`;
         document.body.append(tip);
         this.tip = tip;
-        void nextPaint().then(() => hoverShown(performance.now() - started));
       }
 
       down = (event: MouseEvent) => {
         this.hide();
-        if (!isGotoClick(event)) return;
-        const at = baseAt(this.view, event);
-        if (!at) return;
-        event.preventDefault();
-        event.stopPropagation();
-        hooks.definition("base", path, at.line, at.col);
+        if (gotoOnClick(event, hooks, "base", path, () => baseAt(this.view, event))) event.stopPropagation();
       };
 
       destroy() {

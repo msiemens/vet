@@ -41,8 +41,57 @@ export function bindRevision(source: SemanticSource, revision: number): Semantic
   };
 }
 
+/** How long the pointer rests on a position before the hover query is sent. */
+export const HOVER_MS = 50;
+
+/** A 0-based line and UTF-16 column of a side's text. */
+export interface TextPosition {
+  line: number;
+  col: number;
+}
+
+/**
+ * Asks for the hover text at a position of `side` and returns what builds its tooltip body, or
+ * nothing when there is no text. `hoverShown` gets the time from the query to the body's paint
+ * once the body has been built and put on screen.
+ */
+export async function queryHover(
+  hooks: SemanticHooks,
+  side: Side,
+  path: string,
+  at: TextPosition,
+  hoverShown?: (ms: number) => void,
+): Promise<(() => HTMLElement) | undefined> {
+  const started = performance.now();
+  const hover = await hooks.hover(side, path, at.line, at.col);
+  if (!hover.text) return undefined;
+  return () => {
+    const dom = document.createElement("div");
+    dom.className = "vet-hover";
+    dom.append(hoverContent(hover));
+    if (hoverShown) void nextPaint().then(() => hoverShown(performance.now() - started));
+    return dom;
+  };
+}
+
 /** Mod is Cmd on macOS (Ctrl+click is the context menu there) and Ctrl elsewhere. */
-export const isGotoClick = (e: MouseEvent) => e.button === 0 && (isMac ? e.metaKey : e.ctrlKey);
+const isGotoClick = (e: MouseEvent) => e.button === 0 && (isMac ? e.metaKey : e.ctrlKey);
+
+/** Mod+click goes to the definition at the position `at` finds; answers whether the click was one and has been taken. */
+export function gotoOnClick(
+  event: MouseEvent,
+  hooks: SemanticHooks,
+  side: Side,
+  path: string,
+  at: () => TextPosition | undefined,
+): boolean {
+  if (!isGotoClick(event)) return false;
+  const position = at();
+  if (!position) return false;
+  event.preventDefault();
+  hooks.definition(side, path, position.line, position.col);
+  return true;
+}
 
 /** How long a reached definition stays marked; the selection alone is not drawn in an unfocused or read-only editor. */
 const MARK_MS = 1500;
@@ -105,47 +154,33 @@ export function semanticExtensions(
   hooks: SemanticHooks,
   hoverShown?: (ms: number) => void,
 ): Extension[] {
-  const at = (view: EditorView, pos: number) => {
+  const at = (view: EditorView, pos: number): TextPosition => {
     const { doc } = view.state;
     const line = lineOf(doc, pos);
-    return [line, pos - lineStart(doc, line)] as const;
+    return { line, col: pos - lineStart(doc, line) };
   };
   return [
     targetField,
     hoverTooltip(
       async (view, pos) => {
-        const started = performance.now();
-        const hover = await hooks.hover(side, path, ...at(view, pos));
-        if (!hover.text) return null;
-        return {
-          pos,
-          above: true,
-          create: () => {
-            const dom = document.createElement("div");
-            dom.className = "vet-hover";
-            dom.append(hoverContent(hover));
-            if (hoverShown) void nextPaint().then(() => hoverShown(performance.now() - started));
-            return { dom };
-          },
-        };
+        const create = await queryHover(hooks, side, path, at(view, pos), hoverShown);
+        return create ? { pos, above: true, create: () => ({ dom: create() }) } : null;
       },
-      { hoverTime: 50 },
+      { hoverTime: HOVER_MS },
     ),
     EditorView.domEventHandlers({
-      mousedown: (event, view) => {
-        if (!isGotoClick(event)) return false;
-        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        if (pos === null) return false;
-        event.preventDefault();
-        hooks.definition(side, path, ...at(view, pos));
-        return true;
-      },
+      mousedown: (event, view) =>
+        gotoOnClick(event, hooks, side, path, () => {
+          const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+          return pos === null ? undefined : at(view, pos);
+        }),
     }),
     keymap.of([
       {
         key: "Mod-b",
         run: (view) => {
-          hooks.definition(side, path, ...at(view, view.state.selection.main.head));
+          const { line, col } = at(view, view.state.selection.main.head);
+          hooks.definition(side, path, line, col);
           return true;
         },
       },
