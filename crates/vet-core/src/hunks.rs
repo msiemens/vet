@@ -10,6 +10,15 @@ use crate::text::unit_len;
 /// 0-based line hunks, histogram algorithm. Hunks with almost nothing between them are one
 /// hunk (see [`JOIN_GAP`]).
 pub fn line_hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
+    let old_lines: Vec<&[u8]> = byte_lines(old).collect();
+    join_close_hunks(changed_lines(old, new), |r| {
+        String::from_utf8_lossy(&old_lines[r.start as usize..r.end as usize].concat()).into_owned()
+    })
+}
+
+/// 0-based line hunks of exactly the changed lines, not joined: what a merge or a question of
+/// which lines changed needs, where [`line_hunks`] answers what is reviewed together.
+pub fn changed_lines(old: &[u8], new: &[u8]) -> Vec<Hunk> {
     let input = InternedInput::new(byte_lines(old), byte_lines(new));
     let mut diff = Diff::compute(Algorithm::Histogram, &input);
     diff.postprocess_lines(&input);
@@ -17,14 +26,12 @@ pub fn line_hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
         start: r.start,
         end: r.end,
     };
-    let old_lines: Vec<&[u8]> = byte_lines(old).collect();
-    join_close_hunks(
-        diff.hunks().map(|h| Hunk {
+    diff.hunks()
+        .map(|h| Hunk {
             old: range(h.before),
             new: range(h.after),
-        }),
-        |r| String::from_utf8_lossy(&old_lines[r.start as usize..r.end as usize].concat()).into_owned(),
-    )
+        })
+        .collect()
 }
 
 /// Hunks with fewer than this many units of unchanged text between them are one hunk: changes
