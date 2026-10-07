@@ -13,48 +13,14 @@ use gix::objs::{
     tree::{EntryKind as GitKind, EntryMode},
 };
 use vet_app::ports::GitError;
+use vet_core::classify::{Change, changes, classify, text_blobs};
 use vet_core::content::{
-    BlobId, BlobSource, EntryKind, FileDiff, FileEntry, NonTextChange, NonTextKind, RenameMap, RepoPath, Snapshot,
-    SnapshotDiff, is_binary,
+    BlobId, BlobSource, EntryKind, FileDiff, RenameMap, RepoPath, Snapshot, SnapshotDiff,
 };
 use vet_core::hunks::line_hunks;
 
 use super::scan::Worktree;
 use super::{BlobCache, err};
-
-type Side = Option<(RepoPath, FileEntry)>;
-
-pub(crate) struct Change {
-    pub old: Side,
-    pub new: Side,
-}
-
-/// Entries that differ between the snapshots, by path.
-pub(crate) fn changes(old: &Snapshot, new: &Snapshot) -> Vec<Change> {
-    let side = |snap: &Snapshot, path: &RepoPath| snap.entries.get(path).map(|e| (path.clone(), e.clone()));
-    let mut paths: Vec<&RepoPath> = old.entries.keys().chain(new.entries.keys()).collect();
-    paths.sort();
-    paths.dedup();
-    paths
-        .into_iter()
-        .filter(|p| old.entries.get(*p) != new.entries.get(*p))
-        .map(|p| Change {
-            old: side(old, p),
-            new: side(new, p),
-        })
-        .collect()
-}
-
-/// Blobs whose text a diff of `changes` needs.
-pub(crate) fn text_blobs(changes: &[Change]) -> Vec<(RepoPath, BlobId)> {
-    changes
-        .iter()
-        .flat_map(|c| [&c.old, &c.new])
-        .flatten()
-        .filter(|(_, e)| e.kind == EntryKind::File)
-        .map(|(p, e)| (p.clone(), e.blob))
-        .collect()
-}
 
 /// `contents` holds what the content store had; the rest is looked up in git
 /// or the worktree. Anything unavailable ends up as a `ContentUnavailable` item.
@@ -89,20 +55,26 @@ pub(crate) fn diff(
             new: new_side.and_then(|c| c.new),
         });
     }
-    changes.sort_by(|a, b| key(a).cmp(key(b)));
+    changes.sort_by(|a, b| a.path().cmp(b.path()));
 
     let mut out = SnapshotDiff {
         renames: RenameMap(renames.into_iter().collect()),
         ..Default::default()
     };
-    for change in changes {
-        classify(change, &contents, &mut out);
+    for change in &changes {
+        let classified = classify(change, &contents);
+        out.non_text.extend(classified.non_text);
+        if let Some(text) = classified.text {
+            out.files.push(FileDiff {
+                old_path: text.old.map(|(p, _)| p.clone()),
+                new_path: text.new.map(|(p, _)| p.clone()),
+                old_blob: text.old.map(|(_, b)| b),
+                new_blob: text.new.map(|(_, b)| b),
+                hunks: line_hunks(text.before, text.after),
+            });
+        }
     }
     Ok(out)
-}
-
-fn key(c: &Change) -> &RepoPath {
-    &c.new.as_ref().or(c.old.as_ref()).expect("a change has a side").0
 }
 
 fn take(changes: &mut Vec<Change>, f: impl Fn(&Change) -> bool) -> Option<Change> {
@@ -222,70 +194,4 @@ fn detect_renames(
         )
         .map_err(err)?;
     Ok(found)
-}
-
-fn classify(change: Change, contents: &BTreeMap<BlobId, Vec<u8>>, out: &mut SnapshotDiff) {
-    let kind_of = |s: &Side| s.as_ref().map(|(_, e)| e.kind);
-    let item = |kind, change: &Change| NonTextChange {
-        path: key(change).clone(),
-        from: (kind == NonTextKind::Rename).then(|| key_old(change).clone()),
-        kind,
-        before: change.old.as_ref().map(|(_, e)| e.clone()),
-        after: change.new.as_ref().map(|(_, e)| e.clone()),
-    };
-    let (old_kind, new_kind) = (kind_of(&change.old), kind_of(&change.new));
-
-    if old_kind == Some(EntryKind::Submodule) || new_kind == Some(EntryKind::Submodule) {
-        out.non_text.push(item(NonTextKind::Submodule, &change));
-        return;
-    }
-    if old_kind == Some(EntryKind::Symlink) || new_kind == Some(EntryKind::Symlink) {
-        out.non_text.push(item(NonTextKind::Symlink, &change));
-        return;
-    }
-
-    let (old_blob, new_blob) = (
-        change.old.as_ref().map(|(_, e)| e.blob),
-        change.new.as_ref().map(|(_, e)| e.blob),
-    );
-    if let (Some((_, o)), Some((_, n))) = (&change.old, &change.new) {
-        if o.mode != n.mode {
-            out.non_text.push(item(NonTextKind::Mode, &change));
-        }
-        if o.blob == n.blob {
-            if key_old(&change) != key(&change) {
-                out.non_text.push(item(NonTextKind::Rename, &change));
-            }
-            return;
-        }
-    }
-
-    let text = |blob: Option<BlobId>| match blob {
-        None => Some(&[][..]),
-        Some(b) => contents.blob(b),
-    };
-    let (Some(before), Some(after)) = (text(old_blob), text(new_blob)) else {
-        out.non_text.push(item(NonTextKind::ContentUnavailable, &change));
-        return;
-    };
-    if is_binary(before) || is_binary(after) {
-        out.non_text.push(item(NonTextKind::Binary, &change));
-        return;
-    }
-    // Added or deleted empty: no lines on either side. A file with text on one side keeps its text diff.
-    if before.is_empty() && after.is_empty() {
-        out.non_text.push(item(NonTextKind::Empty, &change));
-        return;
-    }
-    out.files.push(FileDiff {
-        old_path: change.old.as_ref().map(|(p, _)| p.clone()),
-        new_path: change.new.as_ref().map(|(p, _)| p.clone()),
-        old_blob,
-        new_blob,
-        hunks: line_hunks(before, after),
-    });
-}
-
-fn key_old(c: &Change) -> &RepoPath {
-    &c.old.as_ref().expect("both sides").0
 }

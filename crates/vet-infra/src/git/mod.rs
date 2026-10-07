@@ -22,6 +22,7 @@ use vet_app::ports::{
     BaseCandidates, BlobRead, BranchInfo, CheckoutError, CommitInfo, Dirty, GitError, GitRepo, IgnoreRules, Scan, Store,
 };
 use vet_app::review::SessionId;
+use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
 
 use crate::paths;
@@ -313,7 +314,7 @@ impl GitRepo for GixRepo {
 
     async fn diff<S: Store + Sync>(&self, store: &S, old: &Snapshot, new: &Snapshot) -> Result<SnapshotDiff, GitError> {
         let mut stored = BTreeMap::new();
-        for (_, blob) in diff::text_blobs(&diff::changes(old, new)) {
+        for (_, blob) in text_blobs(&changes(old, new)) {
             if let Some(bytes) = store.blob(blob).await.map_err(|e| GitError(e.0))? {
                 stored.insert(blob, bytes);
             }

@@ -2,6 +2,7 @@
 //!
 //! Nothing here knows about git refs, commit hashes, the filesystem, or time.
 
+pub mod classify;
 pub mod completion;
 pub mod content;
 pub mod filter;
