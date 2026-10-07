@@ -6,6 +6,7 @@ import { errorText } from "../lib/errorText";
 import { Backend } from "./backend";
 import { hasNativeDialogs, pickRepository, setWindowMode } from "./host";
 import { recent } from "./recent.svelte";
+import { RepoOpener } from "./repoOpener";
 
 class SessionStore {
   status = $state("connecting…");
@@ -18,6 +19,16 @@ class SessionStore {
   openError = $state<{ path: string; message: string }>();
   private connectListeners = new Set<(backend: Backend) => void>();
   private closeListeners = new Set<() => void>();
+  private opener = new RepoOpener({
+    release: () => this.release(),
+    open: (path) => this.connected().open(path),
+    setWindowMode,
+    opened: (repo) => {
+      this.repo = repo;
+      void recent.remember(this.connected(), repo);
+    },
+    failed: (path, error) => (this.openError = { path, message: errorText(error) }),
+  });
 
   async connect() {
     try {
@@ -47,20 +58,14 @@ class SessionStore {
     return this.backend;
   }
 
-  /** Closes the open repository, if any, and opens `path` (the backend resolves it to a repository root). */
+  /**
+   * Closes the open repository, if any, and opens `path` (the backend resolves it to a repository root).
+   * Asking for a path that is being opened joins that open: a double click or a held Enter opens once.
+   */
   async openRepo(path: string) {
-    const backend = this.connected();
+    this.connected();
     this.openError = undefined;
-    await this.release();
-    try {
-      const repo = await backend.open(path);
-      await setWindowMode("project");
-      this.repo = repo;
-      void recent.remember(backend, repo);
-    } catch (error) {
-      this.openError = { path, message: errorText(error) };
-      await setWindowMode("welcome").catch(console.error);
-    }
+    await this.opener.open(path);
   }
 
   /**
