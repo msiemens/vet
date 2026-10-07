@@ -59,7 +59,7 @@ pub(super) fn target_view(source: &Source, branches: &[BranchInfo]) -> TargetVie
             branch: Some(name.clone()),
             head: branches
                 .iter()
-                .find(|b| !b.remote && b.name == *name)
+                .find(|b| b.name == *name)
                 .map(|b| b.commit.short().to_owned()),
         },
         _ => TargetView {
@@ -193,4 +193,36 @@ pub(super) fn changeset_completion(
     acked: &[NonTextChange],
 ) -> Completion {
     cov.completion(filter, &diff.files, &diff.non_text, acked)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::changeset::CommitId;
+
+    fn branch(name: &str, remote: bool, commit: &str, current: bool) -> BranchInfo {
+        BranchInfo {
+            name: name.into(),
+            remote,
+            commit: CommitId(commit.into()),
+            current,
+            default: false,
+            upstream: None,
+        }
+    }
+
+    #[test]
+    fn a_branch_target_carries_its_tips_short_id_and_the_working_tree_none() {
+        let branches = [
+            branch("main", false, "aaaaaaaaaaaaaaaa", true),
+            branch("origin/feature", true, "bbbbbbbbbbbbbbbb", false),
+        ];
+        let remote = Source::Branch {
+            name: "origin/feature".into(),
+        };
+        assert_eq!(target_view(&remote, &branches).head.as_deref(), Some("bbbbbbb"));
+        let tree = target_view(&Source::WorkingTree, &branches);
+        assert_eq!(tree.head, None);
+        assert_eq!(tree.branch.as_deref(), Some("main"));
+    }
 }
