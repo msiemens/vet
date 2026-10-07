@@ -815,6 +815,77 @@ async fn each_settled_snapshot_of_an_open_review_is_the_next_version() {
     assert_eq!(fx.store.0.lock().unwrap().versions.len(), 3);
 }
 
+/// The files `version` changed with their added and removed lines.
+fn changed(version: &Version) -> Vec<(String, u32, u32)> {
+    let files = version.change.files.iter();
+    files
+        .map(|f| (f.path.to_string_lossy(), f.delta.added, f.delta.removed))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_version_records_what_it_changed_against_the_one_before_it() {
+    let (a0, a1, a2) = (numbered(10, &[]), numbered(10, &[3]), numbered(10, &[3, 7]));
+    let fx = Fixture::reviewing(
+        &[("a.txt", &a0), ("keep.txt", "k\n")],
+        &[("a.txt", &a1), ("new.txt", "n\n"), ("keep.txt", "k\n")],
+    )
+    .await;
+
+    fx.settle(&[("a.txt", &a2), ("new.txt", "n\nm\n"), ("keep.txt", "k\n")])
+        .await;
+    fx.settle(&[("a.txt", &a2), ("keep.txt", "k\n")]).await;
+
+    let versions = fx.store.0.lock().unwrap().versions.clone();
+    assert_eq!(
+        changed(&versions[0]),
+        [("a.txt".to_string(), 1, 1), ("new.txt".to_string(), 1, 0)],
+        "the first version changed what its changeset changes"
+    );
+    assert_eq!(
+        changed(&versions[1]),
+        [("a.txt".to_string(), 1, 1), ("new.txt".to_string(), 1, 0)],
+        "a later one only what the burst before it wrote"
+    );
+    assert_eq!(
+        changed(&versions[2]),
+        [("new.txt".to_string(), 0, 2)],
+        "untouched files are not listed, and a deleted one counts its lines"
+    );
+    assert_eq!(
+        versions[2].change.delta(),
+        vet_core::content::LineDelta { added: 0, removed: 2 }
+    );
+}
+
+#[tokio::test]
+async fn a_version_that_only_moves_the_base_changed_nothing_the_author_did() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n"), ("upstream.txt", "u\n")]).await;
+    // The base moves to a commit that has what the tree has taken over from upstream.
+    fx.git
+        .add_commit("c1", "c1-full", &[("a.txt", "one\n"), ("upstream.txt", "u\n")]);
+    fx.git.add_commit(
+        "merge-base main",
+        "c1-full",
+        &[("a.txt", "one\n"), ("upstream.txt", "u\n")],
+    );
+
+    fx.session
+        .set_base(BaseChoice::Commit {
+            id: CommitId("c1".into()),
+        })
+        .await
+        .unwrap();
+
+    let versions = fx.store.0.lock().unwrap().versions.clone();
+    assert_eq!(versions[1].origin, VersionOrigin::BaseMoved);
+    assert_eq!(
+        changed(&versions[0]),
+        [("a.txt".to_string(), 1, 1), ("upstream.txt".to_string(), 1, 0)]
+    );
+    assert!(changed(&versions[1]).is_empty(), "{:?}", versions[1].change);
+}
+
 #[tokio::test]
 async fn a_base_on_another_commit_is_the_next_version() {
     NOW.store(500, Ordering::Relaxed);

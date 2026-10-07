@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::CommitInfo;
+use crate::{CommitInfo, LineDelta};
 
 /// What a request about the changeset's files reads: the changeset as it is, or what the author
 /// changed between two of its versions (an interdiff). The files of an interdiff are those of its
@@ -48,6 +48,18 @@ pub struct VersionInfo {
     pub base: Option<CommitInfo>,
     /// Something was last marked in this version, which is where the next review starts.
     pub reviewed_here: bool,
+    /// What the version changed against the one before it (the first: against its base), by
+    /// path. A move of the base is not a change.
+    pub files: Vec<VersionFile>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct VersionFile {
+    pub path: String,
+    /// Zero for a file without text lines to count (a mode change, a binary file).
+    pub delta: LineDelta,
 }
 
 /// What an interdiff manifest says about itself beyond its files.

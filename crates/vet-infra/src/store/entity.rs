@@ -215,6 +215,35 @@ pub mod version {
     child_of_changeset!();
 }
 
+/// A file a version changed against the one before it, with the lines it gained and lost.
+pub mod version_file {
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "version_file")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        pub version: i64,
+        pub path: Vec<u8>,
+        pub added: i64,
+        pub removed: i64,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::version::Entity",
+            from = "Column::Version",
+            to = "super::version::Column::Id",
+            on_delete = "Cascade"
+        )]
+        Version,
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 /// How the review's base was chosen. `base_value` is the branch, the reference
 /// or the commit id.
 pub mod review {

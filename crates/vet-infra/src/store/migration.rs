@@ -47,6 +47,7 @@ fn statements() -> Vec<String> {
         tree_child::Entity,
         changeset::Entity,
         version::Entity,
+        version_file::Entity,
         review::Entity,
         project_filter::Entity,
         project_filter_item::Entity,

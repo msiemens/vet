@@ -29,7 +29,7 @@ impl Referenced for StoreReferences {
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use vet_app::changeset::{BaseChoice, CommitId, Source, Version, VersionOrigin};
+    use vet_app::changeset::{BaseChoice, CommitId, Source, Version, VersionChange, VersionOrigin};
     use vet_app::ports::ReviewStore;
     use vet_core::content::Hash;
     use vet_infra::materialize::kept::{KeptTrees, Limits};
@@ -67,6 +67,7 @@ mod tests {
             tip: commit.clone(),
             at: 0,
             origin: VersionOrigin::Settled,
+            change: VersionChange::default(),
         };
         store
             .start_review(

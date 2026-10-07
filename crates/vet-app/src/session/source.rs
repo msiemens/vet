@@ -141,6 +141,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 tip: tip.clone(),
                 at: now,
                 origin: VersionOrigin::Observed,
+                change: self.change_of(Some((&st.base, &st.target)), &base, &target).await,
             };
             let previous = store.versions(changeset).await?.pop();
             store.append_version(changeset, version.clone()).await?;

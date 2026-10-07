@@ -3,12 +3,13 @@ use std::time::Duration;
 
 use sea_orm::PaginatorTrait;
 use tempfile::TempDir;
-use vet_app::changeset::{CommitId, RemoteKey, VersionOrigin};
+use vet_app::changeset::{ChangedFile, CommitId, RemoteKey, VersionChange, VersionOrigin};
 use vet_app::gc::{Retention, collect, open_bases};
 use vet_app::ports::{GcReport, Store};
 use vet_app::review::NonTextAck;
 use vet_core::content::{
-    BlobId, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus,
+    BlobId, EntryKind, FileEntry, Hash, LineDelta, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId,
+    SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanState, ThreadStatus};
@@ -89,6 +90,7 @@ fn version(n: u32, base: SnapshotId, target: SnapshotId) -> Version {
         tip: commit("abc123"),
         at: i64::from(n) * 10,
         origin: VersionOrigin::Settled,
+        change: VersionChange::default(),
     }
 }
 
@@ -475,6 +477,37 @@ async fn versions_are_numbered_per_changeset_and_a_new_review_starts_over() {
         versions.iter().map(|v| (v.n, v.target)).collect::<Vec<_>>(),
         [(1, SnapshotId(h(7)))]
     );
+}
+
+#[tokio::test]
+async fn what_a_version_changed_is_stored_with_it_in_order_and_goes_with_its_review() {
+    let dir = tempfile::tempdir().unwrap();
+    let changed = |path: &str, added, removed| ChangedFile {
+        path: RepoPath(path.as_bytes().to_vec()),
+        delta: LineDelta { added, removed },
+    };
+    let change = VersionChange {
+        files: vec![changed("a.rs", 3, 1), changed("b.rs", 0, 0), changed("c/d.rs", 40, 0)],
+    };
+    let changeset;
+    {
+        let store = open(&dir).await;
+        (changeset, _) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+        let second = Version {
+            change: change.clone(),
+            ..version(2, SnapshotId(h(1)), SnapshotId(h(3)))
+        };
+        store.append_version(changeset, second).await.unwrap();
+    }
+
+    let store = open(&dir).await;
+    let versions = store.versions(changeset).await.unwrap();
+    assert_eq!(versions[0].change, VersionChange::default());
+    assert_eq!(versions[1].change, change);
+
+    review(&store, SnapshotId(h(6)), SnapshotId(h(7))).await;
+    let rows = version_file::Entity::find().all(&store.db).await.unwrap();
+    assert!(rows.is_empty(), "the files of the replaced versions are gone");
 }
 
 #[tokio::test]

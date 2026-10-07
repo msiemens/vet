@@ -377,6 +377,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             tip: head.clone(),
             at: now,
             origin: VersionOrigin::Settled,
+            change: self.change_of(None, &st.base, &st.target).await,
         };
         let (changeset, id) = store
             .start_review(
@@ -483,6 +484,9 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                         tip: st.head.clone(),
                         at: now,
                         origin: VersionOrigin::BaseMoved,
+                        change: self
+                            .change_of(Some((&st.base, &st.target)), &snapshot, &st.target)
+                            .await,
                     };
                     let previous = store.versions(changeset).await?.pop();
                     store.append_version(changeset, version.clone()).await?;
@@ -681,6 +685,9 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 tip: st.head.clone(),
                 at: now,
                 origin: VersionOrigin::Settled,
+                change: self
+                    .change_of(Some((&st.base, &st.target)), &st.base, &scan.snapshot)
+                    .await,
             };
             store.append_version(changeset, version).await?;
         }

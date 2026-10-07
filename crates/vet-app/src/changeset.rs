@@ -4,7 +4,7 @@
 //! `vet_core::content::Changeset` stays the pure pair of snapshots a version
 //! resolves to.
 
-use vet_core::content::SnapshotId;
+use vet_core::content::{LineDelta, RepoPath, SnapshotId};
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct CommitId(pub String);
@@ -62,6 +62,29 @@ pub struct Version {
     /// Unix seconds.
     pub at: i64,
     pub origin: VersionOrigin,
+    pub change: VersionChange,
+}
+
+/// What a version changed against the one before it, or for the first version against its
+/// base. A move of the base is not a change: it is what the interdiff leaves out. Computed once
+/// when the version is recorded.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct VersionChange {
+    /// By path.
+    pub files: Vec<ChangedFile>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ChangedFile {
+    pub path: RepoPath,
+    /// Zero for a file without text lines to count (a mode change, a binary file).
+    pub delta: LineDelta,
+}
+
+impl VersionChange {
+    pub fn delta(&self) -> LineDelta {
+        self.files.iter().map(|f| f.delta).sum()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -105,6 +128,7 @@ mod tests {
             tip: CommitId(tip.into()),
             at: 0,
             origin: VersionOrigin::Settled,
+            change: VersionChange::default(),
         }
     }
 

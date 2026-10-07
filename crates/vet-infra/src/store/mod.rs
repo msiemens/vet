@@ -80,6 +80,12 @@ where
     Ok(())
 }
 
+/// Writes a version and the files it changed.
+async fn insert_version(db: &impl ConnectionTrait, changeset: ChangesetId, version: &Version) -> Res<()> {
+    let id = version_row(changeset, version).insert(db).await?.id;
+    insert_chunked(db, version_file_rows(id, &version.change)).await
+}
+
 async fn put_anchor(db: &impl ConnectionTrait, changeset: i64, anchor: Option<&Anchor>) -> Res<Option<i64>> {
     match anchor {
         Some(a) => Ok(Some(anchor_row(changeset, a).insert(db).await?.id)),
@@ -350,12 +356,26 @@ impl ChangesetStore for SqliteStore {
             .order_by_asc(version::Column::N)
             .all(&self.db)
             .await?;
-        Ok(rows.into_iter().map(version_from).collect::<Res<_>>()?)
+        let mut files: HashMap<i64, Vec<version_file::Model>> = HashMap::new();
+        for file in version_file::Entity::find()
+            .filter(version_file::Column::Version.is_in(rows.iter().map(|r| r.id)))
+            .order_by_asc(version_file::Column::Id)
+            .all(&self.db)
+            .await?
+        {
+            files.entry(file.version).or_default().push(file);
+        }
+        let versions = rows.into_iter().map(|r| {
+            let files = files.remove(&r.id).unwrap_or_default();
+            version_from(r, files)
+        });
+        Ok(versions.collect::<Res<_>>()?)
     }
 
     async fn append_version(&self, changeset: ChangesetId, version: Version) -> Result<(), StoreError> {
-        version_row(changeset, &version).insert(&self.db).await?;
-        Ok(())
+        let txn = self.db.begin().await?;
+        insert_version(&txn, changeset, &version).await?;
+        Ok(txn.commit().await?)
     }
 }
 
@@ -388,7 +408,7 @@ impl ReviewStore for SqliteStore {
             .filter(version::Column::Changeset.eq(changeset))
             .exec(&txn)
             .await?;
-        version_row(ChangesetId(changeset as u64), &first).insert(&txn).await?;
+        insert_version(&txn, ChangesetId(changeset as u64), &first).await?;
         let (base_kind, base_value) = base_columns(base);
         let review = review::ActiveModel {
             changeset: Set(changeset),

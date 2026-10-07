@@ -90,6 +90,12 @@ pub fn versions(versions: &[VersionView]) -> p::Response {
                 tip: v.tip.as_ref().map(commit_info),
                 base: v.base.as_ref().map(commit_info),
                 reviewed_here: v.reviewed_here,
+                files: (v.change.files.iter())
+                    .map(|f| p::VersionFile {
+                        path: f.path.to_string_lossy(),
+                        delta: line_delta(f.delta),
+                    })
+                    .collect(),
             })
             .collect(),
     }

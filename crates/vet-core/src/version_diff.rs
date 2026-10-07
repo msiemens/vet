@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::classify::{Change, changes, classify};
-use crate::content::{BlobId, EntryKind, FileDiff, FileEntry, RepoPath, Snapshot, SnapshotDiff, is_binary};
+use crate::content::{BlobId, EntryKind, FileDiff, FileEntry, LineDelta, RepoPath, Snapshot, SnapshotDiff, is_binary};
 use crate::hunks::line_hunks;
 use crate::interdiff::{FileInterdiff, InterdiffHunk, interdiff};
 
@@ -24,8 +24,15 @@ pub struct VersionSides<'a> {
 
 impl VersionSides<'_> {
     /// The paths either version's changeset changes, which are the only ones that can differ
-    /// between the versions in a way the author made.
+    /// between the versions in a way the author made. With one base for both, those are the
+    /// paths the targets differ in.
     pub fn paths(&self) -> Vec<RepoPath> {
+        if self.base_a.id == self.base_b.id {
+            return changes(self.target_a, self.target_b)
+                .iter()
+                .map(|c| c.path().clone())
+                .collect();
+        }
         let mut paths = BTreeSet::new();
         for (base, target) in [(self.base_a, self.target_a), (self.base_b, self.target_b)] {
             paths.extend(changes(base, target).iter().map(|c| c.path().clone()));
@@ -54,6 +61,21 @@ pub struct VersionDiff {
     pub diff: SnapshotDiff,
     /// The hunks of each text file in `diff`, by its path, aligned with the file's own hunks.
     pub hunks: BTreeMap<RepoPath, Vec<InterdiffHunk>>,
+}
+
+impl VersionDiff {
+    /// The files the interdiff changes, by path, with the lines they gain and lose. A file with
+    /// no text lines to count (a mode change, a binary file) has none.
+    pub fn changed_files(&self) -> Vec<(RepoPath, LineDelta)> {
+        let mut files: BTreeMap<RepoPath, LineDelta> = BTreeMap::new();
+        for file in &self.diff.files {
+            files.insert(file.path().clone(), LineDelta::of(&file.hunks));
+        }
+        for item in &self.diff.non_text {
+            files.entry(item.path.clone()).or_default();
+        }
+        files.into_iter().collect()
+    }
 }
 
 /// The interdiff of `paths` (see [`VersionSides::paths`]). `blobs` holds the content of
@@ -349,6 +371,56 @@ mod tests {
             panic!("{result:?}")
         };
         assert_eq!(item.kind, NonTextKind::Mode);
+    }
+
+    #[test]
+    fn the_files_a_version_changed_are_listed_with_their_lines_and_a_mode_change_with_none() {
+        let before = lines("l", 10);
+        let edited = before.replace("l3\n", "a\nb\n").replace("l8\n", "");
+        let added = "new\nfile\n";
+        let script = "echo\n";
+        let (plain, exec) = (
+            entry(script, 0o100644, EntryKind::File),
+            entry(script, 0o100755, EntryKind::File),
+        );
+        let contents = [&before[..], &edited, added, script];
+        let base = tree(&[("keep", file(&before)), ("edit", file(&before)), ("run", plain)]);
+        let now = tree(&[
+            ("keep", file(&before)),
+            ("edit", file(&edited)),
+            ("added", file(added)),
+            ("run", exec),
+        ]);
+
+        let result = run(&contents, &base, &base, &base, &now);
+
+        assert_eq!(
+            result.changed_files(),
+            [
+                (RepoPath::from("added"), LineDelta { added: 2, removed: 0 }),
+                (RepoPath::from("edit"), LineDelta { added: 2, removed: 2 }),
+                (RepoPath::from("run"), LineDelta::default()),
+            ]
+        );
+    }
+
+    #[test]
+    fn with_one_base_only_the_files_the_targets_differ_in_are_looked_at() {
+        let text = lines("l", 4);
+        let other = lines("m", 4);
+        let (base, a, b) = (
+            tree(&[("same", file(&text)), ("moved", file(&text))]),
+            tree(&[("same", file(&other)), ("moved", file(&text))]),
+            tree(&[("same", file(&other)), ("moved", file(&other))]),
+        );
+        let sides = VersionSides {
+            base_a: &base.0,
+            target_a: &a.0,
+            base_b: &base.0,
+            target_b: &b.0,
+        };
+
+        assert_eq!(sides.paths(), [RepoPath::from("moved")]);
     }
 
     #[test]

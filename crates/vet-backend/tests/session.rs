@@ -1136,7 +1136,7 @@ async fn the_base_can_be_changed_and_review_state_follows() {
 #[tokio::test]
 async fn versions_are_listed_once_a_review_started_and_an_interdiff_needs_two_of_them() {
     let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &text(30, &[3]))]).await;
-    let one = Client::new(&fx.handler);
+    let mut one = Client::new(&fx.handler);
     let project = open(&one, fx.repo.path()).await;
     async fn versions(client: &Client, project: ProjectId) -> Vec<vet_protocol::VersionInfo> {
         match client.call(Request::Versions { project }).await.unwrap() {
@@ -1151,11 +1151,27 @@ async fn versions_are_listed_once_a_review_started_and_an_interdiff_needs_two_of
     let listed = versions(&one, project).await;
     assert_eq!(listed.len(), 1);
     assert_eq!((listed[0].n, listed[0].reviewed_here), (1, true));
+
+    // Each version is served with what it changed against the one before.
+    write(fx.repo.path(), "a.txt", &text(30, &[3, 20]));
+    write(fx.repo.path(), "b.txt", "new\n");
+    assert_eq!(one.settled().await, 1);
+    let files = |v: &vet_protocol::VersionInfo| {
+        (v.files.iter())
+            .map(|f| (f.path.clone(), f.delta.added, f.delta.removed))
+            .collect::<Vec<_>>()
+    };
+    let listed = versions(&one, project).await;
+    assert_eq!(files(&listed[0]), [("a.txt".to_string(), 1, 1)]);
+    assert_eq!(
+        files(&listed[1]),
+        [("a.txt".to_string(), 1, 1), ("b.txt".to_string(), 1, 0)]
+    );
     let interdiff = Request::Manifest {
         project,
-        view: vet_protocol::View::Interdiff { from: 1, to: 2 },
+        view: vet_protocol::View::Interdiff { from: 1, to: 3 },
     };
-    assert_eq!(one.call(interdiff).await.unwrap_err(), "no such version 2");
+    assert_eq!(one.call(interdiff).await.unwrap_err(), "no such version 3");
 }
 
 #[tokio::test]

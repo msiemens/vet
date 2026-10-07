@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::content::{BlobId, EntryKind, FileEntry, Hash, RepoPath, SnapshotId};
+use crate::content::{BlobId, EntryKind, FileEntry, Hash, RepoPath, Snapshot, SnapshotId};
 
 /// One directory: files by name, subdirectories by name and node hash.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -128,6 +128,15 @@ pub fn build(entries: &BTreeMap<RepoPath, FileEntry>) -> (SnapshotId, BTreeMap<H
 
 pub fn snapshot_id(entries: &BTreeMap<RepoPath, FileEntry>) -> SnapshotId {
     build(entries).0
+}
+
+/// The snapshot with no files.
+pub fn empty_snapshot() -> Snapshot {
+    let entries = BTreeMap::new();
+    Snapshot {
+        id: snapshot_id(&entries),
+        entries,
+    }
 }
 
 /// Rebuild a snapshot's entries from its nodes. `None` if a node is missing

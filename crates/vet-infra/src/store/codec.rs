@@ -5,10 +5,12 @@ use std::collections::HashMap;
 
 use sea_orm::sea_query::{SimpleExpr, Value};
 use sea_orm::{ColumnTrait, DbErr, Set};
-use vet_app::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version, VersionOrigin};
+use vet_app::changeset::{
+    BaseChoice, ChangedFile, ChangesetId, CommitId, Source, Version, VersionChange, VersionOrigin,
+};
 use vet_app::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, SpanId};
 use vet_core::content::{
-    BlobId, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
+    BlobId, EntryKind, FileEntry, Hash, LineDelta, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::TreeNode;
@@ -16,6 +18,7 @@ use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanS
 
 use super::entity::{
     ack, anchor, kinds, message, project_filter_item, review, snapshot_path, span, thread, tree_child, version,
+    version_file,
 };
 
 pub fn corrupt(what: &str) -> DbErr {
@@ -163,8 +166,38 @@ pub fn version_row(changeset: ChangesetId, v: &Version) -> version::ActiveModel 
     }
 }
 
-pub fn version_from(m: version::Model) -> Result<Version, DbErr> {
+/// The rows of what version `id` changed.
+pub fn version_file_rows(id: i64, change: &VersionChange) -> Vec<version_file::ActiveModel> {
+    change
+        .files
+        .iter()
+        .map(|f| version_file::ActiveModel {
+            version: Set(id),
+            path: Set(f.path.0.clone()),
+            added: Set(f.delta.added.into()),
+            removed: Set(f.delta.removed.into()),
+            ..Default::default()
+        })
+        .collect()
+}
+
+/// A version from its row and the rows of its files, in the order they were written.
+pub fn version_from(m: version::Model, files: Vec<version_file::Model>) -> Result<Version, DbErr> {
+    let count = |n: i64| u32::try_from(n).map_err(|_| corrupt("line count"));
+    let files = files
+        .into_iter()
+        .map(|f| {
+            Ok(ChangedFile {
+                path: RepoPath(f.path),
+                delta: LineDelta {
+                    added: count(f.added)?,
+                    removed: count(f.removed)?,
+                },
+            })
+        })
+        .collect::<Result<_, DbErr>>()?;
     Ok(Version {
+        change: VersionChange { files },
         n: u32::try_from(m.n).map_err(|_| corrupt("version number"))?,
         base: SnapshotId(hash(&m.base)?),
         base_commit: CommitId(m.base_commit),
