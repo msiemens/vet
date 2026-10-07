@@ -4,7 +4,7 @@
 
 import { errorText } from "../lib/errorText";
 import { Backend } from "./backend";
-import { hasNativeDialogs, pickRepository } from "./host";
+import { hasNativeDialogs, pickRepository, setWindowMode } from "./host";
 import { recent } from "./recent.svelte";
 
 class SessionStore {
@@ -51,12 +51,15 @@ class SessionStore {
   async openRepo(path: string) {
     const backend = this.connected();
     this.openError = undefined;
-    await this.closeRepo();
+    await this.release();
     try {
-      this.repo = await backend.open(path);
-      void recent.remember(backend, this.repo);
+      const repo = await backend.open(path);
+      await setWindowMode("project");
+      this.repo = repo;
+      void recent.remember(backend, repo);
     } catch (error) {
       this.openError = { path, message: errorText(error) };
+      await setWindowMode("welcome").catch(console.error);
     }
   }
 
@@ -78,8 +81,14 @@ class SessionStore {
     }
   }
 
-  /** Back to the welcome screen. */
+  /** Back to the welcome screen, in the welcome screen's window. */
   async closeRepo() {
+    await this.release();
+    await setWindowMode("welcome");
+  }
+
+  /** Closes the open repository without touching the window, for a caller that opens another. */
+  private async release() {
     this.repo = undefined;
     for (const listener of this.closeListeners) listener();
     await this.connected().close();

@@ -6,6 +6,7 @@
 mod backend;
 mod bench;
 mod dialog;
+mod geometry;
 mod menu;
 mod startup;
 mod window;
@@ -30,15 +31,18 @@ pub fn run() {
                 eprintln!("cannot forward menu event: {e}");
             }
         })
+        .on_window_event(geometry::on_window_event)
         .setup(|app| {
             app.manage(Bench::from_env());
             app.manage(Startup::new());
+            geometry::init(app.handle(), &app.state::<Bench>())?;
             startup::show_splash(app.handle());
             startup::launch(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             window::activate_and_show,
+            geometry::set_window_mode,
             startup::backend_connection,
             startup::retry_startup,
             startup::startup_progress,
@@ -54,10 +58,11 @@ pub fn run() {
         .expect("error while building the Vet shell");
 
     app.run(|handle, event| {
-        if let RunEvent::Exit = event
-            && let Some(backend) = handle.try_state::<Backend>()
-        {
-            backend.kill();
+        if let RunEvent::Exit = event {
+            geometry::persist(handle);
+            if let Some(backend) = handle.try_state::<Backend>() {
+                backend.kill();
+            }
         }
     });
 }

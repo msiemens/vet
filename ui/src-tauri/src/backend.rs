@@ -16,7 +16,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(180);
 
 pub struct Backend {
     ready: Ready,
-    /// The repository named on the command line or in `VET_REPO`; none shows the start screen.
+    /// The repository named on the command line or in `VET_REPO`; none shows the welcome screen.
     repo: Option<String>,
     pub child: Mutex<Child>,
 }
@@ -49,7 +49,7 @@ pub fn wsl_distro() -> Option<String> {
 
 /// The repository to review: the first command-line argument that is not a flag, else
 /// `VET_REPO`. The benchmark opens `vet-mock`, which ignores it, without asking.
-fn repo_path(bench: &Bench) -> Option<String> {
+pub fn repo_path(bench: &Bench) -> Option<String> {
     pick_repo(std::env::args().skip(1), std::env::var("VET_REPO").ok())
         .or_else(|| bench.requested().then(|| ".".to_owned()))
 }

@@ -26,6 +26,14 @@ export async function showWindow(): Promise<"custom" | "native" | "browser"> {
   return inTauri ? invoke<"custom" | "native">("activate_and_show") : "browser";
 }
 
+/**
+ * Gives the window the position and size of the welcome screen or of a project. Resolves once the
+ * window has them, so the page changes what it shows after, not before.
+ */
+export async function setWindowMode(mode: "welcome" | "project"): Promise<void> {
+  if (inTauri) await invoke("set_window_mode", { mode });
+}
+
 /** macOS has a native menu bar, drawn by the host from `setNativeMenu`; elsewhere the window shows the menu itself. */
 export const isMac = navigator.userAgent.includes("Mac");
 export const hasNativeMenu = inTauri && isMac;
