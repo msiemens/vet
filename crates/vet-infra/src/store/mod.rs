@@ -26,11 +26,11 @@ use sea_orm::{
 use sea_orm_migration::MigratorTrait;
 use vet_app::pin::{BaseChoice, CommitId, Pin, PinId};
 use vet_app::ports::{ReviewStore, Store, StoreError};
-use vet_app::review::{NonTextAck, RecordedSpan, Session, SessionId, SpanId, Version};
+use vet_app::review::{NonTextAck, Session, SessionId, SpanId, Version};
 use vet_core::content::{BlobId, Changeset, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::{self, TreeNode};
-use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Thread, ThreadId, ThreadStatus};
+use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 
 use codec::*;
 use content::ContentStore;
@@ -147,97 +147,42 @@ impl SqliteStore {
         let Some(row) = session::Entity::find_by_id(sid).one(&self.db).await? else {
             return Ok(None);
         };
-        let anchors: HashMap<i64, anchor::Model> = anchor::Entity::find()
-            .filter(anchor::Column::Session.eq(sid))
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(|a| (a.id, a))
-            .collect();
-        let anchor_of = |id: Option<i64>| id.and_then(|i| anchors.get(&i)).map(anchor_from).transpose();
-
-        let spans = span::Entity::find()
-            .filter(span::Column::Session.eq(sid))
-            .order_by_asc(span::Column::Id)
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(|s| {
-                let span = ReviewedSpan {
-                    base: anchor_of(s.base_anchor)?,
-                    target: anchor_of(s.target_anchor)?,
-                    state: s.state.into(),
-                };
-                Ok(RecordedSpan {
-                    id: SpanId(s.id as u64),
-                    span,
-                })
-            })
-            .collect::<Res<_>>()?;
-        let acks = ack::Entity::find()
-            .filter(ack::Column::Session.eq(sid))
-            .order_by_asc(ack::Column::Id)
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(ack_from)
-            .collect::<Res<_>>()?;
-
-        let mut messages: HashMap<i64, Vec<Message>> = HashMap::new();
         let thread_ids = thread::Entity::find()
             .filter(thread::Column::Session.eq(sid))
             .select_only()
             .column(thread::Column::Id);
-        for m in message::Entity::find()
-            .filter(message::Column::Thread.in_subquery(thread_ids.into_query()))
-            .order_by_asc(message::Column::Id)
-            .all(&self.db)
-            .await?
-        {
-            messages.entry(m.thread).or_default().push(Message {
-                author: m.author,
-                body: m.body,
-                at: m.at,
-            });
-        }
-        let threads = thread::Entity::find()
-            .filter(thread::Column::Session.eq(sid))
-            .order_by_asc(thread::Column::Id)
-            .all(&self.db)
-            .await?
-            .into_iter()
-            .map(|t| {
-                Ok(Thread {
-                    id: ThreadId(t.id as u64),
-                    target: target_from(&t, t.anchor.and_then(|a| anchors.get(&a)))?,
-                    messages: messages.remove(&t.id).unwrap_or_default(),
-                    status: t.status.into(),
-                })
-            })
-            .collect::<Res<_>>()?;
-
-        let stored_base = session_base::Entity::find_by_id(sid)
-            .one(&self.db)
-            .await?
-            .ok_or_else(|| corrupt("session without a base"))?;
-        let base_commit = CommitId(stored_base.commit.clone());
-        let base = base_from(stored_base);
-
-        Ok(Some(Session {
-            id,
-            pin: PinId(row.pin as u64),
-            changeset: Changeset {
-                base: SnapshotId(hash(&row.base)?),
-                target: SnapshotId(hash(&row.target)?),
-            },
-            base,
-            base_commit,
-            spans,
-            acks,
-            threads,
-            closed_at: row.closed_at,
-            complete: row.closed_at.map(|_| row.complete),
-        }))
+        let rows = SessionRows {
+            anchors: anchor::Entity::find()
+                .filter(anchor::Column::Session.eq(sid))
+                .all(&self.db)
+                .await?,
+            spans: span::Entity::find()
+                .filter(span::Column::Session.eq(sid))
+                .order_by_asc(span::Column::Id)
+                .all(&self.db)
+                .await?,
+            acks: ack::Entity::find()
+                .filter(ack::Column::Session.eq(sid))
+                .order_by_asc(ack::Column::Id)
+                .all(&self.db)
+                .await?,
+            messages: message::Entity::find()
+                .filter(message::Column::Thread.in_subquery(thread_ids.into_query()))
+                .order_by_asc(message::Column::Id)
+                .all(&self.db)
+                .await?,
+            threads: thread::Entity::find()
+                .filter(thread::Column::Session.eq(sid))
+                .order_by_asc(thread::Column::Id)
+                .all(&self.db)
+                .await?,
+            base: session_base::Entity::find_by_id(sid)
+                .one(&self.db)
+                .await?
+                .ok_or_else(|| corrupt("session without a base"))?,
+            session: row,
+        };
+        session_from(id, rows).map(Some)
     }
 
     async fn find_thread(db: &impl ConnectionTrait, id: ThreadId) -> Res<thread::Model> {

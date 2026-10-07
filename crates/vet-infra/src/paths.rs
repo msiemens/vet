@@ -21,7 +21,7 @@ impl std::error::Error for PathError {}
 fn unrepresentable(name: &[u8]) -> PathError {
     PathError(format!(
         "the file name {:?} cannot be represented on this platform",
-        String::from_utf8_lossy(name)
+        RepoPath(name.to_vec()).to_string_lossy()
     ))
 }
 

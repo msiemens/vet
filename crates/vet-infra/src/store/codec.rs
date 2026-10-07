@@ -1,18 +1,24 @@
 //! Mapping between `vet-core` review types and entity rows. Isolated so a
 //! change to anchors, spans or entries touches only this file.
 
+use std::collections::HashMap;
+
 use sea_orm::sea_query::{SimpleExpr, Value};
 use sea_orm::{ColumnTrait, DbErr, Set};
-use vet_app::pin::{BaseChoice, CommitId};
-use vet_app::review::NonTextAck;
+use vet_app::pin::{BaseChoice, CommitId, PinId};
+use vet_app::review::{NonTextAck, RecordedSpan, Session, SessionId, SpanId};
 use vet_core::content::{
-    BlobId, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
+    BlobId, Changeset, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::TreeNode;
-use vet_core::review::{Anchor, CommentTarget, Side, SpanState, ThreadStatus};
+use vet_core::review::{
+    Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanState, Thread, ThreadId, ThreadStatus,
+};
 
-use super::entity::{ack, anchor, kinds, project_filter_item, session_base, snapshot_path, thread, tree_child};
+use super::entity::{
+    ack, anchor, kinds, message, project_filter_item, session, session_base, snapshot_path, span, thread, tree_child,
+};
 
 pub fn corrupt(what: &str) -> DbErr {
     DbErr::Custom(format!("corrupt row: {what}"))
@@ -340,6 +346,84 @@ pub fn ack_from(m: ack::Model) -> Result<NonTextAck, DbErr> {
         kind: m.change.into(),
         before: before.entry()?,
         after: after.entry()?,
+    })
+}
+
+/// The rows of one stored session. Spans, acknowledgements and messages are in
+/// the order they were written.
+pub struct SessionRows {
+    pub session: session::Model,
+    pub base: session_base::Model,
+    pub anchors: Vec<anchor::Model>,
+    pub spans: Vec<span::Model>,
+    pub acks: Vec<ack::Model>,
+    pub threads: Vec<thread::Model>,
+    pub messages: Vec<message::Model>,
+}
+
+pub fn session_from(id: SessionId, rows: SessionRows) -> Result<Session, DbErr> {
+    let SessionRows {
+        session,
+        base,
+        anchors,
+        spans,
+        acks,
+        threads,
+        messages,
+    } = rows;
+    let anchors: HashMap<i64, anchor::Model> = anchors.into_iter().map(|a| (a.id, a)).collect();
+    let anchor_of = |id: Option<i64>| id.and_then(|i| anchors.get(&i)).map(anchor_from).transpose();
+
+    let spans = spans
+        .into_iter()
+        .map(|s| {
+            Ok(RecordedSpan {
+                id: SpanId(s.id as u64),
+                span: ReviewedSpan {
+                    base: anchor_of(s.base_anchor)?,
+                    target: anchor_of(s.target_anchor)?,
+                    state: s.state.into(),
+                },
+            })
+        })
+        .collect::<Result<_, DbErr>>()?;
+    let acks = acks.into_iter().map(ack_from).collect::<Result<_, DbErr>>()?;
+
+    let mut by_thread: HashMap<i64, Vec<Message>> = HashMap::new();
+    for m in messages {
+        by_thread.entry(m.thread).or_default().push(Message {
+            author: m.author,
+            body: m.body,
+            at: m.at,
+        });
+    }
+    let threads = threads
+        .into_iter()
+        .map(|t| {
+            Ok(Thread {
+                id: ThreadId(t.id as u64),
+                target: target_from(&t, t.anchor.and_then(|a| anchors.get(&a)))?,
+                messages: by_thread.remove(&t.id).unwrap_or_default(),
+                status: t.status.into(),
+            })
+        })
+        .collect::<Result<_, DbErr>>()?;
+
+    let base_commit = CommitId(base.commit.clone());
+    Ok(Session {
+        id,
+        pin: PinId(session.pin as u64),
+        changeset: Changeset {
+            base: SnapshotId(hash(&session.base)?),
+            target: SnapshotId(hash(&session.target)?),
+        },
+        base: base_from(base),
+        base_commit,
+        spans,
+        acks,
+        threads,
+        closed_at: session.closed_at,
+        complete: session.closed_at.map(|_| session.complete),
     })
 }
 

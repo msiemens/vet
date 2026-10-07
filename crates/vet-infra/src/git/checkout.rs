@@ -59,7 +59,7 @@ fn checked(path: &RepoPath) -> Result<&Path, GitError> {
     if bad {
         return Err(GitError(format!(
             "refusing to write unsafe path {:?}",
-            String::from_utf8_lossy(&path.0)
+            path.to_string_lossy()
         )));
     }
     paths::to_path(&path.0).map_err(err)
