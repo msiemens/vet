@@ -592,12 +592,18 @@ async fn the_first_mark_starts_the_review_at_version_1_and_retains_dirty_content
 
     // Un-marking is not a review action.
     let unmarked = fx.session.set_seen(0, "a.txt", &[0], false).await.unwrap();
-    assert_eq!((fx.session.lifecycle().await, unmarked.started), (Lifecycle::Browsing, None));
+    assert_eq!(
+        (fx.session.lifecycle().await, unmarked.started),
+        (Lifecycle::Browsing, None)
+    );
 
     let marked = fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
     assert!(matches!(marked.started, Some(Lifecycle::Open { version: 1, .. })));
     let again = fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
-    assert_eq!(again.started, None, "only the request that starts the review reports it");
+    assert_eq!(
+        again.started, None,
+        "only the request that starts the review reports it"
+    );
 
     assert!(matches!(
         fx.session.manifest().await.unwrap().lifecycle,

@@ -85,15 +85,15 @@ struct Fake {
 impl Primitives for Fake {
     async fn document_symbols(&self, side: Side, f: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
         self.symbols
-            .get(&(side,f.clone()))
+            .get(&(side, f.clone()))
             .cloned()
             .ok_or_else(|| SemanticError::NoBackend(f.clone()))
     }
     async fn definition(&self, side: Side, a: &At) -> Result<Vec<Location>, SemanticError> {
-        Ok(self.definitions.get(&(side,a.clone())).cloned().unwrap_or_default())
+        Ok(self.definitions.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
     async fn references(&self, side: Side, a: &At) -> Result<Vec<Location>, SemanticError> {
-        Ok(self.references.get(&(side,a.clone())).cloned().unwrap_or_default())
+        Ok(self.references.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
     async fn hover(&self, _: Side, _: &At) -> Result<Option<String>, SemanticError> {
         Ok(None)
@@ -104,7 +104,7 @@ impl Primitives for Fake {
                 "no call hierarchy".into(),
             )));
         }
-        Ok(self.callers.get(&(side,a.clone())).cloned().unwrap_or_default())
+        Ok(self.callers.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
     async fn outgoing_calls(&self, _: Side, _: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
         Ok(vec![])

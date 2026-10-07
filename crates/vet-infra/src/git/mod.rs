@@ -214,7 +214,6 @@ impl Checkout for GixRepo {
             Err(CheckoutError::MissingBlobs(missing))
         }
     }
-
 }
 
 impl BlobReader for GixRepo {

@@ -90,10 +90,7 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
     }
 
     /// Resolves with the next settled scan whose snapshot differs from the previous one.
-    pub async fn next_settled<G: Scanner, S>(
-        &mut self,
-        acquisition: &Acquisition<G, S>,
-    ) -> Result<Scan, GitError> {
+    pub async fn next_settled<G: Scanner, S>(&mut self, acquisition: &Acquisition<G, S>) -> Result<Scan, GitError> {
         loop {
             match self.wake().await {
                 Wake::Event(WatchEvent::Dirty(paths)) => self.settler.record(Dirty::Paths(paths), self.clock.now()),

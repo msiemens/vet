@@ -425,6 +425,29 @@ struct State {
     changes: Option<Changes>,
 }
 
+impl State {
+    /// Every anchor the recorded spans and the range threads are placed by.
+    fn anchors(&self) -> impl Iterator<Item = &Anchor> {
+        let spans = (self.recorded.iter()).flat_map(|r| r.span.base.iter().chain(&r.span.target));
+        let threads = self.threads.iter().filter_map(|t| match &t.target {
+            CommentTarget::Range(a) => Some(a),
+            _ => None,
+        });
+        spans.chain(threads)
+    }
+
+    /// The snapshot `id` if the session has it in memory.
+    fn snapshot(&self, id: SnapshotId) -> Option<&Snapshot> {
+        if id == self.base.id {
+            Some(&self.base)
+        } else if id == self.target.id {
+            Some(&self.target)
+        } else {
+            self.known.get(&id)
+        }
+    }
+}
+
 /// Unix seconds now.
 pub type UnixClock = fn() -> i64;
 
@@ -653,9 +676,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let complete = {
             let changes = st.changes.as_ref().expect("computed");
             let acked = acknowledged(&st, &changes.diff);
-            Coverage::new(&changes.flat)
-                .completion(&st.filter, &changes.diff.files, &changes.diff.non_text, &acked)
-                .is_complete()
+            changeset_completion(&Coverage::new(&changes.flat), &st.filter, &changes.diff, &acked).is_complete()
         };
         self.acquisition.git.delete_session_refs(id).await?;
         self.acquisition
@@ -935,12 +956,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
                 delta: LineDelta::of(&hunks),
                 hunks,
                 review: review_of(&cov, diff, &items, &acked),
-                completion: cov.completion(
-                    &st.filter,
-                    diff.map(slice::from_ref).unwrap_or_default(),
-                    &items,
-                    &acked,
-                ),
+                completion: file_completion(&cov, &st.filter, diff, &items, &acked),
                 non_text: indices.iter().map(|&i| changes.items[i].clone()).collect(),
             });
         }
@@ -954,7 +970,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
                 branch: branches.iter().find(|b| b.current).map(|b| b.name.clone()),
             },
             filter: st.filter.clone(),
-            completion: cov.completion(&st.filter, &changes.diff.files, &changes.diff.non_text, &acked),
+            completion: changeset_completion(&cov, &st.filter, &changes.diff, &acked),
             delta: files.iter().map(|f| f.delta).sum(),
             files,
             degraded: st.degraded,
@@ -1179,10 +1195,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let started = acknowledged && self.begin(&mut st).await?;
         let change = {
             let diff = &st.changes.as_ref().expect("computed").diff;
-            diff.non_text
-                .iter()
-                .find(|n| n.kind == kind && n.path.to_string_lossy() == path)
-                .ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?
+            find_non_text(diff, kind, path).ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?
         };
         let ack = ack_of(change);
         let store = &self.acquisition.store;
@@ -1206,8 +1219,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
-        let change = (st.changes.as_ref().expect("computed").diff.non_text.iter())
-            .find(|n| n.kind == kind && n.path.to_string_lossy() == path)
+        let change = find_non_text(&st.changes.as_ref().expect("computed").diff, kind, path)
             .ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?;
         let (file, entry) = match side {
             Side::Base => (change.from.as_ref().unwrap_or(&change.path), &change.before),
@@ -1390,23 +1402,12 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// are anchored in and only git holds, so their coverage survives git
     /// dropping the objects of a base the session left, and a restart.
     async fn retain_anchored(&self, st: &State) -> Result<()> {
-        let thread_anchors = st.threads.iter().filter_map(|t| match &t.target {
-            CommentTarget::Range(a) => Some(a),
-            _ => None,
-        });
-        let anchors = (st.recorded.iter())
-            .flat_map(|r| r.span.base.iter().chain(&r.span.target))
-            .chain(thread_anchors);
-        let wanted: BTreeSet<(SnapshotId, &RepoPath)> = anchors.map(|a| (a.snapshot, &a.file)).collect();
+        let wanted: BTreeSet<(SnapshotId, &RepoPath)> = st.anchors().map(|a| (a.snapshot, &a.file)).collect();
         let store = &self.acquisition.store;
         let mut stored: HashMap<SnapshotId, Option<Snapshot>> = HashMap::new();
         for (id, file) in wanted {
-            let snapshot = if id == st.base.id {
-                Some(&st.base)
-            } else if id == st.target.id {
-                Some(&st.target)
-            } else if let Some(known) = st.known.get(&id) {
-                Some(known)
+            let snapshot = if let Some(held) = st.snapshot(id) {
+                Some(held)
             } else {
                 if let std::collections::hash_map::Entry::Vacant(v) = stored.entry(id) {
                     v.insert(store.snapshot(id).await?.map(|(s, _)| s));
@@ -1634,17 +1635,9 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             CommentTarget::Range(a) => Some((a.side == Side::Base, a.clone())),
             _ => None,
         };
-        let referenced: Vec<SnapshotId> = st
-            .recorded
-            .iter()
-            .flat_map(anchors)
-            .chain(st.threads.iter().filter_map(thread_anchor))
-            .map(|(_, a)| a.snapshot)
-            .collect();
+        let referenced: Vec<SnapshotId> = st.anchors().map(|a| a.snapshot).collect();
         for &id in &referenced {
-            if id != st.base.id
-                && id != st.target.id
-                && !st.known.contains_key(&id)
+            if st.snapshot(id).is_none()
                 && let Some((snapshot, _)) = self.acquisition.store.snapshot(id).await?
             {
                 st.known.insert(id, snapshot);
@@ -1654,15 +1647,6 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
 
         let mut blobs = std::mem::take(&mut st.changes.as_mut().expect("diffed").blobs);
         let renames = &st.changes.as_ref().expect("diffed").diff.renames;
-        let snapshot_of = |id: SnapshotId| {
-            if id == st.base.id {
-                Some(&st.base)
-            } else if id == st.target.id {
-                Some(&st.target)
-            } else {
-                st.known.get(&id)
-            }
-        };
         let file_entry = |snapshot: Option<&Snapshot>, path: &RepoPath| {
             snapshot
                 .and_then(|s| s.entries.get(path))
@@ -1684,7 +1668,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
                 };
                 let current = if is_base { &st.base } else { &st.target };
                 inputs.push(FileRemapInput {
-                    old_blob: file_entry(snapshot_of(a.snapshot), &a.file),
+                    old_blob: file_entry(st.snapshot(a.snapshot), &a.file),
                     new_blob: new_path.as_ref().and_then(|p| file_entry(Some(current), p)),
                     old_path: Some(a.file.clone()),
                     new_path,
@@ -1931,14 +1915,36 @@ fn update_of(st: &State, path: &str) -> Result<ReviewUpdateView> {
         revision: st.revision,
         path: file,
         review: review_of(&cov, diff, &items, &acked),
-        completion: cov.completion(
-            &st.filter,
-            diff.map(slice::from_ref).unwrap_or_default(),
-            &items,
-            &acked,
-        ),
-        changeset: cov.completion(&st.filter, &changes.diff.files, &changes.diff.non_text, &acked),
+        completion: file_completion(&cov, &st.filter, diff, &items, &acked),
+        changeset: changeset_completion(&cov, &st.filter, &changes.diff, &acked),
     })
+}
+
+/// The completion of one file: its text diff, if it has one, and its shown non-text items.
+fn file_completion(
+    cov: &Coverage,
+    filter: &ReviewFilter,
+    diff: Option<&FileDiff>,
+    items: &[NonTextChange],
+    acked: &[NonTextChange],
+) -> Completion {
+    cov.completion(filter, diff.map(slice::from_ref).unwrap_or_default(), items, acked)
+}
+
+/// The completion of everything the diff changes, as far as the filter shows it.
+fn changeset_completion(
+    cov: &Coverage,
+    filter: &ReviewFilter,
+    diff: &SnapshotDiff,
+    acked: &[NonTextChange],
+) -> Completion {
+    cov.completion(filter, &diff.files, &diff.non_text, acked)
+}
+
+fn find_non_text<'a>(diff: &'a SnapshotDiff, kind: NonTextKind, path: &str) -> Option<&'a NonTextChange> {
+    diff.non_text
+        .iter()
+        .find(|n| n.kind == kind && n.path.to_string_lossy() == path)
 }
 
 #[cfg(test)]

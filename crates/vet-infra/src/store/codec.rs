@@ -12,9 +12,7 @@ use vet_core::content::{
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::TreeNode;
-use vet_core::review::{
-    Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanState, Thread, ThreadId, ThreadStatus,
-};
+use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanState, Thread, ThreadId, ThreadStatus};
 
 use super::entity::{
     ack, anchor, kinds, message, project_filter_item, session, session_base, snapshot_path, span, thread, tree_child,
