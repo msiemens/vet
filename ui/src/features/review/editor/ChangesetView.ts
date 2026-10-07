@@ -297,12 +297,18 @@ export class ChangesetView {
       return;
     }
     const line = lineOf(view.state.doc, view.posAtCoords({ x: e.clientX, y: e.clientY }, false));
+    this.select(this.hunkStopAt(fi, view, line));
+  }
+
+  /** The stop of the hunk at or above a 0-based `line` of `view`, one of file `fi`'s editors (a base editor counts base lines). */
+  private hunkStopAt(fi: number, view: EditorView, line: number): number {
+    const s = this.sections[fi];
     const base = view !== s.handle?.view;
     const hunk = hunkAt(
       s.file.hunks.map((h) => (base ? h.baseStart : h.targetStart)),
       line,
     );
-    this.select(this.stops.start(fi) + s.cards.length + hunk);
+    return this.stops.start(fi) + s.cards.length + hunk;
   }
 
   /** Shows a stop as current or not: a card outlines itself, a hunk is the editor's. */
@@ -419,6 +425,22 @@ export class ChangesetView {
     const [fi, si] = this.stops.locate(this.current);
     const s = this.sections[fi];
     return si < s.cards.length ? this.actions.card(s, si) : this.actions.hunk(s, si - s.cards.length);
+  }
+
+  /**
+   * Makes the hunk at the focused editor's caret (else the nearest one above it) the current stop
+   * and asks the backend to flip it. Undefined when no editor of a file with hunks has the focus.
+   */
+  toggleAtCaret(): Promise<void> | undefined {
+    for (const fi of this.windowing.mounted) {
+      const s = this.sections[fi];
+      if (!s.file.hunks.length) continue;
+      const view = s.handle?.views.find((v) => v.hasFocus);
+      if (!view) continue;
+      this.select(this.hunkStopAt(fi, view, lineOf(view.state.doc, view.state.selection.main.head)));
+      return this.toggleCurrent();
+    }
+    return undefined;
   }
 
   /**

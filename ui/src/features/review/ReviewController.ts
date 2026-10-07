@@ -33,7 +33,7 @@ export interface Probe {
   key(event: KeyboardEvent): boolean;
 }
 
-/** Space types in a field or editor and presses a focused control; it marks the current item only when none of those has the focus. */
+/** Space types in a field and presses a focused control; it marks the current item only when none of those has the focus. */
 const takesSpace = (el: Element | null) =>
   !!el?.closest("button, a, input, textarea, select, [contenteditable], [tabindex], [role=menuitem], [role=tab]");
 
@@ -131,8 +131,7 @@ export class ReviewController {
     };
     if (matches(KEYS.nextHunk.spec, e)) run(() => void view.goToHunk(view.current + 1));
     else if (matches(KEYS.previousHunk.spec, e)) run(() => void view.goToHunk(view.current - 1));
-    else if (matches(KEYS.toggleCurrent.spec, e) && view.current >= 0 && !takesSpace(document.activeElement))
-      run(() => void view.toggleCurrent());
+    else if (matches(KEYS.toggleCurrent.spec, e) && this.toggleBySpace(view)) e.preventDefault();
     else if (matches(KEYS.commentHere.spec, e) && !document.activeElement?.closest("input, textarea")) {
       // Comment on the selection, else on the current hunk.
       if (view.commentHere()) e.preventDefault();
@@ -142,6 +141,17 @@ export class ReviewController {
       if (caret) run(() => void this.openSource(caret.path, caret.line));
     } else if (this.probe?.key(e)) e.preventDefault();
   };
+
+  /**
+   * Space in a diff view: with an editor focused it flips the hunk at the caret; otherwise the
+   * current stop, unless a field or control has the focus and takes the key. Answers whether it acted.
+   */
+  private toggleBySpace(view: ChangesetView): boolean {
+    if (view.toggleAtCaret()) return true;
+    if (view.current < 0 || takesSpace(document.activeElement)) return false;
+    void view.toggleCurrent();
+    return true;
+  }
 
   /** The file of the focused file or text tab; none for the Changes tab. */
   get activePath(): string | undefined {

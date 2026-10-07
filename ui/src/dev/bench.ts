@@ -274,7 +274,7 @@ async function navigationKeys(shell: Shell, o: BenchOptions, interval: number, t
 }
 
 /**
- * Space on the current hunk with nothing focused, as the window handler takes it. The backend
+ * Space with the editor focused and the caret in the hunk, as the window handler takes it. The backend
  * answers every toggle, so this is a round trip plus a repaint, not a frame budget: both are
  * diagnostic. Every press must flip the hunk's state and redraw the file's count, and the run
  * leaves the hunk as it found it.
@@ -288,8 +288,16 @@ async function spaceToggles(shell: Shell, o: BenchOptions, tag: string, biggest:
   if (hunk < 0)
     return [check(`Space toggles the current hunk ${tag}`, false, "no hunk that toggles back to its state")];
   await view.goToHunk(probe.firstHunkOf(biggest) + hunk);
-  // The window handler leaves Space to a focused field, editor or control.
-  if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  // Space with the editor focused and the caret on the hunk's first line, as a reader presses it.
+  const editor = (): EditorView => {
+    const handle = section.handle;
+    if (!handle) throw new Error("the biggest file's editor was unmounted during the Space run");
+    return handle.view;
+  };
+  const { doc } = editor().state;
+  const line = Math.min(section.file.hunks[hunk].targetStart + 1, doc.lines);
+  editor().dispatch({ selection: { anchor: doc.line(line).from } });
+  editor().focus();
 
   const initial = section.review.hunks[hunk];
   const toRender: number[] = [];
@@ -300,7 +308,7 @@ async function spaceToggles(shell: Shell, o: BenchOptions, tag: string, biggest:
     const [state, count] = [section.review.hunks[hunk], section.count.textContent];
     toggling.pending = Promise.resolve();
     const t0 = performance.now();
-    press(document.body, KEYS.toggleCurrent.spec);
+    press(editor().contentDOM, KEYS.toggleCurrent.spec);
     await toggling.pending;
     toReply.push(performance.now() - t0);
     await nextPaint();
