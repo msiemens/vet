@@ -26,6 +26,8 @@ export function categoryOf(row: ChangesetRow): "local" | "pr" {
     case "workingTree":
     case "branch":
       return "local";
+    case "pullRequest":
+      return "pr";
   }
 }
 

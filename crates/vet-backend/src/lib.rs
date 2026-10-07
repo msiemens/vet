@@ -34,6 +34,7 @@ use vet_infra::git::GixRepo;
 use vet_infra::lsp::{LspLauncher, config as lsp_config};
 use vet_infra::materialize::Materialize;
 use vet_infra::materialize::kept::{Collected, KeptTrees, Limits};
+use vet_infra::platform::github::GitHubClient;
 use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
@@ -83,6 +84,7 @@ type Semantic = Semantics<
 type Open = Entry<Connection, Wired>;
 type Projects = Registry<Connection, Wired>;
 type PlatformAccounts = Accounts<TokioRunner, HttpValidator>;
+type GitHub = GitHubClient<Arc<PlatformAccounts>>;
 
 pub struct Orchestrator {
     store: SqliteStore,
@@ -96,6 +98,8 @@ pub struct Orchestrator {
     trees: Arc<KeptTrees>,
     /// Credentials for hosting platforms: per host and app-wide, not per project.
     accounts: Arc<PlatformAccounts>,
+    /// The client for GitHub, with the lists it has kept, for every project.
+    github: Arc<GitHub>,
     /// The connections that asked for `Accounts`, which is where the events that belong
     /// to the process go.
     process_subscribers: Subscribers<Connection>,
@@ -136,6 +140,7 @@ impl Orchestrator {
             },
         ));
         Self {
+            github: Arc::new(GitHubClient::new(accounts.clone())),
             accounts,
             process_subscribers,
             servers: Arc::new(Servers::new(resolver, store.clone(), languages)),
@@ -210,6 +215,7 @@ impl Orchestrator {
                 Ok(Response::Done)
             }
             Request::ListChangesets { project } => self.list_changesets(project).await,
+            Request::ListPullRequests { project } => self.list_pull_requests(project).await,
             Request::OpenChangeset { project, changeset } => self.open_changeset(project, changeset).await,
             Request::Tasks { project } => self.tasks(project).await,
             Request::FinishReview { project } => self.finish_review(project).await,

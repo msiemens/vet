@@ -1372,7 +1372,7 @@ async fn every_local_branch_is_listed_however_old_and_whatever_its_name() {
         .iter()
         .filter_map(|r| match &r.key {
             ChangesetKey::Branch { name } => Some(name.as_str()),
-            ChangesetKey::WorkingTree => None,
+            ChangesetKey::WorkingTree | ChangesetKey::PullRequest { .. } => None,
         })
         .collect();
     names.sort();

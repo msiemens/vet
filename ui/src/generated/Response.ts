@@ -12,6 +12,8 @@ import type { DirEntry } from "./DirEntry";
 import type { Impact } from "./Impact";
 import type { Locations } from "./Locations";
 import type { Manifest } from "./Manifest";
+import type { PullRequestRow } from "./PullRequestRow";
+import type { PullRequestSource } from "./PullRequestSource";
 import type { Reachability } from "./Reachability";
 import type { RecentProject } from "./RecentProject";
 import type { RemovalImpact } from "./RemovalImpact";
@@ -31,7 +33,7 @@ export type Response = { "type": "pong", payload: string, } | { "type": "project
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "changesets", rows: Array<ChangesetRow>, onView: ChangesetKey, } | { "type": "versions", versions: Array<VersionInfo>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
+root: string, } | { "type": "done" } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "changesets", rows: Array<ChangesetRow>, onView: ChangesetKey, } | { "type": "pullRequests", rows: Array<PullRequestRow>, sources: Array<PullRequestSource>, } | { "type": "versions", versions: Array<VersionInfo>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
 /**
  * The changed ranges of the hunks in order, down to the words that differ within a
  * replaced region: line-snapped, one block per hunk (see [`TextChange`]).

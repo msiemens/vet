@@ -66,6 +66,7 @@ pub(super) fn target_view(source: &Source, branches: &[BranchInfo]) -> TargetVie
             source: source.clone(),
             name: format!("#{number}"),
             branch: None,
+            head: None,
         },
         Source::WorkingTree => TargetView {
             source: source.clone(),

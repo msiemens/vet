@@ -5,9 +5,9 @@ use ts_rs::TS;
 
 use crate::{
     Account, Base, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow, CommitInfo, Diagnostic,
-    DirEntry, Highlights, Impact, Locations, Manifest, ProjectId, Reachability, RecentProject, RemovalImpact,
-    ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable,
-    VersionInfo,
+    DirEntry, Highlights, Impact, Locations, Manifest, ProjectId, PullRequestRow, PullRequestSource, Reachability,
+    RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange, TextContent,
+    Thread, ThreadTarget, Unavailable, VersionInfo,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -44,6 +44,12 @@ pub enum Response {
     Changesets {
         rows: Vec<ChangesetRow>,
         on_view: ChangesetKey,
+    },
+    /// The answer to `ListPullRequests`: one source per hosted repository the project has, in the
+    /// order of its remotes.
+    PullRequests {
+        rows: Vec<PullRequestRow>,
+        sources: Vec<PullRequestSource>,
     },
     /// The versions of the open review, oldest first.
     Versions {

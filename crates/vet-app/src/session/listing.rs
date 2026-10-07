@@ -136,7 +136,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     pub async fn reviews_of(&self, sources: &[Source]) -> Result<Vec<RowReview>> {
         let mut reviews = Vec::with_capacity(sources.len());
         for source in sources {
-            reviews.push(self.row_review(source).await?);
+            reviews.push(self.row_state(source).await?.0);
         }
         Ok(reviews)
     }

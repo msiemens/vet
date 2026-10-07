@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::LineDelta;
+
 /// Names a changeset of a repository; stable across versions, rebases and restarts.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -12,6 +14,13 @@ pub enum ChangesetKey {
     WorkingTree,
     /// The commits of a local branch, compared against where it left the default branch.
     Branch { name: String },
+    /// A pull request of a hosted repository, compared against where its head left the branch it
+    /// is merged into.
+    PullRequest {
+        /// The repository as `github.com/acme/app`: the host, then the path on it.
+        remote: String,
+        number: u32,
+    },
 }
 
 /// How far a branch is from the repository's default branch.
@@ -76,4 +85,70 @@ pub struct ChangesetRow {
     #[ts(optional)]
     pub last_commit: Option<u32>,
     pub review: RowReview,
+}
+
+/// The rolled-up state of a commit's checks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CiState {
+    Pending,
+    Success,
+    Failure,
+    Neutral,
+    Skipped,
+}
+
+/// An open pull request that waits for the viewer or is the viewer's own.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PullRequestRow {
+    /// Opens it with `OpenChangeset`.
+    pub key: ChangesetKey,
+    pub title: String,
+    pub author: String,
+    pub source_branch: String,
+    pub target_branch: String,
+    /// The repository the source branch is in, as the platform names it, when that is not the
+    /// pull request's own: a fork.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub fork: Option<String>,
+    /// Absent when the platform's list does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lines: Option<LineDelta>,
+    /// Comments on the pull request and on its code.
+    pub comments: u32,
+    /// The checks of the head commit; absent when it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub ci: Option<CiState>,
+    pub draft: bool,
+    /// Review is asked of the viewer or their team, and they have not reviewed it as it is now.
+    pub waiting_for_me: bool,
+    pub unresolved_threads: u32,
+    /// Unix seconds the platform last saw it change.
+    pub updated_at: u32,
+    /// What Vet has of the viewer's review of it.
+    pub review: RowReview,
+    /// Where it is on the platform.
+    pub url: String,
+}
+
+/// How asking one hosted repository for its pull requests went.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PullRequestSource {
+    /// The repository as `github.com/acme/app`.
+    pub remote: String,
+    /// Why its pull requests could not be listed, fit to show.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub error: Option<String>,
+    /// The error is that there is no credential for the host: the backend has asked for one with
+    /// `CredentialsNeeded`.
+    pub signed_out: bool,
 }

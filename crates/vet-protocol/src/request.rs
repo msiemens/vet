@@ -69,12 +69,24 @@ pub enum Request {
     ListChangesets {
         project: ProjectId,
     },
+    /// The open pull requests of the project's GitHub remotes that wait for the viewer or are the
+    /// viewer's own, most recently updated first. Asks the platform, so it takes a moment and is
+    /// separate from `ListChangesets`; a repository the platform cannot answer for is named in
+    /// `sources` with the reason, a missing credential also as `CredentialsNeeded`, and the other
+    /// repositories still list. Answers with `Response::PullRequests`.
+    ListPullRequests {
+        project: ProjectId,
+    },
     /// Puts a changeset on view in place of the one that is: one is on view per project.
     /// Every subscriber, including the requester, gets `ChangesetOpened`; fetch the
     /// manifest again. A branch whose tip or merge base moved since it was last on view
     /// gets a new version if its review is open. Opening the changeset on view looks at it
     /// again and announces only if it moved. Fails with a message fit to show if the
-    /// branch does not exist. Answers with `Response::Done`.
+    /// branch does not exist. A pull request is fetched first (head and target branch, as a
+    /// task), so the request waits for the network; it fails with a message fit to show if the
+    /// platform or the fetch does, and a missing credential is also announced as
+    /// `CredentialsNeeded`. A push to a pull request on view that a later fetch brings is a new
+    /// version, announced as `SnapshotSettled`. Answers with `Response::Done`.
     OpenChangeset {
         project: ProjectId,
         changeset: ChangesetKey,

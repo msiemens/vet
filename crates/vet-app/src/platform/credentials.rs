@@ -57,6 +57,12 @@ pub trait CredentialProvider {
     fn credential(&self, host: &str, now: i64) -> impl Future<Output = Option<Credential>> + Send;
 }
 
+impl<T: CredentialProvider + ?Sized> CredentialProvider for std::sync::Arc<T> {
+    fn credential(&self, host: &str, now: i64) -> impl Future<Output = Option<Credential>> + Send {
+        (**self).credential(host, now)
+    }
+}
+
 /// Asks a platform whom a credential belongs to; implemented over HTTP by `vet-infra`.
 pub trait CredentialValidator {
     /// The platform's name for the credential's owner.

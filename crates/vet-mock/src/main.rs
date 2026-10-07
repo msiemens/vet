@@ -308,7 +308,9 @@ impl Handler for Mock {
             | Request::ListServers { .. }
             | Request::InstallServer { .. }
             | Request::SetServerPath { .. } => Err("the corpus has no language servers".into()),
-            Request::ListChangesets { .. } | Request::OpenChangeset { .. } => Err("the corpus is one changeset".into()),
+            Request::ListChangesets { .. } | Request::ListPullRequests { .. } | Request::OpenChangeset { .. } => {
+                Err("the corpus is one changeset".into())
+            }
         }
     }
 }

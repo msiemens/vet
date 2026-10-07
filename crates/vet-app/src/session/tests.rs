@@ -3237,5 +3237,6 @@ async fn the_review_state_of_pull_requests_is_listed_for_the_sources_asked() {
 
     let reviews = fx.session.reviews_of(&[other, pull_request_7()]).await.unwrap();
 
-    assert_eq!(reviews, [RowReview::None, RowReview::Open { version: 1 }]);
+    assert_eq!(reviews[0], RowReview::None);
+    assert!(matches!(reviews[1], RowReview::Open { version: 1, .. }), "{reviews:?}");
 }

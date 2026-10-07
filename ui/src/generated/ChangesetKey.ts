@@ -3,4 +3,8 @@
 /**
  * Names a changeset of a repository; stable across versions, rebases and restarts.
  */
-export type ChangesetKey = { "type": "workingTree" } | { "type": "branch", name: string, };
+export type ChangesetKey = { "type": "workingTree" } | { "type": "branch", name: string, } | { "type": "pullRequest", 
+/**
+ * The repository as `github.com/acme/app`: the host, then the path on it.
+ */
+remote: string, number: number, };

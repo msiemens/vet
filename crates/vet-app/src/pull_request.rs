@@ -142,27 +142,49 @@ pub async fn list_pull_requests<P: Platform>(platform: &P, repositories: &[Remot
     PullRequestList { rows, sources }
 }
 
+/// Why a pull request could not be brought in.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum FetchError {
+    /// The platform could not say what the pull request is.
+    Platform(PlatformError),
+    /// Git could not fetch it, or no remote is its repository. Fit to show.
+    Git(String),
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Platform(e) => e.fmt(f),
+            Self::Git(message) => f.write_str(message),
+        }
+    }
+}
+
 /// Brings in the head of pull request `number` of `remote` and the branch it targets, so a
-/// changeset can be made of them. The error is fit to show.
+/// changeset can be made of them.
 pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
     platform: &P,
     fetch: &Fetch<G>,
     credentials: &(impl Credentials + Sync),
     remote: &RemoteKey,
     number: u64,
-) -> Result<(), String> {
-    let detail = platform.pull_request(remote, number).await.map_err(|e| e.to_string())?;
-    let remotes = fetch.remotes().await?;
+) -> Result<(), FetchError> {
+    let detail = platform
+        .pull_request(remote, number)
+        .await
+        .map_err(FetchError::Platform)?;
+    let remotes = fetch.remotes().await.map_err(FetchError::Git)?;
     let hosted = hosted_repositories(&remotes, remote.kind());
     let git_remote = hosted
         .iter()
         .find(|h| h.key == *remote)
         .and_then(|h| remotes.iter().find(|r| r.name == h.remote))
-        .ok_or_else(|| format!("none of the remotes of this repository is {remote}"))?;
+        .ok_or_else(|| FetchError::Git(format!("none of the remotes of this repository is {remote}")))?;
     let updates = PullRequestRefs::of(remote, number).updates(number, &detail.pull_request.target_branch);
     fetch
         .refs(credentials, git_remote, updates, format!("Fetching #{number}"))
         .await
+        .map_err(FetchError::Git)
 }
 
 #[cfg(test)]
@@ -270,7 +292,10 @@ mod tests {
                 .unwrap_or_default())
         }
 
-        async fn pull_request(&self, _: &RemoteKey, number: u64) -> Result<PullRequestDetail, PlatformError> {
+        async fn pull_request(&self, remote: &RemoteKey, number: u64) -> Result<PullRequestDetail, PlatformError> {
+            if self.failing.contains(remote) {
+                return Err(PlatformError::SignedOut(remote.host.clone()));
+            }
             let mut pull_request = pr(number);
             pull_request.target_branch = "release".to_owned();
             Ok(PullRequestDetail {
@@ -365,6 +390,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_pull_request_the_platform_cannot_describe_is_not_fetched() {
+        let app = github("acme/app");
+        let platform = Hosting {
+            prs: vec![],
+            failing: vec![app.clone()],
+        };
+        let (fetch, fetched) = fetching(vec![info("origin", "https://github.com/acme/app")]);
+
+        let error = fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            FetchError::Platform(PlatformError::SignedOut("github.com".to_owned()))
+        );
+        assert!(fetched.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn a_repository_that_is_none_of_the_remotes_is_refused_and_nothing_is_fetched() {
         let platform = Hosting {
             prs: vec![],
@@ -376,7 +421,10 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert_eq!(error, "none of the remotes of this repository is github.com/acme/app");
+        assert_eq!(
+            error,
+            FetchError::Git("none of the remotes of this repository is github.com/acme/app".to_owned())
+        );
         assert!(fetched.lock().unwrap().is_empty());
     }
 

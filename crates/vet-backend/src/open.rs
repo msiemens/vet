@@ -36,7 +36,7 @@ use vet_semantic::ports::Backend;
 use crate::events::{Connection, settled};
 use crate::fetch::fetch_periodically;
 use crate::{
-    LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, message, start_servers_in_background,
+    GitHub, LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, message, start_servers_in_background,
 };
 
 /// The least time between two progress announcements of one task, so a step that
@@ -71,6 +71,8 @@ pub struct Wired {
     pub fetch: Fetch<GixRepo>,
     /// Where `fetch` finds the credentials of the hosting platforms.
     pub accounts: Arc<PlatformAccounts>,
+    /// Where pull requests are asked for.
+    pub github: Arc<GitHub>,
     plan: Plan,
     booted: OnceCell<Result<Arc<Booted>, String>>,
     settling: Mutex<Option<AbortHandle>>,
@@ -275,6 +277,7 @@ impl Orchestrator {
         Ok(Wired {
             fetch: Fetch::new(GixRepo::new(&repo), tasks.clone()),
             accounts: self.accounts.clone(),
+            github: self.github.clone(),
             tasks,
             plan: Plan {
                 id,

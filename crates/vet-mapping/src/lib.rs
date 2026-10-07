@@ -4,8 +4,10 @@ pub mod account;
 pub mod progress;
 pub mod semantic;
 
-use vet_app::changeset::{BaseChoice, CommitId, Source, VersionOrigin};
+use vet_app::changeset::{BaseChoice, CommitId, RemoteKey, Source, VersionOrigin};
+use vet_app::platform::{CiState, PlatformError};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
+use vet_app::pull_request::PullRequestList;
 use vet_app::session::{
     BaseView, ChangesetList, CommentAt, CommentSpot, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView,
     ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView,
@@ -274,15 +276,57 @@ pub fn changeset_key(source: &Source) -> p::ChangesetKey {
     match source {
         Source::WorkingTree => p::ChangesetKey::WorkingTree,
         Source::Branch { name } => p::ChangesetKey::Branch { name: name.clone() },
-        // Not offered over the protocol yet; a pull request is shown as the branch it comes from.
-        Source::PullRequest { .. } => p::ChangesetKey::WorkingTree,
+        Source::PullRequest { remote, number } => p::ChangesetKey::PullRequest {
+            remote: remote.to_string(),
+            number: u32::try_from(*number).unwrap_or(u32::MAX),
+        },
     }
 }
 
-pub fn core_changeset_key(key: p::ChangesetKey) -> Source {
-    match key {
+/// The source `key` names. The error is fit to show.
+pub fn core_changeset_key(key: p::ChangesetKey) -> Result<Source, String> {
+    Ok(match key {
         p::ChangesetKey::WorkingTree => Source::WorkingTree,
         p::ChangesetKey::Branch { name } => Source::Branch { name },
+        p::ChangesetKey::PullRequest { remote, number } => {
+            let (host, path) = remote
+                .split_once('/')
+                .filter(|(host, path)| !host.is_empty() && !path.is_empty())
+                .ok_or_else(|| format!("\"{remote}\" is not a repository, e.g. github.com/acme/app"))?;
+            Source::PullRequest {
+                remote: RemoteKey {
+                    host: host.to_owned(),
+                    path: path.to_owned(),
+                },
+                number: u64::from(number),
+            }
+        }
+    })
+}
+
+fn row_review(review: RowReview) -> p::RowReview {
+    match review {
+        RowReview::None => p::RowReview::None,
+        RowReview::Open {
+            version,
+            started_at,
+            last_reviewed,
+        } => p::RowReview::Open {
+            version,
+            started_at: unix_secs(started_at),
+            last_reviewed,
+        },
+        RowReview::Finished {
+            complete,
+            started_at,
+            finished_at,
+            last_reviewed,
+        } => p::RowReview::Finished {
+            complete,
+            started_at: unix_secs(started_at),
+            finished_at: unix_secs(finished_at),
+            last_reviewed,
+        },
     }
 }
 
@@ -303,29 +347,69 @@ pub fn changesets(list: &ChangesetList) -> p::Response {
                     behind: d.behind,
                 }),
                 last_commit: r.last_commit.map(unix_secs),
-                review: match r.review {
-                    RowReview::None => p::RowReview::None,
-                    RowReview::Open {
-                        version,
-                        started_at,
-                        last_reviewed,
-                    } => p::RowReview::Open {
-                        version,
-                        started_at: unix_secs(started_at),
-                        last_reviewed,
-                    },
-                    RowReview::Finished {
-                        complete,
-                        started_at,
-                        finished_at,
-                        last_reviewed,
-                    } => p::RowReview::Finished {
-                        complete,
-                        started_at: unix_secs(started_at),
-                        finished_at: unix_secs(finished_at),
-                        last_reviewed,
-                    },
-                },
+                review: row_review(r.review),
+            })
+            .collect(),
+    }
+}
+
+fn ci_state(state: CiState) -> p::CiState {
+    match state {
+        CiState::Pending => p::CiState::Pending,
+        CiState::Success => p::CiState::Success,
+        CiState::Failure => p::CiState::Failure,
+        CiState::Neutral => p::CiState::Neutral,
+        CiState::Skipped => p::CiState::Skipped,
+    }
+}
+
+/// The key of pull request `number` of the repository `remote`.
+pub fn pull_request_source(remote: &RemoteKey, number: u64) -> Source {
+    Source::PullRequest {
+        remote: remote.clone(),
+        number,
+    }
+}
+
+/// The answer to `ListPullRequests`. `reviews` has what Vet knows of the review of each row, in
+/// the order of `list.rows`.
+pub fn pull_requests(list: &PullRequestList, reviews: &[RowReview]) -> p::Response {
+    p::Response::PullRequests {
+        rows: list
+            .rows
+            .iter()
+            .zip(reviews)
+            .map(|(listed, review)| {
+                let row = &listed.row;
+                p::PullRequestRow {
+                    key: changeset_key(&pull_request_source(&listed.remote, row.number)),
+                    title: row.title.clone(),
+                    author: row.author.clone(),
+                    source_branch: row.source_branch.clone(),
+                    target_branch: row.target_branch.clone(),
+                    fork: row.fork.clone(),
+                    lines: row.lines.map(|l| p::LineDelta {
+                        added: l.added,
+                        removed: l.removed,
+                    }),
+                    comments: row.comments,
+                    ci: row.ci.map(ci_state),
+                    draft: row.draft,
+                    waiting_for_me: row.waiting_for_me,
+                    unresolved_threads: row.unresolved_threads,
+                    updated_at: unix_secs(row.updated_at),
+                    review: row_review(*review),
+                    url: row.url.clone(),
+                }
+            })
+            .collect(),
+        sources: list
+            .sources
+            .iter()
+            .map(|source| p::PullRequestSource {
+                remote: source.remote.to_string(),
+                error: source.error.as_ref().map(ToString::to_string),
+                signed_out: matches!(source.error, Some(PlatformError::SignedOut(_))),
             })
             .collect(),
     }
@@ -582,5 +666,45 @@ pub fn review_update(u: &ReviewUpdateView) -> p::ReviewUpdate {
         review: review(&u.review),
         completion: completion(&u.completion),
         changeset: completion(&u.changeset),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pull_request_key_names_its_repository_by_host_and_path_and_comes_back_as_it_went() {
+        for remote in ["github.com/acme/app", "ghe.corp.example:8443/acme/app"] {
+            let key = p::ChangesetKey::PullRequest {
+                remote: remote.to_owned(),
+                number: 482,
+            };
+            let source = core_changeset_key(key.clone()).unwrap();
+            assert_eq!(changeset_key(&source), key);
+        }
+        let Source::PullRequest { remote, number } = core_changeset_key(p::ChangesetKey::PullRequest {
+            remote: "ghe.corp.example:8443/acme/app".to_owned(),
+            number: 7,
+        })
+        .unwrap() else {
+            panic!("not a pull request")
+        };
+        assert_eq!(
+            (remote.host.as_str(), remote.path.as_str(), number),
+            ("ghe.corp.example:8443", "acme/app", 7)
+        );
+    }
+
+    #[test]
+    fn a_repository_that_is_not_host_and_path_is_refused_with_a_message() {
+        for remote in ["github.com", "github.com/", "/acme/app", ""] {
+            let key = p::ChangesetKey::PullRequest {
+                remote: remote.to_owned(),
+                number: 1,
+            };
+            let error = core_changeset_key(key).unwrap_err();
+            assert!(error.contains("is not a repository"), "{remote:?}: {error}");
+        }
     }
 }
