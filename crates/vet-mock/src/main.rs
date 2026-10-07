@@ -14,38 +14,27 @@ use std::sync::{Mutex, PoisonError};
 
 use corpus::{Config, Corpus};
 use vet_app::editor::{last_text_line, line_count, text_changes};
-use vet_core::content::LineRange;
-use vet_core::review::{Side, target_line};
-use vet_highlight::{Cache, Language};
-use vet_protocol::{
-    Base, BaseChoice, CommitInfo, Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, LineDelta, Manifest,
-    Request, Response, ReviewInfo, ReviewUpdate, SessionId, Target, TextChange,
+use vet_app::pin::{BaseChoice, CommitId};
+use vet_app::ports::CommitInfo;
+use vet_app::session::{
+    BaseView, FileStatus, FileView, Lifecycle, ManifestView, ReviewUpdateView, ReviewView, TargetView,
 };
+use vet_core::completion::{Completion, Coverage};
+use vet_core::content::{FileDiff, Hash, LineDelta, RepoPath, SnapshotId};
+use vet_core::filter::ReviewFilter;
+use vet_core::marking::hunk_span;
+use vet_core::review::{ReviewedSpan, target_line};
+use vet_highlight::{Cache, Language};
+use vet_protocol::{Request, Response, SessionId};
 use vet_transport::{Events, Handler, Server};
-
-fn core_hunk(h: &Hunk) -> vet_core::content::Hunk {
-    let range = |start, len| LineRange {
-        start,
-        end: start + len,
-    };
-    vet_core::content::Hunk {
-        old: range(h.base_start, h.base_len),
-        new: range(h.target_start, h.target_len),
-    }
-}
-
-fn delta(hunks: &[Hunk]) -> LineDelta {
-    let core: Vec<_> = hunks.iter().map(core_hunk).collect();
-    let counted = vet_core::content::LineDelta::of(&core);
-    LineDelta {
-        added: counted.added,
-        removed: counted.removed,
-    }
-}
 
 struct Mock {
     corpus: Corpus,
     index: HashMap<String, usize>,
+    /// The diff of each corpus file.
+    diffs: Vec<FileDiff>,
+    /// The span that marking a hunk seen creates, per file and hunk.
+    spans: Vec<Vec<Option<ReviewedSpan>>>,
     /// Review state: one seen flag per hunk per file. It lives here, not in the shell (I5).
     seen: Mutex<Vec<Vec<bool>>>,
     /// Highlights by file and side (true for the target).
@@ -55,38 +44,69 @@ struct Mock {
 const HIGHLIGHT_CACHE_BYTES: usize = 64 << 20;
 const SESSION: SessionId = 0;
 const REVISION: u32 = 0;
+/// The corpus has no snapshots; every span is anchored in this one.
+const SNAPSHOT: SnapshotId = SnapshotId(Hash([0; 32]));
 
-fn review(seen: &[bool]) -> FileReview {
-    FileReview {
-        hunks: seen
+impl Mock {
+    fn new(corpus: Corpus) -> Self {
+        let index = corpus
+            .files
             .iter()
-            .map(|&s| if s { HunkState::Seen } else { HunkState::Unseen })
-            .collect(),
-        acknowledged: vec![],
-    }
-}
-
-/// Changed lines are counted on both sides; the corpus has no non-text items or old-base state.
-fn completion(hunks: &[Hunk], seen: &[bool]) -> Completion {
-    let mut c = Completion::default();
-    for (h, &seen) in hunks.iter().zip(seen) {
-        let lines = h.base_len + h.target_len;
-        c.lines += lines;
-        if seen {
-            c.seen_lines += lines;
+            .enumerate()
+            .map(|(i, f)| (f.path.clone(), i))
+            .collect();
+        let diffs: Vec<FileDiff> = corpus
+            .files
+            .iter()
+            .map(|f| FileDiff {
+                old_path: Some(RepoPath::from(f.path.as_str())),
+                new_path: Some(RepoPath::from(f.path.as_str())),
+                old_blob: None,
+                new_blob: None,
+                hunks: f.hunks.clone(),
+            })
+            .collect();
+        let spans = corpus
+            .files
+            .iter()
+            .zip(&diffs)
+            .map(|(f, diff)| {
+                let texts = (Some(f.base.as_bytes()), Some(f.target.as_bytes()));
+                (diff.hunks.iter())
+                    .map(|h| hunk_span(diff, h, (SNAPSHOT, SNAPSHOT), texts))
+                    .collect()
+            })
+            .collect();
+        let seen = Mutex::new(corpus.files.iter().map(|f| vec![false; f.hunks.len()]).collect());
+        Self {
+            corpus,
+            index,
+            diffs,
+            spans,
+            seen,
+            highlights: Cache::new(HIGHLIGHT_CACHE_BYTES),
         }
     }
-    c
-}
 
-fn total(parts: impl Iterator<Item = Completion>) -> Completion {
-    parts.fold(Completion::default(), |a, b| Completion {
-        lines: a.lines + b.lines,
-        seen_lines: a.seen_lines + b.seen_lines,
-        old_base_lines: a.old_base_lines + b.old_base_lines,
-        items: a.items + b.items,
-        acknowledged_items: a.acknowledged_items + b.acknowledged_items,
-    })
+    /// The spans of the hunks marked seen.
+    fn seen_spans(&self, seen: &[Vec<bool>]) -> Vec<ReviewedSpan> {
+        (seen.iter().zip(&self.spans))
+            .flat_map(|(flags, spans)| flags.iter().zip(spans))
+            .filter_map(|(&seen, span)| span.clone().filter(|_| seen))
+            .collect()
+    }
+
+    /// The corpus has no filter, non-text items or old base.
+    fn completion(coverage: &Coverage, diffs: &[FileDiff]) -> Completion {
+        coverage.completion(&ReviewFilter::default(), diffs, &[], &[])
+    }
+
+    fn review(coverage: &Coverage, diff: &FileDiff) -> ReviewView {
+        ReviewView {
+            hunks: coverage.hunk_states(diff),
+            acknowledged: vec![],
+        }
+    }
 }
 
 impl Handler for Mock {
@@ -112,35 +132,30 @@ impl Handler for Mock {
             }),
             Request::CloseSession { .. } => Ok(Response::Done),
             Request::Manifest { .. } => {
-                let seen = seen();
-                let files: Vec<FileChange> = self
-                    .corpus
-                    .files
-                    .iter()
-                    .zip(seen.iter())
-                    .map(|(f, seen)| FileChange {
-                        path: f.path.clone(),
+                let spans = self.seen_spans(&seen());
+                let coverage = Coverage::new(&spans);
+                let files: Vec<FileView> = (self.corpus.files.iter().zip(&self.diffs))
+                    .map(|(f, diff)| FileView {
+                        path: diff.path().clone(),
                         old_path: None,
                         status: FileStatus::Modified,
                         base_lines: line_count(f.base.as_bytes()),
                         target_lines: line_count(f.target.as_bytes()),
                         hunks: f.hunks.clone(),
-                        delta: delta(&f.hunks),
+                        delta: LineDelta::of(&f.hunks),
                         non_text: vec![],
-                        review: review(seen),
-                        completion: completion(&f.hunks, seen),
+                        review: Mock::review(&coverage, diff),
+                        completion: Mock::completion(&coverage, std::slice::from_ref(diff)),
                     })
                     .collect();
-                Ok(Response::Manifest(Box::new(Manifest {
-                    session: SESSION,
+                let view = ManifestView {
                     revision: REVISION,
                     name: self.corpus.name.clone(),
-                    review: ReviewInfo::Browsing,
-                    base: Base {
+                    lifecycle: Lifecycle::Browsing,
+                    base: BaseView {
                         choice: BaseChoice::Branch { name: "main".into() },
                         commit: CommitInfo {
-                            id: "0123456789abcdef0123456789abcdef01234567".into(),
-                            short_id: "0123456".into(),
+                            id: CommitId("0123456789abcdef0123456789abcdef01234567".into()),
                             subject: "Spike corpus".into(),
                             author: "Vet".into(),
                             time: 0,
@@ -148,28 +163,22 @@ impl Handler for Mock {
                         name: "main".into(),
                         behind: None,
                     },
-                    target: Target {
+                    target: TargetView {
                         name: "Working tree".into(),
                         branch: Some("main".into()),
                     },
-                    filter: Default::default(),
-                    completion: total(files.iter().map(|f| f.completion)),
-                    delta: LineDelta {
-                        added: files.iter().map(|f| f.delta.added).sum(),
-                        removed: files.iter().map(|f| f.delta.removed).sum(),
-                    },
+                    filter: ReviewFilter::default(),
+                    delta: files.iter().map(|f| f.delta).sum(),
+                    completion: Mock::completion(&coverage, &self.diffs),
                     files,
-                    excluded_lines: 0,
-                    excluded_items: 0,
                     degraded: None,
-                    restore_failures: Vec::new(),
-                })))
+                };
+                Ok(Response::Manifest(Box::new(vet_mapping::manifest(SESSION, &view, &[]))))
             }
             Request::FileContents { path, .. } => {
                 let at = position(&path)?;
                 let f = &self.corpus.files[at];
-                let hunks: Vec<_> = f.hunks.iter().map(core_hunk).collect();
-                let changes = text_changes(&f.base, &f.target, &hunks);
+                let changes = text_changes(&f.base, &f.target, &f.hunks);
                 // The corpus has no content ids: a side of a file is its own.
                 let highlights = |is_target: bool, text: &str| match Language::of_path(&f.path) {
                     Some(language) => self.highlights.get(&(at, is_target), text, language).to_vec(),
@@ -181,15 +190,7 @@ impl Handler for Mock {
                     target: Some(f.target.clone()),
                     base_highlights: highlights(false, &f.base),
                     target_highlights: highlights(true, &f.target),
-                    changes: changes
-                        .iter()
-                        .map(|c| TextChange {
-                            from_base: c.from_base,
-                            to_base: c.to_base,
-                            from_target: c.from_target,
-                            to_target: c.to_target,
-                        })
-                        .collect(),
+                    changes: changes.iter().map(vet_mapping::text_change).collect(),
                 })
             }
             Request::SetSeen {
@@ -205,20 +206,16 @@ impl Handler for Mock {
                 for hunk in hunks {
                     *all[i].get_mut(hunk as usize).ok_or("no such hunk")? = value;
                 }
-                let file = completion(&self.corpus.files[i].hunks, &all[i]);
-                let changeset = total(
-                    self.corpus
-                        .files
-                        .iter()
-                        .zip(all.iter())
-                        .map(|(f, s)| completion(&f.hunks, s)),
-                );
-                Ok(Response::Review(ReviewUpdate {
-                    path,
-                    review: review(&all[i]),
-                    completion: file,
-                    changeset,
-                }))
+                let spans = self.seen_spans(&all);
+                let coverage = Coverage::new(&spans);
+                let diff = &self.diffs[i];
+                Ok(Response::Review(vet_mapping::review_update(&ReviewUpdateView {
+                    revision: REVISION,
+                    path: diff.path().clone(),
+                    review: Mock::review(&coverage, diff),
+                    completion: Mock::completion(&coverage, std::slice::from_ref(diff)),
+                    changeset: Mock::completion(&coverage, &self.diffs),
+                })))
             }
             Request::Acknowledge { .. } | Request::ItemBlob { .. } => Err("the corpus has no non-text items".into()),
             Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),
@@ -240,12 +237,8 @@ impl Handler for Mock {
             } => {
                 current(session, revision)?;
                 let f = &self.corpus.files[position(&path)?];
-                let hunks: Vec<_> = f.hunks.iter().map(core_hunk).collect();
-                let side = match side {
-                    vet_protocol::Side::Base => Side::Base,
-                    vet_protocol::Side::Target => Side::Target,
-                };
-                let line = target_line(&hunks, side, line).min(last_text_line(f.target.as_bytes()));
+                let line =
+                    target_line(&f.hunks, vet_mapping::core_side(side), line).min(last_text_line(f.target.as_bytes()));
                 Ok(Response::TargetLine { revision, line })
             }
             Request::Threads { .. }
@@ -324,22 +317,43 @@ async fn main() -> std::io::Result<()> {
         std::process::exit(i32::from(!problems.is_empty()));
     }
 
-    let index = corpus
-        .files
-        .iter()
-        .enumerate()
-        .map(|(i, f)| (f.path.clone(), i))
-        .collect();
-    let seen = Mutex::new(corpus.files.iter().map(|f| vec![false; f.hunks.len()]).collect());
+    let mock = Mock::new(corpus);
     let server = Server::bind().await?;
     server.announce()?;
-    let highlights = Cache::new(HIGHLIGHT_CACHE_BYTES);
-    server
-        .serve(Mock {
-            corpus,
-            index,
-            seen,
-            highlights,
+    server.serve(mock).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vet_core::completion::HunkState;
+    use vet_core::hunks::line_hunks;
+
+    fn mock() -> Mock {
+        let base: String = (0..40).map(|i| format!("line {i}\n")).collect();
+        let target = base.replacen("line 3\n", "changed 3\n", 1).replacen("line 30\n", "", 1);
+        let hunks = line_hunks(base.as_bytes(), target.as_bytes());
+        assert_eq!(hunks.len(), 2);
+        Mock::new(Corpus {
+            name: "test".into(),
+            files: vec![corpus::File {
+                path: "a.txt".into(),
+                base,
+                target,
+                hunks,
+            }],
         })
-        .await
+    }
+
+    #[test]
+    fn a_hunk_marked_seen_counts_as_seen_on_both_sides() {
+        let mock = mock();
+        let spans = mock.seen_spans(&[vec![false, true]]);
+        let coverage = Coverage::new(&spans);
+        let diff = &mock.diffs[0];
+        assert_eq!(coverage.hunk_states(diff), [HunkState::Unseen, HunkState::Seen]);
+        let completion = Mock::completion(&coverage, &mock.diffs);
+        // The first hunk changes one line on each side, the second removes one.
+        assert_eq!((completion.lines, completion.seen_lines), (3, 1));
+    }
 }

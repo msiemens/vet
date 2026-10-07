@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use vet_app::editor::line_count;
+use vet_core::content::Hunk;
 use vet_core::hunks::line_hunks;
-use vet_protocol::Hunk;
 
 pub const MIN_FILES: usize = 300;
 pub const MIN_HUNKS: usize = 3000;
@@ -213,7 +213,7 @@ pub fn load(cfg: &Config) -> Result<Corpus, String> {
         if base.contains('\0') || target.contains('\0') {
             continue;
         }
-        let hunks = analyse(&base, &target);
+        let hunks = line_hunks(base.as_bytes(), target.as_bytes());
         if !hunks.is_empty() {
             files.push(File {
                 path,
@@ -229,21 +229,10 @@ pub fn load(cfg: &Config) -> Result<Corpus, String> {
     })
 }
 
-fn analyse(base: &str, target: &str) -> Vec<Hunk> {
-    line_hunks(base.as_bytes(), target.as_bytes())
-        .into_iter()
-        .map(|h| Hunk {
-            base_start: h.old.start,
-            base_len: h.old.len(),
-            target_start: h.new.start,
-            target_len: h.new.len(),
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vet_core::content::LineRange;
 
     fn git_ok(dir: &Path, args: &[&str]) {
         let status = Command::new("git")
@@ -297,22 +286,19 @@ mod tests {
         let paths: Vec<_> = corpus.files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["a.rs", "gone.txt", "new.rs"]);
         assert_eq!(corpus.files[0].hunks.len(), 2);
+        let range = |start, end| LineRange { start, end };
         assert_eq!(
             corpus.files[1].hunks,
             [Hunk {
-                base_start: 0,
-                base_len: 1,
-                target_start: 0,
-                target_len: 0
+                old: range(0, 1),
+                new: range(0, 0)
             }]
         );
         assert_eq!(
             corpus.files[2].hunks,
             [Hunk {
-                base_start: 0,
-                base_len: 0,
-                target_start: 0,
-                target_len: 2
+                old: range(0, 0),
+                new: range(0, 2)
             }]
         );
     }

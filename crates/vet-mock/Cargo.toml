@@ -12,10 +12,10 @@ publish.workspace = true
 vet-app.workspace = true
 vet-core.workspace = true
 vet-highlight.workspace = true
+vet-mapping.workspace = true
 vet-protocol.workspace = true
 vet-transport.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-similar = "3"
 
 [lints]
 workspace = true
