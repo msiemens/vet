@@ -12,5 +12,8 @@ publish.workspace = true
 serde = { version = "1", features = ["derive"] }
 ts-rs = "12"
 
+[dev-dependencies]
+serde_json = "1"
+
 [lints]
 workspace = true

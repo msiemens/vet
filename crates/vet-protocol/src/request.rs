@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{BaseChoice, CommentAt, NonTextKind, ReviewFilter, SessionId, Side, SymbolId, ThreadStatus, ThreadTarget};
+use crate::{
+    BaseChoice, CommentAt, NonTextKind, ReviewFilter, Secret, SessionId, Side, SymbolId, ThreadStatus, ThreadTarget,
+};
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -25,6 +27,28 @@ pub enum Request {
     /// Removes `path` from the recent list. Answers with `Response::RecentProjects`.
     ForgetRecentProject {
         path: String,
+    },
+    /// The credentials the backend holds or can get for hosting platforms, per host
+    /// and not tied to a session, and subscribes this connection to `CredentialsNeeded`.
+    /// Asking also looks up what the platform says about each credential, so it may
+    /// take a moment. Answers with `Response::Accounts`.
+    Accounts,
+    /// Gives the backend a personal access token for `host` (`github.com`, `dev.azure.com`,
+    /// a GitHub Enterprise host); it keeps it in memory only. With `validate` the platform
+    /// is asked first, and a token it refuses, or a platform that cannot be reached,
+    /// fails the request with a message fit to show and nothing is kept. Without it the
+    /// token is taken as is: this is how the shell hands back what its keychain holds.
+    /// Answers with `Response::Account`, whose `host` is the normalized one (lower case,
+    /// without a scheme or a path) and what the shell stores the token under.
+    SetCredentials {
+        host: String,
+        token: Secret,
+        validate: bool,
+    },
+    /// Forgets the personal access token of `host`. A credential of a CLI tool is not
+    /// the backend's to remove. Answers with `Response::Accounts`.
+    RemoveCredentials {
+        host: String,
     },
     /// Opens the working tree of the repository containing `repo`, which may be
     /// any folder inside it, against its current branch, and subscribes this

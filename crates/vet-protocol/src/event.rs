@@ -11,6 +11,10 @@ use crate::{RestoreFailure, ReviewInfo, ReviewUpdate, SessionId};
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
 pub enum Event {
+    /// The backend needs a credential for `host` and has none. Sent to every
+    /// connection that asked for `Accounts`. The shell answers with `SetCredentials`
+    /// if its keychain holds a token for the host, and otherwise does nothing.
+    CredentialsNeeded { host: String },
     /// A snapshot settled and the changeset moved to a new `revision`. The
     /// manifest, with review state remapped onto it, is stale: fetch it again.
     SnapshotSettled { session: SessionId, revision: u32 },

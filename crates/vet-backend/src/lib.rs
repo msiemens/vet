@@ -2,6 +2,7 @@
 //! logic lives in `vet-app`; this crate wires adapters to it and maps its views
 //! to protocol messages.
 
+mod accounts;
 mod events;
 mod highlight;
 mod open;
@@ -17,13 +18,16 @@ use std::time::{Duration, SystemTime};
 
 use vet_app::gc::Retention;
 use vet_app::limits::Limiting;
+use vet_app::platform::Accounts;
 use vet_app::ports::{RecentProject, StoreError};
 use vet_app::recent::RecentProjects;
-use vet_app::registry::{Entry, Registry};
+use vet_app::registry::{Entry, Registry, Subscribers};
 use vet_app::semantics::Semantics;
 use vet_app::servers::Servers;
 use vet_app::session::LiveSession;
 use vet_infra::clock::unix_now;
+use vet_infra::credentials::HttpValidator;
+use vet_infra::exec::TokioRunner;
 use vet_infra::git::GixRepo;
 use vet_infra::lsp::{LspLauncher, config as lsp_config};
 use vet_infra::materialize::Materialize;
@@ -31,7 +35,7 @@ use vet_infra::materialize::kept::{Collected, KeptTrees, Limits, Referenced};
 use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
-use vet_protocol::{Request, Response, SessionId};
+use vet_protocol::{Event, Request, Response, SessionId};
 use vet_semantic::ports::Backend;
 use vet_transport::{Events, Handler};
 
@@ -82,6 +86,11 @@ pub struct Orchestrator {
     highlighter: highlight::Highlighter,
     /// The materialized snapshots kept between launches (§8).
     trees: Arc<KeptTrees>,
+    /// Credentials for hosting platforms: per host and app-wide, not per session.
+    accounts: Accounts<TokioRunner, HttpValidator>,
+    /// The connections that asked for `Accounts`, which is where the events that belong
+    /// to the process go.
+    process_subscribers: Subscribers<Connection>,
 }
 
 fn message(error: impl std::fmt::Display) -> String {
@@ -109,7 +118,19 @@ impl Orchestrator {
         // Which snapshots a session or a repository's remembered base refers to is not known here yet.
         let referenced: Arc<dyn Referenced> = Arc::new(HashSet::<vet_core::content::SnapshotId>::new);
         let trees = KeptTrees::new(store.dir().join("materialized"), Limits::default(), referenced);
+        let process_subscribers = Subscribers::<Connection>::default();
+        let needed = process_subscribers.clone();
+        let accounts = Accounts::new(
+            TokioRunner,
+            HttpValidator::default(),
+            std::env::temp_dir(),
+            move |host| {
+                needed.broadcast(Event::CredentialsNeeded { host: host.to_owned() });
+            },
+        );
         Self {
+            accounts,
+            process_subscribers,
             servers: Arc::new(Servers::new(resolver, store.clone(), languages)),
             backends,
             highlighter: Default::default(),
@@ -170,6 +191,9 @@ impl Orchestrator {
             Request::RecentProjects => recent_projects(self.recent.list().await),
             Request::RecordRecentProject { path } => recent_projects(self.recent.record(path, unix_now()).await),
             Request::ForgetRecentProject { path } => recent_projects(self.recent.forget(&path).await),
+            Request::Accounts => self.accounts(from).await,
+            Request::SetCredentials { host, token, validate } => self.set_credentials(&host, &token, validate).await,
+            Request::RemoveCredentials { host } => self.remove_credentials(&host).await,
             Request::OpenSession { repo } => {
                 let (session, root) = self.open(&repo, from.clone()).await?;
                 Ok(Response::Session { session, root })

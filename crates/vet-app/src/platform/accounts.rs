@@ -168,14 +168,14 @@ where
 
     /// Keeps `token` as the personal access token of `host` (as typed or pasted). With
     /// `validate` the platform is asked first and nothing is kept unless it accepts the
-    /// token. Answers with the accounts afterwards.
+    /// token. Answers with the account, whose host is the normalized one.
     pub async fn set_credentials(
         &self,
         host: &str,
         token: &str,
         validate: bool,
         now: i64,
-    ) -> Result<Vec<Account>, AccountError> {
+    ) -> Result<Account, AccountError> {
         let host = normalize_host(host).map_err(AccountError::InvalidHost)?;
         let token = Token::new(token).ok_or(AccountError::EmptyToken)?;
         let mut identity = Identity::Unchecked;
@@ -197,13 +197,19 @@ where
         {
             let mut state = self.state();
             state.asked.remove(&host);
-            state.hosts.entry(host).or_default().pat = Some(Held {
+            state.hosts.entry(host.clone()).or_default().pat = Some(Held {
                 token,
                 refresh_at: i64::MAX,
                 identity,
             });
         }
-        Ok(self.accounts(now).await)
+        // Whether a CLI shadows the token is part of the answer.
+        self.cli_token(&host, now).await;
+        self.check_identities(Some(&host)).await;
+        self.rows()
+            .into_iter()
+            .find(|a| a.host == host && a.source == CredentialSource::Pat)
+            .ok_or_else(|| AccountError::InvalidHost(format!("the token for {host} was removed meanwhile")))
     }
 
     /// Forgets the personal access token of `host`. Answers with the accounts afterwards.
@@ -227,8 +233,11 @@ where
         for host in &hosts {
             self.cli_token(host, now).await;
         }
-        self.check_identities().await;
+        self.check_identities(None).await;
+        self.rows()
+    }
 
+    fn rows(&self) -> Vec<Account> {
         let state = self.state();
         let mut accounts = Vec::new();
         for (host, slot) in &state.hosts {
@@ -258,10 +267,16 @@ where
         accounts
     }
 
-    /// Asks each platform about the credentials it has not answered for yet.
-    async fn check_identities(&self) {
+    /// Asks the platforms about the credentials they have not answered for yet: those of
+    /// `only` if given, else of every host.
+    async fn check_identities(&self, only: Option<&str>) {
         let mut pending = Vec::new();
-        for (host, slot) in &self.state().hosts {
+        for (host, slot) in self
+            .state()
+            .hosts
+            .iter()
+            .filter(|(host, _)| only.is_none_or(|o| o == *host))
+        {
             for source in [CredentialSource::Cli, CredentialSource::Pat] {
                 let held = match source {
                     CredentialSource::Cli => &slot.cli,
@@ -600,21 +615,21 @@ mod tests {
     async fn a_token_the_platform_accepts_is_kept_with_its_user() {
         let f = fixture();
         f.platforms.knows("ghp_good", Ok("octocat"));
-        let accounts = f
+        let account = f
             .accounts
             .set_credentials("GitHub.com", " ghp_good ", true, 0)
             .await
             .unwrap();
         assert_eq!(
-            accounts,
-            [Account {
+            account,
+            Account {
                 host: "github.com".into(),
                 kind: PlatformKind::GitHub,
                 source: CredentialSource::Pat,
                 user: Some("octocat".into()),
                 state: AccountState::SignedIn,
                 in_use: true,
-            }]
+            }
         );
         assert_eq!(token_for(&f.accounts, "github.com", 0).await.unwrap().0, "ghp_good");
     }

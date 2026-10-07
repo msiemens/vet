@@ -1,6 +1,7 @@
 // Typed requests over the connection. The only module besides `connection.ts` that
 // knows the wire protocol, so a protocol change lands here.
 
+import type { Account } from "../generated/Account";
 import type { Base } from "../generated/Base";
 import type { BaseChoice } from "../generated/BaseChoice";
 import type { BlobContent } from "../generated/BlobContent";
@@ -34,6 +35,9 @@ import { Connection } from "./connection";
 
 export type FileContents = Extract<Response, { type: "fileContents" }>;
 
+/** The events of a session; the backend's own are `credentialsNeeded`. */
+export type SessionEvent = Exclude<ServerEvent, { type: "credentialsNeeded" }>;
+
 /** A language server's Markdown, with the highlights of each of its fenced code blocks, in order. */
 export interface HoverText {
   text: string;
@@ -53,6 +57,9 @@ function expect<T extends Response["type"]>(response: Response, type: T): Extrac
 
 /** The `thread` response carries the thread's fields beside its tag. */
 const asThread = (response: Extract<Response, { type: "thread" }>): Thread => response;
+
+/** Likewise the `account` response. */
+const asAccount = (response: Extract<Response, { type: "account" }>): Account => response;
 
 export class Backend {
   /** The open session, if any; one at a time. */
@@ -103,8 +110,38 @@ export class Backend {
     return this.session;
   }
 
-  onEvent(listener: (event: ServerEvent) => void): () => void {
-    return this.conn.onEvent(listener);
+  /** The events of the open repository's session. */
+  onEvent(listener: (event: SessionEvent) => void): () => void {
+    return this.conn.onEvent((event) => {
+      if (event.type !== "credentialsNeeded") listener(event);
+    });
+  }
+
+  /** Calls `listener` with a host the backend needs a credential for and has none; only heard after `accounts()`. */
+  onCredentialsNeeded(listener: (host: string) => void): () => void {
+    return this.conn.onEvent((event) => {
+      if (event.type === "credentialsNeeded") listener(event.host);
+    });
+  }
+
+  /** The credentials the backend holds or can get, per host; asking also subscribes this connection to `onCredentialsNeeded`. */
+  async accounts(): Promise<Account[]> {
+    return expect(await this.conn.request({ type: "accounts" }), "accounts").accounts;
+  }
+
+  /**
+   * Gives the backend a personal access token, which it keeps in memory only. With `validate` the platform
+   * is asked first and a refused token rejects with the backend's message. Resolves with the account, whose
+   * host is the normalized one.
+   */
+  async setCredentials(host: string, token: string, validate: boolean): Promise<Account> {
+    const request = { type: "setCredentials", host, token, validate } as const;
+    return asAccount(expect(await this.conn.request(request), "account"));
+  }
+
+  /** Forgets the personal access token of a host; resolves with the accounts left. */
+  async removeCredentials(host: string): Promise<Account[]> {
+    return expect(await this.conn.request({ type: "removeCredentials", host }), "accounts").accounts;
   }
 
   async manifest(): Promise<Manifest> {

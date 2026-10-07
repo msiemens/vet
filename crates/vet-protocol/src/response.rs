@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    Base, BlobContent, BranchInfo, ChangedSymbols, CommitInfo, Diagnostic, DirEntry, Highlights, Impact, Locations,
-    Manifest, Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, SessionId, Side, SymbolSignature,
-    TextChange, TextContent, Thread, ThreadTarget, Unavailable,
+    Account, Base, BlobContent, BranchInfo, ChangedSymbols, CommitInfo, Diagnostic, DirEntry, Highlights, Impact,
+    Locations, Manifest, Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, SessionId, Side,
+    SymbolSignature, TextChange, TextContent, Thread, ThreadTarget, Unavailable,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -27,6 +27,14 @@ pub enum Response {
     RecentProjects {
         projects: Vec<RecentProject>,
     },
+    /// The accounts after `Accounts` or `RemoveCredentials`: every credential the backend
+    /// holds or can get, hosts in name order, a host's CLI credential before its personal
+    /// access token.
+    Accounts {
+        accounts: Vec<Account>,
+    },
+    /// The personal access token `SetCredentials` kept, as an account.
+    Account(Account),
     /// Boxed: it would make every response as large as the manifest.
     Manifest(Box<Manifest>),
     /// `None` is a side the file does not have (added or deleted). The text and

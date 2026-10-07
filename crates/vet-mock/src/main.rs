@@ -140,6 +140,10 @@ impl Handler for Mock {
         };
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
+            Request::Accounts => Ok(Response::Accounts { accounts: Vec::new() }),
+            Request::SetCredentials { .. } | Request::RemoveCredentials { .. } => {
+                Err("the corpus has no hosting platform".into())
+            }
             Request::RecentProjects | Request::RecordRecentProject { .. } | Request::ForgetRecentProject { .. } => {
                 Ok(Response::RecentProjects { projects: Vec::new() })
             }

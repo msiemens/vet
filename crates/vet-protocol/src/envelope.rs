@@ -43,8 +43,9 @@ pub enum ServerMessage {
         message: String,
     },
     /// Pushed without a request. A connection receives the events of the sessions
-    /// it opened, until it closes them or disconnects; there is no other subscription.
-    /// Opening a repository that is already open subscribes to the existing session.
+    /// it opened, until it closes them or disconnects, and the events that belong to
+    /// the process once it asked for `Request::Accounts`. Opening a repository that
+    /// is already open subscribes to the existing session.
     Event {
         event: Event,
     },
