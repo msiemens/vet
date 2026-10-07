@@ -7,7 +7,7 @@ use vet_mapping as mapping;
 use vet_protocol::{Event, Response, SessionId};
 use vet_transport::Events;
 
-use crate::Open;
+use crate::open::Ready;
 
 /// A client connection, subscribed to the events of the sessions it opened.
 #[derive(Clone)]
@@ -35,7 +35,7 @@ pub fn settled(subscribers: &Subscribers<Connection>, session: SessionId, revisi
 }
 
 /// Tells every subscriber that a request started the review, as `started` says.
-pub fn announce_start(open: &Open, started: Option<Lifecycle>) {
+pub fn announce_start(open: &Ready, started: Option<Lifecycle>) {
     if let Some(lifecycle) = started {
         open.subscribers.broadcast(Event::ReviewStarted {
             session: open.id,
@@ -45,7 +45,7 @@ pub fn announce_start(open: &Open, started: Option<Lifecycle>) {
 }
 
 /// Tells the other subscribers that threads changed.
-pub async fn threads_changed(open: &Open, from: &Connection) {
+pub async fn threads_changed(open: &Ready, from: &Connection) {
     let revision = open.session.revision().await;
     open.subscribers.broadcast_except(
         from,
@@ -56,13 +56,13 @@ pub async fn threads_changed(open: &Open, from: &Connection) {
     );
 }
 
-pub async fn thread_changed(open: &Open, from: &Connection, thread: &ThreadView) -> Response {
+pub async fn thread_changed(open: &Ready, from: &Connection, thread: &ThreadView) -> Response {
     threads_changed(open, from).await;
     Response::Thread(mapping::thread(thread))
 }
 
 /// The protocol update for the requester; the other subscribers are told too.
-pub fn review_changed(open: &Open, from: &Connection, update: &ReviewUpdateView) -> vet_protocol::ReviewUpdate {
+pub fn review_changed(open: &Ready, from: &Connection, update: &ReviewUpdateView) -> vet_protocol::ReviewUpdate {
     let mapped = mapping::review_update(update);
     open.subscribers.broadcast_except(
         from,

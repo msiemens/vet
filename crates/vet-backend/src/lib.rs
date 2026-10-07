@@ -72,7 +72,8 @@ type Semantic = Semantics<
 >;
 
 /// An open session: sessions are one per repository, and opening an open
-/// repository subscribes to the existing one.
+/// repository subscribes to the existing one. It may not have scanned yet; see
+/// `Orchestrator::ready`.
 type Open = Entry<Connection, Wired>;
 type Sessions = Registry<Connection, Wired>;
 
@@ -202,6 +203,7 @@ impl Orchestrator {
                 self.close(session, from).await?;
                 Ok(Response::Done)
             }
+            Request::Tasks { session } => self.tasks(session).await,
             Request::FinishReview { session } => self.finish_review(session).await,
             Request::Manifest { session } => self.manifest(session).await,
             Request::FileContents { session, path } => self.file_contents(session, &path).await,
@@ -284,7 +286,7 @@ impl Orchestrator {
                 path,
                 line,
                 col,
-            } => self.find(session).await?.hover(revision, side, &path, line, col).await,
+            } => self.ready(session).await?.hover(revision, side, &path, line, col).await,
             Request::Definition {
                 session,
                 revision,
@@ -293,7 +295,7 @@ impl Orchestrator {
                 line,
                 col,
             } => {
-                self.find(session)
+                self.ready(session)
                     .await?
                     .definition(revision, side, &path, line, col)
                     .await
@@ -306,7 +308,7 @@ impl Orchestrator {
                 line,
                 col,
             } => {
-                self.find(session)
+                self.ready(session)
                     .await?
                     .references(revision, side, &path, line, col)
                     .await
@@ -315,28 +317,28 @@ impl Orchestrator {
                 session,
                 revision,
                 path,
-            } => self.find(session).await?.diagnostics(revision, &path).await,
-            Request::ChangedSymbols { session, revision } => self.find(session).await?.changed_symbols(revision).await,
+            } => self.ready(session).await?.diagnostics(revision, &path).await,
+            Request::ChangedSymbols { session, revision } => self.ready(session).await?.changed_symbols(revision).await,
             Request::Signature {
                 session,
                 revision,
                 symbol,
-            } => self.find(session).await?.signature(revision, &symbol).await,
+            } => self.ready(session).await?.signature(revision, &symbol).await,
             Request::Impact {
                 session,
                 revision,
                 symbol,
-            } => self.find(session).await?.impact(revision, &symbol).await,
+            } => self.ready(session).await?.impact(revision, &symbol).await,
             Request::RemovalImpact {
                 session,
                 revision,
                 symbol,
-            } => self.find(session).await?.removal_impact(revision, &symbol).await,
+            } => self.ready(session).await?.removal_impact(revision, &symbol).await,
             Request::Reachability {
                 session,
                 revision,
                 symbol,
-            } => self.find(session).await?.reachability(revision, &symbol).await,
+            } => self.ready(session).await?.reachability(revision, &symbol).await,
             Request::ListServers { session } => self.list_servers(session).await,
             Request::InstallServer { session, language } => self.install_server(session, from, language).await,
             Request::SetServerPath {
@@ -350,9 +352,14 @@ impl Orchestrator {
 
 /// Language servers take long to start; a new revision's first query should
 /// find them running. Starting never delays the reply of the request that
-/// changed the revision.
+/// changed the revision. For a session that has not scanned yet this is what
+/// scans it, so opening does not wait for the scan.
 fn start_servers_in_background(open: Arc<Open>) {
-    tokio::spawn(async move { open.start_servers().await });
+    tokio::spawn(async move {
+        if let Ok(booted) = open.booted().await {
+            booted.start_servers().await;
+        }
+    });
 }
 
 /// The store in the per-platform data directory (§8).

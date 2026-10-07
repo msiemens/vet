@@ -17,6 +17,7 @@ import type { ReviewUpdate } from "./ReviewUpdate";
 import type { ServerInfo } from "./ServerInfo";
 import type { Side } from "./Side";
 import type { SymbolSignature } from "./SymbolSignature";
+import type { Task } from "./Task";
 import type { TextChange } from "./TextChange";
 import type { TextContent } from "./TextContent";
 import type { Thread } from "./Thread";
@@ -27,7 +28,7 @@ export type Response = { "type": "pong", payload: string, } | { "type": "session
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
+root: string, } | { "type": "done" } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
 /**
  * The changed ranges of the hunks in order, down to the words that differ within a
  * replaced region: line-snapped, one block per hunk (see [`TextChange`]).

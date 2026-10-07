@@ -55,7 +55,9 @@ impl Orchestrator {
     async fn servers_replaced(&self, language: &str, from: &Connection) {
         let language = BackendId(language.to_owned());
         for open in self.sessions.all().await {
-            open.semantics.restart(&language).await;
+            if let Some(booted) = open.booted_now() {
+                booted.semantics.restart(&language).await;
+            }
         }
         for open in self.sessions.all().await {
             open.subscribers

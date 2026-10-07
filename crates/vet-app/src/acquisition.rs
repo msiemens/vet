@@ -9,12 +9,15 @@ use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotId, Snaps
 
 use crate::pin::CommitId;
 use crate::ports::{BlobRead, BlobReader, Dirty, GitError, History, Scan, Scanner, Store, StoreError};
+use crate::progress::{TaskKind, Tasks};
 
 pub struct Acquisition<G, S> {
     pub git: G,
     pub store: S,
     /// The commit whose objects back each snapshot's committed blobs.
     commits: Mutex<HashMap<SnapshotId, CommitId>>,
+    /// Where scans and diffs report.
+    pub tasks: Tasks,
 }
 
 impl<G, S> Acquisition<G, S> {
@@ -23,7 +26,14 @@ impl<G, S> Acquisition<G, S> {
             git,
             store,
             commits: Mutex::default(),
+            tasks: Tasks::default(),
         }
+    }
+
+    /// Reports scans and diffs to `tasks`.
+    pub fn reporting(mut self, tasks: Tasks) -> Self {
+        self.tasks = tasks;
+        self
     }
 
     /// Remember that git can reconstruct `snapshot`'s committed blobs from
@@ -123,7 +133,9 @@ impl<G: Scanner, S> Acquisition<G, S> {
     /// Authoritative reconciliation (§6.2): before declaring a snapshot settled,
     /// at open, and on rescan signals.
     pub async fn reconcile(&self, dirty: Dirty) -> Result<Scan, GitError> {
-        self.git.scan(dirty).await
+        self.tasks
+            .track(TaskKind::Scan, "Scanning the working tree", self.git.scan(dirty))
+            .await
     }
 }
 

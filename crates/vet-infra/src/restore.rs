@@ -45,6 +45,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use vet_app::progress::{TaskKind, Tasks};
 use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, RestoreFailure, Restored, Restorer};
@@ -154,6 +155,8 @@ pub struct ToolRestorer {
     tools: Arc<dyn Tools>,
     /// The version of each tool, asked once per launch.
     versions: Mutex<HashMap<String, String>>,
+    /// Where the steps of a restore report.
+    tasks: Tasks,
 }
 
 impl Default for ToolRestorer {
@@ -163,6 +166,7 @@ impl Default for ToolRestorer {
             donor: None,
             tools: Arc::new(Programs),
             versions: Mutex::default(),
+            tasks: Tasks::default(),
         }
     }
 }
@@ -179,6 +183,13 @@ impl ToolRestorer {
     #[cfg(test)]
     fn with_tools(mut self, tools: Arc<dyn Tools>) -> Self {
         self.tools = tools;
+        self
+    }
+
+    /// Reports each restore that runs as a task with a step per tool run. A
+    /// restore taken from a kept tree runs nothing and reports nothing.
+    pub fn reporting(mut self, tasks: Tasks) -> Self {
+        self.tasks = tasks;
         self
     }
 
@@ -457,7 +468,17 @@ impl ToolRestorer {
         };
         let mut records = Vec::new();
         let mut failed: Vec<&Path> = Vec::new();
-        for step in allowed(plan, policy) {
+        let steps: Vec<&Step> = allowed(plan, policy).collect();
+        let total = steps.len() as u32;
+        let task = (total > 0).then(|| {
+            self.tasks
+                .start(TaskKind::Restore, format!("Restoring {} dependencies", language.title))
+        });
+        for (done, step) in steps.into_iter().enumerate() {
+            if let Some(task) = &task {
+                let at = format!("{}: {}", label(&step.project), step.describe());
+                task.report(Some((done as u32, total)), Some(at));
+            }
             // The rest of a project's steps need the one that failed.
             if failed.contains(&step.project.as_path()) {
                 records.push(step.record(Outcome::Failed("an earlier step of the project failed".into())));
@@ -483,6 +504,13 @@ impl ToolRestorer {
                     restored.failures.push(step.failure(why));
                     failed.push(&step.project);
                 }
+            }
+        }
+        if let Some(task) = task {
+            if failed.is_empty() {
+                task.finish();
+            } else {
+                task.fail("a restore step failed".into());
             }
         }
         restored.env = environment(root, language, plan);
@@ -643,6 +671,8 @@ impl Restorer for ToolRestorer {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use vet_app::progress::TaskState;
 
     use super::*;
     use crate::exec::{Host, is_file};
@@ -1066,6 +1096,28 @@ mod tests {
         let second = restorer(&tools).restore(&root, &backend("rust"), NO_EXEC).await;
         assert_eq!(tools.runs(), ["cargo fetch"], "nothing ran again");
         assert_eq!(second, first);
+    }
+
+    #[tokio::test]
+    async fn only_a_restore_that_runs_steps_is_reported_as_a_task() {
+        let (_dir, root) = kept(&[("Cargo.toml", "")]);
+        let tools = Arc::new(FakeTools::default());
+        let announced = Arc::new(Mutex::new(Vec::new()));
+        let tasks = Tasks::new(Duration::ZERO, {
+            let announced = announced.clone();
+            Box::new(move |task| announced.lock().unwrap().push((task.title, task.state)))
+        });
+        let reporting = || restorer(&tools).reporting(tasks.clone());
+
+        reporting().restore(&root, &backend("rust"), NO_EXEC).await;
+        let built = announced.lock().unwrap().clone();
+        assert!(built.iter().all(|(title, _)| title == "Restoring Rust dependencies"));
+        assert_eq!(built.last().map(|(_, state)| state), Some(&TaskState::Finished));
+
+        announced.lock().unwrap().clear();
+        reporting().restore(&root, &backend("rust"), NO_EXEC).await;
+        assert_eq!(tools.runs(), ["cargo fetch"], "the second restore was kept");
+        assert!(announced.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

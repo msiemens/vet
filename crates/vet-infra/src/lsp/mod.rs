@@ -19,6 +19,7 @@ use lsp_types as lsp;
 use lsp_types::request::Initialize;
 use serde_json::{Value, json};
 use vet_app::ports::{ServerCommand, ServerLocator};
+use vet_app::progress::{TaskKind, Tasks};
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, LaunchError, Restored, Restorer, ServerConfig, ServerLauncher, Tree};
 
@@ -41,6 +42,8 @@ pub struct LspLauncher<L, R> {
     pub locator: L,
     /// Restores the dependencies of an immutable tree before its server starts.
     pub restorer: R,
+    /// Where starting and indexing report.
+    pub tasks: Tasks,
 }
 
 impl<L, R> LspLauncher<L, R> {
@@ -49,7 +52,14 @@ impl<L, R> LspLauncher<L, R> {
             ready_timeout: Duration::from_secs(180),
             locator,
             restorer,
+            tasks: Tasks::default(),
         }
+    }
+
+    /// Reports every start to `tasks`.
+    pub fn reporting(mut self, tasks: Tasks) -> Self {
+        self.tasks = tasks;
+        self
     }
 }
 
@@ -161,17 +171,29 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
     }
 }
 
-impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher<L, R> {
-    type Server = LspServer;
+/// A server that has answered `initialize` and, for those that need it, loaded its projects.
+struct Launched {
+    conn: Connection,
+    root: PathBuf,
+    diagnostics: Diagnostics,
+    phases: Phases,
+}
 
-    async fn start(
+/// The server's name as a person knows it.
+fn server_name(config: &ServerConfig) -> &str {
+    language::by_id(&config.backend.0).map_or(config.binary.as_str(), |l| l.display_name)
+}
+
+impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
+    /// Starts the server's process and brings it through the handshake, which is
+    /// the part of a start that does not index.
+    async fn launch(
         &self,
         root: &Path,
         tree: Tree,
         backend: &Backend,
         policy: AnalysisPolicy,
-    ) -> Result<LspServer, LaunchError> {
-        let started = Instant::now();
+    ) -> Result<Launched, LaunchError> {
         let config = backend.config();
         let root = std::fs::canonicalize(root).map_err(|e| LaunchError::Spawn(format!("{}: {e}", root.display())))?;
         let Prepared {
@@ -201,14 +223,68 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
             }
             phases.mark("project load", phase);
         }
+        Ok(Launched {
+            conn,
+            root,
+            diagnostics,
+            phases,
+        })
+    }
+}
+
+impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher<L, R> {
+    type Server = LspServer;
+
+    /// Reports the start as one task and the indexing after it as another, which
+    /// shows what the server says about its progress.
+    async fn start(
+        &self,
+        root: &Path,
+        tree: Tree,
+        backend: &Backend,
+        policy: AnalysisPolicy,
+    ) -> Result<LspServer, LaunchError> {
+        let started = Instant::now();
+        let config = backend.config();
+        let side = match tree {
+            Tree::Live => "",
+            Tree::Immutable => " for the base",
+        };
+        let name = server_name(config);
+        let starting = self
+            .tasks
+            .start(TaskKind::ServerStart, format!("Starting {name}{side}"));
+        let launched = self.launch(root, tree, backend, policy).await;
+        starting.conclude(&launched);
+        let Launched {
+            conn,
+            root,
+            diagnostics,
+            mut phases,
+        } = launched?;
+
         let phase = Instant::now();
-        conn.with_state(rpc::State::touch);
-        if !conn.wait_for(self.ready_timeout, |s| s.is_idle(QUIET)).await {
-            return Err(LaunchError::NotReady(conn.describe(format!(
+        let indexing = self
+            .tasks
+            .start(TaskKind::ServerIndex, format!("Indexing {name}{side}"));
+        conn.with_state(|state| {
+            state.index = Some(indexing);
+            state.touch();
+        });
+        let ready = conn.wait_for(self.ready_timeout, |s| s.is_idle(QUIET)).await;
+        let indexing = conn.with_state(|state| state.index.take());
+        if ready {
+            drop(indexing);
+        } else {
+            let why = format!(
                 "{} did not finish indexing within {}s",
                 config.binary,
                 self.ready_timeout.as_secs()
-            ))));
+            );
+            if let Some(indexing) = indexing {
+                indexing.fail(why.clone());
+            }
+            return Err(LaunchError::NotReady(conn.describe(why)));
         }
         phases.mark("ready wait", phase);
         crate::timing::log(

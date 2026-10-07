@@ -29,6 +29,7 @@ use vet_semantic::trace;
 use crate::acquisition::Acquisition;
 use crate::limits::RestoreLimits;
 use crate::ports::{BlobRead, BlobReader, GitRepo, ReviewStore, Store};
+use crate::progress::{TaskKind, Tasks};
 use crate::session::{LiveSession, SemanticSides, SessionError};
 use crate::trust::{Trust, analysis_policy};
 
@@ -73,6 +74,8 @@ where
     /// Kept current by the launcher's restorer (`Limiting`).
     limits: RestoreLimits,
     trust: Trust,
+    /// Where the changed-symbols analysis reports its files done.
+    tasks: Tasks,
 }
 
 /// The base side's file contents, as the acquisition keeps them.
@@ -114,7 +117,8 @@ where
     /// `materializer` serves the session's snapshots as directories and
     /// `live_root` is the worktree the target side is served from. `trust`
     /// decides which sides may have their servers execute project code.
-    /// `limits` is the one the launcher's restorer updates.
+    /// `limits` is the one the launcher's restorer updates. `tasks` is told
+    /// how far the changed-symbols analysis is.
     pub fn new(
         materializer: M,
         launcher: L,
@@ -122,6 +126,7 @@ where
         backends: Vec<Backend>,
         limits: RestoreLimits,
         trust: Trust,
+        tasks: Tasks,
     ) -> Self {
         let pool = Pool::new(materializer, launcher, live_root, POOL_CAPACITY);
         Self {
@@ -130,6 +135,7 @@ where
             changes: Mutex::new(None),
             limits,
             trust,
+            tasks,
         }
     }
 
@@ -290,14 +296,18 @@ where
                 // The base side's symbols come from the target side's server, so
                 // the base side's servers, which restore the base first, are not waited for.
                 let texts = BaseContent(session.acquisition());
+                let analysis = self.tasks.start(TaskKind::Analyse, "Finding the changed symbols");
                 // Only the target side's servers are queried. They start together, while
                 // the files are queried, so a language late in the list does not wait for
                 // the servers of the languages before it.
                 let (_, changes) = join(
                     self.start_servers_for(&pair, &files, &[Side::Target], &[]),
-                    changed_symbols(&pair, &texts, &files),
+                    changed_symbols(&pair, &texts, &files, &|done, total| {
+                        analysis.report(Some((done as u32, total as u32)), Some(format!("{done} of {total} files")));
+                    }),
                 )
                 .await;
+                analysis.finish();
                 trace::log(
                     || {
                         format!(
@@ -454,6 +464,7 @@ mod tests {
 
     use super::*;
     use crate::pin::CommitId;
+    use crate::progress::TaskState;
     use crate::session::tests::{FakeGit, Fixture, MemStore};
 
     fn sides() -> SemanticSides {
@@ -652,6 +663,7 @@ mod tests {
             vec![backend("rust", "rs"), backend("python", "py"), backend("go", "go")],
             RestoreLimits::default(),
             Trust::Local,
+            Tasks::default(),
         );
         (fx, semantics, counters)
     }
@@ -711,6 +723,42 @@ mod tests {
         let (fx, semantics, counters) = semantics_over(&before, &after).await;
         semantics.changed_symbols(&fx.session, 0).await.unwrap();
         assert_eq!(counters.started_at_first_answer.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn the_analysis_reports_the_files_done_of_the_files_to_analyse_and_ends() {
+        let fx = Fixture::open(
+            &[("a.rs", "one\n"), ("b.py", "one\n"), ("c.md", "one\n")],
+            &[("a.rs", "two\n"), ("b.py", "two\n"), ("c.md", "two\n")],
+        )
+        .await;
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let sink = heard.clone();
+        let semantics = Semantics::new(
+            FakeMaterializer,
+            FakeLauncher(Arc::default()),
+            "/live".into(),
+            vec![backend("rust", "rs"), backend("python", "py")],
+            RestoreLimits::default(),
+            Trust::Local,
+            Tasks::new(
+                std::time::Duration::ZERO,
+                Box::new(move |t| sink.lock().unwrap().push(t)),
+            ),
+        );
+        semantics.changed_symbols(&fx.session, 0).await.unwrap();
+
+        let heard = heard.lock().unwrap();
+        let analysis: Vec<_> = heard.iter().filter(|t| t.kind == TaskKind::Analyse).collect();
+        assert!(analysis.iter().all(|t| t.id == analysis[0].id));
+        assert_eq!(analysis.first().map(|t| &t.state), Some(&TaskState::Running));
+        let last = analysis.last().unwrap();
+        assert_eq!(
+            (&last.state, last.done, last.total),
+            (&TaskState::Finished, Some(3), Some(3))
+        );
+        let progress: Vec<_> = analysis.iter().filter_map(|t| t.done).collect();
+        assert!(progress.windows(2).all(|w| w[0] <= w[1]), "{progress:?}");
     }
 
     #[tokio::test]

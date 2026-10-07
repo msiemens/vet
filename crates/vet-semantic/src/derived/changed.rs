@@ -1,6 +1,8 @@
 //! Which symbols changed (§7.3): `documentSymbol` on both sides of each changed
 //! file, intersected with the diff hunks.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use vet_core::content::{FileDiff, LineRange, RepoPath};
 use vet_core::review::Side;
 
@@ -49,7 +51,14 @@ pub trait BaseTexts: Sync {
     fn base_text(&self, file: &FileDiff) -> impl Future<Output = Option<String>> + Send;
 }
 
-pub async fn changed_symbols(p: &impl Primitives, texts: &impl BaseTexts, files: &[FileDiff]) -> Derived<Changes> {
+/// `on_file(done, total)` is called each time a file's symbols are in, `total` being
+/// the files with changes to look at.
+pub async fn changed_symbols(
+    p: &impl Primitives,
+    texts: &impl BaseTexts,
+    files: &[FileDiff],
+    on_file: &(impl Fn(usize, usize) + Sync),
+) -> Derived<Changes> {
     let mut inputs = Inputs::new("changed symbols");
     let mut out = Changes::default();
     let files: Vec<_> = files.iter().filter(|f| !f.hunks.is_empty()).collect();
@@ -61,12 +70,20 @@ pub async fn changed_symbols(p: &impl Primitives, texts: &impl BaseTexts, files:
             }
         }
     }
-    let answers = bounded(FILES_IN_FLIGHT, 0..files.len(), |at| {
+    let total = files.len();
+    let done = AtomicUsize::new(0);
+    let answers = bounded(FILES_IN_FLIGHT, 0..total, |at| {
         let file = files[at];
-        join(
-            base_symbols(p, texts, file),
-            symbols(p, Side::Target, file.new_path.as_ref()),
-        )
+        let done = &done;
+        async move {
+            let answer = join(
+                base_symbols(p, texts, file),
+                symbols(p, Side::Target, file.new_path.as_ref()),
+            )
+            .await;
+            on_file(done.fetch_add(1, Ordering::Relaxed) + 1, total);
+            answer
+        }
     })
     .await;
     for (file, (base, target)) in files.into_iter().zip(answers) {

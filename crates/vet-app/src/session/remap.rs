@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use vet_core::content::{Changeset, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
+use vet_core::content::{BlobId, Changeset, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
 use vet_core::prepared::PreparedFile;
 use vet_core::remap::remap_span;
 use vet_core::resolve::{Resolution, resolve_anchor};
@@ -14,6 +14,7 @@ use super::state::{Changes, State};
 use super::views::{ItemView, ModeChange};
 use super::{LiveSession, Result};
 use crate::ports::{GitRepo, ReviewStore, Store};
+use crate::progress::{Running, TaskKind};
 use crate::review::{RecordedSpan, SpanId};
 
 /// Indices into the prepared files of a recorded span's base and target side.
@@ -32,19 +33,10 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         if st.changes.is_some() {
             return Ok(());
         }
-        let diff = self
-            .acquisition
-            .git
-            .diff(&self.acquisition.store, &st.base, &st.target)
-            .await?;
-        let mut blobs = BTreeMap::new();
-        for d in &diff.files {
-            for (path, blob) in [(&d.old_path, d.old_blob), (&d.new_path, d.new_blob)] {
-                if let (Some(path), Some(blob)) = (path, blob) {
-                    self.load(&mut blobs, path, blob).await?;
-                }
-            }
-        }
+        let task = self.acquisition.tasks.start(TaskKind::Diff, "Diffing the changes");
+        let diffed = self.diffed(st, &task).await;
+        task.conclude(&diffed);
+        let (diff, blobs) = diffed?;
         let mut items = Vec::new();
         for n in &diff.non_text {
             let before_path = n.from.as_ref().unwrap_or(&n.path);
@@ -81,6 +73,27 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             items,
         });
         self.remap(st).await
+    }
+
+    /// The diff of the base and the target, and the content of every text file it
+    /// changes; `task` reports the files loaded.
+    async fn diffed(&self, st: &State, task: &Running) -> Result<(SnapshotDiff, BTreeMap<BlobId, Vec<u8>>)> {
+        let diff = self
+            .acquisition
+            .git
+            .diff(&self.acquisition.store, &st.base, &st.target)
+            .await?;
+        let mut blobs = BTreeMap::new();
+        let total = diff.files.len() as u32;
+        for (done, d) in diff.files.iter().enumerate() {
+            task.report(Some((done as u32, total)), Some(d.path().to_string_lossy()));
+            for (path, blob) in [(&d.old_path, d.old_blob), (&d.new_path, d.new_blob)] {
+                if let (Some(path), Some(blob)) = (path, blob) {
+                    self.load(&mut blobs, path, blob).await?;
+                }
+            }
+        }
+        Ok((diff, blobs))
     }
 
     /// Remaps every recorded span onto the current changeset (§5.2) and

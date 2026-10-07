@@ -9,10 +9,10 @@ use vet_semantic::ports::{At, Location};
 use vet_mapping::core_side;
 use vet_mapping::semantic as map;
 
-use super::open::Wired;
+use super::open::Booted;
 use super::{highlight, message};
 
-impl Wired {
+impl Booted {
     /// The language that serves `file`, as `ListServers` names it.
     fn language_of(&self, file: &RepoPath) -> Option<String> {
         self.semantics.language_of(file).map(|language| language.0.clone())

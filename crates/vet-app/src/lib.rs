@@ -11,6 +11,7 @@ pub mod limits;
 pub mod pin;
 pub mod platform;
 pub mod ports;
+pub mod progress;
 pub mod recent;
 pub mod registry;
 pub mod review;

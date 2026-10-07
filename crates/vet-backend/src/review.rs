@@ -6,11 +6,12 @@ use vet_mapping as mapping;
 use vet_protocol::{Response, SessionId};
 
 use crate::events::{Connection, announce_start, review_changed, settled};
-use crate::{Open, Orchestrator, message, start_servers_in_background};
+use crate::open::Ready;
+use crate::{Orchestrator, message, start_servers_in_background};
 
 impl Orchestrator {
     pub(crate) async fn finish_review(&self, session: SessionId) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let complete = open.session.finish_review().await.map_err(message)?;
         let revision = open.session.revision().await;
         settled(&open.subscribers, session, revision);
@@ -18,7 +19,7 @@ impl Orchestrator {
     }
 
     pub(crate) async fn manifest(&self, session: SessionId) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let manifest = open.session.manifest().await.map_err(message)?;
         let failures = open.semantics.restore_failures();
         Ok(Response::Manifest(Box::new(mapping::manifest(
@@ -28,7 +29,7 @@ impl Orchestrator {
 
     pub(crate) async fn file_contents(&self, session: SessionId, path: &str) -> Result<Response, String> {
         let text = self
-            .find(session)
+            .ready(session)
             .await?
             .session
             .file_text(path)
@@ -39,7 +40,7 @@ impl Orchestrator {
 
     pub(crate) async fn file_text(&self, session: SessionId, path: &str) -> Result<Response, String> {
         let text = self
-            .find(session)
+            .ready(session)
             .await?
             .session
             .target_text(path)
@@ -56,7 +57,7 @@ impl Orchestrator {
         path: &str,
         hunk: u32,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let update = open.session.toggle_hunk(revision, path, hunk).await.map_err(message)?;
         announce_start(&open, update.started);
         Ok(Response::Review(review_changed(&open, from, &update)))
@@ -70,7 +71,7 @@ impl Orchestrator {
         path: &str,
         kind: vet_protocol::NonTextKind,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let update = open
             .session
             .toggle_item(revision, path, mapping::core_non_text_kind(kind))
@@ -87,7 +88,7 @@ impl Orchestrator {
         revision: u32,
         path: &str,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let update = open.session.toggle_file_seen(revision, path).await.map_err(message)?;
         announce_start(&open, update.started);
         Ok(Response::Review(review_changed(&open, from, &update)))
@@ -102,7 +103,7 @@ impl Orchestrator {
         side: vet_protocol::Side,
     ) -> Result<Response, String> {
         let blob = self
-            .find(session)
+            .ready(session)
             .await?
             .session
             .item_blob(
@@ -121,7 +122,7 @@ impl Orchestrator {
         session: SessionId,
         base: vet_protocol::BaseChoice,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let (base, revision) = open
             .session
             .set_base(mapping::core_base_choice(base))
@@ -136,7 +137,7 @@ impl Orchestrator {
         session: SessionId,
         filter: vet_protocol::ReviewFilter,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let revision = open
             .session
             .set_filter(mapping::core_filter(filter))
@@ -152,7 +153,7 @@ impl Orchestrator {
         path: &str,
         directory: bool,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let revision = open.session.exclude_path(path, directory).await.map_err(message)?;
         settled(&open.subscribers, session, revision);
         Ok(Response::Done)
@@ -160,7 +161,7 @@ impl Orchestrator {
 
     pub(crate) async fn list_base_candidates(&self, session: SessionId) -> Result<Response, String> {
         let candidates = self
-            .find(session)
+            .ready(session)
             .await?
             .session
             .base_candidates()
@@ -171,7 +172,7 @@ impl Orchestrator {
 
     pub(crate) async fn list_directory(&self, session: SessionId, path: &str) -> Result<Response, String> {
         let listing = self
-            .find(session)
+            .ready(session)
             .await?
             .session
             .list_directory(path)
@@ -189,7 +190,7 @@ impl Orchestrator {
         line: u32,
     ) -> Result<Response, String> {
         let line = self
-            .find(session)
+            .ready(session)
             .await?
             .session
             .line_in_target(revision, mapping::core_side(side), path, line)
@@ -201,7 +202,7 @@ impl Orchestrator {
 
 /// A request changed the revision for everyone: they refetch, and the language
 /// servers start for it in the background.
-fn revision_changed(open: std::sync::Arc<Open>, revision: u32) {
-    settled(&open.subscribers, open.id, revision);
-    start_servers_in_background(open);
+fn revision_changed(ready: Ready, revision: u32) {
+    settled(&ready.subscribers, ready.id, revision);
+    start_servers_in_background(ready.open);
 }

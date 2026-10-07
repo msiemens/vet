@@ -69,7 +69,14 @@ pub enum Request {
     FinishReview {
         session: SessionId,
     },
-    /// The changeset as it is now, with review state.
+    /// The background work of the session that is running now, oldest first, for
+    /// a connection that joined after it started. Answers with `Response::Tasks`,
+    /// also while the session is still scanning for the first time.
+    Tasks {
+        session: SessionId,
+    },
+    /// The changeset as it is now, with review state. Waits for the session's
+    /// first scan if it has not finished.
     Manifest {
         session: SessionId,
     },

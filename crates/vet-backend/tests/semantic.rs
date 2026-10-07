@@ -491,10 +491,15 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
         panic!("{python:?}");
     };
     assert_eq!(found, &path);
-    let message = tokio::time::timeout(Duration::from_secs(5), first.inbox.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let message = loop {
+        let message = tokio::time::timeout(Duration::from_secs(5), first.inbox.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if !matches!(message, ServerMessage::Event { event: Event::Task(_) }) {
+            break message;
+        }
+    };
     assert!(matches!(
         message,
         ServerMessage::Event {

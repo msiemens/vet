@@ -66,6 +66,7 @@ use crate::pin::BaseChoice;
 use crate::ports::{
     BaseCandidates, BranchInfo, Clock, Dirty, GitError, GitRepo, ReviewStore, Scan, Store, StoreError, Watcher,
 };
+use crate::progress::Tasks;
 use crate::review::SessionId;
 use crate::settle::Settling;
 
@@ -161,7 +162,12 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// key reviews are recorded under), or else starts out browsing the tree
     /// against the current branch's tip.
     pub async fn open(git: G, store: S, repo: String, clock: UnixClock) -> Result<Self> {
-        let acquisition = Arc::new(Acquisition::new(git, store));
+        Self::open_reporting(git, store, repo, clock, Tasks::default()).await
+    }
+
+    /// Like [`LiveSession::open`], with the scans and diffs of the session reporting to `tasks`.
+    pub async fn open_reporting(git: G, store: S, repo: String, clock: UnixClock, tasks: Tasks) -> Result<Self> {
+        let acquisition = Arc::new(Acquisition::new(git, store).reporting(tasks));
         let filter = acquisition.store.filter(repo.clone()).await?.normalized();
         let name = name_of_repo(&repo);
         if let Some(&id) = acquisition.store.open_sessions(repo.clone()).await?.last() {

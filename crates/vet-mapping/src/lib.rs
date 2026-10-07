@@ -1,6 +1,7 @@
 //! vet-app views to protocol DTOs, and back for the request enums.
 
 pub mod account;
+pub mod progress;
 pub mod semantic;
 
 use vet_app::pin::{BaseChoice, CommitId};

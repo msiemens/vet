@@ -153,6 +153,7 @@ impl Handler for Mock {
                 root: repo,
             }),
             Request::CloseSession { .. } => Ok(Response::Done),
+            Request::Tasks { .. } => Ok(Response::Tasks { tasks: Vec::new() }),
             Request::Manifest { .. } => {
                 let spans = self.seen_spans(&seen());
                 let coverage = Coverage::new(&spans);

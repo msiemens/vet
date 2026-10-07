@@ -10,7 +10,7 @@ use crate::{Orchestrator, message};
 
 impl Orchestrator {
     pub(crate) async fn threads(&self, session: SessionId) -> Result<Response, String> {
-        let threads = self.find(session).await?.session.threads().await.map_err(message)?;
+        let threads = self.ready(session).await?.session.threads().await.map_err(message)?;
         Ok(mapping::threads(&threads))
     }
 
@@ -21,7 +21,7 @@ impl Orchestrator {
         path: &str,
         at: vet_protocol::CommentAt,
     ) -> Result<Response, String> {
-        let spot = (self.find(session).await?.session)
+        let spot = (self.ready(session).await?.session)
             .comment_target(revision, path, mapping::core_comment_at(at))
             .await
             .map_err(message)?;
@@ -36,7 +36,7 @@ impl Orchestrator {
         target: vet_protocol::ThreadTarget,
         body: String,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let thread = open
             .session
             .create_thread(revision, mapping::new_thread(target), body, unix_now())
@@ -53,7 +53,7 @@ impl Orchestrator {
         thread: u32,
         body: String,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let thread = open
             .session
             .reply(ThreadId(thread.into()), body, unix_now())
@@ -69,7 +69,7 @@ impl Orchestrator {
         thread: u32,
         status: vet_protocol::ThreadStatus,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let thread = open
             .session
             .set_thread_status(ThreadId(thread.into()), mapping::core_thread_status(status))
@@ -84,7 +84,7 @@ impl Orchestrator {
         from: &Connection,
         thread: u32,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         open.session
             .delete_thread(ThreadId(thread.into()))
             .await
@@ -100,7 +100,7 @@ impl Orchestrator {
         revision: u32,
         thread: u32,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let thread = open
             .session
             .confirm_anchor(revision, ThreadId(thread.into()))
@@ -117,7 +117,7 @@ impl Orchestrator {
         thread: u32,
         candidate: u32,
     ) -> Result<Response, String> {
-        let open = self.find(session).await?;
+        let open = self.ready(session).await?;
         let thread = open
             .session
             .attach_anchor(revision, ThreadId(thread.into()), candidate as usize)

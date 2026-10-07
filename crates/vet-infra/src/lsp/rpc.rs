@@ -7,7 +7,7 @@
 //! whose future is dropped before its answer arrived is cancelled
 //! (`$/cancelRequest`) and forgotten.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::Child;
 use tokio::sync::{Notify, mpsc, oneshot};
+use vet_app::progress::Running;
 
 use crate::exec::{Tail, command};
 
@@ -33,9 +34,20 @@ pub(super) struct DiagnosticsState {
     pub items: Vec<lsp_types::Diagnostic>,
 }
 
+/// One piece of work a server reports with `$/progress`.
+struct Work {
+    token: String,
+    title: String,
+    message: Option<String>,
+    percentage: Option<u32>,
+}
+
 #[derive(Default)]
 pub(super) struct State {
-    active_progress: HashSet<String>,
+    /// Oldest first; the last is the one that reported most recently.
+    active_progress: Vec<Work>,
+    /// Told what the server is working on, until the launcher takes it.
+    pub index: Option<Running>,
     /// `experimental/serverStatus` `quiescent`, for servers that send it.
     quiescent: Option<bool>,
     last_activity: Option<Instant>,
@@ -310,6 +322,54 @@ impl State {
         self.last_activity = Some(Instant::now());
     }
 
+    /// Applies a `$/progress` notification and tells `index` what the server is
+    /// doing now: the work that reported last, with its percentage if it has one.
+    fn progress(&mut self, params: &Value) {
+        let token = params["token"].to_string();
+        let value = &params["value"];
+        let text = |key: &str| value[key].as_str().map(str::to_owned);
+        let percentage = value["percentage"].as_u64().map(|p| p.min(100) as u32);
+        let at = self.active_progress.iter().position(|w| w.token == token);
+        match value["kind"].as_str() {
+            Some("begin") => {
+                self.active_progress.retain(|w| w.token != token);
+                self.active_progress.push(Work {
+                    token,
+                    title: text("title").unwrap_or_default(),
+                    message: text("message"),
+                    percentage,
+                });
+            }
+            Some("report") => {
+                if let Some(at) = at {
+                    let mut work = self.active_progress.remove(at);
+                    work.message = text("message").or(work.message);
+                    work.percentage = percentage.or(work.percentage);
+                    self.active_progress.push(work);
+                }
+            }
+            Some("end") => {
+                if let Some(at) = at {
+                    self.active_progress.remove(at);
+                }
+            }
+            _ => {}
+        }
+        if let Some(index) = &self.index {
+            match self.active_progress.last() {
+                Some(work) => {
+                    let detail = match (&work.title, &work.message) {
+                        (title, Some(message)) if !title.is_empty() => format!("{title}: {message}"),
+                        (title, None) => title.clone(),
+                        (_, Some(message)) => message.clone(),
+                    };
+                    index.report(work.percentage.map(|p| (p, 100)), Some(detail));
+                }
+                None => index.report(None, None),
+            }
+        }
+    }
+
     /// Indexing is done: no work in progress, the server (if it reports it) is
     /// quiescent, and nothing has happened for `quiet`.
     pub fn is_idle(&self, quiet: Duration) -> bool {
@@ -412,16 +472,7 @@ fn notification(shared: &Shared, method: &str, params: &Value) {
     let mut state = shared.state.lock().expect("not poisoned");
     match method {
         "$/progress" => {
-            let token = params["token"].to_string();
-            match params["value"]["kind"].as_str() {
-                Some("begin") => {
-                    state.active_progress.insert(token);
-                }
-                Some("end") => {
-                    state.active_progress.remove(&token);
-                }
-                _ => {}
-            }
+            state.progress(params);
             state.touch();
         }
         "workspace/projectInitializationComplete" => {
@@ -520,6 +571,48 @@ mod tests {
         fake.until("the probe", |log| log.iter().any(|m| m["method"] == "probe"))
             .await;
         assert!(cancels(&fake.log()).is_empty());
+    }
+
+    fn progress(kind: &str, token: &str, more: Value) -> Value {
+        let mut value = json!({"kind": kind});
+        value.as_object_mut().unwrap().extend(more.as_object().unwrap().clone());
+        json!({"token": token, "value": value})
+    }
+
+    #[test]
+    fn the_task_follows_the_work_the_server_reported_last() {
+        let tasks = vet_app::progress::Tasks::default();
+        let mut state = State {
+            index: Some(tasks.start(vet_app::progress::TaskKind::ServerIndex, "Indexing")),
+            ..State::default()
+        };
+        let shown = || {
+            let task = tasks.running().remove(0);
+            (task.done, task.detail)
+        };
+
+        state.progress(&progress(
+            "begin",
+            "roots",
+            json!({"title": "Roots Scanned", "message": "3/10", "percentage": 30}),
+        ));
+        assert_eq!(shown(), (Some(30), Some("Roots Scanned: 3/10".into())));
+
+        state.progress(&progress("begin", "cache", json!({"title": "Priming caches"})));
+        assert_eq!(shown(), (None, Some("Priming caches".into())));
+
+        state.progress(&progress(
+            "report",
+            "roots",
+            json!({"message": "4/10", "percentage": 40}),
+        ));
+        assert_eq!(shown(), (Some(40), Some("Roots Scanned: 4/10".into())));
+
+        state.progress(&progress("end", "roots", json!({})));
+        assert_eq!(shown(), (None, Some("Priming caches".into())));
+
+        state.progress(&progress("end", "cache", json!({})));
+        assert_eq!(shown(), (None, None));
     }
 
     #[tokio::test]

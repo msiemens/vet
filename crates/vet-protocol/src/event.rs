@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{RestoreFailure, ReviewInfo, ReviewUpdate, SessionId};
+use crate::{RestoreFailure, ReviewInfo, ReviewUpdate, SessionId, Task};
 
 /// Events are invalidations or small state updates; the client re-requests
 /// whatever it displays.
@@ -47,4 +47,7 @@ pub enum Event {
         session: SessionId,
         failures: Vec<RestoreFailure>,
     },
+    /// Background work of the session started, progressed or ended. Sent to every
+    /// subscriber; a task that ended (`Finished` or `Failed`) is not announced again.
+    Task(Task),
 }

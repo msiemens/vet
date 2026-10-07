@@ -97,7 +97,7 @@ impl Client {
         }
     }
 
-    /// The next event other than `ReviewStarted`; panics if none arrives.
+    /// The next event other than `ReviewStarted` and `Task`; panics if none arrives.
     async fn event(&mut self) -> Event {
         loop {
             let message = tokio::time::timeout(Duration::from_secs(10), self.inbox.recv())
@@ -108,6 +108,9 @@ impl Client {
                 ServerMessage::Event {
                     event: Event::ReviewStarted { review, .. },
                 } => self.started.push(review),
+                ServerMessage::Event {
+                    event: Event::Task(_), ..
+                } => {}
                 ServerMessage::Event { event } => return event,
                 other => panic!("{other:?}"),
             }
@@ -134,13 +137,16 @@ impl Client {
         }
     }
 
-    /// Whether no event other than `ReviewStarted` is waiting.
+    /// Whether no event other than `ReviewStarted` and `Task` is waiting.
     fn no_event(&mut self) -> bool {
         while let Ok(message) = self.inbox.try_recv() {
             match message {
                 ServerMessage::Event {
                     event: Event::ReviewStarted { review, .. },
                 } => self.started.push(review),
+                ServerMessage::Event {
+                    event: Event::Task(_), ..
+                } => {}
                 _ => return false,
             }
         }

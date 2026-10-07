@@ -6,7 +6,7 @@ use ts_rs::TS;
 use crate::{
     Account, Base, BlobContent, BranchInfo, ChangedSymbols, CommitInfo, Diagnostic, DirEntry, Highlights, Impact,
     Locations, Manifest, Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, SessionId, Side,
-    SymbolSignature, TextChange, TextContent, Thread, ThreadTarget, Unavailable,
+    SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -35,6 +35,10 @@ pub enum Response {
     },
     /// The personal access token `SetCredentials` kept, as an account.
     Account(Account),
+    /// The running tasks, oldest first.
+    Tasks {
+        tasks: Vec<Task>,
+    },
     /// Boxed: it would make every response as large as the manifest.
     Manifest(Box<Manifest>),
     /// `None` is a side the file does not have (added or deleted). The text and
