@@ -206,8 +206,8 @@ where
     }
 
     /// Starts the servers for every language among the revision's changed
-    /// files, on both sides, then for the other languages of the repository
-    /// on the target side, all at once, and returns when they are running.
+    /// files on the target side and for the other languages of the repository,
+    /// all at once, then those of the base side, and returns when they are running.
     /// A server already running or starting is left alone. A server that
     /// fails to start is not reported here: the query that needs it reports it.
     pub async fn start_servers(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<()> {
@@ -222,7 +222,7 @@ where
         Ok(())
     }
 
-    /// Starts what the changed `files` need on `sides`, then the target side's
+    /// Starts what the changed `files` need on `sides`, and the target side's
     /// servers for the languages of `others`. Changed languages come first,
     /// because only that many fit in the pool.
     async fn start_servers_for(&self, pair: &Pair<'_, M, L>, files: &[FileDiff], sides: &[Side], others: &[RepoPath]) {
@@ -239,7 +239,7 @@ where
         }
         candidates.extend(others.iter().map(|path| (Side::Target, &pair.target, path)));
 
-        let mut wanted: Vec<(&Served, &RepoPath)> = Vec::new();
+        let mut wanted: Vec<(Side, &Served, &RepoPath)> = Vec::new();
         let mut languages: Vec<(Side, &BackendId)> = Vec::new();
         for (side, served, path) in candidates {
             let Some(language) = self.language_of(path) else {
@@ -247,16 +247,23 @@ where
             };
             if !languages.contains(&(side, language)) {
                 languages.push((side, language));
-                wanted.push((served, path));
+                wanted.push((side, served, path));
             }
         }
         // Servers beyond what the pool keeps warm would only evict each other.
         wanted.truncate(POOL_CAPACITY);
-        let _ = bounded(POOL_CAPACITY, 0..wanted.len(), |at| {
-            let (served, file) = wanted[at];
-            self.semantic.start_for(served, file)
-        })
-        .await;
+        // The base side's servers restore and index a snapshot, which slows the
+        // target side's startup down, and the target side is what the first
+        // views need. So they start once the target side's are running, and
+        // are warm by the time anyone hovers the base side.
+        for phase in [Side::Target, Side::Base] {
+            let phase: Vec<_> = wanted.iter().filter(|(side, ..)| *side == phase).collect();
+            let _ = bounded(POOL_CAPACITY, 0..phase.len(), |at| {
+                let (_, served, file) = phase[at];
+                self.semantic.start_for(served, file)
+            })
+            .await;
+        }
     }
 
     /// The symbols the revision's diff touches, on both sides of each changed
@@ -470,6 +477,10 @@ mod tests {
         starting: AtomicUsize,
         peak_starting: AtomicUsize,
         started: AtomicUsize,
+        /// Live-tree servers running.
+        live_started: AtomicUsize,
+        /// Snapshot servers that began starting with fewer than two live-tree servers running.
+        snapshot_started_early: AtomicUsize,
         /// The servers running when the first symbol request was answered; 0 before.
         started_at_first_answer: AtomicUsize,
         /// Symbol requests on the live side, which no cache answers.
@@ -488,6 +499,9 @@ mod tests {
         /// Slow, so starts that overlap are seen to.
         async fn start(&self, _: &Path, tree: Tree, _: &Backend, _: AnalysisPolicy) -> Result<FakeServer, LaunchError> {
             let c = &self.0;
+            if tree == Tree::Immutable && c.live_started.load(Ordering::SeqCst) < 2 {
+                c.snapshot_started_early.fetch_add(1, Ordering::SeqCst);
+            }
             let now = c.starting.fetch_add(1, Ordering::SeqCst) + 1;
             c.peak_starting.fetch_max(now, Ordering::SeqCst);
             for _ in 0..5 {
@@ -495,6 +509,9 @@ mod tests {
             }
             c.starting.fetch_sub(1, Ordering::SeqCst);
             c.started.fetch_add(1, Ordering::SeqCst);
+            if tree == Tree::Live {
+                c.live_started.fetch_add(1, Ordering::SeqCst);
+            }
             Ok(FakeServer(c.clone(), tree))
         }
     }
@@ -611,11 +628,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_servers_of_every_language_and_side_start_at_once() {
+    async fn the_target_servers_of_every_language_start_at_once_and_the_base_side_after_them() {
         let (fx, semantics, counters) = semantics().await;
         semantics.start_servers(&fx.session, 0).await.unwrap();
         assert_eq!(counters.started.load(Ordering::SeqCst), 4);
-        assert_eq!(counters.peak_starting.load(Ordering::SeqCst), 4);
+        assert_eq!(counters.peak_starting.load(Ordering::SeqCst), 2);
+        assert_eq!(counters.snapshot_started_early.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
