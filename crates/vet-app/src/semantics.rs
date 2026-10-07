@@ -686,7 +686,7 @@ mod tests {
         let (first, second) = (first.unwrap(), second.unwrap());
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(first.value.symbols.len(), 2);
-        assert_eq!(first.value.unsupported.len(), 1);
+        assert!(first.value.gaps.is_empty());
         // One request per live file, not one per caller.
         assert_eq!(counters.live_symbol_requests.load(Ordering::SeqCst), 2);
         // The base side is read from its text; no server is started for it.

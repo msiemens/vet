@@ -163,15 +163,11 @@ pub fn changed_symbols(revision: u32, d: &Derived<Changes>) -> p::ChangedSymbols
     p::ChangedSymbols {
         revision,
         symbols: d.value.symbols.iter().map(changed).collect(),
-        gaps: (d.value.unsupported.iter())
-            .map(|file| p::FileGap {
-                path: file.to_string_lossy(),
-                reason: label(p::UnavailableKind::Unsupported).to_owned(),
-            })
-            .chain(d.value.gaps.iter().map(|g| p::FileGap {
+        gaps: (d.value.gaps.iter())
+            .map(|g| p::FileGap {
                 path: g.file.to_string_lossy(),
                 reason: g.reason.clone(),
-            }))
+            })
             .collect(),
         inputs: inputs(&d.inputs),
     }
@@ -281,45 +277,5 @@ pub fn servers(all: &[ServerStatus]) -> p::Response {
                 can_install: s.can_install(),
             })
             .collect(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use vet_semantic::derived::Gap;
-
-    use super::*;
-
-    #[test]
-    fn unsupported_files_are_gaps_that_say_so_in_the_footers_words() {
-        let path = |p: &str| RepoPath::from(p);
-        let changes = Derived {
-            value: Changes {
-                symbols: Vec::new(),
-                unsupported: vec![path("notes.md")],
-                gaps: vec![Gap {
-                    file: path("a.py"),
-                    reason: "no server".into(),
-                }],
-            },
-            inputs: Inputs {
-                analysis: "changed symbols",
-                bounds: None,
-                primitives: Vec::new(),
-                hunks: Vec::new(),
-                config: Vec::new(),
-            },
-        };
-
-        let mapped = changed_symbols(1, &changes);
-
-        let gaps: Vec<_> = mapped
-            .gaps
-            .iter()
-            .map(|g| (g.path.as_str(), g.reason.as_str()))
-            .collect();
-        assert_eq!(gaps, [("notes.md", "No language support"), ("a.py", "no server")]);
-        let no_backend = unavailable(&SemanticError::NoBackend(path("notes.md")), None);
-        assert_eq!(no_backend.label, gaps[0].1);
     }
 }

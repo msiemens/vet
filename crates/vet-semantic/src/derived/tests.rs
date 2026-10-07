@@ -80,6 +80,8 @@ struct Fake {
     callers: HashMap<(Side, At), Vec<SymbolInfo>>,
     definitions: HashMap<(Side, At), Vec<Location>>,
     failing_callers: Vec<At>,
+    /// Files whose document symbols the server fails to answer.
+    failing_symbols: Vec<RepoPath>,
     /// What the target side's server answers for a text under a file's name.
     texts: HashMap<(RepoPath, String), Vec<SymbolInfo>>,
 }
@@ -110,6 +112,9 @@ impl Primitives for Fake {
             .ok_or_else(|| SemanticError::NoBackend(f.clone()))
     }
     async fn document_symbols(&self, side: Side, f: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
+        if self.failing_symbols.contains(f) {
+            return Err(SemanticError::Query(crate::ports::QueryError("server crashed".into())));
+        }
         self.symbols
             .get(&(side, f.clone()))
             .cloned()
@@ -266,11 +271,19 @@ fn changed_symbols_keep_the_order_of_the_files_however_many_are_asked_at_once() 
 }
 
 #[test]
-fn files_without_a_backend_are_reported_not_dropped() {
-    let files = vec![diff("README.md", vec![hunk((0, 1), (0, 2))])];
-    let changes = block_on(changed_symbols(&Fake::default(), &NoTexts, &files)).value;
-    assert_eq!(changes.unsupported, [file("README.md")]);
+fn files_without_a_backend_are_no_gap_but_a_failed_analysis_is() {
+    let mut fake = Fake::default();
+    fake.failing_symbols.push(file("broken.rs"));
+    let files = vec![
+        diff("README.md", vec![hunk((0, 1), (0, 2))]),
+        diff("broken.rs", vec![hunk((0, 1), (0, 2))]),
+    ];
+    let changes = block_on(changed_symbols(&fake, &NoTexts, &files)).value;
     assert!(changes.symbols.is_empty());
+    let gaps: Vec<_> = changes.gaps.iter().map(|g| (&g.file, g.reason.as_str())).collect();
+    assert_eq!(gaps.len(), 1, "{gaps:?}");
+    assert_eq!(gaps[0].0, &file("broken.rs"));
+    assert!(gaps[0].1.contains("server crashed"), "{gaps:?}");
 }
 
 #[test]

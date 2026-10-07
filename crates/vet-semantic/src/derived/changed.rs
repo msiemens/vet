@@ -34,9 +34,8 @@ pub struct Gap {
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct Changes {
     pub symbols: Vec<ChangedSymbol>,
-    /// Files no configured backend handles.
-    pub unsupported: Vec<RepoPath>,
-    /// Files a backend failed on; their symbols are unknown, not unchanged.
+    /// Files a backend failed on; their symbols are unknown, not unchanged. Files no configured
+    /// backend handles are not here: they have no symbols to know, and the footer reports them.
     pub gaps: Vec<Gap>,
 }
 
@@ -77,12 +76,11 @@ pub async fn changed_symbols(p: &impl Primitives, texts: &impl BaseTexts, files:
         let (base, target) = match (base, target) {
             (Ok(b), Ok(t)) => (b, t),
             (Err(e), _) | (_, Err(e)) => {
-                match e {
-                    SemanticError::NoBackend(_) => out.unsupported.push(shown.clone()),
-                    e => out.gaps.push(Gap {
+                if !matches!(e, SemanticError::NoBackend(_)) {
+                    out.gaps.push(Gap {
                         file: shown.clone(),
                         reason: e.to_string(),
-                    }),
+                    });
                 }
                 continue;
             }

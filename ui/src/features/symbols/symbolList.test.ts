@@ -33,7 +33,7 @@ void test("files without symbols are listed with the reason", () => {
     revision: 1,
     symbols: [sym("a.rs", ["x"], 1, 2, "added")],
     gaps: [
-      { path: "notes.txt", reason: "No language support" },
+      { path: "c.rs", reason: "Language server failed" },
       { path: "a.rs", reason: "parse failed" },
       { path: "b.rs", reason: "parse failed" },
     ],
@@ -44,7 +44,7 @@ void test("files without symbols are listed with the reason", () => {
     [
       ["a.rs", 1, undefined],
       ["b.rs", 0, "parse failed"],
-      ["notes.txt", 0, "No language support"],
+      ["c.rs", 0, "Language server failed"],
     ],
   );
 });

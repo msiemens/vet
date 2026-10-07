@@ -180,8 +180,8 @@ pub struct FileGap {
 pub struct ChangedSymbols {
     pub revision: u32,
     pub symbols: Vec<ChangedSymbol>,
-    /// Changed files whose symbols are unknown, with why: no language is configured for
-    /// them (the `label` of `UnavailableKind::Unsupported`), or their analysis failed.
+    /// Changed files whose analysis failed, with why: their symbols are unknown. Files no
+    /// language is configured for are not listed.
     pub gaps: Vec<FileGap>,
     pub inputs: DerivedInputs,
 }

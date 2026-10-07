@@ -378,7 +378,7 @@ async fn rust_semantics_through_the_protocol() {
 async fn a_language_without_a_server_degrades_and_never_fails_the_session() {
     let repo = repo_with(
         &[("a.py", "def f():\n    return 1\n"), ("notes.md", "x\n")],
-        &[("a.py", "def f():\n    return 2\n")],
+        &[("a.py", "def f():\n    return 2\n"), ("notes.md", "y\n")],
     );
     let data = tempfile::tempdir().unwrap();
     let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
@@ -426,7 +426,8 @@ async fn a_language_without_a_server_degrades_and_never_fails_the_session() {
         (UnavailableKind::Unsupported, "No language support", None)
     );
 
-    // Derived results report the gap instead of failing.
+    // Derived results report the failed file as a gap instead of failing; the changed
+    // notes.md has no language and is no gap.
     let Response::ChangedSymbols(changed) = client
         .call(Request::ChangedSymbols { session, revision })
         .await
