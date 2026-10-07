@@ -9,7 +9,7 @@ async fn main() -> std::io::Result<()> {
     if std::env::args().any(|a| a == "--exit-on-stdin-close") {
         vet_transport::exit_when_stdin_closes();
     }
-    vet_app::acquisition::sweep_materialized();
+    vet_infra::materialize::sweep_materialized();
     let store = open_default_store().await.map_err(std::io::Error::other)?;
     let server = Server::bind().await?;
     server.announce()?;

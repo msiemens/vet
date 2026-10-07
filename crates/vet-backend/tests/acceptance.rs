@@ -25,6 +25,7 @@ use vet_backend::{Orchestrator, open_store};
 use vet_core::completion::HunkState as CoreHunk;
 use vet_infra::clock::TokioClock;
 use vet_infra::git::GixRepo;
+use vet_infra::materialize::Materialize;
 use vet_infra::store::SqliteStore;
 use vet_protocol::{
     AnchorConfidence, AnchorState, AnchorStrategy, BaseChoice, EntryKind, Event, FileChange, HunkState, LineLocation,
@@ -707,7 +708,7 @@ async fn criterion1_windows_filesystem_case_only_paths_in_the_worktree_are_flagg
     let flagged: Vec<_> = status.path_collisions.iter().map(|p| p.0.clone()).collect();
     assert_eq!(flagged, [b"Foo.txt".to_vec(), b"foo.txt".to_vec()]);
     // The tree is only refused where the filesystem would merge the two.
-    let result = session.materializer().materialize(sides.target).await;
+    let result = Materialize::new(session.acquisition()).materialize(sides.target).await;
     assert_eq!(result.is_err(), cfg!(any(windows, target_os = "macos")));
 }
 
@@ -721,7 +722,7 @@ async fn criterion1_windows_filesystem_case_only_paths_in_a_commit_are_flagged_a
     let (_, status) = store.snapshot(sides.base).await.unwrap().unwrap();
     let flagged: Vec<_> = status.path_collisions.iter().map(|p| p.0.clone()).collect();
     assert_eq!(flagged, [b"Foo.txt".to_vec(), b"foo.txt".to_vec()]);
-    let result = session.materializer().materialize(sides.base).await;
+    let result = Materialize::new(session.acquisition()).materialize(sides.base).await;
     assert_eq!(result.is_err(), cfg!(any(windows, target_os = "macos")));
 }
 

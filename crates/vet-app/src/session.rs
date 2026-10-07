@@ -48,7 +48,7 @@ use vet_core::review::{
     ThreadId, ThreadStatus, target_line,
 };
 
-use crate::acquisition::{Acquisition, BlobError, SharedAcquisition};
+use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
 use crate::editor::{self, last_text_line, line_count};
 use crate::execution::Execution;
@@ -784,9 +784,10 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         self.state.lock().await.target.clone()
     }
 
-    /// What serves the session's snapshots to its language-server pool.
-    pub fn materializer(&self) -> SharedAcquisition<G, S> {
-        SharedAcquisition(self.acquisition.clone())
+    /// What knows the origin of the session's snapshots, for serving them to a
+    /// language-server pool.
+    pub fn acquisition(&self) -> Arc<Acquisition<G, S>> {
+        self.acquisition.clone()
     }
 
     /// The snapshots of `revision`: what the semantic layer asks about. Fails

@@ -12,6 +12,9 @@ pub mod clock;
 
 pub mod store;
 
+/// `vet_semantic::ports::Materializer`.
+pub mod materialize;
+
 /// The languages Vet analyses.
 pub mod language;
 

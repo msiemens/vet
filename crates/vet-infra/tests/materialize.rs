@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
@@ -16,6 +16,7 @@ use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::merkle;
 use vet_infra::git::GixRepo;
+use vet_infra::materialize::Materialize;
 use vet_semantic::ports::{Materializer, NotMaterializable};
 
 fn git(dir: &Path, args: &[&str]) {
@@ -101,8 +102,9 @@ fn read(root: &Path, name: &str) -> Vec<u8> {
 #[tokio::test]
 async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
     let dir = fixture();
-    let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
+    let acq = Arc::new(Acquisition::new(GixRepo::new(dir.path()), MemStore::default()));
     let opened = common::start_at_head(&acq).await;
+    let materializer = Materialize::new(acq.clone());
     acq.store
         .put_snapshot(opened.target.clone(), opened.status.clone(), 0)
         .await
@@ -111,7 +113,7 @@ async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
     // The worktree moves on; the materialized dirty snapshot does not.
     write(dir.path(), "a.txt", b"later\n");
 
-    let target = acq.materialize(opened.target.id).await.unwrap();
+    let target = materializer.materialize(opened.target.id).await.unwrap();
     assert_eq!(read(&target.root, "a.txt"), b"dirty\n");
     assert_eq!(read(&target.root, "new.txt"), b"new\n");
     assert_eq!(read(&target.root, "dir/b.txt"), b"b\n");
@@ -127,7 +129,7 @@ async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
     assert!(!target.root.join(".git").exists());
 
     // The base is the HEAD tree: git alone, not in the store.
-    let base = acq.materialize(opened.base.id).await.unwrap();
+    let base = materializer.materialize(opened.base.id).await.unwrap();
     assert_eq!(read(&base.root, "a.txt"), b"committed\n");
     assert!(!base.root.join("new.txt").exists());
 
@@ -141,7 +143,9 @@ async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
 async fn unknown_snapshot_is_refused() {
     let dir = fixture();
     let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
-    let result = acq.materialize(SnapshotId(vet_core::content::Hash([9; 32]))).await;
+    let result = Materialize::new(Arc::new(acq))
+        .materialize(SnapshotId(vet_core::content::Hash([9; 32])))
+        .await;
     assert!(matches!(result, Err(NotMaterializable::Other(_))));
 }
 
@@ -149,7 +153,7 @@ async fn unknown_snapshot_is_refused() {
 async fn snapshot_with_unavailable_blobs_is_refused_naming_them() {
     let dir = fixture();
     // Not pinned: the dirty blobs were never copied into the store.
-    let acq = Acquisition::new(GixRepo::new(dir.path()), MemStore::default());
+    let acq = Arc::new(Acquisition::new(GixRepo::new(dir.path()), MemStore::default()));
     let scan = acq.git.scan(vet_app::ports::Dirty::All).await.unwrap();
     acq.store
         .put_snapshot(scan.snapshot.clone(), scan.status, 0)
@@ -158,7 +162,7 @@ async fn snapshot_with_unavailable_blobs_is_refused_naming_them() {
     acq.record_commit(scan.snapshot.id, acq.git.head().await.unwrap());
     // Dirty content is gone from the worktree too, so nothing can reconstruct it.
     let gone = [BlobId::of(b"dirty\n"), BlobId::of(b"new\n")];
-    match acq.materialize(scan.snapshot.id).await {
+    match Materialize::new(acq).materialize(scan.snapshot.id).await {
         Err(NotMaterializable::MissingBlobs(mut blobs)) => {
             blobs.sort();
             let mut want = gone.to_vec();

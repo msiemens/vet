@@ -27,6 +27,7 @@ use vet_core::review::ThreadId;
 use vet_infra::clock::{TokioClock, unix_now};
 use vet_infra::git::{GixRepo, find_root};
 use vet_infra::lsp::{LspLauncher, config as lsp_config};
+use vet_infra::materialize::Materialize;
 use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
@@ -57,7 +58,12 @@ impl Default for Config {
 
 type Live = LiveSession<GixRepo, SqliteStore>;
 type LanguageServers = Servers<ToolResolver, SqliteStore>;
-type Semantic = Semantics<GixRepo, SqliteStore, LspLauncher<Arc<LanguageServers>, Limiting<ToolRestorer>>>;
+type Semantic = Semantics<
+    GixRepo,
+    SqliteStore,
+    LspLauncher<Arc<LanguageServers>, Limiting<ToolRestorer>>,
+    Materialize<GixRepo, SqliteStore>,
+>;
 
 /// The connections that opened a session. Sessions are one per repository:
 /// opening an open repository subscribes to the existing one.
@@ -234,7 +240,7 @@ impl Orchestrator {
             }),
         );
         let semantics = Semantics::new(
-            &session,
+            Materialize::new(session.acquisition()),
             LspLauncher::new(self.servers.clone(), restorer),
             repo.clone(),
             self.backends.to_vec(),

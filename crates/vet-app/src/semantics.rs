@@ -5,6 +5,7 @@
 //! answers from the live tree, which is the revision's target until the next
 //! snapshot settles.
 
+use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 
 use vet_core::content::RepoPath;
@@ -15,12 +16,12 @@ use vet_semantic::derived::{
 };
 use vet_semantic::pool::{Pool, Target};
 use vet_semantic::ports::{
-    At, Backend, BackendId, Diagnostic, Location, RestoreFailure, ServerLauncher, Sym, SymbolInfo, prefer_openable,
+    At, Backend, BackendId, Diagnostic, Location, Materializer, RestoreFailure, ServerLauncher, Sym, SymbolInfo,
+    prefer_openable,
 };
 use vet_semantic::query::{Primitives, Semantic, SemanticError, Served};
 use vet_semantic::signature::{Signature, signature};
 
-use crate::acquisition::SharedAcquisition;
 use crate::limits::RestoreLimits;
 use crate::ports::{GitRepo, ReviewStore, Store};
 use crate::session::{LiveSession, SemanticSides, SessionError};
@@ -45,13 +46,15 @@ pub struct Answer<T> {
 
 type Fallible<T> = Result<T, SessionError>;
 
-pub struct Semantics<G, S, L>
+pub struct Semantics<G, S, L, M>
 where
     G: GitRepo + Send + Sync,
     S: Store + Send + Sync,
     L: ServerLauncher,
+    M: Materializer,
 {
-    semantic: Semantic<SharedAcquisition<G, S>, L>,
+    semantic: Semantic<M, L>,
+    _session: PhantomData<fn(&LiveSession<G, S>)>,
     /// The changed symbols of one revision, which every derived analysis starts from.
     changes: Mutex<Option<(u32, Arc<Derived<Changes>>)>>,
     /// Kept current by the launcher's restorer (`Limiting`).
@@ -74,27 +77,30 @@ fn served(trust: &Trust, sides: &SemanticSides) -> (Served, Served) {
     )
 }
 
-impl<G, S, L> Semantics<G, S, L>
+impl<G, S, L, M> Semantics<G, S, L, M>
 where
     G: GitRepo + Send + Sync,
     S: Store + ReviewStore + Send + Sync,
     L: ServerLauncher + Sync,
     L::Server: Send,
+    M: Materializer + Sync,
 {
+    /// `materializer` serves the session's snapshots as directories and
     /// `live_root` is the worktree the target side is served from. `trust`
     /// decides which sides may have their servers execute project code.
     /// `limits` is the one the launcher's restorer updates.
     pub fn new(
-        session: &LiveSession<G, S>,
+        materializer: M,
         launcher: L,
         live_root: std::path::PathBuf,
         backends: Vec<Backend>,
         limits: RestoreLimits,
         trust: Trust,
     ) -> Self {
-        let pool = Pool::new(session.materializer(), launcher, live_root, POOL_CAPACITY);
+        let pool = Pool::new(materializer, launcher, live_root, POOL_CAPACITY);
         Self {
             semantic: Semantic::new(pool, backends),
+            _session: PhantomData,
             changes: Mutex::new(None),
             limits,
             trust,
@@ -111,11 +117,7 @@ where
         self.limits.all()
     }
 
-    async fn pair(
-        &self,
-        session: &LiveSession<G, S>,
-        revision: u32,
-    ) -> Fallible<vet_semantic::query::Pair<'_, SharedAcquisition<G, S>, L>> {
+    async fn pair(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<vet_semantic::query::Pair<'_, M, L>> {
         let (base, target) = served(&self.trust, &session.semantic_sides(revision).await?);
         Ok(self.semantic.pair(base, target))
     }
