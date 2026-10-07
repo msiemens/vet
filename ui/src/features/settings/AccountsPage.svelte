@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { accounts } from "../../state/accounts.svelte";
+  import Icon from "../../lib/ui/Icon.svelte";
   import { hasKeychain } from "../../state/host";
   import AccountSheet from "./AccountSheet.svelte";
   import { accountRow, type AccountRow } from "./accountRows";
@@ -55,7 +56,7 @@
           aria-selected={row === selected}
           onclick={() => (selectedKey = row.key)}
         >
-          <span class="badge">{row.platform}</span>
+          <span class="mark" title={row.platform.name}><Icon name={row.platform.icon} size={16} /></span>
           <span class="host">{row.host}</span>
           <span>{row.user ?? ""}</span>
           <span>{row.credential}</span>
@@ -181,16 +182,9 @@
     font-family: var(--font-mono);
     font-size: var(--fs-mono);
   }
-  .badge {
-    justify-self: start;
-    padding: 0 5px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--bg-control);
+  .mark {
+    display: flex;
     color: var(--text-2);
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    line-height: 16px;
   }
   .dot {
     justify-self: center;

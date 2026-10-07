@@ -2,6 +2,7 @@
 
 import type { Account } from "../../generated/Account";
 import type { PlatformKind } from "../../generated/PlatformKind";
+import type { IconName } from "../../lib/ui/icons";
 
 export type AccountStatus = "signedIn" | "rejected" | "unverified";
 
@@ -9,8 +10,8 @@ export interface AccountRow {
   /** One row per host and source. */
   key: string;
   host: string;
-  /** The badge: GH, GHE for a GitHub Enterprise host, ADO. */
-  platform: string;
+  /** The platform's mark and name; an Enterprise host shows GitHub's, its host column tells it apart. */
+  platform: { icon: IconName; name: string };
   user?: string;
   /** The table's short name: "gh CLI", "az CLI" or "Token". */
   credential: string;
@@ -38,10 +39,10 @@ export const GITHUB_HOST = "github.com";
 
 export const cliName = (kind: PlatformKind): string => CLI_NAMES[kind];
 
-function badge(account: Account): string {
-  if (account.kind === "azureDevOps") return "ADO";
-  return account.host === GITHUB_HOST ? "GH" : "GHE";
-}
+const PLATFORM_MARKS: Record<PlatformKind, { icon: IconName; name: string }> = {
+  github: { icon: "github", name: "GitHub" },
+  azureDevOps: { icon: "azureDevOps", name: "Azure DevOps" },
+};
 
 /** `keychain`: whether the host keeps personal access tokens in the system keychain. */
 export function accountRow(account: Account, keychain: boolean): AccountRow {
@@ -51,7 +52,7 @@ export function accountRow(account: Account, keychain: boolean): AccountRow {
   return {
     key: `${account.host}/${account.source}`,
     host: account.host,
-    platform: badge(account),
+    platform: PLATFORM_MARKS[account.kind],
     user: account.user ?? undefined,
     credential: cli ? CLI_NAMES[account.kind] : "Token",
     storage: cli ? CLI_NAMES[account.kind] : keychain ? "Token in Keychain" : "Token, kept until Vet quits",

@@ -15,12 +15,12 @@ const account = (over: Partial<Account>): Account => ({
 
 void test("a CLI credential names the CLI and is not Vet's to remove", () => {
   const row = accountRow(account({ source: "cli", kind: "azureDevOps", host: "dev.azure.com" }), true);
-  assert.deepEqual([row.credential, row.platform, row.removable, row.note], ["az CLI", "ADO", false, undefined]);
+  assert.deepEqual([row.credential, row.removable, row.note], ["az CLI", false, undefined]);
 });
 
-void test("a GitHub host other than github.com is an Enterprise host", () => {
-  assert.equal(accountRow(account({}), true).platform, "GH");
-  assert.equal(accountRow(account({ host: "git.contoso.com" }), true).platform, "GHE");
+void test("a GitHub Enterprise host shows GitHub's mark, Azure DevOps its own", () => {
+  assert.equal(accountRow(account({ host: "git.contoso.com" }), true).platform.icon, "github");
+  assert.equal(accountRow(account({ kind: "azureDevOps", host: "dev.azure.com" }), true).platform.icon, "azureDevOps");
 });
 
 void test("a token is in the keychain only where the host has one, and a CLI in front of it is said", () => {
