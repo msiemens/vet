@@ -86,7 +86,7 @@
             </button>
           </li>
         {:else}
-          <li class="empty">No versions yet</li>
+          <li class="empty">Versions start when you first mark something seen, acknowledge a change or comment.</li>
         {/each}
       </ul>
     </div>
