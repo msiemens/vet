@@ -20,6 +20,7 @@
   import "./editor/highlights.css";
   import "./editor/hover.css";
   import "./editor/threadCard.css";
+  import { focusedEditor } from "./editor/semantic";
   import { type Probe, ReviewController } from "./ReviewController";
   import { editorMenu, fileCommands, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
   import { kindOf, pathOf, tabOf } from "./Tabs.svelte";
@@ -143,12 +144,13 @@
     void controller.revealInChanges(path);
   }
 
-  /** Inside an editor the app's own menu replaces the webview's, except in a text field. */
+  /** Inside an editor the app's own menu replaces the webview's, except in a text field. It acts on the editor clicked. */
   function paneMenu(e: MouseEvent) {
     const target = e.target instanceof Element ? e.target : undefined;
-    if (e.defaultPrevented || !target?.closest(".cm-content") || target.closest("input, textarea")) return;
+    const content = target?.closest(".cm-content");
+    if (e.defaultPrevented || !content || target?.closest("input, textarea")) return;
     e.preventDefault();
-    openMenu(editorMenu, e.clientX, e.clientY);
+    openMenu(editorMenu, e.clientX, e.clientY, { editor: focusedEditor(content) });
   }
 </script>
 
