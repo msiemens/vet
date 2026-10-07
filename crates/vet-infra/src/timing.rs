@@ -11,10 +11,13 @@ pub fn enabled() -> bool {
 
 static PROCESS_START: OnceLock<Instant> = OnceLock::new();
 
-/// Marks the start of the process, which the times in the log are relative to.
-/// Called first thing in `main`.
+/// Marks the start of the process, which the times in the log are relative to,
+/// and has the semantic layer report its phases here. Called first thing in `main`.
 pub fn process_started() {
     PROCESS_START.get_or_init(Instant::now);
+    if enabled() {
+        vet_semantic::trace::install(|what, started| log(|| what, started));
+    }
 }
 
 /// Prints `what took N ms (at +T s)` when timing is enabled: `started` is when

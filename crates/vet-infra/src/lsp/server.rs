@@ -5,6 +5,7 @@
 //! cached here; whether an answer may be reused is the pool's decision (I2).
 
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -68,6 +69,55 @@ enum Needs {
     Text,
     /// Its project loaded, as for answers that resolve across files.
     Project,
+}
+
+/// What making the server see a file took and did, for `VET_TIMING`.
+struct Synced {
+    /// The file was opened or its text changed.
+    changed: bool,
+    /// Waiting for other callers' syncs to finish.
+    lock: Duration,
+    /// The wait for the server to go quiet, if this query had to make it.
+    quiet: Option<Duration>,
+}
+
+impl Synced {
+    /// `sync` is the whole time the query spent before it asked the server.
+    fn describe(&self, sync: Duration) -> String {
+        let mut parts = vec![format!("sync {} ms", sync.as_millis())];
+        if self.lock >= Duration::from_millis(1) {
+            parts.push(format!("lock {} ms", self.lock.as_millis()));
+        }
+        if self.changed {
+            parts.push("opened or changed".into());
+        }
+        if let Some(quiet) = self.quiet {
+            parts.push(format!("quiet wait {} ms", quiet.as_millis()));
+        }
+        parts.join(", ")
+    }
+}
+
+/// A query that has made the server see its file: when it began and what that took.
+struct Timed {
+    started: Instant,
+    sync: Duration,
+    synced: Synced,
+}
+
+/// A position in a file, as the timing lines name it.
+struct Place<'a>(&'a At);
+
+impl Display for Place<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}",
+            self.0.file.to_string_lossy(),
+            self.0.pos.line,
+            self.0.pos.col
+        )
+    }
 }
 
 /// Shared by concurrent callers: requests go straight to the connection;
@@ -189,11 +239,44 @@ impl LspServer {
         }
     }
 
+    /// Makes the server see `file` (see [`LspServer::sync`]) and starts the
+    /// clock of the query's timing line.
+    async fn begin(&self, file: &RepoPath, needs: Needs) -> Result<Timed, QueryError> {
+        let started = Instant::now();
+        let synced = self.sync(file, needs).await?;
+        Ok(Timed {
+            started,
+            sync: started.elapsed(),
+            synced,
+        })
+    }
+
+    /// The timing line of a query: `what` names the thing asked about.
+    fn log_query(&self, request: &str, what: impl Display, timed: &Timed, detail: &str) {
+        timing::log(
+            || {
+                format!(
+                    "{request} {:?} {what} ({}{detail})",
+                    self.tree,
+                    timed.synced.describe(timed.sync)
+                )
+            },
+            timed.started,
+        );
+    }
+
+    /// The timing line of a request that needs no sync of its own.
+    fn log_request(&self, request: &str, what: impl Display, detail: &str, started: Instant) {
+        timing::log(|| format!("{request} {:?} {what} ({detail})", self.tree), started);
+    }
+
     /// Makes the server see `file`; on the live tree also mirrors every open
-    /// document from disk. `true` if `file` was opened or changed. Snapshot
-    /// files never change, so they are opened once and left alone.
-    async fn sync(&self, file: &RepoPath, needs: Needs) -> Result<bool, QueryError> {
+    /// document from disk. Snapshot files never change, so they are opened once
+    /// and left alone.
+    async fn sync(&self, file: &RepoPath, needs: Needs) -> Result<Synced, QueryError> {
+        let asked = Instant::now();
         let mut docs = self.docs.lock().await;
+        let lock = asked.elapsed();
         let changed = if self.tree == Tree::Immutable && docs.open.iter().any(|d| &d.file == file) {
             false
         } else if self.tree == Tree::Immutable {
@@ -205,28 +288,30 @@ impl LspServer {
             }
             self.refresh(&mut docs.open, file).await?
         };
-        if needs == Needs::Project {
-            self.settle(&mut docs, file).await;
-        }
-        Ok(changed)
+        let quiet = if needs == Needs::Project {
+            self.settle(&mut docs, file).await
+        } else {
+            None
+        };
+        Ok(Synced { changed, lock, quiet })
     }
 
     /// Opening a file can start loading its project (tsserver), and answers
     /// before that finishes resolve nothing outside the file. So a query that
     /// resolves across files waits for the server to go quiet once after the
     /// document was opened; one wait covers every document opened before it.
-    /// A server that stays busy past the timeout is asked anyway.
-    async fn settle(&self, docs: &mut Docs, file: &RepoPath) {
-        let Some(doc) = docs.open.iter().find(|d| &d.file == file) else {
-            return;
-        };
+    /// A server that stays busy past the timeout is asked anyway. How long the
+    /// wait took, if there was one.
+    async fn settle(&self, docs: &mut Docs, file: &RepoPath) -> Option<Duration> {
+        let doc = docs.open.iter().find(|d| &d.file == file)?;
         if docs.is_settled(doc) {
-            return;
+            return None;
         }
         let from = Instant::now();
         self.conn.with_state(State::touch);
         self.conn.wait_for(OPEN_TIMEOUT, |s| s.is_idle(QUIET)).await;
         docs.quiet_from = Some(from);
+        Some(from.elapsed())
     }
 
     async fn refresh(&self, docs: &mut Vec<Doc>, file: &RepoPath) -> Result<bool, QueryError> {
@@ -325,13 +410,15 @@ impl LspServer {
     }
 
     async fn prepare_calls(&self, at: &At) -> Result<Vec<lsp::CallHierarchyItem>, QueryError> {
-        self.sync(&at.file, Needs::Project).await?;
+        let timed = self.begin(&at.file, Needs::Project).await?;
         let params = lsp::CallHierarchyPrepareParams {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
         };
-        let items = self.conn.request::<CallHierarchyPrepare>(params).await.map_err(err)?;
-        Ok(items.unwrap_or_default())
+        let items = self.conn.request::<CallHierarchyPrepare>(params).await;
+        let found = items.as_ref().map_or(0, |i| i.as_ref().map_or(0, Vec::len));
+        self.log_query("callHierarchy/prepare", Place(at), &timed, &format!(", {found} items"));
+        Ok(items.map_err(err)?.unwrap_or_default())
     }
 
     /// The symbols the call hierarchy `items` stand for, each once, those
@@ -408,23 +495,6 @@ fn flatten_hover(contents: lsp::HoverContents) -> String {
     }
 }
 
-/// How long a query that began at `started` took, with the part spent making
-/// the server see the file (for a query across files that includes waiting for
-/// the server to go quiet).
-fn log_timing(request: &str, file: &RepoPath, changed: bool, started: Instant, sync: Duration) {
-    timing::log(
-        || {
-            format!(
-                "{request} {} (sync {} ms{})",
-                file.to_string_lossy(),
-                sync.as_millis(),
-                if changed { ", opened or changed" } else { "" },
-            )
-        },
-        started,
-    );
-}
-
 fn convert_diagnostic(d: lsp::Diagnostic) -> Diagnostic {
     let severity = match d.severity {
         Some(lsp::DiagnosticSeverity::WARNING) => Severity::Warning,
@@ -446,17 +516,15 @@ fn convert_diagnostic(d: lsp::Diagnostic) -> Diagnostic {
 
 impl LanguageServer for LspServer {
     async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
-        let started = Instant::now();
-        let opened = self.sync(file, Needs::Text).await?;
-        let synced = Instant::now();
+        let timed = self.begin(file, Needs::Text).await?;
         let params = lsp::DocumentSymbolParams {
             text_document: self.id(file)?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self.conn.request::<DocumentSymbolRequest>(params).await.map_err(err)?;
-        log_timing("documentSymbol", file, opened, started, synced - started);
-        Ok(symbols_in(file, response))
+        let response = self.conn.request::<DocumentSymbolRequest>(params).await;
+        self.log_query("documentSymbol", file.to_string_lossy(), &timed, "");
+        Ok(symbols_in(file, response.map_err(err)?))
     }
 
     async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Vec<SymbolInfo>, QueryError> {
@@ -487,19 +555,29 @@ impl LanguageServer for LspServer {
             .await;
         let response = response.map_err(err)?;
         closed.map_err(err)?;
-        log_timing("documentSymbol (text)", file, true, started, Duration::ZERO);
+        let timed = Timed {
+            started,
+            sync: Duration::ZERO,
+            synced: Synced {
+                changed: true,
+                lock: Duration::ZERO,
+                quiet: None,
+            },
+        };
+        self.log_query("documentSymbol (text)", file.to_string_lossy(), &timed, "");
         Ok(symbols_in(file, response))
     }
 
     async fn definition(&self, at: &At) -> Result<Vec<Location>, QueryError> {
-        self.sync(&at.file, Needs::Project).await?;
+        let timed = self.begin(&at.file, Needs::Project).await?;
         let params = lsp::GotoDefinitionParams {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self.conn.request::<GotoDefinition>(params).await.map_err(err)?;
-        Ok(match response {
+        let response = self.conn.request::<GotoDefinition>(params).await;
+        self.log_query("definition", Place(at), &timed, "");
+        Ok(match response.map_err(err)? {
             None => Vec::new(),
             Some(lsp::GotoDefinitionResponse::Scalar(l)) => vec![self.location(&l.uri, l.range)],
             Some(lsp::GotoDefinitionResponse::Array(ls)) => ls.iter().map(|l| self.location(&l.uri, l.range)).collect(),
@@ -511,7 +589,7 @@ impl LanguageServer for LspServer {
     }
 
     async fn references(&self, at: &At) -> Result<Vec<Location>, QueryError> {
-        self.sync(&at.file, Needs::Project).await?;
+        let timed = self.begin(&at.file, Needs::Project).await?;
         let params = lsp::ReferenceParams {
             text_document_position: self.position_params(at)?,
             work_done_progress_params: Default::default(),
@@ -520,8 +598,11 @@ impl LanguageServer for LspServer {
                 include_declaration: false,
             },
         };
-        let response = self.conn.request::<References>(params).await.map_err(err)?;
+        let response = self.conn.request::<References>(params).await;
+        let found = response.as_ref().map_or(0, |r| r.as_ref().map_or(0, Vec::len));
+        self.log_query("references", Place(at), &timed, &format!(", {found} found"));
         Ok(response
+            .map_err(err)?
             .unwrap_or_default()
             .iter()
             .map(|l| self.location(&l.uri, l.range))
@@ -529,13 +610,14 @@ impl LanguageServer for LspServer {
     }
 
     async fn hover(&self, at: &At) -> Result<Option<String>, QueryError> {
-        self.sync(&at.file, Needs::Project).await?;
+        let timed = self.begin(&at.file, Needs::Project).await?;
         let params = lsp::HoverParams {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
         };
-        let response = self.conn.request::<HoverRequest>(params).await.map_err(err)?;
-        Ok(response.map(|h| flatten_hover(h.contents)))
+        let response = self.conn.request::<HoverRequest>(params).await;
+        self.log_query("hover", Place(at), &timed, "");
+        Ok(response.map_err(err)?.map(|h| flatten_hover(h.contents)))
     }
 
     async fn incoming_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
@@ -546,12 +628,22 @@ impl LanguageServer for LspServer {
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
             };
-            let calls = self
-                .conn
-                .request::<CallHierarchyIncomingCalls>(params)
-                .await
-                .map_err(err)?;
-            callers.extend(calls.unwrap_or_default().into_iter().map(|call| call.from));
+            let started = Instant::now();
+            let calls = self.conn.request::<CallHierarchyIncomingCalls>(params).await;
+            let found = calls.as_ref().map_or(0, |c| c.as_ref().map_or(0, Vec::len));
+            self.log_request(
+                "callHierarchy/incomingCalls",
+                Place(at),
+                &format!("{found} calls"),
+                started,
+            );
+            callers.extend(
+                calls
+                    .map_err(err)?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|call| call.from),
+            );
         }
         Ok(self.symbols_of(callers).await)
     }
@@ -564,23 +656,30 @@ impl LanguageServer for LspServer {
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
             };
-            let calls = self
-                .conn
-                .request::<CallHierarchyOutgoingCalls>(params)
-                .await
-                .map_err(err)?;
-            callees.extend(calls.unwrap_or_default().into_iter().map(|call| call.to));
+            let started = Instant::now();
+            let calls = self.conn.request::<CallHierarchyOutgoingCalls>(params).await;
+            let found = calls.as_ref().map_or(0, |c| c.as_ref().map_or(0, Vec::len));
+            self.log_request(
+                "callHierarchy/outgoingCalls",
+                Place(at),
+                &format!("{found} calls"),
+                started,
+            );
+            callees.extend(calls.map_err(err)?.unwrap_or_default().into_iter().map(|call| call.to));
         }
         Ok(self.symbols_of(callees).await)
     }
 
     async fn workspace_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
+        let started = Instant::now();
         let params = lsp::WorkspaceSymbolParams {
             query: query.to_owned(),
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self.conn.request::<WorkspaceSymbolRequest>(params).await.map_err(err)?;
+        let response = self.conn.request::<WorkspaceSymbolRequest>(params).await;
+        self.log_request("workspace/symbol", format!("{query:?}"), "no sync", started);
+        let response = response.map_err(err)?;
         // (uri, name, range if the server gave one)
         let found: Vec<(Uri, String, Option<lsp::Range>)> = match response {
             None => Vec::new(),
@@ -616,7 +715,8 @@ impl LanguageServer for LspServer {
         let key = key(&self.uri_of(file)?);
         let generation = |conn: &Connection| conn.with_state(|s| s.diagnostics.get(&key).map_or(0, |d| d.generation));
         let before = generation(&self.conn);
-        let changed = self.sync(file, Needs::Project).await?;
+        let timed = self.begin(file, Needs::Project).await?;
+        let changed = timed.synced.changed;
         let items = match self.diagnostics {
             Diagnostics::Pull => {
                 let params = lsp::DocumentDiagnosticParams {
@@ -626,12 +726,9 @@ impl LanguageServer for LspServer {
                     work_done_progress_params: Default::default(),
                     partial_result_params: Default::default(),
                 };
-                let report = self
-                    .conn
-                    .request::<DocumentDiagnosticRequest>(params)
-                    .await
-                    .map_err(err)?;
-                match report {
+                let report = self.conn.request::<DocumentDiagnosticRequest>(params).await;
+                self.log_query("diagnostics", file.to_string_lossy(), &timed, ", pull");
+                match report.map_err(err)? {
                     lsp::DocumentDiagnosticReportResult::Report(lsp::DocumentDiagnosticReport::Full(full)) => {
                         full.full_document_diagnostic_report.items
                     }
@@ -640,6 +737,7 @@ impl LanguageServer for LspServer {
             }
             Diagnostics::Push => {
                 let conn = &self.conn;
+                let waiting = Instant::now();
                 let fresh = conn
                     .wait_for(DIAGNOSTICS_TIMEOUT, |s| {
                         s.diagnostics
@@ -647,6 +745,12 @@ impl LanguageServer for LspServer {
                             .is_some_and(|d| d.generation > before || (!changed && d.generation > 0))
                     })
                     .await;
+                let detail = format!(
+                    ", push wait {} ms{}",
+                    waiting.elapsed().as_millis(),
+                    if fresh { "" } else { ", timed out" }
+                );
+                self.log_query("diagnostics", file.to_string_lossy(), &timed, &detail);
                 if !fresh {
                     return Err(err("the server published no diagnostics for the file in time"));
                 }
@@ -673,6 +777,25 @@ mod tests {
             text: String::new(),
             opened,
         }
+    }
+
+    #[test]
+    fn the_timing_line_names_a_lock_wait_an_open_and_a_quiet_wait_only_when_they_happened() {
+        let plain = Synced {
+            changed: false,
+            lock: Duration::ZERO,
+            quiet: None,
+        };
+        assert_eq!(plain.describe(Duration::from_millis(3)), "sync 3 ms");
+        let busy = Synced {
+            changed: true,
+            lock: Duration::from_millis(40),
+            quiet: Some(Duration::from_millis(800)),
+        };
+        assert_eq!(
+            busy.describe(Duration::from_millis(900)),
+            "sync 900 ms, lock 40 ms, opened or changed, quiet wait 800 ms"
+        );
     }
 
     #[test]

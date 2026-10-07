@@ -13,6 +13,7 @@ pub mod ports;
 pub mod query;
 pub mod signature;
 pub mod symbols;
+pub mod trace;
 
 #[cfg(test)]
 mod testutil;

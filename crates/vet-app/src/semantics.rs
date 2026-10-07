@@ -7,6 +7,7 @@
 
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use tokio::sync::OnceCell;
 use vet_core::content::{FileDiff, RepoPath};
@@ -23,6 +24,7 @@ use vet_semantic::ports::{
 };
 use vet_semantic::query::{Pair, Primitives, Semantic, SemanticError, Served};
 use vet_semantic::signature::{Signature, signature};
+use vet_semantic::trace::{self, Traced};
 
 use crate::acquisition::Acquisition;
 use crate::limits::RestoreLimits;
@@ -283,6 +285,7 @@ where
         };
         computation
             .get_or_try_init(|| async {
+                let started = Instant::now();
                 let files = session.changed_files(revision).await?;
                 // The base side's symbols come from the target side's server, so
                 // the base side's servers, which restore the base first, are not waited for.
@@ -292,24 +295,38 @@ where
                 // the servers of the languages before it.
                 let (_, changes) = join(
                     self.start_servers_for(&pair, &files, &[Side::Target], &[]),
-                    changed_symbols(&pair, &texts, &files),
+                    changed_symbols(&Traced::new(&pair, "changed symbols"), &texts, &files),
                 )
                 .await;
+                trace::log(
+                    || {
+                        format!(
+                            "changed symbols of revision {revision} ({} files: target documentSymbol and the base text's symbols on the target server, in parallel per file; target servers start alongside)",
+                            files.len()
+                        )
+                    },
+                    started,
+                );
                 Ok::<_, SessionError>(Arc::new(changes))
             })
             .await
             .cloned()
     }
 
-    /// The changed symbol `sym` and whether it was added, modified or removed.
+    /// The changed symbol `sym` and whether it was added, modified or removed,
+    /// for the `analysis` that asks. The time it takes is the wait for the
+    /// revision's changed symbols, which every analysis shares.
     async fn changed(
         &self,
         session: &LiveSession<G, S>,
         revision: u32,
+        analysis: &str,
         sym: &Sym,
     ) -> Fallible<vet_semantic::derived::ChangedSymbol> {
-        self.changed_symbols(session, revision)
-            .await?
+        let started = Instant::now();
+        let changes = self.changed_symbols(session, revision).await?;
+        trace::log(|| format!("{analysis} {sym}: wait for the changed symbols"), started);
+        changes
             .value
             .symbols
             .iter()
@@ -325,17 +342,20 @@ where
         revision: u32,
         sym: &Sym,
     ) -> Fallible<Answer<Option<Signature>>> {
-        let changed = self.changed(session, revision, sym).await?;
+        let started = Instant::now();
+        let changed = self.changed(session, revision, "signature", sym).await?;
         let side = if changed.change == Change::Removed {
             Side::Base
         } else {
             Side::Target
         };
         let pair = self.pair(session, revision).await?;
-        Ok(Answer {
-            revision,
-            result: signature(&pair, side, &changed.symbol).await,
-        })
+        let result = signature(&Traced::new(&pair, format!("signature {sym}")), side, &changed.symbol).await;
+        trace::log(
+            || format!("signature {sym} (hover on the {side:?} side; the symbol's detail if the hover has none)"),
+            started,
+        );
+        Ok(Answer { revision, result })
     }
 
     /// References and callers of an added or modified symbol, on the target side.
@@ -345,15 +365,20 @@ where
         revision: u32,
         sym: &Sym,
     ) -> Fallible<Derived<SymbolImpact>> {
-        let changed = self.changed(session, revision, sym).await?;
+        let started = Instant::now();
+        let changed = self.changed(session, revision, "impact", sym).await?;
         if changed.change == Change::Removed {
             return Err(SessionError::Invalid(
                 "the symbol was removed; ask for its removal impact".into(),
             ));
         }
         let pair = self.pair(session, revision).await?;
-        let Derived { mut value, inputs } = impact(&pair, &[changed]).await;
+        let Derived { mut value, inputs } = impact(&Traced::new(&pair, format!("impact {sym}")), &[changed]).await;
         let value = value.pop().expect("one symbol in, one impact out");
+        trace::log(
+            || format!("impact {sym} (target: references, then incoming calls, one after the other)"),
+            started,
+        );
         Ok(Derived { value, inputs })
     }
 
@@ -364,14 +389,17 @@ where
         revision: u32,
         sym: &Sym,
     ) -> Fallible<Derived<RemovalImpact>> {
-        let changed = self.changed(session, revision, sym).await?;
+        let started = Instant::now();
+        let changed = self.changed(session, revision, "removal impact", sym).await?;
         if changed.change != Change::Removed {
             return Err(SessionError::Invalid("the symbol was not removed".into()));
         }
         let files = session.changed_files(revision).await?;
         let pair = self.pair(session, revision).await?;
-        let Derived { mut value, inputs } = removal_impact(&pair, &[changed], &files).await;
+        let traced = Traced::new(&pair, format!("removal impact {sym}"));
+        let Derived { mut value, inputs } = removal_impact(&traced, &[changed], &files).await;
         let value = value.pop().expect("one symbol in, one impact out");
+        trace::log(|| format!("removal impact {sym}"), started);
         Ok(Derived { value, inputs })
     }
 
@@ -383,12 +411,23 @@ where
         revision: u32,
         sym: &Sym,
     ) -> Fallible<(SymbolInfo, Derived<Reach>)> {
-        let changed = self.changed(session, revision, sym).await?;
+        let started = Instant::now();
+        let changed = self.changed(session, revision, "reachability", sym).await?;
         if changed.change == Change::Removed {
             return Err(SessionError::Invalid("a removed symbol has nothing to reach".into()));
         }
         let pair = self.pair(session, revision).await?;
-        let derived = reachability(&pair, &changed.symbol, &EntryPoints::default(), REACH_BOUNDS).await;
+        let traced = Traced::new(&pair, format!("reachability {sym}"));
+        let derived = reachability(&traced, &changed.symbol, &EntryPoints::default(), REACH_BOUNDS).await;
+        trace::log(
+            || {
+                format!(
+                    "reachability {sym} (target: incoming calls level by level, one after the other, at most {} deep)",
+                    REACH_BOUNDS.max_depth
+                )
+            },
+            started,
+        );
         Ok((changed.symbol, derived))
     }
 
