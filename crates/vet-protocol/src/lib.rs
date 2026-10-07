@@ -288,7 +288,7 @@ pub enum Request {
         #[ts(optional)]
         approved_hash: Option<String>,
     },
-    /// The files behind a pending `RunNeedsApproval`, with their text. Fails if
+    /// The files behind a pending `RunNeedsApproval`, with their changed lines. Fails if
     /// no approval with this hash is pending. Answers with `Response::RunApprovalDiff`.
     RunApprovalDiff {
         session: SessionId,
@@ -1114,26 +1114,55 @@ pub struct ApprovalChange {
     pub change: RunChange,
 }
 
-/// One changed file of an approval prompt. A side is `None` if the file did not
-/// exist there, has no text (binary) or is over the capture cap.
+/// One changed file of an approval prompt.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ApprovalFile {
     pub path: String,
-    /// The old path if git detected a rename; `base` is then the text there, and
-    /// the removed file has no entry of its own.
+    /// The old path if git detected a rename; the diff is then against the text there,
+    /// and the removed file has no entry of its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub from: Option<String>,
     pub change: RunChange,
-    /// The last approved version.
-    pub base: Option<String>,
-    /// The version about to run.
-    pub target: Option<String>,
-    /// Line hunks between the two, as in `FileChange`.
-    pub hunks: Vec<Hunk>,
+    /// The changed lines with two lines of context, between the last approved version
+    /// and the one about to run. `None` if there is no text to compare (binary, or
+    /// over the capture cap); empty for a file that only moved.
+    pub diff: Option<ApprovalDiff>,
     pub delta: LineDelta,
+}
+
+/// The rows of a file's diff in an approval prompt.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ApprovalDiff {
+    pub rows: Vec<DiffRow>,
+    /// The diff had more rows than are sent.
+    pub truncated: bool,
+}
+
+/// `number` is a 1-based line number: of the new text for `Context` and `Added`, of the
+/// old one for `Removed`.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum DiffRow {
+    Context {
+        number: u32,
+        text: String,
+    },
+    Added {
+        number: u32,
+        text: String,
+    },
+    Removed {
+        number: u32,
+        text: String,
+    },
+    /// Unchanged lines left out.
+    Gap,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

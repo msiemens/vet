@@ -5,6 +5,7 @@
 
 pub mod check;
 pub mod command;
+pub mod rows;
 pub mod targets;
 pub mod trust;
 
@@ -13,12 +14,13 @@ use std::fmt;
 use std::path::{Component, PathBuf};
 
 use vet_core::content::{
-    BlobId, Hash, Hunk, LineDelta, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
+    BlobId, Hash, LineDelta, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
 };
 
 use crate::acquisition::Acquisition;
 use crate::ports::{BlobRead, Command, Dirty, GitError, GitRepo, ProcessRunner, RunStore, Store, StoreError};
 use check::{Approval, Change, RunCheck, RunCheckConfig};
+use rows::DiffRows;
 use targets::RunTarget;
 
 #[derive(Debug)]
@@ -47,18 +49,16 @@ pub struct ListedTarget {
     pub stored: bool,
 }
 
-/// One executor-relevant file of an approval prompt, with its text on both sides.
+/// One executor-relevant file of an approval prompt, with what changed in it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ApprovalFile {
     pub path: RepoPath,
     /// The old path, if git detected a rename; the removed file is not listed then.
     pub from: Option<RepoPath>,
     pub change: Change,
-    /// The last approved version; `None` if there was none, or it has no text.
-    pub old: Option<String>,
-    /// The version about to run; `None` if the file is gone, or it has no text.
-    pub new: Option<String>,
-    pub hunks: Vec<Hunk>,
+    /// The changed lines with their context; `None` if there is no text to compare (binary,
+    /// over the capture cap).
+    pub rows: Option<DiffRows>,
     pub delta: LineDelta,
 }
 
@@ -225,10 +225,8 @@ impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<
                 path: changed.path.clone(),
                 from,
                 change: changed.change,
-                old,
-                new,
+                rows: rows::diff_rows(old.as_deref(), new.as_deref(), changed.change, &hunks),
                 delta: LineDelta::of(&hunks),
-                hunks,
             });
         }
         Ok(files)
@@ -331,6 +329,9 @@ mod tests {
     use vet_core::content::{BlobId, EntryKind, FileDiff, FileEntry, LineRange, RepoPath};
     use vet_core::merkle::snapshot_id;
 
+    use vet_core::content::Hunk;
+
+    use super::rows::Row;
     use super::*;
     use crate::pin::CommitId;
     use crate::ports::{BlobRead, CheckoutError, GcReport, ProcessEvent, RunningProcess, Scan};
@@ -653,10 +654,11 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, RepoPath(b"package.json".to_vec()));
         assert_eq!(files[0].change, Change::Added);
-        assert_eq!(
-            (files[0].old.as_deref(), files[0].new.as_deref()),
-            (None, Some(PACKAGE))
-        );
+        let added = Row::Added {
+            number: 1,
+            text: PACKAGE.into(),
+        };
+        assert_eq!(files[0].rows.as_ref().map(|r| r.rows.clone()), Some(vec![added]));
 
         assert!(matches!(
             run(exec.run("script::dev", &reviewed, Some(first.hash), 1)),
@@ -668,12 +670,20 @@ mod tests {
             panic!("package.json changed");
         };
         let files = run(exec.approval_files(&second)).unwrap();
+        let removed = Row::Removed {
+            number: 1,
+            text: PACKAGE.into(),
+        };
+        let added = Row::Added {
+            number: 1,
+            text: edited.into(),
+        };
         assert_eq!(
-            (files[0].old.as_deref(), files[0].new.as_deref()),
-            (Some(PACKAGE), Some(edited))
+            files[0].rows.as_ref().map(|r| r.rows.clone()),
+            Some(vec![removed, added])
         );
+        assert_eq!(files[0].delta, LineDelta { added: 1, removed: 1 });
         assert_eq!(files[0].change, Change::Modified);
-        assert_eq!(files[0].hunks.len(), 1);
 
         let missing = run(exec.run("nope", &reviewed, None, 1));
         assert_eq!(missing.err().unwrap().to_string(), "no run target nope");

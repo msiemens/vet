@@ -4,6 +4,7 @@ pub mod semantic;
 
 use vet_app::execution::check::{Approval, Change};
 use vet_app::execution::command;
+use vet_app::execution::rows::Row;
 use vet_app::execution::targets::RunTarget;
 use vet_app::execution::{ApprovalFile, ListedTarget};
 use vet_app::pin::{BaseChoice, CommitId};
@@ -482,6 +483,24 @@ pub fn needs_approval(a: &Approval) -> p::Response {
     }
 }
 
+fn diff_row(row: &Row) -> p::DiffRow {
+    match row {
+        Row::Context { number, text } => p::DiffRow::Context {
+            number: *number,
+            text: text.clone(),
+        },
+        Row::Added { number, text } => p::DiffRow::Added {
+            number: *number,
+            text: text.clone(),
+        },
+        Row::Removed { number, text } => p::DiffRow::Removed {
+            number: *number,
+            text: text.clone(),
+        },
+        Row::Gap => p::DiffRow::Gap,
+    }
+}
+
 pub fn approval_files(files: &[ApprovalFile]) -> p::Response {
     p::Response::RunApprovalDiff {
         files: files
@@ -490,9 +509,10 @@ pub fn approval_files(files: &[ApprovalFile]) -> p::Response {
                 path: path_str(&f.path),
                 from: f.from.as_ref().map(path_str),
                 change: run_change(f.change),
-                base: f.old.clone(),
-                target: f.new.clone(),
-                hunks: f.hunks.iter().map(hunk).collect(),
+                diff: f.rows.as_ref().map(|d| p::ApprovalDiff {
+                    rows: d.rows.iter().map(diff_row).collect(),
+                    truncated: d.truncated,
+                }),
                 delta: line_delta(f.delta),
             })
             .collect(),

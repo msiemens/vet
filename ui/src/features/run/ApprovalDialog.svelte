@@ -5,7 +5,6 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import type { Approval } from "../../state/runs.svelte";
   import { runs } from "../../state/runs.svelte";
-  import { approvalRows } from "./approvalRows";
 
   let { approval }: { approval: Approval } = $props();
 
@@ -73,7 +72,7 @@
           {/if}
         </button>
         {#if file && open}
-          {@const shown = approvalRows(file)}
+          {@const shown = file.diff}
           {#if !shown}
             <p class="none">No text to compare.</p>
           {:else if !shown.rows.length}
@@ -81,12 +80,12 @@
           {:else}
             <div class="diff selectable">
               {#each shown.rows as row, r (r)}
-                {#if row.kind === "gap"}
+                {#if row.type === "gap"}
                   <div class="dl gap"><span class="n"></span><span class="s"></span><span>⋯</span></div>
                 {:else}
-                  <div class="dl {row.kind}">
-                    <span class="n">{row.n}</span>
-                    <span class="s">{row.kind === "add" ? "+" : row.kind === "del" ? "−" : ""}</span>
+                  <div class="dl {row.type}">
+                    <span class="n">{row.number}</span>
+                    <span class="s">{row.type === "added" ? "+" : row.type === "removed" ? "−" : ""}</span>
                     <span class="t">{row.text}</span>
                   </div>
                 {/if}
@@ -207,16 +206,16 @@
     text-align: center;
     color: var(--text-3);
   }
-  .dl.add {
+  .dl.added {
     background: var(--add-bg);
   }
-  .dl.del {
+  .dl.removed {
     background: var(--del-bg);
   }
-  .dl.add .s {
+  .dl.added .s {
     color: var(--add-text);
   }
-  .dl.del .s {
+  .dl.removed .s {
     color: var(--del-text);
   }
   .gap {

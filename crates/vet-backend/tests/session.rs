@@ -9,8 +9,8 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, OUTPUT_CAP, Orchestrator, open_store};
 use vet_protocol::{
-    AnchorState, ApprovalChange, Base, BaseChoice, BlobContent, Completion, DirEntry, DirEntryKind, EnvVar, Event,
-    FileStatus, HunkState, LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, Request, Response,
+    AnchorState, ApprovalChange, Base, BaseChoice, BlobContent, Completion, DiffRow, DirEntry, DirEntryKind, EnvVar,
+    Event, FileStatus, HunkState, LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, Request, Response,
     ReviewFilter, ReviewInfo, ReviewUpdate, RunChange, RunStream, RunTarget, ServerMessage, SessionId, Side,
     TextContent, Thread, ThreadStatus, ThreadTarget,
 };
@@ -1412,9 +1412,13 @@ async fn a_run_needs_approval_once_then_streams_output_and_the_exit_code() {
         panic!("not a diff");
     };
     assert_eq!(files.len(), 1);
+    let diff = files[0].diff.as_ref().unwrap();
     assert_eq!(
-        (files[0].base.as_deref(), files[0].target.as_deref()),
-        (None, Some(PACKAGE))
+        diff.rows,
+        [DiffRow::Added {
+            number: 1,
+            text: PACKAGE.into()
+        }]
     );
     assert_eq!(files[0].delta, LineDelta { added: 1, removed: 0 });
     let unknown = Request::RunApprovalDiff {
@@ -1485,26 +1489,34 @@ async fn the_approval_diff_pairs_renamed_build_files() {
     else {
         panic!("not a diff");
     };
-    let summary: Vec<_> = files
-        .iter()
-        .map(|f| {
-            (
-                f.path.as_str(),
-                f.from.as_deref(),
-                f.base.as_deref(),
-                f.target.as_deref(),
-            )
-        })
-        .collect();
+    let summary: Vec<_> = files.iter().map(|f| (f.path.as_str(), f.from.as_deref())).collect();
     assert_eq!(
         summary,
-        [
-            ("sub/Makefile", Some("Makefile"), Some(make), Some(edited.as_str())),
-            ("sub/justfile", Some("justfile"), Some(just), Some(just)),
-        ]
+        [("sub/Makefile", Some("Makefile")), ("sub/justfile", Some("justfile"))]
     );
-    assert_eq!(files[0].hunks.len(), 1);
-    assert!(files[1].hunks.is_empty());
+    // The edited line against its old text, in context; the moved file has no changed line.
+    let row = |kind: fn(u32, String) -> DiffRow, number, text: &str| kind(number, text.to_owned());
+    let context = |number, text: String| DiffRow::Context { number, text };
+    let removed = |number, text: String| DiffRow::Removed { number, text };
+    let added = |number, text: String| DiffRow::Added { number, text };
+    let diff = files[0].diff.as_ref().unwrap();
+    assert_eq!(
+        (diff.rows.as_slice(), diff.truncated),
+        (
+            [
+                DiffRow::Gap,
+                row(context, 3, "\techo two"),
+                row(context, 4, "\techo three"),
+                row(removed, 5, "\techo four"),
+                row(added, 5, "\techo five"),
+            ]
+            .as_slice(),
+            false
+        )
+    );
+    assert_eq!(files[0].delta, LineDelta { added: 1, removed: 1 });
+    assert_eq!(files[1].diff.as_ref().unwrap().rows, []);
+    assert_eq!(files[1].delta, LineDelta::default());
 }
 
 #[cfg(unix)]
