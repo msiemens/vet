@@ -5,6 +5,7 @@
 use std::fmt;
 
 use vet_core::content::RepoPath;
+use vet_core::review::Side;
 
 use crate::policy::AnalysisPolicy;
 use crate::pool::{Lease, Pool, PoolError, PoolKey, Target};
@@ -13,15 +14,9 @@ use crate::ports::{
     backend_for,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Which {
-    Base,
-    Target,
-}
-
 /// What a side of a comparison is served from, and what analysis it may run.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Side {
+pub struct Served {
     pub target: Target,
     pub policy: AnalysisPolicy,
 }
@@ -49,25 +44,25 @@ impl fmt::Display for SemanticError {
 pub trait Primitives {
     fn document_symbols(
         &self,
-        which: Which,
+        side: Side,
         file: &RepoPath,
     ) -> impl Future<Output = Result<Vec<SymbolInfo>, SemanticError>> + Send;
-    fn definition(&self, which: Which, at: &At) -> impl Future<Output = Result<Vec<Location>, SemanticError>> + Send;
-    fn references(&self, which: Which, at: &At) -> impl Future<Output = Result<Vec<Location>, SemanticError>> + Send;
-    fn hover(&self, which: Which, at: &At) -> impl Future<Output = Result<Option<String>, SemanticError>> + Send;
+    fn definition(&self, side: Side, at: &At) -> impl Future<Output = Result<Vec<Location>, SemanticError>> + Send;
+    fn references(&self, side: Side, at: &At) -> impl Future<Output = Result<Vec<Location>, SemanticError>> + Send;
+    fn hover(&self, side: Side, at: &At) -> impl Future<Output = Result<Option<String>, SemanticError>> + Send;
     fn incoming_calls(
         &self,
-        which: Which,
+        side: Side,
         at: &At,
     ) -> impl Future<Output = Result<Vec<SymbolInfo>, SemanticError>> + Send;
     fn outgoing_calls(
         &self,
-        which: Which,
+        side: Side,
         at: &At,
     ) -> impl Future<Output = Result<Vec<SymbolInfo>, SemanticError>> + Send;
     fn diagnostics(
         &self,
-        which: Which,
+        side: Side,
         file: &RepoPath,
     ) -> impl Future<Output = Result<Vec<Diagnostic>, SemanticError>> + Send;
 }
@@ -96,7 +91,7 @@ where
         backend_for(&self.backends, file).map(|b| &b.config().backend)
     }
 
-    pub fn pair(&self, base: Side, target: Side) -> Pair<'_, M, L> {
+    pub fn pair(&self, base: Served, target: Served) -> Pair<'_, M, L> {
         Pair {
             semantic: self,
             base,
@@ -104,18 +99,18 @@ where
         }
     }
 
-    /// Search Everywhere: `workspace/symbol` on `side`, per backend, because
+    /// Search Everywhere: `workspace/symbol` on `served`, per backend, because
     /// each language has its own server. A backend that cannot serve is
     /// reported, not skipped.
     pub async fn workspace_symbols(
         &self,
-        side: &Side,
+        served: &Served,
         query: &str,
     ) -> Vec<(BackendId, Result<Vec<SymbolInfo>, SemanticError>)> {
         let mut results = Vec::new();
         for backend in &self.backends {
             let id = backend.config().backend.clone();
-            let result = match self.lease(side, backend).await {
+            let result = match self.lease(served, backend).await {
                 Ok(lease) => {
                     let r = lease.workspace_symbols(query).await;
                     lease.release().await;
@@ -128,40 +123,40 @@ where
         results
     }
 
-    async fn lease(&self, side: &Side, backend: &Backend) -> Result<Lease<'_, M, L>, SemanticError> {
+    async fn lease(&self, served: &Served, backend: &Backend) -> Result<Lease<'_, M, L>, SemanticError> {
         let key = PoolKey {
-            target: side.target,
+            target: served.target,
             backend: backend.config().backend.clone(),
-            policy: side.policy,
+            policy: served.policy,
         };
         self.pool.lease(&key, backend).await.map_err(SemanticError::Pool)
     }
 
-    async fn lease_for(&self, side: &Side, file: &RepoPath) -> Result<Lease<'_, M, L>, SemanticError> {
+    async fn lease_for(&self, served: &Served, file: &RepoPath) -> Result<Lease<'_, M, L>, SemanticError> {
         let backend = backend_for(&self.backends, file).ok_or_else(|| SemanticError::NoBackend(file.clone()))?;
-        self.lease(side, backend).await
+        self.lease(served, backend).await
     }
 }
 
 /// The two sides of a changeset.
 pub struct Pair<'a, M: Materializer, L: ServerLauncher> {
     semantic: &'a Semantic<M, L>,
-    pub base: Side,
-    pub target: Side,
+    pub base: Served,
+    pub target: Served,
 }
 
 impl<M: Materializer, L: ServerLauncher> Pair<'_, M, L> {
-    fn side(&self, which: Which) -> &Side {
-        match which {
-            Which::Base => &self.base,
-            Which::Target => &self.target,
+    fn served(&self, side: Side) -> &Served {
+        match side {
+            Side::Base => &self.base,
+            Side::Target => &self.target,
         }
     }
 }
 
 macro_rules! ask {
-    ($self:ident, $which:ident, $file:expr, $method:ident($($arg:expr),*)) => {{
-        let lease = $self.semantic.lease_for($self.side($which), $file).await?;
+    ($self:ident, $side:ident, $file:expr, $method:ident($($arg:expr),*)) => {{
+        let lease = $self.semantic.lease_for($self.served($side), $file).await?;
         let answer = lease.$method($($arg),*).await;
         lease.release().await;
         answer.map_err(SemanticError::Query)
@@ -174,31 +169,31 @@ where
     L: ServerLauncher + Sync,
     L::Server: Send,
 {
-    async fn document_symbols(&self, which: Which, file: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
-        ask!(self, which, file, document_symbols(file))
+    async fn document_symbols(&self, side: Side, file: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
+        ask!(self, side, file, document_symbols(file))
     }
 
-    async fn definition(&self, which: Which, at: &At) -> Result<Vec<Location>, SemanticError> {
-        ask!(self, which, &at.file, definition(at))
+    async fn definition(&self, side: Side, at: &At) -> Result<Vec<Location>, SemanticError> {
+        ask!(self, side, &at.file, definition(at))
     }
 
-    async fn references(&self, which: Which, at: &At) -> Result<Vec<Location>, SemanticError> {
-        ask!(self, which, &at.file, references(at))
+    async fn references(&self, side: Side, at: &At) -> Result<Vec<Location>, SemanticError> {
+        ask!(self, side, &at.file, references(at))
     }
 
-    async fn hover(&self, which: Which, at: &At) -> Result<Option<String>, SemanticError> {
-        ask!(self, which, &at.file, hover(at))
+    async fn hover(&self, side: Side, at: &At) -> Result<Option<String>, SemanticError> {
+        ask!(self, side, &at.file, hover(at))
     }
 
-    async fn incoming_calls(&self, which: Which, at: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
-        ask!(self, which, &at.file, incoming_calls(at))
+    async fn incoming_calls(&self, side: Side, at: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
+        ask!(self, side, &at.file, incoming_calls(at))
     }
 
-    async fn outgoing_calls(&self, which: Which, at: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
-        ask!(self, which, &at.file, outgoing_calls(at))
+    async fn outgoing_calls(&self, side: Side, at: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
+        ask!(self, side, &at.file, outgoing_calls(at))
     }
 
-    async fn diagnostics(&self, which: Which, file: &RepoPath) -> Result<Vec<Diagnostic>, SemanticError> {
-        ask!(self, which, file, diagnostics(file))
+    async fn diagnostics(&self, side: Side, file: &RepoPath) -> Result<Vec<Diagnostic>, SemanticError> {
+        ask!(self, side, file, diagnostics(file))
     }
 }

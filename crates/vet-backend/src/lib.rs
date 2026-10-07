@@ -21,6 +21,7 @@ use vet_app::semantics::Semantics;
 use vet_app::servers::Servers;
 use vet_app::session::{Lifecycle, LiveSession, ThreadView};
 use vet_app::settle::Settling;
+use vet_app::trust::Trust;
 use vet_core::review::ThreadId;
 use vet_infra::clock::{TokioClock, unix_now};
 use vet_infra::git::{GixRepo, find_root};
@@ -242,6 +243,7 @@ impl Orchestrator {
             repo.clone(),
             self.backends.to_vec(),
             limits,
+            Trust::Local,
         );
         sessions.push(Arc::new(Open {
             id,

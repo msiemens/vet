@@ -7,6 +7,7 @@ use vet_protocol::{Response, Side};
 use vet_semantic::ports::{At, Location};
 
 use super::highlight;
+use super::mapping::core_side;
 use super::mapping::semantic as map;
 use super::{Open, message};
 
@@ -19,7 +20,7 @@ impl Open {
     pub async fn hover(&self, revision: u32, side: Side, path: &str, line: u32, col: u32) -> Result<Response, String> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
-            .hover(&self.session, revision, map::which(side), &at)
+            .hover(&self.session, revision, core_side(side), &at)
             .await
             .map_err(message)?;
         let (text, unavailable) = map::answer(answer.result, self.language_of(&at.file));
@@ -60,7 +61,7 @@ impl Open {
     ) -> Result<Response, String> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
-            .definition(&self.session, revision, map::which(side), &at)
+            .definition(&self.session, revision, core_side(side), &at)
             .await
             .map_err(message)?;
         Ok(Response::Definition(self.locations(answer, side, &at)))
@@ -76,7 +77,7 @@ impl Open {
     ) -> Result<Response, String> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
-            .references(&self.session, revision, map::which(side), &at)
+            .references(&self.session, revision, core_side(side), &at)
             .await
             .map_err(message)?;
         Ok(Response::References(self.locations(answer, side, &at)))

@@ -11,14 +11,7 @@ use vet_semantic::pool::PoolError;
 use vet_semantic::ports::{
     At, Diagnostic, LaunchError, Location, Pos, RestoreFailure, Severity, Span, Sym, SymbolInfo,
 };
-use vet_semantic::query::{SemanticError, Which};
-
-pub fn which(side: p::Side) -> Which {
-    match side {
-        p::Side::Base => Which::Base,
-        p::Side::Target => Which::Target,
-    }
-}
+use vet_semantic::query::SemanticError;
 
 pub fn at(path: &str, line: u32, col: u32) -> At {
     At {

@@ -2,7 +2,7 @@
 
 use crate::content::{BlobId, FileDiff, Hash, Hunk, LineRange, RepoPath, SnapshotId};
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Side {
     Base,
     Target,

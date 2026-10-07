@@ -2,10 +2,11 @@
 //! file, intersected with the diff hunks.
 
 use vet_core::content::{FileDiff, LineRange, RepoPath};
+use vet_core::review::Side;
 
 use super::{Derived, Inputs};
 use crate::ports::SymbolInfo;
-use crate::query::{Primitives, SemanticError, Which};
+use crate::query::{Primitives, SemanticError};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Change {
@@ -47,8 +48,8 @@ pub async fn changed_symbols(p: &impl Primitives, files: &[FileDiff]) -> Derived
         let new: Vec<_> = file.hunks.iter().map(|h| h.new).collect();
         inputs.record_hunks(&shown.to_string_lossy(), &file.hunks);
 
-        let base = symbols(p, &mut inputs, Which::Base, file.old_path.as_ref()).await;
-        let target = symbols(p, &mut inputs, Which::Target, file.new_path.as_ref()).await;
+        let base = symbols(p, &mut inputs, Side::Base, file.old_path.as_ref()).await;
+        let target = symbols(p, &mut inputs, Side::Target, file.new_path.as_ref()).await;
         let (base, target) = match (base, target) {
             (Ok(b), Ok(t)) => (b, t),
             (Err(e), _) | (_, Err(e)) => {
@@ -98,12 +99,12 @@ pub async fn changed_symbols(p: &impl Primitives, files: &[FileDiff]) -> Derived
 async fn symbols(
     p: &impl Primitives,
     inputs: &mut Inputs,
-    which: Which,
+    side: Side,
     file: Option<&RepoPath>,
 ) -> Result<Vec<SymbolInfo>, SemanticError> {
     let Some(file) = file else { return Ok(Vec::new()) };
-    inputs.query("document_symbols", which, file, None);
-    p.document_symbols(which, file).await
+    inputs.query("document_symbols", side, file, None);
+    p.document_symbols(side, file).await
 }
 
 /// The innermost symbols each hunk touches. An empty range is a deletion or

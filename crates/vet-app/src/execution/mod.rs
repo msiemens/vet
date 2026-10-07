@@ -1,5 +1,5 @@
 //! Execution and trust (§7.5, §9, §10): run targets, the run check, launching
-//! in place, and the analysis policy. Executing restores and debug or test runs
+//! in place. Executing restores and debug or test runs
 //! go through [`Execution::check`] and [`Execution::approve`] the same way
 //! [`Execution::launch`] does, before a pool or a process is asked.
 
@@ -7,7 +7,6 @@ pub mod check;
 pub mod command;
 pub mod rows;
 pub mod targets;
-pub mod trust;
 
 use std::collections::BTreeMap;
 use std::fmt;

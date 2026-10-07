@@ -1,10 +1,12 @@
 //! Impact of a change (§7.3): `references` and incoming calls of each changed
 //! or added symbol, on the target.
 
+use vet_core::review::Side;
+
 use super::changed::{Change, ChangedSymbol};
 use super::{Derived, Inputs};
 use crate::ports::{Location, SymbolInfo};
-use crate::query::{Primitives, Which};
+use crate::query::Primitives;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SymbolImpact {
@@ -22,13 +24,13 @@ pub async fn impact(p: &impl Primitives, changed: &[ChangedSymbol]) -> Derived<V
     for c in changed.iter().filter(|c| c.change != Change::Removed) {
         let at = c.symbol.location();
         let mut gaps = Vec::new();
-        inputs.query_at("references", Which::Target, &at);
-        let references = p.references(Which::Target, &at).await.unwrap_or_else(|e| {
+        inputs.query_at("references", Side::Target, &at);
+        let references = p.references(Side::Target, &at).await.unwrap_or_else(|e| {
             gaps.push(format!("references: {e}"));
             Vec::new()
         });
-        inputs.query_at("incoming_calls", Which::Target, &at);
-        let callers = p.incoming_calls(Which::Target, &at).await.unwrap_or_else(|e| {
+        inputs.query_at("incoming_calls", Side::Target, &at);
+        let callers = p.incoming_calls(Side::Target, &at).await.unwrap_or_else(|e| {
             gaps.push(format!("incoming calls: {e}"));
             Vec::new()
         });

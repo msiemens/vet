@@ -3,9 +3,11 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use vet_core::review::Side;
+
 use super::{Bounds, Derived, Inputs};
 use crate::ports::{Sym, SymbolInfo};
-use crate::query::{Primitives, Which};
+use crate::query::Primitives;
 
 /// A symbol whose last name segment is `name`, in a file under `path_prefix`.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -85,8 +87,8 @@ pub async fn reachability(
             continue;
         }
         let at = node.location();
-        inputs.query_at("incoming_calls", Which::Target, &at);
-        match p.incoming_calls(Which::Target, &at).await {
+        inputs.query_at("incoming_calls", Side::Target, &at);
+        match p.incoming_calls(Side::Target, &at).await {
             Ok(callers) => {
                 for caller in callers {
                     if parent.len() < bounds.max_nodes && !parent.contains_key(&caller.sym) {

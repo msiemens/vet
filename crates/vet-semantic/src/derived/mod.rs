@@ -10,9 +10,9 @@ mod removal;
 mod tests;
 
 use vet_core::content::{Hunk, RepoPath};
+use vet_core::review::Side;
 
 use crate::ports::{At, Pos};
-use crate::query::Which;
 
 pub use changed::{Change, ChangedSymbol, Changes, Gap, changed_symbols};
 pub use impact::{SymbolImpact, impact};
@@ -46,10 +46,10 @@ impl Inputs {
         }
     }
 
-    fn query(&mut self, op: &str, which: Which, file: &RepoPath, pos: Option<Pos>) {
-        let side = match which {
-            Which::Base => "base",
-            Which::Target => "target",
+    fn query(&mut self, op: &str, side: Side, file: &RepoPath, pos: Option<Pos>) {
+        let side = match side {
+            Side::Base => "base",
+            Side::Target => "target",
         };
         let file = file.to_string_lossy();
         self.primitives.push(match pos {
@@ -66,8 +66,8 @@ impl Inputs {
         self.hunks.push(format!("{label}: {}", ranges.join(", ")));
     }
 
-    fn query_at(&mut self, op: &str, which: Which, at: &At) {
-        self.query(op, which, &at.file, Some(at.pos));
+    fn query_at(&mut self, op: &str, side: Side, at: &At) {
+        self.query(op, side, &at.file, Some(at.pos));
     }
 }
 

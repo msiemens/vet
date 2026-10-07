@@ -2,11 +2,12 @@
 //! on the base, each classified against the target.
 
 use vet_core::content::FileDiff;
+use vet_core::review::Side;
 
 use super::changed::{Change, ChangedSymbol};
 use super::{Derived, Inputs};
 use crate::ports::{At, Location, Pos, SymbolInfo};
-use crate::query::{Primitives, Which};
+use crate::query::Primitives;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Fate {
@@ -47,8 +48,8 @@ pub async fn removal_impact(
     let mut out = Vec::new();
     for c in changed.iter().filter(|c| c.change == Change::Removed) {
         let at = c.symbol.location();
-        inputs.query_at("references", Which::Base, &at);
-        let refs = match p.references(Which::Base, &at).await {
+        inputs.query_at("references", Side::Base, &at);
+        let refs = match p.references(Side::Base, &at).await {
             Ok(refs) => refs,
             Err(e) => {
                 out.push(RemovalImpact {
@@ -64,8 +65,8 @@ pub async fn removal_impact(
             let fate = match locate(files, &base) {
                 Located::Fate(fate) => fate,
                 Located::Same(at) => {
-                    inputs.query_at("definition", Which::Target, &at);
-                    match p.definition(Which::Target, &at).await {
+                    inputs.query_at("definition", Side::Target, &at);
+                    match p.definition(Side::Target, &at).await {
                         Ok(now) if now.is_empty() => Fate::LikelyBroken,
                         Ok(now) => Fate::BindingChanged { now },
                         Err(e) => Fate::Unknown(e.to_string()),

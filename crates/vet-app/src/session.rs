@@ -296,11 +296,13 @@ fn image_media_type(path: &RepoPath) -> Option<&'static str> {
     })
 }
 
-/// The two snapshots of a revision.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// The two snapshots of a revision, each with the commit it is built on.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SemanticSides {
     pub base: SnapshotId,
+    pub base_commit: CommitId,
     pub target: SnapshotId,
+    pub head: CommitId,
 }
 
 /// What a new thread is attached to. Ranges are in the text of the revision the
@@ -750,7 +752,9 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         check_revision(&st, revision)?;
         Ok(SemanticSides {
             base: st.base.id,
+            base_commit: st.base_commit.clone(),
             target: st.target.id,
+            head: st.head.clone(),
         })
     }
 

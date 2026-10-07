@@ -8,22 +8,23 @@
 use std::sync::{Arc, Mutex};
 
 use vet_core::content::RepoPath;
+use vet_core::review::Side;
 use vet_semantic::derived::{
     Bounds, Change, Changes, Derived, EntryPoints, Reach, RemovalImpact, SymbolImpact, changed_symbols, impact,
     reachability, removal_impact,
 };
-use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::pool::{Pool, Target};
 use vet_semantic::ports::{
     At, Backend, BackendId, Diagnostic, Location, RestoreFailure, ServerLauncher, Sym, SymbolInfo, prefer_openable,
 };
-use vet_semantic::query::{Primitives, Semantic, SemanticError, Side, Which};
+use vet_semantic::query::{Primitives, Semantic, SemanticError, Served};
 use vet_semantic::signature::{Signature, signature};
 
 use crate::acquisition::SharedAcquisition;
 use crate::limits::RestoreLimits;
 use crate::ports::{GitRepo, ReviewStore, Store};
-use crate::session::{LiveSession, SessionError};
+use crate::session::{LiveSession, SemanticSides, SessionError};
+use crate::trust::{Trust, analysis_policy};
 
 /// Servers kept warm per session: base and target of each language.
 const POOL_CAPACITY: usize = 8;
@@ -55,6 +56,22 @@ where
     changes: Mutex<Option<(u32, Arc<Derived<Changes>>)>>,
     /// Kept current by the launcher's restorer (`Limiting`).
     limits: RestoreLimits,
+    trust: Trust,
+}
+
+/// The base and the target side as the pool serves them: each may execute
+/// project code as far as `trust` holds for the commit it is built on.
+fn served(trust: &Trust, sides: &SemanticSides) -> (Served, Served) {
+    (
+        Served {
+            target: Target::Snapshot(sides.base),
+            policy: analysis_policy(trust, &sides.base_commit),
+        },
+        Served {
+            target: Target::Live,
+            policy: analysis_policy(trust, &sides.head),
+        },
+    )
 }
 
 impl<G, S, L> Semantics<G, S, L>
@@ -64,21 +81,23 @@ where
     L: ServerLauncher + Sync,
     L::Server: Send,
 {
-    /// `live_root` is the worktree the target side is served from. The dirty
-    /// tree is the user's own, so servers may execute project code. `limits` is
-    /// the one the launcher's restorer updates.
+    /// `live_root` is the worktree the target side is served from. `trust`
+    /// decides which sides may have their servers execute project code.
+    /// `limits` is the one the launcher's restorer updates.
     pub fn new(
         session: &LiveSession<G, S>,
         launcher: L,
         live_root: std::path::PathBuf,
         backends: Vec<Backend>,
         limits: RestoreLimits,
+        trust: Trust,
     ) -> Self {
         let pool = Pool::new(session.materializer(), launcher, live_root, POOL_CAPACITY);
         Self {
             semantic: Semantic::new(pool, backends),
             changes: Mutex::new(None),
             limits,
+            trust,
         }
     }
 
@@ -92,37 +111,26 @@ where
         self.limits.all()
     }
 
-    const POLICY: AnalysisPolicy = AnalysisPolicy { allow_executing: true };
-
     async fn pair(
         &self,
         session: &LiveSession<G, S>,
         revision: u32,
     ) -> Fallible<vet_semantic::query::Pair<'_, SharedAcquisition<G, S>, L>> {
-        let sides = session.semantic_sides(revision).await?;
-        Ok(self.semantic.pair(
-            Side {
-                target: Target::Snapshot(sides.base),
-                policy: Self::POLICY,
-            },
-            Side {
-                target: Target::Live,
-                policy: Self::POLICY,
-            },
-        ))
+        let (base, target) = served(&self.trust, &session.semantic_sides(revision).await?);
+        Ok(self.semantic.pair(base, target))
     }
 
     pub async fn hover(
         &self,
         session: &LiveSession<G, S>,
         revision: u32,
-        which: Which,
+        side: Side,
         at: &At,
     ) -> Fallible<Answer<Option<String>>> {
         let pair = self.pair(session, revision).await?;
         Ok(Answer {
             revision,
-            result: pair.hover(which, at).await,
+            result: pair.hover(side, at).await,
         })
     }
 
@@ -130,13 +138,13 @@ where
         &self,
         session: &LiveSession<G, S>,
         revision: u32,
-        which: Which,
+        side: Side,
         at: &At,
     ) -> Fallible<Answer<Vec<Location>>> {
         let pair = self.pair(session, revision).await?;
         Ok(Answer {
             revision,
-            result: pair.definition(which, at).await.map(|mut found| {
+            result: pair.definition(side, at).await.map(|mut found| {
                 prefer_openable(&mut found);
                 found
             }),
@@ -147,13 +155,13 @@ where
         &self,
         session: &LiveSession<G, S>,
         revision: u32,
-        which: Which,
+        side: Side,
         at: &At,
     ) -> Fallible<Answer<Vec<Location>>> {
         let pair = self.pair(session, revision).await?;
         Ok(Answer {
             revision,
-            result: pair.references(which, at).await,
+            result: pair.references(side, at).await,
         })
     }
 
@@ -167,7 +175,7 @@ where
         let pair = self.pair(session, revision).await?;
         Ok(Answer {
             revision,
-            result: pair.diagnostics(Which::Target, file).await,
+            result: pair.diagnostics(Side::Target, file).await,
         })
     }
 
@@ -210,15 +218,15 @@ where
         sym: &Sym,
     ) -> Fallible<Answer<Option<Signature>>> {
         let changed = self.changed(session, revision, sym).await?;
-        let which = if changed.change == Change::Removed {
-            Which::Base
+        let side = if changed.change == Change::Removed {
+            Side::Base
         } else {
-            Which::Target
+            Side::Target
         };
         let pair = self.pair(session, revision).await?;
         Ok(Answer {
             revision,
-            result: signature(&pair, which, &changed.symbol).await,
+            result: signature(&pair, side, &changed.symbol).await,
         })
     }
 
@@ -283,5 +291,42 @@ where
 
     pub async fn shutdown(&self) {
         self.semantic.pool().shutdown().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use vet_core::content::{Hash, SnapshotId};
+
+    use super::*;
+    use crate::pin::CommitId;
+
+    fn sides() -> SemanticSides {
+        SemanticSides {
+            base: SnapshotId(Hash([1; 32])),
+            base_commit: CommitId("base".into()),
+            target: SnapshotId(Hash([2; 32])),
+            head: CommitId("head".into()),
+        }
+    }
+
+    #[test]
+    fn a_local_tree_may_execute_on_both_sides() {
+        let (base, target) = served(&Trust::Local, &sides());
+        assert!(base.policy.allow_executing && target.policy.allow_executing);
+    }
+
+    #[test]
+    fn a_side_built_on_an_untrusted_commit_refuses_executing_servers() {
+        let trust = Trust::Contributor {
+            trusted_head: Some(CommitId("head".into())),
+        };
+        let (base, target) = served(&trust, &sides());
+        assert!(!base.policy.allow_executing);
+        assert!(target.policy.allow_executing);
+
+        let (_, target) = served(&Trust::Contributor { trusted_head: None }, &sides());
+        assert!(!target.policy.allow_executing);
+        assert_eq!(target.target, Target::Live);
     }
 }

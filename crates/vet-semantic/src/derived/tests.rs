@@ -3,10 +3,11 @@
 use std::collections::HashMap;
 
 use vet_core::content::{FileDiff, Hunk, LineRange, RepoPath};
+use vet_core::review::Side;
 
 use super::*;
 use crate::ports::{Diagnostic, Location, Pos, Span, Sym, SymbolInfo};
-use crate::query::{Primitives, SemanticError, Which};
+use crate::query::{Primitives, SemanticError};
 use crate::testutil::block_on;
 
 fn file(p: &str) -> RepoPath {
@@ -74,41 +75,41 @@ fn diff(path: &str, hunks: Vec<Hunk>) -> FileDiff {
 
 #[derive(Default)]
 struct Fake {
-    symbols: HashMap<(Which, RepoPath), Vec<SymbolInfo>>,
-    references: HashMap<(Which, At), Vec<Location>>,
-    callers: HashMap<(Which, At), Vec<SymbolInfo>>,
-    definitions: HashMap<(Which, At), Vec<Location>>,
+    symbols: HashMap<(Side, RepoPath), Vec<SymbolInfo>>,
+    references: HashMap<(Side, At), Vec<Location>>,
+    callers: HashMap<(Side, At), Vec<SymbolInfo>>,
+    definitions: HashMap<(Side, At), Vec<Location>>,
     failing_callers: Vec<At>,
 }
 
 impl Primitives for Fake {
-    async fn document_symbols(&self, which: Which, f: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
+    async fn document_symbols(&self, side: Side, f: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
         self.symbols
-            .get(&(which, f.clone()))
+            .get(&(side,f.clone()))
             .cloned()
             .ok_or_else(|| SemanticError::NoBackend(f.clone()))
     }
-    async fn definition(&self, which: Which, a: &At) -> Result<Vec<Location>, SemanticError> {
-        Ok(self.definitions.get(&(which, a.clone())).cloned().unwrap_or_default())
+    async fn definition(&self, side: Side, a: &At) -> Result<Vec<Location>, SemanticError> {
+        Ok(self.definitions.get(&(side,a.clone())).cloned().unwrap_or_default())
     }
-    async fn references(&self, which: Which, a: &At) -> Result<Vec<Location>, SemanticError> {
-        Ok(self.references.get(&(which, a.clone())).cloned().unwrap_or_default())
+    async fn references(&self, side: Side, a: &At) -> Result<Vec<Location>, SemanticError> {
+        Ok(self.references.get(&(side,a.clone())).cloned().unwrap_or_default())
     }
-    async fn hover(&self, _: Which, _: &At) -> Result<Option<String>, SemanticError> {
+    async fn hover(&self, _: Side, _: &At) -> Result<Option<String>, SemanticError> {
         Ok(None)
     }
-    async fn incoming_calls(&self, which: Which, a: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
+    async fn incoming_calls(&self, side: Side, a: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
         if self.failing_callers.contains(a) {
             return Err(SemanticError::Query(crate::ports::QueryError(
                 "no call hierarchy".into(),
             )));
         }
-        Ok(self.callers.get(&(which, a.clone())).cloned().unwrap_or_default())
+        Ok(self.callers.get(&(side,a.clone())).cloned().unwrap_or_default())
     }
-    async fn outgoing_calls(&self, _: Which, _: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
+    async fn outgoing_calls(&self, _: Side, _: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
         Ok(vec![])
     }
-    async fn diagnostics(&self, _: Which, _: &RepoPath) -> Result<Vec<Diagnostic>, SemanticError> {
+    async fn diagnostics(&self, _: Side, _: &RepoPath) -> Result<Vec<Diagnostic>, SemanticError> {
         Ok(vec![])
     }
 }
@@ -118,7 +119,7 @@ impl Primitives for Fake {
 fn changed_fixture() -> (Fake, Vec<FileDiff>) {
     let mut fake = Fake::default();
     fake.symbols.insert(
-        (Which::Base, file("a.rs")),
+        (Side::Base, file("a.rs")),
         vec![
             sym("a.rs", "S", 0, 9),
             sym("a.rs", "S::keep", 1, 4),
@@ -127,7 +128,7 @@ fn changed_fixture() -> (Fake, Vec<FileDiff>) {
         ],
     );
     fake.symbols.insert(
-        (Which::Target, file("a.rs")),
+        (Side::Target, file("a.rs")),
         vec![
             sym("a.rs", "S", 0, 6),
             sym("a.rs", "S::keep", 1, 5),
@@ -171,11 +172,11 @@ fn changed_symbols_are_the_innermost_symbols_touched_by_hunks() {
 fn added_and_deleted_files_report_every_symbol() {
     let mut fake = Fake::default();
     fake.symbols.insert(
-        (Which::Target, file("new.rs")),
+        (Side::Target, file("new.rs")),
         vec![sym("new.rs", "T", 0, 5), sym("new.rs", "T::f", 1, 3)],
     );
     fake.symbols
-        .insert((Which::Base, file("old.rs")), vec![sym("old.rs", "U", 0, 3)]);
+        .insert((Side::Base, file("old.rs")), vec![sym("old.rs", "U", 0, 3)]);
     let files = vec![
         FileDiff {
             old_path: None,
@@ -211,9 +212,9 @@ fn impact_lists_references_and_callers_of_added_and_modified_symbols_only() {
     let changes = block_on(changed_symbols(&fake, &files)).value.symbols;
     let keep = changes[0].symbol.location();
     fake.references
-        .insert((Which::Target, keep.clone()), vec![site("b.rs", 7)]);
+        .insert((Side::Target, keep.clone()), vec![site("b.rs", 7)]);
     fake.callers
-        .insert((Which::Target, keep), vec![sym("b.rs", "caller", 5, 9)]);
+        .insert((Side::Target, keep), vec![sym("b.rs", "caller", 5, 9)]);
     fake.failing_callers.push(changes[1].symbol.location());
 
     let result = block_on(impact(&fake, &changes));
@@ -245,7 +246,7 @@ fn removed_symbol_call_sites_are_classified() {
         hunks: vec![hunk((0, 4), (0, 0))],
     });
     fake.references.insert(
-        (Which::Base, dropped.symbol.location()),
+        (Side::Base, dropped.symbol.location()),
         vec![
             site("c.rs", 2),
             site("c.rs", 5),
@@ -258,7 +259,7 @@ fn removed_symbol_call_sites_are_classified() {
     // c.rs gains one line at the top, so old line 8 is new line 9.
     let elsewhere = site("other.rs", 1);
     fake.definitions
-        .insert((Which::Target, at("c.rs", 21, 4)), vec![elsewhere.clone()]);
+        .insert((Side::Target, at("c.rs", 21, 4)), vec![elsewhere.clone()]);
 
     let result = block_on(removal_impact(&fake, &changes, &files));
     let fates: Vec<_> = result.value[0].call_sites.iter().map(|c| c.fate.clone()).collect();
@@ -297,7 +298,7 @@ fn graph(edges: &[(&str, &[&str])]) -> Fake {
     let mut fake = Fake::default();
     for (callee, callers) in edges {
         fake.callers.insert(
-            (Which::Target, node(callee).location()),
+            (Side::Target, node(callee).location()),
             callers.iter().map(|c| node(c)).collect(),
         );
     }

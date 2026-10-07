@@ -2,10 +2,11 @@
 //! `documentSymbol.detail` and the Markdown of a hover; this settles which to use and how to
 //! pick the declaration out of a hover.
 
+use vet_core::review::Side;
 use vet_highlight::{Syntax, fenced_blocks};
 
 use crate::ports::SymbolInfo;
-use crate::query::{Primitives, SemanticError, Which};
+use crate::query::{Primitives, SemanticError};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Signature {
@@ -48,15 +49,15 @@ impl Signature {
     }
 }
 
-/// The signature of `symbol`, looked up on `which`: the declaration in its hover, else the
+/// The signature of `symbol`, looked up on `side`: the declaration in its hover, else the
 /// server's `detail`, which is often less (rust-analyzer's leaves out the name). `None` if the
 /// server has nothing to say.
 pub async fn signature(
     p: &impl Primitives,
-    which: Which,
+    side: Side,
     symbol: &SymbolInfo,
 ) -> Result<Option<Signature>, SemanticError> {
-    let hovered = p.hover(which, &symbol.location()).await;
+    let hovered = p.hover(side, &symbol.location()).await;
     if let Ok(Some(text)) = &hovered
         && let Some(found) = Signature::of_hover(text)
     {
@@ -124,27 +125,27 @@ mod tests {
     struct Hovering(Result<Option<&'static str>, &'static str>);
 
     impl Primitives for Hovering {
-        async fn document_symbols(&self, _: Which, _: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
+        async fn document_symbols(&self, _: Side, _: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
             Ok(vec![])
         }
-        async fn definition(&self, _: Which, _: &At) -> Result<Vec<Location>, SemanticError> {
+        async fn definition(&self, _: Side, _: &At) -> Result<Vec<Location>, SemanticError> {
             Ok(vec![])
         }
-        async fn references(&self, _: Which, _: &At) -> Result<Vec<Location>, SemanticError> {
+        async fn references(&self, _: Side, _: &At) -> Result<Vec<Location>, SemanticError> {
             Ok(vec![])
         }
-        async fn hover(&self, _: Which, _: &At) -> Result<Option<String>, SemanticError> {
+        async fn hover(&self, _: Side, _: &At) -> Result<Option<String>, SemanticError> {
             self.0
                 .map(|text| text.map(String::from))
                 .map_err(|e| SemanticError::Query(QueryError(e.into())))
         }
-        async fn incoming_calls(&self, _: Which, _: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
+        async fn incoming_calls(&self, _: Side, _: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
             Ok(vec![])
         }
-        async fn outgoing_calls(&self, _: Which, _: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
+        async fn outgoing_calls(&self, _: Side, _: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
             Ok(vec![])
         }
-        async fn diagnostics(&self, _: Which, _: &RepoPath) -> Result<Vec<Diagnostic>, SemanticError> {
+        async fn diagnostics(&self, _: Side, _: &RepoPath) -> Result<Vec<Diagnostic>, SemanticError> {
             Ok(vec![])
         }
     }
@@ -165,7 +166,7 @@ mod tests {
     #[test]
     fn the_hover_wins_over_the_detail() {
         let server = Hovering(Ok(Some("```rust\npub fn f() -> u32\n```")));
-        let found = block_on(signature(&server, Which::Target, &symbol(Some("fn() -> u32"))));
+        let found = block_on(signature(&server, Side::Target, &symbol(Some("fn() -> u32"))));
         assert_eq!(found.unwrap(), Some(fence("pub fn f() -> u32", "rust")));
     }
 
@@ -176,16 +177,16 @@ mod tests {
             syntax: Syntax::File,
         });
         for server in [Hovering(Ok(None)), Hovering(Err("boom"))] {
-            let found = block_on(signature(&server, Which::Base, &symbol(Some("fn() -> u32"))));
+            let found = block_on(signature(&server, Side::Base, &symbol(Some("fn() -> u32"))));
             assert_eq!(found.unwrap(), detail);
         }
     }
 
     #[test]
     fn without_either_the_answer_is_none_or_the_hovers_error() {
-        let silent = block_on(signature(&Hovering(Ok(None)), Which::Target, &symbol(None)));
+        let silent = block_on(signature(&Hovering(Ok(None)), Side::Target, &symbol(None)));
         assert_eq!(silent.unwrap(), None);
-        let failed = block_on(signature(&Hovering(Err("boom")), Which::Target, &symbol(None)));
+        let failed = block_on(signature(&Hovering(Err("boom")), Side::Target, &symbol(None)));
         assert!(failed.is_err());
     }
 
