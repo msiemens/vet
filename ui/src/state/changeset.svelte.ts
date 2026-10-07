@@ -11,21 +11,12 @@ import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { BaseChoice } from "../generated/BaseChoice";
 import { errorText } from "../lib/errorText";
-import { Backend, type BaseCandidates } from "./backend";
-import { hasNativeDialogs, pickRepository } from "./host";
-import { recent } from "./recent.svelte";
+import type { BaseCandidates } from "./backend";
+import { session } from "./session.svelte";
 
 type ReviewListener = (update: ReviewUpdate) => void;
 
 class ChangesetStore {
-  status = $state("connecting…");
-  /** A short message for the viewer about a request that did not go through. */
-  notice = $state<string>();
-  backend = $state.raw<Backend>();
-  /** The root of the open repository; none shows the start screen. */
-  repo = $state<string>();
-  /** Why the last attempt to open a repository failed. */
-  openError = $state<{ path: string; message: string }>();
   /**
    * The manifest of the last refresh, with the changeset's completion kept current. Its
    * `files` are as of the refresh (paths and hunks, which only a new revision changes);
@@ -57,9 +48,8 @@ class ChangesetStore {
     });
   }
 
-  async connect() {
-    try {
-      const backend = await Backend.connect();
+  constructor() {
+    session.onConnect((backend) =>
       backend.onEvent((event) => {
         if (event.session !== backend.session) return;
         if (event.type === "snapshotSettled") void this.refresh();
@@ -68,55 +58,18 @@ class ChangesetStore {
         else if (event.type === "reviewStarted" && this.manifest)
           this.manifest = { ...this.manifest, review: event.review };
         else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
-      });
-      this.backend = backend;
-      await recent.load(backend);
-      if (backend.initialRepo) await this.openRepo(backend.initialRepo);
-    } catch (error) {
-      this.status = errorText(error);
-    }
-  }
-
-  /** Closes the open repository, if any, and opens `path` (the backend resolves it to a repository root). */
-  async openRepo(path: string) {
-    const backend = this.connected();
-    this.openError = undefined;
-    await this.closeRepo();
-    try {
-      this.repo = await backend.open(path);
-      void recent.remember(backend, this.repo);
-    } catch (error) {
-      this.openError = { path, message: errorText(error) };
-    }
-  }
-
-  /** Asks the host's folder dialog for a repository and opens it. Without a dialog (a plain browser) this goes to the start screen. */
-  async pickRepo() {
-    if (!hasNativeDialogs) {
-      await this.closeRepo();
-      return;
-    }
-    try {
-      const path = await pickRepository();
-      if (path) await this.openRepo(path);
-    } catch (error) {
-      // The host refuses folders the backend cannot see (the WSL split) with a message.
-      this.openError = { path: "", message: errorText(error) };
-    }
-  }
-
-  /** Back to the start screen. */
-  async closeRepo() {
-    this.repo = undefined;
-    this.manifest = undefined;
-    this.restoreFailures = [];
-    this.cells.clear();
-    await this.connected().close();
+      }),
+    );
+    session.onClose(() => {
+      this.manifest = undefined;
+      this.restoreFailures = [];
+      this.cells.clear();
+    });
   }
 
   /** Fetches the manifest again; the revision may have moved. */
   async refresh(): Promise<Manifest> {
-    const manifest = await this.connected().manifest();
+    const manifest = await session.connected().manifest();
     this.cells.clear();
     for (const file of manifest.files) this.cells.set(file.path, file);
     this.manifest = manifest;
@@ -126,11 +79,11 @@ class ChangesetStore {
 
   /** `revision` is the manifest the caller displays; the backend rejects a stale one. */
   async setSeen(revision: number, path: string, hunks: number[], seen: boolean) {
-    await this.review(revision, this.connected().setSeen(revision, path, hunks, seen));
+    await this.review(revision, session.connected().setSeen(revision, path, hunks, seen));
   }
 
   async acknowledge(path: string, kind: NonTextKind, acknowledged: boolean) {
-    const backend = this.connected();
+    const backend = session.connected();
     if (!this.manifest) throw new Error("no manifest loaded");
     const { revision } = this.manifest;
     await this.review(revision, backend.acknowledge(revision, path, kind, acknowledged));
@@ -143,9 +96,9 @@ class ChangesetStore {
    */
   async setBase(choice: BaseChoice) {
     try {
-      await this.connected().setBase(choice);
+      await session.connected().setBase(choice);
     } catch (error) {
-      this.notice = errorText(error);
+      session.notice = errorText(error);
     }
   }
 
@@ -155,10 +108,10 @@ class ChangesetStore {
    */
   async finishReview() {
     try {
-      const complete = await this.connected().finishReview();
-      this.notice = complete ? "Review finished: everything was seen" : "Review finished with unseen changes left";
+      const complete = await session.connected().finishReview();
+      session.notice = complete ? "Review finished: everything was seen" : "Review finished with unseen changes left";
     } catch (error) {
-      this.notice = errorText(error);
+      session.notice = errorText(error);
     }
   }
 
@@ -168,7 +121,7 @@ class ChangesetStore {
    */
   async setFilter(filter: ReviewFilter): Promise<string | undefined> {
     try {
-      await this.connected().setProjectFilter(filter);
+      await session.connected().setProjectFilter(filter);
       return undefined;
     } catch (error) {
       return errorText(error);
@@ -184,7 +137,7 @@ class ChangesetStore {
     const glob = dir ? `/${literal}/**` : `/${literal}`;
     if (filter.exclude.includes(glob)) return;
     const error = await this.setFilter({ ...filter, exclude: [...filter.exclude, glob] });
-    if (error) this.notice = error;
+    if (error) session.notice = error;
   }
 
   /** Limits the review to the folder `path`. */
@@ -192,15 +145,15 @@ class ChangesetStore {
     const filter = this.manifest?.filter;
     if (!filter) return;
     const error = await this.setFilter({ ...filter, roots: [path] });
-    if (error) this.notice = error;
+    if (error) session.notice = error;
   }
 
   /** The children of a directory of the target snapshot; `undefined` after showing why it failed. */
   async listDirectory(path: string) {
     try {
-      return await this.connected().listDirectory(path);
+      return await session.connected().listDirectory(path);
     } catch (error) {
-      this.notice = errorText(error);
+      session.notice = errorText(error);
       return undefined;
     }
   }
@@ -208,9 +161,9 @@ class ChangesetStore {
   /** What a base can be picked from; `undefined` after showing why it failed. */
   async baseCandidates(): Promise<BaseCandidates | undefined> {
     try {
-      return await this.connected().baseCandidates();
+      return await session.connected().baseCandidates();
     } catch (error) {
-      this.notice = errorText(error);
+      session.notice = errorText(error);
       return undefined;
     }
   }
@@ -234,15 +187,10 @@ class ChangesetStore {
    */
   reportFailure(error: unknown, sent?: number) {
     const current = this.manifest?.revision;
-    this.notice =
+    session.notice =
       sent !== undefined && current !== undefined && current !== sent
         ? "Changes arrived — try again"
         : `Request failed: ${errorText(error)}`;
-  }
-
-  private connected(): Backend {
-    if (!this.backend) throw new Error("not connected to the backend");
-    return this.backend;
   }
 
   applyReview(update: ReviewUpdate) {

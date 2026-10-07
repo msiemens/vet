@@ -7,6 +7,7 @@
   import type { Mode } from "../../lib/viewMode";
   import type { Backend } from "../../state/backend";
   import { changeset } from "../../state/changeset.svelte";
+  import { session } from "../../state/session.svelte";
   import { threads } from "../../state/threads.svelte";
   import { CommentsPanel } from "../comments";
   import FileTree from "./FileTree.svelte";
@@ -71,7 +72,7 @@
     const stopThreads = threads.start(backend);
     controller.open(true).then(
       (ms) => onready(controller, ms),
-      (e: unknown) => (changeset.status = errorText(e)),
+      (e: unknown) => (session.status = errorText(e)),
     );
     return () => {
       stopThreads();
@@ -97,7 +98,7 @@
   }
 
   function runMenu(id: string, { path, dir }: { path: string; dir: boolean }) {
-    if (id === "copy") navigator.clipboard.writeText(path).catch(() => (changeset.notice = "Could not copy the path"));
+    if (id === "copy") navigator.clipboard.writeText(path).catch(() => (session.notice = "Could not copy the path"));
     else if (id === "exclude") void changeset.excludePath(path, dir);
     else if (id === "only") void changeset.reviewOnly(path);
   }

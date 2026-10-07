@@ -32,6 +32,7 @@
   import { mainMenu } from "../state/mainMenu.svelte";
   import { recent } from "../state/recent.svelte";
   import { semantic } from "../state/semantic.svelte";
+  import { session } from "../state/session.svelte";
 
   let controller = $state.raw<ReviewController>();
   // The selected tool of each rail, and whether its sidebar is shown.
@@ -71,7 +72,7 @@
 
   // The controller belongs to the repository's screen.
   $effect(() => {
-    if (!changeset.repo) {
+    if (!session.repo) {
       controller = undefined;
       symbols.reset();
     }
@@ -79,7 +80,7 @@
 
   // The changed symbols belong to a revision; another one replaces them.
   $effect(() => {
-    const backend = changeset.backend;
+    const backend = session.backend;
     const revision = changeset.manifest?.revision;
     if (backend && revision !== undefined) untrack(() => void symbols.load(backend, revision));
   });
@@ -91,7 +92,7 @@
     const shown = (side: typeof left, id: string) => side.open && side.tool === id;
     mainMenu.update({
       native: hasNativeMenu,
-      repoOpen: !!changeset.repo,
+      repoOpen: !!session.repo,
       reviewOpen,
       canQuit,
       recent: recent.list.map((path) => ({ path, name: repoName(path) })),
@@ -115,17 +116,17 @@
         console.error(e);
       },
     );
-    void changeset.connect();
+    void session.connect();
     return mainMenu.listen(execute);
   });
 
   function execute(command: Command) {
     switch (command.type) {
       case "open":
-        void changeset.pickRepo();
+        void session.pickRepo();
         break;
       case "openRecent":
-        void changeset.openRepo(command.path);
+        void session.openRepo(command.path);
         break;
       case "finishReview":
         if (reviewOpen) dialog = "finish";
@@ -174,9 +175,9 @@
   }}
 />
 
-{#if changeset.backend && changeset.repo}
+{#if session.backend && session.repo}
   <Header
-    project={repoName(changeset.repo)}
+    project={repoName(session.repo)}
     base={changeset.manifest?.base}
     target={changeset.manifest?.target}
     review={changeset.manifest?.review}
@@ -208,7 +209,7 @@
   <div class="body">
     <ToolRail bind:active={left.tool} bind:open={left.open} />
     <ReviewScreen
-      backend={changeset.backend}
+      backend={session.backend}
       {probe}
       leftTool={left.tool}
       leftOpen={left.open}
@@ -225,30 +226,26 @@
     </ReviewScreen>
     <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />
   </div>
-{:else if changeset.backend}
-  {@const backend = changeset.backend}
+{:else if session.backend}
   <TitleBar />
   <div class="body">
     <StartScreen
       recent={recent.list}
-      failed={changeset.openError}
+      failed={session.openError}
       canPick={hasNativeDialogs}
-      onpick={() => void changeset.pickRepo()}
-      onopen={(path) => void changeset.openRepo(path)}
-      onforget={(path) => {
-        void recent.forget(backend, path);
-        changeset.openError = undefined;
-      }}
+      onpick={() => void session.pickRepo()}
+      onopen={(path) => void session.openRepo(path)}
+      onforget={(path) => void session.forget(path)}
     />
   </div>
 {:else}
   <TitleBar />
-  <p class="message">{changeset.status}</p>
+  <p class="message">{session.status}</p>
 {/if}
 
-{#if changeset.notice}
-  {#key changeset.notice}
-    <Toast message={changeset.notice} onclose={() => (changeset.notice = undefined)} />
+{#if session.notice}
+  {#key session.notice}
+    <Toast message={session.notice} onclose={() => (session.notice = undefined)} />
   {/key}
 {/if}
 
@@ -257,8 +254,8 @@
     {theme}
     ontheme={(t) => applyTheme((theme = t))}
     onclose={() => (dialog = undefined)}
-    backend={changeset.repo ? changeset.backend : undefined}
-    project={changeset.repo ? changeset.manifest : undefined}
+    backend={session.repo ? session.backend : undefined}
+    project={session.repo ? changeset.manifest : undefined}
     onfilter={(f) => changeset.setFilter(f)}
   />
 {:else if dialog === "about"}

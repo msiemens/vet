@@ -11,6 +11,7 @@ import type { Unavailable } from "../generated/Unavailable";
 import type { HoverText } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { type SemanticSummary, summarize } from "./semanticSummary";
+import { session } from "./session.svelte";
 
 const NOTHING: HoverText = { text: "", code: [] };
 
@@ -58,7 +59,7 @@ class SemanticStore {
 
   /** Markdown; the text is empty if the server has nothing to say or the request is stale. */
   async hover(revision: number, side: Side, path: string, line: number, col: number): Promise<HoverText> {
-    const backend = changeset.backend;
+    const backend = session.backend;
     if (!backend) return NOTHING;
     try {
       const r = await backend.hover(revision, side, path, line, col);
@@ -77,13 +78,13 @@ class SemanticStore {
     line: number,
     col: number,
   ): Promise<SemanticLocation[] | undefined> {
-    const backend = changeset.backend;
+    const backend = session.backend;
     if (!backend) return undefined;
     try {
       const r = await backend.definition(revision, side, path, line, col);
       this.note(revision, path, r.unavailable);
-      if (r.unavailable) changeset.notice = r.unavailable.message;
-      else if (!r.locations.length) changeset.notice = "No definition found";
+      if (r.unavailable) session.notice = r.unavailable.message;
+      else if (!r.locations.length) session.notice = "No definition found";
       else return r.locations;
     } catch (error) {
       changeset.reportFailure(error, revision);
@@ -103,7 +104,7 @@ class SemanticStore {
   }
 
   private async fetch(revision: number, path: string): Promise<Diagnostic[]> {
-    const backend = changeset.backend;
+    const backend = session.backend;
     const epoch = this.epoch;
     try {
       const r = await backend?.diagnostics(revision, path);

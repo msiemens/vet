@@ -9,6 +9,7 @@ import { nextPaint } from "../../lib/nextPaint";
 import type { Backend } from "../../state/backend";
 import { changeset } from "../../state/changeset.svelte";
 import { semantic } from "../../state/semantic.svelte";
+import { session } from "../../state/session.svelte";
 import { threads } from "../../state/threads.svelte";
 import type { Thread } from "../../generated/Thread";
 import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
@@ -140,7 +141,7 @@ export class ReviewController {
     const location = found?.[0];
     if (!location) return;
     if (location.external) {
-      changeset.notice = `Defined outside the repository: ${location.path}`;
+      session.notice = `Defined outside the repository: ${location.path}`;
       return;
     }
     await this.openLocation(location.path, location.span.start.line, side, location.span);

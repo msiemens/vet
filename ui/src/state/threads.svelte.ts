@@ -7,6 +7,7 @@ import type { ThreadTarget } from "../generated/ThreadTarget";
 import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
+import { session } from "./session.svelte";
 
 class ThreadStore {
   /** In creation order, resolved at `revision`. Immutable snapshots, replaced as a whole. */
@@ -42,7 +43,7 @@ class ThreadStore {
       const { revision, threads } = await backend.threads();
       if (seq === this.seq) this.set(threads, revision);
     } catch (error) {
-      if (seq === this.seq) changeset.notice = `Could not load comments: ${errorText(error)}`;
+      if (seq === this.seq) session.notice = `Could not load comments: ${errorText(error)}`;
     }
   }
 
