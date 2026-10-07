@@ -463,6 +463,7 @@ Also included: fetch-only restore with shared caches.
 - Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
 - A changed file's file view marks its added, changed and removed lines (removed ones where they were)
 - The Changes tab marks the file the viewer is in (in the tab and the file tree), and reopens the review at the scroll position it was left at
+- The base chosen while browsing is kept per repository: reopening the repository without an open review shows the tree against it again (§5.3)
 
 ### M2
 
