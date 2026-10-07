@@ -114,6 +114,22 @@ impl<'a> Coverage<'a> {
             .collect()
     }
 
+    /// Per hunk, the changed lines covered only by `SeenAgainstOldBase` spans.
+    pub fn old_base_lines(&self, diff: &FileDiff) -> Vec<u32> {
+        diff.hunks
+            .iter()
+            .map(|h| {
+                (diff.sides(h).into_iter())
+                    .filter_map(|(side, file, range)| file.map(|f| (f, side, range)))
+                    .map(|(f, side, range)| {
+                        let (seen, any) = self.lines(f, side, range);
+                        any - seen
+                    })
+                    .sum()
+            })
+            .collect()
+    }
+
     /// The state of the lines `regions` name, as of a hunk that covers exactly them.
     pub fn state_of<'r>(&self, regions: impl IntoIterator<Item = (&'r RepoPath, Side, LineRange)>) -> HunkState {
         let (mut total, mut seen, mut any) = (0, 0, 0);

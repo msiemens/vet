@@ -43,6 +43,7 @@
 //! and `threads` edit the review, `blobs` reads the content they all need, and
 //! `source` and `listing` are about which changeset is on view.
 
+mod base_diff;
 mod blobs;
 mod browse;
 mod content;
@@ -67,6 +68,7 @@ use vet_core::content::{EntryKind, FileDiff, RepoPath, Snapshot, SnapshotId, Sna
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
 
+pub use self::base_diff::{BaseDiffKind, BaseDiffRow, BaseDiffView};
 pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};

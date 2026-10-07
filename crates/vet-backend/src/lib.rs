@@ -242,6 +242,17 @@ impl Orchestrator {
                 revision,
                 path,
             } => self.toggle_file_seen(project, from, view, revision, &path).await,
+            Request::ReconfirmFile {
+                project,
+                revision,
+                path,
+            } => self.reconfirm_file(project, from, revision, &path).await,
+            Request::BaseDiff {
+                project,
+                revision,
+                path,
+                hunk,
+            } => self.base_diff(project, revision, &path, hunk).await,
             Request::ItemBlob {
                 project,
                 view,

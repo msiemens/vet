@@ -337,9 +337,10 @@ impl<'a> Lens<'a> {
     fn state(&self, diff: Option<&FileDiff>, items: &[NonTextChange]) -> (ReviewView, Completion) {
         let states = diff.map(|d| self.hunk_states(d)).unwrap_or_default();
         let mut completion = empty_completion();
+        let mut old_base_lines = vec![0; states.len()];
         if let Some(d) = diff {
             let squash = self.squash(d.path());
-            for (h, state) in self.id.hunks[d.path()].iter().zip(&states) {
+            for ((h, state), old_base) in self.id.hunks[d.path()].iter().zip(&states).zip(&mut old_base_lines) {
                 if *state == HunkState::Informational {
                     continue;
                 }
@@ -356,6 +357,7 @@ impl<'a> Lens<'a> {
                         completion.lines += range.len();
                         completion.seen_lines += seen;
                         completion.old_base_lines += any - seen;
+                        *old_base += any - seen;
                     }
                 }
             }
@@ -374,6 +376,7 @@ impl<'a> Lens<'a> {
         (
             ReviewView {
                 hunks: states,
+                old_base_lines,
                 acknowledged,
             },
             completion,

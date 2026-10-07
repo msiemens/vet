@@ -166,6 +166,8 @@ pub enum NonTextKind {
 pub struct FileReview {
     /// One per hunk of the file.
     pub hunks: Vec<HunkState>,
+    /// One per hunk: its changed lines covered only by spans seen against an old base.
+    pub old_base_lines: Vec<u32>,
     pub acknowledged: Vec<NonTextKind>,
 }
 

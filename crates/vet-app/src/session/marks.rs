@@ -44,6 +44,29 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         Ok(outcome(&st, update_in(&st, view, path)?, started))
     }
 
+    /// Marks the hunks of a file that are seen against an old base seen again, against the base
+    /// now, and leaves the others as they are. Fails if the file has none.
+    pub async fn reconfirm_file(&self, revision: u32, path: &str) -> Result<Outcome<ReviewUpdateView>> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        let hunks: Vec<u32> = update_in(&st, View::Changeset, path)?
+            .review
+            .hunks
+            .iter()
+            .enumerate()
+            .filter(|(_, state)| **state == HunkState::SeenAgainstOldBase)
+            .map(|(i, _)| i as u32)
+            .collect();
+        if hunks.is_empty() {
+            return Err(SessionError::Invalid(
+                "nothing in this file was seen against an old base".into(),
+            ));
+        }
+        self.mark_hunks(&mut st, path, &hunks, true).await?;
+        Ok(outcome(&st, update_in(&st, View::Changeset, path)?, false))
+    }
+
     /// Flips the acknowledgement of one non-text item. Acknowledging starts the review if none
     /// is open. In an interdiff it is the acknowledgement of the newer version's own change.
     pub async fn toggle_item(

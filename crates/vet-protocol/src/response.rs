@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    Account, Base, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow, CommitInfo, Diagnostic,
-    DirEntry, Highlights, Impact, Locations, Manifest, ProjectId, PullRequestRow, PullRequestSource, Reachability,
-    RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange, TextContent,
-    Thread, ThreadTarget, Unavailable, VersionInfo,
+    Account, Base, BaseDiff, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow, CommitInfo,
+    Diagnostic, DirEntry, Highlights, Impact, Locations, Manifest, ProjectId, PullRequestRow, PullRequestSource,
+    Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange,
+    TextContent, Thread, ThreadTarget, Unavailable, VersionInfo,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -72,8 +72,11 @@ pub enum Response {
         /// The same for `target`.
         target_highlights: Highlights,
     },
-    /// The file's review state after `ToggleHunk`, `ToggleItem` or `ToggleFileSeen`.
+    /// The file's review state after `ToggleHunk`, `ToggleItem`, `ToggleFileSeen` or
+    /// `ReconfirmFile`.
     Review(ReviewUpdate),
+    /// The answer to `BaseDiff`.
+    BaseDiff(BaseDiff),
     /// `text` is Markdown; `None` with `unavailable` unset means the server has
     /// nothing to say there. `code_highlights` has one entry for each fenced code block of
     /// `text`, in order: the highlighting of the block's code (see [`Highlights`]).

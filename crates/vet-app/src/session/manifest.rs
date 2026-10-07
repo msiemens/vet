@@ -156,6 +156,7 @@ pub(super) fn status_of(diff: Option<&FileDiff>, items: &[NonTextChange]) -> Fil
 fn review_of(cov: &Coverage, diff: Option<&FileDiff>, items: &[NonTextChange], acked: &[NonTextChange]) -> ReviewView {
     ReviewView {
         hunks: diff.map(|d| cov.hunk_states(d)).unwrap_or_default(),
+        old_base_lines: diff.map(|d| cov.old_base_lines(d)).unwrap_or_default(),
         acknowledged: items.iter().filter(|n| acked.contains(n)).map(|n| n.kind).collect(),
     }
 }

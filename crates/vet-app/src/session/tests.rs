@@ -1859,6 +1859,78 @@ async fn a_changed_base_makes_marks_seen_against_an_old_base_until_it_is_chosen_
     assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen]);
 }
 
+/// A hunk of `a.txt` marked seen, then the base moved to a commit that lacks "line 4"; `b.txt`
+/// changes too and is not marked.
+async fn seen_then_base_changed() -> Fixture {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(
+        &[("a.txt", &base), ("b.txt", &base)],
+        &[("a.txt", &numbered(10, &[3, 4])), ("b.txt", &numbered(10, &[3, 4]))],
+    )
+    .await;
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    let other = base.replace("line 4\n", "");
+    fx.git
+        .add_commit("merge-base main", "mb", &[("a.txt", &other), ("b.txt", &other)]);
+    let merge_base = BaseChoice::MergeBase {
+        reference: "main".into(),
+    };
+    fx.session.set_base(merge_base).await.unwrap();
+    fx
+}
+
+#[tokio::test]
+async fn a_hunk_seen_against_an_old_base_counts_its_lines_and_shows_what_the_base_had() {
+    let fx = seen_then_base_changed().await;
+    let revision = fx.session.revision().await;
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+    let (a, b) = (&m.files[0].review, &m.files[1].review);
+    assert_eq!(
+        (&a.hunks[..], &a.old_base_lines[..]),
+        (&[HunkState::SeenAgainstOldBase][..], &[2][..])
+    );
+    assert_eq!(
+        (&b.hunks[..], &b.old_base_lines[..]),
+        (&[HunkState::Unseen][..], &[0][..])
+    );
+
+    let diff = fx.session.base_diff(revision, "a.txt", 0).await.unwrap();
+    let rows: Vec<_> = diff.rows.iter().map(|r| (r.kind, r.line, r.text.as_str())).collect();
+    // The base had "line 3" and "line 4" there; it has "line 3" now, at line 4 of its text.
+    assert_eq!(
+        rows,
+        [
+            (BaseDiffKind::Context, 4, "line 3"),
+            (BaseDiffKind::Removed, 5, "line 4")
+        ]
+    );
+    assert_eq!(diff.to.id, CommitId("mb".into()));
+    let from = diff
+        .from
+        .expect("the base the hunk was marked against is a version's base");
+    assert_ne!(from.id, diff.to.id);
+
+    let unseen = fx.session.base_diff(revision, "b.txt", 0).await;
+    assert!(matches!(unseen, Err(SessionError::Invalid(_))));
+}
+
+#[tokio::test]
+async fn re_confirming_a_file_marks_its_hunks_seen_against_an_old_base_seen_and_nothing_else() {
+    let fx = seen_then_base_changed().await;
+    let revision = fx.session.revision().await;
+
+    let nothing = fx.session.reconfirm_file(revision, "b.txt").await;
+    assert!(matches!(nothing, Err(SessionError::Invalid(_))));
+    assert_eq!(fx.hunks("b.txt").await, [HunkState::Unseen]);
+
+    let update = fx.session.reconfirm_file(revision, "a.txt").await.unwrap();
+    assert_eq!(update.review.hunks, [HunkState::Seen]);
+    assert_eq!(update.review.old_base_lines, [0]);
+    assert_eq!(update.completion.old_base_lines, 0);
+    assert_eq!(update.changeset.seen_lines, 3);
+}
+
 #[tokio::test]
 async fn coverage_survives_git_dropping_the_old_base() {
     let base = numbered(10, &[]);

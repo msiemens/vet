@@ -119,6 +119,7 @@ impl Mock {
     fn review(coverage: &Coverage, diff: &FileDiff) -> ReviewView {
         ReviewView {
             hunks: coverage.hunk_states(diff),
+            old_base_lines: coverage.old_base_lines(diff),
             acknowledged: vec![],
         }
     }
@@ -251,6 +252,7 @@ impl Handler for Mock {
                 Ok(self.review_update(i, &all))
             }
             Request::ToggleItem { .. } | Request::ItemBlob { .. } => Err("the corpus has no non-text items".into()),
+            Request::ReconfirmFile { .. } | Request::BaseDiff { .. } => Err("the corpus has one base".into()),
             Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),
             Request::Fetch { .. } => Ok(Response::Done),
             Request::SetProjectFilter { .. } | Request::ExcludePath { .. } => Err("the corpus has no filter".into()),

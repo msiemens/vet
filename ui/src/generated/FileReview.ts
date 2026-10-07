@@ -9,4 +9,8 @@ export type FileReview = {
 /**
  * One per hunk of the file.
  */
-hunks: Array<HunkState>, acknowledged: Array<NonTextKind>, };
+hunks: Array<HunkState>, 
+/**
+ * One per hunk: its changed lines covered only by spans seen against an old base.
+ */
+oldBaseLines: Array<number>, acknowledged: Array<NonTextKind>, };

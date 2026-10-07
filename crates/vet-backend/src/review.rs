@@ -124,6 +124,37 @@ impl Orchestrator {
         Ok(Response::Review(review_changed(&open, from, view, &update).await))
     }
 
+    pub(crate) async fn reconfirm_file(
+        &self,
+        project: ProjectId,
+        from: &Connection,
+        revision: u32,
+        path: &str,
+    ) -> Result<Response, String> {
+        let open = self.ready(project).await?;
+        let update = open.session.reconfirm_file(revision, path).await.map_err(message)?;
+        Ok(Response::Review(
+            review_changed(&open, from, vet_app::session::View::Changeset, &update).await,
+        ))
+    }
+
+    pub(crate) async fn base_diff(
+        &self,
+        project: ProjectId,
+        revision: u32,
+        path: &str,
+        hunk: u32,
+    ) -> Result<Response, String> {
+        let diff = self
+            .ready(project)
+            .await?
+            .session
+            .base_diff(revision, path, hunk)
+            .await
+            .map_err(message)?;
+        Ok(mapping::base_diff(&diff))
+    }
+
     pub(crate) async fn item_blob(
         &self,
         project: ProjectId,

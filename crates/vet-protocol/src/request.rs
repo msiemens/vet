@@ -154,6 +154,24 @@ pub enum Request {
         revision: u32,
         path: String,
     },
+    /// Marks the hunks of a file that are seen against an old base seen again, against the
+    /// base now; its other hunks stay as they are. Fails if `revision` is no longer current
+    /// or the file has no such hunk. Answers with `Response::Review`.
+    ReconfirmFile {
+        project: ProjectId,
+        revision: u32,
+        path: String,
+    },
+    /// The base-side lines of a hunk seen against an old base (an index into the manifest of
+    /// `revision`) as they were when it was marked, as a diff to what the base has there now.
+    /// Fails if `revision` is no longer current or the hunk is in another state. Only the
+    /// changeset has such hunks to show. Answers with `Response::BaseDiff`.
+    BaseDiff {
+        project: ProjectId,
+        revision: u32,
+        path: String,
+        hunk: u32,
+    },
     /// Hover at a position of one side of the changeset at `revision`. Positions
     /// are 0-based lines and UTF-16 columns, in the text of that side. Fails if
     /// `revision` is no longer current; a language without a usable server

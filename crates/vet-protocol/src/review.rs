@@ -136,6 +136,39 @@ pub struct CommitInfo {
     pub time: u32,
 }
 
+/// A hunk seen against an old base: the base-side lines as they were when it was marked, as a diff
+/// to the lines the base has now.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BaseDiff {
+    /// The base the hunk was marked against; absent once git has dropped the commit.
+    pub from: Option<CommitInfo>,
+    /// The base now.
+    pub to: CommitInfo,
+    pub rows: Vec<BaseDiffRow>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BaseDiffRow {
+    pub kind: BaseDiffKind,
+    /// 1-based, in the old base for a removed line and in the current base for the others.
+    pub line: u32,
+    /// The line without its terminator.
+    pub text: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum BaseDiffKind {
+    Context,
+    Removed,
+    Added,
+}
+
 /// A file's new review state with the completion it implies, so a shell never
 /// derives progress itself.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]

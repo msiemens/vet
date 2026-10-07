@@ -9,9 +9,9 @@ use vet_app::platform::{CiState, PlatformError};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
 use vet_app::session::{
-    BaseView, ChangesetList, CommentAt, CommentSpot, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView,
-    ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView,
-    RowReview, TargetText, ThreadView, ThreadsView, VersionView, View,
+    BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, DirEntryKind, DirListing, EntryInfo,
+    FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView,
+    ReviewView, RowReview, TargetText, ThreadView, ThreadsView, VersionView, View,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
@@ -167,6 +167,7 @@ fn item(i: &ItemView) -> p::NonTextItem {
 fn review(r: &ReviewView) -> p::FileReview {
     p::FileReview {
         hunks: r.hunks.iter().copied().map(hunk_state).collect(),
+        old_base_lines: r.old_base_lines.clone(),
         acknowledged: r.acknowledged.iter().copied().map(non_text_kind).collect(),
     }
 }
@@ -219,6 +220,24 @@ fn commit_info(c: &CommitInfo) -> p::CommitInfo {
         author: c.author.clone(),
         time: unix_secs(c.time),
     }
+}
+
+pub fn base_diff(d: &BaseDiffView) -> p::Response {
+    p::Response::BaseDiff(p::BaseDiff {
+        from: d.from.as_ref().map(commit_info),
+        to: commit_info(&d.to),
+        rows: (d.rows.iter())
+            .map(|r| p::BaseDiffRow {
+                kind: match r.kind {
+                    BaseDiffKind::Context => p::BaseDiffKind::Context,
+                    BaseDiffKind::Removed => p::BaseDiffKind::Removed,
+                    BaseDiffKind::Added => p::BaseDiffKind::Added,
+                },
+                line: r.line,
+                text: r.text.clone(),
+            })
+            .collect(),
+    })
 }
 
 /// `n`, or the largest `u32` if it does not fit.
