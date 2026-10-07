@@ -34,16 +34,23 @@ import { Windowing } from "./windowing";
 import { WrapRows, rowColumns } from "./wrapRows";
 
 /** The editor hooks as the owner provides them: the semantic requests still name the view's revision. */
-export type ViewHooks = Omit<Hooks, keyof BarActions | keyof SemanticHooks> & SemanticSource;
+export type ViewHooks = Omit<Hooks, keyof BarActions | keyof SemanticHooks | "openLine"> & SemanticSource;
 
 export interface Listeners extends ReviewRequests {
   /** Context menu on a file header. */
   fileMenu(path: string, x: number, y: number): void;
   /** Jump to Source: the file's text at a 0-based target line. */
   openSource(path: string, line: number): void;
-  /** The file's own diff tab; absent in a view of a single file, which already is that tab. */
-  openDiff?(path: string, line: number): void;
+  /** The file whose header is pinned at the top of the view changed; none above the first file. */
+  pinned?(path: string | undefined): void;
   threads: ThreadListeners;
+}
+
+/** Where a view is scrolled to: below the top of a file's section. */
+export interface ScrollPosition {
+  path: string;
+  /** In px from the section's top; negative above the first section. */
+  offset: number;
 }
 
 /** A view's current stop, as a position that survives a new revision. */
@@ -127,7 +134,6 @@ export class ChangesetView {
       const index = this.sections.length;
       const header = fileHeader(file, {
         openSource: (line) => listeners.openSource(file.path, line),
-        openDiff: listeners.openDiff && ((line) => listeners.openDiff?.(file.path, line)),
         comment: () => this.threads.commentOnFile(this.sections[index]),
         toggleSeen: () => void this.actions.file(this.sections[index]),
         menu: (x, y) => listeners.fileMenu(file.path, x, y),
@@ -165,7 +171,12 @@ export class ChangesetView {
         cardsHeight: 0,
         hunkTops: [],
         ...threadState(blockEl),
-        hooks: { ...hooks, ...bindRevision(hooks, revision), ...actions },
+        hooks: {
+          ...hooks,
+          ...bindRevision(hooks, revision),
+          ...actions,
+          openLine: (line) => listeners.openSource(file.path, line),
+        },
         wrap: wrapsByDefault(file.path),
         wrapped: {},
       });
@@ -176,6 +187,7 @@ export class ChangesetView {
       mode: () => this.heights.mode,
       current: (fi, hi) => this.current === this.stopOf(fi, hi),
       press: (fi, hi) => this.select(this.stopOf(fi, hi)),
+      pinned: (fi) => listeners.pinned?.(fi === undefined ? undefined : this.sections[fi].file.path),
     });
     this.root.replaceChildren(...(this.threads.lead ? [this.threads.lead] : []), ...this.sections.map((s) => s.el));
     for (const s of this.sections) renderCount(s, s.completion);
@@ -490,6 +502,23 @@ export class ChangesetView {
     this.pin.refresh();
   }
 
+  /** Where the view is scrolled to, as a file and the distance below its section's top; none for an empty view. */
+  position(): ScrollPosition | undefined {
+    if (!this.sections.length) return undefined;
+    const s = this.sections[this.heights.indexAt(this.root.scrollTop)];
+    return { path: s.file.path, offset: this.root.scrollTop - s.top };
+  }
+
+  /** Scrolls to `at` if its file is in the view, and starts loading what comes into view; answers whether it is. */
+  restore(at: ScrollPosition): boolean {
+    const fi = this.indexOf(at.path);
+    if (fi < 0) return false;
+    this.root.scrollTop = Math.max(0, this.sections[fi].top + at.offset);
+    void this.load(fi).catch(() => undefined);
+    this.sync();
+    return true;
+  }
+
   /** Scrolls to a 0-based target line of file `fi` and puts the caret there. */
   async goToLine(fi: number, line: number): Promise<void> {
     await this.load(fi);
@@ -534,6 +563,12 @@ export class ChangesetView {
         };
     }
     return undefined;
+  }
+
+  /** The target line of the first file's caret, focused or not; none while its editor is not mounted. */
+  caretLine(): number | undefined {
+    const view = this.sections[0]?.handle?.view;
+    return view && lineOf(view.state.doc, view.state.selection.main.head);
   }
 
   /** Where the current stop is, so a view of a newer revision can keep it. */

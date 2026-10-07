@@ -13,6 +13,7 @@ import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
 import type { Highlights } from "../../../lib/highlights";
 import type { Mode } from "../../../lib/viewMode";
+import { currentLine } from "./currentLine";
 import { deletedLines } from "./deletedLines";
 import { backendDiff } from "./backendDiff";
 import type { BarActions } from "./hunkBar";
@@ -20,6 +21,7 @@ import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } f
 import { deletedHighlights } from "./deletedHighlights";
 import { highlightExtension } from "./highlightExtension";
 import { longLines } from "./longLines";
+import { openOnDoubleClick } from "./openAtLine";
 import { deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
 import { reportHeight, softWrap } from "./softWrap";
 
@@ -39,6 +41,8 @@ export interface Hooks extends BarActions, SemanticHooks {
   hoverShown?(ms: number): void;
   /** A key went down in the target editor. */
   keydown?(event: KeyboardEvent): void;
+  /** A line was double-clicked: the file's text at this 0-based target line. */
+  openLine(line: number): void;
 }
 
 export interface Handle {
@@ -89,7 +93,7 @@ function use(view: EditorView): false {
  * selection and cursor, and the caret keys. No undo history, no editing keys and no fallback
  * highlight style (highlights come from the backend).
  */
-const readOnlySetup: Extension = [highlightSpecialChars(), drawSelectionOnUse, keymap.of(standardKeymap)];
+const readOnlySetup: Extension = [highlightSpecialChars(), drawSelectionOnUse, keymap.of(standardKeymap), currentLine];
 
 /** The editors wrap long lines; the owner lays them out by an estimate and hears of the height they measure. */
 export interface Wrapping {
@@ -131,6 +135,7 @@ export function mountFile(
     EditorState.readOnly.of(true),
     ...extra,
     EditorView.domEventHandlers({ keydown: (event) => (hooks.keydown?.(event), false) }),
+    openOnDoubleClick("target", loaded.hunks, (line) => hooks.openLine(line)),
     ...semanticExtensions(path, "target", hooks, shown),
   ];
   if (mode === "unified") {
@@ -157,6 +162,7 @@ export function mountFile(
   }
   const baseField = reviewField(sideConfig(loaded.hunks, "base", null, barHeight), states);
   const base: Extension[] = [
+    currentLine,
     wrap,
     baseField,
     longLines(baseField, columns),
@@ -164,6 +170,7 @@ export function mountFile(
     highlightExtension(loaded.baseHighlights),
     barText,
     EditorState.readOnly.of(true),
+    openOnDoubleClick("base", loaded.hunks, (line) => hooks.openLine(line)),
     ...semanticExtensions(path, "base", hooks, shown),
   ];
   const merge = new MergeView({

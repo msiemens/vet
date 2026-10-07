@@ -23,6 +23,8 @@ export const pathOf = (id: TabId): string | undefined => (id === CHANGES ? undef
 export class Tabs {
   open = $state<TabId[]>([CHANGES]);
   active = $state<TabId>(CHANGES);
+  /** The file the Changes tab is at: the one whose header is pinned at its top. */
+  changesFile = $state<string>();
 
   /** Opens the file's diff tab if needed and focuses it. */
   show(path: string) {

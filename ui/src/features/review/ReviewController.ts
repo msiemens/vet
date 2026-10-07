@@ -14,7 +14,7 @@ import { session } from "../../state/session.svelte";
 import { threads } from "../../state/threads.svelte";
 import { rangeKey } from "../../state/timelineRange";
 import type { Thread } from "../../generated/Thread";
-import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
+import { ChangesetView, type Listeners, type ScrollPosition, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
 import type { ViewProbe } from "./editor/viewProbe";
 import { bindRevision, focusedEditor } from "./editor/semantic";
@@ -24,6 +24,7 @@ import { TextView } from "./editor/TextView";
 import { type SavedView, restoredTabs } from "./changesetViews";
 import { keyId } from "../../state/changesetKey";
 import { type ViewActions, viewCommands } from "./reviewCommands";
+import { readPosition, writePosition } from "./savedPosition";
 import { CHANGES, type TabId, Tabs, fileTab, kindOf, pathOf, textTab } from "./Tabs.svelte";
 
 /** How the dev tools measure and test the controller's editors; the controller itself records nothing. */
@@ -50,6 +51,9 @@ export type ChangesetSource = Pick<
 
 const NO_HOVER = { text: "", code: [] };
 
+/** The Changes tab's position is saved this long after it stopped scrolling. */
+const SAVE_AFTER_MS = 400;
+
 /** Said when a mark or a comment is asked for in a range that does not end at the latest version. */
 export const READ_ONLY_NOTE = "This range does not end at the latest version: marks and comments are off";
 
@@ -70,6 +74,7 @@ export class ReviewController {
   private parked = new Map<string, SavedView>();
   /** Scroll positions and the current hunk the next builds restore, instead of carrying the old views' over. */
   private restore?: { scroll: Map<TabId, number>; anchor?: SavedView["anchor"] };
+  private saving?: ReturnType<typeof setTimeout>;
 
   constructor(
     readonly backend: Backend,
@@ -116,6 +121,8 @@ export class ReviewController {
 
   /** Detaches the controller from the window and the store, and tears down the views. */
   destroy() {
+    clearTimeout(this.saving);
+    this.savePosition();
     this.unsubscribe();
     this.unsubscribeEvents();
     for (const view of this.views.values()) view.destroy();
@@ -255,6 +262,7 @@ export class ReviewController {
 
   private listenersFor(id: TabId): Listeners {
     const listeners: Listeners = {
+      pinned: id === CHANGES ? (path) => (this.tabs.changesFile = path) : undefined,
       toggleHunk: (revision, path, hunk) =>
         this.editing(
           () => this.changeset.toggleHunk(revision, path, hunk),
@@ -272,8 +280,6 @@ export class ReviewController {
         ),
       fileMenu: this.fileMenu,
       openSource: (path, line) => void this.openSource(path, line),
-      // A diff tab shows its file's hunks; only the Changes tab offers to open one.
-      openDiff: id === CHANGES ? (path, line) => void this.openFile(path, line) : undefined,
       threads: {
         create: (revision, target, body) =>
           this.editing(
@@ -365,19 +371,53 @@ export class ReviewController {
     if (path !== undefined) view.load(0).catch(() => undefined);
   }
 
+  /** Where the Changes tab was left when the changeset was last open. */
+  private savedPosition(): ScrollPosition | undefined {
+    const repo = session.repo;
+    return repo === undefined || this.key === undefined ? undefined : readPosition(repo, this.key);
+  }
+
+  /** Remembers where the Changes tab is scrolled to; a range is not the changeset's own view and is not kept. */
+  private savePosition() {
+    const repo = session.repo;
+    const at = this.changeset.currentManifest()?.interdiff ? undefined : this.views.get(CHANGES)?.position();
+    if (repo !== undefined && this.key !== undefined && at) writePosition(repo, this.key, at);
+  }
+
+  /** The Changes tab scrolled: the position is saved once the scrolling pauses. */
+  private onChangesScroll = () => {
+    clearTimeout(this.saving);
+    this.saving = setTimeout(() => this.savePosition(), SAVE_AFTER_MS);
+  };
+
   /** A tab's pane has its scroll root; returns the function that detaches the tab. */
   attach(id: TabId, root: HTMLElement): () => void {
     this.roots.set(id, root);
     // The Changes tab is built by `open`, which fetches the manifest first.
     const manifest = this.changeset.currentManifest();
     if (id !== CHANGES && manifest) this.build(id, manifest);
+    // Registered before the view is, so it hears the scroll that the view's own listener stops.
+    if (id === CHANGES) root.addEventListener("scroll", this.onChangesScroll, { passive: true });
     return () => {
+      if (id === CHANGES) root.removeEventListener("scroll", this.onChangesScroll);
       this.views.get(id)?.destroy();
       this.views.delete(id);
       this.texts.get(id)?.destroy();
       this.texts.delete(id);
       this.roots.delete(id);
     };
+  }
+
+  /**
+   * Switches the active file tab between the file's diff and its text, at the line the caret is on.
+   * Does nothing in any other tab, or for a file the changeset does not change.
+   */
+  async toggleFileView() {
+    const id = this.tabs.active;
+    const path = pathOf(id);
+    if (path === undefined || !this.files.some((f) => f.path === path)) return;
+    if (kindOf(id) === "file") await this.openSource(path, this.views.get(id)?.caretLine());
+    else await this.openFile(path, this.texts.get(id)?.caretLine());
   }
 
   /** Jump to Source: the file's text tab, at a 0-based target `line` if given. */
@@ -443,6 +483,8 @@ export class ReviewController {
   /** Parks the changeset on view and sets the tabs of `next` and what the builds restore. */
   private switchTo(next: string, paths: ReadonlySet<string>) {
     if (this.key !== undefined) {
+      clearTimeout(this.saving);
+      this.savePosition();
       const scroll = new Map<TabId, number>();
       for (const [id, root] of this.roots) scroll.set(id, root.scrollTop);
       this.parked.set(this.key, {
@@ -473,7 +515,8 @@ export class ReviewController {
     this.rangeChanged(manifest);
     this.show(manifest);
     const view = this.changes;
-    await view.goToHunk(0);
+    const saved = manifest.interdiff ? undefined : this.savedPosition();
+    if (!(saved && view.restore(saved))) await view.goToHunk(0);
     await nextPaint();
     const elapsed = performance.now() - t0;
     if (prefetch) await view.loadAll();

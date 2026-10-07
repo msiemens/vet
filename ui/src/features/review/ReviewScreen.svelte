@@ -81,11 +81,28 @@
   controller.mode = mode;
   const tabs = controller.tabs;
   let selected = $state<string>();
+  /** The file picked in the tree, until the Changes tab moves on. */
+  let picked = $state<string>();
 
   const revision = $derived(changeset.manifest?.revision);
   /** The chosen target when it already contains the changeset, so there is nothing to show. */
   const containedIn = $derived(changeset.files.length ? undefined : changeset.manifest?.base.containedIn);
   const highlighted = $derived(pathOf(tabs.active) ?? selected);
+  // The tree marks the file the viewer is in: a file tab's, else the one picked in the tree, else
+  // the file at the top of the Changes tab, which follows its scrolling.
+  const marked = $derived(pathOf(tabs.active) ?? picked ?? tabs.changesFile);
+  // A pick in the tree gives way once the Changes tab moves on.
+  $effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the file a dependency
+    tabs.changesFile;
+    untrack(() => (picked = undefined));
+  });
+  // What the active tab of a changed file shows, which the control above the editors switches.
+  const shown = $derived.by(() => {
+    const path = pathOf(tabs.active);
+    if (path === undefined || !changeset.file(path)) return undefined;
+    return kindOf(tabs.active) === "file" ? "diff" : "file";
+  });
   const fileOf = (path: string) => changeset.file(path);
   // The Symbol panel lists the file the review shows (the active file tab, else the one selected in the tree) first.
   $effect(() => {
@@ -142,7 +159,7 @@
 
   /** Shows the file in the Changes tab; an unchanged file is only selected. */
   function select(path: string) {
-    selected = path;
+    selected = picked = path;
     void controller.revealInChanges(path);
   }
 
@@ -166,7 +183,7 @@
         {fileOf}
         {revision}
         list={(path) => changeset.listDirectory(path)}
-        selected={highlighted}
+        selected={marked}
         excluded={{ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 }}
         onselect={select}
         onopen={(path) => void controller.openSource(path)}
@@ -189,6 +206,8 @@
       {onmode}
       onstep={(delta) => controller.stepHunk(delta)}
       diff={kindOf(tabs.active) !== "text"}
+      {shown}
+      onshow={(view) => view !== shown && void controller.toggleFileView()}
     />
   </div>
   {#if range && readOnly}

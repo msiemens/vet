@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type LineDoc, lineEnd, lineOf, lineStart, offsetAt, selectedLines } from "./positions.ts";
+import { type LineDoc, lineEnd, lineOf, lineStart, offsetAt, selectedLines, targetLineOfBase } from "./positions.ts";
 
 /** "ab\n\ncde": lines at 0..2, 3..3, 4..7. */
 const spans = [
@@ -33,6 +33,20 @@ void test("a selection ending at the start of a line does not include it", () =>
 void test("a position maps to its offset", () => {
   assert.equal(offsetAt(doc, { line: 0, col: 1 }), 1);
   assert.equal(offsetAt(doc, { line: 2, col: 2 }), 6);
+});
+
+void test("a base line stands for the target line the hunks above it move it to, a deleted one for its hunk", () => {
+  // Base lines 2..3 became target line 2 (one line fewer); one line was added before base line 5.
+  const hunks = [
+    { baseStart: 2, baseLen: 2, targetStart: 2, targetLen: 1 },
+    { baseStart: 5, baseLen: 0, targetStart: 4, targetLen: 1 },
+  ];
+  assert.equal(targetLineOfBase(hunks, 1), 1);
+  assert.equal(targetLineOfBase(hunks, 2), 2);
+  assert.equal(targetLineOfBase(hunks, 3), 2);
+  assert.equal(targetLineOfBase(hunks, 4), 3);
+  assert.equal(targetLineOfBase(hunks, 5), 5);
+  assert.equal(targetLineOfBase([], 7), 7);
 });
 
 void test("a position outside the document is clamped", () => {

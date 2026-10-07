@@ -1,6 +1,7 @@
 // Pure position logic of the editors: protocol positions (0-based line, UTF-16 column) to editor
 // offsets.
 
+import type { Hunk } from "../../../generated/Hunk";
 import type { Position } from "../../../generated/Position";
 
 /** What of CodeMirror's `Text` is needed: 1-based lines. */
@@ -23,6 +24,20 @@ export const lineOf = (doc: LineDoc, pos: number): number => doc.lineAt(pos).num
 export function offsetAt(doc: LineDoc, at: Position): number {
   if (at.line >= doc.lines) return lineEnd(doc, at.line);
   return Math.min(lineStart(doc, at.line) + at.col, lineEnd(doc, at.line));
+}
+
+/**
+ * The 0-based target line that stands for a 0-based base line: the same text moved by the hunks
+ * above it, or, for a deleted line, where its hunk sits in the target (the line after it).
+ */
+export function targetLineOfBase(hunks: readonly Hunk[], baseLine: number): number {
+  let shift = 0;
+  for (const h of hunks) {
+    if (baseLine < h.baseStart) break;
+    if (baseLine < h.baseStart + h.baseLen) return h.targetStart;
+    shift += h.targetLen - h.baseLen;
+  }
+  return baseLine + shift;
 }
 
 /** The text range a selection covers, as whole lines: a selection ending at a line start does not include that line. */

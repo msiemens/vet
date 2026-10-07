@@ -117,9 +117,9 @@
 .file .cm-editor .cm-line {
   padding-right: 4px;
 }
-.file .cm-editor .cm-activeLine,
-.file .cm-editor .cm-activeLineGutter {
-  background: transparent;
+/* Over the line's own background (a changed line's), not instead of it. */
+:is(.file, .vet-text) .cm-editor .vet-current-line {
+  background-image: linear-gradient(var(--current-line), var(--current-line));
 }
 .file .cm-editor .cm-cursor {
   border-left-color: var(--text);

@@ -9,9 +9,10 @@ import type { TextSpan } from "../../../generated/TextSpan";
 import { errorText } from "../../../lib/errorText";
 import { decodeHighlights } from "../../../lib/highlights";
 import { iconSvg } from "../../../lib/ui/icons";
+import { currentLine } from "./currentLine";
 import { type FileSource, StaleRevision } from "./fileSource";
 import { highlightExtension } from "./highlightExtension";
-import { lineStart } from "./positions";
+import { lineOf, lineStart } from "./positions";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { softWrap, wrapsByDefault } from "./softWrap";
 
@@ -60,6 +61,7 @@ export class TextView {
       extensions: [
         softWrap(wrapsByDefault(this.path)),
         lineNumbers(),
+        currentLine,
         highlightExtension(decodeHighlights(highlights)),
         // Read-only but focusable, so the caret and Mod+B work.
         EditorState.readOnly.of(true),
@@ -87,6 +89,12 @@ export class TextView {
     if (!view) return;
     const from = lineStart(view.state.doc, line);
     view.dispatch({ selection: { anchor: from }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
+  }
+
+  /** The 0-based line the caret is on; none until the text has arrived. */
+  caretLine(): number | undefined {
+    const view = this.view;
+    return view && lineOf(view.state.doc, view.state.selection.main.head);
   }
 
   /** Selects and marks a span, and centres it. */

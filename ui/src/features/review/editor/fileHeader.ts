@@ -9,8 +9,6 @@ import { el, iconButton } from "./dom.ts";
 export interface HeaderActions {
   /** Jump to Source at a 0-based target line. */
   openSource(line: number): void;
-  /** The file's own diff tab; absent in a view of a single file, which already is that tab. */
-  openDiff?(line: number): void;
   comment(): void;
   /** Flips everything in the file. */
   toggleSeen(): void;
@@ -47,7 +45,7 @@ export function fileHeader(file: FileChange, actions: HeaderActions): FileHeader
   header.addEventListener("dblclick", (e) => {
     if (!(e.target instanceof Element && e.target.closest("button"))) actions.openSource(firstLine);
   });
-  const open = actions.openDiff && iconButton("Open diff in tab", "file", () => actions.openDiff?.(firstLine));
+  const open = iconButton("Open file in tab", "file", () => actions.openSource(firstLine));
   const comment = iconButton(
     "Comment on this file",
     "comments",
@@ -66,7 +64,7 @@ export function fileHeader(file: FileChange, actions: HeaderActions): FileHeader
     2,
   );
   const tools = el("span", "tools");
-  tools.append(...(open ? [open] : []), comment, seen);
+  tools.append(open, comment, seen);
   header.append(title, delta, count, tools);
   header.addEventListener("contextmenu", (e) => {
     e.preventDefault();

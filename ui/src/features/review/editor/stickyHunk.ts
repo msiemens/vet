@@ -21,6 +21,8 @@ export interface PinHost {
   current(file: number, hunk: number): boolean;
   /** A press on the bar. */
   press(file: number, hunk: number): void;
+  /** Another file's header is pinned, or none. */
+  pinned(file: number | undefined): void;
 }
 
 export class StickyHunk {
@@ -49,6 +51,7 @@ export class StickyHunk {
   /** Pins what belongs to the viewport at `y`. */
   update(y: number) {
     const pinned = pinnedAt(this.sections, y, this.m.header, this.m.hunk);
+    if (pinned?.file !== this.file) this.host.pinned(pinned?.file);
     this.pinHeader(pinned?.file);
     if (pinned?.hunk === undefined) {
       this.hide();
