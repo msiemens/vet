@@ -12,7 +12,7 @@
   .meter {
     height: 4px;
     border-radius: 2px;
-    background: var(--line-soft);
+    background: var(--track);
     display: flex;
     overflow: hidden;
     flex: none;
