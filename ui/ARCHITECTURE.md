@@ -53,6 +53,7 @@ Each tab's pane hands its scroll root to `ReviewController.attach`, which builds
 
 - Heights come from the manifest, not from CodeMirror, which estimates what is off screen. `editor/sectionLayout.ts` mirrors `collapseUnchanged` to compute a section's height, including change cards (fixed heights, nothing measured) and thread cards (measured by one `ResizeObserver` per view, estimated until then). Expanding a region grows its section by exactly the lines it hid; unmounting a section resets it to the estimate.
 - The UI computes no diff of a changeset file: `FileContents` carries the changed ranges (`changes`, down to the words that differ), and `editor/backendDiff.ts` hands them to `@codemirror/merge` as its `diffConfig.override`. CodeMirror diffs only the slice around a local edit.
+- The UI parses no code: syntax highlights come with `FileContents`, `FileText` and hover code blocks, and `editor/highlights.ts` turns them into classes.
 - Layout reads happen in CodeMirror's measure phase (`requestMeasure`), never on the mount path. A plugin asks for a measure only on changes that can alter what it reads (document, viewport, its own effects), never on a height-only update: those come from the measure phase itself, and asking from one restarts CodeMirror's measure loop. `gutterWidth.ts` publishes the gutters' width once per editor as `--vet-gutters`.
 - Lists (the file tree's scopes) render through `lib/ui/VirtualRows`: fixed row height from `--h-row`, only the visible rows plus a margin in the DOM. Directory listings carry the revision they belong to; a reply of another revision is dropped.
 
@@ -65,7 +66,7 @@ Each tab's pane hands its scroll root to `ReviewController.attach`, which builds
 Hover, go to definition and diagnostics reach every editor through `editor/semantic.ts`, which asks its owner through `SemanticHooks`; `bindRevision` fixes the revision of a view's requests, since the backend rejects a stale one. `state/semantic.svelte.ts` drops a stale answer.
 
 - Positions are 0-based lines and UTF-16 columns of the side asked about. In a unified view the deleted lines are widgets outside the document, so `editor/deletedLines.ts` maps the pointer to a base position from the DOM.
-- Hover text comes from an external process and is untrusted: `editor/hoverMarkdown.ts` renders it with raw HTML escaped, no images and no link targets; `hoverContent.ts` highlights code with the editor's parsers and highlight style.
+- Hover text comes from an external process and is untrusted: `editor/hoverMarkdown.ts` renders it with raw HTML escaped, no images and no link targets.
 - Unavailable (SPEC I6) is never shown as nothing: `state/semanticSummary.ts` turns it into the footer's language-server text.
 
 ## Runs
