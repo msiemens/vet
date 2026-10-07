@@ -102,6 +102,20 @@ impl Mock {
         coverage.completion(&ReviewFilter::default(), diffs, &[], &[])
     }
 
+    /// The answer to a change of the review state of file `i`.
+    fn review_update(&self, i: usize, seen: &[Vec<bool>]) -> Response {
+        let spans = self.seen_spans(seen);
+        let coverage = Coverage::new(&spans);
+        let diff = &self.diffs[i];
+        Response::Review(vet_mapping::review_update(&ReviewUpdateView {
+            revision: REVISION,
+            path: diff.path().clone(),
+            review: Mock::review(&coverage, diff),
+            completion: Mock::completion(&coverage, std::slice::from_ref(diff)),
+            changeset: Mock::completion(&coverage, &self.diffs),
+        }))
+    }
+
     fn review(coverage: &Coverage, diff: &FileDiff) -> ReviewView {
         ReviewView {
             hunks: coverage.hunk_states(diff),
@@ -210,16 +224,19 @@ impl Handler for Mock {
                 for hunk in hunks {
                     *all[i].get_mut(hunk as usize).ok_or("no such hunk")? = value;
                 }
-                let spans = self.seen_spans(&all);
-                let coverage = Coverage::new(&spans);
-                let diff = &self.diffs[i];
-                Ok(Response::Review(vet_mapping::review_update(&ReviewUpdateView {
-                    revision: REVISION,
-                    path: diff.path().clone(),
-                    review: Mock::review(&coverage, diff),
-                    completion: Mock::completion(&coverage, std::slice::from_ref(diff)),
-                    changeset: Mock::completion(&coverage, &self.diffs),
-                })))
+                Ok(self.review_update(i, &all))
+            }
+            Request::ToggleFileSeen {
+                session,
+                revision,
+                path,
+            } => {
+                current(session, revision)?;
+                let i = position(&path)?;
+                let mut all = seen();
+                let value = !all[i].iter().all(|&seen| seen);
+                all[i].fill(value);
+                Ok(self.review_update(i, &all))
             }
             Request::Acknowledge { .. } | Request::ItemBlob { .. } => Err("the corpus has no non-text items".into()),
             Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),

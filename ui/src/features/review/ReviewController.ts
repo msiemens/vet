@@ -182,6 +182,7 @@ export class ReviewController {
     return {
       setSeen: (revision, path, hunks, seen) => changeset.setSeen(revision, path, hunks, seen),
       acknowledge: (path, kind, acknowledged) => changeset.acknowledge(path, kind, acknowledged),
+      toggleFileSeen: (revision, path) => changeset.toggleFileSeen(revision, path),
       fileMenu: this.fileMenu,
       openSource: (path, line) => void this.openSource(path, line),
       // A diff tab shows its file's hunks; only the Changes tab offers to open one.

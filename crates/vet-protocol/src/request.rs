@@ -72,6 +72,14 @@ pub enum Request {
         kind: NonTextKind,
         acknowledged: bool,
     },
+    /// Marks everything of a file seen: all its hunks and non-text items. If it all
+    /// is seen already, takes every mark back instead. Fails if `revision` is no
+    /// longer current. Answers with `Response::Review`.
+    ToggleFileSeen {
+        session: SessionId,
+        revision: u32,
+        path: String,
+    },
     /// Hover at a position of one side of the changeset at `revision`. Positions
     /// are 0-based lines and UTF-16 columns, in the text of that side. Fails if
     /// `revision` is no longer current; a language without a usable server

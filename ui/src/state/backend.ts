@@ -152,6 +152,11 @@ export class Backend {
     );
   }
 
+  /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
+  async toggleFileSeen(revision: number, path: string): Promise<ReviewUpdate> {
+    return expect(await this.conn.request({ type: "toggleFileSeen", session: this.sid, revision, path }), "review");
+  }
+
   /** Compares against another base; every subscriber, this one included, then gets `snapshotSettled`. */
   async setBase(base: BaseChoice): Promise<Base> {
     return expect(await this.conn.request({ type: "setBase", session: this.sid, base }), "base");

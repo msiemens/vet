@@ -44,7 +44,7 @@ pub enum Response {
         /// The same for `target`.
         target_highlights: Highlights,
     },
-    /// The file's review state after `SetSeen` or `Acknowledge`.
+    /// The file's review state after `SetSeen`, `Acknowledge` or `ToggleFileSeen`.
     Review(ReviewUpdate),
     /// `text` is Markdown; `None` with `unavailable` unset means the server has
     /// nothing to say there. `code_highlights` has one entry for each fenced code block of

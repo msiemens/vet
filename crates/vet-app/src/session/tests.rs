@@ -947,6 +947,59 @@ async fn items_of_one_file_are_acknowledged_separately() {
     assert_eq!((update.changeset.items, update.changeset.acknowledged_items), (2, 1));
 }
 
+/// `run.sh` is edited and made executable: a hunk and a mode change.
+async fn edited_script() -> (LiveSession<FakeGit, MemStore>, MemStore) {
+    let git = FakeGit::default();
+    let base = git.snapshot(&[("run.sh", &numbered(10, &[]))]);
+    let mut dirty = git.snapshot(&[("run.sh", &numbered(10, &[2, 7]))]);
+    dirty.entries.get_mut(&path("run.sh")).unwrap().mode = 0o100755;
+    dirty.id = merkle::snapshot_id(&dirty.entries);
+    *git.base.lock().unwrap() = Some(base);
+    git.scans.lock().unwrap().push(dirty);
+    let store = MemStore::default();
+    let session = LiveSession::open(git, store.clone(), REPO.into(), clock).await.unwrap();
+    (session, store)
+}
+
+#[tokio::test]
+async fn toggling_a_file_marks_all_of_it_and_toggling_again_takes_it_back() {
+    let (session, store) = edited_script().await;
+
+    // Partly seen is not seen: everything gets marked.
+    session.set_seen(0, "run.sh", &[0], true).await.unwrap();
+    let update = session.toggle_file_seen(0, "run.sh").await.unwrap();
+    assert_eq!(update.review.hunks, [HunkState::Seen, HunkState::Seen]);
+    assert_eq!(update.review.acknowledged, [NonTextKind::Mode]);
+    assert!(update.completion.is_complete() && update.changeset.is_complete());
+    assert_eq!(store.0.lock().unwrap().acks.len(), 1);
+
+    let update = session.toggle_file_seen(0, "run.sh").await.unwrap();
+    assert_eq!(update.review.hunks, [HunkState::Unseen, HunkState::Unseen]);
+    assert!(update.review.acknowledged.is_empty());
+    assert!(!update.completion.is_complete());
+    let mem = store.0.lock().unwrap();
+    assert!(mem.spans.is_empty() && mem.acks.is_empty());
+}
+
+#[tokio::test]
+async fn toggling_a_file_with_only_a_mode_change_acknowledges_it_and_starts_the_review() {
+    let git = FakeGit::default();
+    let base = git.snapshot(&[("run.sh", "echo\n")]);
+    let mut dirty = base.clone();
+    dirty.entries.get_mut(&path("run.sh")).unwrap().mode = 0o100755;
+    dirty.id = merkle::snapshot_id(&dirty.entries);
+    *git.base.lock().unwrap() = Some(base);
+    git.scans.lock().unwrap().push(dirty);
+    let session = LiveSession::open(git, MemStore::default(), REPO.into(), clock)
+        .await
+        .unwrap();
+
+    let update = session.toggle_file_seen(0, "run.sh").await.unwrap();
+
+    assert!(matches!(update.started, Some(Lifecycle::Open { version: 1, .. })));
+    assert_eq!(update.review.acknowledged, [NonTextKind::Mode]);
+}
+
 #[tokio::test]
 async fn submodule_changes_carry_both_commits() {
     let git = FakeGit::default();

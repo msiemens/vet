@@ -385,6 +385,16 @@ impl Orchestrator {
                 announce_start(&open, update.started);
                 Ok(Response::Review(review_changed(&open, &events, &update)))
             }
+            Request::ToggleFileSeen {
+                session,
+                revision,
+                path,
+            } => {
+                let open = self.find(session).await?;
+                let update = open.session.toggle_file_seen(revision, &path).await.map_err(message)?;
+                announce_start(&open, update.started);
+                Ok(Response::Review(review_changed(&open, &events, &update)))
+            }
             Request::ItemBlob {
                 session,
                 revision,

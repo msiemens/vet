@@ -82,6 +82,11 @@ class ChangesetStore {
     await this.review(revision, session.connected().setSeen(revision, path, hunks, seen));
   }
 
+  /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
+  async toggleFileSeen(revision: number, path: string) {
+    await this.review(revision, this.connected().toggleFileSeen(revision, path));
+  }
+
   async acknowledge(path: string, kind: NonTextKind, acknowledged: boolean) {
     const backend = session.connected();
     if (!this.manifest) throw new Error("no manifest loaded");

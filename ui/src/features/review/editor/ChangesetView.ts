@@ -45,6 +45,8 @@ export interface Listeners {
   setSeen(revision: number, path: string, hunks: number[], seen: boolean): Promise<void>;
   /** The same for a non-text item. */
   acknowledge(path: string, kind: NonTextKind, acknowledged: boolean): Promise<void>;
+  /** The same for everything in a file: the owner's backend decides whether that marks or unmarks it. */
+  toggleFileSeen(revision: number, path: string): Promise<void>;
   /** Context menu on a file header. */
   fileMenu(path: string, x: number, y: number): void;
   /** Jump to Source: the file's text at a 0-based target line. */
@@ -726,25 +728,10 @@ export class ChangesetView {
     this.updateCount(s);
   }
 
-  /** Marks everything in file `fi` (hunks and change cards) seen, or unseen if it all already is. */
+  /** Asks the backend to mark everything in file `fi` (hunks and change cards) seen, or unseen if it all already is. */
   toggleSeen(fi: number): Promise<void> {
-    const { review, file } = this.sections[fi];
-    const value = !(
-      review.hunks.every((h) => h === "seen") && file.nonText.every((i) => review.acknowledged.includes(i.kind))
-    );
-    const jobs: Promise<void>[] = [];
-    if (review.hunks.length)
-      jobs.push(
-        this.setSeen(
-          fi,
-          review.hunks.map((_, i) => i),
-          value,
-        ),
-      );
-    for (const item of file.nonText)
-      if (review.acknowledged.includes(item.kind) !== value)
-        jobs.push(this.listeners.acknowledge(file.path, item.kind, value));
-    return (this.pendingToggle = Promise.all(jobs).then(() => undefined));
+    const { file } = this.sections[fi];
+    return (this.pendingToggle = this.listeners.toggleFileSeen(this.revision, file.path));
   }
 
   /** Unseen → seen, seen → unseen, seen against an old base → re-confirmed. */

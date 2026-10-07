@@ -1102,9 +1102,62 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
         let started = seen && self.begin(&mut st).await?;
+        self.mark_hunks(&mut st, path, hunks, seen).await?;
+        Ok(outcome(&st, update_of(&st, path)?, started))
+    }
+
+    /// Acknowledges or un-acknowledges one non-text item. Acknowledging starts
+    /// the review if none is open.
+    pub async fn acknowledge(
+        &self,
+        revision: u32,
+        path: &str,
+        kind: NonTextKind,
+        acknowledged: bool,
+    ) -> Result<Outcome<ReviewUpdateView>> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        let started = acknowledged && self.begin(&mut st).await?;
+        self.mark_item(&mut st, path, kind, acknowledged).await?;
+        Ok(outcome(&st, update_of(&st, path)?, started))
+    }
+
+    /// Marks everything of a file seen: all its hunks and its non-text items; if it
+    /// all is seen already, takes every mark back instead. Marking starts the review
+    /// if none is open.
+    pub async fn toggle_file_seen(&self, revision: u32, path: &str) -> Result<Outcome<ReviewUpdateView>> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        let seen = !update_of(&st, path)?.completion.is_complete();
+        let started = seen && self.begin(&mut st).await?;
+        let (hunks, kinds) = {
+            let diff = &st.changes.as_ref().expect("computed").diff;
+            let hunks = find_diff(diff, path).map_or(0, |d| d.hunks.len() as u32);
+            let kinds: Vec<NonTextKind> = shown_items(diff, &st.filter, path)
+                .iter()
+                .filter(|n| st.acks.contains(&ack_of(n)) != seen)
+                .map(|n| n.kind)
+                .collect();
+            (hunks, kinds)
+        };
+        if hunks > 0 {
+            self.mark_hunks(&mut st, path, &(0..hunks).collect::<Vec<_>>(), seen)
+                .await?;
+        }
+        for kind in kinds {
+            self.mark_item(&mut st, path, kind, seen).await?;
+        }
+        Ok(outcome(&st, update_of(&st, path)?, started))
+    }
+
+    /// Records the hunks (indices into the file's hunks) as seen, or cuts them out of the
+    /// recorded spans.
+    async fn mark_hunks(&self, st: &mut State, path: &str, hunks: &[u32], seen: bool) -> Result<()> {
         let Prepared {
             inputs, spans: slots, ..
-        } = self.prepare(&mut st).await?;
+        } = self.prepare(st).await?;
         let (remove, add) = {
             let changes = st.changes.as_ref().expect("computed");
             let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &changes.blobs)).collect();
@@ -1148,23 +1201,10 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         st.recorded.retain(|r| !remove.contains(&r.id));
         st.recorded
             .extend(ids.into_iter().zip(add).map(|(id, span)| RecordedSpan { id, span }));
-        self.remap(&mut st).await?;
-        Ok(outcome(&st, update_of(&st, path)?, started))
+        self.remap(st).await
     }
 
-    /// Acknowledges or un-acknowledges one non-text item. Acknowledging starts
-    /// the review if none is open.
-    pub async fn acknowledge(
-        &self,
-        revision: u32,
-        path: &str,
-        kind: NonTextKind,
-        acknowledged: bool,
-    ) -> Result<Outcome<ReviewUpdateView>> {
-        let mut st = self.state.lock().await;
-        check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
-        let started = acknowledged && self.begin(&mut st).await?;
+    async fn mark_item(&self, st: &mut State, path: &str, kind: NonTextKind, acknowledged: bool) -> Result<()> {
         let change = {
             let diff = &st.changes.as_ref().expect("computed").diff;
             find_non_text(diff, kind, path).ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?
@@ -1183,7 +1223,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         } else if !st.acks.contains(&ack) {
             st.acks.push(ack);
         }
-        Ok(outcome(&st, update_of(&st, path)?, started))
+        Ok(())
     }
 
     /// The bytes of one side of a non-text item's file at `revision`.
@@ -1865,20 +1905,22 @@ fn review_of(cov: &Coverage, diff: Option<&FileDiff>, items: &[NonTextChange], a
     }
 }
 
+/// The non-text changes of the file at `path` that the filter shows.
+fn shown_items(diff: &SnapshotDiff, filter: &ReviewFilter, path: &str) -> Vec<NonTextChange> {
+    let compiled = filter.compile();
+    (diff.non_text.iter())
+        .filter(|n| n.path.to_string_lossy() == path && compiled.shows(n))
+        .cloned()
+        .collect()
+}
+
 /// The review state of one file and the changeset's completion.
 fn update_of(st: &State, path: &str) -> Result<ReviewUpdateView> {
     let changes = st.changes.as_ref().expect("computed");
     let cov = Coverage::new(&changes.flat);
     let acked = acknowledged(st, &changes.diff);
-    let compiled = st.filter.compile();
     let diff = find_diff(&changes.diff, path);
-    let items: Vec<NonTextChange> = changes
-        .diff
-        .non_text
-        .iter()
-        .filter(|n| n.path.to_string_lossy() == path && compiled.shows(n))
-        .cloned()
-        .collect();
+    let items = shown_items(&changes.diff, &st.filter, path);
     let file = diff
         .map(|d| d.path().clone())
         .or_else(|| items.first().map(|n| n.path.clone()))
