@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
+
+use crate::startup;
 
 /// How long one activation of the app-drawn title bar may take before the plugin restores the
 /// native frame. Now and then its page handshake gets lost and an attempt only ends here; a new
@@ -22,9 +24,7 @@ pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static 
     async fn native(window: &tauri::WebviewWindow, cause: impl std::fmt::Display) -> Result<&'static str, String> {
         eprintln!("app-drawn title bar unavailable, using the native frame: {cause}");
         let restored = window.restore_decoration().await;
-        window
-            .show()
-            .map_err(|e| format!("{cause}; showing the native frame failed: {e}"))?;
+        reveal(window).map_err(|e| format!("{cause}; showing the native frame failed: {e}"))?;
         restored
             .map(|()| "native")
             .map_err(|e| format!("{cause}; restoring the native frame failed: {e}"))
@@ -35,7 +35,7 @@ pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static 
     let shown = window.clone();
     std::thread::spawn(move || {
         std::thread::sleep(SHOW_WITHIN);
-        if let Err(e) = shown.show() {
+        if let Err(e) = reveal(&shown) {
             eprintln!("cannot show the window: {e}");
         }
     });
@@ -57,10 +57,17 @@ pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static 
     if std::env::var_os("VET_DEVTOOLS").is_some() {
         window.open_devtools();
     }
-    match window.show() {
+    match reveal(&window) {
         Ok(()) => Ok("custom"),
         Err(e) => native(&window, e).await,
     }
+}
+
+/// Shows the main window, then closes the splash that covered its start.
+fn reveal(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    window.show()?;
+    startup::close_splash(window.app_handle());
+    Ok(())
 }
 
 #[tauri::command]

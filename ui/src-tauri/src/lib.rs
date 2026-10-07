@@ -1,17 +1,20 @@
 //! Tauri host (SPEC §4.1): spawns the backend, reads the `Ready` line it prints
 //! (port and per-launch token), and gives the webview that address. The
-//! webview then talks to the backend directly over the authenticated WebSocket.
+//! webview then talks to the backend directly over the authenticated WebSocket. A splash window
+//! shows the startup steps until the main window is shown.
 
 mod backend;
 mod bench;
 mod dialog;
 mod menu;
+mod startup;
 mod window;
 
 use tauri::{Emitter, Manager, RunEvent};
 
 use backend::Backend;
 use bench::Bench;
+use startup::Startup;
 
 pub fn run() {
     let app = tauri::Builder::default()
@@ -28,14 +31,17 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            let bench = Bench::from_env();
-            app.manage(backend::start_backend(&bench)?);
-            app.manage(bench);
+            app.manage(Bench::from_env());
+            app.manage(Startup::new());
+            startup::show_splash(app.handle());
+            startup::launch(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             window::activate_and_show,
-            backend::backend_connection,
+            startup::backend_connection,
+            startup::retry_startup,
+            startup::startup_progress,
             bench::bench_config,
             dialog::pick_file,
             dialog::pick_repository,

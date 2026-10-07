@@ -9,6 +9,7 @@ use std::time::Duration;
 use vet_protocol::Ready;
 
 use crate::bench::Bench;
+use crate::startup::Step;
 
 /// A first run without `pnpm backend` fetches the corpus before printing Ready.
 const READY_TIMEOUT: Duration = Duration::from_secs(180);
@@ -21,6 +22,13 @@ pub struct Backend {
 }
 
 impl Backend {
+    pub fn connection(&self) -> Connection {
+        Connection {
+            ready: self.ready.clone(),
+            repo: self.repo.clone(),
+        }
+    }
+
     pub fn kill(&self) {
         let _ = self.child.lock().unwrap_or_else(PoisonError::into_inner).kill();
     }
@@ -138,12 +146,15 @@ fn default_backend(bench: &Bench) -> String {
     path.canonicalize().unwrap_or(path).to_string_lossy().into_owned()
 }
 
-pub fn start_backend(bench: &Bench) -> Result<Backend, String> {
+/// Starts the backend and waits for its `Ready` line, telling `report` which step it is in.
+pub fn start_backend(bench: &Bench, report: impl Fn(Step)) -> Result<Backend, String> {
+    report(Step::StartingBackend);
     let (mut command, binary) = backend_command(bench)?;
     let mut child = command
         .spawn()
         .map_err(|error| format!("cannot start the backend {binary}: {error}"))?;
     let stdout = child.stdout.take().ok_or("backend has no stdout")?;
+    report(Step::WaitingForReady);
 
     // Read on a thread so the wait can time out.
     let (sender, receiver) = mpsc::channel();
@@ -176,14 +187,6 @@ pub fn start_backend(bench: &Bench) -> Result<Backend, String> {
 fn abort(mut child: Child, message: String) -> String {
     let _ = child.kill();
     message
-}
-
-#[tauri::command]
-pub fn backend_connection(backend: tauri::State<Backend>) -> Connection {
-    Connection {
-        ready: backend.ready.clone(),
-        repo: backend.repo.clone(),
-    }
 }
 
 #[cfg(test)]
