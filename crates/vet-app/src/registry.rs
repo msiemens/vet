@@ -33,6 +33,13 @@ impl<S> Clone for Subscribers<S> {
     }
 }
 
+/// No connection yet: for events that belong to the process, not to a session.
+impl<S> Default for Subscribers<S> {
+    fn default() -> Self {
+        Self(Arc::default())
+    }
+}
+
 impl<S: Subscriber> Subscribers<S> {
     fn new(first: S) -> Self {
         Self(Arc::new(Mutex::new(vec![first])))
@@ -45,7 +52,7 @@ impl<S: Subscriber> Subscribers<S> {
         subscribers
     }
 
-    fn subscribe(&self, subscriber: S) {
+    pub fn subscribe(&self, subscriber: S) {
         let mut subscribers = self.live();
         if !subscribers.iter().any(|s| s.same_connection(&subscriber)) {
             subscribers.push(subscriber);
