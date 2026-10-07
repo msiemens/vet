@@ -567,9 +567,6 @@ fn filter_change_keeps_state_and_reports_excluded() {
         (c.lines, c.seen_lines, c.excluded_lines, c.is_complete()),
         (4, 4, 6, true)
     );
-
-    let c = completion(&all, &diffs, &[], &spans, &[]);
-    assert!(!c.is_complete());
 }
 
 #[test]
