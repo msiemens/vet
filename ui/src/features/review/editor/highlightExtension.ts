@@ -2,7 +2,7 @@
 
 import { type Extension, RangeSetBuilder } from "@codemirror/state";
 import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
-import { type Highlights, eachRange, mapHighlights } from "./highlights";
+import { type Highlights, eachRange, mapHighlights } from "../../../lib/highlights";
 
 const marks = new Map<string, Decoration>();
 const markOf = (className: string) => {

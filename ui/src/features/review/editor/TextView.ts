@@ -8,10 +8,10 @@ import type { NoTextReason } from "../../../generated/NoTextReason";
 import type { TextContent } from "../../../generated/TextContent";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { errorText } from "../../../lib/errorText";
+import { decodeHighlights } from "../../../lib/highlights";
 import { iconSvg } from "../../../lib/ui/icons";
 import { atRevision } from "../../../state/revision";
 import { highlightExtension } from "./highlightExtension";
-import { decodeHighlights } from "./highlights";
 import { lineStart } from "./positions";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 

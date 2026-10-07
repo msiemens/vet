@@ -5,7 +5,7 @@
 import { getChunks } from "@codemirror/merge";
 import type { Extension } from "@codemirror/state";
 import { type EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
-import { type Highlights, pieces } from "./highlights";
+import { type Highlights, pieces } from "../../../lib/highlights";
 
 const PAINTED = "data-highlighted";
 

@@ -12,6 +12,7 @@ import type { TextChange } from "../../../generated/TextChange";
 import type { HunkState } from "../../../generated/HunkState";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
+import type { Highlights } from "../../../lib/highlights";
 import type { Mode } from "../../../lib/viewMode";
 import { deletedLines } from "./deletedLines";
 import { backendDiff } from "./backendDiff";
@@ -19,7 +20,6 @@ import type { BarActions } from "./hunkBar";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { deletedHighlights } from "./deletedHighlights";
 import { highlightExtension } from "./highlightExtension";
-import type { Highlights } from "./highlights";
 import { type ReviewState, deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
 
 export interface Loaded {

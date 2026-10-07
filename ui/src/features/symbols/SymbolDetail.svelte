@@ -6,7 +6,7 @@
   import type { Reachability } from "../../generated/Reachability";
   import type { RemovalImpact } from "../../generated/RemovalImpact";
   import type { Side } from "../../generated/Side";
-  import { codeBlock } from "../review";
+  import { codeBlock } from "../../lib/codeBlock";
   import DerivedSection from "./DerivedSection.svelte";
   import { containerOf, describeFate, nameOf, type OpenLocation, place } from "./symbolList";
   import { symbols } from "./symbols.svelte";
