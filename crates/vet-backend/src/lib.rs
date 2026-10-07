@@ -196,11 +196,8 @@ impl Orchestrator {
         // Watching starts before the initial scan, so no edit falls between them.
         let watcher = FsWatcher::open(&repo, self.config.poll).map_err(message)?;
         let git = GixRepo::new(&repo);
-        let name = repo
-            .file_name()
-            .map_or_else(|| repo.display().to_string(), |n| n.to_string_lossy().into_owned());
         let session = Arc::new(
-            Live::open(git.clone(), self.store.clone(), name, root.clone(), unix_now)
+            Live::open(git.clone(), self.store.clone(), root.clone(), unix_now)
                 .await
                 .map_err(message)?,
         );
@@ -218,9 +215,7 @@ impl Orchestrator {
             tokio::spawn(async move {
                 session
                     .follow(settling, |revision| {
-                        for events in live(&subscribers).iter() {
-                            events.send(Event::SnapshotSettled { session: id, revision });
-                        }
+                        run::broadcast(&subscribers, Event::SnapshotSettled { session: id, revision });
                     })
                     .await;
             })
@@ -408,9 +403,7 @@ impl Orchestrator {
                     .set_base(mapping::core_base_choice(base))
                     .await
                     .map_err(message)?;
-                for events in live(&open.subscribers).iter() {
-                    events.send(Event::SnapshotSettled { session, revision });
-                }
+                run::broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
                 Ok(Response::Base(mapping::base(&base)))
             }
             Request::SetProjectFilter { session, filter } => {
@@ -420,9 +413,7 @@ impl Orchestrator {
                     .set_filter(mapping::core_filter(filter))
                     .await
                     .map_err(message)?;
-                for events in live(&open.subscribers).iter() {
-                    events.send(Event::SnapshotSettled { session, revision });
-                }
+                run::broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
                 Ok(Response::Done)
             }
             Request::ListBaseCandidates { session } => {

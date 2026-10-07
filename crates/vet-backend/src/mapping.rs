@@ -106,7 +106,7 @@ fn entry(info: &EntryInfo) -> p::EntryDesc {
         },
         mode: info.entry.mode,
         target: info.target.clone(),
-        size: info.size.map(|s| u32::try_from(s).unwrap_or(u32::MAX)),
+        size: info.size.map(sat_u32),
     }
 }
 
@@ -174,6 +174,11 @@ fn commit_info(c: &CommitInfo) -> p::CommitInfo {
         author: c.author.clone(),
         time: unix_secs(c.time),
     }
+}
+
+/// `n`, or the largest `u32` if it does not fit.
+pub fn sat_u32<T: TryInto<u32>>(n: T) -> u32 {
+    n.try_into().unwrap_or(u32::MAX)
 }
 
 fn unix_secs(time: i64) -> u32 {
@@ -351,6 +356,13 @@ pub fn core_thread_status(s: p::ThreadStatus) -> ThreadStatus {
     }
 }
 
+fn thread_status(s: ThreadStatus) -> p::ThreadStatus {
+    match s {
+        ThreadStatus::Open => p::ThreadStatus::Open,
+        ThreadStatus::Resolved => p::ThreadStatus::Resolved,
+    }
+}
+
 fn anchor_state(s: &AnchorState) -> p::AnchorState {
     match s {
         AnchorState::Exact { whitespace_changed } => p::AnchorState::Exact {
@@ -390,7 +402,7 @@ pub fn thread(t: &ThreadView) -> p::Thread {
         CommentTarget::Changeset => (p::ThreadKind::Changeset, None, None),
     };
     p::Thread {
-        id: u32::try_from(t.id.0).unwrap_or(u32::MAX),
+        id: sat_u32(t.id.0),
         kind,
         side: side_of,
         path: t.path.as_ref().map(RepoPath::to_string_lossy),
@@ -404,13 +416,10 @@ pub fn thread(t: &ThreadView) -> p::Thread {
             .map(|m| p::ThreadMessage {
                 author: m.author.clone(),
                 body: m.body.clone(),
-                at: u32::try_from(m.at).unwrap_or(0),
+                at: unix_secs(m.at),
             })
             .collect(),
-        status: match t.status {
-            ThreadStatus::Open => p::ThreadStatus::Open,
-            ThreadStatus::Resolved => p::ThreadStatus::Resolved,
-        },
+        status: thread_status(t.status),
     }
 }
 

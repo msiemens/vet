@@ -475,6 +475,13 @@ fn ack_of(change: &NonTextChange) -> NonTextAck {
     }
 }
 
+/// What a session is called: the repository's directory name, else its whole path.
+fn name_of_repo(repo: &str) -> String {
+    std::path::Path::new(repo)
+        .file_name()
+        .map_or_else(|| repo.to_owned(), |n| n.to_string_lossy().into_owned())
+}
+
 /// Git's `user.name`, else "You".
 async fn author_of<G: GitRepo>(git: &G) -> String {
     git.user_name()
@@ -487,9 +494,10 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// Resumes the open review of the repository at `repo` (the root, as the
     /// key reviews are recorded under), or else starts out browsing the tree
     /// against the current branch's tip.
-    pub async fn open(git: G, store: S, name: String, repo: String, clock: UnixClock) -> Result<Self> {
+    pub async fn open(git: G, store: S, repo: String, clock: UnixClock) -> Result<Self> {
         let acquisition = Arc::new(Acquisition::new(git, store));
         let filter = acquisition.store.filter(repo.clone()).await?.normalized();
+        let name = name_of_repo(&repo);
         if let Some(&id) = acquisition.store.open_sessions(repo.clone()).await?.last() {
             if let Some(session) = Self::resume(&acquisition, id, filter.clone(), &name, &repo, clock).await? {
                 return Ok(session);

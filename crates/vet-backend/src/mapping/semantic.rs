@@ -13,6 +13,8 @@ use vet_semantic::ports::{
 };
 use vet_semantic::query::SemanticError;
 
+use super::sat_u32;
+
 pub fn at(path: &str, line: u32, col: u32) -> At {
     At {
         file: RepoPath::from(path),
@@ -114,7 +116,7 @@ pub fn answer<T: Default>(result: Result<T, SemanticError>, language: Option<Str
 fn bounds(b: Bounds) -> p::DerivedBounds {
     p::DerivedBounds {
         max_depth: b.max_depth,
-        max_nodes: u32::try_from(b.max_nodes).unwrap_or(u32::MAX),
+        max_nodes: sat_u32(b.max_nodes),
     }
 }
 

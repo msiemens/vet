@@ -534,7 +534,7 @@ impl Fixture {
         let first = git.snapshot(dirty);
         git.scans.lock().unwrap().push(first);
         let store = MemStore::default();
-        let session = LiveSession::open(git.clone(), store.clone(), "test".into(), REPO.into(), clock)
+        let session = LiveSession::open(git.clone(), store.clone(), REPO.into(), clock)
             .await
             .unwrap();
         Self { git, store, session }
@@ -631,7 +631,7 @@ async fn acknowledging_and_a_new_thread_also_start_the_review() {
     dirty.id = merkle::snapshot_id(&dirty.entries);
     *git.base.lock().unwrap() = Some(base);
     git.scans.lock().unwrap().push(dirty);
-    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), clock)
+    let session = LiveSession::open(git, MemStore::default(), REPO.into(), clock)
         .await
         .unwrap();
     session
@@ -903,9 +903,7 @@ async fn a_mode_change_needs_acknowledging() {
     *git.base.lock().unwrap() = Some(base);
     git.scans.lock().unwrap().push(dirty);
     let store = MemStore::default();
-    let session = LiveSession::open(git, store.clone(), "t".into(), REPO.into(), clock)
-        .await
-        .unwrap();
+    let session = LiveSession::open(git, store.clone(), REPO.into(), clock).await.unwrap();
 
     let m = session.manifest().await.unwrap();
     assert_eq!((m.completion.items, m.completion.acknowledged_items), (1, 0));
@@ -933,7 +931,7 @@ async fn items_of_one_file_are_acknowledged_separately() {
     dirty.id = merkle::snapshot_id(&dirty.entries);
     *git.base.lock().unwrap() = Some(base);
     git.scans.lock().unwrap().push(dirty);
-    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), clock)
+    let session = LiveSession::open(git, MemStore::default(), REPO.into(), clock)
         .await
         .unwrap();
 
@@ -966,7 +964,7 @@ async fn submodule_changes_carry_both_commits() {
     };
     *git.base.lock().unwrap() = Some(tree(b"one"));
     git.scans.lock().unwrap().push(tree(b"two"));
-    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), clock)
+    let session = LiveSession::open(git, MemStore::default(), REPO.into(), clock)
         .await
         .unwrap();
 
@@ -1006,7 +1004,7 @@ impl Fixture {
     async fn reopen(&self, dirty: &[(&str, &str)]) -> LiveSession<FakeGit, MemStore> {
         let scan = self.git.snapshot(dirty);
         self.git.scans.lock().unwrap().push(scan);
-        LiveSession::open(self.git.clone(), self.store.clone(), "test".into(), REPO.into(), clock)
+        LiveSession::open(self.git.clone(), self.store.clone(), REPO.into(), clock)
             .await
             .unwrap()
     }
@@ -1098,9 +1096,7 @@ async fn a_session_opens_with_the_repository_filter_and_keeps_it_across_reviews(
     let store = MemStore::default();
     store.0.lock().unwrap().filter = Some(filter.clone());
 
-    let session = LiveSession::open(git, store.clone(), "test".into(), REPO.into(), clock)
-        .await
-        .unwrap();
+    let session = LiveSession::open(git, store.clone(), REPO.into(), clock).await.unwrap();
 
     let browsing = session.manifest().await.unwrap();
     assert_eq!((&browsing.filter, browsing.files.len()), (&filter, 1));
@@ -1189,7 +1185,7 @@ async fn the_default_base_is_the_current_branchs_tip() {
     git.scans.lock().unwrap().push(scan);
     git.add_branch("feature", true, "f3", &["f2", "f1"]);
     git.add_branch("main", false, "m1", &[]);
-    let session = LiveSession::open(git, MemStore::default(), "t".into(), REPO.into(), clock)
+    let session = LiveSession::open(git, MemStore::default(), REPO.into(), clock)
         .await
         .unwrap();
 
@@ -2063,13 +2059,20 @@ async fn replies_status_and_deletion_are_persisted() {
 }
 
 #[tokio::test]
+async fn a_session_is_named_after_its_repository_directory() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    assert_eq!(fx.session.manifest().await.unwrap().name, "repo");
+    assert_eq!(name_of_repo("/"), "/");
+}
+
+#[tokio::test]
 async fn the_author_is_the_git_user_or_you() {
     let git = FakeGit::default();
     *git.base.lock().unwrap() = Some(git.snapshot(&[("a.txt", "one\n")]));
     let first = git.snapshot(&[("a.txt", "two\n")]);
     git.scans.lock().unwrap().push(first);
     *git.user.lock().unwrap() = Some("Ada".into());
-    let named = LiveSession::open(git.clone(), MemStore::default(), "t".into(), REPO.into(), clock)
+    let named = LiveSession::open(git.clone(), MemStore::default(), REPO.into(), clock)
         .await
         .unwrap();
     let anonymous = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
