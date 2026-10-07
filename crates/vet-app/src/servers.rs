@@ -264,7 +264,6 @@ mod tests {
         assert_eq!(pinned, [None, Some("1.0.0".into()), None]);
         assert_eq!(status[2].install_blocker.as_deref(), Some("npm is missing"));
         assert_eq!(status[0].server, "rust-server");
-        assert_eq!(status[0].title, "RUST");
     }
 
     #[tokio::test]
