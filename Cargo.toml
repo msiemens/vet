@@ -8,7 +8,8 @@ members = [
     "crates/vet-semantic",
     "crates/vet-app",
     "crates/vet-infra",
-    "crates/vet-backend", "crates/vet-highlight",
+    "crates/vet-backend",
+    "crates/vet-highlight",
 ]
 
 # The Tauri host pulls in a large dependency tree and system webview libraries;
