@@ -181,6 +181,18 @@ async fn csharp_installs_and_starts() {
     assert!(callers.iter().any(|c| c.contains("Main")), "{callers:?}");
     assert!(!server.workspace_symbols("Helper").await.unwrap().is_empty());
     assert!(server.diagnostics(&file).await.unwrap().is_empty());
+
+    // Other text under the file's name, as for a base side.
+    let base = "namespace App;\n\npublic static class Gone\n{\n    public static int Two() => 2;\n}\n";
+    let names: Vec<String> = server
+        .text_symbols(&file, base)
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.sym.name.join("::"))
+        .collect();
+    assert!(names.iter().any(|n| n.contains("Gone")), "{names:?}");
+    assert!(server.diagnostics(&file).await.unwrap().is_empty());
     server.shutdown().await;
 }
 
@@ -219,5 +231,15 @@ async fn python_installs_and_starts() {
     };
     assert!(server.hover(&at).await.unwrap().is_some());
     assert_eq!(server.definition(&at).await.unwrap().len(), 1);
+
+    // Other text under the file's name, as for a base side.
+    let names: Vec<String> = server
+        .text_symbols(&path("a.py"), "def gone() -> int:\n    return 2\n")
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.sym.name.join("::"))
+        .collect();
+    assert_eq!(names, ["gone"]);
     server.shutdown().await;
 }

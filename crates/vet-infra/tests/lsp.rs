@@ -152,6 +152,18 @@ async fn rust_analyzer_answers_the_primitive_queries() {
         "{diagnostics:?}"
     );
 
+    // The symbols of other text under the file's name, as for a base side.
+    let base = "pub fn gone() -> u32 {\n    1\n}\n\npub fn entry() -> u32 {\n    gone()\n}\n";
+    let names = symbol_names(server.text_symbols(&lib, base).await.unwrap());
+    assert_eq!(names, ["entry", "gone"]);
+    let names = symbol_names(server.document_symbols(&lib).await.unwrap());
+    assert!(names.contains(&"added".to_string()) && !names.contains(&"gone".to_string()));
+    assert_eq!(std::fs::read_to_string(dir.path().join("src/lib.rs")).unwrap(), edited);
+    assert!(!dir.path().join("src").read_dir().unwrap().any(|e| {
+        let name = e.unwrap().file_name();
+        name != "lib.rs"
+    }));
+
     server.shutdown().await;
 }
 
@@ -205,5 +217,23 @@ async fn typescript_language_server_answers_the_primitive_queries() {
     assert_eq!(server.references(&decl).await.unwrap().len(), 1);
     assert_eq!(server.incoming_calls(&decl).await.unwrap().len(), 1);
     assert!(server.diagnostics(&file).await.unwrap().is_empty());
+
+    // Other text under the file's name, as for a base side. A script declaring
+    // a global the real file also declares must not disturb the real file.
+    let base = "function helper() { return 2; }\nfunction removed() { return 3; }\n";
+    let found = symbol_names(server.text_symbols(&file, base).await.unwrap());
+    assert_eq!(found, ["helper", "removed"]);
+    assert_eq!(
+        symbol_names(server.document_symbols(&file).await.unwrap()),
+        ["entry", "helper"]
+    );
+    assert!(server.diagnostics(&file).await.unwrap().is_empty());
     server.shutdown().await;
+}
+
+fn symbol_names(mut symbols: Vec<vet_semantic::ports::SymbolInfo>) -> Vec<String> {
+    symbols.sort_by_key(|s| s.span.start.line);
+    let mut names: Vec<String> = symbols.iter().map(|s| s.sym.name.join("::")).collect();
+    names.sort();
+    names
 }

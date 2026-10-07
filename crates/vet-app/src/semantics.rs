@@ -12,10 +12,10 @@ use tokio::sync::OnceCell;
 use vet_core::content::{FileDiff, RepoPath};
 use vet_core::review::Side;
 use vet_semantic::derived::{
-    Bounds, Change, Changes, Derived, EntryPoints, Reach, RemovalImpact, SymbolImpact, changed_symbols, impact,
-    reachability, removal_impact,
+    BaseTexts, Bounds, Change, Changes, Derived, EntryPoints, Reach, RemovalImpact, SymbolImpact, changed_symbols,
+    impact, reachability, removal_impact,
 };
-use vet_semantic::join::{bounded, join};
+use vet_semantic::join::bounded;
 use vet_semantic::pool::{Pool, Target};
 use vet_semantic::ports::{
     At, Backend, BackendId, Diagnostic, Location, Materializer, RestoreFailure, ServerLauncher, Sym, SymbolInfo,
@@ -24,8 +24,9 @@ use vet_semantic::ports::{
 use vet_semantic::query::{Pair, Primitives, Semantic, SemanticError, Served};
 use vet_semantic::signature::{Signature, signature};
 
+use crate::acquisition::Acquisition;
 use crate::limits::RestoreLimits;
-use crate::ports::{GitRepo, ReviewStore, Store};
+use crate::ports::{BlobRead, BlobReader, GitRepo, ReviewStore, Store};
 use crate::session::{LiveSession, SemanticSides, SessionError};
 use crate::trust::{Trust, analysis_policy};
 
@@ -65,6 +66,19 @@ where
     /// Kept current by the launcher's restorer (`Limiting`).
     limits: RestoreLimits,
     trust: Trust,
+}
+
+/// The base side's file contents, as the acquisition keeps them.
+struct BaseContent<G, S>(Arc<Acquisition<G, S>>);
+
+impl<G: BlobReader + Send + Sync, S: Store + Send + Sync> BaseTexts for BaseContent<G, S> {
+    async fn base_text(&self, file: &FileDiff) -> Option<String> {
+        let (path, blob) = (file.old_path.as_ref()?, file.old_blob?);
+        match self.0.blob(path, blob, true).await {
+            Ok(BlobRead::Found(bytes)) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+            _ => None,
+        }
+    }
 }
 
 /// The base and the target side as the pool serves them: each may execute
@@ -242,7 +256,10 @@ where
         computation
             .get_or_try_init(|| async {
                 let files = session.changed_files(revision).await?;
-                let (_, changes) = join(self.start_servers_for(&pair, &files), changed_symbols(&pair, &files)).await;
+                // The base side's symbols come from the target side's server, so
+                // the base side's servers, which restore the base first, are not waited for.
+                let texts = BaseContent(session.acquisition());
+                let changes = changed_symbols(&pair, &texts, &files).await;
                 Ok::<_, SessionError>(Arc::new(changes))
             })
             .await
@@ -356,6 +373,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use vet_core::content::{Hash, SnapshotId};
+    use vet_semantic::join::join;
     use vet_semantic::policy::AnalysisPolicy;
     use vet_semantic::ports::{
         Diagnostic, LanguageServer, LaunchError, Materialized, NotMaterializable, Pos, QueryError, ServerConfig, Span,
@@ -402,6 +420,8 @@ mod tests {
         started: AtomicUsize,
         /// Symbol requests on the live side, which no cache answers.
         live_symbol_requests: AtomicUsize,
+        /// Symbol requests for a text under a file's name.
+        text_symbol_requests: AtomicUsize,
     }
 
     struct FakeLauncher(Arc<Counters>);
@@ -425,6 +445,21 @@ mod tests {
         }
     }
 
+    fn symbol(file: &RepoPath) -> SymbolInfo {
+        SymbolInfo {
+            sym: Sym {
+                file: file.clone(),
+                name: vec!["f".into()],
+            },
+            span: Span {
+                start: Pos { line: 0, col: 0 },
+                end: Pos { line: 5, col: 0 },
+            },
+            at: Pos { line: 0, col: 0 },
+            detail: None,
+        }
+    }
+
     impl LanguageServer for FakeServer {
         async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
             if self.1 == Tree::Live {
@@ -433,18 +468,12 @@ mod tests {
             for _ in 0..5 {
                 tokio::task::yield_now().await;
             }
-            Ok(vec![SymbolInfo {
-                sym: Sym {
-                    file: file.clone(),
-                    name: vec!["f".into()],
-                },
-                span: Span {
-                    start: Pos { line: 0, col: 0 },
-                    end: Pos { line: 5, col: 0 },
-                },
-                at: Pos { line: 0, col: 0 },
-                detail: None,
-            }])
+            Ok(vec![symbol(file)])
+        }
+        async fn text_symbols(&self, file: &RepoPath, _: &str) -> Result<Vec<SymbolInfo>, QueryError> {
+            assert_eq!(self.1, Tree::Live, "a text is asked of the live tree's server");
+            self.0.text_symbol_requests.fetch_add(1, Ordering::SeqCst);
+            Ok(vec![symbol(file)])
         }
         async fn definition(&self, _: &At) -> Result<Vec<Location>, QueryError> {
             Ok(vec![])
@@ -540,7 +569,9 @@ mod tests {
         assert_eq!(first.value.unsupported.len(), 1);
         // One request per live file, not one per caller.
         assert_eq!(counters.live_symbol_requests.load(Ordering::SeqCst), 2);
-        assert_eq!(counters.started.load(Ordering::SeqCst), 4);
+        // The base side is read from its text; no server is started for it.
+        assert_eq!(counters.text_symbol_requests.load(Ordering::SeqCst), 2);
+        assert_eq!(counters.started.load(Ordering::SeqCst), 2);
 
         let third = semantics.changed_symbols(&fx.session, 0).await.unwrap();
         assert!(Arc::ptr_eq(&first, &third));

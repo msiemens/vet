@@ -14,7 +14,7 @@ use vet_core::review::Side;
 
 use crate::ports::{At, Pos};
 
-pub use changed::{Change, ChangedSymbol, Changes, Gap, changed_symbols};
+pub use changed::{BaseTexts, Change, ChangedSymbol, Changes, Gap, changed_symbols};
 pub use impact::{SymbolImpact, impact};
 pub use reach::{EntryPoint, EntryPoints, Reach, reachability};
 pub use removal::{CallSite, Fate, RemovalImpact, removal_impact};

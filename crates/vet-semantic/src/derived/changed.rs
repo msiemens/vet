@@ -43,7 +43,14 @@ pub struct Changes {
 /// Files whose symbols are asked for at once, both sides each.
 const FILES_IN_FLIGHT: usize = 4;
 
-pub async fn changed_symbols(p: &impl Primitives, files: &[FileDiff]) -> Derived<Changes> {
+/// The base side's file contents, so its symbols can be had without a server
+/// on the base snapshot.
+pub trait BaseTexts: Sync {
+    /// The base content of `file`; `None` if it is not available.
+    fn base_text(&self, file: &FileDiff) -> impl Future<Output = Option<String>> + Send;
+}
+
+pub async fn changed_symbols(p: &impl Primitives, texts: &impl BaseTexts, files: &[FileDiff]) -> Derived<Changes> {
     let mut inputs = Inputs::new("changed symbols");
     let mut out = Changes::default();
     let files: Vec<_> = files.iter().filter(|f| !f.hunks.is_empty()).collect();
@@ -58,7 +65,7 @@ pub async fn changed_symbols(p: &impl Primitives, files: &[FileDiff]) -> Derived
     let answers = bounded(FILES_IN_FLIGHT, 0..files.len(), |at| {
         let file = files[at];
         join(
-            symbols(p, Side::Base, file.old_path.as_ref()),
+            base_symbols(p, texts, file),
             symbols(p, Side::Target, file.new_path.as_ref()),
         )
     })
@@ -116,6 +123,26 @@ pub async fn changed_symbols(p: &impl Primitives, files: &[FileDiff]) -> Derived
 async fn symbols(p: &impl Primitives, side: Side, file: Option<&RepoPath>) -> Result<Vec<SymbolInfo>, SemanticError> {
     let Some(file) = file else { return Ok(Vec::new()) };
     p.document_symbols(side, file).await
+}
+
+/// The symbols a document declares depend on its text alone, so the base side
+/// is asked of the target side's server, which is running anyway; the base
+/// side's own server, which has to restore the base's dependencies first, is
+/// asked only when the text cannot be had or placed.
+async fn base_symbols(
+    p: &impl Primitives,
+    texts: &impl BaseTexts,
+    file: &FileDiff,
+) -> Result<Vec<SymbolInfo>, SemanticError> {
+    let Some(path) = &file.old_path else {
+        return Ok(Vec::new());
+    };
+    if let Some(text) = texts.base_text(file).await
+        && let Ok(found) = p.text_symbols(path, &text).await
+    {
+        return Ok(found);
+    }
+    p.document_symbols(Side::Base, path).await
 }
 
 /// The innermost symbols each hunk touches. An empty range is a deletion or

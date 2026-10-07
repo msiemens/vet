@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use lsp_types as lsp;
@@ -78,6 +79,9 @@ pub struct LspServer {
     tree: Tree,
     diagnostics: Diagnostics,
     docs: tokio::sync::Mutex<Docs>,
+    /// Numbers the in-memory documents of `text_symbols`, so concurrent calls
+    /// for one file do not share a URI.
+    virtual_docs: AtomicU64,
 }
 
 fn err(e: impl std::fmt::Display) -> QueryError {
@@ -113,6 +117,7 @@ impl LspServer {
             tree,
             diagnostics,
             docs: tokio::sync::Mutex::new(Docs::default()),
+            virtual_docs: AtomicU64::new(0),
         }
     }
 
@@ -122,6 +127,22 @@ impl LspServer {
 
     fn uri_of(&self, file: &RepoPath) -> Result<Uri, QueryError> {
         file_uri(&self.absolute(file)?).ok_or_else(|| err("path is not absolute"))
+    }
+
+    /// A URI for a document that exists only in the server's memory: a file that
+    /// is not on disk next to `file`. Every server takes it as a loose file of
+    /// the right language (verified for rust-analyzer, typescript-language-server,
+    /// pyright and roslyn); `untitled:` is not used because rust-analyzer only maps
+    /// `file:` URIs to its files.
+    /// The name starts with a dot and the document is closed again right away,
+    /// so it takes no part in a project for long.
+    fn virtual_uri(&self, file: &RepoPath) -> Result<Uri, QueryError> {
+        let n = self.virtual_docs.fetch_add(1, Ordering::Relaxed);
+        let path = self.absolute(file)?;
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        file_uri(&path.with_file_name(format!(".vet-text-{n}-{name}"))).ok_or_else(|| err("path is not absolute"))
     }
 
     fn id(&self, file: &RepoPath) -> Result<lsp::TextDocumentIdentifier, QueryError> {
@@ -356,6 +377,25 @@ fn outline(symbols: &[lsp::DocumentSymbol]) -> Vec<Outline> {
         .collect()
 }
 
+fn symbols_in(file: &RepoPath, response: Option<lsp::DocumentSymbolResponse>) -> Vec<SymbolInfo> {
+    match response {
+        None => Vec::new(),
+        Some(lsp::DocumentSymbolResponse::Nested(nested)) => symbols::flatten(file, &outline(&nested)),
+        Some(lsp::DocumentSymbolResponse::Flat(flat)) => flat
+            .into_iter()
+            .map(|s| SymbolInfo {
+                sym: Sym {
+                    file: file.clone(),
+                    name: symbols::qualified(s.container_name, s.name),
+                },
+                span: span(s.location.range),
+                at: pos(s.location.range.start),
+                detail: None,
+            })
+            .collect(),
+    }
+}
+
 fn flatten_hover(contents: lsp::HoverContents) -> String {
     let marked = |m: lsp::MarkedString| match m {
         lsp::MarkedString::String(s) => s,
@@ -415,22 +455,39 @@ impl LanguageServer for LspServer {
         };
         let response = self.conn.request::<DocumentSymbolRequest>(params).await.map_err(err)?;
         log_timing("documentSymbol", file, opened, synced - started, synced.elapsed());
-        Ok(match response {
-            None => Vec::new(),
-            Some(lsp::DocumentSymbolResponse::Nested(nested)) => symbols::flatten(file, &outline(&nested)),
-            Some(lsp::DocumentSymbolResponse::Flat(flat)) => flat
-                .into_iter()
-                .map(|s| SymbolInfo {
-                    sym: Sym {
-                        file: file.clone(),
-                        name: symbols::qualified(s.container_name, s.name),
-                    },
-                    span: span(s.location.range),
-                    at: pos(s.location.range.start),
-                    detail: None,
-                })
-                .collect(),
-        })
+        Ok(symbols_in(file, response))
+    }
+
+    async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Vec<SymbolInfo>, QueryError> {
+        let started = Instant::now();
+        let uri = self.virtual_uri(file)?;
+        self.conn
+            .notify::<DidOpenTextDocument>(lsp::DidOpenTextDocumentParams {
+                text_document: lsp::TextDocumentItem {
+                    uri: uri.clone(),
+                    language_id: language_id(extension(file)).into(),
+                    version: 1,
+                    text: text.to_owned(),
+                },
+            })
+            .await
+            .map_err(err)?;
+        let params = lsp::DocumentSymbolParams {
+            text_document: lsp::TextDocumentIdentifier { uri: uri.clone() },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let response = self.conn.request::<DocumentSymbolRequest>(params).await;
+        let closed = self
+            .conn
+            .notify::<DidCloseTextDocument>(lsp::DidCloseTextDocumentParams {
+                text_document: lsp::TextDocumentIdentifier { uri },
+            })
+            .await;
+        let response = response.map_err(err)?;
+        closed.map_err(err)?;
+        log_timing("documentSymbol (text)", file, true, Duration::ZERO, started.elapsed());
+        Ok(symbols_in(file, response))
     }
 
     async fn definition(&self, at: &At) -> Result<Vec<Location>, QueryError> {

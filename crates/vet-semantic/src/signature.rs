@@ -128,6 +128,9 @@ mod tests {
         async fn document_symbols(&self, _: Side, _: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
             Ok(vec![])
         }
+        async fn text_symbols(&self, _: &RepoPath, _: &str) -> Result<Vec<SymbolInfo>, SemanticError> {
+            Ok(vec![])
+        }
         async fn definition(&self, _: Side, _: &At) -> Result<Vec<Location>, SemanticError> {
             Ok(vec![])
         }

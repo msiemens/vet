@@ -47,6 +47,14 @@ pub trait Primitives {
         side: Side,
         file: &RepoPath,
     ) -> impl Future<Output = Result<Vec<SymbolInfo>, SemanticError>> + Send;
+    /// The symbols `text` declares as the content of `file`, from the target
+    /// side's server: they depend on the text alone, so no server of the side
+    /// the text belongs to is needed.
+    fn text_symbols(
+        &self,
+        file: &RepoPath,
+        text: &str,
+    ) -> impl Future<Output = Result<Vec<SymbolInfo>, SemanticError>> + Send;
     fn definition(&self, side: Side, at: &At) -> impl Future<Output = Result<Vec<Location>, SemanticError>> + Send;
     fn references(&self, side: Side, at: &At) -> impl Future<Output = Result<Vec<Location>, SemanticError>> + Send;
     fn hover(&self, side: Side, at: &At) -> impl Future<Output = Result<Option<String>, SemanticError>> + Send;
@@ -163,7 +171,7 @@ impl<M: Materializer, L: ServerLauncher> Pair<'_, M, L> {
 }
 
 macro_rules! ask {
-    ($self:ident, $side:ident, $file:expr, $method:ident($($arg:expr),*)) => {{
+    ($self:ident, $side:expr, $file:expr, $method:ident($($arg:expr),*)) => {{
         let lease = $self.semantic.lease_for($self.served($side), $file).await?;
         let answer = lease.$method($($arg),*).await;
         lease.release().await;
@@ -179,6 +187,10 @@ where
 {
     async fn document_symbols(&self, side: Side, file: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
         ask!(self, side, file, document_symbols(file))
+    }
+
+    async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Vec<SymbolInfo>, SemanticError> {
+        ask!(self, Side::Target, file, text_symbols(file, text))
     }
 
     async fn definition(&self, side: Side, at: &At) -> Result<Vec<Location>, SemanticError> {

@@ -119,6 +119,10 @@ impl<S: LanguageServer, G: Send + Sync + 'static> LanguageServer for Entry<S, G>
         cached!(self, symbols, file.clone(), self.server.document_symbols(file))
     }
 
+    async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Vec<SymbolInfo>, QueryError> {
+        self.server.text_symbols(file, text).await
+    }
+
     async fn definition(&self, at: &At) -> Result<Vec<Location>, QueryError> {
         cached!(self, definition, at.clone(), self.server.definition(at))
     }
@@ -607,6 +611,9 @@ mod tests {
 
     impl LanguageServer for FakeServer {
         async fn document_symbols(&self, _: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
+            Ok(vec![])
+        }
+        async fn text_symbols(&self, _: &RepoPath, _: &str) -> Result<Vec<SymbolInfo>, QueryError> {
             Ok(vec![])
         }
         async fn definition(&self, _: &At) -> Result<Vec<Location>, QueryError> {

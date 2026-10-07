@@ -229,6 +229,14 @@ impl fmt::Display for QueryError {
 /// Methods take `&self`: the pool lets several callers use one server at once.
 pub trait LanguageServer: Send + Sync {
     fn document_symbols(&self, file: &RepoPath) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
+    /// The symbols `text` declares if it were the content of `file`, which need
+    /// not exist in the tree. They depend on the text alone, so any server of
+    /// the file's language can answer. Nothing of the text stays in the server.
+    fn text_symbols(
+        &self,
+        file: &RepoPath,
+        text: &str,
+    ) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     fn definition(&self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
     /// Without the declaration itself.
     fn references(&self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
