@@ -41,7 +41,8 @@ pub use crate::platform::RemoteKey;
 pub enum Source {
     /// The repository's live tree. Versions are settled snapshots.
     WorkingTree,
-    /// A local branch's commits. Versions are the tips Vet observed.
+    /// A local branch's commits, or a remote-tracking branch's (`origin/feature`). Versions
+    /// are the tips Vet observed.
     Branch { name: String },
     /// A pull request. Versions are its pushes.
     PullRequest { remote: RemoteKey, number: u64 },

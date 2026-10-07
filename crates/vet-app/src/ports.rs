@@ -86,7 +86,10 @@ impl std::fmt::Display for GitError {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BranchInfo {
+    /// A local branch's name, or `<remote>/<branch>` for a remote-tracking one.
     pub name: String,
+    /// A remote-tracking branch, as of the last fetch.
+    pub remote: bool,
     pub commit: CommitId,
     /// The checked-out branch.
     pub current: bool,
@@ -203,11 +206,12 @@ pub trait History {
     /// The commit `spec` (a full or abbreviated id, or a revision) names.
     /// The error is fit to show to a user.
     fn resolve_commit(&self, spec: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
-    /// The tip of the local branch `name`.
+    /// The tip of the local branch `name`, else of the remote-tracking branch of that name.
     fn branch_tip(&self, name: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
-    /// Local branches and up to `max_commits` commits reachable from `HEAD`, newest first.
+    /// The branches and up to `max_commits` commits reachable from `HEAD`, newest first.
     fn base_candidates(&self, max_commits: usize) -> impl Future<Output = Result<BaseCandidates, GitError>> + Send;
-    /// Local branches, by name.
+    /// The local branches by name, then the remote-tracking ones that no local branch
+    /// follows at the same commit, by name.
     fn branches(&self) -> impl Future<Output = Result<Vec<BranchInfo>, GitError>> + Send;
     fn commit_info(&self, commit: &CommitId) -> impl Future<Output = Result<CommitInfo, GitError>> + Send;
     /// How many first-parent steps lead from `tip` back to `commit`; `None` if

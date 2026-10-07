@@ -142,6 +142,7 @@ impl FakeGit {
             current,
             default: false,
             upstream: None,
+            remote: false,
         });
         branches.sort_by(|a, b| a.name.cmp(&b.name));
     }

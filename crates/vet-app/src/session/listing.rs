@@ -1,10 +1,12 @@
 //! The changesets the repository offers to put on view: the working tree and the local
-//! branches, each with what Vet knows of its review.
+//! branches and the remote ones worth reviewing, each with what Vet knows of its review.
 
 use super::{LiveSession, Result};
 use crate::changeset::{CommitId, Source};
 use crate::ports::{BranchInfo, GitRepo, LiveStore};
 
+/// A remote branch whose latest commit is older than this many days is not offered.
+const RECENT_DAYS: i64 = 30;
 /// Commits counted for how far a branch is from the default one.
 const MAX_COUNT: usize = 10_000;
 
@@ -33,7 +35,7 @@ pub enum RowReview {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ChangesetRow {
     pub source: Source,
-    /// "Working tree", or the branch's name.
+    /// "Working tree", or the branch's name (`origin/feature` for a remote one).
     pub title: String,
     /// The branch is the checked-out one.
     pub checked_out: bool,
@@ -48,12 +50,19 @@ pub struct ChangesetRow {
 pub struct ChangesetList {
     /// The changeset on view.
     pub on_view: Source,
-    /// The working tree first, then the branches, the most recently committed first.
+    /// The working tree first, then the local branches and then the remote ones, each group
+    /// with the most recently committed first.
     pub rows: Vec<ChangesetRow>,
 }
 
+/// Whether a remote branch is offered: it has commits the default branch lacks and was
+/// committed to recently, or it is on view or has a review open. Local branches are all offered.
+fn offered_remote(divergence: Option<Divergence>, age_days: i64, keep: bool) -> bool {
+    keep || (divergence.is_none_or(|d| d.ahead > 0) && age_days <= RECENT_DAYS)
+}
+
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
-    /// The working tree and every branch the repository has.
+    /// The working tree, every local branch, and the remote branches worth reviewing.
     pub async fn changesets(&self) -> Result<ChangesetList> {
         let on_view = self.state.lock().await.source.clone();
         let git = &self.acquisition.git;
@@ -69,7 +78,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             divergence: None,
             last_commit: None,
         }];
-        let mut branches = Vec::new();
+        let now = (self.clock)();
+        let (mut local, mut remote) = (Vec::new(), Vec::new());
         for branch in git.branches().await? {
             let source = Source::Branch {
                 name: branch.name.clone(),
@@ -80,7 +90,13 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 None => None,
             };
             let last_commit = git.commit_info(&branch.commit).await?.time;
-            branches.push(ChangesetRow {
+            let age_days = now.saturating_sub(last_commit) / (24 * 60 * 60);
+            let keep = source == on_view || matches!(review, RowReview::Open { .. });
+            if branch.remote && !offered_remote(divergence, age_days, keep) {
+                continue;
+            }
+            let group = if branch.remote { &mut remote } else { &mut local };
+            group.push(ChangesetRow {
                 title: branch.name,
                 checked_out: branch.current,
                 source,
@@ -89,8 +105,11 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 review,
             });
         }
-        branches.sort_by_key(|b| std::cmp::Reverse(b.last_commit));
-        rows.extend(branches);
+        for group in [&mut local, &mut remote] {
+            group.sort_by_key(|b| std::cmp::Reverse(b.last_commit));
+        }
+        rows.extend(local);
+        rows.extend(remote);
         Ok(ChangesetList { on_view, rows })
     }
 

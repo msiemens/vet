@@ -21,6 +21,14 @@ pub(super) fn resolve_commit(repo: &gix::Repository, spec: &str) -> Result<Commi
         .ok_or_else(|| GitError(format!("unknown commit {spec}")))
 }
 
+/// The tip of the local branch `name`, else of the remote-tracking branch of that name
+/// (`origin/feature`).
+pub(super) fn branch_tip(repo: &gix::Repository, name: &str) -> Result<CommitId, GitError> {
+    resolve_commit(repo, &format!("refs/heads/{name}"))
+        .or_else(|_| resolve_commit(repo, &format!("refs/remotes/{name}")))
+        .map_err(|_| GitError(format!("unknown branch {name}")))
+}
+
 pub(super) fn merge_base(repo: &gix::Repository, reference: &str, tip: &CommitId) -> Result<CommitId, GitError> {
     let other =
         commit_of(repo, reference).ok_or_else(|| GitError(format!("unknown branch or revision {reference}")))?;
@@ -115,21 +123,26 @@ pub(super) fn commits_behind(
     Ok(count)
 }
 
-/// Where the remote had the local branch `name` at the last fetch: the remote-tracking ref the
-/// branch is configured to track, else the default remote's branch of the same name.
-fn upstream(repo: &gix::Repository, name: &gix::refs::FullNameRef) -> Option<CommitId> {
-    let tracking = repo
-        .branch_remote_tracking_ref_name(name, Direction::Fetch)
+/// The remote-tracking ref the local branch `name` follows: the one it is configured to track,
+/// else the default remote's branch of the same name.
+fn tracking_ref(repo: &gix::Repository, name: &gix::refs::FullNameRef) -> Option<String> {
+    repo.branch_remote_tracking_ref_name(name, Direction::Fetch)
         .and_then(Result::ok)
         .map(|tracking| tracking.to_string())
         .or_else(|| {
             let remote = repo.remote_default_name(Direction::Fetch)?;
             Some(format!("refs/remotes/{remote}/{}", name.shorten()))
-        })?;
-    let mut tracked = repo.try_find_reference(tracking.as_str()).ok()??;
+        })
+}
+
+/// Where the remote had the local branch `name` at the last fetch.
+fn upstream(repo: &gix::Repository, name: &gix::refs::FullNameRef) -> Option<CommitId> {
+    let mut tracked = repo.try_find_reference(tracking_ref(repo, name)?.as_str()).ok()??;
     Some(CommitId(tracked.peel_to_id().ok()?.to_string()))
 }
 
+/// The local branches, then the remote-tracking branches (`origin/feature`, without the remote's
+/// `HEAD`) that no local branch follows at the same commit, each group by name.
 pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitError> {
     let current = repo.head_name().map_err(err)?;
     let default = repo
@@ -141,19 +154,50 @@ pub(super) fn branches(repo: &gix::Repository) -> Result<Vec<BranchInfo>, GitErr
         });
 
     let mut branches = Vec::new();
+    // Remote-tracking refs a local branch follows, with the commit that branch is at.
+    let mut followed = Vec::new();
     for reference in repo.references().map_err(err)?.local_branches().map_err(err)? {
         let mut reference = reference.map_err(err)?;
         let name = reference.name().shorten().to_string();
-        let commit = reference.peel_to_id().map_err(err)?;
+        let commit = CommitId(reference.peel_to_id().map_err(err)?.to_string());
+        if let Some(tracking) = tracking_ref(repo, reference.name()) {
+            followed.push((tracking, commit.clone()));
+        }
         branches.push(BranchInfo {
             current: current.as_ref().is_some_and(|c| c.as_ref() == reference.name()),
             default: default.as_deref() == Some(name.as_str()),
             upstream: upstream(repo, reference.name()),
+            remote: false,
             name,
-            commit: CommitId(commit.to_string()),
+            commit,
         });
     }
     branches.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut remote = Vec::new();
+    for reference in repo.references().map_err(err)?.remote_branches().map_err(err)? {
+        let mut reference = reference.map_err(err)?;
+        let full = reference.name().as_bstr().to_string();
+        let name = reference.name().shorten().to_string();
+        if name.ends_with("/HEAD") || branches.iter().any(|b| b.name == name) {
+            continue;
+        }
+        let Ok(commit) = reference.peel_to_id() else { continue };
+        let commit = CommitId(commit.to_string());
+        if followed.iter().any(|(tracking, at)| *tracking == full && *at == commit) {
+            continue;
+        }
+        remote.push(BranchInfo {
+            current: false,
+            default: false,
+            upstream: None,
+            remote: true,
+            name,
+            commit,
+        });
+    }
+    remote.sort_by(|a, b| a.name.cmp(&b.name));
+    branches.extend(remote);
     Ok(branches)
 }
 

@@ -277,8 +277,8 @@ impl History for GixRepo {
     }
 
     async fn branch_tip(&self, name: &str) -> Result<CommitId, GitError> {
-        let spec = format!("refs/heads/{name}");
-        self.blocking(move |i| base::resolve_commit(&i.open()?, &spec)).await
+        let name = name.to_owned();
+        self.blocking(move |i| base::branch_tip(&i.open()?, &name)).await
     }
 
     async fn base_candidates(&self, max_commits: usize) -> Result<BaseCandidates, GitError> {
