@@ -51,6 +51,8 @@ pub enum Compiler {
 
 pub struct Language {
     pub id: &'static str,
+    /// The language's name as a person knows it.
+    pub title: &'static str,
     /// The server's name as a person knows it.
     pub display_name: &'static str,
     /// The server's executable, on `PATH` and in the install directory.
@@ -76,6 +78,7 @@ pub struct Language {
 /// Build scripts and proc macros run during analysis.
 pub const RUST: Language = Language {
     id: "rust",
+    title: "Rust",
     display_name: "rust-analyzer",
     binary: "rust-analyzer",
     args: &[],
@@ -92,6 +95,7 @@ pub const RUST: Language = Language {
 
 pub const TYPESCRIPT: Language = Language {
     id: "typescript",
+    title: "TypeScript / JavaScript",
     display_name: "typescript-language-server",
     binary: "typescript-language-server",
     args: &["--stdio"],
@@ -122,6 +126,7 @@ pub const TYPESCRIPT: Language = Language {
 
 pub const PYTHON: Language = Language {
     id: "python",
+    title: "Python",
     display_name: "Pyright",
     binary: "pyright-langserver",
     args: &["--stdio"],
@@ -142,6 +147,7 @@ pub const PYTHON: Language = Language {
 /// are found by [`crate::lsp::dotnet`], so there are no root markers.
 pub const CSHARP: Language = Language {
     id: "csharp",
+    title: "C#",
     display_name: "roslyn-language-server",
     binary: "roslyn-language-server",
     args: &["--stdio", "--logLevel", "Warning"],

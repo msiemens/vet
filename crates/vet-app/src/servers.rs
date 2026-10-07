@@ -12,6 +12,8 @@ use crate::ports::{ServerCommand, ServerLocator, ServerResolver, ServerSettings,
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ServerStatus {
     pub language: BackendId,
+    /// The language's name as a person knows it, e.g. "C#".
+    pub title: String,
     /// The server's name as a person knows it, e.g. "Pyright".
     pub server: String,
     pub state: ServerState,
@@ -20,6 +22,13 @@ pub struct ServerStatus {
     pub pinned: Option<String>,
     /// Why installing is not possible right now.
     pub install_blocker: Option<String>,
+}
+
+impl ServerStatus {
+    /// Whether `install` can run now: there is a server to install and nothing in the way.
+    pub fn can_install(&self) -> bool {
+        self.pinned.is_some() && self.install_blocker.is_none()
+    }
 }
 
 #[derive(Debug)]
@@ -79,6 +88,7 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
             let state = self.resolver.resolve(language, project, custom_path.as_deref()).await;
             all.push(ServerStatus {
                 language: language.clone(),
+                title: self.resolver.title(language),
                 server: self.resolver.display_name(language),
                 state,
                 custom_path,
@@ -183,6 +193,10 @@ mod tests {
             }
         }
 
+        fn title(&self, language: &BackendId) -> String {
+            language.0.to_uppercase()
+        }
+
         fn display_name(&self, language: &BackendId) -> String {
             format!("{}-server", language.0)
         }
@@ -250,6 +264,15 @@ mod tests {
         assert_eq!(pinned, [None, Some("1.0.0".into()), None]);
         assert_eq!(status[2].install_blocker.as_deref(), Some("npm is missing"));
         assert_eq!(status[0].server, "rust-server");
+        assert_eq!(status[0].title, "RUST");
+    }
+
+    #[tokio::test]
+    async fn only_a_pinned_server_without_a_blocker_can_be_installed() {
+        let status = servers().status(Path::new("/p")).await.unwrap();
+        // Rust has no pin; Python has one but npm is missing; TypeScript has one and nothing in the way.
+        let can_install: Vec<_> = status.iter().map(ServerStatus::can_install).collect();
+        assert_eq!(can_install, [false, true, false]);
     }
 
     #[tokio::test]

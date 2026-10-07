@@ -221,7 +221,7 @@ async fn rust_semantics_through_the_protocol() {
     assert_eq!(change_of("keep"), SymbolChange::Modified);
     assert_eq!(change_of("fresh"), SymbolChange::Added);
     assert_eq!(change_of("main"), SymbolChange::Modified);
-    assert!(changed.gaps.is_empty() && changed.unsupported.is_empty(), "{changed:?}");
+    assert!(changed.gaps.is_empty(), "{changed:?}");
     assert_eq!(changed.inputs.analysis, "changed symbols");
     assert!(
         changed
@@ -409,6 +409,7 @@ async fn a_language_without_a_server_degrades_and_never_fails_the_session() {
     let unavailable = unavailable.expect("degraded");
     assert_eq!(text, None);
     assert_eq!(unavailable.kind, UnavailableKind::ServerMissing);
+    assert_eq!(unavailable.label, "No language server");
     assert_eq!(unavailable.language.as_deref(), Some("python"));
     assert!(
         unavailable.message.contains("/no/such/pyright-langserver"),
@@ -421,8 +422,8 @@ async fn a_language_without_a_server_degrades_and_never_fails_the_session() {
     };
     let unavailable = unavailable.unwrap();
     assert_eq!(
-        (unavailable.kind, unavailable.language),
-        (UnavailableKind::Unsupported, None)
+        (unavailable.kind, unavailable.label.as_str(), unavailable.language),
+        (UnavailableKind::Unsupported, "No language support", None)
     );
 
     // Derived results report the gap instead of failing.

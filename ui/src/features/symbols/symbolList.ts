@@ -48,9 +48,6 @@ export function fileEntries(changed: ChangedSymbols): FileSymbols[] {
   const known = groupByFile(changed.symbols);
   const seen = new Set(known.map((g) => g.path));
   const unknown: FileSymbols[] = [];
-  for (const path of changed.unsupported) {
-    if (!seen.has(path)) unknown.push({ path, symbols: [], note: "Language unsupported" });
-  }
   for (const gap of changed.gaps) {
     if (!seen.has(gap.path)) unknown.push({ path: gap.path, symbols: [], note: gap.reason });
   }

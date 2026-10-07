@@ -32,8 +32,11 @@ void test("files without symbols are listed with the reason", () => {
   const entries = fileEntries({
     revision: 1,
     symbols: [sym("a.rs", ["x"], 1, 2, "added")],
-    unsupported: ["notes.txt", "a.rs"],
-    gaps: [{ path: "b.rs", reason: "parse failed" }],
+    gaps: [
+      { path: "notes.txt", reason: "No language support" },
+      { path: "a.rs", reason: "parse failed" },
+      { path: "b.rs", reason: "parse failed" },
+    ],
     inputs: { analysis: "changed_symbols", bounds: null, primitives: [], hunks: [], config: [] },
   });
   assert.deepEqual(
@@ -41,7 +44,7 @@ void test("files without symbols are listed with the reason", () => {
     [
       ["a.rs", 1, undefined],
       ["b.rs", 0, "parse failed"],
-      ["notes.txt", 0, "Language unsupported"],
+      ["notes.txt", 0, "No language support"],
     ],
   );
 });

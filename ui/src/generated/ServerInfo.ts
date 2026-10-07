@@ -7,6 +7,10 @@ export type ServerInfo = {
  */
 language: string, 
 /**
+ * The language's name as a person knows it, e.g. "C#".
+ */
+title: string, 
+/**
  * The server's name as a person knows it, e.g. "Pyright".
  */
 server: string, state: ServerState, 
@@ -21,4 +25,8 @@ pinnedVersion: string | null,
 /**
  * Why `InstallServer` cannot run now.
  */
-installBlocker: string | null, };
+installBlocker: string | null, 
+/**
+ * `InstallServer` can run now: there is a version to install and no blocker.
+ */
+canInstall: boolean, };

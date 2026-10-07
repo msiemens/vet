@@ -92,6 +92,7 @@ impl Open {
             revision,
             path: path.to_owned(),
             diagnostics: map::diagnostics(&found),
+            count: vet_app::semantics::countable(&found),
             unavailable,
         })
     }

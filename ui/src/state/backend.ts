@@ -220,13 +220,19 @@ export class Backend {
     return { locations: r.locations, unavailable: r.unavailable ?? undefined };
   }
 
-  /** The diagnostics of a file of the target side; the language server may take seconds on a cold start. */
-  async diagnostics(revision: number, path: string): Promise<{ diagnostics: Diagnostic[]; unavailable?: Unavailable }> {
+  /**
+   * The diagnostics of a file of the target side, and how many of them to tell the viewer about;
+   * the language server may take seconds on a cold start.
+   */
+  async diagnostics(
+    revision: number,
+    path: string,
+  ): Promise<{ diagnostics: Diagnostic[]; count: number; unavailable?: Unavailable }> {
     const r = expect(
       await this.conn.request({ type: "diagnostics", session: this.sid, revision, path }),
       "diagnostics",
     );
-    return { diagnostics: r.diagnostics, unavailable: r.unavailable ?? undefined };
+    return { diagnostics: r.diagnostics, count: r.count, unavailable: r.unavailable ?? undefined };
   }
 
   /** Each language's server as it resolves for the open repository. */

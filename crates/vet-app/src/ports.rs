@@ -441,6 +441,8 @@ pub trait ServerResolver {
         project: &Path,
         custom: Option<&str>,
     ) -> impl Future<Output = ServerState> + Send;
+    /// The language's name as a person knows it, e.g. "C#".
+    fn title(&self, language: &BackendId) -> String;
     /// The server's name as a person knows it, e.g. "Pyright".
     fn display_name(&self, language: &BackendId) -> String;
     /// The version `install` puts in place; `None` if Vet cannot install the language's server.

@@ -5,6 +5,7 @@ import type { FileGap } from "./FileGap";
 
 export type ChangedSymbols = { revision: number, symbols: Array<ChangedSymbol>, 
 /**
- * Changed files no language is configured for.
+ * Changed files whose symbols are unknown, with why: no language is configured for
+ * them (the `label` of `UnavailableKind::Unsupported`), or their analysis failed.
  */
-unsupported: Array<string>, gaps: Array<FileGap>, inputs: DerivedInputs, };
+gaps: Array<FileGap>, inputs: DerivedInputs, };

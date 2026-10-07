@@ -20,7 +20,7 @@ class SemanticStore {
   /** Bumped when the cache is dropped, so an answer to an earlier question is not stored. */
   private epoch = 0;
   private pending = new Map<string, Promise<Diagnostic[]>>();
-  /** Diagnostics (hints excluded) per file asked about at `revision`. */
+  /** The number of diagnostics to tell the viewer about, per file asked about at `revision`. */
   private counts = new SvelteMap<string, number>();
   /** The files the backend could not answer for, and why. */
   private missing = new SvelteMap<string, Unavailable>();
@@ -112,7 +112,7 @@ class SemanticStore {
       if (r.unavailable) this.missing.set(path, r.unavailable);
       else {
         this.missing.delete(path);
-        this.counts.set(path, r.diagnostics.filter((d) => d.severity !== "hint").length);
+        this.counts.set(path, r.count);
       }
       return r.diagnostics;
     } catch {

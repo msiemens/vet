@@ -120,7 +120,7 @@ async fn python_semantics_through_the_protocol() {
     else {
         panic!("not changed symbols");
     };
-    assert!(changed.gaps.is_empty() && changed.unsupported.is_empty(), "{changed:?}");
+    assert!(changed.gaps.is_empty(), "{changed:?}");
     let change_of = |symbol: &str| {
         changed
             .symbols

@@ -2,7 +2,6 @@
 // a file has no usable language server instead of silently showing nothing.
 
 import type { Unavailable } from "../generated/Unavailable";
-import type { UnavailableKind } from "../generated/UnavailableKind";
 
 export interface SemanticSummary {
   /** Diagnostics of the files asked about so far; none before the first answer. */
@@ -11,15 +10,6 @@ export interface SemanticSummary {
   label?: string;
   title?: string;
 }
-
-const LABELS: Record<UnavailableKind, string> = {
-  unsupported: "No language support",
-  serverMissing: "No language server",
-  serverFailed: "Language server failed",
-  analysisLimited: "Analysis limited",
-  snapshotUnavailable: "Base not available",
-  queryFailed: "Language server query failed",
-};
 
 /**
  * `path` is the focused file tab's file; without it (the Changes tab) the summary covers every
@@ -36,5 +26,5 @@ export function summarize(
   const first = missing.at(0);
   if (!first) return { diagnostics };
   const files = missing.length > 1 ? ` · ${missing.length} files` : "";
-  return { diagnostics, label: LABELS[first.kind] + files, title: first.message };
+  return { diagnostics, label: first.label + files, title: first.message };
 }

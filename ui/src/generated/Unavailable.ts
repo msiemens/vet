@@ -7,6 +7,10 @@ import type { UnavailableKind } from "./UnavailableKind";
  */
 export type Unavailable = { kind: UnavailableKind, 
 /**
+ * A few words for the kind, to show where there is room for little, e.g. "No language server".
+ */
+label: string, 
+/**
  * Fit to show.
  */
 message: string, 

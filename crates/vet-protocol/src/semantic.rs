@@ -96,6 +96,8 @@ pub struct Diagnostic {
 #[ts(export)]
 pub struct Unavailable {
     pub kind: UnavailableKind,
+    /// A few words for the kind, to show where there is room for little, e.g. "No language server".
+    pub label: String,
     /// Fit to show.
     pub message: String,
     /// The language whose server is the problem, as `ListServers` names it;
@@ -178,8 +180,8 @@ pub struct FileGap {
 pub struct ChangedSymbols {
     pub revision: u32,
     pub symbols: Vec<ChangedSymbol>,
-    /// Changed files no language is configured for.
-    pub unsupported: Vec<String>,
+    /// Changed files whose symbols are unknown, with why: no language is configured for
+    /// them (the `label` of `UnavailableKind::Unsupported`), or their analysis failed.
     pub gaps: Vec<FileGap>,
     pub inputs: DerivedInputs,
 }

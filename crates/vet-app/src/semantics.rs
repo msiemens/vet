@@ -18,8 +18,8 @@ use vet_semantic::derived::{
 use vet_semantic::join::bounded;
 use vet_semantic::pool::{Pool, Target};
 use vet_semantic::ports::{
-    At, Backend, BackendId, Diagnostic, Location, Materializer, RestoreFailure, ServerLauncher, Sym, SymbolInfo,
-    prefer_openable,
+    At, Backend, BackendId, Diagnostic, Location, Materializer, RestoreFailure, ServerLauncher, Severity, Sym,
+    SymbolInfo, prefer_openable,
 };
 use vet_semantic::query::{Pair, Primitives, Semantic, SemanticError, Served};
 use vet_semantic::signature::{Signature, signature};
@@ -48,6 +48,11 @@ pub struct Answer<T> {
 }
 
 type Fallible<T> = Result<T, SessionError>;
+
+/// How many of a file's diagnostics count towards what a viewer is told: hints are not counted.
+pub fn countable(diagnostics: &[Diagnostic]) -> u32 {
+    diagnostics.iter().filter(|d| d.severity != Severity::Hint).count() as u32
+}
 
 type ChangesCell = OnceCell<Arc<Derived<Changes>>>;
 
@@ -391,6 +396,30 @@ mod tests {
             target: SnapshotId(Hash([2; 32])),
             head: CommitId("head".into()),
         }
+    }
+
+    #[test]
+    fn hints_are_not_counted_among_a_files_diagnostics() {
+        let at = |severity| Diagnostic {
+            span: Span {
+                start: Pos { line: 0, col: 0 },
+                end: Pos { line: 0, col: 1 },
+            },
+            severity,
+            message: String::new(),
+            source: None,
+            code: None,
+        };
+        let all = [
+            Severity::Error,
+            Severity::Warning,
+            Severity::Info,
+            Severity::Hint,
+            Severity::Hint,
+        ]
+        .map(at);
+        assert_eq!(countable(&all), 3);
+        assert_eq!(countable(&[]), 0);
     }
 
     #[test]

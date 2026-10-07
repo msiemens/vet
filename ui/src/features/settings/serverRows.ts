@@ -28,13 +28,6 @@ export interface ServerRow {
   installBlocker?: string;
 }
 
-const TITLES: Record<string, string> = {
-  rust: "Rust",
-  typescript: "TypeScript / JavaScript",
-  python: "Python",
-  csharp: "C#",
-};
-
 const ORIGINS: Record<ServerOrigin, string> = {
   custom: "Custom path",
   project: "Project toolchain",
@@ -61,7 +54,7 @@ export function serverRow(info: ServerInfo, install?: InstallProgress): ServerRo
   const found = state.type === "found" ? state : undefined;
   return {
     language: info.language,
-    title: TITLES[info.language] ?? info.language,
+    title: info.title,
     server: info.server,
     status,
     statusLabel: STATUS_LABELS[status],
@@ -72,7 +65,7 @@ export function serverRow(info: ServerInfo, install?: InstallProgress): ServerRo
     problem: install?.error ?? (state.type === "missing" ? state.reason : undefined),
     customPath: info.customPath ?? undefined,
     pinnedVersion: info.pinnedVersion ?? undefined,
-    canInstall: info.pinnedVersion != null && !info.installBlocker && !install?.running,
+    canInstall: info.canInstall && !install?.running,
     installBlocker: info.installBlocker ?? undefined,
   };
 }

@@ -62,6 +62,8 @@ pub enum Response {
         revision: u32,
         path: String,
         diagnostics: Vec<Diagnostic>,
+        /// How many of `diagnostics` to tell the viewer about: hints are not counted.
+        count: u32,
         unavailable: Option<Unavailable>,
     },
     ChangedSymbols(ChangedSymbols),

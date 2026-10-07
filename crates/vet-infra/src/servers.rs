@@ -234,6 +234,10 @@ impl ServerResolver for ToolResolver {
         })
     }
 
+    fn title(&self, language: &BackendId) -> String {
+        Self::spec(language).map_or_else(|| language.0.clone(), |s| s.title.to_owned())
+    }
+
     fn display_name(&self, language: &BackendId) -> String {
         Self::spec(language).map_or_else(|| language.0.clone(), |s| s.display_name.to_owned())
     }

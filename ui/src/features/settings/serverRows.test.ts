@@ -5,20 +5,24 @@ import { serverRow } from "./serverRows.ts";
 
 const found = (origin: "custom" | "project" | "installed" | "path"): ServerInfo => ({
   language: "rust",
+  title: "Rust",
   server: "rust-analyzer",
   state: { type: "found", path: "/bin/ra", origin, version: "1.2", notes: ["note"] },
   customPath: origin === "custom" ? "/bin/ra" : null,
   pinnedVersion: "2026-01-01",
   installBlocker: null,
+  canInstall: true,
 });
 
 const missing: ServerInfo = {
   language: "python",
+  title: "Python",
   server: "Pyright",
   state: { type: "missing", reason: "pyright-langserver is not on PATH" },
   customPath: null,
   pinnedVersion: "1.1.400",
   installBlocker: null,
+  canInstall: true,
 };
 
 void test("a found server shows where it came from", () => {
@@ -36,7 +40,7 @@ void test("a custom origin is the custom status and keeps the path to reset", ()
   assert.equal(row.customPath, "/bin/ra");
 });
 
-void test("a missing server carries the reason and can be installed when pinned", () => {
+void test("a missing server carries the reason and the backend's title and can be installed when the backend says so", () => {
   const row = serverRow(missing);
   assert.equal(row.status, "missing");
   assert.equal(row.problem, "pyright-langserver is not on PATH");
@@ -44,10 +48,10 @@ void test("a missing server carries the reason and can be installed when pinned"
   assert.ok(row.canInstall);
 });
 
-void test("an install blocker or a missing pin turns Install off", () => {
-  assert.equal(serverRow({ ...missing, installBlocker: "npm is missing" }).canInstall, false);
-  assert.equal(serverRow({ ...missing, installBlocker: "npm is missing" }).installBlocker, "npm is missing");
-  assert.equal(serverRow({ ...missing, pinnedVersion: null }).canInstall, false);
+void test("an install the backend cannot run stays off", () => {
+  const blocked = serverRow({ ...missing, installBlocker: "npm is missing", canInstall: false });
+  assert.equal(blocked.canInstall, false);
+  assert.equal(blocked.installBlocker, "npm is missing");
 });
 
 void test("install progress overrides the resolved state", () => {
@@ -57,10 +61,4 @@ void test("install progress overrides the resolved state", () => {
   assert.equal(failed.status, "failed");
   assert.equal(failed.problem, "exit 1");
   assert.ok(failed.canInstall);
-});
-
-void test("an unknown language falls back to its id", () => {
-  const row = serverRow({ ...missing, language: "zig" });
-  assert.equal(row.title, "zig");
-  assert.equal(row.server, "Pyright");
 });

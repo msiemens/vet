@@ -3,7 +3,12 @@ import { test } from "node:test";
 import type { Unavailable } from "../generated/Unavailable.ts";
 import { summarize } from "./semanticSummary.ts";
 
-const missing = (kind: Unavailable["kind"]): Unavailable => ({ kind, message: `why ${kind}`, language: null });
+const missing = (kind: Unavailable["kind"]): Unavailable => ({
+  kind,
+  label: `label of ${kind}`,
+  message: `why ${kind}`,
+  language: null,
+});
 
 void test("nothing is known before the first answer", () => {
   assert.deepEqual(summarize(new Map(), new Map()), { diagnostics: undefined });
@@ -28,11 +33,11 @@ void test("a file tab counts its own file only", () => {
   assert.equal(summarize(counts, new Map(), "c.rs").diagnostics, undefined);
 });
 
-void test("a missing server is named, with the backend's message as the title", () => {
+void test("a missing server is named by the backend's label, with its message as the title", () => {
   const unavailable = new Map([["a.txt", missing("unsupported")]]);
   assert.deepEqual(summarize(new Map(), unavailable, "a.txt"), {
     diagnostics: undefined,
-    label: "No language support",
+    label: "label of unsupported",
     title: "why unsupported",
   });
   assert.equal(summarize(new Map(), unavailable, "b.rs").label, undefined);
@@ -43,5 +48,5 @@ void test("several files without a server are counted", () => {
     ["a.txt", missing("unsupported")],
     ["b.rs", missing("serverMissing")],
   ]);
-  assert.equal(summarize(new Map(), unavailable).label, "No language support · 2 files");
+  assert.equal(summarize(new Map(), unavailable).label, "label of unsupported · 2 files");
 });

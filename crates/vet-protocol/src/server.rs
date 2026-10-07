@@ -41,6 +41,8 @@ pub enum ServerState {
 pub struct ServerInfo {
     /// `rust`, `typescript`, `python` or `csharp`.
     pub language: String,
+    /// The language's name as a person knows it, e.g. "C#".
+    pub title: String,
     /// The server's name as a person knows it, e.g. "Pyright".
     pub server: String,
     pub state: ServerState,
@@ -50,6 +52,8 @@ pub struct ServerInfo {
     pub pinned_version: Option<String>,
     /// Why `InstallServer` cannot run now.
     pub install_blocker: Option<String>,
+    /// `InstallServer` can run now: there is a version to install and no blocker.
+    pub can_install: bool,
 }
 
 /// A dependency restore step that failed (§7.2): what that project's analysis
