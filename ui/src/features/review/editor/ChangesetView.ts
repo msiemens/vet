@@ -3,7 +3,7 @@
 // scrolling does not reflow, and corrected once the editor is mounted. An editor is
 // mounted only for sections near the viewport.
 
-import { EditorView, closeHoverTooltips, showTooltip } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import type { FileChange } from "../../../generated/FileChange";
 import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
@@ -24,11 +24,7 @@ import { SectionHeights, readMetrics } from "./sectionHeights";
 import { COLLAPSE } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
 import { type ThreadListeners, ThreadLayer, threadState } from "./threadLayer";
-
-/** Time a scroll frame may spend creating editors before the rest wait for the next frame. */
-const MOUNT_BUDGET_MS = 6;
-/** Scrolling counts as stopped after this long without a scroll event. */
-const SETTLE_MS = 120;
+import { Windowing } from "./windowing";
 
 /** The editor hooks as the owner provides them: the semantic requests still name the view's revision. */
 export type ViewHooks = Omit<Hooks, keyof BarActions | keyof SemanticHooks> & SemanticSource;
@@ -66,26 +62,10 @@ export class ChangesetView {
   /** Hunk navigation stops at every change card and every hunk. */
   private stops: Stops;
   readonly totalHunks: number;
-  private mounted = new Set<number>();
-  /** Sections whose cards show their image previews. */
-  private previewing = new Set<number>();
   private heights: SectionHeights;
+  private windowing: Windowing;
   current = -1;
-  /** While the viewer scrolls only what is in view mounts; the surroundings follow once the scrolling stops. */
-  private onScroll = (e: Event) => {
-    // CodeMirror measures each of its editors, synchronously, on a scroll of any ancestor. This
-    // listener is registered before any editor mounts, so it runs first and keeps them from it;
-    // `measureVisible` asks the visible ones for one measure in this frame's batch instead.
-    e.stopImmediatePropagation();
-    this.sync(false);
-    this.measureVisible();
-    clearTimeout(this.settle);
-    this.settle = setTimeout(() => this.sync(), SETTLE_MS);
-  };
-  private settle?: ReturnType<typeof setTimeout>;
   private destroyed = false;
-  /** A frame request that continues mounting once a frame's budget is spent. */
-  private later?: number;
   private threads: ThreadLayer;
 
   constructor(
@@ -116,6 +96,10 @@ export class ChangesetView {
       collapse,
     );
     this.heights = new SectionHeights(root, this.sections, metrics, this.threads, mode, collapse);
+    this.windowing = new Windowing(root, this.sections, this.heights, {
+      mount: (fi) => void this.mount(fi),
+      unmount: (s, scrollTop) => this.unmount(s, scrollTop),
+    });
     let hunks = 0;
     for (const file of files) {
       hunks += file.hunks.length;
@@ -169,21 +153,16 @@ export class ChangesetView {
     this.root.replaceChildren(...(this.threads.lead ? [this.threads.lead] : []), ...this.sections.map((s) => s.el));
     for (const s of this.sections) renderCount(s, s.completion);
     this.heights.layout();
-    this.root.addEventListener("scroll", this.onScroll, { passive: true });
+    this.windowing.start();
     this.root.addEventListener("click", this.heights.onExpand, true);
   }
 
   destroy() {
     this.destroyed = true;
-    if (this.later !== undefined) cancelAnimationFrame(this.later);
-    this.later = undefined;
-    clearTimeout(this.settle);
-    this.root.removeEventListener("scroll", this.onScroll);
+    this.windowing.destroy();
     this.root.removeEventListener("click", this.heights.onExpand, true);
-    for (const fi of this.mounted) this.sections[fi].handle?.destroy();
-    this.mounted.clear();
-    for (const fi of this.previewing) this.sections[fi].cards.forEach((c) => c.setPreview(false));
-    this.previewing.clear();
+    for (const fi of this.windowing.mounted) this.sections[fi].handle?.destroy();
+    this.windowing.mounted.clear();
     this.threads.destroy();
     this.root.replaceChildren();
   }
@@ -202,8 +181,8 @@ export class ChangesetView {
 
   setMode(mode: Mode) {
     const fi = this.heights.indexAt(this.root.scrollTop);
-    for (const i of this.mounted) this.unmount(this.sections[i]);
-    this.mounted.clear();
+    for (const i of this.windowing.mounted) this.unmount(this.sections[i]);
+    this.windowing.mounted.clear();
     this.heights.mode = mode;
     this.heights.layout();
     if (this.sections.length) this.root.scrollTop = this.sections[fi].top;
@@ -220,7 +199,7 @@ export class ChangesetView {
     s.loading ??= this.source.contents(s.file).then((loaded) => {
       s.loaded = loaded;
       // Mounting waits for the next frame, so a large reply's parse and an editor's creation never share one.
-      this.syncNextFrame(true);
+      this.windowing.syncNextFrame(true);
       return loaded;
     });
     return s.loading;
@@ -256,7 +235,7 @@ export class ChangesetView {
       [this.threads.extension(s)],
     );
     this.threads.mounted(s);
-    this.mounted.add(fi);
+    this.windowing.mounted.add(fi);
     const first = this.stops.start(fi) + s.cards.length;
     if (this.current >= first && this.current < first + s.file.hunks.length)
       s.handle.dispatchAll(setCurrent.of(this.current - first));
@@ -276,85 +255,12 @@ export class ChangesetView {
 
   /** The servers changed: asks again for the diagnostics of every mounted editor. */
   refreshDiagnostics() {
-    for (const fi of this.mounted) this.showDiagnostics(this.sections[fi]);
+    for (const fi of this.windowing.mounted) this.showDiagnostics(this.sections[fi]);
   }
 
-  /**
-   * Unmounts far sections and mounts loaded near ones, the ones in view first. Creating an
-   * editor is the expensive step, so a scroll frame mounts only as many as fit a time
-   * budget; the rest follow on later frames.
-   */
+  /** Unmounts far sections and mounts loaded near ones, the ones in view first. */
   sync(wide = true) {
-    if (this.destroyed) return; // a load that finished after the view was replaced
-    let top = this.root.scrollTop;
-    const h = this.root.clientHeight;
-    const near = wide
-      ? [this.heights.indexAt(Math.max(0, top - h)), this.heights.indexAt(top + 2 * h)]
-      : [this.heights.indexAt(top), this.heights.indexAt(top + h)];
-    const far = [this.heights.indexAt(Math.max(0, top - 2 * h)), this.heights.indexAt(top + 3 * h)];
-    for (const fi of [...this.mounted]) {
-      if (fi < far[0] || fi > far[1]) {
-        top += this.unmount(this.sections[fi], top);
-        this.mounted.delete(fi);
-      }
-    }
-    for (let fi = near[0]; fi <= near[1]; fi++) this.setPreviews(fi, true);
-    for (const fi of [...this.previewing]) if (fi < far[0] || fi > far[1]) this.setPreviews(fi, false);
-    const middle = top + h / 2;
-    const distance = (fi: number) => {
-      const s = this.sections[fi];
-      return Math.abs(s.top + s.height / 2 - middle);
-    };
-    const pending: number[] = [];
-    for (let fi = near[0]; fi <= near[1]; fi++) {
-      const { handle, loaded, file } = this.sections[fi];
-      // A file without text lines has no editor to show.
-      if (!handle && loaded && (file.hunks.length || file.baseLines || file.targetLines)) pending.push(fi);
-    }
-    pending.sort((a, b) => distance(a) - distance(b));
-    const started = performance.now();
-    for (const [i, fi] of pending.entries()) {
-      if (i > 0 && performance.now() - started > MOUNT_BUDGET_MS) {
-        this.syncNextFrame(wide);
-        return;
-      }
-      this.mount(fi);
-    }
-  }
-
-  private syncNextFrame(wide: boolean) {
-    this.later ??= requestAnimationFrame(() => {
-      this.later = undefined;
-      this.sync(wide);
-    });
-  }
-
-  /**
-   * Requests a measure of the editors in view (CodeMirror runs them in the next frame, once per
-   * editor however many scroll events came before), which keeps a tall editor's visible lines rendered while the
-   * root scrolls. A hover tooltip is closed rather than followed: the scroll moved its anchor.
-   */
-  private measureVisible() {
-    const top = this.root.scrollTop;
-    const bottom = top + this.root.clientHeight;
-    for (const fi of this.mounted) {
-      const { top: start, height, handle } = this.sections[fi];
-      if (!handle || start >= bottom || start + height <= top) continue;
-      for (const view of handle.views) {
-        if (view.state.facet(showTooltip).some(Boolean)) view.dispatch({ effects: closeHoverTooltips });
-        view.requestMeasure();
-      }
-    }
-  }
-
-  /** Image previews are fetched for sections near the viewport and dropped when far away. */
-  private setPreviews(fi: number, on: boolean) {
-    if (on === this.previewing.has(fi)) return;
-    const previews = this.sections[fi].cards.filter((c) => c.hasPreview);
-    if (!previews.length) return;
-    if (on) this.previewing.add(fi);
-    else this.previewing.delete(fi);
-    for (const card of previews) card.setPreview(on);
+    this.windowing.sync(wide);
   }
 
   /** Scrolls the file's header to the top and makes its first card or hunk the current stop. */
@@ -478,7 +384,7 @@ export class ChangesetView {
 
   /** The file and 0-based target line of the focused editor's caret. */
   caret(): { path: string; line: number } | undefined {
-    for (const fi of this.mounted) {
+    for (const fi of this.windowing.mounted) {
       const { view } = this.sections[fi].handle ?? {};
       if (view?.hasFocus)
         return {
@@ -553,7 +459,7 @@ export class ChangesetView {
   /** Mounted files whose merge chunk count differs from the backend's hunk count (a diagnostic). */
   chunkMismatches(): number {
     let n = 0;
-    for (const fi of this.mounted) {
+    for (const fi of this.windowing.mounted) {
       const s = this.sections[fi];
       if (s.handle && s.handle.chunkCount() !== s.file.hunks.length) n++;
     }
@@ -563,7 +469,7 @@ export class ChangesetView {
   /** Largest difference between a mounted section's real height and its estimate; expanded regions are accounted for. */
   maxDrift(): number {
     let drift = 0;
-    for (const fi of this.mounted) {
+    for (const fi of this.windowing.mounted) {
       const s = this.sections[fi];
       drift = Math.max(
         drift,
@@ -588,7 +494,7 @@ export class ChangesetView {
    * else on the current hunk. Answers whether there was somewhere to comment.
    */
   commentHere(): boolean {
-    for (const fi of this.mounted) {
+    for (const fi of this.windowing.mounted) {
       const handle = this.sections[fi].handle;
       const view = handle?.views.find((v) => v.hasFocus);
       if (!handle || !view) continue;
