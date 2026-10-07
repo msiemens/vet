@@ -242,6 +242,47 @@ mod tests {
         );
     }
 
+    /// The editor view's chunks of these changes are pinned by `baseTail.test.ts` in the UI, which
+    /// takes the numbers from here.
+    #[test]
+    fn files_with_and_without_a_final_newline() {
+        let text = "alpha\nbravo\ncharlie";
+        // A whole file added or deleted: its lines and nothing else, whether or not it ends in a line break.
+        for (text, len) in [(text, 19), ("alpha\nbravo\ncharlie\n", 20)] {
+            assert_eq!(
+                text_changes("", text, &[hunk((0, 0), (0, 3))]),
+                [change((0, 0), (0, len))]
+            );
+            assert_eq!(
+                text_changes(text, "", &[hunk((0, 3), (0, 0))]),
+                [change((0, len), (0, 0))]
+            );
+        }
+        // Lines appended to a text whose last line has its break: the change ends inside the line
+        // before it on the base side, so that the editor's chunk has no base lines.
+        assert_eq!(
+            text_changes("alpha\n", text, &[hunk((1, 1), (1, 3))]),
+            [change((6, 5), (6, 19))]
+        );
+        assert_eq!(
+            text_changes(text, "alpha\n", &[hunk((1, 3), (1, 1))]),
+            [change((6, 19), (6, 5))]
+        );
+        // The last line gains or loses its break: both sides have the line, the change is where it ends.
+        let (without, with) = ("alpha\nbravo", "alpha\nbravo\n");
+        assert_eq!(
+            text_changes(without, with, &[hunk((1, 2), (1, 2))]),
+            [change((11, 11), (11, 11))]
+        );
+        assert_eq!(
+            text_changes(with, without, &[hunk((1, 2), (1, 2))]),
+            [change((11, 11), (11, 11))]
+        );
+        for (a, b) in [("bravo", "bravo\n"), ("bravo\n", "bravo")] {
+            assert_eq!(text_changes(a, b, &[hunk((0, 1), (0, 1))]), [change((5, 5), (5, 5))]);
+        }
+    }
+
     #[test]
     fn crlf_counts_as_one_unit() {
         let (a, b) = ("a\r\nold\r\nz\r\n", "a\r\nnew\r\nz\r\n");
