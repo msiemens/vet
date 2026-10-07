@@ -53,7 +53,7 @@
   {:else}
     {#each entries as entry (entry.path)}
       <div class="file" class:current={entry.path === symbols.file} data-path={entry.path} title={entry.path}>
-        <span class="path">{entry.path}</span>
+        <span class="path"><bdi>{entry.path}</bdi></span>
         {#if entry.note}<span class="fnote">{entry.note}</span>{/if}
       </div>
       {#each entry.symbols as s (keyOf(s.symbol.id) + s.change)}
@@ -104,6 +104,9 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+    /* Cut on the left so the file name stays; the <bdi> keeps the path itself left to right. */
+    direction: rtl;
+    text-align: left;
   }
   .fnote {
     flex: none;
