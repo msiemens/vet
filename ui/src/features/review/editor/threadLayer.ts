@@ -9,7 +9,7 @@ import type { CommentAt } from "../../../generated/CommentAt";
 import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
-import { lineEnd } from "./positions";
+import { lineEnd, lineOf, lineStart, selectedLines } from "./positions";
 import type { Section, ThreadState } from "./section";
 import type { ThreadSpace } from "./sectionLayout";
 import { type ThreadActions, buildCard } from "./threadCard";
@@ -278,9 +278,45 @@ export class ThreadLayer {
     this.commentOn(s, { type: "hunk", index });
   }
 
+  /** A stop of the file's hunk navigation: a change card comments on the file, a hunk on itself. */
+  commentOnStop(s: Section, index: number) {
+    if (index < s.cards.length) this.commentOnFile(s);
+    else this.commentOnHunk(s, index - s.cards.length);
+  }
+
+  /**
+   * Opens the form for a comment on the selection of the focused editor among the `sections`' (its
+   * caret line without one). Answers whether an editor had the focus.
+   */
+  commentOnSelection(sections: Iterable<Section>): boolean {
+    for (const s of sections) {
+      const view = s.handle?.views.find((v) => v.hasFocus);
+      if (!s.handle || !view) continue;
+      const { main } = view.state.selection;
+      const { doc } = view.state;
+      const [first, last] = [lineOf(doc, main.from), lineOf(doc, main.to)];
+      const { start, len } = selectedLines(first, last, !main.empty && main.to === lineStart(doc, last));
+      this.commentOnLines(s, view === s.handle.view ? "target" : "base", start, len);
+      return true;
+    }
+    return false;
+  }
+
   /** `len` lines from line `start` (0-based) of a side. */
-  commentOnLines(s: Section, side: Side, start: number, len: number) {
+  private commentOnLines(s: Section, side: Side, start: number, len: number) {
     this.commentOn(s, { type: "lines", side, start, len });
+  }
+
+  /**
+   * Where a thread is shown: the index of its section and the line of its card, if it has one in
+   * the editor; `lead` for the changeset's own; none if it is not in this view.
+   */
+  find(thread: Thread): { index: number; line?: number } | "lead" | undefined {
+    if (thread.kind === "changeset") return this.lead ? "lead" : undefined;
+    const index = thread.path === null ? -1 : this.host.sections.findIndex((s) => s.file.path === thread.path);
+    if (index < 0) return undefined;
+    const card = this.host.sections[index].placement.inline.find((c) => c.thread.id === thread.id);
+    return { index, line: card?.line };
   }
 
   /** Opens the form for a comment where the backend says it attaches. */

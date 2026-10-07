@@ -16,7 +16,7 @@ import { fileHeader, renderCount } from "./fileHeader";
 import type { FileSource } from "./fileSource";
 import type { BarActions } from "./hunkBar";
 import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
-import { lineOf, lineStart, selectedLines } from "./positions";
+import { lineOf, lineStart } from "./positions";
 import { type ReviewRequests, ReviewActions, renderReview } from "./reviewActions";
 import { setCurrent } from "./reviewState";
 import { Stops, hunkAt } from "./stops";
@@ -467,37 +467,20 @@ export class ChangesetView {
    * else on the current hunk. Answers whether there was somewhere to comment.
    */
   commentHere(): boolean {
-    for (const fi of this.windowing.mounted) {
-      const handle = this.sections[fi].handle;
-      const view = handle?.views.find((v) => v.hasFocus);
-      if (!handle || !view) continue;
-      const { main } = view.state.selection;
-      const { doc } = view.state;
-      const [first, last] = [lineOf(doc, main.from), lineOf(doc, main.to)];
-      const { start, len } = selectedLines(first, last, !main.empty && main.to === lineStart(doc, last));
-      this.threads.commentOnLines(this.sections[fi], view === handle.view ? "target" : "base", start, len);
-      return true;
-    }
+    if (this.threads.commentOnSelection([...this.windowing.mounted].map((fi) => this.sections[fi]))) return true;
     if (this.current < 0 || !this.stops.total) return false;
     const [fi, si] = this.stops.locate(this.current);
-    const s = this.sections[fi];
-    if (si < s.cards.length) this.threads.commentOnFile(s);
-    else this.threads.commentOnHunk(s, si - s.cards.length);
+    this.threads.commentOnStop(this.sections[fi], si);
     return true;
   }
 
   /** Scrolls to where a thread is shown; answers whether it is in this view. */
   async goToThread(thread: Thread): Promise<boolean> {
-    if (thread.kind === "changeset") {
-      if (!this.threads.lead) return false;
-      this.root.scrollTop = 0;
-      return true;
-    }
-    const fi = thread.path === null ? -1 : this.indexOf(thread.path);
-    if (fi < 0) return false;
-    const card = this.sections[fi].placement.inline.find((c) => c.thread.id === thread.id);
-    if (card) await this.goToLine(fi, card.line);
-    else await this.goToFile(fi);
+    const at = this.threads.find(thread);
+    if (!at) return false;
+    if (at === "lead") this.root.scrollTop = 0;
+    else if (at.line !== undefined) await this.goToLine(at.index, at.line);
+    else await this.goToFile(at.index);
     return true;
   }
 
