@@ -11,6 +11,7 @@ pub mod policy;
 pub mod pool;
 pub mod ports;
 pub mod query;
+pub mod signature;
 
 #[cfg(test)]
 mod testutil;

@@ -250,6 +250,7 @@ impl Handler for Mock {
             | Request::References { .. }
             | Request::Diagnostics { .. }
             | Request::ChangedSymbols { .. }
+            | Request::Signature { .. }
             | Request::Impact { .. }
             | Request::RemovalImpact { .. }
             | Request::Reachability { .. }

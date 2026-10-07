@@ -581,6 +581,11 @@ impl Handler for Orchestrator {
                 path,
             } => self.find(session).await?.diagnostics(revision, &path).await,
             Request::ChangedSymbols { session, revision } => self.find(session).await?.changed_symbols(revision).await,
+            Request::Signature {
+                session,
+                revision,
+                symbol,
+            } => self.find(session).await?.signature(revision, &symbol).await,
             Request::Impact {
                 session,
                 revision,

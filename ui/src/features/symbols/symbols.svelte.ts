@@ -8,14 +8,16 @@ import type { Impact } from "../../generated/Impact";
 import type { Reachability } from "../../generated/Reachability";
 import type { RemovalImpact } from "../../generated/RemovalImpact";
 import type { Side } from "../../generated/Side";
+import type { SymbolSignature } from "../../generated/SymbolSignature";
 import type { Unavailable } from "../../generated/Unavailable";
-import type { Backend, HoverText } from "../../state/backend";
+import type { Backend } from "../../state/backend";
 import { keyOf, symbolAt } from "./symbolList";
 
 export type Load<T> = { state: "loading" } | { state: "done"; value: T } | { state: "failed"; message: string };
 
-/** The signature as the language server hovers it; `unavailable` says why there is none. */
-export interface Signature extends HoverText {
+/** The signature the backend found; `unavailable` says why there is none. */
+export interface Signature {
+  signature?: SymbolSignature;
   unavailable?: Unavailable;
 }
 
@@ -87,16 +89,14 @@ class SymbolsState {
     if (!backend || revision === undefined) return;
     const run = ++this.detailRun;
     this.selected = symbol;
-    const { id, at } = symbol.symbol;
-    const removed = symbol.change === "removed";
+    const { id } = symbol.symbol;
     this.impact = this.reach = this.removal = undefined;
-    // The removed symbol's text is on the base side only.
     this.signature = this.start(
       run,
-      () => backend.hover(revision, removed ? "base" : "target", id.path, at.line, at.col),
+      () => backend.signature(revision, id),
       (l) => (this.signature = l),
     );
-    if (removed) {
+    if (symbol.change === "removed") {
       this.removal = this.start(
         run,
         () => backend.removalImpact(revision, id),

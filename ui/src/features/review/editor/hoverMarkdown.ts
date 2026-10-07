@@ -39,11 +39,3 @@ md.renderer.rules.fence = (tokens, i, _options, env) => {
 };
 
 export const renderMarkdown = (text: string, code: CodeHighlights): string => md.render(text, { code, next: 0 });
-
-/** The fenced code blocks of a text with their highlights, in order. */
-export function fencedBlocks(text: string, code: CodeHighlights): { code: string; highlights: readonly number[] }[] {
-  return md
-    .parse(text, {})
-    .filter((token) => token.type === "fence")
-    .map((token, i) => ({ code: token.content.replace(/\n$/, ""), highlights: code[i] ?? [] }));
-}

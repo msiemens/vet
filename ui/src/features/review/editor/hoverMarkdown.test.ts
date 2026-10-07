@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fencedBlocks, highlightedHtml, renderMarkdown } from "./hoverMarkdown.ts";
+import { highlightedHtml, renderMarkdown } from "./hoverMarkdown.ts";
 
 void test("raw HTML in hover text is escaped, not passed through", () => {
   const html = renderMarkdown('<img src=x onerror="alert(1)"> <script>alert(1)</script>\n\n<div>hi</div>', []);
@@ -36,15 +36,6 @@ void test("the n-th block takes the n-th highlights", () => {
     "<pre><code>fn</code></pre>",
     '<pre><code><span class="syn-string">f</span>n</code></pre>',
   ]);
-});
-
-void test("fenced blocks come with their highlights; indented code is not one", () => {
-  const text = "    indented\n\n```rust\nfn f() {}\n```\n\n- ```py\n  pass\n  ```\n";
-  assert.deepEqual(fencedBlocks(text, [[0, 2, 0], [1]]), [
-    { code: "fn f() {}", highlights: [0, 2, 0] },
-    { code: "pass", highlights: [1] },
-  ]);
-  assert.deepEqual(fencedBlocks("```\nx\n```", []), [{ code: "x", highlights: [] }]);
 });
 
 void test("links show their text without a destination; javascript: URLs go nowhere", () => {

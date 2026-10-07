@@ -104,6 +104,26 @@ impl Open {
         Ok(Response::ChangedSymbols(map::changed_symbols(revision, &changes)))
     }
 
+    pub async fn signature(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
+        let answer = (self.semantics)
+            .signature(&self.session, revision, &map::core_sym(symbol))
+            .await
+            .map_err(message)?;
+        let (found, unavailable) = map::answer(
+            answer.result,
+            map::language_of(&self.backends, &map::repo_path(&symbol.path)),
+        );
+        let signature = found.map(|s| vet_protocol::SymbolSignature {
+            highlights: highlight::signature(&symbol.path, &s),
+            code: s.code,
+        });
+        Ok(Response::Signature {
+            revision,
+            signature,
+            unavailable,
+        })
+    }
+
     pub async fn impact(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
         let impact = (self.semantics)
             .impact(&self.session, revision, &map::core_sym(symbol))

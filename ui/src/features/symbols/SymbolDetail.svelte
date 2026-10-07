@@ -6,7 +6,7 @@
   import type { Reachability } from "../../generated/Reachability";
   import type { RemovalImpact } from "../../generated/RemovalImpact";
   import type { Side } from "../../generated/Side";
-  import { codeBlock, signatureOf } from "../review";
+  import { codeBlock } from "../review";
   import DerivedSection from "./DerivedSection.svelte";
   import { containerOf, describeFate, nameOf, type OpenLocation, place } from "./symbolList";
   import { symbols } from "./symbols.svelte";
@@ -30,9 +30,9 @@
     <p class="note">Loading…</p>
   {:else if signature.state === "failed"}
     <p class="note err">{signature.message}</p>
-  {:else if signature.value.text}
+  {:else if signature.value.signature}
     <div class="block">
-      <code class="mono selectable" use:codeBlock={signatureOf(signature.value)}></code>
+      <code class="mono selectable" use:codeBlock={signature.value.signature}></code>
     </div>
   {:else}
     <p class="note">{signature.value.unavailable?.message ?? "The language server has no text for it"}</p>

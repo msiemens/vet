@@ -277,6 +277,7 @@ impl LspServer {
             },
             span: span(range),
             at,
+            detail: None,
         }))
     }
 
@@ -317,6 +318,7 @@ fn walk_symbols(file: &RepoPath, chain: &mut Vec<String>, symbols: &[lsp::Docume
             },
             span: span(s.range),
             at: pos(s.selection_range.start),
+            detail: s.detail.clone(),
         });
         walk_symbols(file, chain, s.children.as_deref().unwrap_or_default(), out);
         chain.pop();
@@ -384,6 +386,7 @@ impl LanguageServer for LspServer {
                         },
                         span: span(s.location.range),
                         at: pos(s.location.range.start),
+                        detail: None,
                     });
                 }
             }

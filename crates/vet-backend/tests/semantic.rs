@@ -236,6 +236,26 @@ async fn rust_semantics_through_the_protocol() {
         path: path.into(),
         name: name(&[symbol]),
     };
+    // A removed symbol's signature comes from the base side.
+    for (symbol, expected) in [("keep", "fn keep() -> u32"), ("gone", "fn gone() -> u32")] {
+        let Response::Signature {
+            signature, unavailable, ..
+        } = client
+            .call(Request::Signature {
+                session,
+                revision,
+                symbol: id(symbol),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!("not a signature");
+        };
+        let signature = signature.unwrap_or_else(|| panic!("no signature for {symbol}: {unavailable:?}"));
+        assert!(signature.code.contains(expected), "{signature:?}");
+        assert!(!signature.highlights.is_empty(), "{signature:?}");
+    }
+
     let Response::Impact(impact) = client
         .call(Request::Impact {
             session,

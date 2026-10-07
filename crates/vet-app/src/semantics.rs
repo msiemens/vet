@@ -18,6 +18,7 @@ use vet_semantic::ports::{
     At, Backend, BackendId, Diagnostic, Location, RestoreFailure, ServerLauncher, Sym, SymbolInfo,
 };
 use vet_semantic::query::{Primitives, Semantic, SemanticError, Side, Which};
+use vet_semantic::signature::{Signature, signature};
 
 use crate::acquisition::SharedAcquisition;
 use crate::limits::RestoreLimits;
@@ -191,6 +192,26 @@ where
             .find(|c| &c.symbol.sym == sym)
             .cloned()
             .ok_or_else(|| SessionError::NotFound(format!("changed symbol {sym}")))
+    }
+
+    /// The signature of a changed symbol, from the side it exists on: the base for a removed one.
+    pub async fn signature(
+        &self,
+        session: &LiveSession<G, S>,
+        revision: u32,
+        sym: &Sym,
+    ) -> Fallible<Answer<Option<Signature>>> {
+        let changed = self.changed(session, revision, sym).await?;
+        let which = if changed.change == Change::Removed {
+            Which::Base
+        } else {
+            Which::Target
+        };
+        let pair = self.pair(session, revision).await?;
+        Ok(Answer {
+            revision,
+            result: signature(&pair, which, &changed.symbol).await,
+        })
     }
 
     /// References and callers of an added or modified symbol, on the target side.

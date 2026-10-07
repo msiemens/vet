@@ -18,6 +18,7 @@ import type { ReviewUpdate } from "./ReviewUpdate";
 import type { RunTargetEntry } from "./RunTargetEntry";
 import type { ServerInfo } from "./ServerInfo";
 import type { Side } from "./Side";
+import type { SymbolSignature } from "./SymbolSignature";
 import type { TextChange } from "./TextChange";
 import type { TextContent } from "./TextContent";
 import type { Thread } from "./Thread";
@@ -40,7 +41,7 @@ baseHighlights: Array<number>,
 /**
  * The same for `target`.
  */
-targetHighlights: Array<number>, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", revision: number, side: Side, text: string | null, codeHighlights: Array<Array<number>>, unavailable: Unavailable | null, } | { "type": "definition" } & Locations | { "type": "references" } & Locations | { "type": "diagnostics", revision: number, path: string, diagnostics: Array<Diagnostic>, unavailable: Unavailable | null, } | { "type": "changedSymbols" } & ChangedSymbols | { "type": "impact" } & Impact | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "base" } & Base | { "type": "reviewFinished", complete: boolean, } | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "thread" } & Thread | { "type": "runTargets", targets: Array<RunTargetEntry>, } | { "type": "runNeedsApproval", hash: string, 
+targetHighlights: Array<number>, marks: Array<Mark>, } | { "type": "review" } & ReviewUpdate | { "type": "hover", revision: number, side: Side, text: string | null, codeHighlights: Array<Array<number>>, unavailable: Unavailable | null, } | { "type": "definition" } & Locations | { "type": "references" } & Locations | { "type": "diagnostics", revision: number, path: string, diagnostics: Array<Diagnostic>, unavailable: Unavailable | null, } | { "type": "changedSymbols" } & ChangedSymbols | { "type": "signature", revision: number, signature: SymbolSignature | null, unavailable: Unavailable | null, } | { "type": "impact" } & Impact | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "base" } & Base | { "type": "reviewFinished", complete: boolean, } | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "thread" } & Thread | { "type": "runTargets", targets: Array<RunTargetEntry>, } | { "type": "runNeedsApproval", hash: string, 
 /**
  * No run was ever approved in this repository.
  */

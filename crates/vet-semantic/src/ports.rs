@@ -182,6 +182,8 @@ pub struct SymbolInfo {
     pub span: Span,
     /// Where its name is: the position to ask references and calls about.
     pub at: Pos,
+    /// What the server says about it in one line (`documentSymbol.detail`), often its signature.
+    pub detail: Option<String>,
 }
 
 impl SymbolInfo {

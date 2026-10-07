@@ -25,6 +25,7 @@ import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { ServerInfo } from "../generated/ServerInfo";
 import type { Side } from "../generated/Side";
 import type { SymbolId } from "../generated/SymbolId";
+import type { SymbolSignature } from "../generated/SymbolSignature";
 import type { TextContent } from "../generated/TextContent";
 import type { Thread } from "../generated/Thread";
 import type { ThreadStatus } from "../generated/ThreadStatus";
@@ -258,6 +259,15 @@ export class Backend {
   /** The symbols the changeset touches, as of `revision` (the manifest's; a stale one is rejected). */
   async changedSymbols(revision: number): Promise<ChangedSymbols> {
     return expect(await this.conn.request({ type: "changedSymbols", session: this.sid, revision }), "changedSymbols");
+  }
+
+  /** The declaration of a changed symbol; `signature` is unset if the server has nothing, `unavailable` says why. */
+  async signature(
+    revision: number,
+    symbol: SymbolId,
+  ): Promise<{ signature?: SymbolSignature; unavailable?: Unavailable }> {
+    const r = expect(await this.conn.request({ type: "signature", session: this.sid, revision, symbol }), "signature");
+    return { signature: r.signature ?? undefined, unavailable: r.unavailable ?? undefined };
   }
 
   /** References and callers of an added or modified changed symbol; may take a while on a cold server. */

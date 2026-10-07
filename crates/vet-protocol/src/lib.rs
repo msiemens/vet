@@ -155,6 +155,14 @@ pub enum Request {
         session: SessionId,
         revision: u32,
     },
+    /// The declaration of a changed symbol, from the language server, on the side
+    /// the symbol exists on. Fails like `Impact` but also for a removed symbol.
+    /// Answers with `Response::Signature`.
+    Signature {
+        session: SessionId,
+        revision: u32,
+        symbol: SymbolId,
+    },
     /// References and callers of an added or modified changed symbol, on the
     /// target side (derived). Fails if the symbol is not one of
     /// `ChangedSymbols` at `revision`, or was removed. Answers with `Response::Impact`.
@@ -639,6 +647,12 @@ pub enum Response {
         unavailable: Option<Unavailable>,
     },
     ChangedSymbols(ChangedSymbols),
+    /// `None` with `unavailable` unset means the server has nothing to say.
+    Signature {
+        revision: u32,
+        signature: Option<SymbolSignature>,
+        unavailable: Option<Unavailable>,
+    },
     Impact(Impact),
     RemovalImpact(RemovalImpact),
     Reachability(Reachability),
@@ -907,6 +921,16 @@ pub struct ChangedSymbols {
     pub unsupported: Vec<String>,
     pub gaps: Vec<FileGap>,
     pub inputs: DerivedInputs,
+}
+
+/// A symbol's declaration as text, with its syntax highlighting.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SymbolSignature {
+    pub code: String,
+    /// The highlighting of `code`, empty for prose or an unknown language (see [`Highlights`]).
+    pub highlights: Highlights,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

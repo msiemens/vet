@@ -33,6 +33,7 @@ fn sym(path: &str, name: &str, start: u32, end: u32) -> SymbolInfo {
         },
         span: span(start, end),
         at: Pos { line: start, col: 3 },
+        detail: None,
     }
 }
 
