@@ -442,10 +442,10 @@ Grouped by area; areas and the items within each are in priority order.
 #### Changesets and history
 
 - Committed and stacked changesets (per-commit / pseudo-commit / squash lenses)
-- Interdiffs; snapshot timeline
+- Interdiffs; snapshot timeline, as a bottom panel (not a sidebar tool window)
 - Git fetch (in-process, read-only): on demand and periodically, so remote branches and how far a base is behind are current; Vet never pulls, merges or rebases
 - Change decomposition (mechanical vs. logic clusters)
-- Changeset queue home
+- Changeset queue home, reached through a Queue / Review toggle in the app header (not a sidebar tool window)
 
 #### Semantics and navigation
 
@@ -481,7 +481,7 @@ Grouped by area; areas and the items within each are in priority order.
 #### App shell
 
 - Loading screen while a project opens, naming the step it is at
-- Project switcher: the project name in the title bar is a dropdown of recent projects, plus "Open…"
+- Project switcher and changeset switcher in the title bar, redesigned (design to follow): the project switcher lists recent projects plus "Open…"; the changeset switcher picks what is under review
 - File-type icons for files and folders in the file tree and on tabs, by extension and well-known names (a folder's icon open or closed)
 - Native context menus (the OS's, through the host's menu API) everywhere the app has one: the file tree, the editors and diff views, tabs, the changed-symbols list; they replace the webview's default menu and show each item's shortcut. Without a host (plain browser) the app draws the same items
 - The split between the right sidebar's panels can be dragged, keeping its position
