@@ -129,6 +129,8 @@ pub struct LspServer {
     tree: Tree,
     diagnostics: Diagnostics,
     docs: tokio::sync::Mutex<Docs>,
+    /// Whether answers across files wait for the server to go quiet after a document was opened.
+    loads_project_on_open: bool,
     /// Numbers the in-memory documents of `text_symbols`, so concurrent calls
     /// for one file do not share a URI.
     virtual_docs: AtomicU64,
@@ -160,13 +162,20 @@ fn position(p: Pos) -> lsp::Position {
 }
 
 impl LspServer {
-    pub(super) fn new(conn: Connection, root: PathBuf, tree: Tree, diagnostics: Diagnostics) -> Self {
+    pub(super) fn new(
+        conn: Connection,
+        root: PathBuf,
+        tree: Tree,
+        diagnostics: Diagnostics,
+        loads_project_on_open: bool,
+    ) -> Self {
         Self {
             conn,
             root,
             tree,
             diagnostics,
             docs: tokio::sync::Mutex::new(Docs::default()),
+            loads_project_on_open,
             virtual_docs: AtomicU64::new(0),
         }
     }
@@ -288,11 +297,11 @@ impl LspServer {
             }
             self.refresh(&mut docs.open, file).await?
         };
-        let quiet = if needs == Needs::Project {
-            self.settle(&mut docs, file).await
-        } else {
-            None
-        };
+        let unsettled = needs == Needs::Project
+            && self.loads_project_on_open
+            && docs.open.iter().any(|d| &d.file == file && !docs.is_settled(d));
+        drop(docs);
+        let quiet = if unsettled { Some(self.settle().await) } else { None };
         Ok(Synced { changed, lock, quiet })
     }
 
@@ -300,18 +309,16 @@ impl LspServer {
     /// before that finishes resolve nothing outside the file. So a query that
     /// resolves across files waits for the server to go quiet once after the
     /// document was opened; one wait covers every document opened before it.
-    /// A server that stays busy past the timeout is asked anyway. How long the
-    /// wait took, if there was one.
-    async fn settle(&self, docs: &mut Docs, file: &RepoPath) -> Option<Duration> {
-        let doc = docs.open.iter().find(|d| &d.file == file)?;
-        if docs.is_settled(doc) {
-            return None;
-        }
+    /// A server that stays busy past the timeout is asked anyway. Waits of
+    /// concurrent queries overlap, so documents opened together are settled
+    /// together. How long the wait took.
+    async fn settle(&self) -> Duration {
         let from = Instant::now();
         self.conn.with_state(State::touch);
         self.conn.wait_for(OPEN_TIMEOUT, |s| s.is_idle(QUIET)).await;
-        docs.quiet_from = Some(from);
-        Some(from.elapsed())
+        let mut docs = self.docs.lock().await;
+        docs.quiet_from = docs.quiet_from.max(Some(from));
+        from.elapsed()
     }
 
     async fn refresh(&self, docs: &mut Vec<Doc>, file: &RepoPath) -> Result<bool, QueryError> {

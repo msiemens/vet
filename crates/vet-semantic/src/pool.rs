@@ -528,6 +528,7 @@ mod tests {
             filetypes: vec!["rs".into()],
             root_markers: vec!["Cargo.toml".into()],
             executes_project_code_during_analysis: executes,
+            loads_project_on_open: false,
         })
     }
 

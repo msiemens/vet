@@ -231,6 +231,66 @@ async fn typescript_language_server_answers_the_primitive_queries() {
     server.shutdown().await;
 }
 
+/// Roslyn has its projects loaded when it is ready, so opening another file of
+/// them is no reason to wait for it to go quiet: a hover on a file nobody has
+/// opened yet answers at once, on either kind of tree.
+#[tokio::test]
+async fn roslyn_answers_a_hover_on_a_newly_opened_file_without_waiting_for_quiet() {
+    if !installed("roslyn-language-server") || !installed("dotnet") {
+        eprintln!("skipped: roslyn-language-server or dotnet is not installed");
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("app.csproj"),
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>",
+    )
+    .unwrap();
+    for i in 0..6 {
+        let class = format!("namespace App;\npublic class C{i}\n{{\n    public int Run(int x) => x + {i};\n}}\n");
+        std::fs::write(dir.path().join(format!("C{i}.cs")), class).unwrap();
+    }
+    let restored = Command::new("dotnet")
+        .arg("restore")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        restored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restored.stdout)
+    );
+
+    for tree in [Tree::Immutable, Tree::Live] {
+        let server = LspLauncher::new(BinaryLocator, NoRestore)
+            .start(
+                dir.path(),
+                tree,
+                &config::roslyn(),
+                AnalysisPolicy { allow_executing: true },
+            )
+            .await
+            .expect("roslyn starts");
+        let hover = |i: usize| At {
+            file: path(&format!("C{i}.cs")),
+            pos: Pos { line: 3, col: 15 },
+        };
+        // The first answer pays for the server's own warm-up.
+        assert!(server.hover(&hover(0)).await.unwrap().is_some());
+        let started = std::time::Instant::now();
+        for i in 1..5 {
+            let text = server.hover(&hover(i)).await.unwrap().expect("a hover on `Run`");
+            assert!(text.contains("Run"), "{text}");
+        }
+        let (a, b) = vet_semantic::join::join(server.hover(&hover(5)), server.references(&hover(0))).await;
+        a.unwrap();
+        b.unwrap();
+        // Waiting for quiet costs three quarters of a second per file opened.
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        server.shutdown().await;
+    }
+}
+
 /// The server publishes under its own spelling of the file's URI, which differs
 /// from Vet's when the path has characters it encodes (parentheses, brackets, `+`, `@`).
 #[tokio::test]

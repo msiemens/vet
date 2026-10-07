@@ -220,7 +220,13 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
             },
             started,
         );
-        Ok(LspServer::new(conn, root, tree, diagnostics))
+        Ok(LspServer::new(
+            conn,
+            root,
+            tree,
+            diagnostics,
+            config.loads_project_on_open,
+        ))
     }
 }
 

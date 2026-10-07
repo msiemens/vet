@@ -73,6 +73,9 @@ pub struct Language {
     pub project_toolchain: bool,
     /// The server loads nothing until told which solution or projects (`solution/open`, `project/open`).
     pub loads_on_request: bool,
+    /// Opening a file starts loading the project it belongs to (tsserver), so
+    /// answers across files wait for the server to go quiet after an open.
+    pub loads_project_on_open: bool,
 }
 
 /// Build scripts and proc macros run during analysis.
@@ -91,6 +94,7 @@ pub const RUST: Language = Language {
     compiler: Compiler::None,
     project_toolchain: true,
     loads_on_request: false,
+    loads_project_on_open: false,
 };
 
 pub const TYPESCRIPT: Language = Language {
@@ -122,6 +126,7 @@ pub const TYPESCRIPT: Language = Language {
     compiler: Compiler::TypeScript,
     project_toolchain: false,
     loads_on_request: false,
+    loads_project_on_open: true,
 };
 
 pub const PYTHON: Language = Language {
@@ -141,6 +146,7 @@ pub const PYTHON: Language = Language {
     compiler: Compiler::None,
     project_toolchain: false,
     loads_on_request: false,
+    loads_project_on_open: false,
 };
 
 /// MSBuild design-time builds run project code. The solution or projects to load
@@ -163,6 +169,7 @@ pub const CSHARP: Language = Language {
     compiler: Compiler::None,
     project_toolchain: false,
     loads_on_request: true,
+    loads_project_on_open: false,
 };
 
 /// The POC languages.
@@ -191,6 +198,7 @@ impl Language {
             filetypes: self.files.iter().map(|(ext, _)| (*ext).to_owned()).collect(),
             root_markers: strings(self.root_markers),
             executes_project_code_during_analysis: self.executes_during_analysis,
+            loads_project_on_open: self.loads_project_on_open,
         };
         if self.loads_on_request {
             Backend::Roslyn(config)

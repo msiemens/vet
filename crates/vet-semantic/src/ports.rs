@@ -53,6 +53,10 @@ pub struct ServerConfig {
     pub root_markers: Vec<String>,
     /// Default `true` (conservative).
     pub executes_project_code_during_analysis: bool,
+    /// Opening a file can start loading its project, and answers before that
+    /// finishes resolve nothing outside the file. Servers that load their
+    /// projects before they are ready (all others) answer at once.
+    pub loads_project_on_open: bool,
 }
 
 /// Quirk arms are added reluctantly, per observed incompatibility. No registry,
@@ -325,6 +329,7 @@ mod tests {
             filetypes: vec!["rs".into()],
             root_markers: vec![],
             executes_project_code_during_analysis: true,
+            loads_project_on_open: false,
         })
     }
 
