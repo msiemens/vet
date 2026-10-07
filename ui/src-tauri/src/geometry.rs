@@ -3,6 +3,7 @@
 //! the app config directory. A saved geometry on a display that is gone gives way to the
 //! default, centred on the display the window is on.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -218,11 +219,17 @@ impl Windows {
     }
 }
 
+/// Replaces `file` whole: a reader sees the old text or the new, never a torn write.
 fn write(file: &Path, text: &str) -> std::io::Result<()> {
-    if let Some(dir) = file.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(file, text)
+    let dir = file
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let mut temp = tempfile::NamedTempFile::new_in(dir)?;
+    temp.write_all(text.as_bytes())?;
+    temp.persist(file).map_err(|e| e.error)?;
+    Ok(())
 }
 
 fn snapshot(window: &tauri::WebviewWindow) -> Option<Snapshot> {
