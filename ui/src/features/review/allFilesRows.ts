@@ -3,6 +3,7 @@
 // here that is known only once the listing of the child is loaded.
 
 import type { DirEntry } from "../../generated/DirEntry";
+import { compactChain, joinPath } from "../../lib/paths.ts";
 
 export interface AllRow {
   kind: "dir" | "file";
@@ -15,7 +16,9 @@ export interface AllRow {
   entry: DirEntry;
 }
 
-export const joinPath = (dir: string, name: string) => (dir ? `${dir}/${name}` : name);
+/** The name of the directory that is all of `listing`, if it is one. */
+export const onlyDirectory = (listing: readonly DirEntry[] | undefined): string | undefined =>
+  listing?.length === 1 && listing[0].kind === "dir" ? listing[0].name : undefined;
 
 /** The visible rows; the contents of directories not in `expanded`, or not loaded yet, are left out. */
 export function buildAllRows(
@@ -23,6 +26,10 @@ export function buildAllRows(
   expanded: ReadonlySet<string>,
 ): AllRow[] {
   const rows: AllRow[] = [];
+  const onlyChild = (path: string) => {
+    const name = onlyDirectory(listings.get(path));
+    return name === undefined ? undefined : joinPath(path, name);
+  };
   const walk = (dir: string, depth: number) => {
     for (const entry of listings.get(dir) ?? []) {
       const key = joinPath(dir, entry.name);
@@ -30,13 +37,7 @@ export function buildAllRows(
         rows.push({ kind: "file", key, path: key, name: entry.name, depth, entry });
         continue;
       }
-      let [path, name] = [key, entry.name];
-      for (;;) {
-        const only = listings.get(path);
-        if (only?.length !== 1 || only[0].kind !== "dir") break;
-        path = joinPath(path, only[0].name);
-        name += `/${only[0].name}`;
-      }
+      const { path, name } = compactChain(key, entry.name, onlyChild);
       rows.push({ kind: "dir", key, path, name, depth, entry });
       if (expanded.has(key)) walk(path, depth + 1);
     }

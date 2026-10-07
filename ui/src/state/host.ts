@@ -43,9 +43,6 @@ export async function quit(): Promise<void> {
   await invoke("quit");
 }
 
-/** The last folder of a backend-side path, for display. */
-export const repoName = (path: string): string => path.split(/[/\\]/).filter(Boolean).at(-1) ?? path;
-
 /** The native folder dialog; `null` if cancelled. Rejects with a message for a folder the backend cannot open. */
 export async function pickRepository(): Promise<string | null> {
   return inTauri ? invoke<string | null>("pick_repository") : null;

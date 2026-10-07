@@ -1,6 +1,6 @@
 <script lang="ts">
+  import { repoName } from "../../lib/paths";
   import Icon from "../../lib/ui/Icon.svelte";
-  import { repoName } from "../../state/host";
 
   let {
     recent,

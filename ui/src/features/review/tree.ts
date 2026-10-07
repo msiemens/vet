@@ -5,6 +5,8 @@
 
 import type { FileChange } from "../../generated/FileChange";
 import type { FileStatus } from "../../generated/FileStatus";
+import { percentages } from "../../lib/completion.ts";
+import { basename, compactChain, dirname } from "../../lib/paths.ts";
 
 export interface DirRow {
   kind: "dir";
@@ -53,8 +55,6 @@ function modeChange(file: FileChange): FileSummary["mode"] {
   return after && !before ? "+x" : before && !after ? "-x" : "mode";
 }
 
-const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
-const dirname = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/")));
 // One collator: `localeCompare` creates one per call.
 const collator = new Intl.Collator();
 const byName = (a: string, b: string) => collator.compare(a, b);
@@ -74,25 +74,22 @@ export function buildTree(paths: readonly string[]): DirNode {
   };
   for (const path of paths) dirOf(dirname(path)).files.push(path);
 
-  const finish = (dir: DirNode): DirNode => {
-    dir.dirs = dir.dirs.map(finish).sort((a, b) => byName(a.name, b.name));
-    dir.files.sort((a, b) => byName(basename(a), basename(b)));
-    dir.below = dir.dirs.flatMap((d) => [d.path, ...d.below]);
-    const [only] = dir.dirs;
-    return dir.dirs.length === 1 && !dir.files.length && dir.path ? { ...only, name: `${dir.name}/${only.name}` } : dir;
+  const onlyChild = (path: string) => {
+    const { dirs: below, files } = dirs.get(path) ?? root;
+    return below.length === 1 && !files.length ? below[0].path : undefined;
+  };
+  const finish = (node: DirNode): DirNode => {
+    const { path, name } = node.path ? compactChain(node.path, node.name, onlyChild) : node;
+    const last = dirs.get(path) ?? root;
+    const below = last.dirs.map(finish).sort((a, b) => byName(a.name, b.name));
+    const files = last.files.sort((a, b) => byName(basename(a), basename(b)));
+    return { path, name, dirs: below, files, below: below.flatMap((d) => [d.path, ...d.below]) };
   };
   return finish(root);
 }
 
 export function summarize(file: FileChange): FileSummary {
-  const c = file.completion;
-  const total = c.lines + c.items;
-  return {
-    status: LETTER[file.status],
-    seenPct: total ? ((c.seenLines + c.acknowledgedItems) / total) * 100 : 0,
-    oldPct: total ? (c.oldBaseLines / total) * 100 : 0,
-    mode: modeChange(file),
-  };
+  return { status: LETTER[file.status], ...percentages(file.completion), mode: modeChange(file) };
 }
 
 /** The visible rows; the contents of `collapsed` directories are left out. */

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { FileChange } from "../../generated/FileChange";
   import type { LineDelta } from "../../generated/LineDelta";
+  import { basename } from "../../lib/paths";
   import Tab from "../../lib/ui/Tab.svelte";
   import { CHANGES, type Tabs, pathOf } from "./Tabs.svelte";
 
@@ -27,7 +28,7 @@
       {#if path === undefined}
         Changes {@render counts(delta)}
       {:else}
-        {path.slice(path.lastIndexOf("/") + 1)}
+        {basename(path)}
         {#if file}{@render counts(file.delta)}{/if}
       {/if}
     </Tab>

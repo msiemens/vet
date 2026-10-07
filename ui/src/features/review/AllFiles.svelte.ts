@@ -5,7 +5,8 @@
 
 import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import type { DirEntry } from "../../generated/DirEntry";
-import { type AllRow, buildAllRows, joinPath } from "./allFilesRows";
+import { joinPath } from "../../lib/paths";
+import { type AllRow, buildAllRows, onlyDirectory } from "./allFilesRows";
 
 type List = (path: string) => Promise<{ revision: number; entries: DirEntry[] } | undefined>;
 
@@ -36,7 +37,7 @@ export class AllFiles {
     const reply = await this.list(path);
     if (!reply || reply.revision !== revision) return;
     this.listings.set(path, reply.entries);
-    const [only] = reply.entries;
-    if (path !== "" && reply.entries.length === 1 && only.kind === "dir") await this.load(joinPath(path, only.name));
+    const only = onlyDirectory(reply.entries);
+    if (path !== "" && only !== undefined) await this.load(joinPath(path, only));
   }
 }

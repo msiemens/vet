@@ -20,11 +20,13 @@
   import { SettingsDialog } from "../features/settings";
   import { StartScreen } from "../features/start";
   import { type OpenLocation, SymbolPanel, symbols } from "../features/symbols";
+  import { percentages } from "../lib/completion";
   import { matches } from "../lib/keymap";
+  import { repoName } from "../lib/paths";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import Toast from "../lib/ui/Toast.svelte";
   import { changeset } from "../state/changeset.svelte";
-  import { canQuit, hasNativeDialogs, isMac, quit, repoName, showWindow } from "../state/host";
+  import { canQuit, hasNativeDialogs, isMac, quit, showWindow } from "../state/host";
   import type { Command } from "../state/mainMenu";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { recent } from "../state/recent.svelte";
@@ -46,11 +48,8 @@
   const completion = $derived.by(() => {
     const c = changeset.manifest?.completion;
     if (!c) return { seenPct: 0, oldPct: 0 };
-    const total = c.lines + c.items;
-    const pct = (n: number) => (total ? (n / total) * 100 : 0);
     return {
-      seenPct: pct(c.seenLines + c.acknowledgedItems),
-      oldPct: pct(c.oldBaseLines),
+      ...percentages(c),
       title: `${c.seenLines} of ${c.lines} lines · ${c.acknowledgedItems} of ${c.items} other changes · ${c.oldBaseLines} lines against an old base`,
     };
   });

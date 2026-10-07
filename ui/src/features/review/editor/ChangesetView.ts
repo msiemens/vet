@@ -10,6 +10,7 @@ import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
+import { basename } from "../../../lib/paths";
 import { iconSvg } from "../../../lib/ui/icons";
 import type { Backend } from "../../../state/backend";
 import { type Card, changeCard } from "./changeCard";
@@ -159,11 +160,11 @@ export class ChangesetView {
       const header = document.createElement("header");
       const title = document.createElement("span");
       title.className = "path mono";
-      const slash = file.path.lastIndexOf("/") + 1;
+      const name = basename(file.path);
       const dir = document.createElement("span");
       dir.className = "dir";
-      dir.textContent = file.path.slice(0, slash);
-      title.append(dir, file.path.slice(slash));
+      dir.textContent = file.path.slice(0, file.path.length - name.length);
+      title.append(dir, name);
       title.title = file.path;
       const firstLine = file.hunks[0]?.targetStart ?? 0;
       header.addEventListener("dblclick", (e) => {
