@@ -59,7 +59,7 @@ Each tab's pane hands its scroll root to `ReviewController.attach`, which builds
 
 ## Threads
 
-`state/threads.svelte.ts` holds the backend's threads, resolved at one revision, and reloads on `threadsChanged` and `snapshotSettled`. `ReviewController` hands them to every view whose revision matches. In a view, `editor/threadLayer.ts` owns them: range threads are block widgets (`threadWidgets.ts`) placed by `threadPlacement.ts`, which maps a base-side range to the target line it faces; file and changeset threads are blocks outside the editor.
+`state/threads.svelte.ts` holds the backend's threads, resolved at one revision, and reloads on `threadsChanged` and `snapshotSettled`. `ReviewController` hands them to every view whose revision matches. In a view, `editor/threadLayer.ts` owns them: range threads are block widgets (`threadWidgets.ts`) below the target line the backend sends with each thread; file and changeset threads are blocks outside the editor.
 
 ## Semantics
 
