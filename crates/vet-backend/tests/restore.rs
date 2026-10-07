@@ -51,21 +51,21 @@ async fn a_failed_restore_limits_the_analysis_and_says_which_project() {
     );
     let (handler, _data) = handler().await;
     let mut client = Client::new(&handler);
-    let session = client.open(repo.path()).await;
-    let revision = client.revision(session).await;
-    async fn manifest(client: &Client, session: u32) -> vet_protocol::Manifest {
-        match client.call(Request::Manifest { session }).await.unwrap() {
+    let project = client.open(repo.path()).await;
+    let revision = client.revision(project).await;
+    async fn manifest(client: &Client, project: u32) -> vet_protocol::Manifest {
+        match client.call(Request::Manifest { project }).await.unwrap() {
             Response::Manifest(m) => *m,
             other => panic!("{other:?}"),
         }
     }
-    assert!(manifest(&client, session).await.restore_failures.is_empty());
+    assert!(manifest(&client, project).await.restore_failures.is_empty());
 
     // The base side starts a server on a restored snapshot, whether or not rust-analyzer is there.
     client
-        .hover(session, revision, Side::Base, "svc/src/lib.rs", find(LIB, "show", 0, 1))
+        .hover(project, revision, Side::Base, "svc/src/lib.rs", find(LIB, "show", 0, 1))
         .await;
-    let failures = manifest(&client, session).await.restore_failures;
+    let failures = manifest(&client, project).await.restore_failures;
     assert_eq!(failures.len(), 1, "{failures:?}");
     assert_eq!(
         (failures[0].project.as_str(), failures[0].tool.as_str()),
@@ -75,8 +75,8 @@ async fn a_failed_restore_limits_the_analysis_and_says_which_project() {
 
     let pushed = std::iter::from_fn(|| client.inbox.try_recv().ok()).find_map(|m| match m {
         ServerMessage::Event {
-            event: Event::RestoreFailed { session: s, failures },
-        } if s == session => Some(failures),
+            event: Event::RestoreFailed { project: s, failures },
+        } if s == project => Some(failures),
         _ => None,
     });
     assert_eq!(pushed, Some(failures));
@@ -101,14 +101,14 @@ async fn rust_base_side_resolves_into_a_registry_crate() {
 
     let (handler, _data) = handler().await;
     let client = Client::new(&handler);
-    let session = client.open(repo.path()).await;
-    let revision = client.revision(session).await;
+    let project = client.open(repo.path()).await;
+    let revision = client.revision(project).await;
 
     let at = find(BASE, "Buffer", 0, 1);
-    let defs = client.definition(session, revision, Side::Base, "src/lib.rs", at).await;
+    let defs = client.definition(project, revision, Side::Base, "src/lib.rs", at).await;
     assert!(only(&defs).contains("itoa"), "{defs:?}");
     assert!(defs.locations[0].external);
-    let (text, unavailable) = client.hover(session, revision, Side::Base, "src/lib.rs", at).await;
+    let (text, unavailable) = client.hover(project, revision, Side::Base, "src/lib.rs", at).await;
     assert_eq!(unavailable, None);
     assert!(text.unwrap().contains("Buffer"));
 }
@@ -142,18 +142,18 @@ async fn typescript_base_side_resolves_into_node_modules() {
 
     let (handler, _data) = handler().await;
     let client = Client::new(&handler);
-    let session = client.open(repo.path()).await;
-    client.install(session, "typescript").await;
-    let revision = client.revision(session).await;
+    let project = client.open(repo.path()).await;
+    client.install(project, "typescript").await;
+    let revision = client.revision(project).await;
 
     // `red` is only known once picocolors is installed in the base snapshot.
     let at = find(BASE, "red", 0, 1);
-    let defs = client.definition(session, revision, Side::Base, "a.ts", at).await;
+    let defs = client.definition(project, revision, Side::Base, "a.ts", at).await;
     assert!(only(&defs).starts_with("node_modules/picocolors/"), "{defs:?}");
-    let (text, _) = client.hover(session, revision, Side::Base, "a.ts", at).await;
+    let (text, _) = client.hover(project, revision, Side::Base, "a.ts", at).await;
     assert!(text.unwrap().contains("red"));
     // The user's own tree has no node_modules: the target side is not restored.
-    let defs = client.definition(session, revision, Side::Target, "a.ts", at).await;
+    let defs = client.definition(project, revision, Side::Target, "a.ts", at).await;
     assert!(defs.locations.is_empty(), "{defs:?}");
 }
 
@@ -177,14 +177,14 @@ async fn python_base_side_resolves_into_the_restored_environment() {
 
     let (handler, _data) = handler().await;
     let client = Client::new(&handler);
-    let session = client.open(repo.path()).await;
-    client.install(session, "python").await;
-    let revision = client.revision(session).await;
+    let project = client.open(repo.path()).await;
+    client.install(project, "python").await;
+    let revision = client.revision(project).await;
 
     let at = find(BASE, "IniConfig", 0, 1);
-    let defs = client.definition(session, revision, Side::Base, "a.py", at).await;
+    let defs = client.definition(project, revision, Side::Base, "a.py", at).await;
     assert!(only(&defs).contains("iniconfig"), "{defs:?}");
-    let (text, _) = client.hover(session, revision, Side::Base, "a.py", at).await;
+    let (text, _) = client.hover(project, revision, Side::Base, "a.py", at).await;
     assert!(text.unwrap().contains("IniConfig"));
 }
 
@@ -213,12 +213,12 @@ async fn csharp_base_side_resolves_into_a_nuget_package() {
 
     let (handler, _data) = handler().await;
     let client = Client::new(&handler);
-    let session = client.open(repo.path()).await;
-    client.install(session, "csharp").await;
-    let revision = client.revision(session).await;
+    let project = client.open(repo.path()).await;
+    client.install(project, "csharp").await;
+    let revision = client.revision(project).await;
 
     let at = find(BASE, "SerializeObject", 0, 1);
-    let (text, unavailable) = client.hover(session, revision, Side::Base, "Program.cs", at).await;
+    let (text, unavailable) = client.hover(project, revision, Side::Base, "Program.cs", at).await;
     assert_eq!(unavailable, None);
     assert!(text.unwrap().contains("SerializeObject"));
 }

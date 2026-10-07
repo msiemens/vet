@@ -42,14 +42,14 @@ pub enum ServerMessage {
         id: Option<u32>,
         message: String,
     },
-    /// Pushed without a request. A connection receives the events of the sessions
+    /// Pushed without a request. A connection receives the events of the projects
     /// it opened, until it closes them or disconnects, and the events that belong to
     /// the process once it asked for `Request::Accounts`. Opening a repository that
-    /// is already open subscribes to the existing session.
+    /// is already open subscribes to the existing project.
     Event {
         event: Event,
     },
 }
 
-/// Assigned by the backend in [`Response::Session`].
-pub type SessionId = u32;
+/// Assigned by the backend in [`Response::Project`]: the handle to an open repository.
+pub type ProjectId = u32;

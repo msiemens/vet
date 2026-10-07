@@ -26,13 +26,13 @@ async fn opening_answers_before_the_first_scan_and_the_first_request_that_needs_
     let (handler, _data) = handler().await;
     let client = Client::new(&handler);
 
-    let session = client.open(repo.path()).await;
-    let Ok(Response::Tasks { .. }) = client.call(Request::Tasks { session }).await else {
-        panic!("the tasks of a session that has not scanned are listed");
+    let project = client.open(repo.path()).await;
+    let Ok(Response::Tasks { .. }) = client.call(Request::Tasks { project }).await else {
+        panic!("the tasks of a project that has not scanned are listed");
     };
 
-    let first = client.call(Request::Manifest { session }).await.unwrap_err();
-    let again = client.call(Request::Manifest { session }).await.unwrap_err();
+    let first = client.call(Request::Manifest { project }).await.unwrap_err();
+    let again = client.call(Request::Manifest { project }).await.unwrap_err();
     assert!(!first.is_empty());
     assert_eq!(first, again);
 }
@@ -42,21 +42,21 @@ async fn the_scan_and_the_diff_are_announced_as_tasks_that_end() {
     let repo = repo_with(&[("a.txt", "one\n")], &[("a.txt", "two\n")]);
     let (handler, _data) = handler().await;
     let mut client = Client::new(&handler);
-    let session = client.open(repo.path()).await;
-    client.revision(session).await;
+    let project = client.open(repo.path()).await;
+    client.revision(project).await;
 
     let tasks = announced(&mut client);
     for kind in [TaskKind::Scan, TaskKind::Diff] {
         let of_kind: Vec<_> = tasks.iter().filter(|t| t.kind == kind).collect();
-        let states: Vec<_> = of_kind.iter().map(|t| (t.session, &t.state)).collect();
+        let states: Vec<_> = of_kind.iter().map(|t| (t.project, &t.state)).collect();
         assert_eq!(
             states.first(),
-            Some(&(session, &TaskState::Running)),
+            Some(&(project, &TaskState::Running)),
             "{kind:?} starts: {tasks:?}"
         );
         assert_eq!(
             states.last(),
-            Some(&(session, &TaskState::Finished)),
+            Some(&(project, &TaskState::Finished)),
             "{kind:?} ends: {tasks:?}"
         );
         assert!(
@@ -66,7 +66,7 @@ async fn the_scan_and_the_diff_are_announced_as_tasks_that_end() {
         assert!(!of_kind[0].title.is_empty());
     }
 
-    let Response::Tasks { tasks: running } = client.call(Request::Tasks { session }).await.unwrap() else {
+    let Response::Tasks { tasks: running } = client.call(Request::Tasks { project }).await.unwrap() else {
         panic!("not tasks");
     };
     assert!(

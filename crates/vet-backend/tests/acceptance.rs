@@ -32,7 +32,7 @@ use vet_infra::materialize::kept::{KeptTrees, Limits, Referenced};
 use vet_infra::store::SqliteStore;
 use vet_protocol::{
     AnchorConfidence, AnchorState, AnchorStrategy, BaseChoice, EntryKind, Event, FileChange, HunkState, LineLocation,
-    Manifest, NonTextKind, Request, Response, ReviewFilter, ServerMessage, SessionId, Side, StaleReason, Thread,
+    Manifest, NonTextKind, ProjectId, Request, Response, ReviewFilter, ServerMessage, Side, StaleReason, Thread,
     ThreadKind, ThreadTarget,
 };
 use vet_semantic::policy::AnalysisPolicy;
@@ -104,27 +104,27 @@ impl Client {
         self.handler.handle(request, self.events.clone()).await
     }
 
-    async fn open(&self, repo: &Path) -> SessionId {
-        let request = Request::OpenSession {
+    async fn open(&self, repo: &Path) -> ProjectId {
+        let request = Request::OpenProject {
             repo: repo.to_str().unwrap().into(),
         };
         match self.call(request).await.unwrap() {
-            Response::Session { session, .. } => session,
+            Response::Project { project, .. } => project,
             other => panic!("{other:?}"),
         }
     }
 
-    async fn manifest(&self, session: SessionId) -> Manifest {
-        match self.call(Request::Manifest { session }).await.unwrap() {
+    async fn manifest(&self, project: ProjectId) -> Manifest {
+        match self.call(Request::Manifest { project }).await.unwrap() {
             Response::Manifest(m) => *m,
             other => panic!("{other:?}"),
         }
     }
 
-    async fn toggle_hunk(&self, session: SessionId, path: &str, hunk: u32) {
-        let revision = self.manifest(session).await.revision;
+    async fn toggle_hunk(&self, project: ProjectId, path: &str, hunk: u32) {
+        let revision = self.manifest(project).await.revision;
         let request = Request::ToggleHunk {
-            session,
+            project,
             revision,
             path: path.into(),
             hunk,
@@ -132,10 +132,10 @@ impl Client {
         assert!(matches!(self.call(request).await.unwrap(), Response::Review(_)));
     }
 
-    async fn acknowledge(&self, session: SessionId, path: &str, kind: NonTextKind) {
-        let revision = self.manifest(session).await.revision;
+    async fn acknowledge(&self, project: ProjectId, path: &str, kind: NonTextKind) {
+        let revision = self.manifest(project).await.revision;
         let request = Request::ToggleItem {
-            session,
+            project,
             revision,
             path: path.into(),
             kind,
@@ -143,29 +143,29 @@ impl Client {
         assert!(matches!(self.call(request).await.unwrap(), Response::Review(_)));
     }
 
-    async fn set_base(&self, session: SessionId, base: BaseChoice) {
-        self.call(Request::SetBase { session, base }).await.unwrap();
+    async fn set_base(&self, project: ProjectId, base: BaseChoice) {
+        self.call(Request::SetBase { project, base }).await.unwrap();
     }
 
-    async fn set_filter(&self, session: SessionId, filter: ReviewFilter) {
-        self.call(Request::SetProjectFilter { session, filter }).await.unwrap();
+    async fn set_filter(&self, project: ProjectId, filter: ReviewFilter) {
+        self.call(Request::SetProjectFilter { project, filter }).await.unwrap();
     }
 
     /// A range thread on the target side at the current revision.
-    async fn comment(&self, session: SessionId, path: &str, start: u32, len: u32) -> Thread {
-        let revision = self.manifest(session).await.revision;
+    async fn comment(&self, project: ProjectId, path: &str, start: u32, len: u32) -> Thread {
+        let revision = self.manifest(project).await.revision;
         let target = ThreadTarget::Range {
             side: Side::Target,
             path: path.into(),
             start,
             len,
         };
-        self.create(session, revision, target).await
+        self.create(project, revision, target).await
     }
 
-    async fn create(&self, session: SessionId, revision: u32, target: ThreadTarget) -> Thread {
+    async fn create(&self, project: ProjectId, revision: u32, target: ThreadTarget) -> Thread {
         let request = Request::CreateThread {
-            session,
+            project,
             revision,
             target,
             body: "why?".into(),
@@ -176,15 +176,15 @@ impl Client {
         }
     }
 
-    async fn threads(&self, session: SessionId) -> Vec<Thread> {
-        match self.call(Request::Threads { session }).await.unwrap() {
+    async fn threads(&self, project: ProjectId) -> Vec<Thread> {
+        match self.call(Request::Threads { project }).await.unwrap() {
             Response::Threads { threads, .. } => threads,
             other => panic!("{other:?}"),
         }
     }
 
-    async fn thread(&self, session: SessionId, id: u32) -> Thread {
-        self.threads(session).await.into_iter().find(|t| t.id == id).unwrap()
+    async fn thread(&self, project: ProjectId, id: u32) -> Thread {
+        self.threads(project).await.into_iter().find(|t| t.id == id).unwrap()
     }
 
     /// The next settled revision; panics if none arrives.
@@ -250,10 +250,10 @@ async fn criterion1_amend_keeps_marks_and_comments() {
     let pinned = git(p, &["rev-parse", "HEAD"]);
     write(p, "a.txt", &text(40, &[5, 30]));
     let mut client = Client::new(&fx.handler);
-    let session = client.open(p).await;
-    client.toggle_hunk(session, "a.txt", 0).await;
-    let comment = client.comment(session, "a.txt", 30, 1).await;
-    assert_eq!(hunks(&client.manifest(session).await, "a.txt"), [HunkState::Seen]);
+    let project = client.open(p).await;
+    client.toggle_hunk(project, "a.txt", 0).await;
+    let comment = client.comment(project, "a.txt", 30, 1).await;
+    assert_eq!(hunks(&client.manifest(project).await, "a.txt"), [HunkState::Seen]);
 
     // Folding the dirty edit into that commit rewrites it; git may drop the
     // old one for good, the session's base ref keeps it.
@@ -263,19 +263,19 @@ async fn criterion1_amend_keeps_marks_and_comments() {
     client.quiet().await;
 
     assert_ne!(git(p, &["rev-parse", "HEAD"]), pinned);
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(m.base.commit.id, pinned);
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Seen]);
-    let thread = client.thread(session, comment.id).await;
+    let thread = client.thread(project, comment.id).await;
     assert_eq!((thread.anchor, thread.location), (Some(EXACT), at("a.txt", 30, 1)));
 
     write(p, "a.txt", &text(40, &[5, 20, 30]));
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Unseen, HunkState::Seen]);
     let Response::FileContents { base, .. } = client
         .call(Request::FileContents {
-            session,
+            project,
             path: "a.txt".into(),
         })
         .await
@@ -295,33 +295,33 @@ async fn criterion1_rebase_moves_hunks_and_marks_and_comments_follow() {
     git(p, &["commit", "-q", "-a", "-m", "feature"]);
     write(p, "a.txt", &text(40, &[20, 30]));
     let mut client = Client::new(&fx.handler);
-    let session = client.open(p).await;
-    client.set_base(session, merge_base("main")).await;
+    let project = client.open(p).await;
+    client.set_base(project, merge_base("main")).await;
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Unseen, HunkState::Unseen]);
-    client.toggle_hunk(session, "a.txt", 0).await;
-    let comment = client.comment(session, "a.txt", 20, 1).await;
+    client.toggle_hunk(project, "a.txt", 0).await;
+    let comment = client.comment(project, "a.txt", 20, 1).await;
 
     advance_main(p, &[("a.txt", &format!("header\n{}", text(40, &[])))]);
     git(p, &["rebase", "-q", "--autostash", "main"]);
     client.quiet().await;
 
     // Against the old base the header is one more change; the marks moved down by one line.
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(
         hunks(&m, "a.txt"),
         [HunkState::Unseen, HunkState::Seen, HunkState::Unseen]
     );
-    let thread = client.thread(session, comment.id).await;
+    let thread = client.thread(project, comment.id).await;
     assert_eq!((thread.anchor, thread.location), (Some(EXACT), at("a.txt", 21, 1)));
 
     // Against the new merge base only the feature's own changes are left.
-    client.set_base(session, merge_base("main")).await;
+    client.set_base(project, merge_base("main")).await;
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Seen, HunkState::Unseen]);
-    let thread = client.thread(session, comment.id).await;
+    let thread = client.thread(project, comment.id).await;
     assert_eq!((thread.anchor, thread.location), (Some(EXACT), at("a.txt", 21, 1)));
 }
 
@@ -333,21 +333,21 @@ async fn criterion1_a_rebase_that_changes_the_base_side_marks_seen_against_old_b
     write(p, "a.txt", &text(40, &[7, 8, 9]));
     git(p, &["commit", "-q", "-a", "-m", "feature"]);
     let mut client = Client::new(&fx.handler);
-    let session = client.open(p).await;
-    client.set_base(session, merge_base("main")).await;
+    let project = client.open(p).await;
+    client.set_base(project, merge_base("main")).await;
     client.settled().await;
-    client.toggle_hunk(session, "a.txt", 0).await;
-    assert_eq!(hunks(&client.manifest(session).await, "a.txt"), [HunkState::Seen]);
+    client.toggle_hunk(project, "a.txt", 0).await;
+    assert_eq!(hunks(&client.manifest(project).await, "a.txt"), [HunkState::Seen]);
 
     // Main drops a line inside what the feature edited; the rebase keeps the
     // feature's version, so the target side does not change but the base side does.
     advance_main(p, &[("a.txt", &text(40, &[]).replace("line 8\n", ""))]);
     git(p, &["rebase", "-q", "-X", "theirs", "main"]);
     assert_eq!(std::fs::read_to_string(p.join("a.txt")).unwrap(), text(40, &[7, 8, 9]));
-    client.set_base(session, merge_base("main")).await;
+    client.set_base(project, merge_base("main")).await;
     client.settled().await;
 
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::SeenAgainstOldBase]);
     // The three target lines count as unseen; of the two base lines left, both are seen.
     assert_eq!(
@@ -355,8 +355,8 @@ async fn criterion1_a_rebase_that_changes_the_base_side_marks_seen_against_old_b
         (5, 2, 3)
     );
 
-    client.toggle_hunk(session, "a.txt", 0).await;
-    let m = client.manifest(session).await;
+    client.toggle_hunk(project, "a.txt", 0).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Seen]);
     assert_eq!(m.completion.old_base_lines, 0);
 }
@@ -370,10 +370,10 @@ async fn criterion1_a_seen_deletion_survives_an_unrelated_rebase() {
     write(p, "a.txt", &without);
     git(p, &["commit", "-q", "-a", "-m", "delete three lines"]);
     let mut client = Client::new(&fx.handler);
-    let session = client.open(p).await;
-    client.set_base(session, merge_base("main")).await;
+    let project = client.open(p).await;
+    client.set_base(project, merge_base("main")).await;
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(
         (
             file(&m, "a.txt").hunks[0].base_len,
@@ -381,7 +381,7 @@ async fn criterion1_a_seen_deletion_survives_an_unrelated_rebase() {
         ),
         (3, 0)
     );
-    client.toggle_hunk(session, "a.txt", 0).await;
+    client.toggle_hunk(project, "a.txt", 0).await;
 
     // Main changes the file elsewhere: a header on top and an edit far below.
     advance_main(p, &[("a.txt", &format!("header\n{}", text(40, &[30])))]);
@@ -389,14 +389,14 @@ async fn criterion1_a_seen_deletion_survives_an_unrelated_rebase() {
     client.quiet().await;
 
     // Against the old base the rebase shows up as extra changes; the deletion stays seen.
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(
         hunks(&m, "a.txt"),
         [HunkState::Unseen, HunkState::Seen, HunkState::Unseen]
     );
-    client.set_base(session, merge_base("main")).await;
+    client.set_base(project, merge_base("main")).await;
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Seen]);
     assert_eq!((m.completion.lines, m.completion.seen_lines), (3, 3));
 }
@@ -406,14 +406,14 @@ async fn criterion1_a_crlf_only_change_is_whitespace_exact_for_comments_and_unse
     let dirty = text(10, &[3]);
     let fx = fixture(&[("a.txt", &text(10, &[]))], &[("a.txt", &dirty)]).await;
     let mut client = Client::new(&fx.handler);
-    let session = client.open(fx.repo.path()).await;
-    client.toggle_hunk(session, "a.txt", 0).await;
-    let comment = client.comment(session, "a.txt", 2, 3).await;
+    let project = client.open(fx.repo.path()).await;
+    client.toggle_hunk(project, "a.txt", 0).await;
+    let comment = client.comment(project, "a.txt", 2, 3).await;
 
     write(fx.repo.path(), "a.txt", &dirty.replace('\n', "\r\n"));
     client.settled().await;
 
-    let thread = client.thread(session, comment.id).await;
+    let thread = client.thread(project, comment.id).await;
     assert_eq!(
         thread.anchor,
         Some(AnchorState::Exact {
@@ -422,7 +422,7 @@ async fn criterion1_a_crlf_only_change_is_whitespace_exact_for_comments_and_unse
     );
     assert_eq!(thread.location, at("a.txt", 2, 3));
     // A mark covers identical content only: the line-ending change is new content.
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Unseen]);
     // Only the base-side line, whose text did not change, is still seen.
     assert_eq!(m.completion.seen_lines, 1);
@@ -436,10 +436,10 @@ async fn criterion1_a_filter_change_leaves_review_state_intact_and_counts_the_ex
     )
     .await;
     let mut client = Client::new(&fx.handler);
-    let session = client.open(fx.repo.path()).await;
-    client.toggle_hunk(session, "a.txt", 0).await;
-    let comment = client.comment(session, "a.txt", 2, 1).await;
-    let m = client.manifest(session).await;
+    let project = client.open(fx.repo.path()).await;
+    client.toggle_hunk(project, "a.txt", 0).await;
+    let comment = client.comment(project, "a.txt", 2, 1).await;
+    let m = client.manifest(project).await;
     assert_eq!(
         (m.completion.lines, m.completion.seen_lines, m.excluded_lines),
         (4, 2, 0)
@@ -449,15 +449,15 @@ async fn criterion1_a_filter_change_leaves_review_state_intact_and_counts_the_ex
         exclude: vec!["a.txt".into(), "docs/**".into()],
         ..Default::default()
     };
-    client.set_filter(session, all).await;
+    client.set_filter(project, all).await;
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert!(m.files.is_empty());
     assert_eq!((m.completion.lines, m.excluded_lines), (0, 4));
 
-    client.set_filter(session, ReviewFilter::default()).await;
+    client.set_filter(project, ReviewFilter::default()).await;
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Seen]);
     assert_eq!(hunks(&m, "docs/b.md"), [HunkState::Unseen]);
     assert_eq!(
@@ -470,14 +470,14 @@ async fn criterion1_a_filter_change_leaves_review_state_intact_and_counts_the_ex
         exclude: vec!["docs/**".into()],
         ..Default::default()
     };
-    client.set_filter(session, docs).await;
+    client.set_filter(project, docs).await;
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(
         (m.completion.lines, m.completion.seen_lines, m.excluded_lines),
         (2, 2, 2)
     );
-    let thread = client.thread(session, comment.id).await;
+    let thread = client.thread(project, comment.id).await;
     assert_eq!((thread.anchor, thread.location), (Some(EXACT), at("a.txt", 2, 1)));
 }
 
@@ -487,10 +487,10 @@ async fn criterion1_a_seen_line_that_appears_twice_is_unseen_once_its_context_is
     let dirty = "fn a() {\n    return 0;\n}\nfn b() {\n    return 0;\n}\n";
     let fx = fixture(&[("a.rs", base)], &[("a.rs", dirty)]).await;
     let mut client = Client::new(&fx.handler);
-    let session = client.open(fx.repo.path()).await;
-    client.toggle_hunk(session, "a.rs", 0).await;
+    let project = client.open(fx.repo.path()).await;
+    client.toggle_hunk(project, "a.rs", 0).await;
     assert_eq!(
-        hunks(&client.manifest(session).await, "a.rs"),
+        hunks(&client.manifest(project).await, "a.rs"),
         [HunkState::Seen, HunkState::Unseen]
     );
 
@@ -502,7 +502,7 @@ async fn criterion1_a_seen_line_that_appears_twice_is_unseen_once_its_context_is
     );
     client.settled().await;
     assert_eq!(
-        hunks(&client.manifest(session).await, "a.rs"),
+        hunks(&client.manifest(project).await, "a.rs"),
         [HunkState::Seen, HunkState::Unseen]
     );
 
@@ -514,7 +514,7 @@ async fn criterion1_a_seen_line_that_appears_twice_is_unseen_once_its_context_is
         "fn c() {\n    return 0;\n}\nfn d() {\n    return 0;\n}\n",
     );
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert!(hunks(&m, "a.rs").iter().all(|h| *h == HunkState::Unseen));
     assert_eq!(m.completion.seen_lines, 0);
 }
@@ -526,35 +526,35 @@ async fn criterion1_a_mode_only_changeset_is_not_complete_until_acknowledged() {
     let fx = fixture(&[("run.sh", "echo\n"), ("a.txt", &text(5, &[]))], &[]).await;
     let p = fx.repo.path();
     let mut client = Client::new(&fx.handler);
-    let session = client.open(p).await;
+    let project = client.open(p).await;
     let complete = |m: &Manifest| {
         m.completion.seen_lines == m.completion.lines && m.completion.acknowledged_items == m.completion.items
     };
-    assert!(complete(&client.manifest(session).await), "an empty changeset");
+    assert!(complete(&client.manifest(project).await), "an empty changeset");
 
     std::fs::set_permissions(p.join("run.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(m.files.len(), 1);
     assert_eq!((m.completion.lines, m.completion.items), (0, 1));
     assert!(!complete(&m));
 
-    client.acknowledge(session, "run.sh", NonTextKind::Mode).await;
-    let m = client.manifest(session).await;
+    client.acknowledge(project, "run.sh", NonTextKind::Mode).await;
+    let m = client.manifest(project).await;
     assert!(complete(&m));
     assert_eq!(file(&m, "run.sh").review.acknowledged, [NonTextKind::Mode]);
 
     // The acknowledgement survives an unrelated settle; that edit is what is left to review.
     write(p, "a.txt", &text(5, &[1]));
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(file(&m, "run.sh").review.acknowledged, [NonTextKind::Mode]);
     assert!(!complete(&m));
 
     // Changing the mode back leaves no change at all.
     std::fs::set_permissions(p.join("run.sh"), std::fs::Permissions::from_mode(0o644)).unwrap();
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert!(m.files.iter().all(|f| f.path != "run.sh"));
     assert_eq!(m.completion.items, 0);
 }
@@ -567,7 +567,7 @@ async fn criterion1_windows_filesystem_mode_comes_from_the_index_when_filemode_i
     git(p, &["update-index", "--chmod=+x", "run.sh"]);
     git(p, &["commit", "-q", "-m", "run.sh is executable"]);
     let mut client = Client::new(&fx.handler);
-    let session = client.open(p).await;
+    let project = client.open(p).await;
 
     // On disk the mode bits are whatever the filesystem says; git is told to ignore them.
     #[cfg(unix)]
@@ -578,11 +578,11 @@ async fn criterion1_windows_filesystem_mode_comes_from_the_index_when_filemode_i
         set("plain.txt", 0o755).unwrap();
     }
     client.quiet().await;
-    assert!(client.manifest(session).await.files.is_empty());
+    assert!(client.manifest(project).await.files.is_empty());
 
     git(p, &["update-index", "--chmod=-x", "run.sh"]);
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(m.files.len(), 1);
     let item = &file(&m, "run.sh").non_text[0];
     assert_eq!(item.kind, NonTextKind::Mode);
@@ -599,7 +599,7 @@ async fn criterion1_windows_filesystem_mode_comes_from_the_index_when_filemode_i
         std::fs::set_permissions(p.join("new.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     let new = file(&m, "new.sh");
     assert_eq!(new.status, vet_protocol::FileStatus::Added);
     assert!(new.non_text.is_empty());
@@ -626,12 +626,12 @@ async fn criterion1_windows_filesystem_a_symlink_stays_a_symlink_when_symlinks_a
     let fx = fixture_of(repo).await;
     let p = fx.repo.path();
     let mut client = Client::new(&fx.handler);
-    let session = client.open(p).await;
-    assert!(client.manifest(session).await.files.is_empty(), "no change");
+    let project = client.open(p).await;
+    assert!(client.manifest(project).await.files.is_empty(), "no change");
 
     write(p, "link", "other.txt");
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(m.files.len(), 1);
     let link = file(&m, "link");
     assert!(link.hunks.is_empty());
@@ -744,12 +744,12 @@ async fn criterion1_a_rename_keeps_marks_comments_and_file_threads() {
     let fx = fixture(&[("a.txt", &text(40, &[]))], &[("a.txt", &text(40, &[5]))]).await;
     let p = fx.repo.path();
     let mut client = Client::new(&fx.handler);
-    let session = client.open(p).await;
-    client.toggle_hunk(session, "a.txt", 0).await;
-    let range = client.comment(session, "a.txt", 5, 1).await;
+    let project = client.open(p).await;
+    client.toggle_hunk(project, "a.txt", 0).await;
+    let range = client.comment(project, "a.txt", 5, 1).await;
     let whole_file = client
         .create(
-            session,
+            project,
             0,
             ThreadTarget::File {
                 side: Side::Target,
@@ -761,7 +761,7 @@ async fn criterion1_a_rename_keeps_marks_comments_and_file_threads() {
     git(p, &["mv", "a.txt", "b.txt"]);
     client.settled().await;
 
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(m.files.len(), 1);
     let renamed = file(&m, "b.txt");
     assert_eq!(
@@ -769,9 +769,9 @@ async fn criterion1_a_rename_keeps_marks_comments_and_file_threads() {
         (vet_protocol::FileStatus::Renamed, Some("a.txt"))
     );
     assert_eq!(hunks(&m, "b.txt"), [HunkState::Seen]);
-    let range = client.thread(session, range.id).await;
+    let range = client.thread(project, range.id).await;
     assert_eq!((range.anchor, range.location), (Some(EXACT), at("b.txt", 5, 1)));
-    let whole_file = client.thread(session, whole_file.id).await;
+    let whole_file = client.thread(project, whole_file.id).await;
     assert_eq!(
         (whole_file.kind, whole_file.anchor, whole_file.path.as_deref()),
         (ThreadKind::File, Some(EXACT), Some("b.txt"))
@@ -783,13 +783,13 @@ async fn criterion1_an_edit_inside_the_anchor_range_is_inferred_until_confirmed(
     let dirty = text(30, &[3]);
     let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;
     let mut client = Client::new(&fx.handler);
-    let session = client.open(fx.repo.path()).await;
-    let comment = client.comment(session, "a.txt", 10, 3).await;
+    let project = client.open(fx.repo.path()).await;
+    let comment = client.comment(project, "a.txt", 10, 3).await;
 
     write(fx.repo.path(), "a.txt", &text(30, &[3, 11]));
     let revision = client.settled().await;
 
-    let thread = client.thread(session, comment.id).await;
+    let thread = client.thread(project, comment.id).await;
     assert!(
         matches!(
             thread.anchor,
@@ -807,7 +807,7 @@ async fn criterion1_an_edit_inside_the_anchor_range_is_inferred_until_confirmed(
     );
 
     let request = Request::ConfirmAnchor {
-        session,
+        project,
         revision,
         thread: comment.id,
     };
@@ -823,14 +823,14 @@ async fn criterion1_duplicate_content_is_ambiguous_until_one_candidate_is_attach
     let before = format!("p1\np2\np3\n{block}q1\nq2\nq3\n");
     let fx = fixture(&[("a.txt", "x\n")], &[("a.txt", &before)]).await;
     let mut client = Client::new(&fx.handler);
-    let session = client.open(fx.repo.path()).await;
-    let comment = client.comment(session, "a.txt", 3, 3).await;
+    let project = client.open(fx.repo.path()).await;
+    let comment = client.comment(project, "a.txt", 3, 3).await;
 
     let after = format!("x1\nx2\nx3\n{block}x4\nx5\nx6\nx7\nx8\n{block}y1\ny2\ny3\n");
     write(fx.repo.path(), "a.txt", &after);
     let revision = client.settled().await;
 
-    let thread = client.thread(session, comment.id).await;
+    let thread = client.thread(project, comment.id).await;
     assert_eq!(thread.location, None);
     assert_eq!(
         thread.anchor,
@@ -839,7 +839,7 @@ async fn criterion1_duplicate_content_is_ambiguous_until_one_candidate_is_attach
         })
     );
     let request = Request::AttachAnchor {
-        session,
+        project,
         revision,
         thread: comment.id,
         candidate: 1,
@@ -861,14 +861,14 @@ async fn criterion1_moved_content_in_another_changed_file_is_inferred_across_fil
     };
     let fx = fixture(&[("a.txt", &a), ("b.txt", &b)], &[("a.txt", &insert(&a, "line 5"))]).await;
     let mut client = Client::new(&fx.handler);
-    let session = client.open(fx.repo.path()).await;
-    let comment = client.comment(session, "a.txt", 5, 3).await;
+    let project = client.open(fx.repo.path()).await;
+    let comment = client.comment(project, "a.txt", 5, 3).await;
 
     write(fx.repo.path(), "a.txt", &a);
     write(fx.repo.path(), "b.txt", &insert(&b, "b 7"));
     client.quiet().await;
 
-    let thread = client.thread(session, comment.id).await;
+    let thread = client.thread(project, comment.id).await;
     assert!(
         matches!(
             thread.anchor,
@@ -895,12 +895,12 @@ async fn criterion1_deleting_a_file_detaches_its_threads_but_not_the_changeset_t
     .await;
     let p = fx.repo.path();
     let mut client = Client::new(&fx.handler);
-    let session = client.open(p).await;
-    client.toggle_hunk(session, "a.txt", 0).await;
-    let range = client.comment(session, "a.txt", 2, 3).await;
+    let project = client.open(p).await;
+    client.toggle_hunk(project, "a.txt", 0).await;
+    let range = client.comment(project, "a.txt", 2, 3).await;
     let whole_file = client
         .create(
-            session,
+            project,
             0,
             ThreadTarget::File {
                 side: Side::Target,
@@ -908,7 +908,7 @@ async fn criterion1_deleting_a_file_detaches_its_threads_but_not_the_changeset_t
             },
         )
         .await;
-    let changeset = client.create(session, 0, ThreadTarget::Changeset).await;
+    let changeset = client.create(project, 0, ThreadTarget::Changeset).await;
 
     git(p, &["rm", "-q", "-f", "a.txt"]);
     client.settled().await;
@@ -916,17 +916,17 @@ async fn criterion1_deleting_a_file_detaches_its_threads_but_not_the_changeset_t
     let gone = Some(AnchorState::Stale {
         reason: StaleReason::FileDeleted,
     });
-    let range = client.thread(session, range.id).await;
+    let range = client.thread(project, range.id).await;
     assert_eq!((range.anchor, range.location), (gone.clone(), None));
-    assert_eq!(client.thread(session, whole_file.id).await.anchor, gone);
-    let changeset = client.thread(session, changeset.id).await;
+    assert_eq!(client.thread(project, whole_file.id).await.anchor, gone);
+    let changeset = client.thread(project, changeset.id).await;
     assert_eq!(
         (changeset.anchor, changeset.path, changeset.location),
         (None, None, None)
     );
     // The deletion is a change to review. Only the base line the reviewer saw is
     // still covered; the mark on the edited target line is not carried onto it.
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(file(&m, "a.txt").status, vet_protocol::FileStatus::Deleted);
     assert_eq!((m.completion.lines, m.completion.seen_lines), (10, 1));
 }
@@ -950,7 +950,7 @@ async fn criterion1_all_four_anchor_states_in_one_session() {
     .await;
     let p = fx.repo.path();
     let mut client = Client::new(&fx.handler);
-    let session = client.open(p).await;
+    let project = client.open(p).await;
     let mut threads = Vec::new();
     for (path, start) in [
         ("exact.txt", 10),
@@ -959,7 +959,7 @@ async fn criterion1_all_four_anchor_states_in_one_session() {
         ("stale.txt", 10),
         ("rewritten.txt", 10),
     ] {
-        threads.push(client.comment(session, path, start, 3).await.id);
+        threads.push(client.comment(project, path, start, 3).await.id);
     }
 
     write(p, "exact.txt", &format!("new 1\nnew 2\n{}", own("exact")));
@@ -980,7 +980,7 @@ async fn criterion1_all_four_anchor_states_in_one_session() {
     let states: Vec<_> = {
         let mut states = Vec::new();
         for id in threads {
-            states.push(client.thread(session, id).await.anchor.unwrap());
+            states.push(client.thread(project, id).await.anchor.unwrap());
         }
         states
     };
@@ -1329,8 +1329,8 @@ async fn criterion4_a_write_storm_through_the_real_watcher_settles_on_the_final_
     .await;
     let p = fx.repo.path();
     let mut client = Client::new(&fx.handler);
-    let session = client.open(p).await;
-    client.toggle_hunk(session, "a.txt", 0).await;
+    let project = client.open(p).await;
+    client.toggle_hunk(project, "a.txt", 0).await;
 
     // Hundreds of files across many folders in one burst, with the marked line
     // rewritten and the other mark's hunk left alone.
@@ -1356,7 +1356,7 @@ async fn criterion4_a_write_storm_through_the_real_watcher_settles_on_the_final_
     let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     let m = loop {
         client.quiet().await;
-        let m = client.manifest(session).await;
+        let m = client.manifest(project).await;
         let mut got: Vec<_> = m.files.iter().map(|f| (f.path.clone(), f.status)).collect();
         got.sort_by(|a, b| a.0.cmp(&b.0));
         if got == expected || tokio::time::Instant::now() > deadline {

@@ -88,14 +88,14 @@ async fn rust_semantics_through_the_protocol() {
     let data = tempfile::tempdir().unwrap();
     let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
     let client = Client::new(&handler);
-    let session = client.open(repo.path()).await;
-    let revision = client.revision(session).await;
+    let project = client.open(repo.path()).await;
+    let revision = client.revision(project).await;
     let path = "src/lib.rs";
 
     let (line, col) = find(DIRTY, "keep()", 1, 1);
     let hover = client
         .call(Request::Hover {
-            session,
+            project,
             revision,
             side: Side::Target,
             path: path.into(),
@@ -125,7 +125,7 @@ async fn rust_semantics_through_the_protocol() {
 
     let Response::Definition(defs) = client
         .call(Request::Definition {
-            session,
+            project,
             revision,
             side: Side::Target,
             path: path.into(),
@@ -146,7 +146,7 @@ async fn rust_semantics_through_the_protocol() {
     let (line, col) = find(DIRTY, "keep", 0, 1);
     let Response::References(refs) = client
         .call(Request::References {
-            session,
+            project,
             revision,
             side: Side::Target,
             path: path.into(),
@@ -165,7 +165,7 @@ async fn rust_semantics_through_the_protocol() {
     let (line, col) = find(BASE, "gone()", 1, 1);
     let Response::Hover { text, side, .. } = client
         .call(Request::Hover {
-            session,
+            project,
             revision,
             side: Side::Base,
             path: path.into(),
@@ -186,7 +186,7 @@ async fn rust_semantics_through_the_protocol() {
         ..
     } = client
         .call(Request::Diagnostics {
-            session,
+            project,
             revision,
             path: path.into(),
         })
@@ -202,7 +202,7 @@ async fn rust_semantics_through_the_protocol() {
     );
 
     let Response::ChangedSymbols(changed) = client
-        .call(Request::ChangedSymbols { session, revision })
+        .call(Request::ChangedSymbols { project, revision })
         .await
         .unwrap()
     else {
@@ -242,7 +242,7 @@ async fn rust_semantics_through_the_protocol() {
             signature, unavailable, ..
         } = client
             .call(Request::Signature {
-                session,
+                project,
                 revision,
                 symbol: id(symbol),
             })
@@ -258,7 +258,7 @@ async fn rust_semantics_through_the_protocol() {
 
     let Response::Impact(impact) = client
         .call(Request::Impact {
-            session,
+            project,
             revision,
             symbol: id("keep"),
         })
@@ -282,7 +282,7 @@ async fn rust_semantics_through_the_protocol() {
 
     let Response::RemovalImpact(removal) = client
         .call(Request::RemovalImpact {
-            session,
+            project,
             revision,
             symbol: id("gone"),
         })
@@ -305,7 +305,7 @@ async fn rust_semantics_through_the_protocol() {
 
     let Response::Reachability(reach) = client
         .call(Request::Reachability {
-            session,
+            project,
             revision,
             symbol: id("fresh"),
         })
@@ -327,7 +327,7 @@ async fn rust_semantics_through_the_protocol() {
     // Kinds are not interchangeable, and stale revisions are refused.
     let wrong = client
         .call(Request::Impact {
-            session,
+            project,
             revision,
             symbol: id("gone"),
         })
@@ -335,7 +335,7 @@ async fn rust_semantics_through_the_protocol() {
     assert!(wrong.unwrap_err().contains("removed"));
     let wrong = client
         .call(Request::RemovalImpact {
-            session,
+            project,
             revision,
             symbol: id("keep"),
         })
@@ -343,7 +343,7 @@ async fn rust_semantics_through_the_protocol() {
     assert!(wrong.is_err());
     let unknown = client
         .call(Request::Reachability {
-            session,
+            project,
             revision,
             symbol: id("nothing"),
         })
@@ -351,7 +351,7 @@ async fn rust_semantics_through_the_protocol() {
     assert!(unknown.unwrap_err().contains("changed symbol"));
     for request in [
         Request::Hover {
-            session,
+            project,
             revision: revision + 1,
             side: Side::Target,
             path: path.into(),
@@ -359,11 +359,11 @@ async fn rust_semantics_through_the_protocol() {
             col: 0,
         },
         Request::ChangedSymbols {
-            session,
+            project,
             revision: revision + 1,
         },
         Request::Diagnostics {
-            session,
+            project,
             revision: revision + 1,
             path: path.into(),
         },
@@ -371,11 +371,11 @@ async fn rust_semantics_through_the_protocol() {
         let error = client.call(request).await.unwrap_err();
         assert!(error.contains("stale revision"), "{error}");
     }
-    client.call(Request::CloseSession { session }).await.unwrap();
+    client.call(Request::CloseProject { project }).await.unwrap();
 }
 
 #[tokio::test]
-async fn a_language_without_a_server_degrades_and_never_fails_the_session() {
+async fn a_language_without_a_server_degrades_and_never_fails_the_project() {
     let repo = repo_with(
         &[("a.py", "def f():\n    return 1\n"), ("notes.md", "x\n")],
         &[("a.py", "def f():\n    return 2\n"), ("notes.md", "y\n")],
@@ -383,20 +383,20 @@ async fn a_language_without_a_server_degrades_and_never_fails_the_session() {
     let data = tempfile::tempdir().unwrap();
     let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
     let client = Client::new(&handler);
-    let session = client.open(repo.path()).await;
-    let revision = client.revision(session).await;
+    let project = client.open(repo.path()).await;
+    let revision = client.revision(project).await;
 
     // A path that is not a file: the custom path wins over everything, so the server is missing.
     client
         .call(Request::SetServerPath {
-            session,
+            project,
             language: "python".into(),
             path: Some("/no/such/pyright-langserver".into()),
         })
         .await
         .unwrap();
     let hover = |path: &str| Request::Hover {
-        session,
+        project,
         revision,
         side: Side::Target,
         path: path.into(),
@@ -429,7 +429,7 @@ async fn a_language_without_a_server_degrades_and_never_fails_the_session() {
     // Derived results report the failed file as a gap instead of failing; the changed
     // notes.md has no language and is no gap.
     let Response::ChangedSymbols(changed) = client
-        .call(Request::ChangedSymbols { session, revision })
+        .call(Request::ChangedSymbols { project, revision })
         .await
         .unwrap()
     else {
@@ -440,8 +440,8 @@ async fn a_language_without_a_server_degrades_and_never_fails_the_session() {
     assert_eq!(changed.gaps[0].path, "a.py");
     assert!(changed.gaps[0].reason.contains("/no/such/pyright-langserver"));
 
-    // The session itself is fine.
-    assert_eq!(client.revision(session).await, revision);
+    // The project itself is fine.
+    assert_eq!(client.revision(project).await, revision);
 }
 
 #[tokio::test]
@@ -450,9 +450,9 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
     let data = tempfile::tempdir().unwrap();
     let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
     let mut first = Client::new(&handler);
-    let session = first.open(repo.path()).await;
+    let project = first.open(repo.path()).await;
 
-    let listed = first.servers(session).await;
+    let listed = first.servers(project).await;
     let languages: Vec<_> = listed.iter().map(|s| s.language.as_str()).collect();
     assert_eq!(languages, ["rust", "typescript", "python", "csharp"]);
     let python = listed.iter().find(|s| s.language == "python").unwrap();
@@ -470,13 +470,13 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
 
     // A second connection sets a path; the first is told, the setter is not.
     let second = Client::new(&handler);
-    assert_eq!(second.open(repo.path()).await, session);
+    assert_eq!(second.open(repo.path()).await, project);
     let tool = data.path().join("my-pyright");
     std::fs::write(&tool, "").unwrap();
     let path = tool.to_str().unwrap().to_owned();
     let Response::Servers { servers } = second
         .call(Request::SetServerPath {
-            session,
+            project,
             language: "python".into(),
             path: Some(path.clone()),
         })
@@ -509,7 +509,7 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
 
     let unknown = second
         .call(Request::SetServerPath {
-            session,
+            project,
             language: "cobol".into(),
             path: None,
         })
@@ -520,9 +520,9 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
     drop((first, second));
     let again = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
     let client = Client::new(&again);
-    let session = client.open(repo.path()).await;
+    let project = client.open(repo.path()).await;
     let python = client
-        .servers(session)
+        .servers(project)
         .await
         .into_iter()
         .find(|s| s.language == "python")
@@ -531,14 +531,14 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
 
     client
         .call(Request::SetServerPath {
-            session,
+            project,
             language: "python".into(),
             path: None,
         })
         .await
         .unwrap();
     let python = client
-        .servers(session)
+        .servers(project)
         .await
         .into_iter()
         .find(|s| s.language == "python")

@@ -9,13 +9,13 @@ impl Handler for Echo {
     async fn handle(&self, request: Request, events: Events) -> Result<Response, String> {
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
-            Request::OpenSession { .. } => {
+            Request::OpenProject { .. } => {
                 events.send(Event::SnapshotSettled {
-                    session: 3,
+                    project: 3,
                     revision: 1,
                 });
-                Ok(Response::Session {
-                    session: 3,
+                Ok(Response::Project {
+                    project: 3,
                     root: "/r".into(),
                 })
             }
@@ -101,7 +101,7 @@ async fn handlers_push_events_to_the_connection() {
         &mut socket,
         &ClientMessage::Request {
             id: 1,
-            request: Request::OpenSession { repo: ".".into() },
+            request: Request::OpenProject { repo: ".".into() },
         },
     )
     .await;
@@ -111,8 +111,8 @@ async fn handlers_push_events_to_the_connection() {
         got[0],
         ServerMessage::Response {
             id: 1,
-            response: Response::Session {
-                session: 3,
+            response: Response::Project {
+                project: 3,
                 root: "/r".into()
             }
         }
@@ -121,7 +121,7 @@ async fn handlers_push_events_to_the_connection() {
         got[1],
         ServerMessage::Event {
             event: Event::SnapshotSettled {
-                session: 3,
+                project: 3,
                 revision: 1
             }
         }

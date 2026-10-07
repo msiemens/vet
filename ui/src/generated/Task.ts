@@ -7,9 +7,9 @@ import type { TaskState } from "./TaskState";
  * starts, as it progresses (at most a few times a second) and when it ends, in
  * that order; `Request::Tasks` lists the running ones.
  */
-export type Task = { session: number, 
+export type Task = { project: number, 
 /**
- * Unique among the tasks of the session, and the same in every announcement
+ * Unique among the tasks of the project, and the same in every announcement
  * of the task.
  */
 id: number, kind: TaskKind, 

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    BaseChoice, CommentAt, NonTextKind, ReviewFilter, Secret, SessionId, Side, SymbolId, ThreadStatus, ThreadTarget,
+    BaseChoice, CommentAt, NonTextKind, ProjectId, ReviewFilter, Secret, Side, SymbolId, ThreadStatus, ThreadTarget,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -16,7 +16,7 @@ pub enum Request {
         payload: String,
     },
     /// The recently opened repositories, as the paths they were recorded with and
-    /// when, most recent first. They belong to the backend, not to a session.
+    /// when, most recent first. They belong to the backend, not to a project.
     /// Answers with `Response::RecentProjects`.
     RecentProjects,
     /// Puts `path` at the top of the recent list, opened now, dropping its earlier
@@ -29,7 +29,7 @@ pub enum Request {
         path: String,
     },
     /// The credentials the backend holds or can get for hosting platforms, per host
-    /// and not tied to a session, and subscribes this connection to `CredentialsNeeded`.
+    /// and not tied to a project, and subscribes this connection to `CredentialsNeeded`.
     /// Asking also looks up what the platform says about each credential, so it may
     /// take a moment. Answers with `Response::Accounts`.
     Accounts,
@@ -52,44 +52,44 @@ pub enum Request {
     },
     /// Opens the working tree of the repository containing `repo`, which may be
     /// any folder inside it, against its current branch, and subscribes this
-    /// connection to the session's events. The repository's open review is
-    /// resumed; with none, the session is browsing (`ReviewInfo`). Fails if
+    /// connection to the project's events. The repository's open review is
+    /// resumed; with none, the project is browsing (`ReviewInfo`). Fails if
     /// `repo` is not inside a non-bare repository.
-    OpenSession {
+    OpenProject {
         repo: String,
     },
-    CloseSession {
-        session: SessionId,
+    CloseProject {
+        project: ProjectId,
     },
     /// Ends the open review: its marks, acknowledgements and threads are kept
-    /// in the store but leave the session, which goes back to browsing. The
+    /// in the store but leave the project, which goes back to browsing. The
     /// revision increases and every subscriber, including the requester, gets
     /// `SnapshotSettled`; fetch the manifest again. Fails if no review is open.
     /// Answers with `Response::ReviewFinished`.
     FinishReview {
-        session: SessionId,
+        project: ProjectId,
     },
-    /// The background work of the session that is running now, oldest first, for
+    /// The background work of the project that is running now, oldest first, for
     /// a connection that joined after it started. Answers with `Response::Tasks`,
-    /// also while the session is still scanning for the first time.
+    /// also while the project is still scanning for the first time.
     Tasks {
-        session: SessionId,
+        project: ProjectId,
     },
-    /// The changeset as it is now, with review state. Waits for the session's
+    /// The changeset as it is now, with review state. Waits for the project's
     /// first scan if it has not finished.
     Manifest {
-        session: SessionId,
+        project: ProjectId,
     },
     /// Both sides of one text file at the current revision.
     FileContents {
-        session: SessionId,
+        project: ProjectId,
         path: String,
     },
     /// Flips one hunk (an index into the manifest of `revision`): seen becomes unseen, an
     /// unseen one or one seen against an old base becomes seen. Fails if `revision` is no
     /// longer current. Answers with `Response::Review`.
     ToggleHunk {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         path: String,
         hunk: u32,
@@ -97,7 +97,7 @@ pub enum Request {
     /// Flips the acknowledgement of one non-text item. Fails if `revision` is no longer
     /// current. Answers with `Response::Review`.
     ToggleItem {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         path: String,
         kind: NonTextKind,
@@ -106,7 +106,7 @@ pub enum Request {
     /// is seen already, takes every mark back instead. Fails if `revision` is no
     /// longer current. Answers with `Response::Review`.
     ToggleFileSeen {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         path: String,
     },
@@ -115,7 +115,7 @@ pub enum Request {
     /// `revision` is no longer current; a language without a usable server
     /// answers with `unavailable` set instead. Answers with `Response::Hover`.
     Hover {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         side: Side,
         path: String,
@@ -126,7 +126,7 @@ pub enum Request {
     /// the first is the one to go to: those inside the repository, which can be opened,
     /// come before the others. Answers with `Response::Definition`; otherwise like `Hover`.
     Definition {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         side: Side,
         path: String,
@@ -136,7 +136,7 @@ pub enum Request {
     /// The references to the symbol at the position, without its declaration.
     /// Answers with `Response::References`; otherwise like `Hover`.
     References {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         side: Side,
         path: String,
@@ -147,7 +147,7 @@ pub enum Request {
     /// asked and may take seconds on a cold start: there is no push.
     /// Answers with `Response::Diagnostics`; otherwise like `Hover`.
     Diagnostics {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         path: String,
     },
@@ -155,14 +155,14 @@ pub enum Request {
     /// changed file, intersected with the diff hunks. Fails if `revision` is no
     /// longer current. Answers with `Response::ChangedSymbols`.
     ChangedSymbols {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
     },
     /// The declaration of a changed symbol, from the language server, on the side
     /// the symbol exists on. Fails like `Impact` but also for a removed symbol.
     /// Answers with `Response::Signature`.
     Signature {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         symbol: SymbolId,
     },
@@ -170,7 +170,7 @@ pub enum Request {
     /// target side (derived). Fails if the symbol is not one of
     /// `ChangedSymbols` at `revision`, or was removed. Answers with `Response::Impact`.
     Impact {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         symbol: SymbolId,
     },
@@ -178,35 +178,35 @@ pub enum Request {
     /// symbol is not a removed one of `ChangedSymbols` at `revision`. Answers
     /// with `Response::RemovalImpact`.
     RemovalImpact {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         symbol: SymbolId,
     },
     /// Whether an added or modified changed symbol is reached from an entry
     /// point (derived, §7.4). Fails like `Impact`. Answers with `Response::Reachability`.
     Reachability {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         symbol: SymbolId,
     },
-    /// Each language's server as it resolves for the session's repository.
+    /// Each language's server as it resolves for the project's repository.
     /// Answers with `Response::Servers`.
     ListServers {
-        session: SessionId,
+        project: ProjectId,
     },
     /// Installs the pinned server of a language into Vet's data directory and
     /// restarts that language's running servers. Output lines arrive as
     /// `ServerInstallOutput` events until the answer, which is `Response::Servers`
     /// as after the install. Fails with the tool's output tail if it does not work.
     InstallServer {
-        session: SessionId,
+        project: ProjectId,
         language: String,
     },
     /// Stores the path of the server to use for a language, or removes it with
     /// `None`. The path is not checked here: `ListServers` says whether it works.
     /// Restarts that language's running servers. Answers with `Response::Servers`.
     SetServerPath {
-        session: SessionId,
+        project: ProjectId,
         language: String,
         path: Option<String>,
     },
@@ -215,28 +215,28 @@ pub enum Request {
     /// including the requester, gets `SnapshotSettled`; fetch the manifest again.
     /// Fails with a message fit to show if the choice does not resolve.
     SetBase {
-        session: SessionId,
+        project: ProjectId,
         base: BaseChoice,
     },
     /// What a base can be picked from.
     ListBaseCandidates {
-        session: SessionId,
+        project: ProjectId,
     },
-    /// Replaces the review filter of the repository `session` has open and
-    /// persists it: a project setting, not part of the session (`session` is
+    /// Replaces the review filter of the repository `project` has open and
+    /// persists it: a project setting, not part of the review (`project` is
     /// only the handle to its repository). The revision increases and every
     /// subscriber, including the requester, gets `SnapshotSettled`; fetch the
     /// manifest again. Fails with a message fit to show if a glob is invalid, and
     /// then changes nothing. Answers with `Response::Done`.
     SetProjectFilter {
-        session: SessionId,
+        project: ProjectId,
         filter: ReviewFilter,
     },
     /// Adds the file at `path`, or with `directory` everything below the folder at `path`
     /// (`a/b` without a trailing slash), to the excluded globs of the repository's review
     /// filter and persists it, like `SetProjectFilter`. Answers with `Response::Done`.
     ExcludePath {
-        session: SessionId,
+        project: ProjectId,
         path: String,
         directory: bool,
     },
@@ -244,13 +244,13 @@ pub enum Request {
     /// `path` is `""` for the root, else `a/b` without a trailing slash. Fails if
     /// the snapshot has nothing there.
     ListDirectory {
-        session: SessionId,
+        project: ProjectId,
         path: String,
     },
     /// The target-side text of any path of the current target snapshot, changed
     /// or not.
     FileText {
-        session: SessionId,
+        project: ProjectId,
         path: String,
     },
     /// The bytes of one side of a non-text item's file, to preview an image. The
@@ -259,7 +259,7 @@ pub enum Request {
     /// `revision` is no longer current or there is no such item. Answers with
     /// `Response::ItemBlob`.
     ItemBlob {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         path: String,
         kind: NonTextKind,
@@ -269,14 +269,14 @@ pub enum Request {
     /// is lazy: a settled snapshot only invalidates it, and this request computes
     /// it. Kept apart from `Manifest` so the manifest does not wait for it.
     Threads {
-        session: SessionId,
+        project: ProjectId,
     },
     /// The line of the target text that a unified diff shows what is on `line` of one side of
     /// the file at `path` (its old path on the base side) at: the same rule as
     /// `Thread::target_line`, for a comment that has no thread yet and for a base position to
     /// reveal. Fails if `revision` is no longer current. Answers with `Response::TargetLine`.
     TargetLine {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         side: Side,
         path: String,
@@ -289,7 +289,7 @@ pub enum Request {
     /// longer current, or if the file or hunk does not exist. Answers with
     /// `Response::CommentTarget`, whose target goes to `CreateThread`.
     CommentTarget {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         path: String,
         at: CommentAt,
@@ -298,33 +298,33 @@ pub enum Request {
     /// the text of `revision`. Fails if `revision` is no longer current, or if the
     /// target does not exist at it. Answers with `Response::Thread`.
     CreateThread {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         target: ThreadTarget,
         body: String,
     },
     /// Answers with `Response::Thread`.
     Reply {
-        session: SessionId,
+        project: ProjectId,
         thread: u32,
         body: String,
     },
     /// Resolves or reopens a thread. Answers with `Response::Thread`.
     SetThreadStatus {
-        session: SessionId,
+        project: ProjectId,
         thread: u32,
         status: ThreadStatus,
     },
     /// Deletes a thread; this is also how a detached one is discarded.
     DeleteThread {
-        session: SessionId,
+        project: ProjectId,
         thread: u32,
     },
     /// Re-anchors a thread whose anchor is `Inferred` at its current location,
     /// which makes it `Exact`. Fails if `revision` is no longer current or the
     /// anchor is not `Inferred`. Answers with `Response::Thread`.
     ConfirmAnchor {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         thread: u32,
     },
@@ -332,7 +332,7 @@ pub enum Request {
     /// (an index into the candidates of `revision`). Fails like `ConfirmAnchor`.
     /// Answers with `Response::Thread`.
     AttachAnchor {
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         thread: u32,
         candidate: u32,

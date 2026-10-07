@@ -5,7 +5,7 @@ use ts_rs::TS;
 
 use crate::{
     Account, Base, BlobContent, BranchInfo, ChangedSymbols, CommitInfo, Diagnostic, DirEntry, Highlights, Impact,
-    Locations, Manifest, Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, SessionId, Side,
+    Locations, Manifest, ProjectId, Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, Side,
     SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable,
 };
 
@@ -16,8 +16,8 @@ pub enum Response {
     Pong {
         payload: String,
     },
-    Session {
-        session: SessionId,
+    Project {
+        project: ProjectId,
         /// The root of the repository the opened path belongs to.
         root: String,
     },

@@ -35,7 +35,7 @@ use vet_infra::materialize::kept::{Collected, KeptTrees, Limits, Referenced};
 use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
-use vet_protocol::{Event, Request, Response, SessionId};
+use vet_protocol::{Event, ProjectId, Request, Response};
 use vet_semantic::ports::Backend;
 use vet_transport::{Events, Handler};
 
@@ -47,7 +47,7 @@ pub struct Config {
     pub debounce: Duration,
     /// Poll interval when the topology has no usable file events (§6.4).
     pub poll: Duration,
-    /// How long a session without subscribers stays open, so a reloading
+    /// How long a project without subscribers stays open, so a reloading
     /// shell finds it again.
     pub orphan_grace: Duration,
 }
@@ -71,23 +71,23 @@ type Semantic = Semantics<
     Materialize<GixRepo, SqliteStore>,
 >;
 
-/// An open session: sessions are one per repository, and opening an open
+/// An open project: projects are one per repository, and opening an open
 /// repository subscribes to the existing one. It may not have scanned yet; see
 /// `Orchestrator::ready`.
 type Open = Entry<Connection, Wired>;
-type Sessions = Registry<Connection, Wired>;
+type Projects = Registry<Connection, Wired>;
 
 pub struct Orchestrator {
     store: SqliteStore,
     recent: RecentProjects<SqliteStore>,
     config: Config,
-    sessions: Sessions,
+    projects: Projects,
     servers: Arc<LanguageServers>,
     backends: Arc<[Backend]>,
     highlighter: highlight::Highlighter,
     /// The materialized snapshots kept between launches (§8).
     trees: Arc<KeptTrees>,
-    /// Credentials for hosting platforms: per host and app-wide, not per session.
+    /// Credentials for hosting platforms: per host and app-wide, not per project.
     accounts: Accounts<TokioRunner, HttpValidator>,
     /// The connections that asked for `Accounts`, which is where the events that belong
     /// to the process go.
@@ -116,7 +116,7 @@ impl Orchestrator {
         let backends: Arc<[Backend]> = lsp_config::defaults().into();
         let languages = backends.iter().map(|b| b.config().backend.clone()).collect();
         let resolver = ToolResolver::new(store.dir().to_owned());
-        // Which snapshots a session or a repository's remembered base refers to is not known here yet.
+        // Which snapshots a changeset or a repository's remembered base refers to is not known here yet.
         let referenced: Arc<dyn Referenced> = Arc::new(HashSet::<vet_core::content::SnapshotId>::new);
         let trees = KeptTrees::new(store.dir().join("materialized"), Limits::default(), referenced);
         let process_subscribers = Subscribers::<Connection>::default();
@@ -139,12 +139,12 @@ impl Orchestrator {
             recent: RecentProjects::new(store.clone()),
             store,
             config,
-            sessions: Sessions::default(),
+            projects: Projects::default(),
         }
     }
 
-    async fn find(&self, id: SessionId) -> Result<Arc<Open>, String> {
-        self.sessions.find(id).await.map_err(message)
+    async fn find(&self, id: ProjectId) -> Result<Arc<Open>, String> {
+        self.projects.find(id).await.map_err(message)
     }
 
     /// At startup: removes what a launch that died left, then the kept trees
@@ -195,164 +195,164 @@ impl Orchestrator {
             Request::Accounts => self.accounts(from).await,
             Request::SetCredentials { host, token, validate } => self.set_credentials(&host, &token, validate).await,
             Request::RemoveCredentials { host } => self.remove_credentials(&host).await,
-            Request::OpenSession { repo } => {
-                let (session, root) = self.open(&repo, from.clone()).await?;
-                Ok(Response::Session { session, root })
+            Request::OpenProject { repo } => {
+                let (project, root) = self.open(&repo, from.clone()).await?;
+                Ok(Response::Project { project, root })
             }
-            Request::CloseSession { session } => {
-                self.close(session, from).await?;
+            Request::CloseProject { project } => {
+                self.close(project, from).await?;
                 Ok(Response::Done)
             }
-            Request::Tasks { session } => self.tasks(session).await,
-            Request::FinishReview { session } => self.finish_review(session).await,
-            Request::Manifest { session } => self.manifest(session).await,
-            Request::FileContents { session, path } => self.file_contents(session, &path).await,
+            Request::Tasks { project } => self.tasks(project).await,
+            Request::FinishReview { project } => self.finish_review(project).await,
+            Request::Manifest { project } => self.manifest(project).await,
+            Request::FileContents { project, path } => self.file_contents(project, &path).await,
             Request::ToggleHunk {
-                session,
+                project,
                 revision,
                 path,
                 hunk,
-            } => self.toggle_hunk(session, from, revision, &path, hunk).await,
+            } => self.toggle_hunk(project, from, revision, &path, hunk).await,
             Request::ToggleItem {
-                session,
+                project,
                 revision,
                 path,
                 kind,
-            } => self.toggle_item(session, from, revision, &path, kind).await,
+            } => self.toggle_item(project, from, revision, &path, kind).await,
             Request::ToggleFileSeen {
-                session,
+                project,
                 revision,
                 path,
-            } => self.toggle_file_seen(session, from, revision, &path).await,
+            } => self.toggle_file_seen(project, from, revision, &path).await,
             Request::ItemBlob {
-                session,
+                project,
                 revision,
                 path,
                 kind,
                 side,
-            } => self.item_blob(session, revision, &path, kind, side).await,
-            Request::SetBase { session, base } => self.set_base(session, base).await,
-            Request::SetProjectFilter { session, filter } => self.set_project_filter(session, filter).await,
+            } => self.item_blob(project, revision, &path, kind, side).await,
+            Request::SetBase { project, base } => self.set_base(project, base).await,
+            Request::SetProjectFilter { project, filter } => self.set_project_filter(project, filter).await,
             Request::ExcludePath {
-                session,
+                project,
                 path,
                 directory,
-            } => self.exclude_path(session, &path, directory).await,
-            Request::ListBaseCandidates { session } => self.list_base_candidates(session).await,
-            Request::ListDirectory { session, path } => self.list_directory(session, &path).await,
-            Request::FileText { session, path } => self.file_text(session, &path).await,
+            } => self.exclude_path(project, &path, directory).await,
+            Request::ListBaseCandidates { project } => self.list_base_candidates(project).await,
+            Request::ListDirectory { project, path } => self.list_directory(project, &path).await,
+            Request::FileText { project, path } => self.file_text(project, &path).await,
             Request::TargetLine {
-                session,
+                project,
                 revision,
                 side,
                 path,
                 line,
-            } => self.target_line(session, revision, side, &path, line).await,
-            Request::Threads { session } => self.threads(session).await,
+            } => self.target_line(project, revision, side, &path, line).await,
+            Request::Threads { project } => self.threads(project).await,
             Request::CommentTarget {
-                session,
+                project,
                 revision,
                 path,
                 at,
-            } => self.comment_target(session, revision, &path, at).await,
+            } => self.comment_target(project, revision, &path, at).await,
             Request::CreateThread {
-                session,
+                project,
                 revision,
                 target,
                 body,
-            } => self.create_thread(session, from, revision, target, body).await,
-            Request::Reply { session, thread, body } => self.reply(session, from, thread, body).await,
+            } => self.create_thread(project, from, revision, target, body).await,
+            Request::Reply { project, thread, body } => self.reply(project, from, thread, body).await,
             Request::SetThreadStatus {
-                session,
+                project,
                 thread,
                 status,
-            } => self.set_thread_status(session, from, thread, status).await,
-            Request::DeleteThread { session, thread } => self.delete_thread(session, from, thread).await,
+            } => self.set_thread_status(project, from, thread, status).await,
+            Request::DeleteThread { project, thread } => self.delete_thread(project, from, thread).await,
             Request::ConfirmAnchor {
-                session,
+                project,
                 revision,
                 thread,
-            } => self.confirm_anchor(session, from, revision, thread).await,
+            } => self.confirm_anchor(project, from, revision, thread).await,
             Request::AttachAnchor {
-                session,
+                project,
                 revision,
                 thread,
                 candidate,
-            } => self.attach_anchor(session, from, revision, thread, candidate).await,
+            } => self.attach_anchor(project, from, revision, thread, candidate).await,
             Request::Hover {
-                session,
+                project,
                 revision,
                 side,
                 path,
                 line,
                 col,
-            } => self.ready(session).await?.hover(revision, side, &path, line, col).await,
+            } => self.ready(project).await?.hover(revision, side, &path, line, col).await,
             Request::Definition {
-                session,
+                project,
                 revision,
                 side,
                 path,
                 line,
                 col,
             } => {
-                self.ready(session)
+                self.ready(project)
                     .await?
                     .definition(revision, side, &path, line, col)
                     .await
             }
             Request::References {
-                session,
+                project,
                 revision,
                 side,
                 path,
                 line,
                 col,
             } => {
-                self.ready(session)
+                self.ready(project)
                     .await?
                     .references(revision, side, &path, line, col)
                     .await
             }
             Request::Diagnostics {
-                session,
+                project,
                 revision,
                 path,
-            } => self.ready(session).await?.diagnostics(revision, &path).await,
-            Request::ChangedSymbols { session, revision } => self.ready(session).await?.changed_symbols(revision).await,
+            } => self.ready(project).await?.diagnostics(revision, &path).await,
+            Request::ChangedSymbols { project, revision } => self.ready(project).await?.changed_symbols(revision).await,
             Request::Signature {
-                session,
+                project,
                 revision,
                 symbol,
-            } => self.ready(session).await?.signature(revision, &symbol).await,
+            } => self.ready(project).await?.signature(revision, &symbol).await,
             Request::Impact {
-                session,
+                project,
                 revision,
                 symbol,
-            } => self.ready(session).await?.impact(revision, &symbol).await,
+            } => self.ready(project).await?.impact(revision, &symbol).await,
             Request::RemovalImpact {
-                session,
+                project,
                 revision,
                 symbol,
-            } => self.ready(session).await?.removal_impact(revision, &symbol).await,
+            } => self.ready(project).await?.removal_impact(revision, &symbol).await,
             Request::Reachability {
-                session,
+                project,
                 revision,
                 symbol,
-            } => self.ready(session).await?.reachability(revision, &symbol).await,
-            Request::ListServers { session } => self.list_servers(session).await,
-            Request::InstallServer { session, language } => self.install_server(session, from, language).await,
+            } => self.ready(project).await?.reachability(revision, &symbol).await,
+            Request::ListServers { project } => self.list_servers(project).await,
+            Request::InstallServer { project, language } => self.install_server(project, from, language).await,
             Request::SetServerPath {
-                session,
+                project,
                 language,
                 path,
-            } => self.set_server_path(session, from, language, path).await,
+            } => self.set_server_path(project, from, language, path).await,
         }
     }
 }
 
 /// Language servers take long to start; a new revision's first query should
 /// find them running. Starting never delays the reply of the request that
-/// changed the revision. For a session that has not scanned yet this is what
+/// changed the revision. For a project that has not scanned yet this is what
 /// scans it, so opening does not wait for the scan.
 fn start_servers_in_background(open: Arc<Open>) {
     tokio::spawn(async move {

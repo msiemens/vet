@@ -1,15 +1,15 @@
-//! Telling a session's subscribers what happened: the protocol events, and the
+//! Telling a project's subscribers what happened: the protocol events, and the
 //! connection type that receives them.
 
 use vet_app::registry::{Subscriber, Subscribers};
 use vet_app::session::{Lifecycle, ReviewUpdateView, ThreadView};
 use vet_mapping as mapping;
-use vet_protocol::{Event, Response, SessionId};
+use vet_protocol::{Event, ProjectId, Response};
 use vet_transport::Events;
 
 use crate::open::Ready;
 
-/// A client connection, subscribed to the events of the sessions it opened.
+/// A client connection, subscribed to the events of the projects it opened.
 #[derive(Clone)]
 pub struct Connection(pub Events);
 
@@ -29,16 +29,16 @@ impl Subscriber for Connection {
     }
 }
 
-/// Tells every subscriber that the session's snapshot is a new `revision`.
-pub fn settled(subscribers: &Subscribers<Connection>, session: SessionId, revision: u32) {
-    subscribers.broadcast(Event::SnapshotSettled { session, revision });
+/// Tells every subscriber that the project's snapshot is a new `revision`.
+pub fn settled(subscribers: &Subscribers<Connection>, project: ProjectId, revision: u32) {
+    subscribers.broadcast(Event::SnapshotSettled { project, revision });
 }
 
 /// Tells every subscriber that a request started the review, as `started` says.
 pub fn announce_start(open: &Ready, started: Option<Lifecycle>) {
     if let Some(lifecycle) = started {
         open.subscribers.broadcast(Event::ReviewStarted {
-            session: open.id,
+            project: open.id,
             review: mapping::review_info(lifecycle),
         });
     }
@@ -50,7 +50,7 @@ pub async fn threads_changed(open: &Ready, from: &Connection) {
     open.subscribers.broadcast_except(
         from,
         Event::ThreadsChanged {
-            session: open.id,
+            project: open.id,
             revision,
         },
     );
@@ -67,7 +67,7 @@ pub fn review_changed(open: &Ready, from: &Connection, update: &ReviewUpdateView
     open.subscribers.broadcast_except(
         from,
         Event::ReviewChanged {
-            session: open.id,
+            project: open.id,
             revision: update.revision,
             update: mapped.clone(),
         },

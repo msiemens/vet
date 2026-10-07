@@ -3,7 +3,7 @@
 /**
  * Whether a review has started. It starts with the first review action (a
  * mark, an acknowledgement, a new thread) and ends with `FinishReview`;
- * before and after, the session is browsing: the live diff, nothing kept.
+ * before and after, the project is browsing: the live diff, nothing kept.
  */
 export type ReviewInfo = { "state": "browsing" } | { "state": "open", 
 /**

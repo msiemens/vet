@@ -3,9 +3,9 @@
 use vet_app::progress::{Task, TaskKind, TaskState};
 use vet_protocol as p;
 
-pub fn task(session: p::SessionId, t: &Task) -> p::Task {
+pub fn task(project: p::ProjectId, t: &Task) -> p::Task {
     p::Task {
-        session,
+        project,
         id: t.id,
         kind: match t.kind {
             TaskKind::Scan => p::TaskKind::Scan,

@@ -1,4 +1,4 @@
-//! The recent-projects list over the protocol: it belongs to the backend, not to a session.
+//! The recent-projects list over the protocol: it belongs to the backend, not to a project.
 
 mod common;
 

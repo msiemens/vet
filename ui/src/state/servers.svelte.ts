@@ -1,5 +1,5 @@
 // The language servers of the open repository as the backend resolves them, and the installs
-// the viewer started. Servers resolve per repository, so every request needs a session.
+// the viewer started. Servers resolve per repository, so every request needs a project.
 
 import type { ServerInfo } from "../generated/ServerInfo";
 import { errorText } from "../lib/errorText";
@@ -16,9 +16,9 @@ class ServersStore {
   /** Whether each language's install output is shown. */
   logOpen = $state.raw<Record<string, boolean>>({});
 
-  /** There is an open repository whose session can be asked. */
+  /** There is an open repository whose project can be asked. */
   get available(): boolean {
-    return session.repo !== undefined && session.backend?.session !== undefined;
+    return session.repo !== undefined && session.backend?.project !== undefined;
   }
 
   /** Loads the servers and keeps them current with the backend's events; the returned function stops that. */
@@ -32,7 +32,7 @@ class ServersStore {
     if (!backend) return () => undefined;
     void this.load();
     return backend.onEvent((event) => {
-      if (event.session !== backend.session) return;
+      if (event.project !== backend.project) return;
       if (event.type === "serverInstallOutput") {
         this.logs = { ...this.logs, [event.language]: appendLog(this.logs[event.language] ?? [], event.line) };
       } else if (event.type === "serversChanged") {

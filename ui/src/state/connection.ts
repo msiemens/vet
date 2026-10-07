@@ -83,7 +83,7 @@ export class Connection {
     });
   }
 
-  /** Events of the sessions opened on this connection; returns the unsubscribe function. */
+  /** Events of the projects opened on this connection; returns the unsubscribe function. */
   onEvent(listener: (event: ServerEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

@@ -5,7 +5,7 @@ import { fractionOf, headline } from "./taskHeadline.ts";
 
 function task(id: number, done: number | null = null, total: number | null = null): Task {
   return {
-    session: 1,
+    project: 1,
     id,
     kind: "scan",
     title: `task ${id}`,

@@ -10,8 +10,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
     AnchorState, Base, BaseChoice, BlobContent, Completion, DirEntry, DirEntryKind, Event, FileStatus, HunkState,
-    LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, Request, Response, ReviewFilter, ReviewInfo,
-    ReviewUpdate, ServerMessage, SessionId, Side, TextContent, Thread, ThreadStatus, ThreadTarget,
+    LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, ProjectId, Request, Response, ReviewFilter,
+    ReviewInfo, ReviewUpdate, ServerMessage, Side, TextContent, Thread, ThreadStatus, ThreadTarget,
 };
 use vet_transport::{Events, Handler};
 
@@ -77,16 +77,16 @@ impl Client {
         self.handler.handle(request, self.events.clone()).await
     }
 
-    async fn manifest(&self, session: SessionId) -> Manifest {
-        match self.call(Request::Manifest { session }).await.unwrap() {
+    async fn manifest(&self, project: ProjectId) -> Manifest {
+        match self.call(Request::Manifest { project }).await.unwrap() {
             Response::Manifest(m) => *m,
             other => panic!("{other:?}"),
         }
     }
 
-    async fn toggle_hunk(&self, session: SessionId, revision: u32, hunk: u32) -> ReviewUpdate {
+    async fn toggle_hunk(&self, project: ProjectId, revision: u32, hunk: u32) -> ReviewUpdate {
         let request = Request::ToggleHunk {
-            session,
+            project,
             revision,
             path: "a.txt".into(),
             hunk,
@@ -190,12 +190,12 @@ async fn fixture(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> Fixture {
     }
 }
 
-async fn open(client: &Client, repo: &Path) -> SessionId {
-    let request = Request::OpenSession {
+async fn open(client: &Client, repo: &Path) -> ProjectId {
+    let request = Request::OpenProject {
         repo: repo.to_str().unwrap().into(),
     };
     match client.call(request).await.unwrap() {
-        Response::Session { session, .. } => session,
+        Response::Project { project, .. } => project,
         other => panic!("{other:?}"),
     }
 }
@@ -212,8 +212,8 @@ impl Client {
         }
     }
 
-    async fn threads(&self, session: SessionId) -> (u32, Vec<Thread>) {
-        match self.call(Request::Threads { session }).await.unwrap() {
+    async fn threads(&self, project: ProjectId) -> (u32, Vec<Thread>) {
+        match self.call(Request::Threads { project }).await.unwrap() {
             Response::Threads { revision, threads } => (revision, threads),
             other => panic!("{other:?}"),
         }
@@ -227,10 +227,10 @@ async fn a_base_line_is_placed_in_the_target_text_where_a_unified_diff_shows_it(
     let dirty = base.replace("line 3\nline 4\n", "changed\n");
     let fx = fixture(&[("a.txt", &base)], &[("a.txt", &dirty)]).await;
     let client = Client::new(&fx.handler);
-    let session = open(&client, fx.repo.path()).await;
+    let project = open(&client, fx.repo.path()).await;
     let place = |side, line, revision| {
         client.call(Request::TargetLine {
-            session,
+            project,
             revision,
             side,
             path: "a.txt".into(),
@@ -251,12 +251,12 @@ async fn threads_follow_edits_and_notify_other_connections() {
     let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;
     let mut one = Client::new(&fx.handler);
     let mut two = Client::new(&fx.handler);
-    let session = open(&one, fx.repo.path()).await;
-    assert_eq!(open(&two, fx.repo.path()).await, session);
+    let project = open(&one, fx.repo.path()).await;
+    assert_eq!(open(&two, fx.repo.path()).await, project);
 
     let created = one
         .thread(Request::CreateThread {
-            session,
+            project,
             revision: 0,
             target: ThreadTarget::Range {
                 side: Side::Target,
@@ -284,7 +284,7 @@ async fn threads_follow_edits_and_notify_other_connections() {
     write(fx.repo.path(), "a.txt", &format!("new 1\nnew 2\n{dirty}"));
     assert_eq!(one.settled().await, 1);
     assert_eq!(two.settled().await, 1);
-    let (revision, threads) = one.threads(session).await;
+    let (revision, threads) = one.threads(project).await;
     assert_eq!(revision, 1);
     let at = |start| {
         Some(LineLocation {
@@ -312,7 +312,7 @@ async fn threads_follow_edits_and_notify_other_connections() {
     );
     assert_eq!(one.settled().await, 2);
     two.settled().await;
-    let (_, threads) = one.threads(session).await;
+    let (_, threads) = one.threads(project).await;
     assert!(
         matches!(threads[0].anchor, Some(AnchorState::Inferred { .. })),
         "{:?}",
@@ -321,7 +321,7 @@ async fn threads_follow_edits_and_notify_other_connections() {
     let id = threads[0].id;
     let confirmed = one
         .thread(Request::ConfirmAnchor {
-            session,
+            project,
             revision: 2,
             thread: id,
         })
@@ -338,7 +338,7 @@ async fn threads_follow_edits_and_notify_other_connections() {
     // Reply, resolve and delete reach the other connection too.
     let replied = one
         .thread(Request::Reply {
-            session,
+            project,
             thread: id,
             body: "because".into(),
         })
@@ -346,17 +346,17 @@ async fn threads_follow_edits_and_notify_other_connections() {
     assert_eq!(replied.messages.len(), 2);
     let resolved = one
         .thread(Request::SetThreadStatus {
-            session,
+            project,
             thread: id,
             status: ThreadStatus::Resolved,
         })
         .await;
     assert_eq!(resolved.status, ThreadStatus::Resolved);
-    one.call(Request::DeleteThread { session, thread: id }).await.unwrap();
+    one.call(Request::DeleteThread { project, thread: id }).await.unwrap();
     for _ in 0..3 {
         assert!(matches!(two.event().await, Event::ThreadsChanged { .. }));
     }
-    assert!(one.threads(session).await.1.is_empty());
+    assert!(one.threads(project).await.1.is_empty());
 }
 
 #[tokio::test]
@@ -365,9 +365,9 @@ async fn mark_edit_settle_remap_and_revert() {
     let dirty = text(40, &[5]);
     let fx = fixture(&[("a.txt", &base)], &[("a.txt", &dirty)]).await;
     let mut client = Client::new(&fx.handler);
-    let session = open(&client, fx.repo.path()).await;
+    let project = open(&client, fx.repo.path()).await;
 
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!((m.revision, m.files.len()), (0, 1));
     assert_eq!(m.files[0].status, FileStatus::Modified);
     assert_eq!(hunk_states(&m), [HunkState::Unseen]);
@@ -375,21 +375,21 @@ async fn mark_edit_settle_remap_and_revert() {
     assert!(m.degraded.is_none());
 
     // Mark the hunk seen.
-    let update = client.toggle_hunk(session, 0, 0).await;
+    let update = client.toggle_hunk(project, 0, 0).await;
     assert_eq!(update.review.hunks, [HunkState::Seen]);
     assert_eq!(lines(&update.changeset), (2, 2));
 
     // The agent edits elsewhere: the mark survives, the new hunk is unseen.
     write(fx.repo.path(), "a.txt", &text(40, &[5, 30]));
     assert_eq!(client.settled().await, 1);
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(m.revision, 1);
     assert_eq!(hunk_states(&m), [HunkState::Seen, HunkState::Unseen]);
     assert_eq!(lines(&m.completion), (4, 2));
 
     // A request made against revision 0 is rejected, and changes nothing.
     let stale = Request::ToggleHunk {
-        session,
+        project,
         revision: 0,
         path: "a.txt".into(),
         hunk: 1,
@@ -403,17 +403,17 @@ async fn mark_edit_settle_remap_and_revert() {
         &text(40, &[30]).replace("line 5\n", "something else\n"),
     );
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunk_states(&m), [HunkState::Unseen, HunkState::Unseen]);
     write(fx.repo.path(), "a.txt", &text(40, &[5, 30]));
     client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunk_states(&m), [HunkState::Seen, HunkState::Unseen]);
 
     // Reverting the second edit leaves the original state, and the file text is current.
     write(fx.repo.path(), "a.txt", &dirty);
     let revision = client.settled().await;
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunk_states(&m), [HunkState::Seen]);
     assert_eq!(lines(&m.completion), (2, 2));
     let Response::FileContents {
@@ -423,7 +423,7 @@ async fn mark_edit_settle_remap_and_revert() {
         ..
     } = client
         .call(Request::FileContents {
-            session,
+            project,
             path: "a.txt".into(),
         })
         .await
@@ -437,12 +437,12 @@ async fn mark_edit_settle_remap_and_revert() {
     );
 
     // Un-marking.
-    let update = client.toggle_hunk(session, revision, 0).await;
+    let update = client.toggle_hunk(project, revision, 0).await;
     assert_eq!(update.review.hunks, [HunkState::Unseen]);
     assert_eq!(lines(&update.changeset), (2, 0));
 
-    client.call(Request::CloseSession { session }).await.unwrap();
-    assert!(client.call(Request::Manifest { session }).await.is_err());
+    client.call(Request::CloseProject { project }).await.unwrap();
+    assert!(client.call(Request::Manifest { project }).await.is_err());
 }
 
 #[tokio::test]
@@ -451,8 +451,8 @@ async fn a_seen_region_with_an_edit_in_the_middle_is_split() {
     let dirty = text(40, &region);
     let fx = fixture(&[("a.txt", &text(40, &[]))], &[("a.txt", &dirty)]).await;
     let mut client = Client::new(&fx.handler);
-    let session = open(&client, fx.repo.path()).await;
-    client.toggle_hunk(session, 0, 0).await;
+    let project = open(&client, fx.repo.path()).await;
+    client.toggle_hunk(project, 0, 0).await;
 
     let middle = dirty
         .replace("edited 14", "mid a")
@@ -461,7 +461,7 @@ async fn a_seen_region_with_an_edit_in_the_middle_is_split() {
     write(fx.repo.path(), "a.txt", &middle);
     client.settled().await;
 
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(hunk_states(&m), [HunkState::Unseen]);
     // All 20 base lines are still seen, and 17 of the 20 target lines.
     assert_eq!(lines(&m.completion), (40, 37));
@@ -481,10 +481,10 @@ async fn non_text_changes_are_acknowledged_and_the_other_connection_is_told() {
         .unwrap();
     let mut first = Client::new(&fx.handler);
     let mut second = Client::new(&fx.handler);
-    let session = open(&first, fx.repo.path()).await;
-    assert_eq!(open(&second, fx.repo.path()).await, session, "same repo, same session");
+    let project = open(&first, fx.repo.path()).await;
+    assert_eq!(open(&second, fx.repo.path()).await, project, "same repo, same project");
 
-    let m = first.manifest(session).await;
+    let m = first.manifest(project).await;
     let run = m.files.iter().find(|f| f.path == "run.sh").unwrap();
     assert_eq!(run.non_text.len(), 1);
     assert_eq!(run.non_text[0].kind, NonTextKind::Mode);
@@ -492,7 +492,7 @@ async fn non_text_changes_are_acknowledged_and_the_other_connection_is_told() {
     assert_eq!((m.completion.items, m.completion.acknowledged_items), (1, 0));
 
     let request = Request::ToggleItem {
-        session,
+        project,
         revision: 0,
         path: "run.sh".into(),
         kind: NonTextKind::Mode,
@@ -511,12 +511,12 @@ async fn non_text_changes_are_acknowledged_and_the_other_connection_is_told() {
     assert!(first.no_event(), "the requester gets the response, not an event");
 
     // Marking a hunk is reported the same way.
-    first.toggle_hunk(session, 0, 0).await;
+    first.toggle_hunk(project, 0, 0).await;
     assert!(matches!(second.event().await, Event::ReviewChanged { .. }));
 
-    // The first connection leaves; the session lives on for the second.
-    first.call(Request::CloseSession { session }).await.unwrap();
-    assert_eq!(second.manifest(session).await.completion.acknowledged_items, 1);
+    // The first connection leaves; the project lives on for the second.
+    first.call(Request::CloseProject { project }).await.unwrap();
+    assert_eq!(second.manifest(project).await.completion.acknowledged_items, 1);
 }
 
 #[tokio::test]
@@ -528,9 +528,9 @@ async fn empty_files_are_non_text_items_and_can_be_acknowledged() {
     .await;
     std::fs::remove_file(fx.repo.path().join("gone.txt")).unwrap();
     let client = Client::new(&fx.handler);
-    let session = open(&client, fx.repo.path()).await;
+    let project = open(&client, fx.repo.path()).await;
 
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     let file = |path: &str| m.files.iter().find(|f| f.path == path).unwrap();
     let (new, gone) = (file("new.txt"), file("gone.txt"));
     assert_eq!(
@@ -549,7 +549,7 @@ async fn empty_files_are_non_text_items_and_can_be_acknowledged() {
     assert_eq!((m.completion.items, m.completion.acknowledged_items), (2, 0));
 
     let request = Request::ToggleItem {
-        session,
+        project,
         revision: 0,
         path: "new.txt".into(),
         kind: NonTextKind::Empty,
@@ -558,7 +558,7 @@ async fn empty_files_are_non_text_items_and_can_be_acknowledged() {
         panic!("not a review update");
     };
     assert_eq!(update.review.acknowledged, [NonTextKind::Empty]);
-    assert_eq!(client.manifest(session).await.completion.acknowledged_items, 1);
+    assert_eq!(client.manifest(project).await.completion.acknowledged_items, 1);
 }
 
 #[tokio::test]
@@ -573,10 +573,10 @@ async fn binary_items_serve_the_bytes_of_either_side() {
     write(fx.repo.path(), "big.bin", &big);
     std::fs::remove_file(fx.repo.path().join("gone.gif")).unwrap();
     let client = Client::new(&fx.handler);
-    let session = open(&client, fx.repo.path()).await;
+    let project = open(&client, fx.repo.path()).await;
     let blob = |revision, path: &str, side| {
         let request = Request::ItemBlob {
-            session,
+            project,
             revision,
             path: path.into(),
             kind: NonTextKind::Binary,
@@ -635,7 +635,7 @@ async fn binary_items_serve_the_bytes_of_either_side() {
 async fn ignored_paths_do_not_settle_snapshots() {
     let fx = fixture(&[("a.txt", &text(5, &[]))], &[]).await;
     let mut client = Client::new(&fx.handler);
-    let session = open(&client, fx.repo.path()).await;
+    let project = open(&client, fx.repo.path()).await;
 
     write(fx.repo.path(), "target/debug/out", "build output\n");
     write(fx.repo.path(), "target/debug/more", "more\n");
@@ -644,15 +644,15 @@ async fn ignored_paths_do_not_settle_snapshots() {
 
     write(fx.repo.path(), "a.txt", &text(5, &[1]));
     assert_eq!(client.settled().await, 1);
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(m.files.len(), 1);
 }
 
 impl Client {
-    async fn list(&self, session: SessionId, path: &str) -> Result<(u32, Vec<DirEntry>), String> {
+    async fn list(&self, project: ProjectId, path: &str) -> Result<(u32, Vec<DirEntry>), String> {
         match self
             .call(Request::ListDirectory {
-                session,
+                project,
                 path: path.into(),
             })
             .await?
@@ -662,10 +662,10 @@ impl Client {
         }
     }
 
-    async fn file_text(&self, session: SessionId, path: &str) -> Result<TextContent, String> {
+    async fn file_text(&self, project: ProjectId, path: &str) -> Result<TextContent, String> {
         match self
             .call(Request::FileText {
-                session,
+                project,
                 path: path.into(),
             })
             .await?
@@ -700,9 +700,9 @@ async fn the_whole_snapshot_can_be_browsed_and_read() {
     )
     .await;
     let client = Client::new(&fx.handler);
-    let session = open(&client, fx.repo.path()).await;
+    let project = open(&client, fx.repo.path()).await;
 
-    let (revision, root) = client.list(session, "").await.unwrap();
+    let (revision, root) = client.list(project, "").await.unwrap();
     assert_eq!(revision, 0);
     // No `target/`, `.pnpm-store/` or `pkg/` (which holds only a tool store).
     assert_eq!(
@@ -714,15 +714,15 @@ async fn the_whole_snapshot_can_be_browsed_and_read() {
             ("blob.bin", File, false)
         ]
     );
-    let (_, src) = client.list(session, "src").await.unwrap();
+    let (_, src) = client.list(project, "src").await.unwrap();
     assert_eq!(
         names(&src),
         [("a", Dir, true), ("lib.rs", File, false), ("new.rs", File, true)]
     );
-    let (_, deep) = client.list(session, "src/a/deep").await.unwrap();
+    let (_, deep) = client.list(project, "src/a/deep").await.unwrap();
     assert_eq!(names(&deep), [("f.rs", File, true)]);
-    assert!(client.list(session, "target").await.is_err());
-    assert!(client.list(session, ".pnpm-store").await.is_err());
+    assert!(client.list(project, "target").await.is_err());
+    assert!(client.list(project, ".pnpm-store").await.is_err());
 
     let text = |text: &str, highlights: &[u32]| TextContent::Text {
         text: text.into(),
@@ -730,25 +730,25 @@ async fn the_whole_snapshot_can_be_browsed_and_read() {
     };
     // A comment: no gap, six units, kind 3.
     assert_eq!(
-        client.file_text(session, "src/lib.rs").await.unwrap(),
+        client.file_text(project, "src/lib.rs").await.unwrap(),
         text("// lib\n", &[0, 6, 3])
     );
     assert_eq!(
-        client.file_text(session, "src/new.rs").await.unwrap(),
+        client.file_text(project, "src/new.rs").await.unwrap(),
         text("// new\n", &[0, 6, 3])
     );
     // No grammar for the extension of a plain text.
     assert_eq!(
-        client.file_text(session, "README.md").await.unwrap(),
+        client.file_text(project, "README.md").await.unwrap(),
         text("hello\n", &[])
     );
     assert_eq!(
-        client.file_text(session, "blob.bin").await.unwrap(),
+        client.file_text(project, "blob.bin").await.unwrap(),
         TextContent::NoText {
             reason: NoTextReason::Binary
         }
     );
-    assert!(client.file_text(session, "target/debug/out").await.is_err());
+    assert!(client.file_text(project, "target/debug/out").await.is_err());
 }
 
 /// The ranges of an encoding of highlights as (start, length, kind).
@@ -772,10 +772,10 @@ async fn both_sides_of_a_changed_file_come_with_highlights() {
     )
     .await;
     let client = Client::new(&fx.handler);
-    let session = open(&client, fx.repo.path()).await;
+    let project = open(&client, fx.repo.path()).await;
     let contents = |path: &str| {
         let call = client.call(Request::FileContents {
-            session,
+            project,
             path: path.into(),
         });
         async {
@@ -802,7 +802,7 @@ async fn both_sides_of_a_changed_file_come_with_highlights() {
     assert_eq!(contents("notes.txt").await, (vec![], vec![]));
 }
 
-fn session_refs(repo: &Path) -> String {
+fn project_refs(repo: &Path) -> String {
     let out = Command::new("git")
         .current_dir(repo)
         .args(["for-each-ref", "--format=%(refname)", "refs/vet"])
@@ -816,11 +816,11 @@ async fn reopening_a_repository_resumes_its_review_across_a_restart() {
     let dirty = text(30, &[3, 20]);
     let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;
     let first = Client::new(&fx.handler);
-    let session = open(&first, fx.repo.path()).await;
-    first.toggle_hunk(session, 0, 0).await;
+    let project = open(&first, fx.repo.path()).await;
+    first.toggle_hunk(project, 0, 0).await;
     first
         .thread(Request::CreateThread {
-            session,
+            project,
             revision: 0,
             target: ThreadTarget::Range {
                 side: Side::Target,
@@ -831,7 +831,7 @@ async fn reopening_a_repository_resumes_its_review_across_a_restart() {
             body: "why?".into(),
         })
         .await;
-    first.call(Request::CloseSession { session }).await.unwrap();
+    first.call(Request::CloseProject { project }).await.unwrap();
 
     // The app quits, and a file is edited while it is closed: two lines go in at the top.
     let restarted = std::sync::Arc::new(Orchestrator::new(
@@ -844,9 +844,9 @@ async fn reopening_a_repository_resumes_its_review_across_a_restart() {
     ));
     write(fx.repo.path(), "a.txt", &format!("new 1\nnew 2\n{dirty}"));
     let second = Client::new(&restarted);
-    let session = open(&second, fx.repo.path()).await;
+    let project = open(&second, fx.repo.path()).await;
 
-    let m = second.manifest(session).await;
+    let m = second.manifest(project).await;
     assert!(
         matches!(m.review, ReviewInfo::Open { version: 2, .. }),
         "{:?}",
@@ -858,39 +858,39 @@ async fn reopening_a_repository_resumes_its_review_across_a_restart() {
         [HunkState::Unseen, HunkState::Seen, HunkState::Unseen],
         "the mark followed its lines"
     );
-    let (_, threads) = second.threads(session).await;
+    let (_, threads) = second.threads(project).await;
     assert_eq!(threads.len(), 1);
     assert_eq!(threads[0].messages[0].body, "why?");
     assert_eq!(threads[0].location.as_ref().map(|l| l.start), Some(22));
 }
 
 #[tokio::test]
-async fn an_orphaned_session_is_released_but_stays_open_for_the_next_open() {
+async fn an_orphaned_project_is_released_but_stays_open_for_the_next_open() {
     let fx = fixture(&[("a.txt", &text(5, &[]))], &[("a.txt", &text(5, &[1]))]).await;
     let first = Client::new(&fx.handler);
-    let session = open(&first, fx.repo.path()).await;
-    assert_eq!(session_refs(fx.repo.path()), "", "browsing holds nothing");
-    first.toggle_hunk(session, 0, 0).await;
+    let project = open(&first, fx.repo.path()).await;
+    assert_eq!(project_refs(fx.repo.path()), "", "browsing holds nothing");
+    first.toggle_hunk(project, 0, 0).await;
     assert_eq!(
-        session_refs(fx.repo.path()),
-        format!("refs/vet/sessions/{session}/base\nrefs/vet/sessions/{session}/target\n")
+        project_refs(fx.repo.path()),
+        format!("refs/vet/sessions/{project}/base\nrefs/vet/sessions/{project}/target\n")
     );
 
     // The connection goes away without closing; a reload within the grace
-    // period finds the session again.
+    // period finds the project again.
     drop(first);
     tokio::time::sleep(Duration::from_millis(100)).await;
     let second = Client::new(&fx.handler);
-    assert_eq!(open(&second, fx.repo.path()).await, session);
+    assert_eq!(open(&second, fx.repo.path()).await, project);
 
     drop(second);
     tokio::time::sleep(Duration::from_millis(1200)).await;
     let third = Client::new(&fx.handler);
-    assert!(third.call(Request::Manifest { session }).await.is_err());
+    assert!(third.call(Request::Manifest { project }).await.is_err());
     // Not closed: its refs stay, and opening the repository again resumes it.
     assert_eq!(
-        session_refs(fx.repo.path()),
-        format!("refs/vet/sessions/{session}/base\nrefs/vet/sessions/{session}/target\n")
+        project_refs(fx.repo.path()),
+        format!("refs/vet/sessions/{project}/base\nrefs/vet/sessions/{project}/target\n")
     );
     let resumed = open(&third, fx.repo.path()).await;
     assert!(matches!(
@@ -900,28 +900,28 @@ async fn an_orphaned_session_is_released_but_stays_open_for_the_next_open() {
 }
 
 #[tokio::test]
-async fn a_subfolder_opens_the_repository_root_and_both_paths_share_one_session() {
+async fn a_subfolder_opens_the_repository_root_and_both_paths_share_one_project() {
     let fx = fixture(&[("sub/dir/a.txt", "x\n")], &[]).await;
     let client = Client::new(&fx.handler);
     let root = fx.repo.path().canonicalize().unwrap();
     let call = |path: &Path| {
-        client.call(Request::OpenSession {
+        client.call(Request::OpenProject {
             repo: path.to_str().unwrap().into(),
         })
     };
 
-    let Response::Session { session, root: found } = call(&fx.repo.path().join("sub/dir")).await.unwrap() else {
-        panic!("not a session");
+    let Response::Project { project, root: found } = call(&fx.repo.path().join("sub/dir")).await.unwrap() else {
+        panic!("not a project");
     };
     assert_eq!(found, root.to_str().unwrap());
-    let Response::Session {
-        session: again,
+    let Response::Project {
+        project: again,
         root: found,
     } = call(fx.repo.path()).await.unwrap()
     else {
-        panic!("not a session");
+        panic!("not a project");
     };
-    assert_eq!((again, found.as_str()), (session, root.to_str().unwrap()));
+    assert_eq!((again, found.as_str()), (project, root.to_str().unwrap()));
 }
 
 #[tokio::test]
@@ -929,7 +929,7 @@ async fn paths_outside_a_repository_and_bare_repositories_are_rejected() {
     let fx = fixture(&[("a.txt", "x\n")], &[]).await;
     let client = Client::new(&fx.handler);
     let open = |path: &Path| {
-        client.call(Request::OpenSession {
+        client.call(Request::OpenProject {
             repo: path.to_str().unwrap().into(),
         })
     };
@@ -949,16 +949,16 @@ async fn paths_outside_a_repository_and_bare_repositories_are_rejected() {
 }
 
 impl Client {
-    async fn set_base(&self, session: SessionId, base: BaseChoice) -> Result<Base, String> {
-        match self.call(Request::SetBase { session, base }).await? {
+    async fn set_base(&self, project: ProjectId, base: BaseChoice) -> Result<Base, String> {
+        match self.call(Request::SetBase { project, base }).await? {
             Response::Base(base) => Ok(base),
             other => panic!("{other:?}"),
         }
     }
 }
 
-fn session_base_ref(repo: &Path, session: SessionId) -> String {
-    git(repo, &["rev-parse", &format!("refs/vet/sessions/{session}/base")])
+fn project_base_ref(repo: &Path, project: ProjectId) -> String {
+    git(repo, &["rev-parse", &format!("refs/vet/sessions/{project}/base")])
 }
 
 fn merge_base(reference: &str) -> BaseChoice {
@@ -989,10 +989,10 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     git(p, &["branch", "unrelated", &unrelated]);
 
     let mut client = Client::new(&fx.handler);
-    let session = open(&client, p).await;
+    let project = open(&client, p).await;
 
     // The current branch's tip: only the dirty edit.
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(m.base.choice, BaseChoice::Branch { name: "feature".into() });
     assert_eq!(
         (m.base.commit.id.as_str(), m.base.name.as_str()),
@@ -1007,23 +1007,23 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     assert_eq!(lines(&m.completion), (2, 0));
 
     // Where feature branched off main: the branch's change shows as well.
-    let base = client.set_base(session, merge_base("main")).await.unwrap();
+    let base = client.set_base(project, merge_base("main")).await.unwrap();
     assert_eq!((base.commit.id.as_str(), base.name.as_str()), (main.as_str(), "main"));
     assert_eq!(client.settled().await, 1);
-    assert!(session_refs(p).is_empty(), "browsing holds no refs");
-    let m = client.manifest(session).await;
+    assert!(project_refs(p).is_empty(), "browsing holds no refs");
+    let m = client.manifest(project).await;
     assert_eq!((m.revision, &m.base), (1, &base));
     assert_eq!(hunk_states(&m), [HunkState::Unseen, HunkState::Unseen]);
     assert_eq!((m.files[0].base_lines, m.files[0].target_lines), (41, 40));
 
     // Marking the branch's hunk starts the review, which holds the base chosen so far.
-    let update = client.toggle_hunk(session, 1, 0).await;
+    let update = client.toggle_hunk(project, 1, 0).await;
     assert_eq!(update.review.hunks, [HunkState::Seen, HunkState::Unseen]);
-    assert_eq!(session_base_ref(p, session), main);
+    assert_eq!(project_base_ref(p, project), main);
 
     // Against the first branch commit, base lines of the marked hunk have changed.
     let base = client
-        .set_base(session, BaseChoice::Commit { id: one[..10].into() })
+        .set_base(project, BaseChoice::Commit { id: one[..10].into() })
         .await
         .unwrap();
     assert_eq!(
@@ -1032,15 +1032,15 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     );
     assert_eq!(base.choice, BaseChoice::Commit { id: one.clone() });
     assert_eq!(client.settled().await, 2);
-    assert_eq!(session_base_ref(p, session), one);
-    let m = client.manifest(session).await;
+    assert_eq!(project_base_ref(p, project), one);
+    let m = client.manifest(project).await;
     assert_eq!(hunk_states(&m), [HunkState::SeenAgainstOldBase, HunkState::Unseen]);
     assert_eq!(m.completion.old_base_lines, 1);
     let Response::FileContents {
         revision, base: shown, ..
     } = client
         .call(Request::FileContents {
-            session,
+            project,
             path: "a.txt".into(),
         })
         .await
@@ -1052,23 +1052,23 @@ async fn the_base_can_be_changed_and_review_state_follows() {
 
     // Back to the branch's tip; the mark lies outside what is left to review.
     let feature = BaseChoice::Branch { name: "feature".into() };
-    let base = client.set_base(session, feature).await.unwrap();
+    let base = client.set_base(project, feature).await.unwrap();
     assert_eq!((base.commit.id.as_str(), base.name.as_str()), (two.as_str(), "feature"));
     assert_eq!(client.settled().await, 3);
-    assert_eq!(session_base_ref(p, session), two);
-    assert_eq!(hunk_states(&client.manifest(session).await), [HunkState::Unseen]);
+    assert_eq!(project_base_ref(p, project), two);
+    assert_eq!(hunk_states(&client.manifest(project).await), [HunkState::Unseen]);
 
     // The earlier base brings the earlier coverage back.
-    client.set_base(session, merge_base("main")).await.unwrap();
+    client.set_base(project, merge_base("main")).await.unwrap();
     client.settled().await;
     assert_eq!(
-        hunk_states(&client.manifest(session).await),
+        hunk_states(&client.manifest(project).await),
         [HunkState::Seen, HunkState::Unseen]
     );
 
     // Candidates: branches by name and the commits HEAD reaches.
     let Response::BaseCandidates { branches, commits } =
-        client.call(Request::ListBaseCandidates { session }).await.unwrap()
+        client.call(Request::ListBaseCandidates { project }).await.unwrap()
     else {
         panic!("not candidates");
     };
@@ -1081,13 +1081,13 @@ async fn the_base_can_be_changed_and_review_state_follows() {
 
     // Unresolvable bases are refused with a readable message and change nothing.
     let err = client
-        .set_base(session, BaseChoice::Commit { id: "nope".into() })
+        .set_base(project, BaseChoice::Commit { id: "nope".into() })
         .await
         .unwrap_err();
     assert_eq!(err, "unknown commit nope");
-    let err = client.set_base(session, merge_base("unrelated")).await.unwrap_err();
+    let err = client.set_base(project, merge_base("unrelated")).await.unwrap_err();
     assert_eq!(err, "no common ancestor with unrelated");
-    assert_eq!(client.manifest(session).await.revision, 4);
+    assert_eq!(client.manifest(project).await.revision, 4);
     assert!(client.no_event());
 }
 
@@ -1097,16 +1097,16 @@ async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing()
     let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;
     let mut one = Client::new(&fx.handler);
     let mut two = Client::new(&fx.handler);
-    let session = open(&one, fx.repo.path()).await;
+    let project = open(&one, fx.repo.path()).await;
     open(&two, fx.repo.path()).await;
-    assert_eq!(one.manifest(session).await.review, ReviewInfo::Browsing);
+    assert_eq!(one.manifest(project).await.review, ReviewInfo::Browsing);
 
     // Looking around starts nothing.
     assert!(one.started().is_empty());
 
-    let update = one.toggle_hunk(session, 0, 0).await;
+    let update = one.toggle_hunk(project, 0, 0).await;
     assert_eq!(update.review.hunks, [HunkState::Seen]);
-    let ReviewInfo::Open { version: 1, updated_at } = one.manifest(session).await.review else {
+    let ReviewInfo::Open { version: 1, updated_at } = one.manifest(project).await.review else {
         panic!("the review did not start");
     };
     assert!(updated_at > 1_600_000_000);
@@ -1115,20 +1115,20 @@ async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing()
     assert_eq!(one.started(), [started]);
     assert!(matches!(two.event().await, Event::ReviewChanged { .. }));
     assert_eq!(two.started(), [started]);
-    one.toggle_hunk(session, 0, 0).await;
-    one.toggle_hunk(session, 0, 0).await;
+    one.toggle_hunk(project, 0, 0).await;
+    one.toggle_hunk(project, 0, 0).await;
     assert_eq!(one.started().len(), 1);
 
     // Each settled snapshot is the next version.
     write(fx.repo.path(), "a.txt", &text(30, &[3, 20]));
     assert_eq!(one.settled().await, 1);
     assert!(matches!(
-        one.manifest(session).await.review,
+        one.manifest(project).await.review,
         ReviewInfo::Open { version: 2, .. }
     ));
 
     // Finishing with an unseen hunk left is allowed, and everyone refetches.
-    let Response::ReviewFinished { complete } = one.call(Request::FinishReview { session }).await.unwrap() else {
+    let Response::ReviewFinished { complete } = one.call(Request::FinishReview { project }).await.unwrap() else {
         panic!("not finished");
     };
     assert!(!complete);
@@ -1142,16 +1142,16 @@ async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing()
         }
     };
     assert_eq!(revision, 2);
-    let m = one.manifest(session).await;
+    let m = one.manifest(project).await;
     assert_eq!(m.review, ReviewInfo::Browsing);
     assert_eq!(hunk_states(&m), [HunkState::Unseen, HunkState::Unseen]);
-    assert_eq!(session_refs(fx.repo.path()), "");
-    assert!(one.call(Request::FinishReview { session }).await.is_err());
+    assert_eq!(project_refs(fx.repo.path()), "");
+    assert!(one.call(Request::FinishReview { project }).await.is_err());
 
     // The next review action starts a new review at version 1.
-    one.toggle_hunk(session, 2, 0).await;
+    one.toggle_hunk(project, 2, 0).await;
     assert!(matches!(
-        one.manifest(session).await.review,
+        one.manifest(project).await.review,
         ReviewInfo::Open { version: 1, .. }
     ));
 }
@@ -1160,13 +1160,13 @@ async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing()
 async fn reopening_without_a_started_review_browses_again() {
     let fx = fixture(&[("a.txt", &text(5, &[]))], &[("a.txt", &text(5, &[1]))]).await;
     let first = Client::new(&fx.handler);
-    let session = open(&first, fx.repo.path()).await;
-    first.call(Request::CloseSession { session }).await.unwrap();
+    let project = open(&first, fx.repo.path()).await;
+    first.call(Request::CloseProject { project }).await.unwrap();
 
     let second = Client::new(&fx.handler);
-    let session = open(&second, fx.repo.path()).await;
+    let project = open(&second, fx.repo.path()).await;
 
-    assert_eq!(second.manifest(session).await.review, ReviewInfo::Browsing);
+    assert_eq!(second.manifest(project).await.review, ReviewInfo::Browsing);
 }
 
 #[tokio::test]
@@ -1175,8 +1175,8 @@ async fn a_branch_base_reports_how_far_the_branch_moved_on_until_chosen_again() 
     let p = fx.repo.path();
     let first = git(p, &["rev-parse", "HEAD"]);
     let mut client = Client::new(&fx.handler);
-    let session = open(&client, p).await;
-    let m = client.manifest(session).await;
+    let project = open(&client, p).await;
+    let m = client.manifest(project).await;
     assert_eq!((m.base.name.as_str(), m.base.behind), ("main", None));
 
     // Two commits land on main; the working tree stays as it was.
@@ -1184,24 +1184,24 @@ async fn a_branch_base_reports_how_far_the_branch_moved_on_until_chosen_again() 
     git(p, &["commit", "-q", "--allow-empty", "-m", "empty"]);
     let tip = git(p, &["rev-parse", "HEAD"]);
 
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!(m.base.commit.id, first);
     assert_eq!((m.base.name.as_str(), m.base.behind), ("main~2", Some(2)));
     assert_eq!(m.files[0].hunks.len(), 1, "the commits are still being reviewed");
 
     let base = client
-        .set_base(session, BaseChoice::Branch { name: "main".into() })
+        .set_base(project, BaseChoice::Branch { name: "main".into() })
         .await
         .unwrap();
     assert_eq!((base.commit.id, base.name.as_str(), base.behind), (tip, "main", None));
     client.settled().await;
-    assert!(client.manifest(session).await.files.is_empty());
+    assert!(client.manifest(project).await.files.is_empty());
 }
 
 impl Client {
-    async fn set_filter(&self, session: SessionId, filter: &ReviewFilter) -> Result<Response, String> {
+    async fn set_filter(&self, project: ProjectId, filter: &ReviewFilter) -> Result<Response, String> {
         let filter = filter.clone();
-        self.call(Request::SetProjectFilter { session, filter }).await
+        self.call(Request::SetProjectFilter { project, filter }).await
     }
 }
 
@@ -1213,8 +1213,8 @@ async fn the_filter_moves_completion_and_the_excluded_counts() {
     )
     .await;
     let mut client = Client::new(&fx.handler);
-    let session = open(&client, fx.repo.path()).await;
-    let m = client.manifest(session).await;
+    let project = open(&client, fx.repo.path()).await;
+    let m = client.manifest(project).await;
     assert_eq!((m.files.len(), m.completion.lines, m.excluded_lines), (2, 4, 0));
     assert_eq!(m.filter, ReviewFilter::default());
     // Each replaced line is one added and one removed; the changeset sums the shown files.
@@ -1230,30 +1230,30 @@ async fn the_filter_moves_completion_and_the_excluded_counts() {
         ..Default::default()
     };
     assert!(matches!(
-        client.set_filter(session, &filter).await.unwrap(),
+        client.set_filter(project, &filter).await.unwrap(),
         Response::Done
     ));
     assert_eq!(client.settled().await, 1);
-    let m = client.manifest(session).await;
+    let m = client.manifest(project).await;
     assert_eq!((m.revision, &m.filter), (1, &filter));
     assert_eq!((m.files.len(), m.completion.lines, m.excluded_lines), (1, 2, 2));
     assert_eq!(m.delta, delta(1, 1), "hidden files are not counted");
     // Marking the one remaining file completes the review.
-    let update = client.toggle_hunk(session, 1, 0).await;
+    let update = client.toggle_hunk(project, 1, 0).await;
     assert_eq!(lines(&update.changeset), (2, 2));
 
     let bad = ReviewFilter {
         include: vec!["src/[".into()],
         ..Default::default()
     };
-    let err = client.set_filter(session, &bad).await.unwrap_err();
+    let err = client.set_filter(project, &bad).await.unwrap_err();
     assert!(err.starts_with("invalid pattern \"src/[\""), "{err}");
-    assert_eq!(client.manifest(session).await.revision, 1);
+    assert_eq!(client.manifest(project).await.revision, 1);
     assert!(client.no_event());
 }
 
 #[tokio::test]
-async fn the_project_filter_reaches_every_connection_and_outlives_the_session() {
+async fn the_project_filter_reaches_every_connection_and_outlives_the_project() {
     let fx = fixture(
         &[("a.txt", "1\n"), ("docs/b.md", "1\n")],
         &[("a.txt", "2\n"), ("docs/b.md", "2\n")],
@@ -1261,20 +1261,20 @@ async fn the_project_filter_reaches_every_connection_and_outlives_the_session() 
     .await;
     let mut first = Client::new(&fx.handler);
     let mut second = Client::new(&fx.handler);
-    let session = open(&first, fx.repo.path()).await;
+    let project = open(&first, fx.repo.path()).await;
     open(&second, fx.repo.path()).await;
     let filter = ReviewFilter {
         exclude: vec!["docs/**".into()],
         ..Default::default()
     };
 
-    first.set_filter(session, &filter).await.unwrap();
+    first.set_filter(project, &filter).await.unwrap();
 
     assert_eq!(first.settled().await, 1);
     assert_eq!(second.settled().await, 1);
-    assert_eq!(second.manifest(session).await.filter, filter);
-    first.call(Request::CloseSession { session }).await.unwrap();
-    second.call(Request::CloseSession { session }).await.unwrap();
+    assert_eq!(second.manifest(project).await.filter, filter);
+    first.call(Request::CloseProject { project }).await.unwrap();
+    second.call(Request::CloseProject { project }).await.unwrap();
 
     let restarted = std::sync::Arc::new(Orchestrator::new(
         open_store(fx._data.path()).await.unwrap(),
@@ -1285,8 +1285,8 @@ async fn the_project_filter_reaches_every_connection_and_outlives_the_session() 
         },
     ));
     let third = Client::new(&restarted);
-    let session = open(&third, fx.repo.path()).await;
-    let m = third.manifest(session).await;
+    let project = open(&third, fx.repo.path()).await;
+    let m = third.manifest(project).await;
     assert_eq!(
         (&m.filter, m.files.len()),
         (&filter, 1),

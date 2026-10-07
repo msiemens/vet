@@ -51,7 +51,7 @@ class ChangesetStore {
   constructor() {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
-        if (event.session !== backend.session) return;
+        if (event.project !== backend.project) return;
         if (event.type === "snapshotSettled") void this.refresh();
         else if (event.type === "reviewChanged" && event.revision === this.manifest?.revision)
           this.applyReview(event.update);

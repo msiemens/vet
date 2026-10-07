@@ -20,7 +20,7 @@ class ProgressStore {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
         // Tasks announced before the open request was answered are listed by `onOpen`.
-        if (event.type !== "task" || event.session !== backend.session) return;
+        if (event.type !== "task" || event.project !== backend.project) return;
         this.board.apply(event, performance.now(), this.delay());
         this.publish();
       }),

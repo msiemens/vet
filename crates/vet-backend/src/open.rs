@@ -1,4 +1,4 @@
-//! Opening and closing sessions: assembling the adapters one session runs on.
+//! Opening and closing projects: assembling the adapters one project runs on.
 //!
 //! Opening answers as soon as the repository is found. What needs the first
 //! scan (the live session and the semantic layer built on it) is assembled by
@@ -29,7 +29,7 @@ use vet_infra::restore::ToolRestorer;
 use vet_infra::store::SqliteStore;
 use vet_infra::watch::FsWatcher;
 use vet_mapping as mapping;
-use vet_protocol::{Event, Response, SessionId};
+use vet_protocol::{Event, ProjectId, Response};
 use vet_semantic::ports::Backend;
 
 use crate::events::{Connection, settled};
@@ -39,15 +39,15 @@ use crate::{LanguageServers, Live, Open, Orchestrator, Semantic, message, start_
 /// reports per file reaches the UI a few times a second.
 const TASK_UPDATES: Duration = Duration::from_millis(250);
 
-/// What a session runs on once its first scan is done.
+/// What a project runs on once its first scan is done.
 pub struct Booted {
     pub session: Arc<Live>,
     pub semantics: Semantic,
 }
 
-/// What `Wired::booted` assembles a session from.
+/// What `Wired::booted` assembles a project from.
 struct Plan {
-    id: SessionId,
+    id: ProjectId,
     repo: PathBuf,
     root: String,
     store: SqliteStore,
@@ -60,9 +60,9 @@ struct Plan {
     entry: Arc<OnceLock<Weak<Open>>>,
 }
 
-/// What one open session runs on.
+/// What one open project runs on.
 pub struct Wired {
-    /// The background work of the session, announced to its subscribers.
+    /// The background work of the project, announced to its subscribers.
     pub tasks: Tasks,
     plan: Plan,
     booted: OnceCell<Result<Arc<Booted>, String>>,
@@ -143,7 +143,7 @@ impl Wired {
                 let subscribers = subscribers.clone();
                 Box::new(move |failures| {
                     let failures = mapping::semantic::restore_failures(&failures);
-                    subscribers.broadcast(Event::RestoreFailed { session: id, failures });
+                    subscribers.broadcast(Event::RestoreFailed { project: id, failures });
                 })
             },
         );
@@ -174,9 +174,9 @@ impl Resident for Wired {
     }
 }
 
-/// A session whose first scan is done: what the requests about its review run on.
+/// A project whose first scan is done: what the requests about its review run on.
 pub struct Ready {
-    pub id: SessionId,
+    pub id: ProjectId,
     pub subscribers: Subscribers<Connection>,
     /// The entry, for starting the servers of a new revision.
     pub open: Arc<Open>,
@@ -192,8 +192,8 @@ impl Deref for Ready {
 }
 
 impl Orchestrator {
-    /// The session `id` once its first scan is done, waiting for it if need be.
-    pub(crate) async fn ready(&self, id: SessionId) -> Result<Ready, String> {
+    /// The project `id` once its first scan is done, waiting for it if need be.
+    pub(crate) async fn ready(&self, id: ProjectId) -> Result<Ready, String> {
         let open = self.find(id).await?;
         let booted = open.booted().await?.clone();
         Ok(Ready {
@@ -204,8 +204,8 @@ impl Orchestrator {
         })
     }
 
-    /// The background work of the session running now. Needs no scan.
-    pub(crate) async fn tasks(&self, id: SessionId) -> Result<Response, String> {
+    /// The background work of the project running now. Needs no scan.
+    pub(crate) async fn tasks(&self, id: ProjectId) -> Result<Response, String> {
         let open = self.find(id).await?;
         let tasks = open.tasks.running();
         Ok(Response::Tasks {
@@ -213,35 +213,35 @@ impl Orchestrator {
         })
     }
 
-    /// The session id and the root of the repository containing `repo`. The first
+    /// The project id and the root of the repository containing `repo`. The first
     /// scan has not necessarily happened yet; requests that need it wait for it.
-    pub(crate) async fn open(&self, repo: &str, events: Connection) -> Result<(SessionId, String), String> {
+    pub(crate) async fn open(&self, repo: &str, events: Connection) -> Result<(ProjectId, String), String> {
         let repo = find_root(Path::new(repo))?;
         let root = repo.to_string_lossy().into_owned();
         let entry: Arc<OnceLock<Weak<Open>>> = Arc::default();
         let (open, created) = self
-            .sessions
+            .projects
             .open(&repo, events, |id, subscribers| {
                 self.wire(id, subscribers, repo.clone(), root.clone(), entry.clone())
             })
             .await?;
         if created {
             let _ = entry.set(Arc::downgrade(&open));
-            let (sessions, id, grace) = (self.sessions.clone(), open.id, self.config.orphan_grace);
-            tokio::spawn(async move { sessions.reap(id, grace, &TokioClock::new()).await });
+            let (projects, id, grace) = (self.projects.clone(), open.id, self.config.orphan_grace);
+            tokio::spawn(async move { projects.reap(id, grace, &TokioClock::new()).await });
             start_servers_in_background(open.clone());
         }
         Ok((open.id, root))
     }
 
-    /// Unsubscribes the connection; the last one to leave closes the session.
-    pub(crate) async fn close(&self, id: SessionId, from: &Connection) -> Result<(), String> {
-        self.sessions.close(id, from).await.map_err(message)
+    /// Unsubscribes the connection; the last one to leave closes the project.
+    pub(crate) async fn close(&self, id: ProjectId, from: &Connection) -> Result<(), String> {
+        self.projects.close(id, from).await.map_err(message)
     }
 
     async fn wire(
         &self,
-        id: SessionId,
+        id: ProjectId,
         subscribers: Subscribers<Connection>,
         repo: PathBuf,
         root: String,
@@ -309,24 +309,24 @@ mod tests {
         let data = tempfile::tempdir().unwrap();
         let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), Config::default());
         let (events, mut inbox) = Events::channel();
-        let (session, _) = orchestrator
+        let (project, _) = orchestrator
             .open(repo.path().to_str().unwrap(), Connection(events))
             .await
             .unwrap();
-        let tasks = orchestrator.find(session).await.unwrap().tasks.clone();
+        let tasks = orchestrator.find(project).await.unwrap().tasks.clone();
 
         let index = tasks.start(TaskKind::ServerIndex, "Indexing rust-analyzer");
         let id = tasks.running()[0].id;
         for done in 0..200 {
             index.progress(done, 200);
         }
-        let Ok(Response::Tasks { tasks: listed }) = orchestrator.tasks(session).await else {
+        let Ok(Response::Tasks { tasks: listed }) = orchestrator.tasks(project).await else {
             panic!("no tasks listed");
         };
         assert_eq!(listed.len(), 1);
         assert_eq!(
-            (listed[0].title.as_str(), listed[0].session),
-            ("Indexing rust-analyzer", session)
+            (listed[0].title.as_str(), listed[0].project),
+            ("Indexing rust-analyzer", project)
         );
         assert_eq!((listed[0].done, listed[0].total), (Some(199), Some(200)));
 
@@ -338,7 +338,7 @@ mod tests {
             heard.last().map(|t| (&t.state, t.done)),
             Some((&TaskState::Finished, Some(199)))
         );
-        let Ok(Response::Tasks { tasks: listed }) = orchestrator.tasks(session).await else {
+        let Ok(Response::Tasks { tasks: listed }) = orchestrator.tasks(project).await else {
             panic!("no tasks listed");
         };
         assert!(listed.is_empty());

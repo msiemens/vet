@@ -22,7 +22,7 @@ use vet_protocol::{ClientMessage, Event, PROTOCOL_VERSION, Ready, Request, Respo
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Pushes events to the connection a request arrived on. A handler that opens a
-/// session keeps a clone and sends that session's events through it; sends after
+/// project keeps a clone and sends that project's events through it; sends after
 /// the connection closed are dropped.
 #[derive(Clone)]
 pub struct Events(mpsc::UnboundedSender<ServerMessage>);

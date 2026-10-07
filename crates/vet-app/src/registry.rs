@@ -1,5 +1,5 @@
-//! The open sessions of a process: one per repository, the connections
-//! subscribed to each, and when a session without connections closes.
+//! The open projects of a process: one per repository, the connections
+//! subscribed to each, and when a project without connections closes.
 
 use std::fmt;
 use std::ops::Deref;
@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::ports::{Clock, Millis};
 
-/// A connection that wants a session's events.
+/// A connection that wants a project's events.
 pub trait Subscriber: Clone + Send + Sync + 'static {
     type Event: Clone;
 
@@ -24,7 +24,7 @@ pub trait Subscriber: Clone + Send + Sync + 'static {
     fn same_connection(&self, other: &Self) -> bool;
 }
 
-/// The connections subscribed to one session.
+/// The connections subscribed to one project.
 pub struct Subscribers<S>(Arc<Mutex<Vec<S>>>);
 
 impl<S> Clone for Subscribers<S> {
@@ -84,14 +84,14 @@ impl<S: Subscriber> Subscribers<S> {
     }
 }
 
-/// What an open session needs to do when it closes.
+/// What an open project needs to do when it closes.
 pub trait Resident: Send + Sync + 'static {
-    /// Stops the session's background work. The review itself stays in the
+    /// Stops the project's background work. The review itself stays in the
     /// store for the next open of the repository to resume.
     fn shut(&self) -> impl Future<Output = ()> + Send;
 }
 
-/// An open session: the registry's bookkeeping around the adapters `T` wires.
+/// An open project: the registry's bookkeeping around the adapters `T` wires.
 pub struct Entry<S, T> {
     pub id: u32,
     pub repo: PathBuf,
@@ -108,11 +108,11 @@ impl<S, T> Deref for Entry<S, T> {
 }
 
 #[derive(Debug)]
-pub struct NoSuchSession;
+pub struct NoSuchProject;
 
-impl fmt::Display for NoSuchSession {
+impl fmt::Display for NoSuchProject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("no such session")
+        f.write_str("no such project")
     }
 }
 
@@ -142,7 +142,7 @@ impl<S, T> Default for Registry<S, T> {
 }
 
 impl<S: Subscriber, T: Resident> Registry<S, T> {
-    /// The session of `repo` with `subscriber` subscribed; `create` builds it
+    /// The project of `repo` with `subscriber` subscribed; `create` builds it
     /// from its new id and subscribers when the repository is not open yet.
     /// Whether it did is the second value. Creation holds the registry, so a
     /// repository is never opened twice.
@@ -173,17 +173,17 @@ impl<S: Subscriber, T: Resident> Registry<S, T> {
         Ok((entry, true))
     }
 
-    pub async fn find(&self, id: u32) -> Result<Arc<Entry<S, T>>, NoSuchSession> {
+    pub async fn find(&self, id: u32) -> Result<Arc<Entry<S, T>>, NoSuchProject> {
         let entries = self.entries.lock().await;
-        entries.iter().find(|e| e.id == id).cloned().ok_or(NoSuchSession)
+        entries.iter().find(|e| e.id == id).cloned().ok_or(NoSuchProject)
     }
 
     pub async fn all(&self) -> Vec<Arc<Entry<S, T>>> {
         self.entries.lock().await.clone()
     }
 
-    /// Unsubscribes the connection; the last one to leave closes the session.
-    pub async fn close(&self, id: u32, subscriber: &S) -> Result<(), NoSuchSession> {
+    /// Unsubscribes the connection; the last one to leave closes the project.
+    pub async fn close(&self, id: u32, subscriber: &S) -> Result<(), NoSuchProject> {
         let entry = self.find(id).await?;
         if entry.subscribers.unsubscribe(subscriber) {
             self.entries.lock().await.retain(|e| e.id != id);
@@ -192,7 +192,7 @@ impl<S: Subscriber, T: Resident> Registry<S, T> {
         Ok(())
     }
 
-    /// Returns once the session is gone: closed by its last connection leaving,
+    /// Returns once the project is gone: closed by its last connection leaving,
     /// or by none being subscribed for `grace`.
     pub async fn reap(&self, id: u32, grace: Duration, clock: &impl Clock) {
         let grace = grace.as_millis() as u64;
@@ -321,7 +321,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_repository_has_one_session_that_every_opener_subscribes_to() {
+    async fn a_repository_has_one_project_that_every_opener_subscribes_to() {
         let registry = TestRegistry::default();
         let (a, b) = (Connection::new("a"), Connection::new("b"));
         let adapters = Arc::new(Adapters::default());
@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_last_connection_leaving_closes_the_session() {
+    async fn the_last_connection_leaving_closes_the_project() {
         let registry = TestRegistry::default();
         let (a, b) = (Connection::new("a"), Connection::new("b"));
         let adapters = Arc::new(Adapters::default());
@@ -389,7 +389,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_session_nobody_is_subscribed_to_closes_after_the_grace_period() {
+    async fn a_project_nobody_is_subscribed_to_closes_after_the_grace_period() {
         let registry = TestRegistry::default();
         let a = Connection::new("a");
         let adapters = Arc::new(Adapters::default());

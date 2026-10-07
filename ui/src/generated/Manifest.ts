@@ -12,7 +12,7 @@ import type { WatchDegraded } from "./WatchDegraded";
 /**
  * The changeset as displayed through the repository's review filter.
  */
-export type Manifest = { session: number, 
+export type Manifest = { project: number, 
 /**
  * Increases whenever the changeset's target changes.
  */

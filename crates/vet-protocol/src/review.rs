@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{FileChange, FileReview, LineDelta, RestoreFailure, SessionId};
+use crate::{FileChange, FileReview, LineDelta, ProjectId, RestoreFailure};
 
 /// A side of the changeset.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -30,7 +30,7 @@ pub struct ReviewFilter {
     pub hide_binary: bool,
 }
 
-/// How a session's base is chosen.
+/// How a review's base is chosen.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
@@ -80,7 +80,7 @@ pub struct Target {
 
 /// Whether a review has started. It starts with the first review action (a
 /// mark, an acknowledgement, a new thread) and ends with `FinishReview`;
-/// before and after, the session is browsing: the live diff, nothing kept.
+/// before and after, the project is browsing: the live diff, nothing kept.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
@@ -163,7 +163,7 @@ pub struct Completion {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Manifest {
-    pub session: SessionId,
+    pub project: ProjectId,
     /// Increases whenever the changeset's target changes.
     pub revision: u32,
     pub name: String,

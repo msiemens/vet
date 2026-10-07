@@ -83,7 +83,7 @@ export class ReviewController {
     };
     // A server installed or reconfigured elsewhere may answer differently now.
     this.unsubscribeEvents = backend.onEvent((event) => {
-      if (event.type !== "serversChanged" || event.session !== backend.session) return;
+      if (event.type !== "serversChanged" || event.project !== backend.project) return;
       semantic.invalidate();
       for (const view of this.views.values()) view.refreshDiagnostics();
       for (const text of this.texts.values()) text.refreshDiagnostics();

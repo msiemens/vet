@@ -4,7 +4,7 @@ import { InFlight } from "./inFlight.ts";
 export interface OpenSteps {
   /** Lets go of the open repository, if any. */
   release(): Promise<void>;
-  /** Opens a session; resolves with the repository root the backend settled on. */
+  /** Opens a project; resolves with the repository root the backend settled on. */
   open(path: string): Promise<string>;
   setWindowMode(mode: "welcome" | "project"): Promise<void>;
   opened(root: string): void;

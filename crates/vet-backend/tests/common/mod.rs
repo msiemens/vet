@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    Diagnostic, Locations, Request, Response, ServerInfo, ServerMessage, ServerState, SessionId, Side, Unavailable,
+    Diagnostic, Locations, ProjectId, Request, Response, ServerInfo, ServerMessage, ServerState, Side, Unavailable,
 };
 use vet_transport::{Events, Handler};
 
@@ -100,34 +100,34 @@ impl Client {
         self.handler.handle(request, self.events.clone()).await
     }
 
-    pub async fn open(&self, repo: &Path) -> SessionId {
-        let request = Request::OpenSession {
+    pub async fn open(&self, repo: &Path) -> ProjectId {
+        let request = Request::OpenProject {
             repo: repo.to_str().unwrap().into(),
         };
         match self.call(request).await.unwrap() {
-            Response::Session { session, .. } => session,
+            Response::Project { project, .. } => project,
             other => panic!("{other:?}"),
         }
     }
 
-    pub async fn revision(&self, session: SessionId) -> u32 {
-        match self.call(Request::Manifest { session }).await.unwrap() {
+    pub async fn revision(&self, project: ProjectId) -> u32 {
+        match self.call(Request::Manifest { project }).await.unwrap() {
             Response::Manifest(m) => m.revision,
             other => panic!("{other:?}"),
         }
     }
 
-    pub async fn servers(&self, session: SessionId) -> Vec<ServerInfo> {
-        match self.call(Request::ListServers { session }).await.unwrap() {
+    pub async fn servers(&self, project: ProjectId) -> Vec<ServerInfo> {
+        match self.call(Request::ListServers { project }).await.unwrap() {
             Response::Servers { servers } => servers,
             other => panic!("{other:?}"),
         }
     }
 
     /// Installs the pinned server of `language`; it must work.
-    pub async fn install(&self, session: SessionId, language: &str) {
+    pub async fn install(&self, project: ProjectId, language: &str) {
         let request = Request::InstallServer {
-            session,
+            project,
             language: language.into(),
         };
         match self.call(request).await.unwrap() {
@@ -141,14 +141,14 @@ impl Client {
 
     pub async fn hover(
         &self,
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         side: Side,
         path: &str,
         (line, col): (u32, u32),
     ) -> (Option<String>, Option<Unavailable>) {
         let request = Request::Hover {
-            session,
+            project,
             revision,
             side,
             path: path.into(),
@@ -163,14 +163,14 @@ impl Client {
 
     pub async fn definition(
         &self,
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         side: Side,
         path: &str,
         (line, col): (u32, u32),
     ) -> Locations {
         let request = Request::Definition {
-            session,
+            project,
             revision,
             side,
             path: path.into(),
@@ -185,14 +185,14 @@ impl Client {
 
     pub async fn references(
         &self,
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         side: Side,
         path: &str,
         (line, col): (u32, u32),
     ) -> Locations {
         let request = Request::References {
-            session,
+            project,
             revision,
             side,
             path: path.into(),
@@ -207,12 +207,12 @@ impl Client {
 
     pub async fn diagnostics(
         &self,
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         path: &str,
     ) -> (Vec<Diagnostic>, Option<Unavailable>) {
         let request = Request::Diagnostics {
-            session,
+            project,
             revision,
             path: path.into(),
         };

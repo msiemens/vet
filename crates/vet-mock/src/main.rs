@@ -25,7 +25,7 @@ use vet_core::filter::ReviewFilter;
 use vet_core::marking::hunk_span;
 use vet_core::review::{ReviewedSpan, target_line};
 use vet_highlight::{Cache, Language};
-use vet_protocol::{Request, Response, SessionId};
+use vet_protocol::{ProjectId, Request, Response};
 use vet_transport::shell::{announce, exit_when_stdin_closes};
 use vet_transport::{Events, Handler, Server};
 
@@ -43,7 +43,7 @@ struct Mock {
 }
 
 const HIGHLIGHT_CACHE_BYTES: usize = 64 << 20;
-const SESSION: SessionId = 0;
+const PROJECT: ProjectId = 0;
 const REVISION: u32 = 0;
 /// The corpus has no snapshots; every span is anchored in this one.
 const SNAPSHOT: SnapshotId = SnapshotId(Hash([0; 32]));
@@ -133,10 +133,10 @@ impl Handler for Mock {
                 .ok_or_else(|| format!("no such file: {path}"))
         };
         let seen = || self.seen.lock().unwrap_or_else(PoisonError::into_inner);
-        let current = |session: SessionId, revision: u32| match (session == SESSION, revision == REVISION) {
+        let current = |project: ProjectId, revision: u32| match (project == PROJECT, revision == REVISION) {
             (true, true) => Ok(()),
             (true, false) => Err("stale revision".to_string()),
-            _ => Err("no such session".to_string()),
+            _ => Err("no such project".to_string()),
         };
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
@@ -147,12 +147,12 @@ impl Handler for Mock {
             Request::RecentProjects | Request::RecordRecentProject { .. } | Request::ForgetRecentProject { .. } => {
                 Ok(Response::RecentProjects { projects: Vec::new() })
             }
-            // The mock has one session over its corpus; `repo` is ignored.
-            Request::OpenSession { repo } => Ok(Response::Session {
-                session: SESSION,
+            // The mock has one project over its corpus; `repo` is ignored.
+            Request::OpenProject { repo } => Ok(Response::Project {
+                project: PROJECT,
                 root: repo,
             }),
-            Request::CloseSession { .. } => Ok(Response::Done),
+            Request::CloseProject { .. } => Ok(Response::Done),
             Request::Tasks { .. } => Ok(Response::Tasks { tasks: Vec::new() }),
             Request::Manifest { .. } => {
                 let spans = self.seen_spans(&seen());
@@ -196,7 +196,7 @@ impl Handler for Mock {
                     files,
                     degraded: None,
                 };
-                Ok(Response::Manifest(Box::new(vet_mapping::manifest(SESSION, &view, &[]))))
+                Ok(Response::Manifest(Box::new(vet_mapping::manifest(PROJECT, &view, &[]))))
             }
             Request::FileContents { path, .. } => {
                 let at = position(&path)?;
@@ -217,12 +217,12 @@ impl Handler for Mock {
                 })
             }
             Request::ToggleHunk {
-                session,
+                project,
                 revision,
                 path,
                 hunk,
             } => {
-                current(session, revision)?;
+                current(project, revision)?;
                 let i = position(&path)?;
                 let mut all = seen();
                 let flag = all[i].get_mut(hunk as usize).ok_or("no such hunk")?;
@@ -230,11 +230,11 @@ impl Handler for Mock {
                 Ok(self.review_update(i, &all))
             }
             Request::ToggleFileSeen {
-                session,
+                project,
                 revision,
                 path,
             } => {
-                current(session, revision)?;
+                current(project, revision)?;
                 let i = position(&path)?;
                 let mut all = seen();
                 let value = !all[i].iter().all(|&seen| seen);
@@ -247,13 +247,13 @@ impl Handler for Mock {
             Request::FinishReview { .. } => Err("the corpus has no review to finish".into()),
             Request::ListDirectory { .. } | Request::FileText { .. } => Err("the corpus has no file tree".into()),
             Request::TargetLine {
-                session,
+                project,
                 revision,
                 side,
                 path,
                 line,
             } => {
-                current(session, revision)?;
+                current(project, revision)?;
                 let f = &self.corpus.files[position(&path)?];
                 let line =
                     target_line(&f.hunks, vet_mapping::core_side(side), line).min(last_text_line(f.target.as_bytes()));
@@ -268,14 +268,14 @@ impl Handler for Mock {
             | Request::ConfirmAnchor { .. }
             | Request::AttachAnchor { .. } => Err("the corpus has no threads".into()),
             Request::Hover {
-                session,
+                project,
                 revision,
                 side,
                 path,
                 line,
                 col,
             } => {
-                current(session, revision)?;
+                current(project, revision)?;
                 position(&path)?;
                 Ok(Response::Hover {
                     revision,

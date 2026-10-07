@@ -1,4 +1,4 @@
-//! Accounts on hosting platforms: per host and app-wide, not per session.
+//! Accounts on hosting platforms: per host and app-wide, not per project.
 
 use std::fmt;
 

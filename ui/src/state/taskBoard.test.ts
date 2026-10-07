@@ -4,7 +4,7 @@ import type { Task } from "../generated/Task.ts";
 import { TaskBoard } from "./taskBoard.ts";
 
 function task(id: number, state: Task["state"] = { type: "running" }, title = `task ${id}`): Task {
-  return { session: 1, id, kind: "scan", title, done: null, total: null, detail: null, state };
+  return { project: 1, id, kind: "scan", title, done: null, total: null, detail: null, state };
 }
 
 const ids = (tasks: Task[]) => tasks.map((t) => t.id);

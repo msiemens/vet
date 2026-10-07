@@ -24,7 +24,7 @@ import type { Thread } from "./Thread";
 import type { ThreadTarget } from "./ThreadTarget";
 import type { Unavailable } from "./Unavailable";
 
-export type Response = { "type": "pong", payload: string, } | { "type": "session", session: number, 
+export type Response = { "type": "pong", payload: string, } | { "type": "project", project: number, 
 /**
  * The root of the repository the opened path belongs to.
  */

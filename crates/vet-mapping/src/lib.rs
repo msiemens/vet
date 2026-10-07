@@ -235,9 +235,9 @@ pub fn base_candidates(c: &BaseCandidates) -> p::Response {
     }
 }
 
-pub fn manifest(session: p::SessionId, m: &ManifestView, restore_failures: &[RestoreFailure]) -> p::Manifest {
+pub fn manifest(project: p::ProjectId, m: &ManifestView, restore_failures: &[RestoreFailure]) -> p::Manifest {
     p::Manifest {
-        session,
+        project,
         revision: m.revision,
         name: m.name.clone(),
         review: review_info(m.lifecycle),

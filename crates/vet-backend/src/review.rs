@@ -1,35 +1,35 @@
-//! Requests about a session's review: its changeset, files, marks, base and
+//! Requests about a project's review: its changeset, files, marks, base and
 //! filter. The rules are in `vet_app::session`; this maps requests to them and
 //! tells the other subscribers what changed.
 
 use vet_mapping as mapping;
-use vet_protocol::{Response, SessionId};
+use vet_protocol::{ProjectId, Response};
 
 use crate::events::{Connection, announce_start, review_changed, settled};
 use crate::open::Ready;
 use crate::{Orchestrator, message, start_servers_in_background};
 
 impl Orchestrator {
-    pub(crate) async fn finish_review(&self, session: SessionId) -> Result<Response, String> {
-        let open = self.ready(session).await?;
+    pub(crate) async fn finish_review(&self, project: ProjectId) -> Result<Response, String> {
+        let open = self.ready(project).await?;
         let complete = open.session.finish_review().await.map_err(message)?;
         let revision = open.session.revision().await;
-        settled(&open.subscribers, session, revision);
+        settled(&open.subscribers, project, revision);
         Ok(Response::ReviewFinished { complete })
     }
 
-    pub(crate) async fn manifest(&self, session: SessionId) -> Result<Response, String> {
-        let open = self.ready(session).await?;
+    pub(crate) async fn manifest(&self, project: ProjectId) -> Result<Response, String> {
+        let open = self.ready(project).await?;
         let manifest = open.session.manifest().await.map_err(message)?;
         let failures = open.semantics.restore_failures();
         Ok(Response::Manifest(Box::new(mapping::manifest(
-            session, &manifest, &failures,
+            project, &manifest, &failures,
         ))))
     }
 
-    pub(crate) async fn file_contents(&self, session: SessionId, path: &str) -> Result<Response, String> {
+    pub(crate) async fn file_contents(&self, project: ProjectId, path: &str) -> Result<Response, String> {
         let text = self
-            .ready(session)
+            .ready(project)
             .await?
             .session
             .file_text(path)
@@ -38,9 +38,9 @@ impl Orchestrator {
         Ok(self.highlighter.file_contents(path, text).await)
     }
 
-    pub(crate) async fn file_text(&self, session: SessionId, path: &str) -> Result<Response, String> {
+    pub(crate) async fn file_text(&self, project: ProjectId, path: &str) -> Result<Response, String> {
         let text = self
-            .ready(session)
+            .ready(project)
             .await?
             .session
             .target_text(path)
@@ -51,13 +51,13 @@ impl Orchestrator {
 
     pub(crate) async fn toggle_hunk(
         &self,
-        session: SessionId,
+        project: ProjectId,
         from: &Connection,
         revision: u32,
         path: &str,
         hunk: u32,
     ) -> Result<Response, String> {
-        let open = self.ready(session).await?;
+        let open = self.ready(project).await?;
         let update = open.session.toggle_hunk(revision, path, hunk).await.map_err(message)?;
         announce_start(&open, update.started);
         Ok(Response::Review(review_changed(&open, from, &update)))
@@ -65,13 +65,13 @@ impl Orchestrator {
 
     pub(crate) async fn toggle_item(
         &self,
-        session: SessionId,
+        project: ProjectId,
         from: &Connection,
         revision: u32,
         path: &str,
         kind: vet_protocol::NonTextKind,
     ) -> Result<Response, String> {
-        let open = self.ready(session).await?;
+        let open = self.ready(project).await?;
         let update = open
             .session
             .toggle_item(revision, path, mapping::core_non_text_kind(kind))
@@ -83,12 +83,12 @@ impl Orchestrator {
 
     pub(crate) async fn toggle_file_seen(
         &self,
-        session: SessionId,
+        project: ProjectId,
         from: &Connection,
         revision: u32,
         path: &str,
     ) -> Result<Response, String> {
-        let open = self.ready(session).await?;
+        let open = self.ready(project).await?;
         let update = open.session.toggle_file_seen(revision, path).await.map_err(message)?;
         announce_start(&open, update.started);
         Ok(Response::Review(review_changed(&open, from, &update)))
@@ -96,14 +96,14 @@ impl Orchestrator {
 
     pub(crate) async fn item_blob(
         &self,
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         path: &str,
         kind: vet_protocol::NonTextKind,
         side: vet_protocol::Side,
     ) -> Result<Response, String> {
         let blob = self
-            .ready(session)
+            .ready(project)
             .await?
             .session
             .item_blob(
@@ -119,10 +119,10 @@ impl Orchestrator {
 
     pub(crate) async fn set_base(
         &self,
-        session: SessionId,
+        project: ProjectId,
         base: vet_protocol::BaseChoice,
     ) -> Result<Response, String> {
-        let open = self.ready(session).await?;
+        let open = self.ready(project).await?;
         let (base, revision) = open
             .session
             .set_base(mapping::core_base_choice(base))
@@ -134,10 +134,10 @@ impl Orchestrator {
 
     pub(crate) async fn set_project_filter(
         &self,
-        session: SessionId,
+        project: ProjectId,
         filter: vet_protocol::ReviewFilter,
     ) -> Result<Response, String> {
-        let open = self.ready(session).await?;
+        let open = self.ready(project).await?;
         let revision = open
             .session
             .set_filter(mapping::core_filter(filter))
@@ -149,19 +149,19 @@ impl Orchestrator {
 
     pub(crate) async fn exclude_path(
         &self,
-        session: SessionId,
+        project: ProjectId,
         path: &str,
         directory: bool,
     ) -> Result<Response, String> {
-        let open = self.ready(session).await?;
+        let open = self.ready(project).await?;
         let revision = open.session.exclude_path(path, directory).await.map_err(message)?;
-        settled(&open.subscribers, session, revision);
+        settled(&open.subscribers, project, revision);
         Ok(Response::Done)
     }
 
-    pub(crate) async fn list_base_candidates(&self, session: SessionId) -> Result<Response, String> {
+    pub(crate) async fn list_base_candidates(&self, project: ProjectId) -> Result<Response, String> {
         let candidates = self
-            .ready(session)
+            .ready(project)
             .await?
             .session
             .base_candidates()
@@ -170,9 +170,9 @@ impl Orchestrator {
         Ok(mapping::base_candidates(&candidates))
     }
 
-    pub(crate) async fn list_directory(&self, session: SessionId, path: &str) -> Result<Response, String> {
+    pub(crate) async fn list_directory(&self, project: ProjectId, path: &str) -> Result<Response, String> {
         let listing = self
-            .ready(session)
+            .ready(project)
             .await?
             .session
             .list_directory(path)
@@ -183,14 +183,14 @@ impl Orchestrator {
 
     pub(crate) async fn target_line(
         &self,
-        session: SessionId,
+        project: ProjectId,
         revision: u32,
         side: vet_protocol::Side,
         path: &str,
         line: u32,
     ) -> Result<Response, String> {
         let line = self
-            .ready(session)
+            .ready(project)
             .await?
             .session
             .line_in_target(revision, mapping::core_side(side), path, line)

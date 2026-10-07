@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::SessionId;
+use crate::ProjectId;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -44,8 +44,8 @@ pub enum TaskState {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Task {
-    pub session: SessionId,
-    /// Unique among the tasks of the session, and the same in every announcement
+    pub project: ProjectId,
+    /// Unique among the tasks of the project, and the same in every announcement
     /// of the task.
     pub id: u32,
     pub kind: TaskKind,
