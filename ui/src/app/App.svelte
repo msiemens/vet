@@ -44,6 +44,7 @@
   let theme = $state<Theme>(storedTheme());
   let mode = $state<Mode>("unified");
   let dialog = $state<"settings" | "about" | "finish">();
+  let switcherOpen = $state(false);
   // Only the host knows it; a plain browser shows none.
   let version = $state<string>();
   const reviewOpen = $derived(changeset.manifest?.review.state === "open");
@@ -64,6 +65,8 @@
       openProject,
       finishReview: () => (dialog = "finish"),
       fetch: () => void changeset.fetch(),
+      openChangeset: (key) => void changeset.openChangeset(key),
+      showChangesets: () => (switcherOpen = true),
       showDialog: (d) => (dialog = d),
       quit: () => void quit(),
       setMode,
@@ -157,6 +160,9 @@
     review={changeset.manifest?.review}
     loadBase={() => changeset.baseCandidates()}
     onbase={(choice) => void changeset.setBase(choice)}
+    loadChangesets={() => changeset.listChangesets()}
+    onchangeset={(key) => void changeset.openChangeset(key)}
+    bind:switcherOpen
     completion={changeset.manifest?.completion}
     onfinish={() => (dialog = "finish")}
   />

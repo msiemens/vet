@@ -4,6 +4,7 @@ import { resolveMenu } from "../lib/commandMenu.ts";
 import { CommandRegistry } from "../lib/commands.ts";
 import type { MenuItem } from "../lib/ui/menuItem.ts";
 import { type AppActions, appCommands } from "./appCommands.ts";
+import { keyId } from "./changesetKey.ts";
 import type { CommandContext } from "./commands.ts";
 import { type MenuState, mainMenuSpec } from "./mainMenu.ts";
 
@@ -24,6 +25,8 @@ const actions: AppActions = {
   openProject: (path) => calls.push(`open ${path}`),
   finishReview: () => calls.push("finish"),
   fetch: () => calls.push("fetch"),
+  openChangeset: (key) => calls.push(`changeset ${keyId(key)}`),
+  showChangesets: () => calls.push("changesets"),
   showDialog: (d) => calls.push(`dialog ${d}`),
   quit: () => calls.push("quit"),
   setMode: (mode) => calls.push(`mode ${mode}`),

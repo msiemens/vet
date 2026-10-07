@@ -35,6 +35,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
       items: s.recent.map(({ path, name }) => ({ command: "file.openRecent", arg: path, label: name, detail: path })),
     },
     "-",
+    { command: "changeset.switch" },
     { command: "review.finish" },
     { command: "git.fetch" },
     ...(s.native ? [] : (["-", settings, "-", quit] as MenuSpec)),

@@ -1,9 +1,11 @@
 // The commands of the window as a whole: the ones the main menu offers. The owner of the state
 // they change (`App`) supplies the actions.
 
+import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { Command } from "../lib/commands.ts";
 import { THEMES, type Theme } from "../lib/theme/theme.ts";
 import { MODES, type Mode } from "../lib/viewMode.ts";
+import { parseKeyId } from "./changesetKey.ts";
 import type { CommandContext } from "./commands.ts";
 
 export interface AppActions {
@@ -12,6 +14,10 @@ export interface AppActions {
   finishReview(): void;
   /** Fetches the open project's remotes. */
   fetch(): void;
+  /** Puts a changeset on view. */
+  openChangeset(key: ChangesetKey): void;
+  /** Opens the changeset switcher. */
+  showChangesets(): void;
   showDialog(dialog: "settings" | "about"): void;
   quit(): void;
   setMode(mode: Mode): void;
@@ -32,6 +38,17 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
       run: (_, path) => {
         if (path === undefined) return false;
         a.openProject(path);
+      },
+    },
+    { id: "changeset.switch", label: "Switch Changeset…", enabled: repoOpen, run: () => a.showChangesets() },
+    {
+      id: "changeset.open",
+      label: "Open changeset",
+      enabled: repoOpen,
+      run: (_, id) => {
+        const key = parseKeyId(id);
+        if (!key) return false;
+        a.openChangeset(key);
       },
     },
     { id: "review.finish", label: "Finish Review…", enabled: (c) => c.reviewOpen, run: () => a.finishReview() },

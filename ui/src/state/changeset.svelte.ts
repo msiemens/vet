@@ -10,6 +10,7 @@ import type { RestoreFailure } from "../generated/RestoreFailure";
 import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { BaseChoice } from "../generated/BaseChoice";
+import type { ChangesetKey } from "../generated/ChangesetKey";
 import { errorText } from "../lib/errorText";
 import type { BaseCandidates } from "./backend";
 import { session } from "./session.svelte";
@@ -52,7 +53,7 @@ class ChangesetStore {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
-        if (event.type === "snapshotSettled") void this.refresh();
+        if (event.type === "snapshotSettled" || event.type === "changesetOpened") void this.refresh();
         else if (event.type === "reviewChanged" && event.revision === this.manifest?.revision)
           this.applyReview(event.update);
         else if (event.type === "reviewStarted" && this.manifest)
@@ -91,6 +92,25 @@ class ChangesetStore {
   /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
   async toggleFileSeen(revision: number, path: string) {
     await this.review(revision, session.connected().toggleFileSeen(revision, path));
+  }
+
+  /** The changesets on offer and the one on view; `undefined` after showing why they could not be listed. */
+  async listChangesets() {
+    try {
+      return await session.connected().listChangesets();
+    } catch (error) {
+      session.notice = errorText(error);
+      return undefined;
+    }
+  }
+
+  /** Puts a changeset on view. The backend pushes `changesetOpened`, which fetches its manifest. */
+  async openChangeset(key: ChangesetKey) {
+    try {
+      await session.connected().openChangeset(key);
+    } catch (error) {
+      session.notice = errorText(error);
+    }
   }
 
   /**

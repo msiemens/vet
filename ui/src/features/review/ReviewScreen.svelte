@@ -109,13 +109,12 @@
     };
   });
 
-  // A settled snapshot moved the changeset to a new revision.
+  // A settled snapshot moved the changeset to a new revision, or another changeset is on view.
   $effect(() => {
     if (revision === undefined) return;
     untrack(() => {
       const manifest = changeset.currentManifest();
       if (!manifest) return;
-      tabs.keepOnly(new Set(manifest.files.map((f) => f.path)));
       controller.update(manifest);
     });
   });

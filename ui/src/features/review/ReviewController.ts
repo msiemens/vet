@@ -20,6 +20,8 @@ import { bindRevision, focusedEditor } from "./editor/semantic";
 import type { Mode } from "../../lib/viewMode";
 import { type CommandContext, commands } from "../../state/commands";
 import { TextView } from "./editor/TextView";
+import { type SavedView, restoredTabs } from "./changesetViews";
+import { keyId } from "../../state/changesetKey";
 import { type ViewActions, viewCommands } from "./reviewCommands";
 import { CHANGES, type TabId, Tabs, fileTab, kindOf, pathOf, textTab } from "./Tabs.svelte";
 
@@ -54,6 +56,12 @@ export class ReviewController {
   private roots = new Map<TabId, HTMLElement>();
   mode: Mode = "unified";
   private hooks: ViewHooks;
+  /** The changeset on view, by `keyId`; unknown before the first manifest. */
+  private key?: string;
+  /** What each changeset that is not on view had open, for when it comes back. */
+  private parked = new Map<string, SavedView>();
+  /** Scroll positions and the current hunk the next builds restore, instead of carrying the old views' over. */
+  private restore?: { scroll: Map<TabId, number>; anchor?: SavedView["anchor"] };
 
   constructor(
     readonly backend: Backend,
@@ -269,8 +277,13 @@ export class ReviewController {
       return;
     }
     const files = path === undefined ? manifest.files : manifest.files.filter((f) => f.path === path);
-    const anchor = previous?.currentAnchor();
-    const top = root.scrollTop;
+    const restoring = this.restore?.scroll.has(id) ? this.restore : undefined;
+    const anchor = restoring ? (id === CHANGES ? restoring.anchor : undefined) : previous?.currentAnchor();
+    const top = restoring ? (restoring.scroll.get(id) ?? 0) : root.scrollTop;
+    if (restoring) {
+      restoring.scroll.delete(id);
+      if (restoring.scroll.size === 0) this.restore = undefined;
+    }
     previous?.destroy();
     this.views.delete(id);
     if (path !== undefined && !files.length) return; // the file left the changeset
@@ -330,13 +343,48 @@ export class ReviewController {
     for (const id of this.roots.keys()) this.build(id, manifest, this.views.get(id));
   }
 
-  /** A refetched manifest may be of a newer revision than the views; rebuild them then. */
+  /**
+   * A refetched manifest may be of a newer revision than the views; rebuild them then. A manifest of
+   * another changeset first parks the tabs, scroll positions and current hunk of the one that was on
+   * view, and brings back those of the new one, if it was on view before.
+   */
   update(manifest: Manifest) {
+    const key = keyId(manifest.target.changeset);
+    const switching = this.key !== undefined && key !== this.key;
+    const paths = new Set(manifest.files.map((f) => f.path));
+    const firstVisit = switching && !this.parked.has(key);
+    if (switching) this.switchTo(key, paths);
+    else this.tabs.keepOnly(paths);
+    this.key = key;
     const view = this.views.get(CHANGES);
     if (!view || view.revision === manifest.revision) return;
     this.show(manifest);
+    if (firstVisit) void this.changes.goToHunk(0);
     // The new views have loaded nothing; a newer revision replaces this load.
     this.changes.loadAll().catch(() => undefined);
+  }
+
+  /** Parks the changeset on view and sets the tabs of `next` and what the builds restore. */
+  private switchTo(next: string, paths: ReadonlySet<string>) {
+    if (this.key !== undefined) {
+      const scroll = new Map<TabId, number>();
+      for (const [id, root] of this.roots) scroll.set(id, root.scrollTop);
+      this.parked.set(this.key, {
+        open: [...this.tabs.open],
+        active: this.tabs.active,
+        scroll,
+        anchor: this.views.get(CHANGES)?.currentAnchor(),
+      });
+    }
+    const saved = this.parked.get(next);
+    const { open, active } = restoredTabs(saved, (tab) => kindOf(tab) !== "file" || paths.has(pathOf(tab) ?? ""));
+    this.tabs.open = open;
+    this.tabs.active = active;
+    // Every diff tab builds with its saved position, those not mounted yet when they attach.
+    const scroll = new Map(
+      open.filter((tab) => kindOf(tab) !== "text").map((tab) => [tab, saved?.scroll.get(tab) ?? 0]),
+    );
+    this.restore = { scroll, anchor: saved?.anchor };
   }
 
   /** Fetches the manifest and renders it; resolves with the time to the Changes tab's first hunk paint. */
@@ -344,7 +392,9 @@ export class ReviewController {
     const t0 = performance.now();
     this.views.get(CHANGES)?.destroy();
     this.views.delete(CHANGES);
-    this.show(await this.changeset.refresh());
+    const manifest = await this.changeset.refresh();
+    this.key = keyId(manifest.target.changeset);
+    this.show(manifest);
     const view = this.changes;
     await view.goToHunk(0);
     await nextPaint();

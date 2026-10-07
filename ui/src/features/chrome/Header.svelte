@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Base } from "../../generated/Base";
   import type { BaseChoice } from "../../generated/BaseChoice";
+  import type { ChangesetKey } from "../../generated/ChangesetKey";
+  import type { ChangesetRow } from "../../generated/ChangesetRow";
   import type { Completion } from "../../generated/Completion";
   import type { ReviewInfo } from "../../generated/ReviewInfo";
   import type { Target } from "../../generated/Target";
@@ -14,6 +16,7 @@
   import { commands, menuFor } from "../../state/commands";
   import { openItem } from "../../state/mainMenu";
   import BaseChip from "./BaseChip.svelte";
+  import ChangesetSwitcher from "./ChangesetSwitcher.svelte";
   import TitleBar from "./TitleBar.svelte";
   import VersionLabel from "./VersionLabel.svelte";
 
@@ -24,14 +27,23 @@
     review,
     loadBase,
     onbase,
+    loadChangesets,
+    onchangeset,
+    switcherOpen = $bindable(false),
     completion,
     onfinish,
   }: {
     project: string;
     /** What the changes are compared against. */
     base?: Base;
-    /** What they lead to: the working tree. */
+    /** What they lead to: the working tree, or a branch's tip. */
     target?: Target;
+    /** Lists the changesets on offer and the one on view. */
+    loadChangesets: () => Promise<{ rows: ChangesetRow[]; onView: ChangesetKey } | undefined>;
+    /** Puts another changeset on view. */
+    onchangeset: (key: ChangesetKey) => void;
+    /** The changeset switcher's menu is open. */
+    switcherOpen?: boolean;
     /** Whether a review has started; its version shows only while it is open. */
     review?: ReviewInfo;
     /** Lists the branches and commits the base can be picked from. */
@@ -68,9 +80,13 @@
   <span class="range" data-tauri-drag-region>
     <BaseChip {base} branch={target?.branch} load={loadBase} onpick={onbase} />
     <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
-    <span class="target" title={target?.branch && `On ${target.branch}`} data-tauri-drag-region
-      >{target?.name ?? "…"}</span
-    >
+    <ChangesetSwitcher
+      name={target?.name}
+      title={target?.branch && `On ${target.branch}`}
+      load={loadChangesets}
+      onpick={onchangeset}
+      bind:open={switcherOpen}
+    />
     {#if review?.state === "open"}
       <VersionLabel version={review.version} updatedAt={review.updatedAt} />
     {/if}
@@ -107,10 +123,6 @@
   .arrow {
     display: inline-flex;
     color: var(--text-3);
-  }
-  .target {
-    padding: 0 4px;
-    color: var(--text-2);
   }
   .finish {
     margin-right: 6px;

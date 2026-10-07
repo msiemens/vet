@@ -7,6 +7,8 @@ import type { BaseChoice } from "../generated/BaseChoice";
 import type { BlobContent } from "../generated/BlobContent";
 import type { BranchInfo } from "../generated/BranchInfo";
 import type { ChangedSymbols } from "../generated/ChangedSymbols";
+import type { ChangesetKey } from "../generated/ChangesetKey";
+import type { ChangesetRow } from "../generated/ChangesetRow";
 import type { CommentAt } from "../generated/CommentAt";
 import type { CommitInfo } from "../generated/CommitInfo";
 import type { Diagnostic } from "../generated/Diagnostic";
@@ -195,6 +197,20 @@ export class Backend {
   /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
   async toggleFileSeen(revision: number, path: string): Promise<ReviewUpdate> {
     return expect(await this.conn.request({ type: "toggleFileSeen", project: this.pid, revision, path }), "review");
+  }
+
+  /** The changesets on offer, the working tree first, and the one on view. */
+  async listChangesets(): Promise<{ rows: ChangesetRow[]; onView: ChangesetKey }> {
+    const { rows, onView } = expect(
+      await this.conn.request({ type: "listChangesets", project: this.pid }),
+      "changesets",
+    );
+    return { rows, onView };
+  }
+
+  /** Puts a changeset on view; every subscriber, this one included, then gets `changesetOpened`. */
+  async openChangeset(changeset: ChangesetKey): Promise<void> {
+    expect(await this.conn.request({ type: "openChangeset", project: this.pid, changeset }), "done");
   }
 
   /** Compares against another base; every subscriber, this one included, then gets `snapshotSettled`. */
