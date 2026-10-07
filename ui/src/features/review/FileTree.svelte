@@ -239,7 +239,7 @@
         {removed}
         seen={s.seenPercent}
         old={s.oldBasePercent}
-        title="+{added} −{removed}, {Math.round(s.seenPercent + s.oldBasePercent)}% seen"
+        title="+{added} −{removed}, {Math.round(s.seenPercent)}% seen"
       />
     {/if}
     <span class="mono status" style:color={s && STATUS[s.status]}>{s?.status}</span>

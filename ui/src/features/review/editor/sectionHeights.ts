@@ -21,6 +21,7 @@ export function readMetrics(root: HTMLElement): Metrics {
     collapsed: px(style, "--h-collapsed"),
     gap: px(style, "--h-section-gap"),
     preview: px(style, "--h-preview"),
+    diffGap: px(style, "--h-base-diff-gap"),
   };
 }
 
@@ -96,7 +97,8 @@ export class SectionHeights {
   /** Lays the section out from the manifest; its own bottom border is one more pixel. `known`: see `ThreadLayer.count`. */
   estimate(s: Section, known = new Map<string, number>()): number {
     const space = this.threads.space(s, known);
-    const layout = sectionLayout(s.file, this.mode, this.m, this.collapse, space, s.wrapped);
+    const open = new Map([...s.baseDiffs].map(([hunk, diff]) => [hunk, diff.rows.length]));
+    const layout = sectionLayout(s.file, this.mode, this.m, this.collapse, space, s.wrapped, open);
     s.hunkTops = layout.hunkTops;
     s.cardTops = layout.cardTops;
     s.cardsHeight = layout.cardsHeight;

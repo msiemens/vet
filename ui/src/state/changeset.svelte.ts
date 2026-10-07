@@ -3,6 +3,7 @@
 
 import { untrack } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
+import type { BaseDiff } from "../generated/BaseDiff";
 import type { FileChange } from "../generated/FileChange";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { Manifest } from "../generated/Manifest";
@@ -150,6 +151,36 @@ class ChangesetStore {
   /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
   async toggleFileSeen(revision: number, path: string) {
     await this.review(revision, session.connected().toggleFileSeen(revision, path, this.view));
+  }
+
+  /**
+   * Marks the hunks of a file seen against an old base seen again. A range of versions has no such
+   * request: its hunks are marked one by one, as the backend flips them.
+   */
+  async reconfirmFile(revision: number, path: string) {
+    if (this.view.type === "changeset") {
+      await this.review(revision, session.connected().reconfirmFile(revision, path));
+      return;
+    }
+    const hunks = this.file(path)?.review.hunks ?? [];
+    for (const [hunk, state] of hunks.entries()) {
+      if (state === "seenAgainstOldBase") await this.toggleHunk(revision, path, hunk);
+    }
+  }
+
+  /** The files that have hunks seen against an old base, as they are now. */
+  baseChangedFiles(): string[] {
+    return this.paths.filter((path) => this.file(path)?.review.hunks.includes("seenAgainstOldBase"));
+  }
+
+  /** The base diff of a hunk seen against an old base; `undefined` after showing why it could not be had. */
+  async baseDiff(revision: number, path: string, hunk: number): Promise<BaseDiff | undefined> {
+    try {
+      return await session.connected().baseDiff(revision, path, hunk);
+    } catch (error) {
+      this.reportFailure(error, revision);
+      return undefined;
+    }
   }
 
   /** The changesets on offer and the one on view; `undefined` after showing why they could not be listed. */

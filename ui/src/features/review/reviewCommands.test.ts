@@ -17,11 +17,13 @@ const idle: CommandContext = { repoOpen: true, reviewOpen: true, canQuit: true, 
 
 const calls: string[] = [];
 let toggleFinds = true;
+let reconfirmFinds = true;
 let commentFinds = true;
 let caretFinds = true;
 const view: ViewActions = {
   step: (delta) => calls.push(`step ${delta}`),
   toggleSeen: () => (calls.push("toggle"), toggleFinds),
+  reconfirm: () => (calls.push("reconfirm"), reconfirmFinds),
   comment: () => (calls.push("comment"), commentFinds),
   jumpToSource: () => (calls.push("jump"), caretFinds),
 };
@@ -35,7 +37,7 @@ const files: FileActions = {
 
 function setup(context: Partial<CommandContext> = {}, mod: "Ctrl" | "Meta" = "Ctrl") {
   calls.length = 0;
-  toggleFinds = commentFinds = caretFinds = true;
+  toggleFinds = reconfirmFinds = commentFinds = caretFinds = true;
   const registry = new CommandRegistry<CommandContext>({ ...idle, ...context }, mod);
   registry.register(...viewCommands(view), ...fileCommands(files));
   return registry;
@@ -90,6 +92,18 @@ void test("Space toggles, and passes on when there is nothing to toggle", () => 
   assert.equal(r.dispatch(event), false);
   assert.equal(event.prevented, false);
   assert.deepEqual(calls, ["toggle", "toggle"]);
+});
+
+void test("R re-confirms, and passes on when there is no hunk seen against an old base", () => {
+  const r = setup(inChanges);
+  const press = (init: Parameters<typeof key>[0] = {}) => key({ key: "r", code: "KeyR", ...init });
+  assert.equal(r.dispatch(press()), true);
+  reconfirmFinds = false;
+  const event = press();
+  assert.equal(r.dispatch(event), false);
+  assert.equal(event.prevented, false);
+  assert.equal(r.dispatch(press({ inField: true })), false);
+  assert.deepEqual(calls, ["reconfirm", "reconfirm"]);
 });
 
 void test("Space belongs to a text field", () => {

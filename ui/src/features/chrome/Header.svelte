@@ -15,6 +15,7 @@
   import Segmented from "../../lib/ui/Segmented.svelte";
   import type { BaseCandidates } from "../../state/backend";
   import BaseChip from "./BaseChip.svelte";
+  import { completionTitle } from "./completionTitle";
   import TitleBar from "./TitleBar.svelte";
   import VersionLabel from "./VersionLabel.svelte";
 
@@ -66,10 +67,7 @@
   } = $props();
   const seen = $derived(completion?.seenPercent ?? 0);
   const oldBase = $derived(completion?.oldBasePercent ?? 0);
-  const title = $derived(
-    completion &&
-      `${completion.seenLines} of ${completion.lines} lines · ${completion.acknowledgedItems} of ${completion.items} other changes · ${completion.oldBaseLines} lines against an old base`,
-  );
+  const title = $derived(completion && completionTitle(completion));
 </script>
 
 <TitleBar>
@@ -122,10 +120,10 @@
         width={96}
         segments={[
           { value: seen, color: "var(--seen)" },
-          { value: oldBase, color: "var(--old-base)" },
+          { value: oldBase, color: "var(--old-base-stripes)" },
         ]}
       />
-      <span class="mono pct">{Math.round(seen + oldBase)}%</span>
+      <span class="mono pct">{Math.round(seen)}%</span>
     </span>
     {#if review?.state === "open"}
       <button

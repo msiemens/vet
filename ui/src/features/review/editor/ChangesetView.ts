@@ -4,6 +4,7 @@
 // mounted only for sections near the viewport.
 
 import { EditorView } from "@codemirror/view";
+import type { BaseDiff } from "../../../generated/BaseDiff";
 import type { FileChange } from "../../../generated/FileChange";
 import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
@@ -13,19 +14,19 @@ import type { TextSpan } from "../../../generated/TextSpan";
 import type { Mode } from "../../../lib/viewMode";
 import { changeCard } from "./changeCard";
 import { takesKeys } from "./dom";
-import { fileHeader, renderCount } from "./fileHeader";
+import { fileHeader, renderProgress } from "./fileHeader";
 import type { FileSource } from "./fileSource";
 import type { BarActions } from "./hunkBar";
 import { setColumns } from "./longLines";
 import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
 import { lineOf, lineStart } from "./positions";
 import { type ReviewRequests, ReviewActions, renderReview } from "./reviewActions";
-import { setCurrent } from "./reviewState";
+import { setBaseDiffs, setCurrent } from "./reviewState";
 import { StickyHunk } from "./stickyHunk";
 import { Stops, hunkAt } from "./stops";
 import type { Section } from "./section";
 import { SectionHeights, charWidth, readFont, readMetrics } from "./sectionHeights";
-import { COLLAPSE, type WrappedSides } from "./sectionLayout";
+import { COLLAPSE, type WrappedSides, baseDiffHeight } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
 import { wrapsByDefault } from "./softWrap";
 import { type ThreadListeners, ThreadLayer, threadState } from "./threadLayer";
@@ -136,6 +137,7 @@ export class ChangesetView {
         openSource: (line) => listeners.openSource(file.path, line),
         comment: () => this.threads.commentOnFile(this.sections[index]),
         toggleSeen: () => void this.actions.file(this.sections[index]),
+        reconfirm: () => void this.actions.reconfirm(this.sections[index]),
         menu: (x, y) => listeners.fileMenu(file.path, x, y),
       });
       const body = document.createElement("div");
@@ -155,6 +157,7 @@ export class ChangesetView {
         toggleSeen: (h) => void this.actions.hunk(this.sections[index], h),
         comment: (h) => this.threads.commentOnHunk(this.sections[index], h),
         openSource: (h) => listeners.openSource(file.path, file.hunks[h].targetStart),
+        toggleBaseDiff: listeners.baseDiff && ((h) => void this.toggleBaseDiff(this.sections[index], h)),
       };
       this.sections.push({
         file,
@@ -164,6 +167,9 @@ export class ChangesetView {
         header: header.el,
         body,
         count: header.count,
+        meter: header.meter,
+        reconfirm: header.reconfirm,
+        baseDiffs: new Map(),
         cards,
         top: 0,
         height: 0,
@@ -190,7 +196,7 @@ export class ChangesetView {
       pinned: (fi) => listeners.pinned?.(fi === undefined ? undefined : this.sections[fi].file.path),
     });
     this.root.replaceChildren(...(this.threads.lead ? [this.threads.lead] : []), ...this.sections.map((s) => s.el));
-    for (const s of this.sections) renderCount(s, s.completion);
+    for (const s of this.sections) renderProgress(s, s.review, s.completion);
     this.heights.layout();
     this.pin.update(root.scrollTop);
     this.windowing.start();
@@ -365,9 +371,10 @@ export class ChangesetView {
       s.body,
       s.file.path,
       s.loaded,
-      s.review.hunks,
+      s.review,
+      s.baseDiffs,
       this.heights.mode,
-      this.heights.m.hunk,
+      this.heights.m,
       this.columnsOf(s),
       s.hooks,
       this.collapse ? COLLAPSE : undefined,
@@ -593,12 +600,39 @@ export class ChangesetView {
     this.current = this.stops.nearest(fi, cards.length, card, hunks, anchor.line) ?? this.current;
   }
 
-  /** Renders a file's review state and progress as the backend sent them. */
+  /** Renders a file's review state and progress as the backend sent them; a base diff of a hunk that is no longer seen against an old base closes. */
   applyReview(update: ReviewUpdate) {
     const s = this.sections.find((s) => s.file.path === update.path);
     if (!s) return;
     renderReview(s, update);
+    for (const hi of s.baseDiffs.keys()) if (s.review.hunks[hi] !== "seenAgainstOldBase") this.setBaseDiff(s, hi);
     this.pin.refresh();
+  }
+
+  /** Opens the base diff of a hunk of `s` seen against an old base, or closes it if it is open. */
+  private async toggleBaseDiff(s: Section, hi: number) {
+    if (s.baseDiffs.has(hi)) {
+      this.setBaseDiff(s, hi);
+    } else {
+      const diff = await this.actions.baseDiff(s, hi);
+      if (!diff || this.destroyed || s.review.hunks[hi] !== "seenAgainstOldBase") return;
+      this.setBaseDiff(s, hi, diff);
+    }
+    this.pin.refresh();
+  }
+
+  /**
+   * Opens hunk `hi`'s base diff of `s` (`diff`) or closes it (none). The section grows or shrinks by
+   * exactly the diff's height, wherever it stands in the column.
+   */
+  private setBaseDiff(s: Section, hi: number, diff?: BaseDiff) {
+    const height = (d?: BaseDiff) => (d ? baseDiffHeight(d.rows.length, this.heights.m) : 0);
+    const delta = height(diff) - height(s.baseDiffs.get(hi));
+    if (diff) s.baseDiffs.set(hi, diff);
+    else s.baseDiffs.delete(hi);
+    s.hunkTops = s.hunkTops.map((top, j) => (j > hi ? top + delta : top));
+    s.handle?.dispatchAll(setBaseDiffs.of(new Map(s.baseDiffs)));
+    this.heights.resize(s, s.height + delta);
   }
 
   /** Asks the backend to flip the current stop: a hunk or a card. */
@@ -609,19 +643,38 @@ export class ChangesetView {
   }
 
   /**
-   * Makes the hunk at the focused editor's caret (else the nearest one above it) the current stop
-   * and asks the backend to flip it. Undefined when no editor of a file with hunks has the focus.
+   * Makes the hunk at the focused editor's caret (else the nearest one above it) the current stop.
+   * Undefined when no editor of a file with hunks has the focus.
    */
-  toggleAtCaret(): Promise<void> | undefined {
+  private selectAtCaret(): number | undefined {
     for (const fi of this.windowing.mounted) {
       const s = this.sections[fi];
       if (!s.file.hunks.length) continue;
       const view = s.handle?.views.find(takesKeys);
       if (!view) continue;
-      this.select(this.hunkStopAt(fi, view, lineOf(view.state.doc, view.state.selection.main.head)));
-      return this.toggleCurrent();
+      const stop = this.hunkStopAt(fi, view, lineOf(view.state.doc, view.state.selection.main.head));
+      this.select(stop);
+      return stop;
     }
     return undefined;
+  }
+
+  /** Selects the hunk at the caret and asks the backend to flip it; undefined when no editor has the focus. */
+  toggleAtCaret(): Promise<void> | undefined {
+    return this.selectAtCaret() === undefined ? undefined : this.toggleCurrent();
+  }
+
+  /**
+   * Re-confirms the hunk at the focused editor's caret, else the current stop, if it is seen against
+   * an old base. Undefined when there is no such hunk.
+   */
+  reconfirmCurrent(): Promise<void> | undefined {
+    const stop = this.selectAtCaret() ?? (this.current >= 0 ? this.current : undefined);
+    if (stop === undefined || !this.stops.total) return undefined;
+    const [fi, si] = this.stops.locate(stop);
+    const s = this.sections[fi];
+    const hi = si - s.cards.length;
+    return hi >= 0 && s.review.hunks[hi] === "seenAgainstOldBase" ? this.actions.hunk(s, hi) : undefined;
   }
 
   /**

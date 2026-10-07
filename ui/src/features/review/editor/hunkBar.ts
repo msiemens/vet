@@ -5,13 +5,25 @@ import { iconSvg } from "../../../lib/ui/icons";
 import { commands } from "../../../state/commands";
 import type { Hunk } from "../../../generated/Hunk";
 import type { HunkState } from "../../../generated/HunkState";
-import { iconButton } from "./dom";
+import { el, iconButton, reconfirmButton } from "./dom";
 
 export interface BarActions {
+  /** Flips the hunk; for one seen against an old base that is re-confirming it. */
   toggleSeen(hunk: number): void;
   comment(hunk: number): void;
   /** Jump to Source at the hunk's first line. */
   openSource(hunk: number): void;
+  /** Opens or closes the base diff under the bar of a hunk seen against an old base; absent where there is none to show. */
+  toggleBaseDiff?(hunk: number): void;
+}
+
+/** What a bar shows of its hunk besides the header text. */
+export interface BarHunk {
+  state: HunkState;
+  /** Lines of the hunk covered only by spans seen against an old base. */
+  oldBaseLines: number;
+  /** Its base diff is open. */
+  baseDiffOpen: boolean;
 }
 
 export function hunkHeader(h: Hunk): string {
@@ -22,7 +34,7 @@ export function hunkHeader(h: Hunk): string {
 const LABEL: Record<HunkState, string> = {
   unseen: "Mark hunk seen",
   seen: "Mark hunk unseen",
-  seenAgainstOldBase: "Re-confirm seen",
+  seenAgainstOldBase: "Re-confirm",
   informational: "Nothing left to review",
   unapplied: "Mark hunk seen",
 };
@@ -38,7 +50,7 @@ export class HunkBar extends WidgetType {
   constructor(
     readonly index: number,
     readonly text: string,
-    readonly state: HunkState,
+    readonly hunk: BarHunk,
     /** The view's current stop: hunk navigation and Space act on it. */
     readonly current: boolean,
     readonly actions: BarActions | null,
@@ -46,6 +58,10 @@ export class HunkBar extends WidgetType {
     readonly height: number,
   ) {
     super();
+  }
+
+  get state(): HunkState {
+    return this.hunk.state;
   }
 
   /** Exact, so CodeMirror's height map is right before the bar is drawn and scrolling over it reflows nothing. */
@@ -58,6 +74,8 @@ export class HunkBar extends WidgetType {
       other.index === this.index &&
       other.text === this.text &&
       other.state === this.state &&
+      other.hunk.oldBaseLines === this.hunk.oldBaseLines &&
+      other.hunk.baseDiffOpen === this.hunk.baseDiffOpen &&
       other.current === this.current &&
       other.actions === this.actions
     );
@@ -71,11 +89,15 @@ export class HunkBar extends WidgetType {
     text.className = "vet-hunk-text";
     text.textContent = this.text;
     bar.append(text);
+    const actions = this.actions;
     if (this.state === "seenAgainstOldBase") {
-      const old = document.createElement("span");
-      old.className = "vet-hunk-old";
-      old.title = "Base changed since you marked this seen";
-      old.innerHTML = iconSvg("reconfirm");
+      const old = el("button", "flat vet-hunk-old");
+      old.type = "button";
+      old.title = "Base changed since you marked this seen: show what it was";
+      old.innerHTML = `${iconSvg("reconfirm")}<span>${this.hunk.oldBaseLines}</span>`;
+      old.ariaPressed = String(this.hunk.baseDiffOpen);
+      if (actions?.toggleBaseDiff) old.addEventListener("click", () => actions.toggleBaseDiff?.(this.index));
+      else old.disabled = true;
       bar.append(old);
     }
     const note = NOTE[this.state];
@@ -88,7 +110,6 @@ export class HunkBar extends WidgetType {
     const spacer = document.createElement("span");
     spacer.style.flex = "1";
     bar.append(spacer);
-    const actions = this.actions;
     if (actions) {
       const tools = document.createElement("span");
       tools.className = "vet-hunk-tools";
@@ -97,14 +118,16 @@ export class HunkBar extends WidgetType {
           actions.openSource(this.index),
         ),
         iconButton("Comment", "comments", () => actions.comment(this.index), "vet-icon-btn vet-review-action"),
-        iconButton(
-          LABEL[this.state],
-          "check",
-          () => actions.toggleSeen(this.index),
-          "vet-icon-btn vet-seen-toggle vet-review-action",
-          13,
-          2,
-        ),
+        this.state === "seenAgainstOldBase"
+          ? reconfirmButton(commands.tooltip("review.reconfirm", "Re-confirm"), () => actions.toggleSeen(this.index))
+          : iconButton(
+              LABEL[this.state],
+              "check",
+              () => actions.toggleSeen(this.index),
+              "vet-icon-btn vet-seen-toggle vet-review-action",
+              13,
+              2,
+            ),
       );
       bar.append(tools);
     }

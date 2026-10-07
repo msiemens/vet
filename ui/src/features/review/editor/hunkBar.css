@@ -53,9 +53,27 @@
   min-width: 0;
   margin-left: var(--vet-gutters, 0px);
 }
+/* "↻ 7": the lines whose base changed; a toggle that opens the base diff under the bar. */
 .vet-hunk-old {
   display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius);
   color: var(--old-base);
+  font-size: var(--fs-mono-s);
+}
+.vet-hunk-old:disabled {
+  cursor: default;
+}
+.vet-reconfirm {
+  height: 18px;
+  padding: 0 8px;
+  font-size: var(--fs-mono-s);
+}
+.vet-reconfirm[hidden] {
+  display: none;
 }
 /* An interdiff's hunk that did not apply to the new base, and one with nothing left to review. */
 .vet-hunk-note {
@@ -87,6 +105,56 @@
 .vet-hunk-seen .vet-seen-toggle {
   color: var(--seen);
 }
-.vet-hunk-seenAgainstOldBase .vet-seen-toggle {
-  color: var(--old-base);
+
+/* The base diff of a hunk seen against an old base, under its bar: the base-side lines as they were
+   when it was marked, as a diff to the base now. Its height is `baseDiffHeight` (`sectionLayout.ts`):
+   a header row and a row per line, inside `--h-base-diff-gap`. */
+.vet-basediff {
+  box-sizing: border-box;
+  padding: calc(var(--h-base-diff-gap) / 2) 10px;
+  background: var(--bg-editor);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+}
+.cm-content > .vet-basediff {
+  position: sticky;
+  left: var(--vet-gutters, 0px);
+  width: calc(var(--vet-pane) - var(--vet-gutters, 0px));
+}
+/* An outline, so the box adds nothing to the height. */
+.vet-basediff-box {
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.vet-basediff-head,
+.vet-basediff-row {
+  display: flex;
+  gap: 8px;
+  height: var(--h-line);
+  line-height: var(--h-line);
+  padding: 0 8px;
+  white-space: pre;
+  overflow: hidden;
+}
+.vet-basediff-head {
+  color: var(--text-3);
+  background: var(--bg-hunk);
+}
+.vet-basediff-row .no {
+  flex: none;
+  width: 3ch;
+  text-align: right;
+  color: var(--text-3);
+}
+.vet-basediff-row .sign {
+  flex: none;
+  width: 1ch;
+}
+.vet-basediff-row.removed {
+  background: var(--del-bg);
+}
+.vet-basediff-row.added {
+  background: var(--add-bg);
 }

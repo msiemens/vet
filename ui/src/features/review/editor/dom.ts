@@ -20,6 +20,15 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   return e;
 }
 
+/** The text button that marks what was seen against an old base seen again. */
+export function reconfirmButton(label: string, onclick: () => void): HTMLButtonElement {
+  const button = el("button", "ctl vet-reconfirm vet-review-action", "Re-confirm");
+  button.type = "button";
+  button.title = label;
+  button.addEventListener("click", onclick);
+  return button;
+}
+
 /** A flat button with an icon; `className` also sets its size (`vet-icon-btn` is the 22px one). */
 export function iconButton(
   label: string,

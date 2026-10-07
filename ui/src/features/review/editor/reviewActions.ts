@@ -2,10 +2,11 @@
 // comes back. The backend decides what a toggle does (the direction, what a file toggle covers);
 // the view only asks and draws what it is told.
 
+import type { BaseDiff } from "../../../generated/BaseDiff";
 import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
-import { renderCount } from "./fileHeader";
-import { setStates } from "./reviewState";
+import { renderProgress } from "./fileHeader";
+import { setReview } from "./reviewState";
 import type { Section } from "./section";
 
 export interface ReviewRequests {
@@ -18,6 +19,13 @@ export interface ReviewRequests {
   toggleItem(revision: number, path: string, kind: NonTextKind): Promise<void>;
   /** The same for everything in a file. */
   toggleFileSeen(revision: number, path: string): Promise<void>;
+  /** Marks the file's hunks seen against an old base seen again, against the base now. */
+  reconfirmFile(revision: number, path: string): Promise<void>;
+  /**
+   * What a hunk seen against an old base looked like on the base side when it was marked; none if it
+   * could not be fetched. Absent where the view has no such diff to show (a range of versions).
+   */
+  baseDiff?(revision: number, path: string, hunk: number): Promise<BaseDiff | undefined>;
 }
 
 export class ReviewActions {
@@ -29,6 +37,16 @@ export class ReviewActions {
   /** Asks the backend to mark everything in the file (hunks and change cards) seen, or unseen if it all already is. */
   file({ file }: Section): Promise<void> {
     return this.requests.toggleFileSeen(this.revision, file.path);
+  }
+
+  /** Asks the backend to mark the file's hunks seen against an old base seen again. */
+  reconfirm({ file }: Section): Promise<void> {
+    return this.requests.reconfirmFile(this.revision, file.path);
+  }
+
+  /** Asks for the base diff of the file's `hi`-th hunk. */
+  baseDiff({ file }: Section, hi: number): Promise<BaseDiff | undefined> {
+    return this.requests.baseDiff?.(this.revision, file.path, hi) ?? Promise.resolve(undefined);
   }
 
   /** Asks the backend to flip the file's `hi`-th hunk. */
@@ -46,7 +64,7 @@ export class ReviewActions {
 export function renderReview(s: Section, { review, completion }: ReviewUpdate) {
   s.review = review;
   s.completion = completion;
-  s.handle?.dispatchAll(setStates.of(review.hunks));
+  s.handle?.dispatchAll(setReview.of(review));
   s.cards.forEach((card, i) => card.setAcknowledged(review.acknowledged.includes(s.file.nonText[i].kind)));
-  renderCount(s, completion);
+  renderProgress(s, review, completion);
 }

@@ -3,8 +3,9 @@
 
 import type { Completion } from "../../../generated/Completion.ts";
 import type { FileChange } from "../../../generated/FileChange.ts";
+import type { FileReview } from "../../../generated/FileReview.ts";
 import { basename } from "../../../lib/paths.ts";
-import { el, iconButton } from "./dom.ts";
+import { el, iconButton, reconfirmButton } from "./dom.ts";
 
 export interface HeaderActions {
   /** Jump to Source at a 0-based target line. */
@@ -12,13 +13,23 @@ export interface HeaderActions {
   comment(): void;
   /** Flips everything in the file. */
   toggleSeen(): void;
+  /** Marks the hunks seen against an old base seen again. */
+  reconfirm(): void;
   menu(x: number, y: number): void;
 }
 
-export interface FileHeader {
-  el: HTMLElement;
+/** The parts of a file header that show its progress. */
+export interface FileProgress {
   /** Where the file's progress is written. */
   count: HTMLElement;
+  /** The meter's blue part (seen) and the striped part after it (seen against an old base). */
+  meter: { seen: HTMLElement; old: HTMLElement };
+  /** Offered while the file has hunks seen against an old base. */
+  reconfirm: HTMLElement;
+}
+
+export interface FileHeader extends FileProgress {
+  el: HTMLElement;
 }
 
 /** The progress of a file as the backend counted it: hunks, and non-text items when it has any. */
@@ -29,10 +40,17 @@ export function countText(c: Completion): string {
   return parts.join(" · ");
 }
 
-/** Shows `completion` in the header's count, and marks the section when everything in it is seen. */
-export function renderCount(section: { el: HTMLElement; count: HTMLElement }, completion: Completion) {
+/** Shows a file's progress in its header, and marks the section when everything in it is seen. */
+export function renderProgress(
+  section: FileProgress & { el: HTMLElement },
+  review: FileReview,
+  completion: Completion,
+) {
   section.count.textContent = countText(completion);
   section.el.classList.toggle("all-seen", completion.complete);
+  section.meter.seen.style.width = `${completion.seenPercent}%`;
+  section.meter.old.style.width = `${completion.oldBasePercent}%`;
+  section.reconfirm.hidden = !review.hunks.includes("seenAgainstOldBase");
 }
 
 export function fileHeader(file: FileChange, actions: HeaderActions): FileHeader {
@@ -63,12 +81,18 @@ export function fileHeader(file: FileChange, actions: HeaderActions): FileHeader
     13,
     2,
   );
+  const meter = { seen: el("span", "seen"), old: el("span", "old") };
+  const bar = el("span", "meter");
+  bar.append(meter.seen, meter.old);
+  const reconfirm = reconfirmButton("Re-confirm every hunk of this file seen against an old base", () =>
+    actions.reconfirm(),
+  );
   const tools = el("span", "tools");
-  tools.append(open, comment, seen);
-  header.append(title, delta, count, tools);
+  tools.append(open, comment, reconfirm, seen);
+  header.append(title, delta, count, bar, tools);
   header.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     actions.menu(e.clientX, e.clientY);
   });
-  return { el: header, count };
+  return { el: header, count, meter, reconfirm };
 }

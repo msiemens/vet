@@ -4,6 +4,7 @@
 import type { Account } from "../generated/Account";
 import type { Base } from "../generated/Base";
 import type { BaseChoice } from "../generated/BaseChoice";
+import type { BaseDiff } from "../generated/BaseDiff";
 import type { BlobContent } from "../generated/BlobContent";
 import type { BranchInfo } from "../generated/BranchInfo";
 import type { ChangedSymbols } from "../generated/ChangedSymbols";
@@ -222,6 +223,18 @@ export class Backend {
   async toggleFileSeen(revision: number, path: string, view: View): Promise<ReviewUpdate> {
     const request = { type: "toggleFileSeen", project: this.pid, view, revision, path } as const;
     return expect(await this.conn.request(request), "review");
+  }
+
+  /** Marks the hunks of a file seen against an old base seen again, against the base now. The changeset's file only. */
+  async reconfirmFile(revision: number, path: string): Promise<ReviewUpdate> {
+    const request = { type: "reconfirmFile", project: this.pid, revision, path } as const;
+    return expect(await this.conn.request(request), "review");
+  }
+
+  /** The base-side lines of a hunk seen against an old base as they were when it was marked, as a diff to the base now. */
+  async baseDiff(revision: number, path: string, hunk: number): Promise<BaseDiff> {
+    const request = { type: "baseDiff", project: this.pid, revision, path, hunk } as const;
+    return expect(await this.conn.request(request), "baseDiff");
   }
 
   /** The changesets on offer, the working tree first, and the one on view. */

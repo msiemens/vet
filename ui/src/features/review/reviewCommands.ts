@@ -11,6 +11,8 @@ export interface ViewActions {
   step(delta: number): void;
   /** Flips the hunk at the focused editor's caret, else the current one; answers whether there was one. */
   toggleSeen(): boolean;
+  /** Marks the hunk at the caret, else the current one, seen again if it is seen against an old base; answers whether there was one. */
+  reconfirm(): boolean;
   /** Opens the comment form for the selection, else the current hunk; answers whether there was somewhere to comment. */
   comment(): boolean;
   /** Opens the file of the Changes stream's caret at its line; answers whether there was a caret. */
@@ -37,6 +39,7 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       run: () => a.step(-1),
     },
     { id: "review.toggleSeen", label: "Toggle seen", binding: "Space", enabled: inView, run: () => a.toggleSeen() },
+    { id: "review.reconfirm", label: "Re-confirm", binding: "r", enabled: inView, run: () => a.reconfirm() },
     { id: "review.comment", label: "Add comment", binding: "Ctrl-Alt-c", enabled: inView, run: () => a.comment() },
     {
       id: "review.jumpToSource",
@@ -141,6 +144,7 @@ export const editorMenu: MenuSpec = [
   "-",
   { command: "review.comment" },
   { command: "review.toggleSeen" },
+  { command: "review.reconfirm" },
   "-",
   { command: "edit.copy" },
 ];

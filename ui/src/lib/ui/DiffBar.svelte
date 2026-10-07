@@ -28,7 +28,7 @@
     const covered = Math.min(100, seen + old);
     return [
       { value: seen, color: "var(--seen)" },
-      { value: old, color: "var(--old-base)" },
+      { value: old, color: "var(--old-base-stripes)" },
       { value: Math.max(0, addEnd - covered), color: "var(--add-text)" },
       { value: total ? Math.min(100 - addEnd, 100 - covered) : 0, color: "var(--del-text)" },
     ];

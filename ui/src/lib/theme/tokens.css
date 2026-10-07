@@ -53,6 +53,10 @@
   /* Review state */
   --seen: light-dark(#3d7be0, #5b8ef0);
   --old-base: light-dark(#c17f0c, #d9a13b);
+  /* Seen against an old base: diagonal amber stripes on the review strip and in the meters, never solid
+     (solid blue is seen). The gaps between the stripes are a faint amber, so a segment reads as one. */
+  --old-base-gap: light-dark(rgba(193, 127, 12, 0.22), rgba(217, 161, 59, 0.26));
+  --old-base-stripes: repeating-linear-gradient(135deg, var(--old-base) 0 2px, var(--old-base-gap) 2px 4px);
   --warn: light-dark(#bc4b27, #e07a5f);
   --note: light-dark(#7150c2, #a98beb);
   --ok: light-dark(#2b8546, #6fcf97);
@@ -106,6 +110,8 @@
   --h-collapsed: 27px;
   /* The before/after preview strip of an image change card. */
   --h-preview: 116px;
+  /* Empty space around the base diff a hunk bar opens. */
+  --h-base-diff-gap: 8px;
   --h-tab: 32px;
   /* The underlined tabs of a panel. */
   --h-panel-tabs: 30px;
@@ -120,6 +126,8 @@
   /* A progress bar, and the footer's one for the newest background task. */
   --h-progress: 3px;
   --w-progress: 96px;
+  /* The progress meter in a file's header. */
+  --w-meter-file: 48px;
   /* The sheet listing the running background tasks. */
   --w-tasks: 360px;
   --w-rail: 34px;

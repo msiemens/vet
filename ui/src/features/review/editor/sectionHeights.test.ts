@@ -4,7 +4,7 @@ import type { Section } from "./section.ts";
 import { SectionHeights, sectionAt } from "./sectionHeights.ts";
 import type { ThreadLayer } from "./threadLayer.ts";
 
-const metrics = { line: 20, hunk: 24, header: 26, collapsed: 27, gap: 8, preview: 100 };
+const metrics = { line: 20, hunk: 24, header: 26, collapsed: 27, gap: 8, preview: 100, diffGap: 8 };
 
 /** Three sections of heights 100, 200 and 50, stacked from the top. */
 function column(scrollTop: number) {

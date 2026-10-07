@@ -5,7 +5,7 @@ import type { NonTextItem } from "../../../generated/NonTextItem.ts";
 import { hiddenAt, sectionLayout, shownLines } from "./sectionLayout.ts";
 import { WrapRows } from "./wrapRows.ts";
 
-const metrics = { line: 20, hunk: 24, header: 26, collapsed: 27, gap: 8, preview: 100 };
+const metrics = { line: 20, hunk: 24, header: 26, collapsed: 27, gap: 8, preview: 100, diffGap: 8 };
 const hunk = (targetStart: number, baseLen: number, targetLen: number) => ({
   baseStart: targetStart,
   baseLen,
@@ -79,6 +79,15 @@ void test("cards sit between the header and the first hunk and push everything d
   assert.equal(l.cardsHeight, 64 + 44);
   assert.deepEqual(l.hunkTops, [113 + 108]);
   assert.equal(l.height, plain.height + 108);
+});
+
+void test("an open base diff adds its header row, its rows and its gap below its hunk's bar and moves the hunks after it", () => {
+  const f = file(100, [hunk(10, 1, 1), hunk(80, 1, 1)]);
+  const plain = layout(f, "unified");
+  const l = sectionLayout(f, "unified", metrics, true, undefined, undefined, new Map([[0, 3]]));
+  const added = (3 + 1) * 20 + 8;
+  assert.equal(l.height, plain.height + added);
+  assert.deepEqual(l.hunkTops, [plain.hunkTops[0], plain.hunkTops[1] + added]);
 });
 
 void test("a file's thread block pushes everything down, an inline card only what is below it", () => {

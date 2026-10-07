@@ -22,7 +22,13 @@ export interface Metrics {
   gap: number;
   /** The before/after preview strip of an image card. */
   preview: number;
+  /** Empty space around the base diff a hunk bar opens. */
+  diffGap: number;
 }
+
+/** The base diff under a hunk bar: a header row, a row per line, and the gap around it. */
+export const baseDiffHeight = (rows: number, m: Pick<Metrics, "line" | "diffGap">): number =>
+  (rows + 1) * m.line + m.diffGap;
 
 export interface SectionLayout {
   height: number;
@@ -101,7 +107,8 @@ export function hiddenAt(file: FileChange, collapse: boolean, side: Side, line: 
 
 /**
  * `mode` is the editor's `Mode`; spelled out so this module needs no DOM or CodeMirror types.
- * `wrapped` says how many rows more than one the lines of a wrapping editor take.
+ * `wrapped` says how many rows more than one the lines of a wrapping editor take. `baseDiffs` has
+ * the rows of the base diff each open hunk (by index) shows under its bar.
  */
 export function sectionLayout(
   file: FileChange,
@@ -110,6 +117,7 @@ export function sectionLayout(
   collapse: boolean,
   threads: ThreadSpace = { block: 0, inline: [] },
   wrapped: WrappedSides = {},
+  baseDiffs: ReadonlyMap<number, number> = new Map(),
 ): SectionLayout {
   const hunkTops: number[] = [];
   const cardTops: number[] = [];
@@ -141,7 +149,7 @@ export function sectionLayout(
     y += (rows + wraps) * m.line + (hidden ? m.collapsed : 0);
     return hidden;
   };
-  file.hunks.forEach((h) => {
+  file.hunks.forEach((h, i) => {
     gap(end, h.targetStart);
     hunkTops.push(y + above(h.targetStart));
     const baseRows = h.baseLen + (wrapped.base?.extra(h.baseStart, h.baseStart + h.baseLen) ?? 0);
@@ -150,7 +158,8 @@ export function sectionLayout(
     const rows = mode === "unified" ? baseRows + targetRows : Math.max(baseRows, targetRows);
     // Where the target side has no lines, the filler that aligns it counts the base side's bar too.
     const aligned = mode === "split" && h.targetLen === 0 ? m.hunk : 0;
-    y += m.hunk + aligned + rows * m.line;
+    const diffRows = baseDiffs.get(i);
+    y += m.hunk + aligned + rows * m.line + (diffRows === undefined ? 0 : baseDiffHeight(diffRows, m));
     end = h.targetStart + h.targetLen;
   });
   const hiddenTail = gap(end, file.targetLines);

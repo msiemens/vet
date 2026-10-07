@@ -158,7 +158,7 @@ const modelRows = (c: Case, mode: "unified" | "split", wrapped?: { base: WrapRow
   sectionLayout(
     file(c),
     mode,
-    { line: 1, hunk: 1, header: 0, collapsed: 0, gap: 0, preview: 0 },
+    { line: 1, hunk: 1, header: 0, collapsed: 0, gap: 0, preview: 0, diffGap: 0 },
     false,
     undefined,
     wrapped,

@@ -5,10 +5,11 @@ import { MergeView, getChunks, unifiedMergeView } from "@codemirror/merge";
 import { Compartment, EditorState, type Extension, type StateEffect } from "@codemirror/state";
 import { standardKeymap } from "@codemirror/commands";
 import { EditorView, drawSelection, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
+import type { BaseDiff } from "../../../generated/BaseDiff";
 import type { Diagnostic } from "../../../generated/Diagnostic";
+import type { FileReview } from "../../../generated/FileReview";
 import type { Hunk } from "../../../generated/Hunk";
 import type { TextChange } from "../../../generated/TextChange";
-import type { HunkState } from "../../../generated/HunkState";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
 import type { Highlights } from "../../../lib/highlights";
@@ -22,7 +23,7 @@ import { deletedHighlights } from "./deletedHighlights";
 import { highlightExtension } from "./highlightExtension";
 import { longLines } from "./longLines";
 import { openOnDoubleClick } from "./openAtLine";
-import { deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
+import { type BarMetrics, deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
 import { reportHeight, softWrap } from "./softWrap";
 
 export interface Loaded {
@@ -105,10 +106,12 @@ export function mountFile(
   path: string,
   loaded: Loaded,
   /** The review state of each hunk. */
-  states: HunkState[],
+  review: FileReview,
+  /** The base diffs open under hunk bars. */
+  baseDiffs: ReadonlyMap<number, BaseDiff>,
   mode: Mode,
-  /** A hunk bar's height in px (`--h-hunk`). */
-  barHeight: number,
+  /** The sizes of a hunk bar and of the base diff under it. */
+  barMetrics: BarMetrics,
   /** The characters that fit a row of the code column: a changed line with more is marked. */
   columns: number,
   hooks: Hooks,
@@ -119,7 +122,7 @@ export function mountFile(
   /** Absent: long lines scroll the editor sideways. */
   wrapping?: Wrapping,
 ): Handle {
-  const targetField = reviewField(sideConfig(loaded.hunks, "target", hooks, barHeight), states);
+  const targetField = reviewField(sideConfig(loaded.hunks, "target", hooks, barMetrics), review, baseDiffs);
   const diffConfig = { override: backendDiff(loaded.base, loaded.target, loaded.changes) };
   const shown = (ms: number) => hooks.hoverShown?.(ms);
   const wrap: Extension = wrapping ? [softWrap(true), reportHeight(() => wrapping.heightChanged())] : [];
@@ -160,7 +163,7 @@ export function mountFile(
     });
     return handle(view, [view]);
   }
-  const baseField = reviewField(sideConfig(loaded.hunks, "base", null, barHeight), states);
+  const baseField = reviewField(sideConfig(loaded.hunks, "base", null, barMetrics), review, baseDiffs);
   const base: Extension[] = [
     currentLine,
     wrap,

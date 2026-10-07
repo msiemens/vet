@@ -90,8 +90,13 @@ export class StickyHunk {
     const s = this.sections[file];
     const text = hunkHeader(s.file.hunks[hunk]);
     const current = this.host.current(file, hunk);
+    const state = {
+      state: s.review.hunks[hunk],
+      oldBaseLines: s.review.oldBaseLines[hunk],
+      baseDiffOpen: s.baseDiffs.has(hunk),
+    };
     const bar = (actions: Section["hooks"] | null) =>
-      new HunkBar(hunk, text, s.review.hunks[hunk], current, actions, this.m.hunk).toDOM();
+      new HunkBar(hunk, text, state, current, actions, this.m.hunk).toDOM();
     // A side by side view has a bar on each side; the base side only shows the header.
     this.bars.replaceChildren(...(this.host.mode() === "split" ? [bar(null), bar(s.hooks)] : [bar(s.hooks)]));
     // The bars in the editor start right of its gutters.

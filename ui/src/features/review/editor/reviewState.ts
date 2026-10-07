@@ -12,14 +12,20 @@ import {
   type ViewUpdate,
   gutter,
 } from "@codemirror/view";
+import type { BaseDiff } from "../../../generated/BaseDiff";
+import type { FileReview } from "../../../generated/FileReview";
 import type { Hunk } from "../../../generated/Hunk";
 import type { HunkState } from "../../../generated/HunkState";
 import { replacesBaseTail } from "./baseTail";
+import { BaseDiffBlock } from "./baseDiffBlock";
 import { gutterWidth } from "./gutterWidth";
 import { type BarActions, HunkBar, hunkHeader } from "./hunkBar";
 import { lineEnd, lineStart } from "./positions";
+import type { Metrics } from "./sectionLayout";
 
-export const setStates = StateEffect.define<HunkState[]>();
+export const setReview = StateEffect.define<FileReview>();
+/** The base diffs open under hunk bars, by hunk. */
+export const setBaseDiffs = StateEffect.define<ReadonlyMap<number, BaseDiff>>();
 export const setCurrent = StateEffect.define<number | null>();
 
 const CLASS: Record<HunkState, string> = {
@@ -41,9 +47,15 @@ interface Span {
 export interface ReviewState {
   spans: Span[];
   states: HunkState[];
+  /** Per hunk, the lines seen against an old base only. */
+  oldBase: number[];
+  diffs: ReadonlyMap<number, BaseDiff>;
   current: number | null;
   decos: DecorationSet;
 }
+
+/** The sizes of a bar and of the base diff under it, in px. */
+export type BarMetrics = Pick<Metrics, "hunk" | "line" | "diffGap">;
 
 export interface SideConfig {
   /** `[start, length]` of each hunk on this side, 0-based lines. */
@@ -51,21 +63,15 @@ export interface SideConfig {
   headers: string[];
   /** Absent on the base side of a side-by-side view. */
   bar: BarActions | null;
-  /** A hunk bar's height in px. */
-  barHeight: number;
+  m: BarMetrics;
 }
 
-export function sideConfig(
-  hunks: Hunk[],
-  side: "base" | "target",
-  bar: BarActions | null,
-  barHeight: number,
-): SideConfig {
+export function sideConfig(hunks: Hunk[], side: "base" | "target", bar: BarActions | null, m: BarMetrics): SideConfig {
   return {
     lines: hunks.map((h) => (side === "base" ? [h.baseStart, h.baseLen] : [h.targetStart, h.targetLen])),
     headers: hunks.map(hunkHeader),
     bar,
-    barHeight,
+    m,
   };
 }
 
@@ -82,13 +88,18 @@ function build(state: Omit<ReviewState, "decos">, doc: Text, side: SideConfig): 
     // The base side of a side-by-side view has no bar where the hunk adds lines: the filler
     // that aligns it counts the target side's bar already.
     if (span.empty && !side.bar) return;
+    const hunk = { state: state.states[i], oldBaseLines: state.oldBase[i], baseDiffOpen: state.diffs.has(i) };
     out.push(
       Decoration.widget({
-        widget: new HunkBar(i, side.headers[i], state.states[i], state.current === i, side.bar, side.barHeight),
+        widget: new HunkBar(i, side.headers[i], hunk, state.current === i, side.bar, side.m.hunk),
         block: true,
         side: -2,
       }).range(span.at),
     );
+    const diff = state.diffs.get(i);
+    // Between the bar and the deleted lines the unified view draws at the same place.
+    if (diff && side.bar && hunk.state === "seenAgainstOldBase")
+      out.push(Decoration.widget({ widget: new BaseDiffBlock(diff, side.m), block: true, side: -1.5 }).range(span.at));
     if (span.empty) return;
     const deco = Decoration.line({ class: CLASS[state.states[i]] });
     for (let pos = span.from; pos <= span.to;) {
@@ -104,7 +115,11 @@ function build(state: Omit<ReviewState, "decos">, doc: Text, side: SideConfig): 
  * Review decorations for one side. Positions are mapped through edits, so
  * decorations follow their content.
  */
-export function reviewField(side: SideConfig, states: HunkState[]): StateField<ReviewState> {
+export function reviewField(
+  side: SideConfig,
+  review: FileReview,
+  diffs: ReadonlyMap<number, BaseDiff>,
+): StateField<ReviewState> {
   return StateField.define<ReviewState>({
     create(state) {
       const doc = state.doc;
@@ -113,7 +128,7 @@ export function reviewField(side: SideConfig, states: HunkState[]): StateField<R
         if (len === 0 || start >= doc.lines) return { from: 0, to: 0, empty: true, at };
         return { from: at, to: lineEnd(doc, start + len - 1), empty: false, at };
       });
-      const base = { spans, states, current: null };
+      const base = { spans, states: review.hunks, oldBase: review.oldBaseLines, diffs, current: null };
       return { ...base, decos: build(base, doc, side) };
     },
     update(value, tr) {
@@ -132,8 +147,11 @@ export function reviewField(side: SideConfig, states: HunkState[]): StateField<R
       }
       let rebuild = false;
       for (const effect of tr.effects) {
-        if (effect.is(setStates)) {
-          next = { ...next, states: effect.value };
+        if (effect.is(setReview)) {
+          next = { ...next, states: effect.value.hunks, oldBase: effect.value.oldBaseLines };
+          rebuild = true;
+        } else if (effect.is(setBaseDiffs)) {
+          next = { ...next, diffs: effect.value };
           rebuild = true;
         } else if (effect.is(setCurrent)) {
           next = { ...next, current: effect.value };
@@ -148,7 +166,7 @@ export function reviewField(side: SideConfig, states: HunkState[]): StateField<R
       gutter({
         class: "vet-strip",
         lineMarkerChange: (u) =>
-          u.transactions.some((tr) => tr.effects.some((e) => e.is(setStates) || e.is(setCurrent))),
+          u.transactions.some((tr) => tr.effects.some((e) => e.is(setReview) || e.is(setCurrent))),
         lineMarker: (view, line) => {
           const state = view.state.field(f);
           const i = state.spans.findIndex((s) => !s.empty && s.from <= line.from && line.from <= s.to);
@@ -189,7 +207,7 @@ export function deletedChunkStyle(field: StateField<ReviewState>): Extension {
       // Not on height-only updates: the measure phase sends those itself, and asking for
       // another measure from one restarts the measure loop until CodeMirror gives up.
       update: (u: ViewUpdate) => {
-        if (u.docChanged || u.viewportChanged || u.transactions.some((tr) => tr.effects.some((e) => e.is(setStates))))
+        if (u.docChanged || u.viewportChanged || u.transactions.some((tr) => tr.effects.some((e) => e.is(setReview))))
           schedule();
       },
     };

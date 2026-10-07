@@ -46,7 +46,16 @@ const takesSpace = (el: Element | null) =>
 /** What the controller reads of the open changeset and asks of it. */
 export type ChangesetSource = Pick<
   Changeset,
-  "files" | "view" | "onReview" | "toggleHunk" | "toggleItem" | "toggleFileSeen" | "currentManifest" | "refresh"
+  | "files"
+  | "view"
+  | "onReview"
+  | "toggleHunk"
+  | "toggleItem"
+  | "toggleFileSeen"
+  | "reconfirmFile"
+  | "baseDiff"
+  | "currentManifest"
+  | "refresh"
 >;
 
 const NO_HOVER = { text: "", code: [] };
@@ -191,6 +200,10 @@ export class ReviewController {
         const view = this.active;
         return !!view && this.toggleBySpace(view);
       },
+      reconfirm: () => {
+        const done = this.active?.reconfirmCurrent();
+        return done !== undefined;
+      },
       comment: () => this.active?.commentHere() ?? false,
       jumpToSource: () => {
         const caret = this.tabs.active === CHANGES ? this.active?.caret() : undefined;
@@ -278,6 +291,16 @@ export class ReviewController {
           () => this.changeset.toggleFileSeen(revision, path),
           () => undefined,
         ),
+      reconfirmFile: (revision, path) =>
+        this.editing(
+          () => this.changeset.reconfirmFile(revision, path),
+          () => undefined,
+        ),
+      // Only the changeset has a base diff to show, not a range of versions.
+      baseDiff:
+        this.changeset.view.type === "changeset"
+          ? (revision, path, hunk) => this.changeset.baseDiff(revision, path, hunk)
+          : undefined,
       fileMenu: this.fileMenu,
       openSource: (path, line) => void this.openSource(path, line),
       threads: {

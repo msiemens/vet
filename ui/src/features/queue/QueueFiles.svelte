@@ -38,7 +38,13 @@
       <span class="mono delta"
         ><span class="add">+{file.delta.added}</span> <span class="del">−{file.delta.removed}</span></span
       >
-      <Meter width={56} segments={[{ value: file.completion.seenPercent, color: "var(--seen)" }]} />
+      <Meter
+        width={56}
+        segments={[
+          { value: file.completion.seenPercent, color: "var(--seen)" },
+          { value: file.completion.oldBasePercent, color: "var(--old-base-stripes)" },
+        ]}
+      />
     {/if}
   </button>
 {/snippet}

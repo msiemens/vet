@@ -16,10 +16,10 @@
       {width}
       segments={[
         { value: reviewed.seen, color: "var(--seen)" },
-        { value: reviewed.oldBase, color: "var(--old-base)" },
+        { value: reviewed.oldBase, color: "var(--old-base-stripes)" },
       ]}
     />
-    <span class="mono pct">{Math.round(reviewed.seen + reviewed.oldBase)}%</span>
+    <span class="mono pct">{Math.round(reviewed.seen)}%</span>
   </span>
 {:else}
   <span class="cell" title={reviewed.percent === undefined ? "Finished with changes unseen" : "Finished"}>

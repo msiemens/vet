@@ -1,10 +1,12 @@
 // A file's section in a `ChangesetView`: what the view, its height model and the thread layer
 // all read and write about it.
 
+import type { BaseDiff } from "../../../generated/BaseDiff";
 import type { Completion } from "../../../generated/Completion";
 import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
 import type { Card } from "./changeCard";
+import type { FileProgress } from "./fileHeader";
 import type { Handle, Hooks, Loaded } from "./mount";
 import type { WrappedSides } from "./sectionLayout";
 import type { CardData, InlineCard, Placement } from "./threadPlacement";
@@ -25,14 +27,13 @@ export interface ThreadState {
   counted: Map<string, number>;
 }
 
-export interface Section extends ThreadState {
+export interface Section extends ThreadState, FileProgress {
   file: FileChange;
   review: FileReview;
   completion: Completion;
   el: HTMLElement;
   header: HTMLElement;
   body: HTMLElement;
-  count: HTMLElement;
   /** One per non-text item of the file, above the first hunk. */
   cards: Card[];
   top: number;
@@ -43,6 +44,8 @@ export interface Section extends ThreadState {
   /** Estimated offset of each hunk bar from the top of the section. */
   hunkTops: number[];
   hooks: Hooks;
+  /** The base diffs open under hunk bars, by hunk: what the hunk was seen against, as it was. */
+  baseDiffs: Map<number, BaseDiff>;
   /** The editor wraps long lines. */
   wrap: boolean;
   /** The wrapped lines of each side's text: known once the text has arrived, and only while `wrap` holds. */
