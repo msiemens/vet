@@ -18,3 +18,4 @@ pub mod remap;
 pub mod resolve;
 pub mod review;
 pub mod text;
+pub mod version_diff;

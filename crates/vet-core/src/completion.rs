@@ -90,7 +90,7 @@ impl<'a> Coverage<'a> {
     }
 
     /// Lines of `range` covered by `Seen` spans, and by any span.
-    fn lines(&self, file: &RepoPath, side: Side, range: LineRange) -> (u32, u32) {
+    pub fn lines(&self, file: &RepoPath, side: Side, range: LineRange) -> (u32, u32) {
         let count = |m: &Ranges| m.get(&(file, side)).map_or(0, |v| covered(v, range));
         (count(&self.seen), count(&self.any))
     }
@@ -99,21 +99,29 @@ impl<'a> Coverage<'a> {
         diff.hunks
             .iter()
             .map(|h| {
-                let (mut total, mut seen, mut any) = (0, 0, 0);
-                for (side, file, range) in diff.sides(h) {
-                    let Some(file) = file else { continue };
-                    let (s, a) = self.lines(file, side, range);
-                    total += range.len();
-                    seen += s;
-                    any += a;
-                }
-                match (total > 0, seen == total, any == total) {
-                    (true, true, _) => HunkState::Seen,
-                    (true, false, true) => HunkState::SeenAgainstOldBase,
-                    _ => HunkState::Unseen,
-                }
+                self.state_of(
+                    diff.sides(h)
+                        .into_iter()
+                        .filter_map(|(side, file, range)| file.map(|f| (f, side, range))),
+                )
             })
             .collect()
+    }
+
+    /// The state of the lines `regions` name, as of a hunk that covers exactly them.
+    pub fn state_of<'r>(&self, regions: impl IntoIterator<Item = (&'r RepoPath, Side, LineRange)>) -> HunkState {
+        let (mut total, mut seen, mut any) = (0, 0, 0);
+        for (file, side, range) in regions {
+            let (s, a) = self.lines(file, side, range);
+            total += range.len();
+            seen += s;
+            any += a;
+        }
+        match (total > 0, seen == total, any == total) {
+            (true, true, _) => HunkState::Seen,
+            (true, false, true) => HunkState::SeenAgainstOldBase,
+            _ => HunkState::Unseen,
+        }
     }
 
     /// `acknowledged` holds the acknowledged non-text changes.
