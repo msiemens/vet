@@ -435,6 +435,7 @@ Also included: fetch-only restore with shared caches.
 - Go to definition shows its target: the symbol under the pointer is underlined while Cmd/Ctrl is held
 - Find usages: a list of a symbol's references, any symbol, not only changed ones
 - Syntax highlighting in hover popups (the server's Markdown rendered, code blocks highlighted)
+- Hover popups styled as part of the app: the design tokens' sheet surface, border, radius and shadow, a readable maximum width and height with scrolling, consistent spacing between signature, docs and diagnostics, in both themes
 - File structure view: the symbols of the current file as a tree
 - App-drawn context menus in the code and the chrome instead of the webview's
 - Keyboard shortcuts for every action, shown in menus and tooltips, with a Keymap page in Settings (beyond the JetBrains-feel package's keymap import)
