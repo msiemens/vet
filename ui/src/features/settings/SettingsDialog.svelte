@@ -39,7 +39,7 @@
   type Page = (typeof PAGES)[number]["id"];
 </script>
 
-<Dialog title="Settings" {onclose} width="780px" padded={false}>
+<Dialog title="Settings" {onclose} width="780px" height="min(520px, 76vh)" resizable="settings" padded={false}>
   <div class="layout">
     <nav aria-label="Settings pages">
       {#each PAGES as p (p.id)}
@@ -77,7 +77,7 @@
 <style>
   .layout {
     display: flex;
-    height: min(480px, 66vh);
+    height: 100%;
   }
   nav {
     flex: none;

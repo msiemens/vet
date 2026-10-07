@@ -1,20 +1,27 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { onMount } from "svelte";
+  import { readStored, writeStored } from "../storage";
   import IconButton from "./IconButton.svelte";
 
   let {
     title,
     onclose,
     width = "520px",
+    height,
+    resizable,
     padded = true,
     children,
     actions,
   }: {
     title: string;
     onclose: () => void;
-    /** Any CSS length. */
+    /** Any CSS length; the width until the viewer resizes a `resizable` dialog. */
     width?: string;
+    /** Any CSS length; without it the dialog is as tall as its content, up to the window. */
+    height?: string;
+    /** Lets the viewer drag the dialog's edges; the size is kept under this name. */
+    resizable?: string;
     /** Without it the content runs edge to edge, for a dialog that lays out its own panes. */
     padded?: boolean;
     children: Snippet;
@@ -22,7 +29,63 @@
     actions?: Snippet;
   } = $props();
 
+  const MIN = { w: 360, h: 240 };
+  // The dialog sits at a fixed distance from the top and is centred sideways.
+  const TOP = 0.12;
+  const storageKey = (name: string) => `vet.dialog.${name}`;
+
+  interface Size {
+    w: number;
+    h: number;
+  }
+
+  function storedSize(name: string | undefined): Size | undefined {
+    const stored = name && readStored(storageKey(name));
+    if (!stored) return undefined;
+    try {
+      const { w, h } = JSON.parse(stored) as Partial<Size>;
+      return typeof w === "number" && typeof h === "number" && w >= MIN.w && h >= MIN.h ? { w, h } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   let sheet: HTMLDialogElement;
+  // `resizable` does not change for a mounted dialog.
+  // svelte-ignore state_referenced_locally
+  let size = $state(storedSize(resizable));
+  let drag: { x: number; y: number; start: Size; dx: -1 | 0 | 1; dy: 0 | 1 } | undefined;
+
+  const EDGES = [
+    { name: "left", dx: -1, dy: 0 },
+    { name: "right", dx: 1, dy: 0 },
+    { name: "bottom", dx: 0, dy: 1 },
+    { name: "bottom-left", dx: -1, dy: 1 },
+    { name: "bottom-right", dx: 1, dy: 1 },
+  ] as const;
+
+  function onpointerdown(e: PointerEvent, dx: -1 | 0 | 1, dy: 0 | 1) {
+    if (e.button !== 0) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY, start: { w: sheet.offsetWidth, h: sheet.offsetHeight }, dx, dy };
+  }
+
+  function onpointermove(e: PointerEvent) {
+    if (!drag) return;
+    // Centred, so a side moves by half of what the width changes by.
+    const w = drag.start.w + 2 * drag.dx * (e.clientX - drag.x);
+    const h = drag.start.h + drag.dy * (e.clientY - drag.y);
+    size = {
+      w: Math.min(innerWidth - 32, Math.max(MIN.w, drag.dx ? w : drag.start.w)),
+      h: Math.min(innerHeight * (1 - TOP) - 16, Math.max(MIN.h, h)),
+    };
+  }
+
+  function onpointerup() {
+    if (!drag) return;
+    drag = undefined;
+    if (resizable) writeStored(storageKey(resizable), JSON.stringify(size));
+  }
 
   onMount(() => {
     const opener = document.activeElement as HTMLElement | null;
@@ -36,10 +99,12 @@
      on the backdrop lands on the dialog element itself, which has no padding. -->
 <dialog
   class="surface sheet"
+  class:resizable={!!resizable}
   aria-label={title}
   tabindex="-1"
   bind:this={sheet}
-  style:width
+  style:width={size ? `${size.w}px` : width}
+  style:height={size ? `${size.h}px` : height}
   oncancel={(e) => {
     e.preventDefault();
     onclose();
@@ -52,6 +117,17 @@
   </header>
   <div class="content" class:padded>{@render children()}</div>
   {#if actions}<footer>{@render actions()}</footer>{/if}
+  {#if resizable}
+    {#each EDGES as edge (edge.name)}
+      <div
+        class="edge {edge.name}"
+        aria-hidden="true"
+        onpointerdown={(e) => onpointerdown(e, edge.dx, edge.dy)}
+        {onpointermove}
+        {onpointerup}
+      ></div>
+    {/each}
+  {/if}
 </dialog>
 
 <style>
@@ -85,9 +161,52 @@
     font-size: var(--fs);
     font-weight: 600;
   }
+  .sheet.resizable {
+    max-height: calc(100vh - 12vh - 16px);
+  }
   .content {
+    flex: 1 1 auto;
     overflow: auto;
     min-height: 0;
+  }
+  /* Grips on the sides and bottom, straddling the border; the top stays put. */
+  .edge {
+    position: absolute;
+    touch-action: none;
+  }
+  .left,
+  .right {
+    top: 0;
+    bottom: 8px;
+    width: var(--w-splitter);
+    cursor: ew-resize;
+  }
+  .left {
+    left: calc(var(--w-splitter) / -2);
+  }
+  .right {
+    right: calc(var(--w-splitter) / -2);
+  }
+  .bottom {
+    left: 8px;
+    right: 8px;
+    bottom: calc(var(--w-splitter) / -2);
+    height: var(--w-splitter);
+    cursor: ns-resize;
+  }
+  .bottom-left,
+  .bottom-right {
+    bottom: calc(var(--w-splitter) / -2);
+    width: 12px;
+    height: 12px;
+  }
+  .bottom-left {
+    left: calc(var(--w-splitter) / -2);
+    cursor: nesw-resize;
+  }
+  .bottom-right {
+    right: calc(var(--w-splitter) / -2);
+    cursor: nwse-resize;
   }
   .content.padded {
     padding: 16px;
