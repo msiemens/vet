@@ -6,9 +6,10 @@ use std::sync::Arc;
 use azure_core::credentials::{AccessToken, Secret, TokenCredential, TokenRequestOptions};
 use azure_core::error::ErrorKind;
 use azure_core::http::headers::HeaderName;
-use azure_core::http::{ExponentialRetryOptions, RetryOptions, Transport, Url};
+use azure_core::http::policies::{RetryHeaders, RetryPolicy};
+use azure_core::http::{RetryOptions, StatusCode, Transport, Url};
 use azure_core::time::{Duration, OffsetDateTime};
-use azure_devops_rust_api::{Credential as ApiCredential, profile};
+use azure_devops_rust_api::{Credential as ApiCredential, git, ims, profile};
 use serde::Deserialize;
 use vet_app::platform::{Credential, CredentialSource, PlatformError};
 
@@ -55,6 +56,24 @@ impl Access {
         }
     }
 
+    /// Pull requests, their threads, statuses and iterations.
+    pub(crate) fn git(&self, endpoint: &str) -> Result<git::Client, PlatformError> {
+        Ok(git::ClientBuilder::new(self.credential.clone())
+            .endpoint(url(endpoint)?)
+            .transport(self.transport.clone())
+            .retry(retries())
+            .build())
+    }
+
+    /// Identities and the groups they are members of.
+    pub(crate) fn identities(&self, endpoint: &str) -> Result<ims::Client, PlatformError> {
+        Ok(ims::ClientBuilder::new(self.credential.clone())
+            .endpoint(url(endpoint)?)
+            .transport(self.transport.clone())
+            .retry(retries())
+            .build())
+    }
+
     fn profiles(&self, endpoint: &str) -> Result<profile::Client, PlatformError> {
         Ok(profile::ClientBuilder::new(self.credential.clone())
             .endpoint(url(endpoint)?)
@@ -97,14 +116,39 @@ fn url(endpoint: &str) -> Result<Url, PlatformError> {
     Url::parse(endpoint).map_err(|_| PlatformError::Unexpected(format!("{endpoint} is not an address")))
 }
 
-/// Failed requests are tried again twice, as the platform's `Retry-After` says.
+/// A request that failed on the network or with a server error is tried again twice. A
+/// request the platform asks to slow down is not: its `Retry-After` can be minutes, and
+/// whoever called is told when to come back instead of waiting for it.
+#[derive(Debug)]
+struct Retries;
+
+#[async_trait::async_trait]
+impl RetryPolicy for Retries {
+    fn is_expired(&self, _since_start: Duration, retries: u32) -> bool {
+        retries >= 2
+    }
+
+    fn retry_headers(&self) -> Option<&RetryHeaders> {
+        None
+    }
+
+    fn retry_status_codes(&self) -> &[StatusCode] {
+        &[
+            StatusCode::RequestTimeout,
+            StatusCode::InternalServerError,
+            StatusCode::BadGateway,
+            StatusCode::ServiceUnavailable,
+            StatusCode::GatewayTimeout,
+        ]
+    }
+
+    fn sleep_duration(&self, retries: u32) -> Duration {
+        Duration::milliseconds(500 << retries.saturating_sub(1))
+    }
+}
+
 fn retries() -> RetryOptions {
-    RetryOptions::exponential(ExponentialRetryOptions {
-        initial_delay: Duration::milliseconds(500),
-        max_retries: 2,
-        max_total_elapsed: Duration::seconds(30),
-        max_delay: Duration::seconds(10),
-    })
+    RetryOptions::custom(Arc::new(Retries))
 }
 
 /// Why Azure DevOps refused a request. Every message is fit to show.
