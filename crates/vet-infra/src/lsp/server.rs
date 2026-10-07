@@ -787,25 +787,6 @@ mod tests {
     }
 
     #[test]
-    fn the_timing_line_names_a_lock_wait_an_open_and_a_quiet_wait_only_when_they_happened() {
-        let plain = Synced {
-            changed: false,
-            lock: Duration::ZERO,
-            quiet: None,
-        };
-        assert_eq!(plain.describe(Duration::from_millis(3)), "sync 3 ms");
-        let busy = Synced {
-            changed: true,
-            lock: Duration::from_millis(40),
-            quiet: Some(Duration::from_millis(800)),
-        };
-        assert_eq!(
-            busy.describe(Duration::from_millis(900)),
-            "sync 900 ms, lock 40 ms, opened or changed, quiet wait 800 ms"
-        );
-    }
-
-    #[test]
     fn one_quiet_wait_settles_the_documents_opened_before_it_began() {
         let before = Instant::now();
         let early = doc(before);

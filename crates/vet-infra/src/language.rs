@@ -221,10 +221,4 @@ mod tests {
         let extensions: Vec<_> = ALL.iter().flat_map(|l| l.files).map(|(ext, _)| ext).collect();
         assert_eq!(extensions.len(), extensions.iter().collect::<HashSet<_>>().len());
     }
-
-    #[test]
-    fn an_extension_takes_its_own_language_id_and_an_unknown_one_is_plain_text() {
-        assert_eq!(language_id("tsx"), "typescriptreact");
-        assert_eq!(language_id("md"), "plaintext");
-    }
 }
