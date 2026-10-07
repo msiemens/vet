@@ -39,6 +39,34 @@ struct Doc {
     uri: Uri,
     version: i32,
     text: String,
+    /// When the server was told about the document.
+    opened: Instant,
+}
+
+/// The documents the server has open, and what is known about its progress
+/// on them.
+#[derive(Default)]
+struct Docs {
+    open: Vec<Doc>,
+    /// When the last wait for the server to go quiet began, if it ended with
+    /// the server quiet. Every document opened before that is settled: the
+    /// server had processed it by then.
+    quiet_from: Option<Instant>,
+}
+
+impl Docs {
+    fn is_settled(&self, doc: &Doc) -> bool {
+        self.quiet_from.is_some_and(|from| from >= doc.opened)
+    }
+}
+
+/// What a query needs the server to have done with the document it names.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Needs {
+    /// Its text only, as for the symbols a document declares.
+    Text,
+    /// Its project loaded, as for answers that resolve across files.
+    Project,
 }
 
 /// Shared by concurrent callers: requests go straight to the connection;
@@ -49,7 +77,7 @@ pub struct LspServer {
     root: PathBuf,
     tree: Tree,
     diagnostics: Diagnostics,
-    docs: tokio::sync::Mutex<Vec<Doc>>,
+    docs: tokio::sync::Mutex<Docs>,
 }
 
 fn err(e: impl std::fmt::Display) -> QueryError {
@@ -84,7 +112,7 @@ impl LspServer {
             root,
             tree,
             diagnostics,
-            docs: tokio::sync::Mutex::new(Vec::new()),
+            docs: tokio::sync::Mutex::new(Docs::default()),
         }
     }
 
@@ -143,19 +171,41 @@ impl LspServer {
     /// Makes the server see `file`; on the live tree also mirrors every open
     /// document from disk. `true` if `file` was opened or changed. Snapshot
     /// files never change, so they are opened once and left alone.
-    async fn sync(&self, file: &RepoPath) -> Result<bool, QueryError> {
+    async fn sync(&self, file: &RepoPath, needs: Needs) -> Result<bool, QueryError> {
         let mut docs = self.docs.lock().await;
-        if self.tree == Tree::Immutable {
-            if docs.iter().any(|d| &d.file == file) {
-                return Ok(false);
+        let changed = if self.tree == Tree::Immutable && docs.open.iter().any(|d| &d.file == file) {
+            false
+        } else if self.tree == Tree::Immutable {
+            self.refresh(&mut docs.open, file).await?
+        } else {
+            let open: Vec<_> = docs.open.iter().map(|d| d.file.clone()).collect();
+            for other in open.into_iter().filter(|f| f != file) {
+                self.refresh(&mut docs.open, &other).await?;
             }
-            return self.refresh(&mut docs, file).await;
+            self.refresh(&mut docs.open, file).await?
+        };
+        if needs == Needs::Project {
+            self.settle(&mut docs, file).await;
         }
-        let open: Vec<_> = docs.iter().map(|d| d.file.clone()).collect();
-        for other in open.into_iter().filter(|f| f != file) {
-            self.refresh(&mut docs, &other).await?;
+        Ok(changed)
+    }
+
+    /// Opening a file can start loading its project (tsserver), and answers
+    /// before that finishes resolve nothing outside the file. So a query that
+    /// resolves across files waits for the server to go quiet once after the
+    /// document was opened; one wait covers every document opened before it.
+    /// A server that stays busy past the timeout is asked anyway.
+    async fn settle(&self, docs: &mut Docs, file: &RepoPath) {
+        let Some(doc) = docs.open.iter().find(|d| &d.file == file) else {
+            return;
+        };
+        if docs.is_settled(doc) {
+            return;
         }
-        self.refresh(&mut docs, file).await
+        let from = Instant::now();
+        self.conn.with_state(State::touch);
+        self.conn.wait_for(OPEN_TIMEOUT, |s| s.is_idle(QUIET)).await;
+        docs.quiet_from = Some(from);
     }
 
     async fn refresh(&self, docs: &mut Vec<Doc>, file: &RepoPath) -> Result<bool, QueryError> {
@@ -196,6 +246,7 @@ impl LspServer {
                 uri,
                 version: 1,
                 text,
+                opened: Instant::now(),
             });
             if docs.len() > MAX_OPEN_DOCS {
                 let doc = docs.remove(0);
@@ -206,10 +257,6 @@ impl LspServer {
                     .await
                     .map_err(err)?;
             }
-            // Opening a file can start loading its project (tsserver), and
-            // answers before that finishes resolve nothing outside the file.
-            self.conn.with_state(State::touch);
-            self.conn.wait_for(OPEN_TIMEOUT, |s| s.is_idle(QUIET)).await;
             return Ok(true);
         };
         if docs[index].text == text {
@@ -257,7 +304,7 @@ impl LspServer {
     }
 
     async fn prepare_calls(&self, at: &At) -> Result<Vec<lsp::CallHierarchyItem>, QueryError> {
-        self.sync(&at.file).await?;
+        self.sync(&at.file, Needs::Project).await?;
         let params = lsp::CallHierarchyPrepareParams {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
@@ -321,8 +368,8 @@ fn flatten_hover(contents: lsp::HoverContents) -> String {
     }
 }
 
-/// How long making the server see the file took (opening it includes waiting
-/// for the server to go quiet) and how long the request itself took.
+/// How long making the server see the file took (for a query across files that
+/// includes waiting for the server to go quiet) and how long the request itself took.
 fn log_timing(request: &str, file: &RepoPath, changed: bool, sync: Duration, answer: Duration) {
     timing::log(
         || {
@@ -359,7 +406,7 @@ fn convert_diagnostic(d: lsp::Diagnostic) -> Diagnostic {
 impl LanguageServer for LspServer {
     async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
         let started = Instant::now();
-        let opened = self.sync(file).await?;
+        let opened = self.sync(file, Needs::Text).await?;
         let synced = Instant::now();
         let params = lsp::DocumentSymbolParams {
             text_document: self.id(file)?,
@@ -387,7 +434,7 @@ impl LanguageServer for LspServer {
     }
 
     async fn definition(&self, at: &At) -> Result<Vec<Location>, QueryError> {
-        self.sync(&at.file).await?;
+        self.sync(&at.file, Needs::Project).await?;
         let params = lsp::GotoDefinitionParams {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
@@ -406,7 +453,7 @@ impl LanguageServer for LspServer {
     }
 
     async fn references(&self, at: &At) -> Result<Vec<Location>, QueryError> {
-        self.sync(&at.file).await?;
+        self.sync(&at.file, Needs::Project).await?;
         let params = lsp::ReferenceParams {
             text_document_position: self.position_params(at)?,
             work_done_progress_params: Default::default(),
@@ -424,7 +471,7 @@ impl LanguageServer for LspServer {
     }
 
     async fn hover(&self, at: &At) -> Result<Option<String>, QueryError> {
-        self.sync(&at.file).await?;
+        self.sync(&at.file, Needs::Project).await?;
         let params = lsp::HoverParams {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
@@ -511,7 +558,7 @@ impl LanguageServer for LspServer {
         let key = self.uri_of(file)?.as_str().to_owned();
         let generation = |conn: &Connection| conn.with_state(|s| s.diagnostics.get(&key).map_or(0, |d| d.generation));
         let before = generation(&self.conn);
-        let changed = self.sync(file).await?;
+        let changed = self.sync(file, Needs::Project).await?;
         let items = match self.diagnostics {
             Diagnostics::Pull => {
                 let params = lsp::DocumentDiagnosticParams {
@@ -553,5 +600,32 @@ impl LanguageServer for LspServer {
 
     async fn shutdown(&self) {
         self.conn.close().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn doc(opened: Instant) -> Doc {
+        Doc {
+            file: RepoPath(b"a.ts".to_vec()),
+            uri: "file:///a.ts".parse().unwrap(),
+            version: 1,
+            text: String::new(),
+            opened,
+        }
+    }
+
+    #[test]
+    fn one_quiet_wait_settles_the_documents_opened_before_it_began() {
+        let before = Instant::now();
+        let early = doc(before);
+        let late = doc(Instant::now() + Duration::from_secs(1));
+        let mut docs = Docs::default();
+        assert!(!docs.is_settled(&early));
+        docs.quiet_from = Some(before + Duration::from_millis(1));
+        assert!(docs.is_settled(&early));
+        assert!(!docs.is_settled(&late));
     }
 }
