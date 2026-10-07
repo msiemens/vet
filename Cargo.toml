@@ -36,8 +36,11 @@ vet-infra = { path = "crates/vet-infra" }
 unsafe_code = "deny"
 
 # Debug info dominates link time: file:line backtraces for our crates, none for dependencies.
+# Dependencies are optimized: the hot paths (gitoxide, diffing, SQLite) are theirs, and
+# they are built once.
 [profile.dev]
 debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+opt-level = 2

@@ -30,8 +30,10 @@ tauri-plugin-decoration = "3"
 unsafe_code = "forbid"
 
 # Debug info dominates link time: file:line backtraces for our crates, none for dependencies.
+# Dependencies are optimized: they are built once.
 [profile.dev]
 debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+opt-level = 2
