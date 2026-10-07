@@ -473,6 +473,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - While a file's tab is active, the changed-symbols panel lists only that file's symbols
 - The changed-symbols panel shows its progress while it loads (files done of files to analyse) and lists symbols as their files are done
 - Language-server answers that depend only on a file's text (its symbols) are cached across restarts, keyed by language, server version and content
+- Semantic results track what they depend on (file contents, the project, server version), so a new revision recomputes only what its changes affect instead of discarding everything
 - Jump to Source (F4) from the changed-symbols list opens the selected symbol's definition
 - Clicking into a changed symbol in any editor (Changes, a diff or file tab) selects it in the changed-symbols panel
 - Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
