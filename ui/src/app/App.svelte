@@ -23,7 +23,7 @@
   import Toast from "../lib/ui/Toast.svelte";
   import type { Mode } from "../lib/viewMode";
   import { changeset } from "../state/changeset.svelte";
-  import { canQuit, hasNativeDialogs, hasNativeMenu, quit, showWindow } from "../state/host";
+  import { appVersion, canQuit, hasNativeDialogs, hasNativeMenu, inTauri, quit, showWindow } from "../state/host";
   import type { Command } from "../state/mainMenu";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { recent } from "../state/recent.svelte";
@@ -39,6 +39,8 @@
   let theme = $state<Theme>(storedTheme());
   let mode = $state<Mode>("unified");
   let dialog = $state<"settings" | "about" | "finish">();
+  // Only the host knows it; a plain browser shows none.
+  let version = $state<string>();
   const reviewOpen = $derived(changeset.manifest?.review.state === "open");
 
   const semanticSummary = $derived(semantic.summary(controller?.activePath));
@@ -84,6 +86,7 @@
         },
       );
     };
+    if (inTauri) void appVersion().then((v) => (version = v));
     session.onConnect(reveal);
     void session.connect().then(reveal);
     return mainMenu.listen(execute);
@@ -190,7 +193,7 @@
       recent={recent.list}
       failed={session.openError}
       canPick={hasNativeDialogs}
-      version={__APP_VERSION__}
+      {version}
       onpick={() => void pickProject()}
       onopen={openProject}
       onforget={(path) => void session.forget(path)}
