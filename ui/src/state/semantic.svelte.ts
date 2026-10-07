@@ -10,6 +10,7 @@ import type { Side } from "../generated/Side";
 import type { Unavailable } from "../generated/Unavailable";
 import type { HoverText } from "./backend";
 import { changeset } from "./changeset.svelte";
+import { InFlight } from "./inFlight";
 import { type SemanticSummary, summarize } from "./semanticSummary";
 import { session } from "./session.svelte";
 
@@ -20,6 +21,7 @@ class SemanticStore {
   /** Bumped when the cache is dropped, so an answer to an earlier question is not stored. */
   private epoch = 0;
   private pending = new Map<string, Promise<Diagnostic[]>>();
+  private hovering = new InFlight<HoverText>();
   /** The number of diagnostics to tell the viewer about, per file asked about at `revision`. */
   private counts = new SvelteMap<string, number>();
   /** The files the backend could not answer for, and why. */
@@ -49,6 +51,7 @@ class SemanticStore {
   invalidate() {
     this.epoch++;
     this.pending.clear();
+    this.hovering.clear();
     this.counts.clear();
     this.missing.clear();
   }
@@ -57,17 +60,23 @@ class SemanticStore {
     if (unavailable && this.enter(revision)) this.missing.set(path, unavailable);
   }
 
-  /** Markdown; the text is empty if the server has nothing to say or the request is stale. */
-  async hover(revision: number, side: Side, path: string, line: number, col: number): Promise<HoverText> {
+  /**
+   * Markdown; the text is empty if the server has nothing to say or the request is stale. The same
+   * position asked again while its answer is underway (an editor re-fires its hover when it updates)
+   * joins that request.
+   */
+  hover(revision: number, side: Side, path: string, line: number, col: number): Promise<HoverText> {
     const backend = session.backend;
-    if (!backend) return NOTHING;
-    try {
-      const r = await backend.hover(revision, side, path, line, col);
-      this.note(revision, path, r.unavailable);
-      return { text: r.text, code: r.code };
-    } catch {
-      return NOTHING;
-    }
+    if (!backend) return Promise.resolve(NOTHING);
+    return this.hovering.share(JSON.stringify([revision, side, path, line, col]), async () => {
+      try {
+        const r = await backend.hover(revision, side, path, line, col);
+        this.note(revision, path, r.unavailable);
+        return { text: r.text, code: r.code };
+      } catch {
+        return NOTHING;
+      }
+    });
   }
 
   /** The definitions at the position, in `side`'s snapshot; `undefined` after telling the viewer why there are none. */

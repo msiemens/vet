@@ -5,7 +5,15 @@
 
 import { type Diagnostic as LintDiagnostic, lintGutter, setDiagnostics } from "@codemirror/lint";
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, hoverTooltip, keymap, tooltips } from "@codemirror/view";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  ViewPlugin,
+  hoverTooltip,
+  keymap,
+  tooltips,
+} from "@codemirror/view";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
@@ -159,12 +167,27 @@ export function semanticExtensions(
     const line = lineOf(doc, pos);
     return { line, col: pos - lineStart(doc, line) };
   };
+  // `hoverTooltip` asks for the start of a block widget (a deleted chunk, a thread card) under the
+  // pointer, and for the line start when the pointer is on the line numbers; neither is text to hover.
+  const pointer = ViewPlugin.define((view) => {
+    const state = {
+      overText: false,
+      move: (event: MouseEvent) => {
+        state.overText = event.target instanceof Element && event.target.closest(".cm-line") !== null;
+      },
+      destroy: () => view.dom.removeEventListener("mousemove", state.move),
+    };
+    view.dom.addEventListener("mousemove", state.move);
+    return state;
+  });
   return [
     targetField,
     // A side by side pane clips what it contains; the tooltips of hover and diagnostics live in the body.
     tooltips({ parent: document.body }),
+    pointer,
     hoverTooltip(
       async (view, pos) => {
+        if (!view.plugin(pointer)?.overText) return null;
         const create = await queryHover(hooks, side, path, at(view, pos), hoverShown);
         return create ? { pos, above: true, create: () => ({ dom: create() }) } : null;
       },
