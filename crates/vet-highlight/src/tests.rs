@@ -68,7 +68,7 @@ fn the_protocol_docs_and_the_ui_list_the_kinds_in_wire_order() {
 }
 
 #[test]
-fn rust() {
+fn rust_is_highlighted() {
     let p = pieces("fn main() { let n: u32 = 7; // done\n}", Language::Rust);
     assert!(has(&p, "fn", Keyword));
     assert!(has(&p, "main", Function));
@@ -78,7 +78,7 @@ fn rust() {
 }
 
 #[test]
-fn python() {
+fn python_is_highlighted() {
     let p = pieces("def f(x):\n    return \"s\" + 1  # c\n", Language::Python);
     assert!(has(&p, "def", Keyword));
     assert!(has(&p, "f", Function));
@@ -88,7 +88,7 @@ fn python() {
 }
 
 #[test]
-fn typescript_and_tsx() {
+fn typescript_and_tsx_are_highlighted() {
     let p = pieces(
         "const n: number = 1;\ninterface A { b: string }\n",
         Language::TypeScript,
@@ -102,7 +102,7 @@ fn typescript_and_tsx() {
 }
 
 #[test]
-fn javascript_and_jsx() {
+fn javascript_and_jsx_are_highlighted() {
     let p = pieces(
         "function f() { return `t` + null; }\nconst e = <b/>;\n",
         Language::JavaScript,
@@ -115,7 +115,7 @@ fn javascript_and_jsx() {
 }
 
 #[test]
-fn csharp() {
+fn csharp_is_highlighted() {
     let p = pieces("class A { public int N = 1; } // c\n", Language::CSharp);
     assert!(has(&p, "class", Keyword));
     assert!(has(&p, "1", Number));
@@ -123,7 +123,7 @@ fn csharp() {
 }
 
 #[test]
-fn json() {
+fn json_values_are_highlighted_but_keys_are_not_strings() {
     let p = pieces("{\"k\": [true, null, 1.5, \"v\"]}", Language::Json);
     assert!(has(&p, "true", Number));
     assert!(has(&p, "null", Number));
@@ -134,7 +134,7 @@ fn json() {
 }
 
 #[test]
-fn yaml() {
+fn yaml_is_highlighted() {
     let p = pieces("a: 1\nb: \"s\" # c\nc: true\n", Language::Yaml);
     assert!(has(&p, "1", Number));
     assert!(has(&p, "\"s\"", Str));
@@ -143,7 +143,7 @@ fn yaml() {
 }
 
 #[test]
-fn toml() {
+fn toml_is_highlighted() {
     let p = pieces("[package]\nname = \"vet\" # c\nn = 3\nok = true\n", Language::Toml);
     assert!(has(&p, "\"vet\"", Str));
     assert!(has(&p, "3", Number));
@@ -152,7 +152,7 @@ fn toml() {
 }
 
 #[test]
-fn bash() {
+fn bash_is_highlighted() {
     let p = pieces("if [ -f x ]; then echo \"hi\"; fi # c\n", Language::Bash);
     assert!(has(&p, "if", Keyword));
     assert!(has(&p, "\"hi\"", Str));
@@ -160,7 +160,7 @@ fn bash() {
 }
 
 #[test]
-fn css() {
+fn css_is_highlighted() {
     let p = pieces(
         "a.b { color: #fff; margin: 0 } /* c */\n@media print {}\n",
         Language::Css,
@@ -170,7 +170,7 @@ fn css() {
 }
 
 #[test]
-fn html_with_script_and_style() {
+fn html_highlights_its_script_as_javascript() {
     let p = pieces(
         "<a href=\"x\">t</a><script>let n = 1;</script><style>b { color: red }</style><!-- c -->",
         Language::Html,
@@ -184,7 +184,7 @@ fn html_with_script_and_style() {
 }
 
 #[test]
-fn markdown_with_inline_and_fenced_code() {
+fn markdown_highlights_its_markup_and_the_code_in_fences() {
     let p = pieces(
         "# Title\n\nsome **bold** [t](http://u)\n\n```rust\nfn f() {}\n```\n",
         Language::Markdown,
@@ -203,7 +203,7 @@ fn a_string_and_a_comment_over_several_lines_are_one_span() {
 }
 
 #[test]
-fn crlf_is_one_unit() {
+fn a_crlf_line_break_counts_as_one_unit() {
     let p = pieces("let a = 1;\r\nlet s = \"x\r\ny\";\r\nlet b = 2;\r\n", Language::Rust);
     assert!(has(&p, "1", Number));
     assert!(has(&p, "\"x\ny\"", Str));
@@ -254,7 +254,7 @@ fn text_over_the_limit_is_not_highlighted() {
 }
 
 #[test]
-fn languages_by_path() {
+fn a_file_extension_names_its_language() {
     for (path, language) in [
         ("src/main.rs", Language::Rust),
         ("a/b.PY", Language::Python),
@@ -281,7 +281,7 @@ fn languages_by_path() {
 }
 
 #[test]
-fn fence_names() {
+fn a_fence_info_string_names_its_language() {
     assert_eq!(Language::of_fence("rust"), Some(Language::Rust));
     assert_eq!(Language::of_fence("rust,ignore"), Some(Language::Rust));
     assert_eq!(Language::of_fence("TS {1}"), Some(Language::TypeScript));
@@ -297,7 +297,7 @@ fn every_language_builds() {
 }
 
 #[test]
-fn encoding_is_gap_length_kind() {
+fn spans_are_encoded_as_gap_length_kind_triples() {
     let spans = [
         Span {
             from: 2,
