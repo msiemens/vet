@@ -105,6 +105,13 @@
   /* The before/after preview strip of an image change card. */
   --h-preview: 116px;
   --h-tab: 32px;
+  /* The underlined tabs of a panel. */
+  --h-panel-tabs: 30px;
+  /* The queue: a row of its table, and the panel under the table. */
+  --h-queue-row: 29px;
+  --h-queue-panel: 190px;
+  /* The popovers of the project and the changeset switcher. */
+  --w-switcher: 440px;
   /* The timeline, the bottom panel listing the review's versions. */
   --h-timeline: 300px;
   --w-timeline-files: 360px;

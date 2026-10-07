@@ -43,17 +43,20 @@ export function baseMenuItems(
   branches: BranchInfo[],
   choice: BaseChoice | undefined,
   commitsListed: boolean,
+  /** How far the chosen branch's remote is ahead, shown next to that branch. */
+  behind?: string,
 ): MenuItem[] {
   const ordered = orderBranches(branches);
   const current = ordered.find((b) => b.current);
   const others = ordered.filter((b) => !b.current);
   return [
-    ...ordered.map((b) => ({
-      id: `branch:${b.name}`,
-      label: `${b.name} (latest)`,
-      detail: b.current ? "current" : b.default ? "default" : undefined,
-      checked: choice?.type === "branch" && choice.name === b.name,
-    })),
+    ...ordered.map((b) => {
+      const chosen = choice?.type === "branch" && choice.name === b.name;
+      const detail = [b.current ? "current" : b.default ? "default" : undefined, chosen ? behind : undefined]
+        .filter(Boolean)
+        .join(" · ");
+      return { id: `branch:${b.name}`, label: `${b.name} (latest)`, detail: detail || undefined, checked: chosen };
+    }),
     ...(ordered.length ? [separator] : []),
     {
       id: "mergeBase",

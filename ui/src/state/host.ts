@@ -89,6 +89,14 @@ export async function retryStartup(): Promise<void> {
   await invoke("retry_startup");
 }
 
+/** Where the backend runs, as a project list names it: WSL, or this machine's system; none in a plain browser. */
+export async function hostLabel(): Promise<string | undefined> {
+  if (!inTauri) return undefined;
+  if ((await startupProgress()).distro !== null) return "WSL";
+  if (isMac) return "macOS";
+  return navigator.userAgent.includes("Windows") ? "Windows" : "Linux";
+}
+
 /** The app's version, as the host knows it. */
 export async function appVersion(): Promise<string> {
   const { getVersion } = await import("@tauri-apps/api/app");

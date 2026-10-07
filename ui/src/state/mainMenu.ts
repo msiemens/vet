@@ -40,6 +40,8 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     ...(s.native ? [] : (["-", settings, "-", quit] as MenuSpec)),
   ];
   const view: MenuSpec = [
+    { command: "view.queue" },
+    "-",
     ...MODES.map(({ id, label }) => ({ command: "view.mode", arg: id, label, checked: s.mode === id })),
     "-",
     {

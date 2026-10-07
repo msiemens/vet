@@ -42,6 +42,14 @@ void test("the menu offers each branch's latest, where the current one branched 
   assert.equal(/pin|HEAD at open/i.exec(JSON.stringify(items)), null);
 });
 
+void test("the chosen branch says how far its remote has moved on", () => {
+  const items = baseMenuItems(branches, { type: "branch", name: "main" }, true, "11 behind origin/main");
+  assert.deepEqual(
+    items.filter((i) => i.id.startsWith("branch:")).map((i) => i.detail),
+    ["current", "default · 11 behind origin/main", undefined],
+  );
+});
+
 void test("the checks follow the choice, and a detached HEAD is named as such", () => {
   const merge = baseMenuItems(branches, { type: "mergeBase", reference: "dev" }, false);
   assert.equal(merge.find((i) => i.id === "mergeBase")?.checked, true);

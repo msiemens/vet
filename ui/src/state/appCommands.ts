@@ -16,6 +16,8 @@ export interface AppActions {
   fetch(): void;
   /** Puts a changeset on view. */
   openChangeset(key: ChangesetKey): void;
+  /** Shows the queue of changesets. */
+  showQueue(): void;
   /** Opens the changeset switcher. */
   showChangesets(): void;
   showDialog(dialog: "settings" | "about"): void;
@@ -30,7 +32,7 @@ export interface AppActions {
 export function appCommands(a: AppActions): Command<CommandContext>[] {
   const repoOpen = (c: CommandContext) => c.repoOpen;
   return [
-    { id: "file.open", label: "Open repository…", run: () => a.pickProject() },
+    { id: "file.open", label: "Open repository…", binding: "Mod-o", run: () => a.pickProject() },
     {
       id: "file.openRecent",
       label: "Open recent",
@@ -40,6 +42,7 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
         a.openProject(path);
       },
     },
+    { id: "view.queue", label: "Open Queue", binding: "Mod-1", enabled: repoOpen, run: () => a.showQueue() },
     { id: "changeset.switch", label: "Switch Changeset…", enabled: repoOpen, run: () => a.showChangesets() },
     {
       id: "changeset.open",

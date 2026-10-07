@@ -1,52 +1,51 @@
+<script module lang="ts">
+  export type Screen = "queue" | "review";
+</script>
+
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { Base } from "../../generated/Base";
   import type { BaseChoice } from "../../generated/BaseChoice";
-  import type { ChangesetKey } from "../../generated/ChangesetKey";
-  import type { ChangesetRow } from "../../generated/ChangesetRow";
   import type { Completion } from "../../generated/Completion";
   import type { ReviewInfo } from "../../generated/ReviewInfo";
   import type { Target } from "../../generated/Target";
-  import Chip from "../../lib/ui/Chip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
-  import Menu from "../../lib/ui/Menu.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
-  import Popover from "../../lib/ui/Popover.svelte";
+  import Segmented from "../../lib/ui/Segmented.svelte";
   import type { BaseCandidates } from "../../state/backend";
-  import { commands, menuFor } from "../../state/commands";
-  import { openItem } from "../../state/mainMenu";
   import BaseChip from "./BaseChip.svelte";
-  import ChangesetSwitcher from "./ChangesetSwitcher.svelte";
   import TitleBar from "./TitleBar.svelte";
   import VersionLabel from "./VersionLabel.svelte";
 
   let {
+    screen,
+    onscreen,
     project,
+    changesets,
     base,
     target,
     review,
     loadBase,
     onbase,
-    loadChangesets,
-    onchangeset,
-    switcherOpen = $bindable(false),
     completion,
     onfinish,
+    refreshing = false,
+    onrefresh,
     chips,
     back,
   }: {
-    project: string;
+    /** Which screen shows: the queue of changesets, or the review of the one on view. */
+    screen: Screen;
+    onscreen: (screen: Screen) => void;
+    /** The project's name with its switcher. */
+    project: Snippet;
+    /** The changeset's name with its switcher; shown in the review. */
+    changesets: Snippet;
     /** What the changes are compared against. */
     base?: Base;
     /** What they lead to: the working tree, or a branch's tip. */
     target?: Target;
-    /** Lists the changesets on offer and the one on view. */
-    loadChangesets: () => Promise<{ rows: ChangesetRow[]; onView: ChangesetKey } | undefined>;
-    /** Puts another changeset on view. */
-    onchangeset: (key: ChangesetKey) => void;
-    /** The changeset switcher's menu is open. */
-    switcherOpen?: boolean;
     /** Whether a review has started; its version shows only while it is open. */
     review?: ReviewInfo;
     /** Lists the branches and commits the base can be picked from. */
@@ -56,12 +55,15 @@
     onfinish: () => void;
     /** The changeset's progress. */
     completion?: Completion;
+    /** The queue is being refreshed. */
+    refreshing?: boolean;
+    /** Fetches and lists the queue again. */
+    onrefresh: () => void;
     /** While the review view shows a range of versions: its ends, in place of the base and the progress. */
     chips?: Snippet;
     /** The way back to the changeset, at the right end. */
     back?: Snippet;
   } = $props();
-  let projectMenu = $state(false);
   const seen = $derived(completion?.seenPercent ?? 0);
   const oldBase = $derived(completion?.oldBasePercent ?? 0);
   const title = $derived(
@@ -71,40 +73,35 @@
 </script>
 
 <TitleBar>
-  <Popover bind:open={projectMenu}>
-    {#snippet trigger(toggle)}
-      <Chip bold onclick={toggle}>{project}</Chip>
-    {/snippet}
-    <Menu
-      speedSearch
-      items={menuFor(openItem).items}
-      onselect={(id) => {
-        projectMenu = false;
-        commands.run(id);
-      }}
-    />
-  </Popover>
-  <span class="range" data-tauri-drag-region>
-    {#if !chips}
-      <BaseChip {base} branch={target?.branch} load={loadBase} onpick={onbase} />
-      <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
-    {/if}
-    <ChangesetSwitcher
-      name={target?.name}
-      title={target?.branch && `On ${target.branch}`}
-      live={target?.changeset.type === "workingTree"}
-      load={loadChangesets}
-      onpick={onchangeset}
-      bind:open={switcherOpen}
-    />
-    {#if chips}
-      {@render chips()}
-    {:else if review?.state === "open"}
-      <VersionLabel version={review.version} updatedAt={review.updatedAt} />
-    {/if}
-  </span>
+  <Segmented
+    small
+    label="Screen"
+    options={[
+      { id: "queue", label: "Queue" },
+      { id: "review", label: "Review" },
+    ]}
+    value={screen}
+    onchange={onscreen}
+  />
+  {@render project()}
+  {#if screen === "review"}
+    <span class="range" data-tauri-drag-region>
+      {@render changesets()}
+      {#if chips}
+        {@render chips()}
+      {:else}
+        <BaseChip {base} branch={target?.branch} load={loadBase} onpick={onbase} />
+        <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
+        {#if review?.state === "open"}
+          <VersionLabel version={review.version} updatedAt={review.updatedAt} />
+        {/if}
+      {/if}
+    </span>
+  {/if}
   <span class="grow" data-tauri-drag-region></span>
-  {#if chips}
+  {#if screen === "queue"}
+    <IconButton icon="reconfirm" label={refreshing ? "Fetching…" : "Fetch and refresh the queue"} onclick={onrefresh} />
+  {:else if chips}
     {@render back?.()}
   {:else}
     <span class="completion" {title} data-tauri-drag-region>
@@ -134,7 +131,6 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    margin-left: 4px;
   }
   .arrow {
     display: inline-flex;

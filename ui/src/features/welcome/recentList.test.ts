@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AVATAR_COLOURS, avatarColour, initials, openedLabel, searchRecent } from "./recentList.ts";
+import { AVATAR_COLOURS, avatarColour, initials, searchRecent } from "./recentList.ts";
 
 const project = (path: string) => ({ path, openedAt: 0 });
 const projects = ["/src/ledger-sync", "/src/work/billing-api", "C:\\src\\web-dashboard", "/src/vet"].map(project);
@@ -54,14 +54,4 @@ void test("search matches the first letters of a name's words", () => {
     [0, 1],
     [7, 8],
   ]);
-});
-
-void test("the opened label shortens with distance", () => {
-  const now = new Date(2026, 9, 7, 15, 30).getTime();
-  const at = (...date: [number, number, number?, number?, number?]) => new Date(...date).getTime() / 1000;
-  assert.equal(openedLabel(now / 1000 - 20, now), "now");
-  assert.equal(openedLabel(at(2026, 9, 7, 9, 5), now), "9:05 AM");
-  assert.equal(openedLabel(at(2026, 9, 5, 23, 0), now), "Mon");
-  assert.equal(openedLabel(at(2026, 8, 28, 12), now), "Sep 28");
-  assert.equal(openedLabel(at(2025, 11, 31, 12), now), "Dec 31, 2025");
 });

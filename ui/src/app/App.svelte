@@ -12,26 +12,39 @@
     TaskProgress,
     TitleBar,
     ToolRail,
+    type Screen,
     toggleTool,
   } from "../features/chrome";
+  import { ChangesetSwitcher, QueueScreen } from "../features/queue";
   import { ReviewScreen, type ReviewController, summarize } from "../features/review";
   import { SettingsDialog } from "../features/settings";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
   import { type RangeFile, RangeChips, TimelinePanel } from "../features/timeline";
-  import { WelcomeScreen } from "../features/welcome";
+  import { ProjectSwitcher, WelcomeScreen } from "../features/welcome";
+  import type { Thread } from "../generated/Thread";
   import { repoName } from "../lib/paths";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import ContextMenu from "../lib/ui/ContextMenu.svelte";
   import Toast from "../lib/ui/Toast.svelte";
   import type { Mode } from "../lib/viewMode";
   import { changeset } from "../state/changeset.svelte";
-  import { appVersion, canQuit, hasNativeDialogs, hasNativeMenu, inTauri, quit, showWindow } from "../state/host";
+  import {
+    appVersion,
+    canQuit,
+    hasNativeDialogs,
+    hasNativeMenu,
+    hostLabel,
+    inTauri,
+    quit,
+    showWindow,
+  } from "../state/host";
   import { appCommands } from "../state/appCommands";
   import { commands } from "../state/commands";
   import { contextMenus } from "../state/contextMenu.svelte";
   import { keymap } from "../state/keymap.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { progress as backgroundTasks } from "../state/progress.svelte";
+  import { queue } from "../state/queue.svelte";
   import { recent } from "../state/recent.svelte";
   import { semantic } from "../state/semantic.svelte";
   import { session } from "../state/session.svelte";
@@ -49,8 +62,11 @@
   let mode = $state<Mode>("unified");
   let dialog = $state<"settings" | "about" | "finish">();
   let switcherOpen = $state(false);
-  // Only the host knows it; a plain browser shows none.
+  // The queue is the project's home; the review screen stays mounted behind it, so its views survive.
+  let screen = $state<Screen>("queue");
+  // Only the host knows these; a plain browser shows none.
   let version = $state<string>();
+  let host = $state<string>();
   const reviewOpen = $derived(changeset.manifest?.review.state === "open");
 
   const semanticSummary = $derived(semantic.summary(controller?.activePath));
@@ -75,7 +91,11 @@
       finishReview: () => (dialog = "finish"),
       fetch: () => void changeset.fetch(),
       openChangeset: (key) => void changeset.openChangeset(key),
-      showChangesets: () => (switcherOpen = true),
+      showQueue: () => (screen = "queue"),
+      showChangesets: () => {
+        screen = "review";
+        switcherOpen = true;
+      },
       showDialog: (d) => (dialog = d),
       quit: () => void quit(),
       setMode,
@@ -88,6 +108,7 @@
     }),
   );
   keymap.load();
+  session.onOpen(() => (screen = "queue"));
   const stopContext = commands.provide(() => ({ repoOpen: !!session.repo, reviewOpen, canQuit }));
 
   // The main menu follows the state it shows.
@@ -133,6 +154,7 @@
       );
     };
     if (inTauri) void appVersion().then((v) => (version = v));
+    void hostLabel().then((label) => (host = label));
     session.onConnect(reveal);
     void session.connect().then(reveal);
     const stopMenu = mainMenu.listen();
@@ -161,6 +183,17 @@
     if (timelineOpen) void changeset.setRange(defaultRange(versions.items));
   }
 
+  /** Shows the review at a file. */
+  function openFile(path: string) {
+    screen = "review";
+    void controller?.revealInChanges(path);
+  }
+
+  function openThread(thread: Thread) {
+    screen = "review";
+    void controller?.goToThread(thread);
+  }
+
   function setMode(next: Mode) {
     mode = next;
     controller?.setMode(next);
@@ -184,58 +217,88 @@
       >Back to {base ?? "…"}{latest === undefined ? "" : ` → v${latest}`}</button
     >
   {/snippet}
+  {#snippet projectSwitcher()}
+    {#if session.repo}
+      <ProjectSwitcher
+        name={repoName(session.repo)}
+        path={session.repo}
+        recent={recent.list}
+        {host}
+        canPick={hasNativeDialogs}
+        onopen={openProject}
+        onpick={() => void pickProject()}
+      />
+    {/if}
+  {/snippet}
+  {#snippet changesetSwitcher()}
+    <ChangesetSwitcher
+      name={changeset.manifest?.target.name}
+      title={changeset.manifest?.target.branch && `On ${changeset.manifest.target.branch}`}
+      live={changeset.manifest?.target.changeset.type === "workingTree"}
+      onpick={(key) => void changeset.openChangeset(key)}
+      onqueue={() => (screen = "queue")}
+      bind:open={switcherOpen}
+    />
+  {/snippet}
   <Header
+    {screen}
+    onscreen={(s) => void (screen = s)}
+    project={projectSwitcher}
+    changesets={changesetSwitcher}
     chips={range ? rangeChips : undefined}
     back={backToChangeset}
-    project={repoName(session.repo)}
     base={changeset.manifest?.base}
     target={changeset.manifest?.target}
     review={changeset.manifest?.review}
     loadBase={() => changeset.baseCandidates()}
     onbase={(choice) => void changeset.setBase(choice)}
-    loadChangesets={() => changeset.listChangesets()}
-    onchangeset={(key) => void changeset.openChangeset(key)}
-    bind:switcherOpen
     completion={changeset.manifest?.completion}
     onfinish={() => (dialog = "finish")}
+    refreshing={queue.refreshing}
+    onrefresh={() => void queue.refresh()}
   />
 
   <Banners degraded={changeset.manifest?.degraded} failures={changeset.restoreFailures} />
 
   <div class="body">
-    <ToolRail bind:active={left.tool} bind:open={left.open} timeline={timelineOpen} ontimeline={toggleTimeline} />
-    <ReviewScreen
-      backend={session.backend}
-      {changeset}
-      {probe}
-      leftTool={left.tool}
-      leftOpen={left.open}
-      rightTool={right.tool}
-      rightOpen={right.open}
-      {mode}
-      onmode={setMode}
-      onready={(c, firstPaintMs) => {
-        controller = c;
-        void tools.ready(firstPaintMs);
-      }}
-      onclose={() => (controller = undefined)}
-    >
-      {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel onopen={openLocation} />{/if}{/snippet}
-      {#snippet bottom({ selected, select })}
-        {#if timelineOpen}
-          <TimelinePanel
-            versions={versions.items}
-            {range}
-            files={rangeFiles}
-            {selected}
-            onrange={(r) => void changeset.setRange(r)}
-            onselect={select}
-            onclose={() => (timelineOpen = false)}
-          />
-        {/if}
-      {/snippet}
-    </ReviewScreen>
-    <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />
+    {#if screen === "queue"}
+      <QueueScreen onopen={() => (screen = "review")} onopenfile={openFile} onopenthread={openThread} />
+    {/if}
+    <div class="review" class:away={screen !== "review"} inert={screen !== "review"}>
+      <ToolRail bind:active={left.tool} bind:open={left.open} timeline={timelineOpen} ontimeline={toggleTimeline} />
+      <ReviewScreen
+        backend={session.backend}
+        {changeset}
+        {probe}
+        leftTool={left.tool}
+        leftOpen={left.open}
+        rightTool={right.tool}
+        rightOpen={right.open}
+        {mode}
+        onmode={setMode}
+        onready={(c, firstPaintMs) => {
+          controller = c;
+          void tools.ready(firstPaintMs);
+        }}
+        onclose={() => (controller = undefined)}
+      >
+        {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel onopen={openLocation} />{/if}{/snippet}
+        {#snippet bottom({ selected, select })}
+          {#if timelineOpen}
+            <TimelinePanel
+              versions={versions.items}
+              {range}
+              files={rangeFiles}
+              {selected}
+              onrange={(r) => void changeset.setRange(r)}
+              onselect={select}
+              onclose={() => (timelineOpen = false)}
+            />
+          {/if}
+        {/snippet}
+      </ReviewScreen>
+      <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />
+    </div>
   </div>
 {:else if session.backend}
   <div class="body">
@@ -305,7 +368,19 @@
   .body {
     flex: 1;
     display: flex;
+    position: relative;
     min-height: 0;
+  }
+  .review {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+  }
+  /* Laid out but not seen, so the editors keep their size and scroll positions behind the queue. */
+  .review.away {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
   }
   .message {
     flex: 1;

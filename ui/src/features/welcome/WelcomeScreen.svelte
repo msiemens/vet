@@ -4,7 +4,8 @@
   import AppLogo from "../../lib/ui/AppLogo.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
-  import { avatarColour, initials, openedLabel, searchRecent } from "./recentList";
+  import { shortTime } from "../../lib/shortTime";
+  import { avatarColour, initials, searchRecent } from "./recentList";
 
   // Self-contained: it renders from its props and draws its own window-controls area, so it can
   // live in any window.
@@ -136,7 +137,7 @@
               <span class="name"><Marked text={name} ranges={nameRanges} /></span>
               <span class="mono path"><Marked text={project.path} ranges={pathRanges} /></span>
             </span>
-            <span class="when">{openedLabel(project.openedAt)}</span>
+            <span class="when">{shortTime(project.openedAt)}</span>
           </button>
         </li>
       {/each}

@@ -26,6 +26,7 @@ const actions: AppActions = {
   finishReview: () => calls.push("finish"),
   fetch: () => calls.push("fetch"),
   openChangeset: (key) => calls.push(`changeset ${keyId(key)}`),
+  showQueue: () => calls.push("queue"),
   showChangesets: () => calls.push("changesets"),
   showDialog: (d) => calls.push(`dialog ${d}`),
   quit: () => calls.push("quit"),

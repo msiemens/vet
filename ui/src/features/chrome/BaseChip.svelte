@@ -6,6 +6,7 @@
   import Menu from "../../lib/ui/Menu.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import type { BaseCandidates } from "../../state/backend";
+  import { behindText } from "../../state/baseBehind";
   import { baseMenuItems, baseTooltip, parseBaseItem } from "./baseText";
   import CommitPicker from "./CommitPicker.svelte";
 
@@ -36,7 +37,7 @@
     void load().then((c) => (candidates = c));
   });
 
-  const items = $derived(baseMenuItems(candidates?.branches ?? [], base?.choice, !!candidates));
+  const items = $derived(baseMenuItems(candidates?.branches ?? [], base?.choice, !!candidates, behindText(base)));
 
   function select(id: string) {
     const picked = parseBaseItem(id);
@@ -66,22 +67,3 @@
     <Menu speedSearch {items} onselect={select} />
   {/if}
 </Popover>
-{#if base?.behind && base.choice.type === "branch"}
-  {@const name = base.choice.name}
-  <button
-    class="flat behind"
-    type="button"
-    title="Compare against the latest {name}"
-    onclick={() => onpick({ type: "branch", name })}>{base.behind} behind</button
-  >
-{/if}
-
-<style>
-  .behind {
-    height: var(--h-ctl);
-    padding: 0 6px;
-    border-radius: var(--radius);
-    color: var(--text-3);
-    font-size: var(--fs-mono-s);
-  }
-</style>

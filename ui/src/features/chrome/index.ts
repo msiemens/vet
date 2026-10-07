@@ -2,7 +2,7 @@ export { default as AboutDialog } from "./AboutDialog.svelte";
 export { default as Banners } from "./Banners.svelte";
 export { default as FinishDialog } from "./FinishDialog.svelte";
 export { toggleTool } from "./toggleTool";
-export { default as Header } from "./Header.svelte";
+export { default as Header, type Screen } from "./Header.svelte";
 export { default as TitleBar } from "./TitleBar.svelte";
 export { TOOLS } from "./ToolRail.svelte";
 export { default as ToolRail } from "./ToolRail.svelte";
