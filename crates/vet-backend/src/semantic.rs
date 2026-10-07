@@ -24,16 +24,7 @@ impl Open {
             .await
             .map_err(message)?;
         let (text, unavailable) = map::answer(answer.result, self.language_of(&at.file));
-        let code_highlights = text
-            .as_deref()
-            .map_or_else(Vec::new, |t| highlight::code_blocks(path, t));
-        Ok(Response::Hover {
-            revision,
-            side,
-            text,
-            code_highlights,
-            unavailable,
-        })
+        Ok(highlight::hover(path, revision, side, text, unavailable))
     }
 
     fn locations(
@@ -113,15 +104,7 @@ impl Open {
             .await
             .map_err(message)?;
         let (found, unavailable) = map::answer(answer.result, self.language_of(&RepoPath::from(symbol.path.as_str())));
-        let signature = found.map(|s| vet_protocol::SymbolSignature {
-            highlights: highlight::signature(&symbol.path, &s),
-            code: s.code,
-        });
-        Ok(Response::Signature {
-            revision,
-            signature,
-            unavailable,
-        })
+        Ok(highlight::signature(&symbol.path, revision, found, unavailable))
     }
 
     pub async fn impact(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {

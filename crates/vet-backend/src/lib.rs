@@ -336,18 +336,7 @@ impl Orchestrator {
                     .file_text(&path)
                     .await
                     .map_err(message)?;
-                let (base_highlights, target_highlights) = tokio::join!(
-                    self.highlighter.text(&path, text.base.as_deref()),
-                    self.highlighter.text(&path, text.target.as_deref())
-                );
-                Ok(Response::FileContents {
-                    revision: text.revision,
-                    base: text.base,
-                    target: text.target,
-                    changes: text.changes.iter().map(mapping::text_change).collect(),
-                    base_highlights,
-                    target_highlights,
-                })
+                Ok(self.highlighter.file_contents(&path, text).await)
             }
             Request::SetSeen {
                 session,
@@ -450,8 +439,7 @@ impl Orchestrator {
                     .target_text(&path)
                     .await
                     .map_err(message)?;
-                let highlights = self.highlighter.text(&path, text.content.as_deref().ok()).await;
-                Ok(mapping::target_text(&text, highlights))
+                Ok(self.highlighter.file_text(&path, &text).await)
             }
             Request::Threads { session } => {
                 let threads = self.find(session).await?.session.threads().await.map_err(message)?;
