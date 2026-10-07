@@ -18,21 +18,31 @@ impl Orchestrator {
         Ok(Response::ReviewFinished { complete })
     }
 
-    pub(crate) async fn manifest(&self, project: ProjectId) -> Result<Response, String> {
+    pub(crate) async fn versions(&self, project: ProjectId) -> Result<Response, String> {
+        let versions = self.ready(project).await?.session.versions().await.map_err(message)?;
+        Ok(mapping::versions(&versions))
+    }
+
+    pub(crate) async fn manifest(&self, project: ProjectId, view: vet_protocol::View) -> Result<Response, String> {
         let open = self.ready(project).await?;
-        let manifest = open.session.manifest().await.map_err(message)?;
+        let manifest = open.session.manifest(mapping::core_view(view)).await.map_err(message)?;
         let failures = open.semantics.restore_failures();
         Ok(Response::Manifest(Box::new(mapping::manifest(
             project, &manifest, &failures,
         ))))
     }
 
-    pub(crate) async fn file_contents(&self, project: ProjectId, path: &str) -> Result<Response, String> {
+    pub(crate) async fn file_contents(
+        &self,
+        project: ProjectId,
+        view: vet_protocol::View,
+        path: &str,
+    ) -> Result<Response, String> {
         let text = self
             .ready(project)
             .await?
             .session
-            .file_text(path)
+            .file_text(mapping::core_view(view), path)
             .await
             .map_err(message)?;
         Ok(self.highlighter.file_contents(path, text).await)
@@ -53,50 +63,65 @@ impl Orchestrator {
         &self,
         project: ProjectId,
         from: &Connection,
+        view: vet_protocol::View,
         revision: u32,
         path: &str,
         hunk: u32,
     ) -> Result<Response, String> {
         let open = self.ready(project).await?;
-        let update = open.session.toggle_hunk(revision, path, hunk).await.map_err(message)?;
+        let view = mapping::core_view(view);
+        let update = open
+            .session
+            .toggle_hunk(revision, view, path, hunk)
+            .await
+            .map_err(message)?;
         announce_start(&open, update.started);
-        Ok(Response::Review(review_changed(&open, from, &update)))
+        Ok(Response::Review(review_changed(&open, from, view, &update).await))
     }
 
     pub(crate) async fn toggle_item(
         &self,
         project: ProjectId,
         from: &Connection,
+        view: vet_protocol::View,
         revision: u32,
         path: &str,
         kind: vet_protocol::NonTextKind,
     ) -> Result<Response, String> {
         let open = self.ready(project).await?;
+        let view = mapping::core_view(view);
         let update = open
             .session
-            .toggle_item(revision, path, mapping::core_non_text_kind(kind))
+            .toggle_item(revision, view, path, mapping::core_non_text_kind(kind))
             .await
             .map_err(message)?;
         announce_start(&open, update.started);
-        Ok(Response::Review(review_changed(&open, from, &update)))
+        Ok(Response::Review(review_changed(&open, from, view, &update).await))
     }
 
     pub(crate) async fn toggle_file_seen(
         &self,
         project: ProjectId,
         from: &Connection,
+        view: vet_protocol::View,
         revision: u32,
         path: &str,
     ) -> Result<Response, String> {
         let open = self.ready(project).await?;
-        let update = open.session.toggle_file_seen(revision, path).await.map_err(message)?;
+        let view = mapping::core_view(view);
+        let update = open
+            .session
+            .toggle_file_seen(revision, view, path)
+            .await
+            .map_err(message)?;
         announce_start(&open, update.started);
-        Ok(Response::Review(review_changed(&open, from, &update)))
+        Ok(Response::Review(review_changed(&open, from, view, &update).await))
     }
 
     pub(crate) async fn item_blob(
         &self,
         project: ProjectId,
+        view: vet_protocol::View,
         revision: u32,
         path: &str,
         kind: vet_protocol::NonTextKind,
@@ -108,6 +133,7 @@ impl Orchestrator {
             .session
             .item_blob(
                 revision,
+                mapping::core_view(view),
                 path,
                 mapping::core_non_text_kind(kind),
                 mapping::core_side(side),
@@ -184,6 +210,7 @@ impl Orchestrator {
     pub(crate) async fn target_line(
         &self,
         project: ProjectId,
+        view: vet_protocol::View,
         revision: u32,
         side: vet_protocol::Side,
         path: &str,
@@ -193,7 +220,7 @@ impl Orchestrator {
             .ready(project)
             .await?
             .session
-            .line_in_target(revision, mapping::core_side(side), path, line)
+            .line_in_target(revision, mapping::core_view(view), mapping::core_side(side), path, line)
             .await
             .map_err(message)?;
         Ok(Response::TargetLine { revision, line })

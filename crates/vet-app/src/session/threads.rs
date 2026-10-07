@@ -10,12 +10,16 @@ use vet_core::review::{
     target_line,
 };
 
+use super::interdiff::{View, check_markable, markable};
 use super::manifest::{old_path_of, status_of};
 use super::state::{Changes, State, check_revision, find_diff, outcome, shown_items};
 use super::views::{FileStatus, Outcome};
 use super::{LiveSession, Result, SessionError};
 use crate::editor::last_text_line;
 use crate::ports::{GitRepo, LiveStore};
+
+const NEW_SIDE_ONLY: &str = "a comment on an interdiff goes on its new side; the old side is the older version rebased \
+     onto the newer base, which is not a place to comment";
 
 /// What a new thread is attached to. Ranges are in the text of the revision the
 /// request names.
@@ -84,23 +88,30 @@ pub struct ThreadsView {
 }
 
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
-    /// Every thread, with range anchors resolved at the current revision.
-    pub async fn threads(&self) -> Result<ThreadsView> {
+    /// Every thread, with range anchors resolved at the current revision. An interdiff shows the
+    /// threads on the new side of the latest version, and none for another.
+    pub async fn threads(&self, view: View) -> Result<ThreadsView> {
         let mut st = self.state.lock().await;
-        self.ensure_changes(&mut st).await?;
+        self.ensure_view(&mut st, view).await?;
+        let shown = |t: &&Thread| match view {
+            View::Changeset => true,
+            View::Interdiff { .. } => {
+                markable(&st, view) && matches!(&t.target, CommentTarget::Range(a) if a.side == Side::Target)
+            }
+        };
         Ok(ThreadsView {
             revision: st.revision,
-            threads: st.threads.iter().map(|t| thread_view(&st, t)).collect(),
+            threads: st.threads.iter().filter(shown).map(|t| thread_view(&st, t)).collect(),
         })
     }
 
     /// The target line a unified diff shows `line` of `side` of the file at `path` at, by the rule
     /// that places a thread's card (`ThreadView::target_line`). Fails if `revision` is no longer
     /// current.
-    pub async fn line_in_target(&self, revision: u32, side: Side, path: &str, line: u32) -> Result<u32> {
+    pub async fn line_in_target(&self, revision: u32, view: View, side: Side, path: &str, line: u32) -> Result<u32> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
+        self.ensure_view(&mut st, view).await?;
         let location = Location {
             file: RepoPath::from(path),
             range: LineRange {
@@ -108,16 +119,29 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 end: line.saturating_add(1),
             },
         };
-        Ok(card_line(st.changes.as_ref().expect("computed"), side, &location))
+        Ok(card_line(st.changes_in(view), side, &location))
     }
 
     /// What a comment on part of the changeset file at `path` attaches to (see [`CommentSpot`]).
-    /// Fails if `revision` is no longer current, or the file or hunk is not in the changeset.
-    pub async fn comment_target(&self, revision: u32, path: &str, at: CommentAt) -> Result<CommentSpot> {
+    /// Fails if `revision` is no longer current, or the file or hunk is not in the changeset. In an
+    /// interdiff a comment goes on the new side only, and only on the latest version's.
+    pub async fn comment_target(&self, revision: u32, view: View, path: &str, at: CommentAt) -> Result<CommentSpot> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
-        let changes = st.changes.as_ref().expect("computed");
+        self.ensure_view(&mut st, view).await?;
+        check_markable(&st, view)?;
+        let spot = self.spot(&st, view, path, at)?;
+        match (&spot.target, view) {
+            (
+                NewThread::Range { side: Side::Base, .. } | NewThread::File { side: Side::Base, .. },
+                View::Interdiff { .. },
+            ) => Err(SessionError::Invalid(NEW_SIDE_ONLY.into())),
+            _ => Ok(spot),
+        }
+    }
+
+    fn spot(&self, st: &State, view: View, path: &str, at: CommentAt) -> Result<CommentSpot> {
+        let changes = st.changes_in(view);
         let diff = find_diff(&changes.diff, path);
         let items = shown_items(&changes.diff, &st.filter, path);
         if diff.is_none() && items.is_empty() {
@@ -187,13 +211,22 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     pub async fn create_thread(
         &self,
         revision: u32,
+        view: View,
         target: NewThread,
         body: String,
         now: i64,
     ) -> Result<Outcome<ThreadView>> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
+        self.ensure_view(&mut st, view).await?;
+        check_markable(&st, view)?;
+        if let (
+            View::Interdiff { .. },
+            NewThread::Range { side: Side::Base, .. } | NewThread::File { side: Side::Base, .. },
+        ) = (view, &target)
+        {
+            return Err(SessionError::Invalid(NEW_SIDE_ONLY.into()));
+        }
         let opener = self.message(body, now)?;
         let target = match target {
             NewThread::Range { side, path, range } => {

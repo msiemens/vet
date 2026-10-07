@@ -37,6 +37,12 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let diffed = self.diffed(st, &task).await;
         task.conclude(&diffed);
         let (diff, blobs) = diffed?;
+        st.changes = Some(self.changes_of(diff, blobs).await);
+        self.remap(st).await
+    }
+
+    /// The changes of `diff` with nothing remapped onto them yet; `blobs` has the text of its files.
+    pub(super) async fn changes_of(&self, diff: SnapshotDiff, blobs: BTreeMap<BlobId, Vec<u8>>) -> Changes {
         let mut items = Vec::new();
         for n in &diff.non_text {
             let before_path = n.from.as_ref().unwrap_or(&n.path);
@@ -63,7 +69,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             )
             .cloned()
             .collect();
-        st.changes = Some(Changes {
+        Changes {
             diff,
             changed,
             blobs,
@@ -71,8 +77,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             flat: Vec::new(),
             resolutions: HashMap::new(),
             items,
-        });
-        self.remap(st).await
+            interdiffs: HashMap::new(),
+        }
     }
 
     /// The diff of the base and the target, and the content of every text file it

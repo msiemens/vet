@@ -2,7 +2,7 @@
 //! connection type that receives them.
 
 use vet_app::registry::{Subscriber, Subscribers};
-use vet_app::session::{Lifecycle, ReviewUpdateView, ThreadView};
+use vet_app::session::{Lifecycle, ReviewUpdateView, ThreadView, View};
 use vet_mapping as mapping;
 use vet_protocol::{Event, ProjectId, Response};
 use vet_transport::Events;
@@ -61,16 +61,33 @@ pub async fn thread_changed(open: &Ready, from: &Connection, thread: &ThreadView
     Response::Thread(mapping::thread(thread))
 }
 
-/// The protocol update for the requester; the other subscribers are told too.
-pub fn review_changed(open: &Ready, from: &Connection, update: &ReviewUpdateView) -> vet_protocol::ReviewUpdate {
+/// The protocol update for the requester; the other subscribers are told too. A mark made in an
+/// interdiff changed the changeset, whose file everyone shows, the requester included.
+pub async fn review_changed(
+    open: &Ready,
+    from: &Connection,
+    view: View,
+    update: &ReviewUpdateView,
+) -> vet_protocol::ReviewUpdate {
     let mapped = mapping::review_update(update);
-    open.subscribers.broadcast_except(
-        from,
-        Event::ReviewChanged {
-            project: open.id,
-            revision: update.revision,
-            update: mapped.clone(),
-        },
-    );
+    match view {
+        View::Changeset => open.subscribers.broadcast_except(
+            from,
+            Event::ReviewChanged {
+                project: open.id,
+                revision: update.revision,
+                update: mapped.clone(),
+            },
+        ),
+        View::Interdiff { .. } => {
+            if let Ok(changeset) = open.session.changeset_update(&mapped.path).await {
+                open.subscribers.broadcast(Event::ReviewChanged {
+                    project: open.id,
+                    revision: changeset.revision,
+                    update: mapping::review_update(&changeset),
+                });
+            }
+        }
+    }
     mapped
 }

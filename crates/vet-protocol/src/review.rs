@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{ChangesetKey, FileChange, FileReview, LineDelta, ProjectId, RestoreFailure};
+use crate::{ChangesetKey, FileChange, FileReview, InterdiffInfo, LineDelta, ProjectId, RestoreFailure};
 
 /// A side of the changeset.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -193,6 +193,10 @@ pub struct Manifest {
     /// (§7.5). `Event::RestoreFailed` updates it.
     #[serde(default)]
     pub restore_failures: Vec<RestoreFailure>,
+    /// Set for the manifest of an interdiff view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub interdiff: Option<InterdiffInfo>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

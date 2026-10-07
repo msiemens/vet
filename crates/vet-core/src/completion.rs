@@ -57,6 +57,12 @@ pub enum HunkState {
     Seen,
     /// Every changed line is covered, some only by `SeenAgainstOldBase` spans.
     SeenAgainstOldBase,
+    /// Only an interdiff has these: nothing is left to review in the hunk (the author took a
+    /// change back to the base content), so there is nothing to mark.
+    Informational,
+    /// Only an interdiff has these: unseen, and the old version's patch did not apply to the new
+    /// base there, so the old side shows its lines unrebased.
+    Unapplied,
 }
 
 type Ranges<'a> = BTreeMap<(&'a RepoPath, Side), Vec<LineRange>>;

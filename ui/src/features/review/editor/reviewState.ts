@@ -20,7 +20,13 @@ import { lineEnd, lineStart } from "./positions";
 export const setStates = StateEffect.define<HunkState[]>();
 export const setCurrent = StateEffect.define<number | null>();
 
-const CLASS: Record<HunkState, string> = { unseen: "vet-unseen", seen: "vet-seen", seenAgainstOldBase: "vet-old" };
+const CLASS: Record<HunkState, string> = {
+  unseen: "vet-unseen",
+  seen: "vet-seen",
+  seenAgainstOldBase: "vet-old",
+  informational: "vet-info",
+  unapplied: "vet-unapplied",
+};
 
 interface Span {
   from: number;

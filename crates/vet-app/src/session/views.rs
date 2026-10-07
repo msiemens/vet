@@ -126,6 +126,21 @@ pub struct ManifestView {
     pub completion: Completion,
     /// Why the tree is polled instead of watched, if it is.
     pub degraded: Option<Degraded>,
+    /// Set when the manifest is of an interdiff.
+    pub interdiff: Option<InterdiffView>,
+}
+
+/// What an interdiff view says about itself beyond its files.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct InterdiffView {
+    pub from: u32,
+    pub to: u32,
+    /// The base moved between the versions, so the old side is version `from` rebased.
+    pub rebased: bool,
+    /// Marks and comments land in the changeset of version `to`, which only the latest has.
+    pub markable: bool,
+    /// What does not work in this view and why, fit to show (SPEC I6).
+    pub limits: Vec<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

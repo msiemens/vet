@@ -2,6 +2,7 @@
 import type { Base } from "./Base";
 import type { Completion } from "./Completion";
 import type { FileChange } from "./FileChange";
+import type { InterdiffInfo } from "./InterdiffInfo";
 import type { LineDelta } from "./LineDelta";
 import type { RestoreFailure } from "./RestoreFailure";
 import type { ReviewFilter } from "./ReviewFilter";
@@ -47,4 +48,8 @@ degraded?: WatchDegraded,
  * Dependency restores that failed so far; the shell says analysis is limited
  * (§7.5). `Event::RestoreFailed` updates it.
  */
-restoreFailures: Array<RestoreFailure>, };
+restoreFailures: Array<RestoreFailure>, 
+/**
+ * Set for the manifest of an interdiff view.
+ */
+interdiff?: InterdiffInfo, };

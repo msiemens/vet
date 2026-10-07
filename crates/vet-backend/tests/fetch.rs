@@ -11,7 +11,7 @@ use std::time::Duration;
 use common::{Client, config, git, init, write};
 use tempfile::TempDir;
 use vet_backend::{Config, Orchestrator, open_store};
-use vet_protocol::{Event, ProjectId, Request, Response, ServerMessage, TaskKind, TaskState};
+use vet_protocol::{Event, ProjectId, Request, Response, ServerMessage, TaskKind, TaskState, View};
 
 /// A project cloned from a bare `origin`, and the working repository that feeds that `origin`.
 struct Remote {
@@ -109,7 +109,14 @@ fn behind(event: &Event) -> Option<Option<u32>> {
 }
 
 async fn base_behind(client: &Client, project: ProjectId) -> Option<u32> {
-    match client.call(Request::Manifest { project }).await.unwrap() {
+    match client
+        .call(Request::Manifest {
+            project,
+            view: View::Changeset,
+        })
+        .await
+        .unwrap()
+    {
         Response::Manifest(m) => m.base.behind,
         other => panic!("{other:?}"),
     }

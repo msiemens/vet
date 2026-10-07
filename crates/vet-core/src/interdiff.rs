@@ -4,9 +4,11 @@
 //! Version A is rebased onto B's base with [`merge3`], and the result is diffed against B. A
 //! change the base move brought is in both and vanishes.
 
-use crate::content::{Hunk, LineRange};
+use crate::content::{FileDiff, Hunk, LineRange, RepoPath, SnapshotId};
 use crate::hunks::{changed_lines, line_hunks};
+use crate::marking::Region;
 use crate::merge::{LineOrigin, merge3};
+use crate::review::{Anchor, ReviewedSpan, Side, SpanState};
 use crate::text::{Text, diff_map};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
@@ -89,6 +91,66 @@ pub fn interdiff(base_a: &[u8], target_a: &[u8], base_b: &[u8], target_b: &[u8])
         old: merged.text,
         hunks,
     }
+}
+
+/// What marking an interdiff hunk seen records in B's changeset (design-changesets §2.4): the
+/// lines of `squash` (B's own diff of the file) the hunk covers, and a `Seen` span for them per
+/// squash hunk they fall in, two-sided where both sides have one range there. `texts` are the
+/// base and target text of the file in the snapshots `snapshots` (B's base and target). `None`
+/// if a text is missing or the squash lacks the file on a side the hunk has lines on.
+pub fn squash_marks(
+    squash: &FileDiff,
+    hunk: &InterdiffHunk,
+    snapshots: (SnapshotId, SnapshotId),
+    texts: (Option<&[u8]>, Option<&[u8]>),
+) -> Option<(Vec<Region>, Vec<ReviewedSpan>)> {
+    let clip = |lines: &[LineRange], within: LineRange| -> Vec<LineRange> {
+        let clipped = lines.iter().map(|r| LineRange {
+            start: r.start.max(within.start),
+            end: r.end.min(within.end),
+        });
+        clipped.filter(|r| !r.is_empty()).collect()
+    };
+    let anchor = |side, file: &Option<RepoPath>, snapshot, text: Option<&[u8]>, range| {
+        Anchor::from_text(side, snapshot, file.clone()?, text?, range)
+    };
+    let (mut regions, mut spans) = (Vec::new(), Vec::new());
+    for h in &squash.hunks {
+        let target = clip(&hunk.target_lines, h.new);
+        let base = clip(&hunk.base_lines, h.old);
+        for &range in &target {
+            regions.push(Region {
+                file: squash.new_path.clone()?,
+                side: Side::Target,
+                range,
+            });
+        }
+        for &range in &base {
+            regions.push(Region {
+                file: squash.old_path.clone()?,
+                side: Side::Base,
+                range,
+            });
+        }
+        let span = |base: Option<Anchor>, target: Option<Anchor>| ReviewedSpan {
+            base,
+            target,
+            state: SpanState::Seen,
+        };
+        let on_target = |range| anchor(Side::Target, &squash.new_path, snapshots.1, texts.1, range);
+        let on_base = |range| anchor(Side::Base, &squash.old_path, snapshots.0, texts.0, range);
+        if let ([t], [b]) = (&target[..], &base[..]) {
+            spans.push(span(Some(on_base(*b)?), Some(on_target(*t)?)));
+        } else {
+            for &range in &base {
+                spans.push(span(Some(on_base(range)?), None));
+            }
+            for &range in &target {
+                spans.push(span(None, Some(on_target(range)?)));
+            }
+        }
+    }
+    Some((regions, spans))
 }
 
 /// Ascending line numbers as the ranges of consecutive ones.

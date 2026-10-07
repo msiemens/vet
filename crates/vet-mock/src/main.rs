@@ -196,6 +196,7 @@ impl Handler for Mock {
                     completion: Mock::completion(&coverage, &self.diffs),
                     files,
                     degraded: None,
+                    interdiff: None,
                 };
                 Ok(Response::Manifest(Box::new(vet_mapping::manifest(PROJECT, &view, &[]))))
             }
@@ -217,11 +218,13 @@ impl Handler for Mock {
                     changes: changes.iter().map(vet_mapping::text_change).collect(),
                 })
             }
+            Request::Versions { .. } => Ok(Response::Versions { versions: Vec::new() }),
             Request::ToggleHunk {
                 project,
                 revision,
                 path,
                 hunk,
+                ..
             } => {
                 current(project, revision)?;
                 let i = position(&path)?;
@@ -234,6 +237,7 @@ impl Handler for Mock {
                 project,
                 revision,
                 path,
+                ..
             } => {
                 current(project, revision)?;
                 let i = position(&path)?;
@@ -254,6 +258,7 @@ impl Handler for Mock {
                 side,
                 path,
                 line,
+                ..
             } => {
                 current(project, revision)?;
                 let f = &self.corpus.files[position(&path)?];

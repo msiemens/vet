@@ -57,6 +57,20 @@
   display: inline-flex;
   color: var(--old-base);
 }
+/* An interdiff's hunk that did not apply to the new base, and one with nothing left to review. */
+.vet-hunk-note {
+  font-size: var(--fs-mono-s);
+}
+.vet-hunk-unapplied .vet-hunk-note,
+.vet-hunk-unapplied .vet-seen-toggle {
+  color: var(--warn);
+}
+.vet-hunk-informational .vet-hunk-note {
+  color: var(--note);
+}
+.vet-hunk-informational .vet-seen-toggle {
+  display: none;
+}
 .vet-icon-btn {
   width: 22px;
   height: 22px;

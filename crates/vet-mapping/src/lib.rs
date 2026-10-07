@@ -4,12 +4,12 @@ pub mod account;
 pub mod progress;
 pub mod semantic;
 
-use vet_app::changeset::{BaseChoice, CommitId, Source};
+use vet_app::changeset::{BaseChoice, CommitId, Source, VersionOrigin};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::session::{
     BaseView, ChangesetList, CommentAt, CommentSpot, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView,
     ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView,
-    RowReview, TargetText, ThreadView, ThreadsView,
+    RowReview, TargetText, ThreadView, ThreadsView, VersionView, View,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
@@ -63,6 +63,35 @@ fn hunk_state(state: HunkState) -> p::HunkState {
         HunkState::Unseen => p::HunkState::Unseen,
         HunkState::Seen => p::HunkState::Seen,
         HunkState::SeenAgainstOldBase => p::HunkState::SeenAgainstOldBase,
+        HunkState::Informational => p::HunkState::Informational,
+        HunkState::Unapplied => p::HunkState::Unapplied,
+    }
+}
+
+pub fn core_view(view: p::View) -> View {
+    match view {
+        p::View::Changeset => View::Changeset,
+        p::View::Interdiff { from, to } => View::Interdiff { from, to },
+    }
+}
+
+pub fn versions(versions: &[VersionView]) -> p::Response {
+    p::Response::Versions {
+        versions: versions
+            .iter()
+            .map(|v| p::VersionInfo {
+                n: v.n,
+                at: unix_secs(v.at),
+                origin: match v.origin {
+                    VersionOrigin::Settled => p::VersionOrigin::Settled,
+                    VersionOrigin::BaseMoved => p::VersionOrigin::BaseMoved,
+                    VersionOrigin::Observed => p::VersionOrigin::Observed,
+                },
+                tip: v.tip.as_ref().map(commit_info),
+                base: v.base.as_ref().map(commit_info),
+                reviewed_here: v.reviewed_here,
+            })
+            .collect(),
     }
 }
 
@@ -299,6 +328,13 @@ pub fn manifest(project: p::ProjectId, m: &ManifestView, restore_failures: &[Res
             Degraded::WatchLimit => p::WatchDegraded::WatchLimit,
         }),
         restore_failures: semantic::restore_failures(restore_failures),
+        interdiff: m.interdiff.as_ref().map(|i| p::InterdiffInfo {
+            from: i.from,
+            to: i.to,
+            rebased: i.rebased,
+            markable: i.markable,
+            limits: i.limits.clone(),
+        }),
     }
 }
 

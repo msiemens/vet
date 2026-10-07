@@ -190,11 +190,19 @@
 .file .cm-editor .vet-strip .vet-old {
   background: var(--old-base);
 }
+.file .cm-editor .vet-strip .vet-info {
+  background: var(--note);
+}
+.file .cm-editor .vet-strip .vet-unapplied {
+  background: var(--warn);
+}
 .file .cm-editor .cm-deletedChunk {
   position: relative;
 }
 .file .cm-editor .cm-deletedChunk.vet-seen::before,
-.file .cm-editor .cm-deletedChunk.vet-old::before {
+.file .cm-editor .cm-deletedChunk.vet-old::before,
+.file .cm-editor .cm-deletedChunk.vet-info::before,
+.file .cm-editor .cm-deletedChunk.vet-unapplied::before {
   content: "";
   position: absolute;
   top: 0;
@@ -208,6 +216,12 @@
 }
 .file .cm-editor .cm-deletedChunk.vet-old::before {
   background: var(--old-base);
+}
+.file .cm-editor .cm-deletedChunk.vet-info::before {
+  background: var(--note);
+}
+.file .cm-editor .cm-deletedChunk.vet-unapplied::before {
+  background: var(--warn);
 }
 
 /* The bar of a collapsed unchanged region: "⋯ N unchanged lines", expands on click. */

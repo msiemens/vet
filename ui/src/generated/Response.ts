@@ -25,12 +25,13 @@ import type { TextContent } from "./TextContent";
 import type { Thread } from "./Thread";
 import type { ThreadTarget } from "./ThreadTarget";
 import type { Unavailable } from "./Unavailable";
+import type { VersionInfo } from "./VersionInfo";
 
 export type Response = { "type": "pong", payload: string, } | { "type": "project", project: number, 
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "changesets", rows: Array<ChangesetRow>, onView: ChangesetKey, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
+root: string, } | { "type": "done" } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "changesets", rows: Array<ChangesetRow>, onView: ChangesetKey, } | { "type": "versions", versions: Array<VersionInfo>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
 /**
  * The changed ranges of the hunks in order, down to the words that differ within a
  * replaced region: line-snapped, one block per hunk (see [`TextChange`]).

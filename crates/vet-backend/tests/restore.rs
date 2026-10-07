@@ -54,7 +54,14 @@ async fn a_failed_restore_limits_the_analysis_and_says_which_project() {
     let project = client.open(repo.path()).await;
     let revision = client.revision(project).await;
     async fn manifest(client: &Client, project: u32) -> vet_protocol::Manifest {
-        match client.call(Request::Manifest { project }).await.unwrap() {
+        match client
+            .call(Request::Manifest {
+                project,
+                view: vet_protocol::View::Changeset,
+            })
+            .await
+            .unwrap()
+        {
             Response::Manifest(m) => *m,
             other => panic!("{other:?}"),
         }

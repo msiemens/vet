@@ -34,7 +34,10 @@ import type { Thread } from "../generated/Thread";
 import type { ThreadStatus } from "../generated/ThreadStatus";
 import type { ThreadTarget } from "../generated/ThreadTarget";
 import type { Unavailable } from "../generated/Unavailable";
+import type { VersionInfo } from "../generated/VersionInfo";
+import type { View } from "../generated/View";
 import { Connection } from "./connection";
+import { CHANGESET } from "./view";
 
 export type FileContents = Extract<Response, { type: "fileContents" }>;
 
@@ -152,12 +155,20 @@ export class Backend {
     return expect(await this.conn.request({ type: "tasks", project: this.pid }), "tasks").tasks;
   }
 
-  async manifest(): Promise<Manifest> {
-    return expect(await this.conn.request({ type: "manifest", project: this.pid }), "manifest");
+  /** The versions of the open review, oldest first; none while browsing. */
+  async versions(): Promise<VersionInfo[]> {
+    return expect(await this.conn.request({ type: "versions", project: this.pid }), "versions").versions;
   }
 
-  fileContents(path: string): Promise<FileContents> {
-    return this.conn.request({ type: "fileContents", project: this.pid, path }).then((r) => expect(r, "fileContents"));
+  /** The changeset, or with another `view` an interdiff of two of its versions. */
+  async manifest(view: View = CHANGESET): Promise<Manifest> {
+    return expect(await this.conn.request({ type: "manifest", project: this.pid, view }), "manifest");
+  }
+
+  fileContents(path: string, view: View = CHANGESET): Promise<FileContents> {
+    return this.conn
+      .request({ type: "fileContents", project: this.pid, view, path })
+      .then((r) => expect(r, "fileContents"));
   }
 
   /** The direct children of a directory of the target snapshot (`""` is the root), as of `revision`. */
@@ -179,24 +190,36 @@ export class Backend {
   }
 
   /** One side of a non-text item's file, as of `revision`. */
-  async itemBlob(revision: number, path: string, kind: NonTextKind, side: Side): Promise<BlobContent> {
-    const request = { type: "itemBlob", project: this.pid, revision, path, kind, side } as const;
+  async itemBlob(
+    revision: number,
+    path: string,
+    kind: NonTextKind,
+    side: Side,
+    view: View = CHANGESET,
+  ): Promise<BlobContent> {
+    const request = { type: "itemBlob", project: this.pid, view, revision, path, kind, side } as const;
     return expect(await this.conn.request(request), "itemBlob").content;
   }
 
-  /** Flips one hunk: seen becomes unseen, anything else seen. `revision` is the manifest's; the backend rejects a stale one. */
-  async toggleHunk(revision: number, path: string, hunk: number): Promise<ReviewUpdate> {
-    return expect(await this.conn.request({ type: "toggleHunk", project: this.pid, revision, path, hunk }), "review");
+  /**
+   * Flips one hunk: seen becomes unseen, anything else seen. `revision` is the manifest's; the backend
+   * rejects a stale one. In an interdiff the answer is in the terms of the interdiff.
+   */
+  async toggleHunk(revision: number, path: string, hunk: number, view: View = CHANGESET): Promise<ReviewUpdate> {
+    const request = { type: "toggleHunk", project: this.pid, view, revision, path, hunk } as const;
+    return expect(await this.conn.request(request), "review");
   }
 
   /** Flips the acknowledgement of one non-text item. */
-  async toggleItem(revision: number, path: string, kind: NonTextKind): Promise<ReviewUpdate> {
-    return expect(await this.conn.request({ type: "toggleItem", project: this.pid, revision, path, kind }), "review");
+  async toggleItem(revision: number, path: string, kind: NonTextKind, view: View = CHANGESET): Promise<ReviewUpdate> {
+    const request = { type: "toggleItem", project: this.pid, view, revision, path, kind } as const;
+    return expect(await this.conn.request(request), "review");
   }
 
   /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
-  async toggleFileSeen(revision: number, path: string): Promise<ReviewUpdate> {
-    return expect(await this.conn.request({ type: "toggleFileSeen", project: this.pid, revision, path }), "review");
+  async toggleFileSeen(revision: number, path: string, view: View = CHANGESET): Promise<ReviewUpdate> {
+    const request = { type: "toggleFileSeen", project: this.pid, view, revision, path } as const;
+    return expect(await this.conn.request(request), "review");
   }
 
   /** The changesets on offer, the working tree first, and the one on view. */
@@ -347,8 +370,9 @@ export class Backend {
   }
 
   /** Every thread with its anchor resolved at `revision`, the current one, in creation order. */
-  async threads(): Promise<{ revision: number; threads: Thread[] }> {
-    const { revision, threads } = expect(await this.conn.request({ type: "threads", project: this.pid }), "threads");
+  async threads(view: View = CHANGESET): Promise<{ revision: number; threads: Thread[] }> {
+    const request = { type: "threads", project: this.pid, view } as const;
+    const { revision, threads } = expect(await this.conn.request(request), "threads");
     return { revision, threads };
   }
 
@@ -356,8 +380,8 @@ export class Backend {
    * The line of the target text that a unified diff shows `line` of `side` of the file at `path`
    * (its old path on the base side) at, as of `revision`, the manifest's (a stale one is rejected).
    */
-  async targetLine(revision: number, side: Side, path: string, line: number): Promise<number> {
-    const request = { type: "targetLine", project: this.pid, revision, side, path, line } as const;
+  async targetLine(revision: number, side: Side, path: string, line: number, view: View = CHANGESET): Promise<number> {
+    const request = { type: "targetLine", project: this.pid, view, revision, side, path, line } as const;
     return expect(await this.conn.request(request), "targetLine").line;
   }
 
@@ -369,15 +393,16 @@ export class Backend {
     revision: number,
     path: string,
     at: CommentAt,
+    view: View = CHANGESET,
   ): Promise<{ target: ThreadTarget; line: number | null }> {
-    const request = { type: "commentTarget", project: this.pid, revision, path, at } as const;
+    const request = { type: "commentTarget", project: this.pid, view, revision, path, at } as const;
     const { target, line } = expect(await this.conn.request(request), "commentTarget");
     return { target, line };
   }
 
   /** `revision` is the manifest's; lines of a range target are in its text. */
-  async createThread(revision: number, target: ThreadTarget, body: string): Promise<Thread> {
-    const request = { type: "createThread", project: this.pid, revision, target, body } as const;
+  async createThread(revision: number, target: ThreadTarget, body: string, view: View = CHANGESET): Promise<Thread> {
+    const request = { type: "createThread", project: this.pid, view, revision, target, body } as const;
     return asThread(expect(await this.conn.request(request), "thread"));
   }
 

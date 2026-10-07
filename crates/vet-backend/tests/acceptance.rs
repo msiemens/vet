@@ -115,7 +115,14 @@ impl Client {
     }
 
     async fn manifest(&self, project: ProjectId) -> Manifest {
-        match self.call(Request::Manifest { project }).await.unwrap() {
+        match self
+            .call(Request::Manifest {
+                project,
+                view: vet_protocol::View::Changeset,
+            })
+            .await
+            .unwrap()
+        {
             Response::Manifest(m) => *m,
             other => panic!("{other:?}"),
         }
@@ -124,6 +131,7 @@ impl Client {
     async fn toggle_hunk(&self, project: ProjectId, path: &str, hunk: u32) {
         let revision = self.manifest(project).await.revision;
         let request = Request::ToggleHunk {
+            view: vet_protocol::View::Changeset,
             project,
             revision,
             path: path.into(),
@@ -135,6 +143,7 @@ impl Client {
     async fn acknowledge(&self, project: ProjectId, path: &str, kind: NonTextKind) {
         let revision = self.manifest(project).await.revision;
         let request = Request::ToggleItem {
+            view: vet_protocol::View::Changeset,
             project,
             revision,
             path: path.into(),
@@ -165,6 +174,7 @@ impl Client {
 
     async fn create(&self, project: ProjectId, revision: u32, target: ThreadTarget) -> Thread {
         let request = Request::CreateThread {
+            view: vet_protocol::View::Changeset,
             project,
             revision,
             target,
@@ -177,7 +187,14 @@ impl Client {
     }
 
     async fn threads(&self, project: ProjectId) -> Vec<Thread> {
-        match self.call(Request::Threads { project }).await.unwrap() {
+        match self
+            .call(Request::Threads {
+                project,
+                view: vet_protocol::View::Changeset,
+            })
+            .await
+            .unwrap()
+        {
             Response::Threads { threads, .. } => threads,
             other => panic!("{other:?}"),
         }
@@ -275,6 +292,7 @@ async fn criterion1_amend_keeps_marks_and_comments() {
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Unseen, HunkState::Seen]);
     let Response::FileContents { base, .. } = client
         .call(Request::FileContents {
+            view: vet_protocol::View::Changeset,
             project,
             path: "a.txt".into(),
         })
@@ -675,7 +693,13 @@ async fn collision_session(repo: &Path) -> (LiveSession<GixRepo, SqliteStore>, S
         .await
         .unwrap();
     session
-        .create_thread(0, vet_app::session::NewThread::Changeset, "start".into(), 0)
+        .create_thread(
+            0,
+            vet_app::session::View::Changeset,
+            vet_app::session::NewThread::Changeset,
+            "start".into(),
+            0,
+        )
         .await
         .unwrap();
     (session, store, data)
@@ -1150,7 +1174,7 @@ impl Live {
     }
 
     async fn hunks(&self, path: &str) -> Vec<CoreHunk> {
-        let m = self.session.manifest().await.unwrap();
+        let m = self.session.manifest(vet_app::session::View::Changeset).await.unwrap();
         m.files
             .iter()
             .find(|f| f.path.0 == path.as_bytes())
@@ -1161,7 +1185,7 @@ impl Live {
     }
 
     async fn files(&self) -> Vec<(String, AppFileStatus)> {
-        let m = self.session.manifest().await.unwrap();
+        let m = self.session.manifest(vet_app::session::View::Changeset).await.unwrap();
         let mut files: Vec<_> = m
             .files
             .iter()
@@ -1179,7 +1203,10 @@ async fn criterion4_dropped_events_are_caught_up_by_the_next_rescan() {
         &[("a.txt", &text(40, &[5, 30]))],
     )
     .await;
-    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
+    live.session
+        .toggle_hunk(0, vet_app::session::View::Changeset, "a.txt", 0)
+        .await
+        .unwrap();
     assert_eq!(live.hunks("a.txt").await, [CoreHunk::Seen, CoreHunk::Unseen]);
 
     // The agent rewrites the marked line, adds a file and deletes one; the
@@ -1215,7 +1242,10 @@ async fn criterion4_an_incomplete_event_stream_still_yields_the_whole_tree() {
         &[("a.txt", &text(10, &[1]))],
     )
     .await;
-    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
+    live.session
+        .toggle_hunk(0, vet_app::session::View::Changeset, "a.txt", 0)
+        .await
+        .unwrap();
 
     write(live.path(), "a.txt", &text(10, &[1, 6]));
     write(live.path(), "b.txt", &text(10, &[2]));
@@ -1230,8 +1260,14 @@ async fn criterion4_an_incomplete_event_stream_still_yields_the_whole_tree() {
 #[tokio::test]
 async fn criterion4_a_killed_and_restarted_watcher_catches_up_in_one_rescan() {
     let mut live = Live::open(&[("a.txt", &text(40, &[]))], &[("a.txt", &text(40, &[5, 30]))]).await;
-    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
-    live.session.toggle_hunk(0, "a.txt", 1).await.unwrap();
+    live.session
+        .toggle_hunk(0, vet_app::session::View::Changeset, "a.txt", 0)
+        .await
+        .unwrap();
+    live.session
+        .toggle_hunk(0, vet_app::session::View::Changeset, "a.txt", 1)
+        .await
+        .unwrap();
 
     live.kill_watcher().await;
     write(live.path(), "a.txt", &text(40, &[5]));
@@ -1264,7 +1300,10 @@ async fn criterion4_a_killed_and_restarted_watcher_catches_up_in_one_rescan() {
 #[tokio::test]
 async fn criterion4_an_overflow_in_the_middle_of_a_write_burst_settles_on_the_final_tree() {
     let mut live = Live::open(&[("a.txt", &text(40, &[]))], &[("a.txt", &text(40, &[5]))]).await;
-    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
+    live.session
+        .toggle_hunk(0, vet_app::session::View::Changeset, "a.txt", 0)
+        .await
+        .unwrap();
 
     // An edit stream with an overflow in the middle and a dropped tail.
     let path = vet_core::content::RepoPath(b"a.txt".to_vec());
@@ -1279,7 +1318,11 @@ async fn criterion4_an_overflow_in_the_middle_of_a_write_burst_settles_on_the_fi
     let last = live.settle_all().await.expect("something settled");
     assert!(last >= 1);
     live.assert_correct().await;
-    let text_now = live.session.file_text("a.txt").await.unwrap();
+    let text_now = live
+        .session
+        .file_text(vet_app::session::View::Changeset, "a.txt")
+        .await
+        .unwrap();
     assert_eq!(text_now.target.as_deref(), Some(text(40, &[5, 10, 20, 30]).as_str()));
     assert_eq!(
         live.hunks("a.txt").await,
@@ -1290,15 +1333,25 @@ async fn criterion4_an_overflow_in_the_middle_of_a_write_burst_settles_on_the_fi
 #[tokio::test]
 async fn criterion4_a_watch_limit_fallback_rescans_and_is_reported() {
     let mut live = Live::open(&[("a.txt", &text(10, &[]))], &[("a.txt", &text(10, &[1]))]).await;
-    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
-    assert_eq!(live.session.manifest().await.unwrap().degraded, None);
+    live.session
+        .toggle_hunk(0, vet_app::session::View::Changeset, "a.txt", 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        live.session
+            .manifest(vet_app::session::View::Changeset)
+            .await
+            .unwrap()
+            .degraded,
+        None
+    );
 
     write(live.path(), "a.txt", &text(10, &[1, 7]));
     live.send(WatchEvent::Degraded(Degraded::WatchLimit));
     assert_eq!(live.revision().await, 1);
 
     live.assert_correct().await;
-    let m = live.session.manifest().await.unwrap();
+    let m = live.session.manifest(vet_app::session::View::Changeset).await.unwrap();
     assert_eq!(m.degraded, Some(Degraded::WatchLimit));
     assert_eq!(live.hunks("a.txt").await, [CoreHunk::Seen, CoreHunk::Unseen]);
 }
@@ -1308,7 +1361,10 @@ async fn criterion4_a_git_state_change_without_worktree_events_is_reconciled() {
     // `git commit` moves HEAD and the index but touches no worktree file; the
     // snapshot must stay the same and the review state must not move.
     let mut live = Live::open(&[("a.txt", &text(10, &[]))], &[("a.txt", &text(10, &[1]))]).await;
-    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
+    live.session
+        .toggle_hunk(0, vet_app::session::View::Changeset, "a.txt", 0)
+        .await
+        .unwrap();
     git(live.path(), &["commit", "-q", "-a", "-m", "agent commits"]);
 
     live.send(WatchEvent::MustRescan);

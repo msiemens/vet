@@ -79,7 +79,14 @@ impl Client {
     }
 
     async fn manifest(&self, project: ProjectId) -> Manifest {
-        match self.call(Request::Manifest { project }).await.unwrap() {
+        match self
+            .call(Request::Manifest {
+                project,
+                view: vet_protocol::View::Changeset,
+            })
+            .await
+            .unwrap()
+        {
             Response::Manifest(m) => *m,
             other => panic!("{other:?}"),
         }
@@ -87,6 +94,7 @@ impl Client {
 
     async fn toggle_hunk(&self, project: ProjectId, revision: u32, hunk: u32) -> ReviewUpdate {
         let request = Request::ToggleHunk {
+            view: vet_protocol::View::Changeset,
             project,
             revision,
             path: "a.txt".into(),
@@ -215,7 +223,14 @@ impl Client {
     }
 
     async fn threads(&self, project: ProjectId) -> (u32, Vec<Thread>) {
-        match self.call(Request::Threads { project }).await.unwrap() {
+        match self
+            .call(Request::Threads {
+                project,
+                view: vet_protocol::View::Changeset,
+            })
+            .await
+            .unwrap()
+        {
             Response::Threads { revision, threads } => (revision, threads),
             other => panic!("{other:?}"),
         }
@@ -232,6 +247,7 @@ async fn a_base_line_is_placed_in_the_target_text_where_a_unified_diff_shows_it(
     let project = open(&client, fx.repo.path()).await;
     let place = |side, line, revision| {
         client.call(Request::TargetLine {
+            view: vet_protocol::View::Changeset,
             project,
             revision,
             side,
@@ -258,6 +274,7 @@ async fn threads_follow_edits_and_notify_other_connections() {
 
     let created = one
         .thread(Request::CreateThread {
+            view: vet_protocol::View::Changeset,
             project,
             revision: 0,
             target: ThreadTarget::Range {
@@ -391,6 +408,7 @@ async fn mark_edit_settle_remap_and_revert() {
 
     // A request made against revision 0 is rejected, and changes nothing.
     let stale = Request::ToggleHunk {
+        view: vet_protocol::View::Changeset,
         project,
         revision: 0,
         path: "a.txt".into(),
@@ -425,6 +443,7 @@ async fn mark_edit_settle_remap_and_revert() {
         ..
     } = client
         .call(Request::FileContents {
+            view: vet_protocol::View::Changeset,
             project,
             path: "a.txt".into(),
         })
@@ -444,7 +463,15 @@ async fn mark_edit_settle_remap_and_revert() {
     assert_eq!(lines(&update.changeset), (2, 0));
 
     client.call(Request::CloseProject { project }).await.unwrap();
-    assert!(client.call(Request::Manifest { project }).await.is_err());
+    assert!(
+        client
+            .call(Request::Manifest {
+                project,
+                view: vet_protocol::View::Changeset,
+            })
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -494,6 +521,7 @@ async fn non_text_changes_are_acknowledged_and_the_other_connection_is_told() {
     assert_eq!((m.completion.items, m.completion.acknowledged_items), (1, 0));
 
     let request = Request::ToggleItem {
+        view: vet_protocol::View::Changeset,
         project,
         revision: 0,
         path: "run.sh".into(),
@@ -551,6 +579,7 @@ async fn empty_files_are_non_text_items_and_can_be_acknowledged() {
     assert_eq!((m.completion.items, m.completion.acknowledged_items), (2, 0));
 
     let request = Request::ToggleItem {
+        view: vet_protocol::View::Changeset,
         project,
         revision: 0,
         path: "new.txt".into(),
@@ -578,6 +607,7 @@ async fn binary_items_serve_the_bytes_of_either_side() {
     let project = open(&client, fx.repo.path()).await;
     let blob = |revision, path: &str, side| {
         let request = Request::ItemBlob {
+            view: vet_protocol::View::Changeset,
             project,
             revision,
             path: path.into(),
@@ -777,6 +807,7 @@ async fn both_sides_of_a_changed_file_come_with_highlights() {
     let project = open(&client, fx.repo.path()).await;
     let contents = |path: &str| {
         let call = client.call(Request::FileContents {
+            view: vet_protocol::View::Changeset,
             project,
             path: path.into(),
         });
@@ -825,6 +856,7 @@ async fn reopening_a_repository_resumes_its_review_across_a_restart() {
     first.toggle_hunk(project, 0, 0).await;
     first
         .thread(Request::CreateThread {
+            view: vet_protocol::View::Changeset,
             project,
             revision: 0,
             target: ThreadTarget::Range {
@@ -889,7 +921,15 @@ async fn an_orphaned_project_is_released_but_stays_open_for_the_next_open() {
     drop(second);
     tokio::time::sleep(Duration::from_millis(1200)).await;
     let third = Client::new(&fx.handler);
-    assert!(third.call(Request::Manifest { project }).await.is_err());
+    assert!(
+        third
+            .call(Request::Manifest {
+                project,
+                view: vet_protocol::View::Changeset,
+            })
+            .await
+            .is_err()
+    );
     // Not closed: its refs stay, and opening the repository again resumes it.
     assert_eq!(project_refs(fx.repo.path()), FIRST_VERSION_REFS);
     let resumed = open(&third, fx.repo.path()).await;
@@ -1041,6 +1081,7 @@ async fn the_base_can_be_changed_and_review_state_follows() {
         revision, base: shown, ..
     } = client
         .call(Request::FileContents {
+            view: vet_protocol::View::Changeset,
             project,
             path: "a.txt".into(),
         })
@@ -1090,6 +1131,31 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     assert_eq!(err, "no common ancestor with unrelated");
     assert_eq!(client.manifest(project).await.revision, 4);
     assert!(client.no_event());
+}
+
+#[tokio::test]
+async fn versions_are_listed_once_a_review_started_and_an_interdiff_needs_two_of_them() {
+    let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &text(30, &[3]))]).await;
+    let one = Client::new(&fx.handler);
+    let project = open(&one, fx.repo.path()).await;
+    async fn versions(client: &Client, project: ProjectId) -> Vec<vet_protocol::VersionInfo> {
+        match client.call(Request::Versions { project }).await.unwrap() {
+            Response::Versions { versions } => versions,
+            other => panic!("{other:?}"),
+        }
+    }
+    assert!(versions(&one, project).await.is_empty(), "browsing records no versions");
+
+    one.toggle_hunk(project, 0, 0).await;
+
+    let listed = versions(&one, project).await;
+    assert_eq!(listed.len(), 1);
+    assert_eq!((listed[0].n, listed[0].reviewed_here), (1, true));
+    let interdiff = Request::Manifest {
+        project,
+        view: vet_protocol::View::Interdiff { from: 1, to: 2 },
+    };
+    assert_eq!(one.call(interdiff).await.unwrap_err(), "no such version 2");
 }
 
 #[tokio::test]

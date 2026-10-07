@@ -45,6 +45,7 @@
 mod blobs;
 mod browse;
 mod content;
+mod interdiff;
 mod listing;
 mod manifest;
 mod marks;
@@ -52,6 +53,7 @@ mod remap;
 mod source;
 mod state;
 mod threads;
+mod versions;
 mod views;
 
 use std::collections::{BTreeSet, HashMap};
@@ -67,13 +69,15 @@ use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
 pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};
+pub use self::interdiff::View;
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
 use self::manifest::changeset_completion;
 use self::source::Stored;
 use self::state::{OpenReview, State, acknowledged, check_revision, lifecycle_of};
 pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsView};
+pub use self::versions::VersionView;
 pub use self::views::{
-    BaseView, EntryInfo, FileStatus, FileView, ItemView, Lifecycle, ManifestView, ModeChange, Outcome,
+    BaseView, EntryInfo, FileStatus, FileView, InterdiffView, ItemView, Lifecycle, ManifestView, ModeChange, Outcome,
     ReviewUpdateView, ReviewView, SemanticSides, TargetView,
 };
 use crate::acquisition::{Acquisition, BlobError};

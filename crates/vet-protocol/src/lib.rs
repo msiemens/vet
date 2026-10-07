@@ -17,6 +17,7 @@ mod semantic;
 mod server;
 mod text;
 mod thread;
+mod version;
 
 pub use account::*;
 pub use changeset::*;
@@ -32,3 +33,4 @@ pub use semantic::*;
 pub use server::*;
 pub use text::*;
 pub use thread::*;
+pub use version::*;

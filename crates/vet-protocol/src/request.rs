@@ -5,7 +5,7 @@ use ts_rs::TS;
 
 use crate::{
     BaseChoice, ChangesetKey, CommentAt, NonTextKind, ProjectId, ReviewFilter, Secret, Side, SymbolId, ThreadStatus,
-    ThreadTarget,
+    ThreadTarget, View,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -93,21 +93,33 @@ pub enum Request {
     Tasks {
         project: ProjectId,
     },
-    /// The changeset as it is now, with review state. Waits for the project's
-    /// first scan if it has not finished.
+    /// The versions of the open review, oldest first; none while browsing, as versions are
+    /// recorded only while a review is open. Answers with `Response::Versions`.
+    Versions {
+        project: ProjectId,
+    },
+    /// The changeset as it is now, with review state, or an interdiff of two of its versions
+    /// (see [`View`]). Waits for the project's first scan if it has not finished.
     Manifest {
         project: ProjectId,
+        view: View,
     },
     /// Both sides of one text file at the current revision.
     FileContents {
         project: ProjectId,
+        view: View,
         path: String,
     },
     /// Flips one hunk (an index into the manifest of `revision`): seen becomes unseen, an
     /// unseen one or one seen against an old base becomes seen. Fails if `revision` is no
-    /// longer current. Answers with `Response::Review`.
+    /// longer current. In an interdiff the hunk is marked in the changeset of the newer
+    /// version (which must be the latest), and a hunk with nothing left to review cannot be
+    /// marked. Answers with `Response::Review`, in the terms of `view`; a mark in an
+    /// interdiff also reaches the other subscribers and the requester's own changeset as
+    /// `ReviewChanged` of the changeset file.
     ToggleHunk {
         project: ProjectId,
+        view: View,
         revision: u32,
         path: String,
         hunk: u32,
@@ -116,6 +128,7 @@ pub enum Request {
     /// current. Answers with `Response::Review`.
     ToggleItem {
         project: ProjectId,
+        view: View,
         revision: u32,
         path: String,
         kind: NonTextKind,
@@ -125,6 +138,7 @@ pub enum Request {
     /// longer current. Answers with `Response::Review`.
     ToggleFileSeen {
         project: ProjectId,
+        view: View,
         revision: u32,
         path: String,
     },
@@ -284,6 +298,7 @@ pub enum Request {
     /// `Response::ItemBlob`.
     ItemBlob {
         project: ProjectId,
+        view: View,
         revision: u32,
         path: String,
         kind: NonTextKind,
@@ -292,8 +307,11 @@ pub enum Request {
     /// Every thread with its anchor resolved at the current revision. Resolution
     /// is lazy: a settled snapshot only invalidates it, and this request computes
     /// it. Kept apart from `Manifest` so the manifest does not wait for it.
+    /// An interdiff shows the range threads on the new side of its newer version, and none if
+    /// that is not the latest version.
     Threads {
         project: ProjectId,
+        view: View,
     },
     /// The line of the target text that a unified diff shows what is on `line` of one side of
     /// the file at `path` (its old path on the base side) at: the same rule as
@@ -301,6 +319,7 @@ pub enum Request {
     /// reveal. Fails if `revision` is no longer current. Answers with `Response::TargetLine`.
     TargetLine {
         project: ProjectId,
+        view: View,
         revision: u32,
         side: Side,
         path: String,
@@ -314,15 +333,18 @@ pub enum Request {
     /// `Response::CommentTarget`, whose target goes to `CreateThread`.
     CommentTarget {
         project: ProjectId,
+        view: View,
         revision: u32,
         path: String,
         at: CommentAt,
     },
     /// Opens a thread with its first message. The lines of a range target are in
     /// the text of `revision`. Fails if `revision` is no longer current, or if the
-    /// target does not exist at it. Answers with `Response::Thread`.
+    /// target does not exist at it. In an interdiff a comment goes on the new side of the
+    /// latest version only; anything else fails. Answers with `Response::Thread`.
     CreateThread {
         project: ProjectId,
+        view: View,
         revision: u32,
         target: ThreadTarget,
         body: String,

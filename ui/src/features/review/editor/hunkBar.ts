@@ -23,6 +23,14 @@ const LABEL: Record<HunkState, string> = {
   unseen: "Mark hunk seen",
   seen: "Mark hunk unseen",
   seenAgainstOldBase: "Re-confirm seen",
+  informational: "Nothing left to review",
+  unapplied: "Mark hunk seen",
+};
+
+/** What an interdiff's hunk says about itself beyond its state. */
+const NOTE: Partial<Record<HunkState, string>> = {
+  informational: "nothing left to review",
+  unapplied: "did not apply to the new base",
 };
 
 export class HunkBar extends WidgetType {
@@ -69,6 +77,13 @@ export class HunkBar extends WidgetType {
       old.title = "Base changed since you marked this seen";
       old.innerHTML = iconSvg("reconfirm");
       bar.append(old);
+    }
+    const note = NOTE[this.state];
+    if (note) {
+      const el = document.createElement("span");
+      el.className = "vet-hunk-note";
+      el.textContent = note;
+      bar.append(el);
     }
     const spacer = document.createElement("span");
     spacer.style.flex = "1";

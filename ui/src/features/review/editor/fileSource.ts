@@ -6,9 +6,11 @@ import type { FileChange } from "../../../generated/FileChange";
 import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { Side } from "../../../generated/Side";
 import type { TextContent } from "../../../generated/TextContent";
+import type { View } from "../../../generated/View";
 import { NO_HIGHLIGHTS, decodeHighlights } from "../../../lib/highlights.ts";
 import type { Backend } from "../../../state/backend";
 import { atRevision } from "../../../state/revision.ts";
+import { CHANGESET } from "../../../state/view.ts";
 import type { Loaded } from "./mount";
 
 /** The reply belonged to another revision than the view that asked. */
@@ -29,7 +31,8 @@ export interface FileSource {
   targetLine(side: Side, path: string, line: number): Promise<number>;
 }
 
-export function fileSource(backend: Backend, revision: number): FileSource {
+/** The source of the files of `view` (the changeset, or an interdiff) at `revision`. */
+export function fileSource(backend: Backend, revision: number, view: View = CHANGESET): FileSource {
   return {
     async contents(file) {
       // A file without text lines (binary, content unavailable) has nothing to fetch; the backend refuses it.
@@ -42,7 +45,7 @@ export function fileSource(backend: Backend, revision: number): FileSource {
           baseHighlights: NO_HIGHLIGHTS,
           targetHighlights: NO_HIGHLIGHTS,
         };
-      const reply = atRevision(revision, await backend.fileContents(file.path));
+      const reply = atRevision(revision, await backend.fileContents(file.path, view));
       if (!reply) throw new StaleRevision();
       return {
         base: reply.base ?? "",
@@ -58,7 +61,7 @@ export function fileSource(backend: Backend, revision: number): FileSource {
       if (!reply) throw new StaleRevision();
       return reply.content;
     },
-    itemBlob: (path, kind, side) => backend.itemBlob(revision, path, kind, side),
-    targetLine: (side, path, line) => backend.targetLine(revision, side, path, line),
+    itemBlob: (path, kind, side) => backend.itemBlob(revision, path, kind, side, view),
+    targetLine: (side, path, line) => backend.targetLine(revision, side, path, line, view),
   };
 }

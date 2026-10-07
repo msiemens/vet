@@ -31,8 +31,20 @@ async fn opening_answers_before_the_first_scan_and_the_first_request_that_needs_
         panic!("the tasks of a project that has not scanned are listed");
     };
 
-    let first = client.call(Request::Manifest { project }).await.unwrap_err();
-    let again = client.call(Request::Manifest { project }).await.unwrap_err();
+    let first = client
+        .call(Request::Manifest {
+            project,
+            view: vet_protocol::View::Changeset,
+        })
+        .await
+        .unwrap_err();
+    let again = client
+        .call(Request::Manifest {
+            project,
+            view: vet_protocol::View::Changeset,
+        })
+        .await
+        .unwrap_err();
     assert!(!first.is_empty());
     assert_eq!(first, again);
 }

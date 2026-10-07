@@ -177,6 +177,12 @@ pub enum HunkState {
     Seen,
     /// Target lines unchanged since reviewed, base lines changed. Counts as unseen (§5.2).
     SeenAgainstOldBase,
+    /// Interdiff only: nothing is left to review in the hunk (the author took a change back to
+    /// the base content). It cannot be marked and is not counted.
+    Informational,
+    /// Interdiff only: unseen, and the old version's patch did not apply to the new base here,
+    /// so the old side shows its lines unrebased.
+    Unapplied,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

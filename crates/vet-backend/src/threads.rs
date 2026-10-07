@@ -9,20 +9,24 @@ use crate::events::{Connection, thread_changed, threads_changed};
 use crate::{Orchestrator, message};
 
 impl Orchestrator {
-    pub(crate) async fn threads(&self, project: ProjectId) -> Result<Response, String> {
-        let threads = self.ready(project).await?.session.threads().await.map_err(message)?;
+    pub(crate) async fn threads(&self, project: ProjectId, view: vet_protocol::View) -> Result<Response, String> {
+        let threads = (self.ready(project).await?.session)
+            .threads(mapping::core_view(view))
+            .await
+            .map_err(message)?;
         Ok(mapping::threads(&threads))
     }
 
     pub(crate) async fn comment_target(
         &self,
         project: ProjectId,
+        view: vet_protocol::View,
         revision: u32,
         path: &str,
         at: vet_protocol::CommentAt,
     ) -> Result<Response, String> {
         let spot = (self.ready(project).await?.session)
-            .comment_target(revision, path, mapping::core_comment_at(at))
+            .comment_target(revision, mapping::core_view(view), path, mapping::core_comment_at(at))
             .await
             .map_err(message)?;
         Ok(mapping::comment_spot(&spot))
@@ -32,6 +36,7 @@ impl Orchestrator {
         &self,
         project: ProjectId,
         from: &Connection,
+        view: vet_protocol::View,
         revision: u32,
         target: vet_protocol::ThreadTarget,
         body: String,
@@ -39,7 +44,13 @@ impl Orchestrator {
         let open = self.ready(project).await?;
         let thread = open
             .session
-            .create_thread(revision, mapping::new_thread(target), body, unix_now())
+            .create_thread(
+                revision,
+                mapping::core_view(view),
+                mapping::new_thread(target),
+                body,
+                unix_now(),
+            )
             .await
             .map_err(message)?;
         crate::events::announce_start(&open, thread.started);

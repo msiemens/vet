@@ -7,6 +7,7 @@ use crate::{
     Account, Base, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow, CommitInfo, Diagnostic,
     DirEntry, Highlights, Impact, Locations, Manifest, ProjectId, Reachability, RecentProject, RemovalImpact,
     ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable,
+    VersionInfo,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -43,6 +44,10 @@ pub enum Response {
     Changesets {
         rows: Vec<ChangesetRow>,
         on_view: ChangesetKey,
+    },
+    /// The versions of the open review, oldest first.
+    Versions {
+        versions: Vec<VersionInfo>,
     },
     /// Boxed: it would make every response as large as the manifest.
     Manifest(Box<Manifest>),

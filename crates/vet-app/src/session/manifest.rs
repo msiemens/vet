@@ -8,88 +8,114 @@ use vet_core::completion::{Completion, Coverage};
 use vet_core::content::{BlobId, FileDiff, LineDelta, NonTextChange, RepoPath, SnapshotDiff};
 use vet_core::filter::ReviewFilter;
 
-use super::state::{State, acknowledged, find_diff, lifecycle_of, shown_items};
+use super::interdiff::View;
+use super::state::{Changes, State, acknowledged, find_diff, lifecycle_of, shown_items};
 use super::views::{FileStatus, FileView, ManifestView, ReviewUpdateView, ReviewView, TargetView};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::Source;
 use crate::editor::line_count;
-use crate::ports::{GitRepo, LiveStore};
+use crate::ports::{BranchInfo, GitRepo, LiveStore};
 
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
-    pub async fn manifest(&self) -> Result<ManifestView> {
+    pub async fn manifest(&self, view: View) -> Result<ManifestView> {
         let mut st = self.state.lock().await;
-        self.ensure_changes(&mut st).await?;
+        self.ensure_view(&mut st, view).await?;
+        if let View::Interdiff { from, to } = view {
+            return self.interdiff_manifest(&st, from, to).await;
+        }
         let branches = self.acquisition.git.branches().await?;
         let base = self.base_view(&st, &branches).await?;
         let changes = st.changes.as_ref().expect("computed");
         let cov = Coverage::new(&changes.flat);
         let acked = acknowledged(&st, &changes.diff);
-        let compiled = st.filter.compile();
-
-        // Files by path, with their text diff and non-text items.
-        type Parts<'a> = (Option<&'a FileDiff>, Vec<usize>);
-        let mut by_path: BTreeMap<&RepoPath, Parts> = BTreeMap::new();
-        for d in &changes.diff.files {
-            by_path.entry(d.path()).or_default().0 = Some(d);
-        }
-        for (i, n) in changes.diff.non_text.iter().enumerate() {
-            by_path.entry(&n.path).or_default().1.push(i);
-        }
-
-        // A missing side of a text diff is an empty text.
-        let lines = |diff: Option<&FileDiff>, blob: Option<BlobId>| {
-            diff.map_or(0, |_| {
-                blob.and_then(|b| changes.blobs.get(&b)).map_or(1, |t| line_count(t))
-            })
-        };
-        let mut files = Vec::new();
-        for (path, (diff, indices)) in by_path {
-            let indices: Vec<usize> = indices
-                .into_iter()
-                .filter(|&i| compiled.shows(&changes.diff.non_text[i]))
-                .collect();
-            let items: Vec<NonTextChange> = indices.iter().map(|&i| changes.diff.non_text[i].clone()).collect();
-            if !compiled.passes(path) || (diff.is_none() && items.is_empty()) {
-                continue;
-            }
-            let hunks = diff.map(|d| d.hunks.clone()).unwrap_or_default();
-            files.push(FileView {
-                path: path.clone(),
-                old_path: old_path_of(path, diff, &items),
-                status: status_of(diff, &items),
-                base_lines: lines(diff, diff.and_then(|d| d.old_blob)),
-                target_lines: lines(diff, diff.and_then(|d| d.new_blob)),
-                delta: LineDelta::of(&hunks),
-                hunks,
-                review: review_of(&cov, diff, &items, &acked),
-                completion: file_completion(&cov, &st.filter, diff, &items, &acked),
-                non_text: indices.iter().map(|&i| changes.items[i].clone()).collect(),
-            });
-        }
+        let files = file_views(changes, &st.filter, |diff, items| {
+            (
+                review_of(&cov, diff, items, &acked),
+                file_completion(&cov, &st.filter, diff, items, &acked),
+            )
+        });
         Ok(ManifestView {
             revision: st.revision,
             name: self.name.clone(),
             lifecycle: lifecycle_of(&st),
             base,
-            target: match &st.source {
-                Source::Branch { name } => TargetView {
-                    source: st.source.clone(),
-                    name: name.clone(),
-                    branch: Some(name.clone()),
-                },
-                _ => TargetView {
-                    source: st.source.clone(),
-                    name: "Working tree".into(),
-                    branch: branches.iter().find(|b| b.current).map(|b| b.name.clone()),
-                },
-            },
+            target: target_view(&st.source, &branches),
             filter: st.filter.clone(),
             completion: changeset_completion(&cov, &st.filter, &changes.diff, &acked),
             delta: files.iter().map(|f| f.delta).sum(),
             files,
             degraded: self.degraded_for(&st.source),
+            interdiff: None,
         })
     }
+}
+
+/// What the changeset of `source` is the target of; `branches` are the repository's.
+pub(super) fn target_view(source: &Source, branches: &[BranchInfo]) -> TargetView {
+    match source {
+        Source::Branch { name } => TargetView {
+            source: source.clone(),
+            name: name.clone(),
+            branch: Some(name.clone()),
+        },
+        _ => TargetView {
+            source: source.clone(),
+            name: "Working tree".into(),
+            branch: branches.iter().find(|b| b.current).map(|b| b.name.clone()),
+        },
+    }
+}
+
+/// The files of `changes` the filter shows. `state` gives a file's review state and completion
+/// from its text diff and its shown non-text changes.
+pub(super) fn file_views(
+    changes: &Changes,
+    filter: &ReviewFilter,
+    state: impl Fn(Option<&FileDiff>, &[NonTextChange]) -> (ReviewView, Completion),
+) -> Vec<FileView> {
+    let compiled = filter.compile();
+    // Files by path, with their text diff and non-text items.
+    type Parts<'a> = (Option<&'a FileDiff>, Vec<usize>);
+    let mut by_path: BTreeMap<&RepoPath, Parts> = BTreeMap::new();
+    for d in &changes.diff.files {
+        by_path.entry(d.path()).or_default().0 = Some(d);
+    }
+    for (i, n) in changes.diff.non_text.iter().enumerate() {
+        by_path.entry(&n.path).or_default().1.push(i);
+    }
+
+    // A missing side of a text diff is an empty text.
+    let lines = |diff: Option<&FileDiff>, blob: Option<BlobId>| {
+        diff.map_or(0, |_| {
+            blob.and_then(|b| changes.blobs.get(&b)).map_or(1, |t| line_count(t))
+        })
+    };
+    let mut files = Vec::new();
+    for (path, (diff, indices)) in by_path {
+        let indices: Vec<usize> = indices
+            .into_iter()
+            .filter(|&i| compiled.shows(&changes.diff.non_text[i]))
+            .collect();
+        let items: Vec<NonTextChange> = indices.iter().map(|&i| changes.diff.non_text[i].clone()).collect();
+        if !compiled.passes(path) || (diff.is_none() && items.is_empty()) {
+            continue;
+        }
+        let hunks = diff.map(|d| d.hunks.clone()).unwrap_or_default();
+        let (review, completion) = state(diff, &items);
+        files.push(FileView {
+            path: path.clone(),
+            old_path: old_path_of(path, diff, &items),
+            status: status_of(diff, &items),
+            base_lines: lines(diff, diff.and_then(|d| d.old_blob)),
+            target_lines: lines(diff, diff.and_then(|d| d.new_blob)),
+            delta: LineDelta::of(&hunks),
+            hunks,
+            review,
+            completion,
+            non_text: indices.iter().map(|&i| changes.items[i].clone()).collect(),
+        });
+    }
+    files
 }
 
 /// The base path of a file that is at `path` now and was somewhere else.

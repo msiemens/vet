@@ -163,7 +163,7 @@ impl FakeGit {
         self.branch("feature", "tip1", files, &["m1"]);
     }
 
-    fn add_commit(&self, spec: &str, id: &str, files: &[(&str, &str)]) {
+    pub(crate) fn add_commit(&self, spec: &str, id: &str, files: &[(&str, &str)]) {
         let snapshot = self.snapshot(files);
         self.commits
             .lock()
@@ -624,7 +624,7 @@ fn numbered(n: usize, edited: &[usize]) -> String {
 
 pub(crate) struct Fixture {
     pub(crate) git: FakeGit,
-    store: MemStore,
+    pub(crate) store: MemStore,
     pub(crate) session: LiveSession<FakeGit, MemStore>,
 }
 
@@ -642,18 +642,18 @@ impl Fixture {
     }
 
     /// Like `open`, with the review started.
-    async fn reviewing(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> Self {
+    pub(crate) async fn reviewing(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> Self {
         let fx = Self::open(base, dirty).await;
         fx.begin().await;
         fx
     }
 
-    async fn begin(&self) {
+    pub(crate) async fn begin(&self) {
         self.session.begin(&mut *self.session.state.lock().await).await.unwrap();
     }
 
     /// The tree settles at `files`.
-    async fn settle(&self, files: &[(&str, &str)]) -> u32 {
+    pub(crate) async fn settle(&self, files: &[(&str, &str)]) -> u32 {
         let snapshot = self.git.snapshot(files);
         let scan = Scan {
             snapshot,
@@ -663,7 +663,7 @@ impl Fixture {
     }
 
     async fn hunks(&self, file: &str) -> Vec<HunkState> {
-        let manifest = self.session.manifest().await.unwrap();
+        let manifest = self.session.manifest(View::Changeset).await.unwrap();
         let f = manifest.files.iter().find(|f| f.path == path(file)).unwrap();
         f.review.hunks.clone()
     }
@@ -675,7 +675,7 @@ async fn browsing_keeps_nothing_and_settling_does_not_start_a_review() {
     assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
 
     fx.settle(&[("a.txt", "three\n")]).await;
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
 
     assert_eq!((m.revision, m.lifecycle), (1, Lifecycle::Browsing));
     assert_eq!(m.files.len(), 1);
@@ -707,7 +707,7 @@ async fn the_first_mark_starts_the_review_at_version_1_and_retains_dirty_content
     );
 
     assert!(matches!(
-        fx.session.manifest().await.unwrap().lifecycle,
+        fx.session.manifest(View::Changeset).await.unwrap().lifecycle,
         Lifecycle::Open { version: 1, .. }
     ));
     let started = fx.session.target_snapshot().await.id;
@@ -760,7 +760,7 @@ async fn acknowledging_and_a_new_thread_also_start_the_review() {
 
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
     fx.session
-        .create_thread(0, NewThread::Changeset, "why".into(), 1)
+        .create_thread(0, View::Changeset, NewThread::Changeset, "why".into(), 1)
         .await
         .unwrap();
     assert!(matches!(
@@ -893,7 +893,7 @@ async fn finishing_returns_to_browsing_and_a_later_action_starts_a_new_review() 
         let mem = fx.store.0.lock().unwrap();
         assert_eq!((mem.closed, mem.complete), (true, Some(false)));
     }
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!((m.revision, m.lifecycle), (2, Lifecycle::Browsing));
     assert_eq!(m.files[0].review.hunks, [HunkState::Unseen]);
     assert_eq!(m.completion.seen_lines, 0);
@@ -928,7 +928,7 @@ async fn manifest_lists_changes_with_unseen_hunks() {
     )
     .await;
 
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
 
     assert_eq!(m.revision, 0);
     let paths: Vec<_> = m.files.iter().map(|f| f.path.to_string_lossy()).collect();
@@ -985,7 +985,7 @@ async fn a_seen_region_with_an_edit_in_the_middle_is_split() {
         .replace("edited 16", "mid c");
     fx.settle(&[("a.txt", &middle)]).await;
 
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!(m.files[0].review.hunks, [HunkState::Unseen]);
     // 20 base lines are still seen; 17 of 20 target lines are.
     assert_eq!((m.completion.lines, m.completion.seen_lines), (40, 37));
@@ -1017,7 +1017,7 @@ async fn completion_counts_the_seen_hunks_of_a_file_and_of_the_changeset() {
     )
     .await;
 
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!((m.files[0].completion.hunks, m.files[0].completion.seen_hunks), (2, 0));
     assert_eq!((m.completion.hunks, m.completion.seen_hunks), (3, 0));
 
@@ -1077,7 +1077,7 @@ async fn lines_lost_to_an_edit_come_back_after_unmarking_elsewhere_and_a_revert(
 
     // Reverting the edit: the second part is seen again, including the three lines.
     fx.settle(&[("a.txt", &dirty)]).await;
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!(m.files[0].review.hunks, [HunkState::Unseen]);
     // Base and target lines 14..25 are seen.
     assert_eq!((m.completion.lines, m.completion.seen_lines), (40, 22));
@@ -1107,7 +1107,7 @@ async fn a_mode_change_needs_acknowledging() {
     let store = MemStore::default();
     let session = LiveSession::open(git, store.clone(), REPO.into(), clock).await.unwrap();
 
-    let m = session.manifest().await.unwrap();
+    let m = session.manifest(View::Changeset).await.unwrap();
     assert_eq!((m.completion.items, m.completion.acknowledged_items), (1, 0));
     assert!(m.files[0].hunks.is_empty());
 
@@ -1137,7 +1137,7 @@ async fn items_of_one_file_are_acknowledged_separately() {
         .await
         .unwrap();
 
-    let m = session.manifest().await.unwrap();
+    let m = session.manifest(View::Changeset).await.unwrap();
     assert_eq!(m.completion.items, 2);
     let update = session
         .acknowledge(0, "x.bin", NonTextKind::Binary, true)
@@ -1168,13 +1168,13 @@ async fn toggling_a_file_marks_all_of_it_and_toggling_again_takes_it_back() {
 
     // Partly seen is not seen: everything gets marked.
     session.set_seen(0, "run.sh", &[0], true).await.unwrap();
-    let update = session.toggle_file_seen(0, "run.sh").await.unwrap();
+    let update = session.toggle_file_seen(0, View::Changeset, "run.sh").await.unwrap();
     assert_eq!(update.review.hunks, [HunkState::Seen, HunkState::Seen]);
     assert_eq!(update.review.acknowledged, [NonTextKind::Mode]);
     assert!(update.completion.is_complete() && update.changeset.is_complete());
     assert_eq!(store.0.lock().unwrap().acks.len(), 1);
 
-    let update = session.toggle_file_seen(0, "run.sh").await.unwrap();
+    let update = session.toggle_file_seen(0, View::Changeset, "run.sh").await.unwrap();
     assert_eq!(update.review.hunks, [HunkState::Unseen, HunkState::Unseen]);
     assert!(update.review.acknowledged.is_empty());
     assert!(!update.completion.is_complete());
@@ -1187,16 +1187,16 @@ async fn toggling_a_hunk_flips_what_is_stored_and_a_hunk_seen_against_an_old_bas
     let base = numbered(10, &[]);
     let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3, 4]))]).await;
 
-    let update = fx.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
+    let update = fx.session.toggle_hunk(0, View::Changeset, "a.txt", 0).await.unwrap();
     assert!(matches!(update.started, Some(Lifecycle::Open { .. })));
     assert_eq!(update.review.hunks, [HunkState::Seen]);
-    let update = fx.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
+    let update = fx.session.toggle_hunk(0, View::Changeset, "a.txt", 0).await.unwrap();
     assert_eq!(
         (update.review.hunks.clone(), update.started),
         (vec![HunkState::Unseen], None)
     );
 
-    fx.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
+    fx.session.toggle_hunk(0, View::Changeset, "a.txt", 0).await.unwrap();
     let other = base.replace("line 4\n", "");
     fx.git.add_commit("merge-base main", "mb", &[("a.txt", &other)]);
     fx.session
@@ -1206,10 +1206,10 @@ async fn toggling_a_hunk_flips_what_is_stored_and_a_hunk_seen_against_an_old_bas
         .await
         .unwrap();
     assert_eq!(fx.hunks("a.txt").await, [HunkState::SeenAgainstOldBase]);
-    let update = fx.session.toggle_hunk(1, "a.txt", 0).await.unwrap();
+    let update = fx.session.toggle_hunk(1, View::Changeset, "a.txt", 0).await.unwrap();
     assert_eq!(update.review.hunks, [HunkState::Seen]);
 
-    let missing = fx.session.toggle_hunk(1, "a.txt", 3).await;
+    let missing = fx.session.toggle_hunk(1, View::Changeset, "a.txt", 3).await;
     assert!(matches!(missing, Err(SessionError::NotFound(_))));
 }
 
@@ -1217,12 +1217,18 @@ async fn toggling_a_hunk_flips_what_is_stored_and_a_hunk_seen_against_an_old_bas
 async fn toggling_an_item_flips_its_acknowledgement() {
     let (session, store) = edited_script().await;
 
-    let update = session.toggle_item(0, "run.sh", NonTextKind::Mode).await.unwrap();
+    let update = session
+        .toggle_item(0, View::Changeset, "run.sh", NonTextKind::Mode)
+        .await
+        .unwrap();
     assert_eq!(update.review.acknowledged, [NonTextKind::Mode]);
     assert!(matches!(update.started, Some(Lifecycle::Open { .. })));
     assert_eq!(store.0.lock().unwrap().acks.len(), 1);
 
-    let update = session.toggle_item(0, "run.sh", NonTextKind::Mode).await.unwrap();
+    let update = session
+        .toggle_item(0, View::Changeset, "run.sh", NonTextKind::Mode)
+        .await
+        .unwrap();
     assert!(update.review.acknowledged.is_empty());
     assert!(store.0.lock().unwrap().acks.is_empty());
 }
@@ -1240,7 +1246,7 @@ async fn toggling_a_file_with_only_a_mode_change_acknowledges_it_and_starts_the_
         .await
         .unwrap();
 
-    let update = session.toggle_file_seen(0, "run.sh").await.unwrap();
+    let update = session.toggle_file_seen(0, View::Changeset, "run.sh").await.unwrap();
 
     assert!(matches!(update.started, Some(Lifecycle::Open { version: 1, .. })));
     assert_eq!(update.review.acknowledged, [NonTextKind::Mode]);
@@ -1274,7 +1280,7 @@ async fn only_a_binary_image_has_a_preview_and_a_mode_item_says_how_the_mode_cha
         .await
         .unwrap();
 
-    let m = session.manifest().await.unwrap();
+    let m = session.manifest(View::Changeset).await.unwrap();
 
     let item = |file: &str, kind| {
         let file = m.files.iter().find(|f| f.path == path(file)).unwrap();
@@ -1311,7 +1317,7 @@ async fn submodule_changes_carry_both_commits() {
         .await
         .unwrap();
 
-    let m = session.manifest().await.unwrap();
+    let m = session.manifest(View::Changeset).await.unwrap();
 
     let item = &m.files[0].non_text[0];
     assert_eq!(item.kind, NonTextKind::Submodule);
@@ -1365,8 +1371,11 @@ async fn reopening_resumes_the_open_review_and_remaps_edits_made_while_closed() 
         path: path("a.txt"),
         range,
     };
-    fx.session.create_thread(0, thread, "why".into(), 1).await.unwrap();
-    let before = fx.session.manifest().await.unwrap();
+    fx.session
+        .create_thread(0, View::Changeset, thread, "why".into(), 1)
+        .await
+        .unwrap();
+    let before = fx.session.manifest(View::Changeset).await.unwrap();
 
     assert_eq!(before.files[0].review.hunks, [HunkState::Seen, HunkState::Unseen]);
 
@@ -1374,14 +1383,14 @@ async fn reopening_resumes_the_open_review_and_remaps_edits_made_while_closed() 
     let edited = dirty.replace("line 25", "changed 25");
     let session = fx.reopen(&[("a.txt", &edited)]).await;
 
-    let after = session.manifest().await.unwrap();
+    let after = session.manifest(View::Changeset).await.unwrap();
     assert_eq!(after.revision, 1, "the tree on disk is a new settled snapshot");
     assert!(matches!(after.lifecycle, Lifecycle::Open { version: 2, .. }));
     assert_eq!(
         after.files[0].review.hunks,
         [HunkState::Seen, HunkState::Unseen, HunkState::Unseen]
     );
-    let threads = session.threads().await.unwrap().threads;
+    let threads = session.threads(View::Changeset).await.unwrap().threads;
     assert_eq!(threads.len(), 1);
     assert_eq!(threads[0].messages[0].body, "why");
     assert_eq!(threads[0].location.as_ref().map(|l| l.range), Some(range));
@@ -1420,7 +1429,7 @@ async fn a_resumed_session_uses_the_repository_filter_and_keeps_its_base_and_ref
 
     let session = fx.reopen(&[("a.txt", "two\n")]).await;
 
-    let m = session.manifest().await.unwrap();
+    let m = session.manifest(View::Changeset).await.unwrap();
     assert_eq!((&m.filter, base_of(&m).0), (&filter, &detached_head()));
     assert_eq!(base_of(&m).1, "head");
     assert_eq!(fx.git.refs.lock().unwrap().len(), 2);
@@ -1441,11 +1450,11 @@ async fn a_session_opens_with_the_repository_filter_and_keeps_it_across_reviews(
 
     let session = LiveSession::open(git, store.clone(), REPO.into(), clock).await.unwrap();
 
-    let browsing = session.manifest().await.unwrap();
+    let browsing = session.manifest(View::Changeset).await.unwrap();
     assert_eq!((&browsing.filter, browsing.files.len()), (&filter, 1));
     session.set_seen(0, "a.txt", &[0], true).await.unwrap();
     session.finish_review().await.unwrap();
-    assert_eq!(session.manifest().await.unwrap().filter, filter);
+    assert_eq!(session.manifest(View::Changeset).await.unwrap().filter, filter);
     assert_eq!(store.0.lock().unwrap().filter, Some(filter));
 }
 
@@ -1461,7 +1470,7 @@ async fn a_filter_set_while_browsing_is_stored_and_applies_to_the_review() {
 
     fx.session.set_seen(1, "a.txt", &[0], true).await.unwrap();
 
-    assert_eq!(fx.session.manifest().await.unwrap().filter, filter);
+    assert_eq!(fx.session.manifest(View::Changeset).await.unwrap().filter, filter);
     assert_eq!(fx.store.0.lock().unwrap().filter, Some(filter));
 }
 
@@ -1476,7 +1485,7 @@ async fn a_resumed_review_keeps_its_base_commit_however_its_branch_moved() {
     fx.git.add_commit("refs/heads/main", "m2", &[("a.txt", "one\n")]);
     let session = fx.reopen(&[("a.txt", "two\n")]).await;
 
-    let m = session.manifest().await.unwrap();
+    let m = session.manifest(View::Changeset).await.unwrap();
     assert_eq!((base_of(&m).0, base_of(&m).1), (&choice, "m1"));
 }
 
@@ -1501,7 +1510,7 @@ async fn a_finished_review_is_not_resumed() {
 
     assert_eq!(session.lifecycle().await, Lifecycle::Browsing);
     assert_eq!(
-        session.manifest().await.unwrap().files[0].review.hunks,
+        session.manifest(View::Changeset).await.unwrap().files[0].review.hunks,
         [HunkState::Unseen]
     );
 }
@@ -1520,7 +1529,7 @@ fn base_of(m: &ManifestView) -> (&BaseChoice, &str, &str) {
 #[tokio::test]
 async fn the_default_base_is_the_current_branchs_tip() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    assert_eq!(fx.session.manifest().await.unwrap().base.name, "head");
+    assert_eq!(fx.session.manifest(View::Changeset).await.unwrap().base.name, "head");
 
     let git = FakeGit::default();
     *git.base.lock().unwrap() = Some(git.snapshot(&[("a.txt", "one\n")]));
@@ -1532,7 +1541,7 @@ async fn the_default_base_is_the_current_branchs_tip() {
         .await
         .unwrap();
 
-    let m = session.manifest().await.unwrap();
+    let m = session.manifest(View::Changeset).await.unwrap();
     assert_eq!(
         base_of(&m),
         (&BaseChoice::Branch { name: "feature".into() }, "f3", "feature")
@@ -1563,7 +1572,11 @@ async fn a_base_is_named_by_its_branch_tip_then_branch_relative_then_by_hash() {
             })
             .await
             .unwrap();
-        assert_eq!(fx.session.manifest().await.unwrap().base.name, name, "{commit}");
+        assert_eq!(
+            fx.session.manifest(View::Changeset).await.unwrap().base.name,
+            name,
+            "{commit}"
+        );
     }
 }
 
@@ -1574,12 +1587,12 @@ async fn a_branch_base_counts_how_far_the_branch_moved_on_and_latest_catches_up(
     fx.git.add_commit("refs/heads/main", "m1", &[("a.txt", "one\n")]);
     let main = BaseChoice::Branch { name: "main".into() };
     fx.session.set_base(main.clone()).await.unwrap();
-    assert_eq!(fx.session.manifest().await.unwrap().base.behind, None);
+    assert_eq!(fx.session.manifest(View::Changeset).await.unwrap().base.behind, None);
 
     // Two commits on main since: the base stays where it was.
     fx.git.add_branch("main", true, "m3", &["m2", "m1", "m0"]);
     fx.git.branches.lock().unwrap().retain(|b| b.commit.0 != "m1");
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!((base_of(&m), m.base.behind), ((&main, "m1", "main~2"), Some(2)));
 
     fx.git.add_commit("refs/heads/main", "m3", &[("a.txt", "one\n")]);
@@ -1594,7 +1607,7 @@ async fn a_branch_base_counts_how_far_the_branch_moved_on_and_latest_catches_up(
 async fn setting_the_base_holds_its_commit_and_bumps_the_revision() {
     let base = numbered(10, &[]);
     let fx = Fixture::reviewing(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!(base_of(&m), (&detached_head(), "head", "head"));
     assert_eq!(m.files[0].hunks.len(), 1);
 
@@ -1615,7 +1628,7 @@ async fn setting_the_base_holds_its_commit_and_bumps_the_revision() {
         (&view.choice, view.commit.id.0.as_str(), view.name.as_str()),
         (&full, "c1-full", "c1-full")
     );
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!((m.revision, base_of(&m)), (1, (&full, "c1-full", "c1-full")));
     assert!(m.files.is_empty());
     let held = fx.git.refs.lock().unwrap().clone();
@@ -1634,7 +1647,10 @@ async fn setting_the_base_holds_its_commit_and_bumps_the_revision() {
     let (view, revision) = fx.session.set_base(back()).await.unwrap();
     assert_eq!((revision, view.commit.id.0.as_str()), (2, "head"));
     assert_eq!(fx.session.set_base(back()).await.unwrap().1, 2);
-    assert_eq!(fx.session.manifest().await.unwrap().files[0].hunks.len(), 1);
+    assert_eq!(
+        fx.session.manifest(View::Changeset).await.unwrap().files[0].hunks.len(),
+        1
+    );
     assert_eq!(fx.store.0.lock().unwrap().base, Some(back()));
     assert!(matches!(
         fx.session.lifecycle().await,
@@ -1700,7 +1716,7 @@ async fn a_changed_base_makes_marks_seen_against_an_old_base_until_it_is_chosen_
     fx.session.set_base(merge_base.clone()).await.unwrap();
     // The target lines are as marked, the base lines are not all.
     assert_eq!(fx.hunks("a.txt").await, [HunkState::SeenAgainstOldBase]);
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!((m.completion.seen_lines, m.completion.old_base_lines), (1, 2));
     assert!(!m.completion.is_complete());
 
@@ -1752,7 +1768,10 @@ async fn the_content_of_base_side_threads_is_copied_when_the_base_changes() {
         path: path("a.txt"),
         range: LineRange { start: 5, end: 7 },
     };
-    fx.session.create_thread(0, thread, "why".into(), 1).await.unwrap();
+    fx.session
+        .create_thread(0, View::Changeset, thread, "why".into(), 1)
+        .await
+        .unwrap();
 
     fx.git
         .add_commit("c1", "c1-full", &[("a.txt", &base.replace("line 0\n", ""))]);
@@ -1794,22 +1813,25 @@ async fn a_base_that_does_not_resolve_is_refused_and_changes_nothing() {
     assert_eq!(err.to_string(), "unknown branch gone");
 
     assert_eq!(fx.session.revision().await, 0);
-    assert_eq!(fx.session.manifest().await.unwrap().base.choice, detached_head());
+    assert_eq!(
+        fx.session.manifest(View::Changeset).await.unwrap().base.choice,
+        detached_head()
+    );
 }
 
 #[tokio::test]
 async fn file_text_returns_both_sides() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n"), ("new.txt", "n\n")]).await;
 
-    let text = fx.session.file_text("a.txt").await.unwrap();
+    let text = fx.session.file_text(View::Changeset, "a.txt").await.unwrap();
     assert_eq!(
         (text.base.as_deref(), text.target.as_deref()),
         (Some("one\n"), Some("two\n"))
     );
-    let added = fx.session.file_text("new.txt").await.unwrap();
+    let added = fx.session.file_text(View::Changeset, "new.txt").await.unwrap();
     assert_eq!((added.base, added.target.as_deref()), (None, Some("n\n")));
     assert!(matches!(
-        fx.session.file_text("nope").await,
+        fx.session.file_text(View::Changeset, "nope").await,
         Err(SessionError::NotFound(_))
     ));
 }
@@ -1918,7 +1940,7 @@ async fn setting_the_filter_persists_it_and_moves_the_counts() {
     let base = [("a.txt", "1\n"), ("docs/b.md", "1\n")];
     let dirty = [("a.txt", "2\n"), ("docs/b.md", "2\n")];
     let fx = Fixture::reviewing(&base, &dirty).await;
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!(
         (m.files.len(), m.completion.lines, m.completion.excluded_lines),
         (2, 4, 0)
@@ -1929,7 +1951,7 @@ async fn setting_the_filter_persists_it_and_moves_the_counts() {
         ..Default::default()
     };
     assert_eq!(fx.session.set_filter(filter.clone()).await.unwrap(), 1);
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!((m.revision, m.filter.clone()), (1, filter.clone()));
     assert_eq!(
         (m.files.len(), m.completion.lines, m.completion.excluded_lines),
@@ -1964,7 +1986,7 @@ async fn excluding_a_path_hides_exactly_that_file_or_everything_below_that_folde
     let dirty: Vec<_> = names.iter().map(|n| (*n, "2\n")).collect();
     let fx = Fixture::open(&base, &dirty).await;
     let shown = || async {
-        let m = fx.session.manifest().await.unwrap();
+        let m = fx.session.manifest(View::Changeset).await.unwrap();
         m.files.iter().map(|f| f.path.to_string_lossy()).collect::<Vec<_>>()
     };
 
@@ -1999,7 +2021,7 @@ async fn filter_roots_are_taken_as_directories_without_slashes() {
         ..Default::default()
     };
     fx.session.set_filter(filter).await.unwrap();
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!(m.filter.roots, [path("docs")]);
     assert_eq!(m.files.len(), 1);
     assert_eq!(
@@ -2111,14 +2133,14 @@ impl Fixture {
         let revision = self.session.revision().await;
         let view = self
             .session
-            .create_thread(revision, target, "why?".into(), 100)
+            .create_thread(revision, View::Changeset, target, "why?".into(), 100)
             .await
             .unwrap();
         view.id
     }
 
     async fn view(&self, id: ThreadId) -> ThreadView {
-        let all = self.session.threads().await.unwrap();
+        let all = self.session.threads(View::Changeset).await.unwrap();
         all.threads.into_iter().find(|t| t.id == id).unwrap()
     }
 }
@@ -2184,7 +2206,10 @@ async fn a_line_without_a_thread_is_placed_in_the_target_like_a_cards() {
     let dirty = base.replace("line 3\nline 4\n", "changed\n");
     let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &dirty)]).await;
     let revision = fx.session.revision().await;
-    let at = |side, line| fx.session.line_in_target(revision, side, "a.txt", line);
+    let at = |side, line| {
+        fx.session
+            .line_in_target(revision, View::Changeset, side, "a.txt", line)
+    };
 
     assert_eq!(at(Side::Target, 7).await.unwrap(), 7);
     assert_eq!(at(Side::Base, 0).await.unwrap(), 0);
@@ -2194,7 +2219,10 @@ async fn a_line_without_a_thread_is_placed_in_the_target_like_a_cards() {
     assert_eq!(at(Side::Base, 9).await.unwrap(), 8);
     assert_eq!(at(Side::Target, 40).await.unwrap(), 8);
 
-    let stale = fx.session.line_in_target(revision + 1, Side::Base, "a.txt", 4).await;
+    let stale = fx
+        .session
+        .line_in_target(revision + 1, View::Changeset, Side::Base, "a.txt", 4)
+        .await;
     assert!(matches!(stale, Err(SessionError::Stale { .. })));
 }
 
@@ -2421,7 +2449,10 @@ async fn range_and_file_threads_follow_a_rename() {
 impl Fixture {
     async fn comment_spot(&self, file: &str, at: CommentAt) -> CommentSpot {
         let revision = self.session.revision().await;
-        self.session.comment_target(revision, file, at).await.unwrap()
+        self.session
+            .comment_target(revision, View::Changeset, file, at)
+            .await
+            .unwrap()
     }
 }
 
@@ -2436,7 +2467,10 @@ async fn a_comment_on_a_hunk_targets_its_target_lines_or_for_a_pure_deletion_its
     // The form sits below the last line of the range.
     assert_eq!(spot.line, Some(4));
     let revision = fx.session.revision().await;
-    let missing = fx.session.comment_target(revision, "a.txt", CommentAt::Hunk(1)).await;
+    let missing = fx
+        .session
+        .comment_target(revision, View::Changeset, "a.txt", CommentAt::Hunk(1))
+        .await;
     assert!(matches!(missing, Err(SessionError::NotFound(_))));
 
     // Lines 7 and 8 are deleted: nothing is left to comment on in the target.
@@ -2490,12 +2524,18 @@ async fn a_comment_on_lines_targets_the_side_asked_for_and_is_checked() {
     let revision = fx.session.revision().await;
     let none = fx
         .session
-        .comment_target(revision, "a.txt", lines(Side::Target, 2, 0))
+        .comment_target(revision, View::Changeset, "a.txt", lines(Side::Target, 2, 0))
         .await;
     assert!(matches!(none, Err(SessionError::Invalid(_))));
-    let stale = fx.session.comment_target(revision + 1, "a.txt", CommentAt::File).await;
+    let stale = fx
+        .session
+        .comment_target(revision + 1, View::Changeset, "a.txt", CommentAt::File)
+        .await;
     assert!(matches!(stale, Err(SessionError::Stale { .. })));
-    let unknown = fx.session.comment_target(revision, "nope.txt", CommentAt::File).await;
+    let unknown = fx
+        .session
+        .comment_target(revision, View::Changeset, "nope.txt", CommentAt::File)
+        .await;
     assert!(matches!(unknown, Err(SessionError::NotFound(_))));
 }
 
@@ -2541,7 +2581,7 @@ async fn replies_status_and_deletion_are_persisted() {
             .collect::<Vec<_>>(),
         ["why?", "because"]
     );
-    assert_eq!(fx.session.threads().await.unwrap().threads.len(), 1);
+    assert_eq!(fx.session.threads(View::Changeset).await.unwrap().threads.len(), 1);
     assert!(matches!(
         fx.session.reply(other, "x".into(), 1).await,
         Err(SessionError::NotFound(_))
@@ -2553,7 +2593,14 @@ async fn replies_status_and_deletion_are_persisted() {
 }
 
 async fn thread_ids(session: &LiveSession<FakeGit, MemStore>) -> Vec<ThreadId> {
-    session.threads().await.unwrap().threads.iter().map(|t| t.id).collect()
+    session
+        .threads(View::Changeset)
+        .await
+        .unwrap()
+        .threads
+        .iter()
+        .map(|t| t.id)
+        .collect()
 }
 
 #[tokio::test]
@@ -2602,7 +2649,7 @@ async fn open_threads_of_a_finished_review_are_on_view_when_the_repository_is_op
     // The next review starts with it, and what is resolved in that one stays in it.
     browsing.set_seen(0, "a.txt", &[0], true).await.unwrap();
     let own = browsing
-        .create_thread(0, NewThread::Changeset, "again".into(), 1)
+        .create_thread(0, View::Changeset, NewThread::Changeset, "again".into(), 1)
         .await
         .unwrap()
         .id;
@@ -2636,7 +2683,7 @@ async fn marking_records_the_version_last_reviewed_in() {
 #[tokio::test]
 async fn a_session_is_named_after_its_repository_directory() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    assert_eq!(fx.session.manifest().await.unwrap().name, "repo");
+    assert_eq!(fx.session.manifest(View::Changeset).await.unwrap().name, "repo");
     assert_eq!(name_of_repo("/"), "/");
 }
 
@@ -2653,13 +2700,13 @@ async fn the_author_is_the_git_user_or_you() {
     let anonymous = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
 
     let view = named
-        .create_thread(0, NewThread::Changeset, "hi".into(), 1)
+        .create_thread(0, View::Changeset, NewThread::Changeset, "hi".into(), 1)
         .await
         .unwrap();
     assert_eq!(view.messages[0].author, "Ada");
     let view = anonymous
         .session
-        .create_thread(0, NewThread::Changeset, "hi".into(), 1)
+        .create_thread(0, View::Changeset, NewThread::Changeset, "hi".into(), 1)
         .await
         .unwrap();
     assert_eq!(view.messages[0].author, "You");
@@ -2668,7 +2715,7 @@ async fn the_author_is_the_git_user_or_you() {
 #[tokio::test]
 async fn threads_need_text_inside_the_current_revision() {
     let fx = Fixture::open(&[("a.txt", "one\ntwo\n")], &[("a.txt", "one\ntwo\n"), ("bin", "x\0y")]).await;
-    let new = |target| fx.session.create_thread(0, target, "x".into(), 1);
+    let new = |target| fx.session.create_thread(0, View::Changeset, target, "x".into(), 1);
 
     assert!(matches!(new(on("a.txt", 1, 3)).await, Err(SessionError::Invalid(_))));
     assert!(matches!(new(on("bin", 0, 1)).await, Err(SessionError::NotText(_))));
@@ -2695,7 +2742,7 @@ async fn a_branch_opened_as_a_changeset_shows_what_it_has_beyond_where_it_left_t
 
     let revision = view_feature(&fx).await;
 
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!((m.revision, m.lifecycle), (revision, Lifecycle::Browsing));
     assert_eq!(
         (
@@ -2772,7 +2819,7 @@ async fn a_rebase_is_a_version_with_the_new_base() {
         .branch("feature", "tip2", &[("a.txt", &numbered(30, &[3, 25]))], &["m3"]);
     fx.session.observe().await.unwrap().expect("tip and base moved");
 
-    let m = fx.session.manifest().await.unwrap();
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert!(matches!(m.lifecycle, Lifecycle::Open { version: 2, .. }));
     assert_eq!(m.base.commit.id, CommitId("m3".into()));
     assert_eq!(
@@ -2856,7 +2903,7 @@ async fn a_review_of_a_branch_is_resumed_when_the_branch_is_opened_in_a_new_sess
     again.open_changeset(feature()).await.unwrap();
 
     assert!(matches!(again.lifecycle().await, Lifecycle::Open { version: 1, .. }));
-    let m = again.manifest().await.unwrap();
+    let m = again.manifest(View::Changeset).await.unwrap();
     assert_eq!(m.files[0].review.hunks, [HunkState::Seen]);
 }
 

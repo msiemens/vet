@@ -9,6 +9,7 @@ use vet_core::inline::TextChange;
 use vet_core::review::Side;
 
 use super::blobs::{NoText, image_media_type};
+use super::interdiff::View;
 use super::state::{check_revision, find_diff, find_non_text};
 use super::{LiveSession, Result, SessionError};
 use crate::editor;
@@ -50,10 +51,10 @@ pub enum ItemBlob {
 
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Both sides of a file with text, at the current revision.
-    pub async fn file_text(&self, path: &str) -> Result<FileText> {
+    pub async fn file_text(&self, view: View, path: &str) -> Result<FileText> {
         let mut st = self.state.lock().await;
-        self.ensure_changes(&mut st).await?;
-        let changes = st.changes.as_ref().expect("computed");
+        self.ensure_view(&mut st, view).await?;
+        let changes = st.changes_in(view);
         type Side = Option<(RepoPath, BlobId)>;
         let diff = find_diff(&changes.diff, path);
         let hunks = diff.map(|d| d.hunks.clone()).unwrap_or_default();
@@ -71,7 +72,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         } else {
             return Err(SessionError::NotFound(format!("file {path}")));
         };
-        let mut blobs = std::mem::take(&mut st.changes.as_mut().expect("computed").blobs);
+        let mut blobs = std::mem::take(&mut st.changes_in_mut(view).blobs);
         let mut texts = [None, None];
         let mut result = Ok(());
         for (text, side) in texts.iter_mut().zip([old, new]) {
@@ -85,7 +86,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 break;
             }
         }
-        st.changes.as_mut().expect("computed").blobs = blobs;
+        st.changes_in_mut(view).blobs = blobs;
         result?;
         let [base, target] = texts;
         let changes = editor::text_changes(
@@ -121,11 +122,18 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 
     /// The bytes of one side of a non-text item's file at `revision`.
-    pub async fn item_blob(&self, revision: u32, path: &str, kind: NonTextKind, side: Side) -> Result<ItemBlob> {
+    pub async fn item_blob(
+        &self,
+        revision: u32,
+        view: View,
+        path: &str,
+        kind: NonTextKind,
+        side: Side,
+    ) -> Result<ItemBlob> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
-        let change = find_non_text(&st.changes.as_ref().expect("computed").diff, kind, path)
+        self.ensure_view(&mut st, view).await?;
+        let change = find_non_text(&st.changes_in(view).diff, kind, path)
             .ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?;
         let (file, entry) = match side {
             Side::Base => (change.from.as_ref().unwrap_or(&change.path), &change.before),

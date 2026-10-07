@@ -111,7 +111,14 @@ impl Client {
     }
 
     pub async fn revision(&self, project: ProjectId) -> u32 {
-        match self.call(Request::Manifest { project }).await.unwrap() {
+        match self
+            .call(Request::Manifest {
+                project,
+                view: vet_protocol::View::Changeset,
+            })
+            .await
+            .unwrap()
+        {
             Response::Manifest(m) => m.revision,
             other => panic!("{other:?}"),
         }

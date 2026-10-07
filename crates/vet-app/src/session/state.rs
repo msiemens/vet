@@ -10,6 +10,7 @@ use vet_core::filter::ReviewFilter;
 use vet_core::resolve::Resolution;
 use vet_core::review::{Anchor, CommentTarget, ReviewedSpan, Thread, ThreadId};
 
+use super::interdiff::{Interdiffed, View};
 use super::views::{ItemView, Lifecycle, Outcome};
 use super::{Result, SessionError};
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source};
@@ -29,6 +30,8 @@ pub(super) struct Changes {
     pub(super) resolutions: HashMap<ThreadId, Resolution>,
     /// Both sides of each `diff.non_text` change.
     pub(super) items: Vec<ItemView>,
+    /// The interdiffs asked for at this revision, by the versions they compare.
+    pub(super) interdiffs: HashMap<(u32, u32), Interdiffed>,
 }
 
 /// A started review.
@@ -69,6 +72,23 @@ pub(super) struct State {
 }
 
 impl State {
+    /// The computed changes `view` shows.
+    pub(super) fn changes_in(&self, view: View) -> &Changes {
+        let changes = self.changes.as_ref().expect("computed");
+        match view {
+            View::Changeset => changes,
+            View::Interdiff { from, to } => &changes.interdiffs[&(from, to)].changes,
+        }
+    }
+
+    pub(super) fn changes_in_mut(&mut self, view: View) -> &mut Changes {
+        let changes = self.changes.as_mut().expect("computed");
+        match view {
+            View::Changeset => changes,
+            View::Interdiff { from, to } => &mut changes.interdiffs.get_mut(&(from, to)).expect("computed").changes,
+        }
+    }
+
     /// Every anchor the recorded spans and the range threads are placed by.
     pub(super) fn anchors(&self) -> impl Iterator<Item = &Anchor> {
         let spans = (self.recorded.iter()).flat_map(|r| r.span.base.iter().chain(&r.span.target));
