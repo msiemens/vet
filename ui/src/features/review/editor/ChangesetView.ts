@@ -10,12 +10,10 @@ import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
 import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
-import { NO_HIGHLIGHTS, decodeHighlights } from "../../../lib/highlights";
 import type { Mode } from "../../../lib/viewMode";
-import type { Backend } from "../../../state/backend";
-import { atRevision } from "../../../state/revision";
 import { changeCard } from "./changeCard";
 import { fileHeader, renderCount } from "./fileHeader";
+import type { FileSource } from "./fileSource";
 import type { BarActions } from "./hunkBar";
 import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
 import { lineOf, lineStart, selectedLines } from "./positions";
@@ -96,7 +94,7 @@ export class ChangesetView {
     /** The manifest revision the files are of. */
     readonly revision: number,
     files: FileChange[],
-    private backend: Backend,
+    private source: FileSource,
     public mode: Mode,
     private hooks: ViewHooks,
     private listeners: Listeners,
@@ -145,7 +143,7 @@ export class ChangesetView {
         changeCard(file.path, file.oldPath, item, file.review.acknowledged.includes(item.kind), {
           toggle: () => void this.toggleCard(index, ci),
           comment: () => this.threads.commentOnFile(this.sections[index]),
-          blob: (side) => this.backend.itemBlob(this.revision, file.path, item.kind, side),
+          blob: (side) => this.source.itemBlob(file.path, item.kind, side),
         }),
       );
       const blockEl = document.createElement("div");
@@ -298,33 +296,11 @@ export class ChangesetView {
 
   load(fi: number): Promise<Loaded> {
     const s = this.sections[fi];
-    const { file } = s;
-    // A file without text lines (binary, content unavailable) has nothing to fetch; the backend refuses it.
-    if (!s.loading && !file.hunks.length && !file.baseLines && !file.targetLines)
-      s.loading = Promise.resolve(
-        (s.loaded = {
-          base: "",
-          target: "",
-          hunks: [],
-          changes: [],
-          baseHighlights: NO_HIGHLIGHTS,
-          targetHighlights: NO_HIGHLIGHTS,
-        }),
-      );
-    s.loading ??= this.backend.fileContents(file.path).then((reply) => {
-      const r = atRevision(this.revision, reply);
-      if (!r) throw new Error("stale revision");
-      s.loaded = {
-        base: r.base ?? "",
-        target: r.target ?? "",
-        hunks: file.hunks,
-        changes: r.changes,
-        baseHighlights: decodeHighlights(r.baseHighlights),
-        targetHighlights: decodeHighlights(r.targetHighlights),
-      };
+    s.loading ??= this.source.contents(s.file).then((loaded) => {
+      s.loaded = loaded;
       // Mounting waits for the next frame, so a large reply's parse and an editor's creation never share one.
       this.syncNextFrame(true);
-      return s.loaded;
+      return loaded;
     });
     return s.loading;
   }
@@ -575,7 +551,7 @@ export class ChangesetView {
     const { file } = this.sections[fi];
     const path = side === "base" ? (file.oldPath ?? file.path) : file.path;
     // A newer revision replaces this view, and the request fails then.
-    const line = await this.backend.targetLine(this.revision, side, path, span.start.line).catch(() => undefined);
+    const line = await this.source.targetLine(side, path, span.start.line).catch(() => undefined);
     if (line !== undefined && !this.destroyed) this.reveal(fi, line).revealSpan(side, span);
   }
 

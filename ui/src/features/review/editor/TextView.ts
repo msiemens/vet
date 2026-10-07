@@ -5,12 +5,11 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import type { NoTextReason } from "../../../generated/NoTextReason";
-import type { TextContent } from "../../../generated/TextContent";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { errorText } from "../../../lib/errorText";
 import { decodeHighlights } from "../../../lib/highlights";
 import { iconSvg } from "../../../lib/ui/icons";
-import { atRevision } from "../../../state/revision";
+import { type FileSource, StaleRevision } from "./fileSource";
 import { highlightExtension } from "./highlightExtension";
 import { lineStart } from "./positions";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
@@ -30,27 +29,25 @@ export class TextView {
   private span?: TextSpan;
 
   /**
-   * Fills `root` with the file's text as of `revision`. A reply of another revision is dropped:
+   * Fills `root` with the file's text from `source`. A reply of another revision is dropped:
    * the owner builds a new view when the manifest moves.
    */
   constructor(
     private root: HTMLElement,
     private path: string,
-    revision: number,
-    fetch: () => Promise<{ revision: number; content: TextContent }>,
+    source: FileSource,
     private hooks: SemanticHooks,
   ) {
     root.replaceChildren();
     root.classList.add("vet-text");
-    fetch().then(
-      (reply) => {
-        const text = atRevision(revision, reply);
-        if (this.destroyed || !text) return;
-        if (text.content.type === "text") this.mountEditor(text.content.text, text.content.highlights);
-        else this.placeholder(NO_TEXT[text.content.reason]);
+    source.text(path).then(
+      (content) => {
+        if (this.destroyed) return;
+        if (content.type === "text") this.mountEditor(content.text, content.highlights);
+        else this.placeholder(NO_TEXT[content.reason]);
       },
       (error: unknown) => {
-        if (!this.destroyed) this.placeholder(errorText(error));
+        if (!this.destroyed && !(error instanceof StaleRevision)) this.placeholder(errorText(error));
       },
     );
   }

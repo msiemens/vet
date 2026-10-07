@@ -13,6 +13,7 @@ import { session } from "../../state/session.svelte";
 import { threads } from "../../state/threads.svelte";
 import type { Thread } from "../../generated/Thread";
 import { ChangesetView, type Listeners, type ViewHooks } from "./editor/ChangesetView";
+import { fileSource } from "./editor/fileSource";
 import { bindRevision } from "./editor/semantic";
 import { KEYS, matches } from "../../lib/keymap";
 import type { Mode } from "../../lib/viewMode";
@@ -225,8 +226,7 @@ export class ReviewController {
         new TextView(
           root,
           path,
-          manifest.revision,
-          () => this.backend.fileText(path),
+          fileSource(this.backend, manifest.revision),
           bindRevision(this.hooks, manifest.revision),
         ),
       );
@@ -242,7 +242,7 @@ export class ReviewController {
       root,
       manifest.revision,
       files,
-      this.backend,
+      fileSource(this.backend, manifest.revision),
       this.mode,
       this.hooks,
       this.listenersFor(id),
