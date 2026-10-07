@@ -25,65 +25,91 @@
     onfilter: (filter: ReviewFilter) => Promise<string | undefined>;
   } = $props();
 
-  type Page = "general" | "keymap" | "project" | "servers" | "accounts";
-  let page = $state<Page>("general");
+  // Pages without settings of their own yet (General, Backends) are not listed.
+  const PAGES = [
+    { id: "appearance", label: "Appearance" },
+    { id: "keymap", label: "Keymap" },
+    { id: "review", label: "Review" },
+    { id: "servers", label: "Language servers" },
+    { id: "accounts", label: "Accounts" },
+  ] as const;
+  type Page = (typeof PAGES)[number]["id"];
+  let page = $state<Page>(PAGES[0].id);
 </script>
 
-<Dialog title="Settings" {onclose} width="640px">
-  <div class="pages">
-    <Segmented
-      label="Settings page"
-      value={page}
-      onchange={(p: Page) => {
-        page = p;
-      }}
-      options={[
-        { id: "general", label: "General" },
-        { id: "keymap", label: "Keymap" },
-        { id: "project", label: "Review filter" },
-        { id: "servers", label: "Language servers" },
-        { id: "accounts", label: "Accounts" },
-      ]}
-    />
-  </div>
-  {#if page === "keymap"}
-    <KeymapPage />
-  {:else if page === "project"}
-    <ProjectPage
-      filter={project?.filter}
-      excluded={{ lines: project?.excludedLines ?? 0, items: project?.excludedItems ?? 0 }}
-      onsave={onfilter}
-    />
-  {:else if page === "servers"}
-    <ServersPage />
-  {:else if page === "accounts"}
-    <AccountsPage />
-  {:else}
-    <section>
-      <h3>Appearance</h3>
-      <div class="row">
-        <div class="text">
-          <span>Theme</span>
-          <span class="hint">System follows the operating system's light or dark setting.</span>
+<Dialog title="Settings" {onclose} width="780px" padded={false}>
+  <div class="layout">
+    <nav aria-label="Settings pages">
+      {#each PAGES as p (p.id)}
+        <button type="button" aria-current={page === p.id ? "page" : undefined} onclick={() => (page = p.id)}
+          >{p.label}</button
+        >
+      {/each}
+    </nav>
+    <div class="page">
+      {#if page === "keymap"}
+        <KeymapPage />
+      {:else if page === "review"}
+        <ProjectPage
+          filter={project?.filter}
+          excluded={{ lines: project?.excludedLines ?? 0, items: project?.excludedItems ?? 0 }}
+          onsave={onfilter}
+        />
+      {:else if page === "servers"}
+        <ServersPage />
+      {:else if page === "accounts"}
+        <AccountsPage />
+      {:else}
+        <div class="row">
+          <div class="text">
+            <span>Theme</span>
+            <span class="hint">System follows the operating system's light or dark setting.</span>
+          </div>
+          <Segmented label="Theme" value={theme} onchange={ontheme} options={THEMES} />
         </div>
-        <Segmented label="Theme" value={theme} onchange={ontheme} options={THEMES} />
-      </div>
-    </section>
-  {/if}
-  {#snippet actions()}
-    <button class="ctl" type="button" onclick={onclose}>Close</button>
-  {/snippet}
+      {/if}
+    </div>
+  </div>
 </Dialog>
 
 <style>
-  .pages {
-    margin-bottom: 14px;
+  .layout {
+    display: flex;
+    height: min(480px, 66vh);
   }
-  h3 {
-    margin: 0 0 10px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-2);
+  nav {
+    flex: none;
+    width: 190px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px;
+    overflow: auto;
+    border-right: 1px solid var(--line-soft);
+    background: var(--bg-panel);
+  }
+  nav button {
+    height: 26px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-ctl);
+    text-align: left;
+  }
+  nav button:hover {
+    background: var(--hover);
+  }
+  nav button[aria-current="page"] {
+    background: var(--toggle);
+  }
+  .page {
+    flex: 1;
+    min-width: 0;
+    padding: 16px;
+    overflow: auto;
   }
   .row {
     display: flex;

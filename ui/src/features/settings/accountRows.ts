@@ -9,21 +9,24 @@ export interface AccountRow {
   /** One row per host and source. */
   key: string;
   host: string;
+  /** The badge: GH, GHE for a GitHub Enterprise host, ADO. */
   platform: string;
-  source: string;
   user?: string;
+  /** The table's short name: "gh CLI", "az CLI" or "Token". */
+  credential: string;
+  /** Where the credential lives, for the details. */
+  storage: string;
   status: AccountStatus;
   statusLabel: string;
   /** What the platform said when it did not accept the credential or could not be asked. */
   problem?: string;
   /** Why this credential matters or does not: a CLI's token is never stored, a token behind a CLI is not used. */
   note?: string;
-  /** Only a personal access token is Vet's to remove. */
+  /** Only a personal access token is Vet's to remove or replace. */
   removable: boolean;
 }
 
-const PLATFORMS: Record<PlatformKind, string> = { github: "GitHub", azureDevOps: "Azure DevOps" };
-const CLI_NAMES: Record<PlatformKind, string> = { github: "GitHub CLI (gh)", azureDevOps: "Azure CLI (az)" };
+const CLI_NAMES: Record<PlatformKind, string> = { github: "gh CLI", azureDevOps: "az CLI" };
 
 const STATUS_LABELS: Record<AccountStatus, string> = {
   signedIn: "Signed in",
@@ -31,7 +34,17 @@ const STATUS_LABELS: Record<AccountStatus, string> = {
   unverified: "Not verified",
 };
 
-export function accountRow(account: Account): AccountRow {
+export const GITHUB_HOST = "github.com";
+
+export const cliName = (kind: PlatformKind): string => CLI_NAMES[kind];
+
+function badge(account: Account): string {
+  if (account.kind === "azureDevOps") return "ADO";
+  return account.host === GITHUB_HOST ? "GH" : "GHE";
+}
+
+/** `keychain`: whether the host keeps personal access tokens in the system keychain. */
+export function accountRow(account: Account, keychain: boolean): AccountRow {
   const { state } = account;
   const cli = account.source === "cli";
   let note: string | undefined;
@@ -40,9 +53,10 @@ export function accountRow(account: Account): AccountRow {
   return {
     key: `${account.host}/${account.source}`,
     host: account.host,
-    platform: PLATFORMS[account.kind],
-    source: cli ? CLI_NAMES[account.kind] : "Personal access token",
+    platform: badge(account),
     user: account.user ?? undefined,
+    credential: cli ? CLI_NAMES[account.kind] : "Token",
+    storage: cli ? CLI_NAMES[account.kind] : keychain ? "Token in Keychain" : "Token, kept until Vet quits",
     status: state.type,
     statusLabel: STATUS_LABELS[state.type],
     problem: state.type === "signedIn" ? undefined : state.message,
@@ -50,6 +64,3 @@ export function accountRow(account: Account): AccountRow {
     removable: !cli,
   };
 }
-
-/** Whether a signed-in `gh` or `az` supplies the credential of some host. */
-export const usesCli = (accounts: Account[]): boolean => accounts.some((a) => a.source === "cli" && a.inUse);

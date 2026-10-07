@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Account } from "../../generated/Account.ts";
-import { accountRow, usesCli } from "./accountRows.ts";
+import { accountRow } from "./accountRows.ts";
 
 const account = (over: Partial<Account>): Account => ({
   host: "github.com",
@@ -14,27 +14,26 @@ const account = (over: Partial<Account>): Account => ({
 });
 
 void test("a CLI credential names the CLI and says it is never stored", () => {
-  const row = accountRow(account({ source: "cli", kind: "azureDevOps", host: "dev.azure.com" }));
-  assert.equal(row.source, "Azure CLI (az)");
+  const row = accountRow(account({ source: "cli", kind: "azureDevOps", host: "dev.azure.com" }), true);
+  assert.deepEqual([row.credential, row.platform, row.removable], ["az CLI", "ADO", false]);
   assert.match(row.note ?? "", /never stores it/);
-  assert.equal(row.removable, false);
 });
 
-void test("only a personal access token can be removed, and a CLI in front of it is said", () => {
-  const row = accountRow(account({ inUse: false }));
-  assert.equal(row.removable, true);
+void test("a GitHub host other than github.com is an Enterprise host", () => {
+  assert.equal(accountRow(account({}), true).platform, "GH");
+  assert.equal(accountRow(account({ host: "git.contoso.com" }), true).platform, "GHE");
+});
+
+void test("a token is in the keychain only where the host has one, and a CLI in front of it is said", () => {
+  const row = accountRow(account({ inUse: false }), true);
+  assert.deepEqual([row.storage, row.removable], ["Token in Keychain", true]);
   assert.match(row.note ?? "", /Not used/);
+  assert.match(accountRow(account({}), false).storage, /until Vet quits/);
 });
 
 void test("a refused or unchecked credential carries the platform's reason", () => {
-  const rejected = accountRow(account({ user: null, state: { type: "rejected", message: "Bad credentials" } }));
+  const rejected = accountRow(account({ user: null, state: { type: "rejected", message: "Bad credentials" } }), true);
   assert.deepEqual([rejected.status, rejected.problem, rejected.user], ["rejected", "Bad credentials", undefined]);
-  const unverified = accountRow(account({ state: { type: "unverified", message: "no route to host" } }));
+  const unverified = accountRow(account({ state: { type: "unverified", message: "no route to host" } }), true);
   assert.deepEqual([unverified.statusLabel, unverified.problem], ["Not verified", "no route to host"]);
-});
-
-void test("a CLI is used only when it supplies a host's credential", () => {
-  assert.equal(usesCli([account({})]), false);
-  assert.equal(usesCli([account({ source: "cli", inUse: false })]), false);
-  assert.equal(usesCli([account({}), account({ source: "cli" })]), true);
 });

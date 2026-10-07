@@ -7,6 +7,7 @@
     title,
     onclose,
     width = "520px",
+    padded = true,
     children,
     actions,
   }: {
@@ -14,6 +15,8 @@
     onclose: () => void;
     /** Any CSS length. */
     width?: string;
+    /** Without it the content runs edge to edge, for a dialog that lays out its own panes. */
+    padded?: boolean;
     children: Snippet;
     /** Buttons in the footer, right-aligned. */
     actions?: Snippet;
@@ -47,7 +50,7 @@
     <h2>{title}</h2>
     <IconButton icon="close" label="Close" size={22} iconSize={12} onclick={onclose} />
   </header>
-  <div class="content">{@render children()}</div>
+  <div class="content" class:padded>{@render children()}</div>
   {#if actions}<footer>{@render actions()}</footer>{/if}
 </dialog>
 
@@ -83,9 +86,11 @@
     font-weight: 600;
   }
   .content {
-    padding: 16px;
     overflow: auto;
     min-height: 0;
+  }
+  .content.padded {
+    padding: 16px;
   }
   footer {
     display: flex;

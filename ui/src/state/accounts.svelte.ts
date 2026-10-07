@@ -81,6 +81,24 @@ class AccountsStore {
     return { ok: true, warning };
   }
 
+  /**
+   * Asks the platforms about the credentials again. A saved token is sent to the platform once more,
+   * since a refusal would otherwise stand until the token changes. Resolves with the platform's message
+   * if it still does not accept it.
+   */
+  async recheck(host: string): Promise<string | undefined> {
+    const backend = session.backend;
+    let message: string | undefined;
+    try {
+      const token = backend ? await storedCredential(host) : null;
+      if (backend && token !== null) await backend.setCredentials(host, token, true);
+    } catch (e) {
+      message = errorText(e);
+    }
+    await this.load();
+    return message;
+  }
+
   /** Forgets the personal access token of `host`. Resolves with a message if that failed. */
   async remove(host: string): Promise<string | undefined> {
     const backend = session.backend;

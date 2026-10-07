@@ -1,198 +1,248 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { match } from "../../lib/speedSearch";
-  import Marked from "../../lib/ui/Marked.svelte";
-  import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
-  import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { accounts } from "../../state/accounts.svelte";
   import { hasKeychain } from "../../state/host";
-  import { accountRow, usesCli } from "./accountRows";
+  import AccountSheet from "./AccountSheet.svelte";
+  import { accountRow, type AccountRow } from "./accountRows";
 
-  const search = new SpeedSearch();
-  let listEl = $state<HTMLElement>();
-  const all = $derived(accounts.accounts.map(accountRow));
-  const rows = $derived(
-    all.flatMap((row) => {
-      const m = match(search.query, row.host);
-      return m ? [{ ...row, ranges: m.ranges }] : [];
-    }),
-  );
+  const rows = $derived(accounts.accounts.map((a) => accountRow(a, hasKeychain)));
+  let selectedKey = $state<string>();
+  const selected = $derived<AccountRow | undefined>(rows.find((r) => r.key === selectedKey) ?? rows[0]);
 
-  let adding = $state(false);
-  let host = $state("github.com");
-  let token = $state("");
-  let busy = $state(false);
-  let addError = $state<string>();
+  let sheet = $state<"add" | "replace">();
+  let checking = $state(false);
+  /** What went wrong with the selected account's last action, with the account it was about. */
+  let problem = $state<{ key: string; message: string }>();
   /** A token that works but that the keychain would not keep. */
   let keychainWarning = $state<string>();
-  /** What went wrong removing a token, with the host it was about. */
-  let removeError = $state<{ host: string; message: string }>();
 
   onMount(() => void accounts.load());
 
-  function startAdding() {
-    adding = true;
-    token = "";
-    addError = undefined;
-    keychainWarning = undefined;
+  function done(key: string, warning?: string) {
+    sheet = undefined;
+    selectedKey = key;
+    keychainWarning = warning;
+    problem = undefined;
   }
 
-  async function add() {
-    busy = true;
-    const result = await accounts.addToken(host, token);
-    busy = false;
-    if (result.ok) {
-      adding = false;
-      keychainWarning = result.warning;
-    } else {
-      addError = result.error;
-    }
+  async function checkAgain(host: string, key: string) {
+    checking = true;
+    const message = await accounts.recheck(host);
+    checking = false;
+    problem = message === undefined ? undefined : { key, message };
   }
 
-  async function remove(host: string) {
+  async function remove(host: string, key: string) {
     const message = await accounts.remove(host);
-    removeError = message === undefined ? undefined : { host, message };
+    problem = message === undefined ? undefined : { key, message };
   }
 </script>
 
 <div class="page">
   {#if accounts.loadError}
     <p class="problem">{accounts.loadError}</p>
-  {:else if accounts.loading && !all.length}
-    <p class="empty">Looking for accounts…</p>
-  {:else if !all.length}
-    <p class="empty">
-      No accounts yet. Sign in with <span class="mono">gh auth login</span> or <span class="mono">az login</span>, or
-      add a personal access token.
-    </p>
-  {:else}
-    {#if search.active}<SpeedSearchField query={search.query} found={rows.length > 0} />{/if}
-    <ul bind:this={listEl} onkeydown={(e) => search.keydown(e, listEl, "button:enabled")} {...search.attributes}>
-      {#each rows as row (row.key)}
-        <li>
-          <div class="head">
-            <div class="text">
-              <span class="title"><Marked text={row.host} ranges={row.ranges} /></span>
-              <span class="hint">{row.platform}, {row.source}{row.user ? `, ${row.user}` : ""}</span>
-            </div>
-            <span class="status {row.status}">{row.statusLabel}</span>
-            {#if row.removable}
-              <button class="ctl" type="button" onclick={() => void remove(row.host)}>Remove</button>
-            {/if}
-          </div>
-          {#if row.problem}<div class="problem">{row.problem}</div>{/if}
-          {#if row.note}<div class="hint">{row.note}</div>{/if}
-          {#if removeError?.host === row.host}<div class="problem">{removeError.message}</div>{/if}
-        </li>
-      {/each}
-    </ul>
-    {#if usesCli(accounts.accounts)}
-      <p class="hint">
-        A signed-in <span class="mono">gh</span> or <span class="mono">az</span> was found, so Vet needs no token for those
-        hosts.
-      </p>
-    {/if}
   {/if}
-
-  {#if adding}
-    <form
-      onsubmit={(e) => {
-        e.preventDefault();
-        void add();
-      }}
-    >
-      <label>
-        <span>Host</span>
-        <input
-          class="field mono"
-          type="text"
-          placeholder="github.com, dev.azure.com or a GitHub Enterprise host"
-          autocomplete="off"
-          spellcheck="false"
-          bind:value={host}
-        />
-      </label>
-      <label>
-        <span>Token</span>
-        <input
-          class="field mono"
-          type="password"
-          placeholder="Personal access token"
-          autocomplete="off"
-          spellcheck="false"
-          bind:value={token}
-        />
-      </label>
-      <p class="hint">
-        The platform checks the token before Vet keeps it. {hasKeychain
-          ? "It is kept in the system keychain, never in Vet's own data."
-          : "This window has no keychain, so it is kept until the backend stops."}
-      </p>
-      {#if addError}<p class="problem" role="alert">{addError}</p>{/if}
-      <div class="actions">
-        <button class="ctl" type="submit" disabled={busy || !host.trim() || !token.trim()}
-          >{busy ? "Checking…" : "Add"}</button
-        >
-        <button class="ctl" type="button" disabled={busy} onclick={() => (adding = false)}>Cancel</button>
+  <div class="box">
+    <div class="table" role="listbox" aria-label="Accounts">
+      <div class="head">
+        <span></span><span>Host</span><span>Account</span><span>Credential</span><span></span>
       </div>
-    </form>
-  {:else}
-    <div class="actions">
-      <button class="ctl" type="button" onclick={startAdding}>Add personal access token…</button>
+      {#each rows as row (row.key)}
+        <button
+          class="row"
+          type="button"
+          role="option"
+          aria-selected={row === selected}
+          onclick={() => (selectedKey = row.key)}
+        >
+          <span class="badge">{row.platform}</span>
+          <span class="host">{row.host}</span>
+          <span>{row.user ?? ""}</span>
+          <span>{row.credential}</span>
+          <span class="dot {row.status}" title={row.statusLabel}></span>
+        </button>
+      {/each}
+      {#if !rows.length}
+        <p class="empty">
+          {accounts.loading
+            ? "Looking for accounts…"
+            : "No accounts yet. Sign in with gh auth login or az login, or add a personal access token."}
+        </p>
+      {/if}
     </div>
-    {#if keychainWarning}<p class="problem" role="alert">{keychainWarning}</p>{/if}
+    <div class="strip">
+      <button type="button" aria-label="Add account" onclick={() => (sheet = "add")}>+</button>
+      <button
+        type="button"
+        aria-label="Remove account"
+        disabled={!selected?.removable}
+        onclick={() => selected && void remove(selected.host, selected.key)}>−</button
+      >
+    </div>
+  </div>
+
+  {#if selected}
+    <dl>
+      <dt>Host</dt>
+      <dd class="mono">{selected.host}</dd>
+      <dt>Account</dt>
+      <dd>{selected.user ?? "unknown"}</dd>
+      <dt>Credential</dt>
+      <dd>{selected.storage}</dd>
+      <dt>Status</dt>
+      <dd class="status {selected.status}">{selected.statusLabel}</dd>
+      {#if selected.problem}
+        <dt></dt>
+        <dd class="problem">{selected.problem}</dd>
+      {/if}
+      {#if selected.note}
+        <dt></dt>
+        <dd class="hint">{selected.note}</dd>
+      {/if}
+      {#if problem?.key === selected.key}
+        <dt></dt>
+        <dd class="problem" role="alert">{problem.message}</dd>
+      {/if}
+      <dt></dt>
+      <dd class="actions">
+        {#if selected.removable}
+          <button class="ctl" type="button" onclick={() => (sheet = "replace")}>Replace token…</button>
+        {/if}
+        <button
+          class="ctl"
+          type="button"
+          disabled={checking}
+          onclick={() => void checkAgain(selected.host, selected.key)}>{checking ? "Checking…" : "Check again"}</button
+        >
+      </dd>
+    </dl>
   {/if}
+  {#if keychainWarning}<p class="problem" role="alert">{keychainWarning}</p>{/if}
 </div>
+
+{#if sheet}
+  <AccountSheet
+    replace={sheet === "replace" ? selected?.host : undefined}
+    onclose={() => (sheet = undefined)}
+    ondone={done}
+  />
+{/if}
 
 <style>
   .page {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 16px;
     font-size: var(--fs-ctl);
   }
-  ul {
-    list-style: none;
+  p {
     margin: 0;
-    padding: 0;
+  }
+  .box {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg-editor);
+    overflow: hidden;
+  }
+  .table {
+    min-height: 150px;
     display: flex;
     flex-direction: column;
   }
-  li {
-    padding: 10px 0;
-    border-bottom: 1px solid var(--line-soft);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  li:first-child {
-    padding-top: 0;
-  }
-  li:last-child {
-    border-bottom: 0;
+  .head,
+  .row {
+    display: grid;
+    grid-template-columns: 50px 1.6fr 1fr 0.8fr 28px;
+    align-items: center;
+    column-gap: 4px;
+    padding: 0 6px 0 10px;
+    height: 30px;
+    text-align: left;
   }
   .head {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .text {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .title {
-    font-size: var(--fs);
-  }
-  .hint {
     color: var(--text-3);
-    font-size: 12px;
+    border-bottom: 1px solid var(--line-soft);
   }
-  .status {
-    font-size: 12px;
+  .row {
+    border: 0;
+    border-bottom: 1px solid var(--line-soft);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+  }
+  .row:hover {
+    background: var(--hover);
+  }
+  .row[aria-selected="true"] {
+    background: var(--toggle);
+  }
+  .host,
+  .mono {
+    font-family: var(--font-mono);
+    font-size: var(--fs-mono);
+  }
+  .badge {
+    justify-self: start;
+    padding: 0 5px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg-control);
     color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    line-height: 16px;
+  }
+  .dot {
+    justify-self: center;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-3);
+  }
+  .dot.signedIn {
+    background: var(--ok);
+  }
+  .dot.rejected {
+    background: var(--warn);
+  }
+  .empty {
+    padding: 12px 10px;
+    color: var(--text-3);
+  }
+  .strip {
+    display: flex;
+    border-top: 1px solid var(--line);
+    background: var(--bg-panel);
+  }
+  .strip button {
+    width: 28px;
+    height: 22px;
+    border: 0;
+    border-right: 1px solid var(--line);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+  }
+  .strip button:enabled:hover {
+    background: var(--hover);
+  }
+  .strip button:disabled {
+    opacity: 0.4;
+  }
+  dl {
+    display: grid;
+    grid-template-columns: 100px 1fr;
+    gap: 6px 12px;
+    margin: 0;
+  }
+  dt {
+    text-align: right;
+    color: var(--text-2);
+  }
+  dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .status.signedIn {
     color: var(--add-text);
@@ -200,38 +250,17 @@
   .status.rejected {
     color: var(--del-text);
   }
+  .hint {
+    color: var(--text-3);
+    font-size: 12px;
+  }
   .problem {
     color: var(--del-text);
     font-size: 12px;
     white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-  .empty {
-    margin: 0;
-    color: var(--text-3);
-  }
-  p {
-    margin: 0;
-  }
-  .mono {
-    font-family: var(--font-mono);
-    font-size: var(--fs-mono-s);
-  }
-  form {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding-top: 12px;
-    border-top: 1px solid var(--line-soft);
-  }
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    color: var(--text-2);
   }
   .actions {
     display: flex;
-    gap: 6px;
+    gap: 8px;
   }
 </style>
