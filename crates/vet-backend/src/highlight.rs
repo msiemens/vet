@@ -10,7 +10,7 @@ use vet_highlight::{Cache, Language};
 use vet_protocol::{Response, Side, SymbolSignature, Unavailable};
 use vet_semantic::signature::Signature;
 
-use crate::mapping;
+use vet_mapping as mapping;
 
 /// What the cache of highlights may hold, in bytes.
 const CAPACITY: usize = 64 << 20;

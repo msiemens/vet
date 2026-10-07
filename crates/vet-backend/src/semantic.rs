@@ -6,12 +6,13 @@ use vet_core::content::RepoPath;
 use vet_protocol::{Response, Side};
 use vet_semantic::ports::{At, Location};
 
-use super::highlight;
-use super::mapping::core_side;
-use super::mapping::semantic as map;
-use super::{Open, message};
+use vet_mapping::core_side;
+use vet_mapping::semantic as map;
 
-impl Open {
+use super::open::Wired;
+use super::{highlight, message};
+
+impl Wired {
     /// The language that serves `file`, as `ListServers` names it.
     fn language_of(&self, file: &RepoPath) -> Option<String> {
         self.semantics.language_of(file).map(|language| language.0.clone())
