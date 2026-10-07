@@ -184,6 +184,8 @@ pub trait History {
     /// The commit `spec` (a full or abbreviated id, or a revision) names.
     /// The error is fit to show to a user.
     fn resolve_commit(&self, spec: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
+    /// The tip of the local branch `name`.
+    fn branch_tip(&self, name: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
     /// Local branches and up to `max_commits` commits reachable from `HEAD`, newest first.
     fn base_candidates(&self, max_commits: usize) -> impl Future<Output = Result<BaseCandidates, GitError>> + Send;
     /// Local branches, by name.

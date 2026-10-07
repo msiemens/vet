@@ -223,6 +223,9 @@ impl History for FakeGit {
             .map(|(c, _)| c.clone())
             .ok_or_else(|| GitError(format!("unknown commit {spec}")))
     }
+    async fn branch_tip(&self, name: &str) -> std::result::Result<CommitId, GitError> {
+        self.resolve_commit(&format!("refs/heads/{name}")).await
+    }
     async fn base_candidates(&self, _: usize) -> std::result::Result<crate::ports::BaseCandidates, GitError> {
         unreachable!()
     }

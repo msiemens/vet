@@ -16,6 +16,28 @@ pub fn default_choice(branches: &[BranchInfo], head: &CommitId) -> (BaseChoice, 
     }
 }
 
+/// The commit `choice` names now, with the choice as stored: a commit is spelled out in full.
+/// The error is fit to show.
+pub async fn resolve<G: History>(git: &G, choice: BaseChoice) -> Result<(BaseChoice, CommitId), String> {
+    match choice {
+        BaseChoice::Branch { name } => {
+            let commit = git
+                .branch_tip(&name)
+                .await
+                .map_err(|_| format!("unknown branch {name}"))?;
+            Ok((BaseChoice::Branch { name }, commit))
+        }
+        BaseChoice::MergeBase { reference } => {
+            let commit = git.merge_base(&reference).await.map_err(|e| e.0)?;
+            Ok((BaseChoice::MergeBase { reference }, commit))
+        }
+        BaseChoice::Commit { id } => {
+            let commit = git.resolve_commit(&id.0).await.map_err(|e| e.0)?;
+            Ok((BaseChoice::Commit { id: commit.clone() }, commit))
+        }
+    }
+}
+
 /// The name a person knows `commit` by: a branch whose tip it is, else
 /// `branch~N` on a branch's first-parent history, else its short hash. Branches
 /// are tried in this order: `prefer`, the current one, the default one, the rest.

@@ -264,6 +264,11 @@ impl History for GixRepo {
         self.blocking(move |i| base::resolve_commit(&i.open()?, &spec)).await
     }
 
+    async fn branch_tip(&self, name: &str) -> Result<CommitId, GitError> {
+        let spec = format!("refs/heads/{name}");
+        self.blocking(move |i| base::resolve_commit(&i.open()?, &spec)).await
+    }
+
     async fn base_candidates(&self, max_commits: usize) -> Result<BaseCandidates, GitError> {
         self.blocking(move |i| base::candidates(&i.open()?, max_commits)).await
     }

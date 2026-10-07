@@ -709,24 +709,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// restores the earlier coverage. Returns the revision.
     pub async fn set_base(&self, choice: BaseChoice) -> Result<(BaseView, u32)> {
         let git = &self.acquisition.git;
-        let base_err = |e: GitError| SessionError::Base(e.0);
-        let (choice, commit) = match choice {
-            BaseChoice::Branch { name } => {
-                let commit = git
-                    .resolve_commit(&format!("refs/heads/{name}"))
-                    .await
-                    .map_err(|_| SessionError::Base(format!("unknown branch {name}")))?;
-                (BaseChoice::Branch { name }, commit)
-            }
-            BaseChoice::MergeBase { reference } => {
-                let commit = git.merge_base(&reference).await.map_err(base_err)?;
-                (BaseChoice::MergeBase { reference }, commit)
-            }
-            BaseChoice::Commit { id } => {
-                let commit = git.resolve_commit(&id.0).await.map_err(base_err)?;
-                (BaseChoice::Commit { id: commit.clone() }, commit)
-            }
-        };
+        let (choice, commit) = base::resolve(git, choice).await.map_err(SessionError::Base)?;
         let snapshot = git.commit_snapshot(&commit).await?;
 
         let mut st = self.state.lock().await;
