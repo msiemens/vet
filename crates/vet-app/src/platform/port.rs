@@ -8,8 +8,9 @@ use super::remote::RemoteKey;
 pub trait Platform {
     fn traits(&self) -> PlatformTraits;
 
-    /// The user the credential for `host` belongs to.
-    fn viewer(&self, host: &str) -> impl Future<Output = Result<Viewer, PlatformError>> + Send;
+    /// The user the credential for the host of `remote` belongs to, with the teams that
+    /// count in `remote` (an Azure DevOps team belongs to an organization).
+    fn viewer(&self, remote: &RemoteKey) -> impl Future<Output = Result<Viewer, PlatformError>> + Send;
 
     /// The open pull requests of `remote` that `query` may ask for, narrowed as far as the
     /// platform can, most recently updated first. The platform lists a bounded number;
@@ -34,7 +35,7 @@ pub async fn list_rows<P: Platform>(
     remote: &RemoteKey,
     query: &PullRequestQuery,
 ) -> Result<Vec<PullRequestRow>, PlatformError> {
-    let viewer = platform.viewer(&remote.host).await?;
+    let viewer = platform.viewer(remote).await?;
     let candidates = platform.list_pull_requests(remote, query).await?;
     Ok(rows(candidates, &viewer, query))
 }
@@ -56,7 +57,7 @@ mod tests {
             PlatformTraits::github()
         }
 
-        async fn viewer(&self, _: &str) -> Result<Viewer, PlatformError> {
+        async fn viewer(&self, _: &RemoteKey) -> Result<Viewer, PlatformError> {
             Ok(viewer())
         }
 

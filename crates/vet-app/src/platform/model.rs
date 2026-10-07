@@ -203,7 +203,8 @@ pub struct ForcePush {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PullRequestDetail {
     pub pull_request: PullRequest,
-    /// The tip of the target branch.
+    /// The commit the changes are measured from: the tip of the target branch on GitHub,
+    /// the merge base on Azure DevOps.
     pub base: String,
     /// The source branch is in another repository.
     pub from_fork: bool,

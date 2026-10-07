@@ -330,7 +330,8 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
         PlatformTraits::github()
     }
 
-    async fn viewer(&self, host: &str) -> Result<Viewer, PlatformError> {
+    async fn viewer(&self, remote: &RemoteKey) -> Result<Viewer, PlatformError> {
+        let host = remote.host.as_str();
         let now = (self.now)();
         if let Some((at, viewer)) = self.state().viewers.get(host)
             && now - at < VIEWER_MAX_AGE

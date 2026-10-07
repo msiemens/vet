@@ -416,7 +416,7 @@ async fn a_server_that_cannot_be_reached_is_reported_with_its_host() {
     let fake = Fake::start(|_, _| Canned::json("{}"));
     let client = client(&fake);
     drop(fake);
-    let error = client.viewer("github.com").await.unwrap_err();
+    let error = client.viewer(&remote()).await.unwrap_err();
     assert!(
         matches!(&error, PlatformError::Unreachable(why) if why.starts_with("cannot reach github.com")),
         "{error:?}"
@@ -451,7 +451,7 @@ async fn the_viewer_is_their_login_and_every_team_on_every_page() {
     set_now(NOW);
     let fake = viewer_server();
     let client = client(&fake);
-    let viewer = client.viewer("github.com").await.unwrap();
+    let viewer = client.viewer(&remote()).await.unwrap();
     assert_eq!(
         viewer,
         Viewer {
@@ -462,13 +462,13 @@ async fn the_viewer_is_their_login_and_every_team_on_every_page() {
     assert_eq!(fake.requests().len(), 3);
 
     set_now(NOW + 60);
-    assert_eq!(client.viewer("github.com").await.unwrap(), viewer);
+    assert_eq!(client.viewer(&remote()).await.unwrap(), viewer);
     assert_eq!(fake.requests().len(), 3, "remembered for a while");
 
     // Later it is asked again, as a conditional request for each document, and the
     // pages that were not modified are read from before, the link to the next included.
     set_now(NOW + VIEWER_MAX_AGE + 1);
-    assert_eq!(client.viewer("github.com").await.unwrap(), viewer);
+    assert_eq!(client.viewer(&remote()).await.unwrap(), viewer);
     let again = &fake.requests()[3..];
     assert_eq!(again.len(), 3);
     assert!(again.iter().all(|r| r.header("if-none-match").is_some()), "{again:?}");
@@ -483,7 +483,7 @@ async fn a_token_that_may_not_list_teams_still_has_a_viewer() {
             Canned::status(403, r#"{"message":"Resource not accessible by personal access token"}"#)
         }
     });
-    let viewer = client(&fake).viewer("github.com").await.unwrap();
+    let viewer = client(&fake).viewer(&remote()).await.unwrap();
     assert_eq!((viewer.login.as_str(), viewer.teams.len()), ("ada", 0));
 }
 
@@ -499,7 +499,7 @@ async fn a_link_to_another_host_is_followed_without_the_token() {
         }
         _ => Canned::json(&format!("[{}]", team_json("acme", "security"))),
     });
-    let viewer = client(&fake).viewer("github.com").await.unwrap();
+    let viewer = client(&fake).viewer(&remote()).await.unwrap();
     assert_eq!(viewer.teams, ["acme/reviewers", "acme/security"]);
     let requests = fake.requests();
     assert!(requests[..2].iter().all(|r| r.header("authorization").is_some()));
@@ -509,7 +509,7 @@ async fn a_link_to_another_host_is_followed_without_the_token() {
 #[tokio::test]
 async fn a_redirect_is_not_followed_with_the_token() {
     let fake = Fake::start(|_, _| Canned::status(301, "").with("Location", "https://elsewhere.example/"));
-    let error = client(&fake).viewer("github.com").await.unwrap_err();
+    let error = client(&fake).viewer(&remote()).await.unwrap_err();
     assert!(matches!(error, PlatformError::Unexpected(_)), "{error:?}");
 }
 
@@ -608,7 +608,7 @@ async fn github_smoke() {
         host: "github.com".to_owned(),
         path: std::env::var("VET_SMOKE_REPO").unwrap_or_else(|_| "cli/cli".to_owned()),
     };
-    let viewer = client.viewer(&remote.host).await.unwrap();
+    let viewer = client.viewer(&remote).await.unwrap();
     println!("viewer {viewer:?}");
     for tab in [
         QueueTab::AllOpen,
