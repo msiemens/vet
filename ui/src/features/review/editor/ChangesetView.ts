@@ -20,6 +20,7 @@ import type { BarActions } from "./hunkBar";
 import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
 import { lineOf, lineStart, selectedLines } from "./positions";
 import { setCurrent, setStates } from "./reviewState";
+import { Stops, hunkAt } from "./stops";
 import type { Section } from "./section";
 import { COLLAPSE, type Metrics, hiddenAt, sectionLayout } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
@@ -65,13 +66,9 @@ export interface HunkAnchor {
 
 export class ChangesetView {
   readonly sections: Section[] = [];
-  /**
-   * Hunk navigation stops at every change card and every hunk; a file's stops are its cards
-   * first, then its hunks. `stopStart[fi]` is the number of stops before file `fi`.
-   */
-  private stopStart: number[] = [];
+  /** Hunk navigation stops at every change card and every hunk. */
+  private stops: Stops;
   readonly totalHunks: number;
-  readonly totalStops: number;
   private mounted = new Set<number>();
   /** Sections whose cards show their image previews. */
   private previewing = new Set<number>();
@@ -130,11 +127,8 @@ export class ChangesetView {
       collapse,
     );
     let hunks = 0;
-    let stops = 0;
     for (const file of files) {
-      this.stopStart.push(stops);
       hunks += file.hunks.length;
-      stops += file.nonText.length + file.hunks.length;
       const el = document.createElement("section");
       el.className = "file";
       const index = this.sections.length;
@@ -181,7 +175,7 @@ export class ChangesetView {
       });
     }
     this.totalHunks = hunks;
-    this.totalStops = stops;
+    this.stops = new Stops(this.sections.map((s) => ({ cards: s.cards.length, hunks: s.file.hunks.length })));
     this.root.replaceChildren(...(this.threads.lead ? [this.threads.lead] : []), ...this.sections.map((s) => s.el));
     this.layout();
     this.root.addEventListener("scroll", this.onScroll, { passive: true });
@@ -366,7 +360,7 @@ export class ChangesetView {
     );
     this.threads.mounted(s);
     this.mounted.add(fi);
-    const first = this.stopStart[fi] + s.cards.length;
+    const first = this.stops.start(fi) + s.cards.length;
     if (this.current >= first && this.current < first + s.file.hunks.length)
       s.handle.dispatchAll(setCurrent.of(this.current - first));
     this.showDiagnostics(s);
@@ -473,7 +467,7 @@ export class ChangesetView {
     const handle = this.mount(fi);
     this.sync();
     const { cards, file } = this.sections[fi];
-    if (cards.length + file.hunks.length) this.select(this.stopStart[fi]);
+    if (cards.length + file.hunks.length) this.select(this.stops.start(fi));
     return handle;
   }
 
@@ -494,44 +488,32 @@ export class ChangesetView {
     if (!(e.target instanceof Node) || s.cards.length + s.file.hunks.length === 0) return;
     const ci = s.cards.findIndex((c) => c.el.contains(e.target as Node));
     if (ci >= 0) {
-      this.select(this.stopStart[fi] + ci);
+      this.select(this.stops.start(fi) + ci);
       return;
     }
     const views = s.handle?.views ?? [];
     const view = views.find((v) => v.dom.contains(e.target as Node));
     if (!view || !s.file.hunks.length) {
-      this.select(this.stopStart[fi]);
+      this.select(this.stops.start(fi));
       return;
     }
     const line = lineOf(view.state.doc, view.posAtCoords({ x: e.clientX, y: e.clientY }, false));
     const base = view !== s.handle?.view;
-    let hunk = 0;
-    s.file.hunks.forEach((h, i) => {
-      if ((base ? h.baseStart : h.targetStart) <= line) hunk = i;
-    });
-    this.select(this.stopStart[fi] + s.cards.length + hunk);
-  }
-
-  /** The file of a stop, and the stop's index among that file's stops: below its card count it is a card, else a hunk. */
-  private locate(stop: number): [number, number] {
-    const end = (i: number) => this.stopStart[i] + this.sections[i].cards.length + this.sections[i].file.hunks.length;
-    let [lo, hi] = [0, this.sections.length - 1];
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (end(mid) > stop) hi = mid;
-      else lo = mid + 1;
-    }
-    return [lo, stop - this.stopStart[lo]];
+    const hunk = hunkAt(
+      s.file.hunks.map((h) => (base ? h.baseStart : h.targetStart)),
+      line,
+    );
+    this.select(this.stops.start(fi) + s.cards.length + hunk);
   }
 
   /** The stop of file `fi`'s first hunk. */
   firstHunkOf(fi: number): number {
-    return this.stopStart[fi] + this.sections[fi].cards.length;
+    return this.stops.start(fi) + this.sections[fi].cards.length;
   }
 
   /** Shows a stop as current or not: a card outlines itself, a hunk is the editor's. */
   private markCurrent(stop: number, on: boolean) {
-    const [fi, si] = this.locate(stop);
+    const [fi, si] = this.stops.locate(stop);
     const s = this.sections[fi];
     if (si < s.cards.length) s.cards[si].setCurrent(on);
     else s.handle?.dispatchAll(setCurrent.of(on ? si - s.cards.length : null));
@@ -539,9 +521,9 @@ export class ChangesetView {
 
   /** Goes to the stop with this index over all files' cards and hunks (a card, then the file's hunks). */
   async goToHunk(stop: number): Promise<void> {
-    if (!this.totalStops) return;
-    stop = Math.max(0, Math.min(this.totalStops - 1, stop));
-    const [fi, si] = this.locate(stop);
+    if (!this.stops.total) return;
+    stop = this.stops.clamp(stop);
+    const [fi, si] = this.stops.locate(stop);
     const s = this.sections[fi];
     const cards = s.cards.length;
     if (si < cards) {
@@ -612,8 +594,8 @@ export class ChangesetView {
 
   /** Where the current stop is, so a view of a newer revision can keep it. */
   currentAnchor(): HunkAnchor | undefined {
-    if (this.current < 0 || !this.totalStops) return undefined;
-    const [fi, si] = this.locate(this.current);
+    if (this.current < 0 || !this.stops.total) return undefined;
+    const [fi, si] = this.stops.locate(this.current);
     const { file, cards } = this.sections[fi];
     if (si < cards.length) return { path: file.path, line: 0, card: file.nonText[si].kind };
     return { path: file.path, line: file.hunks[si - cards.length]?.targetStart ?? 0 };
@@ -628,18 +610,8 @@ export class ChangesetView {
     if (!anchor || fi < 0) return;
     const { file, cards } = this.sections[fi];
     const card = anchor.card ? file.nonText.findIndex((i) => i.kind === anchor.card) : -1;
-    if (card >= 0) {
-      this.current = this.stopStart[fi] + card;
-      return;
-    }
-    const hunks = file.hunks;
-    let nearest = -1;
-    hunks.forEach((h, i) => {
-      if (nearest < 0 || Math.abs(h.targetStart - anchor.line) < Math.abs(hunks[nearest].targetStart - anchor.line))
-        nearest = i;
-    });
-    if (nearest >= 0) this.current = this.stopStart[fi] + cards.length + nearest;
-    else if (cards.length) this.current = this.stopStart[fi];
+    const hunks = file.hunks.map((h) => h.targetStart);
+    this.current = this.stops.nearest(fi, cards.length, card, hunks, anchor.line) ?? this.current;
   }
 
   /** The latest toggle, so callers (the benchmark) can wait for the repaint. */
@@ -676,7 +648,7 @@ export class ChangesetView {
 
   /** Asks the backend to flip the current stop: a hunk or a card. */
   toggleCurrent(): Promise<void> {
-    const [fi, si] = this.locate(this.current);
+    const [fi, si] = this.stops.locate(this.current);
     const cards = this.sections[fi].cards.length;
     return si < cards ? this.toggleCard(fi, si) : this.toggleHunk(fi, si - cards);
   }
@@ -728,8 +700,8 @@ export class ChangesetView {
       this.threads.commentOnLines(this.sections[fi], view === handle.view ? "target" : "base", start, len);
       return true;
     }
-    if (this.current < 0 || !this.totalStops) return false;
-    const [fi, si] = this.locate(this.current);
+    if (this.current < 0 || !this.stops.total) return false;
+    const [fi, si] = this.stops.locate(this.current);
     const s = this.sections[fi];
     if (si < s.cards.length) this.threads.commentOnFile(s);
     else this.threads.commentOnHunk(s, si - s.cards.length);
