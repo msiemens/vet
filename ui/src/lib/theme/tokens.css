@@ -21,7 +21,8 @@
   --text-3: light-dark(#6a707a, #8e939b);
   /* The unfilled part of a meter; translucent, so it reads the same on every surface. */
   --track: light-dark(rgba(0, 0, 0, 0.13), rgba(255, 255, 255, 0.14));
-  --select: light-dark(#d4e3fb, #2e436e);
+  /* A text selection; translucent, so it shows over the opaque backgrounds of added and deleted lines. */
+  --select: light-dark(rgba(45, 111, 216, 0.25), rgba(107, 156, 247, 0.35));
   --accent: light-dark(#2d6fd8, #6b9cf7);
   --shadow: 0 14px 40px light-dark(rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.5));
   /* Behind a modal dialog. */

@@ -89,6 +89,12 @@
 :is(.file, .vet-text) .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
   background: var(--select);
 }
+/* CodeMirror draws the selection behind the text (an inline z-index), where the backgrounds of
+   changed lines cover it; above the text and below the gutters it shows on every line. */
+:is(.file, .vet-text) .cm-editor .cm-selectionLayer {
+  z-index: 100 !important;
+  pointer-events: none;
+}
 .file .cm-editor .cm-scroller {
   overflow: visible;
 }
