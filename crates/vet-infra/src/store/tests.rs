@@ -250,6 +250,31 @@ async fn the_base_choice_is_stored_with_the_review_and_survives_reopen() {
 }
 
 #[tokio::test]
+async fn the_browsing_base_is_stored_per_repository_and_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    assert_eq!(store.browsing_base("/a".into()).await.unwrap(), None);
+
+    let branch = BaseChoice::Branch { name: "main".into() };
+    let merge_base = BaseChoice::MergeBase {
+        reference: "main".into(),
+    };
+    store.set_browsing_base("/a".into(), branch).await.unwrap();
+    store.set_browsing_base("/b".into(), merge_base.clone()).await.unwrap();
+    let commit_choice = BaseChoice::Commit { id: commit("abc") };
+    store
+        .set_browsing_base("/a".into(), commit_choice.clone())
+        .await
+        .unwrap();
+
+    drop(store);
+    let store = open(&dir).await;
+    assert_eq!(store.browsing_base("/a".into()).await.unwrap(), Some(commit_choice));
+    assert_eq!(store.browsing_base("/b".into()).await.unwrap(), Some(merge_base));
+    assert_eq!(store.browsing_base("/c".into()).await.unwrap(), None);
+}
+
+#[tokio::test]
 async fn database_is_in_wal_mode() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;

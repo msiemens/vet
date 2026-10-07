@@ -210,7 +210,15 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         };
         let git = &acquisition.git;
         let head = git.head().await?;
-        let (base_choice, base_commit) = base::default_choice(&git.branches().await?, &head);
+        // The base chosen last time, unless it no longer resolves (its branch is gone).
+        let remembered = match acquisition.store.browsing_base(repo.clone()).await? {
+            Some(choice) => base::resolve(git, choice, &head).await.ok(),
+            None => None,
+        };
+        let (base_choice, base_commit) = match remembered {
+            Some(found) => found,
+            None => base::default_choice(&git.branches().await?, &head),
+        };
         let base = git.commit_snapshot(&base_commit).await?;
         let Scan {
             snapshot: target,
@@ -470,6 +478,12 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let (choice, commit) = base::resolve(git, choice, &tip).await.map_err(SessionError::Base)?;
         let snapshot = git.commit_snapshot(&commit).await?;
 
+        if st.source == Source::WorkingTree {
+            self.acquisition
+                .store
+                .set_browsing_base(self.repo.clone(), choice.clone())
+                .await?;
+        }
         if st.base_choice != choice || st.base_commit != commit {
             if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
                 let store = &self.acquisition.store;

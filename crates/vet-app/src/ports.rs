@@ -410,6 +410,14 @@ pub trait ReviewStore {
     /// applies to every changeset of it; the default if none was stored.
     fn filter(&self, repo: String) -> impl Future<Output = Result<ReviewFilter, StoreError>> + Send;
     fn set_filter(&self, repo: String, filter: ReviewFilter) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// The base last chosen for the working tree of the repository at `repo`, which a session
+    /// that is browsing starts out with; none if it was never chosen.
+    fn browsing_base(&self, repo: String) -> impl Future<Output = Result<Option<BaseChoice>, StoreError>> + Send;
+    fn set_browsing_base(
+        &self,
+        repo: String,
+        choice: BaseChoice,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Records that the review's base was chosen as `choice`.
     fn set_base(&self, id: ReviewId, choice: BaseChoice) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Records the number of the version the viewer last marked something in.

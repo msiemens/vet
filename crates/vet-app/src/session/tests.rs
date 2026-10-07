@@ -385,6 +385,7 @@ struct Mem {
     complete: Option<bool>,
     threads: Vec<ChangesetThread>,
     filter: Option<ReviewFilter>,
+    browsing_base: Option<BaseChoice>,
 }
 
 impl Mem {
@@ -453,6 +454,7 @@ impl ReviewStore for MemStore {
             snapshots: std::mem::take(&mut mem.snapshots),
             threads: std::mem::take(&mut mem.threads),
             filter: mem.filter.take(),
+            browsing_base: mem.browsing_base.take(),
             started: mem.started + 1,
             base: Some(choice),
             changeset: Some((repo, source)),
@@ -504,6 +506,13 @@ impl ReviewStore for MemStore {
     }
     async fn set_filter(&self, _: String, filter: ReviewFilter) -> StoreResult<()> {
         self.0.lock().unwrap().filter = Some(filter);
+        Ok(())
+    }
+    async fn browsing_base(&self, _: String) -> StoreResult<Option<BaseChoice>> {
+        Ok(self.0.lock().unwrap().browsing_base.clone())
+    }
+    async fn set_browsing_base(&self, _: String, choice: BaseChoice) -> StoreResult<()> {
+        self.0.lock().unwrap().browsing_base = Some(choice);
         Ok(())
     }
     async fn set_base(&self, _: ReviewId, choice: BaseChoice) -> StoreResult<()> {
@@ -1782,6 +1791,39 @@ async fn a_base_chosen_while_browsing_is_carried_into_the_review() {
             .unwrap()
             .contains(&("1/base".to_string(), CommitId("c1-full".into())))
     );
+}
+
+#[tokio::test]
+async fn the_base_chosen_while_browsing_is_the_base_when_the_repository_opens_again() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.git.add_commit("c1", "c1-full", &[("a.txt", "zero\n")]);
+    fx.git.add_commit("c1-full", "c1-full", &[("a.txt", "zero\n")]);
+    let c1 = BaseChoice::Commit {
+        id: CommitId("c1-full".into()),
+    };
+    fx.session
+        .set_base(BaseChoice::Commit {
+            id: CommitId("c1".into()),
+        })
+        .await
+        .unwrap();
+
+    let session = fx.reopen(&[("a.txt", "two\n")]).await;
+
+    let m = session.manifest(View::Changeset).await.unwrap();
+    assert_eq!((base_of(&m).0, base_of(&m).1), (&c1, "c1-full"));
+    assert_eq!(session.lifecycle().await, Lifecycle::Browsing);
+}
+
+#[tokio::test]
+async fn a_remembered_base_that_no_longer_resolves_gives_way_to_the_default() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.store.0.lock().unwrap().browsing_base = Some(BaseChoice::Branch { name: "deleted".into() });
+
+    let session = fx.reopen(&[("a.txt", "two\n")]).await;
+
+    let m = session.manifest(View::Changeset).await.unwrap();
+    assert_eq!(base_of(&m).0, &detached_head());
 }
 
 #[tokio::test]

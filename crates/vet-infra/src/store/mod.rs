@@ -484,6 +484,25 @@ impl ReviewStore for SqliteStore {
         Ok(txn.commit().await?)
     }
 
+    async fn browsing_base(&self, repo: String) -> Result<Option<BaseChoice>, StoreError> {
+        let row = project_base::Entity::find_by_id(repo).one(&self.db).await?;
+        Ok(row.map(|r| base_from(r.base_kind, r.base_value)))
+    }
+
+    async fn set_browsing_base(&self, repo: String, choice: BaseChoice) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        project_base::Entity::delete_by_id(repo.clone()).exec(&txn).await?;
+        let (base_kind, base_value) = base_columns(choice);
+        project_base::ActiveModel {
+            repo: Set(repo),
+            base_kind: Set(base_kind),
+            base_value: Set(base_value),
+        }
+        .insert(&txn)
+        .await?;
+        Ok(txn.commit().await?)
+    }
+
     async fn set_base(&self, id: ReviewId, choice: BaseChoice) -> Result<(), StoreError> {
         let (kind, value) = base_columns(choice);
         review::ActiveModel {

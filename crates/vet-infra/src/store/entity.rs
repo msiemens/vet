@@ -289,6 +289,27 @@ pub mod project_filter {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
+/// The base last chosen for a repository's working tree, keyed by the repository root. No row
+/// means it was never chosen.
+pub mod project_base {
+    use super::kinds::*;
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "project_base")]
+    pub struct Model {
+        #[sea_orm(primary_key, auto_increment = false)]
+        pub repo: String,
+        pub base_kind: BaseKind,
+        pub base_value: String,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
 /// `kind`: 0 root, 1 include, 2 exclude. Order is the row id.
 pub mod project_filter_item {
     use super::kinds::*;
