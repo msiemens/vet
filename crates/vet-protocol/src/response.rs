@@ -9,7 +9,7 @@ use crate::{
     TextContent, Thread, Unavailable,
 };
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
 pub enum Response {

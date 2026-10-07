@@ -21,8 +21,13 @@ fn completion(c: &Completion) -> p::Completion {
         lines: c.lines,
         seen_lines: c.seen_lines,
         old_base_lines: c.old_base_lines,
+        hunks: c.hunks,
+        seen_hunks: c.seen_hunks,
         items: c.items,
         acknowledged_items: c.acknowledged_items,
+        complete: c.is_complete(),
+        seen_percent: c.seen_percent(),
+        old_base_percent: c.old_base_percent(),
     }
 }
 

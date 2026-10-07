@@ -56,7 +56,7 @@ export class ReviewController {
     window.addEventListener("keydown", this.onKey, true);
     semantic.reset(); // the controller belongs to one repository's screen
     const offReview = changeset.onReview((u) => {
-      for (const view of this.views.values()) view.applyReview(u.path, u.review);
+      for (const view of this.views.values()) view.applyReview(u);
     });
     const offThreads = threads.onChange(() => this.showThreads());
     this.unsubscribe = () => {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Base } from "../../generated/Base";
   import type { BaseChoice } from "../../generated/BaseChoice";
+  import type { Completion } from "../../generated/Completion";
   import type { ReviewInfo } from "../../generated/ReviewInfo";
   import type { Target } from "../../generated/Target";
   import Chip from "../../lib/ui/Chip.svelte";
@@ -38,10 +39,16 @@
     onbase: (choice: BaseChoice) => void;
     /** "Finish review", offered while a review is open. */
     onfinish: () => void;
-    /** Share of changed lines seen and seen against an old base, in percent. */
-    completion: { seenPct: number; oldPct: number; title?: string };
+    /** The changeset's progress. */
+    completion?: Completion;
   } = $props();
   let projectMenu = $state(false);
+  const seen = $derived(completion?.seenPercent ?? 0);
+  const oldBase = $derived(completion?.oldBasePercent ?? 0);
+  const title = $derived(
+    completion &&
+      `${completion.seenLines} of ${completion.lines} lines · ${completion.acknowledgedItems} of ${completion.items} other changes · ${completion.oldBaseLines} lines against an old base`,
+  );
 </script>
 
 <TitleBar>
@@ -68,15 +75,15 @@
     {/if}
   </span>
   <span class="grow" data-tauri-drag-region></span>
-  <span class="completion" title={completion.title} data-tauri-drag-region>
+  <span class="completion" {title} data-tauri-drag-region>
     <Meter
       width={96}
       segments={[
-        { value: completion.seenPct, color: "var(--seen)" },
-        { value: completion.oldPct, color: "var(--old-base)" },
+        { value: seen, color: "var(--seen)" },
+        { value: oldBase, color: "var(--old-base)" },
       ]}
     />
-    <span class="mono pct">{Math.round(completion.seenPct + completion.oldPct)}%</span>
+    <span class="mono pct">{Math.round(seen + oldBase)}%</span>
   </span>
   {#if review?.state === "open"}
     <button

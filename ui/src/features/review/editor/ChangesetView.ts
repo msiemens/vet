@@ -4,9 +4,11 @@
 // mounted only for sections near the viewport.
 
 import { EditorView, closeHoverTooltips, showTooltip } from "@codemirror/view";
+import type { Completion } from "../../../generated/Completion";
 import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
 import type { NonTextKind } from "../../../generated/NonTextKind";
+import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
 import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
@@ -64,6 +66,7 @@ export interface HunkAnchor {
 interface Section extends ThreadState {
   file: FileChange;
   review: FileReview;
+  completion: Completion;
   el: HTMLElement;
   body: HTMLElement;
   count: HTMLElement;
@@ -218,6 +221,7 @@ export class ChangesetView {
       this.sections.push({
         file,
         review: file.review,
+        completion: file.completion,
         el,
         body,
         count,
@@ -320,13 +324,12 @@ export class ChangesetView {
   }
 
   private updateCount(s: Section) {
-    const { hunks, acknowledged } = s.review;
+    const c = s.completion;
     const parts: string[] = [];
-    if (hunks.length || !s.cards.length)
-      parts.push(`${hunks.filter((h) => h === "seen").length}/${hunks.length} hunks seen`);
-    if (s.cards.length) parts.push(`${acknowledged.length}/${s.cards.length} other`);
+    if (c.hunks || !c.items) parts.push(`${c.seenHunks}/${c.hunks} hunks seen`);
+    if (c.items) parts.push(`${c.acknowledgedItems}/${c.items} other`);
     s.count.textContent = parts.join(" · ");
-    s.el.classList.toggle("all-seen", hunks.every((h) => h === "seen") && acknowledged.length === s.cards.length);
+    s.el.classList.toggle("all-seen", c.complete);
   }
 
   /** Drops the editor; the regions it had expanded are collapsed again when it is mounted anew. */
@@ -712,11 +715,12 @@ export class ChangesetView {
     return (this.pendingToggle = this.listeners.setSeen(this.revision, file.path, hunks, value));
   }
 
-  /** Renders a file's review state. */
-  applyReview(path: string, review: FileReview) {
+  /** Renders a file's review state and progress as the backend sent them. */
+  applyReview({ path, review, completion }: ReviewUpdate) {
     const s = this.sections.find((s) => s.file.path === path);
     if (!s) return;
     s.review = review;
+    s.completion = completion;
     s.handle?.dispatchAll(setStates.of(review.hunks));
     s.cards.forEach((card, i) => card.setAcknowledged(review.acknowledged.includes(s.file.nonText[i].kind)));
     this.updateCount(s);

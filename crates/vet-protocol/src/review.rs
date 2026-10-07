@@ -122,7 +122,7 @@ pub struct CommitInfo {
 
 /// A file's new review state with the completion it implies, so a shell never
 /// derives progress itself.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ReviewUpdate {
@@ -134,9 +134,9 @@ pub struct ReviewUpdate {
     pub changeset: Completion,
 }
 
-/// Progress against the review filter (§5.2): changed lines (counted per side)
-/// and non-text items.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+/// Progress against the review filter (§5.2): changed lines (counted per side),
+/// text hunks and non-text items. A shell shows these as they are.
+#[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Completion {
@@ -144,12 +144,22 @@ pub struct Completion {
     pub seen_lines: u32,
     /// Lines seen against an older base; they count as unseen in `seen_lines`.
     pub old_base_lines: u32,
+    pub hunks: u32,
+    /// Hunks whose changed lines are all seen; one seen against an older base is not.
+    pub seen_hunks: u32,
     pub items: u32,
     pub acknowledged_items: u32,
+    /// Everything counted here is seen: all lines and all non-text items.
+    pub complete: bool,
+    /// How much of the lines and non-text items together is seen, in percent; 0 with
+    /// nothing to review.
+    pub seen_percent: f32,
+    /// How much of them is seen against an older base only, in percent.
+    pub old_base_percent: f32,
 }
 
 /// The changeset as displayed through the repository's review filter.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Manifest {

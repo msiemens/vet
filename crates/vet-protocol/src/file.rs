@@ -74,7 +74,7 @@ pub enum NoTextReason {
     NotAFile,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct FileChange {

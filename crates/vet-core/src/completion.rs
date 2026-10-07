@@ -16,6 +16,10 @@ pub struct Completion {
     pub old_base_lines: u32,
     pub items: u32,
     pub acknowledged_items: u32,
+    /// Text hunks of the files passing the filter.
+    pub hunks: u32,
+    /// Of those, in state `Seen`.
+    pub seen_hunks: u32,
     pub excluded_lines: u32,
     pub excluded_items: u32,
 }
@@ -23,6 +27,25 @@ pub struct Completion {
 impl Completion {
     pub fn is_complete(&self) -> bool {
         self.seen_lines == self.lines && self.acknowledged_items == self.items
+    }
+
+    /// Share of the changed lines and non-text items that are seen, in percent; 0 with nothing to review.
+    pub fn seen_percent(&self) -> f32 {
+        self.percent(self.seen_lines + self.acknowledged_items)
+    }
+
+    /// Share of the changed lines and non-text items that are seen against an old base only, in percent.
+    pub fn old_base_percent(&self) -> f32 {
+        self.percent(self.old_base_lines)
+    }
+
+    fn percent(&self, part: u32) -> f32 {
+        let total = self.lines + self.items;
+        if total == 0 {
+            0.0
+        } else {
+            part as f32 / total as f32 * 100.0
+        }
     }
 }
 
@@ -108,11 +131,18 @@ impl<'a> Coverage<'a> {
             old_base_lines: 0,
             items: 0,
             acknowledged_items: 0,
+            hunks: 0,
+            seen_hunks: 0,
             excluded_lines: 0,
             excluded_items: 0,
         };
         for d in diffs {
             let passes = compiled.passes(d.path());
+            if passes {
+                let states = self.hunk_states(d);
+                c.hunks += states.len() as u32;
+                c.seen_hunks += states.iter().filter(|&&s| s == HunkState::Seen).count() as u32;
+            }
             for h in &d.hunks {
                 for (side, file, range) in d.sides(h) {
                     let Some(file) = file else { continue };
@@ -152,4 +182,35 @@ fn covered(sorted: &[LineRange], r: LineRange) -> u32 {
         }
     }
     total
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn completion(lines: u32, seen_lines: u32, old_base_lines: u32, items: u32, acknowledged_items: u32) -> Completion {
+        Completion {
+            lines,
+            seen_lines,
+            old_base_lines,
+            items,
+            acknowledged_items,
+            hunks: 0,
+            seen_hunks: 0,
+            excluded_lines: 0,
+            excluded_items: 0,
+        }
+    }
+
+    #[test]
+    fn lines_and_items_count_alike_and_an_old_base_is_a_share_of_the_same_total() {
+        let c = completion(6, 3, 1, 2, 1);
+        assert_eq!((c.seen_percent(), c.old_base_percent()), (50.0, 12.5));
+    }
+
+    #[test]
+    fn nothing_to_review_is_zero_percent() {
+        let c = completion(0, 0, 0, 0, 0);
+        assert_eq!((c.seen_percent(), c.old_base_percent()), (0.0, 0.0));
+    }
 }

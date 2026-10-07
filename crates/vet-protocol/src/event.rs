@@ -7,7 +7,7 @@ use crate::{RestoreFailure, ReviewInfo, ReviewUpdate, SessionId};
 
 /// Events are invalidations or small state updates; the client re-requests
 /// whatever it displays.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
 pub enum Event {

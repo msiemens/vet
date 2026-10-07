@@ -5,7 +5,6 @@
 
 import type { FileChange } from "../../generated/FileChange";
 import type { FileStatus } from "../../generated/FileStatus";
-import { percentages } from "../../lib/completion.ts";
 import { basename, compactChain, dirname } from "../../lib/paths.ts";
 
 export interface DirRow {
@@ -31,8 +30,8 @@ export type Row = DirRow | FileRow;
 /** What a file row shows besides its name: it changes with review updates. */
 export interface FileSummary {
   status: "M" | "A" | "D" | "R";
-  seenPct: number;
-  oldPct: number;
+  seenPercent: number;
+  oldBasePercent: number;
   /** Set when the mode changed: the executable bit gained or lost, else a plain mode change. */
   mode?: "+x" | "-x" | "mode";
 }
@@ -89,7 +88,8 @@ export function buildTree(paths: readonly string[]): DirNode {
 }
 
 export function summarize(file: FileChange): FileSummary {
-  return { status: LETTER[file.status], ...percentages(file.completion), mode: modeChange(file) };
+  const { seenPercent, oldBasePercent } = file.completion;
+  return { status: LETTER[file.status], seenPercent, oldBasePercent, mode: modeChange(file) };
 }
 
 /** The visible rows; the contents of `collapsed` directories are left out. */

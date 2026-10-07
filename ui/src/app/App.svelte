@@ -17,7 +17,6 @@
   import { SettingsDialog } from "../features/settings";
   import { StartScreen } from "../features/start";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
-  import { percentages } from "../lib/completion";
   import { KEYS, matches } from "../lib/keymap";
   import { repoName } from "../lib/paths";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
@@ -42,14 +41,6 @@
   let dialog = $state<"settings" | "about" | "finish">();
   const reviewOpen = $derived(changeset.manifest?.review.state === "open");
 
-  const completion = $derived.by(() => {
-    const c = changeset.manifest?.completion;
-    if (!c) return { seenPct: 0, oldPct: 0 };
-    return {
-      ...percentages(c),
-      title: `${c.seenLines} of ${c.lines} lines · ${c.acknowledgedItems} of ${c.items} other changes · ${c.oldBaseLines} lines against an old base`,
-    };
-  });
   const semanticSummary = $derived(semantic.summary(controller?.activePath));
   const footer = $derived({
     languageServer: semanticSummary.label,
@@ -149,7 +140,7 @@
     review={changeset.manifest?.review}
     loadBase={() => changeset.baseCandidates()}
     onbase={(choice) => void changeset.setBase(choice)}
-    {completion}
+    completion={changeset.manifest?.completion}
     onfinish={() => (dialog = "finish")}
   />
 

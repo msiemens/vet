@@ -808,6 +808,29 @@ async fn unmarking_removes_the_hunks_spans() {
 }
 
 #[tokio::test]
+async fn completion_counts_the_seen_hunks_of_a_file_and_of_the_changeset() {
+    let base = numbered(30, &[]);
+    let fx = Fixture::open(
+        &[("a.txt", &base), ("b.txt", &base)],
+        &[("a.txt", &numbered(30, &[3, 20])), ("b.txt", &numbered(30, &[5]))],
+    )
+    .await;
+
+    let m = fx.session.manifest().await.unwrap();
+    assert_eq!((m.files[0].completion.hunks, m.files[0].completion.seen_hunks), (2, 0));
+    assert_eq!((m.completion.hunks, m.completion.seen_hunks), (3, 0));
+
+    let update = fx.session.set_seen(0, "a.txt", &[1], true).await.unwrap();
+    assert_eq!((update.completion.hunks, update.completion.seen_hunks), (2, 1));
+    assert!(!update.completion.is_complete());
+    assert_eq!((update.changeset.hunks, update.changeset.seen_hunks), (3, 1));
+
+    let update = fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    assert_eq!((update.completion.hunks, update.completion.seen_hunks), (2, 2));
+    assert!(update.completion.is_complete() && !update.changeset.is_complete());
+}
+
+#[tokio::test]
 async fn unmarking_cuts_a_hunk_out_of_a_larger_span() {
     let base = numbered(40, &[]);
     let region: Vec<usize> = (5..25).collect();

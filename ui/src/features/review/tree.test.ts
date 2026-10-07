@@ -48,7 +48,7 @@ void test("a file's progress comes from its summary, not from the tree", () => {
     path: "a/Cargo.toml",
     status: "modified",
     nonText: [],
-    completion: { lines: 10, seenLines: 5, oldBaseLines: 2, items: 0, acknowledgedItems: 0 },
+    completion: { seenPercent: 50, oldBasePercent: 20 },
   } as unknown as FileChange;
-  assert.deepEqual(summarize(file), { status: "M", seenPct: 50, oldPct: 20, mode: undefined });
+  assert.deepEqual(summarize(file), { status: "M", seenPercent: 50, oldBasePercent: 20, mode: undefined });
 });
