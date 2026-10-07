@@ -17,7 +17,8 @@ import type { FileSource } from "./fileSource";
 import type { BarActions } from "./hunkBar";
 import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
 import { lineOf, lineStart, selectedLines } from "./positions";
-import { setCurrent, setStates } from "./reviewState";
+import { type ReviewRequests, ReviewActions, renderReview } from "./reviewActions";
+import { setCurrent } from "./reviewState";
 import { Stops, hunkAt } from "./stops";
 import type { Section } from "./section";
 import { SectionHeights, readMetrics } from "./sectionHeights";
@@ -29,16 +30,7 @@ import { Windowing } from "./windowing";
 /** The editor hooks as the owner provides them: the semantic requests still name the view's revision. */
 export type ViewHooks = Omit<Hooks, keyof BarActions | keyof SemanticHooks> & SemanticSource;
 
-export interface Listeners {
-  /**
-   * Asks the owner of the review state to flip a hunk's seen state at `revision`; the backend
-   * decides the direction. Its new state comes back through `applyReview`.
-   */
-  toggleHunk(revision: number, path: string, hunk: number): Promise<void>;
-  /** The same for the acknowledgement of a non-text item. */
-  toggleItem(revision: number, path: string, kind: NonTextKind): Promise<void>;
-  /** The same for everything in a file. */
-  toggleFileSeen(revision: number, path: string): Promise<void>;
+export interface Listeners extends ReviewRequests {
   /** Context menu on a file header. */
   fileMenu(path: string, x: number, y: number): void;
   /** Jump to Source: the file's text at a 0-based target line. */
@@ -64,6 +56,7 @@ export class ChangesetView {
   readonly totalHunks: number;
   private heights: SectionHeights;
   private windowing: Windowing;
+  private actions: ReviewActions;
   current = -1;
   private destroyed = false;
   private threads: ThreadLayer;
@@ -95,6 +88,7 @@ export class ChangesetView {
       listeners.threads,
       collapse,
     );
+    this.actions = new ReviewActions(revision, listeners);
     this.heights = new SectionHeights(root, this.sections, metrics, this.threads, mode, collapse);
     this.windowing = new Windowing(root, this.sections, this.heights, {
       mount: (fi) => void this.mount(fi),
@@ -110,14 +104,14 @@ export class ChangesetView {
         openSource: (line) => listeners.openSource(file.path, line),
         openDiff: listeners.openDiff && ((line) => listeners.openDiff?.(file.path, line)),
         comment: () => this.threads.commentOnFile(this.sections[index]),
-        toggleSeen: () => void this.toggleSeen(index),
+        toggleSeen: () => void this.actions.file(this.sections[index]),
         menu: (x, y) => listeners.fileMenu(file.path, x, y),
       });
       const body = document.createElement("div");
       body.className = "body";
       const cards = file.nonText.map((item, ci) =>
         changeCard(file.path, file.oldPath, item, file.review.acknowledged.includes(item.kind), {
-          toggle: () => void this.toggleCard(index, ci),
+          toggle: () => void this.actions.card(this.sections[index], ci),
           comment: () => this.threads.commentOnFile(this.sections[index]),
           blob: (side) => this.source.itemBlob(file.path, item.kind, side),
         }),
@@ -127,7 +121,7 @@ export class ChangesetView {
       el.append(header.el, ...cards.map((c) => c.el), blockEl, body);
       el.addEventListener("pointerdown", (e) => this.selectAt(index, e));
       const actions: BarActions = {
-        toggleSeen: (h) => void this.toggleHunk(index, h),
+        toggleSeen: (h) => void this.actions.hunk(this.sections[index], h),
         comment: (h) => this.threads.commentOnHunk(this.sections[index], h),
         openSource: (h) => listeners.openSource(file.path, file.hunks[h].targetStart),
       };
@@ -418,42 +412,21 @@ export class ChangesetView {
   }
 
   /** The latest toggle, so callers (the benchmark) can wait for the repaint. */
-  pendingToggle: Promise<void> = Promise.resolve();
+  get pendingToggle(): Promise<void> {
+    return this.actions.pending;
+  }
 
   /** Renders a file's review state and progress as the backend sent them. */
-  applyReview({ path, review, completion }: ReviewUpdate) {
-    const s = this.sections.find((s) => s.file.path === path);
-    if (!s) return;
-    s.review = review;
-    s.completion = completion;
-    s.handle?.dispatchAll(setStates.of(review.hunks));
-    s.cards.forEach((card, i) => card.setAcknowledged(review.acknowledged.includes(s.file.nonText[i].kind)));
-    renderCount(s, completion);
-  }
-
-  /** Asks the backend to mark everything in file `fi` (hunks and change cards) seen, or unseen if it all already is. */
-  toggleSeen(fi: number): Promise<void> {
-    const { file } = this.sections[fi];
-    return (this.pendingToggle = this.listeners.toggleFileSeen(this.revision, file.path));
-  }
-
-  /** Asks the backend to flip the file's `hi`-th hunk. */
-  toggleHunk(fi: number, hi: number): Promise<void> {
-    const { file } = this.sections[fi];
-    return (this.pendingToggle = this.listeners.toggleHunk(this.revision, file.path, hi));
-  }
-
-  /** Asks the backend to flip the acknowledgement of the file's `ci`-th change card. */
-  toggleCard(fi: number, ci: number): Promise<void> {
-    const { file } = this.sections[fi];
-    return (this.pendingToggle = this.listeners.toggleItem(this.revision, file.path, file.nonText[ci].kind));
+  applyReview(update: ReviewUpdate) {
+    const s = this.sections.find((s) => s.file.path === update.path);
+    if (s) renderReview(s, update);
   }
 
   /** Asks the backend to flip the current stop: a hunk or a card. */
   toggleCurrent(): Promise<void> {
     const [fi, si] = this.stops.locate(this.current);
-    const cards = this.sections[fi].cards.length;
-    return si < cards ? this.toggleCard(fi, si) : this.toggleHunk(fi, si - cards);
+    const s = this.sections[fi];
+    return si < s.cards.length ? this.actions.card(s, si) : this.actions.hunk(s, si - s.cards.length);
   }
 
   /** Mounted files whose merge chunk count differs from the backend's hunk count (a diagnostic). */
