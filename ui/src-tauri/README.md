@@ -24,6 +24,10 @@ The benchmark: `VET_BENCH=1` runs it on startup and quits with the verdict;
 webview's inspector with the window (debug builds only):
 `VET_DEVTOOLS=1 VET_BENCH=manual pnpm tauri dev`.
 
+`VET_LSP_TIMING=1` makes the backend print one line per language-server symbol
+request to stderr: how long making the server see the file took (including the
+wait after opening it) and how long the request took.
+
 ## WSL split
 
 Shell on Windows, backend in WSL (SPEC §4.1). In WSL, with the repo on the Linux
