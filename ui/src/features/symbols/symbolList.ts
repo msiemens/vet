@@ -1,5 +1,5 @@
-// Pure logic of the Symbol panel: grouping the changed symbols by file, finding the one
-// at a position, and the words shown for a symbol and for the fate of a call site.
+// Pure logic of the Symbol panel: grouping the changed symbols by file, and the words
+// shown for a symbol and for the fate of a call site.
 
 import type { CallFate } from "../../generated/CallFate";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
@@ -7,7 +7,6 @@ import type { ChangedSymbols } from "../../generated/ChangedSymbols";
 import type { Position } from "../../generated/Position";
 import type { Side } from "../../generated/Side";
 import type { SymbolId } from "../../generated/SymbolId";
-import type { TextSpan } from "../../generated/TextSpan";
 
 /** Opens a file at a 0-based `line` of `side`; no line opens it where it is. */
 export type OpenLocation = (path: string, line: number | undefined, side: Side) => void;
@@ -24,9 +23,6 @@ export const nameOf = (id: SymbolId): string => id.name[id.name.length - 1] ?? i
 
 /** Its containers, outermost first, as `A::B`; empty at the top level of a file. */
 export const containerOf = (id: SymbolId): string => id.name.slice(0, -1).join("::");
-
-const before = (a: Position, b: Position) => a.line < b.line || (a.line === b.line && a.col < b.col);
-const contains = (span: TextSpan, at: Position) => !before(at, span.start) && before(at, span.end);
 
 /** By file, then in source order; a removed symbol sits where it was on the base side. */
 export function groupByFile(symbols: readonly ChangedSymbol[]): FileSymbols[] {
@@ -59,28 +55,6 @@ export function fileEntries(changed: ChangedSymbols): FileSymbols[] {
     if (!seen.has(gap.path)) unknown.push({ path: gap.path, symbols: [], note: gap.reason });
   }
   return [...known, ...unknown.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))];
-}
-
-/**
- * The innermost changed symbol whose definition contains the position of `side`. A removed
- * symbol exists on the base side only, the others on the target side only.
- */
-export function symbolAt(
-  symbols: readonly ChangedSymbol[],
-  path: string,
-  side: Side,
-  line: number,
-  col: number,
-): ChangedSymbol | undefined {
-  const at = { line, col };
-  let best: ChangedSymbol | undefined;
-  for (const s of symbols) {
-    if (s.symbol.id.path !== path || (s.change === "removed") !== (side === "base")) continue;
-    if (!contains(s.symbol.span, at)) continue;
-    // Nested definitions are inside their container: the deeper chain is the innermost.
-    if (!best || s.symbol.id.name.length > best.symbol.id.name.length) best = s;
-  }
-  return best;
 }
 
 /** `path:line` with a 1-based line, as editors print it. */

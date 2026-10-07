@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol.ts";
 import type { SymbolChange } from "../../generated/SymbolChange.ts";
-import { describeFate, fileEntries, groupByFile, symbolAt } from "./symbolList.ts";
+import { describeFate, fileEntries, groupByFile } from "./symbolList.ts";
 
 const sym = (path: string, name: string[], from: number, to: number, change: SymbolChange): ChangedSymbol => ({
   symbol: {
@@ -44,21 +44,6 @@ void test("files without symbols are listed with the reason", () => {
       ["notes.txt", 0, "Language unsupported"],
     ],
   );
-});
-
-void test("the innermost symbol at a position wins", () => {
-  const all = [sym("a.rs", ["Outer"], 0, 20, "modified"), sym("a.rs", ["Outer", "inner"], 5, 8, "added")];
-  assert.deepEqual(symbolAt(all, "a.rs", "target", 6, 2)?.symbol.id.name, ["Outer", "inner"]);
-  assert.deepEqual(symbolAt(all, "a.rs", "target", 10, 0)?.symbol.id.name, ["Outer"]);
-  // the end is exclusive
-  assert.equal(symbolAt(all, "a.rs", "target", 20, 1), undefined);
-  assert.equal(symbolAt(all, "other.rs", "target", 6, 2), undefined);
-});
-
-void test("a removed symbol is found on the base side only", () => {
-  const all = [sym("a.rs", ["gone"], 3, 6, "removed"), sym("a.rs", ["kept"], 3, 6, "modified")];
-  assert.deepEqual(symbolAt(all, "a.rs", "base", 4, 0)?.symbol.id.name, ["gone"]);
-  assert.deepEqual(symbolAt(all, "a.rs", "target", 4, 0)?.symbol.id.name, ["kept"]);
 });
 
 void test("fates read as words, the broken one as the bad tone", () => {
