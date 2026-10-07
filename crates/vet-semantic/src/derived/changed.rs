@@ -5,6 +5,7 @@ use vet_core::content::{FileDiff, LineRange, RepoPath};
 use vet_core::review::Side;
 
 use super::{Derived, Inputs};
+use crate::join::{bounded, join};
 use crate::ports::SymbolInfo;
 use crate::query::{Primitives, SemanticError};
 
@@ -39,17 +40,33 @@ pub struct Changes {
     pub gaps: Vec<Gap>,
 }
 
+/// Files whose symbols are asked for at once, both sides each.
+const FILES_IN_FLIGHT: usize = 4;
+
 pub async fn changed_symbols(p: &impl Primitives, files: &[FileDiff]) -> Derived<Changes> {
     let mut inputs = Inputs::new("changed symbols");
     let mut out = Changes::default();
-    for file in files.iter().filter(|f| !f.hunks.is_empty()) {
+    let files: Vec<_> = files.iter().filter(|f| !f.hunks.is_empty()).collect();
+    for file in &files {
+        inputs.record_hunks(&file.path().to_string_lossy(), &file.hunks);
+        for (side, path) in [(Side::Base, &file.old_path), (Side::Target, &file.new_path)] {
+            if let Some(path) = path {
+                inputs.query("document_symbols", side, path, None);
+            }
+        }
+    }
+    let answers = bounded(FILES_IN_FLIGHT, 0..files.len(), |at| {
+        let file = files[at];
+        join(
+            symbols(p, Side::Base, file.old_path.as_ref()),
+            symbols(p, Side::Target, file.new_path.as_ref()),
+        )
+    })
+    .await;
+    for (file, (base, target)) in files.into_iter().zip(answers) {
         let shown = file.path();
         let old: Vec<_> = file.hunks.iter().map(|h| h.old).collect();
         let new: Vec<_> = file.hunks.iter().map(|h| h.new).collect();
-        inputs.record_hunks(&shown.to_string_lossy(), &file.hunks);
-
-        let base = symbols(p, &mut inputs, Side::Base, file.old_path.as_ref()).await;
-        let target = symbols(p, &mut inputs, Side::Target, file.new_path.as_ref()).await;
         let (base, target) = match (base, target) {
             (Ok(b), Ok(t)) => (b, t),
             (Err(e), _) | (_, Err(e)) => {
@@ -96,14 +113,8 @@ pub async fn changed_symbols(p: &impl Primitives, files: &[FileDiff]) -> Derived
     Derived { value: out, inputs }
 }
 
-async fn symbols(
-    p: &impl Primitives,
-    inputs: &mut Inputs,
-    side: Side,
-    file: Option<&RepoPath>,
-) -> Result<Vec<SymbolInfo>, SemanticError> {
+async fn symbols(p: &impl Primitives, side: Side, file: Option<&RepoPath>) -> Result<Vec<SymbolInfo>, SemanticError> {
     let Some(file) = file else { return Ok(Vec::new()) };
-    inputs.query("document_symbols", side, file, None);
     p.document_symbols(side, file).await
 }
 

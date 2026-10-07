@@ -199,6 +199,26 @@ fn added_and_deleted_files_report_every_symbol() {
 }
 
 #[test]
+fn changed_symbols_keep_the_order_of_the_files_however_many_are_asked_at_once() {
+    let mut fake = Fake::default();
+    let mut files = Vec::new();
+    for n in 0..10 {
+        let path = format!("f{n}.rs");
+        fake.symbols
+            .insert((Side::Base, file(&path)), vec![sym(&path, "s", 0, 3)]);
+        fake.symbols
+            .insert((Side::Target, file(&path)), vec![sym(&path, "s", 0, 3)]);
+        files.push(diff(&path, vec![hunk((1, 2), (1, 2))]));
+    }
+    let result = block_on(changed_symbols(&fake, &files));
+    let order: Vec<_> = result.value.symbols.iter().map(|c| c.symbol.sym.file.clone()).collect();
+    let want: Vec<_> = (0..10).map(|n| file(&format!("f{n}.rs"))).collect();
+    assert_eq!(order, want);
+    assert_eq!(result.inputs.primitives.len(), 20);
+    assert_eq!(result.inputs.primitives[2], "document_symbols(base:f1.rs)");
+}
+
+#[test]
 fn files_without_a_backend_are_reported_not_dropped() {
     let files = vec![diff("README.md", vec![hunk((0, 1), (0, 2))])];
     let changes = block_on(changed_symbols(&Fake::default(), &files)).value;
