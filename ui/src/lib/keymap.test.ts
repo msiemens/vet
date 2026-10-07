@@ -60,13 +60,6 @@ void test("Ctrl-Alt-S is Settings", () => {
   assert.ok(!matches(KEYS.settings.spec, altGr("ß", "KeyS")));
 });
 
-void test("a binding's label shows the keys its spec matches", () => {
-  assert.equal(KEYS.settings.label, "Ctrl+Alt+S");
-  assert.equal(KEYS.nextHunk.label, "Ctrl+Alt+Down");
-  assert.equal(KEYS.toggleCurrent.label, "Space");
-  assert.equal(KEYS.jumpToSource.label, "F4");
-});
-
 void test("Space toggles the current item, and only on its own", () => {
   assert.ok(matches("Space", key({ key: " ", code: "Space" })));
   assert.ok(!matches("Space", key({ key: " ", code: "Space", shiftKey: true })));

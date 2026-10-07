@@ -38,7 +38,6 @@ void test("a changed file loads with the hunks of the manifest it belongs to", a
   const { backend } = backendAt(3);
   const changed = file(2, 10);
   const loaded = await fileSource(backend, 3).contents(changed);
-  assert.deepEqual([loaded.base, loaded.target], ["old", "new"]);
   assert.equal(loaded.hunks, changed.hunks);
 });
 

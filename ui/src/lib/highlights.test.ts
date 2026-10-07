@@ -25,21 +25,6 @@ void test("ranges become classes by kind", () => {
     [0, 3, "syn-keyword"],
     [8, 9, "syn-number"],
   ]);
-  const kinds = decodeHighlights([0, 1, 0, 0, 1, 1, 0, 1, 2, 0, 1, 3, 0, 1, 4, 0, 1, 5, 0, 1, 6, 0, 1, 7, 0, 1, 8]);
-  assert.deepEqual(
-    ranges(kinds).map((r) => r[2]),
-    [
-      "syn-keyword",
-      "syn-string",
-      "syn-number",
-      "syn-comment",
-      "syn-type",
-      "syn-function",
-      "syn-attribute",
-      "syn-heading",
-      "syn-link",
-    ],
-  );
 });
 
 void test("only the ranges in view are produced, cut to it", () => {

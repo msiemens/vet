@@ -58,7 +58,7 @@ void test("a file's mode badge follows the backend's classification of its mode 
   assert.equal(summarize({ ...file(null), nonText: [] }).mode, undefined);
 });
 
-void test("a file's progress comes from its summary, not from the tree", () => {
+void test("a file row carries the status letter and the progress of its summary", () => {
   const file = {
     path: "a/Cargo.toml",
     status: "modified",
