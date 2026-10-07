@@ -61,6 +61,13 @@ void test("a pull request's target is its number, not its title", () => {
   assert.equal(target?.value, "#482");
 });
 
+void test("base changed lines are a link to them, and nothing to open without any", () => {
+  const baseChanged = (m: Manifest) => detailGroups(open, m, NOW)[2].facts.find((f) => f.label === "Base changed");
+  assert.deepEqual(baseChanged(manifest), { label: "Base changed", value: "5 lines", link: "baseChanged" });
+  const none: Manifest = { ...manifest, completion: { ...manifest.completion, oldBaseLines: 0 } };
+  assert.deepEqual(baseChanged(none), { label: "Base changed", value: "—" });
+});
+
 void test("a base that its remote has moved on from says so after the base", () => {
   const behind = {
     ...manifest,

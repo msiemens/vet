@@ -35,6 +35,7 @@
     onrefresh,
     chips,
     back,
+    filtered,
   }: {
     /** Which screen shows: the queue of changesets, or the review of the one on view. */
     screen: Screen;
@@ -64,6 +65,8 @@
     chips?: Snippet;
     /** The way back to the changeset, at the right end. */
     back?: Snippet;
+    /** While the review view shows a filtered part of the changeset: what acts on it and the way back, before the progress. */
+    filtered?: Snippet;
   } = $props();
   const seen = $derived(completion?.seenPercent ?? 0);
   const oldBase = $derived(completion?.oldBasePercent ?? 0);
@@ -115,6 +118,7 @@
   {:else if chips}
     {@render back?.()}
   {:else}
+    {@render filtered?.()}
     <span class="completion" {title} data-tauri-drag-region>
       <Meter
         width={96}

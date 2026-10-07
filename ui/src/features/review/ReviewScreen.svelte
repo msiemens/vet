@@ -150,6 +150,8 @@
     if (revision === undefined) return;
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the range a dependency
     changeset.viewKey;
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the file filter a dependency
+    changeset.baseChanged;
     untrack(() => {
       const manifest = changeset.currentManifest();
       if (!manifest) return;
@@ -197,7 +199,7 @@
   <div class="strip">
     <TabStrip
       {tabs}
-      files={changeset.files}
+      files={changeset.shownFiles}
       onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: pathOf(id) } })}
     />
     <span class="grow"></span>

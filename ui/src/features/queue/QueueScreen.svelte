@@ -70,6 +70,12 @@
     if (keyId(row.key) !== onViewId) void changeset.openChangeset(row.key);
   }
 
+  /** The Details tab's link to the base-changed lines: the review shows them. */
+  async function openBaseChanged() {
+    await changeset.showBaseChanged();
+    onopen();
+  }
+
   function move(e: KeyboardEvent, index: number) {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -176,7 +182,7 @@
       {#if !current}
         <p class="empty">Select a changeset</p>
       {:else if panel === "details"}
-        <QueueDetails groups={detailGroups(current, manifest)} />
+        <QueueDetails groups={detailGroups(current, manifest)} onlink={() => void openBaseChanged()} />
       {:else if panel === "files"}
         <QueueFiles paths={changeset.paths} fileOf={(path) => changeset.file(path)} onopen={onopenfile} />
       {:else}

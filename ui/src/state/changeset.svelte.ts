@@ -45,9 +45,17 @@ class ChangesetStore {
   /** The range the manifest is of, as a string; empty for the changeset. */
   viewKey = $derived(rangeKey(this.manifest?.interdiff));
 
+  /**
+   * While the review view shows only the files that had hunks seen against an old base when it was
+   * asked for: their paths. Re-confirming does not shrink it, so the view stays as it is.
+   */
+  baseChanged = $state.raw<ReadonlySet<string>>();
+
   files = $derived(this.manifest?.files ?? []);
   /** Same array while only review state changes. */
   paths = $derived(this.files.map((f) => f.path));
+  /** The files the Changes tab shows: all of them, or those of `baseChanged`. */
+  shownFiles = $derived(this.baseChanged ? this.files.filter((f) => this.baseChanged?.has(f.path)) : this.files);
 
   /** A file as it is now, with its current review state and completion. */
   file(path: string): FileChange | undefined {
@@ -67,8 +75,9 @@ class ChangesetStore {
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
         if (event.type === "changesetOpened") {
-          // Versions are the changeset's own.
+          // Versions and what was seen against an old base are the changeset's own.
           this.range = undefined;
+          this.baseChanged = undefined;
           void this.refresh();
         } else if (event.type === "snapshotSettled") void this.refresh();
         // A mark made in a range is announced as that of the changeset's file, which the range does not show.
@@ -83,6 +92,7 @@ class ChangesetStore {
     session.onClose(() => {
       this.manifest = undefined;
       this.range = undefined;
+      this.baseChanged = undefined;
       this.restoreFailures = [];
       this.cells.clear();
     });
@@ -129,6 +139,7 @@ class ChangesetStore {
    * working tree has a live end: a committed changeset's latest version does not follow anything.
    */
   async setRange(range: Range | undefined) {
+    if (range) this.baseChanged = undefined;
     const follows = this.manifest?.target.changeset.type === "workingTree";
     this.range = range && { ...range, live: range.live && follows };
     try {
@@ -171,6 +182,28 @@ class ChangesetStore {
   /** The files that have hunks seen against an old base, as they are now. */
   baseChangedFiles(): string[] {
     return this.paths.filter((path) => this.file(path)?.review.hunks.includes("seenAgainstOldBase"));
+  }
+
+  /** Shows only the files with hunks seen against an old base in the review view, which then shows the changeset. */
+  async showBaseChanged() {
+    if (this.range) await this.setRange(undefined);
+    this.baseChanged = new Set(this.baseChangedFiles());
+  }
+
+  /** Shows every file again. */
+  showAll() {
+    this.baseChanged = undefined;
+  }
+
+  /** Re-confirms every hunk seen against an old base of the changeset. */
+  async reconfirmAll() {
+    const revision = this.manifest?.revision;
+    if (revision === undefined) return;
+    for (const path of this.baseChangedFiles()) {
+      // A request that failed refetched the manifest: the rest asks again.
+      if (this.manifest?.revision !== revision) return;
+      await this.reconfirmFile(revision, path);
+    }
   }
 
   /** The base diff of a hunk seen against an old base; `undefined` after showing why it could not be had. */

@@ -69,6 +69,7 @@
   let version = $state<string>();
   let host = $state<string>();
   const reviewOpen = $derived(changeset.manifest?.review.state === "open");
+  const baseChangedLeft = $derived(changeset.baseChanged ? changeset.baseChangedFiles().length : 0);
 
   const semanticSummary = $derived(semantic.summary(controller?.activePath));
   const range = $derived(changeset.range);
@@ -239,6 +240,18 @@
       >Back to {base ?? "…"}{latest === undefined ? "" : ` → v${latest}`}</button
     >
   {/snippet}
+  {#snippet baseChangedActions()}
+    <button
+      class="ctl"
+      type="button"
+      title="Mark every hunk seen against an old base seen again"
+      disabled={baseChangedLeft === 0}
+      onclick={() => void changeset.reconfirmAll()}>Re-confirm all</button
+    >
+    <button class="ctl" type="button" title="Show all changes again" onclick={() => changeset.showAll()}
+      >Back to all changes</button
+    >
+  {/snippet}
   {#snippet projectSwitcher()}
     {#if session.repo}
       <ProjectSwitcher
@@ -271,6 +284,7 @@
     changesets={changesetSwitcher}
     chips={range ? rangeChips : undefined}
     back={backToChangeset}
+    filtered={changeset.baseChanged ? baseChangedActions : undefined}
     base={changeset.manifest?.base}
     target={changeset.manifest?.target}
     review={changeset.manifest?.review}

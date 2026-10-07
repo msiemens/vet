@@ -9,10 +9,15 @@ import { shortTime } from "../../lib/shortTime.ts";
 import { behindText } from "../../state/baseBehind.ts";
 import { keyId } from "../../state/changesetKey.ts";
 
+/** What a fact that is a link opens. */
+export type FactLink = "baseChanged";
+
 export interface Fact {
   /** Absent for a fact that is only a statement. */
   label?: string;
   value: string;
+  /** The value is a link to this. */
+  link?: FactLink;
 }
 
 export interface FactGroup {
@@ -81,7 +86,9 @@ function progressFacts(manifest: Manifest): Fact[] {
   return [
     { label: "Lines", value: `${c.seenLines} / ${c.lines}` },
     { label: "Other changes", value: `${c.acknowledgedItems} / ${c.items}` },
-    { label: "Base changed", value: c.oldBaseLines === 0 ? "—" : `${c.oldBaseLines} lines` },
+    c.oldBaseLines === 0
+      ? { label: "Base changed", value: "—" }
+      : { label: "Base changed", value: `${c.oldBaseLines} lines`, link: "baseChanged" },
   ];
 }
 

@@ -47,6 +47,7 @@ const takesSpace = (el: Element | null) =>
 export type ChangesetSource = Pick<
   Changeset,
   | "files"
+  | "baseChanged"
   | "view"
   | "onReview"
   | "toggleHunk"
@@ -79,6 +80,8 @@ export class ReviewController {
   private key?: string;
   /** The range the views show, if they show one. */
   private shown?: { from: number; to: number; revision: number };
+  /** The files the Changes tab was limited to when it was built, if it was. */
+  private filtered?: ReadonlySet<string>;
   /** What each changeset that is not on view had open, for when it comes back. */
   private parked = new Map<string, SavedView>();
   /** Scroll positions and the current hunk the next builds restore, instead of carrying the old views' over. */
@@ -267,9 +270,11 @@ export class ReviewController {
 
   /** Scrolls the Changes tab to a changed file; answers whether `path` is one. */
   async revealInChanges(path: string): Promise<boolean> {
-    if (!this.files.some((f) => f.path === path)) return false;
+    // The Changes tab may show only some of the changed files.
+    const index = this.changes.indexOf(path);
+    if (index < 0) return false;
     this.tabs.active = CHANGES;
-    await this.changes.goToFile(this.changes.indexOf(path));
+    await this.changes.goToFile(index);
     return true;
   }
 
@@ -362,7 +367,11 @@ export class ReviewController {
       this.texts.set(id, text);
       return;
     }
-    const files = path === undefined ? manifest.files : manifest.files.filter((f) => f.path === path);
+    const only = this.changeset.baseChanged;
+    const files =
+      path === undefined
+        ? manifest.files.filter((f) => !only || only.has(f.path))
+        : manifest.files.filter((f) => f.path === path);
     const restoring = this.restore?.scroll.has(id) ? this.restore : undefined;
     const anchor = restoring ? (id === CHANGES ? restoring.anchor : undefined) : previous?.currentAnchor();
     const top = restoring ? (restoring.scroll.get(id) ?? 0) : root.scrollTop;
@@ -477,15 +486,18 @@ export class ReviewController {
     else this.tabs.keepOnly(paths);
     this.key = key;
     const rangeChanged = this.rangeChanged(manifest);
+    const filterChanged = this.filtered !== this.changeset.baseChanged;
+    this.filtered = this.changeset.baseChanged;
     const view = this.views.get(CHANGES);
-    if (!view || (view.revision === manifest.revision && !rangeChanged)) return;
-    // Another range is another set of files: its views start at the top.
-    if (rangeChanged && !switching) {
-      const tabs = this.tabs.open.filter((tab) => kindOf(tab) !== "text");
+    if (!view || (view.revision === manifest.revision && !rangeChanged && !filterChanged)) return;
+    // Another range is another set of files: its views start at the top. So does the Changes tab when
+    // it shows other files.
+    if ((rangeChanged || filterChanged) && !switching) {
+      const tabs = this.tabs.open.filter((tab) => kindOf(tab) !== "text" && (rangeChanged || tab === CHANGES));
       this.restore = { scroll: new Map(tabs.map((tab) => [tab, 0])) };
     }
     this.show(manifest);
-    if (firstVisit || rangeChanged) void this.changes.goToHunk(0);
+    if (firstVisit || rangeChanged || filterChanged) void this.changes.goToHunk(0);
     // The new views have loaded nothing; a newer revision replaces this load.
     this.changes.loadAll().catch(() => undefined);
   }
@@ -536,6 +548,7 @@ export class ReviewController {
     const manifest = await this.changeset.refresh();
     this.key = keyId(manifest.target.changeset);
     this.rangeChanged(manifest);
+    this.filtered = this.changeset.baseChanged;
     this.show(manifest);
     const view = this.changes;
     const saved = manifest.interdiff ? undefined : this.savedPosition();

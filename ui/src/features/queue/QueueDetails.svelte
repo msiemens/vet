@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { FactGroup } from "./details";
+  import type { FactGroup, FactLink } from "./details";
 
-  let { groups }: { groups: FactGroup[] } = $props();
+  let { groups, onlink }: { groups: FactGroup[]; onlink: (link: FactLink) => void } = $props();
 </script>
 
 <div class="groups">
@@ -12,7 +12,14 @@
         {#each group.facts as fact (fact.label ?? fact.value)}
           {#if fact.label}
             <dt>{fact.label}</dt>
-            <dd class="mono">{fact.value}</dd>
+            <dd class="mono">
+              {#if fact.link}
+                {@const link = fact.link}
+                <button class="link" type="button" onclick={() => onlink(link)}>{fact.value}</button>
+              {:else}
+                {fact.value}
+              {/if}
+            </dd>
           {:else}
             <dd class="statement">{fact.value}</dd>
           {/if}
@@ -53,5 +60,16 @@
     font-family: inherit;
     font-size: var(--fs-ctl);
     color: var(--text-2);
+  }
+  .link {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    cursor: pointer;
+  }
+  .link:hover {
+    text-decoration: underline;
   }
 </style>
