@@ -442,15 +442,17 @@ Grouped by area; areas and the items within each are in priority order.
 #### Changesets and history
 
 - GitHub + ADO adapters (§11): pull requests as changesets, their threads synced both ways, CI per commit
+  - Login reuses a signed-in CLI (`gh auth token`; `az account get-access-token` for Azure DevOps), else a device-code login (GitHub OAuth device flow; Microsoft Entra), else a personal access token (also for GitHub Enterprise hosts). Tokens live in the OS keychain, never in Vet's store; in the WSL split the shell keeps them and hands them to the backend
+  - The pull-request list is per project (the repository's remote): "Waiting for me" by default (review requested from the viewer or their team, not reviewed since the last push), then Mine, Assigned, All open, with filters for author, label, draft and CI state. Each row shows title, author, branch → target, CI state, unresolved threads, the viewer's review state ("new pushes since your review") and when it was updated
 - Committed changesets (per-commit / pseudo-commit / squash lenses)
-- Interdiffs; snapshot timeline, as a bottom panel (not a sidebar tool window)
+- Interdiffs; snapshot timeline, as a bottom panel (not a sidebar tool window). A changeset has versions (a local session's snapshots, a pull request's pushes); an interdiff compares any two, opened as a tab from the timeline. "Changes since my last review" is the default action on a changeset and carries the seen marks over. When the base moved (a rebase), the interdiff leaves out what the base move explains, as `git range-diff` does per commit
 - Git fetch (in-process, read-only): on demand and periodically, so remote branches and how far a base is behind are current; Vet never pulls, merges or rebases
-- Change decomposition (mechanical vs. logic clusters)
 - Changeset queue home, reached through a Queue / Review toggle in the app header (not a sidebar tool window): pull requests waiting for the viewer and local branches, with more metadata and filtering than the title bar's changeset switcher, of which it is the full-page view
 
 #### Semantics and navigation
 
-- Diagnostics on the changeset
+- Diagnostics are marked new or pre-existing by comparing the target's with the base's; new ones, those the change introduced, are counted separately and shown first
+- Problems panel: the diagnostics of the whole changeset in one list, new ones first
 - For a changed symbol: its changed callers (recursively, through changed symbols only) and changed callees, and its unchanged direct callers flagged as possibly affected; the list says what the server's call hierarchy cannot see (dynamic dispatch, reflection)
 - Clicking into a changed symbol in any editor (Changes, a diff or file tab) selects it in the changed-symbols panel
 - While a file's tab is active, the changed-symbols panel lists only that file's symbols
@@ -486,7 +488,6 @@ Grouped by area; areas and the items within each are in priority order.
 - File-type icons for files and folders in the file tree and on tabs, by extension and well-known names (a folder's icon open or closed)
 - Native context menus (the OS's, through the host's menu API) everywhere the app has one: the file tree, the editors and diff views, tabs, the changed-symbols list; they replace the webview's default menu and show each item's shortcut. Without a host (plain browser) the app draws the same items
 - The split between the right sidebar's panels can be dragged, keeping its position
-- The window reopens at its last position and size (falling back to the default when that display is gone)
 - Resizable dialogs (Settings first), keeping their size
 
 ### M2
@@ -500,7 +501,6 @@ Grouped by area; areas and the items within each are in priority order.
 - Worktree groups
 - Export annotations as agent task files
 - Coding agents integrated into the UI through the Agent Client Protocol (ACP)
-- Problems panel: the diagnostics of the whole changeset in one list
 - Minimap
 - CI annotations on lines: the platform's check annotations (path, lines, severity, message) shown in the hunk view like diagnostics, anchored to the commit they were produced for
 - Narrowing the project's review filter for one review from the file tree ("Review only this folder", "Exclude from review"), shown in the tree with a reset
