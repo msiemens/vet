@@ -2,7 +2,6 @@
   import type { Base } from "../../generated/Base";
   import type { BaseChoice } from "../../generated/BaseChoice";
   import Chip from "../../lib/ui/Chip.svelte";
-  import Icon from "../../lib/ui/Icon.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import type { BaseCandidates } from "../../state/backend";
@@ -58,7 +57,7 @@
 <Popover bind:open>
   {#snippet trigger(toggle)}
     <Chip mono active={open} title={base ? baseTooltip(base, branch) : undefined} onclick={toggle}>
-      <Icon name="branch" />{base?.name ?? "…"}
+      {base?.name ?? "…"}
     </Chip>
   {/snippet}
   {#if view === "commits" && candidates}

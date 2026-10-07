@@ -16,4 +16,8 @@ name: string,
 /**
  * The branch the target is built on: the checked-out one for the working tree, if any.
  */
-branch?: string, };
+branch?: string, 
+/**
+ * A branch's tip commit, by its short id; absent for the working tree.
+ */
+head?: string, };

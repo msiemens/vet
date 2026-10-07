@@ -190,6 +190,7 @@ impl Handler for Mock {
                         source: Source::WorkingTree,
                         name: "Working tree".into(),
                         branch: Some("main".into()),
+                        head: None,
                     },
                     filter: ReviewFilter::default(),
                     delta: files.iter().map(|f| f.delta).sum(),

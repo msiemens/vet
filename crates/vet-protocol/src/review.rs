@@ -78,6 +78,10 @@ pub struct Target {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub branch: Option<String>,
+    /// A branch's tip commit, by its short id; absent for the working tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub head: Option<String>,
 }
 
 /// Whether a review has started. It starts with the first review action (a

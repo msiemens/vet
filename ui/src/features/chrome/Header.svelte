@@ -77,8 +77,8 @@
     small
     label="Screen"
     options={[
-      { id: "queue", label: "Queue" },
-      { id: "review", label: "Review" },
+      { id: "queue", label: "Queue", icon: "queue" },
+      { id: "review", label: "Review", icon: "review" },
     ]}
     value={screen}
     onchange={onscreen}
@@ -94,6 +94,8 @@
         <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
         {#if review?.state === "open"}
           <VersionLabel version={review.version} updatedAt={review.updatedAt} />
+        {:else if target}
+          <span class="target mono" data-tauri-drag-region>{target.head ?? target.name}</span>
         {/if}
       {/if}
     </span>
@@ -135,6 +137,11 @@
   .arrow {
     display: inline-flex;
     color: var(--text-3);
+  }
+  .target {
+    padding: 2px 6px;
+    color: var(--text-2);
+    font-size: var(--fs-mono);
   }
   .finish {
     margin-right: 6px;

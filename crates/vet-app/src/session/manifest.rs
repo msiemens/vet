@@ -57,11 +57,16 @@ pub(super) fn target_view(source: &Source, branches: &[BranchInfo]) -> TargetVie
             source: source.clone(),
             name: name.clone(),
             branch: Some(name.clone()),
+            head: branches
+                .iter()
+                .find(|b| !b.remote && b.name == *name)
+                .map(|b| b.commit.short().to_owned()),
         },
         _ => TargetView {
             source: source.clone(),
             name: "Working tree".into(),
             branch: branches.iter().find(|b| b.current).map(|b| b.name.clone()),
+            head: None,
         },
     }
 }
