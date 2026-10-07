@@ -3,8 +3,8 @@
 
 import { MergeView, getChunks, unifiedMergeView } from "@codemirror/merge";
 import { EditorState, type Extension, type StateEffect } from "@codemirror/state";
-import { EditorView, lineNumbers } from "@codemirror/view";
-import { minimalSetup } from "codemirror";
+import { standardKeymap } from "@codemirror/commands";
+import { EditorView, drawSelection, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Hunk } from "../../../generated/Hunk";
 import type { TextChange } from "../../../generated/TextChange";
@@ -60,6 +60,13 @@ export interface Collapse {
 
 const barText = EditorState.phrases.of({ "$ unchanged lines": "⋯ $ unchanged lines" });
 
+/**
+ * What a read-only editor needs of CodeMirror's setup: control characters made visible, the drawn
+ * selection and cursor, and the caret keys. No undo history, no editing keys and no fallback
+ * highlight style (highlights come from the backend).
+ */
+const readOnlySetup: Extension = [highlightSpecialChars(), drawSelection(), keymap.of(standardKeymap)];
+
 export function mountFile(
   host: HTMLElement,
   path: string,
@@ -79,7 +86,7 @@ export function mountFile(
   const diffConfig = { override: backendDiff(loaded.base, loaded.target, loaded.changes) };
   const shown = (ms: number) => hooks.hoverShown?.(ms);
   const target: Extension[] = [
-    minimalSetup,
+    readOnlySetup,
     targetField,
     lineNumbers(),
     highlightExtension(loaded.targetHighlights),
