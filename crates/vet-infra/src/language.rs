@@ -172,7 +172,6 @@ pub const RUST: Language = Language {
             "RUSTUP_HOME",
             "CARGO_HOME",
             "RUSTC",
-            "RUSTC_WRAPPER",
             "RUSTC_WORKSPACE_WRAPPER",
             "RUSTFLAGS",
             "CARGO_ENCODED_RUSTFLAGS",
