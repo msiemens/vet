@@ -88,21 +88,27 @@ struct Fake {
     cached: bool,
 }
 
-/// No base content is available.
+/// No content is available.
 struct NoTexts;
 
-impl BaseTexts for NoTexts {
+impl Texts for NoTexts {
     async fn base_text(&self, _: &FileDiff) -> Option<String> {
+        None
+    }
+    async fn target_text(&self, _: &FileDiff) -> Option<String> {
         None
     }
 }
 
-/// The base content of every file is `base of <path>`.
+/// The content of every file is `base of <path>` and `target of <path>`.
 struct FakeTexts;
 
-impl BaseTexts for FakeTexts {
+impl Texts for FakeTexts {
     async fn base_text(&self, file: &FileDiff) -> Option<String> {
         Some(format!("base of {}", file.path().to_string_lossy()))
+    }
+    async fn target_text(&self, file: &FileDiff) -> Option<String> {
+        Some(format!("target of {}", file.path().to_string_lossy()))
     }
 }
 
@@ -220,6 +226,21 @@ fn base_symbols_come_from_the_base_text_not_from_a_base_server() {
     let with_server = block_on(changed_symbols(&expected, &NoTexts, &files, &|_, _| {})).value;
     assert_eq!(with_texts, with_server);
     assert!(with_texts.gaps.is_empty());
+}
+
+#[test]
+fn target_symbols_come_from_the_target_text_not_from_the_file_as_the_server_has_it() {
+    let (mut fake, files) = changed_fixture();
+    // The server's file differs from the revision's text: only the text's symbols count.
+    let target = fake
+        .symbols
+        .insert((Side::Target, file("a.rs")), vec![sym("a.rs", "moved_on", 0, 20)]);
+    fake.texts
+        .insert((file("a.rs"), "target of a.rs".into()), target.unwrap());
+    let with_texts = block_on(changed_symbols(&fake, &FakeTexts, &files, &|_, _| {})).value;
+    let (expected, _) = changed_fixture();
+    let with_server = block_on(changed_symbols(&expected, &NoTexts, &files, &|_, _| {})).value;
+    assert_eq!(with_texts, with_server);
 }
 
 #[test]

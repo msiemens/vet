@@ -18,7 +18,7 @@ use vet_app::ignore::IgnoringWatcher;
 use vet_app::limits::{Limiting, RestoreLimits};
 use vet_app::progress::Tasks;
 use vet_app::registry::{Resident, Subscribers};
-use vet_app::semantics::Semantics;
+use vet_app::semantics::{Links, Semantics};
 use vet_app::settle::Settling;
 use vet_app::trust::Trust;
 use vet_infra::clock::{TokioClock, unix_now};
@@ -165,9 +165,12 @@ impl Wired {
             LspLauncher::new(servers.clone(), restorer).reporting(self.tasks.clone()),
             repo.clone(),
             backends.to_vec(),
-            limits,
             Trust::Local,
-            self.tasks.clone(),
+            Links {
+                revisions: session.revisions(),
+                limits,
+                tasks: self.tasks.clone(),
+            },
         );
         Ok(Arc::new(Booted { session, semantics }))
     }

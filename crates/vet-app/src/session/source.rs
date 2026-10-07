@@ -68,7 +68,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     pub async fn open_changeset(&self, source: Source) -> Result<Option<u32>> {
         let mut st = self.state.lock().await;
         if st.source == source {
-            return self.observe_in(&mut st).await;
+            return self.observe_on_view(&mut st).await;
         }
         let mut parked = self.parked.lock().await;
         let was_parked = parked.contains_key(&source);
@@ -87,6 +87,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         incoming.revision = st.revision.max(incoming.revision) + 1;
         let outgoing = std::mem::replace(&mut *st, incoming);
         parked.insert(outgoing.source.clone(), outgoing);
+        self.revisions.advance(st.revision);
         Ok(Some(st.revision))
     }
 
@@ -95,9 +96,20 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// a review is open that is its next version. Returns the new revision, or `None` if nothing
     /// moved or the changeset on view is not a branch's.
     pub async fn observe(&self) -> Result<Option<u32>> {
-        self.observe_in(&mut *self.state.lock().await).await
+        self.observe_on_view(&mut *self.state.lock().await).await
     }
 
+    /// [`LiveSession::observe_in`] on the state on view, whose new revision is announced.
+    async fn observe_on_view(&self, st: &mut State) -> Result<Option<u32>> {
+        let moved = self.observe_in(st).await?;
+        if let Some(revision) = moved {
+            self.revisions.advance(revision);
+        }
+        Ok(moved)
+    }
+
+    /// Looks at the branch of `st`, which need not be the one on view: only the
+    /// revision of the one on view is announced, by the caller.
     async fn observe_in(&self, st: &mut State) -> Result<Option<u32>> {
         let Source::Branch { name } = &st.source else {
             return Ok(None);

@@ -88,6 +88,7 @@ use crate::ports::{
 };
 use crate::progress::Tasks;
 use crate::review::{ReviewId, visible_threads};
+use crate::revisions::Revisions;
 use crate::settle::Settling;
 
 #[derive(Debug)]
@@ -164,6 +165,8 @@ pub struct LiveSession<G, S> {
     parked: Mutex<HashMap<Source, State>>,
     /// Why the working tree is polled instead of watched, if it is.
     degraded: std::sync::Mutex<Option<Degraded>>,
+    /// Told every time the revision on view moves, so that work for an older one stops.
+    revisions: Arc<Revisions>,
 }
 
 /// What a session is called: the repository's directory name, else its whole path.
@@ -251,6 +254,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             state: Mutex::new(state),
             parked: Mutex::default(),
             degraded: std::sync::Mutex::new(None),
+            revisions: Arc::default(),
         }
     }
 
@@ -443,6 +447,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         st.known.clear();
         st.revision += 1;
         st.changes = None;
+        self.revisions.advance(st.revision);
         Ok(complete)
     }
 
@@ -503,6 +508,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             st.base_commit = commit;
             st.revision += 1;
             st.changes = None;
+            self.revisions.advance(st.revision);
         }
         Ok((self.base_view(&st, &git.branches().await?).await?, st.revision))
     }
@@ -561,6 +567,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             .await?;
         st.filter = filter;
         st.revision += 1;
+        self.revisions.advance(st.revision);
         Ok(st.revision)
     }
 
@@ -571,6 +578,12 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
 
     pub async fn revision(&self) -> u32 {
         self.state.lock().await.revision
+    }
+
+    /// The newest revision on view, as the session announces it. Semantic work for
+    /// an older one is dropped.
+    pub fn revisions(&self) -> Arc<Revisions> {
+        self.revisions.clone()
     }
 
     fn set_degraded(&self, degraded: Option<Degraded>) {
@@ -655,7 +668,9 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     pub async fn settled(&self, scan: Scan) -> Result<(u32, Option<BlobError>)> {
         let mut guard = self.state.lock().await;
         if guard.source == Source::WorkingTree {
-            return self.settle_tree(&mut guard, scan).await;
+            let settled = self.settle_tree(&mut guard, scan).await?;
+            self.revisions.advance(settled.0);
+            return Ok(settled);
         }
         let mut parked = self.parked.lock().await;
         let tree = parked
@@ -664,6 +679,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         self.settle_tree(tree, scan).await
     }
 
+    /// Settles `scan` into `st`, which need not be the one on view: only the revision of
+    /// the one on view is announced, by the caller.
     async fn settle_tree(&self, st: &mut State, scan: Scan) -> Result<(u32, Option<BlobError>)> {
         let mut retained = None;
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {

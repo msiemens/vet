@@ -2,7 +2,8 @@
 //!
 //! Open documents are mirrored from disk before every query (full-text sync),
 //! so on the live worktree the server sees an agent's latest write. Nothing is
-//! cached here; whether an answer may be reused is the pool's decision (I2).
+//! cached here; whether an answer may be reused is decided where answers are
+//! kept (I2), which asks the server only whether it was at work on its own.
 //!
 //! A query may be dropped at any await. Sync is safe against that because
 //! messages are queued rather than awaited: a document's state in [`Docs`]
@@ -24,7 +25,7 @@ use lsp_types::request::{
 };
 use vet_core::content::RepoPath;
 use vet_semantic::ports::{
-    At, Diagnostic, LanguageServer, Location, Pos, QueryError, Severity, Span, Sym, SymbolInfo, Tree,
+    At, Diagnostic, LanguageServer, Location, Pos, QueryError, Readiness, Severity, Span, Sym, SymbolInfo, Tree,
 };
 use vet_semantic::symbols::{self, Outline};
 
@@ -621,6 +622,10 @@ fn convert_diagnostic(d: lsp::Diagnostic) -> Diagnostic {
 }
 
 impl LanguageServer for LspServer {
+    fn readiness(&self) -> Readiness {
+        self.conn.with_state(|state| state.readiness())
+    }
+
     async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
         let params = lsp::DocumentSymbolParams {
             text_document: self.id(file)?,
@@ -944,7 +949,7 @@ mod tests {
     #[tokio::test]
     async fn a_query_superseded_by_a_newer_revision_is_dropped_and_cancelled_at_the_server() {
         let (server, fake, _dir) = live_server(&[("a.rs", "x")], |_| Reply::Hold);
-        let revisions = vet_app::semantics::Revisions::default();
+        let revisions = vet_app::revisions::Revisions::default();
         let at = At {
             file: path("a.rs"),
             pos: Pos { line: 0, col: 0 },

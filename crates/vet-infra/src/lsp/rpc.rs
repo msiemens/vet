@@ -20,6 +20,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWrite
 use tokio::process::Child;
 use tokio::sync::{Notify, mpsc, oneshot};
 use vet_app::progress::Running;
+use vet_semantic::ports::Readiness;
 
 use crate::exec::{Tail, command};
 
@@ -50,6 +51,9 @@ pub(super) struct State {
     pub index: Option<Running>,
     /// `experimental/serverStatus` `quiescent`, for servers that send it.
     quiescent: Option<bool>,
+    /// Bumped whenever the server begins work of its own: progress that begins, or a
+    /// status that is no longer quiescent.
+    work_epoch: u64,
     last_activity: Option<Instant>,
     /// By [`super::uri::key`] of the file.
     pub diagnostics: HashMap<String, DiagnosticsState>,
@@ -332,6 +336,7 @@ impl State {
         let at = self.active_progress.iter().position(|w| w.token == token);
         match value["kind"].as_str() {
             Some("begin") => {
+                self.work_epoch += 1;
                 self.active_progress.retain(|w| w.token != token);
                 self.active_progress.push(Work {
                     token,
@@ -373,9 +378,20 @@ impl State {
     /// Indexing is done: no work in progress, the server (if it reports it) is
     /// quiescent, and nothing has happened for `quiet`.
     pub fn is_idle(&self, quiet: Duration) -> bool {
-        self.active_progress.is_empty()
-            && self.quiescent != Some(false)
-            && self.last_activity.is_some_and(|t| t.elapsed() >= quiet)
+        !self.at_work() && self.last_activity.is_some_and(|t| t.elapsed() >= quiet)
+    }
+
+    /// The server reports work of its own in progress.
+    fn at_work(&self) -> bool {
+        !self.active_progress.is_empty() || self.quiescent == Some(false)
+    }
+
+    /// Whether answers given now are complete, and the count of work begun so far.
+    pub fn readiness(&self) -> Readiness {
+        Readiness {
+            idle: !self.at_work(),
+            epoch: self.work_epoch,
+        }
     }
 }
 
@@ -480,7 +496,11 @@ fn notification(shared: &Shared, method: &str, params: &Value) {
             state.touch();
         }
         "experimental/serverStatus" => {
-            state.quiescent = params["quiescent"].as_bool();
+            let quiescent = params["quiescent"].as_bool();
+            if quiescent == Some(false) && state.quiescent != Some(false) {
+                state.work_epoch += 1;
+            }
+            state.quiescent = quiescent;
             state.touch();
         }
         "textDocument/publishDiagnostics" => {

@@ -16,6 +16,7 @@ pub mod progress;
 pub mod recent;
 pub mod registry;
 pub mod review;
+pub mod revisions;
 pub mod semantics;
 pub mod servers;
 pub mod session;

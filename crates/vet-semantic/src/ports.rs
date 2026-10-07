@@ -230,11 +230,23 @@ impl fmt::Display for QueryError {
     }
 }
 
+/// Whether a server is at work on its own, apart from the queries it is asked. An
+/// answer given while it is, or after it began, may be a partial one (I2).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Readiness {
+    /// No work in progress: indexing and loading are done.
+    pub idle: bool,
+    /// Changes whenever the server begins work, so two equal values taken before and
+    /// after a query tell that it did not begin any in between.
+    pub epoch: u64,
+}
+
 /// The required operations (§7.1). Whether the server's answers come from the
 /// live worktree or an immutable snapshot is the pool's concern, not this trait's.
 ///
 /// Methods take `&self`: the pool lets several callers use one server at once.
 pub trait LanguageServer: Send + Sync {
+    fn readiness(&self) -> Readiness;
     fn document_symbols(&self, file: &RepoPath) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     /// The symbols `text` declares if it were the content of `file`, which need
     /// not exist in the tree. They depend on the text alone, so any server of
@@ -359,6 +371,9 @@ impl<T> Answered<T> {
 pub struct Started<S> {
     pub server: S,
     pub identity: ServerIdentity,
+    /// The fingerprint of the restore its immutable tree was started on (see
+    /// [`Restored::fingerprint`]); `None` if none was recorded, or the tree is live.
+    pub restore: Option<Hash>,
 }
 
 /// Implemented by `vet-infra::lsp`. The pool needs a launcher, not a server

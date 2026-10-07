@@ -21,6 +21,7 @@ use lsp_types::request::Initialize;
 use serde_json::{Value, json};
 use vet_app::ports::{ServerCommand, ServerLocator};
 use vet_app::progress::{TaskKind, Tasks};
+use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{
     Backend, LaunchError, Restored, Restorer, ServerConfig, ServerIdentity, ServerLauncher, Started, Tree,
@@ -183,6 +184,8 @@ struct Launched {
     conn: Connection,
     root: PathBuf,
     identity: ServerIdentity,
+    /// The fingerprint of the restore its tree was started on.
+    restore: Option<Hash>,
     diagnostics: Diagnostics,
     phases: Phases,
 }
@@ -238,6 +241,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
             conn,
             root,
             identity,
+            restore: restored.fingerprint,
             diagnostics,
             phases,
         })
@@ -272,6 +276,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
             conn,
             root,
             identity,
+            restore,
             diagnostics,
             mut phases,
         } = launched?;
@@ -314,6 +319,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
         Ok(Started {
             server: LspServer::new(conn, root, tree, diagnostics, config.loads_project_on_open),
             identity,
+            restore,
         })
     }
 

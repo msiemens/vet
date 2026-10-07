@@ -73,6 +73,12 @@ where
         Self { pool, backends }
     }
 
+    /// Keeps at most `limit` answers of the servers for reuse; 0 keeps none.
+    pub fn keeping(mut self, limit: usize) -> Self {
+        self.pool = self.pool.keeping(limit);
+        self
+    }
+
     pub fn pool(&self) -> &Pool<M, L> {
         &self.pool
     }

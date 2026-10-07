@@ -44,18 +44,21 @@ pub struct Changes {
 /// Files whose symbols are asked for at once, both sides each.
 const FILES_IN_FLIGHT: usize = 4;
 
-/// The base side's file contents, so its symbols can be had without a server
-/// on the base snapshot.
-pub trait BaseTexts: Sync {
+/// The file contents of both sides, so their symbols can be had from the texts alone:
+/// without a server on the base snapshot, and without the target file as the live
+/// tree has it now, which may have moved on from the revision.
+pub trait Texts: Sync {
     /// The base content of `file`; `None` if it is not available.
     fn base_text(&self, file: &FileDiff) -> impl Future<Output = Option<String>> + Send;
+    /// The target content of `file`; `None` if it is not available.
+    fn target_text(&self, file: &FileDiff) -> impl Future<Output = Option<String>> + Send;
 }
 
 /// `on_file(done, total)` is called each time a file's symbols are in, `total` being
 /// the files with changes to look at.
 pub async fn changed_symbols(
     p: &impl Primitives,
-    texts: &impl BaseTexts,
+    texts: &impl Texts,
     files: &[FileDiff],
     on_file: &(impl Fn(usize, usize) + Sync),
 ) -> Derived<Changes> {
@@ -71,11 +74,7 @@ pub async fn changed_symbols(
         let file = files[at];
         let done = &done;
         async move {
-            let answer = join(
-                base_symbols(p, texts, file),
-                symbols(p, Side::Target, file.new_path.as_ref()),
-            )
-            .await;
+            let answer = join(base_symbols(p, texts, file), target_symbols(p, texts, file)).await;
             on_file(done.fetch_add(1, Ordering::Relaxed) + 1, total);
             answer
         }
@@ -146,18 +145,11 @@ fn attributed(answer: Asked<Vec<SymbolInfo>>) -> Symbols {
     answer.map(|a| (a.value, Some(a.provenance)))
 }
 
-async fn symbols(p: &impl Primitives, side: Side, file: Option<&RepoPath>) -> Symbols {
-    let Some(file) = file else {
-        return Ok((Vec::new(), None));
-    };
-    attributed(p.document_symbols(side, file).await)
-}
-
 /// The symbols a document declares depend on its text alone, so the base side
 /// is asked of the target side's server, which is running anyway; the base
 /// side's own server, which has to restore the base's dependencies first, is
 /// asked only when the text cannot be had or placed.
-async fn base_symbols(p: &impl Primitives, texts: &impl BaseTexts, file: &FileDiff) -> Symbols {
+async fn base_symbols(p: &impl Primitives, texts: &impl Texts, file: &FileDiff) -> Symbols {
     let Some(path) = &file.old_path else {
         return Ok((Vec::new(), None));
     };
@@ -167,6 +159,21 @@ async fn base_symbols(p: &impl Primitives, texts: &impl BaseTexts, file: &FileDi
         return attributed(Ok(found));
     }
     attributed(p.document_symbols(Side::Base, path).await)
+}
+
+/// The target side's symbols from the revision's text, which the positions of its
+/// hunks belong to; the file as its side's server has it is asked only when the text
+/// cannot be had or placed.
+async fn target_symbols(p: &impl Primitives, texts: &impl Texts, file: &FileDiff) -> Symbols {
+    let Some(path) = &file.new_path else {
+        return Ok((Vec::new(), None));
+    };
+    if let Some(text) = texts.target_text(file).await
+        && let Ok(found) = p.text_symbols(path, &text).await
+    {
+        return attributed(Ok(found));
+    }
+    attributed(p.document_symbols(Side::Target, path).await)
 }
 
 /// The innermost symbols each hunk touches. An empty range is a deletion or

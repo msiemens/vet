@@ -7,6 +7,10 @@
 //! callers arriving while it starts wait for that start instead of launching
 //! another. Only servers with no lease are evicted. No lock is held across an
 //! await.
+//!
+//! Answers outlive their server: they are kept by the pool under keys that name
+//! the server's identity (I2, `reuse`), so a server that starts later with an
+//! equal identity on an equal tree answers from them.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -15,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use vet_core::content::{RepoPath, SnapshotId};
+use vet_core::content::{BlobId, RepoPath, SnapshotId};
 
 use crate::once::{Producer, Shared};
 use crate::policy::AnalysisPolicy;
@@ -23,10 +27,12 @@ use crate::ports::{
     Answered, At, Backend, BackendId, Diagnostic, LanguageServer, LaunchError, Location, Materializer,
     NotMaterializable, Provenance, QueryError, ServerIdentity, ServerLauncher, Started, SymbolInfo, Tree,
 };
+use crate::reuse::{Answers, Basis, Computed, KEPT, Key, ProjectQuery, Restore, Reused};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Target {
-    /// The dirty tree: served in place, answers never cached.
+    /// The dirty tree: served in place. Its answers are asked fresh, except the
+    /// symbols of a text, which depend on that text alone.
     Live,
     /// An immutable snapshot, served from a materialized directory.
     Snapshot(SnapshotId),
@@ -70,50 +76,21 @@ pub fn admit(backend: &Backend, policy: AnalysisPolicy) -> Result<(), PoolError>
     Ok(())
 }
 
-/// Answers of a server on an immutable snapshot, for the server's lifetime (I2).
-#[derive(Default)]
-struct Cache {
-    symbols: HashMap<RepoPath, Vec<SymbolInfo>>,
-    definition: HashMap<At, Vec<Location>>,
-    references: HashMap<At, Vec<Location>>,
-    hover: HashMap<At, Option<String>>,
-    incoming: HashMap<At, Vec<SymbolInfo>>,
-    outgoing: HashMap<At, Vec<SymbolInfo>>,
-    workspace: HashMap<String, Vec<SymbolInfo>>,
-    diagnostics: HashMap<RepoPath, Vec<Diagnostic>>,
-}
-
-/// A running server, shared by its leases. It answers from the cache when it
-/// has one (snapshots only), and says who answered. Fields drop in order:
+/// A running server, shared by its leases. It answers from the pool's kept
+/// answers when it can (I2), and says who answered. Fields drop in order:
 /// server first, then the materialized directory.
 pub struct Entry<S, G> {
     server: S,
     /// The identity the server started with.
     identity: ServerIdentity,
-    cache: Option<Mutex<Cache>>,
+    answers: Arc<Answers>,
+    /// What the tree is, for the answers that depend on all of it; none for the live tree.
+    basis: Option<Basis>,
     leases: AtomicUsize,
     used: AtomicU64,
     /// Restarted while leased: stopped when the last lease ends.
     retired: AtomicBool,
     _guard: Option<G>,
-}
-
-macro_rules! cached {
-    ($self:ident, $field:ident, $key:expr, $call:expr) => {{
-        let key = $key;
-        if let Some(hit) = $self
-            .cache
-            .as_ref()
-            .and_then(|c| c.lock().expect("not poisoned").$field.get(&key).cloned())
-        {
-            return Ok($self.answered(hit, true));
-        }
-        let answer = $call.await?;
-        if let Some(cache) = &$self.cache {
-            cache.lock().expect("not poisoned").$field.insert(key, answer.clone());
-        }
-        Ok($self.answered(answer, false))
-    }};
 }
 
 impl<S: LanguageServer, G: Send + Sync + 'static> Entry<S, G> {
@@ -131,40 +108,89 @@ impl<S: LanguageServer, G: Send + Sync + 'static> Entry<S, G> {
         }
     }
 
-    pub async fn document_symbols(&self, file: &RepoPath) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
-        cached!(self, symbols, file.clone(), self.server.document_symbols(file))
+    /// The key of a question about the whole tree; none on the live tree, which
+    /// changes under the server.
+    fn project(&self, query: ProjectQuery) -> Option<Key> {
+        self.basis.map(|basis| Key::Project {
+            server: self.identity.clone(),
+            basis,
+            query,
+        })
     }
 
+    /// The answer under `key`, or the server's. The server's answer is kept only if
+    /// it was not at work on its own when it was asked, and did not begin work before
+    /// it answered: an answer given while it indexes may be a partial one.
+    async fn reuse<T: Reused>(
+        &self,
+        key: Option<Key>,
+        ask: impl Future<Output = Result<T, QueryError>>,
+    ) -> Result<Answered<T>, QueryError> {
+        let asked = async {
+            let before = self.server.readiness();
+            let value = ask.await?;
+            let keep = before.idle && before.epoch == self.server.readiness().epoch;
+            Ok(Computed { value, keep })
+        };
+        let (value, from_cache) = self.answers.get(key.as_ref(), asked).await?;
+        Ok(self.answered(value, from_cache))
+    }
+
+    /// Without a text the symbols are those of the file as the tree has it: only a tree that never changes has them under a key.
+    pub async fn document_symbols(&self, file: &RepoPath) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
+        let key = self.project(ProjectQuery::DocumentSymbols(file.clone()));
+        self.reuse(key, self.server.document_symbols(file)).await
+    }
+
+    /// The symbols `text` declares as the content of `file`. They depend on the text
+    /// and the language alone, so any tree has them under one key.
     pub async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
-        Ok(self.answered(self.server.text_symbols(file, text).await?, false))
+        let key = Key::Text {
+            server: self.identity.clone(),
+            extension: file.extension().unwrap_or_default().to_vec(),
+            blob: BlobId::of(text.as_bytes()),
+        };
+        let mut answered = self.reuse(Some(key), self.server.text_symbols(file, text)).await?;
+        // An answer kept for the same text under another name names its symbols after that one.
+        for symbol in &mut answered.value {
+            symbol.sym.file = file.clone();
+        }
+        Ok(answered)
     }
 
     pub async fn definition(&self, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
-        cached!(self, definition, at.clone(), self.server.definition(at))
+        let key = self.project(ProjectQuery::Definition(at.clone()));
+        self.reuse(key, self.server.definition(at)).await
     }
 
     pub async fn references(&self, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
-        cached!(self, references, at.clone(), self.server.references(at))
+        let key = self.project(ProjectQuery::References(at.clone()));
+        self.reuse(key, self.server.references(at)).await
     }
 
     pub async fn hover(&self, at: &At) -> Result<Answered<Option<String>>, QueryError> {
-        cached!(self, hover, at.clone(), self.server.hover(at))
+        let key = self.project(ProjectQuery::Hover(at.clone()));
+        self.reuse(key, self.server.hover(at)).await
     }
 
     pub async fn incoming_calls(&self, at: &At) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
-        cached!(self, incoming, at.clone(), self.server.incoming_calls(at))
+        let key = self.project(ProjectQuery::Incoming(at.clone()));
+        self.reuse(key, self.server.incoming_calls(at)).await
     }
 
     pub async fn outgoing_calls(&self, at: &At) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
-        cached!(self, outgoing, at.clone(), self.server.outgoing_calls(at))
+        let key = self.project(ProjectQuery::Outgoing(at.clone()));
+        self.reuse(key, self.server.outgoing_calls(at)).await
     }
 
     pub async fn workspace_symbols(&self, query: &str) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
-        cached!(self, workspace, query.to_owned(), self.server.workspace_symbols(query))
+        let key = self.project(ProjectQuery::Workspace(query.to_owned()));
+        self.reuse(key, self.server.workspace_symbols(query)).await
     }
 
     pub async fn diagnostics(&self, file: &RepoPath) -> Result<Answered<Vec<Diagnostic>>, QueryError> {
-        cached!(self, diagnostics, file.clone(), self.server.diagnostics(file))
+        let key = self.project(ProjectQuery::Diagnostics(file.clone()));
+        self.reuse(key, self.server.diagnostics(file)).await
     }
 
     async fn shutdown(&self) {
@@ -193,6 +219,9 @@ pub struct Pool<M: Materializer, L: ServerLauncher> {
     launcher: L,
     live_root: PathBuf,
     capacity: usize,
+    answers: Arc<Answers>,
+    /// Numbers the servers started on trees whose restore left no record.
+    instances: AtomicU64,
     state: Mutex<State<L::Server, M::Guard>>,
 }
 
@@ -266,12 +295,20 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             launcher,
             live_root,
             capacity,
+            answers: Arc::new(Answers::new(KEPT)),
+            instances: AtomicU64::new(0),
             state: Mutex::new(State {
                 tick: 0,
                 generations: HashMap::new(),
                 slots: HashMap::new(),
             }),
         }
+    }
+
+    /// Keeps at most `limit` answers; 0 keeps none, so every question reaches a server.
+    pub fn keeping(mut self, limit: usize) -> Self {
+        self.answers = Arc::new(Answers::new(limit));
+        self
     }
 
     /// The server for `key`: the running one, the one being started, or a new one.
@@ -332,7 +369,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             key: key.clone(),
             producer: Some(producer),
         };
-        let (Started { server, identity }, cache, dir_guard) = match self.launch(key, backend).await {
+        let (Started { server, identity, .. }, basis, dir_guard) = match self.launch(key, backend).await {
             Ok(parts) => parts,
             Err(e) => {
                 self.lock().slots.remove(key);
@@ -347,7 +384,8 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             let entry = Arc::new(Entry {
                 server,
                 identity,
-                cache,
+                answers: self.answers.clone(),
+                basis,
                 leases: AtomicUsize::new(1),
                 used: AtomicU64::new(state.tick),
                 retired: AtomicBool::new(stale),
@@ -368,21 +406,16 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         &self,
         key: &PoolKey,
         backend: &Backend,
-    ) -> Result<(Started<L::Server>, Option<Mutex<Cache>>, Option<M::Guard>), PoolError> {
-        let (root, tree, guard, cache) = match key.target {
-            Target::Live => (self.live_root.clone(), Tree::Live, None, None),
+    ) -> Result<(Started<L::Server>, Option<Basis>, Option<M::Guard>), PoolError> {
+        let (root, tree, guard) = match key.target {
+            Target::Live => (self.live_root.clone(), Tree::Live, None),
             Target::Snapshot(id) => {
                 let m = self
                     .materializer
                     .materialize(id, key.policy)
                     .await
                     .map_err(PoolError::NotMaterializable)?;
-                (
-                    m.root,
-                    Tree::Immutable,
-                    Some(m.guard),
-                    Some(Mutex::new(Cache::default())),
-                )
+                (m.root, Tree::Immutable, Some(m.guard))
             }
         };
         let started = self
@@ -390,7 +423,18 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             .start(&root, tree, backend, key.policy)
             .await
             .map_err(PoolError::Launch)?;
-        Ok((started, cache, guard))
+        let basis = match key.target {
+            Target::Live => None,
+            Target::Snapshot(snapshot) => Some(Basis {
+                snapshot,
+                policy: key.policy,
+                restore: match started.restore {
+                    Some(fingerprint) => Restore::Recorded(fingerprint),
+                    None => Restore::Instance(self.instances.fetch_add(1, Ordering::SeqCst)),
+                },
+            }),
+        };
+        Ok((started, basis, guard))
     }
 
     /// Drops one lease; returns the entries to stop (this one if it was
@@ -487,7 +531,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicU8, AtomicUsize};
     use std::task::{Context, Waker};
 
     use vet_core::content::Hash;
@@ -495,7 +539,7 @@ mod tests {
     use super::*;
     use crate::join::join;
     use crate::policy::AnalysisPolicy;
-    use crate::ports::{Materialized, Pos, ServerConfig};
+    use crate::ports::{Materialized, Pos, Readiness, ServerConfig, Severity, Span, Sym};
     use crate::testutil::{block_on, yield_once};
 
     fn backend(executes: bool) -> Backend {
@@ -522,7 +566,6 @@ mod tests {
         assert!(admit(&backend(true), trusted).is_ok());
     }
 
-    #[derive(Default)]
     struct Counters {
         materialized: AtomicUsize,
         guards_dropped: AtomicUsize,
@@ -530,6 +573,45 @@ mod tests {
         shut_down: AtomicUsize,
         hover_calls: AtomicUsize,
         fail_start: AtomicBool,
+        /// The version of the server binary: part of its identity and of what it answers.
+        version: AtomicU8,
+        /// The fingerprint of the restore of an immutable tree; 0: none was recorded.
+        restore: AtomicU8,
+        /// The kinds of the queries that reached a server, in order.
+        asked: Mutex<Vec<&'static str>>,
+        /// The server is at work on its own.
+        busy: AtomicBool,
+        /// The server begins work while it answers.
+        begins_work: AtomicBool,
+        epoch: AtomicU64,
+        failing: AtomicBool,
+    }
+
+    impl Default for Counters {
+        fn default() -> Self {
+            Self {
+                materialized: AtomicUsize::new(0),
+                guards_dropped: AtomicUsize::new(0),
+                started: AtomicUsize::new(0),
+                shut_down: AtomicUsize::new(0),
+                hover_calls: AtomicUsize::new(0),
+                fail_start: AtomicBool::new(false),
+                version: AtomicU8::new(1),
+                restore: AtomicU8::new(5),
+                asked: Mutex::default(),
+                busy: AtomicBool::new(false),
+                begins_work: AtomicBool::new(false),
+                epoch: AtomicU64::new(0),
+                failing: AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl Counters {
+        /// The kinds of the queries that reached a server since the last call.
+        fn asked(&self) -> Vec<&'static str> {
+            std::mem::take(&mut *self.asked.lock().unwrap())
+        }
     }
 
     struct Guard(Arc<Counters>);
@@ -569,7 +651,7 @@ mod tests {
         async fn start(
             &self,
             root: &std::path::Path,
-            _: Tree,
+            tree: Tree,
             backend: &Backend,
             _: AnalysisPolicy,
         ) -> Result<Started<FakeServer>, LaunchError> {
@@ -578,52 +660,126 @@ mod tests {
             if self.0.fail_start.load(Ordering::SeqCst) {
                 return Err(LaunchError::Spawn("boom".into()));
             }
+            let restore = match (tree, self.0.restore.load(Ordering::SeqCst)) {
+                (Tree::Immutable, n) if n != 0 => Some(Hash([n; 32])),
+                _ => None,
+            };
             Ok(Started {
                 server: FakeServer(self.0.clone()),
                 identity: self.identify(root, backend).await?,
+                restore,
             })
         }
 
-        /// A binary that is replaced between two starts: the nth start is version n.
+        /// A binary that is replaced between two starts: the version it has when the server starts.
         async fn identify(&self, _: &std::path::Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
-            let n = self.0.started.load(Ordering::SeqCst);
+            let version = self.0.version.load(Ordering::SeqCst);
             Ok(ServerIdentity {
                 backend: backend.config().backend.clone(),
-                fingerprint: Hash([n as u8; 32]),
-                label: format!("fake {n}"),
+                fingerprint: Hash([version; 32]),
+                label: format!("fake {version}"),
             })
         }
     }
 
+    fn span(at: Pos, version: u8) -> Span {
+        Span {
+            start: at,
+            end: Pos {
+                line: at.line,
+                col: at.col + u32::from(version),
+            },
+        }
+    }
+
+    fn symbol(file: &RepoPath, name: String, at: Pos, version: u8) -> SymbolInfo {
+        SymbolInfo {
+            sym: Sym {
+                file: file.clone(),
+                name: vec![name],
+            },
+            span: span(at, version),
+            at,
+            detail: None,
+        }
+    }
+
+    /// Answers are functions of what is asked and of the version of the server.
+    impl FakeServer {
+        fn asked(&self, kind: &'static str) -> Result<u8, QueryError> {
+            self.0.asked.lock().unwrap().push(kind);
+            if self.0.begins_work.load(Ordering::SeqCst) {
+                self.0.epoch.fetch_add(1, Ordering::SeqCst);
+            }
+            if self.0.failing.load(Ordering::SeqCst) {
+                return Err(QueryError("boom".into()));
+            }
+            Ok(self.0.version.load(Ordering::SeqCst))
+        }
+    }
+
     impl LanguageServer for FakeServer {
-        async fn document_symbols(&self, _: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
-            Ok(vec![])
+        fn readiness(&self) -> Readiness {
+            Readiness {
+                idle: !self.0.busy.load(Ordering::SeqCst),
+                epoch: self.0.epoch.load(Ordering::SeqCst),
+            }
         }
-        async fn text_symbols(&self, _: &RepoPath, _: &str) -> Result<Vec<SymbolInfo>, QueryError> {
-            Ok(vec![])
+        async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
+            let version = self.asked("document_symbols")?;
+            Ok(vec![symbol(file, "on disk".into(), Pos { line: 0, col: 0 }, version)])
         }
-        async fn definition(&self, _: &At) -> Result<Vec<Location>, QueryError> {
-            Ok(vec![])
+        async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Vec<SymbolInfo>, QueryError> {
+            let version = self.asked("text_symbols")?;
+            Ok(vec![symbol(file, text.to_owned(), Pos { line: 0, col: 0 }, version)])
         }
-        async fn references(&self, _: &At) -> Result<Vec<Location>, QueryError> {
-            Ok(vec![])
+        async fn definition(&self, at: &At) -> Result<Vec<Location>, QueryError> {
+            let version = self.asked("definition")?;
+            Ok(vec![Location {
+                file: at.file.clone(),
+                span: span(at.pos, version),
+                external: false,
+            }])
         }
-        /// Answers with how many times it was asked, so a cache hit is visible.
-        async fn hover(&self, _: &At) -> Result<Option<String>, QueryError> {
-            let n = self.0.hover_calls.fetch_add(1, Ordering::SeqCst) + 1;
-            Ok(Some(n.to_string()))
+        async fn references(&self, at: &At) -> Result<Vec<Location>, QueryError> {
+            let version = self.asked("references")?;
+            Ok(vec![Location {
+                file: at.file.clone(),
+                span: span(at.pos, version),
+                external: false,
+            }])
         }
-        async fn incoming_calls(&self, _: &At) -> Result<Vec<SymbolInfo>, QueryError> {
-            Ok(vec![])
+        async fn hover(&self, at: &At) -> Result<Option<String>, QueryError> {
+            let version = self.asked("hover")?;
+            self.0.hover_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Some(format!("{version} {}:{}", at.pos.line, at.pos.col)))
         }
-        async fn outgoing_calls(&self, _: &At) -> Result<Vec<SymbolInfo>, QueryError> {
-            Ok(vec![])
+        async fn incoming_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+            let version = self.asked("incoming_calls")?;
+            Ok(vec![symbol(&at.file, "caller".into(), at.pos, version)])
         }
-        async fn workspace_symbols(&self, _: &str) -> Result<Vec<SymbolInfo>, QueryError> {
-            Ok(vec![])
+        async fn outgoing_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+            let version = self.asked("outgoing_calls")?;
+            Ok(vec![symbol(&at.file, "callee".into(), at.pos, version)])
         }
-        async fn diagnostics(&self, _: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
-            Ok(vec![])
+        async fn workspace_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
+            let version = self.asked("workspace_symbols")?;
+            Ok(vec![symbol(
+                &RepoPath(b"w.rs".to_vec()),
+                query.to_owned(),
+                Pos { line: 0, col: 0 },
+                version,
+            )])
+        }
+        async fn diagnostics(&self, file: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
+            let version = self.asked("diagnostics")?;
+            Ok(vec![Diagnostic {
+                span: span(Pos { line: 0, col: 0 }, version),
+                severity: Severity::Error,
+                message: file.to_string_lossy(),
+                source: None,
+                code: None,
+            }])
         }
         async fn shutdown(&self) {
             self.0.shut_down.fetch_add(1, Ordering::SeqCst);
@@ -663,8 +819,289 @@ mod tests {
         }
     }
 
+    fn file(name: &str) -> RepoPath {
+        RepoPath(name.as_bytes().to_vec())
+    }
+
+    type TestPool = Pool<FakeMaterializer, FakeLauncher>;
+
+    /// Every input of the cached kinds of query.
+    #[derive(Clone)]
+    struct Ask {
+        file: RepoPath,
+        at: At,
+        text: &'static str,
+        query: &'static str,
+    }
+
+    fn ask() -> Ask {
+        Ask {
+            file: file("a.rs"),
+            at: at(),
+            text: "fn a() {}",
+            query: "a",
+        }
+    }
+
+    /// The kinds of query in the order `ask_all` asks them, and those that depend on
+    /// a whole tree.
+    const ALL: [&str; 9] = [
+        "document_symbols",
+        "text_symbols",
+        "definition",
+        "references",
+        "hover",
+        "incoming_calls",
+        "outgoing_calls",
+        "workspace_symbols",
+        "diagnostics",
+    ];
+    const WHOLE_TREE: [&str; 8] = [
+        "document_symbols",
+        "definition",
+        "references",
+        "hover",
+        "incoming_calls",
+        "outgoing_calls",
+        "workspace_symbols",
+        "diagnostics",
+    ];
+
+    /// Asks every cached kind of query: the answers, each with whether it was reused.
+    async fn ask_all(lease: &Lease<'_, FakeMaterializer, FakeLauncher>, ask: &Ask) -> Vec<(String, bool)> {
+        let mut out = Vec::new();
+        macro_rules! record {
+            ($answered:expr) => {{
+                let answered = $answered.await.unwrap();
+                out.push((format!("{:?}", answered.value), answered.provenance.from_cache));
+            }};
+        }
+        record!(lease.document_symbols(&ask.file));
+        record!(lease.text_symbols(&ask.file, ask.text));
+        record!(lease.definition(&ask.at));
+        record!(lease.references(&ask.at));
+        record!(lease.hover(&ask.at));
+        record!(lease.incoming_calls(&ask.at));
+        record!(lease.outgoing_calls(&ask.at));
+        record!(lease.workspace_symbols(ask.query));
+        record!(lease.diagnostics(&ask.file));
+        out
+    }
+
+    /// Asks everything of the server for `key`; what it answered and which queries reached it.
+    fn ask_in(
+        pool: &TestPool,
+        counters: &Counters,
+        key: &PoolKey,
+        ask: &Ask,
+    ) -> (Vec<(String, bool)>, Vec<&'static str>) {
+        block_on(async {
+            let lease = pool.lease(key, &backend(false)).await.unwrap();
+            let answers = ask_all(&lease, ask).await;
+            lease.release().await;
+            (answers, counters.asked())
+        })
+    }
+
     #[test]
-    fn snapshot_answers_are_cached_for_the_servers_lifetime() {
+    fn answers_outlive_their_server_while_every_key_input_is_unchanged() {
+        let (pool, counters) = pool(4);
+        let key = snapshot_key(1);
+        let (first, asked) = ask_in(&pool, &counters, &key, &ask());
+        assert_eq!(asked, ALL);
+        assert!(first.iter().all(|(_, reused)| !reused));
+
+        // The same server, and one started later that is the same in every respect.
+        for _ in 0..2 {
+            let (again, asked) = ask_in(&pool, &counters, &key, &ask());
+            assert!(asked.is_empty(), "{asked:?}");
+            assert!(again.iter().all(|(_, reused)| *reused));
+            let values = |answers: &[(String, bool)]| answers.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>();
+            assert_eq!(values(&again), values(&first));
+            block_on(pool.restart(&BackendId("rust".into())));
+        }
+        assert_eq!(counters.started.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn changing_any_one_key_input_asks_a_server_and_only_for_the_answers_that_depend_on_it() {
+        type Change = fn(&Counters, &mut PoolKey, &mut Ask);
+        let cases: [(&str, Change, &[&str]); 12] = [
+            ("nothing", |_, _, _| {}, &[]),
+            (
+                "the server binary",
+                |c, _, _| c.version.store(2, Ordering::SeqCst),
+                &ALL,
+            ),
+            (
+                "the restore of the tree",
+                |c, _, _| c.restore.store(6, Ordering::SeqCst),
+                &WHOLE_TREE,
+            ),
+            (
+                "a restore nothing was recorded of",
+                |c, _, _| c.restore.store(0, Ordering::SeqCst),
+                &WHOLE_TREE,
+            ),
+            (
+                "the snapshot",
+                |_, key, _| key.target = Target::Snapshot(SnapshotId(Hash([2; 32]))),
+                &WHOLE_TREE,
+            ),
+            (
+                "the analysis policy",
+                |_, key, _| key.policy = AnalysisPolicy { allow_executing: false },
+                &WHOLE_TREE,
+            ),
+            ("the text", |_, _, ask| ask.text = "fn b() {}", &["text_symbols"]),
+            (
+                "the extension of the file",
+                |_, _, ask| ask.file = file("a.py"),
+                &["document_symbols", "text_symbols", "diagnostics"],
+            ),
+            (
+                "the name of the file",
+                |_, _, ask| ask.file = file("b.rs"),
+                &["document_symbols", "diagnostics"],
+            ),
+            (
+                "the position",
+                |_, _, ask| ask.at.pos = Pos { line: 3, col: 4 },
+                &["definition", "references", "hover", "incoming_calls", "outgoing_calls"],
+            ),
+            (
+                "the file of the position",
+                |_, _, ask| ask.at.file = file("b.rs"),
+                &["definition", "references", "hover", "incoming_calls", "outgoing_calls"],
+            ),
+            (
+                "the workspace query",
+                |_, _, ask| ask.query = "b",
+                &["workspace_symbols"],
+            ),
+        ];
+        for (name, change, asks_again) in cases {
+            let (pool, counters) = pool(8);
+            let (mut key, mut asked_about) = (snapshot_key(1), ask());
+            ask_in(&pool, &counters, &key, &asked_about);
+
+            // A server started afterwards is where the changes show, whether or not it differs.
+            change(&counters, &mut key, &mut asked_about);
+            block_on(pool.restart(&BackendId("rust".into())));
+            let (_, asked) = ask_in(&pool, &counters, &key, &asked_about);
+            assert_eq!(asked, asks_again, "after changing {name}");
+        }
+    }
+
+    #[test]
+    fn the_symbols_kept_for_a_text_are_named_after_the_file_that_asks() {
+        let (pool, counters) = pool(4);
+        block_on(async {
+            let lease = pool.lease(&snapshot_key(1), &backend(false)).await.unwrap();
+            lease.text_symbols(&file("a.rs"), "fn a() {}").await.unwrap();
+            let renamed = lease.text_symbols(&file("b.rs"), "fn a() {}").await.unwrap();
+            assert!(renamed.provenance.from_cache);
+            assert!(renamed.value.iter().all(|s| s.sym.file == file("b.rs")));
+            assert_eq!(counters.asked(), ["text_symbols"]);
+            lease.release().await;
+        });
+    }
+
+    #[test]
+    fn answers_of_the_live_tree_are_asked_every_time_except_the_symbols_of_a_text() {
+        let (pool, counters) = pool(4);
+        let mut asked = Vec::new();
+        for _ in 0..2 {
+            asked.extend(ask_in(&pool, &counters, &live_key(), &ask()).1);
+        }
+        let count = |kind: &str| asked.iter().filter(|k| **k == kind).count();
+        assert!(WHOLE_TREE.iter().all(|kind| count(kind) == 2), "{asked:?}");
+        assert_eq!(count("text_symbols"), 1);
+    }
+
+    #[test]
+    fn caching_on_and_off_gives_identical_answers() {
+        fn script(kept: usize) -> (Vec<Vec<String>>, usize) {
+            let (pool, counters) = pool(8);
+            let pool = pool.keeping(kept);
+            let mut answered = Vec::new();
+            let mut total = 0;
+            let mut run = |counters: &Counters, key: &PoolKey, ask: &Ask| {
+                let (answers, asked) = ask_in(&pool, counters, key, ask);
+                total += asked.len();
+                answered.push(answers.into_iter().map(|(value, _)| value).collect());
+            };
+            let rust = BackendId("rust".into());
+            run(&counters, &snapshot_key(1), &ask());
+            run(&counters, &snapshot_key(2), &ask());
+            run(&counters, &snapshot_key(1), &ask());
+            run(&counters, &live_key(), &ask());
+            run(
+                &counters,
+                &snapshot_key(1),
+                &Ask {
+                    text: "fn b() {}",
+                    ..ask()
+                },
+            );
+            counters.restore.store(6, Ordering::SeqCst);
+            block_on(pool.restart(&rust));
+            run(&counters, &snapshot_key(1), &ask());
+            counters.version.store(2, Ordering::SeqCst);
+            block_on(pool.restart(&rust));
+            run(&counters, &snapshot_key(1), &ask());
+            run(&counters, &snapshot_key(2), &ask());
+            (answered, total)
+        }
+        let (without, asked_without) = script(0);
+        let (with, asked_with) = script(crate::reuse::KEPT);
+        assert_eq!(with, without);
+        assert!(asked_with < asked_without, "{asked_with} < {asked_without}");
+    }
+
+    #[test]
+    fn an_answer_given_while_the_server_was_not_ready_is_never_kept() {
+        let (pool, counters) = pool(4);
+        let key = snapshot_key(1);
+        let hover = |reused_after: bool| {
+            let (_, asked) = ask_in(&pool, &counters, &key, &ask());
+            assert_eq!(asked.contains(&"hover"), !reused_after, "{asked:?}");
+        };
+
+        // Indexing: nothing is kept, however often it is asked.
+        counters.busy.store(true, Ordering::SeqCst);
+        hover(false);
+        hover(false);
+
+        // Work begins while the query is answered, though the server was idle when it was asked.
+        counters.busy.store(false, Ordering::SeqCst);
+        counters.begins_work.store(true, Ordering::SeqCst);
+        hover(false);
+        hover(false);
+
+        // Idle all the way: kept.
+        counters.begins_work.store(false, Ordering::SeqCst);
+        hover(false);
+        hover(true);
+    }
+
+    #[test]
+    fn an_error_is_never_kept() {
+        let (pool, counters) = pool(4);
+        let key = snapshot_key(1);
+        counters.failing.store(true, Ordering::SeqCst);
+        block_on(async {
+            let lease = pool.lease(&key, &backend(false)).await.unwrap();
+            assert!(lease.hover(&at()).await.is_err());
+            counters.failing.store(false, Ordering::SeqCst);
+            assert!(!lease.hover(&at()).await.unwrap().provenance.from_cache);
+            assert!(lease.hover(&at()).await.unwrap().provenance.from_cache);
+            lease.release().await;
+        });
+    }
+
+    #[test]
+    fn snapshot_answers_are_reused_across_leases() {
         let (pool, counters) = pool(2);
         block_on(async {
             let lease = pool.lease(&snapshot_key(1), &backend(true)).await.unwrap();
@@ -681,7 +1118,7 @@ mod tests {
 
     #[test]
     fn an_answer_names_the_server_that_started_and_whether_it_was_reused() {
-        let (pool, _) = pool(2);
+        let (pool, counters) = pool(2);
         block_on(async {
             let lease = pool.lease(&snapshot_key(1), &backend(true)).await.unwrap();
             let fresh = lease.hover(&at()).await.unwrap().provenance;
@@ -694,7 +1131,8 @@ mod tests {
             assert_eq!(reused.to_string(), "fake 1, cached");
             lease.release().await;
 
-            // A server started later is another identity, and so is its answer's.
+            // A server started later with another binary is another identity, and so is its answer's.
+            counters.version.store(2, Ordering::SeqCst);
             pool.restart(&BackendId("rust".into())).await;
             let lease = pool.lease(&snapshot_key(1), &backend(true)).await.unwrap();
             let again = lease.hover(&at()).await.unwrap().provenance;
@@ -705,13 +1143,18 @@ mod tests {
     }
 
     #[test]
-    fn live_answers_are_never_cached_and_nothing_is_materialized() {
+    fn live_answers_are_never_reused_and_nothing_is_materialized() {
         let (pool, counters) = pool(2);
         block_on(async {
             let lease = pool.lease(&live_key(), &backend(true)).await.unwrap();
-            let first = lease.hover(&at()).await.unwrap().value;
-            assert_ne!(lease.hover(&at()).await.unwrap().value, first);
+            for _ in 0..2 {
+                let answered = lease.hover(&at()).await.unwrap();
+                assert!(!answered.provenance.from_cache);
+            }
             assert_eq!(counters.hover_calls.load(Ordering::SeqCst), 2);
+            lease.document_symbols(&file("a.rs")).await.unwrap();
+            lease.document_symbols(&file("a.rs")).await.unwrap();
+            assert_eq!(counters.asked().iter().filter(|k| **k == "document_symbols").count(), 2);
             assert_eq!(counters.materialized.load(Ordering::SeqCst), 0);
             lease.release().await;
         });
@@ -728,9 +1171,10 @@ mod tests {
             assert_eq!(counters.materialized.load(Ordering::SeqCst), 1);
             assert!(Arc::ptr_eq(a.entry.as_ref().unwrap(), b.entry.as_ref().unwrap()));
             assert_eq!(a.leases.load(Ordering::SeqCst), 2);
-            // Both see one shared cache.
+            // Both see the same kept answers.
             let first = a.hover(&at()).await.unwrap().value;
             assert_eq!(b.hover(&at()).await.unwrap().value, first);
+            assert_eq!(counters.hover_calls.load(Ordering::SeqCst), 1);
             a.release().await;
             b.release().await;
             assert_eq!(pool.keys(), [key]);
