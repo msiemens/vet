@@ -111,7 +111,7 @@ impl LspServer {
 
     /// The repository path of an absolute path, or `None` outside the root.
     fn file_in_root(&self, path: &Path) -> Option<RepoPath> {
-        paths::from_relative(path.strip_prefix(&self.root).ok()?).ok()
+        paths::from_relative(paths::below(&self.root, path)?).ok()
     }
 
     /// The repository path of a server URI, or `None` outside the root.

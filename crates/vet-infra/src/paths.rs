@@ -3,7 +3,7 @@
 //! (non-UTF-8 on Windows) is an error: nothing is replaced or dropped.
 
 use std::fmt;
-use std::path::{Component, Path};
+use std::path::{Component, Path, Prefix};
 
 use vet_core::content::RepoPath;
 
@@ -47,6 +47,33 @@ pub fn from_relative(relative: &Path) -> Result<RepoPath, PathError> {
     Ok(RepoPath(parts.join(&b'/')))
 }
 
+/// The part of `path` below `root`, both absolute. A Windows drive letter
+/// matches in either case and with or without the `\\?\` prefix: language
+/// servers report paths in their own spelling (`c:` for `C:`).
+pub fn below<'a>(root: &Path, path: &'a Path) -> Option<&'a Path> {
+    let mut rest = path.components();
+    for want in root.components() {
+        if !same_component(want, rest.next()?) {
+            return None;
+        }
+    }
+    Some(rest.as_path())
+}
+
+fn same_component(a: Component, b: Component) -> bool {
+    let disk = |prefix: Prefix| match prefix {
+        Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => Some(letter.to_ascii_uppercase()),
+        _ => None,
+    };
+    match (a, b) {
+        (Component::Prefix(a), Component::Prefix(b)) => match (disk(a.kind()), disk(b.kind())) {
+            (Some(a), Some(b)) => a == b,
+            _ => a == b,
+        },
+        _ => a == b,
+    }
+}
+
 /// An absolute path in the `/`-separated form `RepoPath` uses for places outside the root.
 pub fn from_absolute(path: &Path) -> Result<RepoPath, PathError> {
     let bytes = gix::path::try_into_bstr(path)
@@ -72,6 +99,26 @@ mod tests {
     fn a_path_outside_the_root_is_refused() {
         assert!(from_relative(Path::new("../x")).is_err());
         assert!(from_relative(Path::new("/x")).is_err());
+    }
+
+    #[test]
+    fn below_matches_whole_components() {
+        let root = std::env::temp_dir().join("repo");
+        let file = root.join("src").join("lib.rs");
+        assert_eq!(below(&root, &file), Some(Path::new("src").join("lib.rs").as_path()));
+        assert_eq!(below(&root, &root), Some(Path::new("")));
+        assert_eq!(below(&root, &std::env::temp_dir().join("repo2").join("lib.rs")), None);
+        assert_eq!(below(&root, &std::env::temp_dir()), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn below_ignores_the_case_and_verbatim_form_of_a_drive_letter() {
+        let file = Path::new(r"c:\work\repo\src\lib.rs");
+        let expected = Some(Path::new(r"src\lib.rs"));
+        assert_eq!(below(Path::new(r"C:\work\repo"), file), expected);
+        assert_eq!(below(Path::new(r"\\?\C:\work\repo"), file), expected);
+        assert_eq!(below(Path::new(r"D:\work\repo"), file), None);
     }
 
     #[test]
