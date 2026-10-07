@@ -18,6 +18,7 @@ use vet_core::content::{
     BlobId, BlobSource, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextChange, NonTextKind, RenameMap,
     RepoPath, Snapshot, SnapshotDiff,
 };
+use vet_core::inline::join_close_hunks;
 
 use super::scan::Worktree;
 use super::{BlobCache, err};
@@ -295,7 +296,8 @@ fn is_binary(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(8000)].contains(&0)
 }
 
-/// 0-based line hunks, histogram algorithm.
+/// 0-based line hunks, histogram algorithm. Hunks with almost nothing between them are one
+/// hunk (see [`join_close_hunks`]).
 pub fn line_hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
     let input = InternedInput::new(byte_lines(old), byte_lines(new));
     let mut diff = Diff::compute(Algorithm::Histogram, &input);
@@ -304,10 +306,46 @@ pub fn line_hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
         start: r.start,
         end: r.end,
     };
-    diff.hunks()
-        .map(|h| Hunk {
+    let old_lines: Vec<&[u8]> = byte_lines(old).collect();
+    join_close_hunks(
+        diff.hunks().map(|h| Hunk {
             old: range(h.before),
             new: range(h.after),
-        })
-        .collect()
+        }),
+        |r| String::from_utf8_lossy(&old_lines[r.start as usize..r.end as usize].concat()).into_owned(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spans(old: &str, new: &str) -> Vec<((u32, u32), (u32, u32))> {
+        line_hunks(old.as_bytes(), new.as_bytes())
+            .iter()
+            .map(|h| ((h.old.start, h.old.end), (h.new.start, h.new.end)))
+            .collect()
+    }
+
+    #[test]
+    fn hunks_with_little_between_them_are_joined() {
+        assert_eq!(spans("a\n\nb\n", "A\n\nB\n"), [((0, 3), (0, 3))]);
+        assert_eq!(spans("a\n\nb\n\nc\n", "A\n\nB\n\nC\n"), [((0, 5), (0, 5))]);
+        assert_eq!(spans("a\r\n\r\nb\r\n", "A\r\n\r\nB\r\n"), [((0, 3), (0, 3))]);
+        assert_eq!(spans("a\n\n\nb\n", "A\n\n\nB\n"), [((0, 4), (0, 4))]);
+        assert_eq!(spans("a\n}\nb\n", "A\n}\nB\n"), [((0, 3), (0, 3))]);
+    }
+
+    #[test]
+    fn hunks_with_a_line_between_them_stay_apart() {
+        assert_eq!(
+            spans("a\nxyz\nb\n", "A\nxyz\nB\n"),
+            [((0, 1), (0, 1)), ((2, 3), (2, 3))]
+        );
+        assert_eq!(spans("a\n \nb\n", "A\n \nB\n"), [((0, 3), (0, 3))]);
+        assert_eq!(
+            spans("a\n   \nb\n", "A\n   \nB\n"),
+            [((0, 1), (0, 1)), ((2, 3), (2, 3))]
+        );
+    }
 }

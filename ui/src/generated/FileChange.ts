@@ -9,7 +9,16 @@ export type FileChange = { path: string,
 /**
  * The base path of a renamed file.
  */
-oldPath: string | null, status: FileStatus, baseLines: number, targetLines: number, 
+oldPath: string | null, status: FileStatus, 
+/**
+ * Lines of the base text as an editor numbers them (a final line break is followed by one
+ * more, empty line, and an empty text has one); 0 for a file without a text diff.
+ */
+baseLines: number, 
+/**
+ * Lines of the target text, counted like `base_lines`.
+ */
+targetLines: number, 
 /**
  * Text hunks in order; the sizes let a shell lay out views before it has the text.
  */

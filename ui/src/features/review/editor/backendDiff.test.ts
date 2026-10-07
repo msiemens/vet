@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { Chunk } from "@codemirror/merge";
+import { Text } from "@codemirror/state";
 import type { TextChange } from "../../../generated/TextChange.ts";
 import { backendDiff } from "./backendDiff.ts";
 
@@ -30,6 +32,24 @@ void test("CRLF documents are matched as CodeMirror holds them", () => {
 void test("other texts are diffed", () => {
   const diff = backendDiff("a\nb\n", "a\nc\n", [change(2, 3, 2, 3)]);
   assert.deepEqual(plain(diff("b", "c")), [[0, 1, 0, 1]]);
+});
+
+// CodeMirror's chunks of the backend's changes, as [fromA, toA, fromB, toB].
+function chunks(base: string, target: string, changes: TextChange[]) {
+  const diff = backendDiff(base, target, changes);
+  const built = Chunk.build(Text.of(base.split("\n")), Text.of(target.split("\n")), { override: diff });
+  return built.map((c) => [c.fromA, c.toA, c.fromB, c.toB]);
+}
+
+void test("a deleted empty line before another one is a chunk of that line", () => {
+  // Lines 1 of both texts are empty: a change there that begins at the line start is taken for a line break.
+  assert.deepEqual(chunks("x\n\n\ny\n", "x\n\ny\n", [change(1, 3, 1, 2)]), [[2, 3, 2, 2]]);
+});
+
+void test("inserted lines equal to the line after them stay where they were inserted", () => {
+  const base = "x\nfoo\nbaz\n";
+  const target = "x\nfoo\nbar\nfoo\nbaz\n";
+  assert.deepEqual(chunks(base, target, [change(1, 2, 1, 10)]), [[2, 2, 2, 10]]);
 });
 
 void test("adjacent changes are kept as given", () => {

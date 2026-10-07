@@ -414,8 +414,9 @@ fn diff_path(d: &FileDiff) -> &RepoPath {
     d.new_path.as_ref().or(d.old_path.as_ref()).expect("a diff has a path")
 }
 
+/// Lines as an editor numbers them: a final line break is followed by one more, empty line.
 fn line_count(bytes: &[u8]) -> u32 {
-    bytes.split_inclusive(|&b| b == b'\n').count() as u32
+    bytes.iter().filter(|&&b| b == b'\n').count() as u32 + 1
 }
 
 fn is_binary(bytes: &[u8]) -> bool {
@@ -857,7 +858,12 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             by_path.entry(&n.path).or_default().1.push(i);
         }
 
-        let lines = |blob: Option<BlobId>| blob.and_then(|b| changes.blobs.get(&b)).map_or(0, |t| line_count(t));
+        // A missing side of a text diff is an empty text.
+        let lines = |diff: Option<&FileDiff>, blob: Option<BlobId>| {
+            diff.map_or(0, |_| {
+                blob.and_then(|b| changes.blobs.get(&b)).map_or(1, |t| line_count(t))
+            })
+        };
         let mut files = Vec::new();
         for (path, (diff, indices)) in by_path {
             let indices: Vec<usize> = indices
@@ -875,8 +881,8 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
                     .or_else(|| items.iter().find_map(|n| n.from.clone()))
                     .filter(|old| old != path),
                 status: status_of(diff, &items),
-                base_lines: lines(diff.and_then(|d| d.old_blob)),
-                target_lines: lines(diff.and_then(|d| d.new_blob)),
+                base_lines: lines(diff, diff.and_then(|d| d.old_blob)),
+                target_lines: lines(diff, diff.and_then(|d| d.new_blob)),
                 hunks: diff.map(|d| d.hunks.clone()).unwrap_or_default(),
                 review: review_of(&cov, diff, &items, &acked),
                 completion: cov.completion(

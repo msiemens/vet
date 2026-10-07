@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use similar::{Algorithm, DiffTag, TextDiff};
+use vet_core::content::LineRange;
+use vet_core::inline::join_close_hunks;
 use vet_protocol::{Hunk, Mark, MarkKind};
 
 pub const MIN_FILES: usize = 300;
@@ -261,20 +263,29 @@ fn analyse(base: &str, target: &str) -> (Vec<Hunk>, Vec<Mark>, usize) {
     let diff = TextDiff::configure()
         .algorithm(Algorithm::Myers)
         .diff_lines(base, target);
-    let hunks: Vec<Hunk> = diff
-        .ops()
-        .iter()
-        .filter(|op| op.tag() != DiffTag::Equal)
-        .map(|op| {
+    let base_lines: Vec<&str> = base.split_inclusive('\n').collect();
+    let range = |r: std::ops::Range<usize>| LineRange {
+        start: r.start as u32,
+        end: r.end as u32,
+    };
+    let hunks: Vec<Hunk> = join_close_hunks(
+        diff.ops().iter().filter(|op| op.tag() != DiffTag::Equal).map(|op| {
             let (_, old, new) = op.as_tag_tuple();
-            Hunk {
-                base_start: old.start as u32,
-                base_len: old.len() as u32,
-                target_start: new.start as u32,
-                target_len: new.len() as u32,
+            vet_core::content::Hunk {
+                old: range(old),
+                new: range(new),
             }
-        })
-        .collect();
+        }),
+        |r| base_lines[r.start as usize..r.end as usize].concat(),
+    )
+    .into_iter()
+    .map(|h| Hunk {
+        base_start: h.old.start,
+        base_len: h.old.len(),
+        target_start: h.new.start,
+        target_len: h.new.len(),
+    })
+    .collect();
     let lines: Vec<&str> = target.split('\n').collect();
     let (mut marks, mut short) = (vec![], 0);
     for hunk in &hunks {

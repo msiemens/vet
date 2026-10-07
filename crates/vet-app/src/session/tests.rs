@@ -737,7 +737,8 @@ async fn manifest_lists_changes_with_unseen_hunks() {
     assert_eq!(paths, ["a.txt", "gone.txt", "new.txt"]);
     let status: Vec<_> = m.files.iter().map(|f| f.status).collect();
     assert_eq!(status, [FileStatus::Modified, FileStatus::Deleted, FileStatus::Added]);
-    assert_eq!((m.files[0].base_lines, m.files[0].target_lines), (10, 10));
+    // Ten lines and a final line break: the editor shows an eleventh, empty one.
+    assert_eq!((m.files[0].base_lines, m.files[0].target_lines), (11, 11));
     assert_eq!(m.files[0].review.hunks, [HunkState::Unseen]);
     // a.txt: 1 + 1 lines, gone.txt: 2, new.txt: 1
     assert_eq!((m.completion.lines, m.completion.seen_lines), (5, 0));

@@ -114,7 +114,9 @@ export function sectionLayout(
     hunkTops.push(y + above(h.targetStart));
     // Unified shows each deleted line as an extra row; side by side pads the shorter side.
     const rows = mode === "unified" ? h.baseLen + h.targetLen : Math.max(h.baseLen, h.targetLen);
-    y += m.hunk + rows * m.line;
+    // Where the target side has no lines, the filler that aligns it counts the base side's bar too.
+    const aligned = mode === "split" && h.targetLen === 0 ? m.hunk : 0;
+    y += m.hunk + aligned + rows * m.line;
     end = h.targetStart + h.targetLen;
   });
   gap(file.targetLines - end, file.hunks.length ? margin : 0);

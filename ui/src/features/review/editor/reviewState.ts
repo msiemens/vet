@@ -76,6 +76,9 @@ for (const cls of Object.values(CLASS)) {
 function build(state: Omit<ReviewState, "decos">, doc: Text, side: SideConfig): DecorationSet {
   const out: Range<Decoration>[] = [];
   state.spans.forEach((span, i) => {
+    // The base side of a side-by-side view has no bar where the hunk adds lines: the filler
+    // that aligns it counts the target side's bar already.
+    if (span.empty && !side.bar) return;
     out.push(
       Decoration.widget({
         widget: new HunkBar(i, side.headers[i], state.states[i], state.current === i, side.bar),

@@ -31,6 +31,14 @@ void test("unchanged regions collapse to one bar each, keeping 3 lines of contex
   assert.equal(layout(f, "split").height, 26 + 87 + 24 + 60 + 87 + 8);
 });
 
+void test("side by side, a hunk that deletes lines is one bar taller: the filler counts the base side's bar", () => {
+  const deleted = file(100, [hunk(50, 2, 0)]);
+  assert.equal(layout(deleted, "split").height, 26 + 87 + 24 + 24 + 40 + 87 + 8);
+  assert.equal(layout(deleted, "unified").height, 26 + 87 + 24 + 40 + 87 + 8);
+  // A hunk that adds lines has no bar on the base side.
+  assert.equal(layout(file(100, [hunk(50, 0, 3)]), "split").height, 26 + 87 + 24 + 60 + 87 + 8);
+});
+
 void test("a gap too small to hide lines stays open", () => {
   const l = layout(file(30, [hunk(10, 1, 1), hunk(17, 1, 1)]), "unified");
   assert.deepEqual(l.hunkTops, [113, 297]);

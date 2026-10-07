@@ -1318,7 +1318,10 @@ pub struct FileChange {
     /// The base path of a renamed file.
     pub old_path: Option<String>,
     pub status: FileStatus,
+    /// Lines of the base text as an editor numbers them (a final line break is followed by one
+    /// more, empty line, and an empty text has one); 0 for a file without a text diff.
     pub base_lines: u32,
+    /// Lines of the target text, counted like `base_lines`.
     pub target_lines: u32,
     /// Text hunks in order; the sizes let a shell lay out views before it has the text.
     pub hunks: Vec<Hunk>,

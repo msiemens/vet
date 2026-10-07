@@ -988,7 +988,7 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     let m = client.manifest(session).await;
     assert_eq!((m.revision, &m.base), (1, &base));
     assert_eq!(hunk_states(&m), [HunkState::Unseen, HunkState::Unseen]);
-    assert_eq!((m.files[0].base_lines, m.files[0].target_lines), (40, 39));
+    assert_eq!((m.files[0].base_lines, m.files[0].target_lines), (41, 40));
 
     // Marking the branch's hunk starts the review, which holds the base chosen so far.
     let update = client.set_seen(session, 1, &[0], true).await;
