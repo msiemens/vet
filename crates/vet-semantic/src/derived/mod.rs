@@ -9,7 +9,7 @@ mod removal;
 #[cfg(test)]
 mod tests;
 
-use vet_core::content::{LineRange, RepoPath};
+use vet_core::content::{Hunk, RepoPath};
 
 use crate::ports::{At, Pos};
 use crate::query::Which;
@@ -51,11 +51,19 @@ impl Inputs {
             Which::Base => "base",
             Which::Target => "target",
         };
-        let file = path(file);
+        let file = file.to_string_lossy();
         self.primitives.push(match pos {
             Some(p) => format!("{op}({side}:{file}:{}:{})", p.line, p.col),
             None => format!("{op}({side}:{file})"),
         });
+    }
+
+    /// Records the hunks of the file `label` consulted.
+    fn record_hunks(&mut self, label: &str, hunks: &[Hunk]) {
+        let ranges: Vec<_> = (hunks.iter())
+            .map(|h| format!("old {}..{} new {}..{}", h.old.start, h.old.end, h.new.start, h.new.end))
+            .collect();
+        self.hunks.push(format!("{label}: {}", ranges.join(", ")));
     }
 
     fn query_at(&mut self, op: &str, which: Which, at: &At) {
@@ -67,12 +75,4 @@ impl Inputs {
 pub struct Derived<T> {
     pub value: T,
     pub inputs: Inputs,
-}
-
-fn path(p: &RepoPath) -> String {
-    String::from_utf8_lossy(&p.0).into_owned()
-}
-
-fn lines_intersect(a: LineRange, b: LineRange) -> bool {
-    a.start < b.end && b.start < a.end
 }

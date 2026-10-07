@@ -12,13 +12,13 @@ use gix::index::entry::{Flags, Mode, Stat};
 use gix::objs::Find;
 use gix::worktree::stack::state::attributes::Source;
 use vet_app::ports::{GitError, Scan};
-use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, RepoPath, Snapshot, SnapshotStatus};
+use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, RepoPath, Snapshot, SnapshotStatus, in_tool_store};
 
 use vet_core::merkle;
 
 use super::stat_cache::{Record, StatCache, StatKey, file_stamp};
 use super::tree::tree_entry;
-use super::{BlobCache, err, in_tool_store};
+use super::{BlobCache, err};
 use crate::clock::unix_now;
 use crate::paths;
 

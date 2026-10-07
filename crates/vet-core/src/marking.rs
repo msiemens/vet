@@ -13,18 +13,16 @@ pub struct Region {
 
 /// The non-empty sides of `hunk`.
 pub fn hunk_regions(diff: &FileDiff, hunk: &Hunk) -> Vec<Region> {
-    let side = |file: &Option<RepoPath>, side, range: LineRange| {
-        file.clone()
-            .filter(|_| !range.is_empty())
-            .map(|file| Region { file, side, range })
-    };
-    [
-        side(&diff.old_path, Side::Base, hunk.old),
-        side(&diff.new_path, Side::Target, hunk.new),
-    ]
-    .into_iter()
-    .flatten()
-    .collect()
+    (diff.sides(hunk).into_iter())
+        .filter(|(_, _, range)| !range.is_empty())
+        .filter_map(|(side, file, range)| {
+            file.map(|file| Region {
+                file: file.clone(),
+                side,
+                range,
+            })
+        })
+        .collect()
 }
 
 /// A `Seen` span over the lines of `hunk` on both sides, anchored in the given
@@ -61,7 +59,7 @@ mod tests {
     const SNAP: SnapshotId = SnapshotId(Hash([7; 32]));
 
     fn path(s: &str) -> RepoPath {
-        RepoPath(s.as_bytes().to_vec())
+        RepoPath::from(s)
     }
 
     fn range(start: u32, end: u32) -> LineRange {

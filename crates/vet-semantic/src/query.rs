@@ -37,7 +37,7 @@ pub enum SemanticError {
 impl fmt::Display for SemanticError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoBackend(file) => write!(f, "no language backend for {}", String::from_utf8_lossy(&file.0)),
+            Self::NoBackend(file) => write!(f, "no language backend for {}", file.to_string_lossy()),
             Self::Pool(e) => e.fmt(f),
             Self::Query(e) => e.fmt(f),
         }

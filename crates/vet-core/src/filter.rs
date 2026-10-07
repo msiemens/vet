@@ -13,6 +13,18 @@ pub struct ReviewFilter {
 }
 
 impl ReviewFilter {
+    /// The filter with its roots as `passes` expects them: directories without a leading or
+    /// trailing `/`. A root that names no directory is dropped.
+    pub fn normalized(mut self) -> Self {
+        for root in &mut self.roots {
+            let start = root.0.iter().take_while(|&&b| b == b'/').count();
+            let end = root.0.len() - root.0[start..].iter().rev().take_while(|&&b| b == b'/').count();
+            root.0 = root.0[start..end].to_vec();
+        }
+        self.roots.retain(|root| !root.0.is_empty());
+        self
+    }
+
     /// The first invalid glob of `include` and `exclude`, as a message fit to show.
     pub fn validate(&self) -> Result<(), String> {
         for pattern in self.include.iter().chain(&self.exclude) {
@@ -116,8 +128,30 @@ mod tests {
     }
 
     #[test]
+    fn roots_are_directories_without_slashes_at_their_ends() {
+        let filter = ReviewFilter {
+            roots: ["/src/", "a/b/", "c", "/", "", "//d//e//"].map(RepoPath::from).into(),
+            include: vec!["*.rs".into()],
+            hide_binary: true,
+            ..Default::default()
+        };
+        let normalized = filter.clone().normalized();
+        assert_eq!(normalized.roots, ["src", "a/b", "c", "d//e"].map(RepoPath::from));
+        assert_eq!((&normalized.include, normalized.hide_binary), (&filter.include, true));
+        let passes = |filter: &ReviewFilter, p: &str| filter.compile().passes(&RepoPath::from(p));
+        assert!(passes(&normalized, "src/lib.rs"));
+        assert!(!passes(&normalized, "srcs/lib.rs"));
+        // No root left: everything is under one.
+        let none = ReviewFilter {
+            roots: vec![RepoPath::from("/")],
+            ..Default::default()
+        };
+        assert!(passes(&none.normalized(), "any/file"));
+    }
+
+    #[test]
     fn a_leading_slash_anchors_at_the_root() {
-        let path = |p: &str| RepoPath(p.as_bytes().to_vec());
+        let path = |p: &str| RepoPath::from(p);
         let filter = ReviewFilter {
             exclude: vec!["/top.txt".into(), "any.txt".into()],
             ..Default::default()

@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use super::{Bounds, Derived, Inputs, path};
+use super::{Bounds, Derived, Inputs};
 use crate::ports::{Sym, SymbolInfo};
 use crate::query::{Primitives, Which};
 
@@ -20,7 +20,7 @@ pub struct EntryPoints(pub Vec<EntryPoint>);
 
 impl EntryPoints {
     pub fn matches(&self, sym: &Sym) -> bool {
-        let file = path(&sym.file);
+        let file = sym.file.to_string_lossy();
         self.0
             .iter()
             .any(|e| file.starts_with(&e.path_prefix) && sym.name.last() == Some(&e.name))

@@ -36,7 +36,7 @@ pub enum HunkState {
     SeenAgainstOldBase,
 }
 
-type Ranges<'a> = BTreeMap<(&'a RepoPath, bool), Vec<LineRange>>;
+type Ranges<'a> = BTreeMap<(&'a RepoPath, Side), Vec<LineRange>>;
 
 /// The spans' line ranges per file and side, ready for coverage queries. Spans
 /// must already be remapped into the current changeset.
@@ -53,7 +53,7 @@ impl<'a> Coverage<'a> {
         let mut any = Ranges::new();
         for s in spans {
             for a in s.base.iter().chain(&s.target) {
-                let key = (&a.file, a.side == Side::Base);
+                let key = (&a.file, a.side);
                 any.entry(key).or_default().push(a.range);
                 if s.state == SpanState::Seen {
                     seen.entry(key).or_default().push(a.range);
@@ -67,8 +67,8 @@ impl<'a> Coverage<'a> {
     }
 
     /// Lines of `range` covered by `Seen` spans, and by any span.
-    fn lines(&self, file: &RepoPath, base: bool, range: LineRange) -> (u32, u32) {
-        let count = |m: &Ranges| m.get(&(file, base)).map_or(0, |v| covered(v, range));
+    fn lines(&self, file: &RepoPath, side: Side, range: LineRange) -> (u32, u32) {
+        let count = |m: &Ranges| m.get(&(file, side)).map_or(0, |v| covered(v, range));
         (count(&self.seen), count(&self.any))
     }
 
@@ -77,9 +77,9 @@ impl<'a> Coverage<'a> {
             .iter()
             .map(|h| {
                 let (mut total, mut seen, mut any) = (0, 0, 0);
-                for (file, base, range) in [(&diff.old_path, true, h.old), (&diff.new_path, false, h.new)] {
+                for (side, file, range) in diff.sides(h) {
                     let Some(file) = file else { continue };
-                    let (s, a) = self.lines(file, base, range);
+                    let (s, a) = self.lines(file, side, range);
                     total += range.len();
                     seen += s;
                     any += a;
@@ -112,18 +112,15 @@ impl<'a> Coverage<'a> {
             excluded_items: 0,
         };
         for d in diffs {
-            let Some(path) = d.new_path.as_ref().or(d.old_path.as_ref()) else {
-                continue;
-            };
-            let passes = compiled.passes(path);
+            let passes = compiled.passes(d.path());
             for h in &d.hunks {
-                for (file, base, range) in [(&d.old_path, true, h.old), (&d.new_path, false, h.new)] {
+                for (side, file, range) in d.sides(h) {
                     let Some(file) = file else { continue };
                     if !passes {
                         c.excluded_lines += range.len();
                         continue;
                     }
-                    let (seen, any) = self.lines(file, base, range);
+                    let (seen, any) = self.lines(file, side, range);
                     c.lines += range.len();
                     c.seen_lines += seen;
                     c.old_base_lines += any - seen;

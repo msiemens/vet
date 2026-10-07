@@ -4,7 +4,7 @@
 use vet_core::content::FileDiff;
 
 use super::changed::{Change, ChangedSymbol};
-use super::{Derived, Inputs, path};
+use super::{Derived, Inputs};
 use crate::ports::{At, Location, Pos, SymbolInfo};
 use crate::query::{Primitives, Which};
 
@@ -82,15 +82,7 @@ pub async fn removal_impact(
     }
     for file in files {
         if let Some(old) = &file.old_path {
-            inputs.hunks.push(format!(
-                "{}: {}",
-                path(old),
-                file.hunks
-                    .iter()
-                    .map(|h| format!("old {}..{} new {}..{}", h.old.start, h.old.end, h.new.start, h.new.end))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+            inputs.record_hunks(&old.to_string_lossy(), &file.hunks);
         }
     }
     Derived { value: out, inputs }

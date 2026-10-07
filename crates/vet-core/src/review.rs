@@ -1,12 +1,23 @@
 //! Anchors, review state, threads (SPEC §5). Content-anchored, never line-anchored (I3).
 
-use crate::content::{BlobId, Hash, Hunk, LineRange, RepoPath, SnapshotId};
+use crate::content::{BlobId, FileDiff, Hash, Hunk, LineRange, RepoPath, SnapshotId};
 use crate::platform::PlatformThread;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Side {
     Base,
     Target,
+}
+
+impl FileDiff {
+    /// The two sides of `hunk` in this file: the lines it covers on each, and the path they are in
+    /// (`None` on the side the file does not exist on).
+    pub fn sides(&self, hunk: &Hunk) -> [(Side, Option<&RepoPath>, LineRange); 2] {
+        [
+            (Side::Base, self.old_path.as_ref(), hunk.old),
+            (Side::Target, self.new_path.as_ref(), hunk.new),
+        ]
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -160,6 +171,31 @@ mod tests {
                 end: new.1,
             },
         }
+    }
+
+    #[test]
+    fn a_hunk_has_its_old_lines_on_the_base_and_its_new_ones_on_the_target() {
+        let path = |s: &str| Some(RepoPath::from(s));
+        let hunk = hunk((2, 4), (2, 7));
+        let renamed = FileDiff {
+            old_path: path("a"),
+            new_path: path("b"),
+            old_blob: None,
+            new_blob: None,
+            hunks: vec![hunk],
+        };
+        assert_eq!(
+            renamed.sides(&hunk),
+            [
+                (Side::Base, path("a").as_ref(), hunk.old),
+                (Side::Target, path("b").as_ref(), hunk.new)
+            ]
+        );
+        let added = FileDiff {
+            old_path: None,
+            ..renamed
+        };
+        assert_eq!(added.sides(&hunk)[0].1, None);
     }
 
     #[test]

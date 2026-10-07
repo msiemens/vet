@@ -5,9 +5,9 @@ use gix::bstr::ByteSlice;
 use gix::index::entry::Mode;
 use gix::worktree::stack::state::ignore::Source;
 use vet_app::ports::GitError;
-use vet_core::content::RepoPath;
+use vet_core::content::{RepoPath, in_tool_store};
 
-use super::{err, in_tool_store};
+use super::err;
 use crate::paths;
 
 /// `paths` without those git ignores and without tool stores. A path with tracked files

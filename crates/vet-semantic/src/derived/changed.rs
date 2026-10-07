@@ -3,7 +3,7 @@
 
 use vet_core::content::{FileDiff, LineRange, RepoPath};
 
-use super::{Derived, Inputs, lines_intersect, path};
+use super::{Derived, Inputs};
 use crate::ports::SymbolInfo;
 use crate::query::{Primitives, SemanticError, Which};
 
@@ -42,20 +42,10 @@ pub async fn changed_symbols(p: &impl Primitives, files: &[FileDiff]) -> Derived
     let mut inputs = Inputs::new("changed symbols");
     let mut out = Changes::default();
     for file in files.iter().filter(|f| !f.hunks.is_empty()) {
-        let Some(shown) = file.new_path.as_ref().or(file.old_path.as_ref()) else {
-            continue;
-        };
-        let label = path(shown);
+        let shown = file.path();
         let old: Vec<_> = file.hunks.iter().map(|h| h.old).collect();
         let new: Vec<_> = file.hunks.iter().map(|h| h.new).collect();
-        inputs.hunks.push(format!(
-            "{label}: {}",
-            file.hunks
-                .iter()
-                .map(|h| format!("old {}..{} new {}..{}", h.old.start, h.old.end, h.new.start, h.new.end))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
+        inputs.record_hunks(&shown.to_string_lossy(), &file.hunks);
 
         let base = symbols(p, &mut inputs, Which::Base, file.old_path.as_ref()).await;
         let target = symbols(p, &mut inputs, Which::Target, file.new_path.as_ref()).await;
@@ -126,22 +116,18 @@ fn touched<'a>(symbols: &'a [SymbolInfo], hunks: &[LineRange]) -> Vec<&'a Symbol
             if hunk.is_empty() {
                 lines.start < hunk.start && hunk.start < lines.end
             } else {
-                lines_intersect(lines, *hunk)
+                lines.intersects(*hunk)
             }
         };
         let candidates: Vec<_> = symbols.iter().filter(|s| hit(s)).collect();
         for s in &candidates {
             let contains_another = candidates
                 .iter()
-                .any(|o| o.sym != s.sym && within(o.span.lines(), s.span.lines()));
+                .any(|o| o.sym != s.sym && s.span.lines().contains(o.span.lines()));
             if !contains_another && !out.iter().any(|o| o.sym == s.sym) {
                 out.push(s);
             }
         }
     }
     out
-}
-
-fn within(inner: LineRange, outer: LineRange) -> bool {
-    outer.start <= inner.start && inner.end <= outer.end
 }

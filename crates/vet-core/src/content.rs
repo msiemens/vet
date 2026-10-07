@@ -83,6 +83,37 @@ pub struct SnapshotId(pub Hash);
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct RepoPath(pub Vec<u8>);
 
+impl RepoPath {
+    /// The part of the file name after its last dot; `None` for a name without a dot.
+    pub fn extension(&self) -> Option<&[u8]> {
+        let name = self.0.rsplit(|&b| b == b'/').next()?;
+        let dot = name.iter().rposition(|&b| b == b'.')?;
+        Some(&name[dot + 1..])
+    }
+
+    /// The path for display; invalid UTF-8 is replaced.
+    pub fn to_string_lossy(&self) -> String {
+        String::from_utf8_lossy(&self.0).into_owned()
+    }
+}
+
+impl From<&str> for RepoPath {
+    fn from(path: &str) -> Self {
+        Self(path.as_bytes().to_vec())
+    }
+}
+
+impl From<String> for RepoPath {
+    fn from(path: String) -> Self {
+        Self(path.into_bytes())
+    }
+}
+
+/// Whether `bytes` are not text: git's heuristic, a NUL in the first 8000 bytes.
+pub fn is_binary(bytes: &[u8]) -> bool {
+    bytes[..bytes.len().min(8000)].contains(&0)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EntryKind {
     File,
@@ -148,6 +179,15 @@ pub fn path_collisions<'a>(paths: impl IntoIterator<Item = &'a RepoPath>) -> Vec
     colliding.into_iter().collect()
 }
 
+/// Folders whose name a tool defines as its own store; their untracked contents are never part of
+/// a snapshot (SPEC §6.1).
+const TOOL_STORES: &[&[u8]] = &[b".pnpm-store"];
+
+/// Whether `path` (repository-relative, `/`-separated) is a tool store or inside one.
+pub fn in_tool_store(path: &[u8]) -> bool {
+    path.split(|&b| b == b'/').any(|part| TOOL_STORES.contains(&part))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Changeset {
     pub base: SnapshotId,
@@ -168,6 +208,16 @@ impl LineRange {
 
     pub fn is_empty(self) -> bool {
         self.len() == 0
+    }
+
+    /// Whether the ranges overlap. An empty range overlaps only a range it lies strictly inside.
+    pub fn intersects(self, other: Self) -> bool {
+        self.start < other.end && other.start < self.end
+    }
+
+    /// Whether `other` lies within the range, an empty one at its edge included.
+    pub fn contains(self, other: Self) -> bool {
+        self.start <= other.start && other.end <= self.end
     }
 }
 
@@ -216,6 +266,13 @@ pub struct FileDiff {
     pub hunks: Vec<Hunk>,
 }
 
+impl FileDiff {
+    /// The path the file is known by: the new one, else the old one of a deletion.
+    pub fn path(&self) -> &RepoPath {
+        (self.new_path.as_ref().or(self.old_path.as_ref())).expect("a diff has a path")
+    }
+}
+
 /// Git-detected renames between two snapshots, as `old -> new`.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct RenameMap(pub BTreeMap<RepoPath, RepoPath>);
@@ -257,22 +314,6 @@ pub struct SnapshotDiff {
     pub renames: RenameMap,
 }
 
-/// The media type of a common image format, from the file extension (any case).
-pub fn image_media_type(path: &RepoPath) -> Option<&'static str> {
-    let name = path.0.rsplit(|&b| b == b'/').next().unwrap_or_default();
-    let extension = name.rsplit(|&b| b == b'.').next().filter(|_| name.contains(&b'.'))?;
-    Some(match extension.to_ascii_lowercase().as_slice() {
-        b"png" => "image/png",
-        b"jpg" | b"jpeg" => "image/jpeg",
-        b"gif" => "image/gif",
-        b"webp" => "image/webp",
-        b"bmp" => "image/bmp",
-        b"ico" => "image/x-icon",
-        b"svg" => "image/svg+xml",
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,14 +353,65 @@ mod tests {
     }
 
     #[test]
-    fn image_media_types_come_from_the_extension() {
-        let media = |p: &str| image_media_type(&RepoPath(p.as_bytes().to_vec()));
-        assert_eq!(media("a/b.PNG"), Some("image/png"));
-        assert_eq!(media("x.jpeg"), Some("image/jpeg"));
-        assert_eq!(media("x.svg"), Some("image/svg+xml"));
-        assert_eq!(media("x.txt"), None);
-        assert_eq!(media("png"), None);
-        assert_eq!(media("dir.png/file"), None);
+    fn a_path_has_the_extension_of_its_file_name() {
+        let extension = |p: &str| RepoPath::from(p).extension().map(<[u8]>::to_vec);
+        assert_eq!(extension("a/b.PNG"), Some(b"PNG".to_vec()));
+        assert_eq!(extension("x.tar.gz"), Some(b"gz".to_vec()));
+        assert_eq!(extension(".gitignore"), Some(b"gitignore".to_vec()));
+        assert_eq!(extension("x."), Some(Vec::new()));
+        assert_eq!(extension("png"), None);
+        assert_eq!(extension("dir.png/file"), None);
+    }
+
+    #[test]
+    fn binary_is_a_nul_in_the_first_8000_bytes() {
+        assert!(!is_binary(b""));
+        assert!(!is_binary(b"text\n"));
+        assert!(is_binary(b"a\0b"));
+        let mut late = vec![b'a'; 8000];
+        late.push(0);
+        assert!(!is_binary(&late));
+        late[7999] = 0;
+        assert!(is_binary(&late));
+    }
+
+    #[test]
+    fn line_ranges_intersect_and_contain() {
+        let range = |start, end| LineRange { start, end };
+        assert!(range(2, 5).intersects(range(4, 8)));
+        assert!(range(4, 8).intersects(range(2, 5)));
+        assert!(!range(2, 5).intersects(range(5, 8)));
+        assert!(range(2, 5).intersects(range(3, 3)));
+        assert!(!range(2, 5).intersects(range(2, 2)));
+        assert!(!range(2, 5).intersects(range(5, 5)));
+        assert!(range(2, 5).contains(range(2, 5)));
+        assert!(range(2, 5).contains(range(3, 3)));
+        assert!(range(2, 5).contains(range(5, 5)));
+        assert!(!range(2, 5).contains(range(1, 3)));
+        assert!(!range(2, 5).contains(range(4, 6)));
+    }
+
+    #[test]
+    fn a_diff_is_known_by_its_new_path_else_its_old_one() {
+        let diff = |old: Option<&str>, new: Option<&str>| FileDiff {
+            old_path: old.map(RepoPath::from),
+            new_path: new.map(RepoPath::from),
+            old_blob: None,
+            new_blob: None,
+            hunks: Vec::new(),
+        };
+        assert_eq!(diff(Some("a"), Some("b")).path(), &RepoPath::from("b"));
+        assert_eq!(diff(Some("a"), None).path(), &RepoPath::from("a"));
+        assert_eq!(diff(None, Some("b")).path(), &RepoPath::from("b"));
+    }
+
+    #[test]
+    fn a_tool_store_and_everything_inside_it_is_out_of_scope() {
+        assert!(in_tool_store(b".pnpm-store"));
+        assert!(in_tool_store(b"web/.pnpm-store/v3/files/ab"));
+        assert!(!in_tool_store(b"src/lib.rs"));
+        assert!(!in_tool_store(b"x.pnpm-store/a"));
+        assert!(!in_tool_store(b""));
     }
 
     #[test]
@@ -343,7 +435,7 @@ mod tests {
             "dir/a",
             "dir/b",
         ]
-        .map(|p| RepoPath(p.as_bytes().to_vec()))
+        .map(RepoPath::from)
         .into();
         let colliding: Vec<_> = path_collisions(&paths).into_iter().map(|p| p.0).collect();
         let expected: Vec<Vec<u8>> = ["Foo.txt", "cafe\u{301}", "caf\u{e9}", "foo.txt"]
@@ -360,9 +452,7 @@ mod tests {
             kind: EntryKind::File,
             unfiltered: false,
         };
-        let entries = ["A", "a", "b"]
-            .map(|p| (RepoPath(p.as_bytes().to_vec()), entry.clone()))
-            .into();
+        let entries = ["A", "a", "b"].map(|p| (RepoPath::from(p), entry.clone())).into();
         let snapshot = Snapshot {
             id: SnapshotId(Hash::of(b"")),
             entries,

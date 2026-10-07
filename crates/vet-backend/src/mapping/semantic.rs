@@ -2,7 +2,6 @@
 
 use vet_app::ports::{FoundServer, ServerOrigin, ServerState};
 use vet_app::servers::ServerStatus;
-use vet_app::session::path_str;
 use vet_core::content::RepoPath;
 use vet_protocol as p;
 use vet_semantic::derived::{
@@ -23,25 +22,21 @@ pub fn which(side: p::Side) -> Which {
 
 pub fn at(path: &str, line: u32, col: u32) -> At {
     At {
-        file: repo_path(path),
+        file: RepoPath::from(path),
         pos: Pos { line, col },
     }
 }
 
-pub fn repo_path(path: &str) -> RepoPath {
-    RepoPath(path.as_bytes().to_vec())
-}
-
 pub fn core_sym(id: &p::SymbolId) -> Sym {
     Sym {
-        file: repo_path(&id.path),
+        file: RepoPath::from(id.path.as_str()),
         name: id.name.clone(),
     }
 }
 
 fn symbol_id(sym: &Sym) -> p::SymbolId {
     p::SymbolId {
-        path: path_str(&sym.file),
+        path: sym.file.to_string_lossy(),
         name: sym.name.clone(),
     }
 }
@@ -70,7 +65,7 @@ fn symbol(info: &SymbolInfo) -> p::SymbolInfo {
 
 fn location(l: &Location) -> p::SemanticLocation {
     p::SemanticLocation {
-        path: path_str(&l.file),
+        path: l.file.to_string_lossy(),
         span: span(l.span),
         external: l.external,
     }
@@ -164,10 +159,10 @@ pub fn changed_symbols(revision: u32, d: &Derived<Changes>) -> p::ChangedSymbols
     p::ChangedSymbols {
         revision,
         symbols: d.value.symbols.iter().map(changed).collect(),
-        unsupported: d.value.unsupported.iter().map(path_str).collect(),
+        unsupported: d.value.unsupported.iter().map(RepoPath::to_string_lossy).collect(),
         gaps: (d.value.gaps.iter())
             .map(|g| p::FileGap {
-                path: path_str(&g.file),
+                path: g.file.to_string_lossy(),
                 reason: g.reason.clone(),
             })
             .collect(),

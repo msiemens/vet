@@ -35,7 +35,7 @@ use tokio::sync::Mutex;
 use vet_core::completion::{Completion, Coverage, HunkState};
 use vet_core::content::{
     BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hunk, LineDelta, LineRange, NonTextChange, NonTextKind,
-    RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus, image_media_type,
+    RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus, is_binary,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::inline::TextChange;
@@ -107,11 +107,6 @@ type Result<T> = std::result::Result<T, SessionError>;
 
 /// How many recent commits a base can be picked from.
 const MAX_BASE_COMMITS: usize = 200;
-
-/// Display form of a path; invalid UTF-8 is replaced.
-pub fn path_str(path: &RepoPath) -> String {
-    String::from_utf8_lossy(&path.0).into_owned()
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FileStatus {
@@ -287,6 +282,20 @@ pub enum ItemBlob {
     Unavailable,
 }
 
+/// The media type of a common image format, from the file extension (any case).
+fn image_media_type(path: &RepoPath) -> Option<&'static str> {
+    Some(match path.extension()?.to_ascii_lowercase().as_slice() {
+        b"png" => "image/png",
+        b"jpg" | b"jpeg" => "image/jpeg",
+        b"gif" => "image/gif",
+        b"webp" => "image/webp",
+        b"bmp" => "image/bmp",
+        b"ico" => "image/x-icon",
+        b"svg" => "image/svg+xml",
+        _ => return None,
+    })
+}
+
 /// The two snapshots of a revision.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SemanticSides {
@@ -417,21 +426,13 @@ async fn author_of<G: GitRepo>(git: &G) -> String {
         .unwrap_or_else(|| "You".into())
 }
 
-fn diff_path(d: &FileDiff) -> &RepoPath {
-    d.new_path.as_ref().or(d.old_path.as_ref()).expect("a diff has a path")
-}
-
-fn is_binary(bytes: &[u8]) -> bool {
-    bytes[..bytes.len().min(8000)].contains(&0)
-}
-
 impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// Resumes the open review of the repository at `repo` (the root, as the
     /// key reviews are recorded under), or else starts out browsing the tree
     /// against the current branch's tip.
     pub async fn open(git: G, store: S, name: String, repo: String, clock: UnixClock) -> Result<Self> {
         let acquisition = Arc::new(Acquisition::new(git, store));
-        let filter = acquisition.store.filter(repo.clone()).await?;
+        let filter = acquisition.store.filter(repo.clone()).await?.normalized();
         if let Some(&id) = acquisition.store.open_sessions(repo.clone()).await?.last() {
             if let Some(session) = Self::resume(&acquisition, id, filter.clone(), &name, &repo, clock).await? {
                 return Ok(session);
@@ -708,6 +709,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// is open, and bumps the revision; completion and the excluded counts
     /// follow with the next manifest. Returns the revision.
     pub async fn set_filter(&self, filter: ReviewFilter) -> Result<u32> {
+        let filter = filter.normalized();
         filter.validate().map_err(SessionError::Invalid)?;
         let mut st = self.state.lock().await;
         if st.filter == filter {
@@ -862,7 +864,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         type Parts<'a> = (Option<&'a FileDiff>, Vec<usize>);
         let mut by_path: BTreeMap<&RepoPath, Parts> = BTreeMap::new();
         for d in &changes.diff.files {
-            by_path.entry(diff_path(d)).or_default().0 = Some(d);
+            by_path.entry(d.path()).or_default().0 = Some(d);
         }
         for (i, n) in changes.diff.non_text.iter().enumerate() {
             by_path.entry(&n.path).or_default().1.push(i);
@@ -934,7 +936,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let (old, new): (Side, Side) = if let Some(d) = diff {
             let side = |p: &Option<RepoPath>, b: Option<BlobId>| p.clone().zip(b);
             (side(&d.old_path, d.old_blob), side(&d.new_path, d.new_blob))
-        } else if let Some(n) = changes.diff.non_text.iter().find(|n| path_str(&n.path) == path) {
+        } else if let Some(n) = changes.diff.non_text.iter().find(|n| n.path.to_string_lossy() == path) {
             let side = |p: RepoPath, e: &Option<vet_core::content::FileEntry>| {
                 e.as_ref().filter(|e| e.kind == EntryKind::File).map(|e| (p, e.blob))
             };
@@ -952,7 +954,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             let Some((p, b)) = side else { continue };
             match self.text_of(&mut blobs, &p, b).await {
                 Ok(Ok(t)) => *text = Some(t),
-                Ok(Err(_)) => result = Err(SessionError::NotText(path_str(&p))),
+                Ok(Err(_)) => result = Err(SessionError::NotText(p.to_string_lossy())),
                 Err(e) => result = Err(e),
             }
             if result.is_err() {
@@ -1047,7 +1049,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// The text of any file of the target snapshot, changed or not.
     pub async fn target_text(&self, path: &str) -> Result<TargetText> {
         let st = self.state.lock().await;
-        let key = RepoPath(path.as_bytes().to_vec());
+        let key = RepoPath::from(path);
         let entry = st
             .target
             .entries
@@ -1141,7 +1143,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             let diff = &st.changes.as_ref().expect("computed").diff;
             diff.non_text
                 .iter()
-                .find(|n| n.kind == kind && path_str(&n.path) == path)
+                .find(|n| n.kind == kind && n.path.to_string_lossy() == path)
                 .ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?
         };
         let ack = ack_of(change);
@@ -1167,7 +1169,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
         let change = (st.changes.as_ref().expect("computed").diff.non_text.iter())
-            .find(|n| n.kind == kind && path_str(&n.path) == path)
+            .find(|n| n.kind == kind && n.path.to_string_lossy() == path)
             .ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?;
         let (file, entry) = match side {
             Side::Base => (change.from.as_ref().unwrap_or(&change.path), &change.before),
@@ -1216,7 +1218,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             }
             NewThread::File { side, path } => {
                 if !side_snapshot(&st, side).entries.contains_key(&path) {
-                    return Err(SessionError::NotFound(format!("file {}", path_str(&path))));
+                    return Err(SessionError::NotFound(format!("file {}", path.to_string_lossy())));
                 }
                 CommentTarget::File { side, path }
             }
@@ -1377,10 +1379,10 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             .entries
             .get(path)
             .filter(|e| e.kind == EntryKind::File)
-            .ok_or_else(|| SessionError::NotFound(format!("file {}", path_str(path))))?;
+            .ok_or_else(|| SessionError::NotFound(format!("file {}", path.to_string_lossy())))?;
         let mut blobs = BTreeMap::new();
         if !self.fetch(&mut blobs, path, entry.blob, true).await? || is_binary(&blobs[&entry.blob]) {
-            return Err(SessionError::NotText(path_str(path)));
+            return Err(SessionError::NotText(path.to_string_lossy()));
         }
         Anchor::from_text(side, snapshot.id, path.clone(), &blobs[&entry.blob], range)
             .ok_or_else(|| SessionError::Invalid("the lines are outside the file".into()))
@@ -1829,7 +1831,7 @@ fn check_revision(st: &State, revision: u32) -> Result<()> {
 }
 
 fn find_diff<'a>(diff: &'a SnapshotDiff, path: &str) -> Option<&'a FileDiff> {
-    diff.files.iter().find(|d| path_str(diff_path(d)) == path)
+    diff.files.iter().find(|d| d.path().to_string_lossy() == path)
 }
 
 /// The changes of `diff` that are acknowledged.
@@ -1876,11 +1878,11 @@ fn update_of(st: &State, path: &str) -> Result<ReviewUpdateView> {
         .diff
         .non_text
         .iter()
-        .filter(|n| path_str(&n.path) == path && compiled.shows(n))
+        .filter(|n| n.path.to_string_lossy() == path && compiled.shows(n))
         .cloned()
         .collect();
     let file = diff
-        .map(|d| diff_path(d).clone())
+        .map(|d| d.path().clone())
         .or_else(|| items.first().map(|n| n.path.clone()))
         .ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
     Ok(ReviewUpdateView {

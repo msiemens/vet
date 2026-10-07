@@ -76,11 +76,7 @@ impl Backend {
 
 /// The backend serving `file`, by extension. `None`: the language is unsupported.
 pub fn backend_for<'a>(backends: &'a [Backend], file: &RepoPath) -> Option<&'a Backend> {
-    let name = file.0.rsplit(|b| *b == b'/').next()?;
-    let ext = name
-        .rsplit(|b| *b == b'.')
-        .next()
-        .filter(|ext| ext.len() < name.len())?;
+    let ext = file.extension()?;
     backends
         .iter()
         .find(|b| b.config().filetypes.iter().any(|t| t.as_bytes() == ext))
@@ -172,7 +168,7 @@ pub struct Sym {
 
 impl fmt::Display for Sym {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", String::from_utf8_lossy(&self.file.0))?;
+        f.write_str(&self.file.to_string_lossy())?;
         for part in &self.name {
             write!(f, "::{part}")?;
         }
@@ -327,7 +323,7 @@ mod tests {
     #[test]
     fn backend_is_chosen_by_extension() {
         let backends = [rust()];
-        let path = |p: &str| RepoPath(p.as_bytes().to_vec());
+        let path = |p: &str| RepoPath::from(p);
         assert!(backend_for(&backends, &path("src/lib.rs")).is_some());
         assert!(backend_for(&backends, &path("README.md")).is_none());
         assert!(backend_for(&backends, &path("dir.rs/Makefile")).is_none());
@@ -337,7 +333,7 @@ mod tests {
     #[test]
     fn definitions_inside_the_root_come_first_in_the_servers_order() {
         let at = |file: &str, external| Location {
-            file: RepoPath(file.as_bytes().to_vec()),
+            file: RepoPath::from(file),
             span: Span {
                 start: Pos { line: 0, col: 0 },
                 end: Pos { line: 0, col: 1 },
@@ -351,10 +347,7 @@ mod tests {
             at("d.rs", false),
         ];
         prefer_openable(&mut found);
-        let files: Vec<_> = found
-            .iter()
-            .map(|l| String::from_utf8_lossy(&l.file.0).into_owned())
-            .collect();
+        let files: Vec<_> = found.iter().map(|l| l.file.to_string_lossy()).collect();
         assert_eq!(files, ["b.rs", "d.rs", "/dep/a.rs", "/dep/c.rs"]);
         // Nothing to prefer, nothing to do.
         prefer_openable(&mut []);

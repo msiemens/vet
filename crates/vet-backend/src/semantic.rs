@@ -2,6 +2,7 @@
 //! `vet_app::semantics`; this maps requests to them and their results to the
 //! protocol, turning a language without a usable server into `unavailable`.
 
+use vet_core::content::RepoPath;
 use vet_protocol::{Response, Side};
 use vet_semantic::ports::{At, Location};
 
@@ -81,7 +82,7 @@ impl Open {
     }
 
     pub async fn diagnostics(&self, revision: u32, path: &str) -> Result<Response, String> {
-        let file = map::repo_path(path);
+        let file = RepoPath::from(path);
         let answer = (self.semantics)
             .diagnostics(&self.session, revision, &file)
             .await
@@ -111,7 +112,7 @@ impl Open {
             .map_err(message)?;
         let (found, unavailable) = map::answer(
             answer.result,
-            map::language_of(&self.backends, &map::repo_path(&symbol.path)),
+            map::language_of(&self.backends, &RepoPath::from(symbol.path.as_str())),
         );
         let signature = found.map(|s| vet_protocol::SymbolSignature {
             highlights: highlight::signature(&symbol.path, &s),

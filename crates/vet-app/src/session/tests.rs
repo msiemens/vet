@@ -23,7 +23,7 @@ use crate::review::{Session, Version};
 const REPO: &str = "/repo";
 
 fn path(s: &str) -> RepoPath {
-    RepoPath(s.as_bytes().to_vec())
+    RepoPath::from(s)
 }
 
 fn entry(text: &str, mode: u32) -> FileEntry {
@@ -733,7 +733,7 @@ async fn manifest_lists_changes_with_unseen_hunks() {
     let m = fx.session.manifest().await.unwrap();
 
     assert_eq!(m.revision, 0);
-    let paths: Vec<_> = m.files.iter().map(|f| path_str(&f.path)).collect();
+    let paths: Vec<_> = m.files.iter().map(|f| f.path.to_string_lossy()).collect();
     assert_eq!(paths, ["a.txt", "gone.txt", "new.txt"]);
     let status: Vec<_> = m.files.iter().map(|f| f.status).collect();
     assert_eq!(status, [FileStatus::Modified, FileStatus::Deleted, FileStatus::Added]);
@@ -1581,6 +1581,35 @@ async fn setting_the_filter_persists_it_and_moves_the_counts() {
     let err = fx.session.set_filter(bad).await.unwrap_err();
     assert!(err.to_string().starts_with("invalid pattern \"[\""), "{err}");
     assert_eq!(fx.session.revision().await, 1);
+}
+
+#[tokio::test]
+async fn filter_roots_are_taken_as_directories_without_slashes() {
+    let files = [("a.txt", "1\n"), ("docs/b.md", "1\n")];
+    let fx = Fixture::open(&files, &[("a.txt", "2\n"), ("docs/b.md", "2\n")]).await;
+    let filter = ReviewFilter {
+        roots: vec![path("/docs/"), path("/")],
+        ..Default::default()
+    };
+    fx.session.set_filter(filter).await.unwrap();
+    let m = fx.session.manifest().await.unwrap();
+    assert_eq!(m.filter.roots, [path("docs")]);
+    assert_eq!(m.files.len(), 1);
+    assert_eq!(
+        fx.store.0.lock().unwrap().filter.as_ref().unwrap().roots,
+        [path("docs")]
+    );
+}
+
+#[test]
+fn only_common_image_formats_have_a_media_type() {
+    let media = |p: &str| image_media_type(&path(p));
+    assert_eq!(media("a/b.PNG"), Some("image/png"));
+    assert_eq!(media("x.jpeg"), Some("image/jpeg"));
+    assert_eq!(media("x.svg"), Some("image/svg+xml"));
+    assert_eq!(media("x.txt"), None);
+    assert_eq!(media("png"), None);
+    assert_eq!(media("dir.png/file"), None);
 }
 
 #[tokio::test]

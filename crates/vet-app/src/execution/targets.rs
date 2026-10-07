@@ -73,7 +73,7 @@ fn join(dir: &str, rel: &str) -> String {
 }
 
 fn has(snapshot: &Snapshot, path: &str) -> bool {
-    snapshot.entries.contains_key(&RepoPath(path.as_bytes().to_vec()))
+    snapshot.entries.contains_key(&RepoPath::from(path))
 }
 
 fn target(source: &str, kind: &str, dir: &str, name: &str, program: &str, args: &[&str]) -> RunTarget {
@@ -113,7 +113,7 @@ fn cargo(snapshot: &Snapshot, source: &str, dir: &str, text: &str, out: &mut Vec
         bins.push(name);
     }
     let prefix = join(dir, "src/bin/");
-    let start = RepoPath(prefix.as_bytes().to_vec());
+    let start = RepoPath::from(prefix.as_str());
     for (path, _) in snapshot.entries.range(start..) {
         let Some(rest) = path.0.strip_prefix(prefix.as_bytes()) else {
             break;
@@ -188,7 +188,7 @@ mod tests {
             let blob = BlobId::of(content.as_bytes());
             blobs.insert(blob, content.as_bytes().to_vec());
             entries.insert(
-                RepoPath(path.as_bytes().to_vec()),
+                RepoPath::from(*path),
                 FileEntry {
                     blob,
                     mode: 0o100644,

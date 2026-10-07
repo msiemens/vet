@@ -151,12 +151,11 @@ impl<G: GitRepo, S: Store> Acquisition<G, S> {
             if is_known || entry.kind == EntryKind::Submodule || status.content_unavailable.contains(path) {
                 continue;
             }
-            let bytes = self.git.read_blob(path, entry.blob).await?.ok_or_else(|| {
-                GitError(format!(
-                    "{} changed while being copied",
-                    String::from_utf8_lossy(&path.0)
-                ))
-            })?;
+            let bytes = self
+                .git
+                .read_blob(path, entry.blob)
+                .await?
+                .ok_or_else(|| GitError(format!("{} changed while being copied", path.to_string_lossy())))?;
             self.store.put_blob(bytes).await.map_err(|e| GitError(e.0))?;
         }
         Ok(())

@@ -16,7 +16,7 @@ use gix::objs::{
 use vet_app::ports::GitError;
 use vet_core::content::{
     BlobId, BlobSource, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextChange, NonTextKind, RenameMap,
-    RepoPath, Snapshot, SnapshotDiff,
+    RepoPath, Snapshot, SnapshotDiff, is_binary,
 };
 use vet_core::hunks::join_close_hunks;
 
@@ -289,11 +289,6 @@ fn classify(change: Change, contents: &BTreeMap<BlobId, Vec<u8>>, out: &mut Snap
 
 fn key_old(c: &Change) -> &RepoPath {
     &c.old.as_ref().expect("both sides").0
-}
-
-/// Git's heuristic: a NUL in the first 8000 bytes.
-fn is_binary(bytes: &[u8]) -> bool {
-    bytes[..bytes.len().min(8000)].contains(&0)
 }
 
 /// 0-based line hunks, histogram algorithm. Hunks with almost nothing between them are one

@@ -11,7 +11,7 @@ use vet_app::pin::{BaseChoice, CommitId};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::session::{
     BaseView, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView,
-    NewThread, NoText, ReviewUpdateView, ReviewView, TargetText, ThreadView, ThreadsView, path_str,
+    NewThread, NoText, ReviewUpdateView, ReviewView, TargetText, ThreadView, ThreadsView,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
@@ -127,8 +127,8 @@ fn review(r: &ReviewView) -> p::FileReview {
 
 fn file(f: &FileView) -> p::FileChange {
     p::FileChange {
-        path: path_str(&f.path),
-        old_path: f.old_path.as_ref().map(path_str),
+        path: f.path.to_string_lossy(),
+        old_path: f.old_path.as_ref().map(RepoPath::to_string_lossy),
         status: status(f.status),
         base_lines: f.base_lines,
         target_lines: f.target_lines,
@@ -150,11 +150,7 @@ pub fn core_base_choice(choice: p::BaseChoice) -> BaseChoice {
 
 pub fn core_filter(f: p::ReviewFilter) -> ReviewFilter {
     ReviewFilter {
-        roots: (f.roots.iter())
-            .map(|r| r.trim_matches('/'))
-            .filter(|r| !r.is_empty())
-            .map(|r| RepoPath(r.as_bytes().to_vec()))
-            .collect(),
+        roots: f.roots.into_iter().map(RepoPath::from).collect(),
         include: f.include,
         exclude: f.exclude,
         hide_binary: f.hide_binary,
@@ -163,7 +159,7 @@ pub fn core_filter(f: p::ReviewFilter) -> ReviewFilter {
 
 fn filter(f: &ReviewFilter) -> p::ReviewFilter {
     p::ReviewFilter {
-        roots: f.roots.iter().map(path_str).collect(),
+        roots: f.roots.iter().map(RepoPath::to_string_lossy).collect(),
         include: f.include.clone(),
         exclude: f.exclude.clone(),
         hide_binary: f.hide_binary,
@@ -320,7 +316,7 @@ pub fn core_side(s: p::Side) -> Side {
 
 fn line_location(file: &RepoPath, range: LineRange) -> p::LineLocation {
     p::LineLocation {
-        path: path_str(file),
+        path: file.to_string_lossy(),
         start: range.start,
         len: range.len(),
     }
@@ -334,7 +330,7 @@ pub fn new_thread(t: p::ThreadTarget) -> NewThread {
     match t {
         p::ThreadTarget::Range { side, path, start, len } => NewThread::Range {
             side: core_side(side),
-            path: RepoPath(path.into_bytes()),
+            path: RepoPath::from(path),
             range: LineRange {
                 start,
                 end: start.saturating_add(len),
@@ -342,7 +338,7 @@ pub fn new_thread(t: p::ThreadTarget) -> NewThread {
         },
         p::ThreadTarget::File { side, path } => NewThread::File {
             side: core_side(side),
-            path: RepoPath(path.into_bytes()),
+            path: RepoPath::from(path),
         },
         p::ThreadTarget::Changeset => NewThread::Changeset,
     }
@@ -397,7 +393,7 @@ pub fn thread(t: &ThreadView) -> p::Thread {
         id: u32::try_from(t.id.0).unwrap_or(u32::MAX),
         kind,
         side: side_of,
-        path: t.path.as_ref().map(path_str),
+        path: t.path.as_ref().map(RepoPath::to_string_lossy),
         original,
         location: t.location.as_ref().map(location),
         target_line: t.target_line,
@@ -477,7 +473,7 @@ pub fn needs_approval(a: &Approval) -> p::Response {
         first_run: a.first_run,
         changed: (a.changed.iter())
             .map(|c| p::ApprovalChange {
-                path: path_str(&c.path),
+                path: c.path.to_string_lossy(),
                 change: run_change(c.change),
             })
             .collect(),
@@ -507,8 +503,8 @@ pub fn approval_files(files: &[ApprovalFile]) -> p::Response {
         files: files
             .iter()
             .map(|f| p::ApprovalFile {
-                path: path_str(&f.path),
-                from: f.from.as_ref().map(path_str),
+                path: f.path.to_string_lossy(),
+                from: f.from.as_ref().map(RepoPath::to_string_lossy),
                 change: run_change(f.change),
                 diff: f.rows.as_ref().map(|d| p::ApprovalDiff {
                     rows: d.rows.iter().map(diff_row).collect(),
@@ -522,7 +518,7 @@ pub fn approval_files(files: &[ApprovalFile]) -> p::Response {
 
 pub fn review_update(u: &ReviewUpdateView) -> p::ReviewUpdate {
     p::ReviewUpdate {
-        path: path_str(&u.path),
+        path: u.path.to_string_lossy(),
         review: review(&u.review),
         completion: completion(&u.completion),
         changeset: completion(&u.changeset),
