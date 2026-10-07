@@ -23,12 +23,14 @@ import { setCurrent } from "./reviewState";
 import { StickyHunk } from "./stickyHunk";
 import { Stops, hunkAt } from "./stops";
 import type { Section } from "./section";
-import { SectionHeights, readMetrics } from "./sectionHeights";
-import { COLLAPSE } from "./sectionLayout";
+import { SectionHeights, readCharWidth, readMetrics } from "./sectionHeights";
+import { COLLAPSE, type WrappedSides } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
+import { wrapsByDefault } from "./softWrap";
 import { type ThreadListeners, ThreadLayer, threadState } from "./threadLayer";
 import { type ViewProbe, viewProbe } from "./viewProbe";
 import { Windowing } from "./windowing";
+import { WrapRows, rowColumns } from "./wrapRows";
 
 /** The editor hooks as the owner provides them: the semantic requests still name the view's revision. */
 export type ViewHooks = Omit<Hooks, keyof BarActions | keyof SemanticHooks> & SemanticSource;
@@ -64,6 +66,13 @@ export class ChangesetView {
   private destroyed = false;
   private threads: ThreadLayer;
   private pin: StickyHunk;
+  /** The width of a character, and the view's width: what lines wrap at. */
+  private char: number;
+  private width: number;
+  private widths: ResizeObserver;
+  /** Wrapping sections whose editor measured another height than the section has. */
+  private measured = new Set<Section>();
+  private measuring?: number;
 
   constructor(
     private root: HTMLElement,
@@ -76,12 +85,17 @@ export class ChangesetView {
     private listeners: Listeners,
     /** Collapse unchanged regions (the Changes tab); otherwise the full file is shown. */
     private collapse: boolean,
+    /** Soft wrap for every file; absent: each file by its kind (`wrapsByDefault`). */
+    private wrapAll?: boolean,
     /** Hands the dev tools what they measure; production owners leave it out. */
     inspect?: (probe: ViewProbe) => void,
   ) {
     // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
     root.style.containerType = "inline-size";
     const metrics = readMetrics(root);
+    this.char = readCharWidth(root);
+    this.width = root.clientWidth;
+    this.widths = new ResizeObserver(() => this.onWidth());
     this.threads = new ThreadLayer(
       {
         revision,
@@ -148,6 +162,8 @@ export class ChangesetView {
         hunkTops: [],
         ...threadState(blockEl),
         hooks: { ...hooks, ...bindRevision(hooks, revision), ...actions },
+        wrap: this.wrapAll ?? wrapsByDefault(file.path),
+        wrapped: {},
       });
     }
     this.totalHunks = hunks;
@@ -162,6 +178,7 @@ export class ChangesetView {
     this.heights.layout();
     this.windowing.start();
     this.root.addEventListener("click", this.heights.onExpand, true);
+    this.widths.observe(root);
     inspect?.(
       viewProbe({ sections: this.sections, mounted: this.windowing.mounted, heights: this.heights, stops: this.stops }),
     );
@@ -171,6 +188,8 @@ export class ChangesetView {
     this.destroyed = true;
     this.windowing.destroy();
     this.pin.destroy();
+    this.widths.disconnect();
+    if (this.measuring !== undefined) cancelAnimationFrame(this.measuring);
     this.root.removeEventListener("click", this.heights.onExpand, true);
     for (const fi of this.windowing.mounted) this.sections[fi].handle?.destroy();
     this.windowing.mounted.clear();
@@ -187,15 +206,91 @@ export class ChangesetView {
   }
 
   setMode(mode: Mode) {
+    this.remount(() => {
+      this.heights.mode = mode;
+      this.measureWraps();
+    });
+  }
+
+  /** Whether the view wraps long lines: as set, else if every file does by its kind. */
+  wrapped(): boolean {
+    return this.wrapAll ?? (this.sections.length > 0 && this.sections.every((s) => s.wrap));
+  }
+
+  /** Wraps long lines in every file, or scrolls them sideways. */
+  setWrap(on: boolean) {
+    this.wrapAll = on;
+    this.remount(() => {
+      for (const s of this.sections) s.wrap = on;
+      this.measureWraps();
+    });
+  }
+
+  /** Drops every editor, lets `change` alter what they show, lays the column out again and mounts what is in view. */
+  private remount(change: () => void) {
     const fi = this.heights.indexAt(this.root.scrollTop);
     for (const i of this.windowing.mounted) this.unmount(this.sections[i]);
     this.windowing.mounted.clear();
-    this.heights.mode = mode;
+    change();
     this.heights.layout();
     if (this.sections.length) this.root.scrollTop = this.sections[fi].top;
     this.pin.update(this.root.scrollTop);
     this.pin.refresh();
     this.sync();
+  }
+
+  /** The wrapped lines of a section whose text has arrived and whose editor wraps. */
+  private wrappedSides(s: Section): WrappedSides {
+    if (!s.wrap || !s.loaded) return {};
+    const columns = rowColumns(
+      this.width,
+      this.heights.mode,
+      this.char,
+      Math.max(s.file.baseLines, s.file.targetLines),
+    );
+    return { base: new WrapRows(s.loaded.base, columns), target: new WrapRows(s.loaded.target, columns) };
+  }
+
+  /** Works out again which lines wrap, for the mode, the width and the sections' wrap setting of now. */
+  private measureWraps() {
+    for (const s of this.sections) s.wrapped = this.wrappedSides(s);
+  }
+
+  /**
+   * The view's width changed: lines wrap elsewhere. Sections without an editor are estimated again;
+   * an editor measures its own.
+   */
+  private onWidth() {
+    const width = this.root.clientWidth;
+    if (Math.abs(width - this.width) < 1) return;
+    this.width = width;
+    if (!this.sections.some((s) => s.wrap)) return;
+    const fi = this.heights.indexAt(this.root.scrollTop);
+    const offset = this.root.scrollTop - this.sections[fi].top;
+    this.measureWraps();
+    this.heights.layout(this.windowing.mounted);
+    this.root.scrollTop = this.sections[fi].top + offset;
+  }
+
+  /** A wrapping editor measured its lines: the section takes the height its editor now has. */
+  private heightChanged(s: Section) {
+    this.measured.add(s);
+    this.measuring ??= requestAnimationFrame(() => {
+      this.measuring = undefined;
+      let scrollTop = this.root.scrollTop;
+      const m = this.heights.m;
+      for (const section of this.measured) {
+        const views = section.handle?.views;
+        if (!views) continue;
+        const editor = Math.max(...views.map((v) => v.contentHeight));
+        scrollTop += this.heights.resize(
+          section,
+          m.header + section.cardsHeight + section.block + m.gap + 1 + editor,
+          scrollTop,
+        );
+      }
+      this.measured.clear();
+    });
   }
 
   /** Index of the file with this path, if it is in the view. */
@@ -207,6 +302,11 @@ export class ChangesetView {
     const s = this.sections[fi];
     s.loading ??= this.source.contents(s.file).then((loaded) => {
       s.loaded = loaded;
+      if (s.wrap) {
+        // The text tells how many rows its lines take; the section grows to them before its editor does.
+        s.wrapped = this.wrappedSides(s);
+        this.heights.resize(s, this.heights.estimate(s));
+      }
       // Mounting waits for the next frame, so a large reply's parse and an editor's creation never share one.
       this.windowing.syncNextFrame();
       return loaded;
@@ -247,6 +347,7 @@ export class ChangesetView {
         this.threads.extension(s),
         EditorView.scrollMargins.of(() => ({ top: this.heights.m.header + this.heights.m.hunk })),
       ],
+      s.wrap ? { heightChanged: () => this.heightChanged(s) } : undefined,
     );
     this.threads.mounted(s);
     this.windowing.mounted.add(fi);

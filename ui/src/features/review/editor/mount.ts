@@ -20,6 +20,7 @@ import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } f
 import { deletedHighlights } from "./deletedHighlights";
 import { highlightExtension } from "./highlightExtension";
 import { deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
+import { reportHeight, softWrap } from "./softWrap";
 
 export interface Loaded {
   base: string;
@@ -89,6 +90,11 @@ function use(view: EditorView): false {
  */
 const readOnlySetup: Extension = [highlightSpecialChars(), drawSelectionOnUse, keymap.of(standardKeymap)];
 
+/** The editors wrap long lines; the owner lays them out by an estimate and hears of the height they measure. */
+export interface Wrapping {
+  heightChanged(): void;
+}
+
 export function mountFile(
   host: HTMLElement,
   path: string,
@@ -103,12 +109,16 @@ export function mountFile(
   collapseUnchanged?: Collapse,
   /** More extensions of the target view. */
   extra: Extension[] = [],
+  /** Absent: long lines scroll the editor sideways. */
+  wrapping?: Wrapping,
 ): Handle {
   const targetField = reviewField(sideConfig(loaded.hunks, "target", hooks, barHeight), states);
   const diffConfig = { override: backendDiff(loaded.base, loaded.target, loaded.changes) };
   const shown = (ms: number) => hooks.hoverShown?.(ms);
+  const wrap: Extension = wrapping ? [softWrap(true), reportHeight(() => wrapping.heightChanged())] : [];
   const target: Extension[] = [
     readOnlySetup,
+    wrap,
     targetField,
     lineNumbers(),
     highlightExtension(loaded.targetHighlights),
@@ -142,6 +152,7 @@ export function mountFile(
     return handle(view, [view]);
   }
   const base: Extension[] = [
+    wrap,
     reviewField(sideConfig(loaded.hunks, "base", null, barHeight), states),
     lineNumbers(),
     highlightExtension(loaded.baseHighlights),

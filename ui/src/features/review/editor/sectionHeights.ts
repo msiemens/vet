@@ -24,6 +24,16 @@ export function readMetrics(root: HTMLElement): Metrics {
   };
 }
 
+/** The width in px of a character of the editor's font, as `root` has it. */
+export function readCharWidth(root: HTMLElement): number {
+  const style = getComputedStyle(root);
+  const size = px(style, "--fs-mono");
+  const context = document.createElement("canvas").getContext("2d");
+  if (!context) return size * 0.6;
+  context.font = `${size}px ${style.getPropertyValue("--font-mono")}`;
+  return context.measureText("0").width || size * 0.6;
+}
+
 /** The index of the last section starting at or above `y` (the first one above all of them). */
 export function sectionAt(sections: readonly { top: number }[], y: number): number {
   let lo = 0;
@@ -66,13 +76,15 @@ export class SectionHeights {
     return last ? last.top + last.height : 0;
   }
 
-  /** Estimates every section's height; the section's own bottom border is one more pixel. */
-  layout() {
+  /** Estimates every section's height but the ones at the indices `keep`; the section's own bottom border is one more pixel. */
+  layout(keep: ReadonlySet<number> = new Set()) {
     let top = this.threads.leadHeight;
-    for (const s of this.sections) {
+    for (const [i, s] of this.sections.entries()) {
       s.top = top;
-      s.height = this.estimate(s);
-      s.el.style.height = `${s.height}px`;
+      if (!keep.has(i)) {
+        s.height = this.estimate(s);
+        s.el.style.height = `${s.height}px`;
+      }
       top += s.height;
     }
   }
@@ -80,7 +92,7 @@ export class SectionHeights {
   /** Lays the section out from the manifest; its own bottom border is one more pixel. `known`: see `ThreadLayer.count`. */
   estimate(s: Section, known = new Map<string, number>()): number {
     const space = this.threads.space(s, known);
-    const layout = sectionLayout(s.file, this.mode, this.m, this.collapse, space);
+    const layout = sectionLayout(s.file, this.mode, this.m, this.collapse, space, s.wrapped);
     s.hunkTops = layout.hunkTops;
     s.cardTops = layout.cardTops;
     s.cardsHeight = layout.cardsHeight;

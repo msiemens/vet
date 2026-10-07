@@ -163,9 +163,14 @@
       onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: pathOf(id) } })}
     />
     <span class="grow"></span>
-    {#if kindOf(tabs.active) !== "text"}
-      <ViewControls {mode} {onmode} onstep={(delta) => controller.stepHunk(delta)} />
-    {/if}
+    <ViewControls
+      {mode}
+      {onmode}
+      onstep={(delta) => controller.stepHunk(delta)}
+      wrapped={tabs.wrapped[tabs.active] ?? false}
+      onwrap={() => commands.run("review.toggleWrap")}
+      diff={kindOf(tabs.active) !== "text"}
+    />
   </div>
   <!-- The handler only replaces the webview's menu inside an editor. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->

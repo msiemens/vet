@@ -23,6 +23,8 @@ export const pathOf = (id: TabId): string | undefined => (id === CHANGES ? undef
 export class Tabs {
   open = $state<TabId[]>([CHANGES]);
   active = $state<TabId>(CHANGES);
+  /** Whether each tab's view wraps long lines, as its view reports it; written when a view is built or toggled. */
+  wrapped = $state<Record<string, boolean>>({});
 
   /** Opens the file's diff tab if needed and focuses it. */
   show(path: string) {

@@ -24,6 +24,7 @@ const view: ViewActions = {
   toggleSeen: () => (calls.push("toggle"), toggleFinds),
   comment: () => (calls.push("comment"), commentFinds),
   jumpToSource: () => (calls.push("jump"), caretFinds),
+  toggleWrap: () => (calls.push("wrap"), true),
 };
 const files: FileActions = {
   copyText: (text) => calls.push(`copy ${text}`),
@@ -118,6 +119,16 @@ void test("F4 jumps to source from the Changes tab only, and only when there is 
   caretFinds = true;
   assert.equal(r.dispatch(f4()), true);
   assert.deepEqual(calls, ["jump", "jump"]);
+});
+
+void test("Ctrl+Alt+W toggles soft wrap in a diff view and in a text tab, nowhere else", () => {
+  const pressed = (context: Partial<CommandContext>) => {
+    const handled = setup(context).dispatch(ctrlAlt("w", "KeyW"));
+    return [handled, [...calls]];
+  };
+  assert.deepEqual(pressed(inChanges), [true, ["wrap"]]);
+  assert.deepEqual(pressed({ tab: { kind: "text", path: "a.md" } }), [true, ["wrap"]]);
+  assert.deepEqual(pressed({ diffView: false }), [false, []]);
 });
 
 void test("Mod+B goes to the definition from the focused editor: Cmd on macOS, Ctrl elsewhere", () => {

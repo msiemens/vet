@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { FileChange } from "../../../generated/FileChange.ts";
 import type { NonTextItem } from "../../../generated/NonTextItem.ts";
 import { hiddenAt, sectionLayout, shownLines } from "./sectionLayout.ts";
+import { WrapRows } from "./wrapRows.ts";
 
 const metrics = { line: 20, hunk: 24, header: 26, collapsed: 27, gap: 8, preview: 100 };
 const hunk = (targetStart: number, baseLen: number, targetLen: number) => ({
@@ -92,6 +93,26 @@ void test("a file's thread block pushes everything down, an inline card only wha
   assert.deepEqual(l.drawn, [true, false, true]);
   assert.equal(l.height, plain.height + 50 + 70 + 40);
   assert.deepEqual(l.hunkTops, [113 + 50 + 40]);
+});
+
+void test("a wrapping editor adds the extra rows of the lines that are shown, and none for the ones hidden behind a bar", () => {
+  const f = file(100, [hunk(50, 2, 3)]);
+  // At 10 columns: a line of 11 characters takes 2 rows, one of 25 takes 3.
+  const text = (count: number, long: Record<number, number>) =>
+    Array.from({ length: count }, (_, i) => "x".repeat(long[i] ?? 1)).join("\n");
+  const wrapped = {
+    target: new WrapRows(text(100, { 10: 25, 48: 11, 51: 25 }), 10), // 10 is hidden, 48 is context, 51 is in the hunk
+    base: new WrapRows(text(99, { 50: 11 }), 10),
+  };
+  const plain = layout(f, "unified");
+  const unified = sectionLayout(f, "unified", metrics, true, undefined, wrapped);
+  // One extra row in the context above the hunk, one in its deleted lines and two in its added lines.
+  assert.equal(unified.height, plain.height + (1 + 1 + 2) * 20);
+  // Side by side shows the taller side of the hunk, 3 + 2 rows against 2 + 1.
+  const split = sectionLayout(f, "split", metrics, true, undefined, wrapped);
+  assert.equal(split.height, layout(f, "split").height + (1 + 2) * 20);
+  // The hunk's bar is below the wrapped context line.
+  assert.equal(unified.hunkTops[0], plain.hunkTops[0] + 20);
 });
 
 void test("shown lines are the hunks and their context, or everything without collapsing", () => {

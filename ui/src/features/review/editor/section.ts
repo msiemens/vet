@@ -6,6 +6,7 @@ import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
 import type { Card } from "./changeCard";
 import type { Handle, Hooks, Loaded } from "./mount";
+import type { WrappedSides } from "./sectionLayout";
 import type { CardData, InlineCard, Placement } from "./threadPlacement";
 
 /** The part of a section the thread layer keeps. */
@@ -42,6 +43,10 @@ export interface Section extends ThreadState {
   /** Estimated offset of each hunk bar from the top of the section. */
   hunkTops: number[];
   hooks: Hooks;
+  /** The editor wraps long lines. */
+  wrap: boolean;
+  /** The wrapped lines of each side's text: known once the text has arrived, and only while `wrap` holds. */
+  wrapped: WrappedSides;
   loaded?: Loaded;
   loading?: Promise<Loaded>;
   handle?: Handle;
