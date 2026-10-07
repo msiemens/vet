@@ -21,7 +21,7 @@ import type { BarActions } from "./hunkBar";
 import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
 import { lineOf, lineStart, selectedLines } from "./positions";
 import { setCurrent, setStates } from "./reviewState";
-import { COLLAPSE, type Metrics, sectionLayout } from "./sectionLayout";
+import { COLLAPSE, type Metrics, hiddenAt, sectionLayout } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
 import { type ThreadListeners, type ThreadState, ThreadLayer, threadState } from "./threadLayer";
 
@@ -297,9 +297,14 @@ export class ChangesetView {
    */
   private onExpand = (e: MouseEvent) => {
     const bar = e.target instanceof Element ? e.target.closest(".cm-collapsedLines") : null;
-    const lines = Number(/\d+/.exec(bar?.textContent ?? "")?.[0]);
+    if (!bar) return;
     const s = this.sections.find((s) => s.el.contains(bar));
-    if (s && lines) this.resize(s, s.height + lines * this.m.line - this.m.collapsed);
+    const view = s?.handle?.views.find((v) => v.dom.contains(bar));
+    if (!s || !view) return;
+    // The bar sits where the hidden lines start, which is also where the merge extension keys it.
+    const line = lineOf(view.state.doc, view.posAtDOM(bar));
+    const lines = hiddenAt(s.file, this.collapse, view === s.handle?.view ? "target" : "base", line);
+    if (lines) this.resize(s, s.height + lines * this.m.line - this.m.collapsed);
   };
 
   /** Lays the section out from the manifest; its own bottom border is one more pixel. `known`: see `ThreadLayer.count`. */

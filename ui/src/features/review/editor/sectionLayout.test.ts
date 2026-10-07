@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FileChange } from "../../../generated/FileChange.ts";
 import type { NonTextItem } from "../../../generated/NonTextItem.ts";
-import { sectionLayout, shownLines } from "./sectionLayout.ts";
+import { hiddenAt, sectionLayout, shownLines } from "./sectionLayout.ts";
 
 const metrics = { line: 20, hunk: 24, header: 26, collapsed: 27, gap: 8, preview: 100 };
 const hunk = (targetStart: number, baseLen: number, targetLen: number) => ({
@@ -105,6 +105,17 @@ void test("shown lines are the hunks and their context, or everything without co
     [18, 21],
   ]);
   assert.deepEqual(shownLines(file(40, []), true), []);
+});
+
+void test("a bar knows how many lines it hides, on either side", () => {
+  const f = { ...file(100, [hunk(50, 2, 3)]), baseLines: 99 };
+  assert.equal(hiddenAt(f, true, "target", 0), 47);
+  assert.equal(hiddenAt(f, true, "target", 56), 44);
+  assert.equal(hiddenAt(f, true, "target", 48), 0);
+  // The base side counts its own lines: the hunk spans 2 of them, so the tail starts at 52.
+  assert.equal(hiddenAt(f, true, "base", 55), 99 - 55);
+  assert.equal(hiddenAt(f, false, "target", 0), 0);
+  assert.equal(hiddenAt(file(40, []), true, "target", 5), 40);
 });
 
 void test("an image card has a preview strip, other binaries do not", () => {
