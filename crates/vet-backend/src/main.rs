@@ -13,9 +13,10 @@ async fn main() -> io::Result<()> {
     if std::env::args().any(|a| a == "--exit-on-stdin-close") {
         exit_when_stdin_closes();
     }
-    vet_infra::materialize::sweep_materialized();
     let store = open_default_store().await.map_err(io::Error::other)?;
+    let orchestrator = Orchestrator::new(store, Config::default());
+    orchestrator.collect_trees().await;
     let server = Server::bind().await?;
     announce(&server)?;
-    server.serve(Orchestrator::new(store, Config::default())).await
+    server.serve(orchestrator).await
 }

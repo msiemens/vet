@@ -10,6 +10,7 @@
 
 mod common;
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,15 +24,18 @@ use vet_app::session::{FileStatus as AppFileStatus, LiveSession};
 use vet_app::settle::Settling;
 use vet_backend::{Orchestrator, open_store};
 use vet_core::completion::HunkState as CoreHunk;
+use vet_core::content::SnapshotId;
 use vet_infra::clock::TokioClock;
 use vet_infra::git::GixRepo;
 use vet_infra::materialize::Materialize;
+use vet_infra::materialize::kept::{KeptTrees, Limits, Referenced};
 use vet_infra::store::SqliteStore;
 use vet_protocol::{
     AnchorConfidence, AnchorState, AnchorStrategy, BaseChoice, EntryKind, Event, FileChange, HunkState, LineLocation,
     Manifest, NonTextKind, Request, Response, ReviewFilter, ServerMessage, SessionId, Side, StaleReason, Thread,
     ThreadKind, ThreadTarget,
 };
+use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::Materializer;
 use vet_transport::{Events, Handler};
 
@@ -686,6 +690,13 @@ fn is_case_sensitive(dir: &Path) -> bool {
     names == 2
 }
 
+const POLICY: AnalysisPolicy = AnalysisPolicy { allow_executing: false };
+
+fn kept_trees(data: &Path) -> Arc<KeptTrees> {
+    let none: Arc<dyn Referenced> = Arc::new(HashSet::<SnapshotId>::new);
+    Arc::new(KeptTrees::new(data.join("materialized"), Limits::default(), none))
+}
+
 #[tokio::test]
 async fn criterion1_windows_filesystem_case_only_paths_in_the_worktree_are_flagged_and_not_materialized_where_they_merge()
  {
@@ -699,14 +710,16 @@ async fn criterion1_windows_filesystem_case_only_paths_in_the_worktree_are_flagg
     }
     write(p, "Foo.txt", "1\n");
     write(p, "foo.txt", "2\n");
-    let (session, store, _data) = collision_session(p).await;
+    let (session, store, data) = collision_session(p).await;
     let sides = session.semantic_sides(0).await.unwrap();
 
     let (_, status) = store.snapshot(sides.target).await.unwrap().unwrap();
     let flagged: Vec<_> = status.path_collisions.iter().map(|p| p.0.clone()).collect();
     assert_eq!(flagged, [b"Foo.txt".to_vec(), b"foo.txt".to_vec()]);
     // The tree is only refused where the filesystem would merge the two.
-    let result = Materialize::new(session.acquisition()).materialize(sides.target).await;
+    let result = Materialize::new(session.acquisition(), kept_trees(data.path()))
+        .materialize(sides.target, POLICY)
+        .await;
     assert_eq!(result.is_err(), cfg!(any(windows, target_os = "macos")));
 }
 
@@ -714,13 +727,15 @@ async fn criterion1_windows_filesystem_case_only_paths_in_the_worktree_are_flagg
 async fn criterion1_windows_filesystem_case_only_paths_in_a_commit_are_flagged_and_not_materialized_where_they_merge() {
     use vet_app::ports::Store;
     let repo = colliding_repo();
-    let (session, store, _data) = collision_session(repo.path()).await;
+    let (session, store, data) = collision_session(repo.path()).await;
     let sides = session.semantic_sides(0).await.unwrap();
 
     let (_, status) = store.snapshot(sides.base).await.unwrap().unwrap();
     let flagged: Vec<_> = status.path_collisions.iter().map(|p| p.0.clone()).collect();
     assert_eq!(flagged, [b"Foo.txt".to_vec(), b"foo.txt".to_vec()]);
-    let result = Materialize::new(session.acquisition()).materialize(sides.base).await;
+    let result = Materialize::new(session.acquisition(), kept_trees(data.path()))
+        .materialize(sides.base, POLICY)
+        .await;
     assert_eq!(result.is_err(), cfg!(any(windows, target_os = "macos")));
 }
 

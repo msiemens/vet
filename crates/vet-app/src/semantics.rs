@@ -615,7 +615,7 @@ mod tests {
     impl Materializer for FakeMaterializer {
         type Guard = ();
 
-        async fn materialize(&self, _: SnapshotId) -> Result<Materialized<()>, NotMaterializable> {
+        async fn materialize(&self, _: SnapshotId, _: AnalysisPolicy) -> Result<Materialized<()>, NotMaterializable> {
             Ok(Materialized {
                 root: "/snap".into(),
                 guard: (),

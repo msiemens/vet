@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::sync::{Arc, OnceLock, Weak};
+use std::time::SystemTime;
 
 use tokio::task::AbortHandle;
 use vet_app::ignore::IgnoringWatcher;
@@ -14,6 +15,7 @@ use vet_infra::clock::{TokioClock, unix_now};
 use vet_infra::git::{GixRepo, find_root};
 use vet_infra::lsp::LspLauncher;
 use vet_infra::materialize::Materialize;
+use vet_infra::materialize::kept::KeptTrees;
 use vet_infra::restore::ToolRestorer;
 use vet_infra::watch::FsWatcher;
 use vet_mapping as mapping;
@@ -27,12 +29,15 @@ pub struct Wired {
     pub session: Arc<Live>,
     pub semantics: Semantic,
     settling: AbortHandle,
+    trees: Arc<KeptTrees>,
 }
 
 impl Resident for Wired {
     async fn shut(&self) {
         self.settling.abort();
         self.semantics.shutdown().await;
+        // The servers are gone, so their trees can be collected.
+        self.trees.collect(SystemTime::now()).await;
     }
 }
 
@@ -108,7 +113,7 @@ impl Orchestrator {
             }),
         );
         let semantics = Semantics::new(
-            Materialize::new(session.acquisition()),
+            Materialize::new(session.acquisition(), self.trees.clone()),
             LspLauncher::new(self.servers.clone(), restorer),
             repo,
             self.backends.to_vec(),
@@ -119,6 +124,7 @@ impl Orchestrator {
             session,
             semantics,
             settling: task.abort_handle(),
+            trees: self.trees.clone(),
         })
     }
 }

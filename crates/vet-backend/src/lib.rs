@@ -10,9 +10,10 @@ mod semantic;
 mod servers;
 mod threads;
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use vet_app::gc::Retention;
 use vet_app::limits::Limiting;
@@ -26,6 +27,7 @@ use vet_infra::clock::unix_now;
 use vet_infra::git::GixRepo;
 use vet_infra::lsp::{LspLauncher, config as lsp_config};
 use vet_infra::materialize::Materialize;
+use vet_infra::materialize::kept::{Collected, KeptTrees, Limits, Referenced};
 use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
@@ -78,6 +80,8 @@ pub struct Orchestrator {
     servers: Arc<LanguageServers>,
     backends: Arc<[Backend]>,
     highlighter: highlight::Highlighter,
+    /// The materialized snapshots kept between launches (§8).
+    trees: Arc<KeptTrees>,
 }
 
 fn message(error: impl std::fmt::Display) -> String {
@@ -102,10 +106,14 @@ impl Orchestrator {
         let backends: Arc<[Backend]> = lsp_config::defaults().into();
         let languages = backends.iter().map(|b| b.config().backend.clone()).collect();
         let resolver = ToolResolver::new(store.dir().to_owned());
+        // Which snapshots a session or a repository's remembered base refers to is not known here yet.
+        let referenced: Arc<dyn Referenced> = Arc::new(HashSet::<vet_core::content::SnapshotId>::new);
+        let trees = KeptTrees::new(store.dir().join("materialized"), Limits::default(), referenced);
         Self {
             servers: Arc::new(Servers::new(resolver, store.clone(), languages)),
             backends,
             highlighter: Default::default(),
+            trees: Arc::new(trees),
             recent: RecentProjects::new(store.clone()),
             store,
             config,
@@ -115,6 +123,25 @@ impl Orchestrator {
 
     async fn find(&self, id: SessionId) -> Result<Arc<Open>, String> {
         self.sessions.find(id).await.map_err(message)
+    }
+
+    /// At startup: removes what a launch that died left, then the kept trees
+    /// that are unused for too long or over the disk budget.
+    pub async fn collect_trees(&self) {
+        let swept = self.trees.sweep().await;
+        let collected = self.trees.collect(SystemTime::now()).await;
+        if swept + collected.removed > 0 {
+            eprintln!(
+                "vet: removed {swept} leftovers and {} kept trees ({} MB)",
+                collected.removed,
+                collected.freed >> 20
+            );
+        }
+    }
+
+    /// "Clear semantic caches": removes every kept tree that no running Vet uses.
+    pub async fn clear_kept_trees(&self) -> Collected {
+        self.trees.clear().await
     }
 }
 

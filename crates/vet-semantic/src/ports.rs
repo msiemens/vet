@@ -8,7 +8,8 @@ use vet_core::content::{BlobId, LineRange, RepoPath, SnapshotId};
 
 use crate::policy::AnalysisPolicy;
 
-/// A directory holding a complete snapshot. Dropping `guard` deletes it (§7.2).
+/// A directory holding a complete snapshot. It stays as it is for as long as
+/// `guard` lives; afterwards the materializer may keep it or remove it (§7.2).
 pub struct Materialized<G> {
     pub root: PathBuf,
     pub guard: G,
@@ -34,9 +35,11 @@ impl fmt::Display for NotMaterializable {
 pub trait Materializer {
     type Guard: Send + Sync + 'static;
 
+    /// The directory differs by policy: a restore may run code only where the policy allows.
     fn materialize(
         &self,
         snapshot: SnapshotId,
+        policy: AnalysisPolicy,
     ) -> impl Future<Output = Result<Materialized<Self::Guard>, NotMaterializable>> + Send;
 }
 

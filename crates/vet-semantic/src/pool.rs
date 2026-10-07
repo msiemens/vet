@@ -357,7 +357,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             Target::Snapshot(id) => {
                 let m = self
                     .materializer
-                    .materialize(id)
+                    .materialize(id, key.policy)
                     .await
                     .map_err(PoolError::NotMaterializable)?;
                 (
@@ -528,7 +528,11 @@ mod tests {
     impl Materializer for FakeMaterializer {
         type Guard = Guard;
 
-        async fn materialize(&self, _: SnapshotId) -> Result<Materialized<Guard>, NotMaterializable> {
+        async fn materialize(
+            &self,
+            _: SnapshotId,
+            _: AnalysisPolicy,
+        ) -> Result<Materialized<Guard>, NotMaterializable> {
             self.0.materialized.fetch_add(1, Ordering::SeqCst);
             Ok(Materialized {
                 root: PathBuf::from("/snap"),
