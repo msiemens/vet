@@ -6,11 +6,12 @@
 use std::path::Path;
 use std::process::Command;
 
+use vet_core::content::RepoPath;
 use vet_infra::exec::{Host, is_file};
-use vet_infra::lsp::config;
+use vet_infra::lsp::{BinaryLocator, LspLauncher, NoRestore, config};
 use vet_infra::restore::ToolRestorer;
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{Backend, Restored, Restorer};
+use vet_semantic::ports::{At, Backend, LanguageServer, Pos, Restored, Restorer, ServerLauncher, Tree};
 
 fn wanted(tool: &str) -> bool {
     let listed = std::env::var("VET_TEST_INSTALL").is_ok_and(|l| l.split(',').any(|x| x.trim() == "restore"));
@@ -111,6 +112,92 @@ async fn npm_installs_from_the_lockfile_without_running_scripts() {
     assert!(!project.path().join("script-ran").exists());
     // The npm cache took the download.
     assert!(cache.path().join("_cacache").is_dir());
+}
+
+#[tokio::test]
+async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_resolves_into_them() {
+    if !wanted("npm") || Host::current().find("typescript-language-server", is_file).is_none() {
+        return;
+    }
+    let (donor, copy, cache) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let package = r#"{"name":"p","version":"1.0.0","dependencies":{"picocolors":"1.1.1"}}"#;
+    write(donor.path(), "package.json", package);
+    run(
+        donor.path(),
+        "npm",
+        &["install", "--package-lock-only", "--ignore-scripts"],
+    );
+    let restorer = ToolRestorer::with_env(env("npm_config_cache", cache.path()));
+    restore(&restorer, donor.path(), &config::typescript(), false).await;
+
+    // The copy has other sources, and the same lockfile and dependencies.
+    let source = "import pc from \"picocolors\";\nexport const x = pc.red(\"a\");\n";
+    write(copy.path(), "package.json", package);
+    std::fs::copy(
+        donor.path().join("package-lock.json"),
+        copy.path().join("package-lock.json"),
+    )
+    .unwrap();
+    write(
+        copy.path(),
+        "tsconfig.json",
+        "{\"compilerOptions\":{\"strict\":true,\"moduleResolution\":\"node\",\"esModuleInterop\":true}}",
+    );
+    write(copy.path(), "a.ts", source);
+
+    // Not installed here: a cache that does not exist would make an install fail.
+    let missing = tempfile::tempdir().unwrap().path().join("none");
+    let reusing = ToolRestorer::with_env(env("npm_config_cache", &missing)).reusing(donor.path().to_owned());
+    let restored = restore(&reusing, copy.path(), &config::typescript(), false).await;
+    assert_eq!(restored.ran, [(".".to_owned(), "npm".to_owned())]);
+    let linked = copy.path().join("node_modules");
+    assert!(linked.symlink_metadata().unwrap().file_type().is_symlink());
+    assert!(linked.join("picocolors/package.json").is_file());
+    assert!(!missing.exists());
+
+    let server = LspLauncher::new(BinaryLocator, NoRestore)
+        .start(
+            copy.path(),
+            Tree::Immutable,
+            &config::typescript(),
+            AnalysisPolicy { allow_executing: false },
+        )
+        .await
+        .expect("typescript-language-server starts");
+    let at = At {
+        file: RepoPath(b"a.ts".to_vec()),
+        pos: Pos { line: 1, col: 22 },
+    };
+    let hover = server
+        .hover(&at)
+        .await
+        .unwrap()
+        .expect("pc.red resolves through node_modules");
+    assert!(hover.contains("red"), "{hover}");
+    server.shutdown().await;
+
+    // Another lockfile: the install runs, here failing on the lockfile that does not match `package.json`.
+    write(
+        copy.path(),
+        "package-lock.json",
+        "{\"lockfileVersion\":3,\"packages\":{}}",
+    );
+    std::fs::remove_file(&linked).unwrap();
+    let reusing = ToolRestorer::with_env(env("npm_config_cache", cache.path())).reusing(donor.path().to_owned());
+    let restored = reusing
+        .restore(
+            copy.path(),
+            &config::typescript(),
+            AnalysisPolicy { allow_executing: false },
+        )
+        .await;
+    assert_eq!(restored.failures.len(), 1, "{restored:?}");
+    assert_eq!(restored.failures[0].tool, "npm");
+    assert!(!linked.exists());
 }
 
 #[tokio::test]
@@ -321,6 +408,42 @@ async fn uv_installs_a_pyproject_without_a_lockfile_from_its_subdirectory() {
             .map(|(_, v)| v.as_str()),
         venv.to_str()
     );
+}
+
+#[tokio::test]
+async fn a_copy_with_the_same_projects_takes_the_working_trees_restore_output() {
+    if !wanted("dotnet") {
+        return;
+    }
+    let (donor, copy, packages) = (
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+        tempfile::tempdir().unwrap(),
+    );
+    let project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.3\" />\n  </ItemGroup>\n  <Target Name=\"Mark\" BeforeTargets=\"Restore\">\n    <WriteLinesToFile File=\"$(MSBuildProjectDirectory)/restore-ran\" Lines=\"x\" />\n  </Target>\n</Project>\n";
+    let nuget = "<configuration>\n  <packageSources>\n    <clear />\n    <add key=\"nuget.org\" value=\"https://api.nuget.org/v3/index.json\" />\n  </packageSources>\n</configuration>\n";
+    for dir in [donor.path(), copy.path()] {
+        write(dir, "App.csproj", project);
+        write(dir, "nuget.config", nuget);
+    }
+    write(donor.path(), "Program.cs", "// working tree");
+    write(copy.path(), "Program.cs", "// base");
+
+    let restorer = ToolRestorer::with_env(env("NUGET_PACKAGES", packages.path())).reusing(donor.path().to_owned());
+    restore(&restorer, donor.path(), &config::roslyn(), true).await;
+    assert!(donor.path().join("restore-ran").exists());
+
+    // The copy's restore is not run: the project's own targets did not execute.
+    restore(&restorer, copy.path(), &config::roslyn(), true).await;
+    assert!(copy.path().join("obj/project.assets.json").is_file());
+    assert!(!copy.path().join("restore-ran").exists());
+
+    // Another package version: restored.
+    let other = tempfile::tempdir().unwrap();
+    write(other.path(), "App.csproj", &project.replace("13.0.3", "13.0.2"));
+    write(other.path(), "nuget.config", nuget);
+    restore(&restorer, other.path(), &config::roslyn(), true).await;
+    assert!(other.path().join("restore-ran").exists());
 }
 
 #[tokio::test]

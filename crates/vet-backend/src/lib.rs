@@ -233,7 +233,7 @@ impl Orchestrator {
         let reaper = tokio::spawn(reap(self.sessions.clone(), id, self.config.orphan_grace));
         let limits = RestoreLimits::default();
         let restorer = Limiting::new(
-            ToolRestorer::new(),
+            ToolRestorer::new().reusing(repo.clone()),
             limits.clone(),
             Box::new({
                 let subscribers = subscribers.clone();

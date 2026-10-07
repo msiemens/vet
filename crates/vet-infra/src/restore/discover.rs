@@ -95,7 +95,7 @@ impl Workspace {
     }
 
     /// Whether `dir` is below the workspace and one of its members.
-    fn holds(&self, dir: &Path) -> bool {
+    pub(super) fn holds(&self, dir: &Path) -> bool {
         let Ok(relative) = dir.strip_prefix(&self.dir) else {
             return false;
         };
@@ -107,6 +107,15 @@ impl Workspace {
 pub(super) fn without_members(dirs: Vec<PathBuf>, workspaces: &[Workspace]) -> Vec<PathBuf> {
     dirs.into_iter()
         .filter(|dir| !workspaces.iter().any(|w| w.holds(dir)))
+        .collect()
+}
+
+/// The directories among `dirs` that the workspace rooted at `dir` holds.
+pub(super) fn members(dirs: &[PathBuf], workspaces: &[Workspace], dir: &Path) -> Vec<PathBuf> {
+    let workspace = workspaces.iter().find(|w| w.dir() == dir);
+    (dirs.iter())
+        .filter(|member| workspace.is_some_and(|w| w.holds(member)))
+        .cloned()
         .collect()
 }
 

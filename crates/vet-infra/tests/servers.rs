@@ -12,10 +12,11 @@ use vet_app::ports::{ServerOrigin, ServerResolver, ServerState};
 use vet_app::servers::Servers;
 use vet_core::content::RepoPath;
 use vet_infra::lsp::{LspLauncher, NoRestore, config};
+use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{At, BackendId, LanguageServer, Pos, ServerLauncher, Tree};
+use vet_semantic::ports::{At, BackendId, LanguageServer, Pos, Restorer, ServerLauncher, Tree};
 
 fn wanted(language: &str) -> bool {
     let Ok(list) = std::env::var("VET_TEST_INSTALL") else {
@@ -193,6 +194,46 @@ async fn csharp_installs_and_starts() {
         .collect();
     assert!(names.iter().any(|n| n.contains("Gone")), "{names:?}");
     assert!(server.diagnostics(&file).await.unwrap().is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn csharp_resolves_packages_in_a_copy_that_took_the_working_trees_restore_output() {
+    if !wanted("csharp") {
+        return;
+    }
+    let setup = setup().await;
+    let (donor, copy) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Library</OutputType>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.3\" />\n  </ItemGroup>\n</Project>\n";
+    let program = "using Newtonsoft.Json;\n\npublic static class Program\n{\n    public static string Main() => JsonConvert.SerializeObject(1);\n}\n";
+    for dir in [donor.path(), copy.path()] {
+        std::fs::write(dir.join("App.csproj"), project).unwrap();
+    }
+    std::fs::write(donor.path().join("Program.cs"), format!("{program}// working tree\n")).unwrap();
+    std::fs::write(copy.path().join("Program.cs"), program).unwrap();
+    install(&setup, donor.path(), "csharp").await;
+
+    let restorer = ToolRestorer::new().reusing(donor.path().to_owned());
+    let policy = AnalysisPolicy { allow_executing: true };
+    let backend = config::roslyn();
+    for dir in [donor.path(), copy.path()] {
+        let restored = restorer.restore(dir, &backend, policy).await;
+        assert!(restored.failures.is_empty(), "{:?}", restored.failures);
+    }
+    assert!(copy.path().join("obj/project.assets.json").is_file());
+
+    let launcher = LspLauncher::new(servers(&setup), NoRestore);
+    let server = launcher
+        .start(copy.path(), Tree::Immutable, &backend, policy)
+        .await
+        .expect("the server loads the copy");
+    let call = At {
+        file: path("Program.cs"),
+        pos: Pos { line: 4, col: 50 },
+    };
+    let hover = server.hover(&call).await.unwrap().expect("a package member resolves");
+    assert!(hover.contains("SerializeObject"), "{hover}");
+    assert_eq!(server.definition(&call).await.unwrap().len(), 1);
     server.shutdown().await;
 }
 

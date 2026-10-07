@@ -21,8 +21,16 @@
 //! members of a workspace (Cargo, pnpm, npm, Yarn, uv): their root's install
 //! covers them. A step that fails is reported with its project and the server
 //! starts anyway.
+//!
+//! With a donor tree (the working tree, restored for its own server) a JavaScript
+//! or C# step is not run when the donor's restore would give the same result:
+//! the copy links the donor's `node_modules` if lockfile, install settings and
+//! dependencies in `package.json` are the same, or takes the donor's `obj`
+//! restore output if every project, `.props`, `.targets`, NuGet setting and lock
+//! file is the same. See `reuse`.
 
 pub(crate) mod discover;
+mod reuse;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -53,6 +61,9 @@ struct Step {
     executes: bool,
     /// The project directory, relative to the root; the step runs in it.
     project: PathBuf,
+    /// The members of the project's workspace, relative to the root, which the
+    /// step installs along with the project.
+    covers: Vec<PathBuf>,
 }
 
 impl Step {
@@ -63,6 +74,7 @@ impl Step {
             env: Vec::new(),
             executes: false,
             project: project.to_owned(),
+            covers: Vec::new(),
         }
     }
 
@@ -114,6 +126,8 @@ impl Plan {
 pub struct ToolRestorer {
     /// Added to the environment of every restore command.
     env: Vec<(String, String)>,
+    /// A tree already restored: a step whose inputs are the same there is not run.
+    donor: Option<PathBuf>,
 }
 
 impl ToolRestorer {
@@ -122,7 +136,14 @@ impl ToolRestorer {
     }
 
     pub fn with_env(env: Vec<(String, String)>) -> Self {
-        Self { env }
+        Self { env, donor: None }
+    }
+
+    /// Takes over the restored dependencies of `donor`, the working tree, for a
+    /// step whose lockfile and manifests are the same in the tree restored.
+    pub fn reusing(mut self, donor: PathBuf) -> Self {
+        self.donor = Some(donor);
+        self
     }
 
     async fn plan(&self, root: &Path, language: &Language) -> Plan {
@@ -156,10 +177,13 @@ impl ToolRestorer {
     }
 
     fn javascript(root: &Path, files: &[PathBuf], plan: &mut Plan) {
-        let dirs = discover::candidates(files, &["package.json"]);
-        let dirs = discover::without_members(dirs.clone(), &discover::js_workspaces(root, &dirs));
-        for dir in plan.bounded(dirs, "npm") {
-            plan.steps.push(javascript_step(&root.join(&dir), &dir));
+        let all = discover::candidates(files, &["package.json"]);
+        let workspaces = discover::js_workspaces(root, &all);
+        let roots = discover::without_members(all.clone(), &workspaces);
+        for dir in plan.bounded(roots, "npm") {
+            let mut step = javascript_step(&root.join(&dir), &dir);
+            step.covers = discover::members(&all, &workspaces, &dir);
+            plan.steps.push(step);
         }
     }
 
@@ -374,6 +398,11 @@ impl Restorer for ToolRestorer {
                 continue;
             }
             restored.ran.push((label(&step.project), step.program.to_owned()));
+            if let Some(donor) = &self.donor
+                && reuse::reuse(donor, root, step).await
+            {
+                continue;
+            }
             if let Err(why) = self.run(root, step).await {
                 restored.failures.push(step.failure(why));
                 failed.push(&step.project);
