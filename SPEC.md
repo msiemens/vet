@@ -424,47 +424,66 @@ Also included: fetch-only restore with shared caches.
 
 ### M1 — daily driver
 
-- Committed and stacked changesets (per-commit / pseudo-commit / squash lenses)
-- Changeset queue home
-- Change decomposition (mechanical vs. logic clusters)
-- Interdiffs; snapshot timeline
-- Svelte/Angular backends (config entries + capability assert); C# is in the POC
-- JetBrains-feel package
-- Diagnostics on the changeset
-- Line highlight in the editor: the clicked line stays highlighted
-- Go to definition shows its target: the symbol under the pointer is underlined while Cmd/Ctrl is held
-- Find usages: a list of a symbol's references, any symbol, not only changed ones
-- Syntax highlighting in hover popups (the server's Markdown rendered, code blocks highlighted)
-- Hover popups styled as part of the app: the design tokens' sheet surface, border, radius and shadow, a readable maximum width and height with scrolling, consistent spacing between signature, docs and diagnostics, in both themes
-- File structure view: the symbols of the current file as a tree
-- App-drawn context menus in the code and the chrome instead of the webview's
-- Keyboard shortcuts for every action, shown in menus and tooltips, with a Keymap page in Settings (beyond the JetBrains-feel package's keymap import)
-- Edit and remove your own comments; removing the first comment removes its thread
-- Double-clicking a line in the Changes tab opens the file's tab at that line, highlighted
-- Project switcher: the project name in the title bar is a dropdown of recent projects, plus "Open…"
-- Loading screen while a project opens, naming the step it is at
-- Language-server status per server (starting, indexing with the server's progress, ready, failed, not installed), in the footer with details on click
-- Soft wrap, toggled per view and on by default for prose (Markdown, reStructuredText, plain text); a changed line that runs past the visible width is marked whether or not it wraps
-- Resizable dialogs (Settings first), keeping their size
-- The window reopens at its last position and size (falling back to the default when that display is gone)
-- The file icon of a file in the Changes tab opens the file's tab, like the hunk bar's; a changed file's tab switches between file and diff view
-- Git fetch (in-process, read-only): on demand and periodically, so remote branches and how far a base is behind are current; Vet never pulls, merges or rebases
-- The split between the right sidebar's panels can be dragged, keeping its position
+Grouped by area; areas and the items within each are in priority order.
+
+#### Reviewing changes
+
 - Sticky headers in every diff view: while scrolling, the current file's header and the current hunk's bar stay pinned at the top until the next one pushes them out
-- Speed search: typing in any menu, dropdown, list or tree filters it (camel-hump matching, matches highlighted, Escape clears; trees keep the folders on the path to a match), as in IntelliJ
-- Search in the open file (find with next/previous, matches marked) and search in the project (text across the repository's files, results grouped by file, opening a result at its line)
+- The Changes tab marks the file the viewer is in (in the tab and the file tree), and reopens the review at the scroll position it was left at
+- The base chosen while browsing is kept per repository: reopening the repository without an open review shows the tree against it again (§5.3)
+- Double-clicking a line in the Changes tab opens the file's tab at that line, highlighted
+- The file icon of a file in the Changes tab opens the file's tab, like the hunk bar's; a changed file's tab switches between file and diff view
+- A changed file's file view marks its added, changed and removed lines (removed ones where they were), coloured by review state; a mark opens the hunk's old lines with the hunk bar's actions (toggle seen, comment, open in the diff), so a change can be marked seen in context. Next/previous hunk and Space work there as in the diff (design to be iterated)
+- Edit and remove your own comments; removing the first comment removes its thread
+- Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
+- Line highlight in the editor: the clicked line stays highlighted
+- Soft wrap, toggled per view and on by default for prose (Markdown, reStructuredText, plain text); a changed line that runs past the visible width is marked whether or not it wraps
+
+#### Changesets and history
+
+- Committed and stacked changesets (per-commit / pseudo-commit / squash lenses)
+- Interdiffs; snapshot timeline
+- Git fetch (in-process, read-only): on demand and periodically, so remote branches and how far a base is behind are current; Vet never pulls, merges or rebases
+- Change decomposition (mechanical vs. logic clusters)
+- Changeset queue home
+
+#### Semantics and navigation
+
+- Diagnostics on the changeset
+- For a changed symbol: its changed callers (recursively, through changed symbols only) and changed callees, and its unchanged direct callers flagged as possibly affected; the list says what the server's call hierarchy cannot see (dynamic dispatch, reflection)
+- Clicking into a changed symbol in any editor (Changes, a diff or file tab) selects it in the changed-symbols panel
 - While a file's tab is active, the changed-symbols panel lists only that file's symbols
 - The changed-symbols panel shows its progress while it loads (files done of files to analyse) and lists symbols as their files are done
+- Jump to Source (F4) from the changed-symbols list opens the selected symbol's definition
+- Find usages: a list of a symbol's references, any symbol, not only changed ones
+- Go to definition shows its target: the symbol under the pointer is underlined while Cmd/Ctrl is held
+- Hover popups styled as part of the app: the design tokens' sheet surface, border, radius and shadow, a readable maximum width and height with scrolling, consistent spacing between signature, docs and diagnostics, in both themes
+- Syntax highlighting in hover popups (the server's Markdown rendered, code blocks highlighted)
+- File structure view: the symbols of the current file as a tree
+
+#### Language servers and performance
+
+- Language-server status per server (starting, indexing with the server's progress, ready, failed, not installed), in the footer with details on click
 - Language-server answers that depend only on a file's text (its symbols) are cached across restarts, keyed by language, server version and content
 - Materialized base snapshots and their dependency restore are kept between launches, keyed by snapshot, so reopening a review with the same base starts its servers without copying or restoring again
 - Semantic results track what they depend on (file contents, the project, server version), so a new revision recomputes only what its changes affect instead of discarding everything
-- For a changed symbol: its changed callers (recursively, through changed symbols only) and changed callees, and its unchanged direct callers flagged as possibly affected; the list says what the server's call hierarchy cannot see (dynamic dispatch, reflection)
-- Jump to Source (F4) from the changed-symbols list opens the selected symbol's definition
-- Clicking into a changed symbol in any editor (Changes, a diff or file tab) selects it in the changed-symbols panel
-- Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
-- A changed file's file view marks its added, changed and removed lines (removed ones where they were), coloured by review state; a mark opens the hunk's old lines with the hunk bar's actions (toggle seen, comment, open in the diff), so a change can be marked seen in context. Next/previous hunk and Space work there as in the diff (design to be iterated)
-- The Changes tab marks the file the viewer is in (in the tab and the file tree), and reopens the review at the scroll position it was left at
-- The base chosen while browsing is kept per repository: reopening the repository without an open review shows the tree against it again (§5.3)
+- Svelte/Angular backends (config entries + capability assert); C# is in the POC
+
+#### Search and keyboard
+
+- Search in the open file (find with next/previous, matches marked) and search in the project (text across the repository's files, results grouped by file, opening a result at its line)
+- Keyboard shortcuts for every action, shown in menus and tooltips, with a Keymap page in Settings (beyond the JetBrains-feel package's keymap import)
+- Speed search: typing in any menu, dropdown, list or tree filters it (camel-hump matching, matches highlighted, Escape clears; trees keep the folders on the path to a match), as in IntelliJ
+- JetBrains-feel package
+
+#### App shell
+
+- Loading screen while a project opens, naming the step it is at
+- Project switcher: the project name in the title bar is a dropdown of recent projects, plus "Open…"
+- App-drawn context menus in the code and the chrome instead of the webview's
+- The split between the right sidebar's panels can be dragged, keeping its position
+- The window reopens at its last position and size (falling back to the default when that display is gone)
+- Resizable dialogs (Settings first), keeping their size
 
 ### M2
 
