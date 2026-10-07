@@ -4,14 +4,14 @@
 
 use std::path::{Path, PathBuf};
 
-use vet_core::content::{BlobId, Changeset, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
+use vet_core::content::{BlobId, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 use vet_semantic::ports::{BackendId, ServerConfig};
 
+use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version};
 use crate::gc::{GcFacts, GcPlan};
-use crate::pin::{BaseChoice, CommitId, Pin, PinId};
-use crate::review::{NonTextAck, Session, SessionId, SpanId, Version};
+use crate::review::{ChangesetThread, NonTextAck, Review, ReviewId, SpanId};
 
 /// Monotonic milliseconds.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -213,24 +213,25 @@ pub trait History {
     ) -> impl Future<Output = Result<usize, GitError>> + Send;
 }
 
-/// The refs that keep a session's commits alive.
-pub trait SessionRefs {
-    /// Points `refs/vet/sessions/<session>/<name>` at `commit` so git keeps it
-    /// (§6.1).
-    fn set_session_ref(
+/// The refs that keep a changeset's commits alive.
+pub trait ChangesetRefs {
+    /// Points `refs/vet/changesets/<changeset>/<version>/<name>` at `commit` so
+    /// git keeps it (§6.1).
+    fn set_changeset_ref(
         &self,
-        session: SessionId,
+        changeset: ChangesetId,
+        version: u32,
         name: &str,
         commit: &CommitId,
     ) -> impl Future<Output = Result<(), GitError>> + Send;
-    /// Deletes every `refs/vet/sessions/<session>/*`.
-    fn delete_session_refs(&self, session: SessionId) -> impl Future<Output = Result<(), GitError>> + Send;
+    /// Deletes every `refs/vet/changesets/<changeset>/*`.
+    fn delete_changeset_refs(&self, changeset: ChangesetId) -> impl Future<Output = Result<(), GitError>> + Send;
 }
 
 /// Everything a live session needs of git.
-pub trait GitRepo: Scanner + Checkout + Differ + BlobReader + History + SessionRefs {}
+pub trait GitRepo: Scanner + Checkout + Differ + BlobReader + History + ChangesetRefs {}
 
-impl<T: Scanner + Checkout + Differ + BlobReader + History + SessionRefs> GitRepo for T {}
+impl<T: Scanner + Checkout + Differ + BlobReader + History + ChangesetRefs> GitRepo for T {}
 
 #[derive(Debug)]
 pub struct StoreError(pub String);
@@ -245,14 +246,15 @@ impl<E: std::error::Error> From<E> for StoreError {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct GcReport {
-    pub sessions_deleted: usize,
+    pub changesets_deleted: usize,
     pub snapshots_deleted: usize,
     pub nodes_deleted: usize,
     pub blobs_deleted: usize,
 }
 
-/// Content and snapshots (§8). One implementation backs this, [`ReviewStore`]
-/// and [`GcStore`]: GC checks references across sessions, spans and comments.
+/// Content and snapshots (§8). One implementation backs this, [`ChangesetStore`],
+/// [`ReviewStore`], [`ThreadStore`] and [`GcStore`]: GC checks references across
+/// changesets, spans and comments.
 pub trait Store {
     /// Content-addressed by `BlobId::of`; durable (fsynced, renamed) on return.
     fn put_blob(&self, bytes: Vec<u8>) -> impl Future<Output = Result<BlobId, StoreError>> + Send;
@@ -269,15 +271,6 @@ pub trait Store {
         &self,
         id: SnapshotId,
     ) -> impl Future<Output = Result<Option<(Snapshot, SnapshotStatus)>, StoreError>> + Send;
-    /// Append a settled snapshot to the session's edit timeline (§3); `at` is
-    /// unix seconds. The timeline's length is the review's version.
-    fn append_timeline(
-        &self,
-        session: SessionId,
-        snapshot: SnapshotId,
-        at: i64,
-    ) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn timeline(&self, session: SessionId) -> impl Future<Output = Result<Vec<Version>, StoreError>> + Send;
 }
 
 /// The store's side of garbage collection (§8): it knows how to read what
@@ -293,45 +286,59 @@ pub trait GcStore {
     ) -> impl Future<Output = Result<GcReport, StoreError>> + Send;
 }
 
+/// Changesets and their versions (§3). A changeset is found by the repository
+/// root and its source.
+pub trait ChangesetStore {
+    /// The changeset of `source` in the repository at `repo`, if it was stored.
+    fn changeset(
+        &self,
+        repo: String,
+        source: Source,
+    ) -> impl Future<Output = Result<Option<ChangesetId>, StoreError>> + Send;
+    /// The versions in order of their numbers.
+    fn versions(&self, changeset: ChangesetId) -> impl Future<Output = Result<Vec<Version>, StoreError>> + Send;
+    /// Adds the next version, numbered after the last.
+    fn append_version(
+        &self,
+        changeset: ChangesetId,
+        version: Version,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+}
+
 /// Review state (§5.2). Spans are replaced as a set because remapping is
 /// a partition.
 pub trait ReviewStore {
-    fn put_pin(&self, head: CommitId, tree: SnapshotId) -> impl Future<Output = Result<Pin, StoreError>> + Send;
-    fn pin(&self, id: PinId) -> impl Future<Output = Result<Option<Pin>, StoreError>> + Send;
-    /// `repo` is the repository root the session reviews, which is how a later
-    /// open finds it again. `base` is how `changeset.base` was chosen and
-    /// `base_commit` the commit it is the tree of.
-    fn open_session(
+    /// Opens a review of the changeset of `source` in the repository at `repo`,
+    /// storing the changeset if need be, with `base` as the chosen base rule.
+    /// `first` replaces the changeset's versions: a working tree is versioned
+    /// only while a review of it is open, so a new review starts over. `now` is
+    /// unix seconds.
+    fn start_review(
         &self,
         repo: String,
-        pin: PinId,
-        changeset: Changeset,
+        source: Source,
         base: BaseChoice,
-        base_commit: CommitId,
-    ) -> impl Future<Output = Result<SessionId, StoreError>> + Send;
+        first: Version,
+        now: i64,
+    ) -> impl Future<Output = Result<(ChangesetId, ReviewId), StoreError>> + Send;
     /// `now` is unix seconds; `complete` is whether the review was complete.
-    fn close_session(
+    fn close_review(
         &self,
-        id: SessionId,
+        id: ReviewId,
         now: i64,
         complete: bool,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
-    /// The open sessions of `repo`, oldest first.
-    fn open_sessions(&self, repo: String) -> impl Future<Output = Result<Vec<SessionId>, StoreError>> + Send;
-    fn session(&self, id: SessionId) -> impl Future<Output = Result<Option<Session>, StoreError>> + Send;
+    /// The review of `changeset` that is open, if any; the newest if several are.
+    fn open_review(&self, changeset: ChangesetId) -> impl Future<Output = Result<Option<ReviewId>, StoreError>> + Send;
+    fn review(&self, id: ReviewId) -> impl Future<Output = Result<Option<Review>, StoreError>> + Send;
     /// The review filter of the repository at `repo`, a project setting that
     /// applies to every changeset of it; the default if none was stored.
     fn filter(&self, repo: String) -> impl Future<Output = Result<ReviewFilter, StoreError>> + Send;
     fn set_filter(&self, repo: String, filter: ReviewFilter) -> impl Future<Output = Result<(), StoreError>> + Send;
-    /// Moves the session's changeset to the base snapshot `base`, the tree of
-    /// `commit`, chosen as `choice`.
-    fn set_base(
-        &self,
-        id: SessionId,
-        base: SnapshotId,
-        choice: BaseChoice,
-        commit: CommitId,
-    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Records that the review's base was chosen as `choice`.
+    fn set_base(&self, id: ReviewId, choice: BaseChoice) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Records the number of the version the viewer last marked something in.
+    fn set_last_reviewed(&self, id: ReviewId, version: u32) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Recorded spans are the user's marks in the coordinates they were made
     /// in. They are never remapped in place: callers remap them per changeset
     /// from these (so a reverted edit regains coverage) and keep the result
@@ -340,15 +347,23 @@ pub trait ReviewStore {
     /// Atomic; returns the ids of the added spans.
     fn edit_spans(
         &self,
-        id: SessionId,
+        id: ReviewId,
         remove: Vec<SpanId>,
         add: Vec<ReviewedSpan>,
     ) -> impl Future<Output = Result<Vec<SpanId>, StoreError>> + Send;
-    fn acknowledge(&self, id: SessionId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn unacknowledge(&self, id: SessionId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn acknowledge(&self, id: ReviewId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn unacknowledge(&self, id: ReviewId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
+}
+
+/// The threads of a changeset, which outlive any review of it.
+pub trait ThreadStore {
+    /// Every thread of `changeset`, oldest first.
+    fn threads(&self, changeset: ChangesetId) -> impl Future<Output = Result<Vec<ChangesetThread>, StoreError>> + Send;
+    /// Opens a thread; `review` is the review it is written in, if any.
     fn add_thread(
         &self,
-        id: SessionId,
+        changeset: ChangesetId,
+        review: Option<ReviewId>,
         target: CommentTarget,
         opener: Message,
     ) -> impl Future<Output = Result<ThreadId, StoreError>> + Send;
@@ -366,6 +381,11 @@ pub trait ReviewStore {
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn delete_thread(&self, thread: ThreadId) -> impl Future<Output = Result<(), StoreError>> + Send;
 }
+
+/// Everything a live session needs of the store.
+pub trait LiveStore: Store + ChangesetStore + ReviewStore + ThreadStore {}
+
+impl<T: Store + ChangesetStore + ReviewStore + ThreadStore> LiveStore for T {}
 
 pub struct Command {
     pub program: String,

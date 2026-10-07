@@ -17,12 +17,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gix::bstr::ByteSlice;
-use vet_app::pin::CommitId;
+use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
-    BaseCandidates, BlobRead, BlobReader, BranchInfo, Checkout, CheckoutError, CommitInfo, Differ, Dirty, GitError,
-    History, IgnoreRules, Scan, Scanner, SessionRefs, Store,
+    BaseCandidates, BlobRead, BlobReader, BranchInfo, ChangesetRefs, Checkout, CheckoutError, CommitInfo, Differ,
+    Dirty, GitError, History, IgnoreRules, Scan, Scanner, Store,
 };
-use vet_app::review::SessionId;
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
 
@@ -300,24 +299,31 @@ impl History for GixRepo {
     }
 }
 
-impl SessionRefs for GixRepo {
-    async fn set_session_ref(&self, session: SessionId, name: &str, commit: &CommitId) -> Result<(), GitError> {
-        let (name, commit) = (format!("{}{name}", session_ref_prefix(session)), commit.clone());
+impl ChangesetRefs for GixRepo {
+    async fn set_changeset_ref(
+        &self,
+        changeset: ChangesetId,
+        version: u32,
+        name: &str,
+        commit: &CommitId,
+    ) -> Result<(), GitError> {
+        let name = format!("{}{version}/{name}", changeset_ref_prefix(changeset));
+        let commit = commit.clone();
         self.blocking(move |i| {
             let id = object_id(&commit)?;
             i.open()?
-                .reference(name, id, gix::refs::transaction::PreviousValue::Any, "vet session")
+                .reference(name, id, gix::refs::transaction::PreviousValue::Any, "vet changeset")
                 .map_err(err)?;
             Ok(())
         })
         .await
     }
 
-    async fn delete_session_refs(&self, session: SessionId) -> Result<(), GitError> {
+    async fn delete_changeset_refs(&self, changeset: ChangesetId) -> Result<(), GitError> {
         self.blocking(move |i| {
             let repo = i.open()?;
             let platform = repo.references().map_err(err)?;
-            let prefix = session_ref_prefix(session);
+            let prefix = changeset_ref_prefix(changeset);
             for reference in platform.prefixed(prefix.as_str()).map_err(err)? {
                 reference.map_err(err)?.delete().map_err(err)?;
             }
@@ -346,8 +352,8 @@ impl IgnoreRules for GixRepo {
     }
 }
 
-fn session_ref_prefix(session: SessionId) -> String {
-    format!("refs/vet/sessions/{}/", session.0)
+fn changeset_ref_prefix(changeset: ChangesetId) -> String {
+    format!("refs/vet/changesets/{}/", changeset.0)
 }
 
 fn err(e: impl Display) -> GitError {

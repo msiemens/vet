@@ -1,5 +1,6 @@
 //! Tables as SeaORM entities. Hashes and paths are blobs; enums are integers
-//! mapped in `codec`. Children of a session cascade on its deletion.
+//! mapped in `codec`. Children of a changeset cascade on its deletion, and
+//! those of a review (marks) on its deletion.
 
 /// Enumerations stored as integers.
 pub mod kinds {
@@ -25,41 +26,42 @@ pub mod kinds {
     int_enum!(ChildKind { File = 0, Dir = 1 });
     int_enum!(PathFlag { Collision = 0, ContentUnavailable = 1 });
     int_enum!(ChangeKind { Mode = 0, Symlink = 1, Submodule = 2, Binary = 3, ContentUnavailable = 4, Rename = 5, Empty = 6 });
+    int_enum!(SourceKind { WorkingTree = 0, Branch = 1, PullRequest = 2 });
+    int_enum!(VersionOrigin { Settled = 0, BaseMoved = 1 });
 }
 
-macro_rules! child_of_session {
+macro_rules! child_of_changeset {
     () => {
         #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
         pub enum Relation {
             #[sea_orm(
-                belongs_to = "super::session::Entity",
-                from = "Column::Session",
-                to = "super::session::Column::Id",
+                belongs_to = "super::changeset::Entity",
+                from = "Column::Changeset",
+                to = "super::changeset::Column::Id",
                 on_delete = "Cascade"
             )]
-            Session,
+            Changeset,
         }
 
         impl ActiveModelBehavior for ActiveModel {}
     };
 }
 
-pub mod pin {
-    use sea_orm::entity::prelude::*;
+macro_rules! child_of_review {
+    () => {
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+        pub enum Relation {
+            #[sea_orm(
+                belongs_to = "super::review::Entity",
+                from = "Column::Review",
+                to = "super::review::Column::Id",
+                on_delete = "Cascade"
+            )]
+            Review,
+        }
 
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "pin")]
-    pub struct Model {
-        #[sea_orm(primary_key)]
-        pub id: i64,
-        pub head: String,
-        pub tree: Vec<u8>,
-    }
-
-    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {}
-
-    impl ActiveModelBehavior for ActiveModel {}
+        impl ActiveModelBehavior for ActiveModel {}
+    };
 }
 
 pub mod snapshot {
@@ -161,57 +163,85 @@ pub mod tree_child {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-pub mod session {
+/// What is reviewed, keyed by the repository root and its source. `key` is the
+/// branch name, or `host/path#number` of a pull request, and empty for the
+/// working tree.
+pub mod changeset {
+    use super::kinds::*;
     use sea_orm::entity::prelude::*;
 
     #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "session")]
+    #[sea_orm(table_name = "changeset")]
     pub struct Model {
         #[sea_orm(primary_key)]
         pub id: i64,
-        /// The repository root.
+        #[sea_orm(unique_key = "source")]
         pub repo: String,
-        pub pin: i64,
+        #[sea_orm(unique_key = "source")]
+        pub kind: SourceKind,
+        #[sea_orm(unique_key = "source")]
+        pub key: String,
+    }
+
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {}
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+/// A state of a changeset; the numbers of a changeset's versions are unique.
+pub mod version {
+    use super::kinds::*;
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "version")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        #[sea_orm(unique_key = "number")]
+        pub changeset: i64,
+        #[sea_orm(unique_key = "number")]
+        pub n: i64,
         pub base: Vec<u8>,
+        pub base_commit: String,
         pub target: Vec<u8>,
+        pub tip: String,
+        /// Unix seconds.
+        pub at: i64,
+        pub origin: VersionOrigin,
+    }
+
+    child_of_changeset!();
+}
+
+/// How the review's base was chosen. `base_value` is the branch, the reference
+/// or the commit id.
+pub mod review {
+    use super::kinds::*;
+    use sea_orm::entity::prelude::*;
+
+    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
+    #[sea_orm(table_name = "review")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i64,
+        pub changeset: i64,
+        pub base_kind: BaseKind,
+        pub base_value: String,
+        /// The number of the version something was last marked in.
+        pub last_reviewed: Option<i64>,
+        /// Unix seconds.
+        pub opened_at: i64,
         pub closed_at: Option<i64>,
         /// Whether the review was complete when it was finished; false while open.
         pub complete: bool,
     }
 
-    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {
-        #[sea_orm(
-            belongs_to = "super::pin::Entity",
-            from = "Column::Pin",
-            to = "super::pin::Column::Id"
-        )]
-        Pin,
-    }
-
-    impl ActiveModelBehavior for ActiveModel {}
+    child_of_changeset!();
 }
 
-/// How the session's base was chosen and the commit it resolved to. `value` is
-/// the branch, the reference or the commit id.
-pub mod session_base {
-    use super::kinds::*;
-    use sea_orm::entity::prelude::*;
-
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "session_base")]
-    pub struct Model {
-        #[sea_orm(primary_key, auto_increment = false)]
-        pub session: i64,
-        pub kind: BaseKind,
-        pub value: String,
-        pub commit: String,
-    }
-
-    child_of_session!();
-}
-
-/// A repository's review filter, keyed by the repository root like sessions are.
+/// A repository's review filter, keyed by the repository root like changesets are.
 /// No row means the default filter.
 pub mod project_filter {
     use sea_orm::entity::prelude::*;
@@ -259,24 +289,6 @@ pub mod project_filter_item {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-/// Settled snapshots of a session's tip; order is the row id.
-pub mod timeline {
-    use sea_orm::entity::prelude::*;
-
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "timeline")]
-    pub struct Model {
-        #[sea_orm(primary_key)]
-        pub id: i64,
-        pub session: i64,
-        pub snapshot: Vec<u8>,
-        /// Unix seconds.
-        pub at: i64,
-    }
-
-    child_of_session!();
-}
-
 /// Owned by a span or a thread; deleted with its owner.
 pub mod anchor {
     use super::kinds::*;
@@ -287,7 +299,7 @@ pub mod anchor {
     pub struct Model {
         #[sea_orm(primary_key)]
         pub id: i64,
-        pub session: i64,
+        pub changeset: i64,
         pub side: Side,
         pub snapshot: Vec<u8>,
         pub file: Vec<u8>,
@@ -299,7 +311,7 @@ pub mod anchor {
         pub context: Vec<u8>,
     }
 
-    child_of_session!();
+    child_of_changeset!();
 }
 
 pub mod span {
@@ -311,13 +323,13 @@ pub mod span {
     pub struct Model {
         #[sea_orm(primary_key)]
         pub id: i64,
-        pub session: i64,
+        pub review: i64,
         pub state: SpanState,
         pub base_anchor: Option<i64>,
         pub target_anchor: Option<i64>,
     }
 
-    child_of_session!();
+    child_of_review!();
 }
 
 /// A non-text acknowledgement: before and after entries, each absent for an
@@ -331,7 +343,7 @@ pub mod ack {
     pub struct Model {
         #[sea_orm(primary_key)]
         pub id: i64,
-        pub session: i64,
+        pub review: i64,
         pub change: ChangeKind,
         pub before_path: Option<Vec<u8>>,
         pub before_blob: Option<Vec<u8>>,
@@ -345,10 +357,12 @@ pub mod ack {
         pub after_unfiltered: Option<bool>,
     }
 
-    child_of_session!();
+    child_of_review!();
 }
 
 /// `kind`: 0 range (uses `anchor`), 1 file (`file_side`, `file_path`), 2 changeset.
+/// `review` is the review a local thread was opened in; it only says where the
+/// thread came from.
 pub mod thread {
     use super::kinds::*;
     use sea_orm::entity::prelude::*;
@@ -358,7 +372,8 @@ pub mod thread {
     pub struct Model {
         #[sea_orm(primary_key)]
         pub id: i64,
-        pub session: i64,
+        pub changeset: i64,
+        pub review: Option<i64>,
         pub kind: ThreadKind,
         pub file_side: Option<Side>,
         pub file_path: Option<Vec<u8>>,
@@ -366,7 +381,25 @@ pub mod thread {
         pub status: ThreadStatus,
     }
 
-    child_of_session!();
+    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+    pub enum Relation {
+        #[sea_orm(
+            belongs_to = "super::changeset::Entity",
+            from = "Column::Changeset",
+            to = "super::changeset::Column::Id",
+            on_delete = "Cascade"
+        )]
+        Changeset,
+        #[sea_orm(
+            belongs_to = "super::review::Entity",
+            from = "Column::Review",
+            to = "super::review::Column::Id",
+            on_delete = "SetNull"
+        )]
+        Review,
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
 }
 
 pub mod message {

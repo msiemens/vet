@@ -4,7 +4,7 @@ pub mod account;
 pub mod progress;
 pub mod semantic;
 
-use vet_app::pin::{BaseChoice, CommitId};
+use vet_app::changeset::{BaseChoice, CommitId};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::session::{
     BaseView, CommentAt, CommentSpot, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemBlob, ItemView,

@@ -3,7 +3,7 @@
 
 use vet_semantic::policy::AnalysisPolicy;
 
-use crate::pin::CommitId;
+use crate::changeset::CommitId;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Trust {

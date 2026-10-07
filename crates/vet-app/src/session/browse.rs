@@ -3,7 +3,7 @@
 use vet_core::content::{EntryKind, RepoPath};
 
 use super::{LiveSession, Result, SessionError};
-use crate::ports::{GitRepo, ReviewStore, Store};
+use crate::ports::{GitRepo, LiveStore};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DirEntryKind {
@@ -30,7 +30,7 @@ pub struct DirListing {
     pub entries: Vec<DirItem>,
 }
 
-impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// The children of `path` (`""` is the root) in the target snapshot.
     pub async fn list_directory(&self, path: &str) -> Result<DirListing> {
         let mut st = self.state.lock().await;

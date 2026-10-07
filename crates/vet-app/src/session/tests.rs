@@ -21,12 +21,12 @@ use super::blobs::image_media_type;
 use super::manifest::{old_path_of, update_of};
 use super::state::{check_revision, outcome};
 use super::*;
-use crate::pin::{BaseChoice, CommitId, Pin, PinId};
+use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version, VersionOrigin};
 use crate::ports::{
-    BlobRead, BlobReader, BranchInfo, Checkout, CommitInfo, Differ, Dirty, GitError, History, ReviewStore, Scan,
-    Scanner, SessionRefs, Store, StoreError,
+    BlobRead, BlobReader, BranchInfo, ChangesetRefs, ChangesetStore, Checkout, CommitInfo, Differ, Dirty, GitError,
+    History, ReviewStore, Scan, Scanner, Store, StoreError, ThreadStore,
 };
-use crate::review::{NonTextAck, RecordedSpan, Session, SpanId, Version};
+use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, SpanId};
 
 const REPO: &str = "/repo";
 
@@ -105,7 +105,7 @@ pub(crate) struct FakeGit {
     blobs: Arc<Mutex<HashMap<BlobId, Vec<u8>>>>,
     base: Arc<Mutex<Option<Snapshot>>>,
     scans: Arc<Mutex<Vec<Snapshot>>>,
-    /// `<name>` of each held `refs/vet/sessions/<id>/<name>` and the commit.
+    /// `<version>/<name>` of each held `refs/vet/changesets/<id>/<version>/<name>` and the commit.
     refs: Arc<Mutex<Vec<(String, CommitId)>>>,
     /// What revisions (`merge-base <ref>` for merge bases) resolve to, with the commit's tree.
     commits: Arc<Mutex<HashMap<String, (CommitId, Snapshot)>>>,
@@ -266,14 +266,21 @@ impl History for FakeGit {
     }
 }
 
-impl SessionRefs for FakeGit {
-    async fn set_session_ref(&self, _: SessionId, name: &str, commit: &CommitId) -> std::result::Result<(), GitError> {
+impl ChangesetRefs for FakeGit {
+    async fn set_changeset_ref(
+        &self,
+        _: ChangesetId,
+        version: u32,
+        name: &str,
+        commit: &CommitId,
+    ) -> std::result::Result<(), GitError> {
+        let name = format!("{version}/{name}");
         let mut refs = self.refs.lock().unwrap();
-        refs.retain(|(n, _)| n != name);
-        refs.push((name.into(), commit.clone()));
+        refs.retain(|(n, _)| *n != name);
+        refs.push((name, commit.clone()));
         Ok(())
     }
-    async fn delete_session_refs(&self, _: SessionId) -> std::result::Result<(), GitError> {
+    async fn delete_changeset_refs(&self, _: ChangesetId) -> std::result::Result<(), GitError> {
         self.refs.lock().unwrap().clear();
         Ok(())
     }
@@ -307,28 +314,33 @@ impl Differ for FakeGit {
     }
 }
 
+/// One changeset (`ChangesetId(1)`) and its newest review; starting a review forgets the marks
+/// of the one before, as there is nothing to read them back for.
 #[derive(Default)]
 struct Mem {
     blobs: HashMap<BlobId, Vec<u8>>,
     snapshots: HashMap<SnapshotId, (Snapshot, SnapshotStatus)>,
-    timeline: Vec<Version>,
+    /// The repository and source of the changeset, once a review started.
+    changeset: Option<(String, Source)>,
+    versions: Vec<Version>,
+    /// How many reviews were started; the newest one's id.
+    started: u64,
     spans: Vec<(SpanId, ReviewedSpan)>,
     next_span: u64,
     acks: Vec<NonTextAck>,
-    base: Option<(SnapshotId, BaseChoice, CommitId)>,
+    base: Option<BaseChoice>,
+    last_reviewed: Option<u32>,
     closed: bool,
     /// Whether the review was complete when it was closed.
     complete: Option<bool>,
-    threads: Vec<Thread>,
+    threads: Vec<ChangesetThread>,
     filter: Option<ReviewFilter>,
-    pin: Option<Pin>,
-    /// The repository and changeset the session was opened with.
-    opened: Option<(String, Changeset)>,
 }
 
 impl Mem {
     fn thread(&mut self, id: ThreadId) -> &mut Thread {
-        self.threads.iter_mut().find(|t| t.id == id).expect("a stored thread")
+        let found = self.threads.iter_mut().find(|t| t.thread.id == id);
+        &mut found.expect("a stored thread").thread
     }
 }
 
@@ -353,75 +365,64 @@ impl Store for MemStore {
     async fn snapshot(&self, id: SnapshotId) -> StoreResult<Option<(Snapshot, SnapshotStatus)>> {
         Ok(self.0.lock().unwrap().snapshots.get(&id).cloned())
     }
-    async fn append_timeline(&self, _: SessionId, snapshot: SnapshotId, at: i64) -> StoreResult<()> {
-        self.0.lock().unwrap().timeline.push(Version { snapshot, at });
-        Ok(())
+}
+
+impl ChangesetStore for MemStore {
+    async fn changeset(&self, repo: String, source: Source) -> StoreResult<Option<ChangesetId>> {
+        let mem = self.0.lock().unwrap();
+        Ok((mem.changeset == Some((repo, source))).then_some(ChangesetId(1)))
     }
-    async fn timeline(&self, _: SessionId) -> StoreResult<Vec<Version>> {
-        Ok(self.0.lock().unwrap().timeline.clone())
+    async fn versions(&self, _: ChangesetId) -> StoreResult<Vec<Version>> {
+        Ok(self.0.lock().unwrap().versions.clone())
+    }
+    async fn append_version(&self, _: ChangesetId, version: Version) -> StoreResult<()> {
+        self.0.lock().unwrap().versions.push(version);
+        Ok(())
     }
 }
 
 impl ReviewStore for MemStore {
-    async fn put_pin(&self, head: CommitId, tree: SnapshotId) -> StoreResult<Pin> {
-        let pin = Pin {
-            id: PinId(1),
-            head,
-            tree,
-        };
-        self.0.lock().unwrap().pin = Some(pin.clone());
-        Ok(pin)
-    }
-    async fn pin(&self, _: PinId) -> StoreResult<Option<Pin>> {
-        Ok(self.0.lock().unwrap().pin.clone())
-    }
-    async fn open_session(
+    async fn start_review(
         &self,
         repo: String,
-        _: PinId,
-        changeset: Changeset,
+        source: Source,
         choice: BaseChoice,
-        commit: CommitId,
-    ) -> StoreResult<SessionId> {
+        first: Version,
+        _: i64,
+    ) -> StoreResult<(ChangesetId, ReviewId)> {
         let mut mem = self.0.lock().unwrap();
         *mem = Mem {
             blobs: std::mem::take(&mut mem.blobs),
             snapshots: std::mem::take(&mut mem.snapshots),
-            pin: mem.pin.take(),
-            base: Some((changeset.base, choice, commit)),
-            opened: Some((repo, changeset)),
+            threads: std::mem::take(&mut mem.threads),
             filter: mem.filter.take(),
+            started: mem.started + 1,
+            base: Some(choice),
+            changeset: Some((repo, source)),
+            versions: vec![first],
             ..Default::default()
         };
-        Ok(SessionId(1))
+        Ok((ChangesetId(1), ReviewId(mem.started)))
     }
-    async fn close_session(&self, _: SessionId, _: i64, complete: bool) -> StoreResult<()> {
+    async fn close_review(&self, _: ReviewId, _: i64, complete: bool) -> StoreResult<()> {
         let mut mem = self.0.lock().unwrap();
         mem.closed = true;
         mem.complete = Some(complete);
         Ok(())
     }
-    async fn open_sessions(&self, repo: String) -> StoreResult<Vec<SessionId>> {
+    async fn open_review(&self, _: ChangesetId) -> StoreResult<Option<ReviewId>> {
         let mem = self.0.lock().unwrap();
-        let open = mem.opened.as_ref().is_some_and(|(r, _)| *r == repo) && !mem.closed;
-        Ok(open.then_some(SessionId(1)).into_iter().collect())
+        Ok((mem.changeset.is_some() && !mem.closed).then_some(ReviewId(mem.started)))
     }
-    async fn session(&self, id: SessionId) -> StoreResult<Option<Session>> {
+    async fn review(&self, id: ReviewId) -> StoreResult<Option<Review>> {
         let mem = self.0.lock().unwrap();
-        let Some((_, changeset)) = &mem.opened else {
+        if mem.changeset.is_none() {
             return Ok(None);
-        };
-        let (base, choice, commit) = mem.base.clone().expect("set when the session was opened");
-        Ok(Some(Session {
+        }
+        Ok(Some(Review {
             id,
-            pin: PinId(1),
-            changeset: Changeset {
-                base,
-                target: changeset.target,
-            },
-            base: choice,
-            base_commit: commit,
-            complete: mem.complete,
+            changeset: ChangesetId(1),
+            base: mem.base.clone().expect("set when the review was started"),
             spans: mem
                 .spans
                 .iter()
@@ -431,8 +432,10 @@ impl ReviewStore for MemStore {
                 })
                 .collect(),
             acks: mem.acks.clone(),
-            threads: mem.threads.clone(),
+            last_reviewed: mem.last_reviewed,
+            opened_at: 0,
             closed_at: mem.closed.then_some(0),
+            complete: mem.complete,
         }))
     }
     async fn filter(&self, _: String) -> StoreResult<ReviewFilter> {
@@ -442,11 +445,15 @@ impl ReviewStore for MemStore {
         self.0.lock().unwrap().filter = Some(filter);
         Ok(())
     }
-    async fn set_base(&self, _: SessionId, base: SnapshotId, choice: BaseChoice, commit: CommitId) -> StoreResult<()> {
-        self.0.lock().unwrap().base = Some((base, choice, commit));
+    async fn set_base(&self, _: ReviewId, choice: BaseChoice) -> StoreResult<()> {
+        self.0.lock().unwrap().base = Some(choice);
         Ok(())
     }
-    async fn edit_spans(&self, _: SessionId, remove: Vec<SpanId>, add: Vec<ReviewedSpan>) -> StoreResult<Vec<SpanId>> {
+    async fn set_last_reviewed(&self, _: ReviewId, version: u32) -> StoreResult<()> {
+        self.0.lock().unwrap().last_reviewed = Some(version);
+        Ok(())
+    }
+    async fn edit_spans(&self, _: ReviewId, remove: Vec<SpanId>, add: Vec<ReviewedSpan>) -> StoreResult<Vec<SpanId>> {
         let mut mem = self.0.lock().unwrap();
         mem.spans.retain(|(id, _)| !remove.contains(id));
         let mut ids = Vec::new();
@@ -458,22 +465,37 @@ impl ReviewStore for MemStore {
         }
         Ok(ids)
     }
-    async fn acknowledge(&self, _: SessionId, ack: NonTextAck) -> StoreResult<()> {
+    async fn acknowledge(&self, _: ReviewId, ack: NonTextAck) -> StoreResult<()> {
         self.0.lock().unwrap().acks.push(ack);
         Ok(())
     }
-    async fn unacknowledge(&self, _: SessionId, ack: NonTextAck) -> StoreResult<()> {
+    async fn unacknowledge(&self, _: ReviewId, ack: NonTextAck) -> StoreResult<()> {
         self.0.lock().unwrap().acks.retain(|a| *a != ack);
         Ok(())
     }
-    async fn add_thread(&self, _: SessionId, target: CommentTarget, opener: Message) -> StoreResult<ThreadId> {
+}
+
+impl ThreadStore for MemStore {
+    async fn threads(&self, _: ChangesetId) -> StoreResult<Vec<ChangesetThread>> {
+        Ok(self.0.lock().unwrap().threads.clone())
+    }
+    async fn add_thread(
+        &self,
+        _: ChangesetId,
+        review: Option<ReviewId>,
+        target: CommentTarget,
+        opener: Message,
+    ) -> StoreResult<ThreadId> {
         let mut mem = self.0.lock().unwrap();
         let id = ThreadId(mem.threads.len() as u64 + 1);
-        mem.threads.push(Thread {
-            id,
-            target,
-            messages: vec![opener],
-            status: ThreadStatus::Open,
+        mem.threads.push(ChangesetThread {
+            thread: Thread {
+                id,
+                target,
+                messages: vec![opener],
+                status: ThreadStatus::Open,
+            },
+            review,
         });
         Ok(id)
     }
@@ -490,7 +512,7 @@ impl ReviewStore for MemStore {
         Ok(())
     }
     async fn delete_thread(&self, thread: ThreadId) -> StoreResult<()> {
-        self.0.lock().unwrap().threads.retain(|t| t.id != thread);
+        self.0.lock().unwrap().threads.retain(|t| t.thread.id != thread);
         Ok(())
     }
 }
@@ -599,7 +621,7 @@ async fn browsing_keeps_nothing_and_settling_does_not_start_a_review() {
     assert_eq!((m.revision, m.lifecycle), (1, Lifecycle::Browsing));
     assert_eq!(m.files.len(), 1);
     let mem = fx.store.0.lock().unwrap();
-    assert!(mem.opened.is_none() && mem.snapshots.is_empty() && mem.timeline.is_empty());
+    assert!(mem.changeset.is_none() && mem.snapshots.is_empty() && mem.versions.is_empty());
     assert!(mem.blobs.is_empty());
     assert!(fx.git.refs.lock().unwrap().is_empty());
 }
@@ -629,6 +651,7 @@ async fn the_first_mark_starts_the_review_at_version_1_and_retains_dirty_content
         fx.session.manifest().await.unwrap().lifecycle,
         Lifecycle::Open { version: 1, .. }
     ));
+    let started = fx.session.target_snapshot().await.id;
     let mem = fx.store.0.lock().unwrap();
     assert!(mem.blobs.contains_key(&BlobId::of(b.as_bytes())));
     assert!(mem.blobs.contains_key(&BlobId::of(b"n\n")));
@@ -637,9 +660,22 @@ async fn the_first_mark_starts_the_review_at_version_1_and_retains_dirty_content
         "HEAD content stays in git"
     );
     assert_eq!(mem.snapshots.len(), 2);
-    assert_eq!(mem.timeline.len(), 1);
     assert_eq!(mem.spans.len(), 1);
     assert_eq!(fx.git.refs.lock().unwrap().len(), 2);
+    let [first] = &mem.versions[..] else {
+        panic!("{:?}", mem.versions)
+    };
+    assert_eq!(
+        (first.n, &first.base_commit, &first.tip, first.target, first.origin),
+        (
+            1,
+            &CommitId("head".into()),
+            &CommitId("head".into()),
+            started,
+            VersionOrigin::Settled
+        )
+    );
+    assert_eq!(mem.base, Some(detached_head()));
 }
 
 #[tokio::test]
@@ -698,12 +734,69 @@ async fn each_settled_snapshot_of_an_open_review_is_the_next_version() {
             updated_at: 900
         }
     );
-    // A base or filter change is not a version.
+    let target = fx.session.target_snapshot().await.id;
+    let versions = fx.store.0.lock().unwrap().versions.clone();
+    assert_eq!(
+        versions.iter().map(|v| (v.n, v.origin, v.at)).collect::<Vec<_>>(),
+        [
+            (1, VersionOrigin::Settled, 100),
+            (2, VersionOrigin::Settled, 900),
+            (3, VersionOrigin::Settled, 900)
+        ]
+    );
+    assert_eq!(versions[2].target, target, "the version is the snapshot that settled");
+    assert!(
+        versions
+            .iter()
+            .all(|v| (v.base, &v.base_commit, &v.tip) == (versions[0].base, &versions[0].base_commit, &versions[0].tip)),
+        "versions of one review share its base and the commit it started at"
+    );
+    // A filter change is not a version.
     fx.session.set_filter(ReviewFilter::default()).await.unwrap();
+    assert_eq!(fx.store.0.lock().unwrap().versions.len(), 3);
+}
+
+#[tokio::test]
+async fn a_base_on_another_commit_is_the_next_version() {
+    NOW.store(500, Ordering::Relaxed);
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.settle(&[("a.txt", "three\n")]).await;
+    let before = fx.store.0.lock().unwrap().versions.clone();
     fx.git.add_commit("c1", "c1-full", &[("a.txt", "zero\n")]);
+    fx.git.add_commit("merge-base main", "c1-full", &[("a.txt", "zero\n")]);
+
     fx.session
         .set_base(BaseChoice::Commit {
             id: CommitId("c1".into()),
+        })
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        fx.session.lifecycle().await,
+        Lifecycle::Open { version: 3, .. }
+    ));
+    let versions = fx.store.0.lock().unwrap().versions.clone();
+    let (settled, moved) = (&versions[1], &versions[2]);
+    assert_eq!(versions.len(), 3);
+    assert_eq!(moved.origin, VersionOrigin::BaseMoved);
+    assert_eq!(moved.base_commit, CommitId("c1-full".into()));
+    assert_ne!(moved.base, settled.base, "the version has the new base's tree");
+    assert_eq!(
+        (&moved.target, &moved.tip, moved.at),
+        (&settled.target, &settled.tip, 500),
+        "and the target the tree had when the base moved"
+    );
+    assert_eq!(versions[..2], before[..], "earlier versions stay as they were");
+    // Only what the version adds is kept by a ref: the new base, not the commit already held.
+    let mut refs: Vec<_> = fx.git.refs.lock().unwrap().iter().map(|(n, _)| n.clone()).collect();
+    refs.sort();
+    assert_eq!(refs, ["1/base", "1/tip", "3/base"]);
+
+    // The same commit chosen another way is the same version.
+    fx.session
+        .set_base(BaseChoice::MergeBase {
+            reference: "main".into(),
         })
         .await
         .unwrap();
@@ -711,7 +804,14 @@ async fn each_settled_snapshot_of_an_open_review_is_the_next_version() {
         fx.session.lifecycle().await,
         Lifecycle::Open { version: 3, .. }
     ));
-    assert_eq!(fx.store.0.lock().unwrap().timeline.len(), 3);
+    let mem = fx.store.0.lock().unwrap();
+    assert_eq!(mem.versions.len(), 3);
+    assert_eq!(
+        mem.base,
+        Some(BaseChoice::MergeBase {
+            reference: "main".into()
+        })
+    );
 }
 
 #[tokio::test]
@@ -748,7 +848,7 @@ async fn finishing_returns_to_browsing_and_a_later_action_starts_a_new_review() 
         Lifecycle::Open { version: 1, .. }
     ));
     let mem = fx.store.0.lock().unwrap();
-    assert_eq!((mem.closed, mem.timeline.len(), mem.spans.len()), (false, 1, 1));
+    assert_eq!((mem.closed, mem.versions.len(), mem.spans.len()), (false, 1, 1));
 }
 
 #[tokio::test]
@@ -1171,8 +1271,8 @@ async fn the_commits_are_held_while_the_review_is_open() {
     assert_eq!(
         held(&fx),
         [
-            ("base".to_string(), CommitId("head".into())),
-            ("target".to_string(), CommitId("head".into()))
+            ("1/base".to_string(), CommitId("head".into())),
+            ("1/tip".to_string(), CommitId("head".into()))
         ]
     );
 
@@ -1226,7 +1326,7 @@ async fn reopening_resumes_the_open_review_and_remaps_edits_made_while_closed() 
     assert_eq!(threads.len(), 1);
     assert_eq!(threads[0].messages[0].body, "why");
     assert_eq!(threads[0].location.as_ref().map(|l| l.range), Some(range));
-    assert_eq!(fx.store.0.lock().unwrap().timeline.len(), 2);
+    assert_eq!(fx.store.0.lock().unwrap().versions.len(), 2);
 }
 
 #[tokio::test]
@@ -1236,7 +1336,7 @@ async fn resuming_an_unchanged_tree_does_not_settle_again() {
 
     assert_eq!(session.revision().await, 0);
     assert!(matches!(session.lifecycle().await, Lifecycle::Open { version: 1, .. }));
-    assert_eq!(fx.store.0.lock().unwrap().timeline.len(), 1);
+    assert_eq!(fx.store.0.lock().unwrap().versions.len(), 1);
 }
 
 #[tokio::test]
@@ -1432,7 +1532,7 @@ async fn a_branch_base_counts_how_far_the_branch_moved_on_and_latest_catches_up(
 }
 
 #[tokio::test]
-async fn setting_the_base_moves_the_ref_and_bumps_the_revision() {
+async fn setting_the_base_holds_its_commit_and_bumps_the_revision() {
     let base = numbered(10, &[]);
     let fx = Fixture::reviewing(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
     let m = fx.session.manifest().await.unwrap();
@@ -1460,9 +1560,12 @@ async fn setting_the_base_moves_the_ref_and_bumps_the_revision() {
     assert_eq!((m.revision, base_of(&m)), (1, (&full, "c1-full", "c1-full")));
     assert!(m.files.is_empty());
     let held = fx.git.refs.lock().unwrap().clone();
-    assert!(held.contains(&("base".to_string(), CommitId("c1-full".into()))));
-    assert!(held.contains(&("target".to_string(), CommitId("head".into()))));
-    assert_eq!(fx.store.0.lock().unwrap().base.as_ref().unwrap().1, full);
+    assert!(held.contains(&("2/base".to_string(), CommitId("c1-full".into()))));
+    assert!(
+        held.contains(&("1/base".to_string(), CommitId("head".into()))),
+        "the earlier version keeps its base"
+    );
+    assert_eq!(fx.store.0.lock().unwrap().base, Some(full));
 
     // Back to where it was; asking again changes nothing.
     fx.git.add_commit("head", "head", &[("a.txt", &base)]);
@@ -1473,13 +1576,17 @@ async fn setting_the_base_moves_the_ref_and_bumps_the_revision() {
     assert_eq!((revision, view.commit.id.0.as_str()), (2, "head"));
     assert_eq!(fx.session.set_base(back()).await.unwrap().1, 2);
     assert_eq!(fx.session.manifest().await.unwrap().files[0].hunks.len(), 1);
-    assert_eq!(fx.store.0.lock().unwrap().base.as_ref().unwrap().1, back());
+    assert_eq!(fx.store.0.lock().unwrap().base, Some(back()));
+    assert!(matches!(
+        fx.session.lifecycle().await,
+        Lifecycle::Open { version: 3, .. }
+    ));
     assert!(
         fx.git
             .refs
             .lock()
             .unwrap()
-            .contains(&("base".to_string(), CommitId("head".into())))
+            .contains(&("3/base".to_string(), CommitId("head".into())))
     );
 }
 
@@ -1496,24 +1603,26 @@ async fn a_base_chosen_while_browsing_is_carried_into_the_review() {
         })
         .await
         .unwrap();
-    assert!(
-        fx.store.0.lock().unwrap().base.is_none(),
-        "nothing is stored while browsing"
-    );
+    {
+        let mem = fx.store.0.lock().unwrap();
+        assert!(
+            mem.base.is_none() && mem.versions.is_empty(),
+            "nothing is stored while browsing"
+        );
+    }
 
     fx.session.set_seen(1, "a.txt", &[0], true).await.unwrap();
 
     let mem = fx.store.0.lock().unwrap();
-    assert_eq!(
-        mem.base.as_ref().map(|b| (b.1.clone(), b.2.clone())),
-        Some((c1, CommitId("c1-full".into())))
-    );
+    assert_eq!(mem.base, Some(c1));
+    assert_eq!(mem.versions.len(), 1, "the base is no version of its own");
+    assert_eq!(mem.versions[0].base_commit, CommitId("c1-full".into()));
     assert!(
         fx.git
             .refs
             .lock()
             .unwrap()
-            .contains(&("base".to_string(), CommitId("c1-full".into())))
+            .contains(&("1/base".to_string(), CommitId("c1-full".into())))
     );
 }
 
@@ -1919,7 +2028,7 @@ async fn settled_snapshots_of_an_open_review_are_stored_and_bump_the_revision() 
 
     assert_eq!(fx.session.revision().await, 1);
     let mem = fx.store.0.lock().unwrap();
-    assert_eq!(mem.timeline.len(), 2);
+    assert_eq!(mem.versions.len(), 2);
     assert!(mem.blobs.contains_key(&BlobId::of(b"three\n")));
 }
 
@@ -2119,7 +2228,7 @@ async fn an_edit_inside_the_range_is_inferred_until_confirmed() {
         (confirmed.state, confirmed.location),
         (Some(EXACT), at("a.txt", 10, 13))
     );
-    let stored = fx.store.0.lock().unwrap().threads[0].target.clone();
+    let stored = fx.store.0.lock().unwrap().threads[0].thread.target.clone();
     let CommentTarget::Range(anchor) = stored else { panic!() };
     assert_eq!(anchor.snapshot, fx.session.state.lock().await.target.id);
     // An exact anchor cannot be confirmed again.
@@ -2363,9 +2472,14 @@ async fn replies_status_and_deletion_are_persisted() {
 
     let stored = fx.store.0.lock().unwrap().threads.clone();
     assert_eq!(stored.len(), 1);
-    assert_eq!(stored[0].status, ThreadStatus::Resolved);
+    assert_eq!(stored[0].thread.status, ThreadStatus::Resolved);
     assert_eq!(
-        stored[0].messages.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
+        stored[0]
+            .thread
+            .messages
+            .iter()
+            .map(|m| m.body.as_str())
+            .collect::<Vec<_>>(),
         ["why?", "because"]
     );
     assert_eq!(fx.session.threads().await.unwrap().threads.len(), 1);
@@ -2377,6 +2491,87 @@ async fn replies_status_and_deletion_are_persisted() {
         fx.session.reply(id, "  ".into(), 1).await,
         Err(SessionError::Invalid(_))
     ));
+}
+
+async fn thread_ids(session: &LiveSession<FakeGit, MemStore>) -> Vec<ThreadId> {
+    session.threads().await.unwrap().threads.iter().map(|t| t.id).collect()
+}
+
+#[tokio::test]
+async fn finishing_a_review_keeps_its_open_threads_on_view_and_leaves_the_resolved_ones_in_it() {
+    let base = numbered(30, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(30, &[3]))]).await;
+    let anchored = fx.thread(on_base("a.txt", 10, 13)).await;
+    let overall = fx.thread(NewThread::Changeset).await;
+    let resolved = fx.thread(on("a.txt", 20, 22)).await;
+    fx.session
+        .set_thread_status(resolved, ThreadStatus::Resolved)
+        .await
+        .unwrap();
+    assert_eq!(thread_ids(&fx.session).await, [anchored, overall, resolved]);
+
+    fx.session.finish_review().await.unwrap();
+
+    assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
+    // The base content is only in git, which may drop it now that the review holds no refs.
+    fx.git.forget(&base);
+    assert_eq!(thread_ids(&fx.session).await, [anchored, overall]);
+    let view = fx.view(anchored).await;
+    assert_eq!((view.state, view.location), (Some(EXACT), at("a.txt", 10, 13)));
+    // Answering a thread is no review action.
+    fx.session.reply(overall, "again".into(), 5).await.unwrap();
+    assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
+}
+
+#[tokio::test]
+async fn open_threads_of_a_finished_review_are_on_view_when_the_repository_is_opened_again_and_in_the_next_review() {
+    let (base, dirty) = ("one\n", "two\n");
+    let fx = Fixture::open(&[("a.txt", base)], &[("a.txt", dirty)]).await;
+    let open = fx.thread(NewThread::Changeset).await;
+    let resolved = fx.thread(NewThread::Changeset).await;
+    fx.session
+        .set_thread_status(resolved, ThreadStatus::Resolved)
+        .await
+        .unwrap();
+    fx.session.finish_review().await.unwrap();
+
+    let browsing = fx.reopen(&[("a.txt", dirty)]).await;
+
+    assert_eq!(browsing.lifecycle().await, Lifecycle::Browsing);
+    assert_eq!(thread_ids(&browsing).await, [open]);
+
+    // The next review starts with it, and what is resolved in that one stays in it.
+    browsing.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    let own = browsing
+        .create_thread(0, NewThread::Changeset, "again".into(), 1)
+        .await
+        .unwrap()
+        .id;
+    browsing.set_thread_status(own, ThreadStatus::Resolved).await.unwrap();
+    assert_eq!(thread_ids(&browsing).await, [open, own]);
+    let resumed = fx.reopen(&[("a.txt", dirty)]).await;
+    assert_eq!(thread_ids(&resumed).await, [open, own]);
+
+    resumed.finish_review().await.unwrap();
+    assert_eq!(thread_ids(&resumed).await, [open]);
+}
+
+#[tokio::test]
+async fn marking_records_the_version_last_reviewed_in() {
+    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    let last_reviewed = || fx.store.0.lock().unwrap().last_reviewed;
+    assert_eq!(last_reviewed(), None);
+
+    fx.settle(&[("a.txt", "three\n")]).await;
+    fx.session.set_seen(1, "a.txt", &[0], true).await.unwrap();
+    assert_eq!(last_reviewed(), Some(2));
+
+    fx.settle(&[("a.txt", "four\n")]).await;
+    assert_eq!(last_reviewed(), Some(2), "nothing was marked in version 3");
+    fx.session.set_seen(2, "a.txt", &[0], false).await.unwrap();
+    assert_eq!(last_reviewed(), Some(2), "taking a mark back marks nothing");
+    fx.session.set_seen(2, "a.txt", &[0], true).await.unwrap();
+    assert_eq!(last_reviewed(), Some(3));
 }
 
 #[tokio::test]

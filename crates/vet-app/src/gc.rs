@@ -6,14 +6,14 @@ use std::time::Duration;
 
 use vet_core::content::SnapshotId;
 
-use crate::pin::PinId;
+use crate::changeset::ChangesetId;
 use crate::ports::{GcReport, GcStore, StoreError};
-use crate::review::SessionId;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Retention {
-    /// How long a closed session is kept (§8).
-    pub closed_sessions: Duration,
+    /// How long a changeset with no open review is kept after its last review
+    /// closed (§8).
+    pub closed_changesets: Duration,
     /// Content and snapshots younger than this are never collected, so a blob
     /// written just before the metadata that references it survives a GC.
     pub grace: Duration,
@@ -22,29 +22,27 @@ pub struct Retention {
 impl Default for Retention {
     fn default() -> Self {
         Self {
-            closed_sessions: Duration::from_secs(30 * 24 * 3600),
+            closed_changesets: Duration::from_secs(30 * 24 * 3600),
             grace: Duration::from_secs(3600),
         }
     }
 }
 
-/// A session and everything it keeps alive.
+/// A changeset and everything it keeps alive.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct SessionFacts {
-    pub id: SessionId,
-    pub pin: PinId,
-    /// Unix seconds; `None` while open.
-    pub closed_at: Option<i64>,
+pub struct ChangesetFacts {
+    pub id: ChangesetId,
+    pub has_open_review: bool,
+    /// Unix seconds the latest closed review ended; `None` if none has.
+    pub last_closed_at: Option<i64>,
     pub has_open_thread: bool,
-    /// Its base and target, its timeline and the snapshots its anchors name.
+    /// The bases and targets of its versions, and the snapshots its anchors name.
     pub snapshots: Vec<SnapshotId>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct GcFacts {
-    pub sessions: Vec<SessionFacts>,
-    /// Every stored pin and the snapshot of its tree.
-    pub pins: Vec<(PinId, SnapshotId)>,
+    pub changesets: Vec<ChangesetFacts>,
     /// Every stored snapshot and when it was stored (unix seconds).
     pub snapshots: Vec<(SnapshotId, i64)>,
 }
@@ -52,35 +50,26 @@ pub struct GcFacts {
 /// What to delete. Tree nodes and content follow from what remains.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct GcPlan {
-    pub sessions: Vec<SessionId>,
-    pub pins: Vec<PinId>,
+    pub changesets: Vec<ChangesetId>,
     pub snapshots: Vec<SnapshotId>,
     /// Unreferenced content younger than this stays.
     pub content_grace: Duration,
 }
 
-/// Closed sessions expire after the retention unless an open thread keeps them;
-/// pins live while a session holds them; snapshots live while a session or a
-/// pin refers to them, once they are past the grace period.
+/// A changeset expires once its last review closed longer ago than the
+/// retention, unless a review of it is open or a thread of it is; snapshots
+/// live while a changeset that is kept refers to them, once they are past the
+/// grace period.
 pub fn plan(facts: &GcFacts, now: i64, retention: &Retention) -> GcPlan {
-    let expired_before = now - retention.closed_sessions.as_secs() as i64;
-    let (dead, kept): (Vec<_>, Vec<_>) = facts
-        .sessions
-        .iter()
-        .partition(|s| s.closed_at.is_some_and(|at| at <= expired_before) && !s.has_open_thread);
+    let expired_before = now - retention.closed_changesets.as_secs() as i64;
+    let (dead, kept): (Vec<_>, Vec<_>) = facts.changesets.iter().partition(|c| {
+        !c.has_open_review && !c.has_open_thread && c.last_closed_at.is_some_and(|at| at <= expired_before)
+    });
 
-    let held: HashSet<PinId> = kept.iter().map(|s| s.pin).collect();
-    let (live_pins, dead_pins): (Vec<_>, Vec<_>) = facts.pins.iter().partition(|(id, _)| held.contains(id));
-
-    let live: HashSet<SnapshotId> = kept
-        .iter()
-        .flat_map(|s| s.snapshots.iter().copied())
-        .chain(live_pins.iter().map(|&&(_, tree)| tree))
-        .collect();
+    let live: HashSet<SnapshotId> = kept.iter().flat_map(|c| c.snapshots.iter().copied()).collect();
     let young_after = now - retention.grace.as_secs() as i64;
     GcPlan {
-        sessions: dead.iter().map(|s| s.id).collect(),
-        pins: dead_pins.iter().map(|&&(id, _)| id).collect(),
+        changesets: dead.iter().map(|c| c.id).collect(),
         snapshots: facts
             .snapshots
             .iter()
@@ -91,7 +80,7 @@ pub fn plan(facts: &GcFacts, now: i64, retention: &Retention) -> GcPlan {
     }
 }
 
-/// Deletes expired sessions, then the snapshots, tree nodes and content nothing
+/// Deletes expired changesets, then the snapshots, tree nodes and content nothing
 /// retained refers to. `now` is unix seconds.
 pub async fn collect<S: GcStore>(store: &S, now: i64, retention: &Retention) -> Result<GcReport, StoreError> {
     store.gc(now, &|facts| plan(facts, now, retention)).await
@@ -110,55 +99,52 @@ mod tests {
         SnapshotId(Hash([n; 32]))
     }
 
-    fn session(id: u64, pin: u64, closed_at: Option<i64>, snapshots: &[u8]) -> SessionFacts {
-        SessionFacts {
-            id: SessionId(id),
-            pin: PinId(pin),
-            closed_at,
+    fn changeset(id: u64, last_closed_at: Option<i64>, snapshots: &[u8]) -> ChangesetFacts {
+        ChangesetFacts {
+            id: ChangesetId(id),
+            has_open_review: last_closed_at.is_none(),
+            last_closed_at,
             has_open_thread: false,
             snapshots: snapshots.iter().map(|&n| snap(n)).collect(),
         }
     }
 
-    fn facts(sessions: Vec<SessionFacts>) -> GcFacts {
+    fn facts(changesets: Vec<ChangesetFacts>) -> GcFacts {
         GcFacts {
-            sessions,
-            pins: vec![(PinId(1), snap(10)), (PinId(2), snap(11))],
+            changesets,
             snapshots: (1..=11).map(|n| (snap(n), NOW - 2 * DAY)).collect(),
         }
     }
 
     #[test]
-    fn a_closed_session_expires_after_the_retention_and_an_open_thread_keeps_it() {
+    fn a_changeset_expires_after_its_last_review_closed_and_an_open_review_or_thread_keeps_it() {
         let retention = Retention::default();
-        let closed = |ago: i64| session(1, 1, Some(NOW - ago), &[1]);
+        let closed = |ago: i64| changeset(1, Some(NOW - ago), &[1]);
         let expired = plan(&facts(vec![closed(31 * DAY)]), NOW, &retention);
-        assert_eq!(expired.sessions, vec![SessionId(1)]);
+        assert_eq!(expired.changesets, vec![ChangesetId(1)]);
         let recent = plan(&facts(vec![closed(29 * DAY)]), NOW, &retention);
-        assert!(recent.sessions.is_empty());
-        let open = plan(&facts(vec![session(1, 1, None, &[1])]), NOW, &retention);
-        assert!(open.sessions.is_empty());
+        assert!(recent.changesets.is_empty());
+        let open = plan(&facts(vec![changeset(1, None, &[1])]), NOW, &retention);
+        assert!(open.changesets.is_empty());
 
-        let mut kept = closed(31 * DAY);
-        kept.has_open_thread = true;
-        assert!(plan(&facts(vec![kept]), NOW, &retention).sessions.is_empty());
+        let mut reopened = closed(31 * DAY);
+        reopened.has_open_review = true;
+        assert!(plan(&facts(vec![reopened]), NOW, &retention).changesets.is_empty());
+
+        let mut with_thread = closed(31 * DAY);
+        with_thread.has_open_thread = true;
+        assert!(plan(&facts(vec![with_thread]), NOW, &retention).changesets.is_empty());
     }
 
     #[test]
-    fn a_pin_lives_while_a_session_holds_it() {
-        let both = facts(vec![session(1, 1, None, &[]), session(2, 2, Some(NOW - 31 * DAY), &[])]);
-        assert_eq!(plan(&both, NOW, &Retention::default()).pins, vec![PinId(2)]);
-    }
-
-    #[test]
-    fn a_snapshot_lives_while_a_session_or_a_pin_refers_to_it() {
+    fn a_snapshot_lives_while_a_changeset_that_is_kept_refers_to_it() {
         let f = facts(vec![
-            session(1, 1, None, &[1, 2]),
-            session(2, 2, Some(NOW - 31 * DAY), &[3]),
+            changeset(1, None, &[1, 2]),
+            changeset(2, Some(NOW - 31 * DAY), &[3]),
         ]);
         let dead: HashSet<_> = plan(&f, NOW, &Retention::default()).snapshots.into_iter().collect();
-        // 1 and 2: the live session; 10: its pin. 3 and 11 belong to the expired session.
-        let expected: HashSet<_> = [3, 4, 5, 6, 7, 8, 9, 11].map(snap).into_iter().collect();
+        // 1 and 2 belong to the open review; 3 to the expired changeset.
+        let expected: HashSet<_> = [3, 4, 5, 6, 7, 8, 9, 10, 11].map(snap).into_iter().collect();
         assert_eq!(dead, expected);
     }
 

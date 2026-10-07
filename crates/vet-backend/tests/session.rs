@@ -802,6 +802,9 @@ async fn both_sides_of_a_changed_file_come_with_highlights() {
     assert_eq!(contents("notes.txt").await, (vec![], vec![]));
 }
 
+/// What a review of the first changeset of a fresh store holds from its start.
+const FIRST_VERSION_REFS: &str = "refs/vet/changesets/1/1/base\nrefs/vet/changesets/1/1/tip\n";
+
 fn project_refs(repo: &Path) -> String {
     let out = Command::new("git")
         .current_dir(repo)
@@ -871,10 +874,7 @@ async fn an_orphaned_project_is_released_but_stays_open_for_the_next_open() {
     let project = open(&first, fx.repo.path()).await;
     assert_eq!(project_refs(fx.repo.path()), "", "browsing holds nothing");
     first.toggle_hunk(project, 0, 0).await;
-    assert_eq!(
-        project_refs(fx.repo.path()),
-        format!("refs/vet/sessions/{project}/base\nrefs/vet/sessions/{project}/target\n")
-    );
+    assert_eq!(project_refs(fx.repo.path()), FIRST_VERSION_REFS);
 
     // The connection goes away without closing; a reload within the grace
     // period finds the project again.
@@ -888,10 +888,7 @@ async fn an_orphaned_project_is_released_but_stays_open_for_the_next_open() {
     let third = Client::new(&fx.handler);
     assert!(third.call(Request::Manifest { project }).await.is_err());
     // Not closed: its refs stay, and opening the repository again resumes it.
-    assert_eq!(
-        project_refs(fx.repo.path()),
-        format!("refs/vet/sessions/{project}/base\nrefs/vet/sessions/{project}/target\n")
-    );
+    assert_eq!(project_refs(fx.repo.path()), FIRST_VERSION_REFS);
     let resumed = open(&third, fx.repo.path()).await;
     assert!(matches!(
         third.manifest(resumed).await.review,
@@ -957,8 +954,9 @@ impl Client {
     }
 }
 
-fn project_base_ref(repo: &Path, project: ProjectId) -> String {
-    git(repo, &["rev-parse", &format!("refs/vet/sessions/{project}/base")])
+/// The commit the base of `version` of the first changeset of a fresh store is held at.
+fn base_ref(repo: &Path, version: u32) -> String {
+    git(repo, &["rev-parse", &format!("refs/vet/changesets/1/{version}/base")])
 }
 
 fn merge_base(reference: &str) -> BaseChoice {
@@ -1019,7 +1017,7 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     // Marking the branch's hunk starts the review, which holds the base chosen so far.
     let update = client.toggle_hunk(project, 1, 0).await;
     assert_eq!(update.review.hunks, [HunkState::Seen, HunkState::Unseen]);
-    assert_eq!(project_base_ref(p, project), main);
+    assert_eq!(base_ref(p, 1), main);
 
     // Against the first branch commit, base lines of the marked hunk have changed.
     let base = client
@@ -1032,7 +1030,7 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     );
     assert_eq!(base.choice, BaseChoice::Commit { id: one.clone() });
     assert_eq!(client.settled().await, 2);
-    assert_eq!(project_base_ref(p, project), one);
+    assert_eq!((base_ref(p, 2), base_ref(p, 1)), (one.clone(), main.clone()));
     let m = client.manifest(project).await;
     assert_eq!(hunk_states(&m), [HunkState::SeenAgainstOldBase, HunkState::Unseen]);
     assert_eq!(m.completion.old_base_lines, 1);
@@ -1055,7 +1053,7 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     let base = client.set_base(project, feature).await.unwrap();
     assert_eq!((base.commit.id.as_str(), base.name.as_str()), (two.as_str(), "feature"));
     assert_eq!(client.settled().await, 3);
-    assert_eq!(project_base_ref(p, project), two);
+    assert_eq!(base_ref(p, 3), two);
     assert_eq!(hunk_states(&client.manifest(project).await), [HunkState::Unseen]);
 
     // The earlier base brings the earlier coverage back.

@@ -4,11 +4,11 @@
 
 pub mod acquisition;
 pub mod base;
+pub mod changeset;
 pub mod editor;
 pub mod gc;
 pub mod ignore;
 pub mod limits;
-pub mod pin;
 pub mod platform;
 pub mod ports;
 pub mod progress;

@@ -12,10 +12,10 @@ use super::remap::Prepared;
 use super::state::{State, ack_of, check_revision, find_diff, find_non_text, outcome, shown_items};
 use super::views::{Outcome, ReviewUpdateView};
 use super::{LiveSession, Result, SessionError};
-use crate::ports::{GitRepo, ReviewStore, Store};
+use crate::ports::{GitRepo, LiveStore};
 use crate::review::RecordedSpan;
 
-impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Flips one hunk: seen becomes unseen, anything else (unseen, or seen against an old base)
     /// becomes seen. Marking starts the review if none is open.
     pub async fn toggle_hunk(&self, revision: u32, path: &str, hunk: u32) -> Result<Outcome<ReviewUpdateView>> {
@@ -123,7 +123,25 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         st.recorded.retain(|r| !remove.contains(&r.id));
         st.recorded
             .extend(ids.into_iter().zip(add).map(|(id, span)| RecordedSpan { id, span }));
+        if seen {
+            self.note_reviewed(st).await?;
+        }
         self.remap(st).await
+    }
+
+    /// Records that something was marked in the changeset's latest version, for
+    /// the next review to start from.
+    async fn note_reviewed(&self, st: &mut State) -> Result<()> {
+        if let Some(review) = &mut st.review
+            && review.last_reviewed != Some(review.version)
+        {
+            self.acquisition
+                .store
+                .set_last_reviewed(review.id, review.version)
+                .await?;
+            review.last_reviewed = Some(review.version);
+        }
+        Ok(())
     }
 
     pub(super) async fn mark_item(
@@ -150,6 +168,9 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             st.acks.retain(|a| *a != ack);
         } else if !st.acks.contains(&ack) {
             st.acks.push(ack);
+        }
+        if acknowledged {
+            self.note_reviewed(st).await?;
         }
         Ok(())
     }

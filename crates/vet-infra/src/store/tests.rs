@@ -3,12 +3,12 @@ use std::time::Duration;
 
 use sea_orm::PaginatorTrait;
 use tempfile::TempDir;
+use vet_app::changeset::{CommitId, RemoteKey, VersionOrigin};
 use vet_app::gc::{Retention, collect};
-use vet_app::ports::{GcReport, ReviewStore, Store};
-use vet_app::review::{NonTextAck, Version};
+use vet_app::ports::{GcReport, Store};
+use vet_app::review::NonTextAck;
 use vet_core::content::{
-    BlobId, Changeset, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId,
-    SnapshotStatus,
+    BlobId, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanState, ThreadStatus};
@@ -76,16 +76,31 @@ fn message(body: &str) -> Message {
     }
 }
 
-async fn session(store: &SqliteStore, base: SnapshotId, target: SnapshotId) -> SessionId {
-    let pin = store.put_pin(CommitId("abc123".into()), base).await.unwrap();
-    let head = CommitId("abc123".into());
+fn commit(id: &str) -> CommitId {
+    CommitId(id.into())
+}
+
+fn version(n: u32, base: SnapshotId, target: SnapshotId) -> Version {
+    Version {
+        n,
+        base,
+        base_commit: commit("abc123"),
+        target,
+        tip: commit("abc123"),
+        at: i64::from(n) * 10,
+        origin: VersionOrigin::Settled,
+    }
+}
+
+/// Opens a review of the working tree of `/repo`, whose version 1 is `base` and `target`.
+async fn review(store: &SqliteStore, base: SnapshotId, target: SnapshotId) -> (ChangesetId, ReviewId) {
     store
-        .open_session(
+        .start_review(
             "/repo".into(),
-            pin.id,
-            Changeset { base, target },
-            BaseChoice::Commit { id: head.clone() },
-            head,
+            Source::WorkingTree,
+            BaseChoice::Commit { id: commit("abc123") },
+            version(1, base, target),
+            T0,
         )
         .await
         .unwrap()
@@ -145,68 +160,95 @@ async fn a_database_of_another_version_is_recreated_and_one_of_this_version_is_k
     db.close().await.unwrap();
 
     let store = open(&dir).await;
-    assert!(store.open_sessions("/old".into()).await.unwrap().is_empty());
-    let id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    assert_eq!(store.changeset("/old".into(), Source::WorkingTree).await.unwrap(), None);
+    let (changeset, id) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
     drop(store);
 
     let store = open(&dir).await;
-    assert_eq!(store.open_sessions("/repo".into()).await.unwrap(), vec![id]);
+    assert_eq!(
+        store.changeset("/repo".into(), Source::WorkingTree).await.unwrap(),
+        Some(changeset)
+    );
+    assert_eq!(store.open_review(changeset).await.unwrap(), Some(id));
 }
 
 #[tokio::test]
-async fn the_base_choice_and_snapshot_are_stored_and_survive_reopen() {
+async fn a_changeset_is_found_by_its_repository_and_source() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
-    let id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    let pull_request = |host: &str, path: &str, number| Source::PullRequest {
+        remote: RemoteKey {
+            host: host.into(),
+            path: path.into(),
+        },
+        number,
+    };
+    let sources = [
+        ("/repo", Source::WorkingTree),
+        ("/other", Source::WorkingTree),
+        ("/repo", Source::Branch { name: "main".into() }),
+        ("/repo", Source::Branch { name: "".into() }),
+        ("/repo", pull_request("github.com", "o/r", 1)),
+        ("/repo", pull_request("github.com", "o/r", 2)),
+        ("/repo", pull_request("github.com", "o/x", 1)),
+        ("/repo", pull_request("example.com", "o/r", 1)),
+    ];
+    let mut ids = Vec::new();
+    for (repo, source) in &sources {
+        assert_eq!(store.changeset((*repo).into(), source.clone()).await.unwrap(), None);
+        let (id, _) = store
+            .start_review(
+                (*repo).into(),
+                source.clone(),
+                BaseChoice::Commit { id: commit("a") },
+                version(1, SnapshotId(h(1)), SnapshotId(h(2))),
+                T0,
+            )
+            .await
+            .unwrap();
+        ids.push(id);
+    }
+    drop(store);
+
+    let store = open(&dir).await;
+    for ((repo, source), id) in sources.iter().zip(&ids) {
+        assert_eq!(
+            store.changeset((*repo).into(), source.clone()).await.unwrap(),
+            Some(*id)
+        );
+    }
+    let mut distinct = ids.clone();
+    distinct.sort_by_key(|id| id.0);
+    distinct.dedup();
+    assert_eq!(distinct.len(), sources.len(), "every source is a changeset of its own");
+}
+
+#[tokio::test]
+async fn the_base_choice_is_stored_with_the_review_and_survives_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let (_, id) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
     let loaded = |store: &SqliteStore| {
         let store = store.clone();
-        async move { store.session(id).await.unwrap().unwrap() }
+        async move { store.review(id).await.unwrap().unwrap().base }
     };
-    let s = loaded(&store).await;
-    assert_eq!(
-        (s.base, s.base_commit),
-        (
-            BaseChoice::Commit {
-                id: CommitId("abc123".into())
-            },
-            CommitId("abc123".into())
-        )
-    );
+    assert_eq!(loaded(&store).await, BaseChoice::Commit { id: commit("abc123") });
 
     let merge_base = BaseChoice::MergeBase {
         reference: "main".into(),
     };
-    let at = CommitId("m1".into());
-    store
-        .set_base(id, SnapshotId(h(3)), merge_base.clone(), at.clone())
-        .await
-        .unwrap();
-    let s = loaded(&store).await;
-    assert_eq!(
-        (s.base, s.base_commit, s.changeset.base),
-        (merge_base, at, SnapshotId(h(3)))
-    );
+    store.set_base(id, merge_base.clone()).await.unwrap();
+    assert_eq!(loaded(&store).await, merge_base);
 
-    let commit = BaseChoice::Commit {
-        id: CommitId("abc".into()),
-    };
-    store
-        .set_base(id, SnapshotId(h(4)), commit.clone(), CommitId("abc".into()))
-        .await
-        .unwrap();
+    let commit_choice = BaseChoice::Commit { id: commit("abc") };
+    store.set_base(id, commit_choice.clone()).await.unwrap();
     drop(store);
     let store = open(&dir).await;
-    let s = loaded(&store).await;
-    assert_eq!((s.base, s.changeset.base), (commit, SnapshotId(h(4))));
+    assert_eq!(loaded(&store).await, commit_choice);
 
     let branch = BaseChoice::Branch { name: "main".into() };
-    let tip = CommitId("t1".into());
-    store
-        .set_base(id, SnapshotId(h(1)), branch.clone(), tip.clone())
-        .await
-        .unwrap();
-    let s = loaded(&store).await;
-    assert_eq!((s.base, s.base_commit), (branch, tip));
+    store.set_base(id, branch.clone()).await.unwrap();
+    assert_eq!(loaded(&store).await, branch);
 }
 
 #[tokio::test]
@@ -218,10 +260,20 @@ async fn database_is_in_wal_mode() {
 }
 
 #[tokio::test]
-async fn spans_and_threads_round_trip() {
+async fn spans_and_acks_belong_to_the_review_and_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
-    let id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    let (_, id) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    let (_, other) = store
+        .start_review(
+            "/other".into(),
+            Source::WorkingTree,
+            BaseChoice::Commit { id: commit("abc123") },
+            version(1, SnapshotId(h(1)), SnapshotId(h(2))),
+            T0,
+        )
+        .await
+        .unwrap();
 
     let spans = vec![
         ReviewedSpan {
@@ -243,28 +295,6 @@ async fn spans_and_threads_round_trip() {
     let ids = store.edit_spans(id, vec![], spans.clone()).await.unwrap();
     assert_eq!(ids.len(), 3);
 
-    let range = store
-        .add_thread(id, CommentTarget::Range(anchor(Side::Target, 2)), message("why?"))
-        .await
-        .unwrap();
-    let file = store
-        .add_thread(
-            id,
-            CommentTarget::File {
-                side: Side::Base,
-                path: RepoPath(b"a/b".to_vec()),
-            },
-            message("file"),
-        )
-        .await
-        .unwrap();
-    store
-        .add_thread(id, CommentTarget::Changeset, message("overall"))
-        .await
-        .unwrap();
-    store.add_message(range, message("because")).await.unwrap();
-    store.set_thread_status(file, ThreadStatus::Resolved).await.unwrap();
-
     let ack = NonTextAck {
         kind: NonTextKind::Binary,
         before: Some((RepoPath(b"x".to_vec()), file_entry(5))),
@@ -273,27 +303,86 @@ async fn spans_and_threads_round_trip() {
     store.acknowledge(id, ack.clone()).await.unwrap();
     store.acknowledge(id, ack.clone()).await.unwrap();
     // Same entries, another kind: a separate item.
-    let other = NonTextAck {
+    let mode = NonTextAck {
         kind: NonTextKind::Mode,
         ..ack.clone()
     };
-    store.acknowledge(id, other.clone()).await.unwrap();
+    store.acknowledge(id, mode.clone()).await.unwrap();
 
-    let loaded = store.session(id).await.unwrap().unwrap();
+    let loaded = store.review(id).await.unwrap().unwrap();
     assert_eq!(loaded.spans.iter().map(|r| r.span.clone()).collect::<Vec<_>>(), spans);
-    assert_eq!(loaded.acks, vec![ack.clone(), other.clone()]);
-    assert_eq!(loaded.threads.len(), 3);
-    assert_eq!(loaded.threads[0].target, CommentTarget::Range(anchor(Side::Target, 2)));
-    assert_eq!(loaded.threads[0].messages, vec![message("why?"), message("because")]);
-    assert_eq!(loaded.threads[1].status, ThreadStatus::Resolved);
+    assert_eq!(loaded.acks, vec![ack.clone(), mode.clone()]);
+    let elsewhere = store.review(other).await.unwrap().unwrap();
+    assert!(elsewhere.spans.is_empty() && elsewhere.acks.is_empty());
+
+    store.unacknowledge(id, ack).await.unwrap();
+    assert_eq!(store.review(id).await.unwrap().unwrap().acks, vec![mode.clone()]);
+    store.unacknowledge(id, mode).await.unwrap();
+    store.edit_spans(id, ids, vec![]).await.unwrap();
+    let loaded = store.review(id).await.unwrap().unwrap();
+    assert!(loaded.spans.is_empty() && loaded.acks.is_empty());
+}
+
+#[tokio::test]
+async fn threads_belong_to_the_changeset_and_outlive_its_review() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let (changeset, first) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+
+    let range = store
+        .add_thread(
+            changeset,
+            Some(first),
+            CommentTarget::Range(anchor(Side::Target, 2)),
+            message("why?"),
+        )
+        .await
+        .unwrap();
+    let file = store
+        .add_thread(
+            changeset,
+            Some(first),
+            CommentTarget::File {
+                side: Side::Base,
+                path: RepoPath(b"a/b".to_vec()),
+            },
+            message("file"),
+        )
+        .await
+        .unwrap();
+    let overall = store
+        .add_thread(changeset, None, CommentTarget::Changeset, message("overall"))
+        .await
+        .unwrap();
+    store.add_message(range, message("because")).await.unwrap();
+    store.set_thread_status(file, ThreadStatus::Resolved).await.unwrap();
+
+    store.close_review(first, T0, true).await.unwrap();
+    let (again, second) = review(&store, SnapshotId(h(1)), SnapshotId(h(3))).await;
+    assert_eq!(again, changeset);
+    assert_ne!(second, first);
+
+    let threads = store.threads(changeset).await.unwrap();
     assert_eq!(
-        loaded.threads[1].target,
+        threads.iter().map(|t| t.thread.id).collect::<Vec<_>>(),
+        [range, file, overall]
+    );
+    assert_eq!(
+        threads.iter().map(|t| t.review).collect::<Vec<_>>(),
+        [Some(first), Some(first), None],
+        "a thread keeps the review it was opened in"
+    );
+    assert_eq!(threads[0].thread.target, CommentTarget::Range(anchor(Side::Target, 2)));
+    assert_eq!(threads[0].thread.messages, vec![message("why?"), message("because")]);
+    assert_eq!(threads[1].thread.status, ThreadStatus::Resolved);
+    assert_eq!(
+        threads[1].thread.target,
         CommentTarget::File {
             side: Side::Base,
             path: RepoPath(b"a/b".to_vec())
         }
     );
-    assert_eq!(loaded.threads[2].target, CommentTarget::Changeset);
+    assert_eq!(threads[2].thread.target, CommentTarget::Changeset);
 
     let moved = CommentTarget::Range(Anchor {
         range: LineRange { start: 20, end: 25 },
@@ -301,22 +390,94 @@ async fn spans_and_threads_round_trip() {
     });
     store.set_thread_target(range, moved.clone()).await.unwrap();
     store.delete_thread(file).await.unwrap();
-    store.unacknowledge(id, ack).await.unwrap();
-    assert_eq!(store.session(id).await.unwrap().unwrap().acks, vec![other.clone()]);
-    store.unacknowledge(id, other).await.unwrap();
-    store.edit_spans(id, ids, vec![]).await.unwrap();
-    let loaded = store.session(id).await.unwrap().unwrap();
+    let threads = store.threads(changeset).await.unwrap();
     assert_eq!(
-        loaded.threads.iter().map(|t| &t.target).collect::<Vec<_>>(),
+        threads.iter().map(|t| &t.thread.target).collect::<Vec<_>>(),
         vec![&moved, &CommentTarget::Changeset]
     );
-    assert!(loaded.spans.is_empty() && loaded.acks.is_empty());
 }
 
 #[tokio::test]
-async fn snapshots_and_timeline_survive_reopen() {
+async fn versions_are_numbered_per_changeset_and_a_new_review_starts_over() {
     let dir = tempfile::tempdir().unwrap();
     let id;
+    let changeset;
+    {
+        let store = open(&dir).await;
+        (changeset, id) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+        let moved = Version {
+            base_commit: commit("def456"),
+            origin: VersionOrigin::BaseMoved,
+            ..version(3, SnapshotId(h(4)), SnapshotId(h(3)))
+        };
+        store
+            .append_version(changeset, version(2, SnapshotId(h(1)), SnapshotId(h(3))))
+            .await
+            .unwrap();
+        store.append_version(changeset, moved).await.unwrap();
+        assert!(
+            store
+                .append_version(changeset, version(3, SnapshotId(h(1)), SnapshotId(h(5))))
+                .await
+                .is_err(),
+            "a number is used once"
+        );
+    }
+    let store = open(&dir).await;
+    let versions = store.versions(changeset).await.unwrap();
+    assert_eq!(
+        versions
+            .iter()
+            .map(|v| (v.n, v.base, v.target, v.origin))
+            .collect::<Vec<_>>(),
+        [
+            (1, SnapshotId(h(1)), SnapshotId(h(2)), VersionOrigin::Settled),
+            (2, SnapshotId(h(1)), SnapshotId(h(3)), VersionOrigin::Settled),
+            (3, SnapshotId(h(4)), SnapshotId(h(3)), VersionOrigin::BaseMoved),
+        ]
+    );
+    assert_eq!(
+        (versions[2].base_commit.clone(), versions[2].tip.clone(), versions[2].at),
+        (commit("def456"), commit("abc123"), 30)
+    );
+
+    store.close_review(id, T0, false).await.unwrap();
+    let (_, next) = review(&store, SnapshotId(h(6)), SnapshotId(h(7))).await;
+    assert_ne!(next, id);
+    let versions = store.versions(changeset).await.unwrap();
+    assert_eq!(
+        versions.iter().map(|v| (v.n, v.target)).collect::<Vec<_>>(),
+        [(1, SnapshotId(h(7)))]
+    );
+}
+
+#[tokio::test]
+async fn a_review_records_when_it_ended_and_what_was_last_reviewed() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let (changeset, id) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    let open_review = store.review(id).await.unwrap().unwrap();
+    assert_eq!(
+        (open_review.changeset, open_review.last_reviewed, open_review.opened_at),
+        (changeset, None, T0)
+    );
+    assert_eq!((open_review.closed_at, open_review.complete), (None, None));
+    assert_eq!(store.open_review(changeset).await.unwrap(), Some(id));
+    assert_eq!(store.open_review(ChangesetId(changeset.0 + 1)).await.unwrap(), None);
+
+    store.set_last_reviewed(id, 2).await.unwrap();
+    store.close_review(id, 1, true).await.unwrap();
+    assert_eq!(store.open_review(changeset).await.unwrap(), None);
+    let closed = store.review(id).await.unwrap().unwrap();
+    assert_eq!(
+        (closed.last_reviewed, closed.closed_at, closed.complete),
+        (Some(2), Some(1), Some(true))
+    );
+}
+
+#[tokio::test]
+async fn snapshots_survive_reopen() {
+    let dir = tempfile::tempdir().unwrap();
     let snap = snapshot(&[("a", 1), ("b/c/d", 2), ("b/e", 3)]);
     let status = SnapshotStatus {
         path_collisions: vec![RepoPath(b"A".to_vec())],
@@ -324,36 +485,12 @@ async fn snapshots_and_timeline_survive_reopen() {
     };
     {
         let store = open(&dir).await;
-        id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
         store.put_snapshot(snap.clone(), status.clone(), T0).await.unwrap();
         store.put_snapshot(snap.clone(), status.clone(), T0).await.unwrap();
-        for (at, s) in [(10, 3), (20, 1), (30, 2)] {
-            store.append_timeline(id, SnapshotId(h(s)), at).await.unwrap();
-        }
     }
     let store = open(&dir).await;
     assert_eq!(store.snapshot(snap.id).await.unwrap(), Some((snap, status)));
     assert_eq!(store.snapshot(SnapshotId(h(99))).await.unwrap(), None);
-    let version = |s: u8, at| Version {
-        snapshot: SnapshotId(h(s)),
-        at,
-    };
-    assert_eq!(
-        store.timeline(id).await.unwrap(),
-        vec![version(3, 10), version(1, 20), version(2, 30)]
-    );
-    assert_eq!(store.open_sessions("/repo".into()).await.unwrap(), vec![id]);
-    assert!(store.open_sessions("/other".into()).await.unwrap().is_empty());
-    let stored = store.session(id).await.unwrap().unwrap();
-    assert_eq!(stored.complete, None);
-    assert_eq!(
-        store.pin(stored.pin).await.unwrap().unwrap().head,
-        CommitId("abc123".into())
-    );
-    store.close_session(id, 1, true).await.unwrap();
-    assert!(store.open_sessions("/repo".into()).await.unwrap().is_empty());
-    let closed = store.session(id).await.unwrap().unwrap();
-    assert_eq!((closed.closed_at, closed.complete), (Some(1), Some(true)));
 }
 
 #[tokio::test]
@@ -367,13 +504,13 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
     for n in [21, 22, 23, 24] {
         store.put_blob(vec![n]).await.unwrap();
     }
-    let id = session(&store, snaps[0].id, snaps[1].id).await;
+    let (changeset, id) = review(&store, snaps[0].id, snaps[1].id).await;
     let now = T0;
 
     let report = gc(&store, now).await;
     assert_eq!(
         (
-            report.sessions_deleted,
+            report.changesets_deleted,
             report.snapshots_deleted,
             report.nodes_deleted,
             report.blobs_deleted
@@ -386,31 +523,69 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
     assert_eq!(store.blob(BlobId::of(&[24])).await.unwrap(), None);
     assert!(store.snapshot(snaps[2].id).await.unwrap().is_none());
 
-    // Closed sessions are kept for the retention period.
-    store.close_session(id, now, false).await.unwrap();
+    // A changeset is kept for the retention period after its review closed.
+    store.close_review(id, now, false).await.unwrap();
     assert_eq!(gc(&store, now + 29 * DAY).await, Default::default());
-    assert!(store.session(id).await.unwrap().is_some());
+    assert!(store.review(id).await.unwrap().is_some());
 
-    // An open thread keeps an expired session.
+    // An open thread keeps an expired changeset.
     let thread = store
-        .add_thread(id, CommentTarget::Changeset, message("todo"))
+        .add_thread(changeset, Some(id), CommentTarget::Changeset, message("todo"))
         .await
         .unwrap();
     assert_eq!(gc(&store, now + 31 * DAY).await, Default::default());
     store.set_thread_status(thread, ThreadStatus::Resolved).await.unwrap();
 
-    let report = gc(&store, now + 31 * DAY).await;
+    // So does an open review, and the retention counts from the last closed one.
+    let (_, next) = review(&store, snaps[0].id, snaps[1].id).await;
+    assert_eq!(gc(&store, now + 31 * DAY).await, Default::default());
+    store.close_review(next, now + 31 * DAY, true).await.unwrap();
+    assert_eq!(gc(&store, now + 32 * DAY).await, Default::default());
+
+    let report = gc(&store, now + 62 * DAY).await;
     assert_eq!(
         (
-            report.sessions_deleted,
+            report.changesets_deleted,
             report.snapshots_deleted,
             report.nodes_deleted,
             report.blobs_deleted
         ),
         (1, 2, 2, 2)
     );
-    assert!(store.session(id).await.unwrap().is_none());
+    assert!(store.review(id).await.unwrap().is_none());
+    assert!(store.threads(changeset).await.unwrap().is_empty());
+    assert!(store.versions(changeset).await.unwrap().is_empty());
+    assert_eq!(
+        store.changeset("/repo".into(), Source::WorkingTree).await.unwrap(),
+        None
+    );
     assert_eq!(store.blob(BlobId::of(&[21])).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn gc_keeps_what_an_open_thread_of_a_closed_review_is_anchored_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let snaps = [31u8, 32, 33].map(|n| snapshot(&[("a", n)]));
+    for s in &snaps {
+        store.put_snapshot(s.clone(), Default::default(), T0).await.unwrap();
+    }
+    let (changeset, id) = review(&store, snaps[0].id, snaps[1].id).await;
+    let anchored = Anchor {
+        snapshot: snaps[2].id,
+        ..anchor(Side::Target, 0)
+    };
+    store
+        .add_thread(changeset, Some(id), CommentTarget::Range(anchored), message("open"))
+        .await
+        .unwrap();
+    store.close_review(id, T0, false).await.unwrap();
+
+    let report = gc(&store, T0 + 100 * DAY).await;
+    assert_eq!((report.changesets_deleted, report.snapshots_deleted), (0, 0));
+    for s in &snaps {
+        assert!(store.snapshot(s.id).await.unwrap().is_some());
+    }
 }
 
 #[tokio::test]
@@ -462,7 +637,7 @@ async fn gc_drops_a_node_only_when_no_retained_root_reaches_it() {
         store.put_snapshot(s.clone(), Default::default(), T0).await.unwrap();
     }
     assert_eq!(node_count(&store).await, 5);
-    session(&store, kept.id, kept.id).await;
+    review(&store, kept.id, kept.id).await;
 
     let report = gc(&store, T0).await;
     assert_eq!((report.snapshots_deleted, report.nodes_deleted), (1, 2)); // other's root and `a`; `b` is shared
@@ -471,13 +646,13 @@ async fn gc_drops_a_node_only_when_no_retained_root_reaches_it() {
 }
 
 #[tokio::test]
-async fn a_long_timeline_of_a_large_tree_stays_small() {
+async fn a_long_run_of_versions_over_a_large_tree_stays_small() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
     let mut entries: BTreeMap<RepoPath, FileEntry> = (0..2000)
         .map(|i| (RepoPath(format!("d{:02}/f{i}", i % 100).into_bytes()), file_entry(0)))
         .collect();
-    let id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    let (changeset, _) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
     for i in 0..50u32 {
         let path = RepoPath(format!("d{:02}/f{}", (i * 7) % 100, (i * 7) % 100).into_bytes());
         entries.insert(
@@ -492,18 +667,22 @@ async fn a_long_timeline_of_a_large_tree_stays_small() {
             entries: entries.clone(),
         };
         store.put_snapshot(snap.clone(), Default::default(), T0).await.unwrap();
-        store.append_timeline(id, snap.id, 0).await.unwrap();
+        store
+            .append_version(changeset, version(i + 2, SnapshotId(h(1)), snap.id))
+            .await
+            .unwrap();
     }
     // 101 nodes for the first snapshot (which includes edit 0), then a root and one directory per later edit.
     assert_eq!(node_count(&store).await, 101 + 2 * 49);
     let rows = tree_child::Entity::find().count(&store.db).await.unwrap();
     assert!(rows < 2000 + 100 + 50 * 125, "{rows} child rows");
-    let last = store.timeline(id).await.unwrap().last().unwrap().snapshot;
+    let last = store.versions(changeset).await.unwrap().last().unwrap().target;
     assert_eq!(store.snapshot(last).await.unwrap().unwrap().0.entries, entries);
 }
 
 #[tokio::test]
 async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
+    use vet_core::content::Changeset;
     use vet_core::prepared::PreparedFile;
     use vet_core::remap::remap_span;
     use vet_core::review::FileRemapInput;
@@ -536,7 +715,7 @@ async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
 
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
-    let id = session(&store, SnapshotId(h(2)), SnapshotId(h(3))).await;
+    let (_, id) = review(&store, SnapshotId(h(2)), SnapshotId(h(3))).await;
     let recorded = Anchor::from_text(
         Side::Target,
         SnapshotId(h(1)),
@@ -553,10 +732,10 @@ async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
     let ids = store.edit_spans(id, vec![], vec![span.clone()]).await.unwrap();
 
     let remapped = async |new| {
-        let session = store.session(id).await.unwrap().unwrap();
+        let review = store.review(id).await.unwrap().unwrap();
         let input = input(new);
         let target = PreparedFile::new(&input, &blobs);
-        session
+        review
             .spans
             .iter()
             .flat_map(|r| remap_span(&r.span, now, None, Some(&target)))
@@ -565,7 +744,7 @@ async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
     assert_eq!(remapped(e).await, 2, "the edited line splits the span");
     assert_eq!(remapped(o).await, 1, "reverted: full coverage again");
     assert_eq!(
-        store.session(id).await.unwrap().unwrap().spans[0].span,
+        store.review(id).await.unwrap().unwrap().spans[0].span,
         span,
         "nothing was overwritten"
     );

@@ -88,9 +88,9 @@ pub enum ReviewInfo {
     Browsing,
     Open {
         /// Of the current snapshot: 1 is the review's start snapshot, each
-        /// later settled snapshot adds one.
+        /// later settled snapshot and each base on another commit adds one.
         version: u32,
-        /// Unix seconds the version settled.
+        /// Unix seconds the version was recorded.
         updated_at: u32,
     },
 }

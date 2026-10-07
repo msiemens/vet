@@ -4,7 +4,7 @@
 use gix::bstr::ByteSlice;
 use gix::revision::walk::Sorting;
 use gix::traverse::commit::simple::CommitTimeOrder;
-use vet_app::pin::CommitId;
+use vet_app::changeset::CommitId;
 use vet_app::ports::{BaseCandidates, BranchInfo, CommitInfo, GitError};
 
 use super::{err, object_id};

@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use tempfile::TempDir;
-use vet_app::pin::CommitId;
+use vet_app::changeset::CommitId;
 use vet_app::ports::History;
 use vet_infra::git::GixRepo;
 

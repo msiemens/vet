@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 
 use vet_app::acquisition::Acquisition;
-use vet_app::pin::CommitId;
+use vet_app::changeset::CommitId;
 use vet_app::ports::{Dirty, GitRepo, Store};
 use vet_core::content::{Snapshot, SnapshotStatus};
 

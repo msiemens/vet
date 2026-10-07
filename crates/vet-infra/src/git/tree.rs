@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use vet_app::pin::CommitId;
+use vet_app::changeset::CommitId;
 use vet_app::ports::GitError;
 use vet_core::content::{EntryKind, FileEntry, RepoPath, Snapshot};
 use vet_core::merkle;

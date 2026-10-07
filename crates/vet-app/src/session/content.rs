@@ -12,7 +12,7 @@ use super::blobs::{NoText, image_media_type};
 use super::state::{check_revision, find_diff, find_non_text};
 use super::{LiveSession, Result, SessionError};
 use crate::editor;
-use crate::ports::{BlobRead, GitRepo, ReviewStore, Store};
+use crate::ports::{BlobRead, GitRepo, LiveStore};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct FileText {
@@ -48,7 +48,7 @@ pub enum ItemBlob {
     Unavailable,
 }
 
-impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Both sides of a file with text, at the current revision.
     pub async fn file_text(&self, path: &str) -> Result<FileText> {
         let mut st = self.state.lock().await;

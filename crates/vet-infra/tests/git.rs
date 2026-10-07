@@ -10,10 +10,10 @@ use std::sync::Mutex;
 
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
+use vet_app::changeset::ChangesetId;
 use vet_app::ports::{
-    BlobRead, BlobReader, Differ, Dirty, History, IgnoreRules, Scanner, SessionRefs, Store, StoreError,
+    BlobRead, BlobReader, ChangesetRefs, Differ, Dirty, History, IgnoreRules, Scanner, Store, StoreError,
 };
-use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_infra::git::GixRepo;
 
@@ -86,12 +86,6 @@ impl Store for MemStore {
         unimplemented!()
     }
     async fn snapshot(&self, _: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
-        unimplemented!()
-    }
-    async fn append_timeline(&self, _: SessionId, _: SnapshotId, _: i64) -> Result<(), StoreError> {
-        unimplemented!()
-    }
-    async fn timeline(&self, _: SessionId) -> Result<Vec<vet_app::review::Version>, StoreError> {
         unimplemented!()
     }
 }
@@ -443,7 +437,7 @@ async fn submodule_commits_come_from_the_index_and_the_checked_out_head() {
 }
 
 #[tokio::test]
-async fn session_refs_are_set_and_deleted() {
+async fn changeset_refs_are_set_per_version_and_deleted_with_the_changeset() {
     let dir = repo();
     write(dir.path(), "a.txt", b"a\n");
     commit(dir.path());
@@ -459,18 +453,21 @@ async fn session_refs_are_set_and_deleted() {
         String::from_utf8(out.stdout).unwrap()
     };
 
-    repo.set_session_ref(SessionId(7), "base", &commit_id).await.unwrap();
-    repo.set_session_ref(SessionId(7), "target", &commit_id).await.unwrap();
-    repo.set_session_ref(SessionId(8), "base", &commit_id).await.unwrap();
+    let set = |changeset, version, name| repo.set_changeset_ref(ChangesetId(changeset), version, name, &commit_id);
+    set(7, 1, "base").await.unwrap();
+    set(7, 1, "tip").await.unwrap();
+    set(7, 2, "base").await.unwrap();
+    set(8, 1, "base").await.unwrap();
     assert_eq!(
         refs(dir.path()),
         format!(
-            "refs/vet/sessions/7/base {head}\nrefs/vet/sessions/7/target {head}\nrefs/vet/sessions/8/base {head}\n"
+            "refs/vet/changesets/7/1/base {head}\nrefs/vet/changesets/7/1/tip {head}\n\
+             refs/vet/changesets/7/2/base {head}\nrefs/vet/changesets/8/1/base {head}\n"
         )
     );
 
-    repo.delete_session_refs(SessionId(7)).await.unwrap();
-    assert_eq!(refs(dir.path()), format!("refs/vet/sessions/8/base {head}\n"));
+    repo.delete_changeset_refs(ChangesetId(7)).await.unwrap();
+    assert_eq!(refs(dir.path()), format!("refs/vet/changesets/8/1/base {head}\n"));
 }
 
 #[tokio::test]

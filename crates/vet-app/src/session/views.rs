@@ -5,7 +5,7 @@ use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{FileEntry, Hunk, LineDelta, NonTextKind, RepoPath, SnapshotId};
 use vet_core::filter::ReviewFilter;
 
-use crate::pin::{BaseChoice, CommitId};
+use crate::changeset::{BaseChoice, CommitId};
 use crate::ports::{CommitInfo, Degraded};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -104,7 +104,7 @@ pub enum Lifecycle {
     Open {
         /// Of the current snapshot: 1 is the review's start.
         version: u32,
-        /// Unix seconds the version settled.
+        /// Unix seconds the version was recorded.
         updated_at: i64,
     },
 }

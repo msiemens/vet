@@ -13,7 +13,7 @@ use super::blobs::image_media_type;
 use super::state::{Changes, State};
 use super::views::{ItemView, ModeChange};
 use super::{LiveSession, Result};
-use crate::ports::{GitRepo, ReviewStore, Store};
+use crate::ports::{GitRepo, LiveStore};
 use crate::progress::{Running, TaskKind};
 use crate::review::{RecordedSpan, SpanId};
 
@@ -28,7 +28,7 @@ pub(super) struct Prepared {
     pub(super) threads: Vec<Option<usize>>,
 }
 
-impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     pub(super) async fn ensure_changes(&self, st: &mut State) -> Result<()> {
         if st.changes.is_some() {
             return Ok(());

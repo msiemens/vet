@@ -7,7 +7,7 @@ use vet_core::content::{BlobId, EntryKind, FileEntry, NonTextKind, RepoPath, dec
 
 use super::views::EntryInfo;
 use super::{LiveSession, Result};
-use crate::ports::{BlobRead, GitRepo, ReviewStore, Store};
+use crate::ports::{BlobRead, GitRepo, LiveStore};
 
 /// Why a file has no text to show.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -33,7 +33,7 @@ pub(super) fn image_media_type(path: &RepoPath) -> Option<&'static str> {
     })
 }
 
-impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Unavailable content leaves `target` and `size` empty.
     pub(super) async fn describe(
         &self,

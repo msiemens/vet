@@ -28,7 +28,7 @@ use vet_semantic::trace;
 
 use crate::acquisition::Acquisition;
 use crate::limits::RestoreLimits;
-use crate::ports::{BlobRead, BlobReader, GitRepo, ReviewStore, Store};
+use crate::ports::{BlobRead, BlobReader, GitRepo, LiveStore, Store};
 use crate::progress::{TaskKind, Tasks};
 use crate::session::{LiveSession, SemanticSides, SessionError};
 use crate::trust::{Trust, analysis_policy};
@@ -109,7 +109,7 @@ fn served(trust: &Trust, sides: &SemanticSides) -> (Served, Served) {
 impl<G, S, L, M> Semantics<G, S, L, M>
 where
     G: GitRepo + Send + Sync,
-    S: Store + ReviewStore + Send + Sync,
+    S: LiveStore + Send + Sync,
     L: ServerLauncher + Sync,
     L::Server: Send,
     M: Materializer + Sync,
@@ -463,7 +463,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::pin::CommitId;
+    use crate::changeset::CommitId;
     use crate::progress::TaskState;
     use crate::session::tests::{FakeGit, Fixture, MemStore};
 

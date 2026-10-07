@@ -12,9 +12,9 @@ use super::state::{State, acknowledged, find_diff, lifecycle_of, shown_items};
 use super::views::{FileStatus, FileView, ManifestView, ReviewUpdateView, ReviewView, TargetView};
 use super::{LiveSession, Result, SessionError};
 use crate::editor::line_count;
-use crate::ports::{GitRepo, ReviewStore, Store};
+use crate::ports::{GitRepo, LiveStore};
 
-impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     pub async fn manifest(&self) -> Result<ManifestView> {
         let mut st = self.state.lock().await;
         self.ensure_changes(&mut st).await?;

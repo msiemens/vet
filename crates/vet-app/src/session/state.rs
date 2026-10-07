@@ -12,9 +12,9 @@ use vet_core::review::{Anchor, CommentTarget, ReviewedSpan, Thread, ThreadId};
 
 use super::views::{ItemView, Lifecycle, Outcome};
 use super::{Result, SessionError};
-use crate::pin::{BaseChoice, CommitId};
+use crate::changeset::{BaseChoice, ChangesetId, CommitId};
 use crate::ports::Degraded;
-use crate::review::{NonTextAck, RecordedSpan, SessionId, SpanId};
+use crate::review::{NonTextAck, RecordedSpan, ReviewId, SpanId};
 
 /// What the current revision's diff needs, computed on first use.
 pub(super) struct Changes {
@@ -33,16 +33,22 @@ pub(super) struct Changes {
 }
 
 /// A started review.
-pub(super) struct Review {
-    pub(super) id: SessionId,
+pub(super) struct OpenReview {
+    pub(super) id: ReviewId,
+    /// The number of the changeset's latest version.
     pub(super) version: u32,
+    /// Unix seconds the latest version was recorded.
     pub(super) updated_at: i64,
+    /// The number of the version something was last marked in.
+    pub(super) last_reviewed: Option<u32>,
 }
 
 pub(super) struct State {
     pub(super) revision: u32,
+    /// The stored changeset; `None` until a review of it started.
+    pub(super) changeset: Option<ChangesetId>,
     /// `None` while browsing.
-    pub(super) review: Option<Review>,
+    pub(super) review: Option<OpenReview>,
     pub(super) filter: ReviewFilter,
     pub(super) base: Snapshot,
     pub(super) base_choice: BaseChoice,

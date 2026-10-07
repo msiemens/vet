@@ -1,6 +1,6 @@
 //! What a base is called, how far its branch has moved on, and the default (§6.5).
 
-use crate::pin::{BaseChoice, CommitId};
+use crate::changeset::{BaseChoice, CommitId};
 use crate::ports::{BranchInfo, GitError, History};
 
 /// First-parent steps searched for a branch-relative name.

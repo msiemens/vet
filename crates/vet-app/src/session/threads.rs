@@ -15,7 +15,7 @@ use super::state::{Changes, State, check_revision, find_diff, outcome, shown_ite
 use super::views::{FileStatus, Outcome};
 use super::{LiveSession, Result, SessionError};
 use crate::editor::last_text_line;
-use crate::ports::{GitRepo, ReviewStore, Store};
+use crate::ports::{GitRepo, LiveStore};
 
 /// What a new thread is attached to. Ranges are in the text of the revision the
 /// request names.
@@ -83,7 +83,7 @@ pub struct ThreadsView {
     pub threads: Vec<ThreadView>,
 }
 
-impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Every thread, with range anchors resolved at the current revision.
     pub async fn threads(&self) -> Result<ThreadsView> {
         let mut st = self.state.lock().await;
@@ -209,10 +209,11 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         };
         let started = self.begin(&mut st).await?;
         let review = st.review.as_ref().expect("begun").id;
+        let changeset = st.changeset.expect("begun");
         let id = self
             .acquisition
             .store
-            .add_thread(review, target.clone(), opener.clone())
+            .add_thread(changeset, Some(review), target.clone(), opener.clone())
             .await?;
         st.threads.push(Thread {
             id,

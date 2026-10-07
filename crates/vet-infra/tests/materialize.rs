@@ -12,7 +12,6 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
 use vet_app::ports::{Checkout, CheckoutError, History, Scanner, Store, StoreError};
-use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::merkle;
 use vet_infra::git::GixRepo;
@@ -71,12 +70,6 @@ impl Store for MemStore {
     }
     async fn snapshot(&self, id: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
         Ok(self.snapshots.lock().unwrap().get(&id).cloned())
-    }
-    async fn append_timeline(&self, _: SessionId, _: SnapshotId, _: i64) -> Result<(), StoreError> {
-        unimplemented!()
-    }
-    async fn timeline(&self, _: SessionId) -> Result<Vec<vet_app::review::Version>, StoreError> {
-        unimplemented!()
     }
 }
 

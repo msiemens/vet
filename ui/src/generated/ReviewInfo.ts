@@ -8,10 +8,10 @@
 export type ReviewInfo = { "state": "browsing" } | { "state": "open", 
 /**
  * Of the current snapshot: 1 is the review's start snapshot, each
- * later settled snapshot adds one.
+ * later settled snapshot and each base on another commit adds one.
  */
 version: number, 
 /**
- * Unix seconds the version settled.
+ * Unix seconds the version was recorded.
  */
 updatedAt: number, };

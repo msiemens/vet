@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 
-use crate::pin::CommitId;
+use crate::changeset::CommitId;
 use crate::ports::{BlobRead, BlobReader, Dirty, GitError, History, Scan, Scanner, Store, StoreError};
 use crate::progress::{TaskKind, Tasks};
 

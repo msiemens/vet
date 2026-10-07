@@ -41,16 +41,15 @@ fn statements() -> Vec<String> {
         )+};
     }
     create!(
-        pin::Entity,
         snapshot::Entity,
         snapshot_path::Entity,
         tree_node::Entity,
         tree_child::Entity,
-        session::Entity,
-        session_base::Entity,
+        changeset::Entity,
+        version::Entity,
+        review::Entity,
         project_filter::Entity,
         project_filter_item::Entity,
-        timeline::Entity,
         anchor::Entity,
         span::Entity,
         ack::Entity,

@@ -5,17 +5,17 @@ use std::collections::HashMap;
 
 use sea_orm::sea_query::{SimpleExpr, Value};
 use sea_orm::{ColumnTrait, DbErr, Set};
-use vet_app::pin::{BaseChoice, CommitId, PinId};
-use vet_app::review::{NonTextAck, RecordedSpan, Session, SessionId, SpanId};
+use vet_app::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version, VersionOrigin};
+use vet_app::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, SpanId};
 use vet_core::content::{
-    BlobId, Changeset, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
+    BlobId, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::TreeNode;
 use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanState, Thread, ThreadId, ThreadStatus};
 
 use super::entity::{
-    ack, anchor, kinds, message, project_filter_item, session, session_base, snapshot_path, span, thread, tree_child,
+    ack, anchor, kinds, message, project_filter_item, review, snapshot_path, span, thread, tree_child, version,
 };
 
 pub fn corrupt(what: &str) -> DbErr {
@@ -61,6 +61,7 @@ twin!(
     }
 );
 twin!(ThreadStatus, ThreadStatus { Open, Resolved });
+twin!(VersionOrigin, VersionOrigin { Settled, BaseMoved });
 twin!(
     NonTextKind,
     ChangeKind {
@@ -111,31 +112,65 @@ pub fn filter_from(hide_binary: bool, items: Vec<project_filter_item::Model>) ->
     Ok(filter)
 }
 
-pub fn base_row(session: i64, choice: BaseChoice, commit: CommitId) -> session_base::ActiveModel {
-    let (kind, value) = match choice {
+/// The kind and value a base choice is stored as.
+pub fn base_columns(choice: BaseChoice) -> (kinds::BaseKind, String) {
+    match choice {
         BaseChoice::Branch { name } => (kinds::BaseKind::Branch, name),
         BaseChoice::MergeBase { reference } => (kinds::BaseKind::MergeBase, reference),
         BaseChoice::Commit { id } => (kinds::BaseKind::Commit, id.0),
-    };
-    session_base::ActiveModel {
-        session: Set(session),
-        kind: Set(kind),
-        value: Set(value),
-        commit: Set(commit.0),
     }
 }
 
-pub fn base_from(m: session_base::Model) -> BaseChoice {
-    match m.kind {
-        kinds::BaseKind::Branch => BaseChoice::Branch { name: m.value },
-        kinds::BaseKind::MergeBase => BaseChoice::MergeBase { reference: m.value },
-        kinds::BaseKind::Commit => BaseChoice::Commit { id: CommitId(m.value) },
+pub fn base_from(kind: kinds::BaseKind, value: String) -> BaseChoice {
+    match kind {
+        kinds::BaseKind::Branch => BaseChoice::Branch { name: value },
+        kinds::BaseKind::MergeBase => BaseChoice::MergeBase { reference: value },
+        kinds::BaseKind::Commit => BaseChoice::Commit { id: CommitId(value) },
     }
 }
 
-pub fn anchor_row(session: i64, a: &Anchor) -> anchor::ActiveModel {
+/// The kind and key a source is stored as: the branch name, or `host/path#number`
+/// of a pull request, and nothing for the working tree.
+pub fn source_columns(source: &Source) -> (kinds::SourceKind, String) {
+    match source {
+        Source::WorkingTree => (kinds::SourceKind::WorkingTree, String::new()),
+        Source::Branch { name } => (kinds::SourceKind::Branch, name.clone()),
+        Source::PullRequest { remote, number } => (
+            kinds::SourceKind::PullRequest,
+            format!("{}/{}#{number}", remote.host, remote.path),
+        ),
+    }
+}
+
+pub fn version_row(changeset: ChangesetId, v: &Version) -> version::ActiveModel {
+    version::ActiveModel {
+        changeset: Set(changeset.0 as i64),
+        n: Set(v.n.into()),
+        base: Set(v.base.0.0.to_vec()),
+        base_commit: Set(v.base_commit.0.clone()),
+        target: Set(v.target.0.0.to_vec()),
+        tip: Set(v.tip.0.clone()),
+        at: Set(v.at),
+        origin: Set(v.origin.into()),
+        ..Default::default()
+    }
+}
+
+pub fn version_from(m: version::Model) -> Result<Version, DbErr> {
+    Ok(Version {
+        n: u32::try_from(m.n).map_err(|_| corrupt("version number"))?,
+        base: SnapshotId(hash(&m.base)?),
+        base_commit: CommitId(m.base_commit),
+        target: SnapshotId(hash(&m.target)?),
+        tip: CommitId(m.tip),
+        at: m.at,
+        origin: m.origin.into(),
+    })
+}
+
+pub fn anchor_row(changeset: i64, a: &Anchor) -> anchor::ActiveModel {
     anchor::ActiveModel {
-        session: Set(session),
+        changeset: Set(changeset),
         side: Set(a.side.into()),
         snapshot: Set(a.snapshot.0.0.to_vec()),
         file: Set(a.file.0.clone()),
@@ -281,10 +316,10 @@ impl AckSide {
     }
 }
 
-pub fn ack_row(session: i64, a: &NonTextAck) -> ack::ActiveModel {
+pub fn ack_row(review: i64, a: &NonTextAck) -> ack::ActiveModel {
     let (b, f) = (AckSide::new(a.before.as_ref()), AckSide::new(a.after.as_ref()));
     ack::ActiveModel {
-        session: Set(session),
+        review: Set(review),
         change: Set(a.kind.into()),
         before_path: Set(b.path),
         before_blob: Set(b.blob),
@@ -347,27 +382,21 @@ pub fn ack_from(m: ack::Model) -> Result<NonTextAck, DbErr> {
     })
 }
 
-/// The rows of one stored session. Spans, acknowledgements and messages are in
-/// the order they were written.
-pub struct SessionRows {
-    pub session: session::Model,
-    pub base: session_base::Model,
+/// The rows of one stored review. Spans and acknowledgements are in the order
+/// they were written; `anchors` are those the spans name.
+pub struct ReviewRows {
+    pub review: review::Model,
     pub anchors: Vec<anchor::Model>,
     pub spans: Vec<span::Model>,
     pub acks: Vec<ack::Model>,
-    pub threads: Vec<thread::Model>,
-    pub messages: Vec<message::Model>,
 }
 
-pub fn session_from(id: SessionId, rows: SessionRows) -> Result<Session, DbErr> {
-    let SessionRows {
-        session,
-        base,
+pub fn review_from(rows: ReviewRows) -> Result<Review, DbErr> {
+    let ReviewRows {
+        review,
         anchors,
         spans,
         acks,
-        threads,
-        messages,
     } = rows;
     let anchors: HashMap<i64, anchor::Model> = anchors.into_iter().map(|a| (a.id, a)).collect();
     let anchor_of = |id: Option<i64>| id.and_then(|i| anchors.get(&i)).map(anchor_from).transpose();
@@ -387,6 +416,30 @@ pub fn session_from(id: SessionId, rows: SessionRows) -> Result<Session, DbErr> 
         .collect::<Result<_, DbErr>>()?;
     let acks = acks.into_iter().map(ack_from).collect::<Result<_, DbErr>>()?;
 
+    Ok(Review {
+        id: ReviewId(review.id as u64),
+        changeset: ChangesetId(review.changeset as u64),
+        base: base_from(review.base_kind, review.base_value),
+        spans,
+        acks,
+        last_reviewed: review
+            .last_reviewed
+            .map(|n| u32::try_from(n).map_err(|_| corrupt("version number")))
+            .transpose()?,
+        opened_at: review.opened_at,
+        closed_at: review.closed_at,
+        complete: review.closed_at.map(|_| review.complete),
+    })
+}
+
+/// The threads of one changeset in the order given; `anchors` are those the
+/// range threads name and `messages` are in the order they were written.
+pub fn threads_from(
+    threads: Vec<thread::Model>,
+    anchors: Vec<anchor::Model>,
+    messages: Vec<message::Model>,
+) -> Result<Vec<ChangesetThread>, DbErr> {
+    let anchors: HashMap<i64, anchor::Model> = anchors.into_iter().map(|a| (a.id, a)).collect();
     let mut by_thread: HashMap<i64, Vec<Message>> = HashMap::new();
     for m in messages {
         by_thread.entry(m.thread).or_default().push(Message {
@@ -395,34 +448,20 @@ pub fn session_from(id: SessionId, rows: SessionRows) -> Result<Session, DbErr> 
             at: m.at,
         });
     }
-    let threads = threads
+    threads
         .into_iter()
         .map(|t| {
-            Ok(Thread {
-                id: ThreadId(t.id as u64),
-                target: target_from(&t, t.anchor.and_then(|a| anchors.get(&a)))?,
-                messages: by_thread.remove(&t.id).unwrap_or_default(),
-                status: t.status.into(),
+            Ok(ChangesetThread {
+                thread: Thread {
+                    id: ThreadId(t.id as u64),
+                    target: target_from(&t, t.anchor.and_then(|a| anchors.get(&a)))?,
+                    messages: by_thread.remove(&t.id).unwrap_or_default(),
+                    status: t.status.into(),
+                },
+                review: t.review.map(|r| ReviewId(r as u64)),
             })
         })
-        .collect::<Result<_, DbErr>>()?;
-
-    let base_commit = CommitId(base.commit.clone());
-    Ok(Session {
-        id,
-        pin: PinId(session.pin as u64),
-        changeset: Changeset {
-            base: SnapshotId(hash(&session.base)?),
-            target: SnapshotId(hash(&session.target)?),
-        },
-        base: base_from(base),
-        base_commit,
-        spans,
-        acks,
-        threads,
-        closed_at: session.closed_at,
-        complete: session.closed_at.map(|_| session.complete),
-    })
+        .collect()
 }
 
 /// Sets the target columns; `anchor` is the row id of a `Range` target's anchor.

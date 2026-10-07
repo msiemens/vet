@@ -1,6 +1,6 @@
-//! `vet_app::ports::Store` and `ReviewStore`: a content directory plus one
-//! SQLite file (WAL) accessed through SeaORM, both under the backend side's
-//! data directory (§8).
+//! `vet_app::ports::Store`, `ChangesetStore`, `ReviewStore` and `ThreadStore`: a
+//! content directory plus one SQLite file (WAL) accessed through SeaORM, both
+//! under the backend side's data directory (§8).
 
 mod codec;
 mod content;
@@ -24,10 +24,10 @@ use sea_orm::{
     IntoActiveModel, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Set, SqlxSqliteConnector, TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait;
-use vet_app::pin::{BaseChoice, CommitId, Pin, PinId};
-use vet_app::ports::{ReviewStore, Store, StoreError};
-use vet_app::review::{NonTextAck, Session, SessionId, SpanId, Version};
-use vet_core::content::{BlobId, Changeset, Hash, Snapshot, SnapshotId, SnapshotStatus};
+use vet_app::changeset::{BaseChoice, ChangesetId, Source, Version};
+use vet_app::ports::{ChangesetStore, ReviewStore, Store, StoreError, ThreadStore};
+use vet_app::review::{ChangesetThread, NonTextAck, Review, ReviewId, SpanId};
+use vet_core::content::{BlobId, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::{self, TreeNode};
 use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
@@ -80,11 +80,38 @@ where
     Ok(())
 }
 
-async fn put_anchor(db: &impl ConnectionTrait, session: i64, anchor: Option<&Anchor>) -> Res<Option<i64>> {
+async fn put_anchor(db: &impl ConnectionTrait, changeset: i64, anchor: Option<&Anchor>) -> Res<Option<i64>> {
     match anchor {
-        Some(a) => Ok(Some(anchor_row(session, a).insert(db).await?.id)),
+        Some(a) => Ok(Some(anchor_row(changeset, a).insert(db).await?.id)),
         None => Ok(None),
     }
+}
+
+async fn find_changeset(db: &impl ConnectionTrait, repo: String, source: &Source) -> Res<Option<i64>> {
+    let (kind, key) = source_columns(source);
+    changeset::Entity::find()
+        .filter(changeset::Column::Repo.eq(repo))
+        .filter(changeset::Column::Kind.eq(kind))
+        .filter(changeset::Column::Key.eq(key))
+        .select_only()
+        .column(changeset::Column::Id)
+        .into_tuple()
+        .one(db)
+        .await
+}
+
+/// The anchors with these ids.
+async fn find_anchors(db: &impl ConnectionTrait, ids: Vec<i64>) -> Res<Vec<anchor::Model>> {
+    let mut found = Vec::new();
+    for chunk in ids.chunks(1000) {
+        found.extend(
+            anchor::Entity::find()
+                .filter(anchor::Column::Id.is_in(chunk.to_vec()))
+                .all(db)
+                .await?,
+        );
+    }
+    Ok(found)
 }
 
 async fn write_filter(db: &impl ConnectionTrait, repo: &str, filter: &ReviewFilter) -> Res<()> {
@@ -142,47 +169,56 @@ impl SqliteStore {
             .map_err(db_err)??)
     }
 
-    async fn load_session(&self, id: SessionId) -> Res<Option<Session>> {
-        let sid = id.0 as i64;
-        let Some(row) = session::Entity::find_by_id(sid).one(&self.db).await? else {
+    async fn load_review(&self, id: ReviewId) -> Res<Option<Review>> {
+        let rid = id.0 as i64;
+        let Some(row) = review::Entity::find_by_id(rid).one(&self.db).await? else {
             return Ok(None);
         };
-        let thread_ids = thread::Entity::find()
-            .filter(thread::Column::Session.eq(sid))
-            .select_only()
-            .column(thread::Column::Id);
-        let rows = SessionRows {
-            anchors: anchor::Entity::find()
-                .filter(anchor::Column::Session.eq(sid))
-                .all(&self.db)
-                .await?,
-            spans: span::Entity::find()
-                .filter(span::Column::Session.eq(sid))
-                .order_by_asc(span::Column::Id)
-                .all(&self.db)
-                .await?,
+        let spans = span::Entity::find()
+            .filter(span::Column::Review.eq(rid))
+            .order_by_asc(span::Column::Id)
+            .all(&self.db)
+            .await?;
+        let anchors = find_anchors(
+            &self.db,
+            spans
+                .iter()
+                .flat_map(|s| [s.base_anchor, s.target_anchor])
+                .flatten()
+                .collect(),
+        )
+        .await?;
+        let rows = ReviewRows {
+            review: row,
+            anchors,
+            spans,
             acks: ack::Entity::find()
-                .filter(ack::Column::Session.eq(sid))
+                .filter(ack::Column::Review.eq(rid))
                 .order_by_asc(ack::Column::Id)
                 .all(&self.db)
                 .await?,
-            messages: message::Entity::find()
-                .filter(message::Column::Thread.in_subquery(thread_ids.into_query()))
-                .order_by_asc(message::Column::Id)
-                .all(&self.db)
-                .await?,
-            threads: thread::Entity::find()
-                .filter(thread::Column::Session.eq(sid))
-                .order_by_asc(thread::Column::Id)
-                .all(&self.db)
-                .await?,
-            base: session_base::Entity::find_by_id(sid)
-                .one(&self.db)
-                .await?
-                .ok_or_else(|| corrupt("session without a base"))?,
-            session: row,
         };
-        session_from(id, rows).map(Some)
+        review_from(rows).map(Some)
+    }
+
+    async fn load_threads(&self, changeset: ChangesetId) -> Res<Vec<ChangesetThread>> {
+        let cid = changeset.0 as i64;
+        let threads = thread::Entity::find()
+            .filter(thread::Column::Changeset.eq(cid))
+            .order_by_asc(thread::Column::Id)
+            .all(&self.db)
+            .await?;
+        let anchors = find_anchors(&self.db, threads.iter().filter_map(|t| t.anchor).collect()).await?;
+        let thread_ids = thread::Entity::find()
+            .filter(thread::Column::Changeset.eq(cid))
+            .select_only()
+            .column(thread::Column::Id);
+        let messages = message::Entity::find()
+            .filter(message::Column::Thread.in_subquery(thread_ids.into_query()))
+            .order_by_asc(message::Column::Id)
+            .all(&self.db)
+            .await?;
+        threads_from(threads, anchors, messages)
     }
 
     async fn find_thread(db: &impl ConnectionTrait, id: ThreadId) -> Res<thread::Model> {
@@ -286,90 +322,77 @@ impl Store for SqliteStore {
         );
         Ok(Some((Snapshot { id, entries }, status)))
     }
+}
 
-    async fn append_timeline(&self, session: SessionId, snapshot: SnapshotId, at: i64) -> Result<(), StoreError> {
-        timeline::ActiveModel {
-            session: Set(session.0 as i64),
-            snapshot: Set(snapshot.0.0.to_vec()),
-            at: Set(at),
-            ..Default::default()
-        }
-        .insert(&self.db)
-        .await?;
-        Ok(())
+impl ChangesetStore for SqliteStore {
+    async fn changeset(&self, repo: String, source: Source) -> Result<Option<ChangesetId>, StoreError> {
+        Ok(find_changeset(&self.db, repo, &source)
+            .await?
+            .map(|id| ChangesetId(id as u64)))
     }
 
-    async fn timeline(&self, session: SessionId) -> Result<Vec<Version>, StoreError> {
-        let rows = timeline::Entity::find()
-            .filter(timeline::Column::Session.eq(session.0 as i64))
-            .order_by_asc(timeline::Column::Id)
+    async fn versions(&self, changeset: ChangesetId) -> Result<Vec<Version>, StoreError> {
+        let rows = version::Entity::find()
+            .filter(version::Column::Changeset.eq(changeset.0 as i64))
+            .order_by_asc(version::Column::N)
             .all(&self.db)
             .await?;
-        Ok(rows
-            .iter()
-            .map(|r| {
-                Ok(Version {
-                    snapshot: SnapshotId(hash(&r.snapshot)?),
-                    at: r.at,
-                })
-            })
-            .collect::<Res<_>>()?)
+        Ok(rows.into_iter().map(version_from).collect::<Res<_>>()?)
+    }
+
+    async fn append_version(&self, changeset: ChangesetId, version: Version) -> Result<(), StoreError> {
+        version_row(changeset, &version).insert(&self.db).await?;
+        Ok(())
     }
 }
 
 impl ReviewStore for SqliteStore {
-    async fn put_pin(&self, head: CommitId, tree: SnapshotId) -> Result<Pin, StoreError> {
-        let row = pin::ActiveModel {
-            head: Set(head.0.clone()),
-            tree: Set(tree.0.0.to_vec()),
-            ..Default::default()
-        }
-        .insert(&self.db)
-        .await?;
-        Ok(Pin {
-            id: PinId(row.id as u64),
-            head,
-            tree,
-        })
-    }
-
-    async fn pin(&self, id: PinId) -> Result<Option<Pin>, StoreError> {
-        let Some(row) = pin::Entity::find_by_id(id.0 as i64).one(&self.db).await? else {
-            return Ok(None);
-        };
-        Ok(Some(Pin {
-            id,
-            head: CommitId(row.head),
-            tree: SnapshotId(hash(&row.tree)?),
-        }))
-    }
-
-    async fn open_session(
+    async fn start_review(
         &self,
         repo: String,
-        pin: PinId,
-        changeset: Changeset,
+        source: Source,
         base: BaseChoice,
-        base_commit: CommitId,
-    ) -> Result<SessionId, StoreError> {
+        first: Version,
+        now: i64,
+    ) -> Result<(ChangesetId, ReviewId), StoreError> {
         let txn = self.db.begin().await?;
-        let row = session::ActiveModel {
-            repo: Set(repo),
-            pin: Set(pin.0 as i64),
-            base: Set(changeset.base.0.0.to_vec()),
-            target: Set(changeset.target.0.0.to_vec()),
+        let changeset = match find_changeset(&txn, repo.clone(), &source).await? {
+            Some(id) => id,
+            None => {
+                let (kind, key) = source_columns(&source);
+                changeset::ActiveModel {
+                    repo: Set(repo),
+                    kind: Set(kind),
+                    key: Set(key),
+                    ..Default::default()
+                }
+                .insert(&txn)
+                .await?
+                .id
+            }
+        };
+        version::Entity::delete_many()
+            .filter(version::Column::Changeset.eq(changeset))
+            .exec(&txn)
+            .await?;
+        version_row(ChangesetId(changeset as u64), &first).insert(&txn).await?;
+        let (base_kind, base_value) = base_columns(base);
+        let review = review::ActiveModel {
+            changeset: Set(changeset),
+            base_kind: Set(base_kind),
+            base_value: Set(base_value),
+            opened_at: Set(now),
             complete: Set(false),
             ..Default::default()
         }
         .insert(&txn)
         .await?;
-        base_row(row.id, base, base_commit).insert(&txn).await?;
         txn.commit().await?;
-        Ok(SessionId(row.id as u64))
+        Ok((ChangesetId(changeset as u64), ReviewId(review.id as u64)))
     }
 
-    async fn close_session(&self, id: SessionId, now: i64, complete: bool) -> Result<(), StoreError> {
-        session::ActiveModel {
+    async fn close_review(&self, id: ReviewId, now: i64, complete: bool) -> Result<(), StoreError> {
+        review::ActiveModel {
             id: Set(id.0 as i64),
             closed_at: Set(Some(now)),
             complete: Set(complete),
@@ -380,21 +403,21 @@ impl ReviewStore for SqliteStore {
         Ok(())
     }
 
-    async fn open_sessions(&self, repo: String) -> Result<Vec<SessionId>, StoreError> {
-        let ids: Vec<i64> = session::Entity::find()
-            .filter(session::Column::Repo.eq(repo))
-            .filter(session::Column::ClosedAt.is_null())
-            .order_by_asc(session::Column::Id)
+    async fn open_review(&self, changeset: ChangesetId) -> Result<Option<ReviewId>, StoreError> {
+        let id: Option<i64> = review::Entity::find()
+            .filter(review::Column::Changeset.eq(changeset.0 as i64))
+            .filter(review::Column::ClosedAt.is_null())
+            .order_by_desc(review::Column::Id)
             .select_only()
-            .column(session::Column::Id)
+            .column(review::Column::Id)
             .into_tuple()
-            .all(&self.db)
+            .one(&self.db)
             .await?;
-        Ok(ids.into_iter().map(|i| SessionId(i as u64)).collect())
+        Ok(id.map(|i| ReviewId(i as u64)))
     }
 
-    async fn session(&self, id: SessionId) -> Result<Option<Session>, StoreError> {
-        Ok(self.load_session(id).await?)
+    async fn review(&self, id: ReviewId) -> Result<Option<Review>, StoreError> {
+        Ok(self.load_review(id).await?)
     }
 
     async fn filter(&self, repo: String) -> Result<ReviewFilter, StoreError> {
@@ -416,39 +439,47 @@ impl ReviewStore for SqliteStore {
         Ok(txn.commit().await?)
     }
 
-    async fn set_base(
-        &self,
-        id: SessionId,
-        base: SnapshotId,
-        choice: BaseChoice,
-        commit: CommitId,
-    ) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
-        let sid = id.0 as i64;
-        session::ActiveModel {
-            id: Set(sid),
-            base: Set(base.0.0.to_vec()),
+    async fn set_base(&self, id: ReviewId, choice: BaseChoice) -> Result<(), StoreError> {
+        let (kind, value) = base_columns(choice);
+        review::ActiveModel {
+            id: Set(id.0 as i64),
+            base_kind: Set(kind),
+            base_value: Set(value),
             ..Default::default()
         }
-        .update(&txn)
+        .update(&self.db)
         .await?;
-        session_base::Entity::delete_by_id(sid).exec(&txn).await?;
-        base_row(sid, choice, commit).insert(&txn).await?;
-        Ok(txn.commit().await?)
+        Ok(())
+    }
+
+    async fn set_last_reviewed(&self, id: ReviewId, version: u32) -> Result<(), StoreError> {
+        review::ActiveModel {
+            id: Set(id.0 as i64),
+            last_reviewed: Set(Some(version.into())),
+            ..Default::default()
+        }
+        .update(&self.db)
+        .await?;
+        Ok(())
     }
 
     async fn edit_spans(
         &self,
-        id: SessionId,
+        id: ReviewId,
         remove: Vec<SpanId>,
         add: Vec<ReviewedSpan>,
     ) -> Result<Vec<SpanId>, StoreError> {
         let txn = self.db.begin().await?;
-        let sid = id.0 as i64;
+        let rid = id.0 as i64;
+        let changeset = review::Entity::find_by_id(rid)
+            .one(&txn)
+            .await?
+            .ok_or_else(|| DbErr::RecordNotFound(format!("review {}", id.0)))?
+            .changeset;
         // Anchors are owned by their spans, so they go with them.
         let remove: Vec<i64> = remove.iter().map(|s| s.0 as i64).collect();
         let doomed = span::Entity::find()
-            .filter(span::Column::Session.eq(sid))
+            .filter(span::Column::Review.eq(rid))
             .filter(span::Column::Id.is_in(remove))
             .all(&txn)
             .await?;
@@ -463,10 +494,10 @@ impl ReviewStore for SqliteStore {
         let mut ids = Vec::new();
         for s in &add {
             let row = span::ActiveModel {
-                session: Set(sid),
+                review: Set(rid),
                 state: Set(s.state.into()),
-                base_anchor: Set(put_anchor(&txn, sid, s.base.as_ref()).await?),
-                target_anchor: Set(put_anchor(&txn, sid, s.target.as_ref()).await?),
+                base_anchor: Set(put_anchor(&txn, changeset, s.base.as_ref()).await?),
+                target_anchor: Set(put_anchor(&txn, changeset, s.target.as_ref()).await?),
                 ..Default::default()
             }
             .insert(&txn)
@@ -477,38 +508,51 @@ impl ReviewStore for SqliteStore {
         Ok(ids)
     }
 
-    async fn acknowledge(&self, id: SessionId, ack: NonTextAck) -> Result<(), StoreError> {
+    async fn acknowledge(&self, id: ReviewId, ack: NonTextAck) -> Result<(), StoreError> {
         let txn = self.db.begin().await?;
-        let sid = id.0 as i64;
+        let rid = id.0 as i64;
         let existing = ack::Entity::find()
-            .filter(ack::Column::Session.eq(sid))
+            .filter(ack::Column::Review.eq(rid))
             .filter(ack_filter(&ack))
             .one(&txn)
             .await?;
         if existing.is_none() {
-            ack_row(sid, &ack).insert(&txn).await?;
+            ack_row(rid, &ack).insert(&txn).await?;
         }
         Ok(txn.commit().await?)
     }
 
-    async fn unacknowledge(&self, id: SessionId, ack: NonTextAck) -> Result<(), StoreError> {
+    async fn unacknowledge(&self, id: ReviewId, ack: NonTextAck) -> Result<(), StoreError> {
         ack::Entity::delete_many()
-            .filter(ack::Column::Session.eq(id.0 as i64))
+            .filter(ack::Column::Review.eq(id.0 as i64))
             .filter(ack_filter(&ack))
             .exec(&self.db)
             .await?;
         Ok(())
     }
+}
 
-    async fn add_thread(&self, id: SessionId, target: CommentTarget, opener: Message) -> Result<ThreadId, StoreError> {
+impl ThreadStore for SqliteStore {
+    async fn threads(&self, changeset: ChangesetId) -> Result<Vec<ChangesetThread>, StoreError> {
+        Ok(self.load_threads(changeset).await?)
+    }
+
+    async fn add_thread(
+        &self,
+        changeset: ChangesetId,
+        review: Option<ReviewId>,
+        target: CommentTarget,
+        opener: Message,
+    ) -> Result<ThreadId, StoreError> {
         let txn = self.db.begin().await?;
-        let sid = id.0 as i64;
+        let cid = changeset.0 as i64;
         let anchor = match &target {
-            CommentTarget::Range(a) => put_anchor(&txn, sid, Some(a)).await?,
+            CommentTarget::Range(a) => put_anchor(&txn, cid, Some(a)).await?,
             _ => None,
         };
         let mut row = thread::ActiveModel {
-            session: Set(sid),
+            changeset: Set(cid),
+            review: Set(review.map(|r| r.0 as i64)),
             status: Set(ThreadStatus::Open.into()),
             ..Default::default()
         };
@@ -559,7 +603,7 @@ impl ReviewStore for SqliteStore {
             anchor::Entity::delete_by_id(a).exec(&txn).await?;
         }
         let anchor = match &target {
-            CommentTarget::Range(a) => put_anchor(&txn, old.session, Some(a)).await?,
+            CommentTarget::Range(a) => put_anchor(&txn, old.changeset, Some(a)).await?,
             _ => None,
         };
         let mut row = thread::ActiveModel {

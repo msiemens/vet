@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use corpus::{Config, Corpus};
+use vet_app::changeset::{BaseChoice, CommitId};
 use vet_app::editor::{last_text_line, line_count, text_changes};
-use vet_app::pin::{BaseChoice, CommitId};
 use vet_app::ports::CommitInfo;
 use vet_app::session::{
     BaseView, FileStatus, FileView, Lifecycle, ManifestView, ReviewUpdateView, ReviewView, TargetView,
