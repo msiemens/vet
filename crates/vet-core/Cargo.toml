@@ -6,7 +6,7 @@ publish.workspace = true
 
 # Pure and synchronous: no IO, no git types, no async runtime (ci/check-deps.sh).
 [dependencies]
-blake3 = { version = "1.8.7", default-features = false, features = ["pure"] }
+blake3 = { version = "1.8.7", default-features = false, features = ["pure", "std"] }
 globset = { version = "0.4.20", default-features = false }
 # The line diff gitoxide uses, so hunks match what git shows.
 imara-diff = { package = "gix-imara-diff", version = "0.3.0" }
