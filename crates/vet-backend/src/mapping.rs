@@ -3,6 +3,7 @@
 pub mod semantic;
 
 use vet_app::execution::check::{Approval, Change};
+use vet_app::execution::command;
 use vet_app::execution::targets::RunTarget;
 use vet_app::execution::{ApprovalFile, ListedTarget};
 use vet_app::pin::{BaseChoice, CommitId};
@@ -413,16 +414,18 @@ pub fn threads(v: &ThreadsView) -> p::Response {
     }
 }
 
-pub fn core_run_target(t: p::RunTarget) -> RunTarget {
-    RunTarget {
+/// Fails with the reason, fit to show, if the command line names no program.
+pub fn core_run_target(t: p::RunTarget) -> Result<RunTarget, String> {
+    let (program, args) = command::split(&t.command)?;
+    Ok(RunTarget {
         id: t.id,
         source: t.source,
         label: t.label,
-        program: t.program,
-        args: t.args,
+        program,
+        args,
         cwd: t.cwd,
         env: t.env.into_iter().map(|e| (e.name, e.value)).collect(),
-    }
+    })
 }
 
 pub fn run_targets(listed: &[ListedTarget]) -> p::Response {
@@ -434,8 +437,7 @@ pub fn run_targets(listed: &[ListedTarget]) -> p::Response {
                     id: l.target.id.clone(),
                     source: l.target.source.clone(),
                     label: l.target.label.clone(),
-                    program: l.target.program.clone(),
-                    args: l.target.args.clone(),
+                    command: command::format(&l.target.program, &l.target.args),
                     cwd: l.target.cwd.clone(),
                     env: (l.target.env.iter())
                         .map(|(name, value)| p::EnvVar {

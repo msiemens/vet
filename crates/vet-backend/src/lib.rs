@@ -522,7 +522,7 @@ impl Handler for Orchestrator {
             Request::ListRunTargets { session } => self.find(session).await?.run_targets().await,
             Request::SaveRunTarget { session, target } => {
                 let open = self.find(session).await?;
-                open.save_run_target(mapping::core_run_target(target)).await?;
+                open.save_run_target(mapping::core_run_target(target)?).await?;
                 Ok(Response::Done)
             }
             Request::ResetRunTarget { session, id } => {

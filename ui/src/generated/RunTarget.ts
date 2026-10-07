@@ -14,7 +14,13 @@ id: string,
  * `None` for a target the user added. The backend ignores it in
  * `SaveRunTarget`: discovery decides.
  */
-source: string | null, label: string, program: string, args: Array<string>, 
+source: string | null, label: string, 
+/**
+ * The program and its arguments as one line: words split at whitespace, double
+ * quotes group (with `\"` and `\\`), single quotes group literally, nothing is
+ * expanded. The backend sends it formatted and splits what it receives.
+ */
+command: string, 
 /**
  * Relative to the repository root; empty for the root.
  */

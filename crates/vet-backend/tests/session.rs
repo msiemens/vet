@@ -1268,8 +1268,7 @@ fn sh_target(id: &str, script: &str) -> RunTarget {
         id: id.into(),
         source: None,
         label: id.into(),
-        program: "sh".into(),
-        args: vec!["-c".into(), script.into()],
+        command: format!("sh -c '{script}'"),
         cwd: String::new(),
         env: vec![EnvVar {
             name: "GREETING".into(),
@@ -1368,13 +1367,17 @@ async fn a_run_needs_approval_once_then_streams_output_and_the_exit_code() {
 
     // The script is discovered; saving a target of the same id edits it.
     assert_eq!(client.run_targets(session).await, [("script::hi".to_string(), false)]);
-    let no_command = RunTarget {
-        program: " ".into(),
+    let with_command = |command: &str| RunTarget {
+        command: command.into(),
         ..sh_target("t", "true")
     };
-    for bad in [sh_target("", "true"), no_command] {
+    for bad in [sh_target("", "true"), with_command(" "), with_command("sh -c 'open")] {
         assert!(client.save_target(session, bad).await.is_err());
     }
+    assert_eq!(
+        client.save_target(session, with_command("")).await.unwrap_err(),
+        "a run target needs a command"
+    );
     let mut edited = sh_target("script::hi", "echo $GREETING; echo oops >&2; exit 3");
     edited.label = "hi".into();
     client.save_target(session, edited).await.unwrap();

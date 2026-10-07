@@ -6,7 +6,6 @@
   import type { Approval } from "../../state/runs.svelte";
   import { runs } from "../../state/runs.svelte";
   import { approvalRows, lineCounts } from "./approvalRows";
-  import { formatCommand } from "./command";
 
   let { approval }: { approval: Approval } = $props();
 
@@ -14,7 +13,6 @@
   let busy = $state(false);
 
   const target = $derived(runs.targets.find((t) => t.target.id === approval.targetId)?.target);
-  const command = $derived(target && formatCommand(target.program, target.args));
   // The diff replaces the plain list: it pairs a rename into one entry.
   const entries = $derived<{ file?: ApprovalFile; path: string; change: RunChange }[]>(
     approval.files?.map((file) => ({ file, path: file.path, change: file.change })) ?? approval.changed,
@@ -39,7 +37,7 @@
       <h3>
         {approval.firstRun ? "Run files not approved yet" : "Build files changed since the last run"}
       </h3>
-      {#if target}<span class="mono sub">{target.label} · {command}</span>{/if}
+      {#if target}<span class="mono sub">{target.label} · {target.command}</span>{/if}
     </div>
   </div>
   <p class="why">

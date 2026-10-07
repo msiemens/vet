@@ -4,6 +4,7 @@
 //! [`Execution::launch`] does, before a pool or a process is asked.
 
 pub mod check;
+pub mod command;
 pub mod targets;
 pub mod trust;
 
@@ -140,7 +141,7 @@ impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<
             return invalid("a run target needs an id");
         }
         if target.program.trim().is_empty() {
-            return invalid("a run target needs a command");
+            return invalid(command::NO_COMMAND);
         }
         let relative = std::path::Path::new(&target.cwd)
             .components()

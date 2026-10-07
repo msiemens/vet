@@ -2,7 +2,6 @@
   import type { RunTarget } from "../../generated/RunTarget";
   import Dialog from "../../lib/ui/Dialog.svelte";
   import { runs } from "../../state/runs.svelte";
-  import { formatCommand, parseCommand } from "./command";
 
   interface Draft {
     label: string;
@@ -13,7 +12,7 @@
 
   const draftOf = (t: RunTarget): Draft => ({
     label: t.label,
-    command: formatCommand(t.program, t.args),
+    command: t.command,
     cwd: t.cwd,
     env: t.env.map((e) => `${e.name}=${e.value}`).join("\n"),
   });
@@ -41,7 +40,7 @@
   );
   const problem = $derived.by(() => {
     if (!draft.label.trim()) return "A target needs a name.";
-    if (!parseCommand(draft.command).program) return "A target needs a command.";
+    if (!draft.command.trim()) return "A target needs a command.";
     const bad = env.find((e) => e.at < 1);
     return bad ? `Not NAME=value: ${bad.line}` : undefined;
   });
@@ -62,13 +61,11 @@
 
   async function save() {
     if (id === undefined || problem) return;
-    const { program, args } = parseCommand(draft.command);
     const target: RunTarget = {
       id,
       source: entry?.target.source ?? null,
       label: draft.label.trim(),
-      program,
-      args,
+      command: draft.command,
       cwd: draft.cwd.trim(),
       env: env.map((e) => ({ name: e.line.slice(0, e.at), value: e.line.slice(e.at + 1) })),
     };

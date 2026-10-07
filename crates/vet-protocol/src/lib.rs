@@ -262,8 +262,8 @@ pub enum Request {
     },
     /// Stores an edited discovered target (same `id`) or a new one, per repository.
     /// For a new target the client chooses a non-empty `id` no discovered target
-    /// uses. Fails with a message fit to show if the id or the command is empty
-    /// or `cwd` is not inside the repository. Answers with `Response::Done`.
+    /// uses. Fails with a message fit to show if the id is empty, the command
+    /// names no program or leaves a quote open, or `cwd` is not inside the repository. Answers with `Response::Done`.
     SaveRunTarget {
         session: SessionId,
         target: RunTarget,
@@ -1078,8 +1078,10 @@ pub struct RunTarget {
     /// `SaveRunTarget`: discovery decides.
     pub source: Option<String>,
     pub label: String,
-    pub program: String,
-    pub args: Vec<String>,
+    /// The program and its arguments as one line: words split at whitespace, double
+    /// quotes group (with `\"` and `\\`), single quotes group literally, nothing is
+    /// expanded. The backend sends it formatted and splits what it receives.
+    pub command: String,
     /// Relative to the repository root; empty for the root.
     pub cwd: String,
     pub env: Vec<EnvVar>,
