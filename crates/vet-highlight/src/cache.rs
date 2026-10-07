@@ -87,6 +87,7 @@ impl<K: Hash + Eq + Clone> Cache<K> {
     }
 
     /// The bytes of highlights held.
+    #[cfg(test)]
     pub fn size(&self) -> usize {
         self.lock().size
     }

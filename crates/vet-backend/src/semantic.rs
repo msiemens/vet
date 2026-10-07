@@ -11,8 +11,9 @@ use super::mapping::semantic as map;
 use super::{Open, message};
 
 impl Open {
-    fn language_of(&self, at: &At) -> Option<String> {
-        map::language_of(&self.backends, &at.file)
+    /// The language that serves `file`, as `ListServers` names it.
+    fn language_of(&self, file: &RepoPath) -> Option<String> {
+        self.semantics.language_of(file).map(|language| language.0.clone())
     }
 
     pub async fn hover(&self, revision: u32, side: Side, path: &str, line: u32, col: u32) -> Result<Response, String> {
@@ -21,7 +22,7 @@ impl Open {
             .hover(&self.session, revision, map::which(side), &at)
             .await
             .map_err(message)?;
-        let (text, unavailable) = map::answer(answer.result, self.language_of(&at));
+        let (text, unavailable) = map::answer(answer.result, self.language_of(&at.file));
         let code_highlights = text
             .as_deref()
             .map_or_else(Vec::new, |t| highlight::code_blocks(path, t));
@@ -40,7 +41,7 @@ impl Open {
         side: Side,
         at: &At,
     ) -> vet_protocol::Locations {
-        let (found, unavailable) = map::answer(answer.result, self.language_of(at));
+        let (found, unavailable) = map::answer(answer.result, self.language_of(&at.file));
         vet_protocol::Locations {
             revision: answer.revision,
             side,
@@ -87,7 +88,7 @@ impl Open {
             .diagnostics(&self.session, revision, &file)
             .await
             .map_err(message)?;
-        let (found, unavailable) = map::answer(answer.result, map::language_of(&self.backends, &file));
+        let (found, unavailable) = map::answer(answer.result, self.language_of(&file));
         Ok(Response::Diagnostics {
             revision,
             path: path.to_owned(),
@@ -110,10 +111,7 @@ impl Open {
             .signature(&self.session, revision, &map::core_sym(symbol))
             .await
             .map_err(message)?;
-        let (found, unavailable) = map::answer(
-            answer.result,
-            map::language_of(&self.backends, &RepoPath::from(symbol.path.as_str())),
-        );
+        let (found, unavailable) = map::answer(answer.result, self.language_of(&RepoPath::from(symbol.path.as_str())));
         let signature = found.map(|s| vet_protocol::SymbolSignature {
             highlights: highlight::signature(&symbol.path, &s),
             code: s.code,

@@ -488,6 +488,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         Self::stop(stop).await;
     }
 
+    #[cfg(test)]
     pub fn keys(&self) -> Vec<PoolKey> {
         self.lock().slots.keys().cloned().collect()
     }

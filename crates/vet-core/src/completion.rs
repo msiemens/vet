@@ -139,18 +139,6 @@ impl<'a> Coverage<'a> {
     }
 }
 
-/// Spans must already be remapped into the current changeset. Only `Seen` spans
-/// count towards `seen_lines`; `acknowledged` holds the acknowledged non-text changes.
-pub fn completion(
-    filter: &ReviewFilter,
-    diffs: &[FileDiff],
-    non_text: &[NonTextChange],
-    spans: &[ReviewedSpan],
-    acknowledged: &[NonTextChange],
-) -> Completion {
-    Coverage::new(spans).completion(filter, diffs, non_text, acknowledged)
-}
-
 /// Lines of `r` inside `sorted` ranges, which may overlap.
 fn covered(sorted: &[LineRange], r: LineRange) -> u32 {
     let mut total = 0;

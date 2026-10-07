@@ -91,8 +91,9 @@ where
         &self.pool
     }
 
-    pub fn backends(&self) -> &[Backend] {
-        &self.backends
+    /// The language of the backend serving `file`; `None`: it is unsupported.
+    pub fn language_of(&self, file: &RepoPath) -> Option<&BackendId> {
+        backend_for(&self.backends, file).map(|b| &b.config().backend)
     }
 
     pub fn pair(&self, base: Side, target: Side) -> Pair<'_, M, L> {

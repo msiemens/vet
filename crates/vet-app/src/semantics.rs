@@ -82,6 +82,11 @@ where
         }
     }
 
+    /// The language that serves `file`; `None`: it is unsupported.
+    pub fn language_of(&self, file: &RepoPath) -> Option<&BackendId> {
+        self.semantic.language_of(file)
+    }
+
     /// Restores that failed and have not succeeded since.
     pub fn restore_failures(&self) -> Vec<RestoreFailure> {
         self.limits.all()

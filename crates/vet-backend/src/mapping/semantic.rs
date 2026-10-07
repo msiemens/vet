@@ -9,7 +9,7 @@ use vet_semantic::derived::{
 };
 use vet_semantic::pool::PoolError;
 use vet_semantic::ports::{
-    At, Backend, Diagnostic, LaunchError, Location, Pos, RestoreFailure, Severity, Span, Sym, SymbolInfo, backend_for,
+    At, Diagnostic, LaunchError, Location, Pos, RestoreFailure, Severity, Span, Sym, SymbolInfo,
 };
 use vet_semantic::query::{SemanticError, Which};
 
@@ -90,11 +90,6 @@ pub fn diagnostics(d: &[Diagnostic]) -> Vec<p::Diagnostic> {
             code: d.code.clone(),
         })
         .collect()
-}
-
-/// The language that serves `file`, as `ListServers` names it.
-pub fn language_of(backends: &[Backend], file: &RepoPath) -> Option<String> {
-    backend_for(backends, file).map(|b| b.config().backend.0.clone())
 }
 
 /// A failed query as the reason to show; `language` is the file's.

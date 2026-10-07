@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use vet_core::completion::{Coverage, HunkState, completion};
+use vet_core::completion::{Completion, Coverage, HunkState};
 use vet_core::content::{
     BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hash, Hunk, LineRange, NonTextChange, NonTextKind, RepoPath,
     SnapshotId,
@@ -34,7 +34,19 @@ impl Fix {
 }
 
 fn path(s: &str) -> RepoPath {
-    RepoPath(s.as_bytes().to_vec())
+    RepoPath::from(s)
+}
+
+/// The completion of `diffs` and `non_text` under `spans`, which are already remapped into the
+/// current changeset.
+fn completion(
+    filter: &ReviewFilter,
+    diffs: &[FileDiff],
+    non_text: &[NonTextChange],
+    spans: &[ReviewedSpan],
+    acknowledged: &[NonTextChange],
+) -> Completion {
+    Coverage::new(spans).completion(filter, diffs, non_text, acknowledged)
 }
 
 fn range(start: u32, end: u32) -> LineRange {

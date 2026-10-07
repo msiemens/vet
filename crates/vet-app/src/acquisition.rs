@@ -14,20 +14,6 @@ use vet_semantic::ports::{Materialized, Materializer, NotMaterializable};
 use crate::pin::CommitId;
 use crate::ports::{CheckoutError, Dirty, GitError, GitRepo, Scan, Store};
 
-/// Where a snapshot came from. Never visible to `vet-semantic`.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Origin {
-    DirtyTree { base_head: CommitId },
-    Commit(CommitId),
-    PullRequest { head: CommitId, from_fork: bool },
-}
-
-/// An evolving tip: its settled snapshots, in order, are the edit timeline.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct LogicalTip {
-    pub timeline: Vec<SnapshotId>,
-}
-
 /// Deletes the materialized directory when the pool drops its server (§7.2).
 pub struct DirGuard(PathBuf);
 
