@@ -15,7 +15,7 @@ use vet_semantic::derived::{
     BaseTexts, Bounds, Change, Changes, Derived, EntryPoints, Reach, RemovalImpact, SymbolImpact, changed_symbols,
     impact, reachability, removal_impact,
 };
-use vet_semantic::join::bounded;
+use vet_semantic::join::{bounded, join};
 use vet_semantic::pool::{Pool, Target};
 use vet_semantic::ports::{
     At, Backend, BackendId, Diagnostic, Location, Materializer, RestoreFailure, ServerLauncher, Severity, Sym,
@@ -206,32 +206,48 @@ where
     }
 
     /// Starts the servers for every language among the revision's changed
-    /// files, on both sides, all at once, and returns when they are running.
-    /// A server that fails to start is not reported here: the query that needs
-    /// it reports it.
+    /// files, on both sides, then for the other languages of the repository
+    /// on the target side, all at once, and returns when they are running.
+    /// A server already running or starting is left alone. A server that
+    /// fails to start is not reported here: the query that needs it reports it.
     pub async fn start_servers(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<()> {
         let pair = self.pair(session, revision).await?;
         let files = session.changed_files(revision).await?;
-        self.start_servers_for(&pair, &files).await;
+        let repo = session
+            .target_file_per_key(revision, POOL_CAPACITY, |path| self.language_of(path))
+            .await?;
+        let others: Vec<_> = repo.into_iter().map(|(_, path)| path).collect();
+        self.start_servers_for(&pair, &files, &[Side::Base, Side::Target], &others)
+            .await;
         Ok(())
     }
 
-    async fn start_servers_for(&self, pair: &Pair<'_, M, L>, files: &[FileDiff]) {
-        let mut wanted: Vec<(&Served, &RepoPath)> = Vec::new();
-        let mut languages: Vec<(Side, &BackendId)> = Vec::new();
+    /// Starts what the changed `files` need on `sides`, then the target side's
+    /// servers for the languages of `others`. Changed languages come first,
+    /// because only that many fit in the pool.
+    async fn start_servers_for(&self, pair: &Pair<'_, M, L>, files: &[FileDiff], sides: &[Side], others: &[RepoPath]) {
+        let mut candidates: Vec<(Side, &Served, &RepoPath)> = Vec::new();
         for file in files.iter().filter(|f| !f.hunks.is_empty()) {
             for (side, served, path) in [
                 (Side::Base, &pair.base, &file.old_path),
                 (Side::Target, &pair.target, &file.new_path),
             ] {
-                let Some(path) = path else { continue };
-                let Some(language) = self.language_of(path) else {
-                    continue;
-                };
-                if !languages.contains(&(side, language)) {
-                    languages.push((side, language));
-                    wanted.push((served, path));
+                if let (true, Some(path)) = (sides.contains(&side), path) {
+                    candidates.push((side, served, path));
                 }
+            }
+        }
+        candidates.extend(others.iter().map(|path| (Side::Target, &pair.target, path)));
+
+        let mut wanted: Vec<(&Served, &RepoPath)> = Vec::new();
+        let mut languages: Vec<(Side, &BackendId)> = Vec::new();
+        for (side, served, path) in candidates {
+            let Some(language) = self.language_of(path) else {
+                continue;
+            };
+            if !languages.contains(&(side, language)) {
+                languages.push((side, language));
+                wanted.push((served, path));
             }
         }
         // Servers beyond what the pool keeps warm would only evict each other.
@@ -264,7 +280,14 @@ where
                 // The base side's symbols come from the target side's server, so
                 // the base side's servers, which restore the base first, are not waited for.
                 let texts = BaseContent(session.acquisition());
-                let changes = changed_symbols(&pair, &texts, &files).await;
+                // Only the target side's servers are queried. They start together, while
+                // the files are queried, so a language late in the list does not wait for
+                // the servers of the languages before it.
+                let (_, changes) = join(
+                    self.start_servers_for(&pair, &files, &[Side::Target], &[]),
+                    changed_symbols(&pair, &texts, &files),
+                )
+                .await;
                 Ok::<_, SessionError>(Arc::new(changes))
             })
             .await
@@ -447,6 +470,8 @@ mod tests {
         starting: AtomicUsize,
         peak_starting: AtomicUsize,
         started: AtomicUsize,
+        /// The servers running when the first symbol request was answered; 0 before.
+        started_at_first_answer: AtomicUsize,
         /// Symbol requests on the live side, which no cache answers.
         live_symbol_requests: AtomicUsize,
         /// Symbol requests for a text under a file's name.
@@ -497,6 +522,8 @@ mod tests {
             for _ in 0..5 {
                 tokio::task::yield_now().await;
             }
+            let started = self.0.started.load(Ordering::SeqCst);
+            let _ = (self.0.started_at_first_answer).compare_exchange(0, started, Ordering::SeqCst, Ordering::SeqCst);
             Ok(vec![symbol(file)])
         }
         async fn text_symbols(&self, file: &RepoPath, _: &str) -> Result<Vec<SymbolInfo>, QueryError> {
@@ -553,27 +580,34 @@ mod tests {
         })
     }
 
-    /// Changes in a Rust, a Python and a Markdown file; Markdown has no server.
-    async fn semantics() -> (
+    type Harness = (
         Fixture,
         Semantics<FakeGit, MemStore, FakeLauncher, FakeMaterializer>,
         Arc<Counters>,
-    ) {
-        let fx = Fixture::open(
-            &[("a.rs", "one\n"), ("b.py", "one\n"), ("c.md", "one\n")],
-            &[("a.rs", "two\n"), ("b.py", "two\n"), ("c.md", "two\n")],
-        )
-        .await;
+    );
+
+    /// Servers for Rust, Python and Go; Markdown has none.
+    async fn semantics_over(base: &[(&str, &str)], target: &[(&str, &str)]) -> Harness {
+        let fx = Fixture::open(base, target).await;
         let counters = Arc::new(Counters::default());
         let semantics = Semantics::new(
             FakeMaterializer,
             FakeLauncher(counters.clone()),
             "/live".into(),
-            vec![backend("rust", "rs"), backend("python", "py")],
+            vec![backend("rust", "rs"), backend("python", "py"), backend("go", "go")],
             RestoreLimits::default(),
             Trust::Local,
         );
         (fx, semantics, counters)
+    }
+
+    /// Changes in a Rust, a Python and a Markdown file.
+    async fn semantics() -> Harness {
+        semantics_over(
+            &[("a.rs", "one\n"), ("b.py", "one\n"), ("c.md", "one\n")],
+            &[("a.rs", "two\n"), ("b.py", "two\n"), ("c.md", "two\n")],
+        )
+        .await
     }
 
     #[tokio::test]
@@ -582,6 +616,45 @@ mod tests {
         semantics.start_servers(&fx.session, 0).await.unwrap();
         assert_eq!(counters.started.load(Ordering::SeqCst), 4);
         assert_eq!(counters.peak_starting.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn servers_start_for_languages_that_are_in_the_repository_but_not_in_the_diff() {
+        let (fx, semantics, counters) = semantics_over(
+            &[("a.rs", "one\n"), ("main.go", "same\n")],
+            &[("a.rs", "two\n"), ("main.go", "same\n")],
+        )
+        .await;
+        semantics.start_servers(&fx.session, 0).await.unwrap();
+        // Rust on both sides, Go on the target side only.
+        assert_eq!(counters.started.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn starting_servers_again_leaves_the_running_ones_alone() {
+        let (fx, semantics, counters) = semantics().await;
+        semantics.start_servers(&fx.session, 0).await.unwrap();
+        semantics.start_servers(&fx.session, 0).await.unwrap();
+        assert_eq!(counters.started.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn changed_symbols_starts_the_servers_of_later_languages_before_the_first_file_is_answered() {
+        // More Rust files than are queried at once, so the Python file waits its turn.
+        let rust: Vec<_> = (0..8).map(|i| format!("r{i}.rs")).collect();
+        let before: Vec<_> = rust
+            .iter()
+            .map(|p| (p.as_str(), "one\n"))
+            .chain([("z.py", "one\n")])
+            .collect();
+        let after: Vec<_> = rust
+            .iter()
+            .map(|p| (p.as_str(), "two\n"))
+            .chain([("z.py", "two\n")])
+            .collect();
+        let (fx, semantics, counters) = semantics_over(&before, &after).await;
+        semantics.changed_symbols(&fx.session, 0).await.unwrap();
+        assert_eq!(counters.started_at_first_answer.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

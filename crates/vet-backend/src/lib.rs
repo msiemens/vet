@@ -7,7 +7,7 @@ mod semantic;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 
 use tokio::task::AbortHandle;
@@ -220,12 +220,16 @@ impl Orchestrator {
             self.config.debounce.as_millis() as u64,
             Some(session.settled_snapshot().await),
         );
+        let this: Arc<OnceLock<Weak<Open>>> = Arc::default();
         let task = {
-            let (session, subscribers) = (session.clone(), subscribers.clone());
+            let (session, subscribers, this) = (session.clone(), subscribers.clone(), this.clone());
             tokio::spawn(async move {
                 session
                     .follow(settling, |revision| {
                         broadcast(&subscribers, Event::SnapshotSettled { session: id, revision });
+                        if let Some(open) = this.get().and_then(Weak::upgrade) {
+                            start_servers_in_background(open);
+                        }
                     })
                     .await;
             })
@@ -261,8 +265,8 @@ impl Orchestrator {
             reaper: reaper.abort_handle(),
         });
         sessions.push(open.clone());
-        // The language servers take long to start; the first query should find them running.
-        tokio::spawn(async move { open.start_servers().await });
+        let _ = this.set(Arc::downgrade(&open));
+        start_servers_in_background(open);
         Ok((id, root))
     }
 
@@ -418,6 +422,7 @@ impl Orchestrator {
                     .await
                     .map_err(message)?;
                 broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
+                start_servers_in_background(open);
                 Ok(Response::Base(mapping::base(&base)))
             }
             Request::SetProjectFilter { session, filter } => {
@@ -428,6 +433,7 @@ impl Orchestrator {
                     .await
                     .map_err(message)?;
                 broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
+                start_servers_in_background(open);
                 Ok(Response::Done)
             }
             Request::ExcludePath {
@@ -668,6 +674,13 @@ impl Orchestrator {
             }
         }
     }
+}
+
+/// Language servers take long to start; a new revision's first query should
+/// find them running. Starting never delays the reply of the request that
+/// changed the revision.
+fn start_servers_in_background(open: Arc<Open>) {
+    tokio::spawn(async move { open.start_servers().await });
 }
 
 /// Tells every subscriber that a request started the review, as `started` says.

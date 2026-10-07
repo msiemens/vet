@@ -863,6 +863,30 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         })
     }
 
+    /// For each key `key_of` yields over the files of `revision`'s target
+    /// snapshot, the first file with it; stops once `limit` keys are found.
+    pub async fn target_file_per_key<K: PartialEq>(
+        &self,
+        revision: u32,
+        limit: usize,
+        key_of: impl Fn(&RepoPath) -> Option<K>,
+    ) -> Result<Vec<(K, RepoPath)>> {
+        let st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        let mut found: Vec<(K, RepoPath)> = Vec::new();
+        for path in st.target.entries.keys() {
+            if found.len() >= limit {
+                break;
+            }
+            if let Some(key) = key_of(path)
+                && !found.iter().any(|(k, _)| *k == key)
+            {
+                found.push((key, path.clone()));
+            }
+        }
+        Ok(found)
+    }
+
     /// The text diff of `revision`, for the analyses that map symbols to hunks.
     pub async fn changed_files(&self, revision: u32) -> Result<Vec<FileDiff>> {
         let mut st = self.state.lock().await;

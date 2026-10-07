@@ -17,8 +17,9 @@ impl Open {
         self.semantics.language_of(file).map(|language| language.0.clone())
     }
 
-    /// Starts the servers the current revision's changed files need. A server
-    /// that fails to start is reported by the query that needs it.
+    /// Starts the servers the current revision's changed files and the
+    /// repository's languages need. A server that fails to start is reported
+    /// by the query that needs it.
     pub async fn start_servers(&self) {
         let revision = self.session.revision().await;
         let _ = self.semantics.start_servers(&self.session, revision).await;
