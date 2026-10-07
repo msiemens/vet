@@ -473,6 +473,7 @@ Also included: fetch-only restore with shared caches.
 - Review-questions assistant (read-only; answers cite hunks)
 - Worktree groups
 - Export annotations as agent task files
+- Coding agents integrated into the UI through the Agent Client Protocol (ACP)
 - Problems panel: the diagnostics of the whole changeset in one list
 - Minimap
 - CI annotations on lines: the platform's check annotations (path, lines, severity, message) shown in the hunk view like diagnostics, anchored to the commit they were produced for
