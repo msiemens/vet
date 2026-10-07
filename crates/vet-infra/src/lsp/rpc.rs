@@ -32,6 +32,7 @@ pub(super) struct State {
     /// `experimental/serverStatus` `quiescent`, for servers that send it.
     quiescent: Option<bool>,
     last_activity: Option<Instant>,
+    /// By [`super::uri::key`] of the file.
     pub diagnostics: HashMap<String, DiagnosticsState>,
     /// `workspace/projectInitializationComplete`, which roslyn sends once it has loaded the projects it was told to.
     pub projects_loaded: bool,
@@ -320,7 +321,7 @@ fn notification(shared: &Shared, method: &str, params: &Value) {
             if let Ok(p) = serde_json::from_value::<lsp_types::PublishDiagnosticsParams>(params.clone()) {
                 let entry = state
                     .diagnostics
-                    .entry(p.uri.as_str().to_owned())
+                    .entry(super::uri::key(&p.uri))
                     .or_insert(DiagnosticsState {
                         generation: 0,
                         items: Vec::new(),

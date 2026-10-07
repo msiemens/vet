@@ -231,6 +231,38 @@ async fn typescript_language_server_answers_the_primitive_queries() {
     server.shutdown().await;
 }
 
+/// The server publishes under its own spelling of the file's URI, which differs
+/// from Vet's when the path has characters it encodes (parentheses, brackets, `+`, `@`).
+#[tokio::test]
+async fn pushed_diagnostics_are_found_for_a_path_the_server_spells_differently() {
+    if !installed("typescript-language-server") {
+        eprintln!("skipped: typescript-language-server is not installed");
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    let project = dir.path().join("my proj (1)");
+    std::fs::create_dir_all(project.join("[id]+x")).unwrap();
+    std::fs::write(project.join("tsconfig.json"), "{\"compilerOptions\":{\"strict\":true}}").unwrap();
+    std::fs::write(project.join("[id]+x/é@a.ts"), "const x: number = \"a\";\n").unwrap();
+    let server = LspLauncher::new(BinaryLocator, NoRestore)
+        .start(
+            &project,
+            Tree::Immutable,
+            &config::typescript(),
+            AnalysisPolicy { allow_executing: false },
+        )
+        .await
+        .expect("typescript-language-server starts");
+    let started = std::time::Instant::now();
+    let diagnostics = server.diagnostics(&path("[id]+x/é@a.ts")).await.unwrap();
+    assert!(
+        diagnostics.iter().any(|d| d.message.contains("not assignable")),
+        "{diagnostics:?}"
+    );
+    assert!(started.elapsed() < Duration::from_secs(15));
+    server.shutdown().await;
+}
+
 fn symbol_names(mut symbols: Vec<vet_semantic::ports::SymbolInfo>) -> Vec<String> {
     symbols.sort_by_key(|s| s.span.start.line);
     let mut names: Vec<String> = symbols.iter().map(|s| s.sym.name.join("::")).collect();

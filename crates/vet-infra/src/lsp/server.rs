@@ -25,7 +25,7 @@ use vet_semantic::symbols::{self, Outline};
 use super::QUIET;
 use super::capabilities::Diagnostics;
 use super::rpc::{Connection, State};
-use super::uri::{file_uri, path_of};
+use super::uri::{file_uri, key, path_of};
 use crate::language::language_id;
 use crate::{paths, timing};
 
@@ -613,7 +613,7 @@ impl LanguageServer for LspServer {
     }
 
     async fn diagnostics(&self, file: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
-        let key = self.uri_of(file)?.as_str().to_owned();
+        let key = key(&self.uri_of(file)?);
         let generation = |conn: &Connection| conn.with_state(|s| s.diagnostics.get(&key).map_or(0, |d| d.generation));
         let before = generation(&self.conn);
         let changed = self.sync(file, Needs::Project).await?;
