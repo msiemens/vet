@@ -38,7 +38,7 @@ fn the_protocol_docs_and_the_ui_list_the_kinds_in_wire_order() {
     );
     let names = kinds.map(|k| format!("{k:?}").to_lowercase());
 
-    let protocol = repository_file("../vet-protocol/src/lib.rs");
+    let protocol = repository_file("../vet-protocol/src/text.rs");
     let docs = protocol
         .lines()
         .filter_map(|line| line.trim_start().strip_prefix("///"))
