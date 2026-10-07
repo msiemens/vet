@@ -90,13 +90,14 @@ export class HunkBar extends WidgetType {
     text.textContent = this.text;
     bar.append(text);
     const actions = this.actions;
-    if (this.state === "seenAgainstOldBase") {
+    // The base side of a side-by-side view only shows the header.
+    if (this.state === "seenAgainstOldBase" && actions) {
       const old = el("button", "flat vet-hunk-old");
       old.type = "button";
       old.title = "Base changed since you marked this seen: show what it was";
       old.innerHTML = `${iconSvg("reconfirm")}<span>${this.hunk.oldBaseLines}</span>`;
       old.ariaPressed = String(this.hunk.baseDiffOpen);
-      if (actions?.toggleBaseDiff) old.addEventListener("click", () => actions.toggleBaseDiff?.(this.index));
+      if (actions.toggleBaseDiff) old.addEventListener("click", () => actions.toggleBaseDiff?.(this.index));
       else old.disabled = true;
       bar.append(old);
     }
