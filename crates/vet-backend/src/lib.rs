@@ -436,6 +436,16 @@ impl Orchestrator {
                 broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
                 Ok(Response::Done)
             }
+            Request::ExcludePath {
+                session,
+                path,
+                directory,
+            } => {
+                let open = self.find(session).await?;
+                let revision = open.session.exclude_path(&path, directory).await.map_err(message)?;
+                broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
+                Ok(Response::Done)
+            }
             Request::ListBaseCandidates { session } => {
                 let candidates = self
                     .find(session)

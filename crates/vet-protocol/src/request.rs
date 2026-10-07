@@ -202,6 +202,14 @@ pub enum Request {
         session: SessionId,
         filter: ReviewFilter,
     },
+    /// Adds the file at `path`, or with `directory` everything below the folder at `path`
+    /// (`a/b` without a trailing slash), to the excluded globs of the repository's review
+    /// filter and persists it, like `SetProjectFilter`. Answers with `Response::Done`.
+    ExcludePath {
+        session: SessionId,
+        path: String,
+        directory: bool,
+    },
     /// The direct children of a directory of the current target snapshot.
     /// `path` is `""` for the root, else `a/b` without a trailing slash. Fails if
     /// the snapshot has nothing there.

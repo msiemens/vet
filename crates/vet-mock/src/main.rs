@@ -240,7 +240,7 @@ impl Handler for Mock {
             }
             Request::Acknowledge { .. } | Request::ItemBlob { .. } => Err("the corpus has no non-text items".into()),
             Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),
-            Request::SetProjectFilter { .. } => Err("the corpus has no filter".into()),
+            Request::SetProjectFilter { .. } | Request::ExcludePath { .. } => Err("the corpus has no filter".into()),
             Request::FinishReview { .. } => Err("the corpus has no review to finish".into()),
             Request::ListDirectory { .. } | Request::FileText { .. } => Err("the corpus has no file tree".into()),
             Request::TargetLine {

@@ -168,6 +168,11 @@ export class Backend {
     expect(await this.conn.request({ type: "setProjectFilter", session: this.sid, filter }), "done");
   }
 
+  /** Excludes a file, or with `directory` everything below a folder, from the review; every subscriber, this one included, then gets `snapshotSettled`. */
+  async excludePath(path: string, directory: boolean): Promise<void> {
+    expect(await this.conn.request({ type: "excludePath", session: this.sid, path, directory }), "done");
+  }
+
   /** Ends the open review; every subscriber, this one included, then gets `snapshotSettled`. Resolves with whether it was complete. */
   async finishReview(): Promise<boolean> {
     return expect(await this.conn.request({ type: "finishReview", session: this.sid }), "reviewFinished").complete;

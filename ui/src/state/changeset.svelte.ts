@@ -133,16 +133,13 @@ class ChangesetStore {
     }
   }
 
-  /** Adds `path` (a file, or a folder with `dir`) to the filter's exclude globs, anchored at the root. */
+  /** Excludes `path` (a file, or a folder with `dir`) from the review. As with `setFilter`, the backend then pushes `snapshotSettled`. */
   async excludePath(path: string, dir: boolean) {
-    const filter = this.manifest?.filter;
-    if (!filter) return;
-    // Glob characters in the path match themselves as one-character classes.
-    const literal = path.replace(/[*?[\]{}]/g, "[$&]");
-    const glob = dir ? `/${literal}/**` : `/${literal}`;
-    if (filter.exclude.includes(glob)) return;
-    const error = await this.setFilter({ ...filter, exclude: [...filter.exclude, glob] });
-    if (error) session.notice = error;
+    try {
+      await session.connected().excludePath(path, dir);
+    } catch (error) {
+      session.notice = errorText(error);
+    }
   }
 
   /** Limits the review to the folder `path`. */

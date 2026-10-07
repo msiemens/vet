@@ -799,9 +799,25 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// is open, and bumps the revision; completion and the excluded counts
     /// follow with the next manifest. Returns the revision.
     pub async fn set_filter(&self, filter: ReviewFilter) -> Result<u32> {
+        self.replace_filter(&mut *self.state.lock().await, filter).await
+    }
+
+    /// Adds the file at `path`, or with `directory` everything below the folder at `path`, to the
+    /// filter's excluded globs, and bumps the revision unless it was excluded already. Returns
+    /// the revision.
+    pub async fn exclude_path(&self, path: &str, directory: bool) -> Result<u32> {
+        let mut st = self.state.lock().await;
+        let mut filter = st.filter.clone();
+        let glob = exclude_glob(path, directory);
+        if !filter.exclude.contains(&glob) {
+            filter.exclude.push(glob);
+        }
+        self.replace_filter(&mut st, filter).await
+    }
+
+    async fn replace_filter(&self, st: &mut State, filter: ReviewFilter) -> Result<u32> {
         let filter = filter.normalized();
         filter.validate().map_err(SessionError::Invalid)?;
-        let mut st = self.state.lock().await;
         if st.filter == filter {
             return Ok(st.revision);
         }
@@ -1998,6 +2014,23 @@ fn acknowledged(st: &State, diff: &SnapshotDiff) -> Vec<NonTextChange> {
         .filter(|n| st.acks.contains(&ack_of(n)))
         .cloned()
         .collect()
+}
+
+/// The filter glob for exactly the file at `path`, or everything below the folder at `path`:
+/// anchored at the root, with the characters that are glob syntax matching themselves.
+fn exclude_glob(path: &str, directory: bool) -> String {
+    let mut glob = String::from("/");
+    for c in path.chars() {
+        if matches!(c, '*' | '?' | '[' | ']' | '{' | '}') {
+            glob.extend(['[', c, ']']);
+        } else {
+            glob.push(c);
+        }
+    }
+    if directory {
+        glob.push_str("/**");
+    }
+    glob
 }
 
 /// The base path of a file that is at `path` now and was somewhere else.

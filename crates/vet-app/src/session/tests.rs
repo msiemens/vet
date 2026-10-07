@@ -1696,6 +1696,46 @@ async fn setting_the_filter_persists_it_and_moves_the_counts() {
 }
 
 #[tokio::test]
+async fn excluding_a_path_hides_exactly_that_file_or_everything_below_that_folder() {
+    let names = [
+        "src/a[1].rs",
+        "src/a1.rs",
+        "src/gen/x.rs",
+        "src/gen/sub/y.rs",
+        "src/genx.rs",
+        "gen/z.rs",
+    ];
+    let base: Vec<_> = names.iter().map(|n| (*n, "1\n")).collect();
+    let dirty: Vec<_> = names.iter().map(|n| (*n, "2\n")).collect();
+    let fx = Fixture::open(&base, &dirty).await;
+    let shown = || async {
+        let m = fx.session.manifest().await.unwrap();
+        m.files.iter().map(|f| f.path.to_string_lossy()).collect::<Vec<_>>()
+    };
+
+    // A glob character in the name matches itself, not other files.
+    assert_eq!(fx.session.exclude_path("src/a[1].rs", false).await.unwrap(), 1);
+    assert_eq!(
+        shown().await,
+        [
+            "gen/z.rs",
+            "src/a1.rs",
+            "src/gen/sub/y.rs",
+            "src/gen/x.rs",
+            "src/genx.rs"
+        ]
+    );
+    // The folder at that path only, not a sibling that starts with its name, nor one deeper down.
+    assert_eq!(fx.session.exclude_path("src/gen", true).await.unwrap(), 2);
+    assert_eq!(shown().await, ["gen/z.rs", "src/a1.rs", "src/genx.rs"]);
+
+    // Excluding it again changes nothing; the filter is stored.
+    assert_eq!(fx.session.exclude_path("src/gen", true).await.unwrap(), 2);
+    let stored = fx.store.0.lock().unwrap().filter.clone().unwrap();
+    assert_eq!(stored.exclude, ["/src/a[[]1[]].rs", "/src/gen/**"]);
+}
+
+#[tokio::test]
 async fn filter_roots_are_taken_as_directories_without_slashes() {
     let files = [("a.txt", "1\n"), ("docs/b.md", "1\n")];
     let fx = Fixture::open(&files, &[("a.txt", "2\n"), ("docs/b.md", "2\n")]).await;
