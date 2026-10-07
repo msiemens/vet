@@ -36,6 +36,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     },
     "-",
     { command: "changeset.switch" },
+    { command: "review.sinceLast" },
     { command: "review.finish" },
     ...(s.native ? [] : (["-", settings, "-", quit] as MenuSpec)),
   ];

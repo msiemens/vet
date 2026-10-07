@@ -12,6 +12,8 @@ export interface AppActions {
   pickProject(): void;
   openProject(path: string): void;
   finishReview(): void;
+  /** Shows what changed since the version last reviewed. */
+  changesSinceReview(): void;
   /** Fetches the open project's remotes. */
   fetch(): void;
   /** Puts a changeset on view. */
@@ -53,6 +55,12 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
         if (!key) return false;
         a.openChangeset(key);
       },
+    },
+    {
+      id: "review.sinceLast",
+      label: "Changes Since My Last Review",
+      enabled: (c) => c.reviewOpen,
+      run: () => a.changesSinceReview(),
     },
     { id: "review.finish", label: "Finish Review…", enabled: (c) => c.reviewOpen, run: () => a.finishReview() },
     { id: "git.fetch", label: "Fetch", enabled: repoOpen, run: () => a.fetch() },

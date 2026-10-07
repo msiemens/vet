@@ -179,7 +179,6 @@
     <TabStrip
       {tabs}
       files={changeset.files}
-      delta={changeset.delta}
       onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: pathOf(id) } })}
     />
     <span class="grow"></span>

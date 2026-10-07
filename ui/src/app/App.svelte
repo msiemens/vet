@@ -89,6 +89,7 @@
       pickProject: () => void pickProject(),
       openProject,
       finishReview: () => (dialog = "finish"),
+      changesSinceReview: () => void showChangesSinceReview(),
       fetch: () => void changeset.fetch(),
       openChangeset: (key) => void changeset.openChangeset(key),
       showQueue: () => (screen = "queue"),
@@ -177,7 +178,14 @@
     if (path) openProject(path);
   }
 
-  /** Opening the timeline compares the last reviewed version with the latest. */
+  /** The review view compares the last reviewed version with the latest; with nothing after it, the changeset shows. */
+  async function showChangesSinceReview() {
+    const since = defaultRange(versions.items);
+    if (!since) session.notice = "Nothing has changed since your last review";
+    await changeset.setRange(since);
+  }
+
+  /** Opening the timeline shows the changes since the last review. */
   function toggleTimeline() {
     timelineOpen = !timelineOpen;
     if (timelineOpen) void changeset.setRange(defaultRange(versions.items));

@@ -24,6 +24,7 @@ const actions: AppActions = {
   pickProject: () => calls.push("pick"),
   openProject: (path) => calls.push(`open ${path}`),
   finishReview: () => calls.push("finish"),
+  changesSinceReview: () => calls.push("since"),
   fetch: () => calls.push("fetch"),
   openChangeset: (key) => calls.push(`changeset ${keyId(key)}`),
   showQueue: () => calls.push("queue"),
@@ -93,6 +94,15 @@ void test("Finish Review is offered only while a review is open", () => {
   calls.length = 0;
   assert.equal(registry.run("review.finish", { ...open, reviewOpen: false }), false);
   assert.deepEqual(calls, []);
+});
+
+void test("Changes Since My Last Review is offered only while a review is open", () => {
+  assert.equal(find(menu(), "review.sinceLast")?.enabled, undefined);
+  assert.equal(find(menu({}, { reviewOpen: false }), "review.sinceLast")?.enabled, false);
+  calls.length = 0;
+  assert.equal(registry.run("review.sinceLast", { ...open, reviewOpen: false }), false);
+  assert.equal(registry.run("review.sinceLast", open), true);
+  assert.deepEqual(calls, ["since"]);
 });
 
 void test("Fetch is offered in the VCS menu while a project is open", () => {
