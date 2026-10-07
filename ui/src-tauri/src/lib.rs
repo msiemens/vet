@@ -366,7 +366,8 @@ fn backend_connection(backend: tauri::State<Backend>) -> Connection {
     }
 }
 
-/// Benchmark mode (SPEC §12.0): `VET_BENCH=1` runs it on startup and exits with the verdict.
+/// Benchmark mode (SPEC §12.0): `VET_BENCH=1` runs it on startup and exits with the
+/// verdict; `VET_BENCH=manual` opens the same corpus and leaves starting it to the Dev panel.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BenchConfig {
@@ -376,13 +377,13 @@ struct BenchConfig {
 }
 
 fn bench_requested() -> bool {
-    std::env::var("VET_BENCH").is_ok_and(|v| v == "1")
+    std::env::var("VET_BENCH").is_ok_and(|v| v == "1" || v == "manual")
 }
 
 #[tauri::command]
 fn bench_config() -> BenchConfig {
     BenchConfig {
-        auto: bench_requested(),
+        auto: std::env::var("VET_BENCH").is_ok_and(|v| v == "1"),
         scroll_seconds: std::env::var("VET_BENCH_SCROLL_SECONDS")
             .ok()
             .and_then(|v| v.parse().ok())

@@ -9,7 +9,7 @@ On NixOS, the GTK and webkit libraries come from `shell.nix`:
 `nix-shell --run "cd ui && pnpm tauri dev"`.
 
 The shell spawns the backend (`VET_BACKEND`, default
-`target/{debug,release}/vet-backend`; `vet-mock` when `VET_BENCH=1`) and kills it
+`target/{debug,release}/vet-backend`; `vet-mock` when `VET_BENCH` is set) and kills it
 on exit; the backend also exits when the shell dies (`--exit-on-stdin-close`).
 `pnpm backend` (run by `pnpm tauri dev`) builds it.
 
@@ -18,8 +18,11 @@ The repository comes from the command line or `VET_REPO`:
 "Open repository…" (a native folder dialog) and the recent repositories, which
 the shell keeps in its app config directory.
 
-`VET_DEVTOOLS=1` opens the webview's inspector with the window (debug builds
-only): `VET_DEVTOOLS=1 VET_BENCH=1 pnpm tauri dev`.
+The benchmark: `VET_BENCH=1` runs it on startup and quits with the verdict;
+`VET_BENCH=manual` opens its corpus and waits for "Run benchmark" in the Dev panel
+(the footer's "Dev"), e.g. to record a profile first. `VET_DEVTOOLS=1` opens the
+webview's inspector with the window (debug builds only):
+`VET_DEVTOOLS=1 VET_BENCH=manual pnpm tauri dev`.
 
 ## WSL split
 
