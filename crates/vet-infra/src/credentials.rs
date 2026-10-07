@@ -5,206 +5,236 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use reqwest::{RequestBuilder, StatusCode};
-use vet_app::platform::{Credential, CredentialSource, CredentialValidator, PlatformKind, ValidationError};
+use reqwest::StatusCode;
+use vet_app::platform::{Credential, CredentialValidator, PlatformError, PlatformKind, ValidationError};
 
+use crate::clock::unix_now;
 use crate::http::http_client;
+use crate::platform::azure_devops::access::{Access, PROFILE_ENDPOINT};
+use crate::platform::github;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Azure DevOps' identity service, which knows a user across organizations.
-const AZURE_DEVOPS_IDENTITY: &str = "app.vssps.visualstudio.com";
 
 #[derive(Default)]
 pub struct HttpValidator {
     /// Set up when first needed: loading the system's certificates is not free, and may fail.
-    client: OnceLock<Result<reqwest::Client, String>>,
-}
-
-/// One URL that names the owner of a token, and where in its answer the name is.
-struct Endpoint {
-    url: String,
-    user: fn(&str) -> Option<String>,
+    http: OnceLock<Result<reqwest::Client, String>>,
+    /// Where the APIs are, if not where the host says.
+    #[cfg(test)]
+    endpoint: Option<String>,
 }
 
 impl HttpValidator {
-    fn client(&self) -> Result<&reqwest::Client, ValidationError> {
-        self.client
-            // Azure DevOps sends a token it does not know to its sign-in page.
+    fn http(&self) -> Result<&reqwest::Client, ValidationError> {
+        self.http
             .get_or_init(|| http_client(TIMEOUT))
             .as_ref()
             .map_err(|why| ValidationError::Unreachable(why.clone()))
     }
 
-    fn request(
-        &self,
-        endpoint: &Endpoint,
-        kind: PlatformKind,
-        credential: &Credential,
-    ) -> Result<RequestBuilder, ValidationError> {
-        let token = credential.token.expose();
-        let request = self.client()?.get(&endpoint.url);
-        Ok(match (kind, credential.source) {
-            (PlatformKind::GitHub, _) => request
-                .bearer_auth(token)
-                .header("Accept", "application/vnd.github+json")
-                .header("X-GitHub-Api-Version", "2022-11-28"),
-            // A personal access token is the password of a user with no name.
-            (PlatformKind::AzureDevOps, CredentialSource::Pat) => request.basic_auth("", Some(token)),
-            (PlatformKind::AzureDevOps, CredentialSource::Cli) => request.bearer_auth(token),
-        })
+    fn endpoint(&self, default: impl FnOnce() -> String) -> String {
+        #[cfg(test)]
+        if let Some(endpoint) = &self.endpoint {
+            return endpoint.clone();
+        }
+        default()
     }
 
-    async fn ask(
-        &self,
-        endpoint: &Endpoint,
-        host: &str,
-        kind: PlatformKind,
-        credential: &Credential,
-    ) -> Result<String, ValidationError> {
-        let response = self
-            .request(endpoint, kind, credential)?
-            .send()
-            .await
-            .map_err(|e| ValidationError::Unreachable(format!("cannot reach {host}: {}", e.without_url())))?;
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        if status == StatusCode::OK {
-            return (endpoint.user)(&body).ok_or_else(|| refusal(kind, host, status, &body));
+    async fn github_user(&self, host: &str, credential: &Credential) -> Result<String, ValidationError> {
+        let base = self.endpoint(|| github::Endpoints::of(host).rest);
+        let unusable = |_| ValidationError::Unreachable(format!("cannot set up the client for {host}"));
+        let crab = github::client(self.http()?, &base, credential, false).map_err(unusable)?;
+        match crab.current().user().await {
+            Ok(user) => Ok(user.login),
+            Err(octocrab::Error::GitHub { source, .. }) => {
+                let status = source.status_code;
+                // A token the host does not know is refused, a host that is not GitHub is
+                // not found.
+                let refused = status.is_redirection() || (status.is_client_error() && status != StatusCode::NOT_FOUND);
+                Err(if refused {
+                    refusal(host, status, &source.message)
+                } else {
+                    ValidationError::Unreachable(format!("{host} answered {status}"))
+                })
+            }
+            Err(_) => Err(ValidationError::Unreachable(format!("cannot reach {host}"))),
         }
-        let refused = status.is_redirection() || (status.is_client_error() && status != StatusCode::NOT_FOUND);
-        Err(if refused {
-            refusal(kind, host, status, &body)
-        } else {
-            ValidationError::Unreachable(format!("{host} answered {status}"))
-        })
+    }
+
+    async fn azure_devops_user(&self, host: &str, credential: &Credential) -> Result<String, ValidationError> {
+        let endpoint = self.endpoint(|| PROFILE_ENDPOINT.to_owned());
+        let me = Access::new(credential, self.http()?)
+            .me(&endpoint, host, unix_now())
+            .await
+            .map_err(|e| match e {
+                PlatformError::Rejected(why) | PlatformError::Forbidden(why) => ValidationError::Rejected(why),
+                other => ValidationError::Unreachable(other.to_string()),
+            })?;
+        me.display_name
+            .or(me.email_address)
+            .ok_or_else(|| ValidationError::Rejected(format!("{host} refused the token: the profile has no name")))
     }
 }
 
 impl CredentialValidator for HttpValidator {
     async fn user(&self, host: &str, kind: PlatformKind, credential: &Credential) -> Result<String, ValidationError> {
-        let mut last = None;
-        for endpoint in endpoints(host, kind) {
-            match self.ask(&endpoint, host, kind, credential).await {
-                Ok(user) => return Ok(user),
-                Err(error) => last = Some(error),
-            }
-        }
-        Err(last.expect("every platform has an endpoint"))
-    }
-}
-
-/// Where to ask, best first. A token may lack the scope of one endpoint and have the other's.
-fn endpoints(host: &str, kind: PlatformKind) -> Vec<Endpoint> {
-    match kind {
-        PlatformKind::GitHub => vec![Endpoint {
-            url: github_user_url(host),
-            user: github_login,
-        }],
-        PlatformKind::AzureDevOps => {
-            let mut endpoints = Vec::new();
-            if host != "dev.azure.com" {
-                // An organization's own address.
-                endpoints.push(Endpoint {
-                    url: format!("https://{host}/_apis/connectionData?api-version=7.1-preview"),
-                    user: azure_devops_connection_user,
-                });
-            }
-            endpoints.push(Endpoint {
-                url: format!("https://{AZURE_DEVOPS_IDENTITY}/_apis/connectionData?api-version=7.1-preview"),
-                user: azure_devops_connection_user,
-            });
-            endpoints.push(Endpoint {
-                url: format!("https://{AZURE_DEVOPS_IDENTITY}/_apis/profile/profiles/me?api-version=7.1"),
-                user: azure_devops_profile_user,
-            });
-            endpoints
+        match kind {
+            PlatformKind::GitHub => self.github_user(host, credential).await,
+            PlatformKind::AzureDevOps => self.azure_devops_user(host, credential).await,
         }
     }
 }
 
-fn github_user_url(host: &str) -> String {
-    if host == "github.com" {
-        "https://api.github.com/user".to_owned()
+fn refusal(host: &str, status: StatusCode, reason: &str) -> ValidationError {
+    ValidationError::Rejected(if reason.is_empty() {
+        format!("{host} refused the token ({status})")
     } else {
-        format!("https://{host}/api/v3/user")
-    }
-}
-
-fn github_login(body: &str) -> Option<String> {
-    let user: serde_json::Value = serde_json::from_str(body).ok()?;
-    Some(user.get("login")?.as_str()?.to_owned())
-}
-
-/// The signed-in user of an Azure DevOps `connectionData`; an anonymous caller has none.
-fn azure_devops_connection_user(body: &str) -> Option<String> {
-    let data: serde_json::Value = serde_json::from_str(body).ok()?;
-    let user = data.get("authenticatedUser")?;
-    let name = user
-        .get("providerDisplayName")
-        .or_else(|| user.get("customDisplayName"))?
-        .as_str()?;
-    (user.get("isActive").and_then(serde_json::Value::as_bool) != Some(false)).then(|| name.to_owned())
-}
-
-fn azure_devops_profile_user(body: &str) -> Option<String> {
-    let profile: serde_json::Value = serde_json::from_str(body).ok()?;
-    Some(profile.get("displayName")?.as_str()?.to_owned())
-}
-
-fn refusal(kind: PlatformKind, host: &str, status: StatusCode, body: &str) -> ValidationError {
-    let reason = match kind {
-        PlatformKind::GitHub => serde_json::from_str::<serde_json::Value>(body)
-            .ok()
-            .and_then(|b| b.get("message")?.as_str().map(str::to_owned)),
-        PlatformKind::AzureDevOps => None,
-    };
-    ValidationError::Rejected(match reason {
-        Some(reason) => format!("{host} refused the token: {reason} ({status})"),
-        None => format!("{host} refused the token ({status})"),
+        format!("{host} refused the token: {reason} ({status})")
     })
 }
 
 #[cfg(test)]
 mod tests {
+    use vet_app::platform::{CredentialSource, Token};
+
     use super::*;
+    use crate::platform::fake::{Canned, Fake};
 
-    #[test]
-    fn the_github_user_is_its_login() {
-        let body = r#"{"login":"octocat","id":1,"type":"User","site_admin":false}"#;
-        assert_eq!(github_login(body).as_deref(), Some("octocat"));
-        assert_eq!(github_login(r#"{"message":"Bad credentials"}"#), None);
+    fn credential(source: CredentialSource) -> Credential {
+        Credential {
+            token: Token::new("secret").unwrap(),
+            source,
+        }
     }
 
-    #[test]
-    fn an_enterprise_host_is_asked_at_its_api_path() {
-        assert_eq!(github_user_url("github.com"), "https://api.github.com/user");
+    fn validator(fake: &Fake) -> HttpValidator {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let http = crate::http::client_builder(TIMEOUT).no_proxy().build().unwrap();
+        HttpValidator {
+            http: OnceLock::from(Ok(http)),
+            endpoint: Some(fake.base()),
+        }
+    }
+
+    /// A user as GitHub documents one: `octocrab` needs every URL.
+    fn github_user_json(login: &str) -> String {
+        let url = format!("https://api.github.com/users/{login}");
+        format!(
+            r#"{{"login":"{login}","id":1,"node_id":"U_1","avatar_url":"{url}","gravatar_id":"","url":"{url}",
+"html_url":"{url}","followers_url":"{url}","following_url":"{url}","gists_url":"{url}","starred_url":"{url}",
+"subscriptions_url":"{url}","organizations_url":"{url}","repos_url":"{url}","events_url":"{url}",
+"received_events_url":"{url}","type":"User","site_admin":false,"name":null,"patch_url":null}}"#
+        )
+    }
+
+    #[tokio::test]
+    async fn the_github_user_is_its_login_and_the_token_goes_as_a_bearer() {
+        let fake = Fake::start(|_, _| Canned::json(&github_user_json("octocat")));
+        let user = validator(&fake)
+            .user("github.com", PlatformKind::GitHub, &credential(CredentialSource::Pat))
+            .await
+            .unwrap();
+        assert_eq!(user, "octocat");
+        let requests = fake.requests();
+        assert_eq!(requests[0].path, "/user");
+        assert_eq!(requests[0].header("authorization"), Some("Bearer secret"));
+    }
+
+    #[tokio::test]
+    async fn a_refused_github_token_carries_the_platforms_reason_and_a_missing_api_is_unreachable() {
+        let fake = Fake::start(|_, _| Canned::status(401, r#"{"message":"Bad credentials"}"#));
+        let error = validator(&fake)
+            .user("github.com", PlatformKind::GitHub, &credential(CredentialSource::Pat))
+            .await
+            .unwrap_err();
         assert_eq!(
-            github_user_url("ghe.corp.example"),
-            "https://ghe.corp.example/api/v3/user"
+            error,
+            ValidationError::Rejected("github.com refused the token: Bad credentials (401 Unauthorized)".to_owned())
         );
+
+        let fake = Fake::start(|_, _| Canned::status(404, r#"{"message":"Not Found"}"#));
+        let error = validator(&fake)
+            .user(
+                "ghe.corp.example",
+                PlatformKind::GitHub,
+                &credential(CredentialSource::Pat),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ValidationError::Unreachable(_)), "{error:?}");
     }
 
-    #[test]
-    fn the_azure_devops_user_is_the_authenticated_one() {
-        let signed_in = r#"{"authenticatedUser":{"id":"a1","providerDisplayName":"Ada Lovelace","isActive":true},"authorizedUser":{}}"#;
-        assert_eq!(azure_devops_connection_user(signed_in).as_deref(), Some("Ada Lovelace"));
-        assert_eq!(azure_devops_connection_user(r#"{"instanceId":"x"}"#), None);
-        assert_eq!(azure_devops_connection_user("<html>Sign in</html>"), None);
-        let profile = r#"{"displayName":"Ada Lovelace","publicAlias":"1f","emailAddress":"ada@example.com"}"#;
-        assert_eq!(azure_devops_profile_user(profile).as_deref(), Some("Ada Lovelace"));
+    #[tokio::test]
+    async fn the_azure_devops_user_is_the_name_in_the_profile_and_a_personal_token_has_no_user_name() {
+        let fake = Fake::start(|_, _| {
+            Canned::json(
+                r#"{"displayName":"Ada Lovelace","publicAlias":"1f","emailAddress":"ada@example.com","id":"a1"}"#,
+            )
+        });
+        let user = validator(&fake)
+            .user(
+                "dev.azure.com",
+                PlatformKind::AzureDevOps,
+                &credential(CredentialSource::Pat),
+            )
+            .await
+            .unwrap();
+        assert_eq!(user, "Ada Lovelace");
+        let request = &fake.requests()[0];
+        assert!(
+            request.path.starts_with("/_apis/profile/profiles/me"),
+            "{}",
+            request.path
+        );
+        // base64 of ":secret".
+        assert_eq!(request.header("authorization"), Some("Basic OnNlY3JldA=="));
+
+        let user = validator(&fake)
+            .user(
+                "dev.azure.com",
+                PlatformKind::AzureDevOps,
+                &credential(CredentialSource::Cli),
+            )
+            .await
+            .unwrap();
+        assert_eq!(user, "Ada Lovelace");
+        assert_eq!(fake.requests()[1].header("authorization"), Some("Bearer secret"));
     }
 
-    #[test]
-    fn a_refusal_carries_the_platforms_reason() {
-        let ValidationError::Rejected(why) = refusal(
-            PlatformKind::GitHub,
-            "github.com",
-            StatusCode::UNAUTHORIZED,
-            r#"{"message":"Bad credentials"}"#,
-        ) else {
-            panic!("not a rejection")
-        };
-        assert_eq!(why, "github.com refused the token: Bad credentials (401 Unauthorized)");
+    #[tokio::test]
+    async fn azure_devops_refuses_by_status_by_redirect_and_by_its_sign_in_page() {
+        for (status, body) in [
+            (401, ""),
+            (302, ""),
+            // A token it does not know is answered with the sign-in page and a success status.
+            (203, "<html>Sign in</html>"),
+        ] {
+            let fake = Fake::start(move |_, _| {
+                Canned::status(status, body).with("Location", "https://spsprodweu1.vssps.visualstudio.com/_signin")
+            });
+            let error = validator(&fake)
+                .user(
+                    "dev.azure.com",
+                    PlatformKind::AzureDevOps,
+                    &credential(CredentialSource::Pat),
+                )
+                .await
+                .unwrap_err();
+            assert!(matches!(error, ValidationError::Rejected(_)), "{status}: {error:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_azure_devops_server_error_is_not_a_refusal() {
+        let fake = Fake::start(|_, _| Canned::status(500, ""));
+        let error = validator(&fake)
+            .user(
+                "dev.azure.com",
+                PlatformKind::AzureDevOps,
+                &credential(CredentialSource::Pat),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ValidationError::Unreachable(_)), "{error:?}");
     }
 }

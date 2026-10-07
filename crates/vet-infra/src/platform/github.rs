@@ -58,13 +58,33 @@ const VIEWER_MAX_AGE: i64 = 600;
 /// Where a host's APIs are: the base URIs that the routes of `octocrab` (REST) and
 /// `/graphql` are relative to.
 #[derive(Clone, PartialEq, Eq, Debug)]
-struct Endpoints {
+pub(crate) struct Endpoints {
     graphql: String,
-    rest: String,
+    pub(crate) rest: String,
+}
+
+/// A client for the API under `base` that sends `credential` to it and nowhere else.
+/// With `cache`, requests are conditional on what was answered before.
+pub(crate) fn client(
+    http: &reqwest::Client,
+    base: &str,
+    credential: &Credential,
+    cache: bool,
+) -> octocrab::Result<Octocrab> {
+    let builder = Octocrab::builder()
+        .base_uri(base)?
+        .personal_token(credential.token.expose().to_owned())
+        .add_retry_config(RetryConfig::Simple(RETRIES));
+    let builder = if cache {
+        builder.cache(InMemoryCache::new())
+    } else {
+        builder
+    };
+    builder.build_with_reqwest(http.clone())
 }
 
 impl Endpoints {
-    fn of(host: &str) -> Self {
+    pub(crate) fn of(host: &str) -> Self {
         if host == "github.com" {
             Self {
                 graphql: "https://api.github.com".to_owned(),
@@ -172,24 +192,12 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             .as_ref()
             .map_err(|why| PlatformError::Unreachable(why.clone()))?;
         let endpoints = self.endpoints(host);
-        let build = |base: &str, cache: bool| {
-            let builder = Octocrab::builder()
-                .base_uri(base)?
-                .personal_token(credential.token.expose().to_owned())
-                .add_retry_config(RetryConfig::Simple(RETRIES));
-            let builder = if cache {
-                builder.cache(InMemoryCache::new())
-            } else {
-                builder
-            };
-            builder.build_with_reqwest(http.clone())
-        };
         let unusable = |e: octocrab::Error| {
             PlatformError::Unexpected(format!("cannot set up the client for {host}: {}", short(&e)))
         };
         let clients = Clients {
-            rest: build(&endpoints.rest, true).map_err(unusable)?,
-            graphql: build(&endpoints.graphql, false).map_err(unusable)?,
+            rest: client(http, &endpoints.rest, &credential, true).map_err(unusable)?,
+            graphql: client(http, &endpoints.graphql, &credential, false).map_err(unusable)?,
         };
         self.state()
             .clients

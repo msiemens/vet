@@ -1,19 +1,13 @@
 //! The client against a local server that answers with recorded documents.
 
 use std::cell::Cell;
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 
-use vet_app::platform::{
-    CiState, Credential, CredentialSource, ReviewRequest, ReviewVerdict, Token, ViewerReview, is_waiting_for_me,
-};
+use vet_app::platform::{CiState, ReviewRequest, ReviewVerdict, ViewerReview, is_waiting_for_me};
 
 use super::*;
 use crate::http::client_builder;
+use crate::platform::fake::{Canned, Fake, Seen, Signed};
 
 const SEARCH_PAGE_1: &str = include_str!("fixtures/search_page_1.json");
 const SEARCH_PAGE_2: &str = include_str!("fixtures/search_page_2.json");
@@ -34,169 +28,28 @@ fn set_now(at: i64) {
     CLOCK.with(|c| c.set(at));
 }
 
-#[derive(Clone, Debug)]
-struct Seen {
-    path: String,
-    headers: HashMap<String, String>,
-    body: String,
+trait GraphQlRequest {
+    fn variables(&self) -> Value;
 }
 
-impl Seen {
+impl GraphQlRequest for Seen {
     fn variables(&self) -> Value {
         serde_json::from_str::<Value>(&self.body).unwrap()["variables"].clone()
     }
-
-    fn header(&self, name: &str) -> Option<&str> {
-        self.headers.get(name).map(String::as_str)
-    }
 }
 
-struct Canned {
-    status: u16,
-    headers: Vec<(&'static str, String)>,
-    body: String,
+trait GraphQlRequests {
+    fn graphql_requests(&self) -> Vec<Seen>;
 }
 
-impl Canned {
-    fn json(body: &str) -> Self {
-        Self {
-            status: 200,
-            headers: Vec::new(),
-            body: body.to_owned(),
-        }
-    }
-
-    fn status(status: u16, body: &str) -> Self {
-        Self {
-            status,
-            ..Self::json(body)
-        }
-    }
-
-    fn with(mut self, name: &'static str, value: impl Into<String>) -> Self {
-        self.headers.push((name, value.into()));
-        self
-    }
-}
-
-/// A server on a local port that answers each request as the handler says, one request
-/// per connection.
-struct Fake {
-    addr: SocketAddr,
-    seen: Arc<Mutex<Vec<Seen>>>,
-    stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<()>>,
-}
-
-impl Fake {
-    /// `handler` gets the request and the server's base URL.
-    fn start(handler: impl Fn(&Seen, &str) -> Canned + Send + 'static) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let stop = Arc::new(AtomicBool::new(false));
-        let thread = {
-            let (seen, stop) = (seen.clone(), stop.clone());
-            std::thread::spawn(move || {
-                let base = format!("http://{addr}");
-                for stream in listener.incoming() {
-                    if stop.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    let Ok(mut stream) = stream else { continue };
-                    let Some(request) = read_request(&mut stream) else {
-                        continue;
-                    };
-                    let canned = handler(&request, &base);
-                    seen.lock().unwrap().push(request);
-                    write_response(&mut stream, &canned, &base);
-                }
-            })
-        };
-        Self {
-            addr,
-            seen,
-            stop,
-            thread: Some(thread),
-        }
-    }
-
-    fn base(&self) -> String {
-        format!("http://{}", self.addr)
-    }
-
-    fn requests(&self) -> Vec<Seen> {
-        self.seen.lock().unwrap().clone()
-    }
-
+impl GraphQlRequests for Fake {
     fn graphql_requests(&self) -> Vec<Seen> {
         self.requests().into_iter().filter(|r| r.path == "/graphql").collect()
     }
 }
 
-impl Drop for Fake {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        let _ = TcpStream::connect(self.addr);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
-}
-
-fn read_request(stream: &mut TcpStream) -> Option<Seen> {
-    let mut reader = BufReader::new(stream.try_clone().ok()?);
-    let mut line = String::new();
-    reader.read_line(&mut line).ok()?;
-    let mut parts = line.split_whitespace();
-    let path = parts.nth(1)?.to_owned();
-    let mut headers = HashMap::new();
-    loop {
-        line.clear();
-        reader.read_line(&mut line).ok()?;
-        let line = line.trim_end();
-        if line.is_empty() {
-            break;
-        }
-        let (name, value) = line.split_once(':')?;
-        headers.insert(name.to_ascii_lowercase(), value.trim().to_owned());
-    }
-    let length = headers.get("content-length").and_then(|l| l.parse().ok()).unwrap_or(0);
-    let mut body = vec![0; length];
-    reader.read_exact(&mut body).ok()?;
-    Some(Seen {
-        path,
-        headers,
-        body: String::from_utf8(body).ok()?,
-    })
-}
-
-fn write_response(stream: &mut TcpStream, canned: &Canned, base: &str) {
-    let body = canned.body.replace("{base}", base);
-    let mut head = format!(
-        "HTTP/1.1 {} X\r\nConnection: close\r\nContent-Length: {}\r\n",
-        canned.status,
-        body.len()
-    );
-    for (name, value) in &canned.headers {
-        head.push_str(&format!("{name}: {}\r\n", value.replace("{base}", base)));
-    }
-    let _ = stream.write_all(format!("{head}\r\n{body}").as_bytes());
-}
-
-struct Signed(Option<&'static str>);
-
-impl CredentialProvider for Signed {
-    fn credential(&self, _: &str, _: i64) -> impl Future<Output = Option<Credential>> + Send {
-        std::future::ready(self.0.map(|token| Credential {
-            token: Token::new(token).unwrap(),
-            source: CredentialSource::Cli,
-        }))
-    }
-}
-
 fn client(fake: &Fake) -> GitHubClient<Signed> {
-    client_with(fake, Signed(Some("gho_secret")))
+    client_with(fake, Signed::cli("gho_secret"))
 }
 
 fn client_with<C: CredentialProvider + Sync>(fake: &Fake, credentials: C) -> GitHubClient<C> {
@@ -551,7 +404,7 @@ async fn a_rejected_token_a_missing_repository_and_a_down_server_have_readable_e
 #[tokio::test]
 async fn nothing_is_sent_without_a_credential() {
     let fake = Fake::start(|_, _| Canned::json("{}"));
-    let client = client_with(&fake, Signed(None));
+    let client = client_with(&fake, Signed(None, vet_app::platform::CredentialSource::Cli));
     let error = client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
     assert_eq!(error, PlatformError::SignedOut("github.com".to_owned()));
     assert_eq!(error.to_string(), "not signed in to github.com");
@@ -750,7 +603,7 @@ async fn github_smoke() {
             .to_owned()
             .into_boxed_str(),
     );
-    let client = GitHubClient::new(Signed(Some(token)));
+    let client = GitHubClient::new(Signed::cli(token));
     let remote = RemoteKey {
         host: "github.com".to_owned(),
         path: std::env::var("VET_SMOKE_REPO").unwrap_or_else(|_| "cli/cli".to_owned()),
