@@ -5,6 +5,7 @@
 
 mod backend;
 mod bench;
+mod credentials;
 mod dialog;
 mod geometry;
 mod menu;
@@ -47,6 +48,10 @@ pub fn run() {
             startup::retry_startup,
             startup::startup_progress,
             bench::bench_config,
+            credentials::stored_credentials,
+            credentials::stored_credential,
+            credentials::store_credential,
+            credentials::remove_credential,
             dialog::pick_file,
             dialog::pick_repository,
             window::quit,

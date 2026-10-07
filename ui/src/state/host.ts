@@ -93,6 +93,34 @@ export async function pickRepository(): Promise<string | null> {
   return inTauri ? invoke<string | null>("pick_repository") : null;
 }
 
+/** Whether the personal access tokens survive the window: the host keeps them in the OS keychain. A plain browser has none. */
+export const hasKeychain = inTauri;
+
+/** The token the keychain holds for a host. */
+export interface StoredCredential {
+  host: string;
+  token: string;
+}
+
+/** Every token in the keychain, for the hosts that have one. */
+export async function storedCredentials(): Promise<StoredCredential[]> {
+  return inTauri ? invoke<StoredCredential[]>("stored_credentials") : [];
+}
+
+/** The token the keychain holds for `host`, if any. */
+export async function storedCredential(host: string): Promise<string | null> {
+  return inTauri ? invoke<string | null>("stored_credential", { host }) : null;
+}
+
+/** Keeps `token` in the keychain under `host`. Rejects with a message if the keychain refuses. */
+export async function storeCredential(host: string, token: string): Promise<void> {
+  if (inTauri) await invoke("store_credential", { host, token });
+}
+
+export async function removeStoredCredential(host: string): Promise<void> {
+  if (inTauri) await invoke("remove_credential", { host });
+}
+
 /** The native file dialog; `null` if cancelled. Rejects with a message for a file the backend cannot see. */
 export async function pickFile(): Promise<string | null> {
   return inTauri ? invoke<string | null>("pick_file") : null;

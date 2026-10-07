@@ -26,6 +26,8 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 tempfile = "3"
 tauri-plugin-dialog = "2"
 tauri-plugin-decoration = "3"
+# The OS keychain (macOS Keychain, Windows Credential Manager) for personal access tokens.
+keyring = "4.2"
 
 [lints.rust]
 unsafe_code = "forbid"
