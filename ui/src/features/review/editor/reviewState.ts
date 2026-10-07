@@ -1,6 +1,7 @@
 // Review-state decorations on every changed line (including the deleted lines of
 // the unified view) and hunk header bars (SPEC §10).
 
+import { getChunks, getOriginalDoc } from "@codemirror/merge";
 import { StateEffect, StateField, type Extension, type Range, type Text } from "@codemirror/state";
 import {
   Decoration,
@@ -13,6 +14,7 @@ import {
 } from "@codemirror/view";
 import type { Hunk } from "../../../generated/Hunk";
 import type { HunkState } from "../../../generated/HunkState";
+import { replacesBaseTail } from "./baseTail";
 import { gutterWidth } from "./gutterWidth";
 import { type BarActions, HunkBar, hunkHeader } from "./hunkBar";
 import { lineEnd, lineStart } from "./positions";
@@ -168,10 +170,15 @@ export function deletedChunkStyle(field: StateField<ReviewState>): Extension {
   const style = (view: EditorView) => {
     const state = view.state.field(field);
     const byPos = new Map(state.spans.map((s, i) => [s.at, i]));
+    const baseLength = getOriginalDoc(view.state).length;
+    const chunks = getChunks(view.state)?.chunks ?? [];
     for (const el of view.dom.querySelectorAll<HTMLElement>(".cm-deletedChunk")) {
       el.classList.remove(...Object.values(CLASS));
-      const i = byPos.get(view.posAtDOM(el));
+      const at = view.posAtDOM(el);
+      const i = byPos.get(at);
       if (i !== undefined) el.classList.add(CLASS[state.states[i]]);
+      const chunk = chunks.find((c) => c.fromB === at);
+      el.classList.toggle("vet-base-tail", !!chunk && replacesBaseTail(chunk, baseLength));
     }
   };
   const plugin = ViewPlugin.define((view) => {

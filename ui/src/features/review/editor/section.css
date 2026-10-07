@@ -157,6 +157,10 @@
 .file .cm-merge-a .cm-changedLine {
   background: var(--del-bg);
 }
+/* A deleted row for the empty last line of an empty base text (`baseTail.ts`). */
+.file .cm-editor .cm-deletedChunk.vet-base-tail {
+  display: none;
+}
 .file .cm-editor .cm-changedText {
   background: color-mix(in srgb, var(--add-text) 25%, transparent);
 }

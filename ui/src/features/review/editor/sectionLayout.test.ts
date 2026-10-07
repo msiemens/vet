@@ -12,8 +12,10 @@ const hunk = (targetStart: number, baseLen: number, targetLen: number) => ({
   targetStart,
   targetLen,
 });
-const file = (targetLines: number, hunks: ReturnType<typeof hunk>[], nonText: NonTextItem[] = [], path = "a.rs") =>
-  ({ path, targetLines, hunks, nonText }) as FileChange;
+const file = (targetLines: number, hunks: ReturnType<typeof hunk>[], nonText: NonTextItem[] = [], path = "a.rs") => {
+  const baseLines = hunks.reduce((lines, h) => lines + h.baseLen - h.targetLen, targetLines);
+  return { path, baseLines, targetLines, hunks, nonText } as FileChange;
+};
 const layout = (f: FileChange, mode: "unified" | "split", collapse = true) => sectionLayout(f, mode, metrics, collapse);
 const entry = { kind: "file", mode: 0o100644, target: null, size: 1 } as const;
 const item = (kind: NonTextItem["kind"], hasPreview = false): NonTextItem => ({

@@ -126,8 +126,8 @@ export function sectionLayout(
     threads.inline.reduce((sum, c, i) => (drawn[i] && c.line < line ? sum + c.height : sum), 0);
   let end = 0; // where the previous hunk ends in the target, in lines
   let next = 0; // the first shown range that can still reach the lines not yet measured
-  /** The unchanged lines `[from, to)`: their shown rows, and one bar if some are hidden. */
-  const gap = (from: number, to: number) => {
+  /** The unchanged lines `[from, to)`: their shown rows, and one bar if some are hidden (answers whether there is one). */
+  const gap = (from: number, to: number): boolean => {
     let rows = 0;
     let wraps = 0;
     for (; next < shown.length && shown[next][0] < to; next++) {
@@ -137,7 +137,9 @@ export function sectionLayout(
       if (hi > lo) wraps += wrapped.target?.extra(lo, hi) ?? 0;
       if (b > to) break;
     }
-    y += (rows + wraps) * m.line + (rows < to - from ? m.collapsed : 0);
+    const hidden = rows < to - from;
+    y += (rows + wraps) * m.line + (hidden ? m.collapsed : 0);
+    return hidden;
   };
   file.hunks.forEach((h) => {
     gap(end, h.targetStart);
@@ -151,6 +153,13 @@ export function sectionLayout(
     y += m.hunk + aligned + rows * m.line;
     end = h.targetStart + h.targetLen;
   });
-  gap(end, file.targetLines);
+  const hiddenTail = gap(end, file.targetLines);
+  const last = file.hunks.at(-1);
+  if (mode === "split" && last?.baseLen && last.targetLen && !hiddenTail) {
+    // A base text that ends in a line break has an empty last line after the text. Where the target
+    // ends without one, the hunk that changes the last line of both leaves that line without a
+    // counterpart, a row of its own.
+    y += Math.max(0, file.baseLines - (last.baseStart + last.baseLen) - (file.targetLines - end)) * m.line;
+  }
   return { height: y + above(Infinity) + m.gap, cardTops, cardsHeight, hunkTops, drawn };
 }
