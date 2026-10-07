@@ -321,6 +321,29 @@ pub enum NewThread {
     Changeset,
 }
 
+/// The result of a request that can start the review.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Outcome<T> {
+    pub value: T,
+    /// The review as it began, if this request started it.
+    pub started: Option<Lifecycle>,
+}
+
+impl<T> std::ops::Deref for Outcome<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+fn outcome<T>(st: &State, value: T, started: bool) -> Outcome<T> {
+    Outcome {
+        value,
+        started: started.then(|| lifecycle_of(st)),
+    }
+}
+
 /// A thread with its anchor resolved against the current revision.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ThreadView {
@@ -561,10 +584,10 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// Starts the review (SPEC "Session lifecycle"): records the base, `HEAD`
     /// and the current target, which becomes version 1, copies the target's
     /// dirty content into the store and takes the session refs. Does nothing
-    /// if a review is open.
-    async fn begin(&self, st: &mut State) -> Result<()> {
+    /// if a review is open. Returns whether it started one.
+    async fn begin(&self, st: &mut State) -> Result<bool> {
         if st.review.is_some() {
-            return Ok(());
+            return Ok(false);
         }
         let acquisition = &self.acquisition;
         let (git, store) = (&acquisition.git, &acquisition.store);
@@ -601,7 +624,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             version: 1,
             updated_at: now,
         });
-        Ok(())
+        Ok(true)
     }
 
     /// Whether a review is open, and its version.
@@ -1071,13 +1094,17 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
 
     /// Marks hunks (indices into the file's hunks at `revision`) seen or unseen.
     /// Marking starts the review if none is open.
-    pub async fn set_seen(&self, revision: u32, path: &str, hunks: &[u32], seen: bool) -> Result<ReviewUpdateView> {
+    pub async fn set_seen(
+        &self,
+        revision: u32,
+        path: &str,
+        hunks: &[u32],
+        seen: bool,
+    ) -> Result<Outcome<ReviewUpdateView>> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
-        if seen {
-            self.begin(&mut st).await?;
-        }
+        let started = seen && self.begin(&mut st).await?;
         let Prepared {
             inputs, spans: slots, ..
         } = self.prepare(&mut st).await?;
@@ -1125,7 +1152,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         st.recorded
             .extend(ids.into_iter().zip(add).map(|(id, span)| RecordedSpan { id, span }));
         self.remap(&mut st).await?;
-        update_of(&st, path)
+        Ok(outcome(&st, update_of(&st, path)?, started))
     }
 
     /// Acknowledges or un-acknowledges one non-text item. Acknowledging starts
@@ -1136,13 +1163,11 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         path: &str,
         kind: NonTextKind,
         acknowledged: bool,
-    ) -> Result<ReviewUpdateView> {
+    ) -> Result<Outcome<ReviewUpdateView>> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
-        if acknowledged {
-            self.begin(&mut st).await?;
-        }
+        let started = acknowledged && self.begin(&mut st).await?;
         let change = {
             let diff = &st.changes.as_ref().expect("computed").diff;
             diff.non_text
@@ -1164,7 +1189,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         } else if !st.acks.contains(&ack) {
             st.acks.push(ack);
         }
-        update_of(&st, path)
+        Ok(outcome(&st, update_of(&st, path)?, started))
     }
 
     /// The bytes of one side of a non-text item's file at `revision`.
@@ -1228,7 +1253,13 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
 
     /// Opens a thread with its first message, and starts the review if none is
     /// open. `now` is unix seconds.
-    pub async fn create_thread(&self, revision: u32, target: NewThread, body: String, now: i64) -> Result<ThreadView> {
+    pub async fn create_thread(
+        &self,
+        revision: u32,
+        target: NewThread,
+        body: String,
+        now: i64,
+    ) -> Result<Outcome<ThreadView>> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
@@ -1245,7 +1276,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             }
             NewThread::Changeset => CommentTarget::Changeset,
         };
-        self.begin(&mut st).await?;
+        let started = self.begin(&mut st).await?;
         let review = st.review.as_ref().expect("begun").id;
         let id = self
             .acquisition
@@ -1259,7 +1290,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             status: ThreadStatus::Open,
         });
         self.remap(&mut st).await?;
-        thread_by_id(&st, id)
+        Ok(outcome(&st, thread_by_id(&st, id)?, started))
     }
 
     pub async fn reply(&self, thread: ThreadId, body: String, now: i64) -> Result<ThreadView> {

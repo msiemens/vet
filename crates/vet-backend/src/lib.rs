@@ -356,13 +356,12 @@ impl Orchestrator {
                 seen,
             } => {
                 let open = self.find(session).await?;
-                let before = open.session.lifecycle().await;
                 let update = open
                     .session
                     .set_seen(revision, &path, &hunks, seen)
                     .await
                     .map_err(message)?;
-                announce_start(&open, before).await;
+                announce_start(&open, update.started);
                 Ok(Response::Review(review_changed(&open, &events, &update)))
             }
             Request::Acknowledge {
@@ -373,13 +372,12 @@ impl Orchestrator {
                 acknowledged,
             } => {
                 let open = self.find(session).await?;
-                let before = open.session.lifecycle().await;
                 let update = open
                     .session
                     .acknowledge(revision, &path, mapping::core_non_text_kind(kind), acknowledged)
                     .await
                     .map_err(message)?;
-                announce_start(&open, before).await;
+                announce_start(&open, update.started);
                 Ok(Response::Review(review_changed(&open, &events, &update)))
             }
             Request::ItemBlob {
@@ -485,13 +483,12 @@ impl Orchestrator {
                 body,
             } => {
                 let open = self.find(session).await?;
-                let before = open.session.lifecycle().await;
                 let thread = open
                     .session
                     .create_thread(revision, mapping::new_thread(target), body, unix_now())
                     .await
                     .map_err(message)?;
-                announce_start(&open, before).await;
+                announce_start(&open, thread.started);
                 Ok(thread_changed(&open, &events, &thread).await)
             }
             Request::Reply { session, thread, body } => {
@@ -670,16 +667,14 @@ impl Orchestrator {
     }
 }
 
-/// Tells every subscriber that the request which found the session as `before`
-/// started its review.
-async fn announce_start(open: &Open, before: Lifecycle) {
-    let now = open.session.lifecycle().await;
-    if before == Lifecycle::Browsing && now != before {
+/// Tells every subscriber that a request started the review, as `started` says.
+fn announce_start(open: &Open, started: Option<Lifecycle>) {
+    if let Some(lifecycle) = started {
         run::broadcast(
             &open.subscribers,
             Event::ReviewStarted {
                 session: open.id,
-                review: mapping::review_info(now),
+                review: mapping::review_info(lifecycle),
             },
         );
     }
