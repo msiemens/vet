@@ -141,7 +141,7 @@ impl Handler for Mock {
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
             Request::RecentProjects | Request::RecordRecentProject { .. } | Request::ForgetRecentProject { .. } => {
-                Ok(Response::RecentProjects { paths: Vec::new() })
+                Ok(Response::RecentProjects { projects: Vec::new() })
             }
             // The mock has one session over its corpus; `repo` is ignored.
             Request::OpenSession { repo } => Ok(Response::Session {

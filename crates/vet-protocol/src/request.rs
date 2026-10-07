@@ -13,12 +13,12 @@ pub enum Request {
     Ping {
         payload: String,
     },
-    /// The recently opened repositories, as the paths they were recorded with, most
-    /// recent first. They belong to the backend, not to a session. Answers with
-    /// `Response::RecentProjects`.
+    /// The recently opened repositories, as the paths they were recorded with and
+    /// when, most recent first. They belong to the backend, not to a session.
+    /// Answers with `Response::RecentProjects`.
     RecentProjects,
-    /// Puts `path` at the top of the recent list, dropping its earlier entry and the
-    /// oldest ones beyond ten. Answers with `Response::RecentProjects`.
+    /// Puts `path` at the top of the recent list, opened now, dropping its earlier
+    /// entry and the oldest ones beyond ten. Answers with `Response::RecentProjects`.
     RecordRecentProject {
         path: String,
     },

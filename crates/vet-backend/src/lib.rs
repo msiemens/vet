@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use vet_app::gc::Retention;
 use vet_app::limits::Limiting;
+use vet_app::ports::{RecentProject, StoreError};
 use vet_app::recent::RecentProjects;
 use vet_app::registry::{Entry, Registry};
 use vet_app::semantics::Semantics;
@@ -83,6 +84,19 @@ fn message(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
+fn recent_projects(list: Result<Vec<RecentProject>, StoreError>) -> Result<Response, String> {
+    let projects = list.map_err(|e| e.0)?;
+    Ok(Response::RecentProjects {
+        projects: projects
+            .into_iter()
+            .map(|p| vet_protocol::RecentProject {
+                path: p.path,
+                opened_at: u32::try_from(p.opened_at).unwrap_or(0),
+            })
+            .collect(),
+    })
+}
+
 impl Orchestrator {
     pub fn new(store: SqliteStore, config: Config) -> Self {
         let backends: Arc<[Backend]> = lsp_config::defaults().into();
@@ -126,15 +140,9 @@ impl Orchestrator {
         let from = &from;
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
-            Request::RecentProjects => Ok(Response::RecentProjects {
-                paths: self.recent.list().await.map_err(|e| e.0)?,
-            }),
-            Request::RecordRecentProject { path } => Ok(Response::RecentProjects {
-                paths: self.recent.record(path).await.map_err(|e| e.0)?,
-            }),
-            Request::ForgetRecentProject { path } => Ok(Response::RecentProjects {
-                paths: self.recent.forget(&path).await.map_err(|e| e.0)?,
-            }),
+            Request::RecentProjects => recent_projects(self.recent.list().await),
+            Request::RecordRecentProject { path } => recent_projects(self.recent.record(path, unix_now()).await),
+            Request::ForgetRecentProject { path } => recent_projects(self.recent.forget(&path).await),
             Request::OpenSession { repo } => {
                 let (session, root) = self.open(&repo, from.clone()).await?;
                 Ok(Response::Session { session, root })

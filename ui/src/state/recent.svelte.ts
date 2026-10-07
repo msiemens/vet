@@ -1,10 +1,11 @@
 // The recently opened repositories, kept by the backend.
 
+import type { RecentProject } from "../generated/RecentProject";
 import type { Backend } from "./backend";
 
 class RecentRepositories {
-  /** Backend-side paths, most recent first. */
-  list = $state<string[]>([]);
+  /** Backend-side paths with when they were opened, most recent first. */
+  list = $state<RecentProject[]>([]);
 
   async load(backend: Backend) {
     this.list = await backend.recentProjects().catch(() => []);

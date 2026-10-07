@@ -6,6 +6,7 @@
 mod envelope;
 mod event;
 mod file;
+mod recent;
 mod request;
 mod response;
 mod review;
@@ -17,6 +18,7 @@ mod thread;
 pub use envelope::*;
 pub use event::*;
 pub use file::*;
+pub use recent::*;
 pub use request::*;
 pub use response::*;
 pub use review::*;

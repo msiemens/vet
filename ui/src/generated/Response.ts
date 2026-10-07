@@ -10,6 +10,7 @@ import type { Impact } from "./Impact";
 import type { Locations } from "./Locations";
 import type { Manifest } from "./Manifest";
 import type { Reachability } from "./Reachability";
+import type { RecentProject } from "./RecentProject";
 import type { RemovalImpact } from "./RemovalImpact";
 import type { ReviewUpdate } from "./ReviewUpdate";
 import type { ServerInfo } from "./ServerInfo";
@@ -25,7 +26,7 @@ export type Response = { "type": "pong", payload: string, } | { "type": "session
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "recentProjects", paths: Array<string>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
+root: string, } | { "type": "done" } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
 /**
  * The changed ranges of the hunks in order, down to the words that differ within a
  * replaced region: line-snapped, one block per hunk (see [`TextChange`]).

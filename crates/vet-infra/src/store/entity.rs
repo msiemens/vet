@@ -428,6 +428,8 @@ pub mod recent_project {
         pub id: i64,
         #[sea_orm(unique)]
         pub path: String,
+        /// Unix seconds.
+        pub opened_at: i64,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

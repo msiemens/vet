@@ -58,7 +58,7 @@
       repoOpen: !!session.repo,
       reviewOpen,
       canQuit,
-      recent: recent.list.map((path) => ({ path, name: repoName(path) })),
+      recent: recent.list.map(({ path }) => ({ path, name: repoName(path) })),
       mode,
       theme,
       tools: [
@@ -178,7 +178,7 @@
   <TitleBar />
   <div class="body">
     <StartScreen
-      recent={recent.list}
+      recent={recent.list.map((p) => p.path)}
       failed={session.openError}
       canPick={hasNativeDialogs}
       onpick={() => void session.pickRepo()}

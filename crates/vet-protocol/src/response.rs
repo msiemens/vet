@@ -5,8 +5,8 @@ use ts_rs::TS;
 
 use crate::{
     Base, BlobContent, BranchInfo, ChangedSymbols, CommitInfo, Diagnostic, DirEntry, Highlights, Impact, Locations,
-    Manifest, Reachability, RemovalImpact, ReviewUpdate, ServerInfo, SessionId, Side, SymbolSignature, TextChange,
-    TextContent, Thread, ThreadTarget, Unavailable,
+    Manifest, Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, SessionId, Side, SymbolSignature,
+    TextChange, TextContent, Thread, ThreadTarget, Unavailable,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -25,7 +25,7 @@ pub enum Response {
     Done,
     /// The recent list after the request, most recent first.
     RecentProjects {
-        paths: Vec<String>,
+        projects: Vec<RecentProject>,
     },
     /// Boxed: it would make every response as large as the manifest.
     Manifest(Box<Manifest>),

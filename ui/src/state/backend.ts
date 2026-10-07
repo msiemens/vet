@@ -15,6 +15,7 @@ import type { Impact } from "../generated/Impact";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { Reachability } from "../generated/Reachability";
+import type { RecentProject } from "../generated/RecentProject";
 import type { RemovalImpact } from "../generated/RemovalImpact";
 import type { Response } from "../generated/Response";
 import type { ReviewFilter } from "../generated/ReviewFilter";
@@ -69,18 +70,18 @@ export class Backend {
   }
 
   /** The recently opened repositories, most recent first. They belong to the backend, not to a session. */
-  async recentProjects(): Promise<string[]> {
-    return expect(await this.conn.request({ type: "recentProjects" }), "recentProjects").paths;
+  async recentProjects(): Promise<RecentProject[]> {
+    return expect(await this.conn.request({ type: "recentProjects" }), "recentProjects").projects;
   }
 
   /** Puts `path` at the top of the recent list; resolves with the list. */
-  async recordRecentProject(path: string): Promise<string[]> {
-    return expect(await this.conn.request({ type: "recordRecentProject", path }), "recentProjects").paths;
+  async recordRecentProject(path: string): Promise<RecentProject[]> {
+    return expect(await this.conn.request({ type: "recordRecentProject", path }), "recentProjects").projects;
   }
 
   /** Resolves with the recent list without `path`. */
-  async forgetRecentProject(path: string): Promise<string[]> {
-    return expect(await this.conn.request({ type: "forgetRecentProject", path }), "recentProjects").paths;
+  async forgetRecentProject(path: string): Promise<RecentProject[]> {
+    return expect(await this.conn.request({ type: "forgetRecentProject", path }), "recentProjects").projects;
   }
 
   /** Opens a session on `repo`; resolves with the repository root the backend settled on. */
