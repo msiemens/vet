@@ -437,7 +437,7 @@ Grouped by area; areas and the items within each are in priority order.
 - Edit and remove your own comments; removing the first comment removes its thread
 - Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
 - Line highlight in the editor: the clicked line stays highlighted
-- Soft wrap, toggled per view and on by default for prose (Markdown, reStructuredText, plain text); a changed line that runs past the visible width is marked whether or not it wraps
+- Long lines are reachable in every view (the Changes tab, diff and file tabs, both panes of a split view): horizontal scrolling when soft wrap is off, with hunk bars, cards and thread cards staying in view; soft wrap, toggled per view and on by default for prose (Markdown, reStructuredText, plain text); a changed line that runs past the visible width is marked whether or not it wraps
 
 #### Changesets and history
 
