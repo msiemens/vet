@@ -1,8 +1,12 @@
-// The current hunk's bar, pinned under the current file's header. The header sticks by CSS
-// (`section.css`: it stays until the next section pushes it out); the hunk's bar lives inside the
+// What stays at the top of a `ChangesetView` while it scrolls: the current file's header and, under
+// it, the current hunk's bar.
+//
+// Only the current section's header is `position: sticky` (the class `pinned`, in `section.css`):
+// it stays until the next section pushes it out, and a column of thousands of sticky headers would
+// be thousands of nodes for the browser to place on every scroll. The hunk's bar lives inside the
 // editor, which draws only what is near the viewport, so a long hunk's bar would be gone long
-// before its end. The pin is one element that follows the scroll position, chosen from the
-// hunk positions the height model already has.
+// before its end. The pin is one element that follows the scroll position, chosen from the hunk
+// positions the height model already has.
 
 import type { Mode } from "../../../lib/viewMode.ts";
 import { el } from "./dom.ts";
@@ -23,6 +27,8 @@ export class StickyHunk {
   /** The box under the header that clips the bar while it is pushed up. */
   private box = el("div", "vet-pin");
   private bars = el("div", "vet-pin-bars");
+  /** The section whose header is pinned. */
+  private file?: number;
   private shown?: { file: number; hunk: number };
   private push = 0;
 
@@ -43,6 +49,7 @@ export class StickyHunk {
   /** Pins what belongs to the viewport at `y`. */
   update(y: number) {
     const pinned = pinnedAt(this.sections, y, this.m.header, this.m.hunk);
+    this.pinHeader(pinned?.file);
     if (pinned?.hunk === undefined) {
       this.hide();
       return;
@@ -60,7 +67,15 @@ export class StickyHunk {
   }
 
   destroy() {
+    this.pinHeader(undefined);
     this.hide();
+  }
+
+  private pinHeader(file: number | undefined) {
+    if (file === this.file) return;
+    if (this.file !== undefined) this.sections[this.file].el.classList.remove("pinned");
+    if (file !== undefined) this.sections[file].el.classList.add("pinned");
+    this.file = file;
   }
 
   private hide() {

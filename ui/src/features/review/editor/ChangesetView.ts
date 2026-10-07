@@ -177,6 +177,7 @@ export class ChangesetView {
     this.root.replaceChildren(...(this.threads.lead ? [this.threads.lead] : []), ...this.sections.map((s) => s.el));
     for (const s of this.sections) renderCount(s, s.completion);
     this.heights.layout();
+    this.pin.update(root.scrollTop);
     this.windowing.start();
     this.root.addEventListener("click", this.heights.onExpand, true);
     this.widths.observe(root);

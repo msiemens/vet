@@ -7,12 +7,15 @@
   box-sizing: border-box;
   background: var(--bg-editor);
 }
-/* The header stays at the top of the view until the next section pushes it out. It is above
-   everything an editor stacks (selection layer 100, gutters 200, deleted-block strip 300). */
-.file > header {
+/* The pinned section's header stays at the top of the view until the next section pushes it out
+   (`stickyHunk.ts` pins one section at a time). It is above everything an editor stacks
+   (selection layer 100, gutters 200, deleted-block strip 300). */
+.file.pinned > header {
   position: sticky;
   top: 0;
   z-index: 400;
+}
+.file > header {
   height: var(--h-section);
   box-sizing: border-box;
   display: flex;
