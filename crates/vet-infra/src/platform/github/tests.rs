@@ -3,7 +3,7 @@
 use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 
-use vet_app::platform::{CiState, ReviewRequest, ReviewVerdict, ViewerReview, is_waiting_for_me};
+use vet_app::platform::{ChangedLines, CiState, ReviewRequest, ReviewVerdict, ViewerReview, is_waiting_for_me};
 
 use super::*;
 use crate::http::client_builder;
@@ -194,6 +194,15 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
             1_714_564_800,
         )
     );
+    assert_eq!(first.fork.as_deref(), Some("grace/app"));
+    assert_eq!(
+        first.lines,
+        Some(ChangedLines {
+            added: 120,
+            removed: 34
+        })
+    );
+    assert_eq!(first.comments, 5);
     assert_eq!(first.labels, ["performance", "needs-review"]);
     assert_eq!(first.assignees, ["ada"]);
     assert_eq!(
@@ -219,6 +228,9 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
     assert_eq!(draft.viewer_review, None, "a review that was not submitted");
     assert_eq!(found[2].review_requests, [ReviewRequest::User("former-ada".to_owned())]);
     assert_eq!(found[2].ci, Some(CiState::Success));
+    assert_eq!(draft.fork.as_deref(), Some("a deleted repository"));
+    assert_eq!(draft.comments, 0);
+    assert_eq!(found[2].fork, None, "a branch of the repository itself");
 }
 
 #[tokio::test]
@@ -532,7 +544,7 @@ async fn a_pull_request_comes_with_its_pushes_from_every_page_of_force_pushes() 
     assert_eq!(graphql[1].variables()["after"], "timeline-1");
 
     assert_eq!(detail.base, "b0b0b0");
-    assert!(detail.from_fork);
+    assert_eq!(detail.pull_request.fork.as_deref(), Some("grace/app"));
     assert_eq!(detail.pull_request.head, "c4c4c4");
     assert_eq!(detail.pull_request.ci, Some(CiState::Pending));
     let pushes: Vec<_> = detail.pushes.iter().map(|p| (p.head.as_str(), p.forced)).collect();

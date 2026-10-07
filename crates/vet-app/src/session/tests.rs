@@ -21,11 +21,12 @@ use super::blobs::image_media_type;
 use super::manifest::{old_path_of, update_of};
 use super::state::{check_revision, outcome};
 use super::*;
-use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version, VersionOrigin};
+use crate::changeset::{BaseChoice, ChangesetId, CommitId, RemoteKey, Source, Version, VersionOrigin};
 use crate::ports::{
     BlobRead, BlobReader, BranchInfo, ChangesetRefs, ChangesetStore, Checkout, CommitInfo, Differ, Dirty, GitError,
     History, ReviewStore, Scan, Scanner, Store, StoreError, ThreadStore,
 };
+use crate::pull_request::PullRequestRefs;
 use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, SpanId};
 
 const REPO: &str = "/repo";
@@ -3085,4 +3086,156 @@ async fn the_list_names_the_branch_of_the_working_tree_and_counts_the_open_threa
         (1, 0, 0)
     );
     assert!(after.rows.iter().skip(1).all(|r| r.branch.is_none()));
+}
+
+fn pull_request_7() -> Source {
+    Source::PullRequest {
+        remote: RemoteKey {
+            host: "github.com".into(),
+            path: "acme/app".into(),
+        },
+        number: 7,
+    }
+}
+
+/// Pull request 7 as fetched: its head at commit `head` with the tree `files`, which left the
+/// target branch at commit `m1` with the tree `base`.
+fn fetch_pull_request_7(git: &FakeGit, base: &[(&str, &str)], head: &str, files: &[(&str, &str)]) {
+    let Source::PullRequest { remote, number } = pull_request_7() else {
+        unreachable!()
+    };
+    let refs = PullRequestRefs::of(&remote, number);
+    git.add_commit(&refs.head, head, files);
+    git.add_commit(&format!("merge-base {}", refs.target), "m1", base);
+}
+
+#[tokio::test]
+async fn a_pull_request_opened_as_a_changeset_shows_what_its_head_has_beyond_the_target_branch() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "dirty\n")]).await;
+    fetch_pull_request_7(
+        &fx.git,
+        &[("a.txt", "one\n")],
+        "pr1",
+        &[("a.txt", "two\n"), ("new.txt", "n\n")],
+    );
+
+    let revision = fx.session.open_changeset(pull_request_7()).await.unwrap().unwrap();
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+    assert_eq!((m.revision, m.lifecycle), (revision, Lifecycle::Browsing));
+    assert_eq!(
+        (
+            m.target.source.clone(),
+            m.target.name.as_str(),
+            m.target.branch.as_deref()
+        ),
+        (pull_request_7(), "#7", None)
+    );
+    assert_eq!(m.base.commit.id, CommitId("m1".into()));
+    let files: Vec<_> = m.files.iter().map(|f| (f.path.to_string_lossy(), f.status)).collect();
+    assert_eq!(
+        files,
+        [
+            ("a.txt".to_string(), FileStatus::Modified),
+            ("new.txt".to_string(), FileStatus::Added)
+        ],
+        "the head, not the dirty tree"
+    );
+    assert_eq!(fx.session.source().await, pull_request_7());
+}
+
+#[tokio::test]
+async fn a_new_push_to_a_pull_request_is_the_next_version_and_a_force_push_too() {
+    let base = numbered(30, &[]);
+    let (first, second, rewritten) = (numbered(30, &[3]), numbered(30, &[3, 20]), numbered(30, &[20]));
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr1", &[("a.txt", &first)]);
+    let revision = fx.session.open_changeset(pull_request_7()).await.unwrap().unwrap();
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
+    assert_eq!(fx.session.observe().await.unwrap(), None, "nothing was pushed");
+
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr2", &[("a.txt", &second)]);
+    fx.session.observe().await.unwrap().expect("pushed to");
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen, HunkState::Unseen]);
+
+    // The old head is not an ancestor of the new one.
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr3", &[("a.txt", &rewritten)]);
+    fx.session.observe().await.unwrap().expect("force-pushed");
+
+    let versions = fx.store.0.lock().unwrap().versions.clone();
+    assert_eq!(
+        versions
+            .iter()
+            .map(|v| (v.n, v.tip.0.as_str(), v.base_commit.0.as_str(), v.origin))
+            .collect::<Vec<_>>(),
+        [
+            (1, "pr1", "m1", VersionOrigin::Settled),
+            (2, "pr2", "m1", VersionOrigin::Observed),
+            (3, "pr3", "m1", VersionOrigin::Observed)
+        ]
+    );
+    assert!(matches!(
+        fx.session.lifecycle().await,
+        Lifecycle::Open { version: 3, .. }
+    ));
+}
+
+#[tokio::test]
+async fn a_target_branch_that_moved_under_a_pull_request_moves_its_base() {
+    let base = numbered(30, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr1", &[("a.txt", &numbered(30, &[3]))]);
+    let revision = fx.session.open_changeset(pull_request_7()).await.unwrap().unwrap();
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
+
+    // The author rebased onto a target branch that moved on.
+    fx.git.add_commit(
+        "merge-base refs/vet/pr/github_com/acme/app/7/target pr2",
+        "m3",
+        &[("a.txt", &numbered(30, &[25]))],
+    );
+    fetch_pull_request_7(
+        &fx.git,
+        &[("a.txt", &base)],
+        "pr2",
+        &[("a.txt", &numbered(30, &[3, 25]))],
+    );
+    fx.session.observe().await.unwrap().expect("head and base moved");
+
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+    assert_eq!(m.base.commit.id, CommitId("m3".into()));
+    assert_eq!(m.files[0].review.hunks, [HunkState::Seen]);
+}
+
+#[tokio::test]
+async fn a_pull_request_that_was_not_fetched_cannot_be_opened_and_changes_nothing() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    let before = fx.session.revision().await;
+
+    let error = fx.session.open_changeset(pull_request_7()).await.unwrap_err();
+
+    assert!(matches!(error, SessionError::NotFound(_)), "{error}");
+    assert_eq!(
+        (fx.session.source().await, fx.session.revision().await),
+        (Source::WorkingTree, before)
+    );
+}
+
+#[tokio::test]
+async fn the_review_state_of_pull_requests_is_listed_for_the_sources_asked() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    fetch_pull_request_7(&fx.git, &[("a.txt", "one\n")], "pr1", &[("a.txt", "two\n")]);
+    let other = Source::PullRequest {
+        remote: RemoteKey {
+            host: "github.com".into(),
+            path: "acme/app".into(),
+        },
+        number: 8,
+    };
+    let revision = fx.session.open_changeset(pull_request_7()).await.unwrap().unwrap();
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
+
+    let reviews = fx.session.reviews_of(&[other, pull_request_7()]).await.unwrap();
+
+    assert_eq!(reviews, [RowReview::None, RowReview::Open { version: 1 }]);
 }

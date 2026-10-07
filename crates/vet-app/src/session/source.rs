@@ -10,8 +10,9 @@ use super::state::State;
 use super::{LiveSession, Result, SessionError, UnixClock};
 use crate::acquisition::Acquisition;
 use crate::base;
-use crate::changeset::{BaseChoice, ChangesetId, Source, Version, VersionOrigin};
+use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version, VersionOrigin};
 use crate::ports::{GitRepo, LiveStore};
+use crate::pull_request::PullRequestRefs;
 use crate::review::visible_threads;
 use vet_core::content::SnapshotStatus;
 
@@ -25,6 +26,22 @@ pub(super) enum Stored {
         changeset: Option<ChangesetId>,
         threads: Vec<Thread>,
     },
+}
+
+/// The commit the target of the changeset of `source` is built on: a branch's tip, or a pull
+/// request's head as it was fetched. The working tree has none to look up.
+async fn tip_of<G: GitRepo>(git: &G, source: &Source) -> Result<CommitId> {
+    match source {
+        Source::WorkingTree => Err(SessionError::Invalid("the working tree is not a commit".into())),
+        Source::Branch { name } => git
+            .branch_tip(name)
+            .await
+            .map_err(|_| SessionError::NotFound(format!("branch {name}"))),
+        Source::PullRequest { remote, number } => git
+            .resolve_commit(&PullRequestRefs::of(remote, *number).head)
+            .await
+            .map_err(|_| SessionError::NotFound(format!("pull request #{number}, which has not been fetched"))),
+    }
 }
 
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
@@ -111,14 +128,11 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Looks at the branch of `st`, which need not be the one on view: only the
     /// revision of the one on view is announced, by the caller.
     async fn observe_in(&self, st: &mut State) -> Result<Option<u32>> {
-        let Source::Branch { name } = &st.source else {
+        if st.source == Source::WorkingTree {
             return Ok(None);
-        };
+        }
         let git = &self.acquisition.git;
-        let tip = git
-            .branch_tip(name)
-            .await
-            .map_err(|_| SessionError::NotFound(format!("branch {name}")))?;
+        let tip = tip_of(git, &st.source).await?;
         // A merge base follows the history; a base chosen as a branch's tip or a commit stays where it was chosen.
         let base_commit = match &st.base_choice {
             BaseChoice::MergeBase { .. } => {
@@ -181,20 +195,20 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// The state of a changeset that was never on view in this session. The working tree
     /// always was.
     async fn enter(&self, source: &Source, filter: &ReviewFilter) -> Result<State> {
-        let Source::Branch { name } = source else {
-            return Err(SessionError::Invalid("this changeset cannot be opened".into()));
-        };
         let acquisition = &self.acquisition;
         let git = &acquisition.git;
-        let tip = git
-            .branch_tip(name)
-            .await
-            .map_err(|_| SessionError::NotFound(format!("branch {name}")))?;
+        let tip = tip_of(git, source).await?;
         let (changeset, threads) = match Self::stored(acquisition, &self.repo, source, filter, self.clock).await? {
             Stored::Resumed(state) => return Ok(*state),
             Stored::Browsing { changeset, threads } => (changeset, threads),
         };
-        let (base_choice, base_commit) = base::default_for_branch(git, &tip).await.map_err(SessionError::Base)?;
+        let (base_choice, base_commit) = match source {
+            Source::PullRequest { remote, number } => {
+                base::default_for_pull_request(git, &PullRequestRefs::of(remote, *number), &tip).await
+            }
+            _ => base::default_for_branch(git, &tip).await,
+        }
+        .map_err(SessionError::Base)?;
         let base = git.commit_snapshot(&base_commit).await?;
         let target = git.commit_snapshot(&tip).await?;
         acquisition.record_commit(base.id, base_commit.clone());

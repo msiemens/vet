@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 use crate::platform::{Credential, PlatformKind};
-use crate::ports::{FetchAuth, Fetcher, RemoteInfo};
+use crate::ports::{FetchAuth, Fetcher, RefUpdate, RemoteInfo};
 use crate::progress::{TaskKind, Tasks};
 
 /// How often a project's remotes are fetched while it is open.
@@ -35,6 +35,36 @@ impl<G: Fetcher> Fetch<G> {
         }
     }
 
+    /// The remotes that have a fetch URL.
+    pub async fn remotes(&self) -> Result<Vec<RemoteInfo>, String> {
+        self.git.remotes().await.map_err(|e| e.0)
+    }
+
+    /// Fetches exactly `updates` from `remote`, as a task called `title`. The error is the
+    /// task's failure, fit to show.
+    pub async fn refs(
+        &self,
+        credentials: &(impl Credentials + Sync),
+        remote: &RemoteInfo,
+        updates: Vec<RefUpdate>,
+        title: String,
+    ) -> Result<(), String> {
+        let _only_one = self.running.lock().await;
+        let task = self.tasks.start(TaskKind::Fetch, title);
+        let auth = authentication(credentials, remote).await;
+        match self.git.fetch_refs(&remote.name, updates, auth).await {
+            Ok(()) => {
+                task.finish();
+                Ok(())
+            }
+            Err(e) => {
+                let message = format!("{}: {}", remote.name, e.0);
+                task.fail(message.clone());
+                Err(message)
+            }
+        }
+    }
+
     /// Fetches every remote, one after the other, as one task; a remote that fails does not
     /// stop the others. Answers whether there was anything to fetch, or the message the task
     /// failed with.
@@ -49,14 +79,7 @@ impl<G: Fetcher> Fetch<G> {
         let mut failures = Vec::new();
         for (done, remote) in remotes.iter().enumerate() {
             task.report(Some((done as u32, total)), Some(remote.name.clone()));
-            let auth = match &remote.https_host {
-                Some(host) => credentials.credential(host).await.map(|credential| FetchAuth {
-                    host: host.clone(),
-                    kind: PlatformKind::of_host(host),
-                    credential,
-                }),
-                None => None,
-            };
+            let auth = authentication(credentials, remote).await;
             if let Err(e) = self.git.fetch(&remote.name, auth).await {
                 failures.push(format!("{}: {}", remote.name, e.0));
             }
@@ -70,6 +93,17 @@ impl<G: Fetcher> Fetch<G> {
             Err(message)
         }
     }
+}
+
+/// The platform credential to present to `remote`, if it is fetched over HTTPS from a host there is
+/// one for.
+async fn authentication(credentials: &(impl Credentials + Sync), remote: &RemoteInfo) -> Option<FetchAuth> {
+    let host = remote.https_host.as_ref()?;
+    credentials.credential(host).await.map(|credential| FetchAuth {
+        host: host.clone(),
+        kind: PlatformKind::of_host(host),
+        credential,
+    })
 }
 
 fn title(remotes: &[RemoteInfo]) -> String {
@@ -118,6 +152,24 @@ mod tests {
                 return Err(GitError("connection refused".into()));
             }
             Ok(1)
+        }
+
+        async fn fetch_refs(
+            &self,
+            remote: &str,
+            updates: Vec<RefUpdate>,
+            auth: Option<FetchAuth>,
+        ) -> Result<(), GitError> {
+            let token = auth.map(|a| a.credential.token.expose().to_owned());
+            let wanted: Vec<_> = updates.iter().map(|u| u.source.as_str()).collect();
+            self.fetched
+                .lock()
+                .unwrap()
+                .push((format!("{remote} {}", wanted.join(" ")), token));
+            if self.failing.contains(&remote) {
+                return Err(GitError("connection refused".into()));
+            }
+            Ok(())
         }
     }
 
@@ -194,6 +246,51 @@ mod tests {
             ]
         );
         assert_eq!(heard.lock().unwrap().last().unwrap().state, TaskState::Finished);
+    }
+
+    #[tokio::test]
+    async fn fetching_refs_uses_the_hosts_credential_and_is_a_task_that_fails_with_the_remotes_name() {
+        let (fetch, heard, fetched) = fetching(vec![], vec!["origin"]);
+        let updates = vec![RefUpdate {
+            source: "refs/pull/7/head".into(),
+            destination: "refs/vet/pr/7/head".into(),
+        }];
+
+        let on_github = remote("upstream", Some("github.com"));
+        let done = fetch
+            .refs(&GitHubOnly, &on_github, updates.clone(), "Fetching #7".into())
+            .await;
+        let refused = fetch
+            .refs(
+                &GitHubOnly,
+                &remote("origin", Some("git.example.org")),
+                updates,
+                "Fetching #7".into(),
+            )
+            .await;
+
+        assert_eq!(done, Ok(()));
+        assert_eq!(refused, Err("origin: connection refused".into()));
+        assert_eq!(
+            *fetched.lock().unwrap(),
+            [
+                (
+                    "upstream refs/pull/7/head".to_owned(),
+                    Some("token-for-github.com".to_owned())
+                ),
+                ("origin refs/pull/7/head".to_owned(), None),
+            ]
+        );
+        let states: Vec<_> = heard.lock().unwrap().iter().map(|t| t.state.clone()).collect();
+        assert_eq!(
+            states,
+            [
+                TaskState::Running,
+                TaskState::Finished,
+                TaskState::Running,
+                TaskState::Failed("origin: connection refused".into())
+            ]
+        );
     }
 
     #[tokio::test]

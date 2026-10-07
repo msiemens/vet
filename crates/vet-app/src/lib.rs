@@ -13,6 +13,7 @@ pub mod limits;
 pub mod platform;
 pub mod ports;
 pub mod progress;
+pub mod pull_request;
 pub mod recent;
 pub mod registry;
 pub mod review;

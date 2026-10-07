@@ -2,7 +2,8 @@
 
 use serde::Deserialize;
 use vet_app::platform::{
-    CiState, ForcePush, PlatformError, PullRequest, PullRequestDetail, ReviewRequest, ReviewVerdict, ViewerReview,
+    ChangedLines, CiState, ForcePush, PlatformError, PullRequest, PullRequestDetail, ReviewRequest, ReviewVerdict,
+    ViewerReview,
 };
 
 /// The fields of a pull request that the queue shows. One request per page asks for these
@@ -19,6 +20,11 @@ fragment PullRequestFields on PullRequest {
   headRefName
   baseRefName
   headRefOid
+  additions
+  deletions
+  totalCommentsCount
+  isCrossRepository
+  headRepository { nameWithOwner }
   author { login }
   labels(first: 20) { nodes { name } }
   assignees(first: 10) { nodes { login } }
@@ -56,7 +62,6 @@ pub(super) fn detail_query() -> String {
     pullRequest(number: $number) {{
       ...PullRequestFields
       baseRefOid
-      isCrossRepository
       timelineItems(itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT], first: 100, after: $after) {{
         nodes {{
           ... on HeadRefForcePushedEvent {{
@@ -111,7 +116,6 @@ pub(super) struct DetailNode {
     #[serde(flatten)]
     pub pull_request: PullRequestNode,
     pub base_ref_oid: String,
-    pub is_cross_repository: bool,
     pub timeline_items: Timeline,
 }
 
@@ -154,6 +158,12 @@ struct Login {
 #[derive(Deserialize)]
 struct Name {
     name: String,
+}
+
+#[derive(Deserialize)]
+struct HeadRepository {
+    #[serde(rename = "nameWithOwner")]
+    name_with_owner: String,
 }
 
 #[derive(Deserialize)]
@@ -210,6 +220,12 @@ pub(super) struct PullRequestNode {
     head_ref_name: String,
     base_ref_name: String,
     head_ref_oid: String,
+    additions: u32,
+    deletions: u32,
+    total_comments_count: Option<u32>,
+    is_cross_repository: bool,
+    /// Null when the fork was deleted.
+    head_repository: Option<HeadRepository>,
     /// Null for an account that was deleted.
     author: Option<Login>,
     labels: Nodes<Name>,
@@ -274,7 +290,16 @@ impl PullRequestNode {
             author: self.author.map_or_else(|| "ghost".to_owned(), |a| a.login),
             source_branch: self.head_ref_name,
             target_branch: self.base_ref_name,
+            fork: self.is_cross_repository.then(|| {
+                self.head_repository
+                    .map_or_else(|| "a deleted repository".to_owned(), |r| r.name_with_owner)
+            }),
             head: self.head_ref_oid,
+            lines: Some(ChangedLines {
+                added: self.additions,
+                removed: self.deletions,
+            }),
+            comments: self.total_comments_count.unwrap_or(0),
             draft: self.is_draft,
             labels: self.labels.present().map(|l| l.name).collect(),
             assignees: self.assignees.present().map(|a| a.login).collect(),
@@ -301,7 +326,6 @@ impl DetailNode {
         let detail = PullRequestDetail {
             pull_request,
             base: self.base_ref_oid,
-            from_fork: self.is_cross_repository,
             pushes: Vec::new(),
         };
         Ok((detail, force_pushes))

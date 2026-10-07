@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tempfile::TempDir;
-use vet_app::ports::{Fetcher, History};
+use vet_app::ports::{Fetcher, History, RefUpdate};
 use vet_infra::git::GixRepo;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -177,6 +177,132 @@ async fn a_refspec_that_would_write_a_local_branch_is_refused() {
     let error = repo.fetch("origin", None).await.unwrap_err();
 
     assert_eq!(error.0, "origin has no refspec that fetches into refs/remotes");
+    assert_eq!(fx.outside_remotes(), before);
+}
+
+fn update(source: &str, destination: &str) -> RefUpdate {
+    RefUpdate {
+        source: source.to_owned(),
+        destination: destination.to_owned(),
+    }
+}
+
+impl Fixture {
+    /// The remote's `refs/pull/<n>/head` as a hosting platform keeps it: a commit no branch has.
+    fn open_pull_request(&self, number: u32, file: &str, message: &str) -> String {
+        git(
+            &self.upstream_work,
+            &["checkout", "-q", "-b", &format!("pr-{number}"), "main"],
+        );
+        let id = commit(&self.upstream_work, file, message);
+        git(
+            &self.remote,
+            &[
+                "fetch",
+                "-q",
+                self.upstream_work.to_str().unwrap(),
+                &format!("+{id}:refs/pull/{number}/head"),
+            ],
+        );
+        git(&self.upstream_work, &["checkout", "-q", "main"]);
+        git(&self.upstream_work, &["branch", "-q", "-D", &format!("pr-{number}")]);
+        id
+    }
+
+    fn rev(&self, name: &str) -> Option<String> {
+        let found = Command::new("git")
+            .current_dir(&self.clone)
+            .args(["rev-parse", "-q", "--verify", name])
+            .output()
+            .unwrap();
+        found
+            .status
+            .success()
+            .then(|| String::from_utf8(found.stdout).unwrap().trim().to_owned())
+    }
+}
+
+#[tokio::test]
+async fn a_pull_requests_head_and_target_are_fetched_into_refs_of_vet_and_nothing_else_moves() {
+    let fx = Fixture::new();
+    let head = fx.open_pull_request(7, "pr.txt", "p1");
+    let before = fx.outside_remotes();
+    let repo = GixRepo::new(&fx.clone);
+
+    repo.fetch_refs(
+        "origin",
+        vec![
+            update("refs/pull/7/head", "refs/vet/pr/7/head"),
+            update("refs/heads/feature", "refs/vet/pr/7/target"),
+        ],
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(fx.rev("refs/vet/pr/7/head"), Some(head));
+    assert_eq!(fx.rev("refs/vet/pr/7/target"), fx.rev("refs/remotes/origin/feature"));
+    assert_eq!(fx.rev("refs/pull/7/head"), None, "the platform's ref is not copied");
+    let after: Vec<_> = fx
+        .outside_remotes()
+        .lines()
+        .filter(|l| !l.starts_with("refs/vet/"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        after.join("\n"),
+        before.trim_end(),
+        "branches, HEAD and the worktree stay as they were"
+    );
+    assert_eq!(
+        git(&fx.clone, &["for-each-ref", "--format=%(refname)", "refs/vet/"]),
+        "refs/vet/pr/7/head\nrefs/vet/pr/7/target"
+    );
+}
+
+#[tokio::test]
+async fn a_force_pushed_pull_request_moves_its_ref_to_the_new_head() {
+    let fx = Fixture::new();
+    let first = fx.open_pull_request(7, "pr.txt", "p1");
+    let repo = GixRepo::new(&fx.clone);
+    let updates = vec![update("refs/pull/7/head", "refs/vet/pr/7/head")];
+    repo.fetch_refs("origin", updates.clone(), None).await.unwrap();
+    assert_eq!(fx.rev("refs/vet/pr/7/head"), Some(first.clone()));
+
+    // A different commit on the same parent, not a descendant of the first.
+    let rewritten = fx.open_pull_request(7, "pr.txt", "p1 rewritten");
+    assert_ne!(rewritten, first);
+    repo.fetch_refs("origin", updates, None).await.unwrap();
+
+    assert_eq!(fx.rev("refs/vet/pr/7/head"), Some(rewritten));
+    assert!(
+        fx.rev(&first).is_some(),
+        "the old head is still in the repository for a ref to keep"
+    );
+}
+
+#[tokio::test]
+async fn refs_outside_vets_namespace_are_refused_and_so_is_a_ref_the_remote_lacks() {
+    let fx = Fixture::new();
+    fx.open_pull_request(7, "pr.txt", "p1");
+    let before = fx.outside_remotes();
+    let repo = GixRepo::new(&fx.clone);
+
+    let local_branch = repo
+        .fetch_refs("origin", vec![update("refs/pull/7/head", "refs/heads/pr-7")], None)
+        .await
+        .unwrap_err();
+    let missing = repo
+        .fetch_refs("origin", vec![update("refs/pull/8/head", "refs/vet/pr/8/head")], None)
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        local_branch.0,
+        "refs/heads/pr-7 is not below refs/vet/, where fetched refs are kept"
+    );
+    assert!(missing.0.contains("refs/pull/8/head"), "{}", missing.0);
+    assert_eq!(fx.rev("refs/vet/pr/8/head"), None);
     assert_eq!(fx.outside_remotes(), before);
 }
 

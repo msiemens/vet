@@ -434,7 +434,6 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         Ok(PullRequestDetail {
             pull_request,
             base,
-            from_fork: found.fork_source.is_some(),
             pushes,
         })
     }

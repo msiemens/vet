@@ -10,6 +10,11 @@
         "headRefName": "resolver-cache",
         "baseRefName": "main",
         "headRefOid": "c4c4c4",
+        "additions": 1,
+        "deletions": 1,
+        "totalCommentsCount": 0,
+        "isCrossRepository": true,
+        "headRepository": { "nameWithOwner": "grace/app" },
         "author": { "login": "grace" },
         "labels": { "nodes": [] },
         "assignees": { "nodes": [] },
@@ -18,7 +23,6 @@
         "reviewThreads": { "nodes": [] },
         "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "PENDING" } } }] },
         "baseRefOid": "b0b0b0",
-        "isCrossRepository": true,
         "timelineItems": {
           "nodes": [
             {

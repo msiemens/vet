@@ -18,7 +18,7 @@ use gix::remote::fetch::refs::update::Mode;
 use gix::remote::fetch::{Status, Tags};
 use gix::sec::identity::Account;
 use vet_app::platform::{CredentialSource, PlatformKind};
-use vet_app::ports::{FetchAuth, GitError, RemoteInfo};
+use vet_app::ports::{FetchAuth, GitError, RefUpdate, RemoteInfo};
 
 use super::err;
 
@@ -84,8 +84,37 @@ fn headless(mut repo: gix::Repository) -> Result<gix::Repository, GitError> {
     Ok(repo)
 }
 
+/// What a fetch asks the remote for.
+enum Specs {
+    /// The remote's configured refspecs, the ones that stay below `refs/remotes/`.
+    Configured,
+    /// Exactly these, each forced.
+    Refs(Vec<RefUpdate>),
+}
+
 /// Fetches `remote` as its configured refspecs say. Returns how many refs were updated.
 pub(super) fn fetch(repo: gix::Repository, name: &str, auth: Option<FetchAuth>) -> Result<usize, GitError> {
+    run(repo, name, auth, Specs::Configured)
+}
+
+/// Fetches the refs `updates` name. The refs below `refs/vet/` they are kept under move even if
+/// that is not a fast-forward.
+pub(super) fn fetch_refs(
+    repo: gix::Repository,
+    name: &str,
+    updates: Vec<RefUpdate>,
+    auth: Option<FetchAuth>,
+) -> Result<(), GitError> {
+    if let Some(outside) = updates.iter().find(|u| !u.destination.starts_with("refs/vet/")) {
+        return Err(GitError(format!(
+            "{} is not below refs/vet/, where fetched refs are kept",
+            outside.destination
+        )));
+    }
+    run(repo, name, auth, Specs::Refs(updates)).map(drop)
+}
+
+fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs) -> Result<usize, GitError> {
     // The provider reqwest's TLS needs; installed once, later calls find it in place.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -103,12 +132,18 @@ pub(super) fn fetch(repo: gix::Repository, name: &str, auth: Option<FetchAuth>) 
     };
 
     let mut remote = repo.find_remote(name).map_err(err)?.with_fetch_tags(Tags::None);
-    let specs: Vec<_> = remote
-        .refspecs(Direction::Fetch)
-        .iter()
-        .filter(|s| stays_in_remotes(s))
-        .map(|s| s.to_ref().to_bstring())
-        .collect();
+    let specs: Vec<gix::bstr::BString> = match specs {
+        Specs::Configured => remote
+            .refspecs(Direction::Fetch)
+            .iter()
+            .filter(|s| stays_in_remotes(s))
+            .map(|s| s.to_ref().to_bstring())
+            .collect(),
+        Specs::Refs(updates) => updates
+            .iter()
+            .map(|u| format!("+{}:{}", u.source, u.destination).into())
+            .collect(),
+    };
     if specs.is_empty() {
         return Err(GitError(format!(
             "{name} has no refspec that fetches into refs/remotes"

@@ -91,7 +91,16 @@ pub(super) fn pull_request(pr: &GitPullRequest, me: &Me, web: &str) -> Option<ve
         author: me.name(&pr.created_by),
         source_branch: branch(&pr.source_ref_name),
         target_branch: branch(&pr.target_ref_name),
+        fork: pr.fork_source.as_ref().map(|source| {
+            source
+                .repository
+                .as_ref()
+                .map_or_else(|| "a fork".to_owned(), |r| r.name.clone())
+        }),
         head,
+        // Neither the list nor the pull request says how many lines it changes.
+        lines: None,
+        comments: 0,
         draft: pr.is_draft,
         labels: pr.labels.iter().filter_map(|l| l.name.clone()).collect(),
         // Azure DevOps has no assignees.

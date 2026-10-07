@@ -28,13 +28,14 @@
 //! coordinates: lines such a span lost to earlier edits stay in it and come back
 //! when the edit is reverted.
 //!
-//! **Source.** One changeset is on view at a time: the working tree, or a local
-//! branch (`source`). Switching parks the state of the one on view in memory and
-//! takes up the other's, so what a changeset had (its review, its marks, its
-//! threads) is as it was when it comes back; revisions only increase across
-//! switches. A branch's target is its tip commit, not the live tree: it is
-//! built from git, never settles, and moves only when `observe` sees the
-//! branch's ref or its merge base move.
+//! **Source.** One changeset is on view at a time: the working tree, a local
+//! branch or a pull request (`source`). Switching parks the state of the one on
+//! view in memory and takes up the other's, so what a changeset had (its review,
+//! its marks, its threads) is as it was when it comes back; revisions only
+//! increase across switches. A branch's or pull request's target is its tip
+//! commit, not the live tree: it is built from git, never settles, and moves
+//! only when `observe` sees the ref (the branch, or the pull request's head as
+//! last fetched) or the merge base move.
 //!
 //! This module is the lifecycle and persistence of a review. The rest of the
 //! session is split by what it does with the state: `remap` computes a

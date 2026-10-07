@@ -1,7 +1,9 @@
 //! The pull-request queue: which pull requests belong on which list, and the facts each
 //! row shows. Pure: the platforms only supply the pull requests.
 
-use super::model::{CiState, PullRequest, PullRequestQuery, QueueTab, ReviewRequest, ReviewVerdict, Viewer};
+use super::model::{
+    ChangedLines, CiState, PullRequest, PullRequestQuery, QueueTab, ReviewRequest, ReviewVerdict, Viewer,
+};
 
 /// What the viewer's earlier review says about the pull request as it is now.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -23,6 +25,9 @@ pub struct PullRequestRow {
     pub author: String,
     pub source_branch: String,
     pub target_branch: String,
+    pub fork: Option<String>,
+    pub lines: Option<ChangedLines>,
+    pub comments: u32,
     pub ci: Option<CiState>,
     pub unresolved_threads: u32,
     pub review: ReviewState,
@@ -93,6 +98,9 @@ fn row(pr: PullRequest, viewer: &Viewer) -> PullRequestRow {
         author: pr.author,
         source_branch: pr.source_branch,
         target_branch: pr.target_branch,
+        fork: pr.fork,
+        lines: pr.lines,
+        comments: pr.comments,
         ci: pr.ci,
         unresolved_threads: pr.unresolved_threads,
         draft: pr.draft,
@@ -133,7 +141,10 @@ pub(crate) mod tests {
             author: "grace".to_owned(),
             source_branch: "feature".to_owned(),
             target_branch: "main".to_owned(),
+            fork: None,
             head: "c2".to_owned(),
+            lines: None,
+            comments: 0,
             draft: false,
             labels: Vec::new(),
             assignees: Vec::new(),

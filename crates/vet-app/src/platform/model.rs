@@ -158,6 +158,13 @@ pub struct ViewerReview {
     pub commit: Option<String>,
 }
 
+/// The lines a pull request adds and removes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ChangedLines {
+    pub added: u32,
+    pub removed: u32,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PullRequest {
     pub number: u64,
@@ -166,8 +173,15 @@ pub struct PullRequest {
     pub author: String,
     pub source_branch: String,
     pub target_branch: String,
+    /// The repository the source branch is in, as the platform names it, when that is not the
+    /// repository the pull request is in.
+    pub fork: Option<String>,
     /// The commit the source branch points to.
     pub head: String,
+    /// Absent when the platform's list does not say.
+    pub lines: Option<ChangedLines>,
+    /// Comments on the pull request and on its code.
+    pub comments: u32,
     pub draft: bool,
     pub labels: Vec<String>,
     pub assignees: Vec<String>,
@@ -206,8 +220,6 @@ pub struct PullRequestDetail {
     /// The commit the changes are measured from: the tip of the target branch on GitHub,
     /// the merge base on Azure DevOps.
     pub base: String,
-    /// The source branch is in another repository.
-    pub from_fork: bool,
     /// The states of the source branch the platform lets us know of, oldest first, the
     /// current one last.
     pub pushes: Vec<Push>,

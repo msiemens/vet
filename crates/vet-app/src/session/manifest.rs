@@ -62,7 +62,12 @@ pub(super) fn target_view(source: &Source, branches: &[BranchInfo]) -> TargetVie
                 .find(|b| b.name == *name)
                 .map(|b| b.commit.short().to_owned()),
         },
-        _ => TargetView {
+        Source::PullRequest { number, .. } => TargetView {
+            source: source.clone(),
+            name: format!("#{number}"),
+            branch: None,
+        },
+        Source::WorkingTree => TargetView {
             source: source.clone(),
             name: "Working tree".into(),
             branch: branches.iter().find(|b| b.current).map(|b| b.name.clone()),

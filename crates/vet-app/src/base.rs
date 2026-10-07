@@ -2,6 +2,7 @@
 
 use crate::changeset::{BaseChoice, CommitId};
 use crate::ports::{BranchInfo, GitError, History};
+use crate::pull_request::PullRequestRefs;
 
 /// First-parent steps searched for a branch-relative name.
 const MAX_RELATIVE: usize = 1000;
@@ -23,6 +24,23 @@ pub async fn default_for_branch<G: History>(git: &G, tip: &CommitId) -> Result<(
         Some(reference) => resolve(git, BaseChoice::MergeBase { reference }, tip).await,
         None => Ok((BaseChoice::Commit { id: tip.clone() }, tip.clone())),
     }
+}
+
+/// What a pull request is compared against unless the viewer chose otherwise: where its head left
+/// the target branch as it was fetched.
+pub async fn default_for_pull_request<G: History>(
+    git: &G,
+    refs: &PullRequestRefs,
+    tip: &CommitId,
+) -> Result<(BaseChoice, CommitId), String> {
+    resolve(
+        git,
+        BaseChoice::MergeBase {
+            reference: refs.target.clone(),
+        },
+        tip,
+    )
+    .await
 }
 
 /// The commit `choice` names now, with the choice as stored: a commit is spelled out in full.

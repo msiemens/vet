@@ -467,7 +467,7 @@ async fn a_pull_request_comes_with_its_iterations_as_pushes_and_the_merge_base()
     let client = client(&fake);
     let detail = client.pull_request(&remote(), 7).await.unwrap();
     assert_eq!(detail.base, "base4");
-    assert!(detail.from_fork);
+    assert_eq!(detail.pull_request.fork.as_deref(), Some("api"));
     assert_eq!(detail.pull_request.head, "a3");
     let pushes: Vec<_> = detail.pushes.iter().map(|p| (p.head.as_str(), p.forced)).collect();
     assert_eq!(pushes, [("a1", false), ("a2", false), ("a3", true)]);

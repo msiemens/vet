@@ -249,6 +249,15 @@ pub struct FetchAuth {
     pub credential: Credential,
 }
 
+/// A ref of a remote and the ref of the repository it is kept under.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RefUpdate {
+    /// Full name on the remote, e.g. `refs/pull/7/head`.
+    pub source: String,
+    /// Full name here; below `refs/vet/`.
+    pub destination: String,
+}
+
 /// Brings in what remotes have. Read-only: it writes objects and remote-tracking
 /// refs and touches no other ref, the index or the worktree.
 pub trait Fetcher {
@@ -258,6 +267,16 @@ pub trait Fetcher {
     /// otherwise with git's credential helpers, else anonymously. Never prompts. Answers with how
     /// many refs were updated. The error is fit to show.
     fn fetch(&self, remote: &str, auth: Option<FetchAuth>) -> impl Future<Output = Result<usize, GitError>> + Send;
+    /// Fetches exactly the refs of `updates` from `remote` and moves the refs below `refs/vet/`
+    /// they name, even when that is not a fast-forward (a force-pushed branch). Authenticates as
+    /// `fetch` does. Fails, fetching nothing, if a destination is not below `refs/vet/`. A ref the
+    /// remote lacks fails the fetch. The error is fit to show.
+    fn fetch_refs(
+        &self,
+        remote: &str,
+        updates: Vec<RefUpdate>,
+        auth: Option<FetchAuth>,
+    ) -> impl Future<Output = Result<(), GitError>> + Send;
 }
 
 /// The refs that keep a changeset's commits alive.

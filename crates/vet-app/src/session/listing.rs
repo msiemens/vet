@@ -132,6 +132,15 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         Ok(ChangesetList { on_view, rows })
     }
 
+    /// What Vet has of the latest review of each of `sources`, in their order.
+    pub async fn reviews_of(&self, sources: &[Source]) -> Result<Vec<RowReview>> {
+        let mut reviews = Vec::with_capacity(sources.len());
+        for source in sources {
+            reviews.push(self.row_review(source).await?);
+        }
+        Ok(reviews)
+    }
+
     async fn divergence(&self, branch: &BranchInfo, default: &CommitId) -> Result<Divergence> {
         let git = &self.acquisition.git;
         let ahead = git.commits_behind(&branch.commit, default, MAX_COUNT).await?;
