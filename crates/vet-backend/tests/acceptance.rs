@@ -18,7 +18,7 @@ use common::{git, handler, init, repo_with, write};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
-use vet_app::ports::{Degraded, Dirty, GitRepo, WatchEvent, Watcher};
+use vet_app::ports::{Degraded, Dirty, Scanner, WatchEvent, Watcher};
 use vet_app::session::{FileStatus as AppFileStatus, LiveSession};
 use vet_app::settle::Settling;
 use vet_backend::{Orchestrator, open_store};

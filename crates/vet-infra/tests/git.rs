@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
-use vet_app::ports::{BlobRead, Dirty, GitRepo, IgnoreRules, Store, StoreError};
+use vet_app::ports::{BlobRead, BlobReader, Differ, Dirty, History, IgnoreRules, Scanner, SessionRefs, Store, StoreError};
 use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_infra::git::GixRepo;

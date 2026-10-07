@@ -6,7 +6,7 @@ use std::process::Command;
 
 use tempfile::TempDir;
 use vet_app::pin::CommitId;
-use vet_app::ports::GitRepo;
+use vet_app::ports::History;
 use vet_infra::git::GixRepo;
 
 fn git(dir: &Path, args: &[&str]) -> String {

@@ -10,7 +10,7 @@ use std::task::Poll;
 use vet_core::content::{RepoPath, SnapshotId};
 
 use crate::acquisition::Acquisition;
-use crate::ports::{Clock, Degraded, Dirty, GitError, GitRepo, Millis, Scan, Store, WatchEvent, Watcher};
+use crate::ports::{Clock, Degraded, Dirty, GitError, Millis, Scan, Scanner, WatchEvent, Watcher};
 
 pub struct Settler {
     debounce_ms: u64,
@@ -90,7 +90,7 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
     }
 
     /// Resolves with the next settled scan whose snapshot differs from the previous one.
-    pub async fn next_settled<G: GitRepo, S: Store>(
+    pub async fn next_settled<G: Scanner, S>(
         &mut self,
         acquisition: &Acquisition<G, S>,
     ) -> Result<Scan, GitError> {
@@ -155,17 +155,13 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
 mod tests {
     use std::collections::VecDeque;
     use std::future::Future;
-    use std::path::Path;
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Waker};
 
-    use vet_core::content::{BlobId, Hash, Snapshot, SnapshotDiff, SnapshotStatus};
+    use vet_core::content::{Hash, Snapshot};
 
     use super::*;
-    use crate::pin::CommitId;
-    use crate::ports::{BlobRead, CheckoutError, Scan, StoreError};
-    use crate::review::SessionId;
 
     fn path(name: &str) -> RepoPath {
         RepoPath(name.as_bytes().to_vec())
@@ -213,7 +209,6 @@ mod tests {
     struct FakeClock(Shared);
     struct FakeWatcher(Shared);
     struct FakeGit(Shared);
-    struct FakeStore;
 
     struct Sleep {
         sim: Shared,
@@ -277,13 +272,7 @@ mod tests {
         }
     }
 
-    impl GitRepo for FakeGit {
-        async fn head(&self) -> Result<CommitId, GitError> {
-            unreachable!()
-        }
-        async fn user_name(&self) -> Option<String> {
-            None
-        }
+    impl Scanner for FakeGit {
         async fn scan(&self, dirty: Dirty) -> Result<Scan, GitError> {
             let mut sim = self.0.lock().unwrap();
             sim.scanned.push(dirty);
@@ -296,84 +285,12 @@ mod tests {
                 status: Default::default(),
             })
         }
-        async fn checkout<S: Store + Sync>(
-            &self,
-            _: &S,
-            _: &CommitId,
-            _: &Snapshot,
-            _: &Path,
-        ) -> Result<(), CheckoutError> {
-            unreachable!()
-        }
-        async fn commit_snapshot(&self, _: &CommitId) -> Result<Snapshot, GitError> {
-            unreachable!()
-        }
-        async fn read_blob(&self, _: &RepoPath, _: BlobId) -> Result<Option<Vec<u8>>, GitError> {
-            unreachable!()
-        }
-        async fn read_blob_capped(&self, _: &RepoPath, _: BlobId) -> Result<BlobRead, GitError> {
-            unreachable!()
-        }
-        async fn submodule_commit(&self, _: BlobId) -> Result<Option<String>, GitError> {
-            unreachable!()
-        }
-        async fn merge_base(&self, _: &str) -> Result<CommitId, GitError> {
-            unreachable!()
-        }
-        async fn resolve_commit(&self, _: &str) -> Result<CommitId, GitError> {
-            unreachable!()
-        }
-        async fn base_candidates(&self, _: usize) -> Result<crate::ports::BaseCandidates, GitError> {
-            unreachable!()
-        }
-        async fn branches(&self) -> Result<Vec<crate::ports::BranchInfo>, GitError> {
-            unreachable!()
-        }
-        async fn commit_info(&self, _: &CommitId) -> Result<crate::ports::CommitInfo, GitError> {
-            unreachable!()
-        }
-        async fn first_parent_distance(&self, _: &CommitId, _: &CommitId, _: usize) -> Result<Option<usize>, GitError> {
-            unreachable!()
-        }
-        async fn commits_behind(&self, _: &CommitId, _: &CommitId, _: usize) -> Result<usize, GitError> {
-            unreachable!()
-        }
-        async fn set_session_ref(&self, _: SessionId, _: &str, _: &CommitId) -> Result<(), GitError> {
-            unreachable!()
-        }
-        async fn delete_session_refs(&self, _: SessionId) -> Result<(), GitError> {
-            unreachable!()
-        }
-        async fn diff<S: Store + Sync>(&self, _: &S, _: &Snapshot, _: &Snapshot) -> Result<SnapshotDiff, GitError> {
-            unreachable!()
-        }
-    }
-
-    impl Store for FakeStore {
-        async fn put_blob(&self, _: Vec<u8>) -> Result<BlobId, StoreError> {
-            unreachable!()
-        }
-        async fn blob(&self, _: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
-            unreachable!()
-        }
-        async fn put_snapshot(&self, _: Snapshot, _: SnapshotStatus, _: i64) -> Result<(), StoreError> {
-            unreachable!()
-        }
-        async fn snapshot(&self, _: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
-            unreachable!()
-        }
-        async fn append_timeline(&self, _: SessionId, _: SnapshotId, _: i64) -> Result<(), StoreError> {
-            unreachable!()
-        }
-        async fn timeline(&self, _: SessionId) -> Result<Vec<crate::review::Version>, StoreError> {
-            unreachable!()
-        }
     }
 
     struct Harness {
         sim: Shared,
         settling: Settling<FakeWatcher, FakeClock>,
-        acquisition: Acquisition<FakeGit, FakeStore>,
+        acquisition: Acquisition<FakeGit, ()>,
     }
 
     fn harness(script: Vec<(u64, WatchEvent)>, scans: Vec<SnapshotId>, settled: Option<SnapshotId>) -> Harness {
@@ -384,7 +301,7 @@ mod tests {
         }));
         Harness {
             settling: Settling::new(FakeWatcher(sim.clone()), FakeClock(sim.clone()), 1500, settled),
-            acquisition: Acquisition::new(FakeGit(sim.clone()), FakeStore),
+            acquisition: Acquisition::new(FakeGit(sim.clone()), ()),
             sim,
         }
     }

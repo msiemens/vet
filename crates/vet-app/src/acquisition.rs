@@ -13,7 +13,9 @@ use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotId, Snaps
 use vet_semantic::ports::{Materialized, Materializer, NotMaterializable};
 
 use crate::pin::CommitId;
-use crate::ports::{BlobRead, CheckoutError, Dirty, GitError, GitRepo, Scan, Store, StoreError};
+use crate::ports::{
+    BlobRead, BlobReader, Checkout, CheckoutError, Dirty, GitError, History, Scan, Scanner, Store, StoreError,
+};
 
 /// Deletes the materialized directory when the pool drops its server (§7.2).
 pub struct DirGuard(PathBuf);
@@ -149,7 +151,7 @@ impl From<StoreError> for BlobError {
     }
 }
 
-impl<G: GitRepo, S: Store> Acquisition<G, S> {
+impl<G: BlobReader, S: Store> Acquisition<G, S> {
     /// The content of `blob`, the file at `path`: the store's copy, else git's
     /// (or the worktree's, if the file still hashes to `blob`). With `capped`,
     /// git content over the capture cap is not read.
@@ -204,7 +206,9 @@ impl<G: GitRepo, S: Store> Acquisition<G, S> {
         }
         Ok(())
     }
+}
 
+impl<G: Scanner, S> Acquisition<G, S> {
     /// Authoritative reconciliation (§6.2): before declaring a snapshot settled,
     /// at open, on rescan signals, and before every launch.
     pub async fn reconcile(&self, dirty: Dirty) -> Result<Scan, GitError> {
@@ -212,7 +216,7 @@ impl<G: GitRepo, S: Store> Acquisition<G, S> {
     }
 }
 
-impl<G: GitRepo + Sync, S: Store + Sync> Materializer for Acquisition<G, S> {
+impl<G: History + Checkout + Sync, S: Store + Sync> Materializer for Acquisition<G, S> {
     type Guard = DirGuard;
 
     /// Builds the snapshot in a fresh temporary directory. Refuses unless every
@@ -261,7 +265,7 @@ impl<G: GitRepo + Sync, S: Store + Sync> Materializer for Acquisition<G, S> {
 /// An acquisition that a pool can own while the session keeps using it.
 pub struct SharedAcquisition<G, S>(pub Arc<Acquisition<G, S>>);
 
-impl<G: GitRepo + Send + Sync, S: Store + Send + Sync> Materializer for SharedAcquisition<G, S> {
+impl<G: History + Checkout + Send + Sync, S: Store + Send + Sync> Materializer for SharedAcquisition<G, S> {
     type Guard = DirGuard;
 
     async fn materialize(&self, id: SnapshotId) -> Result<Materialized<DirGuard>, NotMaterializable> {

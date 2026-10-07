@@ -19,7 +19,8 @@ use std::sync::Arc;
 use gix::bstr::ByteSlice;
 use vet_app::pin::CommitId;
 use vet_app::ports::{
-    BaseCandidates, BlobRead, BranchInfo, CheckoutError, CommitInfo, Dirty, GitError, GitRepo, IgnoreRules, Scan, Store,
+    BaseCandidates, BlobRead, BlobReader, BranchInfo, Checkout, CheckoutError, CommitInfo, Differ, Dirty, GitError,
+    History, IgnoreRules, Scan, Scanner, SessionRefs, Store,
 };
 use vet_app::review::SessionId;
 use vet_core::classify::{changes, text_blobs};
@@ -164,30 +165,16 @@ impl Inner {
     }
 }
 
-impl GitRepo for GixRepo {
-    async fn head(&self) -> Result<CommitId, GitError> {
-        self.blocking(|i| Ok(CommitId(i.open()?.head_id().map_err(err)?.to_string())))
-            .await
-    }
-
-    async fn user_name(&self) -> Option<String> {
-        self.blocking(|i| {
-            let repo = i.open()?;
-            let name = repo.config_snapshot().string("user.name");
-            Ok(name.map(|n| n.to_string()))
-        })
-        .await
-        .ok()
-        .flatten()
-    }
-
+impl Scanner for GixRepo {
     /// Always a full reconciliation, but only entries whose stat changed are
     /// read and hashed.
     async fn scan(&self, _dirty: Dirty) -> Result<Scan, GitError> {
         self.blocking(|i| scan::scan(&i.open()?, &i.blobs, &i.stats, i.cap))
             .await
     }
+}
 
+impl Checkout for GixRepo {
     /// Content-store bytes are read here, a bounded batch at a time; the rest
     /// comes from the object database on the blocking pool.
     async fn checkout<S: Store + Sync>(
@@ -228,11 +215,9 @@ impl GitRepo for GixRepo {
         }
     }
 
-    async fn commit_snapshot(&self, commit: &CommitId) -> Result<Snapshot, GitError> {
-        let commit = commit.clone();
-        self.blocking(move |i| i.commit_snapshot(&commit)).await
-    }
+}
 
+impl BlobReader for GixRepo {
     async fn read_blob(&self, path: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
         let path = path.clone();
         self.blocking(move |i| i.read_blob(&path, blob)).await
@@ -245,6 +230,29 @@ impl GitRepo for GixRepo {
 
     async fn submodule_commit(&self, blob: BlobId) -> Result<Option<String>, GitError> {
         Ok(self.0.blobs.submodule_commit(blob))
+    }
+}
+
+impl History for GixRepo {
+    async fn head(&self) -> Result<CommitId, GitError> {
+        self.blocking(|i| Ok(CommitId(i.open()?.head_id().map_err(err)?.to_string())))
+            .await
+    }
+
+    async fn user_name(&self) -> Option<String> {
+        self.blocking(|i| {
+            let repo = i.open()?;
+            let name = repo.config_snapshot().string("user.name");
+            Ok(name.map(|n| n.to_string()))
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn commit_snapshot(&self, commit: &CommitId) -> Result<Snapshot, GitError> {
+        let commit = commit.clone();
+        self.blocking(move |i| i.commit_snapshot(&commit)).await
     }
 
     async fn merge_base(&self, reference: &str) -> Result<CommitId, GitError> {
@@ -286,7 +294,9 @@ impl GitRepo for GixRepo {
         self.blocking(move |i| base::commits_behind(&i.open()?, &tip, &base, max))
             .await
     }
+}
 
+impl SessionRefs for GixRepo {
     async fn set_session_ref(&self, session: SessionId, name: &str, commit: &CommitId) -> Result<(), GitError> {
         let (name, commit) = (format!("{}{name}", session_ref_prefix(session)), commit.clone());
         self.blocking(move |i| {
@@ -311,7 +321,9 @@ impl GitRepo for GixRepo {
         })
         .await
     }
+}
 
+impl Differ for GixRepo {
     async fn diff<S: Store + Sync>(&self, store: &S, old: &Snapshot, new: &Snapshot) -> Result<SnapshotDiff, GitError> {
         let mut stored = BTreeMap::new();
         for (_, blob) in text_blobs(&changes(old, new)) {

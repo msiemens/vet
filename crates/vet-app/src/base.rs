@@ -1,7 +1,7 @@
 //! What a base is called, how far its branch has moved on, and the default (§6.5).
 
 use crate::pin::{BaseChoice, CommitId};
-use crate::ports::{BranchInfo, GitError, GitRepo};
+use crate::ports::{BranchInfo, GitError, History};
 
 /// First-parent steps searched for a branch-relative name.
 const MAX_RELATIVE: usize = 1000;
@@ -19,7 +19,7 @@ pub fn default_choice(branches: &[BranchInfo], head: &CommitId) -> (BaseChoice, 
 /// The name a person knows `commit` by: a branch whose tip it is, else
 /// `branch~N` on a branch's first-parent history, else its short hash. Branches
 /// are tried in this order: `prefer`, the current one, the default one, the rest.
-pub async fn name_of<G: GitRepo>(
+pub async fn name_of<G: History>(
     git: &G,
     branches: &[BranchInfo],
     prefer: Option<&str>,
@@ -40,7 +40,7 @@ pub async fn name_of<G: GitRepo>(
 
 /// How many commits the chosen branch has gained since `base`; `None` unless
 /// the choice is a branch and it has moved.
-pub async fn behind<G: GitRepo>(
+pub async fn behind<G: History>(
     git: &G,
     branches: &[BranchInfo],
     choice: &BaseChoice,

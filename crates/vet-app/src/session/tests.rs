@@ -16,7 +16,7 @@ use vet_core::review::{
 
 use super::*;
 use crate::pin::{BaseChoice, CommitId, Pin, PinId};
-use crate::ports::{BlobRead, Dirty};
+use crate::ports::{BlobRead, BlobReader, Checkout, Differ, Dirty, History, Scanner, SessionRefs};
 use crate::review::{Session, Version};
 
 const REPO: &str = "/repo";
@@ -153,13 +153,7 @@ impl FakeGit {
     }
 }
 
-impl GitRepo for FakeGit {
-    async fn head(&self) -> std::result::Result<CommitId, GitError> {
-        Ok(CommitId("head".into()))
-    }
-    async fn user_name(&self) -> Option<String> {
-        self.user.lock().unwrap().clone()
-    }
+impl Scanner for FakeGit {
     async fn scan(&self, _: Dirty) -> std::result::Result<Scan, GitError> {
         let snapshot = self.scans.lock().unwrap().remove(0);
         Ok(Scan {
@@ -167,6 +161,9 @@ impl GitRepo for FakeGit {
             status: SnapshotStatus::default(),
         })
     }
+}
+
+impl Checkout for FakeGit {
     async fn checkout<St: Store + Sync>(
         &self,
         _: &St,
@@ -176,13 +173,9 @@ impl GitRepo for FakeGit {
     ) -> std::result::Result<(), crate::ports::CheckoutError> {
         unreachable!()
     }
-    async fn commit_snapshot(&self, commit: &CommitId) -> std::result::Result<Snapshot, GitError> {
-        let known = self.commits.lock().unwrap();
-        match known.values().find(|(c, _)| c == commit) {
-            Some((_, snapshot)) => Ok(snapshot.clone()),
-            None => Ok(self.base.lock().unwrap().clone().unwrap()),
-        }
-    }
+}
+
+impl BlobReader for FakeGit {
     async fn read_blob(&self, _: &RepoPath, blob: BlobId) -> std::result::Result<Option<Vec<u8>>, GitError> {
         Ok(self.blobs.lock().unwrap().get(&blob).cloned())
     }
@@ -197,6 +190,22 @@ impl GitRepo for FakeGit {
     /// The first byte of the blob id, in hex.
     async fn submodule_commit(&self, blob: BlobId) -> std::result::Result<Option<String>, GitError> {
         Ok(Some(format!("{:02x}", blob.0.0[0])))
+    }
+}
+
+impl History for FakeGit {
+    async fn head(&self) -> std::result::Result<CommitId, GitError> {
+        Ok(CommitId("head".into()))
+    }
+    async fn user_name(&self) -> Option<String> {
+        self.user.lock().unwrap().clone()
+    }
+    async fn commit_snapshot(&self, commit: &CommitId) -> std::result::Result<Snapshot, GitError> {
+        let known = self.commits.lock().unwrap();
+        match known.values().find(|(c, _)| c == commit) {
+            Some((_, snapshot)) => Ok(snapshot.clone()),
+            None => Ok(self.base.lock().unwrap().clone().unwrap()),
+        }
     }
     async fn merge_base(&self, reference: &str) -> std::result::Result<CommitId, GitError> {
         self.commits
@@ -243,6 +252,9 @@ impl GitRepo for FakeGit {
         let chain = history.get(tip).map(Vec::as_slice).unwrap_or_default();
         Ok(chain.iter().position(|c| c == base).unwrap_or(chain.len()))
     }
+}
+
+impl SessionRefs for FakeGit {
     async fn set_session_ref(&self, _: SessionId, name: &str, commit: &CommitId) -> std::result::Result<(), GitError> {
         let mut refs = self.refs.lock().unwrap();
         refs.retain(|(n, _)| n != name);
@@ -253,6 +265,9 @@ impl GitRepo for FakeGit {
         self.refs.lock().unwrap().clear();
         Ok(())
     }
+}
+
+impl Differ for FakeGit {
     async fn diff<St: Store + Sync>(
         &self,
         _: &St,

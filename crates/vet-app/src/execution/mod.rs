@@ -17,7 +17,9 @@ use vet_core::content::{
 };
 
 use crate::acquisition::Acquisition;
-use crate::ports::{BlobRead, Command, Dirty, GitError, GitRepo, ProcessRunner, RunStore, Store, StoreError};
+use crate::ports::{
+    BlobRead, BlobReader, Command, Differ, Dirty, GitError, ProcessRunner, RunStore, Scanner, Store, StoreError,
+};
 use check::{Approval, Change, RunCheck, RunCheckConfig};
 use rows::DiffRows;
 use targets::RunTarget;
@@ -109,7 +111,7 @@ pub struct Execution<'a, G, S, P> {
     pub config: RunCheckConfig,
 }
 
-impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<'_, G, S, P> {
+impl<G: Scanner + BlobReader + Differ + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<'_, G, S, P> {
     /// Discovered targets of `snapshot` with the user's edits applied.
     pub async fn targets(&self, snapshot: &Snapshot) -> Result<Vec<ListedTarget>, RunError> {
         let mut blobs = BTreeMap::new();
@@ -321,19 +323,15 @@ pub fn changed_files(a: &Snapshot, b: &Snapshot) -> usize {
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeSet, HashMap};
-    use std::path::Path;
     use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll, Waker};
 
-    use vet_core::content::{BlobId, EntryKind, FileDiff, FileEntry, LineRange, RepoPath};
+    use vet_core::content::{BlobId, EntryKind, FileDiff, FileEntry, Hunk, LineRange, RepoPath};
     use vet_core::merkle::snapshot_id;
-
-    use vet_core::content::Hunk;
 
     use super::rows::Row;
     use super::*;
-    use crate::pin::CommitId;
-    use crate::ports::{BlobRead, CheckoutError, ProcessEvent, RunningProcess, Scan};
+    use crate::ports::{BlobRead, ProcessEvent, RunningProcess, Scan};
     use crate::review::SessionId;
 
     fn snapshot(files: &[(&str, &str)]) -> (Snapshot, HashMap<BlobId, Vec<u8>>) {
@@ -377,13 +375,7 @@ mod tests {
         }
     }
 
-    impl GitRepo for Fake {
-        async fn head(&self) -> Result<CommitId, GitError> {
-            unreachable!()
-        }
-        async fn user_name(&self) -> Option<String> {
-            None
-        }
+    impl Scanner for Fake {
         async fn scan(&self, _: Dirty) -> Result<Scan, GitError> {
             let snapshot = self.0.lock().unwrap().tree.clone().unwrap();
             Ok(Scan {
@@ -391,18 +383,9 @@ mod tests {
                 status: Default::default(),
             })
         }
-        async fn checkout<S: Store + Sync>(
-            &self,
-            _: &S,
-            _: &CommitId,
-            _: &Snapshot,
-            _: &Path,
-        ) -> Result<(), CheckoutError> {
-            unreachable!()
-        }
-        async fn commit_snapshot(&self, _: &CommitId) -> Result<Snapshot, GitError> {
-            unreachable!()
-        }
+    }
+
+    impl BlobReader for Fake {
         async fn read_blob(&self, _: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
             Ok(self.0.lock().unwrap().blobs.get(&blob).cloned())
         }
@@ -415,33 +398,9 @@ mod tests {
         async fn submodule_commit(&self, _: BlobId) -> Result<Option<String>, GitError> {
             unreachable!()
         }
-        async fn merge_base(&self, _: &str) -> Result<CommitId, GitError> {
-            unreachable!()
-        }
-        async fn resolve_commit(&self, _: &str) -> Result<CommitId, GitError> {
-            unreachable!()
-        }
-        async fn base_candidates(&self, _: usize) -> Result<crate::ports::BaseCandidates, GitError> {
-            unreachable!()
-        }
-        async fn branches(&self) -> Result<Vec<crate::ports::BranchInfo>, GitError> {
-            unreachable!()
-        }
-        async fn commit_info(&self, _: &CommitId) -> Result<crate::ports::CommitInfo, GitError> {
-            unreachable!()
-        }
-        async fn first_parent_distance(&self, _: &CommitId, _: &CommitId, _: usize) -> Result<Option<usize>, GitError> {
-            unreachable!()
-        }
-        async fn commits_behind(&self, _: &CommitId, _: &CommitId, _: usize) -> Result<usize, GitError> {
-            unreachable!()
-        }
-        async fn set_session_ref(&self, _: SessionId, _: &str, _: &CommitId) -> Result<(), GitError> {
-            unreachable!()
-        }
-        async fn delete_session_refs(&self, _: SessionId) -> Result<(), GitError> {
-            unreachable!()
-        }
+    }
+
+    impl Differ for Fake {
         /// One hunk over the whole file for every path whose blob differs.
         async fn diff<S: Store + Sync>(&self, _: &S, old: &Snapshot, new: &Snapshot) -> Result<SnapshotDiff, GitError> {
             let w = self.0.lock().unwrap();

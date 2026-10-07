@@ -62,7 +62,7 @@ pub enum Dirty {
     Paths(Vec<RepoPath>),
 }
 
-/// The result of [`GitRepo::read_blob_capped`].
+/// The result of [`BlobReader::read_blob_capped`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum BlobRead {
     Found(Vec<u8>),
@@ -116,13 +116,16 @@ impl From<GitError> for CheckoutError {
     }
 }
 
-/// Everything that touches git or hashes the worktree. The persisted
-/// stat-to-hash cache, racy-mtime handling and git blob hashing are private to
-/// the adapter: callers get correct snapshots, not "uncertain" markers.
-pub trait GitRepo {
-    fn head(&self) -> impl Future<Output = Result<CommitId, GitError>> + Send;
+/// Hashes the worktree. The persisted stat-to-hash cache, racy-mtime handling
+/// and git blob hashing are private to the adapter: callers get correct
+/// snapshots, not "uncertain" markers.
+pub trait Scanner {
     /// Establish correct snapshot identity, metadata first (§6.2).
     fn scan(&self, dirty: Dirty) -> impl Future<Output = Result<Scan, GitError>> + Send;
+}
+
+/// Writes a snapshot out as a directory.
+pub trait Checkout {
     /// Write every entry of `snapshot` into the empty directory `root`: each
     /// blob from `store`, else from the object database (`commit` is where git
     /// is expected to have the rest). Content is written as stored: no hooks,
@@ -136,10 +139,21 @@ pub trait GitRepo {
         snapshot: &Snapshot,
         root: &Path,
     ) -> impl Future<Output = Result<(), CheckoutError>> + Send;
-    /// The configured `user.name`, if any.
-    fn user_name(&self) -> impl Future<Output = Option<String>> + Send;
-    /// The snapshot of a commit's tree.
-    fn commit_snapshot(&self, commit: &CommitId) -> impl Future<Output = Result<Snapshot, GitError>> + Send;
+}
+
+/// The line diff of two snapshots.
+pub trait Differ {
+    /// Content comes from `store` first, then as in [`BlobReader::read_blob`].
+    fn diff<S: Store + Sync>(
+        &self,
+        store: &S,
+        old: &Snapshot,
+        new: &Snapshot,
+    ) -> impl Future<Output = Result<SnapshotDiff, GitError>> + Send;
+}
+
+/// The content of blobs git has.
+pub trait BlobReader {
     /// Content of `blob` as git would store it: from the object database, else
     /// from the worktree file at `path` if it still hashes to `blob`.
     fn read_blob(
@@ -155,6 +169,15 @@ pub trait GitRepo {
     ) -> impl Future<Output = Result<BlobRead, GitError>> + Send;
     /// The commit a submodule entry with this `BlobId` is pinned at, for display.
     fn submodule_commit(&self, blob: BlobId) -> impl Future<Output = Result<Option<String>, GitError>> + Send;
+}
+
+/// Commits, branches and the history between them.
+pub trait History {
+    fn head(&self) -> impl Future<Output = Result<CommitId, GitError>> + Send;
+    /// The configured `user.name`, if any.
+    fn user_name(&self) -> impl Future<Output = Option<String>> + Send;
+    /// The snapshot of a commit's tree.
+    fn commit_snapshot(&self, commit: &CommitId) -> impl Future<Output = Result<Snapshot, GitError>> + Send;
     /// The merge base of `reference` (a branch or any revision) and `HEAD`.
     /// The error is fit to show to a user.
     fn merge_base(&self, reference: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
@@ -181,6 +204,10 @@ pub trait GitRepo {
         base: &CommitId,
         max: usize,
     ) -> impl Future<Output = Result<usize, GitError>> + Send;
+}
+
+/// The refs that keep a session's commits alive.
+pub trait SessionRefs {
     /// Points `refs/vet/sessions/<session>/<name>` at `commit` so git keeps it
     /// (§6.1).
     fn set_session_ref(
@@ -191,14 +218,12 @@ pub trait GitRepo {
     ) -> impl Future<Output = Result<(), GitError>> + Send;
     /// Deletes every `refs/vet/sessions/<session>/*`.
     fn delete_session_refs(&self, session: SessionId) -> impl Future<Output = Result<(), GitError>> + Send;
-    /// Content comes from `store` first, then as in `read_blob`.
-    fn diff<S: Store + Sync>(
-        &self,
-        store: &S,
-        old: &Snapshot,
-        new: &Snapshot,
-    ) -> impl Future<Output = Result<SnapshotDiff, GitError>> + Send;
 }
+
+/// Everything a live session needs of git.
+pub trait GitRepo: Scanner + Checkout + Differ + BlobReader + History + SessionRefs {}
+
+impl<T: Scanner + Checkout + Differ + BlobReader + History + SessionRefs> GitRepo for T {}
 
 #[derive(Debug)]
 pub struct StoreError(pub String);
