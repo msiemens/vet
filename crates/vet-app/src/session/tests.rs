@@ -1818,7 +1818,9 @@ async fn the_base_chosen_while_browsing_is_the_base_when_the_repository_opens_ag
 #[tokio::test]
 async fn a_remembered_base_that_no_longer_resolves_gives_way_to_the_default() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.store.0.lock().unwrap().browsing_base = Some(BaseChoice::Branch { name: "deleted".into() });
+    fx.store.0.lock().unwrap().browsing_base = Some(BaseChoice::MergeBase {
+        reference: "deleted".into(),
+    });
 
     let session = fx.reopen(&[("a.txt", "two\n")]).await;
 

@@ -255,11 +255,13 @@ async fn the_browsing_base_is_stored_per_repository_and_replaced() {
     let store = open(&dir).await;
     assert_eq!(store.browsing_base("/a".into()).await.unwrap(), None);
 
-    let branch = BaseChoice::Branch { name: "main".into() };
+    let first = BaseChoice::MergeBase {
+        reference: "develop".into(),
+    };
     let merge_base = BaseChoice::MergeBase {
         reference: "main".into(),
     };
-    store.set_browsing_base("/a".into(), branch).await.unwrap();
+    store.set_browsing_base("/a".into(), first).await.unwrap();
     store.set_browsing_base("/b".into(), merge_base.clone()).await.unwrap();
     let commit_choice = BaseChoice::Commit { id: commit("abc") };
     store
