@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use sea_orm::sea_query::{SimpleExpr, Value};
 use sea_orm::{ColumnTrait, DbErr, Set};
 use vet_app::changeset::{
-    BaseChoice, ChangedFile, ChangesetId, CommitId, Source, Version, VersionChange, VersionOrigin,
+    BaseChoice, ChangedFile, ChangesetId, CommitId, Lens, Source, Version, VersionChange, VersionOrigin,
 };
-use vet_app::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, SpanId};
+use vet_app::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, SpanId, SpanOrigin};
 use vet_core::content::{
     BlobId, EntryKind, FileEntry, Hash, LineDelta, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
 };
@@ -72,6 +72,7 @@ twin!(
         Observed
     }
 );
+twin!(Lens, Lens { Squash, PerCommit });
 twin!(
     NonTextKind,
     ChangeKind {
@@ -449,6 +450,9 @@ pub fn review_from(rows: ReviewRows) -> Result<Review, DbErr> {
                     target: anchor_of(s.target_anchor)?,
                     state: s.state.into(),
                 },
+                origin: s
+                    .origin_commit
+                    .map_or(SpanOrigin::Squash, |c| SpanOrigin::Commit(CommitId(c))),
             })
         })
         .collect::<Result<_, DbErr>>()?;

@@ -5,9 +5,10 @@ use ts_rs::TS;
 
 use crate::{CommitInfo, LineDelta};
 
-/// What a request about the changeset's files reads: the changeset as it is, or what the author
-/// changed between two of its versions (an interdiff). The files of an interdiff are those of its
-/// manifest; their old side is version `from` rebased onto the base of version `to`.
+/// What a request about the changeset's files reads: the changeset as it is, what the author
+/// changed between two of its versions (an interdiff), or what one of its commits changed. The
+/// files of an interdiff are those of its manifest; their old side is version `from` rebased onto
+/// the base of version `to`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
@@ -17,6 +18,13 @@ pub enum View {
     Interdiff {
         from: u32,
         to: u32,
+    },
+    /// The commit at `index` of `Commits`, compared with its parent (a merge: with the automatic
+    /// merge of its parents). Marks made in it count in the changeset wherever the same lines
+    /// are in it, and the other way round; comments are made in the changeset. Fails if there
+    /// is no such commit.
+    Commit {
+        index: u32,
     },
 }
 

@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    BaseChoice, ChangesetKey, CommentAt, NonTextKind, ProjectId, ReviewFilter, Secret, Side, SymbolId, ThreadStatus,
-    ThreadTarget, View,
+    BaseChoice, ChangesetKey, CommentAt, Lens, NonTextKind, ProjectId, ReviewFilter, Secret, Side, SymbolId,
+    ThreadStatus, ThreadTarget, View,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -110,8 +110,21 @@ pub enum Request {
     Versions {
         project: ProjectId,
     },
-    /// The changeset as it is now, with review state, or an interdiff of two of its versions
-    /// (see [`View`]). Waits for the project's first scan if it has not finished.
+    /// The commits of the changeset on view, oldest first, each with its own diff and progress,
+    /// and the lens the changeset is reviewed in. The working tree has none. Answers with
+    /// `Response::Commits`.
+    Commits {
+        project: ProjectId,
+    },
+    /// Remembers the lens a branch changeset is reviewed in. Fails for the working tree.
+    /// Answers with `Response::Done`.
+    SetLens {
+        project: ProjectId,
+        lens: Lens,
+    },
+    /// The changeset as it is now, with review state, an interdiff of two of its versions, or
+    /// one of its commits (see [`View`]). Waits for the project's first scan if it has not
+    /// finished.
     Manifest {
         project: ProjectId,
         view: View,

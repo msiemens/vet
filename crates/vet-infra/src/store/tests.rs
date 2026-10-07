@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use sea_orm::PaginatorTrait;
 use tempfile::TempDir;
-use vet_app::changeset::{ChangedFile, CommitId, RemoteKey, VersionChange, VersionOrigin};
+use vet_app::changeset::{ChangedFile, CommitId, Lens, RemoteKey, VersionChange, VersionOrigin};
 use vet_app::gc::{Retention, collect, open_bases};
 use vet_app::ports::{GcReport, Store};
-use vet_app::review::NonTextAck;
+use vet_app::review::{NonTextAck, SpanOrigin};
 use vet_core::content::{
     BlobId, EntryKind, FileEntry, Hash, LineDelta, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId,
     SnapshotStatus,
@@ -226,6 +226,45 @@ async fn a_changeset_is_found_by_its_repository_and_source() {
 }
 
 #[tokio::test]
+async fn the_lens_is_remembered_per_changeset_before_and_after_a_review_of_it_starts() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let feature = || Source::Branch { name: "feature".into() };
+    assert_eq!(store.lens("/repo".into(), feature()).await.unwrap(), None);
+
+    store
+        .set_lens("/repo".into(), feature(), Lens::PerCommit)
+        .await
+        .unwrap();
+    store
+        .start_review(
+            "/repo".into(),
+            feature(),
+            BaseChoice::Commit { id: commit("a") },
+            version(1, SnapshotId(h(1)), SnapshotId(h(2))),
+            T0,
+        )
+        .await
+        .unwrap();
+    drop(store);
+
+    let store = open(&dir).await;
+    assert_eq!(
+        store.lens("/repo".into(), feature()).await.unwrap(),
+        Some(Lens::PerCommit)
+    );
+    assert_eq!(
+        store
+            .lens("/repo".into(), Source::Branch { name: "other".into() })
+            .await
+            .unwrap(),
+        None
+    );
+    store.set_lens("/repo".into(), feature(), Lens::Squash).await.unwrap();
+    assert_eq!(store.lens("/repo".into(), feature()).await.unwrap(), Some(Lens::Squash));
+}
+
+#[tokio::test]
 async fn the_base_choice_is_stored_with_the_review_and_survives_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
@@ -317,7 +356,9 @@ async fn spans_and_acks_belong_to_the_review_and_round_trip() {
             state: SpanState::Seen,
         },
     ];
-    let ids = store.edit_spans(id, vec![], spans.clone()).await.unwrap();
+    let origins = [SpanOrigin::Squash, SpanOrigin::Commit(commit("c1")), SpanOrigin::Squash];
+    let added = spans.iter().cloned().zip(origins.iter().cloned()).collect();
+    let ids = store.edit_spans(id, vec![], added).await.unwrap();
     assert_eq!(ids.len(), 3);
 
     let ack = NonTextAck {
@@ -336,6 +377,10 @@ async fn spans_and_acks_belong_to_the_review_and_round_trip() {
 
     let loaded = store.review(id).await.unwrap().unwrap();
     assert_eq!(loaded.spans.iter().map(|r| r.span.clone()).collect::<Vec<_>>(), spans);
+    assert_eq!(
+        loaded.spans.iter().map(|r| r.origin.clone()).collect::<Vec<_>>(),
+        origins
+    );
     assert_eq!(loaded.acks, vec![ack.clone(), mode.clone()]);
     let elsewhere = store.review(other).await.unwrap().unwrap();
     assert!(elsewhere.spans.is_empty() && elsewhere.acks.is_empty());
@@ -766,7 +811,7 @@ async fn a_long_run_of_versions_over_a_large_tree_stays_small() {
 async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
     use vet_core::content::Changeset;
     use vet_core::prepared::PreparedFile;
-    use vet_core::remap::remap_span;
+    use vet_core::remap::{RemapMode, remap_span};
     use vet_core::review::FileRemapInput;
 
     let text = |line15: &str| -> String {
@@ -811,7 +856,10 @@ async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
         target: Some(recorded),
         state: SpanState::Seen,
     };
-    let ids = store.edit_spans(id, vec![], vec![span.clone()]).await.unwrap();
+    let ids = store
+        .edit_spans(id, vec![], vec![(span.clone(), SpanOrigin::Squash)])
+        .await
+        .unwrap();
 
     let remapped = async |new| {
         let review = store.review(id).await.unwrap().unwrap();
@@ -820,7 +868,7 @@ async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
         review
             .spans
             .iter()
-            .flat_map(|r| remap_span(&r.span, now, None, Some(&target)))
+            .flat_map(|r| remap_span(&r.span, now, None, Some(&target), RemapMode::SameUnit))
             .count()
     };
     assert_eq!(remapped(e).await, 2, "the edited line splits the span");

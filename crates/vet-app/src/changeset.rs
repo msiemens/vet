@@ -45,6 +45,14 @@ pub enum Source {
     PullRequest { remote: RemoteKey, number: u64 },
 }
 
+/// How a committed changeset is cut into units for review: the whole of it, or one unit per commit.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum Lens {
+    #[default]
+    Squash,
+    PerCommit,
+}
+
 /// One state of a changeset: a base and the target built on a tip. The first
 /// version of a working tree is the snapshot current when its review started.
 #[derive(Clone, PartialEq, Eq, Debug)]

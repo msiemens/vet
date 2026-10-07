@@ -28,6 +28,7 @@ pub mod kinds {
     int_enum!(ChangeKind { Mode = 0, Symlink = 1, Submodule = 2, Binary = 3, ContentUnavailable = 4, Rename = 5, Empty = 6 });
     int_enum!(SourceKind { WorkingTree = 0, Branch = 1, PullRequest = 2 });
     int_enum!(VersionOrigin { Settled = 0, BaseMoved = 1, Observed = 2 });
+    int_enum!(Lens { Squash = 0, PerCommit = 1 });
 }
 
 macro_rules! child_of_changeset {
@@ -181,6 +182,8 @@ pub mod changeset {
         pub kind: SourceKind,
         #[sea_orm(unique_key = "source")]
         pub key: String,
+        /// The lens the viewer last chose; none until they did.
+        pub lens: Option<Lens>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -377,6 +380,8 @@ pub mod span {
         pub state: SpanState,
         pub base_anchor: Option<i64>,
         pub target_anchor: Option<i64>,
+        /// The commit whose own diff the span was marked in; none for the changeset as a whole.
+        pub origin_commit: Option<String>,
     }
 
     child_of_review!();

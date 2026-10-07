@@ -9,10 +9,10 @@ use vet_core::filter::ReviewFilter;
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 use vet_semantic::ports::{BackendId, ServerConfig};
 
-use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version};
+use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
 use crate::gc::{GcFacts, GcPlan};
 use crate::platform::{Credential, PlatformKind};
-use crate::review::{ChangesetThread, NonTextAck, Review, ReviewId, SpanId};
+use crate::review::{ChangesetThread, NonTextAck, Review, ReviewId, SpanId, SpanOrigin};
 
 /// Monotonic milliseconds.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -108,6 +108,25 @@ pub struct CommitInfo {
     pub author: String,
     /// Unix seconds.
     pub time: i64,
+}
+
+/// A commit with what the by-commit lens shows beyond [`CommitInfo`].
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CommitDetail {
+    pub info: CommitInfo,
+    /// The message after its subject, without the blank line between.
+    pub body: String,
+    /// In order: the first is the one a commit's own change is measured against.
+    pub parents: Vec<CommitId>,
+}
+
+/// What a merge commit's two parents merge to by themselves.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Remerged {
+    /// The merged tree; the conflicts git could not resolve stay in the files as markers.
+    pub snapshot: Snapshot,
+    /// The content of the merged files that git does not hold: the snapshot's blobs are of it.
+    pub contents: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -216,6 +235,11 @@ pub trait History {
     /// follows at the same commit, by name.
     fn branches(&self) -> impl Future<Output = Result<Vec<BranchInfo>, GitError>> + Send;
     fn commit_info(&self, commit: &CommitId) -> impl Future<Output = Result<CommitInfo, GitError>> + Send;
+    fn commit_detail(&self, commit: &CommitId) -> impl Future<Output = Result<CommitDetail, GitError>> + Send;
+    /// The automatic merge of the two parents of `merge`, as `git show --remerge-diff` computes
+    /// it, and `None` unless `merge` has exactly two parents. Parents with no common ancestor
+    /// merge as if the ancestor were empty. Writes nothing to the repository.
+    fn remerge(&self, merge: &CommitId) -> impl Future<Output = Result<Option<Remerged>, GitError>> + Send;
     /// How many first-parent steps lead from `tip` back to `commit`; `None` if
     /// it is not on that history within `max` steps.
     fn first_parent_distance(
@@ -363,6 +387,11 @@ pub trait ChangesetStore {
         repo: String,
         source: Source,
     ) -> impl Future<Output = Result<Option<ChangesetId>, StoreError>> + Send;
+    /// The lens the changeset of `source` was last put in; `None` if it never was.
+    fn lens(&self, repo: String, source: Source) -> impl Future<Output = Result<Option<Lens>, StoreError>> + Send;
+    /// Remembers the lens of the changeset of `source`, storing the changeset if need be.
+    fn set_lens(&self, repo: String, source: Source, lens: Lens)
+    -> impl Future<Output = Result<(), StoreError>> + Send;
     /// The changesets a review of which is open, in any repository.
     fn open_changesets(&self) -> impl Future<Output = Result<Vec<ChangesetId>, StoreError>> + Send;
     /// The versions in order of their numbers.
@@ -432,7 +461,7 @@ pub trait ReviewStore {
         &self,
         id: ReviewId,
         remove: Vec<SpanId>,
-        add: Vec<ReviewedSpan>,
+        add: Vec<(ReviewedSpan, SpanOrigin)>,
     ) -> impl Future<Output = Result<Vec<SpanId>, StoreError>> + Send;
     fn acknowledge(&self, id: ReviewId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn unacknowledge(&self, id: ReviewId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;

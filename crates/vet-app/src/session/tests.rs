@@ -21,13 +21,13 @@ use super::blobs::image_media_type;
 use super::manifest::{old_path_of, update_of};
 use super::state::{check_revision, outcome};
 use super::*;
-use crate::changeset::{BaseChoice, ChangesetId, CommitId, RemoteKey, Source, Version, VersionOrigin};
+use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, RemoteKey, Source, Version, VersionOrigin};
 use crate::ports::{
-    BlobRead, BlobReader, BranchInfo, ChangesetRefs, ChangesetStore, Checkout, CommitInfo, Differ, Dirty, GitError,
-    History, ReviewStore, Scan, Scanner, Store, StoreError, ThreadStore,
+    BlobRead, BlobReader, BranchInfo, ChangesetRefs, ChangesetStore, Checkout, CommitDetail, CommitInfo, Differ, Dirty,
+    GitError, History, Remerged, ReviewStore, Scan, Scanner, Store, StoreError, ThreadStore,
 };
 use crate::pull_request::PullRequestRefs;
-use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, SpanId};
+use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, SpanId, SpanOrigin};
 
 const REPO: &str = "/repo";
 
@@ -122,6 +122,10 @@ pub(crate) struct FakeGit {
     default_reference: Arc<Mutex<Option<String>>>,
     /// Unix seconds of commits; 100 for the others.
     times: Arc<Mutex<HashMap<CommitId, i64>>>,
+    /// Parents of commits whose first-parent history is not the whole story (merges).
+    parents: Arc<Mutex<HashMap<CommitId, Vec<CommitId>>>>,
+    /// The automatic merge of the merges among the commits.
+    remerges: Arc<Mutex<HashMap<CommitId, Remerged>>>,
 }
 
 fn clock() -> i64 {
@@ -163,6 +167,46 @@ impl FakeGit {
         self.add_commit("main", "m2", base);
         self.add_branch("main", true, "m2", &["m1"]);
         self.branch("feature", "tip1", files, &["m1"]);
+    }
+
+    /// The branch `feature` has the commits `commits` (id and tree), oldest first, on top of
+    /// `main`'s commit `m1` (tree `base`).
+    pub(crate) fn feature_commits(&self, base: &[(&str, &str)], commits: &[(&str, &[(&str, &str)])]) {
+        *self.default_reference.lock().unwrap() = Some("main".into());
+        self.add_commit("merge-base main", "m1", base);
+        self.add_commit("main", "m2", base);
+        self.add_branch("main", true, "m2", &["m1"]);
+        for (id, files) in commits {
+            self.add_commit(id, id, files);
+        }
+        let (tip, files) = commits.last().expect("a commit");
+        self.add_commit("refs/heads/feature", tip, files);
+        let history: Vec<&str> = (commits.iter().rev().skip(1).map(|(id, _)| *id))
+            .chain(["m1"])
+            .collect();
+        self.add_branch("feature", false, tip, &history);
+    }
+
+    /// The next scan of the working tree finds `files`.
+    pub(crate) fn queue_scan(&self, files: &[(&str, &str)]) {
+        let snapshot = self.snapshot(files);
+        self.scans.lock().unwrap().push(snapshot);
+    }
+
+    /// `commit` is a merge of `parents`, the first being the one the branch's history follows.
+    pub(crate) fn set_parents(&self, commit: &str, parents: &[&str]) {
+        let parents = parents.iter().map(|p| CommitId((*p).into())).collect();
+        self.parents.lock().unwrap().insert(CommitId(commit.into()), parents);
+    }
+
+    /// What the parents of the merge `commit` merge to by themselves.
+    pub(crate) fn set_remerge(&self, commit: &str, files: &[(&str, &str)]) {
+        let snapshot = self.snapshot(files);
+        let contents = files.iter().map(|(_, text)| text.as_bytes().to_vec()).collect();
+        self.remerges
+            .lock()
+            .unwrap()
+            .insert(CommitId(commit.into()), Remerged { snapshot, contents });
     }
 
     pub(crate) fn add_commit(&self, spec: &str, id: &str, files: &[(&str, &str)]) {
@@ -292,6 +336,27 @@ impl History for FakeGit {
             time: self.times.lock().unwrap().get(commit).copied().unwrap_or(100),
         })
     }
+    async fn commit_detail(&self, commit: &CommitId) -> std::result::Result<CommitDetail, GitError> {
+        let parents = match self.parents.lock().unwrap().get(commit) {
+            Some(parents) => parents.clone(),
+            None => {
+                let history = self.history.lock().unwrap();
+                let next = history.values().find_map(|chain| {
+                    let at = chain.iter().position(|c| c == commit)?;
+                    chain.get(at + 1).cloned()
+                });
+                next.into_iter().collect()
+            }
+        };
+        Ok(CommitDetail {
+            info: self.commit_info(commit).await?,
+            body: format!("body of {}", commit.0),
+            parents,
+        })
+    }
+    async fn remerge(&self, merge: &CommitId) -> std::result::Result<Option<Remerged>, GitError> {
+        Ok(self.remerges.lock().unwrap().get(merge).cloned())
+    }
     async fn first_parent_distance(
         &self,
         tip: &CommitId,
@@ -376,6 +441,8 @@ struct Mem {
     /// How many reviews were started; the newest one's id.
     started: u64,
     spans: Vec<(SpanId, ReviewedSpan)>,
+    origins: HashMap<SpanId, SpanOrigin>,
+    lens: Option<Lens>,
     next_span: u64,
     acks: Vec<NonTextAck>,
     base: Option<BaseChoice>,
@@ -423,6 +490,13 @@ impl ChangesetStore for MemStore {
         let mem = self.0.lock().unwrap();
         Ok((mem.changeset == Some((repo, source))).then_some(ChangesetId(1)))
     }
+    async fn lens(&self, _: String, _: Source) -> StoreResult<Option<Lens>> {
+        Ok(self.0.lock().unwrap().lens)
+    }
+    async fn set_lens(&self, _: String, _: Source, lens: Lens) -> StoreResult<()> {
+        self.0.lock().unwrap().lens = Some(lens);
+        Ok(())
+    }
     async fn open_changesets(&self) -> StoreResult<Vec<ChangesetId>> {
         let mem = self.0.lock().unwrap();
         Ok((mem.changeset.is_some() && !mem.closed)
@@ -455,6 +529,7 @@ impl ReviewStore for MemStore {
             threads: std::mem::take(&mut mem.threads),
             filter: mem.filter.take(),
             browsing_base: mem.browsing_base.take(),
+            lens: mem.lens.take(),
             started: mem.started + 1,
             base: Some(choice),
             changeset: Some((repo, source)),
@@ -492,6 +567,7 @@ impl ReviewStore for MemStore {
                 .map(|(id, span)| RecordedSpan {
                     id: *id,
                     span: span.clone(),
+                    origin: mem.origins.get(id).cloned().unwrap_or(SpanOrigin::Squash),
                 })
                 .collect(),
             acks: mem.acks.clone(),
@@ -523,14 +599,20 @@ impl ReviewStore for MemStore {
         self.0.lock().unwrap().last_reviewed = Some(version);
         Ok(())
     }
-    async fn edit_spans(&self, _: ReviewId, remove: Vec<SpanId>, add: Vec<ReviewedSpan>) -> StoreResult<Vec<SpanId>> {
+    async fn edit_spans(
+        &self,
+        _: ReviewId,
+        remove: Vec<SpanId>,
+        add: Vec<(ReviewedSpan, SpanOrigin)>,
+    ) -> StoreResult<Vec<SpanId>> {
         let mut mem = self.0.lock().unwrap();
         mem.spans.retain(|(id, _)| !remove.contains(id));
         let mut ids = Vec::new();
-        for span in add {
+        for (span, origin) in add {
             mem.next_span += 1;
             let id = SpanId(mem.next_span);
             mem.spans.push((id, span));
+            mem.origins.insert(id, origin);
             ids.push(id);
         }
         Ok(ids)
@@ -601,7 +683,7 @@ impl LiveSession<FakeGit, MemStore> {
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
         let started = seen && self.begin(&mut st).await?;
-        self.mark_hunks(&mut st, path, hunks, seen).await?;
+        self.mark_hunks(&mut st, View::Changeset, path, hunks, seen).await?;
         Ok(outcome(&st, update_of(&st, path)?, started))
     }
 
@@ -616,7 +698,8 @@ impl LiveSession<FakeGit, MemStore> {
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
         let started = acknowledged && self.begin(&mut st).await?;
-        self.mark_item(&mut st, path, kind, acknowledged).await?;
+        self.mark_item(&mut st, View::Changeset, path, kind, acknowledged)
+            .await?;
         Ok(outcome(&st, update_of(&st, path)?, started))
     }
 }

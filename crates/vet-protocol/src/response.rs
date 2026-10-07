@@ -5,9 +5,9 @@ use ts_rs::TS;
 
 use crate::{
     Account, Base, BaseDiff, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow, CommitInfo,
-    Diagnostic, DirEntry, Highlights, Impact, Locations, Manifest, ProjectId, PullRequestRow, PullRequestSource,
-    Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange,
-    TextContent, Thread, ThreadTarget, Unavailable, VersionInfo,
+    CommitUnit, Diagnostic, DirEntry, Highlights, Impact, Lens, Locations, Manifest, ProjectId, PullRequestRow,
+    PullRequestSource, Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, Side, SymbolSignature,
+    Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable, VersionInfo,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -54,6 +54,12 @@ pub enum Response {
     /// The versions of the open review, oldest first.
     Versions {
         versions: Vec<VersionInfo>,
+    },
+    /// The answer to `Commits`, at `revision`.
+    Commits {
+        revision: u32,
+        lens: Lens,
+        commits: Vec<CommitUnit>,
     },
     /// Boxed: it would make every response as large as the manifest.
     Manifest(Box<Manifest>),

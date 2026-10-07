@@ -13,19 +13,31 @@ struct Side {
     full: bool,
 }
 
+/// How a span relates to the changeset it is remapped onto.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RemapMode {
+    /// The span was marked in the same unit (the squash, or one commit) in an earlier state of
+    /// it: a base line that changed since means the target was seen against another base.
+    SameUnit,
+    /// The span was marked in another unit, whose base is not this one's. Each side carries over
+    /// on its own, by exact line identity, and no state degrades.
+    Projection,
+}
+
 /// Remap `span` from its recorded snapshots to the changeset `to`. Pass the
 /// recorded span each time, not an earlier remap, so reverting an edit restores
 /// coverage. `None` for a side whose file no longer exists. Prepare each file
 /// once and share it across spans. Only exact line
 /// identity carries coverage; a span may become several or none.
 ///
-/// Target lines that survive while any base line changed are
+/// In [`RemapMode::SameUnit`], target lines that survive while any base line changed are
 /// `SeenAgainstOldBase`.
 pub fn remap_span(
     span: &ReviewedSpan,
     to: Changeset,
     base: Option<&PreparedFile>,
     target: Option<&PreparedFile>,
+    mode: RemapMode,
 ) -> Vec<ReviewedSpan> {
     let b = span.base.as_ref().map(|a| remap_side(a, base, to.base));
     let t = span.target.as_ref().map(|a| remap_side(a, target, to.target));
@@ -39,7 +51,7 @@ pub fn remap_span(
         }];
     }
 
-    let base_changed = b.as_ref().is_some_and(|s| !s.full);
+    let base_changed = mode == RemapMode::SameUnit && b.as_ref().is_some_and(|s| !s.full);
     let target_state = if base_changed {
         SpanState::SeenAgainstOldBase
     } else {

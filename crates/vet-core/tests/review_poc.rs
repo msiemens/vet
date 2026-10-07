@@ -10,7 +10,7 @@ use vet_core::content::{
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::prepared::PreparedFile;
-use vet_core::remap::remap_span;
+use vet_core::remap::{RemapMode, remap_span};
 use vet_core::resolve::{Resolution, resolve_anchor};
 use vet_core::review::{
     Anchor, AnchorState, Confidence, FileRemapInput, Location, ReviewedSpan, Side, SpanState, StaleReason, Strategy,
@@ -87,7 +87,13 @@ fn remap(
     fx: &Fix,
 ) -> Vec<ReviewedSpan> {
     let prepare = |i| PreparedFile::new(i, &fx.0);
-    remap_span(span, NOW, base.map(prepare).as_ref(), target.map(prepare).as_ref())
+    remap_span(
+        span,
+        NOW,
+        base.map(prepare).as_ref(),
+        target.map(prepare).as_ref(),
+        RemapMode::SameUnit,
+    )
 }
 
 fn target_span(a: Anchor) -> ReviewedSpan {
@@ -189,6 +195,37 @@ fn base_change_marks_seen_against_old_base() {
             .iter()
             .all(|(r, s)| *s == SpanState::Seen && !r.is_empty())
     );
+}
+
+#[test]
+fn a_mark_from_another_unit_keeps_its_state_when_the_base_lines_differ() {
+    let mut fx = Fix::default();
+    let base_old = numbered(30);
+    let mut base_new = base_old.clone();
+    base_new[12] = "an earlier commit's line".into();
+    let target: Vec<String> = (0..30).map(|i| format!("target {i:02}")).collect();
+    let (bo, bn, t) = (
+        fx.blob(&join(&base_old)),
+        fx.blob(&join(&base_new)),
+        fx.blob(&join(&target)),
+    );
+    let span = ReviewedSpan {
+        base: Some(anchor(Side::Base, "a.rs", &join(&base_old), range(10, 15))),
+        target: Some(anchor(Side::Target, "a.rs", &join(&target), range(10, 15))),
+        state: SpanState::Seen,
+    };
+    let prepare = |i| PreparedFile::new(i, &fx.0);
+    let (base, same) = (input("a.rs", bo, bn), input("a.rs", t, t));
+
+    let out = remap_span(
+        &span,
+        NOW,
+        Some(&prepare(&base)),
+        Some(&prepare(&same)),
+        RemapMode::Projection,
+    );
+
+    assert_eq!(ranges(&out, Side::Target), vec![(range(10, 15), SpanState::Seen)]);
 }
 
 #[test]

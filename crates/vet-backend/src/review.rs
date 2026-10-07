@@ -24,6 +24,17 @@ impl Orchestrator {
         Ok(mapping::versions(&versions))
     }
 
+    pub(crate) async fn commits(&self, project: ProjectId) -> Result<Response, String> {
+        let list = self.ready(project).await?.session.commits().await.map_err(message)?;
+        Ok(mapping::commits(&list))
+    }
+
+    pub(crate) async fn set_lens(&self, project: ProjectId, lens: vet_protocol::Lens) -> Result<Response, String> {
+        let open = self.ready(project).await?;
+        open.session.set_lens(mapping::core_lens(lens)).await.map_err(message)?;
+        Ok(Response::Done)
+    }
+
     pub(crate) async fn manifest(&self, project: ProjectId, view: vet_protocol::View) -> Result<Response, String> {
         let open = self.ready(project).await?;
         let view = open.session.manifest(mapping::core_view(view)).await.map_err(message)?;

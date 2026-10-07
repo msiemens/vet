@@ -220,6 +220,8 @@ impl Orchestrator {
             Request::Tasks { project } => self.tasks(project).await,
             Request::FinishReview { project } => self.finish_review(project).await,
             Request::Versions { project } => self.versions(project).await,
+            Request::Commits { project } => self.commits(project).await,
+            Request::SetLens { project, lens } => self.set_lens(project, lens).await,
             Request::Manifest { project, view } => self.manifest(project, view).await,
             Request::FileContents { project, view, path } => self.file_contents(project, view, &path).await,
             Request::ToggleHunk {

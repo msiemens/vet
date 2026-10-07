@@ -224,6 +224,12 @@ impl Handler for Mock {
                 })
             }
             Request::Versions { .. } => Ok(Response::Versions { versions: Vec::new() }),
+            Request::Commits { .. } => Ok(Response::Commits {
+                revision: 0,
+                lens: vet_protocol::Lens::Squash,
+                commits: Vec::new(),
+            }),
+            Request::SetLens { .. } => Err("the corpus is one changeset".into()),
             Request::ToggleHunk {
                 project,
                 revision,

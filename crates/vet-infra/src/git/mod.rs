@@ -9,6 +9,7 @@ mod checkout;
 mod diff;
 mod fetch;
 mod ignore;
+mod remerge;
 mod scan;
 mod stat_cache;
 mod tree;
@@ -21,8 +22,9 @@ use std::sync::Arc;
 use gix::bstr::ByteSlice;
 use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
-    BaseCandidates, BlobRead, BlobReader, BranchInfo, ChangesetRefs, Checkout, CheckoutError, CommitInfo, Differ,
-    Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefUpdate, RemoteInfo, Scan, Scanner, Store,
+    BaseCandidates, BlobRead, BlobReader, BranchInfo, ChangesetRefs, Checkout, CheckoutError, CommitDetail, CommitInfo,
+    Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefUpdate, Remerged, RemoteInfo, Scan, Scanner,
+    Store,
 };
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
@@ -292,6 +294,16 @@ impl History for GixRepo {
     async fn commit_info(&self, commit: &CommitId) -> Result<CommitInfo, GitError> {
         let commit = commit.clone();
         self.blocking(move |i| base::commit_info(&i.open()?, &commit)).await
+    }
+
+    async fn commit_detail(&self, commit: &CommitId) -> Result<CommitDetail, GitError> {
+        let commit = commit.clone();
+        self.blocking(move |i| i.commit_detail(&commit)).await
+    }
+
+    async fn remerge(&self, merge: &CommitId) -> Result<Option<Remerged>, GitError> {
+        let merge = merge.clone();
+        self.blocking(move |i| i.remerge(&merge)).await
     }
 
     async fn first_parent_distance(

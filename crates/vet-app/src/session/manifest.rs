@@ -20,8 +20,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     pub async fn manifest(&self, view: View) -> Result<ManifestView> {
         let mut st = self.state.lock().await;
         self.ensure_view(&mut st, view).await?;
-        if let View::Interdiff { from, to } = view {
-            return self.interdiff_manifest(&st, from, to).await;
+        match view {
+            View::Interdiff { from, to } => return self.interdiff_manifest(&st, from, to).await,
+            View::Commit { index } => return self.commit_manifest(&st, index).await,
+            View::Changeset => {}
         }
         let branches = self.acquisition.git.branches().await?;
         let base = self.base_view(&st, &branches).await?;
@@ -153,7 +155,12 @@ pub(super) fn status_of(diff: Option<&FileDiff>, items: &[NonTextChange]) -> Fil
     }
 }
 
-fn review_of(cov: &Coverage, diff: Option<&FileDiff>, items: &[NonTextChange], acked: &[NonTextChange]) -> ReviewView {
+pub(super) fn review_of(
+    cov: &Coverage,
+    diff: Option<&FileDiff>,
+    items: &[NonTextChange],
+    acked: &[NonTextChange],
+) -> ReviewView {
     ReviewView {
         hunks: diff.map(|d| cov.hunk_states(d)).unwrap_or_default(),
         old_base_lines: diff.map(|d| cov.old_base_lines(d)).unwrap_or_default(),
@@ -182,7 +189,7 @@ pub(super) fn update_of(st: &State, path: &str) -> Result<ReviewUpdateView> {
 }
 
 /// The completion of one file: its text diff, if it has one, and its shown non-text items.
-fn file_completion(
+pub(super) fn file_completion(
     cov: &Coverage,
     filter: &ReviewFilter,
     diff: Option<&FileDiff>,

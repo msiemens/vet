@@ -20,15 +20,19 @@ use crate::base;
 use crate::changeset::{BaseChoice, Version};
 use crate::ports::{GitRepo, LiveStore};
 use crate::progress::TaskKind;
+use crate::review::SpanOrigin;
 
-/// What a request about the changeset's files reads: the changeset itself, or the interdiff of
-/// two of the review's versions.
+/// What a request about the changeset's files reads: the changeset itself, the interdiff of
+/// two of the review's versions, or one commit's own diff.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum View {
     #[default]
     Changeset,
     /// Version `from` against the later version `to`.
     Interdiff { from: u32, to: u32 },
+    /// The `index`th commit of the changeset, oldest first: what it changed against its parent
+    /// (for a merge, against the automatic merge of its parents).
+    Commit { index: u32 },
 }
 
 /// An interdiff computed at the current revision.
@@ -48,8 +52,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Computes what `view` shows, if it is not yet.
     pub(super) async fn ensure_view(&self, st: &mut State, view: View) -> Result<()> {
         self.ensure_changes(st).await?;
-        let View::Interdiff { from, to } = view else {
-            return Ok(());
+        let (from, to) = match view {
+            View::Changeset => return Ok(()),
+            View::Commit { index } => return self.ensure_commit(st, index).await,
+            View::Interdiff { from, to } => (from, to),
         };
         if st
             .changes
@@ -223,8 +229,15 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             }
             (regions, add)
         };
-        self.apply_marks(st, regions, if seen { add } else { Vec::new() }, seen)
-            .await
+        self.apply_marks(
+            st,
+            View::Changeset,
+            regions,
+            if seen { add } else { Vec::new() },
+            SpanOrigin::Squash,
+            seen,
+        )
+        .await
     }
 }
 
@@ -240,18 +253,31 @@ pub(super) fn check_markable(st: &State, view: View) -> Result<()> {
     }
 }
 
-/// Whether marks and comments can be made in `view`, which `ensure_view` computed.
+/// Whether marks can be made in `view`, which `ensure_view` computed.
 pub(super) fn markable(st: &State, view: View) -> bool {
     match view {
-        View::Changeset => true,
+        View::Changeset | View::Commit { .. } => true,
         View::Interdiff { from, to } => st.changes.as_ref().expect("computed").interdiffs[&(from, to)].markable,
     }
 }
 
+/// What a request to comment may do: comments are on the changeset and its interdiffs, not on one
+/// commit's own diff.
+pub(super) fn check_commentable(st: &State, view: View) -> Result<()> {
+    if matches!(view, View::Commit { .. }) {
+        return Err(SessionError::Invalid(
+            "comments are made in All changes, not in one commit".into(),
+        ));
+    }
+    check_markable(st, view)
+}
+
 /// The review state of `path` in `view` with the completions it implies.
 pub(super) fn update_in(st: &State, view: View, path: &str) -> Result<ReviewUpdateView> {
-    let View::Interdiff { from, to } = view else {
-        return super::manifest::update_of(st, path);
+    let (from, to) = match view {
+        View::Changeset => return super::manifest::update_of(st, path),
+        View::Commit { index } => return super::lens::commit_update(st, index, path),
+        View::Interdiff { from, to } => (from, to),
     };
     let id = &st.changes.as_ref().expect("computed").interdiffs[&(from, to)];
     let lens = Lens::new(st, id);

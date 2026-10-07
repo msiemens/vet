@@ -3,19 +3,21 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use vet_core::content::{BlobId, Changeset, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
+use vet_core::content::{BlobId, EntryKind, NonTextKind, RenameMap, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
 use vet_core::prepared::PreparedFile;
-use vet_core::remap::remap_span;
+use vet_core::remap::{RemapMode, remap_span};
 use vet_core::resolve::{Resolution, resolve_anchor};
 use vet_core::review::{Anchor, CommentTarget, FileRemapInput, ReviewedSpan, Side, Thread, ThreadId};
 
 use super::blobs::image_media_type;
+use super::interdiff::View;
+use super::lens::commit_frame;
 use super::state::{Changes, State};
 use super::views::{ItemView, ModeChange};
 use super::{LiveSession, Result};
 use crate::ports::{GitRepo, LiveStore};
 use crate::progress::{Running, TaskKind};
-use crate::review::{RecordedSpan, SpanId};
+use crate::review::{RecordedSpan, SpanId, SpanOrigin};
 
 /// Indices into the prepared files of a recorded span's base and target side.
 pub(super) type Slot = (Option<usize>, Option<usize>);
@@ -28,13 +30,48 @@ pub(super) struct Prepared {
     pub(super) threads: Vec<Option<usize>>,
 }
 
+/// What spans and anchors are remapped onto: the two snapshots of a view's unit, and what was
+/// marked in that very unit.
+pub(super) struct Frame<'a> {
+    pub(super) base: &'a Snapshot,
+    pub(super) target: &'a Snapshot,
+    /// The origin of the spans marked in this unit: they remap as the same unit, the others as
+    /// projections.
+    pub(super) origin: SpanOrigin,
+    pub(super) renames: RenameMap,
+}
+
+impl Frame<'_> {
+    fn mode_of(&self, span: &RecordedSpan) -> RemapMode {
+        if span.origin == self.origin {
+            RemapMode::SameUnit
+        } else {
+            RemapMode::Projection
+        }
+    }
+}
+
+/// The frame of `view`, a view of the changeset or of one commit, whose changes `ensure_view` computed.
+/// `renames` are those of the view's own diff.
+pub(super) fn frame_of(st: &State, view: View, renames: RenameMap) -> Frame<'_> {
+    match view {
+        View::Commit { index } => commit_frame(st, index, renames),
+        _ => Frame {
+            base: &st.base,
+            target: &st.target,
+            origin: SpanOrigin::Squash,
+            renames,
+        },
+    }
+}
+
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     pub(super) async fn ensure_changes(&self, st: &mut State) -> Result<()> {
         if st.changes.is_some() {
             return Ok(());
         }
         let task = self.acquisition.tasks.start(TaskKind::Diff, "Diffing the changes");
-        let diffed = self.diffed(st, &task).await;
+        let diffed = self.diffed(&st.base, &st.target, &task).await;
         task.conclude(&diffed);
         let (diff, blobs) = diffed?;
         st.changes = Some(self.changes_of(diff, blobs).await);
@@ -73,22 +110,20 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             diff,
             changed,
             blobs,
-            remapped: Vec::new(),
-            flat: Vec::new(),
-            resolutions: HashMap::new(),
             items,
-            interdiffs: HashMap::new(),
+            ..Default::default()
         }
     }
 
-    /// The diff of the base and the target, and the content of every text file it
-    /// changes; `task` reports the files loaded.
-    async fn diffed(&self, st: &State, task: &Running) -> Result<(SnapshotDiff, BTreeMap<BlobId, Vec<u8>>)> {
-        let diff = self
-            .acquisition
-            .git
-            .diff(&self.acquisition.store, &st.base, &st.target)
-            .await?;
+    /// The diff of two snapshots, and the content of every text file it changes; `task` reports
+    /// the files loaded.
+    pub(super) async fn diffed(
+        &self,
+        old: &Snapshot,
+        new: &Snapshot,
+        task: &Running,
+    ) -> Result<(SnapshotDiff, BTreeMap<BlobId, Vec<u8>>)> {
+        let diff = self.acquisition.git.diff(&self.acquisition.store, old, new).await?;
         let mut blobs = BTreeMap::new();
         let total = diff.files.len() as u32;
         for (done, d) in diff.files.iter().enumerate() {
@@ -102,19 +137,45 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         Ok((diff, blobs))
     }
 
-    /// Remaps every recorded span onto the current changeset (§5.2) and
-    /// resolves every range thread's anchor (§5.1), each from what was recorded.
+    /// Remaps every recorded span onto the changeset and, once computed, each commit's own diff
+    /// (§5.2), and resolves every range thread's anchor (§5.1) in the changeset, each from what
+    /// was recorded.
     pub(super) async fn remap(&self, st: &mut State) -> Result<()> {
-        let Prepared { inputs, spans, threads } = self.prepare(st).await?;
-        let to = Changeset {
-            base: st.base.id,
-            target: st.target.id,
+        self.load_known(st).await?;
+        let mut result = self.remap_view(st, View::Changeset).await;
+        let count = st
+            .changes
+            .as_ref()
+            .and_then(|c| c.commits.as_ref())
+            .map_or(0, |units| units.len());
+        for index in 0..count as u32 {
+            if result.is_ok() {
+                result = self.remap_view(st, View::Commit { index }).await;
+            }
+        }
+        result
+    }
+
+    /// Remaps onto one view of the changeset or of a commit; only the changeset resolves threads.
+    pub(super) async fn remap_view(&self, st: &mut State, view: View) -> Result<()> {
+        let mut changes = std::mem::take(st.changes_in_mut(view));
+        let remapped = self.remapped(st, view, &mut changes).await;
+        *st.changes_in_mut(view) = changes;
+        remapped
+    }
+
+    async fn remapped(&self, st: &State, view: View, changes: &mut Changes) -> Result<()> {
+        let frame = frame_of(st, view, changes.diff.renames.clone());
+        let Prepared { inputs, spans, threads } = self.prepare(st, &frame, changes).await?;
+        let resolving = view == View::Changeset;
+        let to = vet_core::content::Changeset {
+            base: frame.base.id,
+            target: frame.target.id,
         };
-        let changes = st.changes.as_mut().expect("diffed");
         let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &changes.blobs)).collect();
 
         // Moved content is searched for among the changed files of the anchor's side.
-        let (base_inputs, target_inputs) = if threads.iter().any(Option::is_some) {
+        let (base_inputs, target_inputs) = if resolving && threads.iter().any(Option::is_some) {
             changed_inputs(&changes.diff)
         } else {
             Default::default()
@@ -130,7 +191,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             .iter()
             .zip(&threads)
             .filter_map(|(t, slot)| match (&t.target, slot) {
-                (CommentTarget::Range(a), Some(i)) => {
+                (CommentTarget::Range(a), Some(i)) if resolving => {
                     let changed = if a.side == Side::Base {
                         &base_changed
                     } else {
@@ -143,16 +204,13 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             .collect();
         drop((base_changed, target_changed));
 
-        let slots = spans;
         let remapped: Vec<(SpanId, Vec<ReviewedSpan>)> = st
             .recorded
             .iter()
-            .zip(&slots)
+            .zip(&spans)
             .map(|(rec, &(b, t))| {
-                (
-                    rec.id,
-                    remap_span(&rec.span, to, b.map(|i| &prepared[i]), t.map(|i| &prepared[i])),
-                )
+                let (b, t) = (b.map(|i| &prepared[i]), t.map(|i| &prepared[i]));
+                (rec.id, remap_span(&rec.span, to, b, t, frame.mode_of(rec)))
             })
             .collect();
         drop(prepared);
@@ -162,9 +220,24 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         Ok(())
     }
 
+    /// Loads the snapshots the recorded spans and the range threads are anchored in, and drops
+    /// the others.
+    pub(super) async fn load_known(&self, st: &mut State) -> Result<()> {
+        let referenced: Vec<SnapshotId> = st.anchors().map(|a| a.snapshot).collect();
+        for &id in &referenced {
+            if st.snapshot(id).is_none()
+                && let Some((snapshot, _)) = self.acquisition.store.snapshot(id).await?
+            {
+                st.known.insert(id, snapshot);
+            }
+        }
+        st.known.retain(|id, _| referenced.contains(id));
+        Ok(())
+    }
+
     /// The file pairs of the anchors' sides, and for each recorded span and
     /// thread the indices of its pairs. Loads the texts into `changes.blobs`.
-    pub(super) async fn prepare(&self, st: &mut State) -> Result<Prepared> {
+    pub(super) async fn prepare(&self, st: &State, frame: &Frame<'_>, changes: &mut Changes) -> Result<Prepared> {
         let anchors = |r: &RecordedSpan| {
             [(true, r.span.base.clone()), (false, r.span.target.clone())]
                 .into_iter()
@@ -175,18 +248,15 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             CommentTarget::Range(a) => Some((a.side == Side::Base, a.clone())),
             _ => None,
         };
-        let referenced: Vec<SnapshotId> = st.anchors().map(|a| a.snapshot).collect();
-        for &id in &referenced {
-            if st.snapshot(id).is_none()
-                && let Some((snapshot, _)) = self.acquisition.store.snapshot(id).await?
-            {
-                st.known.insert(id, snapshot);
-            }
-        }
-        st.known.retain(|id, _| referenced.contains(id));
+        // Anchored snapshots may be the ones the view is of, which the session holds apart.
+        let find = |id: SnapshotId| match id {
+            _ if id == frame.base.id => Some(frame.base),
+            _ if id == frame.target.id => Some(frame.target),
+            _ => st.snapshot(id),
+        };
 
-        let mut blobs = std::mem::take(&mut st.changes.as_mut().expect("diffed").blobs);
-        let renames = &st.changes.as_ref().expect("diffed").diff.renames;
+        let mut blobs = std::mem::take(&mut changes.blobs);
+        let renames = &frame.renames;
         let file_entry = |snapshot: Option<&Snapshot>, path: &RepoPath| {
             snapshot
                 .and_then(|s| s.entries.get(path))
@@ -201,14 +271,14 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             *index.entry(key).or_insert_with(|| {
                 // The base side stays at its path; the target side follows a
                 // rename from `HEAD` if its file is gone.
-                let new_path = if is_base || st.target.entries.contains_key(&a.file) {
+                let new_path = if is_base || frame.target.entries.contains_key(&a.file) {
                     Some(a.file.clone())
                 } else {
                     renames.0.get(&a.file).cloned()
                 };
-                let current = if is_base { &st.base } else { &st.target };
+                let current = if is_base { frame.base } else { frame.target };
                 inputs.push(FileRemapInput {
-                    old_blob: file_entry(st.snapshot(a.snapshot), &a.file),
+                    old_blob: file_entry(find(a.snapshot), &a.file),
                     new_blob: new_path.as_ref().and_then(|p| file_entry(Some(current), p)),
                     old_path: Some(a.file.clone()),
                     new_path,
@@ -239,7 +309,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 }
             }
         }
-        st.changes.as_mut().expect("diffed").blobs = blobs;
+        changes.blobs = blobs;
         loaded.map(|()| Prepared { inputs, spans, threads })
     }
 }

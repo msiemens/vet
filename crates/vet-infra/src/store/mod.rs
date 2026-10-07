@@ -24,9 +24,9 @@ use sea_orm::{
     IntoActiveModel, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Set, SqlxSqliteConnector, TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait;
-use vet_app::changeset::{BaseChoice, ChangesetId, Source, Version};
+use vet_app::changeset::{BaseChoice, ChangesetId, Lens, Source, Version};
 use vet_app::ports::{ChangesetStore, ReviewStore, Store, StoreError, ThreadStore};
-use vet_app::review::{ChangesetThread, NonTextAck, Review, ReviewId, SpanId};
+use vet_app::review::{ChangesetThread, NonTextAck, Review, ReviewId, SpanId, SpanOrigin};
 use vet_core::content::{BlobId, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::{self, TreeNode};
@@ -337,6 +337,45 @@ impl ChangesetStore for SqliteStore {
             .map(|id| ChangesetId(id as u64)))
     }
 
+    async fn lens(&self, repo: String, source: Source) -> Result<Option<Lens>, StoreError> {
+        let (kind, key) = source_columns(&source);
+        let row = changeset::Entity::find()
+            .filter(changeset::Column::Repo.eq(repo))
+            .filter(changeset::Column::Kind.eq(kind))
+            .filter(changeset::Column::Key.eq(key))
+            .one(&self.db)
+            .await?;
+        Ok(row.and_then(|r| r.lens).map(Into::into))
+    }
+
+    async fn set_lens(&self, repo: String, source: Source, lens: Lens) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        match find_changeset(&txn, repo.clone(), &source).await? {
+            Some(id) => {
+                changeset::ActiveModel {
+                    id: Set(id),
+                    lens: Set(Some(lens.into())),
+                    ..Default::default()
+                }
+                .update(&txn)
+                .await?;
+            }
+            None => {
+                let (kind, key) = source_columns(&source);
+                changeset::ActiveModel {
+                    repo: Set(repo),
+                    kind: Set(kind),
+                    key: Set(key),
+                    lens: Set(Some(lens.into())),
+                    ..Default::default()
+                }
+                .insert(&txn)
+                .await?;
+            }
+        }
+        Ok(txn.commit().await?)
+    }
+
     async fn open_changesets(&self) -> Result<Vec<ChangesetId>, StoreError> {
         let ids: Vec<i64> = review::Entity::find()
             .filter(review::Column::ClosedAt.is_null())
@@ -531,7 +570,7 @@ impl ReviewStore for SqliteStore {
         &self,
         id: ReviewId,
         remove: Vec<SpanId>,
-        add: Vec<ReviewedSpan>,
+        add: Vec<(ReviewedSpan, SpanOrigin)>,
     ) -> Result<Vec<SpanId>, StoreError> {
         let txn = self.db.begin().await?;
         let rid = id.0 as i64;
@@ -556,12 +595,16 @@ impl ReviewStore for SqliteStore {
             .exec(&txn)
             .await?;
         let mut ids = Vec::new();
-        for s in &add {
+        for (s, origin) in &add {
             let row = span::ActiveModel {
                 review: Set(rid),
                 state: Set(s.state.into()),
                 base_anchor: Set(put_anchor(&txn, changeset, s.base.as_ref()).await?),
                 target_anchor: Set(put_anchor(&txn, changeset, s.target.as_ref()).await?),
+                origin_commit: Set(match origin {
+                    SpanOrigin::Squash => None,
+                    SpanOrigin::Commit(c) => Some(c.0.clone()),
+                }),
                 ..Default::default()
             }
             .insert(&txn)

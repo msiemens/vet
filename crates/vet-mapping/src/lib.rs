@@ -4,12 +4,13 @@ pub mod account;
 pub mod progress;
 pub mod semantic;
 
-use vet_app::changeset::{BaseChoice, CommitId, RemoteKey, Source, VersionOrigin};
+use vet_app::changeset::{BaseChoice, CommitId, Lens, RemoteKey, Source, VersionOrigin};
 use vet_app::platform::{CiState, PlatformError};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
 use vet_app::session::{
-    BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, DirEntryKind, DirListing, EntryInfo,
+    BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView, DirEntryKind,
+    DirListing, EntryInfo,
     FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView,
     ReviewView, RowReview, TargetText, ThreadView, ThreadsView, VersionView, View,
 };
@@ -74,6 +75,39 @@ pub fn core_view(view: p::View) -> View {
     match view {
         p::View::Changeset => View::Changeset,
         p::View::Interdiff { from, to } => View::Interdiff { from, to },
+        p::View::Commit { index } => View::Commit { index },
+    }
+}
+
+pub fn core_lens(lens: p::Lens) -> Lens {
+    match lens {
+        p::Lens::Squash => Lens::Squash,
+        p::Lens::PerCommit => Lens::PerCommit,
+    }
+}
+
+pub fn commits(list: &CommitsView) -> p::Response {
+    p::Response::Commits {
+        revision: list.revision,
+        lens: match list.lens {
+            Lens::Squash => p::Lens::Squash,
+            Lens::PerCommit => p::Lens::PerCommit,
+        },
+        commits: list
+            .commits
+            .iter()
+            .map(|c| p::CommitUnit {
+                commit: commit_info(&c.info),
+                body: c.body.clone(),
+                parents: c.parents.iter().map(|p| p.0.clone()).collect(),
+                kind: match c.kind {
+                    CommitKind::Commit => p::CommitKind::Commit,
+                    CommitKind::Merge { clean, remerged } => p::CommitKind::Merge { clean, remerged },
+                },
+                delta: line_delta(c.delta),
+                completion: completion(&c.completion),
+            })
+            .collect(),
     }
 }
 

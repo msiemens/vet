@@ -11,12 +11,14 @@ use vet_core::resolve::Resolution;
 use vet_core::review::{Anchor, CommentTarget, ReviewedSpan, Thread, ThreadId};
 
 use super::interdiff::{Interdiffed, View};
+use super::lens::CommitUnit;
 use super::views::{ItemView, Lifecycle, Outcome};
 use super::{Result, SessionError};
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source};
 use crate::review::{NonTextAck, RecordedSpan, ReviewId, SpanId};
 
 /// What the current revision's diff needs, computed on first use.
+#[derive(Default)]
 pub(super) struct Changes {
     pub(super) diff: SnapshotDiff,
     /// Every path the diff mentions, on either side.
@@ -32,6 +34,8 @@ pub(super) struct Changes {
     pub(super) items: Vec<ItemView>,
     /// The interdiffs asked for at this revision, by the versions they compare.
     pub(super) interdiffs: HashMap<(u32, u32), Interdiffed>,
+    /// The commits of the changeset, each with its own diff, once the by-commit lens asked.
+    pub(super) commits: Option<Vec<CommitUnit>>,
 }
 
 /// A started review.
@@ -78,6 +82,7 @@ impl State {
         match view {
             View::Changeset => changes,
             View::Interdiff { from, to } => &changes.interdiffs[&(from, to)].changes,
+            View::Commit { index } => &commits(changes)[index as usize].changes,
         }
     }
 
@@ -86,6 +91,7 @@ impl State {
         match view {
             View::Changeset => changes,
             View::Interdiff { from, to } => &mut changes.interdiffs.get_mut(&(from, to)).expect("computed").changes,
+            View::Commit { index } => &mut changes.commits.as_mut().expect("computed")[index as usize].changes,
         }
     }
 
@@ -109,6 +115,11 @@ impl State {
             self.known.get(&id)
         }
     }
+}
+
+/// The commit units of `changes`, which `ensure_view` computed for a commit view.
+pub(super) fn commits(changes: &Changes) -> &[CommitUnit] {
+    changes.commits.as_deref().expect("computed")
 }
 
 pub(super) fn outcome<T>(st: &State, value: T, started: bool) -> Outcome<T> {

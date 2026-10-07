@@ -9,12 +9,13 @@ use vet_core::remap::cut_recorded;
 use vet_core::review::ReviewedSpan;
 
 use super::interdiff::{View, check_markable, squash_item, update_in};
-use super::remap::Prepared;
+use super::lens::view_unit;
+use super::remap::{Prepared, frame_of};
 use super::state::{State, ack_of, check_revision, find_diff, find_non_text, outcome, shown_items};
 use super::views::{Outcome, ReviewUpdateView};
 use super::{LiveSession, Result, SessionError};
 use crate::ports::{GitRepo, LiveStore};
-use crate::review::RecordedSpan;
+use crate::review::{RecordedSpan, SpanOrigin};
 
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Flips one hunk: seen becomes unseen, anything else (unseen, or seen against an old base)
@@ -81,11 +82,11 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         self.ensure_view(&mut st, view).await?;
         check_markable(&st, view)?;
         let acknowledged = !update_in(&st, view, path)?.review.acknowledged.contains(&kind);
-        if view != View::Changeset && !self.has_counterpart(&st, view, path, kind) {
+        if matches!(view, View::Interdiff { .. }) && !self.has_counterpart(&st, view, path, kind) {
             return Err(SessionError::Invalid("nothing is left to review in this change".into()));
         }
         let started = acknowledged && self.begin(&mut st).await?;
-        self.mark_item(&mut st, path, kind, acknowledged).await?;
+        self.mark_item(&mut st, view, path, kind, acknowledged).await?;
         Ok(outcome(&st, update_in(&st, view, path)?, started))
     }
 
@@ -108,7 +109,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 .collect();
             let kinds = shown_items(diff, &st.filter, path)
                 .iter()
-                .filter(|n| view == View::Changeset || self.has_counterpart(&st, view, path, n.kind))
+                .filter(|n| !matches!(view, View::Interdiff { .. }) || self.has_counterpart(&st, view, path, n.kind))
                 .filter(|n| update.review.acknowledged.contains(&n.kind) != seen)
                 .map(|n| n.kind)
                 .collect();
@@ -118,7 +119,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             self.mark_hunks_in(&mut st, view, path, &hunks, seen).await?;
         }
         for kind in kinds {
-            self.mark_item(&mut st, path, kind, seen).await?;
+            self.mark_item(&mut st, view, path, kind, seen).await?;
         }
         Ok(outcome(&st, update_in(&st, view, path)?, started))
     }
@@ -140,19 +141,32 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
 
     async fn mark_hunks_in(&self, st: &mut State, view: View, path: &str, hunks: &[u32], seen: bool) -> Result<()> {
         match view {
-            View::Changeset => self.mark_hunks(st, path, hunks, seen).await,
+            View::Changeset | View::Commit { .. } => self.mark_hunks(st, view, path, hunks, seen).await,
             View::Interdiff { from, to } => self.mark_interdiff_hunks(st, (from, to), path, hunks, seen).await,
         }
     }
 
-    /// Records the hunks (indices into the file's hunks) as seen, or cuts them out of the
-    /// recorded spans.
-    pub(super) async fn mark_hunks(&self, st: &mut State, path: &str, hunks: &[u32], seen: bool) -> Result<()> {
+    /// Records the hunks (indices into the file's hunks) of the changeset or of one commit as
+    /// seen, or cuts them out of the recorded spans.
+    pub(super) async fn mark_hunks(
+        &self,
+        st: &mut State,
+        view: View,
+        path: &str,
+        hunks: &[u32],
+        seen: bool,
+    ) -> Result<()> {
+        let (base, target, origin) = view_unit(st, view);
+        if seen && st.review.is_some() && matches!(view, View::Commit { .. }) {
+            // The snapshots a commit's marks are anchored in are not the changeset's own, so
+            // they must be there to be loaded once the session is not.
+            self.keep_snapshots(st, view).await?;
+        }
         let (regions, add) = {
-            let changes = st.changes.as_ref().expect("computed");
+            let changes = st.changes_in(view);
             let diff = find_diff(&changes.diff, path).ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
             let blob_text = |blob: Option<BlobId>| blob.and_then(|b| changes.blobs.get(&b)).map(Vec::as_slice);
-            let ids = (st.base.id, st.target.id);
+            let ids = (base, target);
             let (mut regions, mut add) = (Vec::new(), Vec::new());
             for &i in hunks {
                 let hunk = diff
@@ -167,35 +181,46 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             }
             (regions, add)
         };
-        self.apply_marks(st, regions, add, seen).await
+        self.apply_marks(st, view, regions, add, origin, seen).await
     }
 
-    /// Cuts the lines of `regions` out of the recorded spans, then records `add` as seen.
+    /// Cuts the lines of `regions`, which are of `view`, out of the recorded spans, then records
+    /// `add` as seen, marked in `origin`.
     pub(super) async fn apply_marks(
         &self,
         st: &mut State,
+        view: View,
         regions: Vec<Region>,
         add: Vec<ReviewedSpan>,
+        origin: SpanOrigin,
         seen: bool,
     ) -> Result<()> {
-        let Prepared {
-            inputs, spans: slots, ..
-        } = self.prepare(st).await?;
-        let (remove, add) = {
-            let changes = st.changes.as_ref().expect("computed");
-            let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &changes.blobs)).collect();
-            let mut remove = Vec::new();
-            let mut kept = Vec::new();
-            for (rec, &(b, t)) in st.recorded.iter().zip(&slots) {
-                let (b, t) = (b.map(|i| &prepared[i]), t.map(|i| &prepared[i]));
-                if let Some(rest) = cut_recorded(&rec.span, &regions, b, t) {
-                    remove.push(rec.id);
-                    kept.extend(rest);
-                }
-            }
-            kept.extend(add);
-            (remove, kept)
+        self.load_known(st).await?;
+        let mut changes = std::mem::take(st.changes_in_mut(view));
+        let prepared = {
+            let frame = frame_of(st, view, changes.diff.renames.clone());
+            self.prepare(st, &frame, &mut changes).await
         };
+        let cut = prepared.map(
+            |Prepared {
+                 inputs, spans: slots, ..
+             }| {
+                let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &changes.blobs)).collect();
+                let mut remove = Vec::new();
+                let mut kept: Vec<(ReviewedSpan, SpanOrigin)> = Vec::new();
+                for (rec, &(b, t)) in st.recorded.iter().zip(&slots) {
+                    let (b, t) = (b.map(|i| &prepared[i]), t.map(|i| &prepared[i]));
+                    if let Some(rest) = cut_recorded(&rec.span, &regions, b, t) {
+                        remove.push(rec.id);
+                        kept.extend(rest.into_iter().map(|s| (s, rec.origin.clone())));
+                    }
+                }
+                kept.extend(add.into_iter().map(|s| (s, origin.clone())));
+                (remove, kept)
+            },
+        );
+        *st.changes_in_mut(view) = changes;
+        let (remove, add) = cut?;
         // Without a review there is nothing to un-mark and nothing to store.
         let ids = match &st.review {
             Some(review) => {
@@ -207,8 +232,11 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             None => Vec::new(),
         };
         st.recorded.retain(|r| !remove.contains(&r.id));
-        st.recorded
-            .extend(ids.into_iter().zip(add).map(|(id, span)| RecordedSpan { id, span }));
+        st.recorded.extend(
+            ids.into_iter()
+                .zip(add)
+                .map(|(id, (span, origin))| RecordedSpan { id, span, origin }),
+        );
         if seen {
             self.note_reviewed(st).await?;
         }
@@ -233,12 +261,19 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     pub(super) async fn mark_item(
         &self,
         st: &mut State,
+        view: View,
         path: &str,
         kind: NonTextKind,
         acknowledged: bool,
     ) -> Result<()> {
+        // In an interdiff the acknowledgement is of the changeset's own change.
+        let view = if matches!(view, View::Commit { .. }) {
+            view
+        } else {
+            View::Changeset
+        };
         let change = {
-            let diff = &st.changes.as_ref().expect("computed").diff;
+            let diff = &st.changes_in(view).diff;
             find_non_text(diff, kind, path).ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?
         };
         let ack = ack_of(change);

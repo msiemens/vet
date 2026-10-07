@@ -62,7 +62,8 @@ pub async fn thread_changed(open: &Ready, from: &Connection, thread: &ThreadView
 }
 
 /// The protocol update for the requester; the other subscribers are told too. A mark made in an
-/// interdiff changed the changeset, whose file everyone shows, the requester included.
+/// interdiff or in a commit can change the changeset, whose file everyone shows, the requester
+/// included.
 pub async fn review_changed(
     open: &Ready,
     from: &Connection,
@@ -79,7 +80,7 @@ pub async fn review_changed(
                 update: mapped.clone(),
             },
         ),
-        View::Interdiff { .. } => {
+        View::Interdiff { .. } | View::Commit { .. } => {
             if let Ok(changeset) = open.session.changeset_update(&mapped.path).await {
                 open.subscribers.broadcast(Event::ReviewChanged {
                     project: open.id,

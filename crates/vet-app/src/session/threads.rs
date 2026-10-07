@@ -10,7 +10,7 @@ use vet_core::review::{
     target_line,
 };
 
-use super::interdiff::{View, check_markable, markable};
+use super::interdiff::{View, check_commentable, markable};
 use super::manifest::{old_path_of, status_of};
 use super::state::{Changes, State, check_revision, find_diff, outcome, shown_items};
 use super::views::{FileStatus, Outcome};
@@ -98,6 +98,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             View::Interdiff { .. } => {
                 markable(&st, view) && matches!(&t.target, CommentTarget::Range(a) if a.side == Side::Target)
             }
+            View::Commit { .. } => false,
         };
         Ok(ThreadsView {
             revision: st.revision,
@@ -129,7 +130,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
         self.ensure_view(&mut st, view).await?;
-        check_markable(&st, view)?;
+        check_commentable(&st, view)?;
         let spot = self.spot(&st, view, path, at)?;
         match (&spot.target, view) {
             (
@@ -219,7 +220,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let mut st = self.state.lock().await;
         check_revision(&st, revision)?;
         self.ensure_view(&mut st, view).await?;
-        check_markable(&st, view)?;
+        check_commentable(&st, view)?;
         if let (
             View::Interdiff { .. },
             NewThread::Range { side: Side::Base, .. } | NewThread::File { side: Side::Base, .. },

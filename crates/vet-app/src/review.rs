@@ -6,7 +6,7 @@
 use vet_core::content::{FileEntry, NonTextKind, RepoPath};
 use vet_core::review::{ReviewedSpan, Thread, ThreadStatus};
 
-use crate::changeset::{BaseChoice, ChangesetId};
+use crate::changeset::{BaseChoice, ChangesetId, CommitId};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ReviewId(pub u64);
@@ -20,11 +20,20 @@ pub struct NonTextAck {
     pub after: Option<(RepoPath, FileEntry)>,
 }
 
+/// Where a span was marked: in the changeset as a whole, or in one commit's own diff. It decides
+/// how the span remaps onto another view (design §2.2).
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum SpanOrigin {
+    Squash,
+    Commit(CommitId),
+}
+
 /// A span as recorded, in the snapshots it was marked in; never remapped in place.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RecordedSpan {
     pub id: SpanId,
     pub span: ReviewedSpan,
+    pub origin: SpanOrigin,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
