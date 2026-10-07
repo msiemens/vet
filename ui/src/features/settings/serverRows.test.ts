@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ServerInfo } from "../../generated/ServerInfo.ts";
-import { appendLog, serverRow } from "./serverRows.ts";
+import { serverRow } from "./serverRows.ts";
 
 const found = (origin: "custom" | "project" | "installed" | "path"): ServerInfo => ({
   language: "rust",
@@ -63,10 +63,4 @@ void test("an unknown language falls back to its id", () => {
   const row = serverRow({ ...missing, language: "zig" });
   assert.equal(row.title, "zig");
   assert.equal(row.server, "Pyright");
-});
-
-void test("the install log keeps the newest lines", () => {
-  let lines: string[] = [];
-  for (let i = 0; i < 5; i++) lines = appendLog(lines, `l${i}`, 3);
-  assert.deepEqual(lines, ["l2", "l3", "l4"]);
 });

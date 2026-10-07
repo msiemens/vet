@@ -4,7 +4,6 @@
   import { THEMES, type Theme } from "../../lib/theme/theme";
   import Dialog from "../../lib/ui/Dialog.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
-  import type { Backend } from "../../state/backend";
   import ProjectPage from "./ProjectPage.svelte";
   import ServersPage from "./ServersPage.svelte";
 
@@ -12,15 +11,12 @@
     theme,
     ontheme,
     onclose,
-    backend,
     project,
     onfilter,
   }: {
     theme: Theme;
     ontheme: (theme: Theme) => void;
     onclose: () => void;
-    /** The language servers belong to the open repository's session, if there is one. */
-    backend?: Backend;
     /** The open repository's current manifest, which carries its review filter. */
     project?: Manifest;
     /** Saves the repository's review filter; resolves with the backend's message if it refused it. */
@@ -53,7 +49,7 @@
       onsave={onfilter}
     />
   {:else if page === "servers"}
-    <ServersPage {backend} />
+    <ServersPage />
   {:else}
     <section>
       <h3>Appearance</h3>

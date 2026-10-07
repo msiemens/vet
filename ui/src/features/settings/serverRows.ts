@@ -2,16 +2,10 @@
 
 import type { ServerInfo } from "../../generated/ServerInfo";
 import type { ServerOrigin } from "../../generated/ServerOrigin";
+import type { InstallProgress } from "../../state/installLog";
 
 /** `installing` and `failed` are the page's own: the protocol only knows found and missing. */
 export type ServerStatus = "found" | "custom" | "missing" | "installing" | "failed";
-
-/** An install of this language, as this page started it. */
-export interface InstallProgress {
-  running: boolean;
-  /** The backend's message for an install that did not work. */
-  error?: string;
-}
 
 export interface ServerRow {
   language: string;
@@ -81,10 +75,4 @@ export function serverRow(info: ServerInfo, install?: InstallProgress): ServerRo
     canInstall: info.pinnedVersion != null && !info.installBlocker && !install?.running,
     installBlocker: info.installBlocker ?? undefined,
   };
-}
-
-/** Keeps the newest `max` lines. */
-export function appendLog(lines: readonly string[], line: string, max = 500): string[] {
-  const next = [...lines, line];
-  return next.length > max ? next.slice(next.length - max) : next;
 }

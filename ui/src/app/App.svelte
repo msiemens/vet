@@ -204,7 +204,6 @@
     {theme}
     ontheme={(t) => applyTheme((theme = t))}
     onclose={() => (dialog = undefined)}
-    backend={session.repo ? session.backend : undefined}
     project={session.repo ? changeset.manifest : undefined}
     onfilter={(f) => changeset.setFilter(f)}
   />

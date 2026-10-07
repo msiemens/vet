@@ -1,66 +1,18 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { ServerInfo } from "../../generated/ServerInfo";
   import { errorText } from "../../lib/errorText";
-  import type { Backend } from "../../state/backend";
   import { hasNativeDialogs, pickFile } from "../../state/host";
-  import { appendLog, serverRow, type InstallProgress } from "./serverRows";
+  import { servers } from "../../state/servers.svelte";
+  import { serverRow } from "./serverRows";
 
-  let { backend }: { backend: Backend | undefined } = $props();
-
-  // The servers resolve per repository, so every request needs a session.
-  const available = $derived(backend?.session !== undefined);
-
-  let servers = $state.raw<ServerInfo[]>([]);
-  let loading = $state(false);
-  let loadError = $state<string>();
-  let installs = $state.raw<Partial<Record<string, InstallProgress>>>({});
-  let logs = $state.raw<Record<string, string[]>>({});
-  let logOpen = $state.raw<Record<string, boolean>>({});
   /** The language whose path editor is open, and what is typed in it. */
   let editing = $state<string>();
   let draft = $state("");
   let pathError = $state<{ language: string; message: string }>();
 
-  const rows = $derived(servers.map((info) => serverRow(info, installs[info.language])));
+  const rows = $derived(servers.servers.map((info) => serverRow(info, servers.installs[info.language])));
 
-  async function load() {
-    if (!backend) return;
-    loading = true;
-    try {
-      servers = await backend.listServers();
-      loadError = undefined;
-    } catch (e) {
-      loadError = errorText(e);
-    } finally {
-      loading = false;
-    }
-  }
-
-  onMount(() => {
-    if (available) void load();
-    return backend?.onEvent((event) => {
-      if (event.session !== backend.session) return;
-      if (event.type === "serverInstallOutput") {
-        logs = { ...logs, [event.language]: appendLog(logs[event.language] ?? [], event.line) };
-      } else if (event.type === "serversChanged") {
-        void load();
-      }
-    });
-  });
-
-  async function install(language: string) {
-    if (!backend) return;
-    installs = { ...installs, [language]: { running: true } };
-    logs = { ...logs, [language]: [] };
-    logOpen = { ...logOpen, [language]: true };
-    try {
-      servers = await backend.installServer(language);
-      installs = { ...installs, [language]: { running: false } };
-    } catch (e) {
-      installs = { ...installs, [language]: { running: false, error: errorText(e) } };
-    }
-  }
+  onMount(() => servers.start());
 
   function edit(language: string, current: string | undefined) {
     editing = language;
@@ -69,16 +21,9 @@
   }
 
   async function setPath(language: string, path: string | null) {
-    if (!backend) return;
-    try {
-      servers = await backend.setServerPath(language, path);
-      // The result of an earlier install no longer describes what resolves now.
-      installs = { ...installs, [language]: { running: false } };
-      editing = undefined;
-      pathError = undefined;
-    } catch (e) {
-      pathError = { language, message: errorText(e) };
-    }
+    const message = await servers.setPath(language, path);
+    pathError = message === undefined ? undefined : { language, message };
+    if (message === undefined) editing = undefined;
   }
 
   async function browse() {
@@ -91,16 +36,16 @@
   }
 </script>
 
-{#if !available}
+{#if !servers.available}
   <p class="empty">Language servers are resolved per repository. Open a repository to see and change them.</p>
-{:else if loadError}
-  <p class="problem">{loadError}</p>
-{:else if loading && !servers.length}
+{:else if servers.loadError}
+  <p class="problem">{servers.loadError}</p>
+{:else if servers.loading && !servers.servers.length}
   <p class="empty">Looking for language servers…</p>
 {:else}
   <ul>
     {#each rows as row (row.language)}
-      {@const log = logs[row.language] ?? []}
+      {@const log = servers.logs[row.language] ?? []}
       <li>
         <div class="head">
           <div class="text">
@@ -115,7 +60,8 @@
                 type="button"
                 disabled={!row.canInstall}
                 title={row.installBlocker}
-                onclick={() => void install(row.language)}>{row.status === "failed" ? "Retry" : "Install…"}</button
+                onclick={() => void servers.install(row.language)}
+                >{row.status === "failed" ? "Retry" : "Install…"}</button
               >
             {/if}
             <button
@@ -168,10 +114,10 @@
           {#if pathError?.language === row.language}<div class="problem">{pathError.message}</div>{/if}
         {/if}
 
-        {#if log.length || installs[row.language]?.running}
+        {#if log.length || servers.installs[row.language]?.running}
           <details
-            open={logOpen[row.language]}
-            ontoggle={(e) => (logOpen = { ...logOpen, [row.language]: e.currentTarget.open })}
+            open={servers.logOpen[row.language]}
+            ontoggle={(e) => servers.setLogOpen(row.language, e.currentTarget.open)}
           >
             <summary>Install output</summary>
             <pre class="log selectable">{log.join("\n")}</pre>
