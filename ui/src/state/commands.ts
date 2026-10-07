@@ -6,6 +6,7 @@ import type { Side } from "../generated/Side";
 import type { Thread } from "../generated/Thread";
 import { CommandRegistry } from "../lib/commands";
 import { type MenuSpec, resolveMenu } from "../lib/commandMenu";
+import { bindingSignal } from "./bindingSignal.svelte";
 import { isMac } from "./host";
 
 export type TabKind = "changes" | "file" | "text";
@@ -45,7 +46,7 @@ export interface CommandContext {
 
 const NONE: CommandContext = { repoOpen: false, reviewOpen: false, canQuit: false, diffView: false, hunk: -1 };
 
-export const commands = new CommandRegistry<CommandContext>(NONE, isMac ? "Meta" : "Ctrl");
+export const commands = new CommandRegistry<CommandContext>(NONE, isMac ? "Meta" : "Ctrl", bindingSignal);
 
 /**
  * The items of a menu description for the context of now plus `extra` (a context menu's subject),

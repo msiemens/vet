@@ -5,6 +5,7 @@
   import Dialog from "../../lib/ui/Dialog.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import AccountsPage from "./AccountsPage.svelte";
+  import KeymapPage from "./KeymapPage.svelte";
   import ProjectPage from "./ProjectPage.svelte";
   import ServersPage from "./ServersPage.svelte";
 
@@ -24,7 +25,7 @@
     onfilter: (filter: ReviewFilter) => Promise<string | undefined>;
   } = $props();
 
-  type Page = "general" | "project" | "servers" | "accounts";
+  type Page = "general" | "keymap" | "project" | "servers" | "accounts";
   let page = $state<Page>("general");
 </script>
 
@@ -38,13 +39,16 @@
       }}
       options={[
         { id: "general", label: "General" },
+        { id: "keymap", label: "Keymap" },
         { id: "project", label: "Review filter" },
         { id: "servers", label: "Language servers" },
         { id: "accounts", label: "Accounts" },
       ]}
     />
   </div>
-  {#if page === "project"}
+  {#if page === "keymap"}
+    <KeymapPage />
+  {:else if page === "project"}
     <ProjectPage
       filter={project?.filter}
       excluded={{ lines: project?.excludedLines ?? 0, items: project?.excludedItems ?? 0 }}

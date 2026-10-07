@@ -1,7 +1,7 @@
 // Run with `pnpm test` (node's built-in runner).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bindingOf, isTextInput, matches, type KeyLike } from "./keymap.ts";
+import { bindingOf, canonicalSpec, isTextInput, matches, specOf, type KeyLike } from "./keymap.ts";
 
 const key = (init: Partial<KeyLike>): KeyLike => ({
   key: "",
@@ -66,6 +66,32 @@ void test("Space toggles the current item, and only on its own", () => {
   assert.ok(!matches("Space", key({ key: " ", code: "Space", shiftKey: true })));
   assert.ok(!matches("Space", key({ key: " ", code: "Space", isComposing: true })));
   assert.ok(!matches("Space", key({ key: "s", code: "KeyS" })));
+});
+
+void test("a recorded key reads back as the spec that matches it, however the layout types it", () => {
+  const events = [
+    key({ key: "ß", code: "KeyS", ctrlKey: true, shiftKey: true }),
+    key({ key: "ArrowDown", code: "ArrowDown", ctrlKey: true, altKey: true }),
+    key({ key: " ", code: "Space" }),
+    key({ key: "F4", code: "F4", metaKey: true }),
+    key({ key: "¡", code: "Digit1", ctrlKey: true }),
+  ];
+  assert.deepEqual(events.map(specOf), ["Ctrl-Shift-s", "Ctrl-Alt-ArrowDown", "Space", "Meta-F4", "Ctrl-1"]);
+  for (const e of events) assert.ok(matches(specOf(e) ?? "", e));
+});
+
+void test("text input and keys that are not a shortcut cannot be recorded", () => {
+  assert.equal(specOf(altGr("@", "KeyQ")), null);
+  assert.equal(specOf(key({ key: "{", code: "Digit8", altKey: true })), null);
+  assert.equal(specOf(key({ key: "Dead", code: "Quote" })), null);
+  assert.equal(specOf(key({ key: "a", code: "KeyA", isComposing: true })), null);
+  assert.equal(specOf(key({ key: "Control", code: "ControlLeft", ctrlKey: true })), null);
+  assert.equal(specOf(key({ key: ".", code: "Period", ctrlKey: true })), null);
+});
+
+void test("equal bindings compare equal whatever the order of their modifiers or the case of the letter", () => {
+  assert.equal(canonicalSpec("Alt-Ctrl-S"), canonicalSpec("Ctrl-Alt-s"));
+  assert.notEqual(canonicalSpec("Ctrl-Alt-s"), canonicalSpec("Ctrl-s"));
 });
 
 void test("F4 is Jump to Source, and only without modifiers", () => {

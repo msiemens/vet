@@ -28,6 +28,7 @@
   import { appCommands } from "../state/appCommands";
   import { commands } from "../state/commands";
   import { contextMenus } from "../state/contextMenu.svelte";
+  import { keymap } from "../state/keymap.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { progress as backgroundTasks } from "../state/progress.svelte";
   import { recent } from "../state/recent.svelte";
@@ -73,6 +74,7 @@
       toggleDevPanel: () => (devOpen = !devOpen),
     }),
   );
+  keymap.load();
   const stopContext = commands.provide(() => ({ repoOpen: !!session.repo, reviewOpen, canQuit }));
 
   // The main menu follows the state it shows.

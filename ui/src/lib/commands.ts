@@ -26,7 +26,27 @@ export interface Command<C> {
 }
 
 /** A keydown as the dispatcher reads it. */
-export type KeyEventLike = KeyLike & { target?: EventTarget | null; preventDefault(): void };
+export type KeyEventLike = KeyLike & {
+  target?: EventTarget | null;
+  preventDefault(): void;
+  stopPropagation?(): void;
+};
+
+/** A registered command as the Keymap lists it. */
+export interface CommandListing {
+  id: string;
+  label: string;
+  /** The key that runs it now. */
+  binding?: Binding;
+  /** The key it has unless the viewer changed it. */
+  defaultBinding?: Binding;
+}
+
+/** Lets the registry's bindings be read reactively: `read` runs whenever one is read, `write` when they change. */
+export interface BindingSignal {
+  read(): void;
+  write(): void;
+}
 
 /** Whether the key's target is in a text field; the window and the document are not elements. */
 const inField = (target: EventTarget | null | undefined) =>
@@ -44,14 +64,17 @@ export class CommandRegistry<C extends object> {
   /** Bindings that replace the defaults, by command id; `null` unbinds. */
   private overrides: Record<string, string | null> = {};
   private bound: { binding: Binding; command: Command<C> }[] = [];
+  private capturing?: (event: KeyEventLike) => void;
 
   /** `base` is the context where no source says otherwise. */
   private base: C;
   private mod: ModKey;
+  private signal?: BindingSignal;
 
-  constructor(base: C, mod: ModKey) {
+  constructor(base: C, mod: ModKey, signal?: BindingSignal) {
     this.base = base;
     this.mod = mod;
+    this.signal = signal;
   }
 
   /** Adds the commands; the returned function removes them. */
@@ -93,6 +116,7 @@ export class CommandRegistry<C extends object> {
       const spec = command.id in this.overrides ? this.overrides[command.id] : command.binding;
       if (spec) this.bound.push({ binding: bindingOf(spec, this.mod), command });
     }
+    this.signal?.write();
   }
 
   find(id: string): Command<C> | undefined {
@@ -101,7 +125,32 @@ export class CommandRegistry<C extends object> {
 
   /** The key that runs the command. */
   binding(id: string): Binding | undefined {
+    this.signal?.read();
     return this.bound.find((b) => b.command.id === id)?.binding;
+  }
+
+  /** Every command a key can run, with the key it has and the one it has by default. */
+  list(): CommandListing[] {
+    this.signal?.read();
+    return [...this.commands.values()]
+      .filter((command) => !command.argument)
+      .map((command) => ({
+        id: command.id,
+        label: command.label,
+        binding: this.binding(command.id),
+        ...(command.binding ? { defaultBinding: bindingOf(command.binding, this.mod) } : {}),
+      }));
+  }
+
+  /**
+   * While `handler` is set every key goes to it and runs no command: how a new binding is read by
+   * pressing it. The returned function ends that.
+   */
+  capture(handler: (event: KeyEventLike) => void): () => void {
+    this.capturing = handler;
+    return () => {
+      if (this.capturing === handler) this.capturing = undefined;
+    };
   }
 
   /** `text`, or the command's label, followed by its shortcut in parentheses if it has one. */
@@ -137,6 +186,12 @@ export class CommandRegistry<C extends object> {
    * binding costs more than the match.
    */
   dispatch(event: KeyEventLike): boolean {
+    if (this.capturing) {
+      this.capturing(event);
+      event.preventDefault();
+      event.stopPropagation?.();
+      return true;
+    }
     if (isTextInput(event)) return false;
     let context: C | undefined;
     for (const { binding, command } of this.bound) {

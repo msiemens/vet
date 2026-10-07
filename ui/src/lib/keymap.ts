@@ -53,6 +53,37 @@ export function isTextInput(e: KeyLike): boolean {
   return e.altKey && e.key.length === 1 && e.key.toLowerCase() !== baseChar(e.code);
 }
 
+const MODIFIER_ORDER = ["Ctrl", "Alt", "Shift", "Meta"];
+
+/** `spec` with its modifiers in a fixed order and a letter in lower case, so equal bindings compare equal. */
+export function canonicalSpec(spec: string): string {
+  const parts = spec.split("-");
+  const name = parts.at(-1) ?? "";
+  const mods = new Set(parts.slice(0, -1));
+  return [...MODIFIER_ORDER.filter((m) => mods.has(m)), name.length === 1 ? name.toLowerCase() : name].join("-");
+}
+
+/** Keys that only change what the next key means. */
+const MODIFIER_KEYS = new Set(["Control", "Alt", "AltGraph", "Shift", "Meta", "OS", "CapsLock", "NumLock", "Fn"]);
+
+/**
+ * The spec that `matches` reads as this event: the way a viewer records a binding by pressing it.
+ * `null` for what cannot be one: a lone modifier, text input (so the AltGr, IME and dead-key
+ * safety of `matches` holds for recorded bindings too) and a key `matches` cannot tell apart
+ * (punctuation).
+ */
+export function specOf(e: KeyLike): string | null {
+  if (isTextInput(e) || MODIFIER_KEYS.has(e.key)) return null;
+  const char = baseChar(e.code);
+  let name: string;
+  if (char !== null) name = char;
+  else if (e.key === " ") name = "Space";
+  else if (e.key.length > 1 && e.key !== "Dead" && e.key !== "Process" && e.key !== "Unidentified") name = e.key;
+  else return null;
+  const mods = [e.ctrlKey && "Ctrl", e.altKey && "Alt", e.shiftKey && "Shift", e.metaKey && "Meta"];
+  return [...mods.filter((m) => m !== false), name].join("-");
+}
+
 /**
  * Matches `spec` like `Ctrl-Alt-ArrowDown`, `Alt-s`, `F3` or `Space`. Letters and digits
  * match the physical key (`code`), so layouts do not matter; named keys match
