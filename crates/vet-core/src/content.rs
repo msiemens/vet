@@ -114,6 +114,12 @@ pub fn is_binary(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(8000)].contains(&0)
 }
 
+/// The text of `bytes` as the review shows it: invalid UTF-8 is replaced, and
+/// `None` if they are binary.
+pub fn decode_text(bytes: &[u8]) -> Option<String> {
+    (!is_binary(bytes)).then(|| String::from_utf8_lossy(bytes).into_owned())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EntryKind {
     File,
@@ -373,6 +379,13 @@ mod tests {
         assert!(!is_binary(&late));
         late[7999] = 0;
         assert!(is_binary(&late));
+    }
+
+    #[test]
+    fn text_is_decoded_lossily_unless_binary() {
+        assert_eq!(decode_text(b"caf\xc3\xa9\n").as_deref(), Some("caf\u{e9}\n"));
+        assert_eq!(decode_text(b"a\xffb").as_deref(), Some("a\u{fffd}b"));
+        assert_eq!(decode_text(b"a\0b"), None);
     }
 
     #[test]

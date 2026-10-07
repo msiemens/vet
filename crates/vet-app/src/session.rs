@@ -35,7 +35,7 @@ use tokio::sync::Mutex;
 use vet_core::completion::{Completion, Coverage, HunkState};
 use vet_core::content::{
     BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hunk, LineDelta, LineRange, NonTextChange, NonTextKind,
-    RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus, is_binary,
+    RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus, decode_text, is_binary,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::inline::TextChange;
@@ -48,7 +48,7 @@ use vet_core::review::{
     ThreadId, ThreadStatus, target_line,
 };
 
-use crate::acquisition::{Acquisition, SharedAcquisition};
+use crate::acquisition::{Acquisition, BlobError, SharedAcquisition};
 use crate::base;
 use crate::editor::{self, last_text_line, line_count};
 use crate::execution::Execution;
@@ -100,6 +100,15 @@ impl From<GitError> for SessionError {
 impl From<StoreError> for SessionError {
     fn from(e: StoreError) -> Self {
         Self::Store(e)
+    }
+}
+
+impl From<BlobError> for SessionError {
+    fn from(e: BlobError) -> Self {
+        match e {
+            BlobError::Git(e) => Self::Git(e),
+            BlobError::Store(e) => Self::Store(e),
+        }
     }
 }
 
@@ -575,7 +584,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         if scan.snapshot.id != session.settled_snapshot().await {
             let (revision, retained) = session.settled(scan).await?;
             if let Some(e) = retained {
-                eprintln!("vet: could not keep the content of revision {revision}: {}", e.0);
+                eprintln!("vet: could not keep the content of revision {revision}: {e}");
             }
         }
         Ok(Some(session))
@@ -817,7 +826,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     /// it joins the timeline. Review state is remapped when the next manifest
     /// is computed. A failed copy of its content is not fatal: the diff then
     /// reads the worktree, or shows the file as unavailable.
-    pub async fn settled(&self, scan: Scan) -> Result<(u32, Option<GitError>)> {
+    pub async fn settled(&self, scan: Scan) -> Result<(u32, Option<BlobError>)> {
         let mut guard = self.state.lock().await;
         let st = &mut *guard;
         let mut retained = None;
@@ -867,7 +876,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             match self.settled(scan).await {
                 Ok((revision, retained)) => {
                     if let Some(e) = retained {
-                        eprintln!("vet: could not keep the content of revision {revision}: {}", e.0);
+                        eprintln!("vet: could not keep the content of revision {revision}: {e}");
                     }
                     self.state.lock().await.degraded = settling.degraded();
                     on_settled(revision);
@@ -1210,11 +1219,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         if entry.kind != EntryKind::File {
             return Ok(ItemBlob::Unavailable);
         }
-        let read = match self.acquisition.store.blob(entry.blob).await? {
-            Some(bytes) => BlobRead::Found(bytes),
-            None => self.acquisition.git.read_blob_capped(file, entry.blob).await?,
-        };
-        Ok(match read {
+        Ok(match self.acquisition.blob(file, entry.blob, true).await? {
             BlobRead::Found(bytes) if bytes.len() <= MAX_ITEM_BLOB => ItemBlob::Bytes {
                 media_type: image_media_type(file),
                 bytes,
@@ -1414,11 +1419,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             else {
                 continue;
             };
-            if store.blob(entry.blob).await?.is_none()
-                && let Some(bytes) = self.acquisition.git.read_blob(file, entry.blob).await?
-            {
-                store.put_blob(bytes).await?;
-            }
+            self.acquisition.keep(file, entry.blob).await?;
         }
         Ok(())
     }
@@ -1536,15 +1537,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         if blobs.contains_key(&blob) {
             return Ok(true);
         }
-        let read = match self.acquisition.store.blob(blob).await? {
-            Some(bytes) => BlobRead::Found(bytes),
-            None if capped => self.acquisition.git.read_blob_capped(path, blob).await?,
-            None => match self.acquisition.git.read_blob(path, blob).await? {
-                Some(bytes) => BlobRead::Found(bytes),
-                None => BlobRead::Missing,
-            },
-        };
-        Ok(match read {
+        Ok(match self.acquisition.blob(path, blob, capped).await? {
             BlobRead::Found(bytes) => {
                 blobs.insert(blob, bytes);
                 true
@@ -1563,10 +1556,8 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
     ) -> Result<std::result::Result<String, NoText>> {
         Ok(if !self.fetch(blobs, path, blob, true).await? {
             Err(NoText::Unavailable)
-        } else if is_binary(&blobs[&blob]) {
-            Err(NoText::Binary)
         } else {
-            Ok(String::from_utf8_lossy(&blobs[&blob]).into_owned())
+            decode_text(&blobs[&blob]).ok_or(NoText::Binary)
         })
     }
 

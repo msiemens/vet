@@ -2,17 +2,18 @@
 //! Provenance lives here, keyed by `SnapshotId`, and nowhere else (I1).
 
 use std::collections::HashMap;
+use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use vet_core::content::{EntryKind, Snapshot, SnapshotId, SnapshotStatus};
+use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_semantic::ports::{Materialized, Materializer, NotMaterializable};
 
 use crate::pin::CommitId;
-use crate::ports::{CheckoutError, Dirty, GitError, GitRepo, Scan, Store};
+use crate::ports::{BlobRead, CheckoutError, Dirty, GitError, GitRepo, Scan, Store, StoreError};
 
 /// Deletes the materialized directory when the pool drops its server (§7.2).
 pub struct DirGuard(PathBuf);
@@ -120,7 +121,67 @@ impl<G, S> Acquisition<G, S> {
     }
 }
 
+/// Why content could not be read or kept.
+#[derive(Debug)]
+pub enum BlobError {
+    Git(GitError),
+    Store(StoreError),
+}
+
+impl fmt::Display for BlobError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Git(e) => write!(f, "git: {}", e.0),
+            Self::Store(e) => write!(f, "store: {}", e.0),
+        }
+    }
+}
+
+impl From<GitError> for BlobError {
+    fn from(e: GitError) -> Self {
+        Self::Git(e)
+    }
+}
+
+impl From<StoreError> for BlobError {
+    fn from(e: StoreError) -> Self {
+        Self::Store(e)
+    }
+}
+
 impl<G: GitRepo, S: Store> Acquisition<G, S> {
+    /// The content of `blob`, the file at `path`: the store's copy, else git's
+    /// (or the worktree's, if the file still hashes to `blob`). With `capped`,
+    /// git content over the capture cap is not read.
+    pub async fn blob(&self, path: &RepoPath, blob: BlobId, capped: bool) -> Result<BlobRead, BlobError> {
+        if let Some(bytes) = self.store.blob(blob).await? {
+            return Ok(BlobRead::Found(bytes));
+        }
+        Ok(if capped {
+            self.git.read_blob_capped(path, blob).await?
+        } else {
+            match self.git.read_blob(path, blob).await? {
+                Some(bytes) => BlobRead::Found(bytes),
+                None => BlobRead::Missing,
+            }
+        })
+    }
+
+    /// Makes sure the store holds `blob`, copying it from git or the worktree.
+    /// `false` if there is nothing to copy.
+    pub async fn keep(&self, path: &RepoPath, blob: BlobId) -> Result<bool, BlobError> {
+        if self.store.blob(blob).await?.is_some() {
+            return Ok(true);
+        }
+        match self.git.read_blob(path, blob).await? {
+            Some(bytes) => {
+                self.store.put_blob(bytes).await?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     /// Copies the blobs of `target` that `known` snapshots do not already have
     /// (they are in git or were retained before) into the store, so the
     /// snapshot stays reconstructible (§6.1).
@@ -129,7 +190,7 @@ impl<G: GitRepo, S: Store> Acquisition<G, S> {
         known: &[&Snapshot],
         target: &Snapshot,
         status: &SnapshotStatus,
-    ) -> Result<(), GitError> {
+    ) -> Result<(), BlobError> {
         for (path, entry) in &target.entries {
             let is_known = known
                 .iter()
@@ -137,12 +198,9 @@ impl<G: GitRepo, S: Store> Acquisition<G, S> {
             if is_known || entry.kind == EntryKind::Submodule || status.content_unavailable.contains(path) {
                 continue;
             }
-            let bytes = self
-                .git
-                .read_blob(path, entry.blob)
-                .await?
-                .ok_or_else(|| GitError(format!("{} changed while being copied", path.to_string_lossy())))?;
-            self.store.put_blob(bytes).await.map_err(|e| GitError(e.0))?;
+            if !self.keep(path, entry.blob).await? {
+                return Err(GitError(format!("{} changed while being copied", path.to_string_lossy())).into());
+            }
         }
         Ok(())
     }
