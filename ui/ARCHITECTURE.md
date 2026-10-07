@@ -45,7 +45,7 @@ Chrome is not selectable (`user-select: none` on `body`); content meant to be co
 
 ## Host
 
-The host passes the repository to open (command line or `VET_REPO`; in a plain browser `#repo=`). The folder dialog, the recent list and the file picker are Tauri commands behind `state/host.ts`; paths stay backend-side strings (in the WSL split the host turns `\\wsl.localhost\<distro>\…` into the Linux path).
+The host passes the repository to open (command line or `VET_REPO`; in a plain browser `#repo=`). The folder dialog and the file picker are Tauri commands behind `state/host.ts`; the recent list is the backend's (`state/recent.svelte.ts`); paths stay backend-side strings (in the WSL split the host turns `\\wsl.localhost\<distro>\…` into the Linux path).
 
 ## Views
 
