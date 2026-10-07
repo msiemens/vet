@@ -426,6 +426,8 @@ pub fn manifest(project: p::ProjectId, m: &ManifestView, restore_failures: &[Res
             name: m.target.name.clone(),
             branch: m.target.branch.clone(),
             head: m.target.head.clone(),
+            title: None,
+            draft: false,
         },
         filter: filter(&m.filter),
         files: m.files.iter().map(file).collect(),

@@ -2,10 +2,13 @@
 //! which of a project's remotes are hosted repositories, the pull requests the project's
 //! repositories list, and bringing one in to review.
 
+use std::collections::HashMap;
+use std::sync::{Mutex, PoisonError};
+
 use crate::fetch::{Credentials, Fetch};
 use crate::platform::{
     Platform, PlatformError, PlatformKind, PullRequestQuery, PullRequestRow, QueueTab, RemoteKey, list_rows,
-    parse_remote,
+    parse_remote, rows,
 };
 use crate::ports::{Fetcher, RefUpdate, RemoteInfo};
 
@@ -104,9 +107,48 @@ pub struct PullRequestList {
     pub sources: Vec<RepositoryStatus>,
 }
 
-/// The open pull requests of `repositories` that wait for the viewer or are the viewer's own. A
-/// repository the platform cannot answer for is reported in `sources`; the others still list.
-pub async fn list_pull_requests<P: Platform>(platform: &P, repositories: &[RemoteKey]) -> PullRequestList {
+/// How the platform last named a pull request: what a view of it is headed with.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PullRequestHead {
+    pub title: String,
+    pub draft: bool,
+}
+
+/// The titles of the pull requests this process has heard of from the platform, so a view of
+/// one can be headed without asking again.
+#[derive(Default)]
+pub struct KnownPullRequests(Mutex<HashMap<(RemoteKey, u64), PullRequestHead>>);
+
+impl KnownPullRequests {
+    fn learn(&self, remote: &RemoteKey, number: u64, title: &str, draft: bool) {
+        let head = PullRequestHead {
+            title: title.to_owned(),
+            draft,
+        };
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert((remote.clone(), number), head);
+    }
+
+    pub fn get(&self, remote: &RemoteKey, number: u64) -> Option<PullRequestHead> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&(remote.clone(), number))
+            .cloned()
+    }
+}
+
+/// The open pull requests of `repositories` that wait for the viewer or are the viewer's own, and
+/// `on_view` (a repository and a number) when it is one of them, whoever's it is. A repository the
+/// platform cannot answer for is reported in `sources`; the others still list.
+pub async fn list_pull_requests<P: Platform>(
+    platform: &P,
+    repositories: &[RemoteKey],
+    on_view: Option<(&RemoteKey, u64)>,
+    known: &KnownPullRequests,
+) -> PullRequestList {
     let mut rows = Vec::new();
     let mut sources = Vec::new();
     for remote in repositories {
@@ -128,6 +170,15 @@ pub async fn list_pull_requests<P: Platform>(platform: &P, repositories: &[Remot
             }
         }
         if error.is_none() {
+            if let Some((_, number)) =
+                on_view.filter(|(r, n)| *r == remote && !listed.iter().any(|row| row.number == *n))
+                && let Some(row) = row_of(platform, remote, number).await
+            {
+                listed.push(row);
+            }
+            for row in &listed {
+                known.learn(remote, row.number, &row.title, row.draft);
+            }
             rows.extend(listed.into_iter().map(|row| ListedPullRequest {
                 remote: remote.clone(),
                 row,
@@ -140,6 +191,18 @@ pub async fn list_pull_requests<P: Platform>(platform: &P, repositories: &[Remot
     }
     rows.sort_by_key(|listed| std::cmp::Reverse((listed.row.updated_at, listed.row.number)));
     PullRequestList { rows, sources }
+}
+
+/// The row of one pull request, as the queue would list it; `None` if the platform cannot say.
+async fn row_of<P: Platform>(platform: &P, remote: &RemoteKey, number: u64) -> Option<PullRequestRow> {
+    let viewer = platform.viewer(remote).await.ok()?;
+    let detail = platform.pull_request(remote, number).await.ok()?;
+    rows(
+        vec![detail.pull_request],
+        &viewer,
+        &PullRequestQuery::new(QueueTab::AllOpen),
+    )
+    .pop()
 }
 
 /// Why a pull request could not be brought in.
@@ -166,6 +229,7 @@ pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
     platform: &P,
     fetch: &Fetch<G>,
     credentials: &(impl Credentials + Sync),
+    known: &KnownPullRequests,
     remote: &RemoteKey,
     number: u64,
 ) -> Result<(), FetchError> {
@@ -173,6 +237,7 @@ pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
         .pull_request(remote, number)
         .await
         .map_err(FetchError::Platform)?;
+    known.learn(remote, number, &detail.pull_request.title, detail.pull_request.draft);
     let remotes = fetch.remotes().await.map_err(FetchError::Git)?;
     let hosted = hosted_repositories(&remotes, remote.kind());
     let git_remote = hosted
@@ -378,7 +443,8 @@ mod tests {
         ]);
 
         let app = github("acme/app");
-        fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
+        let known = KnownPullRequests::default();
+        fetch_pull_request(&platform, &fetch, &Anonymous, &known, &app, 7)
             .await
             .unwrap();
 
@@ -390,6 +456,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_pull_request_that_is_fetched_is_known_by_its_title_and_whether_it_is_a_draft() {
+        let app = github("acme/app");
+        let platform = Hosting {
+            prs: vec![],
+            failing: vec![],
+        };
+        let (fetch, _) = fetching(vec![info("origin", "https://github.com/acme/app")]);
+        let known = KnownPullRequests::default();
+        assert_eq!(known.get(&app, 7), None);
+
+        fetch_pull_request(&platform, &fetch, &Anonymous, &known, &app, 7)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            known.get(&app, 7),
+            Some(PullRequestHead {
+                title: "PR 7".to_owned(),
+                draft: false
+            })
+        );
+        assert_eq!(known.get(&app, 8), None);
+    }
+
+    #[tokio::test]
     async fn a_pull_request_the_platform_cannot_describe_is_not_fetched() {
         let app = github("acme/app");
         let platform = Hosting {
@@ -398,7 +489,7 @@ mod tests {
         };
         let (fetch, fetched) = fetching(vec![info("origin", "https://github.com/acme/app")]);
 
-        let error = fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
+        let error = fetch_pull_request(&platform, &fetch, &Anonymous, &KnownPullRequests::default(), &app, 7)
             .await
             .unwrap_err();
 
@@ -417,7 +508,8 @@ mod tests {
         };
         let (fetch, fetched) = fetching(vec![info("origin", "https://github.com/ada/app")]);
 
-        let error = fetch_pull_request(&platform, &fetch, &Anonymous, &github("acme/app"), 7)
+        let known = KnownPullRequests::default();
+        let error = fetch_pull_request(&platform, &fetch, &Anonymous, &known, &github("acme/app"), 7)
             .await
             .unwrap_err();
 
@@ -436,17 +528,45 @@ mod tests {
             failing: vec![],
         };
 
-        let list = list_pull_requests(&platform, std::slice::from_ref(&app)).await;
+        let known = KnownPullRequests::default();
+        let list = list_pull_requests(&platform, std::slice::from_ref(&app), None, &known).await;
 
         let shown: Vec<_> = list.rows.iter().map(|r| (r.row.number, r.row.waiting_for_me)).collect();
         assert_eq!(shown, [(2, false), (4, false), (1, true)], "pr 3 is neither");
         assert_eq!(
             list.sources,
             [RepositoryStatus {
-                remote: app,
+                remote: app.clone(),
                 error: None
             }]
         );
+        assert_eq!(known.get(&app, 4).map(|h| h.title), Some("PR 4".to_owned()));
+        assert_eq!(known.get(&app, 3), None, "what is not listed is not known");
+    }
+
+    #[tokio::test]
+    async fn the_pull_request_on_view_is_listed_though_it_is_neither_the_viewers_nor_waiting_for_them() {
+        let app = github("acme/app");
+        let platform = Hosting {
+            prs: vec![(app.clone(), vec![mine(2, 300)])],
+            failing: vec![],
+        };
+        let known = KnownPullRequests::default();
+
+        let list = list_pull_requests(&platform, std::slice::from_ref(&app), Some((&app, 3)), &known).await;
+
+        let shown: Vec<_> = list.rows.iter().map(|r| r.row.number).collect();
+        assert_eq!(shown, [3, 2], "newest first like the others");
+        assert!(known.get(&app, 3).is_some());
+
+        // Listed anyway, it is not listed twice.
+        let list = list_pull_requests(&platform, std::slice::from_ref(&app), Some((&app, 2)), &known).await;
+        assert_eq!(list.rows.len(), 1);
+
+        // Another repository's number is not this one's.
+        let lib = github("acme/lib");
+        let list = list_pull_requests(&platform, std::slice::from_ref(&app), Some((&lib, 3)), &known).await;
+        assert_eq!(list.rows.len(), 1);
     }
 
     #[tokio::test]
@@ -457,7 +577,13 @@ mod tests {
             failing: vec![app.clone()],
         };
 
-        let list = list_pull_requests(&platform, &[app.clone(), lib.clone()]).await;
+        let list = list_pull_requests(
+            &platform,
+            &[app.clone(), lib.clone()],
+            None,
+            &KnownPullRequests::default(),
+        )
+        .await;
 
         assert_eq!(
             list.rows.iter().map(|r| (&r.remote, r.row.number)).collect::<Vec<_>>(),

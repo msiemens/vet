@@ -17,6 +17,7 @@ use vet_app::fetch::Fetch;
 use vet_app::ignore::IgnoringWatcher;
 use vet_app::limits::{Limiting, RestoreLimits};
 use vet_app::progress::Tasks;
+use vet_app::pull_request::KnownPullRequests;
 use vet_app::registry::{Resident, Subscribers};
 use vet_app::semantics::{Links, Semantics};
 use vet_app::settle::Settling;
@@ -73,6 +74,8 @@ pub struct Wired {
     pub accounts: Arc<PlatformAccounts>,
     /// Where pull requests are asked for.
     pub github: Arc<GitHub>,
+    /// What the platform called the pull requests it has told of.
+    pub pull_requests: KnownPullRequests,
     plan: Plan,
     booted: OnceCell<Result<Arc<Booted>, String>>,
     settling: Mutex<Option<AbortHandle>>,
@@ -278,6 +281,7 @@ impl Orchestrator {
             fetch: Fetch::new(GixRepo::new(&repo), tasks.clone()),
             accounts: self.accounts.clone(),
             github: self.github.clone(),
+            pull_requests: KnownPullRequests::default(),
             tasks,
             plan: Plan {
                 id,

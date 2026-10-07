@@ -85,6 +85,13 @@ pub struct Target {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub head: Option<String>,
+    /// A pull request's title as the platform last said it; absent for any other changeset, and
+    /// for a pull request the platform has not been asked about since the backend started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub title: Option<String>,
+    /// A pull request that is a draft.
+    pub draft: bool,
 }
 
 /// Whether a review has started. It starts with the first review action (a

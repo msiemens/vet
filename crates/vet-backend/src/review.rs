@@ -2,6 +2,7 @@
 //! filter. The rules are in `vet_app::session`; this maps requests to them and
 //! tells the other subscribers what changed.
 
+use vet_app::changeset::Source;
 use vet_mapping as mapping;
 use vet_protocol::{ProjectId, Response};
 
@@ -25,11 +26,16 @@ impl Orchestrator {
 
     pub(crate) async fn manifest(&self, project: ProjectId, view: vet_protocol::View) -> Result<Response, String> {
         let open = self.ready(project).await?;
-        let manifest = open.session.manifest(mapping::core_view(view)).await.map_err(message)?;
+        let view = open.session.manifest(mapping::core_view(view)).await.map_err(message)?;
         let failures = open.semantics.restore_failures();
-        Ok(Response::Manifest(Box::new(mapping::manifest(
-            project, &manifest, &failures,
-        ))))
+        let mut manifest = mapping::manifest(project, &view, &failures);
+        if let Source::PullRequest { remote, number } = &view.target.source
+            && let Some(head) = open.open.pull_requests.get(remote, *number)
+        {
+            manifest.target.title = Some(head.title);
+            manifest.target.draft = head.draft;
+        }
+        Ok(Response::Manifest(Box::new(manifest)))
     }
 
     pub(crate) async fn file_contents(

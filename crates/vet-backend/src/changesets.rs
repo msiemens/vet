@@ -22,7 +22,17 @@ impl Orchestrator {
             .into_iter()
             .map(|h| h.key)
             .collect();
-        let list = pull_request::list_pull_requests(&*self.github, &repositories).await;
+        let on_view = match open.session.source().await {
+            Source::PullRequest { remote, number } => Some((remote, number)),
+            _ => None,
+        };
+        let list = pull_request::list_pull_requests(
+            &*self.github,
+            &repositories,
+            on_view.as_ref().map(|(remote, number)| (remote, *number)),
+            &open.open.pull_requests,
+        )
+        .await;
         for source in &list.sources {
             if let Some(error) = &source.error {
                 self.refused(error, &source.remote.host);
@@ -75,5 +85,6 @@ pub(crate) async fn bring_in(
     remote: &vet_app::changeset::RemoteKey,
     number: u64,
 ) -> Result<(), FetchError> {
-    pull_request::fetch_pull_request(&*open.github, &open.fetch, &Held(&open.accounts), remote, number).await
+    let held = Held(&open.accounts);
+    pull_request::fetch_pull_request(&*open.github, &open.fetch, &held, &open.pull_requests, remote, number).await
 }

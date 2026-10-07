@@ -20,4 +20,13 @@ branch?: string,
 /**
  * A branch's tip commit, by its short id; absent for the working tree.
  */
-head?: string, };
+head?: string, 
+/**
+ * A pull request's title as the platform last said it; absent for any other changeset, and
+ * for a pull request the platform has not been asked about since the backend started.
+ */
+title?: string, 
+/**
+ * A pull request that is a draft.
+ */
+draft: boolean, };
