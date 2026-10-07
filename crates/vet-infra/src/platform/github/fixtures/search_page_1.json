@@ -1,0 +1,53 @@
+{
+  "data": {
+    "search": {
+      "nodes": [
+        {
+          "number": 101,
+          "title": "Add a cache to the resolver",
+          "url": "https://github.com/acme/app/pull/101",
+          "isDraft": false,
+          "updatedAt": "2024-05-01T12:00:00Z",
+          "headRefName": "resolver-cache",
+          "baseRefName": "main",
+          "headRefOid": "c2c2c2",
+          "author": { "login": "grace" },
+          "labels": { "nodes": [{ "name": "performance" }, { "name": "needs-review" }] },
+          "assignees": { "nodes": [{ "login": "ada" }] },
+          "reviewRequests": {
+            "nodes": [
+              { "requestedReviewer": { "__typename": "User", "login": "ada" } },
+              { "requestedReviewer": { "__typename": "Team", "slug": "reviewers", "organization": { "login": "acme" } } }
+            ]
+          },
+          "viewerLatestReview": { "state": "COMMENTED", "commit": { "oid": "c1c1c1" } },
+          "reviewThreads": { "nodes": [{ "isResolved": true }, { "isResolved": false }, { "isResolved": false }] },
+          "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "FAILURE" } } }] }
+        },
+        {
+          "number": 102,
+          "title": "Draft: rework the parser",
+          "url": "https://github.com/acme/app/pull/102",
+          "isDraft": true,
+          "updatedAt": "2024-04-30T08:30:00Z",
+          "headRefName": "parser",
+          "baseRefName": "release/1.x",
+          "headRefOid": "d4d4d4",
+          "author": null,
+          "labels": { "nodes": [] },
+          "assignees": { "nodes": [] },
+          "reviewRequests": {
+            "nodes": [
+              { "requestedReviewer": { "__typename": "Bot" } },
+              { "requestedReviewer": null }
+            ]
+          },
+          "viewerLatestReview": { "state": "PENDING", "commit": { "oid": "d4d4d4" } },
+          "reviewThreads": { "nodes": [] },
+          "commits": { "nodes": [{ "commit": { "statusCheckRollup": null } }] }
+        }
+      ],
+      "pageInfo": { "hasNextPage": true, "endCursor": "cursor-1" }
+    }
+  }
+}

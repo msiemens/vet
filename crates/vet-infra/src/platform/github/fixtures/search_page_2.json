@@ -1,0 +1,28 @@
+{
+  "data": {
+    "search": {
+      "nodes": [
+        {
+          "number": 103,
+          "title": "Bump the lockfile",
+          "url": "https://github.com/acme/app/pull/103",
+          "isDraft": false,
+          "updatedAt": "2024-04-29T17:45:10Z",
+          "headRefName": "deps",
+          "baseRefName": "main",
+          "headRefOid": "e5e5e5",
+          "author": { "login": "dependabot" },
+          "labels": { "nodes": [{ "name": "dependencies" }] },
+          "assignees": { "nodes": [] },
+          "reviewRequests": {
+            "nodes": [{ "requestedReviewer": { "__typename": "Mannequin", "login": "former-ada" } }]
+          },
+          "viewerLatestReview": null,
+          "reviewThreads": { "nodes": [] },
+          "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "SUCCESS" } } }] }
+        }
+      ],
+      "pageInfo": { "hasNextPage": false, "endCursor": "cursor-2" }
+    }
+  }
+}

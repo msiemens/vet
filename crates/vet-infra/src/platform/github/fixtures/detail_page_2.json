@@ -1,0 +1,35 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "number": 101,
+        "title": "Add a cache to the resolver",
+        "url": "https://github.com/acme/app/pull/101",
+        "isDraft": false,
+        "updatedAt": "2024-05-01T12:00:00Z",
+        "headRefName": "resolver-cache",
+        "baseRefName": "main",
+        "headRefOid": "c4c4c4",
+        "author": { "login": "grace" },
+        "labels": { "nodes": [] },
+        "assignees": { "nodes": [] },
+        "reviewRequests": { "nodes": [] },
+        "viewerLatestReview": null,
+        "reviewThreads": { "nodes": [] },
+        "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "PENDING" } } }] },
+        "baseRefOid": "b0b0b0",
+        "isCrossRepository": true,
+        "timelineItems": {
+          "nodes": [
+            {
+              "createdAt": "2024-04-25T10:00:00Z",
+              "beforeCommit": { "oid": "a3a3a3" },
+              "afterCommit": { "oid": "a4a4a4" }
+            }
+          ],
+          "pageInfo": { "hasNextPage": false, "endCursor": "timeline-2" }
+        }
+      }
+    }
+  }
+}

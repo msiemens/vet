@@ -15,6 +15,11 @@ pub mod store;
 /// `vet_app::platform::CredentialValidator` over HTTP.
 pub mod credentials;
 
+/// `vet_app::platform::Platform` over HTTP, one module per platform.
+pub mod platform;
+
+pub(crate) mod http;
+
 /// `vet_semantic::ports::Materializer`.
 pub mod materialize;
 

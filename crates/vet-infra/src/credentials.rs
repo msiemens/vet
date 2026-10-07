@@ -5,8 +5,10 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use reqwest::{RequestBuilder, StatusCode, redirect};
+use reqwest::{RequestBuilder, StatusCode};
 use vet_app::platform::{Credential, CredentialSource, CredentialValidator, PlatformKind, ValidationError};
+
+use crate::http::http_client;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -28,17 +30,8 @@ struct Endpoint {
 impl HttpValidator {
     fn client(&self) -> Result<&reqwest::Client, ValidationError> {
         self.client
-            .get_or_init(|| {
-                // Already installed by something else is as good as installing it now.
-                let _ = rustls::crypto::ring::default_provider().install_default();
-                reqwest::Client::builder()
-                    .user_agent(concat!("vet/", env!("CARGO_PKG_VERSION")))
-                    .timeout(TIMEOUT)
-                    // Azure DevOps sends a token it does not know to its sign-in page.
-                    .redirect(redirect::Policy::none())
-                    .build()
-                    .map_err(|e| format!("cannot set up the HTTP client: {e}"))
-            })
+            // Azure DevOps sends a token it does not know to its sign-in page.
+            .get_or_init(|| http_client(TIMEOUT))
             .as_ref()
             .map_err(|why| ValidationError::Unreachable(why.clone()))
     }
