@@ -12,7 +12,8 @@
 `format:check`, `test` and `build`.
 
 `quick.sh` runs rustfmt on changed files, clippy, tests and module cycles for the
-changed crates and their dependents, and svelte-check, eslint, prettier and unit
+changed crates and their dependents, rustfmt and clippy for `ui/src-tauri` when it
+changed, and svelte-check, eslint, prettier and unit
 tests for changed UI files.
 
 The Rust steps on their own:

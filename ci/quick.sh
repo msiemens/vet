@@ -2,7 +2,7 @@
 # Fast check scoped to what changed since BASE (default: the merge base with main),
 # including uncommitted and untracked files. Rust: format the changed files; clippy,
 # test and module cycles for the changed crates and the workspace crates depending on
-# them. UI: svelte-check, lint and format for the changed files, unit tests. Skips
+# them. ui/src-tauri: rustfmt and clippy when it changed. UI: svelte-check, lint and format for the changed files, unit tests. Skips
 # `pnpm build`; ci/check.sh remains the full check before merging.
 #
 # Usage: ci/quick.sh [BASE]
@@ -59,7 +59,17 @@ if $deps; then
     ci/check-deps.sh
 fi
 if $tauri; then
-    step "ui/src-tauri: run ci/check.sh for its fmt and clippy (needs the webkit toolchain)"
+    step "cargo fmt (ui/src-tauri)"
+    cargo fmt --manifest-path ui/src-tauri/Cargo.toml --check
+    step "cargo clippy (ui/src-tauri)"
+    tauri_clippy=(cargo clippy --manifest-path ui/src-tauri/Cargo.toml --all-targets -- -D warnings)
+    if [[ $(uname) != Linux ]] || pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
+        "${tauri_clippy[@]}"
+    elif command -v nix-shell >/dev/null; then
+        nix-shell --run "${tauri_clippy[*]}"
+    else
+        echo "SKIPPED: the GTK/webkit libraries are missing and nix-shell is not available"
+    fi
 fi
 
 if ((${#ui_files[@]})) || $protocol; then
