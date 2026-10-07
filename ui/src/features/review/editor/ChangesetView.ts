@@ -16,6 +16,7 @@ import { takesKeys } from "./dom";
 import { fileHeader, renderCount } from "./fileHeader";
 import type { FileSource } from "./fileSource";
 import type { BarActions } from "./hunkBar";
+import { setColumns } from "./longLines";
 import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
 import { lineOf, lineStart } from "./positions";
 import { type ReviewRequests, ReviewActions, renderReview } from "./reviewActions";
@@ -239,15 +240,15 @@ export class ChangesetView {
     this.sync();
   }
 
+  /** The characters that fit a row of the section's code column. */
+  private columnsOf(s: Section): number {
+    return rowColumns(this.width, this.heights.mode, this.char, Math.max(s.file.baseLines, s.file.targetLines));
+  }
+
   /** The wrapped lines of a section whose text has arrived and whose editor wraps. */
   private wrappedSides(s: Section): WrappedSides {
     if (!s.wrap || !s.loaded) return {};
-    const columns = rowColumns(
-      this.width,
-      this.heights.mode,
-      this.char,
-      Math.max(s.file.baseLines, s.file.targetLines),
-    );
+    const columns = this.columnsOf(s);
     return { base: new WrapRows(s.loaded.base, columns), target: new WrapRows(s.loaded.target, columns) };
   }
 
@@ -264,6 +265,10 @@ export class ChangesetView {
     const width = this.root.clientWidth;
     if (Math.abs(width - this.width) < 1) return;
     this.width = width;
+    for (const fi of this.windowing.mounted) {
+      const s = this.sections[fi];
+      s.handle?.dispatchAll(setColumns.of(this.columnsOf(s)));
+    }
     if (!this.sections.some((s) => s.wrap)) return;
     const fi = this.heights.indexAt(this.root.scrollTop);
     const offset = this.root.scrollTop - this.sections[fi].top;
@@ -340,6 +345,7 @@ export class ChangesetView {
       s.review.hunks,
       this.heights.mode,
       this.heights.m.hunk,
+      this.columnsOf(s),
       s.hooks,
       this.collapse ? COLLAPSE : undefined,
       // The pinned header and bar cover the top of the view: a caret scrolled into view stays below them.

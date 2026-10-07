@@ -19,6 +19,7 @@ import type { BarActions } from "./hunkBar";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { deletedHighlights } from "./deletedHighlights";
 import { highlightExtension } from "./highlightExtension";
+import { longLines } from "./longLines";
 import { deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
 import { reportHeight, softWrap } from "./softWrap";
 
@@ -104,6 +105,8 @@ export function mountFile(
   mode: Mode,
   /** A hunk bar's height in px (`--h-hunk`). */
   barHeight: number,
+  /** The characters that fit a row of the code column: a changed line with more is marked. */
+  columns: number,
   hooks: Hooks,
   /** Absent: show the whole file. */
   collapseUnchanged?: Collapse,
@@ -120,6 +123,7 @@ export function mountFile(
     readOnlySetup,
     wrap,
     targetField,
+    longLines(targetField, columns),
     lineNumbers(),
     highlightExtension(loaded.targetHighlights),
     barText,
@@ -151,9 +155,11 @@ export function mountFile(
     });
     return handle(view, [view]);
   }
+  const baseField = reviewField(sideConfig(loaded.hunks, "base", null, barHeight), states);
   const base: Extension[] = [
     wrap,
-    reviewField(sideConfig(loaded.hunks, "base", null, barHeight), states),
+    baseField,
+    longLines(baseField, columns),
     lineNumbers(),
     highlightExtension(loaded.baseHighlights),
     barText,

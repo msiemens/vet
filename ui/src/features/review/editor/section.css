@@ -161,6 +161,16 @@
 .file .cm-merge-a .cm-changedText {
   background: color-mix(in srgb, var(--del-text) 25%, transparent);
 }
+/* A changed line that runs past the width of the code column (`longLines.ts`). */
+.file .cm-editor .cm-lineNumbers .cm-gutterElement.vet-long {
+  position: relative;
+  color: var(--accent);
+}
+.file .cm-editor .cm-lineNumbers .cm-gutterElement.vet-long::before {
+  content: "›";
+  position: absolute;
+  left: 2px;
+}
 .file .cm-editor .cm-changedLineGutter,
 .file .cm-editor .cm-deletedLineGutter {
   background: transparent;
