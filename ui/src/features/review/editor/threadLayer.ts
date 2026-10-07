@@ -6,23 +6,14 @@
 import { type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { CommentAt } from "../../../generated/CommentAt";
-import type { FileChange } from "../../../generated/FileChange";
 import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
-import type { Handle } from "./mount";
 import { lineEnd } from "./positions";
+import type { Section, ThreadState } from "./section";
 import type { ThreadSpace } from "./sectionLayout";
 import { type ThreadActions, buildCard } from "./threadCard";
-import {
-  type CardData,
-  type InlineCard,
-  type Placement,
-  cardHeight,
-  cardKey,
-  heightKey,
-  placeThreads,
-} from "./threadPlacement";
+import { type CardData, type InlineCard, cardHeight, cardKey, heightKey, placeThreads } from "./threadPlacement";
 import { type CardHost, setThreadCards, threadCards } from "./threadWidgets";
 
 /** What the owner asks for; each resolves whether the request went through. `revision` is the view's. */
@@ -31,22 +22,6 @@ export type ThreadListeners = Omit<ThreadActions, "create" | "cancelDraft" | "to
   /** Where a comment on a part of the file at `path` attaches, and the target line its form sits below. */
   commentTarget(revision: number, path: string, at: CommentAt): Promise<{ target: ThreadTarget; line: number | null }>;
 };
-
-/** The part of a section the layer keeps. */
-export interface ThreadState {
-  placement: Placement;
-  /** Cards below lines: the placed threads and the form for a new one. */
-  inline: InlineCard[];
-  /** Cards of the file's own threads, between the change cards and the first hunk. */
-  blockEl: HTMLElement;
-  blockCards: CardData[];
-  /** What `blockEl` was built from. */
-  blockSignature: string;
-  /** Height of the block, which `--vet-threads` reports to the body's layout. */
-  block: number;
-  /** The height each card adds to the section's height, by `cardKey`. */
-  counted: Map<string, number>;
-}
 
 export const threadState = (blockEl: HTMLElement): ThreadState => ({
   placement: { file: [], inline: [] },
@@ -58,23 +33,15 @@ export const threadState = (blockEl: HTMLElement): ThreadState => ({
   counted: new Map(),
 });
 
-export interface ThreadSection extends ThreadState {
-  file: FileChange;
-  el: HTMLElement;
-  top: number;
-  height: number;
-  handle?: Handle;
-}
-
 export interface ThreadHost {
   readonly revision: number;
-  readonly sections: ThreadSection[];
+  readonly sections: Section[];
   readonly root: HTMLElement;
   readonly line: number;
   /** Lays the section out again, counting its cards as `known` heights say. */
-  estimate(s: ThreadSection, known: Map<string, number>): void;
+  estimate(s: Section, known: Map<string, number>): void;
   /** Sets a section's height; the view keeps the scroll position when it is above the viewport. */
-  resize(s: ThreadSection, height: number): void;
+  resize(s: Section, height: number): void;
 }
 
 /** A new thread's form, in the section of `path` (the view's name for the file). */
@@ -94,7 +61,7 @@ export class ThreadLayer {
   /** Measured heights by `heightKey`; they estimate a card of an unmounted section. */
   private heights = new Map<string, number>();
   /** The cards on screen, so a measured size finds its section (none: the lead). */
-  private drawn = new WeakMap<Element, { card: CardData; section?: ThreadSection }>();
+  private drawn = new WeakMap<Element, { card: CardData; section?: Section }>();
   private sizes = new ResizeObserver((entries) => entries.forEach((e) => this.onCardSize(e)));
   private destroyed = false;
   /** Cards above the first section, for the changeset's own threads: only the Changes stream has them. */
@@ -136,17 +103,17 @@ export class ThreadLayer {
     this.sizes.disconnect();
   }
 
-  extension(s: ThreadSection): Extension {
+  extension(s: Section): Extension {
     return threadCards(this.hostFor(s));
   }
 
   /** Gives a freshly mounted editor its cards. */
-  mounted(s: ThreadSection) {
+  mounted(s: Section) {
     if (s.inline.length) s.handle?.dispatchAll(setThreadCards.of(s.inline));
   }
 
   /** What a section's cards add to its layout; a card counts at its `known` height, else as measured before, else as estimated. */
-  space(s: ThreadSection, known: Map<string, number>): ThreadSpace {
+  space(s: Section, known: Map<string, number>): ThreadSpace {
     const height = (card: CardData) => known.get(cardKey(card)) ?? this.heightOf(card);
     return {
       block: sum(s.blockCards.map(height)),
@@ -158,7 +125,7 @@ export class ThreadLayer {
    * Records what `space` put into the section's height. A card below a collapsed region counts only
    * once the region is expanded and the card drawn, so `known` carries those over.
    */
-  count(s: ThreadSection, space: ThreadSpace, drawn: boolean[], known: Map<string, number>) {
+  count(s: Section, space: ThreadSpace, drawn: boolean[], known: Map<string, number>) {
     s.block = space.block;
     s.counted = new Map(s.blockCards.map((card) => [cardKey(card), this.known(card, known)]));
     s.inline.forEach((card, i) => {
@@ -225,7 +192,7 @@ export class ThreadLayer {
   }
 
   /** A form being typed in stays as it is: a block is only redrawn when its cards changed. */
-  private drawBlock(s: ThreadSection) {
+  private drawBlock(s: Section) {
     const signature = JSON.stringify(s.blockCards);
     if (signature === s.blockSignature) return;
     s.blockSignature = signature;
@@ -252,14 +219,14 @@ export class ThreadLayer {
   }
 
   /** Editor widgets and blocks build and measure their cards the same way. */
-  private draw(card: CardData, section?: ThreadSection): HTMLElement {
+  private draw(card: CardData, section?: Section): HTMLElement {
     const el = buildCard(card, this.actions);
     this.drawn.set(el, { card, section });
     this.sizes.observe(el);
     return el;
   }
 
-  private hostFor(s: ThreadSection): CardHost {
+  private hostFor(s: Section): CardHost {
     return {
       create: (card) => this.draw(card, s),
       dispose: (el) => this.sizes.unobserve(el),
@@ -303,21 +270,21 @@ export class ThreadLayer {
       });
   }
 
-  commentOnFile(s: ThreadSection) {
+  commentOnFile(s: Section) {
     this.commentOn(s, { type: "file" });
   }
 
-  commentOnHunk(s: ThreadSection, index: number) {
+  commentOnHunk(s: Section, index: number) {
     this.commentOn(s, { type: "hunk", index });
   }
 
   /** `len` lines from line `start` (0-based) of a side. */
-  commentOnLines(s: ThreadSection, side: Side, start: number, len: number) {
+  commentOnLines(s: Section, side: Side, start: number, len: number) {
     this.commentOn(s, { type: "lines", side, start, len });
   }
 
   /** Opens the form for a comment where the backend says it attaches. */
-  private commentOn({ file }: ThreadSection, at: CommentAt) {
+  private commentOn({ file }: Section, at: CommentAt) {
     // A newer revision replaces the view, and the request fails then.
     void this.listeners.commentTarget(this.host.revision, file.path, at).then(
       ({ target, line }) => {

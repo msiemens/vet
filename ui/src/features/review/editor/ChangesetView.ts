@@ -4,9 +4,7 @@
 // mounted only for sections near the viewport.
 
 import { EditorView, closeHoverTooltips, showTooltip } from "@codemirror/view";
-import type { Completion } from "../../../generated/Completion";
 import type { FileChange } from "../../../generated/FileChange";
-import type { FileReview } from "../../../generated/FileReview";
 import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
 import type { Side } from "../../../generated/Side";
@@ -17,15 +15,16 @@ import { basename } from "../../../lib/paths";
 import type { Mode } from "../../../lib/viewMode";
 import type { Backend } from "../../../state/backend";
 import { atRevision } from "../../../state/revision";
-import { type Card, changeCard } from "./changeCard";
+import { changeCard } from "./changeCard";
 import { iconButton } from "./dom";
 import type { BarActions } from "./hunkBar";
 import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
 import { lineOf, lineStart, selectedLines } from "./positions";
 import { setCurrent, setStates } from "./reviewState";
+import type { Section } from "./section";
 import { COLLAPSE, type Metrics, hiddenAt, sectionLayout } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
-import { type ThreadListeners, type ThreadState, ThreadLayer, threadState } from "./threadLayer";
+import { type ThreadListeners, ThreadLayer, threadState } from "./threadLayer";
 
 /** Time a scroll frame may spend creating editors before the rest wait for the next frame. */
 const MOUNT_BUDGET_MS = 6;
@@ -63,28 +62,6 @@ export interface HunkAnchor {
   line: number;
   /** Set when the stop is a change card rather than a hunk. */
   card?: NonTextKind;
-}
-
-interface Section extends ThreadState {
-  file: FileChange;
-  review: FileReview;
-  completion: Completion;
-  el: HTMLElement;
-  body: HTMLElement;
-  count: HTMLElement;
-  /** One per non-text item of the file, above the first hunk. */
-  cards: Card[];
-  top: number;
-  height: number;
-  /** Offset of each card from the top of the section. */
-  cardTops: number[];
-  cardsHeight: number;
-  /** Estimated offset of each hunk bar from the top of the section. */
-  hunkTops: number[];
-  hooks: Hooks;
-  loaded?: Loaded;
-  loading?: Promise<Loaded>;
-  handle?: Handle;
 }
 
 export class ChangesetView {
@@ -147,8 +124,8 @@ export class ChangesetView {
         sections: this.sections,
         root,
         line: this.m.line,
-        estimate: (s, known) => this.estimate(s as Section, known),
-        resize: (s, height) => this.resize(s as Section, height),
+        estimate: (s, known) => this.estimate(s, known),
+        resize: (s, height) => this.resize(s, height),
       },
       listeners.threads,
       collapse,
