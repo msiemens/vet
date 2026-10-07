@@ -12,8 +12,9 @@ export interface ContextMenuRequest {
 }
 
 /**
- * The items as the host draws them in a context menu: the shortcut stays display text (a context
- * menu registers no accelerators), and stray separators and empty submenus are dropped.
+ * The items as the host draws them in a context menu: the shortcut stays display only (the host
+ * shows it the way the OS does; the window's key handler runs it), a context menu registers no
+ * accelerators, and stray separators and empty submenus are dropped.
  */
 export function nativeItems(items: MenuItem[]): MenuItem[] {
   const out: MenuItem[] = [];
