@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    Account, Base, BlobContent, BranchInfo, ChangedSymbols, CommitInfo, Diagnostic, DirEntry, Highlights, Impact,
-    Locations, Manifest, ProjectId, Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, Side,
-    SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable,
+    Account, Base, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow, CommitInfo, Diagnostic,
+    DirEntry, Highlights, Impact, Locations, Manifest, ProjectId, Reachability, RecentProject, RemovalImpact,
+    ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -38,6 +38,11 @@ pub enum Response {
     /// The running tasks, oldest first.
     Tasks {
         tasks: Vec<Task>,
+    },
+    /// The answer to `ListChangesets`; `on_view` is the changeset the manifest shows.
+    Changesets {
+        rows: Vec<ChangesetRow>,
+        on_view: ChangesetKey,
     },
     /// Boxed: it would make every response as large as the manifest.
     Manifest(Box<Manifest>),

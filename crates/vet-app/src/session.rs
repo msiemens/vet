@@ -28,17 +28,28 @@
 //! coordinates: lines such a span lost to earlier edits stay in it and come back
 //! when the edit is reverted.
 //!
+//! **Source.** One changeset is on view at a time: the working tree, or a local
+//! branch (`source`). Switching parks the state of the one on view in memory and
+//! takes up the other's, so what a changeset had (its review, its marks, its
+//! threads) is as it was when it comes back; revisions only increase across
+//! switches. A branch's target is its tip commit, not the live tree: it is
+//! built from git, never settles, and moves only when `observe` sees the
+//! branch's ref or its merge base move.
+//!
 //! This module is the lifecycle and persistence of a review. The rest of the
 //! session is split by what it does with the state: `remap` computes a
 //! revision's changes, `manifest` and `content` and `browse` show them, `marks`
-//! and `threads` edit the review, and `blobs` reads the content they all need.
+//! and `threads` edit the review, `blobs` reads the content they all need, and
+//! `source` and `listing` are about which changeset is on view.
 
 mod blobs;
 mod browse;
 mod content;
+mod listing;
 mod manifest;
 mod marks;
 mod remap;
+mod source;
 mod state;
 mod threads;
 mod views;
@@ -56,7 +67,9 @@ use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
 pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};
+pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
 use self::manifest::changeset_completion;
+use self::source::Stored;
 use self::state::{OpenReview, State, acknowledged, check_revision, lifecycle_of};
 pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsView};
 pub use self::views::{
@@ -66,7 +79,9 @@ pub use self::views::{
 use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
 use crate::changeset::{BaseChoice, ChangesetId, Source, Version, VersionOrigin};
-use crate::ports::{BaseCandidates, BranchInfo, Clock, Dirty, GitError, GitRepo, LiveStore, Scan, StoreError, Watcher};
+use crate::ports::{
+    BaseCandidates, BranchInfo, Clock, Degraded, Dirty, GitError, GitRepo, LiveStore, Scan, StoreError, Watcher,
+};
 use crate::progress::Tasks;
 use crate::review::{ReviewId, visible_threads};
 use crate::settle::Settling;
@@ -136,12 +151,15 @@ pub struct LiveSession<G, S> {
     /// Shared with the session's semantic pool, which materializes snapshots from it.
     acquisition: Arc<Acquisition<G, S>>,
     name: String,
-    /// The repository root, with `source` the key the changeset is stored under.
+    /// The repository root, which with a source is the key a changeset is stored under.
     repo: String,
-    source: Source,
     clock: UnixClock,
-    /// Serializes everything that reads or edits review state.
+    /// Serializes everything that reads or edits review state: of the changeset on view.
     state: Mutex<State>,
+    /// The changesets that were on view and are not now, by source. Locked after `state`.
+    parked: Mutex<HashMap<Source, State>>,
+    /// Why the working tree is polled instead of watched, if it is.
+    degraded: std::sync::Mutex<Option<Degraded>>,
 }
 
 /// What a session is called: the repository's directory name, else its whole path.
@@ -174,22 +192,13 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let filter = acquisition.store.filter(repo.clone()).await?.normalized();
         let name = name_of_repo(&repo);
         let source = Source::WorkingTree;
-        let changeset = acquisition.store.changeset(repo.clone(), source.clone()).await?;
-        if let Some(changeset) = changeset
-            && let Some(id) = acquisition.store.open_review(changeset).await?
-        {
-            if let Some(state) = Self::resumed(&acquisition, changeset, id, filter.clone()).await? {
-                let session = Self::assemble(acquisition, name, repo, source, clock, state).await;
+        let (changeset, threads) = match Self::stored(&acquisition, &repo, &source, &filter, clock).await? {
+            Stored::Resumed(state) => {
+                let session = Self::assemble(acquisition, name, repo, clock, *state).await;
                 session.catch_up().await?;
                 return Ok(session);
             }
-            // Its start record or snapshots are gone: browse rather than fail to open.
-            acquisition.git.delete_changeset_refs(changeset).await?;
-            acquisition.store.close_review(id, clock(), false).await?;
-        }
-        let threads = match changeset {
-            Some(changeset) => visible_threads(acquisition.store.threads(changeset).await?, None),
-            None => Vec::new(),
+            Stored::Browsing { changeset, threads } => (changeset, threads),
         };
         let git = &acquisition.git;
         let head = git.head().await?;
@@ -202,6 +211,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         acquisition.record_commit(base.id, base_commit.clone());
         acquisition.record_commit(target.id, head.clone());
         let state = State {
+            source,
             revision: 0,
             changeset,
             review: None,
@@ -216,17 +226,15 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             recorded: Vec::new(),
             acks: Vec::new(),
             threads,
-            degraded: None,
             changes: None,
         };
-        Ok(Self::assemble(acquisition, name, repo, source, clock, state).await)
+        Ok(Self::assemble(acquisition, name, repo, clock, state).await)
     }
 
     async fn assemble(
         acquisition: Arc<Acquisition<G, S>>,
         name: String,
         repo: String,
-        source: Source,
         clock: UnixClock,
         state: State,
     ) -> Self {
@@ -235,20 +243,22 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             acquisition,
             name,
             repo,
-            source,
             clock,
             state: Mutex::new(state),
+            parked: Mutex::default(),
+            degraded: std::sync::Mutex::new(None),
         }
     }
 
-    /// The state of the stored review `id` of `changeset`. `None` if it cannot be
-    /// reconstructed: its versions, its latest snapshot or its base commit is
-    /// gone.
+    /// The state of the stored review `id` of `changeset`, a changeset of `source`.
+    /// `None` if it cannot be reconstructed: its versions, its latest snapshot or its
+    /// base commit is gone.
     async fn resumed(
         acquisition: &Acquisition<G, S>,
         changeset: ChangesetId,
         id: ReviewId,
         filter: ReviewFilter,
+        source: Source,
     ) -> Result<Option<State>> {
         let store = &acquisition.store;
         let Some(review) = store.review(id).await? else {
@@ -276,6 +286,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         }
         let threads = visible_threads(store.threads(changeset).await?, Some(id));
         Ok(Some(State {
+            source,
             revision: 0,
             changeset: Some(changeset),
             review: Some(OpenReview {
@@ -295,7 +306,6 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             recorded: review.spans,
             acks: review.acks,
             threads,
-            degraded: None,
             changes: None,
         }))
     }
@@ -340,8 +350,14 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         }
         let acquisition = &self.acquisition;
         let (git, store) = (&acquisition.git, &acquisition.store);
-        let head = git.head().await?;
-        acquisition.retain(&[&st.base], &st.target, &st.target_status).await?;
+        // A committed target stays in git, which the version's refs keep.
+        let head = match st.source {
+            Source::WorkingTree => {
+                acquisition.retain(&[&st.base], &st.target, &st.target_status).await?;
+                git.head().await?
+            }
+            _ => st.head.clone(),
+        };
         let now = (self.clock)();
         store
             .put_snapshot(st.base.clone(), SnapshotStatus::of(&st.base), now)
@@ -361,7 +377,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let (changeset, id) = store
             .start_review(
                 self.repo.clone(),
-                self.source.clone(),
+                st.source.clone(),
                 st.base_choice.clone(),
                 first.clone(),
                 now,
@@ -425,8 +441,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         Ok(complete)
     }
 
-    /// Changes what the target is compared against; the target stays the live
-    /// tree. While a review is open, a base on another commit is the next
+    /// Changes what the target is compared against; the target stays as it is.
+    /// While a review is open, a base on another commit is the next
     /// version. Bumps the revision unless nothing changed. Recorded spans are
     /// untouched: the next manifest remaps them onto the new base, so base-side
     /// changes in reviewed regions show as `SeenAgainstOldBase` (§5.2), and
@@ -434,10 +450,15 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// revision.
     pub async fn set_base(&self, choice: BaseChoice) -> Result<(BaseView, u32)> {
         let git = &self.acquisition.git;
-        let (choice, commit) = base::resolve(git, choice).await.map_err(SessionError::Base)?;
+        let mut st = self.state.lock().await;
+        // A merge base is where the target's history left the reference's: `HEAD` for the live tree.
+        let tip = match st.source {
+            Source::WorkingTree => git.head().await?,
+            _ => st.head.clone(),
+        };
+        let (choice, commit) = base::resolve(git, choice, &tip).await.map_err(SessionError::Base)?;
         let snapshot = git.commit_snapshot(&commit).await?;
 
-        let mut st = self.state.lock().await;
         if st.base_choice != choice || st.base_commit != commit {
             if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
                 let store = &self.acquisition.store;
@@ -544,6 +565,16 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         self.state.lock().await.revision
     }
 
+    fn set_degraded(&self, degraded: Option<Degraded>) {
+        *self.degraded.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = degraded;
+    }
+
+    /// Why the working tree is polled instead of watched, if it is; none for any other source.
+    fn degraded_for(&self, source: &Source) -> Option<Degraded> {
+        let degraded = *self.degraded.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        degraded.filter(|_| *source == Source::WorkingTree)
+    }
+
     /// The latest settled target: what the review last showed.
     pub async fn target_snapshot(&self) -> Snapshot {
         self.state.lock().await.target.clone()
@@ -565,6 +596,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             base_commit: st.base_commit.clone(),
             target: st.target.id,
             head: st.head.clone(),
+            live_target: st.source == Source::WorkingTree,
         })
     }
 
@@ -611,9 +643,20 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// the changeset gains a version. Review state is remapped when the next
     /// manifest is computed. A failed copy of its content is not fatal: the diff
     /// then reads the worktree, or shows the file as unavailable.
+    /// It is the working tree's, wherever that is: on view, or parked while a branch is.
     pub async fn settled(&self, scan: Scan) -> Result<(u32, Option<BlobError>)> {
         let mut guard = self.state.lock().await;
-        let st = &mut *guard;
+        if guard.source == Source::WorkingTree {
+            return self.settle_tree(&mut guard, scan).await;
+        }
+        let mut parked = self.parked.lock().await;
+        let tree = parked
+            .get_mut(&Source::WorkingTree)
+            .expect("the working tree is parked while another changeset is on view");
+        self.settle_tree(tree, scan).await
+    }
+
+    async fn settle_tree(&self, st: &mut State, scan: Scan) -> Result<(u32, Option<BlobError>)> {
         let mut retained = None;
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
             retained = self
@@ -652,13 +695,14 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 
     /// Settles snapshots of the worktree as `settling` reports them and calls
-    /// `on_settled` with each new revision, until dropped.
+    /// `on_settled` with each new revision of the changeset on view, until dropped.
+    /// A settled tree that is not on view is not announced: it is not what is shown.
     pub async fn follow<W: Watcher + Send, C: Clock + Send + Sync>(
         &self,
         mut settling: Settling<W, C>,
         mut on_settled: impl FnMut(u32) + Send,
     ) {
-        self.state.lock().await.degraded = settling.degraded();
+        self.set_degraded(settling.degraded());
         loop {
             let scan = match settling.next_settled(&self.acquisition).await {
                 Ok(scan) => scan,
@@ -672,8 +716,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                     if let Some(e) = retained {
                         eprintln!("vet: could not keep the content of revision {revision}: {e}");
                     }
-                    self.state.lock().await.degraded = settling.degraded();
-                    on_settled(revision);
+                    self.set_degraded(settling.degraded());
+                    if self.state.lock().await.source == Source::WorkingTree {
+                        on_settled(revision);
+                    }
                 }
                 Err(e) => eprintln!("vet: could not record a settled snapshot: {e}"),
             }

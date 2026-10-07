@@ -9,9 +9,10 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    AnchorState, Base, BaseChoice, BlobContent, Completion, DirEntry, DirEntryKind, Event, FileStatus, HunkState,
-    LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, ProjectId, Request, Response, ReviewFilter,
-    ReviewInfo, ReviewUpdate, ServerMessage, Side, TextContent, Thread, ThreadStatus, ThreadTarget,
+    AnchorState, Base, BaseChoice, BlobContent, ChangesetKey, Completion, DirEntry, DirEntryKind, Divergence, Event,
+    FileStatus, HunkState, LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, ProjectId, Request, Response,
+    ReviewFilter, ReviewInfo, ReviewUpdate, RowReview, ServerMessage, Side, TextContent, Thread, ThreadStatus,
+    ThreadTarget,
 };
 use vet_transport::{Events, Handler};
 
@@ -1196,6 +1197,71 @@ async fn a_branch_base_reports_how_far_the_branch_moved_on_until_chosen_again() 
     assert_eq!((base.commit.id, base.name.as_str(), base.behind), (tip, "main", None));
     client.settled().await;
     assert!(client.manifest(project).await.files.is_empty());
+}
+
+#[tokio::test]
+async fn a_branch_is_listed_opened_as_the_changeset_on_view_and_left_again_for_every_connection() {
+    let fx = fixture(&[("a.txt", &text(10, &[]))], &[("a.txt", &text(10, &[2]))]).await;
+    let p = fx.repo.path();
+    git(p, &["checkout", "-q", "-b", "feature"]);
+    write(p, "b.txt", "from the branch\n");
+    git(p, &["add", "b.txt"]);
+    git(p, &["commit", "-q", "-m", "feature"]);
+    git(p, &["checkout", "-q", "main"]);
+    let mut first = Client::new(&fx.handler);
+    let mut second = Client::new(&fx.handler);
+    let project = open(&first, p).await;
+    open(&second, p).await;
+
+    let Response::Changesets { rows, on_view } = first.call(Request::ListChangesets { project }).await.unwrap() else {
+        panic!("not a list")
+    };
+    assert_eq!(on_view, ChangesetKey::WorkingTree);
+    assert_eq!(rows[0].key, ChangesetKey::WorkingTree);
+    let feature = rows
+        .iter()
+        .find(|r| r.key == ChangesetKey::Branch { name: "feature".into() })
+        .expect("a branch with a commit of its own is listed");
+    assert_eq!(feature.divergence, Some(Divergence { ahead: 1, behind: 0 }));
+    assert_eq!(feature.review, RowReview::None);
+
+    let key = feature.key.clone();
+    first
+        .call(Request::OpenChangeset {
+            project,
+            changeset: key.clone(),
+        })
+        .await
+        .unwrap();
+    for client in [&mut first, &mut second] {
+        let Event::ChangesetOpened {
+            revision, changeset, ..
+        } = client.event().await
+        else {
+            panic!("not told which changeset is on view")
+        };
+        assert_eq!(changeset, key);
+        let m = client.manifest(project).await;
+        assert_eq!(
+            (m.revision, m.target.changeset.clone(), m.target.name.as_str()),
+            (revision, key.clone(), "feature")
+        );
+        assert_eq!(m.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["b.txt"]);
+    }
+
+    first
+        .call(Request::OpenChangeset {
+            project,
+            changeset: ChangesetKey::WorkingTree,
+        })
+        .await
+        .unwrap();
+    let Event::ChangesetOpened { .. } = second.event().await else {
+        panic!("not told")
+    };
+    let m = second.manifest(project).await;
+    assert_eq!(m.target.changeset, ChangesetKey::WorkingTree);
+    assert_eq!(m.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.txt"]);
 }
 
 impl Client {

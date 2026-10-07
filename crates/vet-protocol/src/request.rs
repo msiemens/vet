@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    BaseChoice, CommentAt, NonTextKind, ProjectId, ReviewFilter, Secret, Side, SymbolId, ThreadStatus, ThreadTarget,
+    BaseChoice, ChangesetKey, CommentAt, NonTextKind, ProjectId, ReviewFilter, Secret, Side, SymbolId, ThreadStatus,
+    ThreadTarget,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -60,6 +61,23 @@ pub enum Request {
     },
     CloseProject {
         project: ProjectId,
+    },
+    /// The changesets the project offers: the working tree first, then the local branches
+    /// that have commits the default branch lacks and were committed to in the last 30 days
+    /// (and always the checked-out one, the one on view and any with a review open), the
+    /// most recently committed first. Answers with `Response::Changesets`.
+    ListChangesets {
+        project: ProjectId,
+    },
+    /// Puts a changeset on view in place of the one that is: one is on view per project.
+    /// Every subscriber, including the requester, gets `ChangesetOpened`; fetch the
+    /// manifest again. A branch whose tip or merge base moved since it was last on view
+    /// gets a new version if its review is open. Opening the changeset on view looks at it
+    /// again and announces only if it moved. Fails with a message fit to show if the
+    /// branch does not exist. Answers with `Response::Done`.
+    OpenChangeset {
+        project: ProjectId,
+        changeset: ChangesetKey,
     },
     /// Ends the open review: its marks, acknowledgements and threads are kept
     /// in the store but leave the project, which goes back to browsing. The

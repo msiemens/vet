@@ -5,7 +5,7 @@ use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{FileEntry, Hunk, LineDelta, NonTextKind, RepoPath, SnapshotId};
 use vet_core::filter::ReviewFilter;
 
-use crate::changeset::{BaseChoice, CommitId};
+use crate::changeset::{BaseChoice, CommitId, Source};
 use crate::ports::{CommitInfo, Degraded};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -91,9 +91,10 @@ pub struct BaseView {
 /// What the changes lead to.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TargetView {
-    /// "Working tree".
+    pub source: Source,
+    /// "Working tree", or the branch's name.
     pub name: String,
-    /// The checked-out branch, if any.
+    /// The branch the target is built on: the checked-out one for the working tree, if any.
     pub branch: Option<String>,
 }
 
@@ -142,7 +143,11 @@ pub struct SemanticSides {
     pub base: SnapshotId,
     pub base_commit: CommitId,
     pub target: SnapshotId,
+    /// The commit the target is built on: the tip of a branch, `HEAD` for the working tree.
     pub head: CommitId,
+    /// The target is the live tree, so its servers read the worktree; otherwise it is a
+    /// commit's tree, served from a materialized snapshot like the base.
+    pub live_target: bool,
 }
 
 /// The result of a request that can start the review.

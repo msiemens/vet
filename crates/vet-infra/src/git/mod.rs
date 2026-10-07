@@ -255,9 +255,20 @@ impl History for GixRepo {
         self.blocking(move |i| i.commit_snapshot(&commit)).await
     }
 
-    async fn merge_base(&self, reference: &str) -> Result<CommitId, GitError> {
-        let reference = reference.to_owned();
-        self.blocking(move |i| base::merge_base(&i.open()?, &reference)).await
+    async fn merge_base(&self, reference: &str, tip: &CommitId) -> Result<CommitId, GitError> {
+        let (reference, tip) = (reference.to_owned(), tip.clone());
+        self.blocking(move |i| base::merge_base(&i.open()?, &reference, &tip))
+            .await
+    }
+
+    async fn default_reference(&self) -> Result<Option<String>, GitError> {
+        self.blocking(|i| base::default_reference(&i.open()?)).await
+    }
+
+    async fn first_parent_range(&self, base: &CommitId, tip: &CommitId) -> Result<Vec<CommitId>, GitError> {
+        let (base, tip) = (base.clone(), tip.clone());
+        self.blocking(move |i| base::first_parent_range(&i.open()?, &base, &tip))
+            .await
     }
 
     async fn resolve_commit(&self, spec: &str) -> Result<CommitId, GitError> {

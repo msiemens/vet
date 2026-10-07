@@ -4,12 +4,12 @@ pub mod account;
 pub mod progress;
 pub mod semantic;
 
-use vet_app::changeset::{BaseChoice, CommitId};
+use vet_app::changeset::{BaseChoice, CommitId, Source};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::session::{
-    BaseView, CommentAt, CommentSpot, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView, ItemBlob, ItemView,
-    Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, TargetText, ThreadView,
-    ThreadsView,
+    BaseView, ChangesetList, CommentAt, CommentSpot, DirEntryKind, DirListing, EntryInfo, FileStatus, FileView,
+    ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView,
+    RowReview, TargetText, ThreadView, ThreadsView,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
@@ -235,6 +235,47 @@ pub fn base_candidates(c: &BaseCandidates) -> p::Response {
     }
 }
 
+pub fn changeset_key(source: &Source) -> p::ChangesetKey {
+    match source {
+        Source::WorkingTree => p::ChangesetKey::WorkingTree,
+        Source::Branch { name } => p::ChangesetKey::Branch { name: name.clone() },
+        // Not offered over the protocol yet; a pull request is shown as the branch it comes from.
+        Source::PullRequest { .. } => p::ChangesetKey::WorkingTree,
+    }
+}
+
+pub fn core_changeset_key(key: p::ChangesetKey) -> Source {
+    match key {
+        p::ChangesetKey::WorkingTree => Source::WorkingTree,
+        p::ChangesetKey::Branch { name } => Source::Branch { name },
+    }
+}
+
+pub fn changesets(list: &ChangesetList) -> p::Response {
+    p::Response::Changesets {
+        on_view: changeset_key(&list.on_view),
+        rows: list
+            .rows
+            .iter()
+            .map(|r| p::ChangesetRow {
+                key: changeset_key(&r.source),
+                title: r.title.clone(),
+                checked_out: r.checked_out,
+                divergence: r.divergence.map(|d| p::Divergence {
+                    ahead: d.ahead,
+                    behind: d.behind,
+                }),
+                last_commit: r.last_commit.map(unix_secs),
+                review: match r.review {
+                    RowReview::None => p::RowReview::None,
+                    RowReview::Open { version } => p::RowReview::Open { version },
+                    RowReview::Finished { complete } => p::RowReview::Finished { complete },
+                },
+            })
+            .collect(),
+    }
+}
+
 pub fn manifest(project: p::ProjectId, m: &ManifestView, restore_failures: &[RestoreFailure]) -> p::Manifest {
     p::Manifest {
         project,
@@ -243,6 +284,7 @@ pub fn manifest(project: p::ProjectId, m: &ManifestView, restore_failures: &[Res
         review: review_info(m.lifecycle),
         base: base(&m.base),
         target: p::Target {
+            changeset: changeset_key(&m.target.source),
             name: m.target.name.clone(),
             branch: m.target.branch.clone(),
         },

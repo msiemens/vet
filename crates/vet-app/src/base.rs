@@ -16,9 +16,22 @@ pub fn default_choice(branches: &[BranchInfo], head: &CommitId) -> (BaseChoice, 
     }
 }
 
+/// What a branch is compared against unless the viewer chose otherwise: where it left the
+/// repository's default branch, or `tip` itself (an empty changeset) when there is no such branch.
+pub async fn default_for_branch<G: History>(git: &G, tip: &CommitId) -> Result<(BaseChoice, CommitId), String> {
+    match git.default_reference().await.map_err(|e| e.0)? {
+        Some(reference) => resolve(git, BaseChoice::MergeBase { reference }, tip).await,
+        None => Ok((BaseChoice::Commit { id: tip.clone() }, tip.clone())),
+    }
+}
+
 /// The commit `choice` names now, with the choice as stored: a commit is spelled out in full.
-/// The error is fit to show.
-pub async fn resolve<G: History>(git: &G, choice: BaseChoice) -> Result<(BaseChoice, CommitId), String> {
+/// A merge base is taken against `tip`, the commit the target is built on. The error is fit to show.
+pub async fn resolve<G: History>(
+    git: &G,
+    choice: BaseChoice,
+    tip: &CommitId,
+) -> Result<(BaseChoice, CommitId), String> {
     match choice {
         BaseChoice::Branch { name } => {
             let commit = git
@@ -28,7 +41,7 @@ pub async fn resolve<G: History>(git: &G, choice: BaseChoice) -> Result<(BaseCho
             Ok((BaseChoice::Branch { name }, commit))
         }
         BaseChoice::MergeBase { reference } => {
-            let commit = git.merge_base(&reference).await.map_err(|e| e.0)?;
+            let commit = git.merge_base(&reference, tip).await.map_err(|e| e.0)?;
             Ok((BaseChoice::MergeBase { reference }, commit))
         }
         BaseChoice::Commit { id } => {

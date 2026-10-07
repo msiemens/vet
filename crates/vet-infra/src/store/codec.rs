@@ -61,7 +61,14 @@ twin!(
     }
 );
 twin!(ThreadStatus, ThreadStatus { Open, Resolved });
-twin!(VersionOrigin, VersionOrigin { Settled, BaseMoved });
+twin!(
+    VersionOrigin,
+    VersionOrigin {
+        Settled,
+        BaseMoved,
+        Observed
+    }
+);
 twin!(
     NonTextKind,
     ChangeKind {

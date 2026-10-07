@@ -429,6 +429,18 @@ impl ReviewStore for SqliteStore {
         Ok(id.map(|i| ReviewId(i as u64)))
     }
 
+    async fn latest_review(&self, changeset: ChangesetId) -> Result<Option<ReviewId>, StoreError> {
+        let id: Option<i64> = review::Entity::find()
+            .filter(review::Column::Changeset.eq(changeset.0 as i64))
+            .order_by_desc(review::Column::Id)
+            .select_only()
+            .column(review::Column::Id)
+            .into_tuple()
+            .one(&self.db)
+            .await?;
+        Ok(id.map(|i| ReviewId(i as u64)))
+    }
+
     async fn review(&self, id: ReviewId) -> Result<Option<Review>, StoreError> {
         Ok(self.load_review(id).await?)
     }

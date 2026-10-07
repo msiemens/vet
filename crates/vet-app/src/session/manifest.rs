@@ -11,6 +11,7 @@ use vet_core::filter::ReviewFilter;
 use super::state::{State, acknowledged, find_diff, lifecycle_of, shown_items};
 use super::views::{FileStatus, FileView, ManifestView, ReviewUpdateView, ReviewView, TargetView};
 use super::{LiveSession, Result, SessionError};
+use crate::changeset::Source;
 use crate::editor::line_count;
 use crate::ports::{GitRepo, LiveStore};
 
@@ -70,15 +71,23 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             name: self.name.clone(),
             lifecycle: lifecycle_of(&st),
             base,
-            target: TargetView {
-                name: "Working tree".into(),
-                branch: branches.iter().find(|b| b.current).map(|b| b.name.clone()),
+            target: match &st.source {
+                Source::Branch { name } => TargetView {
+                    source: st.source.clone(),
+                    name: name.clone(),
+                    branch: Some(name.clone()),
+                },
+                _ => TargetView {
+                    source: st.source.clone(),
+                    name: "Working tree".into(),
+                    branch: branches.iter().find(|b| b.current).map(|b| b.name.clone()),
+                },
             },
             filter: st.filter.clone(),
             completion: changeset_completion(&cov, &st.filter, &changes.diff, &acked),
             delta: files.iter().map(|f| f.delta).sum(),
             files,
-            degraded: st.degraded,
+            degraded: self.degraded_for(&st.source),
         })
     }
 }

@@ -4,6 +4,7 @@
 //! Ids and counts are `u32` so they map to plain TS `number`s.
 
 mod account;
+mod changeset;
 mod envelope;
 mod event;
 mod file;
@@ -18,6 +19,7 @@ mod text;
 mod thread;
 
 pub use account::*;
+pub use changeset::*;
 pub use envelope::*;
 pub use event::*;
 pub use file::*;

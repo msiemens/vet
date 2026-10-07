@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{Base, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate, Task};
+use crate::{Base, ChangesetKey, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate, Task};
 
 /// Events are invalidations or small state updates; the client re-requests
 /// whatever it displays.
@@ -18,6 +18,13 @@ pub enum Event {
     /// A snapshot settled and the changeset moved to a new `revision`. The
     /// manifest, with review state remapped onto it, is stale: fetch it again.
     SnapshotSettled { project: ProjectId, revision: u32 },
+    /// Another changeset is on view now, at `revision`. The manifest, with the threads, is
+    /// stale: fetch it again. The requester gets it too.
+    ChangesetOpened {
+        project: ProjectId,
+        revision: u32,
+        changeset: ChangesetKey,
+    },
     /// Review state of one file changed at the current `revision`.
     ReviewChanged {
         project: ProjectId,

@@ -1,9 +1,9 @@
 //! Semantic queries of a session (§7.3): the side being viewed is asked
 //! directly, derived analyses combine the answers with the revision's diff.
 //! Positions and results belong to a revision; a stale one is refused like any
-//! other request. Base answers come from the session's base snapshot, target
-//! answers from the live tree, which is the revision's target until the next
-//! snapshot settles.
+//! other request. Base answers come from the session's base snapshot. Target
+//! answers come from the live tree, which is the revision's target until the next
+//! snapshot settles, or, when the target is a commit's tree, from a snapshot.
 
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -154,7 +154,9 @@ impl<G: BlobReader + Send + Sync, S: Store + Send + Sync> BaseTexts for BaseCont
 }
 
 /// The base and the target side as the pool serves them: each may execute
-/// project code as far as `trust` holds for the commit it is built on.
+/// project code as far as `trust` holds for the commit it is built on. The target
+/// is served from the live tree only when it is the live tree; a commit's tree is
+/// materialized like the base.
 fn served(trust: &Trust, sides: &SemanticSides) -> (Served, Served) {
     (
         Served {
@@ -162,7 +164,11 @@ fn served(trust: &Trust, sides: &SemanticSides) -> (Served, Served) {
             policy: analysis_policy(trust, &sides.base_commit),
         },
         Served {
-            target: Target::Live,
+            target: if sides.live_target {
+                Target::Live
+            } else {
+                Target::Snapshot(sides.target)
+            },
             policy: analysis_policy(trust, &sides.head),
         },
     )
@@ -594,7 +600,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::changeset::CommitId;
+    use crate::changeset::{CommitId, Source};
     use crate::progress::TaskState;
     use crate::session::tests::{FakeGit, Fixture, MemStore};
 
@@ -604,6 +610,7 @@ mod tests {
             base_commit: CommitId("base".into()),
             target: SnapshotId(Hash([2; 32])),
             head: CommitId("head".into()),
+            live_target: true,
         }
     }
 
@@ -754,7 +761,6 @@ mod tests {
             Ok(vec![symbol(file)])
         }
         async fn text_symbols(&self, file: &RepoPath, _: &str) -> Result<Vec<SymbolInfo>, QueryError> {
-            assert_eq!(self.1, Tree::Live, "a text is asked of the live tree's server");
             self.0.text_symbol_requests.fetch_add(1, Ordering::SeqCst);
             Ok(vec![symbol(file)])
         }
@@ -851,6 +857,29 @@ mod tests {
         assert_eq!(counters.started.load(Ordering::SeqCst), 4);
         assert_eq!(counters.peak_starting.load(Ordering::SeqCst), 2);
         assert_eq!(counters.snapshot_started_early.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn the_target_of_a_branch_is_served_from_a_snapshot_and_never_from_the_live_tree() {
+        let (fx, semantics, counters) = semantics().await;
+        let base = [("a.rs", "one\n"), ("b.py", "one\n"), ("c.md", "one\n")];
+        let tip = [("a.rs", "two\n"), ("b.py", "two\n"), ("c.md", "two\n")];
+        fx.git.feature(&base, &tip);
+
+        let revision = fx
+            .session
+            .open_changeset(Source::Branch { name: "feature".into() })
+            .await
+            .unwrap()
+            .unwrap();
+        semantics.start_servers(&fx.session, revision).await.unwrap();
+
+        assert_eq!(counters.live_started.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            counters.started.load(Ordering::SeqCst),
+            4,
+            "Rust and Python, both sides"
+        );
     }
 
     #[tokio::test]

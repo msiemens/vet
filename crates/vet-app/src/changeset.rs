@@ -70,6 +70,9 @@ pub enum VersionOrigin {
     Settled,
     /// A different base was chosen.
     BaseMoved,
+    /// A branch's tip or its merge base was seen to have moved: new commits, an
+    /// amend or a rebase.
+    Observed,
 }
 
 impl Version {

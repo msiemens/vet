@@ -117,6 +117,10 @@ pub(crate) struct FakeGit {
     branches: Arc<Mutex<Vec<BranchInfo>>>,
     /// First-parent history of a tip, the tip first.
     history: Arc<Mutex<HashMap<CommitId, Vec<CommitId>>>>,
+    /// The revision branches are compared against by default.
+    default_reference: Arc<Mutex<Option<String>>>,
+    /// Unix seconds of commits; 100 for the others.
+    times: Arc<Mutex<HashMap<CommitId, i64>>>,
 }
 
 fn clock() -> i64 {
@@ -131,6 +135,7 @@ impl FakeGit {
         let chain: Vec<CommitId> = [tip].iter().chain(history).map(|c| CommitId((*c).into())).collect();
         self.history.lock().unwrap().insert(chain[0].clone(), chain.clone());
         let mut branches = self.branches.lock().unwrap();
+        branches.retain(|b| b.name != name);
         branches.push(BranchInfo {
             name: name.into(),
             commit: chain[0].clone(),
@@ -139,6 +144,23 @@ impl FakeGit {
             upstream: None,
         });
         branches.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    /// The local branch `name`, not checked out, at commit `tip` with the tree `files`.
+    fn branch(&self, name: &str, tip: &str, files: &[(&str, &str)], history: &[&str]) {
+        self.add_commit(&format!("refs/heads/{name}"), tip, files);
+        self.add_commit(tip, tip, files);
+        self.add_branch(name, false, tip, history);
+    }
+
+    /// The branch `feature` at commit `tip1` (tree `files`), which left the default branch
+    /// `main` at commit `m1` (tree `base`).
+    pub(crate) fn feature(&self, base: &[(&str, &str)], files: &[(&str, &str)]) {
+        *self.default_reference.lock().unwrap() = Some("main".into());
+        self.add_commit("merge-base main", "m1", base);
+        self.add_commit("main", "m2", base);
+        self.add_branch("main", true, "m2", &["m1"]);
+        self.branch("feature", "tip1", files, &["m1"]);
     }
 
     fn add_commit(&self, spec: &str, id: &str, files: &[(&str, &str)]) {
@@ -217,13 +239,31 @@ impl History for FakeGit {
             None => Ok(self.base.lock().unwrap().clone().unwrap()),
         }
     }
-    async fn merge_base(&self, reference: &str) -> std::result::Result<CommitId, GitError> {
-        self.commits
-            .lock()
-            .unwrap()
-            .get(&format!("merge-base {reference}"))
-            .map(|(c, _)| c.clone())
-            .ok_or_else(|| GitError(format!("no common ancestor with {reference}")))
+    async fn merge_base(&self, reference: &str, tip: &CommitId) -> std::result::Result<CommitId, GitError> {
+        let commits = self.commits.lock().unwrap();
+        // A merge base set for one tip wins over one for any.
+        [
+            format!("merge-base {reference} {}", tip.0),
+            format!("merge-base {reference}"),
+        ]
+        .iter()
+        .find_map(|key| commits.get(key))
+        .map(|(c, _)| c.clone())
+        .ok_or_else(|| GitError(format!("no common ancestor with {reference}")))
+    }
+    async fn default_reference(&self) -> std::result::Result<Option<String>, GitError> {
+        Ok(self.default_reference.lock().unwrap().clone())
+    }
+    async fn first_parent_range(
+        &self,
+        base: &CommitId,
+        tip: &CommitId,
+    ) -> std::result::Result<Vec<CommitId>, GitError> {
+        let history = self.history.lock().unwrap();
+        let chain = history.get(tip).map(Vec::as_slice).unwrap_or_default();
+        let mut range: Vec<CommitId> = chain.iter().take_while(|c| *c != base).cloned().collect();
+        range.reverse();
+        Ok(range)
     }
     async fn resolve_commit(&self, spec: &str) -> std::result::Result<CommitId, GitError> {
         self.commits
@@ -247,7 +287,7 @@ impl History for FakeGit {
             id: commit.clone(),
             subject: format!("subject of {}", commit.0),
             author: "Ann".into(),
-            time: 100,
+            time: self.times.lock().unwrap().get(commit).copied().unwrap_or(100),
         })
     }
     async fn first_parent_distance(
@@ -262,8 +302,15 @@ impl History for FakeGit {
     }
     async fn commits_behind(&self, tip: &CommitId, base: &CommitId, _: usize) -> std::result::Result<usize, GitError> {
         let history = self.history.lock().unwrap();
-        let chain = history.get(tip).map(Vec::as_slice).unwrap_or_default();
-        Ok(chain.iter().position(|c| c == base).unwrap_or(chain.len()))
+        let chain = |c: &CommitId| history.get(c).cloned().unwrap_or_else(|| vec![c.clone()]);
+        let tip_chain = chain(tip);
+        Ok(match tip_chain.iter().position(|c| c == base) {
+            Some(steps) => steps,
+            None => {
+                let base_chain = chain(base);
+                tip_chain.iter().filter(|c| !base_chain.contains(c)).count()
+            }
+        })
     }
 }
 
@@ -421,6 +468,10 @@ impl ReviewStore for MemStore {
     async fn open_review(&self, _: ChangesetId) -> StoreResult<Option<ReviewId>> {
         let mem = self.0.lock().unwrap();
         Ok((mem.changeset.is_some() && !mem.closed).then_some(ReviewId(mem.started)))
+    }
+    async fn latest_review(&self, _: ChangesetId) -> StoreResult<Option<ReviewId>> {
+        let mem = self.0.lock().unwrap();
+        Ok(mem.changeset.is_some().then_some(ReviewId(mem.started)))
     }
     async fn review(&self, id: ReviewId) -> StoreResult<Option<Review>> {
         let mem = self.0.lock().unwrap();
@@ -2625,4 +2676,254 @@ async fn threads_need_text_inside_the_current_revision() {
     fx.settle(&[("a.txt", "one\n")]).await;
     assert!(matches!(new(on("a.txt", 0, 1)).await, Err(SessionError::Stale { .. })));
     assert!(fx.store.0.lock().unwrap().threads.is_empty());
+}
+
+fn feature() -> Source {
+    Source::Branch { name: "feature".into() }
+}
+
+/// Opens `feature` on `fx` and returns its revision.
+async fn view_feature(fx: &Fixture) -> u32 {
+    fx.session.open_changeset(feature()).await.unwrap().unwrap()
+}
+
+#[tokio::test]
+async fn a_branch_opened_as_a_changeset_shows_what_it_has_beyond_where_it_left_the_default_branch() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "dirty\n")]).await;
+    fx.git
+        .feature(&[("a.txt", "one\n")], &[("a.txt", "two\n"), ("new.txt", "n\n")]);
+
+    let revision = view_feature(&fx).await;
+
+    let m = fx.session.manifest().await.unwrap();
+    assert_eq!((m.revision, m.lifecycle), (revision, Lifecycle::Browsing));
+    assert_eq!(
+        (
+            m.target.source.clone(),
+            m.target.name.as_str(),
+            m.target.branch.as_deref()
+        ),
+        (feature(), "feature", Some("feature"))
+    );
+    assert_eq!(m.base.commit.id, CommitId("m1".into()));
+    let files: Vec<_> = m.files.iter().map(|f| (f.path.to_string_lossy(), f.status)).collect();
+    assert_eq!(
+        files,
+        [
+            ("a.txt".to_string(), FileStatus::Modified),
+            ("new.txt".to_string(), FileStatus::Added)
+        ],
+        "the branch's tip, not the dirty tree"
+    );
+    assert!(m.degraded.is_none());
+}
+
+#[tokio::test]
+async fn a_new_commit_on_a_reviewed_branch_is_the_next_version_and_keeps_the_marks_that_still_hold() {
+    let base = numbered(30, &[]);
+    let (first, second) = (numbered(30, &[3]), numbered(30, &[3, 20]));
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fx.git.feature(&[("a.txt", &base)], &[("a.txt", &first)]);
+    let revision = view_feature(&fx).await;
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
+    assert!(matches!(
+        fx.session.lifecycle().await,
+        Lifecycle::Open { version: 1, .. }
+    ));
+    assert_eq!(fx.session.observe().await.unwrap(), None, "nothing moved");
+
+    fx.git.branch("feature", "tip2", &[("a.txt", &second)], &["tip1", "m1"]);
+    let moved = fx.session.observe().await.unwrap().expect("the tip moved");
+
+    assert!(moved > revision);
+    assert!(matches!(
+        fx.session.lifecycle().await,
+        Lifecycle::Open { version: 2, .. }
+    ));
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen, HunkState::Unseen]);
+    let versions = fx.store.0.lock().unwrap().versions.clone();
+    assert_eq!(
+        versions
+            .iter()
+            .map(|v| (v.n, v.tip.0.as_str(), v.origin))
+            .collect::<Vec<_>>(),
+        [
+            (1, "tip1", VersionOrigin::Settled),
+            (2, "tip2", VersionOrigin::Observed)
+        ]
+    );
+    assert_eq!(versions[0].base_commit, versions[1].base_commit);
+    assert_eq!(fx.session.observe().await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn a_rebase_is_a_version_with_the_new_base() {
+    let base = numbered(30, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fx.git.feature(&[("a.txt", &base)], &[("a.txt", &numbered(30, &[3]))]);
+    let revision = view_feature(&fx).await;
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
+
+    // The default branch moved on, and the branch was rebased onto it: new base, new tip.
+    let moved_base = numbered(30, &[25]);
+    fx.git
+        .add_commit("merge-base main tip2", "m3", &[("a.txt", &moved_base)]);
+    fx.git
+        .branch("feature", "tip2", &[("a.txt", &numbered(30, &[3, 25]))], &["m3"]);
+    fx.session.observe().await.unwrap().expect("tip and base moved");
+
+    let m = fx.session.manifest().await.unwrap();
+    assert!(matches!(m.lifecycle, Lifecycle::Open { version: 2, .. }));
+    assert_eq!(m.base.commit.id, CommitId("m3".into()));
+    assert_eq!(
+        m.files[0].review.hunks,
+        [HunkState::Seen],
+        "the mark is on the same lines"
+    );
+    let versions = fx.store.0.lock().unwrap().versions.clone();
+    let (before, after) = (&versions[0], &versions[1]);
+    assert_eq!(after.origin, VersionOrigin::Observed);
+    assert_ne!(before.base_commit, after.base_commit);
+    assert_ne!(before.base, after.base);
+    assert_eq!(after.base_commit, CommitId("m3".into()));
+}
+
+#[tokio::test]
+async fn a_moved_branch_that_is_only_browsed_follows_the_tip_and_stores_nothing() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "two\n")]);
+    let revision = view_feature(&fx).await;
+
+    fx.git
+        .branch("feature", "tip2", &[("a.txt", "three\n")], &["tip1", "m1"]);
+    let moved = fx.session.observe().await.unwrap().expect("the tip moved");
+
+    assert!(moved > revision);
+    assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
+    assert_eq!(
+        fx.session.semantic_sides(moved).await.unwrap().head,
+        CommitId("tip2".into())
+    );
+    assert!(fx.store.0.lock().unwrap().versions.is_empty());
+}
+
+#[tokio::test]
+async fn switching_away_from_a_changeset_and_back_keeps_its_review_and_revisions_only_increase() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "branch\n")]);
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen]);
+
+    let on_branch = view_feature(&fx).await;
+    assert_eq!(
+        fx.session.lifecycle().await,
+        Lifecycle::Browsing,
+        "the branch has its own review"
+    );
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::Unseen]);
+    // The tree settling while it is off view is not the revision on view.
+    fx.settle(&[("a.txt", "two\n")]).await;
+    assert_eq!(fx.session.revision().await, on_branch);
+
+    let back = fx.session.open_changeset(Source::WorkingTree).await.unwrap().unwrap();
+
+    assert!(back > on_branch && on_branch > 0);
+    assert!(matches!(
+        fx.session.lifecycle().await,
+        Lifecycle::Open { version: 2, .. }
+    ));
+    assert_eq!(fx.hunks("a.txt").await, [HunkState::Seen]);
+    assert_eq!(fx.session.source().await, Source::WorkingTree);
+    assert_eq!(
+        fx.session.open_changeset(Source::WorkingTree).await.unwrap(),
+        None,
+        "it is on view already"
+    );
+}
+
+#[tokio::test]
+async fn a_review_of_a_branch_is_resumed_when_the_branch_is_opened_in_a_new_session() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "two\n")]);
+    let revision = view_feature(&fx).await;
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
+
+    let tree = fx.git.snapshot(&[("a.txt", "one\n")]);
+    fx.git.scans.lock().unwrap().push(tree);
+    let again = LiveSession::open(fx.git.clone(), fx.store.clone(), REPO.into(), clock)
+        .await
+        .unwrap();
+    again.open_changeset(feature()).await.unwrap();
+
+    assert!(matches!(again.lifecycle().await, Lifecycle::Open { version: 1, .. }));
+    let m = again.manifest().await.unwrap();
+    assert_eq!(m.files[0].review.hunks, [HunkState::Seen]);
+}
+
+#[tokio::test]
+async fn opening_a_branch_that_does_not_exist_changes_nothing() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    let before = fx.session.revision().await;
+
+    assert!(matches!(
+        fx.session.open_changeset(feature()).await,
+        Err(SessionError::NotFound(_))
+    ));
+
+    assert_eq!(
+        (fx.session.source().await, fx.session.revision().await),
+        (Source::WorkingTree, before)
+    );
+}
+
+#[tokio::test]
+async fn the_list_has_the_working_tree_first_then_the_branches_worth_reviewing() {
+    const DAY: i64 = 24 * 60 * 60;
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "two\n")]);
+    fx.git.add_branch("merged", false, "m2", &["m1"]);
+    fx.git.add_branch("stale", false, "s1", &["m1"]);
+    fx.git.add_branch("older", false, "o1", &["m1"]);
+    for (commit, age_days) in [("tip1", 1), ("s1", 40), ("o1", 10)] {
+        fx.git
+            .times
+            .lock()
+            .unwrap()
+            .insert(CommitId(commit.into()), -age_days * DAY);
+    }
+
+    let list = fx.session.changesets().await.unwrap();
+
+    let titles: Vec<_> = list.rows.iter().map(|r| r.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        ["Working tree", "main", "feature", "older"],
+        "merged has nothing of its own, stale is too old; main is checked out; the most recent first"
+    );
+    assert_eq!(list.on_view, Source::WorkingTree);
+    let feature = &list.rows[2];
+    assert_eq!(feature.divergence, Some(Divergence { ahead: 1, behind: 1 }));
+    assert_eq!(feature.last_commit, Some(-DAY));
+    assert!(list.rows[1].checked_out);
+}
+
+#[tokio::test]
+async fn the_list_says_which_changesets_have_a_review_and_keeps_the_one_on_view() {
+    const DAY: i64 = 24 * 60 * 60;
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "two\n")]);
+    // Old, but on view.
+    fx.git.times.lock().unwrap().insert(CommitId("tip1".into()), -90 * DAY);
+    let revision = view_feature(&fx).await;
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
+
+    let open = fx.session.changesets().await.unwrap();
+    assert_eq!(open.on_view, feature());
+    let review_of = |list: &ChangesetList, title: &str| list.rows.iter().find(|r| r.title == title).unwrap().review;
+    assert_eq!(review_of(&open, "Working tree"), RowReview::None);
+    assert_eq!(review_of(&open, "feature"), RowReview::Open { version: 1 });
+
+    fx.session.finish_review().await.unwrap();
+    let finished = fx.session.changesets().await.unwrap();
+    assert_eq!(review_of(&finished, "feature"), RowReview::Finished { complete: true });
 }

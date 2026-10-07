@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{FileChange, FileReview, LineDelta, ProjectId, RestoreFailure};
+use crate::{ChangesetKey, FileChange, FileReview, LineDelta, ProjectId, RestoreFailure};
 
 /// A side of the changeset.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -65,14 +65,16 @@ pub struct Base {
     pub behind: Option<u32>,
 }
 
-/// What the changes lead to: the live working tree.
+/// What the changes lead to: the live working tree, or a branch's tip.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct Target {
-    /// "Working tree".
+    /// Which changeset this is.
+    pub changeset: ChangesetKey,
+    /// "Working tree", or the branch's name.
     pub name: String,
-    /// The checked-out branch.
+    /// The branch the target is built on: the checked-out one for the working tree, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub branch: Option<String>,

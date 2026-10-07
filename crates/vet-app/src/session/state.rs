@@ -12,8 +12,7 @@ use vet_core::review::{Anchor, CommentTarget, ReviewedSpan, Thread, ThreadId};
 
 use super::views::{ItemView, Lifecycle, Outcome};
 use super::{Result, SessionError};
-use crate::changeset::{BaseChoice, ChangesetId, CommitId};
-use crate::ports::Degraded;
+use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source};
 use crate::review::{NonTextAck, RecordedSpan, ReviewId, SpanId};
 
 /// What the current revision's diff needs, computed on first use.
@@ -44,6 +43,8 @@ pub(super) struct OpenReview {
 }
 
 pub(super) struct State {
+    /// What the changeset on view is: its target comes from here.
+    pub(super) source: Source,
     pub(super) revision: u32,
     /// The stored changeset; `None` until a review of it started.
     pub(super) changeset: Option<ChangesetId>,
@@ -64,7 +65,6 @@ pub(super) struct State {
     pub(super) recorded: Vec<RecordedSpan>,
     pub(super) acks: Vec<NonTextAck>,
     pub(super) threads: Vec<Thread>,
-    pub(super) degraded: Option<Degraded>,
     pub(super) changes: Option<Changes>,
 }
 

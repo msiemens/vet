@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use corpus::{Config, Corpus};
-use vet_app::changeset::{BaseChoice, CommitId};
+use vet_app::changeset::{BaseChoice, CommitId, Source};
 use vet_app::editor::{last_text_line, line_count, text_changes};
 use vet_app::ports::CommitInfo;
 use vet_app::session::{
@@ -187,6 +187,7 @@ impl Handler for Mock {
                         behind: None,
                     },
                     target: TargetView {
+                        source: Source::WorkingTree,
                         name: "Working tree".into(),
                         branch: Some("main".into()),
                     },
@@ -301,6 +302,7 @@ impl Handler for Mock {
             | Request::ListServers { .. }
             | Request::InstallServer { .. }
             | Request::SetServerPath { .. } => Err("the corpus has no language servers".into()),
+            Request::ListChangesets { .. } | Request::OpenChangeset { .. } => Err("the corpus is one changeset".into()),
         }
     }
 }

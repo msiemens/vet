@@ -21,14 +21,49 @@ pub(super) fn resolve_commit(repo: &gix::Repository, spec: &str) -> Result<Commi
         .ok_or_else(|| GitError(format!("unknown commit {spec}")))
 }
 
-pub(super) fn merge_base(repo: &gix::Repository, reference: &str) -> Result<CommitId, GitError> {
+pub(super) fn merge_base(repo: &gix::Repository, reference: &str, tip: &CommitId) -> Result<CommitId, GitError> {
     let other =
         commit_of(repo, reference).ok_or_else(|| GitError(format!("unknown branch or revision {reference}")))?;
-    let head = repo.head_id().map_err(err)?;
     let base = repo
-        .merge_base(other.id, head)
+        .merge_base(other.id, object_id(tip)?)
         .map_err(|_| GitError(format!("no common ancestor with {reference}")))?;
     Ok(CommitId(base.to_string()))
+}
+
+/// `origin/HEAD` if the repository has it and it points at a branch that exists, else
+/// the local branch `main` or `master`.
+pub(super) fn default_reference(repo: &gix::Repository) -> Result<Option<String>, GitError> {
+    if let Some(mut head) = repo.try_find_reference("refs/remotes/origin/HEAD").map_err(err)?
+        && head.peel_to_id().is_ok()
+    {
+        return Ok(Some("refs/remotes/origin/HEAD".to_owned()));
+    }
+    for name in ["main", "master"] {
+        let full = format!("refs/heads/{name}");
+        if repo.try_find_reference(full.as_str()).map_err(err)?.is_some() {
+            return Ok(Some(full));
+        }
+    }
+    Ok(None)
+}
+
+pub(super) fn first_parent_range(
+    repo: &gix::Repository,
+    base: &CommitId,
+    tip: &CommitId,
+) -> Result<Vec<CommitId>, GitError> {
+    let walk = repo
+        .rev_walk([object_id(tip)?])
+        .with_hidden([object_id(base)?])
+        .first_parent_only()
+        .all()
+        .map_err(err)?;
+    let mut range = Vec::new();
+    for info in walk {
+        range.push(CommitId(info.map_err(err)?.id.to_string()));
+    }
+    range.reverse();
+    Ok(range)
 }
 
 pub(super) fn commit_info(repo: &gix::Repository, commit: &CommitId) -> Result<CommitInfo, GitError> {

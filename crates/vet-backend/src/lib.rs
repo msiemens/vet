@@ -3,6 +3,7 @@
 //! to protocol messages.
 
 mod accounts;
+mod changesets;
 mod events;
 mod fetch;
 mod highlight;
@@ -208,6 +209,8 @@ impl Orchestrator {
                 self.close(project, from).await?;
                 Ok(Response::Done)
             }
+            Request::ListChangesets { project } => self.list_changesets(project).await,
+            Request::OpenChangeset { project, changeset } => self.open_changeset(project, changeset).await,
             Request::Tasks { project } => self.tasks(project).await,
             Request::FinishReview { project } => self.finish_review(project).await,
             Request::Manifest { project } => self.manifest(project).await,

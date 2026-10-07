@@ -186,9 +186,20 @@ pub trait History {
     fn user_name(&self) -> impl Future<Output = Option<String>> + Send;
     /// The snapshot of a commit's tree.
     fn commit_snapshot(&self, commit: &CommitId) -> impl Future<Output = Result<Snapshot, GitError>> + Send;
-    /// The merge base of `reference` (a branch or any revision) and `HEAD`.
+    /// The merge base of `reference` (a branch or any revision) and `tip`.
     /// The error is fit to show to a user.
-    fn merge_base(&self, reference: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
+    fn merge_base(&self, reference: &str, tip: &CommitId) -> impl Future<Output = Result<CommitId, GitError>> + Send;
+    /// What a changeset of a branch is compared against by default: the remote's default
+    /// branch (`origin/HEAD`) as a revision, else the default local branch; `None` if
+    /// the repository has neither.
+    fn default_reference(&self) -> impl Future<Output = Result<Option<String>, GitError>> + Send;
+    /// The commits reachable from `tip` but not from `base` along first parents only,
+    /// oldest first.
+    fn first_parent_range(
+        &self,
+        base: &CommitId,
+        tip: &CommitId,
+    ) -> impl Future<Output = Result<Vec<CommitId>, GitError>> + Send;
     /// The commit `spec` (a full or abbreviated id, or a revision) names.
     /// The error is fit to show to a user.
     fn resolve_commit(&self, spec: &str) -> impl Future<Output = Result<CommitId, GitError>> + Send;
@@ -364,6 +375,11 @@ pub trait ReviewStore {
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// The review of `changeset` that is open, if any; the newest if several are.
     fn open_review(&self, changeset: ChangesetId) -> impl Future<Output = Result<Option<ReviewId>, StoreError>> + Send;
+    /// The newest review of `changeset`, open or finished.
+    fn latest_review(
+        &self,
+        changeset: ChangesetId,
+    ) -> impl Future<Output = Result<Option<ReviewId>, StoreError>> + Send;
     fn review(&self, id: ReviewId) -> impl Future<Output = Result<Option<Review>, StoreError>> + Send;
     /// The review filter of the repository at `repo`, a project setting that
     /// applies to every changeset of it; the default if none was stored.

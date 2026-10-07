@@ -27,7 +27,7 @@ pub mod kinds {
     int_enum!(PathFlag { Collision = 0, ContentUnavailable = 1 });
     int_enum!(ChangeKind { Mode = 0, Symlink = 1, Submodule = 2, Binary = 3, ContentUnavailable = 4, Rename = 5, Empty = 6 });
     int_enum!(SourceKind { WorkingTree = 0, Branch = 1, PullRequest = 2 });
-    int_enum!(VersionOrigin { Settled = 0, BaseMoved = 1 });
+    int_enum!(VersionOrigin { Settled = 0, BaseMoved = 1, Observed = 2 });
 }
 
 macro_rules! child_of_changeset {

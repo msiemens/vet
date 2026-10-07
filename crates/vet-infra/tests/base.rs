@@ -63,12 +63,63 @@ fn fixture() -> Fixture {
 async fn the_merge_base_is_where_the_branches_diverged() {
     let fx = fixture();
     let repo = GixRepo::new(fx.dir.path());
-    assert_eq!(repo.merge_base("main").await.unwrap(), fx.m1);
-    assert_eq!(repo.merge_base("feature").await.unwrap(), fx.f2);
+    assert_eq!(repo.merge_base("main", &fx.f2).await.unwrap(), fx.m1);
+    assert_eq!(repo.merge_base("feature", &fx.f2).await.unwrap(), fx.f2);
     assert_eq!(
-        repo.merge_base("HEAD~1").await.unwrap().0,
+        repo.merge_base("HEAD~1", &fx.f2).await.unwrap().0,
         git(fx.dir.path(), &["rev-parse", "HEAD~1"])
     );
+    assert_eq!(
+        repo.merge_base("feature", &fx.m2).await.unwrap(),
+        fx.m1,
+        "against the tip given, not HEAD"
+    );
+}
+
+#[tokio::test]
+async fn the_first_parent_range_is_what_the_tip_has_beyond_the_base_oldest_first() {
+    let fx = fixture();
+    let p = fx.dir.path();
+    let repo = GixRepo::new(p);
+    let f1 = CommitId(git(p, &["rev-parse", "HEAD~1"]));
+    assert_eq!(
+        repo.first_parent_range(&fx.m1, &fx.f2).await.unwrap(),
+        [f1, fx.f2.clone()]
+    );
+    assert!(repo.first_parent_range(&fx.f2, &fx.f2).await.unwrap().is_empty());
+
+    // Merging main in: the merge is a unit, the commits it brings are not.
+    git(p, &["merge", "-q", "--no-ff", "-m", "merge main", "main"]);
+    let merge = CommitId(git(p, &["rev-parse", "HEAD"]));
+    let range = repo.first_parent_range(&fx.m2, &merge).await.unwrap();
+    assert_eq!(range.len(), 3, "f1, f2 and the merge");
+    assert_eq!(range.last(), Some(&merge));
+}
+
+#[tokio::test]
+async fn the_default_reference_is_origin_head_else_main_or_master_else_none() {
+    let fx = fixture();
+    let p = fx.dir.path();
+    let repo = GixRepo::new(p);
+    assert_eq!(
+        repo.default_reference().await.unwrap().as_deref(),
+        Some("refs/heads/main")
+    );
+
+    git(p, &["update-ref", "refs/remotes/origin/main", "main"]);
+    git(
+        p,
+        &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+    );
+    assert_eq!(
+        repo.default_reference().await.unwrap().as_deref(),
+        Some("refs/remotes/origin/HEAD")
+    );
+
+    let bare = tempfile::tempdir().unwrap();
+    git(bare.path(), &["init", "-q", "-b", "trunk"]);
+    commit(bare.path(), "a.txt", "a");
+    assert_eq!(GixRepo::new(bare.path()).default_reference().await.unwrap(), None);
 }
 
 #[tokio::test]
@@ -77,7 +128,7 @@ async fn unresolvable_bases_have_user_facing_errors() {
     let p = fx.dir.path();
     let repo = GixRepo::new(p);
     assert_eq!(
-        repo.merge_base("nope").await.unwrap_err().0,
+        repo.merge_base("nope", &fx.f2).await.unwrap_err().0,
         "unknown branch or revision nope"
     );
     assert_eq!(
@@ -90,9 +141,9 @@ async fn unresolvable_bases_have_user_facing_errors() {
     );
 
     git(p, &["checkout", "-q", "--orphan", "unrelated"]);
-    commit(p, "z.txt", "z");
+    let z = commit(p, "z.txt", "z");
     assert_eq!(
-        repo.merge_base("main").await.unwrap_err().0,
+        repo.merge_base("main", &z).await.unwrap_err().0,
         "no common ancestor with main"
     );
 }

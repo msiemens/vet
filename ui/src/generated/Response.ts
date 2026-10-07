@@ -4,6 +4,8 @@ import type { Base } from "./Base";
 import type { BlobContent } from "./BlobContent";
 import type { BranchInfo } from "./BranchInfo";
 import type { ChangedSymbols } from "./ChangedSymbols";
+import type { ChangesetKey } from "./ChangesetKey";
+import type { ChangesetRow } from "./ChangesetRow";
 import type { CommitInfo } from "./CommitInfo";
 import type { Diagnostic } from "./Diagnostic";
 import type { DirEntry } from "./DirEntry";
@@ -28,7 +30,7 @@ export type Response = { "type": "pong", payload: string, } | { "type": "project
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
+root: string, } | { "type": "done" } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "changesets", rows: Array<ChangesetRow>, onView: ChangesetKey, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
 /**
  * The changed ranges of the hunks in order, down to the words that differ within a
  * replaced region: line-snapped, one block per hunk (see [`TextChange`]).
