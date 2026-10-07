@@ -17,7 +17,7 @@
   import "./editor/hover.css";
   import "./editor/threadCard.css";
   import { type Hud, ReviewController } from "./ReviewController";
-  import { CHANGES, kindOf, pathOf } from "./Tabs.svelte";
+  import { kindOf, pathOf } from "./Tabs.svelte";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
@@ -92,10 +92,7 @@
   /** Shows the file in the Changes tab; an unchanged file is only selected. */
   function select(path: string) {
     selected = path;
-    if (!fileOf(path)) return;
-    tabs.active = CHANGES;
-    const view = controller.changes;
-    void view.goToFile(view.indexOf(path));
+    void controller.revealInChanges(path);
   }
 
   function runMenu(id: string, { path, dir }: { path: string; dir: boolean }) {

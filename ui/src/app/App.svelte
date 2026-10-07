@@ -84,9 +84,7 @@
     if (backend && revision !== undefined) untrack(() => void symbols.load(backend, revision));
   });
 
-  // A base-side line has no place in the diff views yet, so a changed file opens as its diff.
-  const openLocation: OpenLocation = (path, line, side) =>
-    side === "base" && changeset.file(path) ? void controller?.openFile(path) : void controller?.openSource(path, line);
+  const openLocation: OpenLocation = (path, line, side) => void controller?.openLocation(path, line, side);
 
   // The main menu follows the state it shows.
   $effect(() => {

@@ -5,6 +5,7 @@
 import { tick } from "svelte";
 import type { Manifest } from "../../generated/Manifest";
 import type { Side } from "../../generated/Side";
+import type { TextSpan } from "../../generated/TextSpan";
 import { nextPaint } from "../../lib/nextPaint";
 import type { Backend } from "../../state/backend";
 import { changeset } from "../../state/changeset.svelte";
@@ -150,12 +151,7 @@ export class ReviewController {
     return pathOf(this.tabs.active);
   }
 
-  /**
-   * Opens the definition of the symbol at a position of `side`'s text. A location in a changed
-   * file opens its diff tab; an unchanged file (the same text on both sides) its read-only text
-   * tab. A base-side location lands in the base content: the base editor of a side-by-side view,
-   * or the target line of the unified view where the deleted lines are drawn.
-   */
+  /** The definition of the symbol at a position of `side`'s text, shown by `openLocation`. */
   private async goToDefinition(revision: number, side: Side, path: string, line: number, col: number) {
     const found = await semantic.definition(revision, side, path, line, col);
     const location = found?.[0];
@@ -164,17 +160,38 @@ export class ReviewController {
       changeset.notice = `Defined outside the repository: ${location.path}`;
       return;
     }
+    await this.openLocation(location.path, location.span.start.line, side, location.span);
+  }
+
+  /**
+   * Shows a 0-based `line` of `side`'s text of the file at `path`, marking `span` if given. A
+   * changed file opens as its diff tab; an unchanged file (the same text on both sides) as its
+   * read-only text tab. A base-side location lands in the base content: the base editor of a
+   * side-by-side view, or the target line of the unified view where the deleted lines are drawn.
+   * Without a span a base line has no place in the diff views yet, so the diff opens at its start.
+   */
+  async openLocation(path: string, line: number | undefined, side: Side, span?: TextSpan) {
     // A base path is the file's old path if it was renamed.
-    const file = this.files.find((f) => (side === "base" ? (f.oldPath ?? f.path) : f.path) === location.path);
-    if (file) {
+    const file = this.files.find((f) => (side === "base" ? (f.oldPath ?? f.path) : f.path) === path);
+    if (!file) {
+      this.tabs.showText(path);
+      await tick();
+      const text = this.texts.get(textTab(path));
+      if (span) text?.goToSpan(span);
+      else if (line !== undefined) text?.goToLine(line);
+    } else if (span) {
       this.tabs.show(file.path);
       await tick();
-      await this.views.get(fileTab(file.path))?.goToSpan(0, side, location.span);
-    } else {
-      this.tabs.showText(location.path);
-      await tick();
-      this.texts.get(textTab(location.path))?.goToSpan(location.span);
-    }
+      await this.views.get(fileTab(file.path))?.goToSpan(0, side, span);
+    } else await this.openFile(file.path, side === "target" ? line : undefined);
+  }
+
+  /** Scrolls the Changes tab to a changed file; answers whether `path` is one. */
+  async revealInChanges(path: string): Promise<boolean> {
+    if (!this.files.some((f) => f.path === path)) return false;
+    this.tabs.active = CHANGES;
+    await this.changes.goToFile(this.changes.indexOf(path));
+    return true;
   }
 
   private listenersFor(id: TabId): Listeners {
