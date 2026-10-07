@@ -24,9 +24,9 @@
     pointer-events: none;
   }
   .del {
-    fill: var(--del-text);
+    fill: var(--logo-del);
   }
   .add {
-    fill: var(--add-text);
+    fill: var(--logo-add);
   }
 </style>
