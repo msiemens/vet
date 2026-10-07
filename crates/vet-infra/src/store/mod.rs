@@ -331,6 +331,19 @@ impl ChangesetStore for SqliteStore {
             .map(|id| ChangesetId(id as u64)))
     }
 
+    async fn open_changesets(&self) -> Result<Vec<ChangesetId>, StoreError> {
+        let ids: Vec<i64> = review::Entity::find()
+            .filter(review::Column::ClosedAt.is_null())
+            .select_only()
+            .column(review::Column::Changeset)
+            .distinct()
+            .order_by_asc(review::Column::Changeset)
+            .into_tuple()
+            .all(&self.db)
+            .await?;
+        Ok(ids.into_iter().map(|id| ChangesetId(id as u64)).collect())
+    }
+
     async fn versions(&self, changeset: ChangesetId) -> Result<Vec<Version>, StoreError> {
         let rows = version::Entity::find()
             .filter(version::Column::Changeset.eq(changeset.0 as i64))

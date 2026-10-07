@@ -372,6 +372,13 @@ impl ChangesetStore for MemStore {
         let mem = self.0.lock().unwrap();
         Ok((mem.changeset == Some((repo, source))).then_some(ChangesetId(1)))
     }
+    async fn open_changesets(&self) -> StoreResult<Vec<ChangesetId>> {
+        let mem = self.0.lock().unwrap();
+        Ok((mem.changeset.is_some() && !mem.closed)
+            .then_some(ChangesetId(1))
+            .into_iter()
+            .collect())
+    }
     async fn versions(&self, _: ChangesetId) -> StoreResult<Vec<Version>> {
         Ok(self.0.lock().unwrap().versions.clone())
     }

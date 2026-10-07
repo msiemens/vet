@@ -70,9 +70,9 @@ impl Default for Limits {
     }
 }
 
-/// What keeps a tree from being collected besides being in use: an open session
-/// whose base it is, or a repository's remembered base. Implemented by whoever
-/// knows the sessions; this module never looks at them.
+/// What keeps a tree from being collected besides being in use: the base of an
+/// open changeset, or a repository's remembered base. Implemented by whoever
+/// knows the changesets; this module never looks at them.
 pub trait Referenced: Send + Sync {
     fn snapshots(&self) -> Pin<Box<dyn Future<Output = HashSet<SnapshotId>> + Send + '_>>;
 }

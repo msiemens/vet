@@ -295,6 +295,8 @@ pub trait ChangesetStore {
         repo: String,
         source: Source,
     ) -> impl Future<Output = Result<Option<ChangesetId>, StoreError>> + Send;
+    /// The changesets a review of which is open, in any repository.
+    fn open_changesets(&self) -> impl Future<Output = Result<Vec<ChangesetId>, StoreError>> + Send;
     /// The versions in order of their numbers.
     fn versions(&self, changeset: ChangesetId) -> impl Future<Output = Result<Vec<Version>, StoreError>> + Send;
     /// Adds the next version, numbered after the last.

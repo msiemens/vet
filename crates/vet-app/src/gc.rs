@@ -7,7 +7,7 @@ use std::time::Duration;
 use vet_core::content::SnapshotId;
 
 use crate::changeset::ChangesetId;
-use crate::ports::{GcReport, GcStore, StoreError};
+use crate::ports::{ChangesetStore, GcReport, GcStore, StoreError};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Retention {
@@ -78,6 +78,18 @@ pub fn plan(facts: &GcFacts, now: i64, retention: &Retention) -> GcPlan {
             .collect(),
         content_grace: retention.grace,
     }
+}
+
+/// The bases materialized trees are kept for: those of the latest versions of the
+/// changesets a review of which is open.
+pub async fn open_bases<S: ChangesetStore>(store: &S) -> Result<HashSet<SnapshotId>, StoreError> {
+    let mut bases = HashSet::new();
+    for changeset in store.open_changesets().await? {
+        if let Some(latest) = store.versions(changeset).await?.last() {
+            bases.insert(latest.base);
+        }
+    }
+    Ok(bases)
 }
 
 /// Deletes expired changesets, then the snapshots, tree nodes and content nothing

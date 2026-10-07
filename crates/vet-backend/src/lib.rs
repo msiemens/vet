@@ -6,12 +6,12 @@ mod accounts;
 mod events;
 mod highlight;
 mod open;
+mod references;
 mod review;
 mod semantic;
 mod servers;
 mod threads;
 
-use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -31,7 +31,7 @@ use vet_infra::exec::TokioRunner;
 use vet_infra::git::GixRepo;
 use vet_infra::lsp::{LspLauncher, config as lsp_config};
 use vet_infra::materialize::Materialize;
-use vet_infra::materialize::kept::{Collected, KeptTrees, Limits, Referenced};
+use vet_infra::materialize::kept::{Collected, KeptTrees, Limits};
 use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
@@ -41,6 +41,7 @@ use vet_transport::{Events, Handler};
 
 use events::Connection;
 use open::Wired;
+use references::StoreReferences;
 
 pub struct Config {
     /// How long the tree must be quiet before a snapshot settles (§6.2).
@@ -116,8 +117,7 @@ impl Orchestrator {
         let backends: Arc<[Backend]> = lsp_config::defaults().into();
         let languages = backends.iter().map(|b| b.config().backend.clone()).collect();
         let resolver = ToolResolver::new(store.dir().to_owned());
-        // Which snapshots a changeset or a repository's remembered base refers to is not known here yet.
-        let referenced: Arc<dyn Referenced> = Arc::new(HashSet::<vet_core::content::SnapshotId>::new);
+        let referenced = Arc::new(StoreReferences(store.clone()));
         let trees = KeptTrees::new(store.dir().join("materialized"), Limits::default(), referenced);
         let process_subscribers = Subscribers::<Connection>::default();
         let needed = process_subscribers.clone();

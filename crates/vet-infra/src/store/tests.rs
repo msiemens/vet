@@ -4,7 +4,7 @@ use std::time::Duration;
 use sea_orm::PaginatorTrait;
 use tempfile::TempDir;
 use vet_app::changeset::{CommitId, RemoteKey, VersionOrigin};
-use vet_app::gc::{Retention, collect};
+use vet_app::gc::{Retention, collect, open_bases};
 use vet_app::ports::{GcReport, Store};
 use vet_app::review::NonTextAck;
 use vet_core::content::{
@@ -395,6 +395,32 @@ async fn threads_belong_to_the_changeset_and_outlive_its_review() {
         threads.iter().map(|t| &t.thread.target).collect::<Vec<_>>(),
         vec![&moved, &CommentTarget::Changeset]
     );
+}
+
+#[tokio::test]
+async fn the_open_bases_are_the_latest_versions_of_the_changesets_with_an_open_review() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let (open_one, _) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    store
+        .append_version(open_one, version(2, SnapshotId(h(3)), SnapshotId(h(2))))
+        .await
+        .unwrap();
+    let (_, closed) = store
+        .start_review(
+            "/other".into(),
+            Source::WorkingTree,
+            BaseChoice::Commit { id: commit("abc123") },
+            version(1, SnapshotId(h(4)), SnapshotId(h(5))),
+            T0,
+        )
+        .await
+        .unwrap();
+    store.close_review(closed, T0, true).await.unwrap();
+
+    let bases = open_bases(&store).await.unwrap();
+
+    assert_eq!(bases, HashSet::from([SnapshotId(h(3))]));
 }
 
 #[tokio::test]
