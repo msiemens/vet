@@ -257,12 +257,15 @@ pub trait ReviewStore {
     fn put_pin(&self, head: CommitId, tree: SnapshotId) -> impl Future<Output = Result<Pin, StoreError>> + Send;
     fn pin(&self, id: PinId) -> impl Future<Output = Result<Option<Pin>, StoreError>> + Send;
     /// `repo` is the repository root the session reviews, which is how a later
-    /// open finds it again.
+    /// open finds it again. `base` is how `changeset.base` was chosen and
+    /// `base_commit` the commit it is the tree of.
     fn open_session(
         &self,
         repo: String,
         pin: PinId,
         changeset: Changeset,
+        base: BaseChoice,
+        base_commit: CommitId,
     ) -> impl Future<Output = Result<SessionId, StoreError>> + Send;
     /// `now` is unix seconds; `complete` is whether the review was complete.
     fn close_session(

@@ -169,15 +169,14 @@ pub mod session {
     pub struct Model {
         #[sea_orm(primary_key)]
         pub id: i64,
-        /// The repository root; `None` for sessions recorded before it was kept,
-        /// which are never resumed.
-        pub repo: Option<String>,
+        /// The repository root.
+        pub repo: String,
         pub pin: i64,
         pub base: Vec<u8>,
         pub target: Vec<u8>,
         pub closed_at: Option<i64>,
-        /// Whether the review was complete when it was finished.
-        pub complete: Option<bool>,
+        /// Whether the review was complete when it was finished; false while open.
+        pub complete: bool,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -193,8 +192,8 @@ pub mod session {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-/// How the session's base was chosen and the commit it resolved to; no row
-/// means the pin's `HEAD`. `value` is the branch, the reference or the commit id.
+/// How the session's base was chosen and the commit it resolved to. `value` is
+/// the branch, the reference or the commit id.
 pub mod session_base {
     use super::kinds::*;
     use sea_orm::entity::prelude::*;
@@ -206,7 +205,7 @@ pub mod session_base {
         pub session: i64,
         pub kind: BaseKind,
         pub value: String,
-        pub commit: Option<String>,
+        pub commit: String,
     }
 
     child_of_session!();
@@ -272,7 +271,7 @@ pub mod timeline {
         pub session: i64,
         pub snapshot: Vec<u8>,
         /// Unix seconds.
-        pub at: Option<i64>,
+        pub at: i64,
     }
 
     child_of_session!();

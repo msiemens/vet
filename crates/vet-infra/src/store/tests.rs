@@ -73,8 +73,15 @@ fn message(body: &str) -> Message {
 
 async fn session(store: &SqliteStore, base: SnapshotId, target: SnapshotId) -> SessionId {
     let pin = store.put_pin(CommitId("abc123".into()), base).await.unwrap();
+    let head = CommitId("abc123".into());
     store
-        .open_session("/repo".into(), pin.id, Changeset { base, target })
+        .open_session(
+            "/repo".into(),
+            pin.id,
+            Changeset { base, target },
+            BaseChoice::Commit { id: head.clone() },
+            head,
+        )
         .await
         .unwrap()
 }
@@ -118,48 +125,27 @@ async fn the_filter_is_stored_per_repository_and_replaced_as_a_whole() {
 }
 
 #[tokio::test]
-async fn migrating_takes_each_repositorys_filter_from_its_latest_session() {
+async fn a_database_of_another_version_is_recreated_and_one_of_this_version_is_kept() {
     let dir = tempfile::tempdir().unwrap();
-    let options = SqliteConnectOptions::new()
-        .filename(dir.path().join("vet.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
-    let pool = SqlitePoolOptions::new().connect_with(options).await.unwrap();
-    let db = SqlxSqliteConnector::from_sqlx_sqlite_pool(pool);
-    // A database with the filter stored per session.
-    migration::Migrator::up(&db, Some(7)).await.unwrap();
+    let db = connect(dir.path()).await.unwrap();
+    // What an earlier version left behind: its migrations and a differently shaped session table.
     for sql in [
-        "ALTER TABLE session ADD COLUMN hide_binary BOOLEAN NOT NULL DEFAULT 0",
-        "CREATE TABLE filter_item (id INTEGER PRIMARY KEY AUTOINCREMENT, \
-         session INTEGER NOT NULL REFERENCES session(id) ON DELETE CASCADE, kind INTEGER NOT NULL, value BLOB NOT NULL)",
-        "INSERT INTO pin (id, head, tree) VALUES (1, 'h', X'00')",
-        "INSERT INTO session (id, repo, pin, base, target, hide_binary) VALUES \
-         (1, '/a', 1, X'00', X'00', 1), (2, '/a', 1, X'00', X'00', 0), \
-         (3, '/b', 1, X'00', X'00', 1), (4, NULL, 1, X'00', X'00', 1)",
-        // kind: 0 root, 1 include, 2 exclude
-        "INSERT INTO filter_item (session, kind, value) VALUES \
-         (1, 2, X'6f6c64'), (2, 0, X'737263'), (2, 2, X'78'), (2, 1, X'2a2e7273'), (3, 2, X'62'), (4, 2, X'7a')",
+        "CREATE TABLE seaql_migrations (version VARCHAR NOT NULL PRIMARY KEY, applied_at BIGINT NOT NULL)",
+        "INSERT INTO seaql_migrations VALUES ('m0001_initial', 1), ('m0002_run_state', 2)",
+        "CREATE TABLE session (id INTEGER PRIMARY KEY, repo TEXT)",
+        "INSERT INTO session VALUES (1, '/old')",
     ] {
         db.execute_unprepared(sql).await.unwrap();
     }
-    drop(db);
+    db.close().await.unwrap();
 
     let store = open(&dir).await;
+    assert!(store.open_sessions("/old".into()).await.unwrap().is_empty());
+    let id = session(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    drop(store);
 
-    let a = store.filter("/a".into()).await.unwrap();
-    assert_eq!(
-        a,
-        ReviewFilter {
-            roots: vec![RepoPath(b"src".to_vec())],
-            include: vec!["*.rs".into()],
-            exclude: vec!["x".into()],
-            hide_binary: false,
-        }
-    );
-    let b = store.filter("/b".into()).await.unwrap();
-    assert_eq!((b.hide_binary, b.exclude), (true, vec!["b".to_string()]));
-    assert_eq!(store.filter("/c".into()).await.unwrap(), ReviewFilter::default());
-    assert_eq!(store.open_sessions("/a".into()).await.unwrap().len(), 2);
+    let store = open(&dir).await;
+    assert_eq!(store.open_sessions("/repo".into()).await.unwrap(), vec![id]);
 }
 
 #[tokio::test]
@@ -171,7 +157,6 @@ async fn the_base_choice_and_snapshot_are_stored_and_survive_reopen() {
         let store = store.clone();
         async move { store.session(id).await.unwrap().unwrap() }
     };
-    // A session without a stored base choice was based on the pin's `HEAD`.
     let s = loaded(&store).await;
     assert_eq!(
         (s.base, s.base_commit),
@@ -179,7 +164,7 @@ async fn the_base_choice_and_snapshot_are_stored_and_survive_reopen() {
             BaseChoice::Commit {
                 id: CommitId("abc123".into())
             },
-            None
+            CommitId("abc123".into())
         )
     );
 
@@ -194,7 +179,7 @@ async fn the_base_choice_and_snapshot_are_stored_and_survive_reopen() {
     let s = loaded(&store).await;
     assert_eq!(
         (s.base, s.base_commit, s.changeset.base),
-        (merge_base, Some(at), SnapshotId(h(3)))
+        (merge_base, at, SnapshotId(h(3)))
     );
 
     let commit = BaseChoice::Commit {
@@ -216,7 +201,7 @@ async fn the_base_choice_and_snapshot_are_stored_and_survive_reopen() {
         .await
         .unwrap();
     let s = loaded(&store).await;
-    assert_eq!((s.base, s.base_commit), (branch, Some(tip)));
+    assert_eq!((s.base, s.base_commit), (branch, tip));
 }
 
 #[tokio::test]

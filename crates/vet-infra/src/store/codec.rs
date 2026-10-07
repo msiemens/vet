@@ -3,6 +3,7 @@
 
 use sea_orm::sea_query::{SimpleExpr, Value};
 use sea_orm::{ColumnTrait, DbErr, Set};
+use vet_app::pin::{BaseChoice, CommitId};
 use vet_app::review::NonTextAck;
 use vet_core::content::{
     BlobId, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
@@ -10,9 +11,9 @@ use vet_core::content::{
 use vet_core::merkle::TreeNode;
 use vet_core::review::{Anchor, CommentTarget, Side, SpanState, ThreadStatus};
 
-use super::entity::{ack, anchor, kinds, snapshot_path, thread, tree_child};
+use super::entity::{ack, anchor, kinds, session_base, snapshot_path, thread, tree_child};
 
-fn corrupt(what: &str) -> DbErr {
+pub fn corrupt(what: &str) -> DbErr {
     DbErr::Custom(format!("corrupt row: {what}"))
 }
 
@@ -67,6 +68,28 @@ twin!(
         Empty
     }
 );
+
+pub fn base_row(session: i64, choice: BaseChoice, commit: CommitId) -> session_base::ActiveModel {
+    let (kind, value) = match choice {
+        BaseChoice::Branch { name } => (kinds::BaseKind::Branch, name),
+        BaseChoice::MergeBase { reference } => (kinds::BaseKind::MergeBase, reference),
+        BaseChoice::Commit { id } => (kinds::BaseKind::Commit, id.0),
+    };
+    session_base::ActiveModel {
+        session: Set(session),
+        kind: Set(kind),
+        value: Set(value),
+        commit: Set(commit.0),
+    }
+}
+
+pub fn base_from(m: session_base::Model) -> BaseChoice {
+    match m.kind {
+        kinds::BaseKind::Branch => BaseChoice::Branch { name: m.value },
+        kinds::BaseKind::MergeBase => BaseChoice::MergeBase { reference: m.value },
+        kinds::BaseKind::Commit => BaseChoice::Commit { id: CommitId(m.value) },
+    }
+}
 
 pub fn anchor_row(session: i64, a: &Anchor) -> anchor::ActiveModel {
     anchor::ActiveModel {

@@ -506,7 +506,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         let Some((target, target_status)) = store.snapshot(latest).await? else {
             return Ok(None);
         };
-        let base_commit = stored.base_commit.unwrap_or_else(|| pin.head.clone());
+        let base_commit = stored.base_commit;
         let Ok(base) = acquisition.git.commit_snapshot(&base_commit).await else {
             return Ok(None);
         };
@@ -583,9 +583,14 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             base: st.base.id,
             target: st.target.id,
         };
-        let id = store.open_session(self.repo.clone(), pin.id, changeset).await?;
-        store
-            .set_base(id, st.base.id, st.base_choice.clone(), st.base_commit.clone())
+        let id = store
+            .open_session(
+                self.repo.clone(),
+                pin.id,
+                changeset,
+                st.base_choice.clone(),
+                st.base_commit.clone(),
+            )
             .await?;
         store.append_timeline(id, st.target.id, now).await?;
         git.set_session_ref(id, "base", &st.base_commit).await?;

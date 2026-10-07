@@ -35,8 +35,8 @@ pub struct Session {
     pub changeset: Changeset,
     /// How `changeset.base` was chosen.
     pub base: BaseChoice,
-    /// The commit `changeset.base` is the tree of; `None` for the pin's `HEAD`.
-    pub base_commit: Option<CommitId>,
+    /// The commit `changeset.base` is the tree of.
+    pub base_commit: CommitId,
     pub spans: Vec<RecordedSpan>,
     pub acks: Vec<NonTextAck>,
     pub threads: Vec<Thread>,

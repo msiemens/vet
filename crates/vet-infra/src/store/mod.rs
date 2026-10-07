@@ -34,7 +34,7 @@ use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Thread, Thr
 
 use codec::*;
 use content::ContentStore;
-use entity::kinds::{BaseKind, FilterKind};
+use entity::kinds::FilterKind;
 use entity::*;
 
 type Res<T> = Result<T, DbErr>;
@@ -67,6 +67,25 @@ pub struct SqliteStore {
 
 fn db_err(e: impl std::fmt::Display) -> DbErr {
     DbErr::Custom(e.to_string())
+}
+
+const DATABASE: &str = "vet.sqlite";
+
+async fn connect(dir: &Path) -> Result<DatabaseConnection, DbErr> {
+    let options = SqliteConnectOptions::new()
+        .filename(dir.join(DATABASE))
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true)
+        .busy_timeout(Duration::from_secs(5));
+    // One connection serializes writers; WAL readers would not need it, but
+    // nothing here is read-heavy.
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(db_err)?;
+    Ok(SqlxSqliteConnector::from_sqlx_sqlite_pool(pool))
 }
 
 /// SQLite allows 32766 bound variables per statement.
@@ -143,22 +162,21 @@ impl SqliteStore {
         dirs::data_dir().map(|d| d.join("vet"))
     }
 
+    /// A database written by another version of Vet (it applied migrations
+    /// this one does not have) is deleted and created anew, losing its reviews.
     pub async fn open(dir: &Path, config: StoreConfig) -> Result<Self, StoreError> {
         std::fs::create_dir_all(dir)?;
-        let options = SqliteConnectOptions::new()
-            .filename(dir.join("vet.sqlite"))
-            .create_if_missing(true)
-            .journal_mode(SqliteJournalMode::Wal)
-            .foreign_keys(true)
-            .busy_timeout(Duration::from_secs(5));
-        // One connection serializes writers; WAL readers would not need it, but
-        // nothing here is read-heavy.
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect_with(options)
-            .await
-            .map_err(db_err)?;
-        let db = SqlxSqliteConnector::from_sqlx_sqlite_pool(pool);
+        let mut db = connect(dir).await?;
+        if migration::is_foreign(&db).await? {
+            db.close().await?;
+            for suffix in ["", "-wal", "-shm"] {
+                match std::fs::remove_file(dir.join(format!("{DATABASE}{suffix}"))) {
+                    Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e.into()),
+                    _ => {}
+                }
+            }
+            db = connect(dir).await?;
+        }
         migration::Migrator::up(&db, None).await?;
         let content = ContentStore::open(dir.join("content"))?;
         Ok(Self {
@@ -265,20 +283,12 @@ impl SqliteStore {
             })
             .collect::<Res<_>>()?;
 
-        let stored_base = session_base::Entity::find_by_id(sid).one(&self.db).await?;
-        let base_commit = stored_base.as_ref().and_then(|b| b.commit.clone()).map(CommitId);
-        let pin = pin::Entity::find_by_id(row.pin).one(&self.db).await?;
-        let base = match stored_base {
-            Some(b) => match b.kind {
-                BaseKind::Branch => BaseChoice::Branch { name: b.value },
-                BaseKind::MergeBase => BaseChoice::MergeBase { reference: b.value },
-                BaseKind::Commit => BaseChoice::Commit { id: CommitId(b.value) },
-            },
-            // Stored before branches: the base was the pin's `HEAD`.
-            None => BaseChoice::Commit {
-                id: CommitId(pin.map(|p| p.head).unwrap_or_default()),
-            },
-        };
+        let stored_base = session_base::Entity::find_by_id(sid)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| corrupt("session without a base"))?;
+        let base_commit = CommitId(stored_base.commit.clone());
+        let base = base_from(stored_base);
 
         Ok(Some(Session {
             id,
@@ -293,7 +303,7 @@ impl SqliteStore {
             acks,
             threads,
             closed_at: row.closed_at,
-            complete: row.complete,
+            complete: row.closed_at.map(|_| row.complete),
         }))
     }
 
@@ -567,7 +577,7 @@ impl Store for SqliteStore {
         timeline::ActiveModel {
             session: Set(session.0 as i64),
             snapshot: Set(snapshot.0.0.to_vec()),
-            at: Set(Some(at)),
+            at: Set(at),
             ..Default::default()
         }
         .insert(&self.db)
@@ -586,7 +596,7 @@ impl Store for SqliteStore {
             .map(|r| {
                 Ok(Version {
                     snapshot: SnapshotId(hash(&r.snapshot)?),
-                    at: r.at.unwrap_or(0),
+                    at: r.at,
                 })
             })
             .collect::<Res<_>>()?)
@@ -628,16 +638,27 @@ impl ReviewStore for SqliteStore {
         }))
     }
 
-    async fn open_session(&self, repo: String, pin: PinId, changeset: Changeset) -> Result<SessionId, StoreError> {
+    async fn open_session(
+        &self,
+        repo: String,
+        pin: PinId,
+        changeset: Changeset,
+        base: BaseChoice,
+        base_commit: CommitId,
+    ) -> Result<SessionId, StoreError> {
+        let txn = self.db.begin().await?;
         let row = session::ActiveModel {
-            repo: Set(Some(repo)),
+            repo: Set(repo),
             pin: Set(pin.0 as i64),
             base: Set(changeset.base.0.0.to_vec()),
             target: Set(changeset.target.0.0.to_vec()),
+            complete: Set(false),
             ..Default::default()
         }
-        .insert(&self.db)
+        .insert(&txn)
         .await?;
+        base_row(row.id, base, base_commit).insert(&txn).await?;
+        txn.commit().await?;
         Ok(SessionId(row.id as u64))
     }
 
@@ -645,7 +666,7 @@ impl ReviewStore for SqliteStore {
         session::ActiveModel {
             id: Set(id.0 as i64),
             closed_at: Set(Some(now)),
-            complete: Set(Some(complete)),
+            complete: Set(complete),
             ..Default::default()
         }
         .update(&self.db)
@@ -706,19 +727,7 @@ impl ReviewStore for SqliteStore {
         .update(&txn)
         .await?;
         session_base::Entity::delete_by_id(sid).exec(&txn).await?;
-        let (kind, value) = match choice {
-            BaseChoice::Branch { name } => (BaseKind::Branch, name),
-            BaseChoice::MergeBase { reference } => (BaseKind::MergeBase, reference),
-            BaseChoice::Commit { id } => (BaseKind::Commit, id.0),
-        };
-        session_base::ActiveModel {
-            session: Set(sid),
-            kind: Set(kind),
-            value: Set(value),
-            commit: Set(Some(commit.0)),
-        }
-        .insert(&txn)
-        .await?;
+        base_row(sid, choice, commit).insert(&txn).await?;
         Ok(txn.commit().await?)
     }
 

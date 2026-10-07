@@ -378,12 +378,20 @@ impl ReviewStore for MemStore {
     async fn pin(&self, _: PinId) -> StoreResult<Option<Pin>> {
         Ok(self.0.lock().unwrap().pin.clone())
     }
-    async fn open_session(&self, repo: String, _: PinId, changeset: Changeset) -> StoreResult<SessionId> {
+    async fn open_session(
+        &self,
+        repo: String,
+        _: PinId,
+        changeset: Changeset,
+        choice: BaseChoice,
+        commit: CommitId,
+    ) -> StoreResult<SessionId> {
         let mut mem = self.0.lock().unwrap();
         *mem = Mem {
             blobs: std::mem::take(&mut mem.blobs),
             snapshots: std::mem::take(&mut mem.snapshots),
             pin: mem.pin.take(),
+            base: Some((changeset.base, choice, commit)),
             opened: Some((repo, changeset)),
             filter: mem.filter.take(),
             ..Default::default()
@@ -406,20 +414,15 @@ impl ReviewStore for MemStore {
         let Some((_, changeset)) = &mem.opened else {
             return Ok(None);
         };
-        let (base, choice, commit) = match mem.base.clone() {
-            Some((base, choice, commit)) => (Some(base), Some(choice), Some(commit)),
-            None => (None, None, None),
-        };
+        let (base, choice, commit) = mem.base.clone().expect("set when the session was opened");
         Ok(Some(Session {
             id,
             pin: PinId(1),
             changeset: Changeset {
-                base: base.unwrap_or(changeset.base),
+                base,
                 target: changeset.target,
             },
-            base: choice.unwrap_or(BaseChoice::Commit {
-                id: CommitId("head".into()),
-            }),
+            base: choice,
             base_commit: commit,
             complete: mem.complete,
             spans: mem
