@@ -1797,10 +1797,11 @@ fn card_line(changes: &Changes, side: Side, location: &Location) -> u32 {
     let last = location.range.end.saturating_sub(1).max(location.range.start);
     let line = target_line(hunks, side, last);
     // A deleted file has no target text; an unchanged one is not in the diff and cannot overrun.
+    // The empty line after a final line break holds no text, so no card sits below it.
     let lines = diff.map(|d| {
         d.new_blob
             .and_then(|b| changes.blobs.get(&b))
-            .map_or(0, |t| line_count(t))
+            .map_or(0, |t| line_count(t) - u32::from(t.last() == Some(&b'\n')))
     });
     lines.map_or(line, |lines| line.min(lines.saturating_sub(1)))
 }
