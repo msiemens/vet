@@ -8,6 +8,7 @@ mod cache;
 mod kind;
 mod language;
 mod markdown;
+mod syntax;
 
 use tree_sitter_highlight::{HighlightEvent, Highlighter};
 use vet_core::text::Units;
@@ -15,7 +16,8 @@ use vet_core::text::Units;
 pub use cache::Cache;
 pub use kind::Kind;
 pub use language::Language;
-pub use markdown::code_blocks;
+pub use markdown::{Fence, code_blocks, fenced_blocks};
+pub use syntax::Syntax;
 
 /// Texts over this size are not highlighted: parsing them would cost more than the colour is worth.
 pub const MAX_BYTES: usize = 2 << 20;

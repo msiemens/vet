@@ -2,25 +2,15 @@
 //! `documentSymbol.detail` and the Markdown of a hover; this settles which to use and how to
 //! pick the declaration out of a hover.
 
-use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
+use vet_highlight::{Syntax, fenced_blocks};
 
 use crate::ports::SymbolInfo;
 use crate::query::{Primitives, SemanticError, Which};
 
-/// What language a signature's code is in.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Syntax {
-    /// That of the file the symbol is in.
-    File,
-    /// The info string of the Markdown fence it came from; empty for a fence without one.
-    Fence(String),
-    /// Prose, not code.
-    Plain,
-}
-
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Signature {
     pub code: String,
+    /// What language the code is in.
     pub syntax: Syntax,
 }
 
@@ -29,33 +19,17 @@ impl Signature {
     /// of its own before the declaration, and prose after it, so it is the last block that is
     /// not empty. A hover without a code block is taken whole.
     pub fn of_hover(markdown: &str) -> Option<Self> {
-        let mut blocks: Vec<Self> = Vec::new();
-        let mut open: Option<Self> = None;
-        for event in Parser::new(markdown) {
-            match event {
-                Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
-                    open = Some(Self {
-                        code: String::new(),
-                        syntax: Syntax::Fence(info.trim().to_owned()),
-                    });
+        let block = fenced_blocks(markdown)
+            .into_iter()
+            .rev()
+            .find(|b| !b.code.trim().is_empty())
+            .map(|mut b| {
+                b.code.truncate(b.code.strip_suffix('\n').unwrap_or(&b.code).len());
+                Self {
+                    code: b.code,
+                    syntax: Syntax::Fence(b.info),
                 }
-                Event::Text(text) => {
-                    if let Some(block) = &mut open {
-                        block.code.push_str(&text);
-                    }
-                }
-                Event::End(TagEnd::CodeBlock) => {
-                    if let Some(mut block) = open.take() {
-                        block
-                            .code
-                            .truncate(block.code.strip_suffix('\n').unwrap_or(&block.code).len());
-                        blocks.push(block);
-                    }
-                }
-                _ => {}
-            }
-        }
-        let block = blocks.into_iter().rev().find(|b| !b.code.trim().is_empty());
+            });
         block.or_else(|| {
             let text = markdown.trim();
             (!text.is_empty()).then(|| Self {

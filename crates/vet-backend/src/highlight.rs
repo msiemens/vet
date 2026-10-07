@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use vet_core::content::BlobId;
 use vet_highlight::{Cache, Language};
-use vet_semantic::signature::{Signature, Syntax};
+use vet_semantic::signature::Signature;
 
 /// What the cache of highlights may hold, in bytes.
 const CAPACITY: usize = 64 << 20;
@@ -40,13 +40,7 @@ impl Highlighter {
 /// The highlights of the signature of a symbol of the file at `path`; empty for prose and for a
 /// language without a grammar.
 pub fn signature(path: &str, signature: &Signature) -> Vec<u32> {
-    let language = match &signature.syntax {
-        Syntax::File => Language::of_path(path),
-        Syntax::Fence(info) if info.is_empty() => Language::of_path(path),
-        Syntax::Fence(info) => Language::of_fence(info),
-        Syntax::Plain => None,
-    };
-    language.map_or_else(Vec::new, |l| {
+    (signature.syntax.language(path)).map_or_else(Vec::new, |l| {
         vet_highlight::encode(&vet_highlight::highlight(&signature.code, l))
     })
 }

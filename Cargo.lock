@@ -4336,8 +4336,8 @@ dependencies = [
 name = "vet-semantic"
 version = "0.0.0"
 dependencies = [
- "pulldown-cmark",
  "vet-core",
+ "vet-highlight",
 ]
 
 [[package]]

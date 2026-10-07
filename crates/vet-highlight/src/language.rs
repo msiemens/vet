@@ -88,6 +88,16 @@ impl Language {
         })
     }
 
+    /// Like [`Self::of_fence`], except that a fence without an info string is in `default`
+    /// (the language of the file it is in).
+    pub fn of_fence_or(info: &str, default: Option<Self>) -> Option<Self> {
+        if info.trim().is_empty() {
+            default
+        } else {
+            Self::of_fence(info)
+        }
+    }
+
     /// The highlight configuration, built on first use.
     pub(crate) fn config(self) -> &'static HighlightConfiguration {
         static CONFIGS: [OnceLock<HighlightConfiguration>; Language::ALL.len()] =

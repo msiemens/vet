@@ -316,6 +316,45 @@ fn cache_does_not_keep_what_exceeds_it() {
 }
 
 #[test]
+fn an_empty_info_string_takes_the_default() {
+    assert_eq!(Language::of_fence_or("", Some(Language::Rust)), Some(Language::Rust));
+    assert_eq!(Language::of_fence_or("  ", None), None);
+    assert_eq!(
+        Language::of_fence_or("python", Some(Language::Rust)),
+        Some(Language::Python)
+    );
+    assert_eq!(Language::of_fence_or("nope", Some(Language::Rust)), None);
+}
+
+#[test]
+fn a_syntax_names_its_grammar() {
+    assert_eq!(Syntax::File.language("a.py"), Some(Language::Python));
+    assert_eq!(Syntax::Fence("rust".into()).language("a.py"), Some(Language::Rust));
+    assert_eq!(Syntax::Fence(String::new()).language("a.py"), Some(Language::Python));
+    assert_eq!(Syntax::Fence("nope".into()).language("a.py"), None);
+    assert_eq!(Syntax::Plain.language("a.py"), None);
+    assert_eq!(Syntax::File.language("Makefile"), None);
+}
+
+#[test]
+fn fenced_blocks_of_markdown() {
+    let md = "text\n\n```rust,ignore \nfn f() {}\n```\n\n    indented\n\n```\nplain\n\n```\n";
+    assert_eq!(
+        fenced_blocks(md),
+        [
+            Fence {
+                info: "rust,ignore".into(),
+                code: "fn f() {}\n".into()
+            },
+            Fence {
+                info: String::new(),
+                code: "plain\n\n".into()
+            },
+        ]
+    );
+}
+
+#[test]
 fn code_blocks_of_markdown() {
     let md = "```rust\nfn f() {}\n```\n\ntext\n\n```\nfn g() {}\n```\n\n```nope\nfn h() {}\n```\n";
     let blocks = code_blocks(md, Some(Language::Rust));
