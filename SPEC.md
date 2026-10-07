@@ -28,7 +28,7 @@ Vet is a **review-first IDE** for the agentic coding age. The unit of work is th
 | # | Invariant | Test |
 |---|---|---|
 | **I1** | **The semantic layer never knows git.** Acquisition maps git state into immutable snapshots; provenance lives in the acquisition/review layer. | No semantic-layer API accepts commit hashes, ref names, or origin flags. |
-| **I2** | **Vet never invalidates semantic data.** Semantic answers come from language servers running against the live worktree or a complete, materialized snapshot. Nothing semantic is persisted: answers from a server on an immutable snapshot are cached in memory only for that server's lifetime, and answers from the live worktree are not cached at all. | No code path in Vet decides whether a semantic fact is still valid. Restarting a server or Vet discards every semantic answer. |
+| **I2** | **A semantic answer is reused only under a key that names everything it depends on.** Semantic answers come from language servers running against the live worktree or a complete, materialized snapshot. Every answer Vet keeps, in memory or on disk, is stored under a key built from the complete inputs of the query that produced it: the exact text it was asked about (by blob id) for answers that depend on one document; the side's snapshot, the analysis policy and the restore of its dependencies for answers that resolve across files; and always the identity of the server (binary, version, settings, toolchain, and the user-level configuration outside the repository it reads). An answer is reused if and only if a recomputed key is equal; validity is never judged by time, events or heuristics. Answers from the live worktree are reused only when they depend on the exact text Vet sent. Every cache can be deleted at any time without changing anything but speed. | For every cached query kind, changing any one key input makes a fresh server query, and keeping all of them answers from the cache without one. The same scenario run with every cache disabled and with caching on gives identical results. An answer the server gave while it was not ready is never stored. Deleting the cache file and the materialized directories leaves review state and all results unchanged. |
 | **I3** | **Annotations and review state are content-anchored, never line-anchored. Outcomes distinguish `Exact` / `Inferred` / `Stale` / `Ambiguous`. `Seen` applies only to content identical to the content that was reviewed — new or modified content is never silently marked seen.** | Annotations survive amend, rebase, force-push, renames, moves, agent edits — repositioned with recorded confidence, never silently orphaned. A seen region split by new edits yields seen parts for identical content and unseen parts for the rest. |
 | **I4** | **All writers are opaque.** Everything is learned from observing the git object graph and filesystem. Never detect, parse, or infer harness behavior. | Identical behavior whether the writer is Claude Code, Aider, a human, or `sed`. |
 | **I5** | **The shell is a thin client.** All product logic sits behind the orchestrator's IPC boundary. | A shell port touches rendering only. No backend, store, or acquisition decision may reference the shell. |
@@ -267,11 +267,12 @@ Adding a language means adding a config entry plus a one-time manual check that 
 
 **Required operations:** `documentSymbol`, `definition`, `references`, `hover`, `callHierarchy` (incoming and outgoing), `workspace/symbol`, and diagnostics (push or pull).
 
-### 7.2 Server pool (I2)
+### 7.2 Server pool and reuse (I2)
 
-- **The live target** (the dirty tree) is served by a server running on the worktree itself. Its answers are never cached.
+- **The live target** (the dirty tree) is served by a server running on the worktree itself. Its answers are asked fresh for every request, except answers that depend only on a document's text (its symbols): those are asked with the text of the revision's blob and reused by that blob (§7.6).
 - **Any other snapshot** (a pinned base, an older timeline entry, a PR's base or head) is served by a server on a directory obtained from Acquisition via `materialize(SnapshotId) → root`. The semantic layer never sees how the directory was produced (I1). Acquisition builds it from the snapshot's commit plus the content store, and refuses if the snapshot is not materializable (§6.1).
-- **Pool:** servers are keyed by `(SnapshotId or live worktree, backend)`, kept warm while in use, and evicted LRU. A server on an immutable snapshot caches its answers in memory; the cache dies with the server. Changing backend settings restarts the affected servers. Materialized directories are deleted with their server.
+- **Pool:** servers are keyed by `(SnapshotId or live worktree, backend, policy)`, kept warm while in use, and evicted LRU. Answers outlive their server: they are kept by query key (§7.6), not per server. Changing backend settings restarts the affected servers; their answers stop matching because the server identity in the key changed, and nothing is deleted.
+- **Materialized snapshots are kept between launches** under Vet's data directory, one tree per snapshot and analysis policy shared by all languages, with a record of each language's restore. Reopening a review with the same base starts its servers without copying or restoring again. A restore record is checked against the current tools before reuse. Kept trees are garbage-collected under a disk budget (§8).
 - **Restore:** a materialized snapshot needs installed dependencies for its server to work. Fetch-without-execution is the default and covers documentation needs (cargo registry, `.d.ts`, typeshed, NuGet XML docs).
 ### 7.3 Queries
 
@@ -286,6 +287,8 @@ Primitive rows pass backend answers through. Derived rows combine primitives wit
 | Impact of a change | derived | `references` + incoming `callHierarchy` for each changed or added symbol, on the target server, async |
 | Impact of a removal | derived | `references` for each removed symbol on the base server; each call site is then classified in the target as **gone**, **modified**, **likely broken** (identical and unresolved), **binding changed** (identical but resolves elsewhere), or **unknown** |
 | Semantic-graph diff | derived | outgoing calls and references of each changed symbol on both sides, compared by container-qualified name. A renamed symbol appears as removed + added next to the textual diff; Vet does not infer renames or moves. |
+| Is a diagnostic new or pre-existing | derived | diagnostics of each changed file on both sides. A target diagnostic is pre-existing if the base has one with equal severity, source, code and message (whitespace-collapsed) on a line that maps to it; otherwise it is new. It is *unknown*, never new, while the base side's diagnostics are unavailable; the target's diagnostics show at once as origin pending. |
+| Changed callers and callees of a changed symbol | derived | incoming and outgoing calls on the target, followed through changed symbols only. Unchanged direct callers are listed as possibly affected. |
 
 ### 7.4 Reachability — a derived analysis (I6)
 
@@ -304,6 +307,18 @@ What analysis may execute project code. Not a security boundary.
 - **Contributor PRs** (head on a fork or a remote not marked trusted): fetch-only restores, and only servers with `executes_project_code_during_analysis = false` start; other languages show a visible "analysis limited" marker. One action ("Trust this PR") lifts this for the PR's **current head commit**. Any new push to the PR voids the trust and restores the restrictions.
 - **Analysis on trusted code** runs normally: language servers may execute project code (build scripts, proc macros, MSBuild design-time builds) without asking.
 
+### 7.6 Reuse of answers (I2)
+
+| Query | Depends on | Key | Kept |
+|---|---|---|---|
+| Document symbols (either side, any tree) | the document text, the language, the server | `(server identity, file extension, BlobId of the text sent)` | memory and disk |
+| Hover, definition, references, call hierarchy, diagnostics on a materialized snapshot | the whole snapshot, its restored dependencies, the server, the policy | `(server identity, SnapshotId, policy, restore fingerprint, query)` | memory and disk |
+| Workspace symbols on a materialized snapshot | as above | as above | memory |
+| Any project-wide query on the live worktree | the live tree, which changes under the server | — | never reused |
+| Derived analyses | their primitives and the diff | recomputed from (cached) primitives; changed symbols per file pair `(old BlobId, new BlobId, server identity)` | memory |
+
+An answer the server gave while it reported work in progress or had not finished starting is never stored. A cached primitive keeps the identity of the server that produced it, and a derived result shows it among its inputs (I6). A new revision cancels the semantic work still running for the old one.
+
 ---
 
 ## 8. Storage and retention
@@ -312,6 +327,8 @@ What analysis may execute project code. Not a security boundary.
 - **Content store:** content-addressed files written temp → fsync → rename, referenced from metadata only once durable.
 - **SQLite (WAL mode):** snapshots and their timeline order, sessions, reviewed spans, comments, and PR trust.
 - **Retention:** content is kept while any open session, unresolved or unsynced comment, or reviewed span references it; closed sessions are kept 30 days (configurable). Unreferenced content is garbage-collected.
+- **Semantic cache:** one SQLite file (`semantic-cache.sqlite`, WAL), apart from the review database. It holds reusable answers (§7.6) under a size budget (default 256 MB, adjustable in Settings), evicted least recently used. It is disposable: deleting it, or a format Vet does not recognise, only costs speed.
+- **Materialized snapshots:** one tree per snapshot and analysis policy, with completion and restore records. A tree in use by a running Vet is locked; others are kept while an open session or a repository's remembered base refers to them, then removed least recently used to stay under a disk budget (default 20 GB, adjustable in Settings) and after 14 days unused. Settings shows the current use next to a "Clear semantic caches" action.
 
 ---
 
@@ -468,11 +485,11 @@ Grouped by area; areas and the items within each are in priority order.
 #### Language servers and performance
 
 - Language-server status per server (starting, indexing with the server's progress, ready, failed, not installed), in the footer with details on click
-- Language-server answers that depend only on a file's text (its symbols) are cached across restarts, keyed by language, server version and content
+- Language-server answers are reused across restarts under keys naming everything they depend on (§7.6): symbols by content on any tree, and hover, definition, references, call hierarchy and diagnostics on materialized snapshots
 - Materialized base snapshots and their dependency restore are kept between launches, keyed by snapshot, so reopening a review with the same base starts its servers without copying or restoring again
 - Semantic results track what they depend on (file contents, the project, server version), so a new revision recomputes only what its changes affect instead of discarding everything
 - Svelte/Angular backends (config entries + capability assert); C# is in the POC
-- The language-server client's JSON-RPC transport uses `async-lsp` instead of its own framing, and cancels requests whose answer is no longer wanted (a hover the pointer left, a query for an outdated revision)
+- Requests whose answer is no longer wanted (a hover the pointer left, a query for an outdated revision) are cancelled from the UI down to the language server (`$/cancelRequest`)
 
 #### Search and keyboard
 
@@ -502,6 +519,7 @@ Grouped by area; areas and the items within each are in priority order.
 - Export annotations as agent task files
 - Coding agents integrated into the UI through the Agent Client Protocol (ACP)
 - Minimap
+- The language-server client's JSON-RPC transport uses `async-lsp` instead of its own framing, once upstream supports cancelling outgoing requests and our `lsp-types` version
 - CI annotations on lines: the platform's check annotations (path, lines, severity, message) shown in the hunk view like diagnostics, anchored to the commit they were produced for
 - Narrowing the project's review filter for one review from the file tree ("Review only this folder", "Exclude from review"), shown in the tree with a reset
 
