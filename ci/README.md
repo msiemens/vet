@@ -18,11 +18,17 @@ tests for changed UI files.
 The Rust steps on their own:
 
 ```sh
+cargo nextest run --workspace  # .config/nextest.toml
 cargo clippy --workspace --all-targets
 cargo fmt --all --check     # rustfmt.toml; ui/src-tauri is checked by check.sh
 ./ci/check-deps.sh          # dependency direction between crates
 ./ci/check-module-cycles.sh # module cycles inside a crate
 ```
+
+Tests run with `cargo-nextest` (`cargo install cargo-nextest --locked`): each test
+in its own process, test binaries in parallel. A test is reported as slow after
+30 s and killed after 2 min. Tests that start real language servers or restores
+form the `language-servers` group, of which at most two run at once.
 
 `check-deps.sh` fails if a crate depends on one outside its allowlist, or if a
 pure crate pulls in an async runtime, git or IO.

@@ -19,8 +19,8 @@ elif command -v nix-shell >/dev/null; then
 else
     echo "SKIPPED: the GTK/webkit libraries are missing and nix-shell is not available"
 fi
-step "cargo test"
-cargo test --workspace
+step "cargo nextest"
+cargo nextest run --workspace
 step "check-deps"
 ci/check-deps.sh
 step "module cycles"

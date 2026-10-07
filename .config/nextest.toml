@@ -1,0 +1,18 @@
+# cargo-nextest: `cargo nextest run --workspace`. Every test runs in its own
+# process; test binaries run in parallel.
+
+[test-groups]
+# Tests that start real language servers or run real restores (rust-analyzer,
+# typescript-language-server, pyright, roslyn, dotnet, npm). Several at once
+# compete for CPU and slow each other past their own timeouts.
+language-servers = { max-threads = 2 }
+
+[profile.default]
+# Report a test as slow after 30 s; kill it after 4 periods (2 min), so a server
+# that never answers fails its test instead of hanging the run.
+slow-timeout = { period = "30s", terminate-after = 4 }
+failure-output = "immediate-final"
+
+[[profile.default.overrides]]
+filter = '(package(vet-infra) & (binary(lsp) | binary(servers) | binary(restore))) | (package(vet-backend) & (binary(semantic) | binary(restore) | binary(python)))'
+test-group = "language-servers"
