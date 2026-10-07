@@ -459,6 +459,10 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
     assert!(python.pinned_version.is_some());
     assert_eq!(python.server, "Pyright");
     assert_eq!(python.custom_path, None);
+    // The footer finds the server of a file by its extension.
+    assert!(python.extensions.iter().any(|e| e == "py"));
+    let typescript = listed.iter().find(|s| s.language == "typescript").unwrap();
+    assert!(typescript.extensions.iter().any(|e| e == "tsx"));
     assert!(
         listed
             .iter()

@@ -16,6 +16,8 @@ pub struct ServerStatus {
     pub title: String,
     /// The server's name as a person knows it, e.g. "Pyright".
     pub server: String,
+    /// The file extensions (without the dot) the server serves.
+    pub extensions: Vec<String>,
     pub state: ServerState,
     pub custom_path: Option<String>,
     /// The version `install` provides; `None` if Vet cannot install this language's server.
@@ -93,6 +95,7 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
                 language: language.clone(),
                 title: self.resolver.title(language),
                 server: self.resolver.display_name(language),
+                extensions: self.resolver.extensions(language),
                 state,
                 custom_path,
                 pinned: self.resolver.pinned(language),
@@ -208,6 +211,10 @@ mod tests {
 
         fn display_name(&self, language: &BackendId) -> String {
             format!("{}-server", language.0)
+        }
+
+        fn extensions(&self, language: &BackendId) -> Vec<String> {
+            vec![language.0.clone()]
         }
 
         fn pinned(&self, language: &BackendId) -> Option<String> {

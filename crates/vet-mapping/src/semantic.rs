@@ -270,6 +270,7 @@ pub fn servers(all: &[ServerStatus]) -> p::Response {
                 language: s.language.0.clone(),
                 title: s.title.clone(),
                 server: s.server.clone(),
+                extensions: s.extensions.clone(),
                 state: server_state(&s.state),
                 custom_path: s.custom_path.clone(),
                 pinned_version: s.pinned.clone(),

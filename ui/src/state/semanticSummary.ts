@@ -9,6 +9,8 @@ export interface SemanticSummary {
   /** Short footer text when a language server is missing, with the backend's message as `title`. */
   label?: string;
   title?: string;
+  /** Why the focused file has no answers, if it has none. */
+  missing?: Unavailable;
 }
 
 /**
@@ -25,5 +27,5 @@ export function summarize(
   // The Changes tab holds many files, so no one language's status applies there.
   const missing = path === undefined ? undefined : unavailable.get(path);
   if (!missing) return { diagnostics };
-  return { diagnostics, label: missing.label, title: missing.message };
+  return { diagnostics, label: missing.label, title: missing.message, missing };
 }

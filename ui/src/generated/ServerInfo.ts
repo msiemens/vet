@@ -13,7 +13,11 @@ title: string,
 /**
  * The server's name as a person knows it, e.g. "Pyright".
  */
-server: string, state: ServerState, 
+server: string, 
+/**
+ * The file extensions (without the dot) the server serves.
+ */
+extensions: Array<string>, state: ServerState, 
 /**
  * The path the user set; it is what `state` was resolved from if present.
  */

@@ -39,6 +39,7 @@ void test("a missing server is named by the backend's label, with its message as
     diagnostics: undefined,
     label: "label of unsupported",
     title: "why unsupported",
+    missing: missing("unsupported"),
   });
   assert.equal(summarize(new Map(), unavailable, "b.rs").label, undefined);
 });

@@ -1,11 +1,11 @@
 <script module lang="ts">
+  import type { ServerLine } from "../../state/serverStatus";
+
   export interface FooterInfo {
     /** The range of versions the review shows, e.g. `v14 → v17`. */
     range?: string;
     /** Each part is shown once something reports it: the semantic layer, the caret, the file. */
-    languageServer?: string;
-    /** Why, as a tooltip of `languageServer`. */
-    languageServerTitle?: string;
+    languageServer?: ServerLine;
     topology?: { label: string; ok: boolean };
     cursor?: string;
     eol?: string;
@@ -17,12 +17,28 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
 
-  let { info, progress, end }: { info: FooterInfo; progress?: Snippet; end?: Snippet } = $props();
+  let {
+    info,
+    onserver,
+    progress,
+    end,
+  }: {
+    info: FooterInfo;
+    /** Shows the details of the language servers. */
+    onserver?: () => void;
+    progress?: Snippet;
+    end?: Snippet;
+  } = $props();
 </script>
 
 <footer>
   {#if info.range}<span class="mono small" title="The versions the review shows">{info.range}</span>{/if}
-  {#if info.languageServer}<span title={info.languageServerTitle}>{info.languageServer}</span>{/if}
+  {#if info.languageServer}
+    {@const server = info.languageServer}
+    <button class="flat server" type="button" title={server.title ?? "Language servers"} onclick={onserver}
+      >{server.name}{#if server.state}<span class="state"> · {server.state}</span>{/if}</button
+    >
+  {/if}
   {#if info.topology}
     <span class="topology"><span class="dot" class:ok={info.topology.ok}></span>{info.topology.label}</span>
   {/if}
@@ -49,6 +65,17 @@
     color: var(--text-2);
     font-size: 12px;
     flex: none;
+  }
+  .server {
+    height: calc(var(--h-footer) - 4px);
+    padding: 0 6px;
+    margin: 0 -6px;
+    border-radius: var(--radius);
+    color: inherit;
+    font-size: inherit;
+  }
+  .state {
+    color: var(--text-3);
   }
   .small {
     font-size: var(--fs-mono-s);

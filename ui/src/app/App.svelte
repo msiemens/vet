@@ -47,6 +47,8 @@
   import { queue } from "../state/queue.svelte";
   import { recent } from "../state/recent.svelte";
   import { semantic } from "../state/semantic.svelte";
+  import { serverList } from "../state/serverList.svelte";
+  import { serverLine } from "../state/serverStatus";
   import { session } from "../state/session.svelte";
   import { defaultRange } from "../state/timelineRange";
   import { versions } from "../state/versions.svelte";
@@ -78,8 +80,7 @@
   );
   const footer = $derived({
     range: range && `v${range.from} → v${range.to}`,
-    languageServer: semanticSummary.label,
-    languageServerTitle: semanticSummary.title,
+    languageServer: serverLine(controller?.activePath, serverList.servers, backgroundTasks.tasks, semanticSummary),
     diagnostics: semanticSummary.diagnostics,
   });
 
@@ -410,7 +411,7 @@
 
 <DevTools bind:this={tools} {controller} bind:open={devOpen} />
 
-<StatusFooter info={footer}>
+<StatusFooter info={footer} onserver={() => showDialog("settings", "servers")}>
   {#snippet progress()}<TaskProgress tasks={backgroundTasks.tasks} />{/snippet}
   {#snippet end()}<button class="flat dev" type="button" aria-pressed={devOpen} onclick={() => (devOpen = !devOpen)}
       >Dev</button
