@@ -1,11 +1,12 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use vet_core::classify::{changes, classify};
 use vet_core::content::{
-    BlobId, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextChange, NonTextKind, RepoPath, Snapshot,
-    SnapshotDiff, SnapshotId, SnapshotStatus,
+    BlobId, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId,
+    SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle;
@@ -277,48 +278,22 @@ impl Differ for FakeGit {
         old: &Snapshot,
         new: &Snapshot,
     ) -> std::result::Result<SnapshotDiff, GitError> {
-        let blobs = self.blobs.lock().unwrap();
-        let text = |e: Option<&FileEntry>| {
-            e.map(|e| String::from_utf8(blobs[&e.blob].clone()).unwrap())
-                .unwrap_or_default()
-        };
-        let paths: BTreeSet<_> = old.entries.keys().chain(new.entries.keys()).collect();
+        let blobs: BTreeMap<_, _> = self.blobs.lock().unwrap().clone().into_iter().collect();
         let mut out = SnapshotDiff::default();
         out.renames.0.extend(self.renames.lock().unwrap().iter().cloned());
-        for p in paths {
-            let (o, n) = (old.entries.get(p), new.entries.get(p));
-            if o == n {
-                continue;
+        for change in changes(old, new) {
+            let classified = classify(&change, &blobs);
+            out.non_text.extend(classified.non_text);
+            if let Some(text) = classified.text {
+                let utf8 = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
+                out.files.push(FileDiff {
+                    old_path: text.old.map(|(p, _)| p.clone()),
+                    new_path: text.new.map(|(p, _)| p.clone()),
+                    old_blob: text.old.map(|(_, b)| b),
+                    new_blob: text.new.map(|(_, b)| b),
+                    hunks: hunks(&utf8(text.before), &utf8(text.after)),
+                });
             }
-            let item = |kind| NonTextChange {
-                path: p.clone(),
-                from: None,
-                kind,
-                before: o.cloned(),
-                after: n.cloned(),
-            };
-            if [o, n].iter().flatten().any(|e| e.kind == EntryKind::Submodule) {
-                out.non_text.push(item(NonTextKind::Submodule));
-                continue;
-            }
-            let mode_changed = matches!((o, n), (Some(a), Some(b)) if a.mode != b.mode);
-            if mode_changed {
-                out.non_text.push(item(NonTextKind::Mode));
-            }
-            if text(o).contains('\0') || text(n).contains('\0') {
-                out.non_text.push(item(NonTextKind::Binary));
-                continue;
-            }
-            if o.map(|a| a.blob) == n.map(|b| b.blob) {
-                continue;
-            }
-            out.files.push(FileDiff {
-                old_path: o.map(|_| p.clone()),
-                new_path: n.map(|_| p.clone()),
-                old_blob: o.map(|e| e.blob),
-                new_blob: n.map(|e| e.blob),
-                hunks: hunks(&text(o), &text(n)),
-            });
         }
         Ok(out)
     }
