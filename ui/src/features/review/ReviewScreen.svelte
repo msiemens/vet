@@ -252,10 +252,10 @@
     inset: 0;
     display: flex;
     flex-direction: column;
-    visibility: hidden;
   }
-  .pane.active {
-    visibility: visible;
+  /* Not `visibility: visible` on the active pane: that would show it through a hidden ancestor. */
+  .pane:not(.active) {
+    visibility: hidden;
   }
   .scroll {
     flex: 1;

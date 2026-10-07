@@ -88,10 +88,10 @@
     align-items: center;
     justify-content: center;
     border-radius: var(--radius);
-    visibility: hidden;
+    opacity: 0;
   }
   .tab:hover .close,
   .tab.selected .close {
-    visibility: visible;
+    opacity: 1;
   }
 </style>
