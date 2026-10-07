@@ -27,7 +27,6 @@
 //! when the edit is reverted.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::{fmt, slice};
 
@@ -51,8 +50,6 @@ use vet_core::review::{
 use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
 use crate::editor::{self, last_text_line, line_count};
-use crate::execution::Execution;
-use crate::execution::check::RunCheckConfig;
 use crate::pin::{BaseChoice, CommitId};
 use crate::ports::{
     BaseCandidates, BlobRead, BranchInfo, Clock, CommitInfo, Degraded, Dirty, GitError, GitRepo, ReviewStore, Scan,
@@ -809,23 +806,6 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         check_revision(&st, revision)?;
         self.ensure_changes(&mut st).await?;
         Ok(st.changes.as_ref().expect("computed").diff.files.clone())
-    }
-
-    /// Running in place and the run check, on the session's acquisition.
-    pub fn execution<'a, P>(
-        &'a self,
-        runner: &'a P,
-        repo: String,
-        root: PathBuf,
-        config: RunCheckConfig,
-    ) -> Execution<'a, G, S, P> {
-        Execution {
-            acquisition: &self.acquisition,
-            runner,
-            repo,
-            root,
-            config,
-        }
     }
 
     /// The initial scan identifies the settled snapshot, so settling does not

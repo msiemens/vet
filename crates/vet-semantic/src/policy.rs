@@ -1,4 +1,4 @@
-//! What analysis a caller permits. Computed by `vet-app` (Execution/Trust) from
+//! What analysis a caller permits. Computed by `vet-app` (Trust) from
 //! PR trust and the head commit, so the pool never looks at provenance (I1).
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

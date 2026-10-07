@@ -397,57 +397,6 @@ pub mod message {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-/// A user-edited or user-added target, unique per `(repo, target_id)`. `args`
-/// and `env` are JSON.
-pub mod run_target {
-    use sea_orm::entity::prelude::*;
-
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "run_target")]
-    pub struct Model {
-        #[sea_orm(primary_key)]
-        pub id: i64,
-        #[sea_orm(unique_key = "repo_target")]
-        pub repo: String,
-        #[sea_orm(unique_key = "repo_target")]
-        pub target_id: String,
-        pub label: String,
-        pub program: String,
-        pub args: String,
-        pub cwd: String,
-        pub env: String,
-    }
-
-    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {}
-
-    impl ActiveModelBehavior for ActiveModel {}
-}
-
-/// The last approval of a repo; `baseline` is a stored snapshot of the
-/// executor-relevant files at that time.
-pub mod run_approval {
-    use sea_orm::entity::prelude::*;
-
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "run_approval")]
-    pub struct Model {
-        #[sea_orm(primary_key)]
-        pub id: i64,
-        #[sea_orm(unique)]
-        pub repo: String,
-        pub hash: Vec<u8>,
-        pub baseline: Vec<u8>,
-        /// Unix seconds.
-        pub at: i64,
-    }
-
-    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {}
-
-    impl ActiveModelBehavior for ActiveModel {}
-}
-
 /// The custom language server path, unique per language.
 pub mod server_path {
     use sea_orm::entity::prelude::*;

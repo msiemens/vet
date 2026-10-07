@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    ApprovalChange, ApprovalFile, Base, BlobContent, BranchInfo, ChangedSymbols, CommitInfo, Diagnostic, DirEntry,
-    Highlights, Impact, Locations, Manifest, Reachability, RemovalImpact, ReviewUpdate, RunTargetEntry, ServerInfo,
-    SessionId, Side, SymbolSignature, TextChange, TextContent, Thread, Unavailable,
+    Base, BlobContent, BranchInfo, ChangedSymbols, CommitInfo, Diagnostic, DirEntry, Highlights, Impact, Locations,
+    Manifest, Reachability, RemovalImpact, ReviewUpdate, ServerInfo, SessionId, Side, SymbolSignature, TextChange,
+    TextContent, Thread, Unavailable,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -116,32 +116,4 @@ pub enum Response {
     },
     /// One thread after a change, resolved at the current revision.
     Thread(Thread),
-    RunTargets {
-        targets: Vec<RunTargetEntry>,
-    },
-    /// Nothing was started. Show `changed` (and `RunApprovalDiff` for the text)
-    /// and ask "run anyway?"; approving is `Run` with `hash` as `approved_hash`.
-    RunNeedsApproval {
-        hash: String,
-        /// No run was ever approved in this repository.
-        first_run: bool,
-        changed: Vec<ApprovalChange>,
-    },
-    /// The process runs in place. Its output arrives as `RunOutput` and its end as
-    /// `RunExited`, which can reach the connection before this response.
-    RunStarted {
-        run_id: u32,
-        /// The reconciled tree that runs, as a snapshot id.
-        snapshot: String,
-        /// Files that differ between that tree and the target snapshot the
-        /// review last showed; the run panel says "N files changed since review"
-        /// if not zero.
-        changed_since_review: u32,
-    },
-    /// The answer to `RunApprovalDiff`, in the order of `RunNeedsApproval::changed`,
-    /// except that a renamed file takes the place of the added path and the
-    /// removed one is left out.
-    RunApprovalDiff {
-        files: Vec<ApprovalFile>,
-    },
 }

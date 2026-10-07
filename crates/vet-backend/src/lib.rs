@@ -3,10 +3,7 @@
 //! to protocol messages.
 
 mod highlight;
-mod run;
 mod semantic;
-
-pub use run::OUTPUT_CAP;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -78,13 +75,18 @@ struct Open {
     subscribers: Subscribers,
     settling: AbortHandle,
     reaper: AbortHandle,
-    runs: run::Runs,
 }
 
 fn live(subscribers: &Subscribers) -> std::sync::MutexGuard<'_, Vec<Events>> {
     let mut subscribers = subscribers.lock().unwrap_or_else(PoisonError::into_inner);
     subscribers.retain(|events| !events.is_closed());
     subscribers
+}
+
+fn broadcast(subscribers: &Subscribers, event: Event) {
+    for events in live(subscribers).iter() {
+        events.send(event.clone());
+    }
 }
 
 pub struct Orchestrator {
@@ -102,13 +104,12 @@ pub struct Orchestrator {
 type Sessions = Arc<tokio::sync::Mutex<Vec<Arc<Open>>>>;
 
 impl Open {
-    /// Stops watching and kills the session's runs and language servers. The
+    /// Stops watching and shuts down the session's language servers. The
     /// session stays open in the store, with its refs, for the next open of the
     /// repository to resume: the last connection leaving (a reload, an app
     /// quit) is not the end of a review.
     async fn shut(&self) {
         self.settling.abort();
-        self.runs.stop_all();
         self.semantics.shutdown().await;
     }
 }
@@ -224,7 +225,7 @@ impl Orchestrator {
             tokio::spawn(async move {
                 session
                     .follow(settling, |revision| {
-                        run::broadcast(&subscribers, Event::SnapshotSettled { session: id, revision });
+                        broadcast(&subscribers, Event::SnapshotSettled { session: id, revision });
                     })
                     .await;
             })
@@ -238,7 +239,7 @@ impl Orchestrator {
                 let subscribers = subscribers.clone();
                 move |failures| {
                     let failures = mapping::semantic::restore_failures(&failures);
-                    run::broadcast(&subscribers, Event::RestoreFailed { session: id, failures });
+                    broadcast(&subscribers, Event::RestoreFailed { session: id, failures });
                 }
             }),
         );
@@ -258,7 +259,6 @@ impl Orchestrator {
             subscribers,
             settling: task.abort_handle(),
             reaper: reaper.abort_handle(),
-            runs: Default::default(),
         });
         sessions.push(open.clone());
         // The language servers take long to start; the first query should find them running.
@@ -332,7 +332,7 @@ impl Orchestrator {
                 let open = self.find(session).await?;
                 let complete = open.session.finish_review().await.map_err(message)?;
                 let revision = open.session.revision().await;
-                run::broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
+                broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
                 Ok(Response::ReviewFinished { complete })
             }
             Request::Manifest { session } => {
@@ -413,7 +413,7 @@ impl Orchestrator {
                     .set_base(mapping::core_base_choice(base))
                     .await
                     .map_err(message)?;
-                run::broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
+                broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
                 Ok(Response::Base(mapping::base(&base)))
             }
             Request::SetProjectFilter { session, filter } => {
@@ -423,7 +423,7 @@ impl Orchestrator {
                     .set_filter(mapping::core_filter(filter))
                     .await
                     .map_err(message)?;
-                run::broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
+                broadcast(&open.subscribers, Event::SnapshotSettled { session, revision });
                 Ok(Response::Done)
             }
             Request::ListBaseCandidates { session } => {
@@ -549,29 +549,6 @@ impl Orchestrator {
                     .map_err(message)?;
                 Ok(thread_changed(&open, &events, &thread).await)
             }
-            Request::ListRunTargets { session } => self.find(session).await?.run_targets().await,
-            Request::SaveRunTarget { session, target } => {
-                let open = self.find(session).await?;
-                open.save_run_target(mapping::core_run_target(target)?).await?;
-                Ok(Response::Done)
-            }
-            Request::ResetRunTarget { session, id } => {
-                self.find(session).await?.reset_run_target(id).await?;
-                Ok(Response::Done)
-            }
-            Request::Run {
-                session,
-                target_id,
-                approved_hash,
-            } => {
-                let open = self.find(session).await?;
-                open.run(&target_id, approved_hash.as_deref()).await
-            }
-            Request::RunApprovalDiff { session, hash } => self.find(session).await?.run_approval_diff(&hash).await,
-            Request::StopRun { session, run_id } => {
-                self.find(session).await?.stop_run(run_id);
-                Ok(Response::Done)
-            }
             Request::Hover {
                 session,
                 revision,
@@ -638,7 +615,7 @@ impl Orchestrator {
             Request::InstallServer { session, language } => {
                 let open = self.find(session).await?;
                 let progress = |line: &str| {
-                    run::broadcast(
+                    broadcast(
                         &open.subscribers,
                         Event::ServerInstallOutput {
                             session,
@@ -670,7 +647,7 @@ impl Orchestrator {
 /// Tells every subscriber that a request started the review, as `started` says.
 fn announce_start(open: &Open, started: Option<Lifecycle>) {
     if let Some(lifecycle) = started {
-        run::broadcast(
+        broadcast(
             &open.subscribers,
             Event::ReviewStarted {
                 session: open.id,

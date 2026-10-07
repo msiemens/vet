@@ -2,10 +2,9 @@
 import type { RestoreFailure } from "./RestoreFailure";
 import type { ReviewInfo } from "./ReviewInfo";
 import type { ReviewUpdate } from "./ReviewUpdate";
-import type { RunStream } from "./RunStream";
 
 /**
  * Events are invalidations or small state updates; the client re-requests
  * whatever it displays.
  */
-export type Event = { "type": "snapshotSettled", session: number, revision: number, } | { "type": "reviewChanged", session: number, revision: number, update: ReviewUpdate, } | { "type": "reviewStarted", session: number, review: ReviewInfo, } | { "type": "threadsChanged", session: number, revision: number, } | { "type": "serverInstallOutput", session: number, language: string, line: string, } | { "type": "serversChanged", session: number, } | { "type": "runOutput", session: number, runId: number, stream: RunStream, bytes: string, } | { "type": "runExited", session: number, runId: number, code: number | null, droppedBytes: number, } | { "type": "restoreFailed", session: number, failures: Array<RestoreFailure>, };
+export type Event = { "type": "snapshotSettled", session: number, revision: number, } | { "type": "reviewChanged", session: number, revision: number, update: ReviewUpdate, } | { "type": "reviewStarted", session: number, review: ReviewInfo, } | { "type": "threadsChanged", session: number, revision: number, } | { "type": "serverInstallOutput", session: number, language: string, line: string, } | { "type": "serversChanged", session: number, } | { "type": "restoreFailed", session: number, failures: Array<RestoreFailure>, };

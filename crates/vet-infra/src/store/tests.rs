@@ -314,7 +314,7 @@ async fn spans_and_threads_round_trip() {
 }
 
 #[tokio::test]
-async fn snapshots_timeline_and_approvals_survive_reopen() {
+async fn snapshots_and_timeline_survive_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let id;
     let snap = snapshot(&[("a", 1), ("b/c/d", 2), ("b/e", 3)]);

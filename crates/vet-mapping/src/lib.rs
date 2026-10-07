@@ -2,11 +2,6 @@
 
 pub mod semantic;
 
-use vet_app::execution::check::{Approval, Change};
-use vet_app::execution::command;
-use vet_app::execution::rows::Row;
-use vet_app::execution::targets::RunTarget;
-use vet_app::execution::{ApprovalFile, ListedTarget};
 use vet_app::pin::{BaseChoice, CommitId};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::session::{
@@ -427,101 +422,6 @@ pub fn threads(v: &ThreadsView) -> p::Response {
     p::Response::Threads {
         revision: v.revision,
         threads: v.threads.iter().map(thread).collect(),
-    }
-}
-
-/// Fails with the reason, fit to show, if the command line names no program.
-pub fn core_run_target(t: p::RunTarget) -> Result<RunTarget, String> {
-    let (program, args) = command::split(&t.command)?;
-    Ok(RunTarget {
-        id: t.id,
-        source: t.source,
-        label: t.label,
-        program,
-        args,
-        cwd: t.cwd,
-        env: t.env.into_iter().map(|e| (e.name, e.value)).collect(),
-    })
-}
-
-pub fn run_targets(listed: &[ListedTarget]) -> p::Response {
-    p::Response::RunTargets {
-        targets: listed
-            .iter()
-            .map(|l| p::RunTargetEntry {
-                target: p::RunTarget {
-                    id: l.target.id.clone(),
-                    source: l.target.source.clone(),
-                    label: l.target.label.clone(),
-                    command: command::format(&l.target.program, &l.target.args),
-                    cwd: l.target.cwd.clone(),
-                    env: (l.target.env.iter())
-                        .map(|(name, value)| p::EnvVar {
-                            name: name.clone(),
-                            value: value.clone(),
-                        })
-                        .collect(),
-                },
-                stored: l.stored,
-            })
-            .collect(),
-    }
-}
-
-fn run_change(c: Change) -> p::RunChange {
-    match c {
-        Change::Added => p::RunChange::Added,
-        Change::Modified => p::RunChange::Modified,
-        Change::Removed => p::RunChange::Removed,
-    }
-}
-
-pub fn needs_approval(a: &Approval) -> p::Response {
-    p::Response::RunNeedsApproval {
-        hash: a.hash.to_hex(),
-        first_run: a.first_run,
-        changed: (a.changed.iter())
-            .map(|c| p::ApprovalChange {
-                path: c.path.to_string_lossy(),
-                change: run_change(c.change),
-            })
-            .collect(),
-    }
-}
-
-fn diff_row(row: &Row) -> p::DiffRow {
-    match row {
-        Row::Context { number, text } => p::DiffRow::Context {
-            number: *number,
-            text: text.clone(),
-        },
-        Row::Added { number, text } => p::DiffRow::Added {
-            number: *number,
-            text: text.clone(),
-        },
-        Row::Removed { number, text } => p::DiffRow::Removed {
-            number: *number,
-            text: text.clone(),
-        },
-        Row::Gap => p::DiffRow::Gap,
-    }
-}
-
-pub fn approval_files(files: &[ApprovalFile]) -> p::Response {
-    p::Response::RunApprovalDiff {
-        files: files
-            .iter()
-            .map(|f| p::ApprovalFile {
-                path: f.path.to_string_lossy(),
-                from: f.from.as_ref().map(RepoPath::to_string_lossy),
-                change: run_change(f.change),
-                diff: f.rows.as_ref().map(|d| p::ApprovalDiff {
-                    rows: d.rows.iter().map(diff_row).collect(),
-                    truncated: d.truncated,
-                }),
-                delta: line_delta(f.delta),
-            })
-            .collect(),
     }
 }
 

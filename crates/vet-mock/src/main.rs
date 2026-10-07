@@ -26,6 +26,7 @@ use vet_core::marking::hunk_span;
 use vet_core::review::{ReviewedSpan, target_line};
 use vet_highlight::{Cache, Language};
 use vet_protocol::{Request, Response, SessionId};
+use vet_transport::shell::{announce, exit_when_stdin_closes};
 use vet_transport::{Events, Handler, Server};
 
 struct Mock {
@@ -224,12 +225,6 @@ impl Handler for Mock {
             Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),
             Request::SetProjectFilter { .. } => Err("the corpus has no filter".into()),
             Request::FinishReview { .. } => Err("the corpus has no review to finish".into()),
-            Request::ListRunTargets { .. }
-            | Request::SaveRunTarget { .. }
-            | Request::ResetRunTarget { .. }
-            | Request::Run { .. }
-            | Request::RunApprovalDiff { .. }
-            | Request::StopRun { .. } => Err("the corpus has nothing to run".into()),
             Request::ListDirectory { .. } | Request::FileText { .. } => Err("the corpus has no file tree".into()),
             Request::TargetLine {
                 session,
@@ -293,7 +288,7 @@ async fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let flag = |name: &str| args.iter().any(|a| a == name);
     if flag("--exit-on-stdin-close") {
-        vet_transport::exit_when_stdin_closes();
+        exit_when_stdin_closes();
     }
     let config = Config::from_args(&args);
     let fail = |error: String| -> ! {
@@ -322,7 +317,7 @@ async fn main() -> std::io::Result<()> {
 
     let mock = Mock::new(corpus);
     let server = Server::bind().await?;
-    server.announce()?;
+    announce(&server)?;
     server.serve(mock).await
 }
 

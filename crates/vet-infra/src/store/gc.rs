@@ -13,7 +13,6 @@ use vet_core::content::{BlobId, SnapshotId};
 
 use super::codec::hash;
 use super::entity::*;
-use super::run::approved_baselines;
 use super::{Res, SqliteStore};
 
 /// SQLite allows 32766 bound variables per statement.
@@ -74,16 +73,10 @@ async fn facts(db: &impl ConnectionTrait) -> Res<GcFacts> {
         .into_iter()
         .map(|s| Ok((snapshot_id(&s.id)?, s.created)))
         .collect::<Res<_>>()?;
-    let baselines = approved_baselines(db)
-        .await?
-        .iter()
-        .map(|b| snapshot_id(b))
-        .collect::<Res<_>>()?;
     Ok(GcFacts {
         sessions,
         pins,
         snapshots,
-        baselines,
     })
 }
 

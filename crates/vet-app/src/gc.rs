@@ -47,8 +47,6 @@ pub struct GcFacts {
     pub pins: Vec<(PinId, SnapshotId)>,
     /// Every stored snapshot and when it was stored (unix seconds).
     pub snapshots: Vec<(SnapshotId, i64)>,
-    /// The baselines of run approvals.
-    pub baselines: Vec<SnapshotId>,
 }
 
 /// What to delete. Tree nodes and content follow from what remains.
@@ -62,8 +60,8 @@ pub struct GcPlan {
 }
 
 /// Closed sessions expire after the retention unless an open thread keeps them;
-/// pins live while a session holds them; snapshots live while a session, a pin
-/// or a run approval refers to them, once they are past the grace period.
+/// pins live while a session holds them; snapshots live while a session or a
+/// pin refers to them, once they are past the grace period.
 pub fn plan(facts: &GcFacts, now: i64, retention: &Retention) -> GcPlan {
     let expired_before = now - retention.closed_sessions.as_secs() as i64;
     let (dead, kept): (Vec<_>, Vec<_>) = facts
@@ -78,7 +76,6 @@ pub fn plan(facts: &GcFacts, now: i64, retention: &Retention) -> GcPlan {
         .iter()
         .flat_map(|s| s.snapshots.iter().copied())
         .chain(live_pins.iter().map(|&&(_, tree)| tree))
-        .chain(facts.baselines.iter().copied())
         .collect();
     let young_after = now - retention.grace.as_secs() as i64;
     GcPlan {
@@ -128,7 +125,6 @@ mod tests {
             sessions,
             pins: vec![(PinId(1), snap(10)), (PinId(2), snap(11))],
             snapshots: (1..=11).map(|n| (snap(n), NOW - 2 * DAY)).collect(),
-            baselines: vec![],
         }
     }
 
@@ -155,15 +151,14 @@ mod tests {
     }
 
     #[test]
-    fn a_snapshot_lives_while_a_session_a_pin_or_an_approval_refers_to_it() {
-        let mut f = facts(vec![
+    fn a_snapshot_lives_while_a_session_or_a_pin_refers_to_it() {
+        let f = facts(vec![
             session(1, 1, None, &[1, 2]),
             session(2, 2, Some(NOW - 31 * DAY), &[3]),
         ]);
-        f.baselines = vec![snap(4)];
         let dead: HashSet<_> = plan(&f, NOW, &Retention::default()).snapshots.into_iter().collect();
-        // 1 and 2: the live session; 10: its pin; 4: an approval. 3 and 11 belong to the expired session.
-        let expected: HashSet<_> = [3, 5, 6, 7, 8, 9, 11].map(snap).into_iter().collect();
+        // 1 and 2: the live session; 10: its pin. 3 and 11 belong to the expired session.
+        let expected: HashSet<_> = [3, 4, 5, 6, 7, 8, 9, 11].map(snap).into_iter().collect();
         assert_eq!(dead, expected);
     }
 

@@ -56,8 +56,6 @@ fn statements() -> Vec<String> {
         ack::Entity,
         thread::Entity,
         message::Entity,
-        run_target::Entity,
-        run_approval::Entity,
         server_path::Entity,
         recent_project::Entity
     );

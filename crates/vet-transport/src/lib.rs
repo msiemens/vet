@@ -6,6 +6,8 @@
 //! authenticated connection are handled concurrently, so a slow query never
 //! blocks a hover.
 
+pub mod shell;
+
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -65,24 +67,12 @@ impl Server {
         })
     }
 
-    /// The line the backend prints to stdout for the shell to read.
+    /// What a client needs to connect: the port and the token.
     pub fn ready(&self) -> io::Result<Ready> {
         Ok(Ready {
             port: self.listener.local_addr()?.port(),
             token: self.token.clone(),
         })
-    }
-
-    /// Prints the `Ready` line to stdout for the shell, and to stderr the
-    /// address a plain browser needs during development.
-    pub fn announce(&self) -> io::Result<()> {
-        let ready = self.ready()?;
-        println!("{}", serde_json::to_string(&ready).expect("ready serializes"));
-        eprintln!(
-            "dev UI: http://localhost:1420/#port={}&token={}",
-            ready.port, ready.token
-        );
-        Ok(())
     }
 
     pub async fn serve<H: Handler>(self, handler: H) -> io::Result<()> {
@@ -98,16 +88,6 @@ impl Server {
             });
         }
     }
-}
-
-/// Exits the process when stdin reaches EOF. The shell keeps the backend's stdin
-/// pipe open, so a shell that dies without killing its child (Ctrl-C, crash) does
-/// not leave the backend running, which on Windows also locks its .exe.
-pub fn exit_when_stdin_closes() {
-    std::thread::spawn(|| {
-        let _ = io::copy(&mut io::stdin(), &mut io::sink());
-        std::process::exit(0);
-    });
 }
 
 fn random_token() -> io::Result<String> {

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{RestoreFailure, ReviewInfo, ReviewUpdate, RunStream, SessionId};
+use crate::{RestoreFailure, ReviewInfo, ReviewUpdate, SessionId};
 
 /// Events are invalidations or small state updates; the client re-requests
 /// whatever it displays.
@@ -37,26 +37,6 @@ pub enum Event {
     /// Another connection installed a server or changed a server path: what
     /// `ListServers` says may have changed.
     ServersChanged { session: SessionId },
-    /// Output of a run, in order per stream. `bytes` is base64 (standard alphabet,
-    /// padded) of the raw bytes: process output is not necessarily UTF-8 and a
-    /// chunk can end inside a multi-byte character, so a client decodes and joins
-    /// the chunks of a stream before decoding text.
-    RunOutput {
-        session: SessionId,
-        run_id: u32,
-        stream: RunStream,
-        bytes: String,
-    },
-    /// The last event of a run. `code` is `None` if a signal ended the process,
-    /// as `StopRun` does. A run sends a bounded amount of output; the process is
-    /// not slowed, but output past the bound is dropped and `dropped_bytes` counts
-    /// it (saturating).
-    RunExited {
-        session: SessionId,
-        run_id: u32,
-        code: Option<i32>,
-        dropped_bytes: u32,
-    },
     /// A dependency restore failed, so analysis is limited. `failures` is every
     /// failure of the session so far, as in `Manifest::restore_failures`.
     RestoreFailed {

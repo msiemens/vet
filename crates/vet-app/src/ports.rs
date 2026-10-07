@@ -4,12 +4,11 @@
 
 use std::path::{Path, PathBuf};
 
-use vet_core::content::{BlobId, Changeset, Hash, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
+use vet_core::content::{BlobId, Changeset, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 use vet_semantic::ports::{BackendId, ServerConfig};
 
-use crate::execution::targets::RunTarget;
 use crate::gc::{GcFacts, GcPlan};
 use crate::pin::{BaseChoice, CommitId, Pin, PinId};
 use crate::review::{NonTextAck, Session, SessionId, SpanId, Version};
@@ -360,29 +359,6 @@ pub trait ReviewStore {
         target: CommentTarget,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn delete_thread(&self, thread: ThreadId) -> impl Future<Output = Result<(), StoreError>> + Send;
-}
-
-/// Per-repo execution state (§7.5, §10); `repo` identifies the repository.
-pub trait RunStore {
-    /// User-edited and user-added targets, in insertion order.
-    fn run_targets(&self, repo: String) -> impl Future<Output = Result<Vec<RunTarget>, StoreError>> + Send;
-    /// Inserts, or replaces the target with the same id.
-    fn put_run_target(&self, repo: String, target: RunTarget) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn delete_run_target(&self, repo: String, id: String) -> impl Future<Output = Result<(), StoreError>> + Send;
-    /// Approving records the executor-relevant hash for `repo` and the stored
-    /// snapshot of those files, so the next prompt can show what changed. The
-    /// store keeps that snapshot's content (§8).
-    fn record_run_approval(
-        &self,
-        repo: String,
-        hash: Hash,
-        baseline: SnapshotId,
-        at: i64,
-    ) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn last_run_approval(
-        &self,
-        repo: String,
-    ) -> impl Future<Output = Result<Option<(Hash, SnapshotId)>, StoreError>> + Send;
 }
 
 pub struct Command {

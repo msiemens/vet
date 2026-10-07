@@ -8,7 +8,6 @@ mod entity;
 mod gc;
 mod migration;
 mod recent;
-mod run;
 mod servers;
 #[cfg(test)]
 mod tests;

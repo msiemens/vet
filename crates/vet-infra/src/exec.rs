@@ -83,7 +83,7 @@ pub async fn capture(
         .map_err(|_| format!("{program} did not finish within {}s", timeout.as_secs()))?
 }
 
-/// How long a stopped run gets to wind down before its tree is killed.
+/// How long a killed process gets to wind down before its tree is killed.
 const STOP_GRACE: Duration = Duration::from_secs(3);
 
 /// Must be called from within a tokio runtime.

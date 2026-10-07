@@ -121,7 +121,7 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
 
 impl<G: Scanner, S> Acquisition<G, S> {
     /// Authoritative reconciliation (§6.2): before declaring a snapshot settled,
-    /// at open, on rescan signals, and before every launch.
+    /// at open, and on rescan signals.
     pub async fn reconcile(&self, dirty: Dirty) -> Result<Scan, GitError> {
         self.git.scan(dirty).await
     }

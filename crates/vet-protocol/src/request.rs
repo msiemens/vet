@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{BaseChoice, NonTextKind, ReviewFilter, RunTarget, SessionId, Side, SymbolId, ThreadStatus, ThreadTarget};
+use crate::{BaseChoice, NonTextKind, ReviewFilter, SessionId, Side, SymbolId, ThreadStatus, ThreadTarget};
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -218,52 +218,6 @@ pub enum Request {
         path: String,
         kind: NonTextKind,
         side: Side,
-    },
-    /// The run targets of the current target snapshot (§10): discovered from its
-    /// manifests, with the user's edits applied, then the targets the user added.
-    /// Answers with `Response::RunTargets`.
-    ListRunTargets {
-        session: SessionId,
-    },
-    /// Stores an edited discovered target (same `id`) or a new one, per repository.
-    /// For a new target the client chooses a non-empty `id` no discovered target
-    /// uses. Fails with a message fit to show if the id is empty, the command
-    /// names no program or leaves a quote open, or `cwd` is not inside the repository. Answers with `Response::Done`.
-    SaveRunTarget {
-        session: SessionId,
-        target: RunTarget,
-    },
-    /// Drops the stored target: an edited discovered target reverts, an added one
-    /// disappears. Answers with `Response::Done`.
-    ResetRunTarget {
-        session: SessionId,
-        id: String,
-    },
-    /// Starts a target in place (§9): the backend reconciles the tree, applies the
-    /// run check (§7.5) and either starts the process or asks for approval first.
-    /// Answers with `Response::RunNeedsApproval`, which starts nothing, or
-    /// `Response::RunStarted`. After the former, ask again with its `hash` as
-    /// `approved_hash` to approve and run; the hash is honored only while the
-    /// files about to run still hash to it, else the answer is a new
-    /// `RunNeedsApproval`.
-    Run {
-        session: SessionId,
-        target_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional)]
-        approved_hash: Option<String>,
-    },
-    /// The files behind a pending `RunNeedsApproval`, with their changed lines. Fails if
-    /// no approval with this hash is pending. Answers with `Response::RunApprovalDiff`.
-    RunApprovalDiff {
-        session: SessionId,
-        hash: String,
-    },
-    /// Kills a running process; `RunExited` follows. Answers with `Response::Done`,
-    /// also for a run that already exited.
-    StopRun {
-        session: SessionId,
-        run_id: u32,
     },
     /// Every thread with its anchor resolved at the current revision. Resolution
     /// is lazy: a settled snapshot only invalidates it, and this request computes
