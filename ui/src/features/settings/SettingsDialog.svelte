@@ -4,6 +4,7 @@
   import { THEMES, type Theme } from "../../lib/theme/theme";
   import Dialog from "../../lib/ui/Dialog.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
+  import AccountsPage from "./AccountsPage.svelte";
   import ProjectPage from "./ProjectPage.svelte";
   import ServersPage from "./ServersPage.svelte";
 
@@ -23,7 +24,7 @@
     onfilter: (filter: ReviewFilter) => Promise<string | undefined>;
   } = $props();
 
-  type Page = "general" | "project" | "servers";
+  type Page = "general" | "project" | "servers" | "accounts";
   let page = $state<Page>("general");
 </script>
 
@@ -39,6 +40,7 @@
         { id: "general", label: "General" },
         { id: "project", label: "Review filter" },
         { id: "servers", label: "Language servers" },
+        { id: "accounts", label: "Accounts" },
       ]}
     />
   </div>
@@ -50,6 +52,8 @@
     />
   {:else if page === "servers"}
     <ServersPage />
+  {:else if page === "accounts"}
+    <AccountsPage />
   {:else}
     <section>
       <h3>Appearance</h3>
