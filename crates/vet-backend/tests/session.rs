@@ -217,6 +217,31 @@ impl Client {
 }
 
 #[tokio::test]
+async fn a_base_line_is_placed_in_the_target_text_where_a_unified_diff_shows_it() {
+    // Base lines 3 and 4 became one line, at 3.
+    let base = text(10, &[]);
+    let dirty = base.replace("line 3\nline 4\n", "changed\n");
+    let fx = fixture(&[("a.txt", &base)], &[("a.txt", &dirty)]).await;
+    let client = Client::new(&fx.handler);
+    let session = open(&client, fx.repo.path()).await;
+    let place = |side, line, revision| {
+        client.call(Request::TargetLine {
+            session,
+            revision,
+            side,
+            path: "a.txt".into(),
+            line,
+        })
+    };
+    let at = |line| Ok(Response::TargetLine { revision: 0, line });
+
+    assert_eq!(place(Side::Base, 4, 0).await, at(3));
+    assert_eq!(place(Side::Base, 8, 0).await, at(7));
+    assert_eq!(place(Side::Target, 7, 0).await, at(7));
+    assert!(place(Side::Base, 4, 1).await.is_err(), "a stale revision is refused");
+}
+
+#[tokio::test]
 async fn threads_follow_edits_and_notify_other_connections() {
     let dirty = text(30, &[3]);
     let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;

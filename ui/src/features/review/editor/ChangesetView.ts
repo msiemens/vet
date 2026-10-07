@@ -19,7 +19,7 @@ import { type Card, changeCard } from "./changeCard";
 import { iconButton } from "./dom";
 import type { BarActions } from "./hunkBar";
 import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
-import { lineOf, lineStart, selectedLines, targetLine } from "./positions";
+import { lineOf, lineStart, selectedLines } from "./positions";
 import { setCurrent, setStates } from "./reviewState";
 import { COLLAPSE, type Metrics, sectionLayout } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
@@ -644,12 +644,15 @@ export class ChangesetView {
   /**
    * Scrolls to a span of file `fi` as `side`'s text has it and marks it. A unified view has no
    * base editor: a base line is shown at the target line the diff puts it at (a deleted line, at
-   * its hunk), and only the line is revealed.
+   * its hunk), which the backend names, and only the line is revealed.
    */
   async goToSpan(fi: number, side: Side, span: TextSpan): Promise<void> {
     await this.load(fi);
-    const line = targetLine(this.sections[fi].file.hunks, side, span.start.line);
-    this.reveal(fi, line).revealSpan(side, span);
+    const { file } = this.sections[fi];
+    const path = side === "base" ? (file.oldPath ?? file.path) : file.path;
+    // A newer revision replaces this view, and the request fails then.
+    const line = await this.backend.targetLine(this.revision, side, path, span.start.line).catch(() => undefined);
+    if (line !== undefined && !this.destroyed) this.reveal(fi, line).revealSpan(side, span);
   }
 
   /** The file and 0-based target line of the focused editor's caret. */

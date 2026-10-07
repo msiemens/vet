@@ -13,8 +13,9 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use corpus::{Config, Corpus};
-use vet_app::editor::{line_count, text_changes};
+use vet_app::editor::{last_text_line, line_count, text_changes};
 use vet_core::content::LineRange;
+use vet_core::review::{Side, target_line};
 use vet_highlight::{Cache, Language};
 use vet_protocol::{
     Base, BaseChoice, CommitInfo, Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, LineDelta, Manifest,
@@ -231,6 +232,23 @@ impl Handler for Mock {
             | Request::RunApprovalDiff { .. }
             | Request::StopRun { .. } => Err("the corpus has nothing to run".into()),
             Request::ListDirectory { .. } | Request::FileText { .. } => Err("the corpus has no file tree".into()),
+            Request::TargetLine {
+                session,
+                revision,
+                side,
+                path,
+                line,
+            } => {
+                current(session, revision)?;
+                let f = &self.corpus.files[position(&path)?];
+                let hunks: Vec<_> = f.hunks.iter().map(core_hunk).collect();
+                let side = match side {
+                    vet_protocol::Side::Base => Side::Base,
+                    vet_protocol::Side::Target => Side::Target,
+                };
+                let line = target_line(&hunks, side, line).min(last_text_line(f.target.as_bytes()));
+                Ok(Response::TargetLine { revision, line })
+            }
             Request::Threads { .. }
             | Request::CreateThread { .. }
             | Request::Reply { .. }

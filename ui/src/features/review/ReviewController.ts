@@ -187,6 +187,7 @@ export class ReviewController {
       openDiff: id === CHANGES ? (path, line) => void this.openFile(path, line) : undefined,
       threads: {
         create: (revision, target, body) => threads.create(revision, target, body),
+        targetLine: (revision, side, path, line) => this.backend.targetLine(revision, side, path, line),
         reply: (thread, body) => threads.reply(thread, body),
         setStatus: (thread, status) => threads.setStatus(thread, status),
         remove: (thread) => threads.remove(thread),

@@ -1772,6 +1772,26 @@ async fn a_cards_line_is_the_end_of_the_range_in_the_target_text() {
 }
 
 #[tokio::test]
+async fn a_line_without_a_thread_is_placed_in_the_target_like_a_cards() {
+    let base = numbered(10, &[]);
+    let dirty = base.replace("line 3\nline 4\n", "changed\n");
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &dirty)]).await;
+    let revision = fx.session.revision().await;
+    let at = |side, line| fx.session.line_in_target(revision, side, "a.txt", line);
+
+    assert_eq!(at(Side::Target, 7).await.unwrap(), 7);
+    assert_eq!(at(Side::Base, 0).await.unwrap(), 0);
+    assert_eq!(at(Side::Base, 4).await.unwrap(), 3);
+    assert_eq!(at(Side::Base, 8).await.unwrap(), 7);
+    // Not past the last line with text.
+    assert_eq!(at(Side::Base, 9).await.unwrap(), 8);
+    assert_eq!(at(Side::Target, 40).await.unwrap(), 8);
+
+    let stale = fx.session.line_in_target(revision + 1, Side::Base, "a.txt", 4).await;
+    assert!(matches!(stale, Err(SessionError::Stale { .. })));
+}
+
+#[tokio::test]
 async fn a_card_on_deleted_lines_sits_where_they_were() {
     let base = numbered(10, &[]);
     let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", "line 0\nline 1\nline 2\n")]).await;

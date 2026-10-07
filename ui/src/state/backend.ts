@@ -297,6 +297,15 @@ export class Backend {
     return { revision, threads };
   }
 
+  /**
+   * The line of the target text that a unified diff shows `line` of `side` of the file at `path`
+   * (its old path on the base side) at, as of `revision`, the manifest's (a stale one is rejected).
+   */
+  async targetLine(revision: number, side: Side, path: string, line: number): Promise<number> {
+    const request = { type: "targetLine", session: this.sid, revision, side, path, line } as const;
+    return expect(await this.conn.request(request), "targetLine").line;
+  }
+
   /** `revision` is the manifest's; lines of a range target are in its text. */
   async createThread(revision: number, target: ThreadTarget, body: string): Promise<Thread> {
     const request = { type: "createThread", session: this.sid, revision, target, body } as const;

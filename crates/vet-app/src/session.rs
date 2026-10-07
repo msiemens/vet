@@ -1205,6 +1205,23 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         })
     }
 
+    /// The target line a unified diff shows `line` of `side` of the file at `path` at, by the rule
+    /// that places a thread's card (`ThreadView::target_line`). Fails if `revision` is no longer
+    /// current.
+    pub async fn line_in_target(&self, revision: u32, side: Side, path: &str, line: u32) -> Result<u32> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        let location = Location {
+            file: RepoPath::from(path),
+            range: LineRange {
+                start: line,
+                end: line.saturating_add(1),
+            },
+        };
+        Ok(card_line(st.changes.as_ref().expect("computed"), side, &location))
+    }
+
     /// Opens a thread with its first message, and starts the review if none is
     /// open. `now` is unix seconds.
     pub async fn create_thread(&self, revision: u32, target: NewThread, body: String, now: i64) -> Result<ThreadView> {

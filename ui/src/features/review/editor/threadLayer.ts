@@ -6,10 +6,11 @@
 import { type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { FileChange } from "../../../generated/FileChange";
+import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
 import type { Handle } from "./mount";
-import { lineEnd, targetLine } from "./positions";
+import { lineEnd } from "./positions";
 import type { ThreadSpace } from "./sectionLayout";
 import { type ThreadActions, buildCard } from "./threadCard";
 import {
@@ -26,6 +27,8 @@ import { type CardHost, setThreadCards, threadCards } from "./threadWidgets";
 /** What the owner asks for; each resolves whether the request went through. `revision` is the view's. */
 export type ThreadListeners = Omit<ThreadActions, "create" | "cancelDraft" | "toggle"> & {
   create(revision: number, target: ThreadTarget, body: string): Promise<boolean>;
+  /** The target line of a diff that `line` of `side` of the file at `path` is shown at. */
+  targetLine(revision: number, side: Side, path: string, line: number): Promise<number>;
 };
 
 /** The part of a section the layer keeps. */
@@ -77,6 +80,8 @@ export interface ThreadHost {
 interface Draft {
   path: string;
   target: Extract<ThreadTarget, { type: "range" | "file" }>;
+  /** For a range: the target line its form sits below, where the backend places it. */
+  line?: number;
 }
 
 const sum = (heights: Iterable<number>) => [...heights].reduce((total, h) => total + h, 0);
@@ -100,7 +105,7 @@ export class ThreadLayer {
 
   constructor(
     private host: ThreadHost,
-    listeners: ThreadListeners,
+    private listeners: ThreadListeners,
     withLead: boolean,
   ) {
     if (withLead) {
@@ -189,12 +194,12 @@ export class ThreadLayer {
       const placement = placeThreads(byPath.get(file.path) ?? []);
       const inline: InlineCard[] = placement.inline.map((c) => ({ ...c, open: open(c.thread) }));
       const blockCards: CardData[] = placement.file.map((thread) => ({ thread, open: open(thread) }));
-      const draft = this.draft?.path === file.path ? this.draft.target : undefined;
+      const drafted = this.draft?.path === file.path ? this.draft : undefined;
+      const draft = drafted?.target;
       if (draft?.type === "file") blockCards.push({ draft });
       else if (draft?.type === "range") {
-        const end = targetLine(file.hunks, draft.side, draft.start + draft.len - 1);
         // The sort is stable: the form lands below the threads already on that line.
-        inline.push({ draft, line: Math.min(end, Math.max(0, file.targetLines - 1)) });
+        inline.push({ draft, line: drafted?.line ?? 0 });
         inline.sort((a, b) => a.line - b.line);
       }
       if (!inline.length && !blockCards.length && !s.inline.length && !s.counted.size) {
@@ -321,6 +326,13 @@ export class ThreadLayer {
     start = Math.min(start, lines - 1);
     len = Math.max(1, Math.min(len, lines - start));
     const path = side === "base" ? (file.oldPath ?? file.path) : file.path;
-    this.setDraft({ path: file.path, target: { type: "range", side, path, start, len } });
+    // A newer revision replaces the view, and the request fails then.
+    void this.listeners.targetLine(this.host.revision, side, path, start + len - 1).then(
+      (line) => {
+        if (!this.destroyed)
+          this.setDraft({ path: file.path, target: { type: "range", side, path, start, len }, line });
+      },
+      () => undefined,
+    );
   }
 }

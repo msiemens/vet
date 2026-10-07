@@ -445,6 +445,22 @@ impl Handler for Orchestrator {
                 let threads = self.find(session).await?.session.threads().await.map_err(message)?;
                 Ok(mapping::threads(&threads))
             }
+            Request::TargetLine {
+                session,
+                revision,
+                side,
+                path,
+                line,
+            } => {
+                let line = self
+                    .find(session)
+                    .await?
+                    .session
+                    .line_in_target(revision, mapping::core_side(side), &path, line)
+                    .await
+                    .map_err(message)?;
+                Ok(Response::TargetLine { revision, line })
+            }
             Request::CreateThread {
                 session,
                 revision,

@@ -307,6 +307,17 @@ pub enum Request {
     Threads {
         session: SessionId,
     },
+    /// The line of the target text that a unified diff shows what is on `line` of one side of
+    /// the file at `path` (its old path on the base side) at: the same rule as
+    /// `Thread::target_line`, for a comment that has no thread yet and for a base position to
+    /// reveal. Fails if `revision` is no longer current. Answers with `Response::TargetLine`.
+    TargetLine {
+        session: SessionId,
+        revision: u32,
+        side: Side,
+        path: String,
+        line: u32,
+    },
     /// Opens a thread with its first message. The lines of a range target are in
     /// the text of `revision`. Fails if `revision` is no longer current, or if the
     /// target does not exist at it. Answers with `Response::Thread`.
@@ -696,6 +707,11 @@ pub enum Response {
     Threads {
         revision: u32,
         threads: Vec<Thread>,
+    },
+    /// The answer to `TargetLine`: the line (0-based) of the target text, at `revision`.
+    TargetLine {
+        revision: u32,
+        line: u32,
     },
     /// One thread after a change, resolved at the current revision.
     Thread(Thread),
