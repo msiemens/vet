@@ -227,6 +227,7 @@ export class ChangesetView {
       s.loaded,
       s.review.hunks,
       this.heights.mode,
+      this.heights.m.hunk,
       s.hooks,
       this.collapse ? COLLAPSE : undefined,
       [this.threads.extension(s)],

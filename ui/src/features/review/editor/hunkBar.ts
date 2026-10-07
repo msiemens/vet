@@ -34,8 +34,15 @@ export class HunkBar extends WidgetType {
     /** The view's current stop: hunk navigation and Space act on it. */
     readonly current: boolean,
     readonly actions: BarActions | null,
+    /** The bar's height in px (`--h-hunk`). */
+    readonly height: number,
   ) {
     super();
+  }
+
+  /** Exact, so CodeMirror's height map is right before the bar is drawn and scrolling over it reflows nothing. */
+  get estimatedHeight(): number {
+    return this.height;
   }
 
   eq(other: HunkBar): boolean {

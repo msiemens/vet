@@ -43,13 +43,21 @@ export interface SideConfig {
   headers: string[];
   /** Absent on the base side of a side-by-side view. */
   bar: BarActions | null;
+  /** A hunk bar's height in px. */
+  barHeight: number;
 }
 
-export function sideConfig(hunks: Hunk[], side: "base" | "target", bar: BarActions | null): SideConfig {
+export function sideConfig(
+  hunks: Hunk[],
+  side: "base" | "target",
+  bar: BarActions | null,
+  barHeight: number,
+): SideConfig {
   return {
     lines: hunks.map((h) => (side === "base" ? [h.baseStart, h.baseLen] : [h.targetStart, h.targetLen])),
     headers: hunks.map(hunkHeader),
     bar,
+    barHeight,
   };
 }
 
@@ -68,7 +76,7 @@ function build(state: Omit<ReviewState, "decos">, doc: Text, side: SideConfig): 
     if (span.empty && !side.bar) return;
     out.push(
       Decoration.widget({
-        widget: new HunkBar(i, side.headers[i], state.states[i], state.current === i, side.bar),
+        widget: new HunkBar(i, side.headers[i], state.states[i], state.current === i, side.bar, side.barHeight),
         block: true,
         side: -2,
       }).range(span.at),

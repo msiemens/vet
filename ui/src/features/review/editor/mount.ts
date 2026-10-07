@@ -67,13 +67,15 @@ export function mountFile(
   /** The review state of each hunk. */
   states: HunkState[],
   mode: Mode,
+  /** A hunk bar's height in px (`--h-hunk`). */
+  barHeight: number,
   hooks: Hooks,
   /** Absent: show the whole file. */
   collapseUnchanged?: Collapse,
   /** More extensions of the target view. */
   extra: Extension[] = [],
 ): Handle {
-  const targetField = reviewField(sideConfig(loaded.hunks, "target", hooks), states);
+  const targetField = reviewField(sideConfig(loaded.hunks, "target", hooks, barHeight), states);
   const diffConfig = { override: backendDiff(loaded.base, loaded.target, loaded.changes) };
   const shown = (ms: number) => hooks.hoverShown?.(ms);
   const target: Extension[] = [
@@ -111,7 +113,7 @@ export function mountFile(
     return handle(view, [view]);
   }
   const base: Extension[] = [
-    reviewField(sideConfig(loaded.hunks, "base", null), states),
+    reviewField(sideConfig(loaded.hunks, "base", null, barHeight), states),
     lineNumbers(),
     highlightExtension(loaded.baseHighlights),
     barText,
