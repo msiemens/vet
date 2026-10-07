@@ -2,6 +2,7 @@
   import type { FileChange } from "../../generated/FileChange";
   import type { LineDelta } from "../../generated/LineDelta";
   import { basename } from "../../lib/paths";
+  import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Tab from "../../lib/ui/Tab.svelte";
   import { CHANGES, type TabId, type Tabs, pathOf } from "./Tabs.svelte";
 
@@ -35,6 +36,7 @@
       {#if path === undefined}
         Changes {@render counts(delta)}
       {:else}
+        <FileIcon name={basename(path)} />
         {basename(path)}
         {#if file}{@render counts(file.delta)}{/if}
       {/if}

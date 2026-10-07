@@ -3,6 +3,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import type { DirEntry } from "../../generated/DirEntry";
   import type { FileChange } from "../../generated/FileChange";
+  import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import Tab from "../../lib/ui/Tab.svelte";
@@ -94,6 +95,7 @@
     oncontextmenu={(e) => menu(e, path, true)}
   >
     <span class="chev"><Icon name={open ? "open" : "closed"} size={10} /></span>
+    <FileIcon {name} folder {open} />
     <span class="name">{name}</span>
     {#if entry?.changed}<span class="mark" title="Contains changes"></span>{/if}
   </button>
@@ -119,6 +121,7 @@
     oncontextmenu={(e) => menu(e, path, false)}
   >
     <span class="chev"></span>
+    <FileIcon {name} />
     <span class="name">{name}</span>
     {#if s?.mode}<span class="mono x" title="File mode changed">{s.mode}</span>{/if}
     {#if s && file}

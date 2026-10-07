@@ -66,6 +66,9 @@ importers:
       eslint-plugin-svelte:
         specifier: ^3.23.0
         version: 3.23.0(eslint@10.12.0)(svelte@5.57.1(@typescript-eslint/types@8.71.0))
+      material-icon-theme:
+        specifier: ^5.39.0
+        version: 5.39.0
       prettier:
         specifier: ^3.9.9
         version: 3.9.9
@@ -671,6 +674,9 @@ packages:
     resolution: {integrity: sha512-Qgzu8kfBvo+cA4962jnP1KkS6Dop5NS6g7R5LFYJr4b8Ub94PPQXUksCw9PvXoeXPRRddRNC5C1JQUR2SMGtnA==}
     engines: {node: '>= 14.16.0'}
 
+  chroma-js@3.2.0:
+    resolution: {integrity: sha512-os/OippSlX1RlWWr+QDPcGUZs0uoqr32urfxESG9U93lhUfbnlyckte84Q8P1UQY/qth983AS1JONKmLS4T0nw==}
+
   clsx@2.1.1:
     resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}
     engines: {node: '>=6'}
@@ -1066,6 +1072,10 @@ packages:
   markdown-it@15.0.2:
     resolution: {integrity: sha512-q4IGxMv56jCqT4OCRCADBoDP3LO4MhmTXjFbphHPXs4g3j9Xg5RDnxqN8IF/3vIWEU+VCnUq+7JUg/cfy2E6Qw==}
     hasBin: true
+
+  material-icon-theme@5.39.0:
+    resolution: {integrity: sha512-6dUQXJgNBlklaILIOlCZXhSBTsBmLkt11XMoTY7Uyb4ZikelGgZHOY4AdOWBA+SXz51cVWfOVnTHrTwGM91eYw==}
+    engines: {vscode: ^1.55.0}
 
   mdurl@2.1.0:
     resolution: {integrity: sha512-1+HBaOx0zi/dQWht8rNv9MYf9qqpqL/kxI0hXImU6Y547zM6Sni8BQibt7ifgMcYtQg41ao3Ivd6cnSM86inpg==}
@@ -1893,6 +1903,8 @@ snapshots:
     dependencies:
       readdirp: 4.1.2
 
+  chroma-js@3.2.0: {}
+
   clsx@2.1.1: {}
 
   codemirror@6.0.2:
@@ -2272,6 +2284,10 @@ snapshots:
       mdurl: 2.1.0
       punycode.js: 2.3.1
       uc.micro: 3.0.0
+
+  material-icon-theme@5.39.0:
+    dependencies:
+      chroma-js: 3.2.0
 
   mdurl@2.1.0: {}
 
