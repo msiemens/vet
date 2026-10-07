@@ -379,7 +379,8 @@ export class ChangesetView {
     s.loading ??= this.backend.fileContents(file.path).then((r) => {
       if (r.revision !== this.revision) throw new Error("stale revision");
       s.loaded = { base: r.base ?? "", target: r.target ?? "", hunks: file.hunks, changes: r.changes, marks: r.marks };
-      this.sync();
+      // Mounting waits for the next frame, so a large reply's parse and an editor's creation never share one.
+      this.syncNextFrame(true);
       return s.loaded;
     });
     return s.loading;
@@ -474,14 +475,18 @@ export class ChangesetView {
     const started = performance.now();
     for (const [i, fi] of pending.entries()) {
       if (i > 0 && performance.now() - started > MOUNT_BUDGET_MS) {
-        this.later ??= requestAnimationFrame(() => {
-          this.later = undefined;
-          this.sync(wide);
-        });
+        this.syncNextFrame(wide);
         return;
       }
       this.mount(fi);
     }
+  }
+
+  private syncNextFrame(wide: boolean) {
+    this.later ??= requestAnimationFrame(() => {
+      this.later = undefined;
+      this.sync(wide);
+    });
   }
 
   /**
