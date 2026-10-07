@@ -62,9 +62,9 @@ pub enum Request {
     CloseProject {
         project: ProjectId,
     },
-    /// The changesets the project offers: the working tree first, then the local branches
-    /// that have commits the default branch lacks and were committed to in the last 30 days
-    /// (and always the checked-out one, the one on view and any with a review open), the
+    /// The changesets the project offers: the working tree first, then every local branch, then
+    /// the remote-tracking branches that have commits the default branch lacks and were committed
+    /// to in the last 30 days (and always the one on view and any with a review open), each group
     /// most recently committed first. Answers with `Response::Changesets`.
     ListChangesets {
         project: ProjectId,
