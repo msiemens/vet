@@ -44,6 +44,38 @@ export async function onNativeMenu(listener: (id: string) => void): Promise<() =
   return listen<string>("vet-menu", (event) => listener(event.payload));
 }
 
+export type StartupStep = "startingBackend" | "waitingForReady" | "loadingUi";
+
+/** Where the host's startup is (the splash window shows it). A failure keeps the step it happened in. */
+export interface StartupProgress {
+  step: StartupStep;
+  /** The WSL distro the backend runs in; none for a backend on this machine. */
+  distro: string | null;
+  error: string | null;
+}
+
+/** Calls `listener` with each startup step the host reports; resolves with the unsubscribe function. */
+export async function onStartupProgress(listener: (progress: StartupProgress) => void): Promise<() => void> {
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<StartupProgress>("vet-startup", (event) => listener(event.payload));
+}
+
+/** Where startup is now, for a page that loaded after the host reported its first steps. */
+export function startupProgress(): Promise<StartupProgress> {
+  return invoke<StartupProgress>("startup_progress");
+}
+
+/** Starts the backend again after a failed start. */
+export async function retryStartup(): Promise<void> {
+  await invoke("retry_startup");
+}
+
+/** The app's version, as the host knows it. */
+export async function appVersion(): Promise<string> {
+  const { getVersion } = await import("@tauri-apps/api/app");
+  return getVersion();
+}
+
 export async function quit(): Promise<void> {
   await invoke("quit");
 }

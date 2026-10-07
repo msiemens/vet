@@ -71,15 +71,21 @@
 
   onMount(() => {
     applyTheme(theme);
-    showWindow().then(
-      (frame) => {
-        if (frame === "native") console.warn("app-drawn title bar unavailable; the host log says why");
-      },
-      (e: unknown) => {
-        console.error(e);
-      },
-    );
-    void session.connect();
+    // The splash covers the start until the backend is connected (or the connection failed, which
+    // the window then shows), so the window never shows empty.
+    let shown: Promise<void> | undefined;
+    const reveal = () => {
+      shown ??= showWindow().then(
+        (frame) => {
+          if (frame === "native") console.warn("app-drawn title bar unavailable; the host log says why");
+        },
+        (e: unknown) => {
+          console.error(e);
+        },
+      );
+    };
+    session.onConnect(reveal);
+    void session.connect().then(reveal);
     return mainMenu.listen(execute);
   });
 
