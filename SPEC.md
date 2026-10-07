@@ -469,6 +469,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - The file icon of a file in the Changes tab opens the file's tab, like the hunk bar's; a changed file's tab switches between file and diff view
 - Git fetch (in-process, read-only): on demand and periodically, so remote branches and how far a base is behind are current; Vet never pulls, merges or rebases
 - The split between the right sidebar's panels can be dragged, keeping its position
+- Search in the open file (find with next/previous, matches marked) and search in the project (text across the repository's files, results grouped by file, opening a result at its line)
 - While a file's tab is active, the changed-symbols panel lists only that file's symbols
 - The changed-symbols panel shows its progress while it loads (files done of files to analyse) and lists symbols as their files are done
 - Jump to Source (F4) from the changed-symbols list opens the selected symbol's definition
