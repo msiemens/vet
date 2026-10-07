@@ -5,12 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 # Adapters: one module per port. Dependencies (gix, notify, an HTTP client)
-# arrive with their module, behind features where they are heavy.
-[features]
-default = []
-# GitHub and Azure DevOps adapters (M2).
-platform = []
-
+# arrive with their module.
 [dependencies]
 vet-core.workspace = true
 vet-semantic.workspace = true

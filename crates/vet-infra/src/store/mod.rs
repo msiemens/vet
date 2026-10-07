@@ -30,7 +30,6 @@ use vet_app::review::{NonTextAck, RecordedSpan, Session, SessionId, SpanId, Vers
 use vet_core::content::{BlobId, Changeset, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::{self, TreeNode};
-use vet_core::platform::PlatformThread;
 use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Thread, ThreadId, ThreadStatus};
 
 use codec::*;
@@ -208,18 +207,11 @@ impl SqliteStore {
             .await?
             .into_iter()
             .map(|t| {
-                let platform = t.remote_id.clone().map(|remote_id| PlatformThread {
-                    remote_id,
-                    remote_status: t.remote_status.clone(),
-                    resolvable: t.remote_resolvable.unwrap_or(false),
-                    blocks_merge: t.remote_blocks_merge.unwrap_or(false),
-                });
                 Ok(Thread {
                     id: ThreadId(t.id as u64),
                     target: target_from(&t, t.anchor.and_then(|a| anchors.get(&a)))?,
                     messages: messages.remove(&t.id).unwrap_or_default(),
                     status: t.status.into(),
-                    platform,
                 })
             })
             .collect::<Res<_>>()?;
@@ -632,20 +624,6 @@ impl ReviewStore for SqliteStore {
         set_target(&mut row, &target, anchor);
         row.update(&txn).await?;
         Ok(txn.commit().await?)
-    }
-
-    async fn set_thread_platform(&self, thread: ThreadId, platform: Option<PlatformThread>) -> Result<(), StoreError> {
-        thread::ActiveModel {
-            id: Set(thread.0 as i64),
-            remote_id: Set(platform.as_ref().map(|p| p.remote_id.clone())),
-            remote_status: Set(platform.as_ref().and_then(|p| p.remote_status.clone())),
-            remote_resolvable: Set(platform.as_ref().map(|p| p.resolvable)),
-            remote_blocks_merge: Set(platform.as_ref().map(|p| p.blocks_merge)),
-            ..Default::default()
-        }
-        .update(&self.db)
-        .await?;
-        Ok(())
     }
 
     async fn delete_thread(&self, thread: ThreadId) -> Result<(), StoreError> {

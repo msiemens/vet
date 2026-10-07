@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 use vet_core::content::{BlobId, Changeset, Hash, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
-use vet_core::platform::{PlatformThread, PlatformTraits};
 use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
 use vet_semantic::ports::{BackendId, ServerConfig};
 
@@ -333,11 +332,6 @@ pub trait ReviewStore {
         thread: ThreadId,
         target: CommentTarget,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
-    fn set_thread_platform(
-        &self,
-        thread: ThreadId,
-        platform: Option<PlatformThread>,
-    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn delete_thread(&self, thread: ThreadId) -> impl Future<Output = Result<(), StoreError>> + Send;
 }
 
@@ -478,10 +472,4 @@ pub trait ServerSettings {
         language: String,
         path: Option<String>,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
-}
-
-/// Implemented by `vet-infra::platform` (an enum over GitHub and ADO). Core
-/// branches on the returned traits, never on which platform it is.
-pub trait Platform {
-    fn traits(&self) -> PlatformTraits;
 }

@@ -9,7 +9,6 @@ use vet_core::content::{
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle;
-use vet_core::platform::PlatformThread;
 use vet_core::review::{
     AnchorState, CommentTarget, Location, Message, ReviewedSpan, Side, StaleReason, Strategy, Thread, ThreadId,
     ThreadStatus,
@@ -474,7 +473,6 @@ impl ReviewStore for MemStore {
             target,
             messages: vec![opener],
             status: ThreadStatus::Open,
-            platform: None,
         });
         Ok(id)
     }
@@ -489,9 +487,6 @@ impl ReviewStore for MemStore {
     async fn set_thread_target(&self, thread: ThreadId, target: CommentTarget) -> StoreResult<()> {
         self.0.lock().unwrap().thread(thread).target = target;
         Ok(())
-    }
-    async fn set_thread_platform(&self, _: ThreadId, _: Option<PlatformThread>) -> StoreResult<()> {
-        unimplemented!()
     }
     async fn delete_thread(&self, thread: ThreadId) -> StoreResult<()> {
         self.0.lock().unwrap().threads.retain(|t| t.id != thread);

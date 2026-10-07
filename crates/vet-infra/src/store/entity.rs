@@ -364,10 +364,6 @@ pub mod thread {
         pub file_path: Option<Vec<u8>>,
         pub anchor: Option<i64>,
         pub status: ThreadStatus,
-        pub remote_id: Option<String>,
-        pub remote_status: Option<String>,
-        pub remote_resolvable: Option<bool>,
-        pub remote_blocks_merge: Option<bool>,
     }
 
     child_of_session!();

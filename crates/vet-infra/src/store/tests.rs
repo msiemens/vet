@@ -11,7 +11,6 @@ use vet_core::content::{
     SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
-use vet_core::platform::PlatformThread;
 use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanState, ThreadStatus};
 
 use super::*;
@@ -259,19 +258,12 @@ async fn spans_and_threads_round_trip() {
         )
         .await
         .unwrap();
-    let whole = store
+    store
         .add_thread(id, CommentTarget::Changeset, message("overall"))
         .await
         .unwrap();
     store.add_message(range, message("because")).await.unwrap();
     store.set_thread_status(file, ThreadStatus::Resolved).await.unwrap();
-    let platform = PlatformThread {
-        remote_id: "r1".into(),
-        remote_status: Some("Won't fix".into()),
-        resolvable: true,
-        blocks_merge: false,
-    };
-    store.set_thread_platform(whole, Some(platform.clone())).await.unwrap();
 
     let ack = NonTextAck {
         kind: NonTextKind::Binary,
@@ -302,7 +294,6 @@ async fn spans_and_threads_round_trip() {
         }
     );
     assert_eq!(loaded.threads[2].target, CommentTarget::Changeset);
-    assert_eq!(loaded.threads[2].platform, Some(platform));
 
     let moved = CommentTarget::Range(Anchor {
         range: LineRange { start: 20, end: 25 },

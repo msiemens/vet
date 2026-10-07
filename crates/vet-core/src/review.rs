@@ -1,7 +1,6 @@
 //! Anchors, review state, threads (SPEC §5). Content-anchored, never line-anchored (I3).
 
 use crate::content::{BlobId, FileDiff, Hash, Hunk, LineRange, RepoPath, SnapshotId};
-use crate::platform::PlatformThread;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Side {
@@ -105,7 +104,6 @@ pub struct Thread {
     pub target: CommentTarget,
     pub messages: Vec<Message>,
     pub status: ThreadStatus,
-    pub platform: Option<PlatformThread>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

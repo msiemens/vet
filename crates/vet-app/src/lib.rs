@@ -16,4 +16,3 @@ pub mod semantics;
 pub mod servers;
 pub mod session;
 pub mod settle;
-pub mod sync;

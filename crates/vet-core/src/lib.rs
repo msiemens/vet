@@ -9,7 +9,6 @@ pub mod hunks;
 pub mod inline;
 pub mod marking;
 pub mod merkle;
-pub mod platform;
 pub mod prepared;
 pub mod remap;
 pub mod resolve;

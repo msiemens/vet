@@ -1253,7 +1253,6 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             target,
             messages: vec![opener],
             status: ThreadStatus::Open,
-            platform: None,
         });
         self.remap(&mut st).await?;
         thread_by_id(&st, id)
