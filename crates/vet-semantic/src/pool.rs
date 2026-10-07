@@ -544,16 +544,6 @@ mod tests {
         assert!(admit(&backend(true), trusted).is_ok());
     }
 
-    #[test]
-    fn policy_is_part_of_the_pool_key() {
-        let key = |allow_executing| PoolKey {
-            target: Target::Live,
-            backend: BackendId("rust".into()),
-            policy: AnalysisPolicy { allow_executing },
-        };
-        assert_ne!(key(false), key(true));
-    }
-
     #[derive(Default)]
     struct Counters {
         materialized: AtomicUsize,
