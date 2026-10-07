@@ -626,9 +626,8 @@ pub enum Response {
     Done,
     /// Boxed: it would make every response as large as the manifest.
     Manifest(Box<Manifest>),
-    /// `None` is a side the file does not have (added or deleted). The text,
-    /// `changes` and `marks` belong to `revision`; the hunks are in that
-    /// revision's manifest.
+    /// `None` is a side the file does not have (added or deleted). The text and
+    /// `changes` belong to `revision`; the hunks are in that revision's manifest.
     FileContents {
         revision: u32,
         base: Option<String>,
@@ -641,7 +640,6 @@ pub enum Response {
         base_highlights: Highlights,
         /// The same for `target`.
         target_highlights: Highlights,
-        marks: Vec<Mark>,
     },
     /// The file's review state after `SetSeen` or `Acknowledge`.
     Review(ReviewUpdate),
@@ -1537,30 +1535,6 @@ pub struct TextChange {
     pub to_target: u32,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub enum MarkKind {
-    /// A changed symbol (derived, §7.3).
-    Symbol,
-    /// Reachability of the changed code (derived, §7.4).
-    Reachability,
-    /// An executor-relevant or whitespace note.
-    Note,
-}
-
-/// An inline decoration on the target side. `from`/`to` are UTF-16 columns, as
-/// CodeMirror counts them.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct Mark {
-    pub line: u32,
-    pub from: u32,
-    pub to: u32,
-    pub kind: MarkKind,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1580,7 +1554,6 @@ mod tests {
             changes: Vec::new(),
             base_highlights: vec![0, 3, 0, 5, 1, 2],
             target_highlights: Vec::new(),
-            marks: Vec::new(),
         });
         assert_eq!(json["baseHighlights"], serde_json::json!([0, 3, 0, 5, 1, 2]));
         assert_eq!(json["targetHighlights"], serde_json::json!([]));

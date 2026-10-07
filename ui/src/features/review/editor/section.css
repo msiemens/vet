@@ -196,14 +196,3 @@
 .file .cm-editor .cm-collapsedLines:active {
   background-image: linear-gradient(var(--press), var(--press));
 }
-
-/* Inline decorations: changed symbol, reachability, notes (derived, §7.3/§7.4). */
-.vet-m-symbol {
-  border-bottom: 1px solid var(--syn-function);
-}
-.vet-m-reach {
-  border-bottom: 1px dotted var(--ok);
-}
-.vet-m-note {
-  border-bottom: 1px dashed var(--note);
-}

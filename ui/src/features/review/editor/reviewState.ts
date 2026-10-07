@@ -1,5 +1,5 @@
 // Review-state decorations on every changed line (including the deleted lines of
-// the unified view), hunk header bars and inline marks from the backend (SPEC §10).
+// the unified view) and hunk header bars (SPEC §10).
 
 import { StateEffect, StateField, type Extension, type Range, type Text } from "@codemirror/state";
 import {
@@ -12,8 +12,6 @@ import {
   gutter,
 } from "@codemirror/view";
 import type { Hunk } from "../../../generated/Hunk";
-import type { Mark } from "../../../generated/Mark";
-import type { MarkKind } from "../../../generated/MarkKind";
 import type { HunkState } from "../../../generated/HunkState";
 import { gutterWidth } from "./gutterWidth";
 import { type BarActions, HunkBar, hunkHeader } from "./hunkBar";
@@ -23,12 +21,6 @@ export const setStates = StateEffect.define<HunkState[]>();
 export const setCurrent = StateEffect.define<number | null>();
 
 const CLASS: Record<HunkState, string> = { unseen: "vet-unseen", seen: "vet-seen", seenAgainstOldBase: "vet-old" };
-
-const markDeco: Record<MarkKind, Decoration> = {
-  symbol: Decoration.mark({ class: "vet-m-symbol" }),
-  reachability: Decoration.mark({ class: "vet-m-reach" }),
-  note: Decoration.mark({ class: "vet-m-note" }),
-};
 
 interface Span {
   from: number;
@@ -40,7 +32,6 @@ interface Span {
 
 export interface ReviewState {
   spans: Span[];
-  marks: { from: number; to: number; kind: MarkKind }[];
   states: HunkState[];
   current: number | null;
   decos: DecorationSet;
@@ -90,7 +81,6 @@ function build(state: Omit<ReviewState, "decos">, doc: Text, side: SideConfig): 
       pos = line.to + 1;
     }
   });
-  for (const m of state.marks) if (m.from < m.to) out.push(markDeco[m.kind].range(m.from, m.to));
   return Decoration.set(out, true);
 }
 
@@ -98,7 +88,7 @@ function build(state: Omit<ReviewState, "decos">, doc: Text, side: SideConfig): 
  * Review decorations for one side. Positions are mapped through edits, so
  * decorations follow their content.
  */
-export function reviewField(side: SideConfig, marks: Mark[], states: HunkState[]): StateField<ReviewState> {
+export function reviewField(side: SideConfig, states: HunkState[]): StateField<ReviewState> {
   return StateField.define<ReviewState>({
     create(state) {
       const doc = state.doc;
@@ -107,12 +97,7 @@ export function reviewField(side: SideConfig, marks: Mark[], states: HunkState[]
         if (len === 0 || start >= doc.lines) return { from: 0, to: 0, empty: true, at };
         return { from: at, to: lineEnd(doc, start + len - 1), empty: false, at };
       });
-      const placed = marks.flatMap((m) => {
-        if (m.line >= doc.lines) return [];
-        const [from, to] = [lineStart(doc, m.line), lineEnd(doc, m.line)];
-        return [{ from: Math.min(from + m.from, to), to: Math.min(from + m.to, to), kind: m.kind }];
-      });
-      const base = { spans, marks: placed, states, current: null };
+      const base = { spans, states, current: null };
       return { ...base, decos: build(base, doc, side) };
     },
     update(value, tr) {
@@ -126,7 +111,6 @@ export function reviewField(side: SideConfig, marks: Mark[], states: HunkState[]
             at: map(s.at, 1),
             ...(s.empty ? {} : { from: map(s.from, -1), to: map(s.to, 1) }),
           })),
-          marks: next.marks.map((m) => ({ ...m, from: map(m.from, -1), to: map(m.to, 1) })),
           decos: next.decos.map(tr.changes),
         };
       }

@@ -1,5 +1,5 @@
 //! The spike's corpus: one real git changeset (`base..head` of a repo), with
-//! hunks and inline marks computed per file.
+//! hunks computed per file.
 //!
 //! Default: ruff 0.11.12..0.11.13 (649 files, ~5k hunks, a 10k-line file),
 //! shallow-fetched into `.corpus/ruff` on first use.
@@ -8,16 +8,13 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use similar::{Algorithm, DiffTag, TextDiff};
 use vet_app::editor::line_count;
-use vet_core::content::LineRange;
-use vet_core::hunks::join_close_hunks;
-use vet_protocol::{Hunk, Mark, MarkKind};
+use vet_core::hunks::line_hunks;
+use vet_protocol::Hunk;
 
 pub const MIN_FILES: usize = 300;
 pub const MIN_HUNKS: usize = 3000;
 pub const MIN_BIG_FILE_LINES: usize = 10_000;
-pub const MIN_MARKS_PER_HUNK: usize = 3;
 
 pub struct Config {
     pub url: String,
@@ -52,9 +49,6 @@ pub struct File {
     pub base: String,
     pub target: String,
     pub hunks: Vec<Hunk>,
-    pub marks: Vec<Mark>,
-    /// Hunks with fewer than `MIN_MARKS_PER_HUNK` marks (the text had no room).
-    pub short_hunks: usize,
 }
 
 pub struct Corpus {
@@ -66,7 +60,6 @@ pub struct Stats {
     pub files: usize,
     pub hunks: usize,
     pub biggest: (String, usize),
-    pub hunks_with_few_marks: usize,
 }
 
 impl Stats {
@@ -82,13 +75,6 @@ impl Stats {
             out.push(format!(
                 "biggest file has {} lines <= {MIN_BIG_FILE_LINES}",
                 self.biggest.1
-            ));
-        }
-        // A hunk in a near-empty file has no text to mark; tolerate under 1%.
-        if self.hunks_with_few_marks * 100 > self.hunks {
-            out.push(format!(
-                "{} hunks with < {MIN_MARKS_PER_HUNK} marks",
-                self.hunks_with_few_marks
             ));
         }
         out
@@ -109,21 +95,7 @@ impl Corpus {
             files: self.files.len(),
             hunks: self.files.iter().map(|f| f.hunks.len()).sum(),
             biggest: biggest.unwrap_or_default(),
-            hunks_with_few_marks: self.files.iter().map(|f| f.short_hunks).sum(),
         }
-    }
-}
-
-/// Lines that carry a hunk's marks: its changed target lines, or for a pure
-/// deletion the context right after it.
-fn hunk_mark_lines(hunk: &Hunk, total: u32) -> (u32, u32) {
-    if hunk.target_len > 0 {
-        (hunk.target_start, hunk.target_start + hunk.target_len)
-    } else {
-        (
-            hunk.target_start.min(total.saturating_sub(1)),
-            (hunk.target_start + 3).min(total),
-        )
     }
 }
 
@@ -241,15 +213,13 @@ pub fn load(cfg: &Config) -> Result<Corpus, String> {
         if base.contains('\0') || target.contains('\0') {
             continue;
         }
-        let (hunks, marks, short_hunks) = analyse(&base, &target);
+        let hunks = analyse(&base, &target);
         if !hunks.is_empty() {
             files.push(File {
                 path,
                 base,
                 target,
                 hunks,
-                marks,
-                short_hunks,
             });
         }
     }
@@ -259,95 +229,16 @@ pub fn load(cfg: &Config) -> Result<Corpus, String> {
     })
 }
 
-fn analyse(base: &str, target: &str) -> (Vec<Hunk>, Vec<Mark>, usize) {
-    let diff = TextDiff::configure()
-        .algorithm(Algorithm::Myers)
-        .diff_lines(base, target);
-    let base_lines: Vec<&str> = base.split_inclusive('\n').collect();
-    let range = |r: std::ops::Range<usize>| LineRange {
-        start: r.start as u32,
-        end: r.end as u32,
-    };
-    let hunks: Vec<Hunk> = join_close_hunks(
-        diff.ops().iter().filter(|op| op.tag() != DiffTag::Equal).map(|op| {
-            let (_, old, new) = op.as_tag_tuple();
-            vet_core::content::Hunk {
-                old: range(old),
-                new: range(new),
-            }
-        }),
-        |r| base_lines[r.start as usize..r.end as usize].concat(),
-    )
-    .into_iter()
-    .map(|h| Hunk {
-        base_start: h.old.start,
-        base_len: h.old.len(),
-        target_start: h.new.start,
-        target_len: h.new.len(),
-    })
-    .collect();
-    let lines: Vec<&str> = target.split('\n').collect();
-    let (mut marks, mut short) = (vec![], 0);
-    for hunk in &hunks {
-        let found = marks_for(hunk, &lines);
-        // A deleted file has no target text to mark.
-        short += usize::from(found.len() < MIN_MARKS_PER_HUNK && !target.is_empty());
-        marks.extend(found);
-    }
-    (hunks, marks, short)
-}
-
-/// Inline marks for one hunk: identifier-like tokens on its lines (stand-ins for
-/// changed symbols, reachability and notes), at least `MIN_MARKS_PER_HUNK`
-/// where the text allows.
-fn marks_for(hunk: &Hunk, lines: &[&str]) -> Vec<Mark> {
-    let (lo, hi) = hunk_mark_lines(hunk, lines.len() as u32);
-    let mut marks = vec![];
-    // Identifiers first; failing that any non-blank text, also looking before the hunk.
-    for (token_ok, before) in [
-        (is_ident_char as fn(char) -> bool, 0),
-        (|c: char| !c.is_whitespace(), 8),
-    ] {
-        marks.clear();
-        for line in lo.saturating_sub(before)..(hi + 8).min(lines.len() as u32) {
-            tokens(lines[line as usize], token_ok, line, &mut marks);
-            if line >= hi.saturating_sub(1) && marks.len() > MIN_MARKS_PER_HUNK {
-                break;
-            }
-        }
-        if marks.len() >= MIN_MARKS_PER_HUNK {
-            break;
-        }
-    }
-    marks.truncate(MIN_MARKS_PER_HUNK + 1);
-    for (i, mark) in marks.iter_mut().enumerate() {
-        mark.kind = [MarkKind::Symbol, MarkKind::Reachability, MarkKind::Note][i % 3];
-    }
-    marks
-}
-
-fn is_ident_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
-
-fn tokens(line: &str, ok: fn(char) -> bool, line_no: u32, out: &mut Vec<Mark>) {
-    let (mut col, mut start) = (0u32, None);
-    for c in line.chars().chain(std::iter::once(' ')) {
-        match (ok(c), start) {
-            (true, None) => start = Some(col),
-            (false, Some(from)) => {
-                out.push(Mark {
-                    line: line_no,
-                    from,
-                    to: col,
-                    kind: MarkKind::Symbol,
-                });
-                start = None;
-            }
-            _ => {}
-        }
-        col += c.len_utf16() as u32;
-    }
+fn analyse(base: &str, target: &str) -> Vec<Hunk> {
+    line_hunks(base.as_bytes(), target.as_bytes())
+        .into_iter()
+        .map(|h| Hunk {
+            base_start: h.old.start,
+            base_len: h.old.len(),
+            target_start: h.new.start,
+            target_len: h.new.len(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -423,14 +314,6 @@ mod tests {
                 target_start: 0,
                 target_len: 2
             }]
-        );
-        // Every hunk has marks, including the pure deletion, and columns are UTF-16.
-        assert_eq!(corpus.stats().hunks_with_few_marks, 0);
-        let new = &corpus.files[2];
-        assert!(
-            new.marks.iter().any(|m| m.line == 1 && m.from == 3 && m.to == 8),
-            "{:?}",
-            new.marks
         );
     }
 }

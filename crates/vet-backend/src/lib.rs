@@ -326,7 +326,6 @@ impl Handler for Orchestrator {
                     changes: text.changes.iter().map(mapping::text_change).collect(),
                     base_highlights,
                     target_highlights,
-                    marks: Vec::new(),
                 })
             }
             Request::SetSeen {

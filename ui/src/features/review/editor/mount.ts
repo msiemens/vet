@@ -7,7 +7,6 @@ import { EditorView, lineNumbers } from "@codemirror/view";
 import { minimalSetup } from "codemirror";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Hunk } from "../../../generated/Hunk";
-import type { Mark } from "../../../generated/Mark";
 import type { TextChange } from "../../../generated/TextChange";
 import type { HunkState } from "../../../generated/HunkState";
 import type { Side } from "../../../generated/Side";
@@ -31,7 +30,6 @@ export interface Loaded {
   /** The syntax highlighting of each side's text. */
   baseHighlights: Highlights;
   targetHighlights: Highlights;
-  marks: Mark[];
 }
 
 export interface Hooks extends BarActions, SemanticHooks {
@@ -49,7 +47,7 @@ export interface Handle {
   showDiagnostics(diagnostics: readonly Diagnostic[]): void;
   /** Scrolls to and marks a span of `side`'s text; a base span has no editor of its own in a unified view and is left to the caller. */
   revealSpan(side: Side, span: TextSpan): void;
-  /** Review decorations (changed lines, marks, bars) on the target view; for integrity checks. */
+  /** Review decorations (changed lines, bars) on the target view; for integrity checks. */
   decorationCount(): number;
   chunkCount(): number;
   destroy(): void;
@@ -76,7 +74,7 @@ export function mountFile(
   /** More extensions of the target view. */
   extra: Extension[] = [],
 ): Handle {
-  const targetField = reviewField(sideConfig(loaded.hunks, "target", hooks), loaded.marks, states);
+  const targetField = reviewField(sideConfig(loaded.hunks, "target", hooks), states);
   const diffConfig = { override: backendDiff(loaded.base, loaded.target, loaded.changes) };
   const shown = (ms: number) => hooks.hoverShown(ms);
   const target: Extension[] = [
@@ -112,7 +110,7 @@ export function mountFile(
     return handle(view, [view], targetField);
   }
   const base: Extension[] = [
-    reviewField(sideConfig(loaded.hunks, "base", null), [], states),
+    reviewField(sideConfig(loaded.hunks, "base", null), states),
     lineNumbers(),
     highlightExtension(loaded.baseHighlights),
     barText,

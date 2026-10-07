@@ -190,7 +190,6 @@ impl Handler for Mock {
                             to_target: c.to_target,
                         })
                         .collect(),
-                    marks: f.marks.clone(),
                 })
             }
             Request::SetSeen {

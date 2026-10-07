@@ -371,7 +371,6 @@ export class ChangesetView {
           changes: [],
           baseHighlights: NO_HIGHLIGHTS,
           targetHighlights: NO_HIGHLIGHTS,
-          marks: [],
         }),
       );
     s.loading ??= this.backend.fileContents(file.path).then((reply) => {
@@ -384,7 +383,6 @@ export class ChangesetView {
         changes: r.changes,
         baseHighlights: decodeHighlights(r.baseHighlights),
         targetHighlights: decodeHighlights(r.targetHighlights),
-        marks: r.marks,
       };
       // Mounting waits for the next frame, so a large reply's parse and an editor's creation never share one.
       this.syncNextFrame(true);
