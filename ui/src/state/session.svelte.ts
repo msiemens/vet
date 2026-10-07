@@ -12,7 +12,7 @@ class SessionStore {
   /** A short message for the viewer about a request that did not go through. */
   notice = $state<string>();
   backend = $state.raw<Backend>();
-  /** The root of the open repository; none shows the start screen. */
+  /** The root of the open repository; none shows the welcome screen. */
   repo = $state<string>();
   /** Why the last attempt to open a repository failed. */
   openError = $state<{ path: string; message: string }>();
@@ -60,22 +60,25 @@ class SessionStore {
     }
   }
 
-  /** Asks the host's folder dialog for a repository and opens it. Without a dialog (a plain browser) this goes to the start screen. */
-  async pickRepo() {
+  /**
+   * Asks the host's folder dialog for a repository; resolves with its path, or nothing if cancelled.
+   * Without a dialog (a plain browser) this goes to the welcome screen.
+   */
+  async pickRepo(): Promise<string | undefined> {
     if (!hasNativeDialogs) {
       await this.closeRepo();
-      return;
+      return undefined;
     }
     try {
-      const path = await pickRepository();
-      if (path) await this.openRepo(path);
+      return (await pickRepository()) ?? undefined;
     } catch (error) {
       // The host refuses folders the backend cannot see (the WSL split) with a message.
       this.openError = { path: "", message: errorText(error) };
+      return undefined;
     }
   }
 
-  /** Back to the start screen. */
+  /** Back to the welcome screen. */
   async closeRepo() {
     this.repo = undefined;
     for (const listener of this.closeListeners) listener();

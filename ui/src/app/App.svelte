@@ -15,8 +15,8 @@
   } from "../features/chrome";
   import { ReviewScreen, type ReviewController } from "../features/review";
   import { SettingsDialog } from "../features/settings";
-  import { StartScreen } from "../features/start";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
+  import { WelcomeScreen } from "../features/welcome";
   import { KEYS, matches } from "../lib/keymap";
   import { repoName } from "../lib/paths";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
@@ -92,10 +92,10 @@
   function execute(command: Command) {
     switch (command.type) {
       case "open":
-        void session.pickRepo();
+        void pickProject();
         break;
       case "openRecent":
-        void session.openRepo(command.path);
+        openProject(command.path);
         break;
       case "finishReview":
         if (reviewOpen) dialog = "finish";
@@ -122,6 +122,16 @@
         devOpen = !devOpen;
         break;
     }
+  }
+
+  /** Every way of opening a project (recent list, menu, folder dialog, typed path) ends here. */
+  function openProject(path: string) {
+    void session.openRepo(path);
+  }
+
+  async function pickProject() {
+    const path = await session.pickRepo();
+    if (path) openProject(path);
   }
 
   function setMode(next: Mode) {
@@ -175,15 +185,16 @@
     <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />
   </div>
 {:else if session.backend}
-  <TitleBar />
   <div class="body">
-    <StartScreen
-      recent={recent.list.map((p) => p.path)}
+    <WelcomeScreen
+      recent={recent.list}
       failed={session.openError}
       canPick={hasNativeDialogs}
-      onpick={() => void session.pickRepo()}
-      onopen={(path) => void session.openRepo(path)}
+      version={__APP_VERSION__}
+      onpick={() => void pickProject()}
+      onopen={openProject}
       onforget={(path) => void session.forget(path)}
+      onsettings={() => (dialog = "settings")}
     />
   </div>
 {:else}

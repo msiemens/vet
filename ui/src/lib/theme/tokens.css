@@ -59,6 +59,18 @@
   --logo-del: light-dark(#e5332d, #fd423c);
   --logo-add: light-dark(#17b85a, #38e471);
 
+  /* Project avatars on the welcome screen: a palette a project's path picks from, light enough in
+     dark mode to stay apart from the panel, with white initials on top in both. */
+  --avatar-1: light-dark(#2f6fdc, #3d78d8);
+  --avatar-2: light-dark(#1f8a6e, #2a9a7c);
+  --avatar-3: light-dark(#8a5a1c, #a06a22);
+  --avatar-4: light-dark(#5b4aa8, #6b5bc0);
+  --avatar-5: light-dark(#b0396b, #c24a7e);
+  --avatar-6: light-dark(#2f7f9a, #3a8fad);
+  --on-avatar: #ffffff;
+  /* The app icon's tile behind the V. */
+  --logo-tile: #101113;
+
   /* Diff */
   --add-bg: light-dark(#e4f4e8, #20352a);
   --add-text: light-dark(#2b8546, #6fcf97);
@@ -94,6 +106,10 @@
   --h-preview: 116px;
   --h-tab: 32px;
   --w-rail: 34px;
+  --w-welcome-side: 240px;
+  --h-welcome-row: 52px;
+  --s-avatar: 28px;
+  --s-logo: 40px;
   --w-tree: 270px;
   --w-symbols: 330px;
   --w-side-min: 180px;

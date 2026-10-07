@@ -2,7 +2,7 @@
   import type { Snippet } from "svelte";
   import { isMac } from "../../state/host";
   import { mainMenu } from "../../state/mainMenu.svelte";
-  import AppLogo from "./AppLogo.svelte";
+  import AppLogo from "../../lib/ui/AppLogo.svelte";
   import MainMenuButton from "./MainMenuButton.svelte";
 
   let { children }: { children?: Snippet } = $props();
