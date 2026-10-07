@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Thread } from "../../generated/Thread";
+  import { canSubmit, isSubmitKey } from "../../lib/composer";
   import { KEYS } from "../../lib/keymap";
+  import { movedTitle } from "../../lib/movedTitle";
   import ContextMenu from "../../lib/ui/ContextMenu.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -19,7 +21,7 @@
   let menu = $state<{ thread: Thread; x: number; y: number }>();
 
   async function post() {
-    if (threads.revision === undefined || !body.trim() || sending) return;
+    if (threads.revision === undefined || !canSubmit(body, sending)) return;
     sending = true;
     const sent = await threads.create(threads.revision, { type: "changeset" }, body.trim());
     sending = false;
@@ -52,7 +54,7 @@
 {#snippet actions(thread: Thread)}
   {#if thread.anchor?.type === "inferred"}
     <div class="actions">
-      <span class="badge moved" title="Found by its surrounding lines, not where it was put">moved</span>
+      <span class="badge badge-moved" title={movedTitle(thread)}>moved</span>
       <span class="grow"></span>
       <button class="ctl small" type="button" onclick={() => void threads.confirm(thread.id)}>Confirm</button>
     </div>
@@ -104,14 +106,14 @@
         autofocus
         bind:value={body}
         onkeydown={(e) => {
-          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+          if (isSubmitKey(e)) {
             e.preventDefault();
             void post();
           } else if (e.key === "Escape") composing = false;
         }}></textarea>
       <div class="buttons">
         <button class="ctl" type="button" onclick={() => (composing = false)}>Cancel</button>
-        <button class="ctl primary" type="button" disabled={!body.trim() || sending} onclick={() => void post()}>
+        <button class="ctl primary" type="button" disabled={!canSubmit(body, sending)} onclick={() => void post()}>
           Comment
         </button>
       </div>
@@ -270,16 +272,5 @@
   .reason {
     font-size: 11.5px;
     color: var(--text-3);
-  }
-  .badge {
-    height: 16px;
-    box-sizing: border-box;
-    display: inline-flex;
-    align-items: center;
-    padding: 0 6px;
-    border: 1px solid var(--note);
-    border-radius: 8px;
-    color: var(--note);
-    font-size: 11px;
   }
 </style>

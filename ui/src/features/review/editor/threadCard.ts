@@ -6,7 +6,9 @@
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadStatus } from "../../../generated/ThreadStatus";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
+import { canSubmit, isSubmitKey } from "../../../lib/composer.ts";
 import { lineRange } from "../../../lib/lineRange.ts";
+import { movedTitle } from "../../../lib/movedTitle.ts";
 import { el, iconButton } from "./dom.ts";
 import type { CardData } from "./threadPlacement.ts";
 
@@ -21,17 +23,6 @@ export interface ThreadActions {
   cancelDraft(): void;
   /** Opens a resolved thread, or folds it again; the owner redraws it. */
   toggle(thread: number): void;
-}
-
-/** The tooltip of a "moved" badge: how the anchor was found and where it was recorded. */
-export function movedTitle(thread: Thread): string {
-  const anchor = thread.anchor;
-  if (anchor?.type !== "inferred") return "";
-  const how = anchor.strategy === "crossFileMove" ? "found in another file" : "found by its surrounding lines";
-  const was = thread.original
-    ? `; was ${thread.original.path}:${lineRange(thread.original.start, thread.original.len)}`
-    : "";
-  return `Moved: ${how}, ${anchor.confidence} confidence${was}`;
 }
 
 /** What a new comment is attached to, for the form's title. */
@@ -61,17 +52,17 @@ function composer(rows: number, placeholder: string, label: string, submit: (bod
   send.disabled = true;
   let busy = false;
   async function run() {
-    if (busy || !field.value.trim()) return;
+    if (!canSubmit(field.value, busy)) return;
     busy = true;
     send.disabled = true;
     const sent = await submit(field.value.trim());
     busy = false;
     if (sent) field.value = "";
-    send.disabled = !field.value.trim();
+    send.disabled = !canSubmit(field.value, busy);
   }
-  field.addEventListener("input", () => (send.disabled = busy || !field.value.trim()));
+  field.addEventListener("input", () => (send.disabled = !canSubmit(field.value, busy)));
   field.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+    if (isSubmitKey(e)) {
       e.preventDefault();
       void run();
     }
@@ -116,10 +107,10 @@ function threadCard(thread: Thread, open: boolean, actions: ThreadActions): HTML
       11,
       2,
     );
-    head.append(toggle, el("span", "vet-badge vet-badge-ok", "Resolved"));
+    head.append(toggle, el("span", "badge badge-ok", "Resolved"));
   }
   if (thread.anchor?.type === "inferred") {
-    const moved = el("span", "vet-badge vet-badge-moved", "moved");
+    const moved = el("span", "badge badge-moved", "moved");
     moved.title = movedTitle(thread);
     head.append(
       moved,
@@ -127,7 +118,7 @@ function threadCard(thread: Thread, open: boolean, actions: ThreadActions): HTML
     );
   }
   if (thread.anchor?.type === "exact" && thread.anchor.whitespaceChanged) {
-    const note = el("span", "vet-badge", "whitespace changed");
+    const note = el("span", "badge", "whitespace changed");
     note.title = "Only whitespace differs from where the comment was made";
     head.append(note);
   }

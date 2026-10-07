@@ -66,27 +66,6 @@
   padding: 0 8px;
   font-size: var(--fs-mono-s);
 }
-.vet-badge {
-  height: 16px;
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 6px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--text-2);
-  font-size: 11px;
-  line-height: 1;
-  white-space: nowrap;
-}
-.vet-badge-moved {
-  border-color: var(--note);
-  color: var(--note);
-}
-.vet-badge-ok {
-  border-color: var(--ok);
-  color: var(--ok);
-}
 .vet-msg-meta {
   display: flex;
   align-items: center;
