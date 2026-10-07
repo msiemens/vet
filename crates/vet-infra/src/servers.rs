@@ -204,10 +204,6 @@ impl ServerResolver for ToolResolver {
             };
         };
 
-        let version = match origin {
-            ServerOrigin::Installed => self.installed_version(spec).await,
-            _ => Self::probe_version(spec, &path).await,
-        };
         let mut notes = Vec::new();
         let mut compiler = None;
         if spec.compiler == Compiler::TypeScript {
@@ -229,9 +225,17 @@ impl ServerResolver for ToolResolver {
                 compiler,
             },
             origin,
-            version,
+            version: None,
             notes,
         })
+    }
+
+    async fn version(&self, language: &BackendId, found: &FoundServer) -> Option<String> {
+        let spec = Self::spec(language)?;
+        match found.origin {
+            ServerOrigin::Installed => self.installed_version(spec).await,
+            _ => Self::probe_version(spec, Path::new(&found.command.program)).await,
+        }
     }
 
     fn title(&self, language: &BackendId) -> String {
@@ -379,7 +383,11 @@ mod tests {
         let server = found(resolver.resolve(&language("typescript"), project.path(), None).await);
         assert_eq!(server.origin, ServerOrigin::Installed);
         assert_eq!(server.command.program, bin.to_string_lossy());
-        assert_eq!(server.version.as_deref(), Some("6.0.1"));
+        assert_eq!(server.version, None);
+        assert_eq!(
+            resolver.version(&language("typescript"), &server).await.as_deref(),
+            Some("6.0.1")
+        );
     }
 
     #[test]

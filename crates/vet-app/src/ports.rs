@@ -416,7 +416,7 @@ pub enum ServerOrigin {
 pub struct FoundServer {
     pub command: ServerCommand,
     pub origin: ServerOrigin,
-    /// If it is cheap to learn.
+    /// Learned by [`ServerResolver::version`]; `resolve` leaves it empty.
     pub version: Option<String>,
     /// Facts that shape its answers, e.g. which `tsserver` it uses.
     pub notes: Vec<String>,
@@ -441,6 +441,9 @@ pub trait ServerResolver {
         project: &Path,
         custom: Option<&str>,
     ) -> impl Future<Output = ServerState> + Send;
+    /// The version of a server `resolve` found. Separate because learning it
+    /// can start a process, which a server start does not wait for.
+    fn version(&self, language: &BackendId, found: &FoundServer) -> impl Future<Output = Option<String>> + Send;
     /// The language's name as a person knows it, e.g. "C#".
     fn title(&self, language: &BackendId) -> String;
     /// The server's name as a person knows it, e.g. "Pyright".

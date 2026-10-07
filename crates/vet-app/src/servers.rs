@@ -85,7 +85,10 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
         let mut all = Vec::new();
         for language in &self.languages {
             let custom_path = self.settings.custom_server_path(language.0.clone()).await?;
-            let state = self.resolver.resolve(language, project, custom_path.as_deref()).await;
+            let mut state = self.resolver.resolve(language, project, custom_path.as_deref()).await;
+            if let ServerState::Found(found) = &mut state {
+                found.version = self.resolver.version(language, found).await;
+            }
             all.push(ServerStatus {
                 language: language.clone(),
                 title: self.resolver.title(language),
@@ -172,8 +175,9 @@ mod tests {
         }
     }
 
-    /// Finds a server only where the custom path points.
-    struct Resolver;
+    /// Finds a server only where the custom path points. Counts the version lookups.
+    #[derive(Default)]
+    struct Resolver(std::sync::atomic::AtomicUsize);
 
     impl ServerResolver for Resolver {
         async fn resolve(&self, language: &BackendId, _project: &Path, custom: Option<&str>) -> ServerState {
@@ -191,6 +195,11 @@ mod tests {
                     reason: format!("no {} server", language.0),
                 },
             }
+        }
+
+        async fn version(&self, language: &BackendId, _: &FoundServer) -> Option<String> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Some(format!("{}-1.2", language.0))
         }
 
         fn title(&self, language: &BackendId) -> String {
@@ -217,7 +226,22 @@ mod tests {
 
     fn servers() -> Servers<Resolver, Settings> {
         let languages = ["rust", "typescript", "python"].map(|l| BackendId(l.into())).to_vec();
-        Servers::new(Resolver, Settings::default(), languages)
+        Servers::new(Resolver::default(), Settings::default(), languages)
+    }
+
+    #[tokio::test]
+    async fn the_version_is_learned_for_the_status_but_not_when_locating_for_a_start() {
+        let servers = servers();
+        servers.set_custom_path("rust", Some("/opt/ra".into())).await.unwrap();
+        servers.locate(&config("rust"), Path::new("/p")).await.unwrap();
+        assert_eq!(servers.resolver.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        let status = servers.status(Path::new("/p")).await.unwrap();
+        let ServerState::Found(found) = &status[0].state else {
+            panic!("{:?}", status[0].state)
+        };
+        assert_eq!(found.version.as_deref(), Some("rust-1.2"));
+        assert_eq!(servers.resolver.0.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     fn config(language: &str) -> ServerConfig {
