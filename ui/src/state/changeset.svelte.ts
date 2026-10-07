@@ -38,6 +38,8 @@ class ChangesetStore {
   private listeners = new Set<ReviewListener>();
 
   files = $derived(this.manifest?.files ?? []);
+  /** The lines the shown files add and remove. */
+  delta = $derived(this.manifest?.delta ?? { added: 0, removed: 0 });
   /** Same array while only review state changes. */
   paths = $derived(this.files.map((f) => f.path));
 

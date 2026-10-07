@@ -127,7 +127,7 @@
 
 <main>
   <div class="strip">
-    <TabStrip {tabs} files={changeset.files} />
+    <TabStrip {tabs} files={changeset.files} delta={changeset.delta} />
     <span class="grow"></span>
     {#if kindOf(tabs.active) !== "text"}
       <ViewControls {mode} {onmode} onstep={(delta) => controller.stepHunk(delta)} />

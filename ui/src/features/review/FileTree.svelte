@@ -8,7 +8,6 @@
   import Tab from "../../lib/ui/Tab.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { AllFiles } from "./AllFiles.svelte";
-  import { lineDelta } from "./editor/lineDelta";
   import { buildRows, buildTree, summarize } from "./tree";
 
   let {
@@ -123,7 +122,7 @@
     <span class="name">{name}</span>
     {#if s?.mode}<span class="mono x" title="File mode changed">{s.mode}</span>{/if}
     {#if s && file}
-      {@const { added, removed } = lineDelta([file])}
+      {@const { added, removed } = file.delta}
       <DiffBar
         width={22}
         {added}

@@ -34,8 +34,8 @@ use std::{fmt, slice};
 use tokio::sync::Mutex;
 use vet_core::completion::{Completion, Coverage, HunkState};
 use vet_core::content::{
-    BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextChange, NonTextKind, RepoPath, Snapshot,
-    SnapshotDiff, SnapshotId, SnapshotStatus, image_media_type,
+    BlobId, Changeset, EntryKind, FileDiff, FileEntry, Hunk, LineDelta, LineRange, NonTextChange, NonTextKind,
+    RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus, image_media_type,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::inline::{TextChange, text_changes};
@@ -152,6 +152,7 @@ pub struct FileView {
     pub base_lines: u32,
     pub target_lines: u32,
     pub hunks: Vec<Hunk>,
+    pub delta: LineDelta,
     pub non_text: Vec<ItemView>,
     pub review: ReviewView,
     pub completion: Completion,
@@ -200,6 +201,8 @@ pub struct ManifestView {
     pub target: TargetView,
     pub filter: ReviewFilter,
     pub files: Vec<FileView>,
+    /// The lines the shown files add and remove.
+    pub delta: LineDelta,
     pub completion: Completion,
     /// Why the tree is polled instead of watched, if it is.
     pub degraded: Option<Degraded>,
@@ -874,6 +877,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             if !compiled.passes(path) || (diff.is_none() && items.is_empty()) {
                 continue;
             }
+            let hunks = diff.map(|d| d.hunks.clone()).unwrap_or_default();
             files.push(FileView {
                 path: path.clone(),
                 old_path: diff
@@ -883,7 +887,8 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
                 status: status_of(diff, &items),
                 base_lines: lines(diff, diff.and_then(|d| d.old_blob)),
                 target_lines: lines(diff, diff.and_then(|d| d.new_blob)),
-                hunks: diff.map(|d| d.hunks.clone()).unwrap_or_default(),
+                delta: LineDelta::of(&hunks),
+                hunks,
                 review: review_of(&cov, diff, &items, &acked),
                 completion: cov.completion(
                     &st.filter,
@@ -905,6 +910,7 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
             },
             filter: st.filter.clone(),
             completion: cov.completion(&st.filter, &changes.diff.files, &changes.diff.non_text, &acked),
+            delta: files.iter().map(|f| f.delta).sum(),
             files,
             degraded: st.degraded,
         })

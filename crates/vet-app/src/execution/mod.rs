@@ -13,7 +13,7 @@ use std::fmt;
 use std::path::{Component, PathBuf};
 
 use vet_core::content::{
-    BlobId, Hash, Hunk, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
+    BlobId, Hash, Hunk, LineDelta, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
 };
 
 use crate::acquisition::Acquisition;
@@ -59,6 +59,7 @@ pub struct ApprovalFile {
     /// The version about to run; `None` if the file is gone, or it has no text.
     pub new: Option<String>,
     pub hunks: Vec<Hunk>,
+    pub delta: LineDelta,
 }
 
 impl From<GitError> for RunError {
@@ -226,6 +227,7 @@ impl<G: GitRepo + Sync, S: Store + RunStore + Sync, P: ProcessRunner> Execution<
                 change: changed.change,
                 old,
                 new,
+                delta: LineDelta::of(&hunks),
                 hunks,
             });
         }

@@ -5,7 +5,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import type { Approval } from "../../state/runs.svelte";
   import { runs } from "../../state/runs.svelte";
-  import { approvalRows, lineCounts } from "./approvalRows";
+  import { approvalRows } from "./approvalRows";
 
   let { approval }: { approval: Approval } = $props();
 
@@ -52,7 +52,7 @@
     {#each entries as entry, i (entry.path)}
       {@const file = entry.file}
       {@const open = expanded[entry.path] ?? i === 0}
-      {@const counts = file && lineCounts(file)}
+      {@const counts = file?.delta}
       <div class="file">
         <button
           type="button"

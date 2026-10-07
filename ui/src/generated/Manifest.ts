@@ -2,6 +2,7 @@
 import type { Base } from "./Base";
 import type { Completion } from "./Completion";
 import type { FileChange } from "./FileChange";
+import type { LineDelta } from "./LineDelta";
 import type { RestoreFailure } from "./RestoreFailure";
 import type { ReviewFilter } from "./ReviewFilter";
 import type { ReviewInfo } from "./ReviewInfo";
@@ -24,6 +25,10 @@ base: Base,
  * What the files lead to.
  */
 target: Target, filter: ReviewFilter, files: Array<FileChange>, 
+/**
+ * The lines `files` add and remove, together.
+ */
+delta: LineDelta, 
 /**
  * Completion of the whole changeset.
  */

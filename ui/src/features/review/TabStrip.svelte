@@ -1,16 +1,16 @@
 <script lang="ts">
   import type { FileChange } from "../../generated/FileChange";
+  import type { LineDelta } from "../../generated/LineDelta";
   import Tab from "../../lib/ui/Tab.svelte";
-  import { lineDelta } from "./editor/lineDelta";
   import { CHANGES, type Tabs, pathOf } from "./Tabs.svelte";
 
-  let { tabs, files }: { tabs: Tabs; files: FileChange[] } = $props();
+  /** `delta` is the changeset's. */
+  let { tabs, files, delta }: { tabs: Tabs; files: FileChange[]; delta: LineDelta } = $props();
 
   const byPath = $derived(new Map(files.map((f) => [f.path, f])));
 </script>
 
-{#snippet delta(of: readonly FileChange[])}
-  {@const { added, removed } = lineDelta(of)}
+{#snippet counts({ added, removed }: LineDelta)}
   <span class="mono delta"><span class="add">+{added}</span> <span class="del">−{removed}</span></span>
 {/snippet}
 
@@ -25,10 +25,10 @@
       onclose={id === CHANGES ? undefined : () => tabs.close(id)}
     >
       {#if path === undefined}
-        Changes {@render delta(files)}
+        Changes {@render counts(delta)}
       {:else}
         {path.slice(path.lastIndexOf("/") + 1)}
-        {#if file}{@render delta([file])}{/if}
+        {#if file}{@render counts(file.delta)}{/if}
       {/if}
     </Tab>
   {/each}

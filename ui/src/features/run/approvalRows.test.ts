@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ApprovalFile } from "../../generated/ApprovalFile.ts";
-import { MAX_ROWS, approvalRows, lineCounts } from "./approvalRows.ts";
+import { MAX_ROWS, approvalRows } from "./approvalRows.ts";
 
 const file = (over: Partial<ApprovalFile>): ApprovalFile => ({
   path: "a",
@@ -9,6 +9,7 @@ const file = (over: Partial<ApprovalFile>): ApprovalFile => ({
   base: "",
   target: "",
   hunks: [],
+  delta: { added: 0, removed: 0 },
   ...over,
 });
 const text = (n: number) => Array.from({ length: n }, (_, i) => `l${i + 1}`).join("\n") + "\n";
@@ -77,11 +78,4 @@ void test("long diffs are cut", () => {
     }),
   );
   assert.deepEqual([rows?.rows.length, rows?.truncated], [MAX_ROWS, true]);
-});
-
-void test("line counts come from the hunks", () => {
-  assert.deepEqual(lineCounts(file({ hunks: [{ baseStart: 0, baseLen: 2, targetStart: 0, targetLen: 5 }] })), {
-    added: 5,
-    removed: 2,
-  });
 });

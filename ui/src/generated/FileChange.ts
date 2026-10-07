@@ -3,6 +3,7 @@ import type { Completion } from "./Completion";
 import type { FileReview } from "./FileReview";
 import type { FileStatus } from "./FileStatus";
 import type { Hunk } from "./Hunk";
+import type { LineDelta } from "./LineDelta";
 import type { NonTextItem } from "./NonTextItem";
 
 export type FileChange = { path: string, 
@@ -23,6 +24,10 @@ targetLines: number,
  * Text hunks in order; the sizes let a shell lay out views before it has the text.
  */
 hunks: Array<Hunk>, 
+/**
+ * The lines `hunks` add and remove.
+ */
+delta: LineDelta, 
 /**
  * Each is one review item (§5.2).
  */

@@ -18,13 +18,6 @@ function lines(text: string | null): string[] {
   return all;
 }
 
-export function lineCounts(file: ApprovalFile): { added: number; removed: number } {
-  return {
-    added: file.hunks.reduce((sum, h) => sum + h.targetLen, 0),
-    removed: file.hunks.reduce((sum, h) => sum + h.baseLen, 0),
-  };
-}
-
 /** `undefined` if there is no text to show (binary, over the capture cap). */
 export function approvalRows(file: ApprovalFile): { rows: Row[]; truncated: boolean } | undefined {
   if ((file.base === null && file.change !== "added") || (file.target === null && file.change !== "removed")) {

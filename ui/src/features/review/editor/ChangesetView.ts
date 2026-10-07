@@ -15,7 +15,6 @@ import type { Backend } from "../../../state/backend";
 import { type Card, changeCard } from "./changeCard";
 import type { BarActions } from "./hunkBar";
 import { NO_HIGHLIGHTS, decodeHighlights } from "./highlights";
-import { lineDelta } from "./lineDelta";
 import { type Handle, type Hooks, type Loaded, type Mode, mountFile } from "./mount";
 import { baseLineToTarget } from "./positions";
 import { setCurrent, setStates } from "./reviewState";
@@ -188,7 +187,7 @@ export class ChangesetView {
       comment.innerHTML = iconSvg("comments", 13, 1.8);
       const index = this.sections.length;
       comment.addEventListener("click", () => this.threads.commentOnFile(this.sections[index]));
-      const { added, removed } = lineDelta([file]);
+      const { added, removed } = file.delta;
       const delta = document.createElement("span");
       delta.className = "delta mono";
       delta.innerHTML = `<span class="add">+${added}</span> <span class="del">−${removed}</span>`;

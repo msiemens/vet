@@ -10,9 +10,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, OUTPUT_CAP, Orchestrator, open_store};
 use vet_protocol::{
     AnchorState, ApprovalChange, Base, BaseChoice, BlobContent, Completion, DirEntry, DirEntryKind, EnvVar, Event,
-    FileStatus, HunkState, LineLocation, Manifest, NoTextReason, NonTextKind, Request, Response, ReviewFilter,
-    ReviewInfo, ReviewUpdate, RunChange, RunStream, RunTarget, ServerMessage, SessionId, Side, TextContent, Thread,
-    ThreadStatus, ThreadTarget,
+    FileStatus, HunkState, LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, Request, Response,
+    ReviewFilter, ReviewInfo, ReviewUpdate, RunChange, RunStream, RunTarget, ServerMessage, SessionId, Side,
+    TextContent, Thread, ThreadStatus, ThreadTarget,
 };
 use vet_transport::{Events, Handler};
 
@@ -1192,6 +1192,13 @@ async fn the_filter_moves_completion_and_the_excluded_counts() {
     let m = client.manifest(session).await;
     assert_eq!((m.files.len(), m.completion.lines, m.excluded_lines), (2, 4, 0));
     assert_eq!(m.filter, ReviewFilter::default());
+    // Each replaced line is one added and one removed; the changeset sums the shown files.
+    let delta = |added, removed| LineDelta { added, removed };
+    assert_eq!(
+        m.files.iter().map(|f| f.delta).collect::<Vec<_>>(),
+        [delta(1, 1), delta(1, 1)]
+    );
+    assert_eq!(m.delta, delta(2, 2));
 
     let filter = ReviewFilter {
         exclude: vec!["docs/**".into()],
@@ -1205,6 +1212,7 @@ async fn the_filter_moves_completion_and_the_excluded_counts() {
     let m = client.manifest(session).await;
     assert_eq!((m.revision, &m.filter), (1, &filter));
     assert_eq!((m.files.len(), m.completion.lines, m.excluded_lines), (1, 2, 2));
+    assert_eq!(m.delta, delta(1, 1), "hidden files are not counted");
     // Marking the one remaining file completes the review.
     let update = client.set_seen(session, 1, &[0], true).await;
     assert_eq!(lines(&update.changeset), (2, 2));
@@ -1408,6 +1416,7 @@ async fn a_run_needs_approval_once_then_streams_output_and_the_exit_code() {
         (files[0].base.as_deref(), files[0].target.as_deref()),
         (None, Some(PACKAGE))
     );
+    assert_eq!(files[0].delta, LineDelta { added: 1, removed: 0 });
     let unknown = Request::RunApprovalDiff {
         session,
         hash: "0".repeat(64),

@@ -1133,6 +1133,7 @@ pub struct ApprovalFile {
     pub target: Option<String>,
     /// Line hunks between the two, as in `FileChange`.
     pub hunks: Vec<Hunk>,
+    pub delta: LineDelta,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -1309,6 +1310,8 @@ pub struct Manifest {
     pub target: Target,
     pub filter: ReviewFilter,
     pub files: Vec<FileChange>,
+    /// The lines `files` add and remove, together.
+    pub delta: LineDelta,
     /// Completion of the whole changeset.
     pub completion: Completion,
     /// Changed lines and non-text items the filter hides, so "complete" never
@@ -1351,10 +1354,21 @@ pub struct FileChange {
     pub target_lines: u32,
     /// Text hunks in order; the sizes let a shell lay out views before it has the text.
     pub hunks: Vec<Hunk>,
+    /// The lines `hunks` add and remove.
+    pub delta: LineDelta,
     /// Each is one review item (§5.2).
     pub non_text: Vec<NonTextItem>,
     pub review: FileReview,
     pub completion: Completion,
+}
+
+/// Lines a diff adds (the new side's lines its hunks cover) and removes (the old side's).
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LineDelta {
+    pub added: u32,
+    pub removed: u32,
 }
 
 /// A non-text change with both sides; `None` is a side that does not exist.

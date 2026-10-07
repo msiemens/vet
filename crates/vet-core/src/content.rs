@@ -178,6 +178,33 @@ pub struct Hunk {
     pub new: LineRange,
 }
 
+/// How many lines a diff adds and removes: a file's `+N −M`, or a changeset's.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct LineDelta {
+    /// Lines of the new side the hunks cover.
+    pub added: u32,
+    /// Lines of the old side the hunks cover.
+    pub removed: u32,
+}
+
+impl LineDelta {
+    pub fn of(hunks: &[Hunk]) -> Self {
+        hunks.iter().fold(Self::default(), |sum, h| Self {
+            added: sum.added + h.new.len(),
+            removed: sum.removed + h.old.len(),
+        })
+    }
+}
+
+impl std::iter::Sum for LineDelta {
+    fn sum<I: Iterator<Item = Self>>(parts: I) -> Self {
+        parts.fold(Self::default(), |a, b| Self {
+            added: a.added + b.added,
+            removed: a.removed + b.removed,
+        })
+    }
+}
+
 /// A git-free line diff between two versions of a file. Acquisition produces
 /// these; Review and the symbol-to-hunk intersection consume them.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -249,6 +276,40 @@ pub fn image_media_type(path: &RepoPath) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hunk(old: (u32, u32), new: (u32, u32)) -> Hunk {
+        Hunk {
+            old: LineRange {
+                start: old.0,
+                end: old.1,
+            },
+            new: LineRange {
+                start: new.0,
+                end: new.1,
+            },
+        }
+    }
+
+    #[test]
+    fn a_diff_adds_the_new_lines_and_removes_the_old_ones() {
+        let hunks = [
+            hunk((2, 5), (2, 4)),
+            // A pure addition and a pure deletion.
+            hunk((9, 9), (8, 11)),
+            hunk((20, 22), (22, 22)),
+        ];
+        assert_eq!(LineDelta::of(&hunks), LineDelta { added: 5, removed: 5 });
+        assert_eq!(LineDelta::of(&[]), LineDelta::default());
+    }
+
+    #[test]
+    fn deltas_sum_over_files() {
+        let files = [LineDelta { added: 1, removed: 2 }, LineDelta { added: 10, removed: 20 }];
+        assert_eq!(
+            files.into_iter().sum::<LineDelta>(),
+            LineDelta { added: 11, removed: 22 }
+        );
+    }
 
     #[test]
     fn image_media_types_come_from_the_extension() {

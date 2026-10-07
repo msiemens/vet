@@ -17,8 +17,8 @@ use vet_core::content::LineRange;
 use vet_core::inline::text_changes;
 use vet_highlight::{Cache, Language};
 use vet_protocol::{
-    Base, BaseChoice, CommitInfo, Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, Manifest, Request,
-    Response, ReviewInfo, ReviewUpdate, SessionId, Target, TextChange,
+    Base, BaseChoice, CommitInfo, Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, LineDelta, Manifest,
+    Request, Response, ReviewInfo, ReviewUpdate, SessionId, Target, TextChange,
 };
 use vet_transport::{Events, Handler, Server};
 
@@ -30,6 +30,15 @@ fn core_hunk(h: &Hunk) -> vet_core::content::Hunk {
     vet_core::content::Hunk {
         old: range(h.base_start, h.base_len),
         new: range(h.target_start, h.target_len),
+    }
+}
+
+fn delta(hunks: &[Hunk]) -> LineDelta {
+    let core: Vec<_> = hunks.iter().map(core_hunk).collect();
+    let counted = vet_core::content::LineDelta::of(&core);
+    LineDelta {
+        added: counted.added,
+        removed: counted.removed,
     }
 }
 
@@ -115,6 +124,7 @@ impl Handler for Mock {
                         base_lines: corpus::line_count(&f.base) as u32,
                         target_lines: corpus::line_count(&f.target) as u32,
                         hunks: f.hunks.clone(),
+                        delta: delta(&f.hunks),
                         non_text: vec![],
                         review: review(seen),
                         completion: completion(&f.hunks, seen),
@@ -143,6 +153,10 @@ impl Handler for Mock {
                     },
                     filter: Default::default(),
                     completion: total(files.iter().map(|f| f.completion)),
+                    delta: LineDelta {
+                        added: files.iter().map(|f| f.delta.added).sum(),
+                        removed: files.iter().map(|f| f.delta.removed).sum(),
+                    },
                     files,
                     excluded_lines: 0,
                     excluded_items: 0,

@@ -13,7 +13,7 @@ use vet_app::session::{
     NewThread, NoText, ReviewUpdateView, ReviewView, TargetText, ThreadView, ThreadsView, path_str,
 };
 use vet_core::completion::{Completion, HunkState};
-use vet_core::content::{EntryKind, Hunk, LineRange, NonTextKind, RepoPath};
+use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
 use vet_core::filter::ReviewFilter;
 use vet_core::inline::TextChange;
 use vet_core::review::{AnchorState, CommentTarget, Confidence, Location, Side, StaleReason, Strategy, ThreadStatus};
@@ -71,6 +71,13 @@ fn hunk(h: &Hunk) -> p::Hunk {
     }
 }
 
+fn line_delta(d: LineDelta) -> p::LineDelta {
+    p::LineDelta {
+        added: d.added,
+        removed: d.removed,
+    }
+}
+
 pub fn text_change(c: &TextChange) -> p::TextChange {
     p::TextChange {
         from_base: c.from_base,
@@ -125,6 +132,7 @@ fn file(f: &FileView) -> p::FileChange {
         base_lines: f.base_lines,
         target_lines: f.target_lines,
         hunks: f.hunks.iter().map(hunk).collect(),
+        delta: line_delta(f.delta),
         non_text: f.non_text.iter().map(item).collect(),
         review: review(&f.review),
         completion: completion(&f.completion),
@@ -229,6 +237,7 @@ pub fn manifest(session: p::SessionId, m: &ManifestView, restore_failures: &[Res
         },
         filter: filter(&m.filter),
         files: m.files.iter().map(file).collect(),
+        delta: line_delta(m.delta),
         completion: completion(&m.completion),
         excluded_lines: m.completion.excluded_lines,
         excluded_items: m.completion.excluded_items,
@@ -484,6 +493,7 @@ pub fn approval_files(files: &[ApprovalFile]) -> p::Response {
                 base: f.old.clone(),
                 target: f.new.clone(),
                 hunks: f.hunks.iter().map(hunk).collect(),
+                delta: line_delta(f.delta),
             })
             .collect(),
     }
