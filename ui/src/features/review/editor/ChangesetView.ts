@@ -11,12 +11,11 @@ import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { NO_HIGHLIGHTS, decodeHighlights } from "../../../lib/highlights";
-import { basename } from "../../../lib/paths";
 import type { Mode } from "../../../lib/viewMode";
 import type { Backend } from "../../../state/backend";
 import { atRevision } from "../../../state/revision";
 import { changeCard } from "./changeCard";
-import { iconButton } from "./dom";
+import { fileHeader, renderCount } from "./fileHeader";
 import type { BarActions } from "./hunkBar";
 import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
 import { lineOf, lineStart, selectedLines } from "./positions";
@@ -138,46 +137,13 @@ export class ChangesetView {
       stops += file.nonText.length + file.hunks.length;
       const el = document.createElement("section");
       el.className = "file";
-      const header = document.createElement("header");
-      const title = document.createElement("span");
-      title.className = "path mono";
-      const name = basename(file.path);
-      const dir = document.createElement("span");
-      dir.className = "dir";
-      dir.textContent = file.path.slice(0, file.path.length - name.length);
-      title.append(dir, name);
-      title.title = file.path;
-      const firstLine = file.hunks[0]?.targetStart ?? 0;
-      header.addEventListener("dblclick", (e) => {
-        if (!(e.target instanceof Element && e.target.closest("button"))) listeners.openSource(file.path, firstLine);
-      });
       const index = this.sections.length;
-      const open =
-        listeners.openDiff && iconButton("Open diff in tab", "file", () => listeners.openDiff?.(file.path, firstLine));
-      const comment = iconButton("Comment on this file", "comments", () =>
-        this.threads.commentOnFile(this.sections[index]),
-      );
-      const { added, removed } = file.delta;
-      const delta = document.createElement("span");
-      delta.className = "delta mono";
-      delta.innerHTML = `<span class="add">+${added}</span> <span class="del">−${removed}</span>`;
-      const count = document.createElement("span");
-      count.className = "count";
-      const button = iconButton(
-        "Toggle everything in this file seen",
-        "check",
-        () => void this.toggleSeen(index),
-        "vet-icon-btn seen",
-        13,
-        2,
-      );
-      const tools = document.createElement("span");
-      tools.className = "tools";
-      tools.append(...(open ? [open] : []), comment, button);
-      header.append(title, delta, count, tools);
-      header.addEventListener("contextmenu", (e) => {
-        e.preventDefault();
-        this.listeners.fileMenu(file.path, e.clientX, e.clientY);
+      const header = fileHeader(file, {
+        openSource: (line) => listeners.openSource(file.path, line),
+        openDiff: listeners.openDiff && ((line) => listeners.openDiff?.(file.path, line)),
+        comment: () => this.threads.commentOnFile(this.sections[index]),
+        toggleSeen: () => void this.toggleSeen(index),
+        menu: (x, y) => listeners.fileMenu(file.path, x, y),
       });
       const body = document.createElement("div");
       body.className = "body";
@@ -190,7 +156,7 @@ export class ChangesetView {
       );
       const blockEl = document.createElement("div");
       blockEl.className = "vet-thread-block";
-      el.append(header, ...cards.map((c) => c.el), blockEl, body);
+      el.append(header.el, ...cards.map((c) => c.el), blockEl, body);
       el.addEventListener("pointerdown", (e) => this.selectAt(index, e));
       const actions: BarActions = {
         toggleSeen: (h) => void this.toggleHunk(index, h),
@@ -203,7 +169,7 @@ export class ChangesetView {
         completion: file.completion,
         el,
         body,
-        count,
+        count: header.count,
         cards,
         top: 0,
         height: 0,
@@ -250,7 +216,7 @@ export class ChangesetView {
       s.height = this.estimate(s);
       s.el.style.height = `${s.height}px`;
       top += s.height;
-      this.updateCount(s);
+      renderCount(s, s.completion);
     }
   }
 
@@ -300,15 +266,6 @@ export class ChangesetView {
     this.threads.count(s, space, layout.drawn, known);
     s.el.style.setProperty("--vet-cards", `${layout.cardsHeight}px`);
     return layout.height + 1;
-  }
-
-  private updateCount(s: Section) {
-    const c = s.completion;
-    const parts: string[] = [];
-    if (c.hunks || !c.items) parts.push(`${c.seenHunks}/${c.hunks} hunks seen`);
-    if (c.items) parts.push(`${c.acknowledgedItems}/${c.items} other`);
-    s.count.textContent = parts.join(" · ");
-    s.el.classList.toggle("all-seen", c.complete);
   }
 
   /** Drops the editor; the regions it had expanded are collapsed again when it is mounted anew. */
@@ -696,7 +653,7 @@ export class ChangesetView {
     s.completion = completion;
     s.handle?.dispatchAll(setStates.of(review.hunks));
     s.cards.forEach((card, i) => card.setAcknowledged(review.acknowledged.includes(s.file.nonText[i].kind)));
-    this.updateCount(s);
+    renderCount(s, completion);
   }
 
   /** Asks the backend to mark everything in file `fi` (hunks and change cards) seen, or unseen if it all already is. */
