@@ -4239,7 +4239,6 @@ name = "vet-backend"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
- "serde_json",
  "tempfile",
  "tokio",
  "vet-app",
@@ -4323,7 +4322,6 @@ dependencies = [
 name = "vet-mock"
 version = "0.0.0"
 dependencies = [
- "serde_json",
  "tokio",
  "vet-app",
  "vet-core",
