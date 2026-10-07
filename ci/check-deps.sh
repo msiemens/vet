@@ -10,11 +10,12 @@ declare -A ALLOWED=(
     [vet-core]=""
     [vet-protocol]=""
     [vet-transport]="vet-protocol"
-    [vet-mock]="vet-protocol vet-transport"
+    [vet-highlight]=""
+    [vet-mock]="vet-core vet-protocol vet-transport vet-highlight"
     [vet-semantic]="vet-core"
     [vet-app]="vet-core vet-semantic"
     [vet-infra]="vet-core vet-semantic vet-app"
-    [vet-backend]="vet-core vet-protocol vet-transport vet-semantic vet-app vet-infra"
+    [vet-backend]="vet-core vet-protocol vet-transport vet-semantic vet-app vet-infra vet-highlight"
 )
 
 # External crates the pure layers must never depend on.
