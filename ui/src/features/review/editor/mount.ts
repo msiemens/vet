@@ -2,7 +2,7 @@
 // (`MergeView`), with the review decorations of `reviewState.ts` (SPEC §10).
 
 import { MergeView, getChunks, unifiedMergeView } from "@codemirror/merge";
-import { EditorState, type Extension, type StateEffect } from "@codemirror/state";
+import { Compartment, EditorState, type Extension, type StateEffect } from "@codemirror/state";
 import { standardKeymap } from "@codemirror/commands";
 import { EditorView, drawSelection, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
 import type { Diagnostic } from "../../../generated/Diagnostic";
@@ -60,12 +60,34 @@ export interface Collapse {
 
 const barText = EditorState.phrases.of({ "$ unchanged lines": "⋯ $ unchanged lines" });
 
+const drawnSelection = new Compartment();
+const drawn = drawSelection();
+
+/**
+ * The drawn selection and cursor, from the editor's first focus or press on. Until then there is
+ * neither to draw, and in WebKit their layers made creating a unified editor several times slower,
+ * which the editors mounting during a scroll pay for in dropped frames.
+ */
+const drawSelectionOnUse: Extension = [
+  drawnSelection.of([]),
+  EditorView.domEventHandlers({
+    focus: (_, view) => use(view),
+    mousedown: (_, view) => use(view),
+  }),
+];
+
+/** Turns the drawn selection on; never takes the event from CodeMirror's own handling. */
+function use(view: EditorView): false {
+  if (drawnSelection.get(view.state) !== drawn) view.dispatch({ effects: drawnSelection.reconfigure(drawn) });
+  return false;
+}
+
 /**
  * What a read-only editor needs of CodeMirror's setup: control characters made visible, the drawn
  * selection and cursor, and the caret keys. No undo history, no editing keys and no fallback
  * highlight style (highlights come from the backend).
  */
-const readOnlySetup: Extension = [highlightSpecialChars(), drawSelection(), keymap.of(standardKeymap)];
+const readOnlySetup: Extension = [highlightSpecialChars(), drawSelectionOnUse, keymap.of(standardKeymap)];
 
 export function mountFile(
   host: HTMLElement,
