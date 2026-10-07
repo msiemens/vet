@@ -1,6 +1,13 @@
 // Plain DOM builders for the editor's own widgets (headers, hunk bars, cards), which are not Svelte.
 
+import type { EditorView } from "@codemirror/view";
 import { type IconName, iconSvg } from "../../../lib/ui/icons.ts";
+
+/**
+ * Whether the editor takes the keys: its content is the document's active element. Unlike
+ * `EditorView.hasFocus`, this does not also ask whether the window has the focus.
+ */
+export const takesKeys = (view: EditorView): boolean => view.contentDOM === document.activeElement;
 
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,

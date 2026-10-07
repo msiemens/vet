@@ -12,6 +12,7 @@ import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
 import type { Mode } from "../../../lib/viewMode";
 import { changeCard } from "./changeCard";
+import { takesKeys } from "./dom";
 import { fileHeader, renderCount } from "./fileHeader";
 import type { FileSource } from "./fileSource";
 import type { BarActions } from "./hunkBar";
@@ -383,7 +384,7 @@ export class ChangesetView {
   caret(): { path: string; line: number } | undefined {
     for (const fi of this.windowing.mounted) {
       const { view } = this.sections[fi].handle ?? {};
-      if (view?.hasFocus)
+      if (view && takesKeys(view))
         return {
           path: this.sections[fi].file.path,
           line: lineOf(view.state.doc, view.state.selection.main.head),
@@ -435,7 +436,7 @@ export class ChangesetView {
     for (const fi of this.windowing.mounted) {
       const s = this.sections[fi];
       if (!s.file.hunks.length) continue;
-      const view = s.handle?.views.find((v) => v.hasFocus);
+      const view = s.handle?.views.find(takesKeys);
       if (!view) continue;
       this.select(this.hunkStopAt(fi, view, lineOf(view.state.doc, view.state.selection.main.head)));
       return this.toggleCurrent();

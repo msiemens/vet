@@ -9,6 +9,7 @@ import type { CommentAt } from "../../../generated/CommentAt";
 import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
+import { takesKeys } from "./dom";
 import { lineEnd, lineOf, lineStart, selectedLines } from "./positions";
 import type { Section, ThreadState } from "./section";
 import type { ThreadSpace } from "./sectionLayout";
@@ -290,7 +291,7 @@ export class ThreadLayer {
    */
   commentOnSelection(sections: Iterable<Section>): boolean {
     for (const s of sections) {
-      const view = s.handle?.views.find((v) => v.hasFocus);
+      const view = s.handle?.views.find(takesKeys);
       if (!s.handle || !view) continue;
       const { main } = view.state.selection;
       const { doc } = view.state;
