@@ -263,7 +263,7 @@ async fn handshake(
     let init = conn
         .request::<Initialize>(params)
         .await
-        .map_err(|e| LaunchError::Protocol(conn.describe(e)))?;
+        .map_err(|e| LaunchError::Protocol(conn.describe(e.message)))?;
     let diagnostics = capabilities::assert_capabilities(&init.capabilities)?;
     conn.notify::<lsp::notification::Initialized>(lsp::InitializedParams {})
         .map_err(LaunchError::Protocol)?;

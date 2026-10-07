@@ -3,6 +3,11 @@
 //! Open documents are mirrored from disk before every query (full-text sync),
 //! so on the live worktree the server sees an agent's latest write. Nothing is
 //! cached here; whether an answer may be reused is the pool's decision (I2).
+//!
+//! A query may be dropped at any await. Sync is safe against that because
+//! messages are queued rather than awaited: a document's state in [`Docs`]
+//! changes in the same step as the message that tells the server. A query that
+//! opens a document of its own closes it when dropped.
 
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -15,7 +20,7 @@ use lsp_types::Uri;
 use lsp_types::notification::{DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument};
 use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare, DocumentDiagnosticRequest,
-    DocumentSymbolRequest, GotoDefinition, HoverRequest, References, WorkspaceSymbolRequest,
+    DocumentSymbolRequest, GotoDefinition, HoverRequest, References, Request, WorkspaceSymbolRequest,
 };
 use vet_core::content::RepoPath;
 use vet_semantic::ports::{
@@ -35,6 +40,9 @@ const MAX_OPEN_DOCS: usize = 64;
 const DIAGNOSTICS_TIMEOUT: Duration = Duration::from_secs(20);
 /// How long a newly opened document may keep the server busy before a query goes ahead.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
+/// How often a query is repeated after the server dropped it, and how long to wait before.
+const TRANSIENT_RETRIES: u32 = 20;
+const TRANSIENT_BACKOFF: Duration = Duration::from_millis(100);
 
 struct Doc {
     file: RepoPath,
@@ -72,6 +80,7 @@ enum Needs {
 }
 
 /// What making the server see a file took and did, for `VET_TIMING`.
+#[derive(Default)]
 struct Synced {
     /// The file was opened or its text changed.
     changed: bool,
@@ -103,6 +112,24 @@ struct Timed {
     started: Instant,
     sync: Duration,
     synced: Synced,
+    /// How often the server dropped the request and it was sent again.
+    retries: u32,
+}
+
+impl Timed {
+    fn describe(&self) -> String {
+        let sync = self.synced.describe(self.sync);
+        match self.retries {
+            0 => sync,
+            n => format!("{sync}, {n} retries"),
+        }
+    }
+}
+
+/// The server's answer to a query, with its timing.
+struct Asked<T> {
+    response: Result<T, QueryError>,
+    timed: Timed,
 }
 
 /// A position in a file, as the timing lines name it.
@@ -257,19 +284,56 @@ impl LspServer {
             started,
             sync: started.elapsed(),
             synced,
+            retries: 0,
         })
+    }
+
+    /// Asks the server `R`, after making it see `file` if there is one. A server
+    /// that drops the request as transient (a document changed under it, or it
+    /// was busy) is asked again, after the document is synced again: on the live
+    /// tree the file may have changed once more. Dropping the query ends the
+    /// retries and cancels the request in flight.
+    async fn request<R: Request>(
+        &self,
+        file: Option<(&RepoPath, Needs)>,
+        params: R::Params,
+    ) -> Result<Asked<R::Result>, QueryError>
+    where
+        R::Params: Clone,
+    {
+        let started = Instant::now();
+        let mut retries = 0;
+        loop {
+            let mut timed = match file {
+                Some((file, needs)) => self.begin(file, needs).await?,
+                None => Timed {
+                    started,
+                    sync: Duration::ZERO,
+                    synced: Synced::default(),
+                    retries: 0,
+                },
+            };
+            match self.conn.request::<R>(params.clone()).await {
+                Err(e) if e.is_transient() && retries < TRANSIENT_RETRIES => {
+                    retries += 1;
+                    tokio::time::sleep(TRANSIENT_BACKOFF).await;
+                }
+                response => {
+                    timed.started = started;
+                    timed.retries = retries;
+                    return Ok(Asked {
+                        response: response.map_err(err),
+                        timed,
+                    });
+                }
+            }
+        }
     }
 
     /// The timing line of a query: `what` names the thing asked about.
     fn log_query(&self, request: &str, what: impl Display, timed: &Timed, detail: &str) {
         timing::log(
-            || {
-                format!(
-                    "{request} {:?} {what} ({}{detail})",
-                    self.tree,
-                    timed.synced.describe(timed.sync)
-                )
-            },
+            || format!("{request} {:?} {what} ({}{detail})", self.tree, timed.describe()),
             timed.started,
         );
     }
@@ -321,6 +385,9 @@ impl LspServer {
         from.elapsed()
     }
 
+    /// Brings the server's copy of `file` in line with the disk. Whether the file
+    /// changed. Every change to `docs` follows its message without an await in
+    /// between, so a dropped query never leaves `docs` out of step with the server.
     async fn refresh(&self, docs: &mut Vec<Doc>, file: &RepoPath) -> Result<bool, QueryError> {
         let path = self.absolute(file)?;
         let text = tokio::fs::read(&path)
@@ -373,20 +440,21 @@ impl LspServer {
             return Ok(false);
         }
         let doc = &mut docs[index];
-        doc.version += 1;
-        doc.text = text.clone();
+        let version = doc.version + 1;
         let params = lsp::DidChangeTextDocumentParams {
             text_document: lsp::VersionedTextDocumentIdentifier {
                 uri: doc.uri.clone(),
-                version: doc.version,
+                version,
             },
             content_changes: vec![lsp::TextDocumentContentChangeEvent {
                 range: None,
                 range_length: None,
-                text,
+                text: text.clone(),
             }],
         };
         self.conn.notify::<DidChangeTextDocument>(params).map_err(err)?;
+        doc.version = version;
+        doc.text = text;
         Ok(true)
     }
 
@@ -414,15 +482,16 @@ impl LspServer {
     }
 
     async fn prepare_calls(&self, at: &At) -> Result<Vec<lsp::CallHierarchyItem>, QueryError> {
-        let timed = self.begin(&at.file, Needs::Project).await?;
         let params = lsp::CallHierarchyPrepareParams {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
         };
-        let items = self.conn.request::<CallHierarchyPrepare>(params).await;
+        let Asked { response: items, timed } = self
+            .request::<CallHierarchyPrepare>(Some((&at.file, Needs::Project)), params)
+            .await?;
         let found = items.as_ref().map_or(0, |i| i.as_ref().map_or(0, Vec::len));
         self.log_query("callHierarchy/prepare", Place(at), &timed, &format!(", {found} items"));
-        Ok(items.map_err(err)?.unwrap_or_default())
+        Ok(items?.unwrap_or_default())
     }
 
     /// The symbols the call hierarchy `items` stand for, each once, those
@@ -445,6 +514,39 @@ impl LspServer {
             }
         }
         out
+    }
+}
+
+/// A document that exists only in the server's memory, for the length of one
+/// query. It is closed when dropped, however the query ends.
+struct VirtualDoc<'a> {
+    conn: &'a Connection,
+    uri: Uri,
+}
+
+impl<'a> VirtualDoc<'a> {
+    fn open(conn: &'a Connection, uri: Uri, file: &RepoPath, text: &str) -> Result<Self, QueryError> {
+        conn.notify::<DidOpenTextDocument>(lsp::DidOpenTextDocumentParams {
+            text_document: lsp::TextDocumentItem {
+                uri: uri.clone(),
+                language_id: language_id(extension(file)).into(),
+                version: 1,
+                text: text.to_owned(),
+            },
+        })
+        .map_err(err)?;
+        Ok(Self { conn, uri })
+    }
+}
+
+impl Drop for VirtualDoc<'_> {
+    fn drop(&mut self) {
+        // A server that is gone has nothing left open.
+        let _ = self
+            .conn
+            .notify::<DidCloseTextDocument>(lsp::DidCloseTextDocumentParams {
+                text_document: lsp::TextDocumentIdentifier { uri: self.uri.clone() },
+            });
     }
 }
 
@@ -520,66 +622,44 @@ fn convert_diagnostic(d: lsp::Diagnostic) -> Diagnostic {
 
 impl LanguageServer for LspServer {
     async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
-        let timed = self.begin(file, Needs::Text).await?;
         let params = lsp::DocumentSymbolParams {
             text_document: self.id(file)?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self.conn.request::<DocumentSymbolRequest>(params).await;
+        let Asked { response, timed } = self
+            .request::<DocumentSymbolRequest>(Some((file, Needs::Text)), params)
+            .await?;
         self.log_query("documentSymbol", file.to_string_lossy(), &timed, "");
-        Ok(symbols_in(file, response.map_err(err)?))
+        Ok(symbols_in(file, response?))
     }
 
     async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Vec<SymbolInfo>, QueryError> {
-        let started = Instant::now();
         let uri = self.virtual_uri(file)?;
-        self.conn
-            .notify::<DidOpenTextDocument>(lsp::DidOpenTextDocumentParams {
-                text_document: lsp::TextDocumentItem {
-                    uri: uri.clone(),
-                    language_id: language_id(extension(file)).into(),
-                    version: 1,
-                    text: text.to_owned(),
-                },
-            })
-            .map_err(err)?;
+        let doc = VirtualDoc::open(&self.conn, uri, file, text)?;
         let params = lsp::DocumentSymbolParams {
-            text_document: lsp::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp::TextDocumentIdentifier { uri: doc.uri.clone() },
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self.conn.request::<DocumentSymbolRequest>(params).await;
-        let closed = self
-            .conn
-            .notify::<DidCloseTextDocument>(lsp::DidCloseTextDocumentParams {
-                text_document: lsp::TextDocumentIdentifier { uri },
-            });
-        let response = response.map_err(err)?;
-        closed.map_err(err)?;
-        let timed = Timed {
-            started,
-            sync: Duration::ZERO,
-            synced: Synced {
-                changed: true,
-                lock: Duration::ZERO,
-                quiet: None,
-            },
-        };
+        let Asked { response, mut timed } = self.request::<DocumentSymbolRequest>(None, params).await?;
+        drop(doc);
+        timed.synced.changed = true;
         self.log_query("documentSymbol (text)", file.to_string_lossy(), &timed, "");
-        Ok(symbols_in(file, response))
+        Ok(symbols_in(file, response?))
     }
 
     async fn definition(&self, at: &At) -> Result<Vec<Location>, QueryError> {
-        let timed = self.begin(&at.file, Needs::Project).await?;
         let params = lsp::GotoDefinitionParams {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self.conn.request::<GotoDefinition>(params).await;
+        let Asked { response, timed } = self
+            .request::<GotoDefinition>(Some((&at.file, Needs::Project)), params)
+            .await?;
         self.log_query("definition", Place(at), &timed, "");
-        Ok(match response.map_err(err)? {
+        Ok(match response? {
             None => Vec::new(),
             Some(lsp::GotoDefinitionResponse::Scalar(l)) => vec![self.location(&l.uri, l.range)],
             Some(lsp::GotoDefinitionResponse::Array(ls)) => ls.iter().map(|l| self.location(&l.uri, l.range)).collect(),
@@ -591,7 +671,6 @@ impl LanguageServer for LspServer {
     }
 
     async fn references(&self, at: &At) -> Result<Vec<Location>, QueryError> {
-        let timed = self.begin(&at.file, Needs::Project).await?;
         let params = lsp::ReferenceParams {
             text_document_position: self.position_params(at)?,
             work_done_progress_params: Default::default(),
@@ -600,11 +679,12 @@ impl LanguageServer for LspServer {
                 include_declaration: false,
             },
         };
-        let response = self.conn.request::<References>(params).await;
+        let Asked { response, timed } = self
+            .request::<References>(Some((&at.file, Needs::Project)), params)
+            .await?;
         let found = response.as_ref().map_or(0, |r| r.as_ref().map_or(0, Vec::len));
         self.log_query("references", Place(at), &timed, &format!(", {found} found"));
-        Ok(response
-            .map_err(err)?
+        Ok(response?
             .unwrap_or_default()
             .iter()
             .map(|l| self.location(&l.uri, l.range))
@@ -612,14 +692,15 @@ impl LanguageServer for LspServer {
     }
 
     async fn hover(&self, at: &At) -> Result<Option<String>, QueryError> {
-        let timed = self.begin(&at.file, Needs::Project).await?;
         let params = lsp::HoverParams {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
         };
-        let response = self.conn.request::<HoverRequest>(params).await;
+        let Asked { response, timed } = self
+            .request::<HoverRequest>(Some((&at.file, Needs::Project)), params)
+            .await?;
         self.log_query("hover", Place(at), &timed, "");
-        Ok(response.map_err(err)?.map(|h| flatten_hover(h.contents)))
+        Ok(response?.map(|h| flatten_hover(h.contents)))
     }
 
     async fn incoming_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
@@ -630,22 +711,17 @@ impl LanguageServer for LspServer {
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
             };
-            let started = Instant::now();
-            let calls = self.conn.request::<CallHierarchyIncomingCalls>(params).await;
+            let Asked { response: calls, timed } = self
+                .request::<CallHierarchyIncomingCalls>(Some((&at.file, Needs::Project)), params)
+                .await?;
             let found = calls.as_ref().map_or(0, |c| c.as_ref().map_or(0, Vec::len));
             self.log_request(
                 "callHierarchy/incomingCalls",
                 Place(at),
                 &format!("{found} calls"),
-                started,
+                timed.started,
             );
-            callers.extend(
-                calls
-                    .map_err(err)?
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|call| call.from),
-            );
+            callers.extend(calls?.unwrap_or_default().into_iter().map(|call| call.from));
         }
         Ok(self.symbols_of(callers).await)
     }
@@ -658,30 +734,30 @@ impl LanguageServer for LspServer {
                 work_done_progress_params: Default::default(),
                 partial_result_params: Default::default(),
             };
-            let started = Instant::now();
-            let calls = self.conn.request::<CallHierarchyOutgoingCalls>(params).await;
+            let Asked { response: calls, timed } = self
+                .request::<CallHierarchyOutgoingCalls>(Some((&at.file, Needs::Project)), params)
+                .await?;
             let found = calls.as_ref().map_or(0, |c| c.as_ref().map_or(0, Vec::len));
             self.log_request(
                 "callHierarchy/outgoingCalls",
                 Place(at),
                 &format!("{found} calls"),
-                started,
+                timed.started,
             );
-            callees.extend(calls.map_err(err)?.unwrap_or_default().into_iter().map(|call| call.to));
+            callees.extend(calls?.unwrap_or_default().into_iter().map(|call| call.to));
         }
         Ok(self.symbols_of(callees).await)
     }
 
     async fn workspace_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
-        let started = Instant::now();
         let params = lsp::WorkspaceSymbolParams {
             query: query.to_owned(),
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self.conn.request::<WorkspaceSymbolRequest>(params).await;
-        self.log_request("workspace/symbol", format!("{query:?}"), "no sync", started);
-        let response = response.map_err(err)?;
+        let Asked { response, timed } = self.request::<WorkspaceSymbolRequest>(None, params).await?;
+        self.log_request("workspace/symbol", format!("{query:?}"), "no sync", timed.started);
+        let response = response?;
         // (uri, name, range if the server gave one)
         let found: Vec<(Uri, String, Option<lsp::Range>)> = match response {
             None => Vec::new(),
@@ -717,8 +793,6 @@ impl LanguageServer for LspServer {
         let key = key(&self.uri_of(file)?);
         let generation = |conn: &Connection| conn.with_state(|s| s.diagnostics.get(&key).map_or(0, |d| d.generation));
         let before = generation(&self.conn);
-        let timed = self.begin(file, Needs::Project).await?;
-        let changed = timed.synced.changed;
         let items = match self.diagnostics {
             Diagnostics::Pull => {
                 let params = lsp::DocumentDiagnosticParams {
@@ -728,9 +802,11 @@ impl LanguageServer for LspServer {
                     work_done_progress_params: Default::default(),
                     partial_result_params: Default::default(),
                 };
-                let report = self.conn.request::<DocumentDiagnosticRequest>(params).await;
+                let Asked { response, timed } = self
+                    .request::<DocumentDiagnosticRequest>(Some((file, Needs::Project)), params)
+                    .await?;
                 self.log_query("diagnostics", file.to_string_lossy(), &timed, ", pull");
-                match report.map_err(err)? {
+                match response? {
                     lsp::DocumentDiagnosticReportResult::Report(lsp::DocumentDiagnosticReport::Full(full)) => {
                         full.full_document_diagnostic_report.items
                     }
@@ -738,6 +814,8 @@ impl LanguageServer for LspServer {
                 }
             }
             Diagnostics::Push => {
+                let timed = self.begin(file, Needs::Project).await?;
+                let changed = timed.synced.changed;
                 let conn = &self.conn;
                 let waiting = Instant::now();
                 let fresh = conn
@@ -769,7 +847,160 @@ impl LanguageServer for LspServer {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use serde_json::Value;
+
     use super::*;
+    use crate::lsp::fake::{self, Fake, Reply};
+
+    const CONTENT_MODIFIED: i64 = -32801;
+    const SERVER_CANCELLED: i64 = -32802;
+
+    fn path(p: &str) -> RepoPath {
+        RepoPath(p.as_bytes().to_vec())
+    }
+
+    /// A server on the live tree of a directory with `files`, talking to a fake.
+    fn live_server(
+        files: &[(&str, &str)],
+        behave: impl Fn(&Value) -> Reply + Send + 'static,
+    ) -> (LspServer, Fake, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, text) in files {
+            std::fs::write(dir.path().join(name), text).unwrap();
+        }
+        let (conn, fake) = fake::start(behave);
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        (
+            LspServer::new(conn, root, Tree::Live, Diagnostics::Pull, false),
+            fake,
+            dir,
+        )
+    }
+
+    fn requests(fake: &Fake) -> usize {
+        fake.messages("textDocument/documentSymbol").len()
+    }
+
+    #[tokio::test]
+    async fn a_query_dropped_anywhere_leaves_the_server_with_the_documents_on_disk() {
+        for delay in [0, 1, 2, 3, 5, 8, 30] {
+            let hold = Arc::new(AtomicBool::new(true));
+            let (server, fake, dir) = live_server(&[("a.rs", "one"), ("b.rs", "b")], {
+                let hold = hold.clone();
+                move |_| {
+                    if hold.load(Ordering::SeqCst) {
+                        Reply::Hold
+                    } else {
+                        Reply::Result(Value::Null)
+                    }
+                }
+            });
+            // `a.rs` is open and then changes on disk. The query for `b.rs` opens it and
+            // brings `a.rs` up to date, and is dropped after `delay`, in the sync or in
+            // the request the server never answers.
+            hold.store(false, Ordering::SeqCst);
+            server.document_symbols(&path("a.rs")).await.unwrap();
+            hold.store(true, Ordering::SeqCst);
+            std::fs::write(dir.path().join("a.rs"), "two").unwrap();
+            let dropped =
+                tokio::time::timeout(Duration::from_millis(delay), server.document_symbols(&path("b.rs"))).await;
+            assert!(dropped.is_err(), "{delay} ms");
+
+            std::fs::write(dir.path().join("a.rs"), "three").unwrap();
+            hold.store(false, Ordering::SeqCst);
+            server.document_symbols(&path("b.rs")).await.unwrap();
+
+            let uri = |f: &str| server.uri_of(&path(f)).unwrap().as_str().to_owned();
+            assert!(fake.violations().is_empty(), "{delay} ms: {:?}", fake.violations());
+            assert_eq!(
+                fake.documents(),
+                [(uri("a.rs"), "three".to_owned()), (uri("b.rs"), "b".to_owned())].into(),
+                "{delay} ms"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_dropped_query_for_the_symbols_of_a_text_closes_its_document_and_cancels_the_request() {
+        let (server, fake, _dir) = live_server(&[], |_| Reply::Hold);
+        let dropped = tokio::time::timeout(
+            Duration::from_millis(50),
+            server.text_symbols(&path("a.rs"), "fn main() {}"),
+        )
+        .await;
+        assert!(dropped.is_err());
+        fake.until("the document closed", |log| {
+            log.iter().any(|m| m["method"] == "textDocument/didClose")
+        })
+        .await;
+        assert!(fake.documents().is_empty());
+        assert!(fake.violations().is_empty());
+        assert_eq!(fake.messages("$/cancelRequest").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_retry_of_a_request_the_server_dropped_syncs_the_document_again() {
+        for code in [CONTENT_MODIFIED, SERVER_CANCELLED] {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("a.rs");
+            std::fs::write(&file, "v1").unwrap();
+            let asked = AtomicUsize::new(0);
+            let (conn, fake) = fake::start(move |_| {
+                if asked.fetch_add(1, Ordering::SeqCst) == 0 {
+                    // The file changes while the server works, and it gives up on the request.
+                    std::fs::write(&file, "v2").unwrap();
+                    Reply::Error(code)
+                } else {
+                    Reply::Result(Value::Null)
+                }
+            });
+            let root = std::fs::canonicalize(dir.path()).unwrap();
+            let server = LspServer::new(conn, root, Tree::Live, Diagnostics::Pull, false);
+            server.document_symbols(&path("a.rs")).await.unwrap();
+
+            let steps: Vec<_> = fake
+                .log()
+                .iter()
+                .map(|m| match m["method"].as_str().unwrap() {
+                    "textDocument/didOpen" => format!("open {}", m["params"]["textDocument"]["text"]),
+                    "textDocument/didChange" => format!("change {}", m["params"]["contentChanges"][0]["text"]),
+                    other => other.to_owned(),
+                })
+                .collect();
+            assert_eq!(
+                steps,
+                [
+                    "open \"v1\"",
+                    "textDocument/documentSymbol",
+                    "change \"v2\"",
+                    "textDocument/documentSymbol"
+                ],
+                "{code}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_query_dropped_while_the_server_keeps_dropping_it_stops_asking() {
+        let (server, fake, _dir) = live_server(&[("a.rs", "x")], |_| Reply::Error(CONTENT_MODIFIED));
+        let dropped = tokio::time::timeout(Duration::from_millis(250), server.document_symbols(&path("a.rs"))).await;
+        assert!(dropped.is_err());
+        let asked = requests(&fake);
+        assert!(asked > 1, "{asked}");
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!(requests(&fake), asked);
+    }
+
+    #[tokio::test]
+    async fn an_error_that_is_not_transient_is_not_asked_again() {
+        let (server, fake, _dir) = live_server(&[("a.rs", "x")], |_| Reply::Error(-32602));
+        let error = server.document_symbols(&path("a.rs")).await.unwrap_err();
+        assert_eq!(error.0, "textDocument/documentSymbol: failed");
+        assert_eq!(requests(&fake), 1);
+    }
 
     fn doc(opened: Instant) -> Doc {
         Doc {

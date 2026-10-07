@@ -26,9 +26,6 @@ pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const STDERR_LINES: usize = 20;
 const CONTENT_MODIFIED: i64 = -32801;
 const SERVER_CANCELLED: i64 = -32802;
-/// How often a request is repeated after the server dropped it, and how long to wait before.
-const TRANSIENT_RETRIES: u32 = 20;
-const TRANSIENT_BACKOFF: Duration = Duration::from_millis(100);
 
 pub(super) struct DiagnosticsState {
     /// Bumped on every publish, so a waiter can tell a fresh one.
@@ -68,6 +65,34 @@ impl ResponseError {
     /// is what the protocol expects of a client.
     fn is_transient(&self) -> bool {
         matches!(self.code, CONTENT_MODIFIED | SERVER_CANCELLED)
+    }
+}
+
+/// Why a request has no result.
+#[derive(Debug)]
+pub(super) struct RequestError {
+    pub message: String,
+    transient: bool,
+}
+
+impl RequestError {
+    fn fatal(message: String) -> Self {
+        Self {
+            message,
+            transient: false,
+        }
+    }
+
+    /// The server dropped the request and would take it again (see
+    /// [`ResponseError::is_transient`]). Only the caller knows what to redo first.
+    pub fn is_transient(&self) -> bool {
+        self.transient
+    }
+}
+
+impl std::fmt::Display for RequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
     }
 }
 
@@ -169,7 +194,9 @@ impl Connection {
         }
     }
 
-    pub async fn request<R: Request>(&self, params: R::Params) -> Result<R::Result, String> {
+    /// One request. A server that drops it as transient is not asked again here:
+    /// what has to be redone first is the caller's to know.
+    pub async fn request<R: Request>(&self, params: R::Params) -> Result<R::Result, RequestError> {
         self.request_with_timeout::<R>(params, REQUEST_TIMEOUT).await
     }
 
@@ -177,37 +204,35 @@ impl Connection {
         &self,
         params: R::Params,
         timeout: Duration,
-    ) -> Result<R::Result, String> {
-        let params = serde_json::to_value(params).map_err(|e| e.to_string())?;
-        let deadline = tokio::time::Instant::now() + timeout;
-        let mut retries = 0;
-        loop {
-            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-            let (tx, rx) = oneshot::channel();
-            self.shared.pending.lock().expect("not poisoned").insert(id, tx);
-            let in_flight = InFlight {
-                shared: &self.shared,
-                outbox: &self.outbox,
-                id,
-            };
-            let message = json!({"jsonrpc": "2.0", "id": id, "method": R::METHOD, "params": params});
-            if let Err(e) = self.outbox.send(&message) {
-                return Err(self.describe(format!("{}: {e}", R::METHOD)));
-            }
-            let answer = tokio::time::timeout_at(deadline, rx).await;
-            drop(in_flight);
-            match answer {
-                Ok(Ok(Ok(value))) => {
-                    return serde_json::from_value(value).map_err(|e| format!("{}: bad response: {e}", R::METHOD));
-                }
-                Ok(Ok(Err(error))) if error.is_transient() && retries < TRANSIENT_RETRIES => {
-                    retries += 1;
-                    tokio::time::sleep(TRANSIENT_BACKOFF).await;
-                }
-                Ok(Ok(Err(error))) => return Err(format!("{}: {}", R::METHOD, error.message)),
-                Ok(Err(_)) => return Err(self.describe(format!("{}: server exited", R::METHOD))),
-                Err(_) => return Err(format!("{}: timed out after {}s", R::METHOD, timeout.as_secs())),
-            }
+    ) -> Result<R::Result, RequestError> {
+        let params = serde_json::to_value(params).map_err(|e| RequestError::fatal(e.to_string()))?;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.shared.pending.lock().expect("not poisoned").insert(id, tx);
+        let _in_flight = InFlight {
+            shared: &self.shared,
+            outbox: &self.outbox,
+            id,
+        };
+        let message = json!({"jsonrpc": "2.0", "id": id, "method": R::METHOD, "params": params});
+        if let Err(e) = self.outbox.send(&message) {
+            return Err(RequestError::fatal(self.describe(format!("{}: {e}", R::METHOD))));
+        }
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(Ok(value))) => serde_json::from_value(value)
+                .map_err(|e| RequestError::fatal(format!("{}: bad response: {e}", R::METHOD))),
+            Ok(Ok(Err(error))) => Err(RequestError {
+                transient: error.is_transient(),
+                message: format!("{}: {}", R::METHOD, error.message),
+            }),
+            Ok(Err(_)) => Err(RequestError::fatal(
+                self.describe(format!("{}: server exited", R::METHOD)),
+            )),
+            Err(_) => Err(RequestError::fatal(format!(
+                "{}: timed out after {}s",
+                R::METHOD,
+                timeout.as_secs()
+            ))),
         }
     }
 
@@ -435,7 +460,6 @@ async fn collect_stderr(stderr: tokio::process::ChildStderr, shared: Arc<Shared>
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
     use std::sync::atomic::AtomicUsize;
 
     use lsp_types::request::Shutdown;
@@ -443,35 +467,14 @@ mod tests {
     use super::*;
     use crate::lsp::fake::{self, Reply};
 
-    /// A shell that answers its first request with an error of `code` and every
-    /// later one with `null`, whatever they ask.
-    fn server_failing_once_with(code: i64) -> Connection {
-        let script = format!(
-            r#"n=0
-while IFS= read -r line; do
-  case "$line" in
-    *Content-Length*)
-      n=$((n+1))
-      if [ $n = 1 ]; then body='{{"jsonrpc":"2.0","id":1,"error":{{"code":{code},"message":"dropped"}}}}'
-      else body='{{"jsonrpc":"2.0","id":'$n',"result":null}}'; fi
-      printf 'Content-Length: %s\r\n\r\n%s' ${{#body}} "$body";;
-  esac
-done"#
-        );
-        Connection::spawn("sh", &["-c".into(), script], Path::new("."), &[], Value::Null).unwrap()
-    }
-
     #[tokio::test]
-    async fn a_request_the_server_dropped_because_a_document_changed_is_asked_again() {
-        let conn = server_failing_once_with(CONTENT_MODIFIED);
-        conn.request::<Shutdown>(()).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn any_other_error_is_the_answer() {
-        let conn = server_failing_once_with(-32602);
-        let error = conn.request::<Shutdown>(()).await.unwrap_err();
-        assert_eq!(error, "shutdown: dropped");
+    async fn only_the_errors_that_ask_for_a_repeat_are_transient() {
+        for (code, transient) in [(CONTENT_MODIFIED, true), (SERVER_CANCELLED, true), (-32602, false)] {
+            let (conn, _fake) = fake::start(move |_| Reply::Error(code));
+            let error = conn.request::<Shutdown>(()).await.unwrap_err();
+            assert_eq!(error.message, "shutdown: failed");
+            assert_eq!(error.is_transient(), transient, "{code}");
+        }
     }
 
     fn cancels(log: &[Value]) -> Vec<Value> {
@@ -503,7 +506,7 @@ done"#
             .request_with_timeout::<Shutdown>((), Duration::from_millis(20))
             .await
             .unwrap_err();
-        assert!(error.contains("timed out"), "{error}");
+        assert!(error.message.contains("timed out"), "{error}");
         fake.until("the cancellation", |log| !cancels(log).is_empty()).await;
         assert_eq!(pending(&conn), 0);
     }
