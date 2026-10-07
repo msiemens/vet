@@ -3,7 +3,7 @@
 // scrolling does not reflow, and corrected once the editor is mounted. An editor is
 // mounted only for sections near the viewport.
 
-import { EditorView } from "@codemirror/view";
+import { EditorView, closeHoverTooltips, showTooltip } from "@codemirror/view";
 import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
 import type { NonTextKind } from "../../../generated/NonTextKind";
@@ -96,8 +96,13 @@ export class ChangesetView {
   private m: Metrics;
   current = -1;
   /** While the viewer scrolls only what is in view mounts; the surroundings follow once the scrolling stops. */
-  private onScroll = () => {
+  private onScroll = (e: Event) => {
+    // CodeMirror measures each of its editors, synchronously, on a scroll of any ancestor. This
+    // listener is registered before any editor mounts, so it runs first and keeps them from it;
+    // `measureVisible` asks the visible ones for one measure in this frame's batch instead.
+    e.stopImmediatePropagation();
     this.sync(false);
+    this.measureVisible();
     clearTimeout(this.settle);
     this.settle = setTimeout(() => this.sync(), SETTLE_MS);
   };
@@ -476,6 +481,24 @@ export class ChangesetView {
         return;
       }
       this.mount(fi);
+    }
+  }
+
+  /**
+   * Requests a measure of the editors in view (CodeMirror runs them in the next frame, once per
+   * editor however many scroll events came before), which keeps a tall editor's visible lines rendered while the
+   * root scrolls. A hover tooltip is closed rather than followed: the scroll moved its anchor.
+   */
+  private measureVisible() {
+    const top = this.root.scrollTop;
+    const bottom = top + this.root.clientHeight;
+    for (const fi of this.mounted) {
+      const { top: start, height, handle } = this.sections[fi];
+      if (!handle || start >= bottom || start + height <= top) continue;
+      for (const view of handle.views) {
+        if (view.state.facet(showTooltip).some(Boolean)) view.dispatch({ effects: closeHoverTooltips });
+        view.requestMeasure();
+      }
     }
   }
 
