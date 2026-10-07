@@ -296,6 +296,8 @@ pub fn changesets(list: &ChangesetList) -> p::Response {
                 key: changeset_key(&r.source),
                 title: r.title.clone(),
                 checked_out: r.checked_out,
+                branch: r.branch.clone(),
+                open_threads: r.open_threads,
                 divergence: r.divergence.map(|d| p::Divergence {
                     ahead: d.ahead,
                     behind: d.behind,
@@ -303,8 +305,26 @@ pub fn changesets(list: &ChangesetList) -> p::Response {
                 last_commit: r.last_commit.map(unix_secs),
                 review: match r.review {
                     RowReview::None => p::RowReview::None,
-                    RowReview::Open { version } => p::RowReview::Open { version },
-                    RowReview::Finished { complete } => p::RowReview::Finished { complete },
+                    RowReview::Open {
+                        version,
+                        started_at,
+                        last_reviewed,
+                    } => p::RowReview::Open {
+                        version,
+                        started_at: unix_secs(started_at),
+                        last_reviewed,
+                    },
+                    RowReview::Finished {
+                        complete,
+                        started_at,
+                        finished_at,
+                        last_reviewed,
+                    } => p::RowReview::Finished {
+                        complete,
+                        started_at: unix_secs(started_at),
+                        finished_at: unix_secs(finished_at),
+                        last_reviewed,
+                    },
                 },
             })
             .collect(),

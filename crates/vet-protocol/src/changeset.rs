@@ -34,9 +34,21 @@ pub enum RowReview {
     Open {
         /// The number of the changeset's latest version.
         version: u32,
+        /// Unix seconds of the first review action.
+        started_at: u32,
+        /// The number of the version the viewer last marked something in.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        last_reviewed: Option<u32>,
     },
     Finished {
         complete: bool,
+        /// Unix seconds of the first review action.
+        started_at: u32,
+        finished_at: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        last_reviewed: Option<u32>,
     },
 }
 
@@ -49,6 +61,12 @@ pub struct ChangesetRow {
     pub title: String,
     /// The branch is the checked-out one.
     pub checked_out: bool,
+    /// The branch the working tree is on; absent for a branch, and for a detached HEAD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub branch: Option<String>,
+    /// Threads of the changeset that are open.
+    pub open_threads: u32,
     /// Absent for the working tree, and for a branch when the repository has no default branch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

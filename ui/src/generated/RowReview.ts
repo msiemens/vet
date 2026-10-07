@@ -7,4 +7,16 @@ export type RowReview = { "state": "none" } | { "state": "open",
 /**
  * The number of the changeset's latest version.
  */
-version: number, } | { "state": "finished", complete: boolean, };
+version: number, 
+/**
+ * Unix seconds of the first review action.
+ */
+startedAt: number, 
+/**
+ * The number of the version the viewer last marked something in.
+ */
+lastReviewed?: number, } | { "state": "finished", complete: boolean, 
+/**
+ * Unix seconds of the first review action.
+ */
+startedAt: number, finishedAt: number, lastReviewed?: number, };

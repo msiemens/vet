@@ -4,6 +4,7 @@
 use super::{LiveSession, Result};
 use crate::changeset::{CommitId, Source};
 use crate::ports::{BranchInfo, GitRepo, LiveStore};
+use vet_core::review::ThreadStatus;
 
 /// A remote branch whose latest commit is older than this many days is not offered.
 const RECENT_DAYS: i64 = 30;
@@ -26,9 +27,17 @@ pub enum RowReview {
     Open {
         /// The number of the changeset's latest version.
         version: u32,
+        /// Unix seconds of the first review action.
+        started_at: i64,
+        /// The number of the version the viewer last marked something in.
+        last_reviewed: Option<u32>,
     },
     Finished {
         complete: bool,
+        /// Unix seconds of the first review action.
+        started_at: i64,
+        finished_at: i64,
+        last_reviewed: Option<u32>,
     },
 }
 
@@ -39,6 +48,10 @@ pub struct ChangesetRow {
     pub title: String,
     /// The branch is the checked-out one.
     pub checked_out: bool,
+    /// The branch the working tree is on, if any; `None` for a branch.
+    pub branch: Option<String>,
+    /// Threads of the changeset that are open.
+    pub open_threads: u32,
     /// `None` for the working tree, and for a branch when the repository has no default branch.
     pub divergence: Option<Divergence>,
     /// Unix seconds of the branch's tip commit.
@@ -70,21 +83,25 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             Some(reference) => git.resolve_commit(&reference).await.ok(),
             None => None,
         };
+        let all = git.branches().await?;
+        let (review, open_threads) = self.row_state(&Source::WorkingTree).await?;
         let mut rows = vec![ChangesetRow {
-            review: self.row_review(&Source::WorkingTree).await?,
+            review,
+            open_threads,
             source: Source::WorkingTree,
             title: "Working tree".into(),
             checked_out: false,
+            branch: all.iter().find(|b| b.current).map(|b| b.name.clone()),
             divergence: None,
             last_commit: None,
         }];
         let now = (self.clock)();
         let (mut local, mut remote) = (Vec::new(), Vec::new());
-        for branch in git.branches().await? {
+        for branch in all {
             let source = Source::Branch {
                 name: branch.name.clone(),
             };
-            let review = self.row_review(&source).await?;
+            let (review, open_threads) = self.row_state(&source).await?;
             let divergence = match &default {
                 Some(default) => Some(self.divergence(&branch, default).await?),
                 None => None,
@@ -99,6 +116,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             group.push(ChangesetRow {
                 title: branch.name,
                 checked_out: branch.current,
+                branch: None,
+                open_threads,
                 source,
                 divergence,
                 last_commit: Some(last_commit),
@@ -123,24 +142,37 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         })
     }
 
-    async fn row_review(&self, source: &Source) -> Result<RowReview> {
+    /// What Vet has of the changeset's latest review, and how many of its threads are open.
+    async fn row_state(&self, source: &Source) -> Result<(RowReview, u32)> {
         let store = &self.acquisition.store;
         let Some(changeset) = store.changeset(self.repo.clone(), source.clone()).await? else {
-            return Ok(RowReview::None);
+            return Ok((RowReview::None, 0));
         };
+        let open_threads = store
+            .threads(changeset)
+            .await?
+            .iter()
+            .filter(|t| t.thread.status == ThreadStatus::Open)
+            .count() as u32;
         let Some(review) = store.latest_review(changeset).await? else {
-            return Ok(RowReview::None);
+            return Ok((RowReview::None, open_threads));
         };
         let Some(review) = store.review(review).await? else {
-            return Ok(RowReview::None);
+            return Ok((RowReview::None, open_threads));
         };
-        Ok(match review.closed_at {
+        let review = match review.closed_at {
             None => RowReview::Open {
                 version: store.versions(changeset).await?.last().map_or(1, |v| v.n),
+                started_at: review.opened_at,
+                last_reviewed: review.last_reviewed,
             },
-            Some(_) => RowReview::Finished {
+            Some(finished_at) => RowReview::Finished {
                 complete: review.complete.unwrap_or(false),
+                started_at: review.opened_at,
+                finished_at,
+                last_reviewed: review.last_reviewed,
             },
-        })
+        };
+        Ok((review, open_threads))
     }
 }

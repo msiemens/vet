@@ -13,6 +13,14 @@ title: string,
  */
 checkedOut: boolean, 
 /**
+ * The branch the working tree is on; absent for a branch, and for a detached HEAD.
+ */
+branch?: string, 
+/**
+ * Threads of the changeset that are open.
+ */
+openThreads: number, 
+/**
  * Absent for the working tree, and for a branch when the repository has no default branch.
  */
 divergence?: Divergence, 

@@ -3040,9 +3040,49 @@ async fn the_list_says_which_changesets_have_a_review_and_keeps_the_one_on_view(
     assert_eq!(open.on_view, feature());
     let review_of = |list: &ChangesetList, title: &str| list.rows.iter().find(|r| r.title == title).unwrap().review;
     assert_eq!(review_of(&open, "Working tree"), RowReview::None);
-    assert_eq!(review_of(&open, "feature"), RowReview::Open { version: 1 });
+    let RowReview::Open {
+        version,
+        started_at,
+        last_reviewed,
+    } = review_of(&open, "feature")
+    else {
+        panic!("the review is open")
+    };
+    assert_eq!((version, last_reviewed), (1, Some(1)));
 
     fx.session.finish_review().await.unwrap();
     let finished = fx.session.changesets().await.unwrap();
-    assert_eq!(review_of(&finished, "feature"), RowReview::Finished { complete: true });
+    let RowReview::Finished {
+        complete,
+        started_at: finished_started,
+        finished_at,
+        last_reviewed,
+    } = review_of(&finished, "feature")
+    else {
+        panic!("the review is finished")
+    };
+    assert_eq!((complete, finished_started, last_reviewed), (true, started_at, Some(1)));
+    assert!(finished_at >= started_at);
+}
+
+#[tokio::test]
+async fn the_list_names_the_branch_of_the_working_tree_and_counts_the_open_threads_of_each_changeset() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
+    fx.git.feature(&[("a.txt", "one\n")], &[("a.txt", "two\n")]);
+
+    let before = fx.session.changesets().await.unwrap();
+    assert_eq!(before.rows[0].branch.as_deref(), Some("main"));
+    assert!(before.rows.iter().all(|r| r.open_threads == 0));
+
+    fx.session
+        .create_thread(0, View::Changeset, NewThread::Changeset, "why".into(), 1)
+        .await
+        .unwrap();
+    let after = fx.session.changesets().await.unwrap();
+    let count_of = |title: &str| after.rows.iter().find(|r| r.title == title).unwrap().open_threads;
+    assert_eq!(
+        (count_of("Working tree"), count_of("main"), count_of("feature")),
+        (1, 0, 0)
+    );
+    assert!(after.rows.iter().skip(1).all(|r| r.branch.is_none()));
 }
