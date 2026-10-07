@@ -455,6 +455,7 @@ Grouped by area; areas and the items within each are in priority order.
 - While a file's tab is active, the changed-symbols panel lists only that file's symbols
 - The changed-symbols panel shows its progress while it loads (files done of files to analyse) and lists symbols as their files are done
 - Jump to Source (F4) from the changed-symbols list opens the selected symbol's definition
+- The changed-symbols panel's file headers show the file name in the normal text style and the folder path before it de-emphasized
 - Find usages: a list of a symbol's references, any symbol, not only changed ones
 - Go to definition shows its target: the symbol under the pointer is underlined while Cmd/Ctrl is held
 - Hover popups styled as part of the app: the design tokens' sheet surface, border, radius and shadow, a readable maximum width and height with scrolling, consistent spacing between signature, docs and diagnostics, in both themes
