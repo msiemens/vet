@@ -24,7 +24,7 @@ use vet_semantic::ports::{
 };
 use vet_semantic::query::{Pair, Primitives, Semantic, SemanticError, Served};
 use vet_semantic::signature::{Signature, signature};
-use vet_semantic::trace::{self, Traced};
+use vet_semantic::trace;
 
 use crate::acquisition::Acquisition;
 use crate::limits::RestoreLimits;
@@ -295,7 +295,7 @@ where
                 // the servers of the languages before it.
                 let (_, changes) = join(
                     self.start_servers_for(&pair, &files, &[Side::Target], &[]),
-                    changed_symbols(&Traced::new(&pair, "changed symbols"), &texts, &files),
+                    changed_symbols(&pair, &texts, &files),
                 )
                 .await;
                 trace::log(
@@ -350,7 +350,7 @@ where
             Side::Target
         };
         let pair = self.pair(session, revision).await?;
-        let result = signature(&Traced::new(&pair, format!("signature {sym}")), side, &changed.symbol).await;
+        let result = signature(&pair, side, &changed.symbol).await;
         trace::log(
             || format!("signature {sym} (hover on the {side:?} side; the symbol's detail if the hover has none)"),
             started,
@@ -373,7 +373,7 @@ where
             ));
         }
         let pair = self.pair(session, revision).await?;
-        let Derived { mut value, inputs } = impact(&Traced::new(&pair, format!("impact {sym}")), &[changed]).await;
+        let Derived { mut value, inputs } = impact(&pair, &[changed]).await;
         let value = value.pop().expect("one symbol in, one impact out");
         trace::log(
             || format!("impact {sym} (target: references, then incoming calls, one after the other)"),
@@ -396,8 +396,7 @@ where
         }
         let files = session.changed_files(revision).await?;
         let pair = self.pair(session, revision).await?;
-        let traced = Traced::new(&pair, format!("removal impact {sym}"));
-        let Derived { mut value, inputs } = removal_impact(&traced, &[changed], &files).await;
+        let Derived { mut value, inputs } = removal_impact(&pair, &[changed], &files).await;
         let value = value.pop().expect("one symbol in, one impact out");
         trace::log(|| format!("removal impact {sym}"), started);
         Ok(Derived { value, inputs })
@@ -417,8 +416,7 @@ where
             return Err(SessionError::Invalid("a removed symbol has nothing to reach".into()));
         }
         let pair = self.pair(session, revision).await?;
-        let traced = Traced::new(&pair, format!("reachability {sym}"));
-        let derived = reachability(&traced, &changed.symbol, &EntryPoints::default(), REACH_BOUNDS).await;
+        let derived = reachability(&pair, &changed.symbol, &EntryPoints::default(), REACH_BOUNDS).await;
         trace::log(
             || {
                 format!(
