@@ -9,10 +9,16 @@ const MAX_RELATIVE: usize = 1000;
 /// Commits counted for "behind".
 const MAX_BEHIND: usize = 10_000;
 
-/// The current branch's tip, or `head` itself when none is checked out.
+/// The current branch's tip, or `head` itself when none is checked out. Against the checked-out
+/// branch the merge base with `HEAD` is its tip.
 pub fn default_choice(branches: &[BranchInfo], head: &CommitId) -> (BaseChoice, CommitId) {
     match branches.iter().find(|b| b.current) {
-        Some(b) => (BaseChoice::Branch { name: b.name.clone() }, b.commit.clone()),
+        Some(b) => (
+            BaseChoice::MergeBase {
+                reference: b.name.clone(),
+            },
+            b.commit.clone(),
+        ),
         None => (BaseChoice::Commit { id: head.clone() }, head.clone()),
     }
 }
@@ -51,13 +57,6 @@ pub async fn resolve<G: History>(
     tip: &CommitId,
 ) -> Result<(BaseChoice, CommitId), String> {
     match choice {
-        BaseChoice::Branch { name } => {
-            let commit = git
-                .branch_tip(&name)
-                .await
-                .map_err(|_| format!("unknown branch {name}"))?;
-            Ok((BaseChoice::Branch { name }, commit))
-        }
         BaseChoice::MergeBase { reference } => {
             let commit = git.merge_base(&reference, tip).await.map_err(|e| e.0)?;
             Ok((BaseChoice::MergeBase { reference }, commit))
@@ -91,19 +90,31 @@ pub async fn name_of<G: History>(
     Ok(commit.short().to_owned())
 }
 
+/// The reference a changeset whose tip the base reached is already contained in: set when
+/// the choice is a merge base that is `tip` itself, and the reference is not the changeset's own
+/// branch `own`. Such a changeset has nothing to review.
+pub fn contained_in(choice: &BaseChoice, base: &CommitId, tip: &CommitId, own: Option<&str>) -> Option<String> {
+    match choice {
+        BaseChoice::MergeBase { reference } if base == tip && own != Some(reference.as_str()) => {
+            Some(reference.clone())
+        }
+        _ => None,
+    }
+}
+
 /// How many commits the chosen branch has gained since `base`, on its own or on
-/// the remote as of the last fetch; `None` unless the choice is a branch and it
-/// has moved.
+/// the remote as of the last fetch; `None` unless the choice is a merge base
+/// against a branch and it has moved.
 pub async fn behind<G: History>(
     git: &G,
     branches: &[BranchInfo],
     choice: &BaseChoice,
     base: &CommitId,
 ) -> Result<Option<u32>, GitError> {
-    let BaseChoice::Branch { name } = choice else {
+    let BaseChoice::MergeBase { reference } = choice else {
         return Ok(None);
     };
-    let Some(branch) = branches.iter().find(|b| b.name == *name) else {
+    let Some(branch) = branches.iter().find(|b| b.name == *reference) else {
         return Ok(None);
     };
     let mut count = git.commits_behind(&branch.commit, base, MAX_BEHIND).await?;

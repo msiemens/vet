@@ -83,6 +83,8 @@
   let selected = $state<string>();
 
   const revision = $derived(changeset.manifest?.revision);
+  /** The chosen target when it already contains the changeset, so there is nothing to show. */
+  const containedIn = $derived(changeset.files.length ? undefined : changeset.manifest?.base.containedIn);
   const highlighted = $derived(pathOf(tabs.active) ?? selected);
   const fileOf = (path: string) => changeset.file(path);
   // The Symbol panel lists the file the review shows (the active file tab, else the one selected in the tree) first.
@@ -197,6 +199,11 @@
   <!-- The handler only replaces the webview's menu inside an editor. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="panes" class:readonly={readOnly} oncontextmenu={paneMenu}>
+    {#if containedIn}
+      <p class="empty">
+        Nothing to review: {containedIn} already contains {changeset.manifest?.target.branch ?? "HEAD"}
+      </p>
+    {/if}
     {#each tabs.open as id (id)}
       <div class="pane" class:active={tabs.active === id}>
         <div class="scroll" {@attach (root) => controller.attach(id, root)}></div>
@@ -245,6 +252,12 @@
     isolation: isolate;
     flex: 1;
     min-height: 0;
+  }
+  .empty {
+    position: relative;
+    z-index: 1;
+    margin: 12px 16px;
+    color: var(--text-3);
   }
   /* Every tab keeps its pane laid out, so scroll positions and editors survive switching. */
   .pane {

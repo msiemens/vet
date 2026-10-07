@@ -147,6 +147,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             name: base::name_of(git, &branches, None, &id.to.base_commit).await?,
             commit,
             behind: None,
+            contained_in: None,
         };
         let conflicts = (id.hunks.values().flatten()).any(|h| h.flags.conflict);
         let mut limits = vec![if id.markable {

@@ -35,11 +35,9 @@ pub struct ReviewFilter {
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
 pub enum BaseChoice {
-    /// The tip of a local branch as it is when chosen; the branch moving on
-    /// does not move the base (`Base::behind`), choosing it again does.
-    Branch { name: String },
-    /// Where `HEAD` branched off `reference` (a branch or any revision): their
-    /// merge base.
+    /// Compared against `reference` (a branch or any revision): the merge base of
+    /// it and the changeset's tip. The reference moving on does not move the base
+    /// (`Base::behind`), choosing it again does.
     MergeBase { reference: String },
     /// A commit: a full or abbreviated id, or any revision.
     Commit { id: String },
@@ -58,11 +56,16 @@ pub struct Base {
     /// `branch~N` on a local branch's first-parent history (the chosen branch,
     /// the current one, the default one, then the rest), else its short id.
     pub name: String,
-    /// How many commits a chosen branch has gained since the base was chosen;
-    /// absent unless the choice is a branch that has moved.
+    /// How many commits the chosen target branch has gained since the base;
+    /// absent unless it has moved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub behind: Option<u32>,
+    /// Set when the chosen target already contains the changeset's tip: there is
+    /// nothing to review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub contained_in: Option<String>,
 }
 
 /// What the changes lead to: the live working tree, or a branch's tip.

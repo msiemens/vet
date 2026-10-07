@@ -125,7 +125,6 @@ pub fn filter_from(hide_binary: bool, items: Vec<project_filter_item::Model>) ->
 /// The kind and value a base choice is stored as.
 pub fn base_columns(choice: BaseChoice) -> (kinds::BaseKind, String) {
     match choice {
-        BaseChoice::Branch { name } => (kinds::BaseKind::Branch, name),
         BaseChoice::MergeBase { reference } => (kinds::BaseKind::MergeBase, reference),
         BaseChoice::Commit { id } => (kinds::BaseKind::Commit, id.0),
     }
@@ -133,7 +132,6 @@ pub fn base_columns(choice: BaseChoice) -> (kinds::BaseKind, String) {
 
 pub fn base_from(kind: kinds::BaseKind, value: String) -> BaseChoice {
     match kind {
-        kinds::BaseKind::Branch => BaseChoice::Branch { name: value },
         kinds::BaseKind::MergeBase => BaseChoice::MergeBase { reference: value },
         kinds::BaseKind::Commit => BaseChoice::Commit { id: CommitId(value) },
     }

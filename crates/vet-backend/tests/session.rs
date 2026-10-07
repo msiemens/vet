@@ -1034,7 +1034,7 @@ async fn the_base_can_be_changed_and_review_state_follows() {
 
     // The current branch's tip: only the dirty edit.
     let m = client.manifest(project).await;
-    assert_eq!(m.base.choice, BaseChoice::Branch { name: "feature".into() });
+    assert_eq!(m.base.choice, merge_base("feature"));
     assert_eq!(
         (m.base.commit.id.as_str(), m.base.name.as_str()),
         (two.as_str(), "feature")
@@ -1093,8 +1093,7 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     assert_eq!((revision, shown), (2, Some(dropped)));
 
     // Back to the branch's tip; the mark lies outside what is left to review.
-    let feature = BaseChoice::Branch { name: "feature".into() };
-    let base = client.set_base(project, feature).await.unwrap();
+    let base = client.set_base(project, merge_base("feature")).await.unwrap();
     assert_eq!((base.commit.id.as_str(), base.name.as_str()), (two.as_str(), "feature"));
     assert_eq!(client.settled().await, 3);
     assert_eq!(base_ref(p, 3), two);
@@ -1272,13 +1271,110 @@ async fn a_branch_base_reports_how_far_the_branch_moved_on_until_chosen_again() 
     assert_eq!((m.base.name.as_str(), m.base.behind), ("main~2", Some(2)));
     assert_eq!(m.files[0].hunks.len(), 1, "the commits are still being reviewed");
 
-    let base = client
-        .set_base(project, BaseChoice::Branch { name: "main".into() })
-        .await
-        .unwrap();
+    let base = client.set_base(project, merge_base("main")).await.unwrap();
     assert_eq!((base.commit.id, base.name.as_str(), base.behind), (tip, "main", None));
     client.settled().await;
     assert!(client.manifest(project).await.files.is_empty());
+}
+
+/// `main` gained `c.txt` after `feature` split off and `feature` added `b.txt`. Leaves `main` checked out.
+async fn diverged(fx: &Fixture) -> String {
+    let p = fx.repo.path();
+    let fork = git(p, &["rev-parse", "HEAD"]);
+    git(p, &["checkout", "-q", "-b", "feature"]);
+    write(p, "b.txt", "from the branch\n");
+    git(p, &["add", "b.txt"]);
+    git(p, &["commit", "-q", "-m", "feature"]);
+    git(p, &["checkout", "-q", "main"]);
+    write(p, "c.txt", "from main\n");
+    git(p, &["add", "c.txt"]);
+    git(p, &["commit", "-q", "-m", "main moves on"]);
+    fork
+}
+
+fn paths(m: &vet_protocol::Manifest) -> Vec<&str> {
+    m.files.iter().map(|f| f.path.as_str()).collect()
+}
+
+impl Client {
+    async fn open_branch(&mut self, project: ProjectId, name: &str) {
+        let changeset = ChangesetKey::Branch { name: name.into() };
+        self.call(Request::OpenChangeset { project, changeset }).await.unwrap();
+        let Event::ChangesetOpened { .. } = self.event().await else {
+            panic!("not told which changeset is on view")
+        };
+    }
+}
+
+#[tokio::test]
+async fn a_branch_against_a_target_that_moved_on_shows_only_its_own_changes() {
+    let fx = fixture(&[("a.txt", &text(10, &[]))], &[]).await;
+    let fork = diverged(&fx).await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    client.open_branch(project, "feature").await;
+
+    let base = client.set_base(project, merge_base("main")).await.unwrap();
+
+    client.settled().await;
+    let m = client.manifest(project).await;
+    assert_eq!(paths(&m), ["b.txt"], "what main gained is not a reverse change");
+    assert_eq!(
+        (base.commit.id.as_str(), base.behind, base.contained_in),
+        (fork.as_str(), Some(1), None)
+    );
+}
+
+#[tokio::test]
+async fn a_changeset_the_target_already_contains_is_empty_and_says_so() {
+    let fx = fixture(&[("a.txt", &text(10, &[]))], &[]).await;
+    let p = fx.repo.path();
+    git(p, &["checkout", "-q", "-b", "feature"]);
+    write(p, "b.txt", "from the branch\n");
+    git(p, &["add", "b.txt"]);
+    git(p, &["commit", "-q", "-m", "feature"]);
+    git(p, &["checkout", "-q", "main"]);
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, p).await;
+    client.open_branch(project, "main").await;
+
+    let base = client.set_base(project, merge_base("feature")).await.unwrap();
+
+    client.settled().await;
+    assert!(client.manifest(project).await.files.is_empty());
+    assert_eq!(base.contained_in.as_deref(), Some("feature"));
+    assert_eq!(base.name, "main");
+}
+
+#[tokio::test]
+async fn the_working_tree_against_a_target_is_the_branch_since_the_fork_plus_uncommitted_changes() {
+    let fx = fixture(&[("a.txt", &text(10, &[]))], &[]).await;
+    let p = fx.repo.path();
+    let fork = diverged(&fx).await;
+    git(p, &["checkout", "-q", "feature"]);
+    write(p, "a.txt", &text(10, &[2]));
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, p).await;
+    assert_eq!(
+        paths(&client.manifest(project).await),
+        ["a.txt"],
+        "by default only uncommitted changes"
+    );
+
+    let base = client.set_base(project, merge_base("main")).await.unwrap();
+
+    client.settled().await;
+    assert_eq!(paths(&client.manifest(project).await), ["a.txt", "b.txt"]);
+    assert_eq!(base.commit.id, fork);
+
+    // An explicit commit is the base as chosen, whatever the target is.
+    let main_tip = git(p, &["rev-parse", "main"]);
+    client
+        .set_base(project, BaseChoice::Commit { id: main_tip })
+        .await
+        .unwrap();
+    client.settled().await;
+    assert_eq!(paths(&client.manifest(project).await), ["a.txt", "b.txt", "c.txt"]);
 }
 
 #[tokio::test]

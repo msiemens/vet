@@ -6,8 +6,9 @@ import { behindText } from "./baseBehind.ts";
 const base = (choice: Base["choice"], behind?: number) => ({ choice, behind }) as Base;
 
 void test("only a chosen branch that has moved is behind its remote", () => {
-  assert.equal(behindText(base({ type: "branch", name: "master" }, 11)), "11 behind origin/master");
-  assert.equal(behindText(base({ type: "branch", name: "master" })), undefined);
-  assert.equal(behindText(base({ type: "mergeBase", reference: "master" }, 3)), undefined);
+  assert.equal(behindText(base({ type: "mergeBase", reference: "master" }, 11)), "11 behind origin/master");
+  assert.equal(behindText(base({ type: "mergeBase", reference: "origin/master" }, 11)), "11 behind origin/master");
+  assert.equal(behindText(base({ type: "mergeBase", reference: "master" })), undefined);
+  assert.equal(behindText(base({ type: "commit", id: "a".repeat(40) }, 3)), undefined);
   assert.equal(behindText(undefined), undefined);
 });

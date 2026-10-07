@@ -525,13 +525,15 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     async fn base_view(&self, st: &State, branches: &[BranchInfo]) -> Result<BaseView> {
         let git = &self.acquisition.git;
         let prefer = match &st.base_choice {
-            BaseChoice::Branch { name } => Some(name.as_str()),
+            BaseChoice::MergeBase { reference } => Some(reference.as_str()),
             _ => None,
         };
+        let own = manifest::target_view(&st.source, branches).branch;
         Ok(BaseView {
             choice: st.base_choice.clone(),
             commit: git.commit_info(&st.base_commit).await?,
             name: base::name_of(git, branches, prefer, &st.base_commit).await?,
+            contained_in: base::contained_in(&st.base_choice, &st.base_commit, &st.head, own.as_deref()),
             behind: base::behind(git, branches, &st.base_choice, &st.base_commit).await?,
         })
     }

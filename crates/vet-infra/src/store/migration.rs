@@ -28,6 +28,10 @@ pub async fn is_foreign(db: &impl ConnectionTrait) -> Result<bool, DbErr> {
     Ok(applied.iter().any(|m| !known.contains(&m.version)))
 }
 
+/// Raised whenever stored values change meaning without the table definitions changing, so
+/// databases of the old meaning are recreated.
+const VALUES_REVISION: u32 = 1;
+
 /// The SQL that creates every table and index.
 fn statements() -> Vec<String> {
     let schema = Schema::new(DbBackend::Sqlite);
@@ -68,7 +72,7 @@ impl MigrationName for Initial {
     fn name(&self) -> &str {
         static NAME: OnceLock<String> = OnceLock::new();
         NAME.get_or_init(|| {
-            let hex = Hash::of(statements().join(";\n").as_bytes()).to_hex();
+            let hex = Hash::of(format!("{VALUES_REVISION}\n{}", statements().join(";\n")).as_bytes()).to_hex();
             format!("schema_{}", &hex[..16])
         })
     }

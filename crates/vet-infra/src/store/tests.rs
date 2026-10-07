@@ -247,10 +247,6 @@ async fn the_base_choice_is_stored_with_the_review_and_survives_reopen() {
     drop(store);
     let store = open(&dir).await;
     assert_eq!(loaded(&store).await, commit_choice);
-
-    let branch = BaseChoice::Branch { name: "main".into() };
-    store.set_base(id, branch.clone()).await.unwrap();
-    assert_eq!(loaded(&store).await, branch);
 }
 
 #[tokio::test]

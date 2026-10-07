@@ -21,43 +21,39 @@ void test("branches are ordered current, default, then as listed", () => {
   );
 });
 
-void test("the menu offers each branch's latest, where the current one branched off, and a commit", () => {
-  const items = baseMenuItems(branches, { type: "branch", name: "main" }, true);
-  const branchItems = items.filter((i) => i.id.startsWith("branch:"));
+void test("the menu offers each branch as a target, and a commit", () => {
+  const items = baseMenuItems(branches, { type: "mergeBase", reference: "main" }, true);
   assert.deepEqual(
-    branchItems.map((i) => [i.label, i.detail, i.checked]),
+    items.filter((i) => i.id.startsWith("branch:")).map((i) => [i.label, i.detail, i.checked]),
     [
-      ["feature (latest)", "current", false],
-      ["main (latest)", "default", true],
-      ["dev (latest)", undefined, false],
+      ["feature", "current", false],
+      ["main", "default", true],
+      ["dev", undefined, false],
     ],
   );
-  const off = items.find((i) => i.id === "mergeBase");
-  assert.equal(off?.label, "Where feature branched off");
-  assert.deepEqual(
-    off.children?.map((i) => i.label),
-    ["main", "dev"],
-  );
   assert.equal(items.at(-1)?.label, "Pick a commit…");
-  assert.equal(/pin|HEAD at open/i.exec(JSON.stringify(items)), null);
+  assert.equal(/latest|branched off/i.exec(JSON.stringify(items)), null);
 });
 
-void test("the chosen branch says how far its remote has moved on", () => {
-  const items = baseMenuItems(branches, { type: "branch", name: "main" }, true, "11 behind origin/main");
+void test("a changeset's own branch is not offered as its target", () => {
+  const items = baseMenuItems(branches, undefined, true, undefined, "dev");
+  assert.deepEqual(
+    items.filter((i) => i.id.startsWith("branch:")).map((i) => i.label),
+    ["feature", "main"],
+  );
+});
+
+void test("the chosen target says how far its remote has moved on", () => {
+  const items = baseMenuItems(branches, { type: "mergeBase", reference: "main" }, true, "11 behind origin/main");
   assert.deepEqual(
     items.filter((i) => i.id.startsWith("branch:")).map((i) => i.detail),
     ["current", "default · 11 behind origin/main", undefined],
   );
 });
 
-void test("the checks follow the choice, and a detached HEAD is named as such", () => {
-  const merge = baseMenuItems(branches, { type: "mergeBase", reference: "dev" }, false);
-  assert.equal(merge.find((i) => i.id === "mergeBase")?.checked, true);
-  assert.equal(merge.find((i) => i.id === "mergeBase")?.children?.find((i) => i.id === "mb:dev")?.checked, true);
-  assert.equal(merge.find((i) => i.id === "commit")?.enabled, false);
-
-  const detached = baseMenuItems([branch("main")], undefined, true);
-  assert.equal(detached.find((i) => i.id === "mergeBase")?.label, "Where HEAD branched off");
+void test("the commit entry is checked for a commit and disabled until commits are listed", () => {
+  const items = baseMenuItems(branches, { type: "commit", id: "a".repeat(40) }, false);
+  assert.deepEqual([items.at(-1)?.checked, items.at(-1)?.enabled], [true, false]);
   assert.equal(
     baseMenuItems([], undefined, true).some((i) => i.separator),
     false,
@@ -65,10 +61,8 @@ void test("the checks follow the choice, and a detached HEAD is named as such", 
 });
 
 void test("items read back as the choice they stand for", () => {
-  assert.deepEqual(parseBaseItem("branch:main"), { type: "branch", name: "main" });
-  assert.deepEqual(parseBaseItem("mb:release/1.0"), { type: "mergeBase", reference: "release/1.0" });
+  assert.deepEqual(parseBaseItem("branch:release/1.0"), { type: "mergeBase", reference: "release/1.0" });
   assert.equal(parseBaseItem("commit"), "commits");
-  assert.equal(parseBaseItem("mergeBase"), undefined);
 });
 
 void test("the tooltip has the choice, the full hash, the subject, the author and the age", () => {

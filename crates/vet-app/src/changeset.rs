@@ -20,10 +20,7 @@ impl CommitId {
 /// not follow from it; that is the changeset's source.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum BaseChoice {
-    /// The tip of a local branch as it was when chosen; the branch moving on
-    /// does not move the base.
-    Branch { name: String },
-    /// The merge base of `reference` (a branch or any revision) and `HEAD`.
+    /// The merge base of `reference` (a branch or any revision) and the changeset's tip.
     MergeBase { reference: String },
     /// A commit. As requested the id may be abbreviated or a revision; the
     /// changeset stores and reports the full id.

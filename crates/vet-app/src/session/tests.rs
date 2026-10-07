@@ -1550,12 +1550,14 @@ async fn a_filter_set_while_browsing_is_stored_and_applies_to_the_review() {
 #[tokio::test]
 async fn a_resumed_review_keeps_its_base_commit_however_its_branch_moved() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-    fx.git.add_commit("refs/heads/main", "m1", &[("a.txt", "one\n")]);
-    let choice = BaseChoice::Branch { name: "main".into() };
+    fx.git.add_commit("merge-base main", "m1", &[("a.txt", "one\n")]);
+    let choice = BaseChoice::MergeBase {
+        reference: "main".into(),
+    };
     fx.session.set_base(choice.clone()).await.unwrap();
     fx.begin().await;
 
-    fx.git.add_commit("refs/heads/main", "m2", &[("a.txt", "one\n")]);
+    fx.git.add_commit("merge-base main", "m2", &[("a.txt", "one\n")]);
     let session = fx.reopen(&[("a.txt", "two\n")]).await;
 
     let m = session.manifest(View::Changeset).await.unwrap();
@@ -1617,7 +1619,13 @@ async fn the_default_base_is_the_current_branchs_tip() {
     let m = session.manifest(View::Changeset).await.unwrap();
     assert_eq!(
         base_of(&m),
-        (&BaseChoice::Branch { name: "feature".into() }, "f3", "feature")
+        (
+            &BaseChoice::MergeBase {
+                reference: "feature".into()
+            },
+            "f3",
+            "feature"
+        )
     );
     assert_eq!(m.base.behind, None);
     assert_eq!(m.target.name, "Working tree");
@@ -1657,8 +1665,10 @@ async fn a_base_is_named_by_its_branch_tip_then_branch_relative_then_by_hash() {
 async fn a_branch_base_counts_how_far_the_branch_moved_on_and_latest_catches_up() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
     fx.git.add_branch("main", true, "m1", &["m0"]);
-    fx.git.add_commit("refs/heads/main", "m1", &[("a.txt", "one\n")]);
-    let main = BaseChoice::Branch { name: "main".into() };
+    fx.git.add_commit("merge-base main", "m1", &[("a.txt", "one\n")]);
+    let main = BaseChoice::MergeBase {
+        reference: "main".into(),
+    };
     fx.session.set_base(main.clone()).await.unwrap();
     assert_eq!(fx.session.manifest(View::Changeset).await.unwrap().base.behind, None);
 
@@ -1668,7 +1678,7 @@ async fn a_branch_base_counts_how_far_the_branch_moved_on_and_latest_catches_up(
     let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!((base_of(&m), m.base.behind), ((&main, "m1", "main~2"), Some(2)));
 
-    fx.git.add_commit("refs/heads/main", "m3", &[("a.txt", "one\n")]);
+    fx.git.add_commit("merge-base main", "m3", &[("a.txt", "one\n")]);
     let (view, _) = fx.session.set_base(main).await.unwrap();
     assert_eq!(
         (view.commit.id.0.as_str(), view.name.as_str(), view.behind),
@@ -1877,13 +1887,6 @@ async fn a_base_that_does_not_resolve_is_refused_and_changes_nothing() {
         .await
         .unwrap_err();
     assert_eq!(err.to_string(), "no common ancestor with dev");
-
-    let err = fx
-        .session
-        .set_base(BaseChoice::Branch { name: "gone".into() })
-        .await
-        .unwrap_err();
-    assert_eq!(err.to_string(), "unknown branch gone");
 
     assert_eq!(fx.session.revision().await, 0);
     assert_eq!(

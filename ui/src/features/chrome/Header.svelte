@@ -90,7 +90,13 @@
       {#if chips}
         {@render chips()}
       {:else}
-        <BaseChip {base} branch={target?.branch} load={loadBase} onpick={onbase} />
+        <BaseChip
+          {base}
+          branch={target?.branch}
+          own={target?.changeset.type === "branch" ? target.name : undefined}
+          load={loadBase}
+          onpick={onbase}
+        />
         <span class="arrow" data-tauri-drag-region><Icon name="arrow" stroke={1.8} /></span>
         {#if review?.state === "open"}
           <VersionLabel version={review.version} updatedAt={review.updatedAt} />

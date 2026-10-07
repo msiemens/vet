@@ -22,7 +22,7 @@ pub mod kinds {
     int_enum!(ThreadKind { Range = 0, File = 1, Changeset = 2 });
     int_enum!(ThreadStatus { Open = 0, Resolved = 1 });
     int_enum!(FilterKind { Root = 0, Include = 1, Exclude = 2 });
-    int_enum!(BaseKind { MergeBase = 0, Commit = 1, Branch = 2 });
+    int_enum!(BaseKind { MergeBase = 0, Commit = 1 });
     int_enum!(ChildKind { File = 0, Dir = 1 });
     int_enum!(PathFlag { Collision = 0, ContentUnavailable = 1 });
     int_enum!(ChangeKind { Mode = 0, Symlink = 1, Submodule = 2, Binary = 3, ContentUnavailable = 4, Rename = 5, Empty = 6 });

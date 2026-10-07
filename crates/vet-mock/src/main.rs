@@ -176,7 +176,9 @@ impl Handler for Mock {
                     name: self.corpus.name.clone(),
                     lifecycle: Lifecycle::Browsing,
                     base: BaseView {
-                        choice: BaseChoice::Branch { name: "main".into() },
+                        choice: BaseChoice::MergeBase {
+                            reference: "main".into(),
+                        },
                         commit: CommitInfo {
                             id: CommitId("0123456789abcdef0123456789abcdef01234567".into()),
                             subject: "Spike corpus".into(),
@@ -185,6 +187,7 @@ impl Handler for Mock {
                         },
                         name: "main".into(),
                         behind: None,
+                        contained_in: None,
                     },
                     target: TargetView {
                         source: Source::WorkingTree,

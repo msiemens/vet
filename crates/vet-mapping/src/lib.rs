@@ -188,7 +188,6 @@ fn file(f: &FileView) -> p::FileChange {
 
 pub fn core_base_choice(choice: p::BaseChoice) -> BaseChoice {
     match choice {
-        p::BaseChoice::Branch { name } => BaseChoice::Branch { name },
         p::BaseChoice::MergeBase { reference } => BaseChoice::MergeBase { reference },
         p::BaseChoice::Commit { id } => BaseChoice::Commit { id: CommitId(id) },
     }
@@ -234,7 +233,6 @@ fn unix_secs(time: i64) -> u32 {
 pub fn base(b: &BaseView) -> p::Base {
     p::Base {
         choice: match &b.choice {
-            BaseChoice::Branch { name } => p::BaseChoice::Branch { name: name.clone() },
             BaseChoice::MergeBase { reference } => p::BaseChoice::MergeBase {
                 reference: reference.clone(),
             },
@@ -243,6 +241,7 @@ pub fn base(b: &BaseView) -> p::Base {
         commit: commit_info(&b.commit),
         name: b.name.clone(),
         behind: b.behind,
+        contained_in: b.contained_in.clone(),
     }
 }
 

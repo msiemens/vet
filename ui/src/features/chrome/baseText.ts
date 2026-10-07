@@ -9,10 +9,10 @@ import { relativeTime } from "./relativeTime.ts";
 /** How the choice came about, for the tooltip. `branch` is the working tree's. */
 export function baseDescription(choice: BaseChoice, branch: string | undefined): string {
   switch (choice.type) {
-    case "branch":
-      return `Tip of ${choice.name}`;
     case "mergeBase":
-      return `Where ${branch ?? "HEAD"} branched off ${choice.reference}`;
+      return choice.reference === branch
+        ? `Tip of ${branch}`
+        : `Where ${branch ?? "HEAD"} branched off ${choice.reference}`;
     case "commit":
       return "A commit";
   }
@@ -36,40 +36,27 @@ export function orderBranches(branches: BranchInfo[]): BranchInfo[] {
 }
 
 /**
- * The base menu: each branch's latest, where the working tree's branch branched off another, and a
- * commit to pick. Item ids are read back by `parseBaseItem`.
+ * The base menu: each branch as the target to compare against, and a commit to pick. A changeset's
+ * own branch (`own`) is not offered as its own target. Item ids are read back by `parseBaseItem`.
  */
 export function baseMenuItems(
   branches: BranchInfo[],
   choice: BaseChoice | undefined,
   commitsListed: boolean,
-  /** How far the chosen branch's remote is ahead, shown next to that branch. */
+  /** How far the chosen target's remote is ahead, shown next to that branch. */
   behind?: string,
+  own?: string,
 ): MenuItem[] {
-  const ordered = orderBranches(branches);
-  const current = ordered.find((b) => b.current);
-  const others = ordered.filter((b) => !b.current);
+  const offered = orderBranches(branches).filter((b) => b.name !== own);
   return [
-    ...ordered.map((b) => {
-      const chosen = choice?.type === "branch" && choice.name === b.name;
+    ...offered.map((b) => {
+      const chosen = choice?.type === "mergeBase" && choice.reference === b.name;
       const detail = [b.current ? "current" : b.default ? "default" : undefined, chosen ? behind : undefined]
         .filter(Boolean)
         .join(" · ");
-      return { id: `branch:${b.name}`, label: `${b.name} (latest)`, detail: detail || undefined, checked: chosen };
+      return { id: `branch:${b.name}`, label: b.name, detail: detail || undefined, checked: chosen };
     }),
-    ...(ordered.length ? [separator] : []),
-    {
-      id: "mergeBase",
-      label: `Where ${current?.name ?? "HEAD"} branched off`,
-      enabled: others.length > 0,
-      checked: choice?.type === "mergeBase",
-      children: others.map((b) => ({
-        id: `mb:${b.name}`,
-        label: b.name,
-        detail: b.default ? "default" : undefined,
-        checked: choice?.type === "mergeBase" && choice.reference === b.name,
-      })),
-    },
+    ...(offered.length ? [separator] : []),
     { id: "commit", label: "Pick a commit…", enabled: commitsListed, checked: choice?.type === "commit" },
   ];
 }
@@ -77,7 +64,6 @@ export function baseMenuItems(
 /** What a chosen item of `baseMenuItems` asks for: a base, or the commit picker. */
 export function parseBaseItem(id: string): BaseChoice | "commits" | undefined {
   if (id === "commit") return "commits";
-  if (id.startsWith("branch:")) return { type: "branch", name: id.slice("branch:".length) };
-  if (id.startsWith("mb:")) return { type: "mergeBase", reference: id.slice("mb:".length) };
+  if (id.startsWith("branch:")) return { type: "mergeBase", reference: id.slice("branch:".length) };
   return undefined;
 }

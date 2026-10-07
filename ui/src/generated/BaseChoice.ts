@@ -3,4 +3,4 @@
 /**
  * How a review's base is chosen.
  */
-export type BaseChoice = { "type": "branch", name: string, } | { "type": "mergeBase", reference: string, } | { "type": "commit", id: string, };
+export type BaseChoice = { "type": "mergeBase", reference: string, } | { "type": "commit", id: string, };

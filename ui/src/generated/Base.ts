@@ -21,7 +21,12 @@ commit: CommitInfo,
  */
 name: string, 
 /**
- * How many commits a chosen branch has gained since the base was chosen;
- * absent unless the choice is a branch that has moved.
+ * How many commits the chosen target branch has gained since the base;
+ * absent unless it has moved.
  */
-behind?: number, };
+behind?: number, 
+/**
+ * Set when the chosen target already contains the changeset's tip: there is
+ * nothing to review.
+ */
+containedIn?: string, };

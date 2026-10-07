@@ -86,6 +86,8 @@ pub struct BaseView {
     pub name: String,
     /// How many commits a chosen branch has gained since; `None` unless it moved.
     pub behind: Option<u32>,
+    /// The chosen target when it already contains the changeset's tip, so the changeset is empty.
+    pub contained_in: Option<String>,
 }
 
 /// What the changes lead to.

@@ -12,6 +12,7 @@
   let {
     base,
     branch,
+    own,
     load,
     onpick,
   }: {
@@ -19,6 +20,8 @@
     base?: Base;
     /** The working tree's branch. */
     branch?: string;
+    /** The branch a branch changeset is of; it is not offered as its own target. */
+    own?: string;
     /** Branches and recent commits; `undefined` if they could not be listed. */
     load: () => Promise<BaseCandidates | undefined>;
     onpick: (choice: BaseChoice) => void;
@@ -36,7 +39,7 @@
     void load().then((c) => (candidates = c));
   });
 
-  const items = $derived(baseMenuItems(candidates?.branches ?? [], base?.choice, !!candidates, behindText(base)));
+  const items = $derived(baseMenuItems(candidates?.branches ?? [], base?.choice, !!candidates, behindText(base), own));
 
   function select(id: string) {
     const picked = parseBaseItem(id);

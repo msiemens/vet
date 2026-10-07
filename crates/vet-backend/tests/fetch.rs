@@ -287,8 +287,8 @@ async fn a_branch_that_exists_only_on_the_remote_is_a_changeset_and_its_remote_m
     let base = match client
         .call(Request::SetBase {
             project,
-            base: BaseChoice::Branch {
-                name: "origin/main".into(),
+            base: BaseChoice::MergeBase {
+                reference: "origin/main".into(),
             },
         })
         .await
@@ -297,8 +297,11 @@ async fn a_branch_that_exists_only_on_the_remote_is_a_changeset_and_its_remote_m
         Response::Base(base) => base,
         other => panic!("{other:?}"),
     };
-    assert_eq!(base.name, "origin/main");
-    assert_eq!(base.commit.id, remote.rev("refs/remotes/origin/main"));
+    assert_eq!(
+        base.commit.id, first,
+        "origin/feature/x is compared from where it left origin/main"
+    );
+    assert_eq!(base.behind, Some(1));
 }
 
 #[tokio::test]

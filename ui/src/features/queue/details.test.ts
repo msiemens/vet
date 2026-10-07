@@ -56,7 +56,7 @@ void test("the changeset on view has all three groups", () => {
 void test("a base that its remote has moved on from says so after the base", () => {
   const behind = {
     ...manifest,
-    base: { choice: { type: "branch", name: "master" }, commit: { shortId: "a41c9e2" }, behind: 11 },
+    base: { choice: { type: "mergeBase", reference: "master" }, commit: { shortId: "a41c9e2" }, behind: 11 },
   } as Manifest;
   assert.deepEqual(detailGroups(open, behind, NOW)[0].facts.slice(0, 2), [
     { label: "Base", value: "a41c9e2" },
