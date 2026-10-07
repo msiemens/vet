@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tokio::task::AbortHandle;
+use vet_app::gc::Retention;
 use vet_app::ignore::IgnoringWatcher;
 use vet_app::limits::{Limiting, RestoreLimits};
 use vet_app::semantics::Semantics;
@@ -727,6 +728,12 @@ pub async fn open_default_store() -> Result<SqliteStore, String> {
     open_store(&dir).await
 }
 
+/// Opens the store and collects what its retention no longer keeps. A failed
+/// collection only leaves the garbage for the next start.
 pub async fn open_store(dir: &Path) -> Result<SqliteStore, String> {
-    SqliteStore::open(dir).await.map_err(|e| e.0)
+    let store = SqliteStore::open(dir).await.map_err(|e| e.0)?;
+    if let Err(e) = vet_app::gc::collect(&store, unix_now(), &Retention::default()).await {
+        eprintln!("vet: garbage collection failed: {}", e.0);
+    }
+    Ok(store)
 }
