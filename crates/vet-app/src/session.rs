@@ -45,7 +45,7 @@ use vet_core::remap::{cut_recorded, remap_span};
 use vet_core::resolve::{Resolution, resolve_anchor};
 use vet_core::review::{
     Anchor, AnchorState, CommentTarget, FileRemapInput, Location, Message, ReviewedSpan, Side, StaleReason, Thread,
-    ThreadId, ThreadStatus,
+    ThreadId, ThreadStatus, target_line,
 };
 
 use crate::acquisition::{Acquisition, SharedAcquisition};
@@ -322,6 +322,9 @@ pub struct ThreadView {
     pub state: Option<AnchorState>,
     /// The lines of a range thread now; `None` when it is detached.
     pub location: Option<Location>,
+    /// The line of the target text the thread's card is shown below in a unified diff; `Some`
+    /// exactly when `location` is.
+    pub target_line: Option<u32>,
     pub messages: Vec<Message>,
     pub status: ThreadStatus,
 }
@@ -1767,15 +1770,39 @@ fn thread_view(st: &State, t: &Thread) -> ThreadView {
         }
         CommentTarget::Changeset => (None, None, None),
     };
+    let target_line = match (&t.target, &location) {
+        (CommentTarget::Range(a), Some(l)) => Some(card_line(changes, a.side, l)),
+        _ => None,
+    };
     ThreadView {
         id: t.id,
         target: t.target.clone(),
         path,
         state,
         location,
+        target_line,
         messages: t.messages.clone(),
         status: t.status,
     }
+}
+
+/// The target line a range thread's card is shown below: the line its range ends on, as the
+/// target text has it, but not past the last line of the file.
+fn card_line(changes: &Changes, side: Side, location: &Location) -> u32 {
+    let diff = changes.diff.files.iter().find(|d| {
+        let path = if side == Side::Base { &d.old_path } else { &d.new_path };
+        path.as_ref() == Some(&location.file)
+    });
+    let hunks = diff.map_or(&[][..], |d| &d.hunks[..]);
+    let last = location.range.end.saturating_sub(1).max(location.range.start);
+    let line = target_line(hunks, side, last);
+    // A deleted file has no target text; an unchanged one is not in the diff and cannot overrun.
+    let lines = diff.map(|d| {
+        d.new_blob
+            .and_then(|b| changes.blobs.get(&b))
+            .map_or(0, |t| line_count(t))
+    });
+    lines.map_or(line, |lines| line.min(lines.saturating_sub(1)))
 }
 
 fn lifecycle_of(st: &State) -> Lifecycle {

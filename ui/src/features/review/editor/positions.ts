@@ -1,8 +1,9 @@
-// Pure position logic of the semantic layer: protocol positions (0-based line, UTF-16 column)
-// to editor offsets, and base lines to the target lines a unified diff shows them at.
+// Pure position logic of the editors: protocol positions (0-based line, UTF-16 column) to editor
+// offsets, and base lines to the target lines a unified diff shows them at.
 
 import type { Hunk } from "../../../generated/Hunk";
 import type { Position } from "../../../generated/Position";
+import type { Side } from "../../../generated/Side";
 
 /** What of CodeMirror's `Text` is needed: 1-based lines. */
 export interface LineDoc {
@@ -18,16 +19,19 @@ export function offsetAt(doc: LineDoc, at: Position): number {
 }
 
 /**
- * The target line a base line is shown at in a unified diff: lines between hunks move by what the
- * hunks before them added or removed, and a line a hunk replaced or deleted maps to the hunk's
- * start (where its deleted lines are drawn).
+ * The target line that line `line` of `side` faces in a unified diff: itself on the target side;
+ * on the base side the last target line of the hunk it was deleted or replaced in, else the line
+ * it shifted to. It places what the viewer does before the backend has an object to ask about (the
+ * form for a new comment) and the landing of a go to definition. Comment threads come with the
+ * line from the backend, which applies the same rule (`vet_core::review::target_line`).
  */
-export function baseLineToTarget(hunks: readonly Hunk[], baseLine: number): number {
-  let delta = 0;
+export function targetLine(hunks: readonly Hunk[], side: Side, line: number): number {
+  if (side === "target") return line;
+  let shift = 0;
   for (const h of hunks) {
-    if (baseLine < h.baseStart) break;
-    if (baseLine < h.baseStart + h.baseLen) return h.targetStart;
-    delta = h.targetStart + h.targetLen - (h.baseStart + h.baseLen);
+    if (line < h.baseStart) break;
+    if (line < h.baseStart + h.baseLen) return h.targetStart + Math.max(h.targetLen, 1) - 1;
+    shift += h.targetLen - h.baseLen;
   }
-  return baseLine + delta;
+  return Math.max(0, line + shift);
 }

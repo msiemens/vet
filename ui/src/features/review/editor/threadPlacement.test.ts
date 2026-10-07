@@ -1,22 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Thread } from "../../../generated/Thread.ts";
-import {
-  bodyRows,
-  cardHeight,
-  draftTitle,
-  movedTitle,
-  placeThreads,
-  selectedLines,
-  targetLine,
-} from "./threadPlacement.ts";
+import { bodyRows, cardHeight, draftTitle, movedTitle, placeThreads, selectedLines } from "./threadPlacement.ts";
 
-const hunk = (baseStart: number, baseLen: number, targetStart: number, targetLen: number) => ({
-  baseStart,
-  baseLen,
-  targetStart,
-  targetLen,
-});
 const msg = (body: string) => ({ author: "me", body, at: 0 });
 const thread = (id: number, over: Partial<Thread> = {}): Thread => ({
   id,
@@ -25,45 +11,37 @@ const thread = (id: number, over: Partial<Thread> = {}): Thread => ({
   path: "a.rs",
   original: { path: "a.rs", start: 4, len: 2 },
   location: { path: "a.rs", start: 4, len: 2 },
+  targetLine: 5,
   anchor: { type: "exact", whitespaceChanged: false },
   messages: [msg("hi")],
   status: "open",
   ...over,
 });
 
-void test("a base line faces the hunk it was changed in, or where it shifted to", () => {
-  // Lines 10..12 of the base became one target line at 10; two lines were added at 20.
-  const hunks = [hunk(10, 2, 10, 1), hunk(18, 0, 17, 2)];
-  assert.equal(targetLine(hunks, "target", 7), 7);
-  assert.equal(targetLine(hunks, "base", 5), 5);
-  assert.equal(targetLine(hunks, "base", 11), 10); // inside the first hunk
-  assert.equal(targetLine(hunks, "base", 14), 13); // one line fewer after it
-  assert.equal(targetLine(hunks, "base", 30), 31); // and one line more after both
-});
-
-void test("a pure deletion's base lines face the line above it", () => {
-  const hunks = [hunk(5, 3, 5, 0)];
-  assert.equal(targetLine(hunks, "base", 6), 5);
-  assert.equal(targetLine(hunks, "base", 0), 0);
-  assert.equal(targetLine([hunk(0, 2, 0, 0)], "base", 1), 0);
-});
-
 void test("threads split into file-level and inline, detached ones and other files left out", () => {
   const threads = [
     thread(1),
-    thread(2, { kind: "file", location: null, original: null, side: "target" }),
+    thread(2, { kind: "file", location: null, original: null, side: "target", targetLine: null }),
     thread(3, { path: "b.rs" }),
-    thread(4, { anchor: { type: "stale", reason: "contextChanged" }, location: null }),
-    thread(5, { anchor: { type: "ambiguous", candidates: [] }, location: null }),
-    thread(6, { kind: "changeset", path: null, location: null, original: null, side: null, anchor: null }),
-    thread(7, { location: { path: "a.rs", start: 1, len: 1 } }),
+    thread(4, { anchor: { type: "stale", reason: "contextChanged" }, location: null, targetLine: null }),
+    thread(5, { anchor: { type: "ambiguous", candidates: [] }, location: null, targetLine: null }),
+    thread(6, {
+      kind: "changeset",
+      path: null,
+      location: null,
+      original: null,
+      side: null,
+      anchor: null,
+      targetLine: null,
+    }),
+    thread(7, { location: { path: "a.rs", start: 1, len: 1 }, targetLine: 1 }),
   ];
-  const placed = placeThreads("a.rs", [], 50, threads);
+  const placed = placeThreads("a.rs", threads);
   assert.deepEqual(
     placed.file.map((t) => t.id),
     [2],
   );
-  // The card sits below the last line of the range, in text order.
+  // The card sits at the line the backend named, in text order.
   assert.deepEqual(
     placed.inline.map((c) => [c.thread.id, c.line]),
     [
@@ -71,11 +49,6 @@ void test("threads split into file-level and inline, detached ones and other fil
       [1, 5],
     ],
   );
-});
-
-void test("a card never sits past the last line", () => {
-  const placed = placeThreads("a.rs", [], 3, [thread(1, { location: { path: "a.rs", start: 9, len: 4 } })]);
-  assert.equal(placed.inline[0].line, 2);
 });
 
 void test("a resolved thread is one row until expanded; heights grow with the text", () => {

@@ -481,6 +481,10 @@ pub struct Thread {
     /// Where a range thread is now; `None` when it is detached, and for file
     /// and changeset threads.
     pub location: Option<LineLocation>,
+    /// The line (0-based) of the target text that a unified diff shows a range thread's
+    /// card below: where `location` ends, mapped through the hunks if the thread is on the
+    /// base side, and not past the file's last line. Set exactly when `location` is.
+    pub target_line: Option<u32>,
     /// `None` for a changeset thread, which never detaches. A file thread is
     /// `Exact`, or `Stale` once its file is deleted.
     pub anchor: Option<AnchorState>,

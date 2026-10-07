@@ -400,6 +400,7 @@ pub fn thread(t: &ThreadView) -> p::Thread {
         path: t.path.as_ref().map(path_str),
         original,
         location: t.location.as_ref().map(location),
+        target_line: t.target_line,
         anchor: t.state.as_ref().map(anchor_state),
         messages: t
             .messages

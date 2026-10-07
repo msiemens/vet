@@ -31,6 +31,12 @@ original: LineLocation | null,
  */
 location: LineLocation | null, 
 /**
+ * The line (0-based) of the target text that a unified diff shows a range thread's
+ * card below: where `location` ends, mapped through the hunks if the thread is on the
+ * base side, and not past the file's last line. Set exactly when `location` is.
+ */
+targetLine: number | null, 
+/**
  * `None` for a changeset thread, which never detaches. A file thread is
  * `Exact`, or `Stale` once its file is deleted.
  */

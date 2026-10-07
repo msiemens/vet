@@ -9,6 +9,7 @@ import type { FileChange } from "../../../generated/FileChange";
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
 import type { Handle } from "./mount";
+import { targetLine } from "./positions";
 import type { ThreadSpace } from "./sectionLayout";
 import { type ThreadActions, buildCard } from "./threadCard";
 import {
@@ -19,7 +20,6 @@ import {
   cardKey,
   heightKey,
   placeThreads,
-  targetLine,
 } from "./threadPlacement";
 import { type CardHost, setThreadCards, threadCards } from "./threadWidgets";
 
@@ -187,7 +187,7 @@ export class ThreadLayer {
     const open = (thread: Thread) => this.opened.has(thread.id);
     for (const s of this.host.sections) {
       const { file } = s;
-      const placement = placeThreads(file.path, file.hunks, file.targetLines, byPath.get(file.path) ?? []);
+      const placement = placeThreads(file.path, byPath.get(file.path) ?? []);
       const inline: InlineCard[] = placement.inline.map((c) => ({ ...c, open: open(c.thread) }));
       const blockCards: CardData[] = placement.file.map((thread) => ({ thread, open: open(thread) }));
       const draft = this.draft?.path === file.path ? this.draft.target : undefined;

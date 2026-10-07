@@ -1710,6 +1710,84 @@ async fn a_thread_follows_an_edit_above_it() {
     assert_eq!(recorded.range, LineRange { start: 10, end: 13 }, "never rewritten");
 }
 
+fn on_base(file: &str, start: u32, end: u32) -> NewThread {
+    NewThread::Range {
+        side: Side::Base,
+        path: path(file),
+        range: LineRange { start, end },
+    }
+}
+
+impl Fixture {
+    /// The target line the card of a new thread is shown below.
+    async fn card_line(&self, target: NewThread) -> Option<u32> {
+        let id = self.thread(target).await;
+        self.view(id).await.target_line
+    }
+}
+
+#[tokio::test]
+async fn a_cards_line_is_the_end_of_the_range_in_the_target_text() {
+    // Base lines 3 and 4 became one line, at 3.
+    let base = numbered(10, &[]);
+    let dirty = base.replace("line 3\nline 4\n", "changed\n");
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &dirty)]).await;
+
+    assert_eq!(fx.card_line(on("a.txt", 5, 8)).await, Some(7));
+    assert_eq!(fx.card_line(on("a.txt", 3, 4)).await, Some(3));
+    // Before the hunk, in it, and after it, from the base side.
+    assert_eq!(fx.card_line(on_base("a.txt", 0, 2)).await, Some(1));
+    assert_eq!(fx.card_line(on_base("a.txt", 4, 5)).await, Some(3));
+    assert_eq!(fx.card_line(on_base("a.txt", 3, 5)).await, Some(3));
+    assert_eq!(fx.card_line(on_base("a.txt", 7, 9)).await, Some(7));
+}
+
+#[tokio::test]
+async fn a_card_on_deleted_lines_sits_where_they_were() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", "line 0\nline 1\nline 2\n")]).await;
+    // The deleted lines face the last line that is left, not one past it.
+    assert_eq!(fx.card_line(on_base("a.txt", 4, 6)).await, Some(2));
+    assert_eq!(fx.card_line(on_base("a.txt", 9, 10)).await, Some(2));
+}
+
+#[tokio::test]
+async fn a_card_in_a_deleted_file_sits_on_the_first_line() {
+    let fx = Fixture::open(
+        &[("a.txt", &numbered(10, &[])), ("keep.txt", "x\n")],
+        &[("keep.txt", "x\n")],
+    )
+    .await;
+    assert_eq!(fx.card_line(on_base("a.txt", 6, 8)).await, Some(0));
+}
+
+#[tokio::test]
+async fn a_card_in_an_unchanged_file_sits_below_its_own_line() {
+    let fx = Fixture::open(
+        &[("a.txt", &numbered(10, &[])), ("same.txt", &numbered(5, &[]))],
+        &[("a.txt", &numbered(10, &[2])), ("same.txt", &numbered(5, &[]))],
+    )
+    .await;
+    assert_eq!(fx.card_line(on("same.txt", 1, 4)).await, Some(3));
+    assert_eq!(fx.card_line(on_base("same.txt", 1, 4)).await, Some(3));
+    // A replaced line is one line either way.
+    assert_eq!(fx.card_line(on_base("a.txt", 2, 3)).await, Some(2));
+}
+
+#[tokio::test]
+async fn file_and_changeset_threads_have_no_card_line() {
+    let fx = Fixture::open(&[("a.txt", "x\n")], &[("a.txt", "y\n")]).await;
+    for target in [
+        NewThread::File {
+            side: Side::Target,
+            path: path("a.txt"),
+        },
+        NewThread::Changeset,
+    ] {
+        assert_eq!(fx.card_line(target).await, None);
+    }
+}
+
 #[tokio::test]
 async fn a_line_ending_change_keeps_the_anchor_exact() {
     let dirty = numbered(10, &[3]);

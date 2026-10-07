@@ -1,11 +1,8 @@
 // Where a file's comment threads show and how tall their cards are expected to be, from
-// data alone. A range thread's card sits below the last line of its range in the target
-// text; a thread on a base line is mapped to the target line it faces. A card's real height
-// is measured once it is drawn (the text wraps), so the estimate only has to be close.
+// data alone. A range thread's card sits below the target line the backend names. A card's
+// real height is measured once it is drawn (the text wraps), so the estimate only has to be close.
 
-import type { Hunk } from "../../../generated/Hunk";
 import { lineRange } from "../../../lib/lineRange.ts";
-import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
 
@@ -38,45 +35,18 @@ export interface Placement {
   inline: (InlineCard & { thread: Thread })[];
 }
 
-/** A thread whose anchor has no place: shown in the Comments tool window only. */
-export function isDetached(thread: Thread): boolean {
-  return thread.anchor?.type === "stale" || thread.anchor?.type === "ambiguous";
-}
-
 /**
- * The target line that line `line` of `side` faces: itself on the target side; on the base side
- * the last target line of the hunk it was deleted or replaced in, else the line it shifted to.
+ * Splits the threads shown in a file: its own, and the ones on lines, each at the line the
+ * backend says its card sits below. A detached thread has neither a location nor a line: it is
+ * shown in the Comments tool window only.
  */
-export function targetLine(
-  hunks: Pick<Hunk, "baseStart" | "baseLen" | "targetStart" | "targetLen">[],
-  side: Side,
-  line: number,
-): number {
-  if (side === "target") return line;
-  let shift = 0;
-  for (const h of hunks) {
-    if (line < h.baseStart) break;
-    if (line < h.baseStart + h.baseLen) return Math.max(0, h.targetStart + Math.max(h.targetLen, 1) - 1);
-    shift += h.targetLen - h.baseLen;
-  }
-  return Math.max(0, line + shift);
-}
-
-/** Splits the threads shown in a file: its own, and the ones on lines. */
-export function placeThreads(
-  path: string,
-  hunks: Pick<Hunk, "baseStart" | "baseLen" | "targetStart" | "targetLen">[],
-  targetLines: number,
-  threads: readonly Thread[],
-): Placement {
+export function placeThreads(path: string, threads: readonly Thread[]): Placement {
   const placement: Placement = { file: [], inline: [] };
   for (const thread of threads) {
-    if ((thread.path ?? thread.location?.path) !== path || isDetached(thread)) continue;
+    if ((thread.path ?? thread.location?.path) !== path) continue;
     if (thread.kind === "file") placement.file.push(thread);
-    else if (thread.kind === "range" && thread.location) {
-      const end = thread.location.start + Math.max(thread.location.len, 1) - 1;
-      const line = Math.min(targetLine(hunks, thread.side ?? "target", end), Math.max(0, targetLines - 1));
-      placement.inline.push({ thread, line });
+    else if (thread.kind === "range" && thread.targetLine !== null) {
+      placement.inline.push({ thread, line: thread.targetLine });
     }
   }
   placement.inline.sort((a, b) => a.line - b.line || a.thread.id - b.thread.id);

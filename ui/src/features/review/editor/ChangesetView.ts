@@ -16,7 +16,7 @@ import { type Card, changeCard } from "./changeCard";
 import type { BarActions } from "./hunkBar";
 import { NO_HIGHLIGHTS, decodeHighlights } from "./highlights";
 import { type Handle, type Hooks, type Loaded, type Mode, mountFile } from "./mount";
-import { baseLineToTarget } from "./positions";
+import { targetLine } from "./positions";
 import { setCurrent, setStates } from "./reviewState";
 import { COLLAPSE, type Metrics, sectionLayout } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
@@ -662,11 +662,11 @@ export class ChangesetView {
   /**
    * Scrolls to a span of file `fi` as `side`'s text has it and marks it. A unified view has no
    * base editor: a base line is shown at the target line the diff puts it at (a deleted line, at
-   * its hunk's deleted lines), and only the line is revealed.
+   * its hunk), and only the line is revealed.
    */
   async goToSpan(fi: number, side: Side, span: TextSpan): Promise<void> {
     await this.load(fi);
-    const line = side === "base" ? baseLineToTarget(this.sections[fi].file.hunks, span.start.line) : span.start.line;
+    const line = targetLine(this.sections[fi].file.hunks, side, span.start.line);
     this.reveal(fi, line).revealSpan(side, span);
   }
 
