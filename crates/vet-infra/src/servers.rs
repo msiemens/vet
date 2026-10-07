@@ -15,12 +15,13 @@ use vet_app::ports::{
 };
 use vet_semantic::ports::BackendId;
 
-use crate::exec::{Captured, Host, TokioRunner, capture as run_to_end, is_file};
+use crate::exec::{
+    Captured, Host, LineSplitter, OUTPUT_TAIL_LINES, Tail, TokioRunner, capture as run_to_end, dotnet_env, is_file,
+};
 use crate::language::{self, Compiler, Install, Language};
 
 /// How long a `--version` probe may take.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-const OUTPUT_TAIL_LINES: usize = 12;
 
 pub struct ToolResolver {
     data_dir: PathBuf,
@@ -300,36 +301,27 @@ impl ServerResolver for ToolResolver {
             program: program.into(),
             args,
             cwd: dir.clone(),
-            env: vec![
-                ("DOTNET_NOLOGO".into(), "1".into()),
-                ("DOTNET_CLI_TELEMETRY_OPTOUT".into(), "1".into()),
-            ],
+            env: dotnet_env(),
         };
         let mut process = TokioRunner.spawn(&command)?;
-        let mut tail: Vec<String> = Vec::new();
-        let mut partial: [Vec<u8>; 2] = Default::default();
+        let mut tail = Tail::new(OUTPUT_TAIL_LINES);
+        let mut streams = [LineSplitter::default(), LineSplitter::default()];
         let code = loop {
             let (stream, bytes) = match process.next().await {
                 ProcessEvent::Stdout(b) => (0, b),
                 ProcessEvent::Stderr(b) => (1, b),
                 ProcessEvent::Exit(code) => break code,
             };
-            partial[stream].extend(bytes);
-            while let Some(end) = partial[stream].iter().position(|&b| b == b'\n') {
-                let line: Vec<u8> = partial[stream].drain(..=end).collect();
-                let line = String::from_utf8_lossy(&line).trim_end().to_owned();
+            for line in streams[stream].feed(&bytes) {
                 if !line.is_empty() {
                     progress(&line);
                     tail.push(line);
-                    if tail.len() > OUTPUT_TAIL_LINES {
-                        tail.remove(0);
-                    }
                 }
             }
         };
         if code != Some(0) || self.installed(spec).is_none() {
             let status = code.map_or("was killed".to_owned(), |c| format!("exited with {c}"));
-            return Err(format!("{program} {status}:\n{}", tail.join("\n")));
+            return Err(format!("{program} {status}:\n{}", tail.text()));
         }
         Ok(())
     }

@@ -2,7 +2,7 @@
 //! what an LSP client needs: requests, notifications, and a reader task that
 //! answers server requests and records progress and diagnostics.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,8 +12,10 @@ use lsp_types::notification::Notification;
 use lsp_types::request::Request;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::process::{Child, ChildStdin, ChildStdout};
 use tokio::sync::{Notify, oneshot};
+
+use crate::exec::{Tail, command};
 
 pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const STDERR_LINES: usize = 20;
@@ -42,7 +44,7 @@ struct Shared {
     pending: Pending,
     state: Mutex<State>,
     changed: Notify,
-    stderr: Mutex<VecDeque<String>>,
+    stderr: Mutex<Tail>,
     workspace_folders: Value,
 }
 
@@ -61,15 +63,8 @@ impl Connection {
         env: &[(String, String)],
         workspace_folders: Value,
     ) -> Result<Self, String> {
-        let (program, args) = crate::exec::invocation(binary, args);
-        let mut child = Command::new(program)
-            .args(args)
-            .current_dir(cwd)
-            .envs(env.iter().map(|(k, v)| (k, v)))
+        let mut child = command(binary, args, Some(cwd), env)
             .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
             .spawn()
             .map_err(|e| format!("{binary}: {e}"))?;
         let stdin = Arc::new(tokio::sync::Mutex::new(child.stdin.take().expect("piped")));
@@ -79,7 +74,7 @@ impl Connection {
             pending: Mutex::default(),
             state: Mutex::default(),
             changed: Notify::new(),
-            stderr: Mutex::default(),
+            stderr: Mutex::new(Tail::new(STDERR_LINES)),
             workspace_folders,
         });
         tokio::spawn(read_loop(stdout, shared.clone(), stdin.clone()));
@@ -145,10 +140,7 @@ impl Connection {
         if tail.is_empty() {
             error
         } else {
-            format!(
-                "{error}\nserver stderr:\n{}",
-                tail.iter().cloned().collect::<Vec<_>>().join("\n")
-            )
+            format!("{error}\nserver stderr:\n{}", tail.text())
         }
     }
 
@@ -346,10 +338,6 @@ fn notification(shared: &Shared, method: &str, params: &Value) {
 async fn collect_stderr(stderr: tokio::process::ChildStderr, shared: Arc<Shared>) {
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
-        let mut tail = shared.stderr.lock().expect("not poisoned");
-        if tail.len() == STDERR_LINES {
-            tail.pop_front();
-        }
-        tail.push_back(line);
+        shared.stderr.lock().expect("not poisoned").push(line);
     }
 }

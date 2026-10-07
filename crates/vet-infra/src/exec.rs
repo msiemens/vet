@@ -1,6 +1,7 @@
 //! `vet_app::ports::ProcessRunner` over tokio processes, and the one place
 //! that finds and invokes external programs.
 
+mod output;
 mod program;
 mod tree;
 
@@ -15,7 +16,37 @@ use tokio::process::Command as TokioCommand;
 use tokio::sync::{Notify, mpsc};
 use vet_app::ports::{Command, ProcessEvent, ProcessRunner, RunningProcess};
 
+pub use output::{LineSplitter, Tail};
 pub use program::{Host, invocation, is_file, parse_pathext};
+
+/// How many lines of a failed tool's output an error message carries.
+pub const OUTPUT_TAIL_LINES: usize = 12;
+
+/// The environment that keeps `dotnet` quiet and from phoning home.
+pub fn dotnet_env() -> Vec<(String, String)> {
+    vec![
+        ("DOTNET_NOLOGO".into(), "1".into()),
+        ("DOTNET_CLI_TELEMETRY_OPTOUT".into(), "1".into()),
+    ]
+}
+
+/// `program` as this host runs it, with `env` added, piped output and no input.
+/// The process dies with its handle.
+pub fn command(program: &str, args: &[String], cwd: Option<&Path>, env: &[(String, String)]) -> TokioCommand {
+    let (invoked, args) = invocation(program, args);
+    let mut command = TokioCommand::new(invoked);
+    command
+        .args(args)
+        .envs(env.iter().map(|(k, v)| (k, v)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command
+}
 
 pub struct Captured {
     pub ok: bool,
@@ -31,19 +62,9 @@ pub async fn capture(
     env: &[(String, String)],
     timeout: Duration,
 ) -> Result<Captured, String> {
-    let (program, args) = invocation(program, args);
-    let mut command = TokioCommand::new(&program);
-    command
-        .args(args)
-        .envs(env.iter().map(|(k, v)| (k, v)))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    let mut child = command.spawn().map_err(|e| format!("{program}: {e}"))?;
+    let mut child = command(program, args, cwd, env)
+        .spawn()
+        .map_err(|e| format!("{program}: {e}"))?;
     let mut stdout = child.stdout.take().expect("piped");
     let mut stderr = child.stderr.take().expect("piped");
     let run = async {
@@ -78,16 +99,7 @@ impl ProcessRunner for TokioRunner {
     type Process = Process;
 
     fn spawn(&self, command: &Command) -> Result<Process, String> {
-        let (program, args) = invocation(&command.program, &command.args);
-        let mut spawn = TokioCommand::new(program);
-        spawn
-            .args(args)
-            .current_dir(&command.cwd)
-            .envs(command.env.iter().map(|(k, v)| (k, v)))
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
+        let mut spawn = self::command(&command.program, &command.args, Some(&command.cwd), &command.env);
         tree::prepare(&mut spawn);
         let mut child = spawn.spawn().map_err(|e| format!("{}: {e}", command.program))?;
         // On failure `child` drops and takes the leader with it.

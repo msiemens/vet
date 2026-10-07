@@ -31,14 +31,13 @@ use serde_json::Value;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, RestoreFailure, Restored, Restorer};
 
-use crate::exec::capture;
+use crate::exec::{OUTPUT_TAIL_LINES, Tail, capture, dotnet_env};
 use crate::git::list_files;
 use crate::language::{self, Language, Restore};
 use crate::lsp::dotnet;
 
 /// Restores download packages: far longer than a probe.
 const STEP_TIMEOUT: Duration = Duration::from_secs(600);
-const OUTPUT_TAIL_LINES: usize = 12;
 
 /// Projects restored per language: a monorepo is not a reason to download the world.
 const MAX_PROJECTS: usize = 16;
@@ -240,10 +239,7 @@ impl ToolRestorer {
                 .unwrap_or(Path::new(""));
             let mut step = Step::new(project, "dotnet", &["restore"]);
             step.args.push(target.to_string_lossy().into_owned());
-            step.env = vec![
-                ("DOTNET_NOLOGO".into(), "1".into()),
-                ("DOTNET_CLI_TELEMETRY_OPTOUT".into(), "1".into()),
-            ];
+            step.env = dotnet_env();
             step.executes = true;
             plan.steps.push(step);
         }
@@ -263,9 +259,11 @@ impl ToolRestorer {
         } else {
             &out.stderr
         };
-        let lines: Vec<_> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-        let tail = lines[lines.len().saturating_sub(OUTPUT_TAIL_LINES)..].join("\n");
-        Err(format!("`{}` failed:\n{tail}", step.describe()))
+        Err(format!(
+            "`{}` failed:\n{}",
+            step.describe(),
+            Tail::of(text, OUTPUT_TAIL_LINES).text()
+        ))
     }
 }
 
