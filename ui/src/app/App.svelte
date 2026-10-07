@@ -242,7 +242,6 @@
     <ChangesetSwitcher
       name={changeset.manifest?.target.name}
       title={changeset.manifest?.target.branch && `On ${changeset.manifest.target.branch}`}
-      live={changeset.manifest?.target.changeset.type === "workingTree"}
       onpick={(key) => void changeset.openChangeset(key)}
       onqueue={() => (screen = "queue")}
       bind:open={switcherOpen}

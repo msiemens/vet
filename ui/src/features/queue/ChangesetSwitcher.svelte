@@ -23,7 +23,6 @@
   let {
     name,
     title,
-    live = false,
     open = $bindable(false),
     onpick,
     onqueue,
@@ -31,8 +30,6 @@
     /** What the changeset on view is called; unknown until the manifest arrives. */
     name?: string;
     title?: string;
-    /** It follows the working tree: a new settled version moves what is shown forward. */
-    live?: boolean;
     open?: boolean;
     onpick: (key: ChangesetKey) => void;
     /** Shows the queue. */
@@ -84,8 +81,7 @@
 <Popover bind:open>
   {#snippet trigger(toggle)}
     <Chip active={open} {title} onclick={toggle}>
-      <Icon name="branch" />{name ?? "…"}{#if live}<span class="live-dot" aria-label="Follows the working tree"
-        ></span>{/if}
+      <Icon name="branch" />{name ?? "…"}
     </Chip>
   {/snippet}
   <div class="switcher">

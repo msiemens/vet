@@ -97,6 +97,11 @@
         {:else if target}
           <span class="target mono" data-tauri-drag-region>{target.head ?? target.name}</span>
         {/if}
+        {#if target?.changeset.type === "workingTree"}<span
+            class="live-dot"
+            aria-label="Follows the working tree"
+            data-tauri-drag-region
+          ></span>{/if}
       {/if}
     </span>
   {/if}
@@ -137,6 +142,9 @@
   .arrow {
     display: inline-flex;
     color: var(--text-3);
+  }
+  .live-dot {
+    margin-left: 0;
   }
   .target {
     padding: 2px 6px;
