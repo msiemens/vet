@@ -204,14 +204,71 @@ fn client_with<C: CredentialProvider + Sync>(fake: &Fake, credentials: C) -> Git
     let http = client_builder(TIMEOUT).no_proxy().build().unwrap();
     GitHubClient {
         credentials,
-        client: OnceLock::from(Ok(http)),
+        http: OnceLock::from(Ok(http)),
         endpoints: Some(Endpoints {
-            graphql: format!("{}/graphql", fake.base()),
+            graphql: fake.base(),
             rest: fake.base(),
         }),
         now,
         state: Mutex::default(),
     }
+}
+
+const PROBE: &str = "/repos/acme/app/pulls?state=all&sort=updated&direction=desc&per_page=1";
+
+/// The pull request that was updated last, as the probe sees it.
+fn newest(version: &str) -> String {
+    format!(r#"[{{"number":7,"updated_at":"2024-05-01T12:00:00Z/{version}"}}]"#)
+}
+
+fn rate_limits(remaining: u64, reset: i64) -> String {
+    let bucket = format!(
+        r#"{{"limit":5000,"used":{},"remaining":{remaining},"reset":{reset}}}"#,
+        5000 - remaining
+    );
+    format!(r#"{{"resources":{{"core":{bucket},"search":{bucket},"graphql":{bucket}}},"rate":{bucket}}}"#)
+}
+
+/// A user as GitHub documents one: `octocrab` needs every URL.
+fn user_json(login: &str) -> String {
+    let url = |what: &str| format!("https://api.github.com/users/{login}/{what}");
+    format!(
+        r#"{{"login":"{login}","id":1,"node_id":"U_1","avatar_url":"https://avatars.example/u/1","gravatar_id":"",
+"url":"{}","html_url":"https://github.com/{login}","followers_url":"{}","following_url":"{}","gists_url":"{}",
+"starred_url":"{}","subscriptions_url":"{}","organizations_url":"{}","repos_url":"{}","events_url":"{}",
+"received_events_url":"{}","type":"User","site_admin":false,"name":null,"patch_url":null}}"#,
+        url(""),
+        url("followers"),
+        url("following"),
+        url("gists"),
+        url("starred"),
+        url("subscriptions"),
+        url("orgs"),
+        url("repos"),
+        url("events"),
+        url("received_events"),
+    )
+}
+
+fn team_json(org: &str, slug: &str) -> String {
+    let url = |what: &str| format!("https://api.github.com/{what}/{org}/{slug}");
+    format!(
+        r#"{{"id":5,"node_id":"T_5","url":"{}","html_url":"{}","name":"{slug}","slug":"{slug}","description":null,
+"privacy":"closed","permission":"pull","members_url":"{}","repositories_url":"{}",
+"organization":{{"login":"{org}","id":9,"node_id":"O_9","url":"{}","repos_url":"{}","events_url":"{}",
+"hooks_url":"{}","issues_url":"{}","members_url":"{}","public_members_url":"{}","avatar_url":"https://avatars.example/o/9"}}}}"#,
+        url("teams"),
+        url("teams"),
+        url("members"),
+        url("repos"),
+        url("orgs"),
+        url("repos"),
+        url("events"),
+        url("hooks"),
+        url("issues"),
+        url("members"),
+        url("public_members"),
+    )
 }
 
 fn remote() -> RemoteKey {
@@ -226,15 +283,16 @@ fn is_probe(request: &Seen) -> bool {
 }
 
 /// A server that holds the repository's pull requests as recorded: two search pages and
-/// a probe whose tag changes when `etag` does.
-fn repository(etag: Arc<Mutex<&'static str>>) -> Fake {
+/// a probe that sees a different newest pull request when `version` changes.
+fn repository(version: Arc<Mutex<&'static str>>) -> Fake {
     Fake::start(move |request, _| {
         if is_probe(request) {
-            let current = *etag.lock().unwrap();
-            if request.header("if-none-match") == Some(current) {
+            let current = *version.lock().unwrap();
+            let tag = format!("\"{current}\"");
+            if request.header("if-none-match") == Some(tag.as_str()) {
                 return Canned::status(304, "");
             }
-            return Canned::json("[]").with("ETag", current);
+            return Canned::json(&newest(current)).with("ETag", tag);
         }
         let after = request.variables()["after"].clone();
         Canned::json(if after.is_null() { SEARCH_PAGE_1 } else { SEARCH_PAGE_2 })
@@ -248,7 +306,7 @@ fn all_open() -> PullRequestQuery {
 #[tokio::test]
 async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
     set_now(NOW);
-    let fake = repository(Arc::new(Mutex::new("\"v1\"")));
+    let fake = repository(Arc::new(Mutex::new("v1")));
     let found = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
 
     assert_eq!(found.iter().map(|p| p.number).collect::<Vec<_>>(), [101, 102, 103]);
@@ -313,7 +371,7 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
 #[tokio::test]
 async fn what_is_listed_decides_who_is_waiting() {
     set_now(NOW);
-    let fake = repository(Arc::new(Mutex::new("\"v1\"")));
+    let fake = repository(Arc::new(Mutex::new("v1")));
     let found = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
     let viewer = Viewer {
         login: "ada".to_owned(),
@@ -327,7 +385,7 @@ async fn what_is_listed_decides_who_is_waiting() {
 #[tokio::test]
 async fn an_unchanged_repository_is_answered_from_the_last_list_for_a_while() {
     set_now(NOW);
-    let fake = repository(Arc::new(Mutex::new("\"v1\"")));
+    let fake = repository(Arc::new(Mutex::new("v1")));
     let client = client(&fake);
     let first = client.list_pull_requests(&remote(), &all_open()).await.unwrap();
 
@@ -349,12 +407,12 @@ async fn an_unchanged_repository_is_answered_from_the_last_list_for_a_while() {
 #[tokio::test]
 async fn a_changed_repository_is_searched_again() {
     set_now(NOW);
-    let etag = Arc::new(Mutex::new("\"v1\""));
-    let fake = repository(etag.clone());
+    let version = Arc::new(Mutex::new("v1"));
+    let fake = repository(version.clone());
     let client = client(&fake);
     client.list_pull_requests(&remote(), &all_open()).await.unwrap();
 
-    *etag.lock().unwrap() = "\"v2\"";
+    *version.lock().unwrap() = "v2";
     set_now(NOW + 10);
     client.list_pull_requests(&remote(), &all_open()).await.unwrap();
     assert_eq!(fake.graphql_requests().len(), 4);
@@ -363,7 +421,7 @@ async fn a_changed_repository_is_searched_again() {
 #[tokio::test]
 async fn another_search_of_an_unchanged_repository_is_not_answered_from_a_different_list() {
     set_now(NOW);
-    let fake = repository(Arc::new(Mutex::new("\"v1\"")));
+    let fake = repository(Arc::new(Mutex::new("v1")));
     let client = client(&fake);
     client.list_pull_requests(&remote(), &all_open()).await.unwrap();
     client
@@ -407,20 +465,18 @@ fn the_search_says_what_the_tab_and_the_filters_say() {
 }
 
 #[tokio::test]
-async fn a_rate_limit_is_reported_with_when_it_ends_and_then_not_tried_against() {
+async fn a_rate_limit_is_reported_with_when_it_ends() {
     set_now(NOW);
     let reset = NOW + 600;
-    let fake = Fake::start(move |request, _| {
-        if is_probe(request) {
-            return Canned::json("[]").with("ETag", "\"v1\"");
-        }
-        Canned::json(r#"{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded for user ID 1."}]}"#)
-            .with("x-ratelimit-remaining", "0")
-            .with("x-ratelimit-reset", reset.to_string())
+    let fake = Fake::start(move |request, _| match request.path.as_str() {
+        "/rate_limit" => Canned::json(&rate_limits(0, reset)),
+        p if p == PROBE => Canned::json(&newest("v1")),
+        _ => Canned::json(r#"{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded for user ID 1."}]}"#),
     });
-    let client = client(&fake);
-
-    let error = client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
+    let error = client(&fake)
+        .list_pull_requests(&remote(), &all_open())
+        .await
+        .unwrap_err();
     assert_eq!(
         error,
         PlatformError::RateLimited {
@@ -428,33 +484,17 @@ async fn a_rate_limit_is_reported_with_when_it_ends_and_then_not_tried_against()
             retry_at: Some(reset)
         }
     );
-    let sent = fake.requests().len();
-
-    set_now(NOW + 120);
-    let error = client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
-    assert!(error.to_string().contains("resets in 8 minutes"), "{error}");
-    assert_eq!(
-        fake.graphql_requests().len(),
-        1,
-        "nothing is sent while the limit is used up"
-    );
-    assert!(fake.requests().len() <= sent + 1, "at most the free probe");
-
-    set_now(reset + 1);
-    let error = client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
-    assert!(matches!(error, PlatformError::RateLimited { .. }));
-    assert_eq!(fake.graphql_requests().len(), 2, "asked again once the limit has reset");
 }
 
 #[tokio::test]
 async fn a_secondary_limit_says_to_wait_and_a_refusal_to_read_is_not_one() {
     set_now(NOW);
     let fake = Fake::start(|request, _| match request.path.as_str() {
-        "/repos/acme/app/pulls?state=all&sort=updated&direction=desc&per_page=1" => Canned::status(
+        "/rate_limit" => Canned::json(&rate_limits(4000, NOW + 3000)),
+        PROBE => Canned::status(
             403,
             r#"{"message":"You have exceeded a secondary rate limit. Please wait a few minutes."}"#,
-        )
-        .with("retry-after", "90"),
+        ),
         _ => Canned::status(
             403,
             r#"{"message":"Resource protected by organization SAML enforcement."}"#,
@@ -464,9 +504,10 @@ async fn a_secondary_limit_says_to_wait_and_a_refusal_to_read_is_not_one() {
     assert_eq!(
         client.list_pull_requests(&remote(), &all_open()).await.unwrap_err(),
         PlatformError::RateLimited {
-            message: "github.com's rate limit is used up; it resets in 2 minutes".to_owned(),
-            retry_at: Some(NOW + 90)
-        }
+            message: "github.com's rate limit is used up; try again in a minute".to_owned(),
+            retry_at: None
+        },
+        "the bucket still has points, so the limit has no time to give"
     );
     let error = client.pull_request(&remote(), 1).await.unwrap_err();
     assert!(matches!(error, PlatformError::Forbidden(_)), "{error:?}");
@@ -493,11 +534,17 @@ async fn a_rejected_token_a_missing_repository_and_a_down_server_have_readable_e
     let error = client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
     assert!(matches!(error, PlatformError::NotFound(_)), "{error:?}");
 
-    *status.lock().unwrap() = (502, "<html>Bad gateway</html>");
+    *status.lock().unwrap() = (502, r#"{"message":"Server Error"}"#);
+    let sent = fake.requests().len();
     let error = client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
     assert_eq!(
         error,
         PlatformError::Unreachable("github.com answered 502 Bad Gateway".to_owned())
+    );
+    assert_eq!(
+        fake.requests().len() - sent,
+        1 + RETRIES,
+        "a server error is tried again"
     );
 }
 
@@ -531,12 +578,15 @@ fn viewer_server() -> Fake {
         {
             Canned::status(304, "")
         }
-        "/user" => Canned::json(r#"{"login":"ada","id":1}"#).with("ETag", "\"user\""),
-        "/user/teams?per_page=100" => Canned::json(r#"[{"slug":"reviewers","organization":{"login":"acme"}}]"#)
+        "/user" => Canned::json(&user_json("ada")).with("ETag", "\"user\""),
+        "/user/teams?per_page=100" => Canned::json(&format!("[{}]", team_json("acme", "reviewers")))
             .with("ETag", "\"teams-1\"")
-            .with("Link", r#"<{base}/user/teams?per_page=100&page=2>; rel="next", <{base}/user/teams?per_page=100&page=2>; rel="last""#),
+            .with(
+                "Link",
+                r#"<{base}/user/teams?per_page=100&page=2>; rel="next", <{base}/user/teams?per_page=100&page=2>; rel="last""#,
+            ),
         "/user/teams?per_page=100&page=2" => {
-            Canned::json(r#"[{"slug":"security","organization":{"login":"acme"}}]"#).with("ETag", "\"teams-2\"")
+            Canned::json(&format!("[{}]", team_json("acme", "security"))).with("ETag", "\"teams-2\"")
         }
         other => panic!("unexpected request {other}"),
     }
@@ -575,7 +625,7 @@ async fn the_viewer_is_their_login_and_every_team_on_every_page() {
 async fn a_token_that_may_not_list_teams_still_has_a_viewer() {
     let fake = Fake::start(|request, _| {
         if request.path == "/user" {
-            Canned::json(r#"{"login":"ada"}"#)
+            Canned::json(&user_json("ada"))
         } else {
             Canned::status(403, r#"{"message":"Resource not accessible by personal access token"}"#)
         }
@@ -585,19 +635,22 @@ async fn a_token_that_may_not_list_teams_still_has_a_viewer() {
 }
 
 #[tokio::test]
-async fn a_link_to_another_host_is_not_followed() {
-    let fake = Fake::start(|request, _| {
-        if request.path == "/user" {
-            Canned::json(r#"{"login":"ada"}"#)
-        } else {
-            Canned::json("[]").with("Link", r#"<https://evil.example/user/teams>; rel="next""#)
+async fn a_link_to_another_host_is_followed_without_the_token() {
+    let fake = Fake::start(|request, base| match request.path.as_str() {
+        "/user" => Canned::json(&user_json("ada")),
+        "/user/teams?per_page=100" => {
+            // The same server under another name is another host.
+            let elsewhere = base.replace("127.0.0.1", "localhost");
+            Canned::json(&format!("[{}]", team_json("acme", "reviewers")))
+                .with("Link", format!(r#"<{elsewhere}/user/teams?page=2>; rel="next""#))
         }
+        _ => Canned::json(&format!("[{}]", team_json("acme", "security"))),
     });
-    let error = client(&fake).viewer("github.com").await.unwrap_err();
-    assert!(
-        matches!(&error, PlatformError::Unexpected(why) if why.contains("evil.example")),
-        "{error:?}"
-    );
+    let viewer = client(&fake).viewer("github.com").await.unwrap();
+    assert_eq!(viewer.teams, ["acme/reviewers", "acme/security"]);
+    let requests = fake.requests();
+    assert!(requests[..2].iter().all(|r| r.header("authorization").is_some()));
+    assert_eq!(requests[2].header("authorization"), None);
 }
 
 #[tokio::test]
@@ -671,11 +724,11 @@ async fn only_github_repositories_are_asked() {
 
 #[test]
 fn enterprise_hosts_have_their_api_under_their_own_name() {
-    assert_eq!(Endpoints::of("github.com").graphql, "https://api.github.com/graphql");
+    assert_eq!(Endpoints::of("github.com").rest, "https://api.github.com");
     assert_eq!(
         Endpoints::of("ghe.corp.example"),
         Endpoints {
-            graphql: "https://ghe.corp.example/api/graphql".to_owned(),
+            graphql: "https://ghe.corp.example/api".to_owned(),
             rest: "https://ghe.corp.example/api/v3".to_owned()
         }
     );

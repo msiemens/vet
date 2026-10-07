@@ -220,23 +220,6 @@ pub(super) struct PullRequestNode {
     commits: Nodes<CommitNode>,
 }
 
-#[derive(Deserialize)]
-pub(super) struct UserDocument {
-    pub login: String,
-}
-
-#[derive(Deserialize)]
-pub(super) struct TeamDocument {
-    slug: String,
-    organization: Login,
-}
-
-impl TeamDocument {
-    pub(super) fn name(&self) -> String {
-        format!("{}/{}", self.organization.login, self.slug)
-    }
-}
-
 fn unexpected(what: &str) -> PlatformError {
     PlatformError::Unexpected(format!("GitHub sent {what} that Vet cannot read"))
 }
