@@ -69,10 +69,6 @@ Hover, go to definition and diagnostics reach every editor through `editor/seman
 - Hover text comes from an external process and is untrusted: `editor/hoverMarkdown.ts` renders it with raw HTML escaped, no images and no link targets.
 - Unavailable (SPEC I6) is never shown as nothing: `state/semanticSummary.ts` turns it into the footer's language-server text.
 
-## Runs
-
-`state/runs.svelte.ts` holds targets, approvals and runs. Output is decoded per stream into a `RunLog` (`state/runLog.ts`, not reactive, bounded scrollback) and drawn by `LogView`, which appends to the DOM once per frame; a chunk never invalidates Svelte state.
-
 ## Where things go
 
 - New screen: `features/<name>/` with an `index.ts`; mount it from `app/App.svelte`.
