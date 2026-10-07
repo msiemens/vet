@@ -559,6 +559,52 @@ fn sweep_in(base: &Path, own: &str) -> usize {
     removed
 }
 
+/// Where a tree under `root` keeps its records, if `root` is the `tree/` of a kept tree.
+#[derive(Clone)]
+pub(crate) struct Layout {
+    dir: PathBuf,
+}
+
+impl Layout {
+    pub(crate) fn of_tree(root: &Path) -> Option<Self> {
+        let dir = root.parent()?;
+        (root.file_name()? == TREE && dir.join(META).join(COMPLETE).is_file()).then(|| Self { dir: dir.to_owned() })
+    }
+
+    pub(crate) fn meta(&self) -> PathBuf {
+        self.dir.join(META)
+    }
+
+    /// Held while a language restores the tree: the restores of one tree run one at a time.
+    pub(crate) async fn lock_restore(&self) -> io::Result<File> {
+        let name = self.dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let path = self
+            .dir
+            .parent()
+            .unwrap_or(&self.dir)
+            .join(LOCKS)
+            .join(format!("{name}.restore"));
+        blocking(move || {
+            if let Some(locks) = path.parent() {
+                std::fs::create_dir_all(locks)?;
+            }
+            let lock = open_lock(&path)?;
+            lock.lock()?;
+            Ok(lock)
+        })
+        .await
+    }
+
+    /// Re-measures the tree after a restore added to it.
+    pub(crate) async fn measure(&self) {
+        let (tree, size) = (self.dir.join(TREE), self.meta().join(SIZE));
+        blocking(move || {
+            let _ = std::fs::write(size, tree_size(&tree).to_string());
+        })
+        .await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;

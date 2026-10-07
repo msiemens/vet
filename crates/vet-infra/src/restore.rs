@@ -28,21 +28,35 @@
 //! dependencies in `package.json` are the same, or takes the donor's `obj`
 //! restore output if every project, `.props`, `.targets`, NuGet setting and lock
 //! file is the same. See `reuse`.
+//!
+//! A tree kept between launches (`materialize::kept`) is restored once: the
+//! restore is written to a record next to the tree (`record`) and used again
+//! while the tools, the steps and the donor's inputs are the same. The restores
+//! of the languages of one tree run one at a time.
 
 pub(crate) mod discover;
+mod record;
 mod reuse;
+mod tools;
 
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, RestoreFailure, Restored, Restorer};
 
-use crate::exec::{OUTPUT_TAIL_LINES, Tail, capture, dotnet_env};
+use crate::exec::{OUTPUT_TAIL_LINES, Tail, dotnet_env};
 use crate::git::list_files;
 use crate::language::{self, Language, Restore};
 use crate::lsp::dotnet;
+use crate::materialize::kept::Layout;
+use record::{Digest, Outcome, Record, StepRecord};
+use reuse::Reused;
+use tools::{Programs, Tools};
 
 /// Restores download packages: far longer than a probe.
 const STEP_TIMEOUT: Duration = Duration::from_secs(600);
@@ -85,6 +99,16 @@ impl Step {
     fn failure(&self, message: String) -> RestoreFailure {
         failure(&self.project, self.program, message)
     }
+
+    fn record(&self, outcome: Outcome) -> StepRecord {
+        StepRecord {
+            project: label(&self.project),
+            program: self.program.to_owned(),
+            args: self.args.clone(),
+            env: self.env.clone(),
+            outcome,
+        }
+    }
 }
 
 fn label(project: &Path) -> String {
@@ -122,12 +146,25 @@ impl Plan {
     }
 }
 
-#[derive(Default)]
 pub struct ToolRestorer {
     /// Added to the environment of every restore command.
     env: Vec<(String, String)>,
     /// A tree already restored: a step whose inputs are the same there is not run.
     donor: Option<PathBuf>,
+    tools: Arc<dyn Tools>,
+    /// The version of each tool, asked once per launch.
+    versions: Mutex<HashMap<String, String>>,
+}
+
+impl Default for ToolRestorer {
+    fn default() -> Self {
+        Self {
+            env: Vec::new(),
+            donor: None,
+            tools: Arc::new(Programs),
+            versions: Mutex::default(),
+        }
+    }
 }
 
 impl ToolRestorer {
@@ -136,7 +173,13 @@ impl ToolRestorer {
     }
 
     pub fn with_env(env: Vec<(String, String)>) -> Self {
-        Self { env, donor: None }
+        Self { env, ..Self::default() }
+    }
+
+    #[cfg(test)]
+    fn with_tools(mut self, tools: Arc<dyn Tools>) -> Self {
+        self.tools = tools;
+        self
     }
 
     /// Takes over the restored dependencies of `donor`, the working tree, for a
@@ -272,7 +315,9 @@ impl ToolRestorer {
     async fn run(&self, root: &Path, step: &Step) -> Result<(), String> {
         let env: Vec<_> = self.env.iter().chain(&step.env).cloned().collect();
         let cwd = root.join(&step.project);
-        let out = capture(step.program, &step.args, Some(&cwd), &env, STEP_TIMEOUT)
+        let out = self
+            .tools
+            .run(step.program, &step.args, &cwd, &env, STEP_TIMEOUT)
             .await
             .map_err(|e| format!("`{}`: {e}", step.describe()))?;
         if out.ok {
@@ -381,53 +426,224 @@ fn venv_bin(venv: &Path) -> PathBuf {
     venv.join(if cfg!(windows) { "Scripts" } else { "bin" })
 }
 
+/// The environment the server runs in: one server, one environment, the first
+/// project's, which is the root's if it has one.
+fn environment(root: &Path, language: &Language, plan: &Plan) -> Vec<(String, String)> {
+    let venv = plan
+        .steps
+        .iter()
+        .map(|s| root.join(&s.project).join(VENV))
+        .find(|v| v.is_dir());
+    let mut env = Vec::new();
+    if let (Restore::Python, Some(venv)) = (language.restore, venv) {
+        env.push(("VIRTUAL_ENV".into(), venv.to_string_lossy().into_owned()));
+        env.extend(path_with_first(&venv_bin(&venv)).map(|p| ("PATH".into(), p)));
+    }
+    env
+}
+
+impl ToolRestorer {
+    /// Runs the steps of `plan` that the policy allows, and records how each ended.
+    async fn execute(
+        &self,
+        root: &Path,
+        language: &Language,
+        plan: &Plan,
+        policy: AnalysisPolicy,
+    ) -> (Restored, Vec<StepRecord>) {
+        let mut restored = Restored {
+            failures: plan.failures.clone(),
+            ..Restored::default()
+        };
+        let mut records = Vec::new();
+        let mut failed: Vec<&Path> = Vec::new();
+        for step in allowed(plan, policy) {
+            // The rest of a project's steps need the one that failed.
+            if failed.contains(&step.project.as_path()) {
+                records.push(step.record(Outcome::Failed("an earlier step of the project failed".into())));
+                continue;
+            }
+            restored.ran.push((label(&step.project), step.program.to_owned()));
+            if let Some(donor) = &self.donor
+                && let Some(reused) = reuse::reuse(donor, root, step).await
+            {
+                records.push(step.record(match reused {
+                    Reused::Linked(inputs) => Outcome::Linked {
+                        donor: donor.to_string_lossy().into_owned(),
+                        inputs,
+                    },
+                    Reused::Copied => Outcome::Copied,
+                }));
+                continue;
+            }
+            match self.run(root, step).await {
+                Ok(()) => records.push(step.record(Outcome::Ran)),
+                Err(why) => {
+                    records.push(step.record(Outcome::Failed(why.clone())));
+                    restored.failures.push(step.failure(why));
+                    failed.push(&step.project);
+                }
+            }
+        }
+        restored.env = environment(root, language, plan);
+        (restored, records)
+    }
+
+    /// `(program, version)` of every tool the steps run, asked once per launch.
+    async fn versions(&self, steps: &[&Step]) -> Vec<(String, String)> {
+        let mut programs: BTreeSet<&str> = steps.iter().map(|s| s.program).collect();
+        // The package managers run on it.
+        if programs.iter().any(|p| matches!(*p, "npm" | "pnpm" | "yarn")) {
+            programs.insert("node");
+        }
+        let mut versions = Vec::new();
+        for program in programs {
+            let known = self
+                .versions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .get(program)
+                .cloned();
+            let version = match known {
+                Some(version) => version,
+                None => {
+                    let version = self.tools.version(program).await;
+                    self.versions
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(program.to_owned(), version.clone());
+                    version
+                }
+            };
+            versions.push((program.to_owned(), version));
+        }
+        versions
+    }
+
+    /// Everything that decides what a restore does before it runs: the policy,
+    /// the environment, the tools and their versions, the steps and what the
+    /// plan could not restore. A record made under other inputs is not reused.
+    fn inputs(&self, plan: &Plan, steps: &[&Step], tools: &[(String, String)], policy: AnalysisPolicy) -> Hash {
+        let mut digest = Digest::default();
+        digest.field(if policy.allow_executing { "exec" } else { "noexec" });
+        digest.field("environment");
+        for (key, value) in &self.env {
+            digest.field(key).field(value);
+        }
+        digest.field("tools");
+        for (program, version) in tools {
+            digest.field(program).field(version);
+        }
+        digest.field("steps");
+        for step in steps {
+            digest.field(&label(&step.project)).field(step.program);
+            for arg in &step.args {
+                digest.field(arg);
+            }
+            digest.field("with");
+            for (key, value) in &step.env {
+                digest.field(key).field(value);
+            }
+        }
+        digest.field("failures");
+        for failure in &plan.failures {
+            digest
+                .field(&failure.project)
+                .field(&failure.tool)
+                .field(&failure.message);
+        }
+        digest.finish()
+    }
+
+    /// Whether `record` stands for the restore that would run now: same inputs,
+    /// every step done, and the donor's `node_modules` still what they were linked as.
+    fn reusable(&self, record: &Record, inputs: Hash, root: &Path, steps: &[&Step]) -> bool {
+        record.inputs == inputs
+            && record.succeeded()
+            && record.steps.len() == steps.len()
+            && record.steps.iter().zip(steps).all(|(done, step)| match &done.outcome {
+                Outcome::Linked { donor, inputs } => {
+                    self.donor.as_deref().is_some_and(|d| {
+                        d.to_string_lossy() == donor.as_str() && reuse::linked_inputs(d, step) == *inputs
+                    }) && reuse::link_intact(root, step)
+                }
+                _ => true,
+            })
+    }
+
+    /// Restores a kept tree unless its record says it is restored. The tree's
+    /// languages take turns.
+    async fn restore_kept(
+        &self,
+        layout: &Layout,
+        root: &Path,
+        language: &Language,
+        plan: &Plan,
+        policy: AnalysisPolicy,
+    ) -> Restored {
+        let started = Instant::now();
+        let Ok(_turn) = layout.lock_restore().await else {
+            return self.execute(root, language, plan, policy).await.0;
+        };
+        let steps: Vec<&Step> = allowed(plan, policy).collect();
+        let tools = self.versions(&steps).await;
+        let inputs = self.inputs(plan, &steps, &tools, policy);
+        let file = layout.meta().join(format!("restore-{}.json", language.id));
+        if let Some(record) = Record::read(&file)
+            && self.reusable(&record, inputs, root, &steps)
+        {
+            crate::timing::log(|| format!("restore {} (kept)", language.id), started);
+            return Restored {
+                failures: plan.failures.clone(),
+                ran: steps
+                    .iter()
+                    .map(|s| (label(&s.project), s.program.to_owned()))
+                    .collect(),
+                env: environment(root, language, plan),
+                fingerprint: Some(record.fingerprint()),
+            };
+        }
+        // What an earlier restore left must not stand in for this one.
+        for step in &steps {
+            reuse::unlink(root, step);
+        }
+        let (mut restored, done) = self.execute(root, language, plan, policy).await;
+        let record = Record {
+            inputs,
+            tools,
+            steps: done,
+        };
+        restored.fingerprint = Some(record.fingerprint());
+        // Without the record the next use restores again, which is only slower.
+        let _ = record.write(&file);
+        layout.measure().await;
+        crate::timing::log(|| format!("restore {} (built)", language.id), started);
+        restored
+    }
+}
+
+/// The steps the policy lets run.
+fn allowed(plan: &Plan, policy: AnalysisPolicy) -> impl Iterator<Item = &Step> {
+    plan.steps.iter().filter(move |s| policy.allow_executing || !s.executes)
+}
+
 impl Restorer for ToolRestorer {
     async fn restore(&self, root: &Path, backend: &Backend, policy: AnalysisPolicy) -> Restored {
         let Some(language) = language::by_id(&backend.config().backend.0) else {
             return Restored::default();
         };
         let plan = self.plan(root, language).await;
-        let mut restored = Restored {
-            failures: plan.failures,
-            ..Restored::default()
-        };
-        let mut failed: Vec<&Path> = Vec::new();
-        for step in plan.steps.iter().filter(|s| policy.allow_executing || !s.executes) {
-            // The rest of a project's steps need the one that failed.
-            if failed.contains(&step.project.as_path()) {
-                continue;
-            }
-            restored.ran.push((label(&step.project), step.program.to_owned()));
-            if let Some(donor) = &self.donor
-                && reuse::reuse(donor, root, step).await
-            {
-                continue;
-            }
-            if let Err(why) = self.run(root, step).await {
-                restored.failures.push(step.failure(why));
-                failed.push(&step.project);
-            }
+        match Layout::of_tree(root) {
+            Some(layout) => self.restore_kept(&layout, root, language, &plan, policy).await,
+            None => self.execute(root, language, &plan, policy).await.0,
         }
-        // One server, one environment: the first project's, which is the root's if it has one.
-        let venv = plan
-            .steps
-            .iter()
-            .map(|s| root.join(&s.project).join(VENV))
-            .find(|v| v.is_dir());
-        if let (Restore::Python, Some(venv)) = (language.restore, venv) {
-            restored
-                .env
-                .push(("VIRTUAL_ENV".into(), venv.to_string_lossy().into_owned()));
-            restored
-                .env
-                .extend(path_with_first(&venv_bin(&venv)).map(|p| ("PATH".into(), p)));
-        }
-        restored
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
     use super::*;
     use crate::exec::{Host, is_file};
 
@@ -753,6 +969,239 @@ mod tests {
         assert_eq!((failure.project.as_str(), failure.tool.as_str()), (".", "cargo"));
         assert!(failure.message.contains("cargo fetch"), "{restored:?}");
         assert!(failure.message.contains("Cargo.toml"), "{restored:?}");
+    }
+
+    /// Runs nothing: records what was asked, and answers the way it is told to.
+    #[derive(Default)]
+    struct FakeTools {
+        versions: Mutex<HashMap<String, String>>,
+        failing: Mutex<BTreeSet<String>>,
+        runs: Mutex<Vec<String>>,
+        active: AtomicUsize,
+        overlapped: AtomicBool,
+    }
+
+    impl FakeTools {
+        fn version_of(self: &Arc<Self>, program: &str, version: &str) -> Arc<Self> {
+            self.versions.lock().unwrap().insert(program.into(), version.into());
+            self.clone()
+        }
+
+        fn fail(self: &Arc<Self>, program: &str, fails: bool) {
+            let mut failing = self.failing.lock().unwrap();
+            if fails {
+                failing.insert(program.into());
+            } else {
+                failing.remove(program);
+            }
+        }
+
+        fn runs(&self) -> Vec<String> {
+            self.runs.lock().unwrap().clone()
+        }
+    }
+
+    impl Tools for FakeTools {
+        fn version<'a>(&'a self, program: &'a str) -> tools::BoxFuture<'a, String> {
+            let version = self.versions.lock().unwrap().get(program).cloned();
+            Box::pin(std::future::ready(version.unwrap_or_else(|| "1.0".into())))
+        }
+
+        fn run<'a>(
+            &'a self,
+            program: &'a str,
+            args: &'a [String],
+            _: &'a Path,
+            _: &'a [(String, String)],
+            _: Duration,
+        ) -> tools::BoxFuture<'a, Result<crate::exec::Captured, String>> {
+            Box::pin(async move {
+                self.runs.lock().unwrap().push(format!("{program} {}", args.join(" ")));
+                if self.active.fetch_add(1, Ordering::SeqCst) > 0 {
+                    self.overlapped.store(true, Ordering::SeqCst);
+                }
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                self.active.fetch_sub(1, Ordering::SeqCst);
+                let ok = !self.failing.lock().unwrap().contains(program);
+                Ok(crate::exec::Captured {
+                    ok,
+                    stdout: String::new(),
+                    stderr: if ok { String::new() } else { "boom".into() },
+                })
+            })
+        }
+    }
+
+    /// A tree laid out as `materialize::kept` keeps it: `<key>/tree` and `<key>/meta/complete`.
+    fn kept(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("snapshot-noexec");
+        std::fs::create_dir_all(key.join("meta")).unwrap();
+        std::fs::write(key.join("meta/complete"), "").unwrap();
+        for (name, content) in files {
+            let path = key.join("tree").join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        }
+        let root = key.join("tree");
+        (dir, root)
+    }
+
+    const NO_EXEC: AnalysisPolicy = AnalysisPolicy { allow_executing: false };
+
+    fn restorer(tools: &Arc<FakeTools>) -> ToolRestorer {
+        ToolRestorer::new().with_tools(tools.clone())
+    }
+
+    #[tokio::test]
+    async fn a_kept_tree_is_restored_once_and_a_restart_finds_the_record() {
+        let (_dir, root) = kept(&[("Cargo.toml", "")]);
+        let tools = Arc::new(FakeTools::default());
+
+        let first = restorer(&tools).restore(&root, &backend("rust"), NO_EXEC).await;
+        assert_eq!(tools.runs(), ["cargo fetch"]);
+        assert!(first.fingerprint.is_some());
+
+        // A new launch: its restorer has probed nothing.
+        let second = restorer(&tools).restore(&root, &backend("rust"), NO_EXEC).await;
+        assert_eq!(tools.runs(), ["cargo fetch"], "nothing ran again");
+        assert_eq!(second, first);
+    }
+
+    #[tokio::test]
+    async fn a_tool_that_changed_version_restores_again() {
+        let (_dir, root) = kept(&[("Cargo.toml", "")]);
+        let tools = Arc::new(FakeTools::default());
+        let before = restorer(&tools).restore(&root, &backend("rust"), NO_EXEC).await;
+
+        let upgraded = Arc::new(FakeTools::default());
+        let after = restorer(&upgraded.version_of("cargo", "2.0"))
+            .restore(&root, &backend("rust"), NO_EXEC)
+            .await;
+        assert_eq!(upgraded.runs(), ["cargo fetch"]);
+        assert_ne!(after.fingerprint, before.fingerprint);
+
+        // The record is the new one now.
+        let again = restorer(&upgraded).restore(&root, &backend("rust"), NO_EXEC).await;
+        assert_eq!(upgraded.runs().len(), 1);
+        assert_eq!(again.fingerprint, after.fingerprint);
+    }
+
+    #[tokio::test]
+    async fn another_manifest_layout_restores_again() {
+        let (_dir, root) = kept(&[("Cargo.toml", "")]);
+        let tools = Arc::new(FakeTools::default());
+        restorer(&tools).restore(&root, &backend("rust"), NO_EXEC).await;
+        std::fs::create_dir_all(root.join("svc")).unwrap();
+        std::fs::write(root.join("svc/Cargo.toml"), "").unwrap();
+        restorer(&tools).restore(&root, &backend("rust"), NO_EXEC).await;
+        assert_eq!(tools.runs(), ["cargo fetch", "cargo fetch", "cargo fetch"]);
+    }
+
+    #[tokio::test]
+    async fn a_restore_that_failed_is_tried_again_the_next_time() {
+        let (_dir, root) = kept(&[("Cargo.toml", "")]);
+        let tools = Arc::new(FakeTools::default());
+        tools.fail("cargo", true);
+        let failed = restorer(&tools).restore(&root, &backend("rust"), NO_EXEC).await;
+        assert_eq!(failed.failures.len(), 1);
+
+        tools.fail("cargo", false);
+        let fixed = restorer(&tools).restore(&root, &backend("rust"), NO_EXEC).await;
+        assert!(fixed.failures.is_empty());
+        assert_eq!(tools.runs().len(), 2);
+        assert_ne!(fixed.fingerprint, failed.fingerprint);
+    }
+
+    const PACKAGE: &str = r#"{"name":"p","dependencies":{"a":"1"},"scripts":{}}"#;
+
+    #[tokio::test]
+    async fn a_link_to_the_donors_node_modules_is_checked_against_the_donor_before_it_is_reused() {
+        let (_dir, root) = kept(&[("package.json", PACKAGE), ("package-lock.json", "lock")]);
+        let donor = tree(&[
+            ("package.json", PACKAGE),
+            ("package-lock.json", "lock"),
+            ("node_modules/a/index.js", ""),
+        ]);
+        let tools = Arc::new(FakeTools::default());
+        let reusing = || restorer(&tools).reusing(donor.path().to_owned());
+        let typescript = backend("typescript");
+
+        let linked = reusing().restore(&root, &typescript, NO_EXEC).await;
+        assert!(tools.runs().is_empty(), "the donor's install stood in for it");
+        assert!(root.join("node_modules/a/index.js").is_file());
+
+        // Edits that do not change what an install does leave the link.
+        std::fs::write(
+            donor.path().join("package.json"),
+            r#"{"name":"p","dependencies":{"a":"1"},"scripts":{"build":"x"}}"#,
+        )
+        .unwrap();
+        let again = reusing().restore(&root, &typescript, NO_EXEC).await;
+        assert!(tools.runs().is_empty());
+        assert_eq!(again.fingerprint, linked.fingerprint);
+
+        // The donor installs something else: the link follows it, so the tree is restored for real.
+        std::fs::write(donor.path().join("package-lock.json"), "other lock").unwrap();
+        let moved = reusing().restore(&root, &typescript, NO_EXEC).await;
+        assert_eq!(tools.runs(), ["npm ci --ignore-scripts"]);
+        assert!(!root.join("node_modules").exists(), "the link is gone");
+        assert!(donor.path().join("node_modules/a/index.js").is_file());
+        assert_ne!(moved.fingerprint, linked.fingerprint);
+    }
+
+    #[tokio::test]
+    async fn a_donor_that_lost_its_install_is_not_linked_to() {
+        let (_dir, root) = kept(&[("package.json", PACKAGE), ("package-lock.json", "lock")]);
+        let donor = tree(&[
+            ("package.json", PACKAGE),
+            ("package-lock.json", "lock"),
+            ("node_modules/a/index.js", ""),
+        ]);
+        let tools = Arc::new(FakeTools::default());
+        let reusing = || restorer(&tools).reusing(donor.path().to_owned());
+        reusing().restore(&root, &backend("typescript"), NO_EXEC).await;
+
+        std::fs::remove_dir_all(donor.path().join("node_modules")).unwrap();
+        reusing().restore(&root, &backend("typescript"), NO_EXEC).await;
+        assert_eq!(tools.runs(), ["npm ci --ignore-scripts"]);
+    }
+
+    #[tokio::test]
+    async fn the_languages_of_one_kept_tree_restore_one_at_a_time() {
+        let files = [("Cargo.toml", ""), ("package.json", "{}"), ("package-lock.json", "")];
+        let both = |tools: &Arc<FakeTools>, root: PathBuf| {
+            let (rust, typescript) = (restorer(tools), restorer(tools));
+            async move {
+                let (rust_backend, typescript_backend) = (backend("rust"), backend("typescript"));
+                tokio::join!(
+                    rust.restore(&root, &rust_backend, NO_EXEC),
+                    typescript.restore(&root, &typescript_backend, NO_EXEC)
+                )
+            }
+        };
+
+        let (_dir, root) = kept(&files);
+        let tools = Arc::new(FakeTools::default());
+        both(&tools, root).await;
+        assert_eq!(tools.runs().len(), 2);
+        assert!(!tools.overlapped.load(Ordering::SeqCst), "two restores ran at once");
+
+        // Without the tree's lock the same two would overlap, so the check above can fail.
+        let plain = tree(&files);
+        let unlocked = Arc::new(FakeTools::default());
+        both(&unlocked, plain.path().to_owned()).await;
+        assert!(unlocked.overlapped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn a_tree_outside_the_kept_layout_is_restored_every_time_and_has_no_fingerprint() {
+        let dir = tree(&[("Cargo.toml", "")]);
+        let tools = Arc::new(FakeTools::default());
+        let restored = restorer(&tools).restore(dir.path(), &backend("rust"), NO_EXEC).await;
+        restorer(&tools).restore(dir.path(), &backend("rust"), NO_EXEC).await;
+        assert_eq!(tools.runs().len(), 2);
+        assert_eq!(restored.fingerprint, None);
     }
 
     #[tokio::test]

@@ -4,7 +4,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use vet_core::content::{BlobId, LineRange, RepoPath, SnapshotId};
+use vet_core::content::{BlobId, Hash, LineRange, RepoPath, SnapshotId};
 
 use crate::policy::AnalysisPolicy;
 
@@ -290,6 +290,10 @@ pub struct Restored {
     /// `(project, tool)` of every step that ran, failed or not: a success is
     /// what lifts an earlier failure of the same step.
     pub ran: Vec<(String, String)>,
+    /// Hash of the restore record of the kept tree: tool versions, each step's
+    /// argv and environment and its outcome. Equal fingerprints mean equal
+    /// dependencies; `None` for a restore nothing was recorded of.
+    pub fingerprint: Option<Hash>,
 }
 
 /// Installs the dependencies of a materialized snapshot without executing

@@ -13,15 +13,26 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::Step;
+use super::record::Digest;
 use crate::git::list_files;
+use vet_core::content::Hash;
+
+/// How a step was done by the donor's restore.
+pub(super) enum Reused {
+    /// The donor's `node_modules` are linked in and follow the donor; `inputs`
+    /// is what of the donor they depend on (`linked_inputs`).
+    Linked(Hash),
+    /// The restore output was copied: it is the copy's own from then on.
+    Copied,
+}
 
 /// Whether `step`, a restore of the copy at `root`, is done by what `donor`
 /// (the working tree) has restored. If so, the copy has the result.
-pub(super) async fn reuse(donor: &Path, root: &Path, step: &Step) -> bool {
+pub(super) async fn reuse(donor: &Path, root: &Path, step: &Step) -> Option<Reused> {
     match step.program {
-        "npm" | "pnpm" | "yarn" => node_modules(donor, root, step),
-        "dotnet" => dotnet_assets(donor, root).await,
-        _ => false,
+        "npm" | "pnpm" | "yarn" => node_modules(donor, root, step).map(Reused::Linked),
+        "dotnet" => dotnet_assets(donor, root).await.then_some(Reused::Copied),
+        _ => None,
     }
 }
 
@@ -64,9 +75,73 @@ fn same_dependencies(donor: &Path, root: &Path) -> bool {
     NODE_DEPENDENCIES.iter().all(|key| donor.get(key) == root.get(key))
 }
 
+/// The step's project and the members of its workspace, relative to the root.
+fn node_dirs(step: &Step) -> Vec<&Path> {
+    std::iter::once(step.project.as_path())
+        .chain(step.covers.iter().map(PathBuf::as_path))
+        .collect()
+}
+
+/// A hash of what of the donor a link of its `node_modules` depends on: the
+/// lockfiles and install settings, the dependencies of each package and whether
+/// the donor has installed them. A link that was made when this was something
+/// else follows a tree that is not what the copy needs.
+pub(super) fn linked_inputs(donor: &Path, step: &Step) -> Hash {
+    let mut digest = Digest::default();
+    let project = donor.join(&step.project);
+    for name in NODE_LOCKFILES.iter().chain(NODE_SETTINGS) {
+        let content = read(project.join(name)).map_or_else(|| "-".to_owned(), |c| Hash::of(&c).to_hex());
+        digest.field(name).field(&content);
+    }
+    for dir in node_dirs(step) {
+        let package: Value = read(donor.join(dir).join("package.json"))
+            .and_then(|c| serde_json::from_slice(&c).ok())
+            .unwrap_or_default();
+        let dependencies: serde_json::Map<String, Value> = NODE_DEPENDENCIES
+            .iter()
+            .filter_map(|key| Some(((*key).to_owned(), package.get(key)?.clone())))
+            .collect();
+        digest
+            .field(&dir.to_string_lossy())
+            .field(&Value::Object(dependencies).to_string())
+            .field(if donor.join(dir).join("node_modules").is_dir() {
+                "installed"
+            } else {
+                "missing"
+            });
+    }
+    digest.finish()
+}
+
+/// Whether the links `node_modules` made for `step` still lead somewhere.
+pub(super) fn link_intact(root: &Path, step: &Step) -> bool {
+    root.join(&step.project).join("node_modules").is_dir()
+}
+
+/// Removes the links `node_modules` made for `step`: the links, never what they lead to.
+pub(super) fn unlink(root: &Path, step: &Step) {
+    for dir in node_dirs(step) {
+        let link = root.join(dir).join("node_modules");
+        if link.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+            let _ = remove_link(&link);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn remove_link(link: &Path) -> io::Result<()> {
+    std::fs::remove_file(link)
+}
+
+/// A junction is removed as a directory, which leaves what it leads to.
+#[cfg(windows)]
+fn remove_link(link: &Path) -> io::Result<()> {
+    std::fs::remove_dir(link)
+}
+
 /// Links the donor's `node_modules` of the step's project and of the members
 /// of its workspace into the copy, if the lockfile is the same on both sides.
-fn node_modules(donor: &Path, root: &Path, step: &Step) -> bool {
+fn node_modules(donor: &Path, root: &Path, step: &Step) -> Option<Hash> {
     let (donor_project, project) = (donor.join(&step.project), root.join(&step.project));
     let locked = NODE_LOCKFILES.iter().any(|name| project.join(name).is_file());
     let same_inputs = NODE_LOCKFILES
@@ -74,16 +149,14 @@ fn node_modules(donor: &Path, root: &Path, step: &Step) -> bool {
         .chain(NODE_SETTINGS)
         .all(|name| same_file(&donor_project, &project, name));
     if !locked || !same_inputs {
-        return false;
+        return None;
     }
-    let dirs: Vec<&Path> = std::iter::once(step.project.as_path())
-        .chain(step.covers.iter().map(PathBuf::as_path))
-        .collect();
+    let dirs = node_dirs(step);
     if !dirs
         .iter()
         .all(|dir| same_dependencies(&donor.join(dir), &root.join(dir)))
     {
-        return false;
+        return None;
     }
     // The project's own `node_modules` is required; a member may have none.
     let links: Vec<(PathBuf, PathBuf)> = dirs
@@ -98,9 +171,12 @@ fn node_modules(donor: &Path, root: &Path, step: &Step) -> bool {
         .collect();
     let has_project = links.iter().any(|(_, to)| to == &project.join("node_modules"));
     if !has_project || links.iter().any(|(_, to)| to.symlink_metadata().is_ok()) {
-        return false;
+        return None;
     }
-    links.iter().all(|(from, to)| link_dir(from, to).is_ok())
+    links
+        .iter()
+        .all(|(from, to)| link_dir(from, to).is_ok())
+        .then(|| linked_inputs(donor, step))
 }
 
 #[cfg(unix)]
@@ -236,7 +312,7 @@ mod tests {
     #[test]
     fn node_modules_are_linked_when_the_lockfile_and_dependencies_are_the_same() {
         let (donor, copy) = node_trees(&[]);
-        assert!(node_modules(donor.path(), copy.path(), &step("", &[])));
+        assert!(node_modules(donor.path(), copy.path(), &step("", &[])).is_some());
         assert!(copy.path().join("node_modules/a/index.js").is_file());
     }
 
@@ -244,7 +320,7 @@ mod tests {
     fn other_lockfiles_dependencies_or_settings_mean_a_restore() {
         let different = |copy: &[(&str, &str)]| {
             let (donor, copy) = node_trees(copy);
-            let linked = node_modules(donor.path(), copy.path(), &step("", &[]));
+            let linked = node_modules(donor.path(), copy.path(), &step("", &[])).is_some();
             assert_eq!(linked, copy.path().join("node_modules").exists());
             !linked
         };
@@ -266,11 +342,11 @@ mod tests {
     fn without_a_lockfile_or_a_donor_install_nothing_is_reused() {
         let donor = tree(&[("package.json", PACKAGE)]);
         let copy = tree(&[("package.json", PACKAGE)]);
-        assert!(!node_modules(donor.path(), copy.path(), &step("", &[])));
+        assert!(node_modules(donor.path(), copy.path(), &step("", &[])).is_none());
 
         let donor = tree(&[("package.json", PACKAGE), ("pnpm-lock.yaml", "lock")]);
         let copy = tree(&[("package.json", PACKAGE), ("pnpm-lock.yaml", "lock")]);
-        assert!(!node_modules(donor.path(), copy.path(), &step("", &[])));
+        assert!(node_modules(donor.path(), copy.path(), &step("", &[])).is_none());
         assert!(!copy.path().join("node_modules").exists());
     }
 
@@ -291,11 +367,11 @@ mod tests {
             .concat(),
         );
         let copy = tree(&files("{}"));
-        assert!(node_modules(donor.path(), copy.path(), &step("", &["packages/a"])));
+        assert!(node_modules(donor.path(), copy.path(), &step("", &["packages/a"])).is_some());
         assert!(copy.path().join("packages/a/node_modules/y").is_file());
 
         let copy = tree(&files(r#"{"dependencies":{"z":"1"}}"#));
-        assert!(!node_modules(donor.path(), copy.path(), &step("", &["packages/a"])));
+        assert!(node_modules(donor.path(), copy.path(), &step("", &["packages/a"])).is_none());
         assert!(!copy.path().join("node_modules").exists());
     }
 
