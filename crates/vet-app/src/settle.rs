@@ -57,6 +57,14 @@ impl Settler {
     }
 }
 
+/// What [`Settling::next_settled`] resolved with.
+pub enum Settled {
+    /// The working tree settled.
+    Tree(Scan),
+    /// A branch ref was written; the branch on view may have a new tip.
+    RefsMoved,
+}
+
 enum Wake {
     Event(WatchEvent),
     Deadline,
@@ -89,10 +97,12 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
         self.watcher.degraded()
     }
 
-    /// Resolves with the next settled scan whose snapshot differs from the previous one.
-    pub async fn next_settled<G: Scanner, S>(&mut self, acquisition: &Acquisition<G, S>) -> Result<Scan, GitError> {
+    /// Resolves with the next settled scan whose snapshot differs from the previous one, or
+    /// as soon as a branch ref is written: refs are looked at as they move, not debounced.
+    pub async fn next_settled<G: Scanner, S>(&mut self, acquisition: &Acquisition<G, S>) -> Result<Settled, GitError> {
         loop {
             match self.wake().await {
+                Wake::Event(WatchEvent::RefsMoved) => return Ok(Settled::RefsMoved),
                 Wake::Event(WatchEvent::Dirty(paths)) => self.settler.record(Dirty::Paths(paths), self.clock.now()),
                 Wake::Event(WatchEvent::MustRescan | WatchEvent::Degraded(_)) => {
                     let snapshot = acquisition.reconcile(Dirty::All).await?.snapshot;
@@ -121,7 +131,7 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
                         self.candidate = None;
                         if Some(snapshot.id) != self.settled {
                             self.settled = Some(snapshot.id);
-                            return Ok(scan);
+                            return Ok(Settled::Tree(scan));
                         }
                     }
                 }
@@ -317,10 +327,17 @@ mod tests {
         WatchEvent::Dirty(vec![path(name)])
     }
 
+    fn tree(settled: Settled) -> Scan {
+        match settled {
+            Settled::Tree(scan) => scan,
+            Settled::RefsMoved => panic!("expected a settled tree"),
+        }
+    }
+
     #[test]
     fn a_write_burst_settles_after_the_quiet_window() {
         let mut h = harness(vec![(0, dirty("a.rs")), (1000, dirty("b.rs"))], vec![id(1)], None);
-        let snapshot = run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap().snapshot;
+        let snapshot = tree(run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap()).snapshot;
         assert_eq!(snapshot.id, id(1));
         let sim = h.sim.lock().unwrap();
         assert_eq!(sim.now, 2500);
@@ -331,7 +348,7 @@ mod tests {
     fn a_snapshot_that_keeps_changing_does_not_settle() {
         let script = vec![(0, WatchEvent::MustRescan), (1000, WatchEvent::MustRescan)];
         let mut h = harness(script, vec![id(1), id(2), id(2)], None);
-        let snapshot = run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap().snapshot;
+        let snapshot = tree(run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap()).snapshot;
         assert_eq!(snapshot.id, id(2));
         assert_eq!(h.sim.lock().unwrap().now, 2500, "second rescan restarted the window");
     }
@@ -345,6 +362,18 @@ mod tests {
         );
         assert!(run(h.settling.next_settled(&h.acquisition)).is_none());
         assert!(h.sim.lock().unwrap().scans.is_empty());
+    }
+
+    #[test]
+    fn a_ref_write_is_reported_at_once_without_a_scan() {
+        let mut h = harness(vec![(0, WatchEvent::RefsMoved)], vec![], None);
+        assert!(matches!(
+            run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap(),
+            Settled::RefsMoved
+        ));
+        let sim = h.sim.lock().unwrap();
+        assert_eq!(sim.now, 0);
+        assert!(sim.scanned.is_empty());
     }
 
     #[test]

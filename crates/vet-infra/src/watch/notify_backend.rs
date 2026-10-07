@@ -11,14 +11,14 @@ use notify::{Config, ErrorKind, RecommendedWatcher, RecursiveMode, Watcher as _}
 use tokio::sync::mpsc::UnboundedSender;
 use vet_app::ports::{Degraded, WatchEvent};
 
-use super::{Guard, StartError, dirty_event};
+use super::{Guard, StartError, dirty_events};
 
 type NotifyResult = notify::Result<notify::Event>;
 
 pub fn start(root: &Path, tx: UnboundedSender<WatchEvent>) -> Result<Guard, StartError> {
     let event_root = root.to_owned();
     let on_event = move |res| {
-        if let Some(event) = translate(&event_root, res) {
+        for event in translate(&event_root, res) {
             drop(tx.send(event));
         }
     };
@@ -34,23 +34,23 @@ fn failed(e: notify::Error) -> StartError {
     }
 }
 
-/// Maps one `notify` result to a `WatchEvent`; `None` for events that cannot
+/// Maps one `notify` result to `WatchEvent`s; none for events that cannot
 /// change content. Anything unexpected becomes `MustRescan`, never silence.
-fn translate(root: &Path, res: NotifyResult) -> Option<WatchEvent> {
+fn translate(root: &Path, res: NotifyResult) -> Vec<WatchEvent> {
     let event = match res {
         Ok(event) => event,
         Err(e) if matches!(e.kind, ErrorKind::MaxFilesWatch) => {
-            return Some(WatchEvent::Degraded(Degraded::WatchLimit));
+            return vec![WatchEvent::Degraded(Degraded::WatchLimit)];
         }
-        Err(_) => return Some(WatchEvent::MustRescan),
+        Err(_) => return vec![WatchEvent::MustRescan],
     };
     if event.need_rescan() || event.info() == Some("root changed") {
-        return Some(WatchEvent::MustRescan);
+        return vec![WatchEvent::MustRescan];
     }
     if matches!(event.kind, EventKind::Access(_)) {
-        return None;
+        return Vec::new();
     }
-    dirty_event(root, &event.paths)
+    dirty_events(root, &event.paths)
 }
 
 #[cfg(test)]
@@ -68,7 +68,7 @@ mod tests {
         event
     }
 
-    fn translated(event: notify::Event) -> Option<WatchEvent> {
+    fn translated(event: notify::Event) -> Vec<WatchEvent> {
         translate(Path::new(ROOT), Ok(event))
     }
 
@@ -76,10 +76,10 @@ mod tests {
     fn rescan_flags_require_reconciliation() {
         let rescan = notify::Event::new(EventKind::Other).set_flag(Flag::Rescan);
         // inotify IN_Q_OVERFLOW
-        assert_eq!(translated(rescan.clone()), Some(WatchEvent::MustRescan));
+        assert_eq!(translated(rescan.clone()), vec![WatchEvent::MustRescan]);
         // FSEvents MustScanSubDirs, UserDropped, KernelDropped
         for info in ["rescan: user dropped", "rescan: kernel dropped"] {
-            assert_eq!(translated(rescan.clone().set_info(info)), Some(WatchEvent::MustRescan));
+            assert_eq!(translated(rescan.clone().set_info(info)), vec![WatchEvent::MustRescan]);
         }
     }
 
@@ -87,7 +87,7 @@ mod tests {
     fn fsevents_root_change_requires_reconciliation() {
         let root_changed =
             notify::Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::From))).set_info("root changed");
-        assert_eq!(translated(root_changed), Some(WatchEvent::MustRescan));
+        assert_eq!(translated(root_changed), vec![WatchEvent::MustRescan]);
     }
 
     #[test]
@@ -95,10 +95,10 @@ mod tests {
         let limit = Err(notify::Error::new(ErrorKind::MaxFilesWatch));
         assert_eq!(
             translate(Path::new(ROOT), limit),
-            Some(WatchEvent::Degraded(Degraded::WatchLimit))
+            vec![WatchEvent::Degraded(Degraded::WatchLimit)]
         );
         let other = Err(notify::Error::generic("handle invalidated"));
-        assert_eq!(translate(Path::new(ROOT), other), Some(WatchEvent::MustRescan));
+        assert_eq!(translate(Path::new(ROOT), other), vec![WatchEvent::MustRescan]);
     }
 
     #[test]
@@ -106,11 +106,11 @@ mod tests {
         let modified = event(EventKind::Modify(ModifyKind::Any), &["src/a.rs"]);
         assert_eq!(
             translated(modified),
-            Some(WatchEvent::Dirty(vec![RepoPath(b"src/a.rs".to_vec())]))
+            vec![WatchEvent::Dirty(vec![RepoPath(b"src/a.rs".to_vec())])]
         );
         assert_eq!(
             translated(event(EventKind::Access(AccessKind::Any), &["src/a.rs"])),
-            None
+            vec![]
         );
     }
 
@@ -118,18 +118,33 @@ mod tests {
     fn git_state_changes_rescan_and_the_rest_of_git_is_ignored() {
         assert_eq!(
             translated(event(EventKind::Any, &[".git/HEAD"])),
-            Some(WatchEvent::MustRescan)
+            vec![WatchEvent::MustRescan]
         );
         assert_eq!(
             translated(event(EventKind::Any, &[".git/index"])),
-            Some(WatchEvent::MustRescan)
+            vec![WatchEvent::MustRescan]
         );
-        assert_eq!(translated(event(EventKind::Any, &[".git/objects/ab/cd"])), None);
+        assert_eq!(translated(event(EventKind::Any, &[".git/objects/ab/cd"])), vec![]);
+    }
+
+    #[test]
+    fn ref_writes_are_reported_even_alongside_a_rescan() {
+        for path in [
+            ".git/refs/heads/main",
+            ".git/refs/remotes/origin/main",
+            ".git/packed-refs",
+        ] {
+            assert_eq!(translated(event(EventKind::Any, &[path])), vec![WatchEvent::RefsMoved]);
+        }
+        assert_eq!(
+            translated(event(EventKind::Any, &[".git/index", ".git/refs/heads/main"])),
+            vec![WatchEvent::MustRescan, WatchEvent::RefsMoved]
+        );
     }
 
     #[test]
     fn paths_outside_the_root_require_reconciliation() {
         let outside = notify::Event::new(EventKind::Any).add_path("/elsewhere/a".into());
-        assert_eq!(translated(outside), Some(WatchEvent::MustRescan));
+        assert_eq!(translated(outside), vec![WatchEvent::MustRescan]);
     }
 }

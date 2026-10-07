@@ -90,7 +90,7 @@ use crate::ports::{
 use crate::progress::Tasks;
 use crate::review::{ReviewId, visible_threads};
 use crate::revisions::Revisions;
-use crate::settle::Settling;
+use crate::settle::{Settled, Settling};
 
 #[derive(Debug)]
 pub enum SessionError {
@@ -723,9 +723,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         Ok((st.revision, retained))
     }
 
-    /// Settles snapshots of the worktree as `settling` reports them and calls
-    /// `on_settled` with each new revision of the changeset on view, until dropped.
-    /// A settled tree that is not on view is not announced: it is not what is shown.
+    /// Settles snapshots of the worktree as `settling` reports them, and looks at the branch
+    /// on view when a ref was written, calling `on_settled` with each new revision of the
+    /// changeset on view, until dropped. A settled tree that is not on view is not announced:
+    /// it is not what is shown.
     pub async fn follow<W: Watcher + Send, C: Clock + Send + Sync>(
         &self,
         mut settling: Settling<W, C>,
@@ -734,7 +735,15 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         self.set_degraded(settling.degraded());
         loop {
             let scan = match settling.next_settled(&self.acquisition).await {
-                Ok(scan) => scan,
+                Ok(Settled::Tree(scan)) => scan,
+                Ok(Settled::RefsMoved) => {
+                    match self.observe().await {
+                        Ok(Some(revision)) => on_settled(revision),
+                        Ok(None) => {}
+                        Err(e) => eprintln!("vet: could not look at the branch on view: {e}"),
+                    }
+                    continue;
+                }
                 Err(e) => {
                     eprintln!("vet: reconciliation failed: {}", e.0);
                     continue;

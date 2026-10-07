@@ -38,7 +38,7 @@ use windows_sys::Win32::System::Threading::{
     CreateEventW, INFINITE, ResetEvent, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
 };
 
-use super::dirty_event;
+use super::dirty_events;
 
 const BUFFER_BYTES: usize = 64 * 1024;
 const REOPEN_ATTEMPTS: u32 = 5;
@@ -274,25 +274,24 @@ fn run(
         }
     };
     loop {
-        let event = match watch.arm().and_then(|()| watch.wait(stop)) {
+        let events = match watch.arm().and_then(|()| watch.wait(stop)) {
             Ok(Completion::Stopped) => return,
-            Ok(Completion::Overflow) => WatchEvent::MustRescan,
+            Ok(Completion::Overflow) => vec![WatchEvent::MustRescan],
             Ok(Completion::Changes(names)) => {
-                match dirty_event(root, names.iter().map(|name| PathBuf::from(root).join(name))) {
-                    Some(event) => event,
-                    None => continue,
-                }
+                dirty_events(root, names.iter().map(|name| PathBuf::from(root).join(name)))
             }
             Err(_) => {
                 let Some(reopened) = reopen(root, buffer_bytes, stop, tx) else {
                     return;
                 };
                 watch = reopened;
-                WatchEvent::MustRescan
+                vec![WatchEvent::MustRescan]
             }
         };
-        if tx.send(event).is_err() {
-            return;
+        for event in events {
+            if tx.send(event).is_err() {
+                return;
+            }
         }
     }
 }

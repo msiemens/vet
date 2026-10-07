@@ -1346,6 +1346,130 @@ async fn a_branch_is_listed_opened_as_the_changeset_on_view_and_left_again_for_e
     assert_eq!(m.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.txt"]);
 }
 
+/// A repository with a branch `feature` that edits `a.txt`, `main` checked out.
+async fn fixture_with_feature() -> Fixture {
+    let fx = fixture(&[("a.txt", &text(30, &[]))], &[]).await;
+    let p = fx.repo.path();
+    git(p, &["checkout", "-q", "-b", "feature"]);
+    write(p, "a.txt", &text(30, &[3]));
+    git(p, &["commit", "-q", "-a", "-m", "feature"]);
+    git(p, &["checkout", "-q", "main"]);
+    fx
+}
+
+/// Commits `content` as `a.txt` to `branch` from a second checkout of the repository, so the
+/// one the app watches sees only the branch's ref move.
+fn commit_elsewhere(repo: &Path, checkout: &Path, branch: &str, content: &str) {
+    if !checkout.exists() {
+        git(
+            repo,
+            &["worktree", "add", "-q", "--detach", checkout.to_str().unwrap(), "main"],
+        );
+    }
+    git(checkout, &["checkout", "-q", branch]);
+    write(checkout, "a.txt", content);
+    git(checkout, &["commit", "-q", "-a", "-m", "more"]);
+    git(checkout, &["checkout", "-q", "--detach", "main"]);
+}
+
+async fn version_count(client: &Client, project: ProjectId) -> usize {
+    match client.call(Request::Versions { project }).await.unwrap() {
+        Response::Versions { versions } => versions.len(),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Opens `name` as the changeset on view and starts its review with the first mark.
+async fn review_branch(client: &mut Client, project: ProjectId, name: &str) {
+    client
+        .call(Request::OpenChangeset {
+            project,
+            changeset: ChangesetKey::Branch { name: name.into() },
+        })
+        .await
+        .unwrap();
+    let Event::ChangesetOpened { revision, .. } = client.event().await else {
+        panic!("not told which changeset is on view")
+    };
+    client.toggle_hunk(project, revision, 0).await;
+    assert_eq!(version_count(client, project).await, 1);
+}
+
+#[tokio::test]
+async fn a_commit_to_the_branch_on_view_is_its_next_version_without_opening_it_again() {
+    let fx = fixture_with_feature().await;
+    let p = fx.repo.path();
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, p).await;
+    review_branch(&mut client, project, "feature").await;
+
+    let other = tempfile::tempdir().unwrap();
+    commit_elsewhere(p, &other.path().join("wt"), "feature", &text(30, &[3, 20]));
+
+    let revision = client.settled().await;
+    assert_eq!(version_count(&client, project).await, 2);
+    let m = client.manifest(project).await;
+    assert_eq!(m.revision, revision);
+    assert_eq!(m.files[0].hunks.len(), 2, "the new commit is in the changeset");
+}
+
+#[tokio::test]
+async fn a_fetch_that_moves_the_remote_branch_on_view_is_its_next_version() {
+    let fx = fixture_with_feature().await;
+    let p = fx.repo.path();
+    let scratch = tempfile::tempdir().unwrap();
+    let remote = scratch.path().join("remote.git");
+    git(
+        scratch.path(),
+        &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()],
+    );
+    git(p, &["remote", "add", "origin", remote.to_str().unwrap()]);
+    git(p, &["push", "-q", "origin", "main", "feature"]);
+    let clone = scratch.path().join("clone");
+    git(
+        scratch.path(),
+        &["clone", "-q", remote.to_str().unwrap(), clone.to_str().unwrap()],
+    );
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, p).await;
+    review_branch(&mut client, project, "origin/feature").await;
+
+    git(&clone, &["checkout", "-q", "feature"]);
+    write(&clone, "a.txt", &text(30, &[3, 20]));
+    git(&clone, &["commit", "-q", "-a", "-m", "more"]);
+    git(&clone, &["push", "-q", "origin", "feature"]);
+    git(p, &["fetch", "-q", "origin"]);
+
+    // The app fetches by itself on opening, and says so with `BaseChanged`.
+    loop {
+        match client.event().await {
+            Event::BaseChanged { .. } => {}
+            Event::SnapshotSettled { .. } => break,
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(version_count(&client, project).await, 2);
+}
+
+#[tokio::test]
+async fn a_commit_to_another_branch_leaves_the_branch_on_view_alone() {
+    let fx = fixture_with_feature().await;
+    let p = fx.repo.path();
+    git(p, &["branch", "other", "main"]);
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, p).await;
+    review_branch(&mut client, project, "feature").await;
+    let revision = client.manifest(project).await.revision;
+
+    let scratch = tempfile::tempdir().unwrap();
+    commit_elsewhere(p, &scratch.path().join("wt"), "other", &text(30, &[9]));
+
+    tokio::time::sleep(Duration::from_millis(900)).await;
+    assert!(client.no_event());
+    assert_eq!(version_count(&client, project).await, 1);
+    assert_eq!(client.manifest(project).await.revision, revision);
+}
+
 #[tokio::test]
 async fn every_local_branch_is_listed_however_old_and_whatever_its_name() {
     let fx = fixture(&[("a.txt", &text(10, &[]))], &[]).await;

@@ -127,30 +127,47 @@ impl Watcher for FsWatcher {
     }
 }
 
-/// Maps changed absolute paths to `Dirty` (root-relative, `/`-separated); `None` when
-/// nothing changed that matters. Paths outside the root or `.git/HEAD` and
+/// Maps changed absolute paths to events: `Dirty` paths (root-relative, `/`-separated), empty
+/// when nothing changed that matters. Paths outside the root or `.git/HEAD` and
 /// `.git/index` (branch switches and commits change snapshot identity without
-/// touching the worktree) force `MustRescan`; the rest of `.git` is ignored.
-fn dirty_event<P: AsRef<Path>>(root: &Path, paths: impl IntoIterator<Item = P>) -> Option<WatchEvent> {
+/// touching the worktree) force `MustRescan`; a change below `.git/refs` or to
+/// `.git/packed-refs` (a commit on any branch, a fetch) is `RefsMoved`, besides
+/// whatever else the paths say; the rest of `.git` is ignored.
+fn dirty_events<P: AsRef<Path>>(root: &Path, paths: impl IntoIterator<Item = P>) -> Vec<WatchEvent> {
     let mut dirty = Vec::new();
+    let mut refs_moved = false;
+    let mut rescan = false;
     for path in paths {
         let Ok(relative) = path.as_ref().strip_prefix(root) else {
-            return Some(WatchEvent::MustRescan);
+            rescan = true;
+            continue;
         };
         // A name that cannot be told apart from the repository's is a reason to look at everything.
         let Ok(path) = paths::from_relative(relative) else {
-            return Some(WatchEvent::MustRescan);
+            rescan = true;
+            continue;
         };
         let mut parts = path.0.split(|&b| b == b'/');
         if parts.next() == Some(b".git".as_slice()) {
-            if matches!(parts.next(), Some(b"HEAD" | b"index")) {
-                return Some(WatchEvent::MustRescan);
+            match parts.next() {
+                Some(b"HEAD" | b"index") => rescan = true,
+                Some(b"refs" | b"packed-refs") => refs_moved = true,
+                _ => {}
             }
             continue;
         }
         dirty.push(path);
     }
-    (!dirty.is_empty()).then_some(WatchEvent::Dirty(dirty))
+    let mut events = Vec::new();
+    if rescan {
+        events.push(WatchEvent::MustRescan);
+    } else if !dirty.is_empty() {
+        events.push(WatchEvent::Dirty(dirty));
+    }
+    if refs_moved {
+        events.push(WatchEvent::RefsMoved);
+    }
+    events
 }
 
 #[cfg(test)]

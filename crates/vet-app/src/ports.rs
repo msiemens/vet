@@ -32,6 +32,8 @@ pub enum WatchEvent {
     MustRescan,
     /// The watcher fell back to polling; implies `MustRescan`.
     Degraded(Degraded),
+    /// A branch ref was written: a commit on any branch, or a fetch.
+    RefsMoved,
 }
 
 /// Why watching is polling-only; the session status surfaces it (§4.1, §6.4).
