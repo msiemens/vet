@@ -6,7 +6,7 @@
   background: var(--bg-editor);
 }
 /* An editor is as wide as its longest line, so a card keeps to the width of what is visible and
-   stays there while the view scrolls sideways. `cqw` is the width of the nearest container: the
+   stays there while the editor scrolls sideways. `cqw` is the width of the nearest container: the
    view (`ChangesetView`), or one pane of a side by side editor (`section.css`). The card starts
    in the code column, right of the gutters, and does not grow past a reading width. */
 .vet-thread {

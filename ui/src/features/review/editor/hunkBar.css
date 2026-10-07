@@ -17,6 +17,14 @@
   background: color-mix(in srgb, var(--accent) 16%, var(--bg-hunk));
   box-shadow: inset 3px 0 var(--accent);
 }
+/* An editor scrolls sideways by itself, and its bars stay where the code column is visible: they
+   start right of the gutters and are as wide as the column's visible part. `cqw` is the width of
+   the nearest container: the view (`ChangesetView`), or one pane of a side by side editor. */
+.cm-content > .vet-hunk {
+  position: sticky;
+  left: var(--vet-gutters, 0px);
+  width: calc(100cqw - var(--vet-gutters, 0px));
+}
 .vet-hunk-text {
   font-size: var(--fs-mono-s);
   white-space: pre;

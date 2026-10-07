@@ -147,6 +147,8 @@ export function reviewField(side: SideConfig, states: HunkState[]): StateField<R
           return i < 0 ? null : gutterMarkers[CLASS[state.states[i]]];
         },
       }),
+      // The bars start right of the gutters and stay there while the editor scrolls sideways.
+      gutterWidth,
     ],
   });
 }
