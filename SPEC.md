@@ -472,6 +472,7 @@ Also included: run-target-in-place; fetch-only restore with shared caches.
 - Search in the open file (find with next/previous, matches marked) and search in the project (text across the repository's files, results grouped by file, opening a result at its line)
 - While a file's tab is active, the changed-symbols panel lists only that file's symbols
 - The changed-symbols panel shows its progress while it loads (files done of files to analyse) and lists symbols as their files are done
+- Language-server answers that depend only on a file's text (its symbols) are cached across restarts, keyed by language, server version and content
 - Jump to Source (F4) from the changed-symbols list opens the selected symbol's definition
 - Clicking into a changed symbol in any editor (Changes, a diff or file tab) selects it in the changed-symbols panel
 - Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
