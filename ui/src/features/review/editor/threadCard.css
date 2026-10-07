@@ -5,17 +5,16 @@
 .vet-thread-block {
   background: var(--bg-editor);
 }
-/* An editor is as wide as its longest line, so a card keeps to the width of the view (a container
-   of `ChangesetView`) and stays at the left edge while the view scrolls sideways. It covers the
-   gutters (above their z-index) and starts its text where the code starts. */
+/* An editor is as wide as its longest line, so a card keeps to the width of what is visible and
+   stays there while the view scrolls sideways. `cqw` is the width of the nearest container: the
+   view (`ChangesetView`), or one pane of a side by side editor (`section.css`). The card starts
+   in the code column, right of the gutters, and does not grow past a reading width. */
 .vet-thread {
   position: sticky;
-  left: 0;
-  z-index: 201;
-  width: 100cqw;
-  margin-left: calc(-1 * var(--vet-gutters, 0px));
+  left: var(--vet-gutters, 0px);
+  width: min(calc(100cqw - var(--vet-gutters, 0px)), var(--w-thread));
   box-sizing: border-box;
-  padding: 6px 10px 6px calc(var(--vet-gutters, 0px) + 6px);
+  padding: 6px 10px 6px 6px;
   background: var(--bg-sheet);
   border-top: 1px solid var(--line-soft);
   border-bottom: 1px solid var(--line-soft);

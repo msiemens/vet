@@ -101,6 +101,8 @@
   --w-splitter: 5px;
   --w-chev: 14px;
   --w-indent: 12px;
+  /* A comment thread card, as wide as a comfortable line of text. */
+  --w-thread: 720px;
   --radius: 5px;
   /* Floating sheets: menus, popovers, dialogs, toasts. */
   --radius-sheet: 8px;

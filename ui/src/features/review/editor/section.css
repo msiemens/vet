@@ -112,6 +112,11 @@
 .cm-mergeViewEditors {
   overflow: visible;
 }
+/* Each pane of a side by side editor clips its long lines; it is the container thread cards size
+   themselves to (`threadCard.css`), not the whole view. */
+.file .cm-mergeViewEditor {
+  container-type: inline-size;
+}
 
 /* An unchanged file's text tab: one editor filling the pane, scrolling by itself. */
 .vet-text .cm-editor {
