@@ -461,7 +461,7 @@ Also included: fetch-only restore with shared caches.
 - Jump to Source (F4) from the changed-symbols list opens the selected symbol's definition
 - Clicking into a changed symbol in any editor (Changes, a diff or file tab) selects it in the changed-symbols panel
 - Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
-- A changed file's file view marks its added, changed and removed lines (removed ones where they were)
+- A changed file's file view marks its added, changed and removed lines (removed ones where they were), coloured by review state; a mark opens the hunk's old lines with the hunk bar's actions (toggle seen, comment, open in the diff), so a change can be marked seen in context. Next/previous hunk and Space work there as in the diff (design to be iterated)
 - The Changes tab marks the file the viewer is in (in the tab and the file tree), and reopens the review at the scroll position it was left at
 - The base chosen while browsing is kept per repository: reopening the repository without an open review shows the tree against it again (§5.3)
 
