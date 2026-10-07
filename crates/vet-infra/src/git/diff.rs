@@ -6,7 +6,6 @@ use std::convert::Infallible;
 
 use gix::ObjectId;
 use gix::bstr::ByteSlice;
-use gix::diff::blob::{Algorithm, Diff, InternedInput, sources::byte_lines};
 use gix::diff::rewrites::{Tracker, tracker::ChangeKind};
 use gix::diff::tree::visit::Action;
 use gix::objs::{
@@ -15,10 +14,10 @@ use gix::objs::{
 };
 use vet_app::ports::GitError;
 use vet_core::content::{
-    BlobId, BlobSource, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextChange, NonTextKind, RenameMap,
-    RepoPath, Snapshot, SnapshotDiff, is_binary,
+    BlobId, BlobSource, EntryKind, FileDiff, FileEntry, NonTextChange, NonTextKind, RenameMap, RepoPath, Snapshot,
+    SnapshotDiff, is_binary,
 };
-use vet_core::hunks::join_close_hunks;
+use vet_core::hunks::line_hunks;
 
 use super::scan::Worktree;
 use super::{BlobCache, err};
@@ -289,58 +288,4 @@ fn classify(change: Change, contents: &BTreeMap<BlobId, Vec<u8>>, out: &mut Snap
 
 fn key_old(c: &Change) -> &RepoPath {
     &c.old.as_ref().expect("both sides").0
-}
-
-/// 0-based line hunks, histogram algorithm. Hunks with almost nothing between them are one
-/// hunk (see [`join_close_hunks`]).
-pub fn line_hunks(old: &[u8], new: &[u8]) -> Vec<Hunk> {
-    let input = InternedInput::new(byte_lines(old), byte_lines(new));
-    let mut diff = Diff::compute(Algorithm::Histogram, &input);
-    diff.postprocess_lines(&input);
-    let range = |r: std::ops::Range<u32>| LineRange {
-        start: r.start,
-        end: r.end,
-    };
-    let old_lines: Vec<&[u8]> = byte_lines(old).collect();
-    join_close_hunks(
-        diff.hunks().map(|h| Hunk {
-            old: range(h.before),
-            new: range(h.after),
-        }),
-        |r| String::from_utf8_lossy(&old_lines[r.start as usize..r.end as usize].concat()).into_owned(),
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn spans(old: &str, new: &str) -> Vec<((u32, u32), (u32, u32))> {
-        line_hunks(old.as_bytes(), new.as_bytes())
-            .iter()
-            .map(|h| ((h.old.start, h.old.end), (h.new.start, h.new.end)))
-            .collect()
-    }
-
-    #[test]
-    fn hunks_with_little_between_them_are_joined() {
-        assert_eq!(spans("a\n\nb\n", "A\n\nB\n"), [((0, 3), (0, 3))]);
-        assert_eq!(spans("a\n\nb\n\nc\n", "A\n\nB\n\nC\n"), [((0, 5), (0, 5))]);
-        assert_eq!(spans("a\r\n\r\nb\r\n", "A\r\n\r\nB\r\n"), [((0, 3), (0, 3))]);
-        assert_eq!(spans("a\n\n\nb\n", "A\n\n\nB\n"), [((0, 4), (0, 4))]);
-        assert_eq!(spans("a\n}\nb\n", "A\n}\nB\n"), [((0, 3), (0, 3))]);
-    }
-
-    #[test]
-    fn hunks_with_a_line_between_them_stay_apart() {
-        assert_eq!(
-            spans("a\nxyz\nb\n", "A\nxyz\nB\n"),
-            [((0, 1), (0, 1)), ((2, 3), (2, 3))]
-        );
-        assert_eq!(spans("a\n \nb\n", "A\n \nB\n"), [((0, 3), (0, 3))]);
-        assert_eq!(
-            spans("a\n   \nb\n", "A\n   \nB\n"),
-            [((0, 1), (0, 1)), ((2, 3), (2, 3))]
-        );
-    }
 }

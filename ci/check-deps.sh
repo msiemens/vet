@@ -42,7 +42,8 @@ for crate in $PURE; do
     jq -r --arg c "$crate" \
         '.packages[] | select(.name == $c) | .dependencies[] | select(.path == null) | .name' \
         <<<"$metadata" | while read -r dep; do
-        if [[ "$dep" =~ $DENY ]]; then
+        # The line diff is pure computation; hunks are domain policy.
+        if [[ "$dep" =~ $DENY && "$dep" != gix-imara-diff ]]; then
             echo "FORBIDDEN: $crate depends on $dep (IO, git, or async runtime in a pure crate)"
             exit 1
         fi

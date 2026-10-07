@@ -30,8 +30,6 @@ use stat_cache::StatCache;
 
 pub(crate) use blob_cache::BlobCache;
 
-pub use diff::line_hunks;
-
 /// Default capture size cap (§6.1).
 pub const DEFAULT_CAP: u64 = 50 * 1024 * 1024;
 

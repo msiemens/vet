@@ -4260,6 +4260,7 @@ name = "vet-core"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "gix-imara-diff",
  "globset",
  "similar",
  "unicode-normalization",
