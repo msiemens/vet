@@ -40,7 +40,7 @@ export interface Hooks extends BarActions, SemanticHooks {
 }
 
 export interface Handle {
-  /** The editable target-side view. */
+  /** The target-side view. */
   view: EditorView;
   views: EditorView[];
   dispatchAll(effect: StateEffect<unknown>): void;
@@ -84,6 +84,8 @@ export function mountFile(
     lineNumbers(),
     highlightExtension(loaded.targetHighlights),
     barText,
+    // Vet never writes the tree: both sides keep a caret and selection but take no edits.
+    EditorState.readOnly.of(true),
     ...extra,
     EditorView.domEventHandlers({ keydown: (event) => (hooks.keydown?.(event), false) }),
     ...semanticExtensions(path, "target", hooks, shown),
@@ -116,7 +118,6 @@ export function mountFile(
     highlightExtension(loaded.baseHighlights),
     barText,
     EditorState.readOnly.of(true),
-    EditorView.editable.of(false),
     ...semanticExtensions(path, "base", hooks, shown),
   ];
   const merge = new MergeView({
