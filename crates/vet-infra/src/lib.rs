@@ -26,5 +26,7 @@ pub mod restore;
 /// `vet_app::ports::ServerResolver`.
 pub mod servers;
 
+pub mod timing;
+
 /// `RepoPath` to and from filesystem paths.
 pub(crate) mod paths;

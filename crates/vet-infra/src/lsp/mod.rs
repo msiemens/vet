@@ -133,6 +133,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
         backend: &Backend,
         policy: AnalysisPolicy,
     ) -> Result<LspServer, LaunchError> {
+        let started = std::time::Instant::now();
         let config = backend.config();
         let root = std::fs::canonicalize(root).map_err(|e| LaunchError::Spawn(format!("{}: {e}", root.display())))?;
         let Prepared {
@@ -165,6 +166,10 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
                 self.ready_timeout.as_secs()
             ))));
         }
+        crate::timing::log(
+            || format!("starting {} on {} ({tree:?})", config.binary, root.display()),
+            started.elapsed(),
+        );
         Ok(LspServer::new(conn, root, tree, diagnostics))
     }
 }

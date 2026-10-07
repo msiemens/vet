@@ -282,6 +282,23 @@ impl Orchestrator {
 
 impl Handler for Orchestrator {
     async fn handle(&self, request: Request, events: Events) -> Result<Response, String> {
+        if !vet_infra::timing::enabled() {
+            return self.answer(request, events).await;
+        }
+        let name = format!("{request:?}")
+            .split([' ', '{', '('])
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        let started = std::time::Instant::now();
+        let response = self.answer(request, events).await;
+        vet_infra::timing::log(|| format!("request {name}"), started.elapsed());
+        response
+    }
+}
+
+impl Orchestrator {
+    async fn answer(&self, request: Request, events: Events) -> Result<Response, String> {
         match request {
             Request::Ping { payload } => Ok(Response::Pong { payload }),
             Request::OpenSession { repo } => {

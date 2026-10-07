@@ -6,7 +6,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use lsp_types as lsp;
@@ -27,7 +26,7 @@ use super::capabilities::Diagnostics;
 use super::rpc::{Connection, State};
 use super::uri::{file_uri, path_of};
 use crate::language::language_id;
-use crate::paths;
+use crate::{paths, timing};
 
 /// Documents kept open at once; the oldest are closed beyond this.
 const MAX_OPEN_DOCS: usize = 64;
@@ -322,20 +321,19 @@ fn flatten_hover(contents: lsp::HoverContents) -> String {
     }
 }
 
-/// With `VET_LSP_TIMING=1`, one stderr line per request: how long making the
-/// server see the file took (opening it includes waiting for the server to go
-/// quiet) and how long the request itself took.
+/// How long making the server see the file took (opening it includes waiting
+/// for the server to go quiet) and how long the request itself took.
 fn log_timing(request: &str, file: &RepoPath, changed: bool, sync: Duration, answer: Duration) {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    if !*ENABLED.get_or_init(|| std::env::var_os("VET_LSP_TIMING").is_some_and(|v| v == "1")) {
-        return;
-    }
-    eprintln!(
-        "vet lsp: {request} {}: sync {} ms{}, request {} ms",
-        file.to_string_lossy(),
-        sync.as_millis(),
-        if changed { " (opened or changed)" } else { "" },
-        answer.as_millis()
+    timing::log(
+        || {
+            format!(
+                "{request} {} (sync {} ms{})",
+                file.to_string_lossy(),
+                sync.as_millis(),
+                if changed { ", opened or changed" } else { "" },
+            )
+        },
+        sync + answer,
     );
 }
 
