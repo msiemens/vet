@@ -14,10 +14,10 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::task::{Poll, Waker};
 
 use vet_core::content::{RepoPath, SnapshotId};
 
+use crate::once::{Producer, Shared};
 use crate::policy::AnalysisPolicy;
 use crate::ports::{
     At, Backend, BackendId, Diagnostic, LanguageServer, LaunchError, Location, Materializer, NotMaterializable,
@@ -46,7 +46,7 @@ pub enum PoolError {
     /// The backend would execute project code and the policy forbids it. The UI
     /// shows an "analysis limited" marker for the language (§7.5).
     AnalysisLimited(BackendId),
-    /// Another caller's start of the same server failed or was abandoned.
+    /// Another caller's start of the same server failed.
     StartFailed(String),
 }
 
@@ -156,59 +156,12 @@ impl<S: LanguageServer, G: Send + Sync + 'static> LanguageServer for Entry<S, G>
     }
 }
 
-/// The result of a start, shared with everyone who waited for it.
-struct StartCell<S, G> {
-    inner: Mutex<StartInner<S, G>>,
-}
-
-struct StartInner<S, G> {
-    result: Option<Result<Arc<Entry<S, G>>, String>>,
-    wakers: Vec<Waker>,
-    /// Callers waiting; counted under the pool lock so the starter can give
-    /// each of them a lease.
-    waiters: usize,
-}
-
-impl<S, G> StartCell<S, G> {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(StartInner {
-                result: None,
-                wakers: Vec::new(),
-                waiters: 0,
-            }),
-        })
-    }
-
-    fn complete(&self, result: Result<Arc<Entry<S, G>>, String>) {
-        let wakers = {
-            let mut inner = self.inner.lock().expect("not poisoned");
-            if inner.result.is_some() {
-                return;
-            }
-            inner.result = Some(result);
-            std::mem::take(&mut inner.wakers)
-        };
-        wakers.into_iter().for_each(Waker::wake);
-    }
-
-    async fn wait(&self) -> Result<Arc<Entry<S, G>>, String> {
-        std::future::poll_fn(|cx| {
-            let mut inner = self.inner.lock().expect("not poisoned");
-            match &inner.result {
-                Some(result) => Poll::Ready(result.clone()),
-                None => {
-                    inner.wakers.push(cx.waker().clone());
-                    Poll::Pending
-                }
-            }
-        })
-        .await
-    }
-}
+/// How a start ended for the callers who waited for it: the server is in the
+/// pool (`Ok`), or the start failed for this reason.
+type Started = Result<(), String>;
 
 enum Slot<S, G> {
-    Starting(Arc<StartCell<S, G>>),
+    Starting(Arc<Shared<Started>>),
     Running(Arc<Entry<S, G>>),
 }
 
@@ -263,20 +216,28 @@ impl<M: Materializer, L: ServerLauncher> Lease<'_, M, L> {
     }
 }
 
-/// Removes an unfinished start if its starter is dropped, so waiters fail
-/// instead of hanging.
+/// A start in progress. If its starter is dropped before the start ended, the
+/// slot is freed and the waiters are woken, so one of them starts the server.
 struct StartGuard<'p, M: Materializer, L: ServerLauncher> {
     pool: &'p Pool<M, L>,
     key: PoolKey,
-    cell: Arc<StartCell<L::Server, M::Guard>>,
-    done: bool,
+    /// Taken when the start ended.
+    producer: Option<Producer<Started>>,
+}
+
+impl<M: Materializer, L: ServerLauncher> StartGuard<'_, M, L> {
+    fn end(&mut self, outcome: Started) {
+        if let Some(producer) = self.producer.take() {
+            producer.finish(outcome);
+        }
+    }
 }
 
 impl<M: Materializer, L: ServerLauncher> Drop for StartGuard<'_, M, L> {
     fn drop(&mut self) {
-        if !self.done {
+        // The slot goes before the producer is dropped: a woken waiter must find it free.
+        if self.producer.is_some() {
             self.pool.lock().slots.remove(&self.key);
-            self.cell.complete(Err("the start was abandoned".into()));
         }
     }
 }
@@ -298,79 +259,79 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
     }
 
     /// The server for `key`: the running one, the one being started, or a new one.
+    /// A caller that waited for a start which was abandoned or whose server did
+    /// not stay (it was restarted meanwhile) asks again, and may start the
+    /// server itself.
     pub async fn lease(&self, key: &PoolKey, backend: &Backend) -> Result<Lease<'_, M, L>, PoolError> {
         admit(backend, key.policy)?;
         enum Plan<S, G> {
             Join(Arc<Entry<S, G>>),
-            Wait(Arc<StartCell<S, G>>),
-            Start(Arc<StartCell<S, G>>, u64),
+            Wait(Arc<Shared<Started>>),
+            Start(Producer<Started>, u64),
         }
-        let plan = {
-            let mut state = self.lock();
-            state.tick += 1;
-            let tick = state.tick;
-            let generation = state.generations.get(&key.backend).copied().unwrap_or(0);
-            match state.slots.get(key) {
-                Some(Slot::Running(entry)) => {
-                    entry.leases.fetch_add(1, Ordering::SeqCst);
-                    entry.used.store(tick, Ordering::SeqCst);
-                    Plan::Join(entry.clone())
+        loop {
+            let plan = {
+                let mut state = self.lock();
+                state.tick += 1;
+                let tick = state.tick;
+                let generation = state.generations.get(&key.backend).copied().unwrap_or(0);
+                match state.slots.get(key) {
+                    Some(Slot::Running(entry)) => {
+                        entry.leases.fetch_add(1, Ordering::SeqCst);
+                        entry.used.store(tick, Ordering::SeqCst);
+                        Plan::Join(entry.clone())
+                    }
+                    Some(Slot::Starting(start)) => Plan::Wait(start.clone()),
+                    None => {
+                        let (start, producer) = Shared::start();
+                        state.slots.insert(key.clone(), Slot::Starting(start));
+                        Plan::Start(producer, generation)
+                    }
                 }
-                Some(Slot::Starting(cell)) => {
-                    cell.inner.lock().expect("not poisoned").waiters += 1;
-                    Plan::Wait(cell.clone())
-                }
-                None => {
-                    let cell = StartCell::new();
-                    state.slots.insert(key.clone(), Slot::Starting(cell.clone()));
-                    Plan::Start(cell, generation)
-                }
-            }
-        };
-        let entry = match plan {
-            Plan::Join(entry) => entry,
-            Plan::Wait(cell) => cell.wait().await.map_err(PoolError::StartFailed)?,
-            Plan::Start(cell, generation) => self.start(key, backend, cell, generation).await?,
-        };
-        Ok(Lease {
-            pool: self,
-            entry: Some(entry),
-        })
+            };
+            let entry = match plan {
+                Plan::Join(entry) => entry,
+                Plan::Wait(start) => match start.wait().await {
+                    Some(Err(why)) => return Err(PoolError::StartFailed(why)),
+                    Some(Ok(())) | None => continue,
+                },
+                Plan::Start(producer, generation) => self.start(key, backend, producer, generation).await?,
+            };
+            return Ok(Lease {
+                pool: self,
+                entry: Some(entry),
+            });
+        }
     }
 
     async fn start(
         &self,
         key: &PoolKey,
         backend: &Backend,
-        cell: Arc<StartCell<L::Server, M::Guard>>,
+        producer: Producer<Started>,
         generation: u64,
     ) -> Result<Arc<EntryOf<M, L>>, PoolError> {
         let mut guard = StartGuard {
             pool: self,
             key: key.clone(),
-            cell: cell.clone(),
-            done: false,
+            producer: Some(producer),
         };
-        let launched = self.launch(key, backend).await;
-        let fail = |guard: &mut StartGuard<'_, M, L>, e: PoolError| {
-            guard.done = true;
-            self.lock().slots.remove(&guard.key);
-            cell.complete(Err(e.to_string()));
-            e
-        };
-        let (server, cache, dir_guard) = match launched {
+        let (server, cache, dir_guard) = match self.launch(key, backend).await {
             Ok(parts) => parts,
-            Err(e) => return Err(fail(&mut guard, e)),
+            Err(e) => {
+                self.lock().slots.remove(key);
+                guard.end(Err(e.to_string()));
+                return Err(e);
+            }
         };
         let entry = {
             let mut state = self.lock();
             let stale = state.generations.get(&key.backend).copied().unwrap_or(0) != generation;
-            let waiters = cell.inner.lock().expect("not poisoned").waiters;
             state.tick += 1;
             let entry = Arc::new(Entry {
                 server,
                 cache,
-                leases: AtomicUsize::new(1 + waiters),
+                leases: AtomicUsize::new(1),
                 used: AtomicU64::new(state.tick),
                 retired: AtomicBool::new(stale),
                 _guard: dir_guard,
@@ -382,8 +343,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             }
             entry
         };
-        guard.done = true;
-        cell.complete(Ok(entry.clone()));
+        guard.end(Ok(()));
         Ok(entry)
     }
 
@@ -511,6 +471,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;
+    use std::task::{Context, Waker};
 
     use vet_core::content::Hash;
 
@@ -733,6 +694,57 @@ mod tests {
             counters.fail_start.store(false, Ordering::SeqCst);
             pool.lease(&key, &backend(true)).await.unwrap().release().await;
             assert_eq!(counters.started.load(Ordering::SeqCst), 2);
+        });
+    }
+
+    #[test]
+    fn a_waiter_takes_over_a_start_whose_caller_gave_up() {
+        let (pool, counters) = pool(2);
+        let key = snapshot_key(1);
+        let be = backend(true);
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut starter = Box::pin(pool.lease(&key, &be));
+        let mut first = Box::pin(pool.lease(&key, &be));
+        let mut second = Box::pin(pool.lease(&key, &be));
+        assert!(starter.as_mut().poll(&mut cx).is_pending());
+        assert!(first.as_mut().poll(&mut cx).is_pending());
+        assert!(second.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(counters.started.load(Ordering::SeqCst), 1);
+
+        drop(starter);
+        assert!(pool.keys().is_empty());
+        block_on(async {
+            let (first, second) = join(first, second).await;
+            let (first, second) = (first.unwrap(), second.unwrap());
+            assert_eq!(counters.started.load(Ordering::SeqCst), 2);
+            assert!(Arc::ptr_eq(
+                first.entry.as_ref().unwrap(),
+                second.entry.as_ref().unwrap()
+            ));
+            assert_eq!(first.leases.load(Ordering::SeqCst), 2);
+            assert_eq!(pool.keys(), [snapshot_key(1)]);
+            first.release().await;
+            second.release().await;
+        });
+        // The abandoned start's directory is gone, the taken-over one's is kept.
+        assert_eq!(counters.guards_dropped.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_waiter_that_gave_up_holds_no_lease() {
+        let (pool, _) = pool(2);
+        let key = snapshot_key(1);
+        let be = backend(true);
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut starter = Box::pin(pool.lease(&key, &be));
+        let mut waiter = Box::pin(pool.lease(&key, &be));
+        assert!(starter.as_mut().poll(&mut cx).is_pending());
+        assert!(waiter.as_mut().poll(&mut cx).is_pending());
+        drop(waiter);
+        block_on(async {
+            let lease = starter.await.unwrap();
+            assert_eq!(lease.leases.load(Ordering::SeqCst), 1);
+            lease.release().await;
         });
     }
 
