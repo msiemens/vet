@@ -12,7 +12,8 @@ mod tests;
 use vet_core::content::{Hunk, RepoPath};
 use vet_core::review::Side;
 
-use crate::ports::{At, Pos};
+use crate::ports::{At, Pos, Provenance};
+use crate::query::{Asked, SemanticError};
 
 pub use changed::{BaseTexts, Change, ChangedSymbol, Changes, Gap, changed_symbols};
 pub use impact::{SymbolImpact, impact};
@@ -30,7 +31,8 @@ pub struct Bounds {
 pub struct Inputs {
     pub analysis: &'static str,
     pub bounds: Option<Bounds>,
-    /// The primitive queries consulted, e.g. `incoming_calls(target:src/a.rs:3:4)`.
+    /// The primitive queries consulted and who answered each, e.g.
+    /// `incoming_calls(target:src/a.rs:3:4) [rust-analyzer 1.91.0]`.
     pub primitives: Vec<String>,
     /// The diff hunks consulted, e.g. `src/a.rs: old 3..5, new 3..6`.
     pub hunks: Vec<String>,
@@ -46,16 +48,22 @@ impl Inputs {
         }
     }
 
-    fn query(&mut self, op: &str, side: Side, file: &RepoPath, pos: Option<Pos>) {
+    /// Records a primitive query and, if it was answered, the server that answered
+    /// and whether the answer was reused (I6): `references(target:a.rs:3:4) [rust-analyzer 1.91, cached]`.
+    fn query(&mut self, op: &str, side: Side, file: &RepoPath, pos: Option<Pos>, answered_by: Option<&Provenance>) {
         let side = match side {
             Side::Base => "base",
             Side::Target => "target",
         };
         let file = file.to_string_lossy();
-        self.primitives.push(match pos {
+        let mut query = match pos {
             Some(p) => format!("{op}({side}:{file}:{}:{})", p.line, p.col),
             None => format!("{op}({side}:{file})"),
-        });
+        };
+        if let Some(provenance) = answered_by {
+            query.push_str(&format!(" [{provenance}]"));
+        }
+        self.primitives.push(query);
     }
 
     /// Records the hunks of the file `label` consulted.
@@ -66,8 +74,16 @@ impl Inputs {
         self.hunks.push(format!("{label}: {}", ranges.join(", ")));
     }
 
-    fn query_at(&mut self, op: &str, side: Side, at: &At) {
-        self.query(op, side, &at.file, Some(at.pos));
+    /// Records the query `op` at `at` with its outcome and hands the answer on.
+    fn asked_at<T>(&mut self, op: &str, side: Side, at: &At, result: Asked<T>) -> Result<T, SemanticError> {
+        self.query(
+            op,
+            side,
+            &at.file,
+            Some(at.pos),
+            result.as_ref().ok().map(|a| &a.provenance),
+        );
+        result.map(|a| a.value)
     }
 }
 

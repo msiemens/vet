@@ -5,7 +5,7 @@
 use vet_core::review::Side;
 use vet_highlight::{Syntax, fenced_blocks};
 
-use crate::ports::SymbolInfo;
+use crate::ports::{Answered, Provenance, SymbolInfo};
 use crate::query::{Primitives, SemanticError};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -51,21 +51,23 @@ impl Signature {
 
 /// The signature of `symbol`, looked up on `side`: the declaration in its hover, else the
 /// server's `detail`, which is often less (rust-analyzer's leaves out the name). `None` if the
-/// server has nothing to say.
+/// server has nothing to say. With it comes the server whose hover it was asked of; a hover
+/// that failed leaves none.
 pub async fn signature(
     p: &impl Primitives,
     side: Side,
     symbol: &SymbolInfo,
-) -> Result<Option<Signature>, SemanticError> {
+) -> Result<(Option<Signature>, Option<Provenance>), SemanticError> {
     let hovered = p.hover(side, &symbol.location()).await;
-    if let Ok(Some(text)) = &hovered
+    let by = hovered.as_ref().ok().map(|a| a.provenance.clone());
+    if let Ok(Answered { value: Some(text), .. }) = &hovered
         && let Some(found) = Signature::of_hover(text)
     {
-        return Ok(Some(found));
+        return Ok((Some(found), by));
     }
     match symbol.detail.as_deref().and_then(Signature::of_detail) {
-        Some(found) => Ok(Some(found)),
-        None => hovered.map(|_| None),
+        Some(found) => Ok((Some(found), by)),
+        None => hovered.map(|a| (None, Some(a.provenance))),
     }
 }
 
@@ -75,7 +77,8 @@ mod tests {
 
     use super::*;
     use crate::ports::{At, Diagnostic, Location, Pos, QueryError, Span, Sym};
-    use crate::testutil::block_on;
+    use crate::query::Asked;
+    use crate::testutil::{answered, block_on};
 
     fn fence(code: &str, info: &str) -> Signature {
         Signature {
@@ -125,31 +128,32 @@ mod tests {
     struct Hovering(Result<Option<&'static str>, &'static str>);
 
     impl Primitives for Hovering {
-        async fn document_symbols(&self, _: Side, _: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
-            Ok(vec![])
+        async fn document_symbols(&self, _: Side, _: &RepoPath) -> Asked<Vec<SymbolInfo>> {
+            answered(vec![])
         }
-        async fn text_symbols(&self, _: &RepoPath, _: &str) -> Result<Vec<SymbolInfo>, SemanticError> {
-            Ok(vec![])
+        async fn text_symbols(&self, _: &RepoPath, _: &str) -> Asked<Vec<SymbolInfo>> {
+            answered(vec![])
         }
-        async fn definition(&self, _: Side, _: &At) -> Result<Vec<Location>, SemanticError> {
-            Ok(vec![])
+        async fn definition(&self, _: Side, _: &At) -> Asked<Vec<Location>> {
+            answered(vec![])
         }
-        async fn references(&self, _: Side, _: &At) -> Result<Vec<Location>, SemanticError> {
-            Ok(vec![])
+        async fn references(&self, _: Side, _: &At) -> Asked<Vec<Location>> {
+            answered(vec![])
         }
-        async fn hover(&self, _: Side, _: &At) -> Result<Option<String>, SemanticError> {
-            self.0
-                .map(|text| text.map(String::from))
-                .map_err(|e| SemanticError::Query(QueryError(e.into())))
+        async fn hover(&self, _: Side, _: &At) -> Asked<Option<String>> {
+            match self.0 {
+                Ok(text) => answered(text.map(String::from)),
+                Err(e) => Err(SemanticError::Query(QueryError(e.into()))),
+            }
         }
-        async fn incoming_calls(&self, _: Side, _: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
-            Ok(vec![])
+        async fn incoming_calls(&self, _: Side, _: &At) -> Asked<Vec<SymbolInfo>> {
+            answered(vec![])
         }
-        async fn outgoing_calls(&self, _: Side, _: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
-            Ok(vec![])
+        async fn outgoing_calls(&self, _: Side, _: &At) -> Asked<Vec<SymbolInfo>> {
+            answered(vec![])
         }
-        async fn diagnostics(&self, _: Side, _: &RepoPath) -> Result<Vec<Diagnostic>, SemanticError> {
-            Ok(vec![])
+        async fn diagnostics(&self, _: Side, _: &RepoPath) -> Asked<Vec<Diagnostic>> {
+            answered(vec![])
         }
     }
 
@@ -170,7 +174,9 @@ mod tests {
     fn the_hover_wins_over_the_detail() {
         let server = Hovering(Ok(Some("```rust\npub fn f() -> u32\n```")));
         let found = block_on(signature(&server, Side::Target, &symbol(Some("fn() -> u32"))));
-        assert_eq!(found.unwrap(), Some(fence("pub fn f() -> u32", "rust")));
+        let (found, by) = found.unwrap();
+        assert_eq!(found, Some(fence("pub fn f() -> u32", "rust")));
+        assert_eq!(by.unwrap().server.label, "fake");
     }
 
     #[test]
@@ -179,16 +185,19 @@ mod tests {
             code: "fn() -> u32".into(),
             syntax: Syntax::File,
         });
-        for server in [Hovering(Ok(None)), Hovering(Err("boom"))] {
+        for (server, answered_by_hover) in [(Hovering(Ok(None)), true), (Hovering(Err("boom")), false)] {
             let found = block_on(signature(&server, Side::Base, &symbol(Some("fn() -> u32"))));
-            assert_eq!(found.unwrap(), detail);
+            let (found, by) = found.unwrap();
+            assert_eq!(found, detail);
+            // Only a hover that answered says who did.
+            assert_eq!(by.is_some(), answered_by_hover);
         }
     }
 
     #[test]
     fn without_either_the_answer_is_none_or_the_hovers_error() {
         let silent = block_on(signature(&Hovering(Ok(None)), Side::Target, &symbol(None)));
-        assert_eq!(silent.unwrap(), None);
+        assert_eq!(silent.unwrap().0, None);
         let failed = block_on(signature(&Hovering(Err("boom")), Side::Target, &symbol(None)));
         assert!(failed.is_err());
     }

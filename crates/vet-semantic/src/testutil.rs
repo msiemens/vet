@@ -4,6 +4,26 @@ use std::future::poll_fn;
 use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
+use vet_core::content::Hash;
+
+use crate::ports::{Answered, BackendId, Provenance, ServerIdentity};
+use crate::query::Asked;
+
+/// An answer from a fake server called "fake".
+pub fn answered<T>(value: T) -> Asked<T> {
+    Ok(Answered {
+        value,
+        provenance: Provenance {
+            server: ServerIdentity {
+                backend: BackendId("fake".into()),
+                fingerprint: Hash([0; 32]),
+                label: "fake".into(),
+            },
+            from_cache: false,
+        },
+    })
+}
+
 pub fn block_on<T>(fut: impl Future<Output = T>) -> T {
     let mut fut = pin!(fut);
     let mut cx = Context::from_waker(Waker::noop());

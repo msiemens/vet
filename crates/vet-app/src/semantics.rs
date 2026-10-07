@@ -19,10 +19,10 @@ use vet_semantic::derived::{
 use vet_semantic::join::{bounded, join};
 use vet_semantic::pool::{Pool, Target};
 use vet_semantic::ports::{
-    At, Backend, BackendId, Diagnostic, Location, Materializer, RestoreFailure, ServerLauncher, Severity, Sym,
-    SymbolInfo, prefer_openable,
+    At, Backend, BackendId, Diagnostic, Location, Materializer, Provenance, RestoreFailure, ServerLauncher, Severity,
+    Sym, SymbolInfo, prefer_openable,
 };
-use vet_semantic::query::{Pair, Primitives, Semantic, SemanticError, Served};
+use vet_semantic::query::{Asked, Pair, Primitives, Semantic, SemanticError, Served};
 use vet_semantic::signature::{Signature, signature};
 use vet_semantic::trace;
 
@@ -48,6 +48,26 @@ const REACH_BOUNDS: Bounds = Bounds {
 pub struct Answer<T> {
     pub revision: u32,
     pub result: Result<T, SemanticError>,
+    /// The server that answered and whether the answer was reused (I6); none if no
+    /// server did, or the answer is made of more than one server's.
+    pub provenance: Option<Provenance>,
+}
+
+impl<T> Answer<T> {
+    fn of(revision: u32, asked: Asked<T>) -> Self {
+        match asked {
+            Ok(answered) => Self {
+                revision,
+                result: Ok(answered.value),
+                provenance: Some(answered.provenance),
+            },
+            Err(e) => Self {
+                revision,
+                result: Err(e),
+                provenance: None,
+            },
+        }
+    }
 }
 
 type Fallible<T> = Result<T, SessionError>;
@@ -162,10 +182,7 @@ where
         at: &At,
     ) -> Fallible<Answer<Option<String>>> {
         let pair = self.pair(session, revision).await?;
-        Ok(Answer {
-            revision,
-            result: pair.hover(side, at).await,
-        })
+        Ok(Answer::of(revision, pair.hover(side, at).await))
     }
 
     pub async fn definition(
@@ -176,13 +193,13 @@ where
         at: &At,
     ) -> Fallible<Answer<Vec<Location>>> {
         let pair = self.pair(session, revision).await?;
-        Ok(Answer {
-            revision,
-            result: pair.definition(side, at).await.map(|mut found| {
+        let asked = pair.definition(side, at).await.map(|answered| {
+            answered.map(|mut found| {
                 prefer_openable(&mut found);
                 found
-            }),
-        })
+            })
+        });
+        Ok(Answer::of(revision, asked))
     }
 
     pub async fn references(
@@ -193,10 +210,7 @@ where
         at: &At,
     ) -> Fallible<Answer<Vec<Location>>> {
         let pair = self.pair(session, revision).await?;
-        Ok(Answer {
-            revision,
-            result: pair.references(side, at).await,
-        })
+        Ok(Answer::of(revision, pair.references(side, at).await))
     }
 
     /// Diagnostics of a file of the target side.
@@ -207,10 +221,7 @@ where
         file: &RepoPath,
     ) -> Fallible<Answer<Vec<Diagnostic>>> {
         let pair = self.pair(session, revision).await?;
-        Ok(Answer {
-            revision,
-            result: pair.diagnostics(Side::Target, file).await,
-        })
+        Ok(Answer::of(revision, pair.diagnostics(Side::Target, file).await))
     }
 
     /// Starts the servers for every language among the revision's changed
@@ -360,12 +371,19 @@ where
             Side::Target
         };
         let pair = self.pair(session, revision).await?;
-        let result = signature(&pair, side, &changed.symbol).await;
+        let signed = signature(&pair, side, &changed.symbol).await;
         trace::log(
             || format!("signature {sym} (hover on the {side:?} side; the symbol's detail if the hover has none)"),
             started,
         );
-        Ok(Answer { revision, result })
+        Ok(match signed {
+            Ok((signature, provenance)) => Answer {
+                revision,
+                result: Ok(signature),
+                provenance,
+            },
+            Err(e) => Answer::of(revision, Err(e)),
+        })
     }
 
     /// References and callers of an added or modified symbol, on the target side.
@@ -458,8 +476,8 @@ mod tests {
     use vet_semantic::join::join;
     use vet_semantic::policy::AnalysisPolicy;
     use vet_semantic::ports::{
-        Diagnostic, LanguageServer, LaunchError, Materialized, NotMaterializable, Pos, QueryError, ServerConfig, Span,
-        Tree,
+        Diagnostic, LanguageServer, LaunchError, Materialized, NotMaterializable, Pos, QueryError, ServerConfig,
+        ServerIdentity, Span, Started, Tree,
     };
 
     use super::*;
@@ -545,7 +563,13 @@ mod tests {
         type Server = FakeServer;
 
         /// Slow, so starts that overlap are seen to.
-        async fn start(&self, _: &Path, tree: Tree, _: &Backend, _: AnalysisPolicy) -> Result<FakeServer, LaunchError> {
+        async fn start(
+            &self,
+            root: &Path,
+            tree: Tree,
+            backend: &Backend,
+            _: AnalysisPolicy,
+        ) -> Result<Started<FakeServer>, LaunchError> {
             let c = &self.0;
             if tree == Tree::Immutable && c.live_started.load(Ordering::SeqCst) < 2 {
                 c.snapshot_started_early.fetch_add(1, Ordering::SeqCst);
@@ -560,7 +584,18 @@ mod tests {
             if tree == Tree::Live {
                 c.live_started.fetch_add(1, Ordering::SeqCst);
             }
-            Ok(FakeServer(c.clone(), tree))
+            Ok(Started {
+                server: FakeServer(c.clone(), tree),
+                identity: self.identify(root, backend).await?,
+            })
+        }
+
+        async fn identify(&self, _: &Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
+            Ok(ServerIdentity {
+                backend: backend.config().backend.clone(),
+                fingerprint: Hash([7; 32]),
+                label: format!("fake {}", backend.config().binary),
+            })
         }
     }
 
@@ -759,6 +794,33 @@ mod tests {
         );
         let progress: Vec<_> = analysis.iter().filter_map(|t| t.done).collect();
         assert!(progress.windows(2).all(|w| w[0] <= w[1]), "{progress:?}");
+    }
+
+    #[tokio::test]
+    async fn an_answer_names_the_server_that_gave_it_and_a_derived_result_shows_it() {
+        let (fx, semantics, _) = semantics().await;
+        let at = At {
+            file: RepoPath(b"a.rs".to_vec()),
+            pos: Pos { line: 0, col: 0 },
+        };
+        let hover = semantics.hover(&fx.session, 0, Side::Target, &at).await.unwrap();
+        let by = hover.provenance.unwrap();
+        assert_eq!(by.server.label, "fake rust");
+        assert!(!by.from_cache);
+
+        let changes = semantics.changed_symbols(&fx.session, 0).await.unwrap();
+        assert_eq!(
+            changes.inputs.primitives,
+            [
+                "document_symbols(base:a.rs) [fake rust]",
+                "document_symbols(target:a.rs) [fake rust]",
+                "document_symbols(base:b.py) [fake python]",
+                "document_symbols(target:b.py) [fake python]",
+                // No server for Markdown.
+                "document_symbols(base:c.md)",
+                "document_symbols(target:c.md)",
+            ]
+        );
     }
 
     #[tokio::test]

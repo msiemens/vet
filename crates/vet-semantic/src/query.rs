@@ -10,7 +10,7 @@ use vet_core::review::Side;
 use crate::policy::AnalysisPolicy;
 use crate::pool::{Lease, Pool, PoolError, PoolKey, Target};
 use crate::ports::{
-    At, Backend, BackendId, Diagnostic, LanguageServer, Location, Materializer, QueryError, ServerLauncher, SymbolInfo,
+    Answered, At, Backend, BackendId, Diagnostic, Location, Materializer, QueryError, ServerLauncher, SymbolInfo,
     backend_for,
 };
 
@@ -39,40 +39,23 @@ impl fmt::Display for SemanticError {
     }
 }
 
+/// What a primitive query yields: the answer and the server it came from.
+pub type Asked<T> = Result<Answered<T>, SemanticError>;
+
 /// The primitive queries on either side of a comparison. Fakes implement this
 /// in tests; [`Pair`] implements it over the pool.
 pub trait Primitives {
-    fn document_symbols(
-        &self,
-        side: Side,
-        file: &RepoPath,
-    ) -> impl Future<Output = Result<Vec<SymbolInfo>, SemanticError>> + Send;
+    fn document_symbols(&self, side: Side, file: &RepoPath) -> impl Future<Output = Asked<Vec<SymbolInfo>>> + Send;
     /// The symbols `text` declares as the content of `file`, from the target
     /// side's server: they depend on the text alone, so no server of the side
     /// the text belongs to is needed.
-    fn text_symbols(
-        &self,
-        file: &RepoPath,
-        text: &str,
-    ) -> impl Future<Output = Result<Vec<SymbolInfo>, SemanticError>> + Send;
-    fn definition(&self, side: Side, at: &At) -> impl Future<Output = Result<Vec<Location>, SemanticError>> + Send;
-    fn references(&self, side: Side, at: &At) -> impl Future<Output = Result<Vec<Location>, SemanticError>> + Send;
-    fn hover(&self, side: Side, at: &At) -> impl Future<Output = Result<Option<String>, SemanticError>> + Send;
-    fn incoming_calls(
-        &self,
-        side: Side,
-        at: &At,
-    ) -> impl Future<Output = Result<Vec<SymbolInfo>, SemanticError>> + Send;
-    fn outgoing_calls(
-        &self,
-        side: Side,
-        at: &At,
-    ) -> impl Future<Output = Result<Vec<SymbolInfo>, SemanticError>> + Send;
-    fn diagnostics(
-        &self,
-        side: Side,
-        file: &RepoPath,
-    ) -> impl Future<Output = Result<Vec<Diagnostic>, SemanticError>> + Send;
+    fn text_symbols(&self, file: &RepoPath, text: &str) -> impl Future<Output = Asked<Vec<SymbolInfo>>> + Send;
+    fn definition(&self, side: Side, at: &At) -> impl Future<Output = Asked<Vec<Location>>> + Send;
+    fn references(&self, side: Side, at: &At) -> impl Future<Output = Asked<Vec<Location>>> + Send;
+    fn hover(&self, side: Side, at: &At) -> impl Future<Output = Asked<Option<String>>> + Send;
+    fn incoming_calls(&self, side: Side, at: &At) -> impl Future<Output = Asked<Vec<SymbolInfo>>> + Send;
+    fn outgoing_calls(&self, side: Side, at: &At) -> impl Future<Output = Asked<Vec<SymbolInfo>>> + Send;
+    fn diagnostics(&self, side: Side, file: &RepoPath) -> impl Future<Output = Asked<Vec<Diagnostic>>> + Send;
 }
 
 pub struct Semantic<M: Materializer, L: ServerLauncher> {
@@ -122,7 +105,7 @@ where
                 Ok(lease) => {
                     let r = lease.workspace_symbols(query).await;
                     lease.release().await;
-                    r.map_err(SemanticError::Query)
+                    r.map(|answered| answered.value).map_err(SemanticError::Query)
                 }
                 Err(e) => Err(e),
             };
@@ -185,35 +168,35 @@ where
     L: ServerLauncher + Sync,
     L::Server: Send,
 {
-    async fn document_symbols(&self, side: Side, file: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
+    async fn document_symbols(&self, side: Side, file: &RepoPath) -> Asked<Vec<SymbolInfo>> {
         ask!(self, side, file, document_symbols(file))
     }
 
-    async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Vec<SymbolInfo>, SemanticError> {
+    async fn text_symbols(&self, file: &RepoPath, text: &str) -> Asked<Vec<SymbolInfo>> {
         ask!(self, Side::Target, file, text_symbols(file, text))
     }
 
-    async fn definition(&self, side: Side, at: &At) -> Result<Vec<Location>, SemanticError> {
+    async fn definition(&self, side: Side, at: &At) -> Asked<Vec<Location>> {
         ask!(self, side, &at.file, definition(at))
     }
 
-    async fn references(&self, side: Side, at: &At) -> Result<Vec<Location>, SemanticError> {
+    async fn references(&self, side: Side, at: &At) -> Asked<Vec<Location>> {
         ask!(self, side, &at.file, references(at))
     }
 
-    async fn hover(&self, side: Side, at: &At) -> Result<Option<String>, SemanticError> {
+    async fn hover(&self, side: Side, at: &At) -> Asked<Option<String>> {
         ask!(self, side, &at.file, hover(at))
     }
 
-    async fn incoming_calls(&self, side: Side, at: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
+    async fn incoming_calls(&self, side: Side, at: &At) -> Asked<Vec<SymbolInfo>> {
         ask!(self, side, &at.file, incoming_calls(at))
     }
 
-    async fn outgoing_calls(&self, side: Side, at: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
+    async fn outgoing_calls(&self, side: Side, at: &At) -> Asked<Vec<SymbolInfo>> {
         ask!(self, side, &at.file, outgoing_calls(at))
     }
 
-    async fn diagnostics(&self, side: Side, file: &RepoPath) -> Result<Vec<Diagnostic>, SemanticError> {
+    async fn diagnostics(&self, side: Side, file: &RepoPath) -> Asked<Vec<Diagnostic>> {
         ask!(self, side, file, diagnostics(file))
     }
 }

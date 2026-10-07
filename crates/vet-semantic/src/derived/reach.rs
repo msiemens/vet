@@ -87,8 +87,8 @@ pub async fn reachability(
             continue;
         }
         let at = node.location();
-        inputs.query_at("incoming_calls", Side::Target, &at);
-        match p.incoming_calls(Side::Target, &at).await {
+        let found = p.incoming_calls(Side::Target, &at).await;
+        match inputs.asked_at("incoming_calls", Side::Target, &at, found) {
             Ok(callers) => {
                 for caller in callers {
                     if parent.len() < bounds.max_nodes && !parent.contains_key(&caller.sym) {

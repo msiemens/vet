@@ -20,8 +20,8 @@ use vet_core::content::{RepoPath, SnapshotId};
 use crate::once::{Producer, Shared};
 use crate::policy::AnalysisPolicy;
 use crate::ports::{
-    At, Backend, BackendId, Diagnostic, LanguageServer, LaunchError, Location, Materializer, NotMaterializable,
-    QueryError, ServerLauncher, SymbolInfo, Tree,
+    Answered, At, Backend, BackendId, Diagnostic, LanguageServer, LaunchError, Location, Materializer,
+    NotMaterializable, Provenance, QueryError, ServerIdentity, ServerLauncher, Started, SymbolInfo, Tree,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -84,10 +84,12 @@ struct Cache {
 }
 
 /// A running server, shared by its leases. It answers from the cache when it
-/// has one (snapshots only). Fields drop in order: server first, then the
-/// materialized directory.
+/// has one (snapshots only), and says who answered. Fields drop in order:
+/// server first, then the materialized directory.
 pub struct Entry<S, G> {
     server: S,
+    /// The identity the server started with.
+    identity: ServerIdentity,
     cache: Option<Mutex<Cache>>,
     leases: AtomicUsize,
     used: AtomicU64,
@@ -104,50 +106,64 @@ macro_rules! cached {
             .as_ref()
             .and_then(|c| c.lock().expect("not poisoned").$field.get(&key).cloned())
         {
-            return Ok(hit);
+            return Ok($self.answered(hit, true));
         }
         let answer = $call.await?;
         if let Some(cache) = &$self.cache {
             cache.lock().expect("not poisoned").$field.insert(key, answer.clone());
         }
-        Ok(answer)
+        Ok($self.answered(answer, false))
     }};
 }
 
-impl<S: LanguageServer, G: Send + Sync + 'static> LanguageServer for Entry<S, G> {
-    async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
+impl<S: LanguageServer, G: Send + Sync + 'static> Entry<S, G> {
+    pub fn identity(&self) -> &ServerIdentity {
+        &self.identity
+    }
+
+    fn answered<T>(&self, value: T, from_cache: bool) -> Answered<T> {
+        Answered {
+            value,
+            provenance: Provenance {
+                server: self.identity.clone(),
+                from_cache,
+            },
+        }
+    }
+
+    pub async fn document_symbols(&self, file: &RepoPath) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         cached!(self, symbols, file.clone(), self.server.document_symbols(file))
     }
 
-    async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Vec<SymbolInfo>, QueryError> {
-        self.server.text_symbols(file, text).await
+    pub async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
+        Ok(self.answered(self.server.text_symbols(file, text).await?, false))
     }
 
-    async fn definition(&self, at: &At) -> Result<Vec<Location>, QueryError> {
+    pub async fn definition(&self, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
         cached!(self, definition, at.clone(), self.server.definition(at))
     }
 
-    async fn references(&self, at: &At) -> Result<Vec<Location>, QueryError> {
+    pub async fn references(&self, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
         cached!(self, references, at.clone(), self.server.references(at))
     }
 
-    async fn hover(&self, at: &At) -> Result<Option<String>, QueryError> {
+    pub async fn hover(&self, at: &At) -> Result<Answered<Option<String>>, QueryError> {
         cached!(self, hover, at.clone(), self.server.hover(at))
     }
 
-    async fn incoming_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+    pub async fn incoming_calls(&self, at: &At) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         cached!(self, incoming, at.clone(), self.server.incoming_calls(at))
     }
 
-    async fn outgoing_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
+    pub async fn outgoing_calls(&self, at: &At) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         cached!(self, outgoing, at.clone(), self.server.outgoing_calls(at))
     }
 
-    async fn workspace_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
+    pub async fn workspace_symbols(&self, query: &str) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         cached!(self, workspace, query.to_owned(), self.server.workspace_symbols(query))
     }
 
-    async fn diagnostics(&self, file: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
+    pub async fn diagnostics(&self, file: &RepoPath) -> Result<Answered<Vec<Diagnostic>>, QueryError> {
         cached!(self, diagnostics, file.clone(), self.server.diagnostics(file))
     }
 
@@ -158,10 +174,10 @@ impl<S: LanguageServer, G: Send + Sync + 'static> LanguageServer for Entry<S, G>
 
 /// How a start ended for the callers who waited for it: the server is in the
 /// pool (`Ok`), or the start failed for this reason.
-type Started = Result<(), String>;
+type StartEnd = Result<(), String>;
 
 enum Slot<S, G> {
-    Starting(Arc<Shared<Started>>),
+    Starting(Arc<Shared<StartEnd>>),
     Running(Arc<Entry<S, G>>),
 }
 
@@ -222,11 +238,11 @@ struct StartGuard<'p, M: Materializer, L: ServerLauncher> {
     pool: &'p Pool<M, L>,
     key: PoolKey,
     /// Taken when the start ended.
-    producer: Option<Producer<Started>>,
+    producer: Option<Producer<StartEnd>>,
 }
 
 impl<M: Materializer, L: ServerLauncher> StartGuard<'_, M, L> {
-    fn end(&mut self, outcome: Started) {
+    fn end(&mut self, outcome: StartEnd) {
         if let Some(producer) = self.producer.take() {
             producer.finish(outcome);
         }
@@ -266,8 +282,8 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         admit(backend, key.policy)?;
         enum Plan<S, G> {
             Join(Arc<Entry<S, G>>),
-            Wait(Arc<Shared<Started>>),
-            Start(Producer<Started>, u64),
+            Wait(Arc<Shared<StartEnd>>),
+            Start(Producer<StartEnd>, u64),
         }
         loop {
             let plan = {
@@ -308,7 +324,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         &self,
         key: &PoolKey,
         backend: &Backend,
-        producer: Producer<Started>,
+        producer: Producer<StartEnd>,
         generation: u64,
     ) -> Result<Arc<EntryOf<M, L>>, PoolError> {
         let mut guard = StartGuard {
@@ -316,7 +332,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             key: key.clone(),
             producer: Some(producer),
         };
-        let (server, cache, dir_guard) = match self.launch(key, backend).await {
+        let (Started { server, identity }, cache, dir_guard) = match self.launch(key, backend).await {
             Ok(parts) => parts,
             Err(e) => {
                 self.lock().slots.remove(key);
@@ -330,6 +346,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             state.tick += 1;
             let entry = Arc::new(Entry {
                 server,
+                identity,
                 cache,
                 leases: AtomicUsize::new(1),
                 used: AtomicU64::new(state.tick),
@@ -351,7 +368,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         &self,
         key: &PoolKey,
         backend: &Backend,
-    ) -> Result<(L::Server, Option<Mutex<Cache>>, Option<M::Guard>), PoolError> {
+    ) -> Result<(Started<L::Server>, Option<Mutex<Cache>>, Option<M::Guard>), PoolError> {
         let (root, tree, guard, cache) = match key.target {
             Target::Live => (self.live_root.clone(), Tree::Live, None, None),
             Target::Snapshot(id) => {
@@ -368,12 +385,12 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                 )
             }
         };
-        let server = self
+        let started = self
             .launcher
             .start(&root, tree, backend, key.policy)
             .await
             .map_err(PoolError::Launch)?;
-        Ok((server, cache, guard))
+        Ok((started, cache, guard))
     }
 
     /// Drops one lease; returns the entries to stop (this one if it was
@@ -551,17 +568,30 @@ mod tests {
         /// Slow, so a second caller can arrive while the first is starting.
         async fn start(
             &self,
-            _: &std::path::Path,
+            root: &std::path::Path,
             _: Tree,
-            _: &Backend,
+            backend: &Backend,
             _: AnalysisPolicy,
-        ) -> Result<FakeServer, LaunchError> {
+        ) -> Result<Started<FakeServer>, LaunchError> {
             self.0.started.fetch_add(1, Ordering::SeqCst);
             yield_once().await;
             if self.0.fail_start.load(Ordering::SeqCst) {
                 return Err(LaunchError::Spawn("boom".into()));
             }
-            Ok(FakeServer(self.0.clone()))
+            Ok(Started {
+                server: FakeServer(self.0.clone()),
+                identity: self.identify(root, backend).await?,
+            })
+        }
+
+        /// A binary that is replaced between two starts: the nth start is version n.
+        async fn identify(&self, _: &std::path::Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
+            let n = self.0.started.load(Ordering::SeqCst);
+            Ok(ServerIdentity {
+                backend: backend.config().backend.clone(),
+                fingerprint: Hash([n as u8; 32]),
+                label: format!("fake {n}"),
+            })
         }
     }
 
@@ -638,13 +668,38 @@ mod tests {
         let (pool, counters) = pool(2);
         block_on(async {
             let lease = pool.lease(&snapshot_key(1), &backend(true)).await.unwrap();
-            let first = lease.hover(&at()).await.unwrap();
-            assert_eq!(lease.hover(&at()).await.unwrap(), first);
+            let first = lease.hover(&at()).await.unwrap().value;
+            assert_eq!(lease.hover(&at()).await.unwrap().value, first);
             lease.release().await;
             let lease = pool.lease(&snapshot_key(1), &backend(true)).await.unwrap();
-            assert_eq!(lease.hover(&at()).await.unwrap(), first);
+            assert_eq!(lease.hover(&at()).await.unwrap().value, first);
             assert_eq!(counters.hover_calls.load(Ordering::SeqCst), 1);
             assert_eq!(counters.started.load(Ordering::SeqCst), 1);
+            lease.release().await;
+        });
+    }
+
+    #[test]
+    fn an_answer_names_the_server_that_started_and_whether_it_was_reused() {
+        let (pool, _) = pool(2);
+        block_on(async {
+            let lease = pool.lease(&snapshot_key(1), &backend(true)).await.unwrap();
+            let fresh = lease.hover(&at()).await.unwrap().provenance;
+            let reused = lease.hover(&at()).await.unwrap().provenance;
+            assert_eq!(fresh.server, *lease.identity());
+            assert_eq!(fresh.server.label, "fake 1");
+            assert!(!fresh.from_cache && reused.from_cache);
+            assert_eq!(reused.server, fresh.server);
+            assert_eq!(fresh.to_string(), "fake 1");
+            assert_eq!(reused.to_string(), "fake 1, cached");
+            lease.release().await;
+
+            // A server started later is another identity, and so is its answer's.
+            pool.restart(&BackendId("rust".into())).await;
+            let lease = pool.lease(&snapshot_key(1), &backend(true)).await.unwrap();
+            let again = lease.hover(&at()).await.unwrap().provenance;
+            assert_eq!(again.server.label, "fake 2");
+            assert!(!again.from_cache);
             lease.release().await;
         });
     }
@@ -654,8 +709,8 @@ mod tests {
         let (pool, counters) = pool(2);
         block_on(async {
             let lease = pool.lease(&live_key(), &backend(true)).await.unwrap();
-            let first = lease.hover(&at()).await.unwrap();
-            assert_ne!(lease.hover(&at()).await.unwrap(), first);
+            let first = lease.hover(&at()).await.unwrap().value;
+            assert_ne!(lease.hover(&at()).await.unwrap().value, first);
             assert_eq!(counters.hover_calls.load(Ordering::SeqCst), 2);
             assert_eq!(counters.materialized.load(Ordering::SeqCst), 0);
             lease.release().await;
@@ -674,8 +729,8 @@ mod tests {
             assert!(Arc::ptr_eq(a.entry.as_ref().unwrap(), b.entry.as_ref().unwrap()));
             assert_eq!(a.leases.load(Ordering::SeqCst), 2);
             // Both see one shared cache.
-            let first = a.hover(&at()).await.unwrap();
-            assert_eq!(b.hover(&at()).await.unwrap(), first);
+            let first = a.hover(&at()).await.unwrap().value;
+            assert_eq!(b.hover(&at()).await.unwrap().value, first);
             a.release().await;
             b.release().await;
             assert_eq!(pool.keys(), [key]);

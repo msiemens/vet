@@ -116,16 +116,6 @@ impl ToolResolver {
             })
     }
 
-    async fn probe_version(spec: &Language, program: &Path) -> Option<String> {
-        let flag = spec.version_flag?;
-        let out = capture(&program.to_string_lossy(), &[flag.to_owned()], None)
-            .await
-            .ok()?;
-        out.ok
-            .then(|| out.stdout.lines().next().unwrap_or("").trim().to_owned())
-            .filter(|v| !v.is_empty())
-    }
-
     fn missing_reason(&self, spec: &Language, looked: &[String]) -> String {
         let hint = match spec.install {
             Install::No => "Install it with `rustup component add rust-analyzer`, or set a path.".to_owned(),
@@ -133,6 +123,17 @@ impl ToolResolver {
         };
         format!("{} was not found ({}). {hint}", spec.binary, looked.join("; "))
     }
+}
+
+/// What `program --version` says in its first line, for a language whose server has such a flag.
+pub(crate) async fn probe_version(spec: &Language, program: &Path) -> Option<String> {
+    let flag = spec.version_flag?;
+    let out = capture(&program.to_string_lossy(), &[flag.to_owned()], None)
+        .await
+        .ok()?;
+    out.ok
+        .then(|| out.stdout.lines().next().unwrap_or("").trim().to_owned())
+        .filter(|v| !v.is_empty())
 }
 
 /// The `version` of the npm package in `package`.
@@ -153,7 +154,7 @@ fn tool_list_version(table: &str, package: &str) -> Option<String> {
     })
 }
 
-async fn capture(program: &str, args: &[String], cwd: Option<&Path>) -> Result<Captured, String> {
+pub(crate) async fn capture(program: &str, args: &[String], cwd: Option<&Path>) -> Result<Captured, String> {
     run_to_end(program, args, cwd, &[], PROBE_TIMEOUT).await
 }
 
@@ -234,7 +235,7 @@ impl ServerResolver for ToolResolver {
         let spec = Self::spec(language)?;
         match found.origin {
             ServerOrigin::Installed => self.installed_version(spec).await,
-            _ => Self::probe_version(spec, Path::new(&found.command.program)).await,
+            _ => probe_version(spec, Path::new(&found.command.program)).await,
         }
     }
 

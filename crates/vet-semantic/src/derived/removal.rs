@@ -48,8 +48,8 @@ pub async fn removal_impact(
     let mut out = Vec::new();
     for c in changed.iter().filter(|c| c.change == Change::Removed) {
         let at = c.symbol.location();
-        inputs.query_at("references", Side::Base, &at);
-        let refs = match p.references(Side::Base, &at).await {
+        let found = p.references(Side::Base, &at).await;
+        let refs = match inputs.asked_at("references", Side::Base, &at, found) {
             Ok(refs) => refs,
             Err(e) => {
                 out.push(RemovalImpact {
@@ -65,8 +65,8 @@ pub async fn removal_impact(
             let fate = match locate(files, &base) {
                 Located::Fate(fate) => fate,
                 Located::Same(at) => {
-                    inputs.query_at("definition", Side::Target, &at);
-                    match p.definition(Side::Target, &at).await {
+                    let found = p.definition(Side::Target, &at).await;
+                    match inputs.asked_at("definition", Side::Target, &at, found) {
                         Ok(now) if now.is_empty() => Fate::LikelyBroken,
                         Ok(now) => Fate::BindingChanged { now },
                         Err(e) => Fate::Unknown(e.to_string()),

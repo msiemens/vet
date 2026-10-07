@@ -17,16 +17,16 @@ const FORMAT: u64 = 1;
 
 /// A hash over fields, each length-prefixed so that no two field lists give one input.
 #[derive(Default)]
-pub(super) struct Digest(Vec<u8>);
+pub(crate) struct Digest(Vec<u8>);
 
 impl Digest {
-    pub(super) fn field(&mut self, text: &str) -> &mut Self {
+    pub(crate) fn field(&mut self, text: &str) -> &mut Self {
         self.0.extend((text.len() as u64).to_le_bytes());
         self.0.extend(text.as_bytes());
         self
     }
 
-    pub(super) fn finish(&self) -> Hash {
+    pub(crate) fn finish(&self) -> Hash {
         Hash::of(&self.0)
     }
 }

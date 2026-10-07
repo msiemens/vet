@@ -8,8 +8,8 @@ use vet_core::review::Side;
 
 use super::{Derived, Inputs};
 use crate::join::{bounded, join};
-use crate::ports::SymbolInfo;
-use crate::query::{Primitives, SemanticError};
+use crate::ports::{Provenance, SymbolInfo};
+use crate::query::{Asked, Primitives, SemanticError};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Change {
@@ -64,11 +64,6 @@ pub async fn changed_symbols(
     let files: Vec<_> = files.iter().filter(|f| !f.hunks.is_empty()).collect();
     for file in &files {
         inputs.record_hunks(&file.path().to_string_lossy(), &file.hunks);
-        for (side, path) in [(Side::Base, &file.old_path), (Side::Target, &file.new_path)] {
-            if let Some(path) = path {
-                inputs.query("document_symbols", side, path, None);
-            }
-        }
     }
     let total = files.len();
     let done = AtomicUsize::new(0);
@@ -90,8 +85,17 @@ pub async fn changed_symbols(
         let shown = file.path();
         let old: Vec<_> = file.hunks.iter().map(|h| h.old).collect();
         let new: Vec<_> = file.hunks.iter().map(|h| h.new).collect();
+        for (side, path, answer) in [
+            (Side::Base, &file.old_path, &base),
+            (Side::Target, &file.new_path, &target),
+        ] {
+            if let Some(path) = path {
+                let by = answer.as_ref().ok().and_then(|(_, by)| by.as_ref());
+                inputs.query("document_symbols", side, path, None, by);
+            }
+        }
         let (base, target) = match (base, target) {
-            (Ok(b), Ok(t)) => (b, t),
+            (Ok((b, _)), Ok((t, _))) => (b, t),
             (Err(e), _) | (_, Err(e)) => {
                 if !matches!(e, SemanticError::NoBackend(_)) {
                     out.gaps.push(Gap {
@@ -135,29 +139,34 @@ pub async fn changed_symbols(
     Derived { value: out, inputs }
 }
 
-async fn symbols(p: &impl Primitives, side: Side, file: Option<&RepoPath>) -> Result<Vec<SymbolInfo>, SemanticError> {
-    let Some(file) = file else { return Ok(Vec::new()) };
-    p.document_symbols(side, file).await
+/// A file's symbols and the server that gave them; none for a side the file is not on.
+type Symbols = Result<(Vec<SymbolInfo>, Option<Provenance>), SemanticError>;
+
+fn attributed(answer: Asked<Vec<SymbolInfo>>) -> Symbols {
+    answer.map(|a| (a.value, Some(a.provenance)))
+}
+
+async fn symbols(p: &impl Primitives, side: Side, file: Option<&RepoPath>) -> Symbols {
+    let Some(file) = file else {
+        return Ok((Vec::new(), None));
+    };
+    attributed(p.document_symbols(side, file).await)
 }
 
 /// The symbols a document declares depend on its text alone, so the base side
 /// is asked of the target side's server, which is running anyway; the base
 /// side's own server, which has to restore the base's dependencies first, is
 /// asked only when the text cannot be had or placed.
-async fn base_symbols(
-    p: &impl Primitives,
-    texts: &impl BaseTexts,
-    file: &FileDiff,
-) -> Result<Vec<SymbolInfo>, SemanticError> {
+async fn base_symbols(p: &impl Primitives, texts: &impl BaseTexts, file: &FileDiff) -> Symbols {
     let Some(path) = &file.old_path else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     };
     if let Some(text) = texts.base_text(file).await
         && let Ok(found) = p.text_symbols(path, &text).await
     {
-        return Ok(found);
+        return attributed(Ok(found));
     }
-    p.document_symbols(Side::Base, path).await
+    attributed(p.document_symbols(Side::Base, path).await)
 }
 
 /// The innermost symbols each hunk touches. An empty range is a deletion or

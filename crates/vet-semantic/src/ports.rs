@@ -308,6 +308,59 @@ pub trait Restorer {
     ) -> impl Future<Output = Restored> + Send;
 }
 
+/// Who answered (I2): two servers with equal identities answer equal questions
+/// equally. Everything the answers of a server depend on, apart from the tree it
+/// runs on, is in `fingerprint`: its binary and version, its arguments and
+/// initialization options, the compiler it is told about, and the user-level
+/// configuration and environment it reads outside the repository.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ServerIdentity {
+    pub backend: BackendId,
+    pub fingerprint: Hash,
+    /// Fit to show, e.g. "rust-analyzer 1.91.0 (2026-09-01)".
+    pub label: String,
+}
+
+/// Where an answer came from (I6).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Provenance {
+    pub server: ServerIdentity,
+    /// The server was not asked: an earlier answer to the same question was reused.
+    pub from_cache: bool,
+}
+
+impl fmt::Display for Provenance {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.server.label)?;
+        if self.from_cache {
+            f.write_str(", cached")?;
+        }
+        Ok(())
+    }
+}
+
+/// An answer and where it came from.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Answered<T> {
+    pub value: T,
+    pub provenance: Provenance,
+}
+
+impl<T> Answered<T> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Answered<U> {
+        Answered {
+            value: f(self.value),
+            provenance: self.provenance,
+        }
+    }
+}
+
+/// A started server and the identity it started with.
+pub struct Started<S> {
+    pub server: S,
+    pub identity: ServerIdentity,
+}
+
 /// Implemented by `vet-infra::lsp`. The pool needs a launcher, not a server
 /// instance, because the pool owns lifecycle: eviction, restart on settings
 /// change, and the capability assertion (which the launcher performs on start).
@@ -321,7 +374,16 @@ pub trait ServerLauncher {
         tree: Tree,
         backend: &Backend,
         policy: AnalysisPolicy,
-    ) -> impl Future<Output = Result<Self::Server, LaunchError>> + Send;
+    ) -> impl Future<Output = Result<Started<Self::Server>, LaunchError>> + Send;
+
+    /// The identity a server started on `root` now would have, without starting
+    /// it. A binary replaced between this and a start shows in the identity the
+    /// start returns, which is the one that counts.
+    fn identify(
+        &self,
+        root: &std::path::Path,
+        backend: &Backend,
+    ) -> impl Future<Output = Result<ServerIdentity, LaunchError>> + Send;
 }
 
 #[cfg(test)]

@@ -7,8 +7,8 @@ use vet_core::review::Side;
 
 use super::*;
 use crate::ports::{Diagnostic, Location, Pos, Span, Sym, SymbolInfo};
-use crate::query::{Primitives, SemanticError};
-use crate::testutil::block_on;
+use crate::query::{Asked, Primitives, SemanticError};
+use crate::testutil::{answered, block_on};
 
 fn file(p: &str) -> RepoPath {
     RepoPath(p.as_bytes().to_vec())
@@ -84,6 +84,8 @@ struct Fake {
     failing_symbols: Vec<RepoPath>,
     /// What the target side's server answers for a text under a file's name.
     texts: HashMap<(RepoPath, String), Vec<SymbolInfo>>,
+    /// Every answer is one reused from an earlier question.
+    cached: bool,
 }
 
 /// No base content is available.
@@ -105,43 +107,49 @@ impl BaseTexts for FakeTexts {
 }
 
 impl Primitives for Fake {
-    async fn text_symbols(&self, f: &RepoPath, text: &str) -> Result<Vec<SymbolInfo>, SemanticError> {
-        self.texts
-            .get(&(f.clone(), text.to_owned()))
-            .cloned()
-            .ok_or_else(|| SemanticError::NoBackend(f.clone()))
+    async fn text_symbols(&self, f: &RepoPath, text: &str) -> Asked<Vec<SymbolInfo>> {
+        let found = (self.texts.get(&(f.clone(), text.to_owned())).cloned())
+            .ok_or_else(|| SemanticError::NoBackend(f.clone()))?;
+        self.answer(found)
     }
-    async fn document_symbols(&self, side: Side, f: &RepoPath) -> Result<Vec<SymbolInfo>, SemanticError> {
+    async fn document_symbols(&self, side: Side, f: &RepoPath) -> Asked<Vec<SymbolInfo>> {
         if self.failing_symbols.contains(f) {
             return Err(SemanticError::Query(crate::ports::QueryError("server crashed".into())));
         }
-        self.symbols
-            .get(&(side, f.clone()))
-            .cloned()
-            .ok_or_else(|| SemanticError::NoBackend(f.clone()))
+        let found =
+            (self.symbols.get(&(side, f.clone())).cloned()).ok_or_else(|| SemanticError::NoBackend(f.clone()))?;
+        self.answer(found)
     }
-    async fn definition(&self, side: Side, a: &At) -> Result<Vec<Location>, SemanticError> {
-        Ok(self.definitions.get(&(side, a.clone())).cloned().unwrap_or_default())
+    async fn definition(&self, side: Side, a: &At) -> Asked<Vec<Location>> {
+        self.answer(self.definitions.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
-    async fn references(&self, side: Side, a: &At) -> Result<Vec<Location>, SemanticError> {
-        Ok(self.references.get(&(side, a.clone())).cloned().unwrap_or_default())
+    async fn references(&self, side: Side, a: &At) -> Asked<Vec<Location>> {
+        self.answer(self.references.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
-    async fn hover(&self, _: Side, _: &At) -> Result<Option<String>, SemanticError> {
-        Ok(None)
+    async fn hover(&self, _: Side, _: &At) -> Asked<Option<String>> {
+        self.answer(None)
     }
-    async fn incoming_calls(&self, side: Side, a: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
+    async fn incoming_calls(&self, side: Side, a: &At) -> Asked<Vec<SymbolInfo>> {
         if self.failing_callers.contains(a) {
             return Err(SemanticError::Query(crate::ports::QueryError(
                 "no call hierarchy".into(),
             )));
         }
-        Ok(self.callers.get(&(side, a.clone())).cloned().unwrap_or_default())
+        self.answer(self.callers.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
-    async fn outgoing_calls(&self, _: Side, _: &At) -> Result<Vec<SymbolInfo>, SemanticError> {
-        Ok(vec![])
+    async fn outgoing_calls(&self, _: Side, _: &At) -> Asked<Vec<SymbolInfo>> {
+        self.answer(vec![])
     }
-    async fn diagnostics(&self, _: Side, _: &RepoPath) -> Result<Vec<Diagnostic>, SemanticError> {
-        Ok(vec![])
+    async fn diagnostics(&self, _: Side, _: &RepoPath) -> Asked<Vec<Diagnostic>> {
+        self.answer(vec![])
+    }
+}
+
+impl Fake {
+    fn answer<T>(&self, value: T) -> Asked<T> {
+        let mut answered = answered(value)?;
+        answered.provenance.from_cache = self.cached;
+        Ok(answered)
     }
 }
 
@@ -194,7 +202,10 @@ fn changed_symbols_are_the_innermost_symbols_touched_by_hunks() {
     );
     assert_eq!(
         result.inputs.primitives,
-        ["document_symbols(base:a.rs)", "document_symbols(target:a.rs)"]
+        [
+            "document_symbols(base:a.rs) [fake]",
+            "document_symbols(target:a.rs) [fake]"
+        ]
     );
     assert_eq!(result.inputs.hunks.len(), 1);
 }
@@ -269,7 +280,7 @@ fn changed_symbols_keep_the_order_of_the_files_however_many_are_asked_at_once() 
     let want: Vec<_> = (0..10).map(|n| file(&format!("f{n}.rs"))).collect();
     assert_eq!(order, want);
     assert_eq!(result.inputs.primitives.len(), 20);
-    assert_eq!(result.inputs.primitives[2], "document_symbols(base:f1.rs)");
+    assert_eq!(result.inputs.primitives[2], "document_symbols(base:f1.rs) [fake]");
 }
 
 #[test]
@@ -385,13 +396,13 @@ fn removed_symbol_call_sites_are_classified() {
         result
             .inputs
             .primitives
-            .contains(&"definition(target:c.rs:9:4)".to_string())
+            .contains(&"definition(target:c.rs:9:4) [fake]".to_string())
     );
     assert!(
         result
             .inputs
             .primitives
-            .contains(&"definition(target:e.rs:3:4)".to_string())
+            .contains(&"definition(target:e.rs:3:4) [fake]".to_string())
     );
 }
 
@@ -428,9 +439,38 @@ fn reached_reports_the_path_and_the_queries_it_used() {
     }
     assert_eq!(
         result.inputs.primitives,
-        ["incoming_calls(target:g.rs:108:3)", "incoming_calls(target:g.rs:109:3)"]
+        [
+            "incoming_calls(target:g.rs:108:3) [fake]",
+            "incoming_calls(target:g.rs:109:3) [fake]"
+        ]
     );
     assert_eq!(result.inputs.config, ["entry point ::main"]);
+}
+
+#[test]
+fn the_inputs_say_which_server_answered_and_which_answers_were_reused() {
+    let mut fake = graph(&[("leaf", &["main"])]);
+    fake.cached = true;
+    let result = block_on(reachability(&fake, &node("leaf"), &EntryPoints::default(), BOUNDS));
+    assert_eq!(
+        result.inputs.primitives,
+        ["incoming_calls(target:g.rs:108:3) [fake, cached]"]
+    );
+
+    // A query that failed names no server.
+    let mut broken = Fake::default();
+    let leaf = node("leaf");
+    broken.failing_callers.push(leaf.location());
+    let result = block_on(reachability(&broken, &leaf, &EntryPoints::default(), BOUNDS));
+    assert_eq!(result.inputs.primitives, ["incoming_calls(target:g.rs:108:3)"]);
+
+    let (mut fake, files) = changed_fixture();
+    fake.failing_symbols.push(file("a.rs"));
+    let result = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}));
+    assert_eq!(
+        result.inputs.primitives,
+        ["document_symbols(base:a.rs)", "document_symbols(target:a.rs)"]
+    );
 }
 
 #[test]

@@ -89,7 +89,8 @@ async fn rust_analyzer_answers_the_primitive_queries() {
             AnalysisPolicy { allow_executing: true },
         )
         .await
-        .expect("rust-analyzer starts and has every required capability");
+        .expect("rust-analyzer starts and has every required capability")
+        .server;
     let lib = path("src/lib.rs");
 
     let symbols = server.document_symbols(&lib).await.unwrap();
@@ -189,7 +190,8 @@ async fn typescript_language_server_answers_the_primitive_queries() {
             AnalysisPolicy { allow_executing: false },
         )
         .await
-        .expect("typescript-language-server starts and has every required capability");
+        .expect("typescript-language-server starts and has every required capability")
+        .server;
     let file = path("a.ts");
     let mut names: Vec<String> = server
         .document_symbols(&file)
@@ -270,7 +272,8 @@ async fn roslyn_answers_a_hover_on_a_newly_opened_file_without_waiting_for_quiet
                 AnalysisPolicy { allow_executing: true },
             )
             .await
-            .expect("roslyn starts");
+            .expect("roslyn starts")
+            .server;
         let hover = |i: usize| At {
             file: path(&format!("C{i}.cs")),
             pos: Pos { line: 3, col: 15 },
@@ -312,7 +315,8 @@ async fn pushed_diagnostics_are_found_for_a_path_the_server_spells_differently()
             AnalysisPolicy { allow_executing: false },
         )
         .await
-        .expect("typescript-language-server starts");
+        .expect("typescript-language-server starts")
+        .server;
     let started = std::time::Instant::now();
     let diagnostics = server.diagnostics(&path("[id]+x/é@a.ts")).await.unwrap();
     assert!(
@@ -352,7 +356,8 @@ async fn diagnostics_of_files_opened_together_share_one_quiet_wait() {
             AnalysisPolicy { allow_executing: false },
         )
         .await
-        .expect("typescript-language-server starts");
+        .expect("typescript-language-server starts")
+        .server;
     let started = std::time::Instant::now();
     let files: Vec<_> = (0..6).map(|i| path(&format!("a{i}.ts"))).collect();
     let answers = vet_semantic::join::bounded(6, &files, |file| server.diagnostics(file)).await;

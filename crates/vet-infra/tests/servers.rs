@@ -110,7 +110,8 @@ async fn typescript_installs_and_uses_the_project_typescript() {
             AnalysisPolicy { allow_executing: false },
         )
         .await
-        .expect("the installed server starts and has every required capability");
+        .expect("the installed server starts and has every required capability")
+        .server;
     let at = At {
         file: path("a.ts"),
         pos: Pos { line: 3, col: 25 },
@@ -151,7 +152,8 @@ async fn csharp_installs_and_starts() {
             AnalysisPolicy { allow_executing: true },
         )
         .await
-        .expect("the installed server starts and has every required capability");
+        .expect("the installed server starts and has every required capability")
+        .server;
     let file = path("Program.cs");
     let names: Vec<String> = server
         .document_symbols(&file)
@@ -226,7 +228,8 @@ async fn csharp_resolves_packages_in_a_copy_that_took_the_working_trees_restore_
     let server = launcher
         .start(copy.path(), Tree::Immutable, &backend, policy)
         .await
-        .expect("the server loads the copy");
+        .expect("the server loads the copy")
+        .server;
     let call = At {
         file: path("Program.cs"),
         pos: Pos { line: 4, col: 50 },
@@ -265,7 +268,8 @@ async fn python_installs_and_starts() {
             AnalysisPolicy { allow_executing: false },
         )
         .await
-        .expect("the installed server starts and has every required capability");
+        .expect("the installed server starts and has every required capability")
+        .server;
     let at = At {
         file: path("a.py"),
         pos: Pos { line: 3, col: 5 },

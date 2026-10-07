@@ -24,16 +24,20 @@ pub async fn impact(p: &impl Primitives, changed: &[ChangedSymbol]) -> Derived<V
     for c in changed.iter().filter(|c| c.change != Change::Removed) {
         let at = c.symbol.location();
         let mut gaps = Vec::new();
-        inputs.query_at("references", Side::Target, &at);
-        let references = p.references(Side::Target, &at).await.unwrap_or_else(|e| {
-            gaps.push(format!("references: {e}"));
-            Vec::new()
-        });
-        inputs.query_at("incoming_calls", Side::Target, &at);
-        let callers = p.incoming_calls(Side::Target, &at).await.unwrap_or_else(|e| {
-            gaps.push(format!("incoming calls: {e}"));
-            Vec::new()
-        });
+        let found = p.references(Side::Target, &at).await;
+        let references = inputs
+            .asked_at("references", Side::Target, &at, found)
+            .unwrap_or_else(|e| {
+                gaps.push(format!("references: {e}"));
+                Vec::new()
+            });
+        let found = p.incoming_calls(Side::Target, &at).await;
+        let callers = inputs
+            .asked_at("incoming_calls", Side::Target, &at, found)
+            .unwrap_or_else(|e| {
+                gaps.push(format!("incoming calls: {e}"));
+                Vec::new()
+            });
         out.push(SymbolImpact {
             symbol: c.symbol.clone(),
             references,

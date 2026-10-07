@@ -8,6 +8,7 @@ pub mod config;
 pub(crate) mod dotnet;
 #[cfg(test)]
 mod fake;
+mod identity;
 mod rpc;
 mod server;
 mod uri;
@@ -21,7 +22,9 @@ use serde_json::{Value, json};
 use vet_app::ports::{ServerCommand, ServerLocator};
 use vet_app::progress::{TaskKind, Tasks};
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{Backend, LaunchError, Restored, Restorer, ServerConfig, ServerLauncher, Tree};
+use vet_semantic::ports::{
+    Backend, LaunchError, Restored, Restorer, ServerConfig, ServerIdentity, ServerLauncher, Started, Tree,
+};
 
 use crate::git::list_files;
 use crate::language::{self, Compiler};
@@ -30,6 +33,7 @@ use capabilities::Diagnostics;
 use rpc::Connection;
 use uri::{directory_uri, file_uri};
 
+pub use identity::{Identities, UserEnv};
 pub use server::LspServer;
 
 /// No server message for this long, none in progress: indexing is done.
@@ -44,6 +48,8 @@ pub struct LspLauncher<L, R> {
     pub restorer: R,
     /// Where starting and indexing report.
     pub tasks: Tasks,
+    /// Tells servers apart (I2), and remembers what that cost.
+    pub identities: Identities,
 }
 
 impl<L, R> LspLauncher<L, R> {
@@ -53,6 +59,7 @@ impl<L, R> LspLauncher<L, R> {
             locator,
             restorer,
             tasks: Tasks::default(),
+            identities: Identities::new(UserEnv::current()),
         }
     }
 
@@ -175,6 +182,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
 struct Launched {
     conn: Connection,
     root: PathBuf,
+    identity: ServerIdentity,
     diagnostics: Diagnostics,
     phases: Phases,
 }
@@ -202,6 +210,9 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
             folders,
             mut phases,
         } = self.prepare(&root, tree, backend, policy).await?;
+        let identity = phases
+            .run("identity", self.identities.of(&root, backend, &command))
+            .await?;
         let folders_json = serde_json::to_value(&folders).map_err(|e| LaunchError::Protocol(e.to_string()))?;
         let phase = Instant::now();
         let conn = Connection::spawn(&command.program, &config.args, &root, &restored.env, folders_json)
@@ -226,6 +237,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
         Ok(Launched {
             conn,
             root,
+            identity,
             diagnostics,
             phases,
         })
@@ -243,7 +255,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
         tree: Tree,
         backend: &Backend,
         policy: AnalysisPolicy,
-    ) -> Result<LspServer, LaunchError> {
+    ) -> Result<Started<LspServer>, LaunchError> {
         let started = Instant::now();
         let config = backend.config();
         let side = match tree {
@@ -259,6 +271,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
         let Launched {
             conn,
             root,
+            identity,
             diagnostics,
             mut phases,
         } = launched?;
@@ -298,13 +311,16 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
             },
             started,
         );
-        Ok(LspServer::new(
-            conn,
-            root,
-            tree,
-            diagnostics,
-            config.loads_project_on_open,
-        ))
+        Ok(Started {
+            server: LspServer::new(conn, root, tree, diagnostics, config.loads_project_on_open),
+            identity,
+        })
+    }
+
+    async fn identify(&self, root: &Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
+        let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned());
+        let command = (self.locator.locate(backend.config(), &root).await).map_err(LaunchError::NotInstalled)?;
+        self.identities.of(&root, backend, &command).await
     }
 }
 

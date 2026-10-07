@@ -35,7 +35,7 @@
 //! of the languages of one tree run one at a time.
 
 pub(crate) mod discover;
-mod record;
+pub(crate) mod record;
 mod reuse;
 mod tools;
 

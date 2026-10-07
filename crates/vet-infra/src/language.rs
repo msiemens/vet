@@ -49,6 +49,36 @@ pub enum Compiler {
     TypeScript,
 }
 
+/// A file in the user's home that a server reads.
+#[derive(Clone, Copy, Debug)]
+pub enum UserFile {
+    /// Relative to the home directory.
+    Home(&'static str),
+    /// In the directory `var` names, else in `fallback` below the home directory.
+    Under {
+        var: &'static str,
+        fallback: &'static str,
+        file: &'static str,
+    },
+}
+
+/// What a language's server reads outside the repository. It shapes the
+/// server's answers, so it is part of the server's identity (I2): an answer is
+/// reused only while all of it is as it was. Every language lists its own, even
+/// if the list is empty, so that adding a language means looking.
+pub struct UserConfig {
+    /// Files looked for in every directory above the root: configuration the server
+    /// finds by walking up from the project (the root's own files are the snapshot's).
+    pub above_root: &'static [&'static str],
+    /// Configuration in the user's home, such as the user-level server settings.
+    pub user_files: &'static [UserFile],
+    /// Environment variables the server or its tools read.
+    pub env: &'static [&'static str],
+    /// Programs run in the root, whose output stands for the toolchain the server
+    /// finds there: the one a `rust-toolchain` file or a `global.json` picks.
+    pub toolchain: &'static [(&'static str, &'static [&'static str])],
+}
+
 pub struct Language {
     pub id: &'static str,
     /// The language's name as a person knows it.
@@ -76,6 +106,7 @@ pub struct Language {
     /// Opening a file starts loading the project it belongs to (tsserver), so
     /// answers across files wait for the server to go quiet after an open.
     pub loads_project_on_open: bool,
+    pub user_config: UserConfig,
 }
 
 /// Build scripts and proc macros run during analysis.
@@ -95,6 +126,62 @@ pub const RUST: Language = Language {
     project_toolchain: true,
     loads_on_request: false,
     loads_project_on_open: false,
+    // Cargo's configuration chain: `.cargo/config.toml` in every directory above the
+    // project and in `$CARGO_HOME` (source replacement, build flags, target); the
+    // toolchain rustup picks (override files, the default in rustup's settings); and
+    // rust-analyzer's own settings files.
+    user_config: UserConfig {
+        above_root: &[
+            ".cargo/config.toml",
+            ".cargo/config",
+            "rust-toolchain.toml",
+            "rust-toolchain",
+            "rust-analyzer.toml",
+            ".rust-analyzer.toml",
+        ],
+        user_files: &[
+            UserFile::Under {
+                var: "CARGO_HOME",
+                fallback: ".cargo",
+                file: "config.toml",
+            },
+            UserFile::Under {
+                var: "CARGO_HOME",
+                fallback: ".cargo",
+                file: "config",
+            },
+            UserFile::Under {
+                var: "RUSTUP_HOME",
+                fallback: ".rustup",
+                file: "settings.toml",
+            },
+            UserFile::Under {
+                var: "XDG_CONFIG_HOME",
+                fallback: ".config",
+                file: "rust-analyzer/rust-analyzer.toml",
+            },
+            UserFile::Home("Library/Application Support/rust-analyzer/rust-analyzer.toml"),
+            UserFile::Under {
+                var: "APPDATA",
+                fallback: "AppData/Roaming",
+                file: "rust-analyzer/rust-analyzer.toml",
+            },
+        ],
+        env: &[
+            "RUSTUP_TOOLCHAIN",
+            "RUSTUP_HOME",
+            "CARGO_HOME",
+            "RUSTC",
+            "RUSTC_WRAPPER",
+            "RUSTC_WORKSPACE_WRAPPER",
+            "RUSTFLAGS",
+            "CARGO_ENCODED_RUSTFLAGS",
+            "CARGO_BUILD_TARGET",
+            "CARGO_BUILD_RUSTFLAGS",
+            "RUST_SRC_PATH",
+        ],
+        toolchain: &[("rustc", &["-vV"])],
+    },
 };
 
 pub const TYPESCRIPT: Language = Language {
@@ -127,6 +214,14 @@ pub const TYPESCRIPT: Language = Language {
     project_toolchain: false,
     loads_on_request: false,
     loads_project_on_open: true,
+    // tsserver takes the nearest `tsconfig.json` or `jsconfig.json` above a file, even
+    // above the root. It reads no settings of the user's; Node reads the variables.
+    user_config: UserConfig {
+        above_root: &["tsconfig.json", "jsconfig.json"],
+        user_files: &[],
+        env: &["NODE_PATH", "NODE_OPTIONS"],
+        toolchain: &[("node", &["--version"])],
+    },
 };
 
 pub const PYTHON: Language = Language {
@@ -147,6 +242,15 @@ pub const PYTHON: Language = Language {
     project_toolchain: false,
     loads_on_request: false,
     loads_project_on_open: false,
+    // Pyright reads the configuration in the project root and none of the user's; the
+    // interpreter it asks for the search paths comes from the environment (a restore's
+    // virtual environment arrives with the restored tree, not here).
+    user_config: UserConfig {
+        above_root: &[],
+        user_files: &[],
+        env: &["VIRTUAL_ENV", "CONDA_PREFIX", "PYTHONPATH", "PYTHONHOME"],
+        toolchain: &[("python3", &["--version"]), ("python", &["--version"])],
+    },
 };
 
 /// MSBuild design-time builds run project code. The solution or projects to load
@@ -170,6 +274,42 @@ pub const CSHARP: Language = Language {
     project_toolchain: false,
     loads_on_request: true,
     loads_project_on_open: false,
+    // The SDK `global.json` picks, MSBuild's inherited props and analyzer settings in the
+    // directories above the project, and NuGet's configuration chain (above the project
+    // and the user-level file) that decides where packages come from.
+    user_config: UserConfig {
+        above_root: &[
+            "global.json",
+            "NuGet.config",
+            "NuGet.Config",
+            "nuget.config",
+            "Directory.Build.props",
+            "Directory.Build.targets",
+            "Directory.Packages.props",
+            ".editorconfig",
+        ],
+        user_files: &[
+            UserFile::Home(".nuget/NuGet/NuGet.Config"),
+            UserFile::Home(".nuget/NuGet/nuget.config"),
+            UserFile::Under {
+                var: "APPDATA",
+                fallback: "AppData/Roaming",
+                file: "NuGet/NuGet.Config",
+            },
+        ],
+        env: &[
+            "DOTNET_ROOT",
+            "DOTNET_ROOT_X64",
+            "DOTNET_ROOT_ARM64",
+            "DOTNET_CLI_HOME",
+            "DOTNET_ROLL_FORWARD",
+            "DOTNET_MSBUILD_SDK_RESOLVER_SDKS_DIR",
+            "MSBuildSDKsPath",
+            "MSBUILD_EXE_PATH",
+            "NUGET_PACKAGES",
+        ],
+        toolchain: &[("dotnet", &["--version"])],
+    },
 };
 
 /// The POC languages.
