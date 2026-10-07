@@ -12,6 +12,9 @@ pub mod clock;
 
 pub mod store;
 
+/// `vet_app::platform::CredentialValidator` over HTTP.
+pub mod credentials;
+
 /// `vet_semantic::ports::Materializer`.
 pub mod materialize;
 
