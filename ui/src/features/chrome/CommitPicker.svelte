@@ -50,6 +50,7 @@
 
 <div class="picker">
   <input
+    class="field"
     bind:this={input}
     bind:value={query}
     oninput={() => (highlighted = 0)}
@@ -97,15 +98,6 @@
   }
   input {
     margin: 8px;
-    height: var(--h-ctl);
-    box-sizing: border-box;
-    padding: 0 8px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--bg-editor);
-    color: var(--text);
-    font: inherit;
-    font-size: var(--fs-ctl);
   }
   input:focus-visible {
     outline-offset: -1px;

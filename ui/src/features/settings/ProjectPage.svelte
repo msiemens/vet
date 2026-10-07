@@ -34,7 +34,7 @@
     <label>
       <span>Review roots</span>
       <textarea
-        class="mono"
+        class="field mono"
         rows="2"
         aria-label="Review roots, one folder per line"
         value={filter.roots.join("\n")}
@@ -50,7 +50,7 @@
     <label>
       <span>Include globs</span>
       <textarea
-        class="mono"
+        class="field mono"
         rows="2"
         aria-label="Include globs, one per line"
         value={filter.include.join("\n")}
@@ -59,7 +59,7 @@
     <label>
       <span>Exclude globs</span>
       <textarea
-        class="mono"
+        class="field mono"
         rows="3"
         aria-label="Exclude globs, one per line"
         value={filter.exclude.join("\n")}
@@ -92,14 +92,8 @@
     gap: 8px;
     color: var(--text);
   }
-  textarea {
+  textarea.field {
     resize: vertical;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--bg-editor);
-    color: var(--text);
-    font-size: var(--fs-mono);
-    padding: 4px 8px;
   }
   p {
     margin: 0;

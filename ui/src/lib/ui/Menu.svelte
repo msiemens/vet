@@ -71,7 +71,14 @@
   }
 </script>
 
-<ul role="menu" class:nested class:scroll={!items.some((i) => i.children)} bind:this={list} {onkeydown}>
+<ul
+  role="menu"
+  class:surface={nested}
+  class:nested
+  class:scroll={!items.some((i) => i.children)}
+  bind:this={list}
+  {onkeydown}
+>
   {#each items as item, i (item.separator ? `-${i}` : item.id)}
     {#if item.separator}
       <li role="separator"></li>
@@ -136,10 +143,6 @@
     top: -5px;
     z-index: 1;
     min-width: 180px;
-    background: var(--bg-sheet);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    box-shadow: var(--shadow);
   }
   button {
     width: 100%;

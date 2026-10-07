@@ -1,4 +1,7 @@
 <script lang="ts">
+  import Menu from "./Menu.svelte";
+  import type { MenuItem } from "./menuItem";
+
   let {
     x,
     y,
@@ -9,66 +12,39 @@
     /** Viewport position of the pointer. */
     x: number;
     y: number;
-    items: { id: string; label: string }[];
+    items: MenuItem[];
     onselect: (id: string) => void;
     onclose: () => void;
   } = $props();
 
-  let menu = $state<HTMLElement>();
+  let sheet = $state<HTMLElement>();
 
   // Keep the menu inside the viewport once its size is known.
-  const left = $derived(menu ? Math.max(0, Math.min(x, window.innerWidth - menu.offsetWidth)) : x);
-  const top = $derived(menu ? Math.max(0, Math.min(y, window.innerHeight - menu.offsetHeight)) : y);
-
-  $effect(() => menu?.querySelector("button")?.focus());
+  const left = $derived(sheet ? Math.max(0, Math.min(x, window.innerWidth - sheet.offsetWidth)) : x);
+  const top = $derived(sheet ? Math.max(0, Math.min(y, window.innerHeight - sheet.offsetHeight)) : y);
 </script>
 
 <svelte:window
-  onpointerdown={(e) => !menu?.contains(e.target as Node) && onclose()}
+  onpointerdown={(e) => !sheet?.contains(e.target as Node) && onclose()}
   onkeydown={(e) => e.key === "Escape" && onclose()}
   onblur={onclose}
   onresize={onclose}
 />
 
-<ul class="menu" role="menu" bind:this={menu} style:left="{left}px" style:top="{top}px">
-  {#each items as item (item.id)}
-    <li role="none">
-      <button
-        class="flat"
-        role="menuitem"
-        type="button"
-        onclick={() => {
-          onselect(item.id);
-          onclose();
-        }}
-      >
-        {item.label}
-      </button>
-    </li>
-  {/each}
-</ul>
+<div class="surface sheet" bind:this={sheet} style:left="{left}px" style:top="{top}px">
+  <Menu
+    {items}
+    onselect={(id) => {
+      onselect(id);
+      onclose();
+    }}
+  />
+</div>
 
 <style>
-  .menu {
+  .sheet {
     position: fixed;
     z-index: 40;
     min-width: 160px;
-    margin: 0;
-    padding: 4px 0;
-    list-style: none;
-    background: var(--bg-sheet);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    box-shadow: var(--shadow);
-  }
-  button {
-    width: 100%;
-    height: var(--h-row);
-    display: flex;
-    align-items: center;
-    padding: 0 12px;
-    text-align: left;
-    font-size: var(--fs-ctl);
-    white-space: nowrap;
   }
 </style>

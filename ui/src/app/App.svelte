@@ -183,7 +183,6 @@
     loadBase={() => changeset.baseCandidates()}
     onbase={(choice) => void changeset.setBase(choice)}
     {completion}
-    onopenrepo={() => void changeset.pickRepo()}
     onfinish={() => (dialog = "finish")}
   />
 

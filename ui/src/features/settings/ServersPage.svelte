@@ -156,7 +156,7 @@
           >
             <input
               type="text"
-              class="mono"
+              class="field mono"
               placeholder="Path to the server executable"
               aria-label="Server path for {row.title}"
               bind:value={draft}

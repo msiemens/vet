@@ -54,7 +54,7 @@
 <!-- The scrim closes the dialog on a press outside the sheet. -->
 <div class="scrim" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && onclose()}>
   <div
-    class="sheet"
+    class="surface sheet"
     role="dialog"
     aria-modal="true"
     aria-label={title}
@@ -88,10 +88,6 @@
     max-height: 76vh;
     display: flex;
     flex-direction: column;
-    background: var(--bg-sheet);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    box-shadow: var(--shadow);
   }
   .sheet:focus-visible {
     outline: none;

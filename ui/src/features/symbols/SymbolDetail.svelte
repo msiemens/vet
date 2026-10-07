@@ -160,25 +160,6 @@
     border-bottom: 1px solid var(--line-soft);
     padding-bottom: 6px;
   }
-  .sh {
-    display: flex;
-    align-items: center;
-    height: var(--h-ctl);
-    padding: 0 10px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-2);
-  }
-  .note {
-    margin: 0;
-    padding: 2px 10px 4px 26px;
-    color: var(--text-3);
-    font-size: var(--fs-ctl);
-  }
-  .err {
-    color: var(--del-text);
-    white-space: pre-wrap;
-  }
   .block {
     padding: 0 10px 4px 26px;
   }
@@ -223,9 +204,6 @@
   .at {
     font-size: 11px;
     color: var(--text-3);
-  }
-  .grow {
-    flex: 1;
   }
   .verdict {
     font-size: 12px;

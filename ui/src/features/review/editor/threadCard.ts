@@ -44,7 +44,7 @@ const time = (at: number) => new Date(at * 1000).toLocaleString(undefined, { dat
 
 /** A text field and its submit button, which stays disabled while the text is blank or a request runs. */
 function composer(rows: number, placeholder: string, label: string, submit: (body: string) => Promise<boolean>) {
-  const field = el("textarea", "vet-thread-field");
+  const field = el("textarea", "field vet-thread-field");
   field.rows = rows;
   field.placeholder = placeholder;
   field.spellcheck = true;

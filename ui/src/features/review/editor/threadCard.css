@@ -87,16 +87,7 @@
 }
 .vet-thread-field {
   flex: 1;
-  min-width: 0;
-  box-sizing: border-box;
-  padding: 3px 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-editor);
-  color: var(--text);
-  font: inherit;
   line-height: 18px;
-  resize: none;
 }
 .vet-thread-draft .vet-thread-field {
   display: block;

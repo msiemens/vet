@@ -86,8 +86,8 @@
 {/snippet}
 
 <aside aria-label="Comments">
-  <div class="head">
-    <span class="title">Comments</span>
+  <div class="sh sh-bar">
+    <span>Comments</span>
     <span class="grow"></span>
     <IconButton
       icon="comments"
@@ -101,6 +101,7 @@
     <div class="compose">
       <!-- svelte-ignore a11y_autofocus -->
       <textarea
+        class="field"
         rows="3"
         placeholder="Comment on the changeset…"
         autofocus
@@ -150,22 +151,6 @@
     flex-direction: column;
     overflow: hidden auto;
   }
-  .head {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: var(--h-ctl);
-    padding: 0 6px 0 10px;
-    flex: none;
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .head .title {
-    font-weight: 600;
-    font-size: var(--fs-ctl);
-  }
-  .grow {
-    flex: 1;
-  }
   .empty {
     margin: 12px 10px;
     color: var(--text-3);
@@ -178,41 +163,18 @@
     border-bottom: 1px solid var(--line-soft);
   }
   textarea {
-    box-sizing: border-box;
     width: 100%;
-    padding: 4px 6px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--bg-editor);
-    color: var(--text);
-    font: inherit;
-    font-size: var(--fs-ctl);
-    resize: none;
   }
   .buttons {
     display: flex;
     justify-content: flex-end;
     gap: 6px;
   }
-  .sh {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: var(--h-ctl);
-    padding: 0 10px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-2);
-  }
   .sh .title {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .n {
-    font-weight: 400;
-    color: var(--text-3);
   }
   ul {
     margin: 0;

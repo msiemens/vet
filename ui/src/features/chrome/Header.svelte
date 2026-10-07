@@ -10,6 +10,8 @@
   import Meter from "../../lib/ui/Meter.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import type { BaseCandidates } from "../../state/backend";
+  import { openItem } from "../../state/mainMenu";
+  import { mainMenu } from "../../state/mainMenu.svelte";
   import BaseChip from "./BaseChip.svelte";
   import TitleBar from "./TitleBar.svelte";
   import VersionLabel from "./VersionLabel.svelte";
@@ -22,7 +24,6 @@
     loadBase,
     onbase,
     completion,
-    onopenrepo,
     onfinish,
   }: {
     project: string;
@@ -35,8 +36,6 @@
     /** Lists the branches and commits the base can be picked from. */
     loadBase: () => Promise<BaseCandidates | undefined>;
     onbase: (choice: BaseChoice) => void;
-    /** "Open repository…" in the project menu. */
-    onopenrepo: () => void;
     /** "Finish review", offered while a review is open. */
     onfinish: () => void;
     /** Share of changed lines seen and seen against an old base, in percent. */
@@ -51,10 +50,10 @@
       <Chip bold onclick={toggle}>{project}</Chip>
     {/snippet}
     <Menu
-      items={[{ id: "open", label: "Open repository…" }]}
-      onselect={() => {
+      items={[openItem]}
+      onselect={(id) => {
         projectMenu = false;
-        onopenrepo();
+        mainMenu.run(id);
       }}
     />
   </Popover>

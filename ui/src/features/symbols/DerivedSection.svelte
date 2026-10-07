@@ -71,23 +71,6 @@
     border-bottom: 1px solid var(--line-soft);
     padding-bottom: 6px;
   }
-  .sh {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: var(--h-ctl);
-    padding: 0 10px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-2);
-  }
-  .n {
-    font-weight: 400;
-    color: var(--text-3);
-  }
-  .grow {
-    flex: 1;
-  }
   .derived {
     display: inline-flex;
     align-items: center;
@@ -95,16 +78,6 @@
     font-weight: 400;
     font-size: 11px;
     color: var(--text-3);
-  }
-  .note {
-    margin: 0;
-    padding: 2px 10px 4px 26px;
-    color: var(--text-3);
-    font-size: var(--fs-ctl);
-  }
-  .err {
-    color: var(--del-text);
-    white-space: pre-wrap;
   }
   .disclose {
     display: flex;

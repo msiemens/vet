@@ -29,8 +29,8 @@
   });
 </script>
 
-<div class="bar">
-  <span class="title">Changed symbols</span>
+<div class="sh sh-bar">
+  <span>Changed symbols</span>
   {#if changed?.state === "done"}<span class="mono n">{changed.value.symbols.length}</span>{/if}
   <span class="grow"></span>
   <button
@@ -72,25 +72,6 @@
 </div>
 
 <style>
-  .bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: var(--h-ctl);
-    padding: 0 6px 0 10px;
-    flex: none;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-2);
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .n {
-    font-weight: 400;
-    color: var(--text-3);
-  }
-  .grow {
-    flex: 1;
-  }
   .only {
     height: 20px;
     padding: 0 6px;
@@ -104,14 +85,7 @@
     border-bottom: 1px solid var(--line);
   }
   .note {
-    margin: 0;
     padding: 6px 10px;
-    color: var(--text-3);
-    font-size: var(--fs-ctl);
-  }
-  .err {
-    color: var(--del-text);
-    white-space: pre-wrap;
   }
   .file {
     height: var(--h-row);

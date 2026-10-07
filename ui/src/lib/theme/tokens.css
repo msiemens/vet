@@ -99,6 +99,8 @@
   --w-chev: 14px;
   --w-indent: 12px;
   --radius: 5px;
+  /* Floating sheets: menus, popovers, dialogs, toasts. */
+  --radius-sheet: 8px;
 }
 
 :root[data-theme="light"] {

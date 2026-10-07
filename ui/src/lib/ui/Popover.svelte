@@ -30,7 +30,7 @@
 <span class="pop" bind:this={root}>
   {@render trigger(toggle)}
   {#if open}
-    <div class="sheet" role="dialog" {@attach place}>{@render children()}</div>
+    <div class="surface sheet" role="dialog" {@attach place}>{@render children()}</div>
   {/if}
 </span>
 
@@ -43,9 +43,5 @@
     position: fixed;
     z-index: 20;
     min-width: 220px;
-    background: var(--bg-sheet);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    box-shadow: var(--shadow);
   }
 </style>

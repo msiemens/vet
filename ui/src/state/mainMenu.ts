@@ -35,6 +35,9 @@ export type Command =
   | { type: "theme"; theme: Theme }
   | { type: "devPanel" };
 
+/** Also offered by the project chip's menu. */
+export const openItem: MenuItem = { id: "open", label: "Open repository…" };
+
 export function buildMenu(c: MenuContext): MenuItem[] {
   // The native menu bar's accelerator reports the item like a click; the window's own binding is `KEYS.settings`.
   const settings: MenuItem = {
@@ -51,7 +54,7 @@ export function buildMenu(c: MenuContext): MenuItem[] {
   };
 
   const file: MenuItem[] = [
-    { id: "open", label: "Open repository…" },
+    openItem,
     {
       id: "recent",
       label: "Open Recent",

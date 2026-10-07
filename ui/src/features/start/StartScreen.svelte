@@ -40,7 +40,13 @@
           if (typed.trim()) onopen(typed.trim());
         }}
       >
-        <input type="text" bind:value={typed} placeholder="/path/to/repository" aria-label="Repository path" />
+        <input
+          class="field mono"
+          type="text"
+          bind:value={typed}
+          placeholder="/path/to/repository"
+          aria-label="Repository path"
+        />
         <button class="ctl" type="submit">Open</button>
       </form>
     {/if}
@@ -114,16 +120,6 @@
   }
   input {
     flex: 1;
-    height: var(--h-ctl);
-    box-sizing: border-box;
-    padding: 0 8px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--bg-editor);
-    color: var(--text);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--fs-mono);
   }
   .error {
     width: 100%;
