@@ -20,7 +20,7 @@ export interface AccountRow {
   statusLabel: string;
   /** What the platform said when it did not accept the credential or could not be asked. */
   problem?: string;
-  /** Why this credential matters or does not: a CLI's token is never stored, a token behind a CLI is not used. */
+  /** Why this credential is not used: a token behind a signed-in CLI. */
   note?: string;
   /** Only a personal access token is Vet's to remove or replace. */
   removable: boolean;
@@ -47,9 +47,7 @@ function badge(account: Account): string {
 export function accountRow(account: Account, keychain: boolean): AccountRow {
   const { state } = account;
   const cli = account.source === "cli";
-  let note: string | undefined;
-  if (!account.inUse) note = "Not used: the signed-in CLI for this host comes first.";
-  else if (cli) note = "Vet asks the CLI for a token when it needs one and never stores it.";
+  const note = account.inUse ? undefined : "Not used: the signed-in CLI for this host comes first.";
   return {
     key: `${account.host}/${account.source}`,
     host: account.host,

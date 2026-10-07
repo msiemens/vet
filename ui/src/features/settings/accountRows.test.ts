@@ -13,10 +13,9 @@ const account = (over: Partial<Account>): Account => ({
   ...over,
 });
 
-void test("a CLI credential names the CLI and says it is never stored", () => {
+void test("a CLI credential names the CLI and is not Vet's to remove", () => {
   const row = accountRow(account({ source: "cli", kind: "azureDevOps", host: "dev.azure.com" }), true);
-  assert.deepEqual([row.credential, row.platform, row.removable], ["az CLI", "ADO", false]);
-  assert.match(row.note ?? "", /never stores it/);
+  assert.deepEqual([row.credential, row.platform, row.removable, row.note], ["az CLI", "ADO", false, undefined]);
 });
 
 void test("a GitHub host other than github.com is an Enterprise host", () => {
