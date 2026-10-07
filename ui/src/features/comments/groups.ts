@@ -26,10 +26,7 @@ export function groupThreads(threads: readonly Thread[]): Groups {
     if (isDetached(thread)) groups.detached.push(thread);
     else if (thread.anchor?.type === "inferred") groups.moved.push(thread);
     else if (thread.kind === "changeset") groups.changeset.push(thread);
-    else {
-      const path = thread.path ?? thread.location?.path ?? "";
-      byPath.set(path, [...(byPath.get(path) ?? []), thread]);
-    }
+    else if (thread.path !== null) byPath.set(thread.path, [...(byPath.get(thread.path) ?? []), thread]);
   }
   const start = (t: Thread) => (t.kind === "file" ? -1 : (t.location?.start ?? 0));
   for (const path of [...byPath.keys()].sort()) {

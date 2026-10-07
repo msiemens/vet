@@ -10,6 +10,7 @@ import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { Side } from "../../../generated/Side";
 import { formatBytes } from "../../../lib/formatBytes";
 import { iconSvg } from "../../../lib/ui/icons";
+import { el, iconButton } from "./dom";
 import { hasPreview } from "./sectionLayout";
 
 const TITLE: Record<NonTextKind, string> = {
@@ -42,13 +43,6 @@ function describe(kind: NonTextKind, side: EntryDesc | null, path: string): stri
     default:
       return "";
   }
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  e.className = className;
-  if (text !== undefined) e.textContent = text;
-  return e;
 }
 
 function line(sign: "−" | "+", text: string): HTMLElement {
@@ -105,15 +99,8 @@ export function changeCard(
   const root = el("article", "vet-card");
   const thumbs: { thumb: HTMLElement; side: Side }[] = [];
   const bar = el("div", "vet-hunk");
-  const toggle = el("button", "flat vet-hunk-btn vet-seen-toggle");
-  toggle.type = "button";
-  toggle.innerHTML = iconSvg("check", 13, 2);
-  toggle.addEventListener("click", () => actions.toggle());
-  const comment = el("button", "flat vet-hunk-btn");
-  comment.type = "button";
-  comment.ariaLabel = comment.title = "Comment";
-  comment.innerHTML = iconSvg("comments", 13, 1.8);
-  comment.addEventListener("click", () => actions.comment());
+  const toggle = iconButton("Mark seen", "check", () => actions.toggle(), "vet-icon-btn vet-seen-toggle", 13, 2);
+  const comment = iconButton("Comment", "comments", () => actions.comment());
   bar.append(el("span", "vet-hunk-text", TITLE[item.kind]), el("span", "vet-card-path mono", path), el("span", "grow"));
   bar.append(comment, toggle);
   root.append(bar);

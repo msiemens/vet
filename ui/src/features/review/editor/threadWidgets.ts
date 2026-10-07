@@ -4,6 +4,7 @@
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { gutterWidth } from "./gutterWidth";
+import { lineEnd } from "./positions";
 import type { CardData, InlineCard } from "./threadPlacement";
 
 /** What the owner of the editor provides for its cards. */
@@ -62,7 +63,7 @@ export function threadCards(host: CardHost): Extension {
         decos = Decoration.set(
           effect.value.map((card) =>
             Decoration.widget({ widget: new CardWidget(card, host), block: true, side: 1 }).range(
-              doc.line(Math.min(card.line + 1, doc.lines)).to,
+              lineEnd(doc, card.line),
             ),
           ),
           true,

@@ -12,6 +12,7 @@ import { iconSvg } from "../../../lib/ui/icons";
 import { atRevision } from "../../../state/revision";
 import { highlightExtension } from "./highlightExtension";
 import { decodeHighlights } from "./highlights";
+import { lineStart } from "./positions";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 
 const NO_TEXT: Record<NoTextReason, string> = {
@@ -85,7 +86,7 @@ export class TextView {
     this.line = line;
     const view = this.view;
     if (!view) return;
-    const { from } = view.state.doc.line(Math.min(line + 1, view.state.doc.lines));
+    const from = lineStart(view.state.doc, line);
     view.dispatch({ selection: { anchor: from }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
   }
 

@@ -1,0 +1,42 @@
+/* The hunk header bar and the icon buttons of bars, cards and file headers (`dom.ts`). */
+.vet-hunk {
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--h-hunk);
+  box-sizing: border-box;
+  padding: 0 8px 0 10px;
+  background: var(--bg-hunk);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+/* The current stop (hunk or change card): its bar, so the lines keep their diff colours. */
+.vet-hunk.vet-hunk-current,
+.vet-card.vet-current > .vet-hunk {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-hunk));
+  box-shadow: inset 3px 0 var(--accent);
+}
+.vet-hunk-text {
+  font-size: var(--fs-mono-s);
+  white-space: pre;
+}
+.vet-hunk-old {
+  display: inline-flex;
+  color: var(--old-base);
+}
+.vet-icon-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  color: var(--text-2);
+}
+.vet-hunk-seen .vet-seen-toggle {
+  color: var(--seen);
+}
+.vet-hunk-seenAgainstOldBase .vet-seen-toggle {
+  color: var(--old-base);
+}

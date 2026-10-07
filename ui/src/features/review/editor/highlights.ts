@@ -2,7 +2,7 @@
 // nothing, it only decodes the ranges and puts a class on each. Offsets are UTF-16 units of the
 // document, as CodeMirror counts them.
 
-/** The CSS class of each kind, in the protocol's numbering; the colours are in `editor.css`. */
+/** The CSS class of each kind, in the protocol's numbering; the colours are in `highlights.css`. */
 const CLASSES = [
   "syn-keyword",
   "syn-string",

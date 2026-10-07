@@ -13,7 +13,7 @@ import { nextPaint } from "../../../lib/nextPaint";
 import type { HoverText } from "../../../state/backend";
 import { isMac } from "../../../state/host";
 import { hoverContent } from "./hoverContent";
-import { offsetAt } from "./positions";
+import { lineOf, lineStart, offsetAt } from "./positions";
 
 /** What an editor asks of its owner, which knows the view's revision and what to do with an answer. */
 export interface SemanticHooks {
@@ -106,8 +106,9 @@ export function semanticExtensions(
   hoverShown?: (ms: number) => void,
 ): Extension[] {
   const at = (view: EditorView, pos: number) => {
-    const line = view.state.doc.lineAt(pos);
-    return [line.number - 1, pos - line.from] as const;
+    const { doc } = view.state;
+    const line = lineOf(doc, pos);
+    return [line, pos - lineStart(doc, line)] as const;
   };
   return [
     targetField,

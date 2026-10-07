@@ -1,0 +1,209 @@
+/* File sections: fixed height from the manifest, content clipped to it. `clip`, not `hidden`:
+   it is not a scroll container, so focusing or scrolling into view never shifts the content
+   under the header. */
+.file {
+  overflow: clip;
+  border-bottom: 1px solid var(--line);
+  box-sizing: border-box;
+  background: var(--bg-editor);
+}
+.file > header {
+  height: var(--h-section);
+  box-sizing: border-box;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 0 8px 0 10px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs-ctl);
+}
+.file > header .path {
+  font-size: var(--fs-mono);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file > header .path .dir {
+  color: var(--text-3);
+}
+.file > header .delta {
+  font-size: var(--fs-mono-s);
+}
+.file > header .delta .add {
+  color: var(--add-text);
+}
+.file > header .delta .del {
+  color: var(--del-text);
+}
+.file > header .count {
+  flex: 1;
+  color: var(--text-3);
+  font-size: var(--fs-mono-s);
+}
+/* Spaced and inset like the hunk bar's buttons (`.vet-hunk`), so the two columns line up. */
+.file > header .tools {
+  display: flex;
+  gap: 8px;
+}
+.file.all-seen > header .seen {
+  color: var(--seen);
+}
+/* `--vet-cards` is the height of the section's change cards and `--vet-threads` that of its file
+   comments, set by the view. The editor is clipped above the section's bottom gap, which also
+   hides the empty last line of a file's text. */
+.file > .body {
+  height: calc(100% - var(--h-section) - var(--vet-cards, 0px) - var(--vet-threads, 0px) - var(--h-section-gap));
+  overflow: clip;
+}
+/* Rows sit exactly where `sectionLayout` puts them: no padding above the first or below the last. */
+.file .cm-editor .cm-content {
+  padding: 0;
+}
+
+/* The editor look of a changeset's file sections and of a text tab. */
+:is(.file, .vet-text) .cm-editor {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  background: var(--bg-editor);
+  color: var(--text);
+}
+:is(.file, .vet-text) .cm-editor.cm-focused {
+  outline: none;
+}
+:is(.file, .vet-text) .cm-editor .cm-scroller {
+  line-height: var(--h-line);
+  font-family: inherit;
+}
+:is(.file, .vet-text) .cm-editor .cm-gutters {
+  background: var(--bg-editor);
+  color: var(--text-3);
+  border: none;
+}
+:is(.file, .vet-text) .cm-editor .cm-lineNumbers .cm-gutterElement {
+  min-width: 40px;
+  padding: 0 6px 0 8px;
+}
+:is(.file, .vet-text) .cm-editor .cm-selectionBackground,
+:is(.file, .vet-text) .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+  background: var(--select);
+}
+.file .cm-editor .cm-scroller {
+  overflow: visible;
+}
+.file .cm-editor .cm-line {
+  padding-right: 4px;
+}
+.file .cm-editor .cm-activeLine,
+.file .cm-editor .cm-activeLineGutter {
+  background: transparent;
+}
+.file .cm-editor .cm-cursor {
+  border-left-color: var(--text);
+}
+.cm-mergeView,
+.cm-mergeViewEditors {
+  overflow: visible;
+}
+
+/* An unchanged file's text tab: one editor filling the pane, scrolling by itself. */
+.vet-text .cm-editor {
+  height: 100%;
+}
+.vet-notext {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  color: var(--text-2);
+  font-size: var(--fs-ctl);
+}
+
+/* Added and deleted lines (unified: target lines and deleted chunks; side by side: the two editors). */
+.file .cm-editor .cm-changedLine,
+.file .cm-editor .cm-insertedLine {
+  background: var(--add-bg);
+}
+.file .cm-editor .cm-deletedChunk,
+.file .cm-editor .cm-deletedLine,
+.file .cm-merge-a .cm-changedLine {
+  background: var(--del-bg);
+}
+.file .cm-editor .cm-changedText {
+  background: color-mix(in srgb, var(--add-text) 25%, transparent);
+}
+.file .cm-editor .cm-deletedChunk .cm-changedText,
+.file .cm-merge-a .cm-changedText {
+  background: color-mix(in srgb, var(--del-text) 25%, transparent);
+}
+.file .cm-editor .cm-changedLineGutter,
+.file .cm-editor .cm-deletedLineGutter {
+  background: transparent;
+}
+
+/* Review state (SPEC §10): a 3px strip, blue seen, amber seen against an old base, none unseen. */
+.file .cm-editor .vet-strip {
+  min-width: 3px;
+  width: 3px;
+}
+.file .cm-editor .vet-strip .vet-seen {
+  background: var(--seen);
+}
+.file .cm-editor .vet-strip .vet-old {
+  background: var(--old-base);
+}
+.file .cm-editor .cm-deletedChunk {
+  position: relative;
+}
+.file .cm-editor .cm-deletedChunk.vet-seen::before,
+.file .cm-editor .cm-deletedChunk.vet-old::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--vet-gutters, 0px));
+  width: 3px;
+  z-index: 300;
+}
+.file .cm-editor .cm-deletedChunk.vet-seen::before {
+  background: var(--seen);
+}
+.file .cm-editor .cm-deletedChunk.vet-old::before {
+  background: var(--old-base);
+}
+
+/* The bar of a collapsed unchanged region: "⋯ N unchanged lines", expands on click. */
+.file .cm-editor .cm-collapsedLines {
+  height: var(--h-collapsed);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  background: var(--bg-hunk);
+  color: var(--text-3);
+  font-size: var(--fs-mono-s);
+  cursor: default;
+  user-select: none;
+}
+.file .cm-editor .cm-collapsedLines::before,
+.file .cm-editor .cm-collapsedLines::after {
+  content: none;
+}
+.file .cm-editor .cm-collapsedLines:hover {
+  background-image: linear-gradient(var(--hover), var(--hover));
+}
+.file .cm-editor .cm-collapsedLines:active {
+  background-image: linear-gradient(var(--press), var(--press));
+}
+
+/* Inline decorations: changed symbol, reachability, notes (derived, §7.3/§7.4). */
+.vet-m-symbol {
+  border-bottom: 1px solid var(--syn-function);
+}
+.vet-m-reach {
+  border-bottom: 1px dotted var(--ok);
+}
+.vet-m-note {
+  border-bottom: 1px dashed var(--note);
+}

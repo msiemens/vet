@@ -2,7 +2,6 @@
 // data alone. A range thread's card sits below the target line the backend names. A card's
 // real height is measured once it is drawn (the text wraps), so the estimate only has to be close.
 
-import { lineRange } from "../../../lib/lineRange.ts";
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
 
@@ -36,14 +35,13 @@ export interface Placement {
 }
 
 /**
- * Splits the threads shown in a file: its own, and the ones on lines, each at the line the
- * backend says its card sits below. A detached thread has neither a location nor a line: it is
- * shown in the Comments tool window only.
+ * Splits the threads of a file: its own, and the ones on lines, each at the line the backend
+ * says its card sits below. A detached thread has neither a location nor a line: it is shown in
+ * the Comments tool window only.
  */
-export function placeThreads(path: string, threads: readonly Thread[]): Placement {
+export function placeThreads(threads: readonly Thread[]): Placement {
   const placement: Placement = { file: [], inline: [] };
   for (const thread of threads) {
-    if ((thread.path ?? thread.location?.path) !== path) continue;
     if (thread.kind === "file") placement.file.push(thread);
     else if (thread.kind === "range" && thread.targetLine !== null) {
       placement.inline.push({ thread, line: thread.targetLine });
@@ -78,33 +76,4 @@ export function cardHeight(card: CardData, m: CardMetrics): number {
   if (thread.status === "resolved" && !card.open) return CARD_PAD + m.line;
   const messages = thread.messages.reduce((h, msg) => h + m.line + bodyRows(msg.body) * m.line, 0);
   return CARD_PAD + m.line + messages + REPLY;
-}
-
-/** The tooltip of a "moved" badge: how the anchor was found and where it was recorded. */
-export function movedTitle(thread: Thread): string {
-  const anchor = thread.anchor;
-  if (anchor?.type !== "inferred") return "";
-  const how = anchor.strategy === "crossFileMove" ? "found in another file" : "found by its surrounding lines";
-  const was = thread.original
-    ? `; was ${thread.original.path}:${lineRange(thread.original.start, thread.original.len)}`
-    : "";
-  return `Moved: ${how}, ${anchor.confidence} confidence${was}`;
-}
-
-/** What a new comment is attached to, for the form's title. */
-export function draftTitle(target: ThreadTarget): string {
-  if (target.type === "changeset") return "Comment on the changeset";
-  if (target.type === "file") return "Comment on this file";
-  const lines = lineRange(target.start, target.len);
-  return target.side === "base" ? `Comment on base ${lines}` : `Comment on ${lines}`;
-}
-
-/** The text range a selection covers, as whole lines: a selection ending at a line start does not include that line. */
-export function selectedLines(
-  startLine: number,
-  endLine: number,
-  endsAtLineStart: boolean,
-): { start: number; len: number } {
-  const last = endsAtLineStart && endLine > startLine ? endLine - 1 : endLine;
-  return { start: startLine, len: last - startLine + 1 };
 }

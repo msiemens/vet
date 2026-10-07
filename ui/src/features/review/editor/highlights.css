@@ -1,0 +1,28 @@
+/* Syntax highlighting: the backend's token kinds (editor/highlights.ts) in the theme tokens. */
+.syn-keyword {
+  color: var(--syn-keyword);
+}
+.syn-string {
+  color: var(--syn-string);
+}
+.syn-number,
+.syn-attribute {
+  color: var(--syn-number);
+}
+.syn-comment {
+  color: var(--text-3);
+  font-style: italic;
+}
+.syn-type {
+  color: var(--syn-type);
+}
+.syn-function {
+  color: var(--syn-function);
+}
+.syn-heading {
+  color: var(--syn-function);
+  font-weight: bold;
+}
+.syn-link {
+  color: var(--accent);
+}

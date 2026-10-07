@@ -1,10 +1,11 @@
-// The hunk header bar: `@@ −40,5 +40,7 @@ symbol`, a seen toggle and a comment button.
+// The hunk header bar: `@@ −40,5 +40,7 @@`, a seen toggle and a comment button.
 
 import { WidgetType } from "@codemirror/view";
 import { KEYS } from "../../../lib/keymap";
 import { iconSvg } from "../../../lib/ui/icons";
 import type { Hunk } from "../../../generated/Hunk";
 import type { HunkState } from "../../../generated/HunkState";
+import { iconButton } from "./dom";
 
 export interface BarActions {
   toggleSeen(hunk: number): void;
@@ -13,10 +14,9 @@ export interface BarActions {
   openSource(hunk: number): void;
 }
 
-export function hunkHeader(h: Hunk, symbol?: string): string {
+export function hunkHeader(h: Hunk): string {
   const start = (s: number, len: number) => (len === 0 ? s : s + 1);
-  const text = `@@ −${start(h.baseStart, h.baseLen)},${h.baseLen} +${start(h.targetStart, h.targetLen)},${h.targetLen} @@`;
-  return symbol ? `${text} ${symbol}` : text;
+  return `@@ −${start(h.baseStart, h.baseLen)},${h.baseLen} +${start(h.targetStart, h.targetLen)},${h.targetLen} @@`;
 }
 
 const LABEL: Record<HunkState, string> = {
@@ -69,23 +69,19 @@ export class HunkBar extends WidgetType {
     const actions = this.actions;
     if (actions) {
       bar.append(
-        this.button(`Jump to source (${KEYS.jumpToSource.label})`, "file", "", () => actions.openSource(this.index)),
-        this.button("Comment", "comments", "", () => actions.comment(this.index)),
-        this.button(LABEL[this.state], "check", `vet-seen-toggle`, () => actions.toggleSeen(this.index)),
+        iconButton(`Jump to source (${KEYS.jumpToSource.label})`, "file", () => actions.openSource(this.index)),
+        iconButton("Comment", "comments", () => actions.comment(this.index)),
+        iconButton(
+          LABEL[this.state],
+          "check",
+          () => actions.toggleSeen(this.index),
+          "vet-icon-btn vet-seen-toggle",
+          13,
+          2,
+        ),
       );
     }
     return bar;
-  }
-
-  private button(label: string, icon: "check" | "comments" | "file", cls: string, onclick: () => void): HTMLElement {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = `flat vet-hunk-btn ${cls}`;
-    b.ariaLabel = label;
-    b.title = label;
-    b.innerHTML = iconSvg(icon, 13, icon === "check" ? 2 : 1.8);
-    b.addEventListener("click", onclick);
-    return b;
   }
 
   ignoreEvent(): boolean {

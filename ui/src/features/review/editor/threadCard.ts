@@ -6,8 +6,9 @@
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadStatus } from "../../../generated/ThreadStatus";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
-import { iconSvg } from "../../../lib/ui/icons";
-import { type CardData, draftTitle, movedTitle } from "./threadPlacement";
+import { lineRange } from "../../../lib/lineRange.ts";
+import { el, iconButton } from "./dom.ts";
+import type { CardData } from "./threadPlacement.ts";
 
 /** What a card asks of its owner; each resolves whether the request went through. */
 export interface ThreadActions {
@@ -22,21 +23,28 @@ export interface ThreadActions {
   toggle(thread: number): void;
 }
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  e.className = className;
-  if (text !== undefined) e.textContent = text;
-  return e;
+/** The tooltip of a "moved" badge: how the anchor was found and where it was recorded. */
+export function movedTitle(thread: Thread): string {
+  const anchor = thread.anchor;
+  if (anchor?.type !== "inferred") return "";
+  const how = anchor.strategy === "crossFileMove" ? "found in another file" : "found by its surrounding lines";
+  const was = thread.original
+    ? `; was ${thread.original.path}:${lineRange(thread.original.start, thread.original.len)}`
+    : "";
+  return `Moved: ${how}, ${anchor.confidence} confidence${was}`;
 }
 
-function button(label: string, className: string, onclick: () => void, icon?: "check" | "close" | "open" | "closed") {
-  const b = el("button", className);
+/** What a new comment is attached to, for the form's title. */
+export function draftTitle(target: ThreadTarget): string {
+  if (target.type === "changeset") return "Comment on the changeset";
+  if (target.type === "file") return "Comment on this file";
+  const lines = lineRange(target.start, target.len);
+  return target.side === "base" ? `Comment on base ${lines}` : `Comment on ${lines}`;
+}
+
+function button(label: string, className: string, onclick: () => void) {
+  const b = el("button", className, label);
   b.type = "button";
-  if (icon) {
-    b.innerHTML = iconSvg(icon, 11, 2);
-    b.ariaLabel = label;
-    b.title = label;
-  } else b.textContent = label;
   b.addEventListener("click", onclick);
   return b;
 }
@@ -100,11 +108,13 @@ function threadCard(thread: Thread, open: boolean, actions: ThreadActions): HTML
 
   const head = el("div", "vet-thread-head");
   if (resolved) {
-    const toggle = button(
+    const toggle = iconButton(
       folded ? "Show the thread" : "Hide the thread",
-      "flat vet-thread-btn",
-      () => actions.toggle(thread.id),
       folded ? "closed" : "open",
+      () => actions.toggle(thread.id),
+      "vet-thread-btn",
+      11,
+      2,
     );
     head.append(toggle, el("span", "vet-badge vet-badge-ok", "Resolved"));
   }
@@ -133,7 +143,7 @@ function threadCard(thread: Thread, open: boolean, actions: ThreadActions): HTML
         "ctl vet-thread-small",
         () => void actions.setStatus(thread.id, resolved ? "open" : "resolved"),
       ),
-      button("Delete the thread", "flat vet-thread-btn", () => void actions.remove(thread.id), "close"),
+      iconButton("Delete the thread", "close", () => void actions.remove(thread.id), "vet-thread-btn", 11, 2),
     );
   }
   card.append(head);

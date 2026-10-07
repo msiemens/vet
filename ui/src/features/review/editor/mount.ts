@@ -40,12 +40,6 @@ export interface Hooks extends BarActions, SemanticHooks {
   keydown(event: KeyboardEvent): void;
 }
 
-/** Per-hunk review display state of one file. */
-export interface Review {
-  states: HunkState[];
-  symbols: (string | undefined)[];
-}
-
 export interface Handle {
   /** The editable target-side view. */
   view: EditorView;
@@ -73,7 +67,8 @@ export function mountFile(
   host: HTMLElement,
   path: string,
   loaded: Loaded,
-  review: Review,
+  /** The review state of each hunk. */
+  states: HunkState[],
   mode: Mode,
   hooks: Hooks,
   /** Absent: show the whole file. */
@@ -81,11 +76,7 @@ export function mountFile(
   /** More extensions of the target view. */
   extra: Extension[] = [],
 ): Handle {
-  const targetField = reviewField(
-    sideConfig(loaded.hunks, "target", review.symbols, hooks),
-    loaded.marks,
-    review.states,
-  );
+  const targetField = reviewField(sideConfig(loaded.hunks, "target", hooks), loaded.marks, states);
   const diffConfig = { override: backendDiff(loaded.base, loaded.target, loaded.changes) };
   const shown = (ms: number) => hooks.hoverShown(ms);
   const target: Extension[] = [
@@ -121,7 +112,7 @@ export function mountFile(
     return handle(view, [view], targetField);
   }
   const base: Extension[] = [
-    reviewField(sideConfig(loaded.hunks, "base", review.symbols, null), [], review.states),
+    reviewField(sideConfig(loaded.hunks, "base", null), [], states),
     lineNumbers(),
     highlightExtension(loaded.baseHighlights),
     barText,

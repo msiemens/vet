@@ -10,7 +10,11 @@
   import { threads } from "../../state/threads.svelte";
   import { CommentsPanel } from "../comments";
   import FileTree from "./FileTree.svelte";
-  import "./editor/editor.css";
+  import "./editor/section.css";
+  import "./editor/hunkBar.css";
+  import "./editor/changeCard.css";
+  import "./editor/highlights.css";
+  import "./editor/hover.css";
   import "./editor/threadCard.css";
   import { type Hud, ReviewController } from "./ReviewController";
   import { CHANGES, kindOf, pathOf } from "./Tabs.svelte";

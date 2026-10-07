@@ -9,7 +9,7 @@ import type { FileChange } from "../../../generated/FileChange";
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
 import type { Handle } from "./mount";
-import { targetLine } from "./positions";
+import { lineEnd, targetLine } from "./positions";
 import type { ThreadSpace } from "./sectionLayout";
 import { type ThreadActions, buildCard } from "./threadCard";
 import {
@@ -180,14 +180,13 @@ export class ThreadLayer {
     const byPath = new Map<string, Thread[]>();
     const changeset: Thread[] = [];
     for (const thread of this.threads) {
-      const path = thread.path ?? thread.location?.path;
       if (thread.kind === "changeset") changeset.push(thread);
-      else if (path !== undefined) byPath.set(path, [...(byPath.get(path) ?? []), thread]);
+      else if (thread.path !== null) byPath.set(thread.path, [...(byPath.get(thread.path) ?? []), thread]);
     }
     const open = (thread: Thread) => this.opened.has(thread.id);
     for (const s of this.host.sections) {
       const { file } = s;
-      const placement = placeThreads(file.path, byPath.get(file.path) ?? []);
+      const placement = placeThreads(byPath.get(file.path) ?? []);
       const inline: InlineCard[] = placement.inline.map((c) => ({ ...c, open: open(c.thread) }));
       const blockCards: CardData[] = placement.file.map((thread) => ({ thread, open: open(thread) }));
       const draft = this.draft?.path === file.path ? this.draft.target : undefined;
@@ -294,10 +293,7 @@ export class ThreadLayer {
     const doc = s?.handle?.view.state.doc;
     if (form && doc && s.handle)
       s.handle.view.dispatch({
-        effects: EditorView.scrollIntoView(doc.line(Math.min(form.line + 1, doc.lines)).to, {
-          y: "nearest",
-          yMargin: 160,
-        }),
+        effects: EditorView.scrollIntoView(lineEnd(doc, form.line), { y: "nearest", yMargin: 160 }),
       });
   }
 

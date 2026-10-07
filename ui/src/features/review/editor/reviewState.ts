@@ -17,6 +17,7 @@ import type { MarkKind } from "../../../generated/MarkKind";
 import type { HunkState } from "../../../generated/HunkState";
 import { gutterWidth } from "./gutterWidth";
 import { type BarActions, HunkBar, hunkHeader } from "./hunkBar";
+import { lineEnd, lineStart } from "./positions";
 
 export const setStates = StateEffect.define<HunkState[]>();
 export const setCurrent = StateEffect.define<number | null>();
@@ -53,15 +54,10 @@ export interface SideConfig {
   bar: BarActions | null;
 }
 
-export function sideConfig(
-  hunks: Hunk[],
-  side: "base" | "target",
-  symbols: (string | undefined)[],
-  bar: BarActions | null,
-): SideConfig {
+export function sideConfig(hunks: Hunk[], side: "base" | "target", bar: BarActions | null): SideConfig {
   return {
     lines: hunks.map((h) => (side === "base" ? [h.baseStart, h.baseLen] : [h.targetStart, h.targetLen])),
-    headers: hunks.map((h, i) => hunkHeader(h, symbols[i])),
+    headers: hunks.map(hunkHeader),
     bar,
   };
 }
@@ -107,14 +103,14 @@ export function reviewField(side: SideConfig, marks: Mark[], states: HunkState[]
     create(state) {
       const doc = state.doc;
       const spans = side.lines.map(([start, len]): Span => {
-        const at = start < doc.lines ? doc.line(start + 1).from : doc.length;
+        const at = start < doc.lines ? lineStart(doc, start) : doc.length;
         if (len === 0 || start >= doc.lines) return { from: 0, to: 0, empty: true, at };
-        return { from: at, to: doc.line(Math.min(start + len, doc.lines)).to, empty: false, at };
+        return { from: at, to: lineEnd(doc, start + len - 1), empty: false, at };
       });
       const placed = marks.flatMap((m) => {
         if (m.line >= doc.lines) return [];
-        const line = doc.line(m.line + 1);
-        return [{ from: Math.min(line.from + m.from, line.to), to: Math.min(line.from + m.to, line.to), kind: m.kind }];
+        const [from, to] = [lineStart(doc, m.line), lineEnd(doc, m.line)];
+        return [{ from: Math.min(from + m.from, to), to: Math.min(from + m.to, to), kind: m.kind }];
       });
       const base = { spans, marks: placed, states, current: null };
       return { ...base, decos: build(base, doc, side) };
