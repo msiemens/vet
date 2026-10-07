@@ -9,6 +9,7 @@ use vet_transport::shell::{announce, exit_when_stdin_closes};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
+    vet_infra::timing::process_started();
     if std::env::args().any(|a| a == "--exit-on-stdin-close") {
         exit_when_stdin_closes();
     }

@@ -408,9 +408,10 @@ fn flatten_hover(contents: lsp::HoverContents) -> String {
     }
 }
 
-/// How long making the server see the file took (for a query across files that
-/// includes waiting for the server to go quiet) and how long the request itself took.
-fn log_timing(request: &str, file: &RepoPath, changed: bool, sync: Duration, answer: Duration) {
+/// How long a query that began at `started` took, with the part spent making
+/// the server see the file (for a query across files that includes waiting for
+/// the server to go quiet).
+fn log_timing(request: &str, file: &RepoPath, changed: bool, started: Instant, sync: Duration) {
     timing::log(
         || {
             format!(
@@ -420,7 +421,7 @@ fn log_timing(request: &str, file: &RepoPath, changed: bool, sync: Duration, ans
                 if changed { ", opened or changed" } else { "" },
             )
         },
-        sync + answer,
+        started,
     );
 }
 
@@ -454,7 +455,7 @@ impl LanguageServer for LspServer {
             partial_result_params: Default::default(),
         };
         let response = self.conn.request::<DocumentSymbolRequest>(params).await.map_err(err)?;
-        log_timing("documentSymbol", file, opened, synced - started, synced.elapsed());
+        log_timing("documentSymbol", file, opened, started, synced - started);
         Ok(symbols_in(file, response))
     }
 
@@ -486,7 +487,7 @@ impl LanguageServer for LspServer {
             .await;
         let response = response.map_err(err)?;
         closed.map_err(err)?;
-        log_timing("documentSymbol (text)", file, true, Duration::ZERO, started.elapsed());
+        log_timing("documentSymbol (text)", file, true, started, Duration::ZERO);
         Ok(symbols_in(file, response))
     }
 

@@ -302,7 +302,7 @@ impl Handler for Orchestrator {
             .to_owned();
         let started = std::time::Instant::now();
         let response = self.answer(request, events).await;
-        vet_infra::timing::log(|| format!("request {name}"), started.elapsed());
+        vet_infra::timing::log(|| format!("request {name}"), started);
         response
     }
 }

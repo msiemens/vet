@@ -218,7 +218,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
                     phases.describe()
                 )
             },
-            started.elapsed(),
+            started,
         );
         Ok(LspServer::new(conn, root, tree, diagnostics))
     }
