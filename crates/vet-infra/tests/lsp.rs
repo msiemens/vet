@@ -323,6 +323,45 @@ async fn pushed_diagnostics_are_found_for_a_path_the_server_spells_differently()
     server.shutdown().await;
 }
 
+/// Files opened together share one wait for the server to go quiet, instead of
+/// each waiting after the one before.
+#[tokio::test]
+async fn diagnostics_of_files_opened_together_share_one_quiet_wait() {
+    if !installed("typescript-language-server") {
+        eprintln!("skipped: typescript-language-server is not installed");
+        return;
+    }
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("tsconfig.json"),
+        "{\"compilerOptions\":{\"strict\":true}}",
+    )
+    .unwrap();
+    for i in 0..6 {
+        std::fs::write(
+            dir.path().join(format!("a{i}.ts")),
+            format!("export const x{i}: number = {i};\n"),
+        )
+        .unwrap();
+    }
+    let server = LspLauncher::new(BinaryLocator, NoRestore)
+        .start(
+            dir.path(),
+            Tree::Live,
+            &config::typescript(),
+            AnalysisPolicy { allow_executing: false },
+        )
+        .await
+        .expect("typescript-language-server starts");
+    let started = std::time::Instant::now();
+    let files: Vec<_> = (0..6).map(|i| path(&format!("a{i}.ts"))).collect();
+    let answers = vet_semantic::join::bounded(6, &files, |file| server.diagnostics(file)).await;
+    assert!(answers.iter().all(Result::is_ok));
+    // One after another, each file would add its own wait of three quarters of a second.
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    server.shutdown().await;
+}
+
 fn symbol_names(mut symbols: Vec<vet_semantic::ports::SymbolInfo>) -> Vec<String> {
     symbols.sort_by_key(|s| s.span.start.line);
     let mut names: Vec<String> = symbols.iter().map(|s| s.sym.name.join("::")).collect();
