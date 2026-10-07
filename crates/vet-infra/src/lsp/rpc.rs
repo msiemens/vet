@@ -19,6 +19,11 @@ use crate::exec::{Tail, command};
 
 pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const STDERR_LINES: usize = 20;
+const CONTENT_MODIFIED: i64 = -32801;
+const SERVER_CANCELLED: i64 = -32802;
+/// How often a request is repeated after the server dropped it, and how long to wait before.
+const TRANSIENT_RETRIES: u32 = 20;
+const TRANSIENT_BACKOFF: Duration = Duration::from_millis(100);
 
 pub(super) struct DiagnosticsState {
     /// Bumped on every publish, so a waiter can tell a fresh one.
@@ -39,7 +44,29 @@ pub(super) struct State {
     exited: bool,
 }
 
-type Pending = Mutex<HashMap<i64, oneshot::Sender<Result<Value, String>>>>;
+/// An error response of the server.
+struct ResponseError {
+    code: i64,
+    message: String,
+}
+
+impl ResponseError {
+    fn from_response(error: &Value) -> Self {
+        Self {
+            code: error["code"].as_i64().unwrap_or(0),
+            message: error["message"].as_str().unwrap_or("unknown error").to_owned(),
+        }
+    }
+
+    /// The server dropped the request because a document changed under it, or
+    /// because it was busy (`ContentModified`, `ServerCancelled`): asking again
+    /// is what the protocol expects of a client.
+    fn is_transient(&self) -> bool {
+        matches!(self.code, CONTENT_MODIFIED | SERVER_CANCELLED)
+    }
+}
+
+type Pending = Mutex<HashMap<i64, oneshot::Sender<Result<Value, ResponseError>>>>;
 
 struct Shared {
     pending: Pending,
@@ -97,27 +124,32 @@ impl Connection {
         params: R::Params,
         timeout: Duration,
     ) -> Result<R::Result, String> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = oneshot::channel();
-        self.shared.pending.lock().expect("not poisoned").insert(id, tx);
-        let message = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": R::METHOD,
-            "params": serde_json::to_value(params).map_err(|e| e.to_string())?,
-        });
-        if let Err(e) = write_message(&self.stdin, &message).await {
-            self.shared.pending.lock().expect("not poisoned").remove(&id);
-            return Err(self.describe(format!("{}: {e}", R::METHOD)));
-        }
-        let outcome = tokio::time::timeout(timeout, rx).await;
-        match outcome {
-            Ok(Ok(Ok(value))) => serde_json::from_value(value).map_err(|e| format!("{}: bad response: {e}", R::METHOD)),
-            Ok(Ok(Err(error))) => Err(format!("{}: {error}", R::METHOD)),
-            Ok(Err(_)) => Err(self.describe(format!("{}: server exited", R::METHOD))),
-            Err(_) => {
+        let params = serde_json::to_value(params).map_err(|e| e.to_string())?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut retries = 0;
+        loop {
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            let (tx, rx) = oneshot::channel();
+            self.shared.pending.lock().expect("not poisoned").insert(id, tx);
+            let message = json!({"jsonrpc": "2.0", "id": id, "method": R::METHOD, "params": params});
+            if let Err(e) = write_message(&self.stdin, &message).await {
                 self.shared.pending.lock().expect("not poisoned").remove(&id);
-                Err(format!("{}: timed out after {}s", R::METHOD, timeout.as_secs()))
+                return Err(self.describe(format!("{}: {e}", R::METHOD)));
+            }
+            match tokio::time::timeout_at(deadline, rx).await {
+                Ok(Ok(Ok(value))) => {
+                    return serde_json::from_value(value).map_err(|e| format!("{}: bad response: {e}", R::METHOD));
+                }
+                Ok(Ok(Err(error))) if error.is_transient() && retries < TRANSIENT_RETRIES => {
+                    retries += 1;
+                    tokio::time::sleep(TRANSIENT_BACKOFF).await;
+                }
+                Ok(Ok(Err(error))) => return Err(format!("{}: {}", R::METHOD, error.message)),
+                Ok(Err(_)) => return Err(self.describe(format!("{}: server exited", R::METHOD))),
+                Err(_) => {
+                    self.shared.pending.lock().expect("not poisoned").remove(&id);
+                    return Err(format!("{}: timed out after {}s", R::METHOD, timeout.as_secs()));
+                }
             }
         }
     }
@@ -258,7 +290,7 @@ async fn read_loop(stdout: ChildStdout, shared: Arc<Shared>, stdin: Arc<tokio::s
             (Some(method), None) => notification(&shared, &method, &message["params"]),
             (None, Some(id)) => {
                 let result = match message.get("error") {
-                    Some(error) => Err(error["message"].as_str().unwrap_or("unknown error").to_owned()),
+                    Some(error) => Err(ResponseError::from_response(error)),
                     None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
                 };
                 let sender = id
@@ -340,5 +372,45 @@ async fn collect_stderr(stderr: tokio::process::ChildStderr, shared: Arc<Shared>
     let mut lines = BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         shared.stderr.lock().expect("not poisoned").push(line);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use lsp_types::request::Shutdown;
+
+    use super::*;
+
+    /// A shell that answers its first request with an error of `code` and every
+    /// later one with `null`, whatever they ask.
+    fn server_failing_once_with(code: i64) -> Connection {
+        let script = format!(
+            r#"n=0
+while IFS= read -r line; do
+  case "$line" in
+    *Content-Length*)
+      n=$((n+1))
+      if [ $n = 1 ]; then body='{{"jsonrpc":"2.0","id":1,"error":{{"code":{code},"message":"dropped"}}}}'
+      else body='{{"jsonrpc":"2.0","id":'$n',"result":null}}'; fi
+      printf 'Content-Length: %s\r\n\r\n%s' ${{#body}} "$body";;
+  esac
+done"#
+        );
+        Connection::spawn("sh", &["-c".into(), script], Path::new("."), &[], Value::Null).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_request_the_server_dropped_because_a_document_changed_is_asked_again() {
+        let conn = server_failing_once_with(CONTENT_MODIFIED);
+        conn.request::<Shutdown>(()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn any_other_error_is_the_answer() {
+        let conn = server_failing_once_with(-32602);
+        let error = conn.request::<Shutdown>(()).await.unwrap_err();
+        assert_eq!(error, "shutdown: dropped");
     }
 }
