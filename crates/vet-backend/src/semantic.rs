@@ -5,6 +5,7 @@
 use vet_protocol::{Response, Side};
 use vet_semantic::ports::{At, Location};
 
+use super::highlight;
 use super::mapping::semantic as map;
 use super::{Open, message};
 
@@ -20,10 +21,14 @@ impl Open {
             .await
             .map_err(message)?;
         let (text, unavailable) = map::answer(answer.result, self.language_of(&at));
+        let code_highlights = text
+            .as_deref()
+            .map_or_else(Vec::new, |t| highlight::code_blocks(path, t));
         Ok(Response::Hover {
             revision,
             side,
             text,
+            code_highlights,
             unavailable,
         })
     }

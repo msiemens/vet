@@ -611,16 +611,23 @@ pub enum Response {
         target: Option<String>,
         /// The hunks' changed ranges, down to the words that differ within a replaced region.
         changes: Vec<TextChange>,
+        /// The syntax highlighting of `base`, empty for a side without one or without a
+        /// known language (see [`Highlights`]).
+        base_highlights: Highlights,
+        /// The same for `target`.
+        target_highlights: Highlights,
         marks: Vec<Mark>,
     },
     /// The file's review state after `SetSeen` or `Acknowledge`.
     Review(ReviewUpdate),
     /// `text` is Markdown; `None` with `unavailable` unset means the server has
-    /// nothing to say there.
+    /// nothing to say there. `code_highlights` has one entry for each fenced code block of
+    /// `text`, in order: the highlighting of the block's code (see [`Highlights`]).
     Hover {
         revision: u32,
         side: Side,
         text: Option<String>,
+        code_highlights: Vec<Highlights>,
         unavailable: Option<Unavailable>,
     },
     Definition(Locations),
@@ -1137,8 +1144,14 @@ pub struct DirEntry {
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
 pub enum TextContent {
-    Text { text: String },
-    NoText { reason: NoTextReason },
+    /// `highlights` is empty for a file without a known language (see [`Highlights`]).
+    Text {
+        text: String,
+        highlights: Highlights,
+    },
+    NoText {
+        reason: NoTextReason,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -1405,6 +1418,13 @@ pub struct Hunk {
     pub target_len: u32,
 }
 
+/// Syntax highlighting of a text, as the plain numbers of a `Vec<u32>`: three per coloured
+/// range, in order and not overlapping: the gap since the end of the previous range (since the
+/// start of the text for the first), the range's length, and its kind (0 keyword, 1 string,
+/// 2 number, 3 comment, 4 type, 5 function, 6 attribute, 7 heading, 8 link). Offsets are
+/// UTF-16 units of the text with `\r\n` counted as one unit, as for [`TextChange`].
+pub type Highlights = Vec<u32>;
+
 /// A changed range of the base and target text. Offsets are UTF-16 units of the
 /// text with `\r\n` counted as one unit, as CodeMirror counts its document.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -1439,4 +1459,54 @@ pub struct Mark {
     pub from: u32,
     pub to: u32,
     pub kind: MarkKind,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn round_trip(response: &Response) -> serde_json::Value {
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(&serde_json::from_value::<Response>(json.clone()).unwrap(), response);
+        json
+    }
+
+    #[test]
+    fn file_contents_carry_highlights_of_both_sides() {
+        let json = round_trip(&Response::FileContents {
+            revision: 1,
+            base: Some("let a = 1;".into()),
+            target: None,
+            changes: Vec::new(),
+            base_highlights: vec![0, 3, 0, 5, 1, 2],
+            target_highlights: Vec::new(),
+            marks: Vec::new(),
+        });
+        assert_eq!(json["baseHighlights"], serde_json::json!([0, 3, 0, 5, 1, 2]));
+        assert_eq!(json["targetHighlights"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn file_text_carries_highlights() {
+        let json = round_trip(&Response::FileText {
+            revision: 1,
+            content: TextContent::Text {
+                text: "fn f() {}".into(),
+                highlights: vec![0, 2, 0],
+            },
+        });
+        assert_eq!(json["content"]["highlights"], serde_json::json!([0, 2, 0]));
+    }
+
+    #[test]
+    fn hover_carries_highlights_per_code_block() {
+        let json = round_trip(&Response::Hover {
+            revision: 1,
+            side: Side::Target,
+            text: Some("```rust\nfn f() {}\n```".into()),
+            code_highlights: vec![vec![0, 2, 0], Vec::new()],
+            unavailable: None,
+        });
+        assert_eq!(json["codeHighlights"], serde_json::json!([[0, 2, 0], []]));
+    }
 }

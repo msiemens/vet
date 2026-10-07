@@ -10,6 +10,7 @@ publish.workspace = true
 # the protocol and the text diff of `vet-core`.
 [dependencies]
 vet-core.workspace = true
+vet-highlight.workspace = true
 vet-protocol.workspace = true
 vet-transport.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

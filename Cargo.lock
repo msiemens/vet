@@ -4248,6 +4248,7 @@ dependencies = [
  "tokio",
  "vet-app",
  "vet-core",
+ "vet-highlight",
  "vet-infra",
  "vet-protocol",
  "vet-semantic",
@@ -4315,6 +4316,7 @@ dependencies = [
  "similar",
  "tokio",
  "vet-core",
+ "vet-highlight",
  "vet-protocol",
  "vet-transport",
 ]
@@ -4324,6 +4326,7 @@ name = "vet-protocol"
 version = "0.0.0"
 dependencies = [
  "serde",
+ "serde_json",
  "ts-rs",
 ]
 

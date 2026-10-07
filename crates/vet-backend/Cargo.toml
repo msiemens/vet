@@ -12,6 +12,7 @@ vet-transport.workspace = true
 vet-semantic.workspace = true
 vet-app.workspace = true
 vet-infra.workspace = true
+vet-highlight.workspace = true
 base64 = "0.22"
 tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "sync", "time"] }
 

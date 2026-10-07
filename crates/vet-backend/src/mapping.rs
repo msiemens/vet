@@ -260,11 +260,14 @@ pub fn directory(l: &DirListing) -> p::Response {
     }
 }
 
-pub fn target_text(t: &TargetText) -> p::Response {
+pub fn target_text(t: &TargetText, highlights: p::Highlights) -> p::Response {
     p::Response::FileText {
         revision: t.revision,
         content: match &t.content {
-            Ok(text) => p::TextContent::Text { text: text.clone() },
+            Ok(text) => p::TextContent::Text {
+                text: text.clone(),
+                highlights,
+            },
             Err(reason) => p::TextContent::NoText {
                 reason: match reason {
                     NoText::Binary => p::NoTextReason::Binary,

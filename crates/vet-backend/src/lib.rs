@@ -2,6 +2,7 @@
 //! logic lives in `vet-app`; this crate wires adapters to it and maps its views
 //! to protocol messages.
 
+mod highlight;
 mod mapping;
 mod run;
 mod semantic;
@@ -84,6 +85,7 @@ pub struct Orchestrator {
     sessions: Sessions,
     servers: Arc<LanguageServers>,
     backends: Arc<[Backend]>,
+    highlighter: highlight::Highlighter,
     /// The protocol id of the next session opened; unrelated to the store's ids.
     next_id: AtomicU32,
 }
@@ -138,6 +140,7 @@ impl Orchestrator {
         Self {
             servers: Arc::new(Servers::new(resolver, store.clone(), languages)),
             backends,
+            highlighter: Default::default(),
             store,
             config,
             sessions: Sessions::default(),
@@ -314,11 +317,17 @@ impl Handler for Orchestrator {
                     .file_text(&path)
                     .await
                     .map_err(message)?;
+                let (base_highlights, target_highlights) = tokio::join!(
+                    self.highlighter.text(&path, text.base.as_deref()),
+                    self.highlighter.text(&path, text.target.as_deref())
+                );
                 Ok(Response::FileContents {
                     revision: text.revision,
                     base: text.base,
                     target: text.target,
                     changes: text.changes.iter().map(mapping::text_change).collect(),
+                    base_highlights,
+                    target_highlights,
                     marks: Vec::new(),
                 })
             }
@@ -429,7 +438,8 @@ impl Handler for Orchestrator {
                     .target_text(&path)
                     .await
                     .map_err(message)?;
-                Ok(mapping::target_text(&text))
+                let highlights = self.highlighter.text(&path, text.content.as_deref().ok()).await;
+                Ok(mapping::target_text(&text, highlights))
             }
             Request::Threads { session } => {
                 let threads = self.find(session).await?.session.threads().await.map_err(message)?;

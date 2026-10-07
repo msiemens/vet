@@ -15,6 +15,7 @@ use std::sync::{Mutex, PoisonError};
 use corpus::{Config, Corpus};
 use vet_core::content::LineRange;
 use vet_core::inline::text_changes;
+use vet_highlight::{Cache, Language};
 use vet_protocol::{
     Base, BaseChoice, CommitInfo, Completion, FileChange, FileReview, FileStatus, Hunk, HunkState, Manifest, Request,
     Response, ReviewInfo, ReviewUpdate, SessionId, Target, TextChange,
@@ -37,8 +38,11 @@ struct Mock {
     index: HashMap<String, usize>,
     /// Review state: one seen flag per hunk per file. It lives here, not in the shell (I5).
     seen: Mutex<Vec<Vec<bool>>>,
+    /// Highlights by file and side (true for the target).
+    highlights: Cache<(usize, bool)>,
 }
 
+const HIGHLIGHT_CACHE_BYTES: usize = 64 << 20;
 const SESSION: SessionId = 0;
 const REVISION: u32 = 0;
 
@@ -147,13 +151,21 @@ impl Handler for Mock {
                 })))
             }
             Request::FileContents { path, .. } => {
-                let f = &self.corpus.files[position(&path)?];
+                let at = position(&path)?;
+                let f = &self.corpus.files[at];
                 let hunks: Vec<_> = f.hunks.iter().map(core_hunk).collect();
                 let changes = text_changes(&f.base, &f.target, &hunks);
+                // The corpus has no content ids: a side of a file is its own.
+                let highlights = |is_target: bool, text: &str| match Language::of_path(&f.path) {
+                    Some(language) => self.highlights.get(&(at, is_target), text, language).to_vec(),
+                    None => Vec::new(),
+                };
                 Ok(Response::FileContents {
                     revision: REVISION,
                     base: Some(f.base.clone()),
                     target: Some(f.target.clone()),
+                    base_highlights: highlights(false, &f.base),
+                    target_highlights: highlights(true, &f.target),
                     changes: changes
                         .iter()
                         .map(|c| TextChange {
@@ -230,6 +242,7 @@ impl Handler for Mock {
                         line + 1,
                         col + 1
                     )),
+                    code_highlights: Vec::new(),
                     unavailable: None,
                 })
             }
@@ -288,5 +301,13 @@ async fn main() -> std::io::Result<()> {
     let seen = Mutex::new(corpus.files.iter().map(|f| vec![false; f.hunks.len()]).collect());
     let server = Server::bind().await?;
     server.announce()?;
-    server.serve(Mock { corpus, index, seen }).await
+    let highlights = Cache::new(HIGHLIGHT_CACHE_BYTES);
+    server
+        .serve(Mock {
+            corpus,
+            index,
+            seen,
+            highlights,
+        })
+        .await
 }

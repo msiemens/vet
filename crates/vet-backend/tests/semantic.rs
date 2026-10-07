@@ -108,6 +108,7 @@ async fn rust_semantics_through_the_protocol() {
         revision: answered,
         side,
         text,
+        code_highlights,
         unavailable,
     } = hover
     else {
@@ -115,6 +116,12 @@ async fn rust_semantics_through_the_protocol() {
     };
     assert_eq!((answered, side, unavailable), (revision, Side::Target, None));
     assert!(text.unwrap().contains("fn keep"));
+    // The signature is the last of the fenced Rust blocks: `pub fn keep`.
+    let signature = code_highlights.last().unwrap();
+    assert!(
+        signature.starts_with(&[0, 3, 0, 1, 2, 0, 1, 4, 5]),
+        "{code_highlights:?}"
+    );
 
     let Response::Definition(defs) = client
         .call(Request::Definition {

@@ -698,9 +698,24 @@ async fn the_whole_snapshot_can_be_browsed_and_read() {
     assert!(client.list(session, "target").await.is_err());
     assert!(client.list(session, ".pnpm-store").await.is_err());
 
-    let text = |text: &str| TextContent::Text { text: text.into() };
-    assert_eq!(client.file_text(session, "src/lib.rs").await.unwrap(), text("// lib\n"));
-    assert_eq!(client.file_text(session, "src/new.rs").await.unwrap(), text("// new\n"));
+    let text = |text: &str, highlights: &[u32]| TextContent::Text {
+        text: text.into(),
+        highlights: highlights.into(),
+    };
+    // A comment: no gap, six units, kind 3.
+    assert_eq!(
+        client.file_text(session, "src/lib.rs").await.unwrap(),
+        text("// lib\n", &[0, 6, 3])
+    );
+    assert_eq!(
+        client.file_text(session, "src/new.rs").await.unwrap(),
+        text("// new\n", &[0, 6, 3])
+    );
+    // No grammar for the extension of a plain text.
+    assert_eq!(
+        client.file_text(session, "README.md").await.unwrap(),
+        text("hello\n", &[])
+    );
     assert_eq!(
         client.file_text(session, "blob.bin").await.unwrap(),
         TextContent::NoText {
@@ -708,6 +723,57 @@ async fn the_whole_snapshot_can_be_browsed_and_read() {
         }
     );
     assert!(client.file_text(session, "target/debug/out").await.is_err());
+}
+
+/// The ranges of an encoding of highlights as (start, length, kind).
+fn highlighted(encoded: &[u32]) -> Vec<(u32, u32, u32)> {
+    let mut end = 0;
+    encoded
+        .chunks(3)
+        .map(|c| {
+            let start = end + c[0];
+            end = start + c[1];
+            (start, c[1], c[2])
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn both_sides_of_a_changed_file_come_with_highlights() {
+    let fx = fixture(
+        &[("a.rs", "fn f() { 1 }\n"), ("notes.txt", "fn f() { 1 }\n")],
+        &[("a.rs", "// new\nfn g() { \"s\" }\n"), ("notes.txt", "fn g() { 2 }\n")],
+    )
+    .await;
+    let client = Client::new(&fx.handler);
+    let session = open(&client, fx.repo.path()).await;
+    let contents = |path: &str| {
+        let call = client.call(Request::FileContents {
+            session,
+            path: path.into(),
+        });
+        async {
+            match call.await.unwrap() {
+                Response::FileContents {
+                    base_highlights,
+                    target_highlights,
+                    ..
+                } => (highlighted(&base_highlights), highlighted(&target_highlights)),
+                other => panic!("{other:?}"),
+            }
+        }
+    };
+
+    let (base, target) = contents("a.rs").await;
+    // `fn` is a keyword, `f` a function, `1` a number.
+    assert_eq!(base, [(0, 2, 0), (3, 1, 5), (9, 1, 2)]);
+    // The comment, then the same for the new line; the string is in the target only.
+    assert_eq!(target, [(0, 6, 3), (7, 2, 0), (10, 1, 5), (16, 3, 1)]);
+    // The same text again is answered from the cache, equally.
+    assert_eq!(contents("a.rs").await, (base, target));
+
+    // A language without a grammar has none, on either side.
+    assert_eq!(contents("notes.txt").await, (vec![], vec![]));
 }
 
 fn session_refs(repo: &Path) -> String {
