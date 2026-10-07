@@ -164,7 +164,7 @@ mod tests {
 
     use super::*;
     use crate::pin::CommitId;
-    use crate::ports::{BlobRead, CheckoutError, GcReport, Scan, StoreError};
+    use crate::ports::{BlobRead, CheckoutError, Scan, StoreError};
     use crate::review::SessionId;
 
     fn path(name: &str) -> RepoPath {
@@ -366,9 +366,6 @@ mod tests {
             unreachable!()
         }
         async fn timeline(&self, _: SessionId) -> Result<Vec<crate::review::Version>, StoreError> {
-            unreachable!()
-        }
-        async fn gc(&self, _: i64) -> Result<GcReport, StoreError> {
             unreachable!()
         }
     }

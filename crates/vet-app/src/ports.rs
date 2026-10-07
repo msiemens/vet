@@ -11,6 +11,7 @@ use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadSta
 use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::execution::targets::RunTarget;
+use crate::gc::{GcFacts, GcPlan};
 use crate::pin::{BaseChoice, CommitId, Pin, PinId};
 use crate::review::{NonTextAck, Session, SessionId, SpanId, Version};
 
@@ -219,8 +220,8 @@ pub struct GcReport {
     pub blobs_deleted: usize,
 }
 
-/// Content and snapshots (§8). One implementation backs this and
-/// [`ReviewStore`]: GC checks references across sessions, spans and comments.
+/// Content and snapshots (§8). One implementation backs this, [`ReviewStore`]
+/// and [`GcStore`]: GC checks references across sessions, spans and comments.
 pub trait Store {
     /// Content-addressed by `BlobId::of`; durable (fsynced, renamed) on return.
     fn put_blob(&self, bytes: Vec<u8>) -> impl Future<Output = Result<BlobId, StoreError>> + Send;
@@ -246,9 +247,19 @@ pub trait Store {
         at: i64,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn timeline(&self, session: SessionId) -> impl Future<Output = Result<Vec<Version>, StoreError>> + Send;
-    /// Delete expired closed sessions, then snapshots and content nothing
-    /// retained refers to (§8). `now` is unix seconds.
-    fn gc(&self, now: i64) -> impl Future<Output = Result<GcReport, StoreError>> + Send;
+}
+
+/// The store's side of garbage collection (§8): it knows how to read what
+/// refers to what and how to delete, `crate::gc` decides what to keep.
+pub trait GcStore {
+    /// Reads the facts, deletes what `decide` makes of them in the same
+    /// transaction, then the tree nodes no snapshot reaches and the content no
+    /// tree refers to. `now` is unix seconds.
+    fn gc(
+        &self,
+        now: i64,
+        decide: &(dyn Fn(&GcFacts) -> GcPlan + Send + Sync),
+    ) -> impl Future<Output = Result<GcReport, StoreError>> + Send;
 }
 
 /// Review state (§5.2). Spans are replaced as a set because remapping is

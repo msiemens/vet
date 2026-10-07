@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use sea_orm::PaginatorTrait;
 use tempfile::TempDir;
-use vet_app::ports::{ReviewStore, Store};
+use vet_app::gc::{Retention, collect};
+use vet_app::ports::{GcReport, ReviewStore, Store};
 use vet_app::review::{NonTextAck, Version};
 use vet_core::content::{
     BlobId, Changeset, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId,
@@ -24,11 +25,16 @@ fn h(n: u8) -> Hash {
 }
 
 async fn open(dir: &TempDir) -> SqliteStore {
-    let config = StoreConfig {
-        gc_grace: Duration::ZERO,
+    SqliteStore::open(dir.path()).await.unwrap()
+}
+
+/// Collects with no grace period, so content is eligible as soon as it is unreferenced.
+async fn gc(store: &SqliteStore, now: i64) -> GcReport {
+    let retention = Retention {
+        grace: Duration::ZERO,
         ..Default::default()
     };
-    SqliteStore::open(dir.path(), config).await.unwrap()
+    collect(store, now, &retention).await.unwrap()
 }
 
 fn file_entry(blob: u8) -> FileEntry {
@@ -373,7 +379,7 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
     let id = session(&store, snaps[0].id, snaps[1].id).await;
     let now = T0;
 
-    let report = store.gc(now).await.unwrap();
+    let report = gc(&store, now).await;
     assert_eq!(
         (
             report.sessions_deleted,
@@ -391,7 +397,7 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
 
     // Closed sessions are kept for the retention period.
     store.close_session(id, now, false).await.unwrap();
-    assert_eq!(store.gc(now + 29 * DAY).await.unwrap(), Default::default());
+    assert_eq!(gc(&store, now + 29 * DAY).await, Default::default());
     assert!(store.session(id).await.unwrap().is_some());
 
     // An open thread keeps an expired session.
@@ -399,10 +405,10 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
         .add_thread(id, CommentTarget::Changeset, message("todo"))
         .await
         .unwrap();
-    assert_eq!(store.gc(now + 31 * DAY).await.unwrap(), Default::default());
+    assert_eq!(gc(&store, now + 31 * DAY).await, Default::default());
     store.set_thread_status(thread, ThreadStatus::Resolved).await.unwrap();
 
-    let report = store.gc(now + 31 * DAY).await.unwrap();
+    let report = gc(&store, now + 31 * DAY).await;
     assert_eq!(
         (
             report.sessions_deleted,
@@ -419,17 +425,19 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
 #[tokio::test]
 async fn gc_grace_protects_fresh_content() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SqliteStore::open(dir.path(), StoreConfig::default()).await.unwrap();
+    let store = open(&dir).await;
+    let retention = Retention::default();
     store.put_blob(vec![1]).await.unwrap();
     store
         .put_snapshot(snapshot(&[("a", 1)]), Default::default(), T0)
         .await
         .unwrap();
-    assert_eq!(store.gc(T0).await.unwrap(), Default::default());
+    assert_eq!(collect(&store, T0, &retention).await.unwrap(), Default::default());
     assert!(store.blob(BlobId::of(&[1])).await.unwrap().is_some());
     assert!(store.snapshot(snapshot(&[("a", 1)]).id).await.unwrap().is_some());
 
-    assert_eq!(store.gc(T0 + 3600).await.unwrap().snapshots_deleted, 1);
+    let later = collect(&store, T0 + 3600, &retention).await.unwrap();
+    assert_eq!(later.snapshots_deleted, 1);
 }
 
 async fn node_count(store: &SqliteStore) -> u64 {
@@ -462,7 +470,7 @@ async fn gc_drops_a_node_only_when_no_retained_root_reaches_it() {
     assert_eq!(node_count(&store).await, 5);
     session(&store, kept.id, kept.id).await;
 
-    let report = store.gc(T0).await.unwrap();
+    let report = gc(&store, T0).await;
     assert_eq!((report.snapshots_deleted, report.nodes_deleted), (1, 2)); // other's root and `a`; `b` is shared
     assert_eq!(node_count(&store).await, 3);
     assert_eq!(store.snapshot(kept.id).await.unwrap().unwrap().0, kept);

@@ -334,7 +334,7 @@ mod tests {
     use super::rows::Row;
     use super::*;
     use crate::pin::CommitId;
-    use crate::ports::{BlobRead, CheckoutError, GcReport, ProcessEvent, RunningProcess, Scan};
+    use crate::ports::{BlobRead, CheckoutError, ProcessEvent, RunningProcess, Scan};
     use crate::review::SessionId;
 
     fn snapshot(files: &[(&str, &str)]) -> (Snapshot, HashMap<BlobId, Vec<u8>>) {
@@ -497,9 +497,6 @@ mod tests {
             unreachable!()
         }
         async fn timeline(&self, _: SessionId) -> Result<Vec<crate::review::Version>, StoreError> {
-            unreachable!()
-        }
-        async fn gc(&self, _: i64) -> Result<GcReport, StoreError> {
             unreachable!()
         }
     }

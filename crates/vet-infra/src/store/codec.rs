@@ -8,10 +8,11 @@ use vet_app::review::NonTextAck;
 use vet_core::content::{
     BlobId, EntryKind, FileEntry, Hash, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
 };
+use vet_core::filter::ReviewFilter;
 use vet_core::merkle::TreeNode;
 use vet_core::review::{Anchor, CommentTarget, Side, SpanState, ThreadStatus};
 
-use super::entity::{ack, anchor, kinds, session_base, snapshot_path, thread, tree_child};
+use super::entity::{ack, anchor, kinds, project_filter_item, session_base, snapshot_path, thread, tree_child};
 
 pub fn corrupt(what: &str) -> DbErr {
     DbErr::Custom(format!("corrupt row: {what}"))
@@ -68,6 +69,43 @@ twin!(
         Empty
     }
 );
+
+/// The item rows of `repo`'s filter, roots first, in the order they are read back.
+pub fn filter_rows(repo: &str, filter: &ReviewFilter) -> Vec<project_filter_item::ActiveModel> {
+    let item = |kind: kinds::FilterKind, value: Vec<u8>| project_filter_item::ActiveModel {
+        repo: Set(repo.to_owned()),
+        kind: Set(kind),
+        value: Set(value),
+        ..Default::default()
+    };
+    let text = |kind, patterns: &[String]| {
+        patterns
+            .iter()
+            .map(|s| item(kind, s.clone().into_bytes()))
+            .collect::<Vec<_>>()
+    };
+    let roots = filter.roots.iter().map(|r| item(kinds::FilterKind::Root, r.0.clone()));
+    roots
+        .chain(text(kinds::FilterKind::Include, &filter.include))
+        .chain(text(kinds::FilterKind::Exclude, &filter.exclude))
+        .collect()
+}
+
+pub fn filter_from(hide_binary: bool, items: Vec<project_filter_item::Model>) -> Result<ReviewFilter, DbErr> {
+    let mut filter = ReviewFilter {
+        hide_binary,
+        ..Default::default()
+    };
+    for item in items {
+        let text = |v: Vec<u8>| String::from_utf8(v).map_err(|_| corrupt("filter pattern is not UTF-8"));
+        match item.kind {
+            kinds::FilterKind::Root => filter.roots.push(RepoPath(item.value)),
+            kinds::FilterKind::Include => filter.include.push(text(item.value)?),
+            kinds::FilterKind::Exclude => filter.exclude.push(text(item.value)?),
+        }
+    }
+    Ok(filter)
+}
 
 pub fn base_row(session: i64, choice: BaseChoice, commit: CommitId) -> session_base::ActiveModel {
     let (kind, value) = match choice {

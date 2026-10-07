@@ -9,8 +9,6 @@ use sea_orm::{DbBackend, Schema};
 use sea_orm_migration::prelude::*;
 
 use super::entity::*;
-use super::run::{run_approval, run_target};
-use super::servers::server_path;
 
 pub struct Migrator;
 

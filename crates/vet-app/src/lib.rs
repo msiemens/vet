@@ -5,6 +5,7 @@
 pub mod acquisition;
 pub mod base;
 pub mod execution;
+pub mod gc;
 pub mod ignore;
 pub mod limits;
 pub mod pin;

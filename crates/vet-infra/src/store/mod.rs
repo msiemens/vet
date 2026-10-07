@@ -5,6 +5,7 @@
 mod codec;
 mod content;
 mod entity;
+mod gc;
 mod migration;
 mod run;
 mod servers;
@@ -15,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
 
 use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sea_orm::{
@@ -24,7 +25,7 @@ use sea_orm::{
 };
 use sea_orm_migration::MigratorTrait;
 use vet_app::pin::{BaseChoice, CommitId, Pin, PinId};
-use vet_app::ports::{GcReport, ReviewStore, Store, StoreError};
+use vet_app::ports::{ReviewStore, Store, StoreError};
 use vet_app::review::{NonTextAck, RecordedSpan, Session, SessionId, SpanId, Version};
 use vet_core::content::{BlobId, Changeset, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
@@ -34,34 +35,14 @@ use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Thread, Thr
 
 use codec::*;
 use content::ContentStore;
-use entity::kinds::FilterKind;
 use entity::*;
 
 type Res<T> = Result<T, DbErr>;
-
-#[derive(Clone, Copy, Debug)]
-pub struct StoreConfig {
-    /// How long a closed session is kept (§8).
-    pub closed_retention: Duration,
-    /// Content and snapshots younger than this are never collected, so a blob
-    /// written just before the metadata that references it survives a GC.
-    pub gc_grace: Duration,
-}
-
-impl Default for StoreConfig {
-    fn default() -> Self {
-        Self {
-            closed_retention: Duration::from_secs(30 * 24 * 3600),
-            gc_grace: Duration::from_secs(3600),
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct SqliteStore {
     db: DatabaseConnection,
     content: Arc<ContentStore>,
-    config: StoreConfig,
     dir: PathBuf,
 }
 
@@ -114,46 +95,7 @@ async fn write_filter(db: &impl ConnectionTrait, repo: &str, filter: &ReviewFilt
     }
     .insert(db)
     .await?;
-    let item = |kind: FilterKind, value: Vec<u8>| project_filter_item::ActiveModel {
-        repo: Set(repo.to_owned()),
-        kind: Set(kind),
-        value: Set(value),
-        ..Default::default()
-    };
-    let rows = filter
-        .roots
-        .iter()
-        .map(|r| item(FilterKind::Root, r.0.clone()))
-        .chain(
-            filter
-                .include
-                .iter()
-                .map(|s| item(FilterKind::Include, s.clone().into_bytes())),
-        )
-        .chain(
-            filter
-                .exclude
-                .iter()
-                .map(|s| item(FilterKind::Exclude, s.clone().into_bytes())),
-        )
-        .collect();
-    insert_chunked(db, rows).await
-}
-
-fn read_filter(hide_binary: bool, items: Vec<project_filter_item::Model>) -> Res<ReviewFilter> {
-    let mut filter = ReviewFilter {
-        hide_binary,
-        ..Default::default()
-    };
-    for item in items {
-        let text = |v: Vec<u8>| String::from_utf8(v).map_err(db_err);
-        match item.kind {
-            FilterKind::Root => filter.roots.push(vet_core::content::RepoPath(item.value)),
-            FilterKind::Include => filter.include.push(text(item.value)?),
-            FilterKind::Exclude => filter.exclude.push(text(item.value)?),
-        }
-    }
-    Ok(filter)
+    insert_chunked(db, filter_rows(repo, filter)).await
 }
 
 impl SqliteStore {
@@ -164,7 +106,7 @@ impl SqliteStore {
 
     /// A database written by another version of Vet (it applied migrations
     /// this one does not have) is deleted and created anew, losing its reviews.
-    pub async fn open(dir: &Path, config: StoreConfig) -> Result<Self, StoreError> {
+    pub async fn open(dir: &Path) -> Result<Self, StoreError> {
         std::fs::create_dir_all(dir)?;
         let mut db = connect(dir).await?;
         if migration::is_foreign(&db).await? {
@@ -182,7 +124,6 @@ impl SqliteStore {
         Ok(Self {
             db,
             content: Arc::new(content),
-            config,
             dir: dir.to_owned(),
         })
     }
@@ -314,169 +255,6 @@ impl SqliteStore {
             .ok_or_else(|| DbErr::RecordNotFound(format!("thread {}", id.0)))
     }
 
-    async fn gc_metadata(&self, now: i64) -> Res<(GcReport, HashSet<BlobId>)> {
-        let cutoff = now - self.config.closed_retention.as_secs() as i64;
-        let grace = now - self.config.gc_grace.as_secs() as i64;
-        let txn = self.db.begin().await?;
-
-        // Expired closed sessions, unless an open thread keeps them.
-        let expired: Vec<i64> = session::Entity::find()
-            .filter(session::Column::ClosedAt.lte(cutoff))
-            .select_only()
-            .column(session::Column::Id)
-            .into_tuple()
-            .all(&txn)
-            .await?;
-        let kept: HashSet<i64> = thread::Entity::find()
-            .filter(thread::Column::Session.is_in(expired.clone()))
-            .filter(thread::Column::Status.eq(kinds::ThreadStatus::Open))
-            .select_only()
-            .column(thread::Column::Session)
-            .into_tuple()
-            .all(&txn)
-            .await?
-            .into_iter()
-            .collect();
-        let dead: Vec<i64> = expired.into_iter().filter(|id| !kept.contains(id)).collect();
-        let sessions_deleted = session::Entity::delete_many()
-            .filter(session::Column::Id.is_in(dead))
-            .exec(&txn)
-            .await?
-            .rows_affected as usize;
-
-        let pins: Vec<i64> = session::Entity::find()
-            .select_only()
-            .column(session::Column::Pin)
-            .into_tuple()
-            .all(&txn)
-            .await?;
-        pin::Entity::delete_many()
-            .filter(pin::Column::Id.is_not_in(pins))
-            .exec(&txn)
-            .await?;
-
-        // Snapshots nothing retained refers to.
-        let mut live: HashSet<Vec<u8>> = HashSet::new();
-        live.extend(
-            session::Entity::find()
-                .select_only()
-                .column(session::Column::Base)
-                .into_tuple::<Vec<u8>>()
-                .all(&txn)
-                .await?,
-        );
-        live.extend(
-            session::Entity::find()
-                .select_only()
-                .column(session::Column::Target)
-                .into_tuple::<Vec<u8>>()
-                .all(&txn)
-                .await?,
-        );
-        live.extend(
-            pin::Entity::find()
-                .select_only()
-                .column(pin::Column::Tree)
-                .into_tuple::<Vec<u8>>()
-                .all(&txn)
-                .await?,
-        );
-        live.extend(
-            timeline::Entity::find()
-                .select_only()
-                .column(timeline::Column::Snapshot)
-                .into_tuple::<Vec<u8>>()
-                .all(&txn)
-                .await?,
-        );
-        live.extend(
-            anchor::Entity::find()
-                .select_only()
-                .column(anchor::Column::Snapshot)
-                .into_tuple::<Vec<u8>>()
-                .all(&txn)
-                .await?,
-        );
-        live.extend(run::approved_baselines(&txn).await?);
-        let candidates: Vec<Vec<u8>> = snapshot::Entity::find()
-            .filter(snapshot::Column::Created.lte(grace))
-            .select_only()
-            .column(snapshot::Column::Id)
-            .into_tuple()
-            .all(&txn)
-            .await?;
-        let unreferenced: Vec<Vec<u8>> = candidates.into_iter().filter(|id| !live.contains(id)).collect();
-        let mut snapshots_deleted = 0;
-        for chunk in unreferenced.chunks(1000) {
-            snapshots_deleted += snapshot::Entity::delete_many()
-                .filter(snapshot::Column::Id.is_in(chunk.to_vec()))
-                .exec(&txn)
-                .await?
-                .rows_affected as usize;
-        }
-
-        // Mark nodes reachable from the remaining roots, sweep the rest.
-        let roots: Vec<Vec<u8>> = snapshot::Entity::find()
-            .select_only()
-            .column(snapshot::Column::Id)
-            .into_tuple()
-            .all(&txn)
-            .await?;
-        let edges: Vec<(Vec<u8>, Vec<u8>)> = tree_child::Entity::find()
-            .filter(tree_child::Column::Kind.eq(kinds::ChildKind::Dir))
-            .select_only()
-            .column(tree_child::Column::Node)
-            .column(tree_child::Column::Dir)
-            .into_tuple()
-            .all(&txn)
-            .await?;
-        let mut children: HashMap<Vec<u8>, Vec<Vec<u8>>> = HashMap::new();
-        for (node, dir) in edges {
-            children.entry(node).or_default().push(dir);
-        }
-        let mut reachable: HashSet<Vec<u8>> = HashSet::new();
-        let mut stack = roots;
-        while let Some(n) = stack.pop() {
-            if reachable.insert(n.clone()) {
-                stack.extend(children.remove(&n).unwrap_or_default());
-            }
-        }
-        let nodes: Vec<Vec<u8>> = tree_node::Entity::find()
-            .select_only()
-            .column(tree_node::Column::Id)
-            .into_tuple()
-            .all(&txn)
-            .await?;
-        let unreachable: Vec<Vec<u8>> = nodes.into_iter().filter(|n| !reachable.contains(n)).collect();
-        let mut nodes_deleted = 0;
-        for chunk in unreachable.chunks(1000) {
-            nodes_deleted += tree_node::Entity::delete_many()
-                .filter(tree_node::Column::Id.is_in(chunk.to_vec()))
-                .exec(&txn)
-                .await?
-                .rows_affected as usize;
-        }
-
-        let blobs: Vec<Vec<u8>> = tree_child::Entity::find()
-            .filter(tree_child::Column::Blob.is_not_null())
-            .select_only()
-            .column(tree_child::Column::Blob)
-            .distinct()
-            .into_tuple()
-            .all(&txn)
-            .await?;
-        let blobs = blobs.iter().map(|b| hash(b).map(BlobId)).collect::<Res<HashSet<_>>>()?;
-        txn.commit().await?;
-        Ok((
-            GcReport {
-                sessions_deleted,
-                snapshots_deleted,
-                nodes_deleted,
-                blobs_deleted: 0,
-            },
-            blobs,
-        ))
-    }
 }
 
 impl Store for SqliteStore {
@@ -601,14 +379,6 @@ impl Store for SqliteStore {
             })
             .collect::<Res<_>>()?)
     }
-
-    async fn gc(&self, now: i64) -> Result<GcReport, StoreError> {
-        let (mut report, live) = self.gc_metadata(now).await?;
-        let at = UNIX_EPOCH + Duration::from_secs(now.max(0) as u64);
-        let grace = self.config.gc_grace;
-        report.blobs_deleted = self.blocking(move |c| c.sweep(&live, at, grace)).await?;
-        Ok(report)
-    }
 }
 
 impl ReviewStore for SqliteStore {
@@ -700,7 +470,7 @@ impl ReviewStore for SqliteStore {
             .order_by_asc(project_filter_item::Column::Id)
             .all(&self.db)
             .await?;
-        Ok(read_filter(row.hide_binary, items)?)
+        Ok(filter_from(row.hide_binary, items)?)
     }
 
     async fn set_filter(&self, repo: String, filter: ReviewFilter) -> Result<(), StoreError> {

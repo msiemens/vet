@@ -17,7 +17,7 @@ use vet_core::review::{
 
 use super::*;
 use crate::pin::{BaseChoice, CommitId, Pin, PinId};
-use crate::ports::{BlobRead, Dirty, GcReport};
+use crate::ports::{BlobRead, Dirty};
 use crate::review::{Session, Version};
 
 const REPO: &str = "/repo";
@@ -359,9 +359,6 @@ impl Store for MemStore {
     }
     async fn timeline(&self, _: SessionId) -> StoreResult<Vec<Version>> {
         Ok(self.0.lock().unwrap().timeline.clone())
-    }
-    async fn gc(&self, _: i64) -> StoreResult<GcReport> {
-        unimplemented!()
     }
 }
 

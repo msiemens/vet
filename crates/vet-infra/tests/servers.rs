@@ -36,7 +36,7 @@ struct Setup {
 
 async fn setup() -> Setup {
     let data = tempfile::tempdir().unwrap();
-    let store = SqliteStore::open(data.path(), Default::default()).await.unwrap();
+    let store = SqliteStore::open(data.path()).await.unwrap();
     Setup { data, store }
 }
 

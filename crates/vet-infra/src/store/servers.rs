@@ -4,26 +4,7 @@ use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set, Tran
 use vet_app::ports::{ServerSettings, StoreError};
 
 use super::SqliteStore;
-
-/// Unique per language.
-pub mod server_path {
-    use sea_orm::entity::prelude::*;
-
-    #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-    #[sea_orm(table_name = "server_path")]
-    pub struct Model {
-        #[sea_orm(primary_key)]
-        pub id: i64,
-        #[sea_orm(unique)]
-        pub language: String,
-        pub path: String,
-    }
-
-    #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-    pub enum Relation {}
-
-    impl ActiveModelBehavior for ActiveModel {}
-}
+use super::entity::server_path;
 
 impl ServerSettings for SqliteStore {
     async fn custom_server_path(&self, language: String) -> Result<Option<String>, StoreError> {
@@ -61,7 +42,7 @@ mod tests {
     async fn a_custom_path_is_per_language_replaced_removed_and_kept_across_opens() {
         let dir = tempfile::tempdir().unwrap();
         {
-            let store = SqliteStore::open(dir.path(), Default::default()).await.unwrap();
+            let store = SqliteStore::open(dir.path()).await.unwrap();
             store
                 .set_custom_server_path("rust".into(), Some("/a/ra".into()))
                 .await
@@ -75,7 +56,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let store = SqliteStore::open(dir.path(), Default::default()).await.unwrap();
+        let store = SqliteStore::open(dir.path()).await.unwrap();
         assert_eq!(
             store.custom_server_path("rust".into()).await.unwrap().as_deref(),
             Some("/b/ra")

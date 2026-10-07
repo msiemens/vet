@@ -696,5 +696,5 @@ pub async fn open_default_store() -> Result<SqliteStore, String> {
 }
 
 pub async fn open_store(dir: &Path) -> Result<SqliteStore, String> {
-    SqliteStore::open(dir, Default::default()).await.map_err(|e| e.0)
+    SqliteStore::open(dir).await.map_err(|e| e.0)
 }
