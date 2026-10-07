@@ -204,8 +204,11 @@
   .grow {
     flex: 1;
   }
+  /* The editors stack their layers up to z-index 1000; isolated, those stay inside the panes and
+     the header's popovers (z-index 20) lie above them. */
   .panes {
     position: relative;
+    isolation: isolate;
     flex: 1;
     min-height: 0;
   }
