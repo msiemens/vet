@@ -7,6 +7,7 @@ import type { ChangedSymbols } from "../../generated/ChangedSymbols";
 import type { Position } from "../../generated/Position";
 import type { Side } from "../../generated/Side";
 import type { SymbolId } from "../../generated/SymbolId";
+import { match, type Range } from "../../lib/speedSearch.ts";
 
 /** Opens a file at a 0-based `line` of `side`; no line opens it where it is. */
 export type OpenLocation = (path: string, line: number | undefined, side: Side) => void;
@@ -52,6 +53,27 @@ export function fileEntries(changed: ChangedSymbols): FileSymbols[] {
     if (!seen.has(gap.path)) unknown.push({ path: gap.path, symbols: [], note: gap.reason });
   }
   return [...known, ...unknown.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))];
+}
+
+/**
+ * The symbols whose name matches `query` under their files, files without one left out; `ranges`
+ * has the matches to highlight.
+ */
+export function searchEntries(
+  entries: readonly FileSymbols[],
+  query: string,
+): { entries: FileSymbols[]; ranges: Map<ChangedSymbol, Range[]> } {
+  const ranges = new Map<ChangedSymbol, Range[]>();
+  const found: FileSymbols[] = [];
+  for (const entry of entries) {
+    const symbols = entry.symbols.filter((s) => {
+      const m = match(query, nameOf(s.symbol.id));
+      if (m) ranges.set(s, m.ranges);
+      return m;
+    });
+    if (symbols.length) found.push({ ...entry, symbols });
+  }
+  return { entries: found, ranges };
 }
 
 /** `path:line` with a 1-based line, as editors print it. */

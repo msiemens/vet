@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { errorText } from "../../lib/errorText";
+  import { match } from "../../lib/speedSearch";
+  import Marked from "../../lib/ui/Marked.svelte";
+  import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
+  import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { hasNativeDialogs, pickFile } from "../../state/host";
   import { servers } from "../../state/servers.svelte";
   import { serverRow } from "./serverRows";
@@ -10,7 +14,16 @@
   let draft = $state("");
   let pathError = $state<{ language: string; message: string }>();
 
-  const rows = $derived(servers.servers.map((info) => serverRow(info, servers.installs[info.language])));
+  const search = new SpeedSearch();
+  let listEl = $state<HTMLElement>();
+  const rows = $derived(
+    servers.servers
+      .map((info) => serverRow(info, servers.installs[info.language]))
+      .flatMap((row) => {
+        const m = match(search.query, row.title);
+        return m ? [{ ...row, ranges: m.ranges }] : [];
+      }),
+  );
 
   onMount(() => servers.start());
 
@@ -43,13 +56,14 @@
 {:else if servers.loading && !servers.servers.length}
   <p class="empty">Looking for language servers…</p>
 {:else}
-  <ul>
+  {#if search.active}<SpeedSearchField query={search.query} found={rows.length > 0} />{/if}
+  <ul bind:this={listEl} onkeydown={(e) => search.keydown(e, listEl, "button:enabled, summary")} {...search.attributes}>
     {#each rows as row (row.language)}
       {@const log = servers.logs[row.language] ?? []}
       <li>
         <div class="head">
           <div class="text">
-            <span class="title">{row.title}</span>
+            <span class="title"><Marked text={row.title} ranges={row.ranges} /></span>
             <span class="hint">{row.server}{row.pinnedVersion ? `, pinned ${row.pinnedVersion}` : ""}</span>
           </div>
           <span class="status {row.status}">{row.statusLabel}</span>

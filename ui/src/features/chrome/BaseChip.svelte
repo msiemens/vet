@@ -63,7 +63,7 @@
   {#if view === "commits" && candidates}
     <CommitPicker commits={candidates.commits} current={base?.commit.id ?? ""} onpick={pickCommit} />
   {:else}
-    <Menu {items} onselect={select} />
+    <Menu speedSearch {items} onselect={select} />
   {/if}
 </Popover>
 {#if base?.behind && base.choice.type === "branch"}

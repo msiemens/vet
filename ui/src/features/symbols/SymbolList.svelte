@@ -1,18 +1,24 @@
 <script lang="ts">
   // The changed symbols by file, with the current file's group in view.
   import { tick } from "svelte";
+  import Marked from "../../lib/ui/Marked.svelte";
+  import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
+  import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { keyOf } from "../../state/symbolKey";
   import { symbols } from "../../state/symbols.svelte";
-  import { containerOf, fileEntries, nameOf } from "./symbolList";
+  import { containerOf, fileEntries, nameOf, searchEntries } from "./symbolList";
 
   let list = $state<HTMLElement>();
 
   const changed = $derived(symbols.changed);
-  const entries = $derived(
+  const search = new SpeedSearch();
+  const listed = $derived(
     changed?.state === "done"
       ? fileEntries(changed.value).filter((e) => !symbols.currentOnly || e.path === symbols.file)
       : [],
   );
+  const searched = $derived(search.active ? searchEntries(listed, search.query) : undefined);
+  const entries = $derived(searched?.entries ?? listed);
   const selectedKey = $derived(symbols.selected && keyOf(symbols.selected.symbol.id));
   const SIGN = { added: "+", modified: "~", removed: "−" } as const;
 
@@ -43,7 +49,8 @@
     onclick={() => (symbols.currentOnly = !symbols.currentOnly)}>This file</button
   >
 </div>
-<div class="list" bind:this={list}>
+{#if search.active}<SpeedSearchField query={search.query} found={entries.length > 0} />{/if}
+<div class="list" bind:this={list} onkeydown={(e) => search.keydown(e, list, "button.row")} {...search.attributes}>
   {#if !changed || changed.state === "loading"}
     <p class="note">Loading…</p>
   {:else if changed.state === "failed"}
@@ -64,7 +71,9 @@
           onclick={() => symbols.select(s)}
         >
           <span class="sign {s.change}" title={s.change}>{SIGN[s.change]}</span>
-          <span class="mono name" class:gone={s.change === "removed"}>{nameOf(s.symbol.id)}</span>
+          <span class="mono name" class:gone={s.change === "removed"}
+            ><Marked text={nameOf(s.symbol.id)} ranges={searched?.ranges.get(s)} /></span
+          >
           <span class="mono container">{containerOf(s.symbol.id)}</span>
         </button>
       {/each}

@@ -40,6 +40,7 @@
 
 <div class="surface sheet" bind:this={sheet} style:left="{left}px" style:top="{top}px">
   <Menu
+    speedSearch
     {items}
     onselect={(id) => {
       restoreFocus();

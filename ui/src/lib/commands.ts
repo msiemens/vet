@@ -6,6 +6,7 @@
 // defines: `lib/` knows nothing of the domain.
 
 import { type Binding, type KeyLike, type ModKey, bindingOf, isTextInput, matches } from "./keymap.ts";
+import { SEARCHING } from "./speedSearch.ts";
 
 export interface Command<C> {
   /** Stable, free of `:`. A menu item or a context menu names the command by it. */
@@ -48,9 +49,11 @@ export interface BindingSignal {
   write(): void;
 }
 
-/** Whether the key's target is in a text field; the window and the document are not elements. */
+/** Whether the key's target is in a text field or a list taking a speed search; the window and the document are not elements. */
 const inField = (target: EventTarget | null | undefined) =>
-  (target as { closest?: (selector: string) => unknown } | null | undefined)?.closest?.("input, textarea") != null;
+  (target as { closest?: (selector: string) => unknown } | null | undefined)?.closest?.(
+    `input, textarea, [${SEARCHING}]`,
+  ) != null;
 
 /** Splits a menu item's id into its command and the argument after the first `:`. */
 const splitId = (id: string): [string, string | undefined] => {

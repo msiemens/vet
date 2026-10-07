@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol.ts";
 import type { SymbolChange } from "../../generated/SymbolChange.ts";
-import { describeFate, fileEntries, groupByFile } from "./symbolList.ts";
+import { describeFate, fileEntries, groupByFile, searchEntries } from "./symbolList.ts";
 
 const sym = (path: string, name: string[], from: number, to: number, change: SymbolChange): ChangedSymbol => ({
   symbol: {
@@ -47,6 +47,23 @@ void test("files without symbols are listed with the reason", () => {
       ["c.rs", 0, "Language server failed"],
     ],
   );
+});
+
+void test("a search keeps the matching symbols under their files and drops files without one", () => {
+  const entries = groupByFile([
+    sym("a.rs", ["Parser", "parseHeader"], 1, 3, "added"),
+    sym("a.rs", ["Parser", "next"], 4, 6, "modified"),
+    sym("b.rs", ["Other"], 1, 2, "removed"),
+  ]);
+  const { entries: found, ranges } = searchEntries(entries, "pH");
+  assert.deepEqual(
+    found.map((e) => [e.path, e.symbols.map((s) => s.symbol.id.name.at(-1))]),
+    [["a.rs", ["parseHeader"]]],
+  );
+  assert.deepEqual(ranges.get(found[0].symbols[0]), [
+    [0, 1],
+    [5, 6],
+  ]);
 });
 
 void test("fates read as words, the broken one as the bad tone", () => {

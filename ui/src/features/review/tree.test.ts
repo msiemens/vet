@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { FileChange } from "../../generated/FileChange.ts";
 import type { ModeChange } from "../../generated/ModeChange.ts";
-import { buildRows, buildTree, summarize } from "./tree.ts";
+import { buildRows, buildTree, filterRows, summarize } from "./tree.ts";
 
 const labels = (paths: string[], collapsed: string[] = []) =>
   buildRows(buildTree(paths), new Set(collapsed)).map((r) => `${r.depth}:${r.kind === "dir" ? r.name + "/" : r.name}`);
@@ -42,6 +42,66 @@ void test("collapsing a folder hides its rows, and its descendants stay collapse
     buildRows(buildTree(paths), collapsed).map((r) => r.path),
     ["a", "a/b", "a/c", "a/x.rs"],
   );
+});
+
+const searchPaths = [
+  "README.md",
+  "ui/src/lib/Menu.svelte",
+  "ui/src/review/ChangesetView.ts",
+  "ui/src/review/FileTree.svelte",
+  "ui/src/state/changeset.svelte.ts",
+  "crates/core/src/lib.rs",
+];
+const found = (query: string) => {
+  const result = filterRows(buildRows(buildTree(searchPaths), new Set()), query);
+  return {
+    shown: result.rows.map((r) => `${r.depth}:${r.name}`),
+    hits: result.rows.filter((r) => result.hits.has(r)).map((r) => r.name),
+  };
+};
+
+void test("a search keeps the folders above a match, expanded, and drops the rest", () => {
+  assert.deepEqual(found("CSV").shown, [
+    "0:ui/src",
+    "1:review",
+    "2:ChangesetView.ts",
+    "1:state",
+    "2:changeset.svelte.ts",
+  ]);
+  assert.deepEqual(found("CSV").hits, ["ChangesetView.ts", "changeset.svelte.ts"]);
+  assert.deepEqual(found("FT").shown, ["0:ui/src", "1:review", "2:FileTree.svelte"]);
+});
+
+void test("a search finds files in several folders, in tree order", () => {
+  assert.deepEqual(found("svelte").shown, [
+    "0:ui/src",
+    "1:lib",
+    "2:Menu.svelte",
+    "1:review",
+    "2:FileTree.svelte",
+    "1:state",
+    "2:changeset.svelte.ts",
+  ]);
+});
+
+void test("a folder that matches is shown, but not what is in it", () => {
+  const result = found("state");
+  assert.deepEqual(result.shown, ["0:ui/src", "1:state"]);
+  assert.deepEqual(result.hits, ["state"]);
+});
+
+void test("a search that matches nothing shows nothing", () => {
+  assert.deepEqual(found("zzz").shown, []);
+});
+
+void test("a match reports its ranges for highlighting", () => {
+  const { rows, hits } = filterRows(buildRows(buildTree(searchPaths), new Set()), "FT");
+  const file = rows.find((r) => r.name === "FileTree.svelte");
+  assert.ok(file);
+  assert.deepEqual(hits.get(file), [
+    [0, 1],
+    [4, 5],
+  ]);
 });
 
 void test("a file's mode badge follows the backend's classification of its mode item", () => {

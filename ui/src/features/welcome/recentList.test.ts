@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AVATAR_COLOURS, avatarColour, highlightRuns, initials, openedLabel, searchRecent } from "./recentList.ts";
+import { AVATAR_COLOURS, avatarColour, initials, openedLabel, searchRecent } from "./recentList.ts";
 
 const project = (path: string) => ({ path, openedAt: 0 });
 const projects = ["/src/ledger-sync", "/src/work/billing-api", "C:\\src\\web-dashboard", "/src/vet"].map(project);
@@ -45,19 +45,15 @@ void test("search reports where it matched, merged, in the name and the path", (
   assert.deepEqual(searchRecent(projects, "ledger led")[0].nameRanges, [[0, 6]]);
 });
 
-void test("highlight runs cover the text exactly", () => {
-  assert.deepEqual(highlightRuns("ledger-sync", [[0, 3]]), [
-    { text: "led", hit: true },
-    { text: "ger-sync", hit: false },
-  ]);
-  assert.deepEqual(highlightRuns("abc", []), [{ text: "abc", hit: false }]);
+void test("search matches the first letters of a name's words", () => {
   assert.deepEqual(
-    highlightRuns("abcd", [
-      [1, 2],
-      [3, 4],
-    ]).map((r) => r.text),
-    ["a", "b", "c", "d"],
+    searchRecent(projects, "ls").map((m) => m.name),
+    ["ledger-sync"],
   );
+  assert.deepEqual(searchRecent(projects, "ls")[0].nameRanges, [
+    [0, 1],
+    [7, 8],
+  ]);
 });
 
 void test("the opened label shortens with distance", () => {

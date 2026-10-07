@@ -1,10 +1,22 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { match } from "../../lib/speedSearch";
+  import Marked from "../../lib/ui/Marked.svelte";
+  import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
+  import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { accounts } from "../../state/accounts.svelte";
   import { hasKeychain } from "../../state/host";
   import { accountRow, usesCli } from "./accountRows";
 
-  const rows = $derived(accounts.accounts.map(accountRow));
+  const search = new SpeedSearch();
+  let listEl = $state<HTMLElement>();
+  const all = $derived(accounts.accounts.map(accountRow));
+  const rows = $derived(
+    all.flatMap((row) => {
+      const m = match(search.query, row.host);
+      return m ? [{ ...row, ranges: m.ranges }] : [];
+    }),
+  );
 
   let adding = $state(false);
   let host = $state("github.com");
@@ -46,20 +58,21 @@
 <div class="page">
   {#if accounts.loadError}
     <p class="problem">{accounts.loadError}</p>
-  {:else if accounts.loading && !rows.length}
+  {:else if accounts.loading && !all.length}
     <p class="empty">Looking for accounts…</p>
-  {:else if !rows.length}
+  {:else if !all.length}
     <p class="empty">
       No accounts yet. Sign in with <span class="mono">gh auth login</span> or <span class="mono">az login</span>, or
       add a personal access token.
     </p>
   {:else}
-    <ul>
+    {#if search.active}<SpeedSearchField query={search.query} found={rows.length > 0} />{/if}
+    <ul bind:this={listEl} onkeydown={(e) => search.keydown(e, listEl, "button:enabled")} {...search.attributes}>
       {#each rows as row (row.key)}
         <li>
           <div class="head">
             <div class="text">
-              <span class="title">{row.host}</span>
+              <span class="title"><Marked text={row.host} ranges={row.ranges} /></span>
               <span class="hint">{row.platform}, {row.source}{row.user ? `, ${row.user}` : ""}</span>
             </div>
             <span class="status {row.status}">{row.statusLabel}</span>

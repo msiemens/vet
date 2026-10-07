@@ -57,6 +57,7 @@
       <Chip bold onclick={toggle}>{project}</Chip>
     {/snippet}
     <Menu
+      speedSearch
       items={menuFor(openItem).items}
       onselect={(id) => {
         projectMenu = false;

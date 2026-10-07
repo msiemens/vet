@@ -3,7 +3,8 @@
   import type { RecentProject } from "../../generated/RecentProject";
   import AppLogo from "../../lib/ui/AppLogo.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
-  import { avatarColour, highlightRuns, initials, openedLabel, searchRecent, type Range } from "./recentList";
+  import Marked from "../../lib/ui/Marked.svelte";
+  import { avatarColour, initials, openedLabel, searchRecent } from "./recentList";
 
   // Self-contained: it renders from its props and draws its own window-controls area, so it can
   // live in any window.
@@ -62,10 +63,6 @@
     node.focus();
   }
 </script>
-
-{#snippet marked(text: string, ranges: Range[])}
-  {#each highlightRuns(text, ranges) as run, i (i)}{#if run.hit}<mark>{run.text}</mark>{:else}{run.text}{/if}{/each}
-{/snippet}
 
 <div class="welcome">
   <nav class="side" aria-label="Welcome">
@@ -136,8 +133,8 @@
           >
             <span class="avatar" style:background="var(--avatar-{avatarColour(project.path)})">{initials(name)}</span>
             <span class="text">
-              <span class="name">{@render marked(name, nameRanges)}</span>
-              <span class="mono path">{@render marked(project.path, pathRanges)}</span>
+              <span class="name"><Marked text={name} ranges={nameRanges} /></span>
+              <span class="mono path"><Marked text={project.path} ranges={pathRanges} /></span>
             </span>
             <span class="when">{openedLabel(project.openedAt)}</span>
           </button>
@@ -313,11 +310,6 @@
   }
   .on .path {
     color: var(--text-2);
-  }
-  mark {
-    background: var(--select);
-    color: inherit;
-    border-radius: 2px;
   }
   .when {
     flex: none;

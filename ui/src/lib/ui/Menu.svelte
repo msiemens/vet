@@ -1,18 +1,25 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import Icon from "./Icon.svelte";
+  import { match } from "../speedSearch";
+  import Marked from "./Marked.svelte";
   import Menu from "./Menu.svelte";
   import type { MenuItem } from "./menuItem";
+  import { SpeedSearch } from "./speedSearch.svelte";
+  import SpeedSearchField from "./SpeedSearchField.svelte";
 
   let {
     items,
     onselect,
     nested = false,
     onback,
+    speedSearch = false,
   }: {
     items: MenuItem[];
     /** Called with the id of a chosen leaf item. */
     onselect: (id: string) => void;
+    /** Typing filters the top-level items by label. */
+    speedSearch?: boolean;
     /** A submenu: placed beside its parent item and not focused on mount. */
     nested?: boolean;
     /** Left arrow in a submenu. */
@@ -22,6 +29,18 @@
   let list: HTMLElement;
   let openId = $state<string>();
   const checks = $derived(items.some((i) => i.checked !== undefined));
+
+  const search = new SpeedSearch();
+  const found = $derived(
+    speedSearch && search.active
+      ? items.flatMap((item) => {
+          const m = item.separator ? undefined : match(search.query, item.label);
+          return m ? [{ item, ranges: m.ranges }] : [];
+        })
+      : undefined,
+  );
+  const shown = $derived(found ? found.map((f) => f.item) : items);
+  const marks = $derived(new Map(found?.map((f) => [f.item, f.ranges])));
 
   const buttons = () => [...list.querySelectorAll<HTMLButtonElement>(":scope > li > button:enabled")];
 
@@ -37,6 +56,11 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    // A submenu's keys are its own.
+    if (speedSearch && !nested && (e.target as Element).closest("ul") === list && search.type(e)) {
+      void tick().then(() => buttons()[0]?.focus());
+      return;
+    }
     const all = buttons();
     const at = all.indexOf(document.activeElement as HTMLButtonElement);
     const move = (to: number) => {
@@ -78,8 +102,10 @@
   class:scroll={!items.some((i) => i.children)}
   bind:this={list}
   {onkeydown}
+  {...search.attributes}
 >
-  {#each items as item, i (item.separator ? `-${i}` : item.id)}
+  {#if found}<li role="none"><SpeedSearchField query={search.query} found={found.length > 0} /></li>{/if}
+  {#each shown as item, i (item.separator ? `-${i}` : item.id)}
     {#if item.separator}
       <li role="separator"></li>
     {:else}
@@ -102,7 +128,7 @@
           {#if checks}<span class="check"
               >{#if item.checked}<Icon name="check" size={12} stroke={2.2} />{/if}</span
             >{/if}
-          <span class="label">{item.label}</span>
+          <span class="label"><Marked text={item.label} ranges={marks.get(item)} /></span>
           {#if item.detail}<span class="mono detail">{item.detail}</span>{/if}
           {#if item.shortcut}<span class="detail">{item.shortcut}</span>{/if}
           {#if item.children}<span class="sub"><Icon name="closed" size={9} /></span>{/if}

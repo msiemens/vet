@@ -7,6 +7,7 @@ import type { FileChange } from "../../generated/FileChange";
 import type { FileStatus } from "../../generated/FileStatus";
 import type { ModeChange } from "../../generated/ModeChange";
 import { basename, compactChain, dirname } from "../../lib/paths.ts";
+import { match, type Range } from "../../lib/speedSearch.ts";
 
 export interface DirRow {
   kind: "dir";
@@ -95,6 +96,31 @@ export function buildTree(paths: readonly string[]): DirNode {
 export function summarize(file: FileChange): FileSummary {
   const { seenPercent, oldBasePercent } = file.completion;
   return { status: LETTER[file.status], seenPercent, oldBasePercent, mode: modeChange(file) };
+}
+
+/**
+ * The rows of a speed search over `rows` (a tree in display order, its folders open): those whose
+ * name matches `query`, and the folders above them, whatever their names. `hits` has the matches'
+ * ranges to highlight.
+ */
+export function filterRows<R extends { kind: "dir" | "file"; depth: number; name: string }>(
+  rows: readonly R[],
+  query: string,
+): { rows: R[]; hits: Map<R, Range[]> } {
+  const hits = new Map<R, Range[]>();
+  const kept: R[] = [];
+  // below[d]: a row at depth d is kept in the subtree being walked back through.
+  const below: (boolean | undefined)[] = [];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    const found = match(query, row.name);
+    if (found) hits.set(row, found.ranges);
+    const keep = !!found || (row.kind === "dir" && !!below[row.depth + 1]);
+    below.length = row.depth + 1;
+    below[row.depth] = keep || !!below[row.depth];
+    if (keep) kept.push(row);
+  }
+  return { rows: kept.reverse(), hits };
 }
 
 /** The visible rows; the contents of `collapsed` directories are left out. */

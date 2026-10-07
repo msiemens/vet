@@ -3,12 +3,10 @@
 
 import type { RecentProject } from "../../generated/RecentProject";
 import { repoName } from "../../lib/paths.ts";
+import { match, type Range } from "../../lib/speedSearch.ts";
 
 /** How many avatar colours the palette (`--avatar-1` …) has. */
 export const AVATAR_COLOURS = 6;
-
-/** A half-open range of characters of a text. */
-export type Range = [start: number, end: number];
 
 export interface RecentMatch {
   project: RecentProject;
@@ -35,12 +33,6 @@ export function avatarColour(path: string): number {
   return (hash % AVATAR_COLOURS) + 1;
 }
 
-/** The ranges where `term` occurs in `text`, ignoring case; the first occurrence only. */
-function find(text: string, term: string): Range | undefined {
-  const at = text.toLowerCase().indexOf(term);
-  return at < 0 ? undefined : [at, at + term.length];
-}
-
 function merge(ranges: Range[]): Range[] {
   const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
   const merged: Range[] = [];
@@ -53,11 +45,11 @@ function merge(ranges: Range[]): Range[] {
 }
 
 /**
- * The projects whose name or path contains every word of `query` (ignoring case), in their order.
- * An empty query matches all.
+ * The projects whose name or path matches every word of `query` (speed search matching: ignoring
+ * case, by word starts or as a run), in their order. An empty query matches all.
  */
 export function searchRecent(projects: RecentProject[], query: string): RecentMatch[] {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = query.split(/\s+/).filter(Boolean);
   const out: RecentMatch[] = [];
   for (const project of projects) {
     const name = repoName(project.path);
@@ -65,31 +57,18 @@ export function searchRecent(projects: RecentProject[], query: string): RecentMa
     const pathRanges: Range[] = [];
     let all = true;
     for (const term of terms) {
-      const inName = find(name, term);
-      const inPath = find(project.path, term);
+      const inName = match(term, name);
+      const inPath = match(term, project.path);
       if (!inName && !inPath) {
         all = false;
         break;
       }
-      if (inName) nameRanges.push(inName);
-      if (inPath) pathRanges.push(inPath);
+      if (inName) nameRanges.push(...inName.ranges);
+      if (inPath) pathRanges.push(...inPath.ranges);
     }
     if (all) out.push({ project, name, nameRanges: merge(nameRanges), pathRanges: merge(pathRanges) });
   }
   return out;
-}
-
-/** `text` cut into runs, each marked whether it lies in one of the (merged, sorted) `ranges`. */
-export function highlightRuns(text: string, ranges: Range[]): { text: string; hit: boolean }[] {
-  const runs: { text: string; hit: boolean }[] = [];
-  let at = 0;
-  for (const [start, end] of ranges) {
-    if (start > at) runs.push({ text: text.slice(at, start), hit: false });
-    runs.push({ text: text.slice(start, end), hit: true });
-    at = end;
-  }
-  if (at < text.length) runs.push({ text: text.slice(at), hit: false });
-  return runs;
 }
 
 const weekday = new Intl.DateTimeFormat("en", { weekday: "short" });
