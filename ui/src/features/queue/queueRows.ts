@@ -50,6 +50,14 @@ export function sourceText(row: ChangesetRow): string {
   return ahead === undefined ? "local" : `local · ${ahead} ${ahead === 1 ? "commit" : "commits"}`;
 }
 
+/**
+ * Whether the changeset on view's lines are shown on `row`. They are counted against the base the
+ * review uses, so a branch with no commits of its own on the default branch cannot show them.
+ */
+export function showsOwnLines(row: ChangesetRow): boolean {
+  return row.divergence?.ahead !== 0;
+}
+
 /** The Updated column: the working tree is live, a branch changed with its last commit. */
 export function updatedText(row: ChangesetRow, nowMs = Date.now()): string {
   if (row.key.type === "workingTree") return "now";

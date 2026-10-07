@@ -9,7 +9,15 @@
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
   import { queue } from "../../state/queue.svelte";
-  import { type QueueTab, SWITCHER_FILTERS, filterRows, reviewedOf, sourceText, updatedText } from "./queueRows";
+  import {
+    type QueueTab,
+    SWITCHER_FILTERS,
+    filterRows,
+    reviewedOf,
+    showsOwnLines,
+    sourceText,
+    updatedText,
+  } from "./queueRows";
   import ReviewedCell from "./ReviewedCell.svelte";
 
   let {
@@ -76,7 +84,8 @@
 <Popover bind:open>
   {#snippet trigger(toggle)}
     <Chip active={open} {title} onclick={toggle}>
-      {name ?? "…"}{#if live}<span class="live-dot" aria-label="Follows the working tree"></span>{/if}
+      <Icon name="branch" />{name ?? "…"}{#if live}<span class="live-dot" aria-label="Follows the working tree"
+        ></span>{/if}
     </Chip>
   {/snippet}
   <div class="switcher">
@@ -109,6 +118,7 @@
       {#each shown as row, index (keyId(row.key))}
         {@const id = keyId(row.key)}
         {@const numbers = id === onViewId ? own : undefined}
+        {@const lines = numbers && showsOwnLines(row) ? numbers : undefined}
         <li>
           <button
             class="flat row"
@@ -125,9 +135,9 @@
             <span class="line sub">
               <span class="detail">
                 {sourceText(row)}
-                {#if numbers}<span class="mono"
-                    ><span class="add">+{numbers.delta.added}</span>
-                    <span class="del">−{numbers.delta.removed}</span></span
+                {#if lines}<span class="mono"
+                    ><span class="add">+{lines.delta.added}</span>
+                    <span class="del">−{lines.delta.removed}</span></span
                   >{/if}
                 {#if row.openThreads > 0}<span class="threads"><Icon name="comments" size={11} />{row.openThreads}</span
                   >{/if}
@@ -253,10 +263,13 @@
   }
   .foot button {
     width: 100%;
+    box-sizing: border-box;
     display: flex;
+    align-items: center;
     justify-content: space-between;
     height: var(--h-row);
     padding: 0 8px;
+    border-radius: var(--radius);
     font-size: var(--fs-ctl);
   }
   .key {

@@ -9,7 +9,16 @@
   import { queue } from "../../state/queue.svelte";
   import { threads } from "../../state/threads.svelte";
   import { detailGroups } from "./details";
-  import { type QueueTab, TABS, filterRows, reviewedOf, sourceText, tabCounts, updatedText } from "./queueRows";
+  import {
+    type QueueTab,
+    TABS,
+    filterRows,
+    reviewedOf,
+    showsOwnLines,
+    sourceText,
+    tabCounts,
+    updatedText,
+  } from "./queueRows";
   import QueueComments from "./QueueComments.svelte";
   import QueueDetails from "./QueueDetails.svelte";
   import QueueFiles from "./QueueFiles.svelte";
@@ -108,7 +117,7 @@
           <span class="title">{row.title}</span>
           <span class="source">{sourceText(row)}</span>
           <span class="mono delta">
-            {#if numbers}<span class="add">+{numbers.delta.added}</span>
+            {#if numbers && showsOwnLines(row)}<span class="add">+{numbers.delta.added}</span>
               <span class="del">−{numbers.delta.removed}</span>{/if}
           </span>
           <span><ReviewedCell reviewed={reviewedOf(row.review, numbers?.completion)} /></span>

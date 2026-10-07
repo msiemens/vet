@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangesetRow } from "../../generated/ChangesetRow";
 import type { Completion } from "../../generated/Completion";
-import { filterRows, reviewedOf, sourceText, tabCounts, updatedText } from "./queueRows.ts";
+import { filterRows, reviewedOf, showsOwnLines, sourceText, tabCounts, updatedText } from "./queueRows.ts";
 
 const NOW = new Date(2026, 9, 7, 15, 30).getTime();
 const tree: ChangesetRow = {
@@ -32,6 +32,12 @@ const skew: ChangesetRow = {
   review: { state: "finished", complete: true, startedAt: 0, finishedAt: 0 },
 };
 const rows = [tree, retry, skew];
+
+void test("a branch with no commits of its own shows no lines, whatever base the review picked", () => {
+  assert.equal(showsOwnLines({ ...retry, divergence: { ahead: 0, behind: 5 } }), false);
+  assert.equal(showsOwnLines(retry), true);
+  assert.equal(showsOwnLines(tree), true);
+});
 
 void test("the source says which branch the working tree is on and how many commits a branch has", () => {
   assert.equal(sourceText(tree), "main");
