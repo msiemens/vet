@@ -54,24 +54,6 @@ pub enum Request {
         session: SessionId,
         path: String,
     },
-    /// Marks hunks (indices into the manifest of `revision`) seen or unseen.
-    /// Fails if `revision` is no longer current.
-    SetSeen {
-        session: SessionId,
-        revision: u32,
-        path: String,
-        hunks: Vec<u32>,
-        seen: bool,
-    },
-    /// Acknowledges or un-acknowledges one non-text item. Fails if `revision` is
-    /// no longer current.
-    Acknowledge {
-        session: SessionId,
-        revision: u32,
-        path: String,
-        kind: NonTextKind,
-        acknowledged: bool,
-    },
     /// Flips one hunk (an index into the manifest of `revision`): seen becomes unseen, an
     /// unseen one or one seen against an old base becomes seen. Fails if `revision` is no
     /// longer current. Answers with `Response::Review`.
@@ -241,7 +223,7 @@ pub enum Request {
         path: String,
     },
     /// The bytes of one side of a non-text item's file, to preview an image. The
-    /// item is found by `path` and `kind` as in `Acknowledge`; `Base` is the file
+    /// item is found by `path` and `kind` as in `ToggleItem`; `Base` is the file
     /// before (at its old path for a rename), `Target` the file after. Fails if
     /// `revision` is no longer current or there is no such item. Answers with
     /// `Response::ItemBlob`.

@@ -1149,40 +1149,6 @@ impl<G: GitRepo + Sync, S: Store + ReviewStore + Sync> LiveSession<G, S> {
         })
     }
 
-    /// Marks hunks (indices into the file's hunks at `revision`) seen or unseen.
-    /// Marking starts the review if none is open.
-    pub async fn set_seen(
-        &self,
-        revision: u32,
-        path: &str,
-        hunks: &[u32],
-        seen: bool,
-    ) -> Result<Outcome<ReviewUpdateView>> {
-        let mut st = self.state.lock().await;
-        check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
-        let started = seen && self.begin(&mut st).await?;
-        self.mark_hunks(&mut st, path, hunks, seen).await?;
-        Ok(outcome(&st, update_of(&st, path)?, started))
-    }
-
-    /// Acknowledges or un-acknowledges one non-text item. Acknowledging starts
-    /// the review if none is open.
-    pub async fn acknowledge(
-        &self,
-        revision: u32,
-        path: &str,
-        kind: NonTextKind,
-        acknowledged: bool,
-    ) -> Result<Outcome<ReviewUpdateView>> {
-        let mut st = self.state.lock().await;
-        check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
-        let started = acknowledged && self.begin(&mut st).await?;
-        self.mark_item(&mut st, path, kind, acknowledged).await?;
-        Ok(outcome(&st, update_of(&st, path)?, started))
-    }
-
     /// Flips one hunk: seen becomes unseen, anything else (unseen, or seen against an old base)
     /// becomes seen. Marking starts the review if none is open.
     pub async fn toggle_hunk(&self, revision: u32, path: &str, hunk: u32) -> Result<Outcome<ReviewUpdateView>> {

@@ -211,21 +211,6 @@ impl Handler for Mock {
                     changes: changes.iter().map(vet_mapping::text_change).collect(),
                 })
             }
-            Request::SetSeen {
-                session,
-                revision,
-                path,
-                hunks,
-                seen: value,
-            } => {
-                current(session, revision)?;
-                let i = position(&path)?;
-                let mut all = seen();
-                for hunk in hunks {
-                    *all[i].get_mut(hunk as usize).ok_or("no such hunk")? = value;
-                }
-                Ok(self.review_update(i, &all))
-            }
             Request::ToggleHunk {
                 session,
                 revision,
@@ -251,9 +236,7 @@ impl Handler for Mock {
                 all[i].fill(value);
                 Ok(self.review_update(i, &all))
             }
-            Request::Acknowledge { .. } | Request::ToggleItem { .. } | Request::ItemBlob { .. } => {
-                Err("the corpus has no non-text items".into())
-            }
+            Request::ToggleItem { .. } | Request::ItemBlob { .. } => Err("the corpus has no non-text items".into()),
             Request::SetBase { .. } | Request::ListBaseCandidates { .. } => Err("the corpus has one base".into()),
             Request::SetProjectFilter { .. } | Request::ExcludePath { .. } => Err("the corpus has no filter".into()),
             Request::FinishReview { .. } => Err("the corpus has no review to finish".into()),

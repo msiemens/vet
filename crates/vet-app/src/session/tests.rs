@@ -487,6 +487,40 @@ impl ReviewStore for MemStore {
     }
 }
 
+/// Marks that state what they set rather than flip it, which tests need to set up several hunks
+/// at once or to un-mark one that was never marked.
+impl LiveSession<FakeGit, MemStore> {
+    pub(crate) async fn set_seen(
+        &self,
+        revision: u32,
+        path: &str,
+        hunks: &[u32],
+        seen: bool,
+    ) -> Result<Outcome<ReviewUpdateView>> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        let started = seen && self.begin(&mut st).await?;
+        self.mark_hunks(&mut st, path, hunks, seen).await?;
+        Ok(outcome(&st, update_of(&st, path)?, started))
+    }
+
+    pub(crate) async fn acknowledge(
+        &self,
+        revision: u32,
+        path: &str,
+        kind: NonTextKind,
+        acknowledged: bool,
+    ) -> Result<Outcome<ReviewUpdateView>> {
+        let mut st = self.state.lock().await;
+        check_revision(&st, revision)?;
+        self.ensure_changes(&mut st).await?;
+        let started = acknowledged && self.begin(&mut st).await?;
+        self.mark_item(&mut st, path, kind, acknowledged).await?;
+        Ok(outcome(&st, update_of(&st, path)?, started))
+    }
+}
+
 fn numbered(n: usize, edited: &[usize]) -> String {
     (0..n)
         .map(|i| {

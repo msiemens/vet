@@ -353,38 +353,6 @@ impl Orchestrator {
                     .map_err(message)?;
                 Ok(self.highlighter.file_contents(&path, text).await)
             }
-            Request::SetSeen {
-                session,
-                revision,
-                path,
-                hunks,
-                seen,
-            } => {
-                let open = self.find(session).await?;
-                let update = open
-                    .session
-                    .set_seen(revision, &path, &hunks, seen)
-                    .await
-                    .map_err(message)?;
-                announce_start(&open, update.started);
-                Ok(Response::Review(review_changed(&open, &events, &update)))
-            }
-            Request::Acknowledge {
-                session,
-                revision,
-                path,
-                kind,
-                acknowledged,
-            } => {
-                let open = self.find(session).await?;
-                let update = open
-                    .session
-                    .acknowledge(revision, &path, mapping::core_non_text_kind(kind), acknowledged)
-                    .await
-                    .map_err(message)?;
-                announce_start(&open, update.started);
-                Ok(Response::Review(review_changed(&open, &events, &update)))
-            }
             Request::ToggleHunk {
                 session,
                 revision,

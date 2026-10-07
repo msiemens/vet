@@ -84,13 +84,12 @@ impl Client {
         }
     }
 
-    async fn set_seen(&self, session: SessionId, revision: u32, hunks: &[u32], seen: bool) -> ReviewUpdate {
-        let request = Request::SetSeen {
+    async fn toggle_hunk(&self, session: SessionId, revision: u32, hunk: u32) -> ReviewUpdate {
+        let request = Request::ToggleHunk {
             session,
             revision,
             path: "a.txt".into(),
-            hunks: hunks.to_vec(),
-            seen,
+            hunk,
         };
         match self.call(request).await.unwrap() {
             Response::Review(update) => update,
@@ -370,7 +369,7 @@ async fn mark_edit_settle_remap_and_revert() {
     assert!(m.degraded.is_none());
 
     // Mark the hunk seen.
-    let update = client.set_seen(session, 0, &[0], true).await;
+    let update = client.toggle_hunk(session, 0, 0).await;
     assert_eq!(update.review.hunks, [HunkState::Seen]);
     assert_eq!(lines(&update.changeset), (2, 2));
 
@@ -383,12 +382,11 @@ async fn mark_edit_settle_remap_and_revert() {
     assert_eq!(lines(&m.completion), (4, 2));
 
     // A request made against revision 0 is rejected, and changes nothing.
-    let stale = Request::SetSeen {
+    let stale = Request::ToggleHunk {
         session,
         revision: 0,
         path: "a.txt".into(),
-        hunks: vec![1],
-        seen: true,
+        hunk: 1,
     };
     assert!(client.call(stale).await.unwrap_err().contains("stale"));
 
@@ -433,7 +431,7 @@ async fn mark_edit_settle_remap_and_revert() {
     );
 
     // Un-marking.
-    let update = client.set_seen(session, revision, &[0], false).await;
+    let update = client.toggle_hunk(session, revision, 0).await;
     assert_eq!(update.review.hunks, [HunkState::Unseen]);
     assert_eq!(lines(&update.changeset), (2, 0));
 
@@ -448,7 +446,7 @@ async fn a_seen_region_with_an_edit_in_the_middle_is_split() {
     let fx = fixture(&[("a.txt", &text(40, &[]))], &[("a.txt", &dirty)]).await;
     let mut client = Client::new(&fx.handler);
     let session = open(&client, fx.repo.path()).await;
-    client.set_seen(session, 0, &[0], true).await;
+    client.toggle_hunk(session, 0, 0).await;
 
     let middle = dirty
         .replace("edited 14", "mid a")
@@ -487,12 +485,11 @@ async fn non_text_changes_are_acknowledged_and_the_other_connection_is_told() {
     assert_eq!(run.non_text[0].after.as_ref().unwrap().mode, 0o100755);
     assert_eq!((m.completion.items, m.completion.acknowledged_items), (1, 0));
 
-    let request = Request::Acknowledge {
+    let request = Request::ToggleItem {
         session,
         revision: 0,
         path: "run.sh".into(),
         kind: NonTextKind::Mode,
-        acknowledged: true,
     };
     let Response::Review(update) = first.call(request).await.unwrap() else {
         panic!("not a review update");
@@ -508,7 +505,7 @@ async fn non_text_changes_are_acknowledged_and_the_other_connection_is_told() {
     assert!(first.no_event(), "the requester gets the response, not an event");
 
     // Marking a hunk is reported the same way.
-    first.set_seen(session, 0, &[0], true).await;
+    first.toggle_hunk(session, 0, 0).await;
     assert!(matches!(second.event().await, Event::ReviewChanged { .. }));
 
     // The first connection leaves; the session lives on for the second.
@@ -545,12 +542,11 @@ async fn empty_files_are_non_text_items_and_can_be_acknowledged() {
     assert_eq!(emptied.review.hunks.len(), 1);
     assert_eq!((m.completion.items, m.completion.acknowledged_items), (2, 0));
 
-    let request = Request::Acknowledge {
+    let request = Request::ToggleItem {
         session,
         revision: 0,
         path: "new.txt".into(),
         kind: NonTextKind::Empty,
-        acknowledged: true,
     };
     let Response::Review(update) = client.call(request).await.unwrap() else {
         panic!("not a review update");
@@ -815,7 +811,7 @@ async fn reopening_a_repository_resumes_its_review_across_a_restart() {
     let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;
     let first = Client::new(&fx.handler);
     let session = open(&first, fx.repo.path()).await;
-    first.set_seen(session, 0, &[0], true).await;
+    first.toggle_hunk(session, 0, 0).await;
     first
         .thread(Request::CreateThread {
             session,
@@ -868,7 +864,7 @@ async fn an_orphaned_session_is_released_but_stays_open_for_the_next_open() {
     let first = Client::new(&fx.handler);
     let session = open(&first, fx.repo.path()).await;
     assert_eq!(session_refs(fx.repo.path()), "", "browsing holds nothing");
-    first.set_seen(session, 0, &[0], true).await;
+    first.toggle_hunk(session, 0, 0).await;
     assert_eq!(
         session_refs(fx.repo.path()),
         format!("refs/vet/sessions/{session}/base\nrefs/vet/sessions/{session}/target\n")
@@ -1015,7 +1011,7 @@ async fn the_base_can_be_changed_and_review_state_follows() {
     assert_eq!((m.files[0].base_lines, m.files[0].target_lines), (41, 40));
 
     // Marking the branch's hunk starts the review, which holds the base chosen so far.
-    let update = client.set_seen(session, 1, &[0], true).await;
+    let update = client.toggle_hunk(session, 1, 0).await;
     assert_eq!(update.review.hunks, [HunkState::Seen, HunkState::Unseen]);
     assert_eq!(session_base_ref(p, session), main);
 
@@ -1099,11 +1095,10 @@ async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing()
     open(&two, fx.repo.path()).await;
     assert_eq!(one.manifest(session).await.review, ReviewInfo::Browsing);
 
-    // Looking around and un-marking start nothing.
-    one.set_seen(session, 0, &[0], false).await;
+    // Looking around starts nothing.
     assert!(one.started().is_empty());
 
-    let update = one.set_seen(session, 0, &[0], true).await;
+    let update = one.toggle_hunk(session, 0, 0).await;
     assert_eq!(update.review.hunks, [HunkState::Seen]);
     let ReviewInfo::Open { version: 1, updated_at } = one.manifest(session).await.review else {
         panic!("the review did not start");
@@ -1114,8 +1109,8 @@ async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing()
     assert_eq!(one.started(), [started]);
     assert!(matches!(two.event().await, Event::ReviewChanged { .. }));
     assert_eq!(two.started(), [started]);
-    one.set_seen(session, 0, &[0], false).await;
-    one.set_seen(session, 0, &[0], true).await;
+    one.toggle_hunk(session, 0, 0).await;
+    one.toggle_hunk(session, 0, 0).await;
     assert_eq!(one.started().len(), 1);
 
     // Each settled snapshot is the next version.
@@ -1148,7 +1143,7 @@ async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing()
     assert!(one.call(Request::FinishReview { session }).await.is_err());
 
     // The next review action starts a new review at version 1.
-    one.set_seen(session, 2, &[0], true).await;
+    one.toggle_hunk(session, 2, 0).await;
     assert!(matches!(
         one.manifest(session).await.review,
         ReviewInfo::Open { version: 1, .. }
@@ -1238,7 +1233,7 @@ async fn the_filter_moves_completion_and_the_excluded_counts() {
     assert_eq!((m.files.len(), m.completion.lines, m.excluded_lines), (1, 2, 2));
     assert_eq!(m.delta, delta(1, 1), "hidden files are not counted");
     // Marking the one remaining file completes the review.
-    let update = client.set_seen(session, 1, &[0], true).await;
+    let update = client.toggle_hunk(session, 1, 0).await;
     assert_eq!(lines(&update.changeset), (2, 2));
 
     let bad = ReviewFilter {

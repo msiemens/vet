@@ -117,26 +117,24 @@ impl Client {
         }
     }
 
-    async fn mark(&self, session: SessionId, path: &str, hunks: &[u32], seen: bool) {
+    async fn toggle_hunk(&self, session: SessionId, path: &str, hunk: u32) {
         let revision = self.manifest(session).await.revision;
-        let request = Request::SetSeen {
+        let request = Request::ToggleHunk {
             session,
             revision,
             path: path.into(),
-            hunks: hunks.to_vec(),
-            seen,
+            hunk,
         };
         assert!(matches!(self.call(request).await.unwrap(), Response::Review(_)));
     }
 
     async fn acknowledge(&self, session: SessionId, path: &str, kind: NonTextKind) {
         let revision = self.manifest(session).await.revision;
-        let request = Request::Acknowledge {
+        let request = Request::ToggleItem {
             session,
             revision,
             path: path.into(),
             kind,
-            acknowledged: true,
         };
         assert!(matches!(self.call(request).await.unwrap(), Response::Review(_)));
     }
@@ -249,7 +247,7 @@ async fn criterion1_amend_keeps_marks_and_comments() {
     write(p, "a.txt", &text(40, &[5, 30]));
     let mut client = Client::new(&fx.handler);
     let session = client.open(p).await;
-    client.mark(session, "a.txt", &[0], true).await;
+    client.toggle_hunk(session, "a.txt", 0).await;
     let comment = client.comment(session, "a.txt", 30, 1).await;
     assert_eq!(hunks(&client.manifest(session).await, "a.txt"), [HunkState::Seen]);
 
@@ -298,7 +296,7 @@ async fn criterion1_rebase_moves_hunks_and_marks_and_comments_follow() {
     client.settled().await;
     let m = client.manifest(session).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Unseen, HunkState::Unseen]);
-    client.mark(session, "a.txt", &[0], true).await;
+    client.toggle_hunk(session, "a.txt", 0).await;
     let comment = client.comment(session, "a.txt", 20, 1).await;
 
     advance_main(p, &[("a.txt", &format!("header\n{}", text(40, &[])))]);
@@ -334,7 +332,7 @@ async fn criterion1_a_rebase_that_changes_the_base_side_marks_seen_against_old_b
     let session = client.open(p).await;
     client.set_base(session, merge_base("main")).await;
     client.settled().await;
-    client.mark(session, "a.txt", &[0], true).await;
+    client.toggle_hunk(session, "a.txt", 0).await;
     assert_eq!(hunks(&client.manifest(session).await, "a.txt"), [HunkState::Seen]);
 
     // Main drops a line inside what the feature edited; the rebase keeps the
@@ -353,7 +351,7 @@ async fn criterion1_a_rebase_that_changes_the_base_side_marks_seen_against_old_b
         (5, 2, 3)
     );
 
-    client.mark(session, "a.txt", &[0], true).await;
+    client.toggle_hunk(session, "a.txt", 0).await;
     let m = client.manifest(session).await;
     assert_eq!(hunks(&m, "a.txt"), [HunkState::Seen]);
     assert_eq!(m.completion.old_base_lines, 0);
@@ -379,7 +377,7 @@ async fn criterion1_a_seen_deletion_survives_an_unrelated_rebase() {
         ),
         (3, 0)
     );
-    client.mark(session, "a.txt", &[0], true).await;
+    client.toggle_hunk(session, "a.txt", 0).await;
 
     // Main changes the file elsewhere: a header on top and an edit far below.
     advance_main(p, &[("a.txt", &format!("header\n{}", text(40, &[30])))]);
@@ -405,7 +403,7 @@ async fn criterion1_a_crlf_only_change_is_whitespace_exact_for_comments_and_unse
     let fx = fixture(&[("a.txt", &text(10, &[]))], &[("a.txt", &dirty)]).await;
     let mut client = Client::new(&fx.handler);
     let session = client.open(fx.repo.path()).await;
-    client.mark(session, "a.txt", &[0], true).await;
+    client.toggle_hunk(session, "a.txt", 0).await;
     let comment = client.comment(session, "a.txt", 2, 3).await;
 
     write(fx.repo.path(), "a.txt", &dirty.replace('\n', "\r\n"));
@@ -435,7 +433,7 @@ async fn criterion1_a_filter_change_leaves_review_state_intact_and_counts_the_ex
     .await;
     let mut client = Client::new(&fx.handler);
     let session = client.open(fx.repo.path()).await;
-    client.mark(session, "a.txt", &[0], true).await;
+    client.toggle_hunk(session, "a.txt", 0).await;
     let comment = client.comment(session, "a.txt", 2, 1).await;
     let m = client.manifest(session).await;
     assert_eq!(
@@ -486,7 +484,7 @@ async fn criterion1_a_seen_line_that_appears_twice_is_unseen_once_its_context_is
     let fx = fixture(&[("a.rs", base)], &[("a.rs", dirty)]).await;
     let mut client = Client::new(&fx.handler);
     let session = client.open(fx.repo.path()).await;
-    client.mark(session, "a.rs", &[0], true).await;
+    client.toggle_hunk(session, "a.rs", 0).await;
     assert_eq!(
         hunks(&client.manifest(session).await, "a.rs"),
         [HunkState::Seen, HunkState::Unseen]
@@ -732,7 +730,7 @@ async fn criterion1_a_rename_keeps_marks_comments_and_file_threads() {
     let p = fx.repo.path();
     let mut client = Client::new(&fx.handler);
     let session = client.open(p).await;
-    client.mark(session, "a.txt", &[0], true).await;
+    client.toggle_hunk(session, "a.txt", 0).await;
     let range = client.comment(session, "a.txt", 5, 1).await;
     let whole_file = client
         .create(
@@ -883,7 +881,7 @@ async fn criterion1_deleting_a_file_detaches_its_threads_but_not_the_changeset_t
     let p = fx.repo.path();
     let mut client = Client::new(&fx.handler);
     let session = client.open(p).await;
-    client.mark(session, "a.txt", &[0], true).await;
+    client.toggle_hunk(session, "a.txt", 0).await;
     let range = client.comment(session, "a.txt", 2, 3).await;
     let whole_file = client
         .create(
@@ -1166,7 +1164,7 @@ async fn criterion4_dropped_events_are_caught_up_by_the_next_rescan() {
         &[("a.txt", &text(40, &[5, 30]))],
     )
     .await;
-    live.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
     assert_eq!(live.hunks("a.txt").await, [CoreHunk::Seen, CoreHunk::Unseen]);
 
     // The agent rewrites the marked line, adds a file and deletes one; the
@@ -1202,7 +1200,7 @@ async fn criterion4_an_incomplete_event_stream_still_yields_the_whole_tree() {
         &[("a.txt", &text(10, &[1]))],
     )
     .await;
-    live.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
 
     write(live.path(), "a.txt", &text(10, &[1, 6]));
     write(live.path(), "b.txt", &text(10, &[2]));
@@ -1217,7 +1215,8 @@ async fn criterion4_an_incomplete_event_stream_still_yields_the_whole_tree() {
 #[tokio::test]
 async fn criterion4_a_killed_and_restarted_watcher_catches_up_in_one_rescan() {
     let mut live = Live::open(&[("a.txt", &text(40, &[]))], &[("a.txt", &text(40, &[5, 30]))]).await;
-    live.session.set_seen(0, "a.txt", &[0, 1], true).await.unwrap();
+    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
+    live.session.toggle_hunk(0, "a.txt", 1).await.unwrap();
 
     live.kill_watcher().await;
     write(live.path(), "a.txt", &text(40, &[5]));
@@ -1250,7 +1249,7 @@ async fn criterion4_a_killed_and_restarted_watcher_catches_up_in_one_rescan() {
 #[tokio::test]
 async fn criterion4_an_overflow_in_the_middle_of_a_write_burst_settles_on_the_final_tree() {
     let mut live = Live::open(&[("a.txt", &text(40, &[]))], &[("a.txt", &text(40, &[5]))]).await;
-    live.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
 
     // An edit stream with an overflow in the middle and a dropped tail.
     let path = vet_core::content::RepoPath(b"a.txt".to_vec());
@@ -1276,7 +1275,7 @@ async fn criterion4_an_overflow_in_the_middle_of_a_write_burst_settles_on_the_fi
 #[tokio::test]
 async fn criterion4_a_watch_limit_fallback_rescans_and_is_reported() {
     let mut live = Live::open(&[("a.txt", &text(10, &[]))], &[("a.txt", &text(10, &[1]))]).await;
-    live.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
     assert_eq!(live.session.manifest().await.unwrap().degraded, None);
 
     write(live.path(), "a.txt", &text(10, &[1, 7]));
@@ -1294,7 +1293,7 @@ async fn criterion4_a_git_state_change_without_worktree_events_is_reconciled() {
     // `git commit` moves HEAD and the index but touches no worktree file; the
     // snapshot must stay the same and the review state must not move.
     let mut live = Live::open(&[("a.txt", &text(10, &[]))], &[("a.txt", &text(10, &[1]))]).await;
-    live.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    live.session.toggle_hunk(0, "a.txt", 0).await.unwrap();
     git(live.path(), &["commit", "-q", "-a", "-m", "agent commits"]);
 
     live.send(WatchEvent::MustRescan);
@@ -1316,7 +1315,7 @@ async fn criterion4_a_write_storm_through_the_real_watcher_settles_on_the_final_
     let p = fx.repo.path();
     let mut client = Client::new(&fx.handler);
     let session = client.open(p).await;
-    client.mark(session, "a.txt", &[0], true).await;
+    client.toggle_hunk(session, "a.txt", 0).await;
 
     // Hundreds of files across many folders in one burst, with the marked line
     // rewritten and the other mark's hunk left alone.
