@@ -6,7 +6,6 @@
   import Menu from "../../lib/ui/Menu.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import type { BaseCandidates } from "../../state/backend";
-  import { commands } from "../../state/commands";
   import { baseMenuItems, baseTooltip, parseBaseItem } from "./baseText";
   import CommitPicker from "./CommitPicker.svelte";
 
@@ -67,9 +66,6 @@
     <Menu speedSearch {items} onselect={select} />
   {/if}
 </Popover>
-<button class="flat fetch" type="button" title="Fetch the remotes" onclick={() => commands.run("git.fetch")}
-  >Fetch</button
->
 {#if base?.behind && base.choice.type === "branch"}
   {@const name = base.choice.name}
   <button
@@ -81,7 +77,6 @@
 {/if}
 
 <style>
-  .fetch,
   .behind {
     height: var(--h-ctl);
     padding: 0 6px;

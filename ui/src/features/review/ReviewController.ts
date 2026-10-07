@@ -54,8 +54,6 @@ export class ReviewController {
   /** The view of each attached text tab. */
   private texts = new Map<TabId, TextView>();
   private roots = new Map<TabId, HTMLElement>();
-  /** The soft wrap the viewer chose for a tab; a tab without one wraps each file by its kind. */
-  private wraps = new Map<TabId, boolean>();
   mode: Mode = "unified";
   private hooks: ViewHooks;
   /** The changeset on view, by `keyId`; unknown before the first manifest. */
@@ -162,20 +160,7 @@ export class ReviewController {
         void this.openSource(caret.path, caret.line);
         return true;
       },
-      toggleWrap: () => this.toggleWrap(),
     };
-  }
-
-  /** Wraps the long lines of the active tab, or scrolls them sideways; the choice stays with the tab. */
-  private toggleWrap(): boolean {
-    const id = this.tabs.active;
-    const view = this.views.get(id) ?? this.texts.get(id);
-    if (!view) return false;
-    const on = !view.wrapped();
-    view.setWrap(on);
-    this.wraps.set(id, on);
-    this.tabs.wrapped[id] = on;
-    return true;
   }
 
   /**
@@ -285,10 +270,8 @@ export class ReviewController {
         path,
         fileSource(this.backend, manifest.revision),
         bindRevision(this.hooks, manifest.revision),
-        this.wraps.get(id),
       );
       this.texts.set(id, text);
-      this.tabs.wrapped[id] = text.wrapped();
       return;
     }
     const files = path === undefined ? manifest.files : manifest.files.filter((f) => f.path === path);
@@ -311,11 +294,9 @@ export class ReviewController {
       this.hooks,
       this.listenersFor(id),
       id === CHANGES, // only the Changes tab collapses unchanged regions
-      this.wraps.get(id),
       this.probe && ((probe) => this.probe?.view(id, probe)),
     );
     this.views.set(id, view);
-    this.tabs.wrapped[id] = view.wrapped();
     if (threads.revision === manifest.revision) view.setThreads(threads.items, threads.revision);
     root.scrollTop = top;
     view.keepCurrent(anchor);

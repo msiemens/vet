@@ -15,8 +15,6 @@ export interface ViewActions {
   comment(): boolean;
   /** Opens the file of the Changes stream's caret at its line; answers whether there was a caret. */
   jumpToSource(): boolean;
-  /** Wraps the long lines of the active tab, or scrolls them sideways; answers whether the tab has lines. */
-  toggleWrap(): boolean;
 }
 
 export function viewCommands(a: ViewActions): Command<CommandContext>[] {
@@ -47,13 +45,6 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       inFields: true,
       enabled: (c) => c.diffView && c.tab?.kind === "changes",
       run: () => a.jumpToSource(),
-    },
-    {
-      id: "review.toggleWrap",
-      label: "Toggle soft wrap",
-      binding: "Ctrl-Alt-w",
-      enabled: (c) => c.diffView || c.tab?.kind === "text",
-      run: () => a.toggleWrap(),
     },
     {
       id: "review.goToDefinition",
@@ -150,7 +141,6 @@ export const editorMenu: MenuSpec = [
   "-",
   { command: "review.comment" },
   { command: "review.toggleSeen" },
-  { command: "review.toggleWrap" },
   "-",
   { command: "edit.copy" },
 ];

@@ -59,7 +59,7 @@ void test("the macOS menu bar has an app menu; elsewhere Settings and Exit are i
   const mac = menu({ native: true });
   assert.deepEqual(
     mac.map((m) => m.id),
-    ["app", "file", "view", "help"],
+    ["app", "file", "view", "vcs", "help"],
   );
   assert.equal(find(mac, "app.settings")?.accelerator, "Cmd+,");
   assert.equal(find(mac, "app.quit")?.label, "Quit Vet");
@@ -67,7 +67,7 @@ void test("the macOS menu bar has an app menu; elsewhere Settings and Exit are i
   const other = menu();
   assert.deepEqual(
     other.map((m) => m.id),
-    ["file", "view", "help"],
+    ["file", "view", "vcs", "help"],
   );
   assert.equal(find(other, "app.settings")?.shortcut, "Ctrl+Alt+S");
   assert.equal(find(other, "app.quit")?.label, "Exit");
@@ -94,9 +94,9 @@ void test("Finish Review is offered only while a review is open", () => {
   assert.deepEqual(calls, []);
 });
 
-void test("Fetch is offered in the File menu while a project is open", () => {
-  const file = menu().find((m) => m.id === "file");
-  assert.ok(file?.children?.some((i) => i.id === "git.fetch"));
+void test("Fetch is offered in the VCS menu while a project is open", () => {
+  const vcs = menu().find((m) => m.id === "vcs");
+  assert.ok(vcs?.children?.some((i) => i.id === "git.fetch"));
   assert.equal(find(menu({}, { repoOpen: false }), "git.fetch")?.enabled, false);
   calls.length = 0;
   assert.equal(registry.run("git.fetch", { ...open, repoOpen: false }), false);

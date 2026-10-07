@@ -87,8 +87,6 @@ export class ChangesetView {
     private listeners: Listeners,
     /** Collapse unchanged regions (the Changes tab); otherwise the full file is shown. */
     private collapse: boolean,
-    /** Soft wrap for every file; absent: each file by its kind (`wrapsByDefault`). */
-    private wrapAll?: boolean,
     /** Hands the dev tools what they measure; production owners leave it out. */
     inspect?: (probe: ViewProbe) => void,
   ) {
@@ -168,7 +166,7 @@ export class ChangesetView {
         hunkTops: [],
         ...threadState(blockEl),
         hooks: { ...hooks, ...bindRevision(hooks, revision), ...actions },
-        wrap: this.wrapAll ?? wrapsByDefault(file.path),
+        wrap: wrapsByDefault(file.path),
         wrapped: {},
       });
     }
@@ -224,20 +222,6 @@ export class ChangesetView {
   private publishPane() {
     const pane = this.heights.mode === "split" ? this.width / 2 : this.width;
     this.root.style.setProperty("--vet-pane", `${pane}px`);
-  }
-
-  /** Whether the view wraps long lines: as set, else if every file does by its kind. */
-  wrapped(): boolean {
-    return this.wrapAll ?? (this.sections.length > 0 && this.sections.every((s) => s.wrap));
-  }
-
-  /** Wraps long lines in every file, or scrolls them sideways. */
-  setWrap(on: boolean) {
-    this.wrapAll = on;
-    this.remount(() => {
-      for (const s of this.sections) s.wrap = on;
-      this.measureWraps();
-    });
   }
 
   /** Drops every editor, lets `change` alter what they show, lays the column out again and mounts what is in view. */

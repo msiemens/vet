@@ -2,7 +2,7 @@
 // editor with syntax highlighting, line numbers and the semantic layer (hover, go to definition,
 // diagnostics), or a small placeholder when the file has no text to show.
 
-import { Compartment, EditorState } from "@codemirror/state";
+import { EditorState } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import type { NoTextReason } from "../../../generated/NoTextReason";
 import type { TextSpan } from "../../../generated/TextSpan";
@@ -23,7 +23,6 @@ const NO_TEXT: Record<NoTextReason, string> = {
 
 export class TextView {
   private view?: EditorView;
-  private wrapping = new Compartment();
   private destroyed = false;
   /** The 0-based line to show once the text has arrived. */
   private line?: number;
@@ -39,8 +38,6 @@ export class TextView {
     private path: string,
     source: FileSource,
     private hooks: SemanticHooks,
-    /** Soft wrap; absent: by the file's kind (`wrapsByDefault`). */
-    private wrap = wrapsByDefault(path),
   ) {
     root.replaceChildren();
     root.classList.add("vet-text");
@@ -61,7 +58,7 @@ export class TextView {
       parent: this.root,
       doc: text,
       extensions: [
-        this.wrapping.of(softWrap(this.wrap)),
+        softWrap(wrapsByDefault(this.path)),
         lineNumbers(),
         highlightExtension(decodeHighlights(highlights)),
         // Read-only but focusable, so the caret and Mod+B work.
@@ -72,16 +69,6 @@ export class TextView {
     if (this.span) this.goToSpan(this.span);
     else if (this.line !== undefined) this.goToLine(this.line);
     this.refreshDiagnostics();
-  }
-
-  wrapped(): boolean {
-    return this.wrap;
-  }
-
-  /** Wraps long lines, or scrolls them sideways. */
-  setWrap(on: boolean) {
-    this.wrap = on;
-    this.view?.dispatch({ effects: this.wrapping.reconfigure(softWrap(on)) });
   }
 
   /** Asks for the file's diagnostics again (the first time, or after the servers changed). */

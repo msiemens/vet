@@ -37,7 +37,6 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     "-",
     { command: "changeset.switch" },
     { command: "review.finish" },
-    { command: "git.fetch" },
     ...(s.native ? [] : (["-", settings, "-", quit] as MenuSpec)),
   ];
   const view: MenuSpec = [
@@ -54,12 +53,14 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
       items: THEMES.map(({ id, label }) => ({ command: "view.theme", arg: id, label, checked: s.theme === id })),
     },
   ];
+  const vcs: MenuSpec = [{ command: "git.fetch" }];
   const help: MenuSpec = [...(s.native ? [] : [about]), { command: "dev.panel", checked: s.devPanel }];
 
   return [
     ...(s.native ? [{ id: "app", label: "Vet", items: [about, "-", settings, "-", quit] as MenuSpec }] : []),
     { id: "file", label: "File", items: file },
     { id: "view", label: "View", items: view },
+    { id: "vcs", label: "VCS", items: vcs },
     { id: "help", label: "Help", items: help },
   ];
 }

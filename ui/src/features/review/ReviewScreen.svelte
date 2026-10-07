@@ -167,8 +167,6 @@
       {mode}
       {onmode}
       onstep={(delta) => controller.stepHunk(delta)}
-      wrapped={tabs.wrapped[tabs.active] ?? false}
-      onwrap={() => commands.run("review.toggleWrap")}
       diff={kindOf(tabs.active) !== "text"}
     />
   </div>

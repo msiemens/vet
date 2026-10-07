@@ -8,17 +8,12 @@
     mode,
     onmode,
     onstep,
-    wrapped,
-    onwrap,
     diff,
   }: {
     mode: Mode;
     onmode: (mode: Mode) => void;
     /** Moves the current hunk by `delta` in the focused tab. */
     onstep: (delta: number) => void;
-    /** The focused tab wraps long lines. */
-    wrapped: boolean;
-    onwrap: () => void;
     /** The focused tab shows a diff: it has a view mode and hunks. */
     diff: boolean;
   } = $props();
@@ -44,14 +39,6 @@
       />
     </div>
   {/if}
-  <IconButton
-    icon="wrap"
-    label={commands.tooltip("review.toggleWrap")}
-    size={22}
-    iconSize={14}
-    active={wrapped}
-    onclick={onwrap}
-  />
 </div>
 
 <style>
