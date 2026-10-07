@@ -335,7 +335,6 @@ impl LspServer {
                     .notify::<DidCloseTextDocument>(lsp::DidCloseTextDocumentParams {
                         text_document: lsp::TextDocumentIdentifier { uri: doc.uri },
                     })
-                    .await
                     .map_err(err)?;
                 return Ok(false);
             }
@@ -352,7 +351,6 @@ impl LspServer {
                         text: text.clone(),
                     },
                 })
-                .await
                 .map_err(err)?;
             docs.push(Doc {
                 file: file.clone(),
@@ -367,7 +365,6 @@ impl LspServer {
                     .notify::<DidCloseTextDocument>(lsp::DidCloseTextDocumentParams {
                         text_document: lsp::TextDocumentIdentifier { uri: doc.uri },
                     })
-                    .await
                     .map_err(err)?;
             }
             return Ok(true);
@@ -389,7 +386,7 @@ impl LspServer {
                 text,
             }],
         };
-        self.conn.notify::<DidChangeTextDocument>(params).await.map_err(err)?;
+        self.conn.notify::<DidChangeTextDocument>(params).map_err(err)?;
         Ok(true)
     }
 
@@ -546,7 +543,6 @@ impl LanguageServer for LspServer {
                     text: text.to_owned(),
                 },
             })
-            .await
             .map_err(err)?;
         let params = lsp::DocumentSymbolParams {
             text_document: lsp::TextDocumentIdentifier { uri: uri.clone() },
@@ -558,8 +554,7 @@ impl LanguageServer for LspServer {
             .conn
             .notify::<DidCloseTextDocument>(lsp::DidCloseTextDocumentParams {
                 text_document: lsp::TextDocumentIdentifier { uri },
-            })
-            .await;
+            });
         let response = response.map_err(err)?;
         closed.map_err(err)?;
         let timed = Timed {

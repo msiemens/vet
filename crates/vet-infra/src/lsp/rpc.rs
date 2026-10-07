@@ -1,6 +1,11 @@
 //! JSON-RPC over a child process's stdio, with `Content-Length` framing. Only
 //! what an LSP client needs: requests, notifications, and a reader task that
 //! answers server requests and records progress and diagnostics.
+//!
+//! Messages leave through one writer task, in the order they were sent, so
+//! sending never awaits and cannot be cut short by a dropped caller. A request
+//! whose future is dropped before its answer arrived is cancelled
+//! (`$/cancelRequest`) and forgotten.
 
 use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
@@ -11,9 +16,9 @@ use std::time::{Duration, Instant};
 use lsp_types::notification::Notification;
 use lsp_types::request::Request;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout};
-use tokio::sync::{Notify, oneshot};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::process::Child;
+use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::exec::{Tail, command};
 
@@ -76,9 +81,44 @@ struct Shared {
     workspace_folders: Value,
 }
 
+/// Where messages to the server are queued; a task writes them in order.
+#[derive(Clone)]
+struct Outbox(mpsc::UnboundedSender<Vec<u8>>);
+
+impl Outbox {
+    fn send(&self, message: &Value) -> std::io::Result<()> {
+        let body = serde_json::to_vec(message)?;
+        let mut frame = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
+        frame.extend(body);
+        self.0
+            .send(frame)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the server no longer reads"))
+    }
+}
+
+/// A request that has been sent and not answered. Dropping it (the caller gave
+/// up, or the request timed out) tells the server to stop working on it.
+struct InFlight<'a> {
+    shared: &'a Shared,
+    outbox: &'a Outbox,
+    id: i64,
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        // An answer takes the entry out first, and then there is nothing to cancel.
+        let unanswered = self.shared.pending.lock().expect("not poisoned").remove(&self.id);
+        if unanswered.is_some() {
+            let _ = self
+                .outbox
+                .send(&json!({"jsonrpc": "2.0", "method": "$/cancelRequest", "params": {"id": self.id}}));
+        }
+    }
+}
+
 pub(super) struct Connection {
-    child: tokio::sync::Mutex<Child>,
-    stdin: Arc<tokio::sync::Mutex<ChildStdin>>,
+    child: tokio::sync::Mutex<Option<Child>>,
+    outbox: Outbox,
     next_id: AtomicI64,
     shared: Arc<Shared>,
 }
@@ -95,9 +135,23 @@ impl Connection {
             .stdin(Stdio::piped())
             .spawn()
             .map_err(|e| format!("{binary}: {e}"))?;
-        let stdin = Arc::new(tokio::sync::Mutex::new(child.stdin.take().expect("piped")));
+        let stdin = child.stdin.take().expect("piped");
         let stdout = child.stdout.take().expect("piped");
         let stderr = child.stderr.take().expect("piped");
+        let conn = Self::over(stdout, stdin, Some(child), workspace_folders);
+        tokio::spawn(collect_stderr(stderr, conn.shared.clone()));
+        Ok(conn)
+    }
+
+    /// A connection over any byte streams; `child` is the process behind them, if any.
+    pub fn over(
+        reader: impl AsyncRead + Send + Unpin + 'static,
+        writer: impl AsyncWrite + Send + Unpin + 'static,
+        child: Option<Child>,
+        workspace_folders: Value,
+    ) -> Self {
+        let (queue, queued) = mpsc::unbounded_channel();
+        let outbox = Outbox(queue);
         let shared = Arc::new(Shared {
             pending: Mutex::default(),
             state: Mutex::default(),
@@ -105,14 +159,14 @@ impl Connection {
             stderr: Mutex::new(Tail::new(STDERR_LINES)),
             workspace_folders,
         });
-        tokio::spawn(read_loop(stdout, shared.clone(), stdin.clone()));
-        tokio::spawn(collect_stderr(stderr, shared.clone()));
-        Ok(Self {
+        tokio::spawn(write_loop(writer, queued));
+        tokio::spawn(read_loop(reader, shared.clone(), outbox.clone()));
+        Self {
             child: tokio::sync::Mutex::new(child),
-            stdin,
+            outbox,
             next_id: AtomicI64::new(1),
             shared,
-        })
+        }
     }
 
     pub async fn request<R: Request>(&self, params: R::Params) -> Result<R::Result, String> {
@@ -131,12 +185,18 @@ impl Connection {
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             let (tx, rx) = oneshot::channel();
             self.shared.pending.lock().expect("not poisoned").insert(id, tx);
+            let in_flight = InFlight {
+                shared: &self.shared,
+                outbox: &self.outbox,
+                id,
+            };
             let message = json!({"jsonrpc": "2.0", "id": id, "method": R::METHOD, "params": params});
-            if let Err(e) = write_message(&self.stdin, &message).await {
-                self.shared.pending.lock().expect("not poisoned").remove(&id);
+            if let Err(e) = self.outbox.send(&message) {
                 return Err(self.describe(format!("{}: {e}", R::METHOD)));
             }
-            match tokio::time::timeout_at(deadline, rx).await {
+            let answer = tokio::time::timeout_at(deadline, rx).await;
+            drop(in_flight);
+            match answer {
                 Ok(Ok(Ok(value))) => {
                     return serde_json::from_value(value).map_err(|e| format!("{}: bad response: {e}", R::METHOD));
                 }
@@ -146,24 +206,20 @@ impl Connection {
                 }
                 Ok(Ok(Err(error))) => return Err(format!("{}: {}", R::METHOD, error.message)),
                 Ok(Err(_)) => return Err(self.describe(format!("{}: server exited", R::METHOD))),
-                Err(_) => {
-                    self.shared.pending.lock().expect("not poisoned").remove(&id);
-                    return Err(format!("{}: timed out after {}s", R::METHOD, timeout.as_secs()));
-                }
+                Err(_) => return Err(format!("{}: timed out after {}s", R::METHOD, timeout.as_secs())),
             }
         }
     }
 
-    pub async fn notify<N: Notification>(&self, params: N::Params) -> Result<(), String> {
+    pub fn notify<N: Notification>(&self, params: N::Params) -> Result<(), String> {
         self.notify_raw(N::METHOD, serde_json::to_value(params).map_err(|e| e.to_string())?)
-            .await
     }
 
     /// A notification outside the LSP types, such as a server's own extension.
-    pub async fn notify_raw(&self, method: &str, params: Value) -> Result<(), String> {
+    pub fn notify_raw(&self, method: &str, params: Value) -> Result<(), String> {
         let message = json!({"jsonrpc": "2.0", "method": method, "params": params});
-        write_message(&self.stdin, &message)
-            .await
+        self.outbox
+            .send(&message)
             .map_err(|e| self.describe(format!("{method}: {e}")))
     }
 
@@ -212,8 +268,9 @@ impl Connection {
         let _ = self
             .request_with_timeout::<lsp_types::request::Shutdown>((), Duration::from_secs(5))
             .await;
-        let _ = self.notify::<lsp_types::notification::Exit>(()).await;
+        let _ = self.notify::<lsp_types::notification::Exit>(());
         let mut child = self.child.lock().await;
+        let Some(child) = child.as_mut() else { return };
         if tokio::time::timeout(Duration::from_secs(3), child.wait())
             .await
             .is_err()
@@ -237,17 +294,16 @@ impl State {
     }
 }
 
-async fn write_message(stdin: &tokio::sync::Mutex<ChildStdin>, message: &Value) -> std::io::Result<()> {
-    let body = serde_json::to_vec(message)?;
-    let mut stdin = stdin.lock().await;
-    stdin
-        .write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes())
-        .await?;
-    stdin.write_all(&body).await?;
-    stdin.flush().await
+/// Writes the queued frames until the queue closes or the server stops reading.
+async fn write_loop(mut writer: impl AsyncWrite + Unpin, mut queued: mpsc::UnboundedReceiver<Vec<u8>>) {
+    while let Some(frame) = queued.recv().await {
+        if writer.write_all(&frame).await.is_err() || writer.flush().await.is_err() {
+            break;
+        }
+    }
 }
 
-async fn read_message(reader: &mut BufReader<ChildStdout>) -> std::io::Result<Option<Value>> {
+pub(super) async fn read_message(reader: &mut BufReader<impl AsyncRead + Unpin>) -> std::io::Result<Option<Value>> {
     let mut length = None;
     loop {
         let mut line = String::new();
@@ -268,8 +324,8 @@ async fn read_message(reader: &mut BufReader<ChildStdout>) -> std::io::Result<Op
     Ok(Some(serde_json::from_slice(&body)?))
 }
 
-async fn read_loop(stdout: ChildStdout, shared: Arc<Shared>, stdin: Arc<tokio::sync::Mutex<ChildStdin>>) {
-    let mut reader = BufReader::new(stdout);
+async fn read_loop(reader: impl AsyncRead + Unpin, shared: Arc<Shared>, outbox: Outbox) {
+    let mut reader = BufReader::new(reader);
     while let Ok(Some(message)) = read_message(&mut reader).await {
         let method = message.get("method").and_then(Value::as_str).map(str::to_owned);
         let id = message.get("id").cloned();
@@ -283,7 +339,7 @@ async fn read_loop(stdout: ChildStdout, shared: Arc<Shared>, stdin: Arc<tokio::s
                         "error": {"code": -32601, "message": format!("unsupported request {method}")},
                     }),
                 };
-                if write_message(&stdin, &reply).await.is_err() {
+                if outbox.send(&reply).is_err() {
                     break;
                 }
             }
@@ -293,6 +349,8 @@ async fn read_loop(stdout: ChildStdout, shared: Arc<Shared>, stdin: Arc<tokio::s
                     Some(error) => Err(ResponseError::from_response(error)),
                     None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
                 };
+                // The answer to a cancelled request (`RequestCancelled`, or a result that
+                // got there first) finds no entry: nobody is waiting for it.
                 let sender = id
                     .as_i64()
                     .and_then(|id| shared.pending.lock().expect("not poisoned").remove(&id));
@@ -378,10 +436,12 @@ async fn collect_stderr(stderr: tokio::process::ChildStderr, shared: Arc<Shared>
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::sync::atomic::AtomicUsize;
 
     use lsp_types::request::Shutdown;
 
     use super::*;
+    use crate::lsp::fake::{self, Reply};
 
     /// A shell that answers its first request with an error of `code` and every
     /// later one with `null`, whatever they ask.
@@ -412,5 +472,71 @@ done"#
         let conn = server_failing_once_with(-32602);
         let error = conn.request::<Shutdown>(()).await.unwrap_err();
         assert_eq!(error, "shutdown: dropped");
+    }
+
+    fn cancels(log: &[Value]) -> Vec<Value> {
+        log.iter()
+            .filter(|m| m["method"] == "$/cancelRequest")
+            .map(|m| m["params"]["id"].clone())
+            .collect()
+    }
+
+    fn pending(conn: &Connection) -> usize {
+        conn.shared.pending.lock().unwrap().len()
+    }
+
+    #[tokio::test]
+    async fn a_dropped_request_is_cancelled_at_the_server_and_forgotten() {
+        let (conn, fake) = fake::start(|_| Reply::Hold);
+        let gave_up = tokio::time::timeout(Duration::from_millis(20), conn.request::<Shutdown>(())).await;
+        assert!(gave_up.is_err());
+        fake.until("the cancellation", |log| !cancels(log).is_empty()).await;
+        let sent = fake.messages("shutdown")[0]["id"].clone();
+        assert_eq!(cancels(&fake.log()), [sent]);
+        assert_eq!(pending(&conn), 0);
+    }
+
+    #[tokio::test]
+    async fn a_request_that_times_out_is_cancelled_too() {
+        let (conn, fake) = fake::start(|_| Reply::Hold);
+        let error = conn
+            .request_with_timeout::<Shutdown>((), Duration::from_millis(20))
+            .await
+            .unwrap_err();
+        assert!(error.contains("timed out"), "{error}");
+        fake.until("the cancellation", |log| !cancels(log).is_empty()).await;
+        assert_eq!(pending(&conn), 0);
+    }
+
+    #[tokio::test]
+    async fn an_answered_request_is_not_cancelled() {
+        let (conn, fake) = fake::start(|_| Reply::Result(Value::Null));
+        conn.request::<Shutdown>(()).await.unwrap();
+        // The request is the last thing the server could have heard before a cancel.
+        conn.notify_raw("probe", Value::Null).unwrap();
+        fake.until("the probe", |log| log.iter().any(|m| m["method"] == "probe"))
+            .await;
+        assert!(cancels(&fake.log()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_late_answer_to_a_cancelled_request_is_ignored() {
+        let asked = AtomicUsize::new(0);
+        let (conn, fake) = fake::start(move |_| match asked.fetch_add(1, Ordering::SeqCst) {
+            0 => Reply::Hold,
+            _ => Reply::Result(Value::Null),
+        });
+        let gave_up = tokio::time::timeout(Duration::from_millis(20), conn.request::<Shutdown>(())).await;
+        assert!(gave_up.is_err());
+        fake.until("the cancellation", |log| !cancels(log).is_empty()).await;
+        let first = cancels(&fake.log())[0].as_i64().unwrap();
+
+        // The server answers the cancelled request, with the error it is meant to
+        // use and with a result; the connection carries on.
+        fake.reply(first, Reply::Error(-32800)).await;
+        fake.reply(first, Reply::Result(json!("stale"))).await;
+        conn.request::<Shutdown>(()).await.unwrap();
+        assert_eq!(pending(&conn), 0);
+        assert!(!conn.with_state(|s| s.exited));
     }
 }

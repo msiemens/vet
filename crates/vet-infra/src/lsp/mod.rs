@@ -6,6 +6,8 @@
 mod capabilities;
 pub mod config;
 pub(crate) mod dotnet;
+#[cfg(test)]
+mod fake;
 mod rpc;
 mod server;
 mod uri;
@@ -264,7 +266,6 @@ async fn handshake(
         .map_err(|e| LaunchError::Protocol(conn.describe(e)))?;
     let diagnostics = capabilities::assert_capabilities(&init.capabilities)?;
     conn.notify::<lsp::notification::Initialized>(lsp::InitializedParams {})
-        .await
         .map_err(LaunchError::Protocol)?;
     Ok(diagnostics)
 }
@@ -289,7 +290,7 @@ async fn load_dotnet_projects(conn: &Connection, root: &Path) -> Result<(), Laun
             ));
         }
     };
-    conn.notify_raw(method, params).await.map_err(LaunchError::Protocol)
+    conn.notify_raw(method, params).map_err(LaunchError::Protocol)
 }
 
 /// The root if it holds a root marker (or the config has none); else the
