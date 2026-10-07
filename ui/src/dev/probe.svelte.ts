@@ -14,6 +14,9 @@ export const tooltipLatencies: number[] = [];
 /** Bound only to count collisions in the manual input check: AltGr types these keys on a German layout. */
 const BAIT = ["Ctrl-Alt-q", "Ctrl-Alt-e", "Ctrl-Alt-7", "Ctrl-Alt-8", "Ctrl-Alt-9", "Ctrl-Alt-0", "Ctrl-Alt-m"];
 
+/** Keys that are only a modifier going down: the key that follows is the one worth timing. */
+const MODIFIERS = new Set(["Shift", "Control", "Alt", "AltGraph", "Meta"]);
+
 /** The latest seen toggle, so the benchmark can wait for its repaint. */
 export const toggling = { pending: Promise.resolve() };
 
@@ -43,7 +46,7 @@ export const probe: Probe = {
     },
     hoverShown: (ms) => void tooltipLatencies.push(ms),
     keydown: (event) => {
-      if (event.key.length !== 1 && event.key !== "Backspace" && event.key !== "Enter") return;
+      if (MODIFIERS.has(event.key)) return;
       void nextPaint().then(() => (hud.keystroke = performance.now() - event.timeStamp));
     },
   }),

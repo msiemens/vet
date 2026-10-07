@@ -9,6 +9,8 @@ export interface ViewProbe {
   readonly sections: readonly Section[];
   /** Height of the whole column. */
   totalHeight(): number;
+  /** The number of stops (cards and hunks) hunk navigation moves over. */
+  readonly stopCount: number;
   /** The stop of file `fi`'s first hunk. */
   firstHunkOf(fi: number): number;
   /** The button on the header of file `fi` that toggles everything in it. */
@@ -28,6 +30,7 @@ export function viewProbe(parts: {
   const { sections, mounted, heights, stops } = parts;
   return {
     sections,
+    stopCount: stops.total,
     totalHeight: () => heights.total,
     firstHunkOf: (fi) => stops.start(fi) + sections[fi].cards.length,
     seenButton(fi) {

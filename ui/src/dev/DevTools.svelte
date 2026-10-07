@@ -67,7 +67,7 @@
     <span class="status">{status}</span>
     <span
       class="hud mono"
-      title="Live: keydown to paint, hover round trip, Ctrl-Alt bait bindings fired (must stay 0 when typing AltGr characters)"
+      title="Live: keydown to paint, hover round trip, Ctrl-Alt bait bindings fired (must stay 0 when pressing AltGr character keys)"
     >
       key→paint {hud.keystroke.toFixed(1)} ms · hover {hud.hover.toFixed(1)} ms · collisions {hud.collisions}
     </span>

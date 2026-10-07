@@ -2,7 +2,7 @@
 // (`MergeView`), with the review decorations of `reviewState.ts` (SPEC §10).
 
 import { MergeView, getChunks, unifiedMergeView } from "@codemirror/merge";
-import { EditorState, type Extension, type StateEffect, type StateField } from "@codemirror/state";
+import { EditorState, type Extension, type StateEffect } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { minimalSetup } from "codemirror";
 import type { Diagnostic } from "../../../generated/Diagnostic";
@@ -19,7 +19,7 @@ import type { BarActions } from "./hunkBar";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { deletedHighlights } from "./deletedHighlights";
 import { highlightExtension } from "./highlightExtension";
-import { type ReviewState, deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
+import { deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
 
 export interface Loaded {
   base: string;
@@ -48,8 +48,6 @@ export interface Handle {
   showDiagnostics(diagnostics: readonly Diagnostic[]): void;
   /** Scrolls to and marks a span of `side`'s text; a base span has no editor of its own in a unified view and is left to the caller. */
   revealSpan(side: Side, span: TextSpan): void;
-  /** Review decorations (changed lines, bars) on the target view; for integrity checks. */
-  decorationCount(): number;
   chunkCount(): number;
   destroy(): void;
 }
@@ -110,7 +108,7 @@ export function mountFile(
         deletedLines(path, hooks, shown),
       ],
     });
-    return handle(view, [view], targetField);
+    return handle(view, [view]);
   }
   const base: Extension[] = [
     reviewField(sideConfig(loaded.hunks, "base", null), states),
@@ -129,15 +127,10 @@ export function mountFile(
     collapseUnchanged,
     diffConfig,
   });
-  return handle(merge.b, [merge.a, merge.b], targetField, () => merge.destroy());
+  return handle(merge.b, [merge.a, merge.b], () => merge.destroy());
 }
 
-function handle(
-  view: EditorView,
-  views: EditorView[],
-  field: StateField<ReviewState>,
-  destroy = () => view.destroy(),
-): Handle {
+function handle(view: EditorView, views: EditorView[], destroy = () => view.destroy()): Handle {
   return {
     view,
     views,
@@ -147,7 +140,6 @@ function handle(
       if (side === "target") revealSpan(view, span, true);
       else if (views.length > 1) revealSpan(views[0], span, false);
     },
-    decorationCount: () => view.state.field(field).decos.size,
     chunkCount: () => getChunks(view.state)?.chunks.length ?? 0,
     destroy,
   };
