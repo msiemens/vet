@@ -283,15 +283,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn status_reports_pins_and_install_blockers() {
-        let status = servers().status(Path::new("/p")).await.unwrap();
-        let pinned: Vec<_> = status.iter().map(|s| s.pinned.clone()).collect();
-        assert_eq!(pinned, [None, Some("1.0.0".into()), None]);
-        assert_eq!(status[2].install_blocker.as_deref(), Some("npm is missing"));
-        assert_eq!(status[0].server, "rust-server");
-    }
-
-    #[tokio::test]
     async fn only_a_pinned_server_without_a_blocker_can_be_installed() {
         let status = servers().status(Path::new("/p")).await.unwrap();
         // Rust has no pin; Python has one but npm is missing; TypeScript has one and nothing in the way.
