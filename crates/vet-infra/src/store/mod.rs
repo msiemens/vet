@@ -254,7 +254,6 @@ impl SqliteStore {
             .await?
             .ok_or_else(|| DbErr::RecordNotFound(format!("thread {}", id.0)))
     }
-
 }
 
 impl Store for SqliteStore {

@@ -42,7 +42,10 @@ impl StatKey {
 }
 
 fn stamp(t: SystemTime) -> (i64, u32) {
-    (unix_secs(t), t.duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos()))
+    (
+        unix_secs(t),
+        t.duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos()),
+    )
 }
 
 #[derive(Clone)]

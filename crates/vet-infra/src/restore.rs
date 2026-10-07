@@ -22,7 +22,7 @@
 //! covers them. A step that fails is reported with its project and the server
 //! starts anyway.
 
-mod discover;
+pub(crate) mod discover;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -32,6 +32,8 @@ use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, RestoreFailure, Restored, Restorer};
 
 use crate::exec::capture;
+use crate::git::list_files;
+use crate::language::{self, Language, Restore};
 use crate::lsp::dotnet;
 
 /// Restores download packages: far longer than a probe.
@@ -124,24 +126,24 @@ impl ToolRestorer {
         Self { env }
     }
 
-    async fn plan(&self, root: &Path, language: &str) -> Plan {
+    async fn plan(&self, root: &Path, language: &Language) -> Plan {
         let mut plan = Plan::default();
-        if language == "csharp" {
+        if language.restore == Restore::Dotnet {
             Self::csharp(root, &mut plan).await;
             return plan;
         }
-        let files = match dotnet::files(root).await {
+        let files = match list_files(root).await {
             Ok(files) => files,
             Err(why) => {
                 plan.failures.push(failure(Path::new(""), "vet", why));
                 return plan;
             }
         };
-        match language {
-            "rust" => Self::rust(root, &files, &mut plan),
-            "typescript" => Self::javascript(root, &files, &mut plan),
-            "python" => Self::python(root, &files, &mut plan),
-            _ => {}
+        match language.restore {
+            Restore::Cargo => Self::rust(root, &files, &mut plan),
+            Restore::Javascript => Self::javascript(root, &files, &mut plan),
+            Restore::Python => Self::python(root, &files, &mut plan),
+            Restore::Dotnet => {}
         }
         plan
     }
@@ -359,7 +361,9 @@ fn venv_bin(venv: &Path) -> PathBuf {
 
 impl Restorer for ToolRestorer {
     async fn restore(&self, root: &Path, backend: &Backend, policy: AnalysisPolicy) -> Restored {
-        let language = backend.config().backend.0.as_str();
+        let Some(language) = language::by_id(&backend.config().backend.0) else {
+            return Restored::default();
+        };
         let plan = self.plan(root, language).await;
         let mut restored = Restored {
             failures: plan.failures,
@@ -383,7 +387,7 @@ impl Restorer for ToolRestorer {
             .iter()
             .map(|s| root.join(&s.project).join(VENV))
             .find(|v| v.is_dir());
-        if let (true, Some(venv)) = (language == "python", venv) {
+        if let (Restore::Python, Some(venv)) = (language.restore, venv) {
             restored
                 .env
                 .push(("VIRTUAL_ENV".into(), venv.to_string_lossy().into_owned()));
@@ -397,20 +401,15 @@ impl Restorer for ToolRestorer {
 
 #[cfg(test)]
 mod tests {
-    use vet_semantic::ports::{BackendId, ServerConfig};
-
     use super::*;
     use crate::exec::{Host, is_file};
 
-    fn backend(language: &str) -> Backend {
-        Backend::GenericLsp(ServerConfig {
-            backend: BackendId(language.into()),
-            binary: String::new(),
-            args: vec![],
-            filetypes: vec![],
-            root_markers: vec![],
-            executes_project_code_during_analysis: false,
-        })
+    fn lang(id: &str) -> &'static Language {
+        language::by_id(id).expect("a registered language")
+    }
+
+    fn backend(id: &str) -> Backend {
+        lang(id).backend()
     }
 
     fn tree(files: &[(&str, &str)]) -> tempfile::TempDir {
@@ -426,7 +425,7 @@ mod tests {
     /// `project: command` of each step, and the plan's own failures.
     async fn planned(files: &[(&str, &str)], language: &str) -> (Vec<String>, Vec<RestoreFailure>) {
         let dir = tree(files);
-        let plan = ToolRestorer::new().plan(dir.path(), language).await;
+        let plan = ToolRestorer::new().plan(dir.path(), lang(language)).await;
         let steps = plan.steps.iter();
         (
             steps
@@ -570,7 +569,7 @@ mod tests {
     async fn a_yarn_release_checked_into_the_repository_counts_as_executing() {
         async fn executes(rc: &str, content: &str) -> bool {
             let dir = tree(&[("package.json", "{}"), ("yarn.lock", ""), (rc, content)]);
-            ToolRestorer::new().plan(dir.path(), "typescript").await.steps[0].executes
+            ToolRestorer::new().plan(dir.path(), lang("typescript")).await.steps[0].executes
         }
         assert!(executes(".yarnrc.yml", "yarnPath: .yarn/releases/yarn-4.js\n").await);
         assert!(executes(".yarnrc.yml", "plugins:\n  - path: p.cjs\n").await);
@@ -647,7 +646,7 @@ mod tests {
         let create = format!("uv venv {venv} --allow-existing --no-python-downloads");
 
         std::fs::write(dir.path().join("requirements.txt"), "").unwrap();
-        let plan = restorer.plan(dir.path(), "python").await;
+        let plan = restorer.plan(dir.path(), lang("python")).await;
         assert_eq!(
             steps(&plan),
             [
@@ -657,7 +656,7 @@ mod tests {
         );
 
         std::fs::write(dir.path().join("pyproject.toml"), "[project]\nname = \"p\"\n").unwrap();
-        let plan = restorer.plan(dir.path(), "python").await;
+        let plan = restorer.plan(dir.path(), lang("python")).await;
         assert_eq!(
             steps(&plan),
             [
@@ -669,10 +668,10 @@ mod tests {
         // Tool configuration alone has nothing to install; Poetry's own format is reported.
         std::fs::remove_file(dir.path().join("requirements.txt")).unwrap();
         std::fs::write(dir.path().join("pyproject.toml"), "[tool.ruff]\nline-length = 100\n").unwrap();
-        let plan = restorer.plan(dir.path(), "python").await;
+        let plan = restorer.plan(dir.path(), lang("python")).await;
         assert!(plan.steps.is_empty() && plan.failures.is_empty());
         std::fs::write(dir.path().join("pyproject.toml"), "[tool.poetry]\nname = \"p\"\n").unwrap();
-        let plan = restorer.plan(dir.path(), "python").await;
+        let plan = restorer.plan(dir.path(), lang("python")).await;
         assert!(plan.steps.is_empty());
         assert_eq!(plan.failures.len(), 1);
         assert!(plan.failures[0].message.contains("Poetry"), "{:?}", plan.failures);
@@ -697,7 +696,7 @@ mod tests {
     #[tokio::test]
     async fn csharp_restores_what_the_server_loads_and_only_where_executing_is_allowed() {
         let dir = tree(&[("App.csproj", ""), ("Program.cs", "")]);
-        let plan = ToolRestorer::new().plan(dir.path(), "csharp").await;
+        let plan = ToolRestorer::new().plan(dir.path(), lang("csharp")).await;
         assert_eq!(plan.steps.len(), 1);
         assert!(plan.steps[0].executes && plan.steps[0].args[0] == "restore");
 

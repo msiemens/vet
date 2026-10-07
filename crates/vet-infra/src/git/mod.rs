@@ -3,29 +3,32 @@
 //! gix work runs on the blocking pool.
 
 mod base;
+mod blob_cache;
 mod checkout;
 mod diff;
 mod ignore;
 mod scan;
 mod stat_cache;
+mod tree;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use gix::bstr::ByteSlice;
-use gix::objs::{Find, FindHeader};
 use vet_app::pin::CommitId;
 use vet_app::ports::{
     BaseCandidates, BlobRead, BranchInfo, CheckoutError, CommitInfo, Dirty, GitError, GitRepo, IgnoreRules, Scan, Store,
 };
 use vet_app::review::SessionId;
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
-use vet_core::merkle;
 
+use crate::paths;
 use checkout::Pending;
 use stat_cache::StatCache;
+
+pub(crate) use blob_cache::BlobCache;
 
 pub use diff::line_hunks;
 
@@ -41,6 +44,38 @@ pub fn find_root(path: &Path) -> Result<PathBuf, String> {
         .workdir()
         .ok_or_else(|| "Bare repositories are not supported".to_string())?;
     workdir.canonicalize().map_err(|_| not_a_repo())
+}
+
+/// The files of the tree at `root`, relative to it, without reading any: in a
+/// worktree what git sees (the scan's candidates, so ignored files are left
+/// out); in a directory that is not one, every file, since it holds nothing but
+/// its own. A name the platform cannot represent is left out.
+pub async fn list_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    // `.git` is how git marks a worktree's root, as a directory or a file.
+    if root.join(".git").exists() {
+        let files = GixRepo::new(root).list_files().await.map_err(|e| e.0)?;
+        return Ok(files
+            .iter()
+            .filter_map(|f| paths::to_path(&f.0).ok())
+            .map(Path::to_owned)
+            .collect());
+    }
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_owned()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))?
+            .flatten()
+        {
+            let path = entry.path();
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                pending.push(path);
+            } else if let Ok(relative) = path.strip_prefix(root) {
+                found.push(relative.to_owned());
+            }
+        }
+    }
+    Ok(found)
 }
 
 /// Cheap to clone: clones share the caches.
@@ -73,6 +108,12 @@ impl GixRepo {
         }))
     }
 
+    /// Every file of the tree as git sees it, read from none: the index plus
+    /// what is untracked and not ignored.
+    pub async fn list_files(&self) -> Result<Vec<RepoPath>, GitError> {
+        self.blocking(|i| scan::list(&i.open()?)).await
+    }
+
     async fn blocking<T: Send + 'static>(
         &self,
         f: impl FnOnce(&Inner) -> Result<T, GitError> + Send + 'static,
@@ -90,22 +131,6 @@ impl GixRepo {
 impl Inner {
     fn open(&self) -> Result<gix::Repository, GitError> {
         gix::open(&self.root).map_err(err)
-    }
-
-    fn commit_snapshot(&self, commit: &CommitId) -> Result<Snapshot, GitError> {
-        let repo = self.open()?;
-        let id = gix::ObjectId::from_hex(commit.0.as_bytes()).map_err(err)?;
-        let tree = repo.find_commit(id).map_err(err)?.tree_id().map_err(err)?;
-        let index = repo.index_from_tree(&tree).map_err(err)?;
-        let mut entries = BTreeMap::new();
-        for e in index.entries() {
-            let entry = scan::tree_entry(&repo, &self.blobs, e.id, e.mode.bits())?;
-            entries.insert(RepoPath(e.path(&index).to_vec()), entry);
-        }
-        Ok(Snapshot {
-            id: merkle::snapshot_id(&entries),
-            entries,
-        })
     }
 
     fn read_blob(&self, path: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
@@ -266,7 +291,7 @@ impl GitRepo for GixRepo {
     async fn set_session_ref(&self, session: SessionId, name: &str, commit: &CommitId) -> Result<(), GitError> {
         let (name, commit) = (format!("{}{name}", session_ref_prefix(session)), commit.clone());
         self.blocking(move |i| {
-            let id = gix::ObjectId::from_hex(commit.0.as_bytes()).map_err(err)?;
+            let id = object_id(&commit)?;
             i.open()?
                 .reference(name, id, gix::refs::transaction::PreviousValue::Any, "vet session")
                 .map_err(err)?;
@@ -306,75 +331,16 @@ impl IgnoreRules for GixRepo {
     }
 }
 
-/// Git object id to `BlobId` and back, so unchanged tracked files and tree
-/// entries are hashed once. In memory for now.
-#[derive(Default)]
-pub(crate) struct BlobCache {
-    ids: Mutex<Ids>,
-}
-
-#[derive(Default)]
-struct Ids {
-    by_oid: HashMap<gix::ObjectId, BlobId>,
-    by_blob: HashMap<BlobId, gix::ObjectId>,
-    /// Pinned commit of each submodule entry's `BlobId`, which only hashes it.
-    submodules: HashMap<BlobId, gix::ObjectId>,
-}
-
-impl BlobCache {
-    /// The `BlobId` of a submodule entry pinned at `commit`.
-    pub fn submodule_id(&self, commit: gix::ObjectId) -> BlobId {
-        let id = BlobId::of(commit.as_bytes());
-        self.ids.lock().expect("not poisoned").submodules.insert(id, commit);
-        id
-    }
-
-    pub fn submodule_commit(&self, blob: BlobId) -> Option<String> {
-        let ids = self.ids.lock().expect("not poisoned");
-        ids.submodules.get(&blob).map(|c| c.to_string())
-    }
-
-    /// The `BlobId` of the git blob `oid`, reading it from the object database
-    /// on a miss.
-    pub fn blob_id(&self, repo: &gix::Repository, oid: gix::ObjectId) -> Result<BlobId, GitError> {
-        if let Some(id) = self.ids.lock().expect("not poisoned").by_oid.get(&oid) {
-            return Ok(*id);
-        }
-        let mut buf = Vec::new();
-        repo.objects
-            .try_find(&oid, &mut buf)
-            .map_err(err)?
-            .ok_or_else(|| GitError(format!("missing object {oid}")))?;
-        let id = BlobId::of(&buf);
-        let mut ids = self.ids.lock().expect("not poisoned");
-        ids.by_oid.insert(oid, id);
-        ids.by_blob.insert(id, oid);
-        Ok(id)
-    }
-
-    /// Size of `blob` if git has it, from the object header.
-    pub fn odb_size(&self, repo: &gix::Repository, blob: BlobId) -> Result<Option<u64>, GitError> {
-        let oid = self.ids.lock().expect("not poisoned").by_blob.get(&blob).copied();
-        let Some(oid) = oid else { return Ok(None) };
-        Ok(repo.objects.try_header(&oid).map_err(err)?.map(|h| h.size))
-    }
-
-    /// Content of `blob` if git has it and it is within `cap`.
-    pub fn odb_content(&self, repo: &gix::Repository, blob: BlobId, cap: u64) -> Result<Option<Vec<u8>>, GitError> {
-        let oid = self.ids.lock().expect("not poisoned").by_blob.get(&blob).copied();
-        let Some(oid) = oid else { return Ok(None) };
-        let mut buf = Vec::new();
-        let found = repo.objects.try_find(&oid, &mut buf).map_err(err)?.is_some();
-        Ok((found && buf.len() as u64 <= cap).then_some(buf))
-    }
-}
-
 fn session_ref_prefix(session: SessionId) -> String {
     format!("refs/vet/sessions/{}/", session.0)
 }
 
 fn err(e: impl Display) -> GitError {
     GitError(e.to_string())
+}
+
+fn object_id(commit: &CommitId) -> Result<gix::ObjectId, GitError> {
+    gix::ObjectId::from_hex(commit.0.as_bytes()).map_err(err)
 }
 
 /// Folders whose name a tool defines as its own store; their untracked contents are never

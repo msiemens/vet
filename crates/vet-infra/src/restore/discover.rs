@@ -7,7 +7,11 @@ use std::path::{Path, PathBuf};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde_json::Value;
 
-/// How deep below the root a project may be.
+/// How deep below the root a project may be. Four levels reach the usual
+/// monorepo layouts (`services/api/clients/rust`); a manifest deeper than that
+/// is mostly a fixture or an example, and every project found costs a restore
+/// and a workspace folder of the language server. Restoring and the server's
+/// workspace folders share it, so neither covers a project the other misses.
 const MAX_DEPTH: usize = 4;
 
 /// Folders no manifest inside is a project of the repository: dependencies and build output.
@@ -15,7 +19,7 @@ const SKIPPED: &[&str] = &["node_modules", "target", "vendor"];
 
 /// The directories that hold a file called one of `names`, shallowest first.
 /// Hidden folders and tool or build folders are not searched.
-pub(super) fn candidates(files: &[PathBuf], names: &[&str]) -> Vec<PathBuf> {
+pub(crate) fn candidates(files: &[PathBuf], names: &[&str]) -> Vec<PathBuf> {
     let usable = |dir: &Path| {
         dir.components().count() <= MAX_DEPTH
             && dir.components().all(|c| {
@@ -41,6 +45,18 @@ pub(super) fn candidates(files: &[PathBuf], names: &[&str]) -> Vec<PathBuf> {
     });
     dirs.dedup();
     dirs
+}
+
+/// `dirs`, shallowest first, without those below another of them: a project
+/// holds the directories under it.
+pub(crate) fn outermost(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut kept: Vec<PathBuf> = Vec::new();
+    for dir in dirs {
+        if !kept.iter().any(|outer| dir.starts_with(outer)) {
+            kept.push(dir);
+        }
+    }
+    kept
 }
 
 /// A directory whose tool installs the packages of the directories below it in one go.
@@ -201,6 +217,13 @@ mod tests {
             &["package.json"],
         );
         assert_eq!(found, paths(&["", "a", "b", "a/x", "a/b/c/d"]));
+    }
+
+    #[test]
+    fn a_project_holds_the_projects_below_it() {
+        let dirs = paths(&["a", "b", "a/x", "b/y/z", "ab"]);
+        assert_eq!(outermost(dirs), paths(&["a", "b", "ab"]));
+        assert_eq!(outermost(paths(&["", "a"])), paths(&[""]));
     }
 
     #[test]

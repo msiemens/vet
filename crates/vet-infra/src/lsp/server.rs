@@ -6,7 +6,6 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::time::Duration;
 
 use lsp_types as lsp;
@@ -20,11 +19,14 @@ use vet_core::content::RepoPath;
 use vet_semantic::ports::{
     At, Diagnostic, LanguageServer, Location, Pos, QueryError, Severity, Span, Sym, SymbolInfo, Tree,
 };
+use vet_semantic::symbols::{self, Outline};
 
 use super::QUIET;
 use super::capabilities::Diagnostics;
-use super::config::language_id;
 use super::rpc::{Connection, State};
+use super::uri::{file_uri, path_of};
+use crate::language::language_id;
+use crate::paths;
 
 /// Documents kept open at once; the oldest are closed beyond this.
 const MAX_OPEN_DOCS: usize = 64;
@@ -75,11 +77,6 @@ fn position(p: Pos) -> lsp::Position {
     }
 }
 
-fn contains(s: Span, p: Pos) -> bool {
-    let key = |p: Pos| (p.line, p.col);
-    key(s.start) <= key(p) && key(p) <= key(s.end)
-}
-
 impl LspServer {
     pub(super) fn new(conn: Connection, root: PathBuf, tree: Tree, diagnostics: Diagnostics) -> Self {
         Self {
@@ -91,18 +88,12 @@ impl LspServer {
         }
     }
 
-    fn conn(&self) -> Result<&Connection, QueryError> {
-        Ok(&self.conn)
-    }
-
-    fn path_of(&self, file: &RepoPath) -> Result<PathBuf, QueryError> {
-        let relative = gix::path::try_from_byte_slice(&file.0).map_err(err)?;
-        Ok(self.root.join(relative))
+    fn absolute(&self, file: &RepoPath) -> Result<PathBuf, QueryError> {
+        Ok(self.root.join(paths::to_path(&file.0).map_err(err)?))
     }
 
     fn uri_of(&self, file: &RepoPath) -> Result<Uri, QueryError> {
-        let url = url::Url::from_file_path(self.path_of(file)?).map_err(|()| err("path is not absolute"))?;
-        Uri::from_str(url.as_str()).map_err(err)
+        file_uri(&self.absolute(file)?).ok_or_else(|| err("path is not absolute"))
     }
 
     fn id(&self, file: &RepoPath) -> Result<lsp::TextDocumentIdentifier, QueryError> {
@@ -118,27 +109,30 @@ impl LspServer {
         })
     }
 
+    /// The repository path of an absolute path, or `None` outside the root.
+    fn file_in_root(&self, path: &Path) -> Option<RepoPath> {
+        paths::from_relative(path.strip_prefix(&self.root).ok()?).ok()
+    }
+
     /// The repository path of a server URI, or `None` outside the root.
     fn file_of(&self, uri: &Uri) -> Option<RepoPath> {
-        let path = url::Url::parse(uri.as_str()).ok()?.to_file_path().ok()?;
-        let relative = path.strip_prefix(&self.root).ok()?;
-        Some(repo_path(relative))
+        self.file_in_root(&path_of(uri)?)
     }
 
     fn location(&self, uri: &Uri, range: lsp::Range) -> Location {
-        match self.file_of(uri) {
+        let path = path_of(uri);
+        match path.as_deref().and_then(|p| self.file_in_root(p)) {
             Some(file) => Location {
                 file,
                 span: span(range),
                 external: false,
             },
             None => {
-                let absolute = url::Url::parse(uri.as_str())
-                    .ok()
-                    .and_then(|u| u.to_file_path().ok())
-                    .map_or_else(|| uri.as_str().as_bytes().to_vec(), |p| repo_path(&p).0);
+                let absolute = path
+                    .and_then(|p| paths::from_absolute(&p).ok())
+                    .unwrap_or_else(|| RepoPath(uri.as_str().as_bytes().to_vec()));
                 Location {
-                    file: RepoPath(absolute),
+                    file: absolute,
                     span: span(range),
                     external: true,
                 }
@@ -165,7 +159,7 @@ impl LspServer {
     }
 
     async fn refresh(&self, docs: &mut Vec<Doc>, file: &RepoPath) -> Result<bool, QueryError> {
-        let path = self.path_of(file)?;
+        let path = self.absolute(file)?;
         let text = tokio::fs::read(&path)
             .await
             .map(|b| String::from_utf8_lossy(&b).into_owned());
@@ -174,7 +168,7 @@ impl LspServer {
             (Ok(text), _) => text,
             (Err(_), Some(index)) => {
                 let doc = docs.remove(index);
-                self.conn()?
+                self.conn
                     .notify::<DidCloseTextDocument>(lsp::DidCloseTextDocumentParams {
                         text_document: lsp::TextDocumentIdentifier { uri: doc.uri },
                     })
@@ -186,7 +180,7 @@ impl LspServer {
         };
         let Some(index) = index else {
             let uri = self.uri_of(file)?;
-            self.conn()?
+            self.conn
                 .notify::<DidOpenTextDocument>(lsp::DidOpenTextDocumentParams {
                     text_document: lsp::TextDocumentItem {
                         uri: uri.clone(),
@@ -205,7 +199,7 @@ impl LspServer {
             });
             if docs.len() > MAX_OPEN_DOCS {
                 let doc = docs.remove(0);
-                self.conn()?
+                self.conn
                     .notify::<DidCloseTextDocument>(lsp::DidCloseTextDocumentParams {
                         text_document: lsp::TextDocumentIdentifier { uri: doc.uri },
                     })
@@ -235,10 +229,7 @@ impl LspServer {
                 text,
             }],
         };
-        self.conn()?
-            .notify::<DidChangeTextDocument>(params)
-            .await
-            .map_err(err)?;
+        self.conn.notify::<DidChangeTextDocument>(params).await.map_err(err)?;
         Ok(true)
     }
 
@@ -261,24 +252,8 @@ impl LspServer {
         selection: lsp::Position,
     ) -> Option<SymbolInfo> {
         let file = self.file_of(uri)?;
-        let at = pos(selection);
         let symbols = self.symbols_cached(cache, &file).await;
-        let exact = symbols.iter().find(|s| s.at == at);
-        let innermost = || {
-            symbols
-                .iter()
-                .filter(|s| contains(s.span, at))
-                .max_by_key(|s| (s.span.start.line, s.span.start.col))
-        };
-        Some(exact.or_else(innermost).cloned().unwrap_or_else(|| SymbolInfo {
-            sym: Sym {
-                file,
-                name: vec![name.to_owned()],
-            },
-            span: span(range),
-            at,
-            detail: None,
-        }))
+        Some(symbols::resolve(&symbols, file, name, span(range), pos(selection)))
     }
 
     async fn prepare_calls(&self, at: &At) -> Result<Vec<lsp::CallHierarchyItem>, QueryError> {
@@ -287,12 +262,30 @@ impl LspServer {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
         };
-        let items = self
-            .conn()?
-            .request::<CallHierarchyPrepare>(params)
-            .await
-            .map_err(err)?;
+        let items = self.conn.request::<CallHierarchyPrepare>(params).await.map_err(err)?;
         Ok(items.unwrap_or_default())
+    }
+
+    /// The symbols the call hierarchy `items` stand for, each once, those
+    /// outside the root left out.
+    async fn symbols_of(&self, items: Vec<lsp::CallHierarchyItem>) -> Vec<SymbolInfo> {
+        let mut cache = HashMap::new();
+        let mut out: Vec<SymbolInfo> = Vec::new();
+        for item in items {
+            let resolved = self
+                .resolve(
+                    &mut cache,
+                    &item.uri,
+                    &item.name,
+                    item.range,
+                    item.selection_range.start,
+                )
+                .await;
+            if let Some(s) = resolved.filter(|s| !out.iter().any(|o| o.sym == s.sym)) {
+                out.push(s);
+            }
+        }
+        out
     }
 }
 
@@ -303,26 +296,17 @@ fn extension(file: &RepoPath) -> &str {
         .map_or("", |(_, ext)| ext)
 }
 
-fn repo_path(relative: &Path) -> RepoPath {
-    let bytes = gix::path::into_bstr(relative);
-    RepoPath(gix::path::to_unix_separators_on_windows(bytes).into_owned().into())
-}
-
-fn walk_symbols(file: &RepoPath, chain: &mut Vec<String>, symbols: &[lsp::DocumentSymbol], out: &mut Vec<SymbolInfo>) {
-    for s in symbols {
-        chain.push(s.name.clone());
-        out.push(SymbolInfo {
-            sym: Sym {
-                file: file.clone(),
-                name: chain.clone(),
-            },
+fn outline(symbols: &[lsp::DocumentSymbol]) -> Vec<Outline> {
+    symbols
+        .iter()
+        .map(|s| Outline {
+            name: s.name.clone(),
             span: span(s.range),
             at: pos(s.selection_range.start),
             detail: s.detail.clone(),
-        });
-        walk_symbols(file, chain, s.children.as_deref().unwrap_or_default(), out);
-        chain.pop();
-    }
+            children: outline(s.children.as_deref().unwrap_or_default()),
+        })
+        .collect()
 }
 
 fn flatten_hover(contents: lsp::HoverContents) -> String {
@@ -364,34 +348,23 @@ impl LanguageServer for LspServer {
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self
-            .conn()?
-            .request::<DocumentSymbolRequest>(params)
-            .await
-            .map_err(err)?;
-        let mut out = Vec::new();
-        match response {
-            None => {}
-            Some(lsp::DocumentSymbolResponse::Nested(symbols)) => {
-                walk_symbols(file, &mut Vec::new(), &symbols, &mut out);
-            }
-            Some(lsp::DocumentSymbolResponse::Flat(symbols)) => {
-                for s in symbols {
-                    let mut name: Vec<_> = s.container_name.into_iter().filter(|c| !c.is_empty()).collect();
-                    name.push(s.name);
-                    out.push(SymbolInfo {
-                        sym: Sym {
-                            file: file.clone(),
-                            name,
-                        },
-                        span: span(s.location.range),
-                        at: pos(s.location.range.start),
-                        detail: None,
-                    });
-                }
-            }
-        }
-        Ok(out)
+        let response = self.conn.request::<DocumentSymbolRequest>(params).await.map_err(err)?;
+        Ok(match response {
+            None => Vec::new(),
+            Some(lsp::DocumentSymbolResponse::Nested(nested)) => symbols::flatten(file, &outline(&nested)),
+            Some(lsp::DocumentSymbolResponse::Flat(flat)) => flat
+                .into_iter()
+                .map(|s| SymbolInfo {
+                    sym: Sym {
+                        file: file.clone(),
+                        name: symbols::qualified(s.container_name, s.name),
+                    },
+                    span: span(s.location.range),
+                    at: pos(s.location.range.start),
+                    detail: None,
+                })
+                .collect(),
+        })
     }
 
     async fn definition(&self, at: &At) -> Result<Vec<Location>, QueryError> {
@@ -401,7 +374,7 @@ impl LanguageServer for LspServer {
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self.conn()?.request::<GotoDefinition>(params).await.map_err(err)?;
+        let response = self.conn.request::<GotoDefinition>(params).await.map_err(err)?;
         Ok(match response {
             None => Vec::new(),
             Some(lsp::GotoDefinitionResponse::Scalar(l)) => vec![self.location(&l.uri, l.range)],
@@ -423,7 +396,7 @@ impl LanguageServer for LspServer {
                 include_declaration: false,
             },
         };
-        let response = self.conn()?.request::<References>(params).await.map_err(err)?;
+        let response = self.conn.request::<References>(params).await.map_err(err)?;
         Ok(response
             .unwrap_or_default()
             .iter()
@@ -437,13 +410,12 @@ impl LanguageServer for LspServer {
             text_document_position_params: self.position_params(at)?,
             work_done_progress_params: Default::default(),
         };
-        let response = self.conn()?.request::<HoverRequest>(params).await.map_err(err)?;
+        let response = self.conn.request::<HoverRequest>(params).await.map_err(err)?;
         Ok(response.map(|h| flatten_hover(h.contents)))
     }
 
     async fn incoming_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
-        let mut cache = HashMap::new();
-        let mut out: Vec<SymbolInfo> = Vec::new();
+        let mut callers = Vec::new();
         for item in self.prepare_calls(at).await? {
             let params = lsp::CallHierarchyIncomingCallsParams {
                 item,
@@ -451,32 +423,17 @@ impl LanguageServer for LspServer {
                 partial_result_params: Default::default(),
             };
             let calls = self
-                .conn()?
+                .conn
                 .request::<CallHierarchyIncomingCalls>(params)
                 .await
                 .map_err(err)?;
-            for call in calls.unwrap_or_default() {
-                let from = call.from;
-                let resolved = self
-                    .resolve(
-                        &mut cache,
-                        &from.uri,
-                        &from.name,
-                        from.range,
-                        from.selection_range.start,
-                    )
-                    .await;
-                if let Some(s) = resolved.filter(|s| !out.iter().any(|o| o.sym == s.sym)) {
-                    out.push(s);
-                }
-            }
+            callers.extend(calls.unwrap_or_default().into_iter().map(|call| call.from));
         }
-        Ok(out)
+        Ok(self.symbols_of(callers).await)
     }
 
     async fn outgoing_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
-        let mut cache = HashMap::new();
-        let mut out: Vec<SymbolInfo> = Vec::new();
+        let mut callees = Vec::new();
         for item in self.prepare_calls(at).await? {
             let params = lsp::CallHierarchyOutgoingCallsParams {
                 item,
@@ -484,21 +441,13 @@ impl LanguageServer for LspServer {
                 partial_result_params: Default::default(),
             };
             let calls = self
-                .conn()?
+                .conn
                 .request::<CallHierarchyOutgoingCalls>(params)
                 .await
                 .map_err(err)?;
-            for call in calls.unwrap_or_default() {
-                let to = call.to;
-                let resolved = self
-                    .resolve(&mut cache, &to.uri, &to.name, to.range, to.selection_range.start)
-                    .await;
-                if let Some(s) = resolved.filter(|s| !out.iter().any(|o| o.sym == s.sym)) {
-                    out.push(s);
-                }
-            }
+            callees.extend(calls.unwrap_or_default().into_iter().map(|call| call.to));
         }
-        Ok(out)
+        Ok(self.symbols_of(callees).await)
     }
 
     async fn workspace_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
@@ -507,11 +456,7 @@ impl LanguageServer for LspServer {
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
-        let response = self
-            .conn()?
-            .request::<WorkspaceSymbolRequest>(params)
-            .await
-            .map_err(err)?;
+        let response = self.conn.request::<WorkspaceSymbolRequest>(params).await.map_err(err)?;
         // (uri, name, range if the server gave one)
         let found: Vec<(Uri, String, Option<lsp::Range>)> = match response {
             None => Vec::new(),
@@ -546,7 +491,7 @@ impl LanguageServer for LspServer {
     async fn diagnostics(&self, file: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
         let key = self.uri_of(file)?.as_str().to_owned();
         let generation = |conn: &Connection| conn.with_state(|s| s.diagnostics.get(&key).map_or(0, |d| d.generation));
-        let before = generation(self.conn()?);
+        let before = generation(&self.conn);
         let changed = self.sync(file).await?;
         let items = match self.diagnostics {
             Diagnostics::Pull => {
@@ -558,7 +503,7 @@ impl LanguageServer for LspServer {
                     partial_result_params: Default::default(),
                 };
                 let report = self
-                    .conn()?
+                    .conn
                     .request::<DocumentDiagnosticRequest>(params)
                     .await
                     .map_err(err)?;
@@ -570,7 +515,7 @@ impl LanguageServer for LspServer {
                 }
             }
             Diagnostics::Push => {
-                let conn = self.conn()?;
+                let conn = &self.conn;
                 let fresh = conn
                     .wait_for(DIAGNOSTICS_TIMEOUT, |s| {
                         s.diagnostics

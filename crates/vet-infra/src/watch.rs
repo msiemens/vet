@@ -10,7 +10,8 @@ use std::time::Duration;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::time::{Interval, MissedTickBehavior, interval_at};
 use vet_app::ports::{Degraded, WatchEvent, Watcher};
-use vet_core::content::RepoPath;
+
+use crate::paths;
 
 #[cfg(not(windows))]
 mod notify_backend;
@@ -136,23 +137,27 @@ fn dirty_event<P: AsRef<Path>>(root: &Path, paths: impl IntoIterator<Item = P>) 
         let Ok(relative) = path.as_ref().strip_prefix(root) else {
             return Some(WatchEvent::MustRescan);
         };
-        let parts: Vec<&[u8]> = relative
-            .components()
-            .map(|part| part.as_os_str().as_encoded_bytes())
-            .collect();
-        if parts.first() == Some(&b".git".as_slice()) {
-            if matches!(parts.get(1).copied(), Some(b"HEAD" | b"index")) {
+        // A name that cannot be told apart from the repository's is a reason to look at everything.
+        let Ok(path) = paths::from_relative(relative) else {
+            return Some(WatchEvent::MustRescan);
+        };
+        let mut parts = path.0.split(|&b| b == b'/');
+        if parts.next() == Some(b".git".as_slice()) {
+            if matches!(parts.next(), Some(b"HEAD" | b"index")) {
                 return Some(WatchEvent::MustRescan);
             }
             continue;
         }
-        dirty.push(RepoPath(parts.join(&b'/')));
+        dirty.push(path);
     }
     (!dirty.is_empty()).then_some(WatchEvent::Dirty(dirty))
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    use vet_core::content::RepoPath;
+
     use super::*;
 
     #[test]

@@ -12,6 +12,9 @@ pub mod clock;
 
 pub mod store;
 
+/// The languages Vet analyses.
+pub mod language;
+
 pub mod lsp;
 
 /// `vet_app::ports::ProcessRunner`.
@@ -22,6 +25,9 @@ pub mod restore;
 
 /// `vet_app::ports::ServerResolver`.
 pub mod servers;
+
+/// `RepoPath` to and from filesystem paths.
+pub(crate) mod paths;
 
 /// `vet_app::ports::Platform`: an enum over GitHub and Azure DevOps.
 #[cfg(feature = "platform")]

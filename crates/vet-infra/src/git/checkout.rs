@@ -7,6 +7,7 @@ use vet_app::ports::GitError;
 use vet_core::content::{BlobId, EntryKind, FileEntry, RepoPath};
 
 use super::{Inner, err};
+use crate::paths;
 
 /// An entry with the bytes the content store had for it, if any.
 pub(super) type Pending = (RepoPath, FileEntry, Option<Vec<u8>>);
@@ -61,7 +62,7 @@ fn checked(path: &RepoPath) -> Result<&Path, GitError> {
             String::from_utf8_lossy(&path.0)
         )));
     }
-    gix::path::try_from_byte_slice(&path.0).map_err(err)
+    paths::to_path(&path.0).map_err(err)
 }
 
 #[cfg(unix)]

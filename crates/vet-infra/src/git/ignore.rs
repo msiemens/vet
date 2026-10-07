@@ -8,6 +8,7 @@ use vet_app::ports::GitError;
 use vet_core::content::RepoPath;
 
 use super::{err, in_tool_store};
+use crate::paths;
 
 /// `paths` without those git ignores and without tool stores. A path with tracked files
 /// at or below it is never ignored, as in git.
@@ -23,7 +24,7 @@ pub(crate) fn unignored(repo: &gix::Repository, paths: Vec<RepoPath>) -> Result<
     let mut kept = Vec::new();
     for path in paths {
         let rela = path.0.as_bstr();
-        let is_dir = std::fs::symlink_metadata(root.join(gix::path::from_bstr(rela))).is_ok_and(|m| m.is_dir());
+        let is_dir = std::fs::symlink_metadata(root.join(paths::to_path(rela).map_err(err)?)).is_ok_and(|m| m.is_dir());
         let mut prefix = path.0.clone();
         prefix.push(b'/');
         let tracked = index.entry_by_path(rela).is_some()

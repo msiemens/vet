@@ -20,10 +20,7 @@ impl MigratorTrait for Migrator {
 
 /// Whether `db` applied migrations that `Migrator` does not know.
 pub async fn is_foreign(db: &impl ConnectionTrait) -> Result<bool, DbErr> {
-    let known: HashSet<String> = Migrator::migrations()
-        .iter()
-        .map(|m| m.name().to_owned())
-        .collect();
+    let known: HashSet<String> = Migrator::migrations().iter().map(|m| m.name().to_owned()).collect();
     let applied = Migrator::get_migration_models(db).await?;
     Ok(applied.iter().any(|m| !known.contains(&m.version)))
 }

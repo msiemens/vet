@@ -2,7 +2,7 @@
 //! implementation or a test seam. `LanguageServer`, `ServerLauncher` and
 //! `Materializer` are owned by `vet-semantic`, which consumes them.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use vet_core::content::{BlobId, Changeset, Hash, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
@@ -367,7 +367,7 @@ pub trait RunStore {
 pub struct Command {
     pub program: String,
     pub args: Vec<String>,
-    pub cwd: std::path::PathBuf,
+    pub cwd: PathBuf,
     pub env: Vec<(String, String)>,
 }
 
@@ -397,9 +397,9 @@ pub trait RunningProcess {
 pub struct ServerCommand {
     /// A path, or a name the OS finds. The arguments are the backend's own.
     pub program: String,
-    /// Sent with `initialize`, for servers that need to be told where their
-    /// compiler is (the project's `typescript`).
-    pub initialization_options: Option<serde_json::Value>,
+    /// The compiler the server must be told about because it brings none (the
+    /// project's `tsserver.js` for TypeScript).
+    pub compiler: Option<PathBuf>,
 }
 
 /// Where a language server was found.

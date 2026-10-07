@@ -450,7 +450,10 @@ async fn snapshots_that_differ_in_one_file_share_all_other_nodes() {
     let store = open(&dir).await;
     let before = snapshot(&[("a/x", 1), ("b/y", 2), ("c/d/z", 3)]);
     let after = snapshot(&[("a/x", 9), ("b/y", 2), ("c/d/z", 3)]);
-    store.put_snapshot(before.clone(), Default::default(), T0).await.unwrap();
+    store
+        .put_snapshot(before.clone(), Default::default(), T0)
+        .await
+        .unwrap();
     assert_eq!(node_count(&store).await, 5); // root, a, b, c, c/d
     store.put_snapshot(after.clone(), Default::default(), T0).await.unwrap();
     assert_eq!(node_count(&store).await, 7); // plus a new root and a new `a`

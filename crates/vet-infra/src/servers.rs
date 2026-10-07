@@ -9,7 +9,6 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde_json::json;
 use vet_app::ports::{
     Command, FoundServer, ProcessEvent, ProcessRunner, RunningProcess, ServerCommand, ServerOrigin, ServerResolver,
     ServerState,
@@ -17,88 +16,11 @@ use vet_app::ports::{
 use vet_semantic::ports::BackendId;
 
 use crate::exec::{Captured, Host, TokioRunner, capture as run_to_end, is_file};
-
-/// Pinned versions of the servers Vet installs. Bump with a check that the
-/// server still has every required capability (§7.1).
-pub const TYPESCRIPT_LANGUAGE_SERVER_VERSION: &str = "6.0.1";
-pub const PYRIGHT_VERSION: &str = "1.1.414";
-pub const ROSLYN_LANGUAGE_SERVER_VERSION: &str = "5.12.0-1.26475.2";
-/// The `tsserver` for projects without a usable one: the language server
-/// bundles none, and TypeScript 7 and later ship no `lib/tsserver.js`.
-pub const FALLBACK_TYPESCRIPT_VERSION: &str = "6.0.3";
+use crate::language::{self, Compiler, Install, Language};
 
 /// How long a `--version` probe may take.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 const OUTPUT_TAIL_LINES: usize = 12;
-
-/// How Vet installs a language's server.
-#[derive(Clone, Copy)]
-enum Install {
-    /// Not installed by Vet.
-    No,
-    /// `npm install --prefix <dir> <package>@<version>...`; the binary is in
-    /// `node_modules/.bin`. The first package is the server, the others its companions.
-    Npm {
-        packages: &'static [(&'static str, &'static str)],
-    },
-    /// `dotnet tool install <package> --tool-path <dir> --version <version>`.
-    DotnetTool {
-        package: &'static str,
-        version: &'static str,
-    },
-}
-
-struct Spec {
-    language: &'static str,
-    /// The server's name as a person knows it.
-    display_name: &'static str,
-    /// The executable's name, on `PATH` and in the install directory.
-    binary: &'static str,
-    install: Install,
-    /// What to run to learn the version; `None` if the server has no such flag.
-    version_flag: Option<&'static str>,
-}
-
-const SPECS: [Spec; 4] = [
-    Spec {
-        language: "rust",
-        display_name: "rust-analyzer",
-        binary: "rust-analyzer",
-        install: Install::No,
-        version_flag: Some("--version"),
-    },
-    Spec {
-        language: "typescript",
-        display_name: "typescript-language-server",
-        binary: "typescript-language-server",
-        install: Install::Npm {
-            packages: &[
-                ("typescript-language-server", TYPESCRIPT_LANGUAGE_SERVER_VERSION),
-                ("typescript", FALLBACK_TYPESCRIPT_VERSION),
-            ],
-        },
-        version_flag: Some("--version"),
-    },
-    Spec {
-        language: "python",
-        display_name: "Pyright",
-        binary: "pyright-langserver",
-        install: Install::Npm {
-            packages: &[("pyright", PYRIGHT_VERSION)],
-        },
-        version_flag: None,
-    },
-    Spec {
-        language: "csharp",
-        display_name: "roslyn-language-server",
-        binary: "roslyn-language-server",
-        install: Install::DotnetTool {
-            package: "roslyn-language-server",
-            version: ROSLYN_LANGUAGE_SERVER_VERSION,
-        },
-        version_flag: None,
-    },
-];
 
 pub struct ToolResolver {
     data_dir: PathBuf,
@@ -115,16 +37,16 @@ impl ToolResolver {
         Self { data_dir, host }
     }
 
-    fn spec(language: &BackendId) -> Option<&'static Spec> {
-        SPECS.iter().find(|s| s.language == language.0)
+    fn spec(language: &BackendId) -> Option<&'static Language> {
+        language::by_id(&language.0)
     }
 
-    fn install_dir(&self, spec: &Spec) -> PathBuf {
-        self.data_dir.join("servers").join(spec.language)
+    fn install_dir(&self, spec: &Language) -> PathBuf {
+        self.data_dir.join("servers").join(spec.id)
     }
 
     /// The server Vet installed, if it did.
-    fn installed(&self, spec: &Spec) -> Option<PathBuf> {
+    fn installed(&self, spec: &Language) -> Option<PathBuf> {
         let dir = self.install_dir(spec);
         match spec.install {
             Install::No => None,
@@ -137,7 +59,7 @@ impl ToolResolver {
 
     /// The version of a Vet-installed server: an npm package's `package.json`,
     /// or what `dotnet tool list --tool-path` reports.
-    async fn installed_version(&self, spec: &Spec) -> Option<String> {
+    async fn installed_version(&self, spec: &Language) -> Option<String> {
         let dir = self.install_dir(spec);
         match spec.install {
             Install::No => None,
@@ -179,7 +101,7 @@ impl ToolResolver {
     /// The `tsserver` the language server must use: the project's own
     /// `typescript`, so its answers match what the project compiles with, else
     /// the fallback Vet installed beside the server.
-    fn tsserver(&self, spec: &Spec, project: &Path) -> Option<(PathBuf, String)> {
+    fn tsserver(&self, spec: &Language, project: &Path) -> Option<(PathBuf, String)> {
         let project_package = project.join("node_modules").join("typescript");
         let fallback = self.install_dir(spec).join("node_modules").join("typescript");
         [(project_package, "the project's"), (fallback, "Vet's fallback")]
@@ -193,7 +115,7 @@ impl ToolResolver {
             })
     }
 
-    async fn probe_version(spec: &Spec, program: &Path) -> Option<String> {
+    async fn probe_version(spec: &Language, program: &Path) -> Option<String> {
         let flag = spec.version_flag?;
         let out = capture(&program.to_string_lossy(), &[flag.to_owned()], None)
             .await
@@ -203,7 +125,7 @@ impl ToolResolver {
             .filter(|v| !v.is_empty())
     }
 
-    fn missing_reason(&self, spec: &Spec, looked: &[String]) -> String {
+    fn missing_reason(&self, spec: &Language, looked: &[String]) -> String {
         let hint = match spec.install {
             Install::No => "Install it with `rustup component add rust-analyzer`, or set a path.".to_owned(),
             _ => "Install it from the language servers settings, or set a path.".to_owned(),
@@ -254,7 +176,7 @@ impl ServerResolver for ToolResolver {
                 }
             }
         }
-        if found.is_none() && spec.language == "rust" {
+        if found.is_none() && spec.project_toolchain {
             match self.project_rust_analyzer(project).await {
                 Ok(path) => found = Some((path, ServerOrigin::Project)),
                 Err(why) => looked.push(why),
@@ -286,12 +208,12 @@ impl ServerResolver for ToolResolver {
             _ => Self::probe_version(spec, &path).await,
         };
         let mut notes = Vec::new();
-        let mut initialization_options = None;
-        if spec.language == "typescript" {
+        let mut compiler = None;
+        if spec.compiler == Compiler::TypeScript {
             match self.tsserver(spec, project) {
                 Some((tsserver, whose)) => {
                     notes.push(format!("tsserver: {whose} ({})", tsserver.display()));
-                    initialization_options = Some(json!({"tsserver": {"path": tsserver.to_string_lossy()}}));
+                    compiler = Some(tsserver);
                 }
                 None => notes.push(
                     "tsserver: none; the project has no typescript with lib/tsserver.js (TypeScript 7 ships none) \
@@ -303,7 +225,7 @@ impl ServerResolver for ToolResolver {
         ServerState::Found(FoundServer {
             command: ServerCommand {
                 program: path.to_string_lossy().into_owned(),
-                initialization_options,
+                compiler,
             },
             origin,
             version,
@@ -417,6 +339,7 @@ impl ServerResolver for ToolResolver {
 mod tests {
     use super::*;
     use crate::exec::parse_pathext;
+    use crate::language::PYRIGHT_VERSION;
 
     fn host(windows: bool, path: Vec<PathBuf>) -> Host {
         Host {
@@ -506,24 +429,22 @@ mod tests {
         let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![path_dir.path().to_owned()]));
         let server = found(resolver.resolve(&language("typescript"), project.path(), None).await);
         assert_eq!(server.origin, ServerOrigin::Path);
-        let options = server.command.initialization_options.unwrap();
         let tsserver = project.path().join("node_modules/typescript/lib/tsserver.js");
-        assert_eq!(options["tsserver"]["path"], tsserver.to_string_lossy().as_ref());
+        assert_eq!(server.command.compiler.as_deref(), Some(tsserver.as_path()));
         assert!(server.notes[0].contains("5.9.2"), "{:?}", server.notes);
 
         // A project without a usable typescript (none, or TypeScript 7, which has no tsserver.js).
         let bare = tempfile::tempdir().unwrap();
         let server = found(resolver.resolve(&language("typescript"), bare.path(), None).await);
-        assert!(server.command.initialization_options.is_none());
+        assert!(server.command.compiler.is_none());
         assert!(server.notes[0].starts_with("tsserver: none"), "{:?}", server.notes);
 
         let fallback = data.path().join("servers/typescript/node_modules/typescript");
         touch(&fallback.join("lib/tsserver.js"));
         let server = found(resolver.resolve(&language("typescript"), bare.path(), None).await);
-        let options = server.command.initialization_options.unwrap();
         assert_eq!(
-            options["tsserver"]["path"],
-            fallback.join("lib/tsserver.js").to_string_lossy().as_ref()
+            server.command.compiler.as_deref(),
+            Some(fallback.join("lib/tsserver.js").as_path())
         );
         assert!(server.notes[0].contains("Vet's fallback"), "{:?}", server.notes);
         // The project's own still wins over the fallback.

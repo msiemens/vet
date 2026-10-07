@@ -7,7 +7,7 @@ use gix::traverse::commit::simple::CommitTimeOrder;
 use vet_app::pin::CommitId;
 use vet_app::ports::{BaseCandidates, BranchInfo, CommitInfo, GitError};
 
-use super::err;
+use super::{err, object_id};
 
 fn commit_of<'r>(repo: &'r gix::Repository, spec: &str) -> Option<gix::Commit<'r>> {
     let id = repo.rev_parse_single(spec).ok()?;
@@ -28,10 +28,6 @@ pub(super) fn merge_base(repo: &gix::Repository, reference: &str) -> Result<Comm
         .merge_base(other.id, head)
         .map_err(|_| GitError(format!("no common ancestor with {reference}")))?;
     Ok(CommitId(base.to_string()))
-}
-
-fn object_id(commit: &CommitId) -> Result<gix::ObjectId, GitError> {
-    gix::ObjectId::from_hex(commit.0.as_bytes()).map_err(err)
 }
 
 pub(super) fn commit_info(repo: &gix::Repository, commit: &CommitId) -> Result<CommitInfo, GitError> {

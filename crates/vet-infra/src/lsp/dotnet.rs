@@ -1,15 +1,11 @@
 //! What `roslyn-language-server` is told to load. It loads nothing by itself
 //! unless sent `solution/open` or `project/open` after `initialized`.
 //!
-//! The candidates are the files of the tree as Vet sees it: in a worktree the
-//! scan, which drops what git ignores; in a materialized snapshot every file,
-//! since it holds nothing but the snapshot's own.
+//! The candidates are the files of the tree as Vet sees it (`list_files`).
 
 use std::path::{Path, PathBuf};
 
-use vet_app::ports::{Dirty, GitRepo};
-
-use crate::git::GixRepo;
+use crate::git::list_files;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Load {
@@ -25,40 +21,10 @@ fn has_extension(path: &Path, extensions: &[&str]) -> bool {
         .is_some_and(|e| extensions.iter().any(|x| e.eq_ignore_ascii_case(x)))
 }
 
-/// The files of the tree at `root`, relative to it.
-pub(crate) async fn files(root: &Path) -> Result<Vec<PathBuf>, String> {
-    // `.git` is how git marks a worktree's root, as a directory or a file.
-    if root.join(".git").exists() {
-        let scan = GixRepo::new(root).scan(Dirty::All).await.map_err(|e| e.0)?;
-        return Ok(scan
-            .snapshot
-            .entries
-            .keys()
-            .map(|p| PathBuf::from(String::from_utf8_lossy(&p.0).into_owned()))
-            .collect());
-    }
-    let mut found = Vec::new();
-    let mut pending = vec![root.to_owned()];
-    while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir)
-            .map_err(|e| format!("{}: {e}", dir.display()))?
-            .flatten()
-        {
-            let path = entry.path();
-            if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                pending.push(path);
-            } else if let Ok(relative) = path.strip_prefix(root) {
-                found.push(relative.to_owned());
-            }
-        }
-    }
-    Ok(found)
-}
-
 /// The solution (`.sln` or `.slnx`) directly in `root` if there is exactly one,
 /// else every `.csproj` of the tree. `None` if there is nothing to load.
 pub async fn find(root: &Path) -> Result<Option<Load>, String> {
-    let files = files(root).await?;
+    let files = list_files(root).await?;
     let mut solutions: Vec<PathBuf> = (files.iter())
         .filter(|f| f.components().count() == 1 && has_extension(f, &["sln", "slnx"]))
         .map(|f| root.join(f))

@@ -17,8 +17,10 @@ use vet_core::content::{BlobId, EntryKind, FileEntry, Hash, RepoPath, Snapshot, 
 use vet_core::merkle;
 
 use super::stat_cache::{Record, StatCache, StatKey, file_stamp};
+use super::tree::tree_entry;
 use super::{BlobCache, err, in_tool_store};
 use crate::clock::unix_now;
+use crate::paths;
 
 /// One worktree item, converted the way git would store it.
 pub(crate) struct Item {
@@ -95,7 +97,7 @@ impl<'r> Worktree<'r> {
         tracked: Option<&gix::index::Entry>,
         keep: bool,
     ) -> Result<Option<Item>, GitError> {
-        let full = self.root.join(gix::path::from_bstr(path));
+        let full = self.root.join(paths::to_path(path).map_err(err)?);
         let at = |e: std::io::Error| err(format!("{}: {e}", full.display()));
         let mut md = match std::fs::symlink_metadata(&full) {
             Ok(md) => md,
@@ -276,7 +278,7 @@ impl<'r> Worktree<'r> {
     /// Built-in conversions (`eol`, `text`, `autocrlf`, `ident`), plus whether
     /// the path names a custom `filter` driver. `None` if nothing changed.
     fn convert(&mut self, path: &BStr, raw: &[u8]) -> Result<(Option<Vec<u8>>, bool), GitError> {
-        let rela = gix::path::from_bstr(path);
+        let rela = paths::to_path(path).map_err(err)?;
         let platform = self.attrs.at_path(path, None, &self.repo.objects).map_err(err)?;
         let mut custom_filter = false;
         let (index, repo) = (&self.index, self.repo);
@@ -284,7 +286,7 @@ impl<'r> Worktree<'r> {
             .filter
             .convert_to_git(
                 raw,
-                &rela,
+                rela,
                 &mut |_, attrs| {
                     platform.matching_attributes(attrs);
                     custom_filter = attrs.iter_selected().any(|m| {
@@ -343,6 +345,49 @@ impl gix::dir::walk::Delegate for SkipToolStores {
     }
 }
 
+/// The files git neither tracks nor ignores, tool stores left out. The dirwalk
+/// only knows an index entry is tracked if it is flagged up to date, so it may
+/// report tracked files too; callers skip those.
+fn untracked(repo: &gix::Repository, index: &gix::worktree::Index) -> Result<Vec<BString>, GitError> {
+    let mut delegate = SkipToolStores::default();
+    let options = repo.dirwalk_options().map_err(err)?;
+    repo.dirwalk(
+        index,
+        Vec::<BString>::new(),
+        &AtomicBool::new(false),
+        options,
+        &mut delegate,
+    )
+    .map_err(err)?;
+    Ok(delegate
+        .0
+        .into_entries_by_path()
+        .into_iter()
+        .filter(|(found, _)| {
+            found.status == gix::dir::entry::Status::Untracked
+                && matches!(
+                    found.disk_kind,
+                    Some(gix::dir::entry::Kind::File | gix::dir::entry::Kind::Symlink)
+                )
+        })
+        .map(|(found, _)| found.rela_path)
+        .collect())
+}
+
+/// Every file of the tree as git sees it, without reading any: what the index
+/// holds and what is untracked and not ignored.
+pub(crate) fn list(repo: &gix::Repository) -> Result<Vec<RepoPath>, GitError> {
+    let index = repo.index_or_empty().map_err(err)?;
+    let tracked = index.entries().iter().map(|e| e.path(&index).to_vec());
+    let mut files: Vec<RepoPath> = tracked
+        .chain(untracked(repo, &index)?.into_iter().map(|p| p.to_vec()))
+        .map(RepoPath)
+        .collect();
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
 pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache, cap: u64) -> Result<Scan, GitError> {
     let mut wt = Worktree::new(repo, blobs, stats, cap)?;
     wt.use_stat_cache();
@@ -370,31 +415,9 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache,
     }
     let tracked_paths: BTreeSet<_> = work.iter().map(|(p, _)| p.clone()).collect();
 
-    // The dirwalk only knows an index entry is tracked if it is flagged up to
-    // date, so it may report tracked files too; those are skipped here.
-    let mut delegate = SkipToolStores::default();
-    let options = repo.dirwalk_options().map_err(err)?;
-    repo.dirwalk(
-        &index,
-        Vec::<BString>::new(),
-        &AtomicBool::new(false),
-        options,
-        &mut delegate,
-    )
-    .map_err(err)?;
-    for (found, _) in delegate.0.into_entries_by_path() {
-        if found.status != gix::dir::entry::Status::Untracked {
-            continue;
-        }
-        let is_file = matches!(
-            found.disk_kind,
-            Some(gix::dir::entry::Kind::File | gix::dir::entry::Kind::Symlink)
-        );
-        if is_file
-            && !tracked_paths.contains(&found.rela_path)
-            && !entries.contains_key(&RepoPath(found.rela_path.to_vec()))
-        {
-            work.push((found.rela_path, None));
+    for path in untracked(repo, &index)? {
+        if !tracked_paths.contains(&path) && !entries.contains_key(&RepoPath(path.to_vec())) {
+            work.push((path, None));
         }
     }
 
@@ -428,27 +451,6 @@ pub(crate) fn scan(repo: &gix::Repository, blobs: &BlobCache, stats: &StatCache,
 
 /// The commit a checked-out submodule is at; `None` if it is not checked out.
 fn submodule_head(repo: &gix::Repository, path: &BStr) -> Option<gix::ObjectId> {
-    let dir = repo.workdir()?.join(gix::path::from_bstr(path));
+    let dir = repo.workdir()?.join(paths::to_path(path).ok()?);
     Some(gix::open(dir).ok()?.head_id().ok()?.detach())
-}
-
-/// The entry for `oid` as recorded in a tree or index, with no worktree
-/// involved. A submodule's blob is the hash of its pinned commit id.
-pub(crate) fn tree_entry(
-    repo: &gix::Repository,
-    blobs: &BlobCache,
-    oid: gix::ObjectId,
-    mode: u32,
-) -> Result<FileEntry, GitError> {
-    let (kind, blob) = match mode & 0o170000 {
-        0o160000 => (EntryKind::Submodule, blobs.submodule_id(oid)),
-        0o120000 => (EntryKind::Symlink, blobs.blob_id(repo, oid)?),
-        _ => (EntryKind::File, blobs.blob_id(repo, oid)?),
-    };
-    Ok(FileEntry {
-        blob,
-        mode,
-        kind,
-        unfiltered: false,
-    })
 }

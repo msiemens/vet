@@ -171,7 +171,7 @@ mod tests {
                 Some(path) => ServerState::Found(FoundServer {
                     command: ServerCommand {
                         program: path.into(),
-                        initialization_options: None,
+                        compiler: None,
                     },
                     origin: ServerOrigin::Custom,
                     version: None,

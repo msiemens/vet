@@ -8,18 +8,24 @@ pub mod config;
 pub(crate) mod dotnet;
 mod rpc;
 mod server;
+mod uri;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use lsp_types as lsp;
 use lsp_types::request::Initialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use vet_app::ports::{ServerCommand, ServerLocator};
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, LaunchError, Restored, Restorer, ServerConfig, ServerLauncher, Tree};
 
+use crate::git::list_files;
+use crate::language::{self, Compiler};
+use crate::restore::discover;
+use capabilities::Diagnostics;
 use rpc::Connection;
+use uri::{directory_uri, file_uri};
 
 pub use server::LspServer;
 
@@ -62,7 +68,57 @@ impl ServerLocator for BinaryLocator {
     async fn locate(&self, config: &ServerConfig, _project: &Path) -> Result<ServerCommand, String> {
         Ok(ServerCommand {
             program: config.binary.clone(),
-            initialization_options: None,
+            compiler: None,
+        })
+    }
+}
+
+/// What a server needs before it starts.
+struct Prepared {
+    command: ServerCommand,
+    restored: Restored,
+    folders: Vec<lsp::WorkspaceFolder>,
+}
+
+impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
+    /// Restores the tree's dependencies if it is immutable, finds the server and
+    /// the projects it is to serve. A restore that fails is not an error here:
+    /// the failures come back with the result and reach the user through the
+    /// restore limits.
+    async fn prepare(
+        &self,
+        root: &Path,
+        tree: Tree,
+        backend: &Backend,
+        policy: AnalysisPolicy,
+    ) -> Result<Prepared, LaunchError> {
+        let config = backend.config();
+        let restored = match tree {
+            Tree::Immutable => self.restorer.restore(root, backend, policy).await,
+            Tree::Live => Restored::default(),
+        };
+        let command = self
+            .locator
+            .locate(config, root)
+            .await
+            .map_err(LaunchError::NotInstalled)?;
+        let folders = workspace_folders(root, config)
+            .await
+            .iter()
+            .filter_map(|dir| {
+                let name = dir
+                    .file_name()
+                    .map_or_else(|| "root".into(), |n| n.to_string_lossy().into_owned());
+                Some(lsp::WorkspaceFolder {
+                    uri: directory_uri(dir)?,
+                    name,
+                })
+            })
+            .collect();
+        Ok(Prepared {
+            command,
+            restored,
+            folders,
         })
     }
 }
@@ -79,68 +135,17 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
     ) -> Result<LspServer, LaunchError> {
         let config = backend.config();
         let root = std::fs::canonicalize(root).map_err(|e| LaunchError::Spawn(format!("{}: {e}", root.display())))?;
-        let restored = match tree {
-            Tree::Immutable => self.restorer.restore(&root, backend, policy).await,
-            Tree::Live => Restored::default(),
-        };
-        for failure in &restored.failures {
-            eprintln!(
-                "vet: restoring {} in {}: {}",
-                failure.project,
-                root.display(),
-                failure.message
-            );
-        }
-        let command = self
-            .locator
-            .locate(config, &root)
-            .await
-            .map_err(LaunchError::NotInstalled)?;
-        let folders = workspace_folders(&root, config);
-        let folder_values: Vec<_> = folders
-            .iter()
-            .filter_map(|f| {
-                let uri = url::Url::from_directory_path(f).ok()?;
-                let name = f
-                    .file_name()
-                    .map_or_else(|| "root".into(), |n| n.to_string_lossy().into_owned());
-                Some(json!({"uri": uri.as_str(), "name": name}))
-            })
-            .collect();
-        let conn = Connection::spawn(
-            &command.program,
-            &config.args,
-            &root,
-            &restored.env,
-            json!(folder_values),
-        )
-        .map_err(LaunchError::Spawn)?;
+        let Prepared {
+            command,
+            restored,
+            folders,
+        } = self.prepare(&root, tree, backend, policy).await?;
+        let folders_json = serde_json::to_value(&folders).map_err(|e| LaunchError::Protocol(e.to_string()))?;
+        let conn = Connection::spawn(&command.program, &config.args, &root, &restored.env, folders_json)
+            .map_err(LaunchError::Spawn)?;
 
-        #[allow(deprecated)]
-        let params = lsp::InitializeParams {
-            process_id: Some(std::process::id()),
-            root_uri: url::Url::from_directory_path(&root)
-                .ok()
-                .and_then(|u| u.as_str().parse().ok()),
-            initialization_options: command.initialization_options,
-            capabilities: client_capabilities(),
-            workspace_folders: Some(
-                serde_json::from_value(json!(folder_values)).map_err(|e| LaunchError::Protocol(e.to_string()))?,
-            ),
-            client_info: Some(lsp::ClientInfo {
-                name: "vet".into(),
-                version: None,
-            }),
-            ..Default::default()
-        };
-        let init = conn
-            .request::<Initialize>(params)
-            .await
-            .map_err(|e| LaunchError::Protocol(conn.describe(e)))?;
-        let diagnostics = capabilities::assert_capabilities(&init.capabilities)?;
-        conn.notify::<lsp::notification::Initialized>(lsp::InitializedParams {})
-            .await
-            .map_err(LaunchError::Protocol)?;
+        let options = initialization_options(config, &command);
+        let diagnostics = handshake(&conn, &root, folders, options).await?;
 
         if matches!(backend, Backend::Roslyn(_)) {
             load_dotnet_projects(&conn, &root).await?;
@@ -164,12 +169,51 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
     }
 }
 
+/// What a language's server is told with `initialize`, beyond the protocol:
+/// where its compiler is, for those that bring none.
+fn initialization_options(config: &ServerConfig, command: &ServerCommand) -> Option<Value> {
+    let compiler = command.compiler.as_ref()?;
+    let language = language::by_id(&config.backend.0)?;
+    (language.compiler == Compiler::TypeScript).then(|| json!({"tsserver": {"path": compiler.to_string_lossy()}}))
+}
+
+/// `initialize`, the check of what the server can do, and `initialized`.
+async fn handshake(
+    conn: &Connection,
+    root: &Path,
+    folders: Vec<lsp::WorkspaceFolder>,
+    initialization_options: Option<Value>,
+) -> Result<Diagnostics, LaunchError> {
+    #[allow(deprecated)]
+    let params = lsp::InitializeParams {
+        process_id: Some(std::process::id()),
+        root_uri: directory_uri(root),
+        initialization_options,
+        capabilities: client_capabilities(),
+        workspace_folders: Some(folders),
+        client_info: Some(lsp::ClientInfo {
+            name: "vet".into(),
+            version: None,
+        }),
+        ..Default::default()
+    };
+    let init = conn
+        .request::<Initialize>(params)
+        .await
+        .map_err(|e| LaunchError::Protocol(conn.describe(e)))?;
+    let diagnostics = capabilities::assert_capabilities(&init.capabilities)?;
+    conn.notify::<lsp::notification::Initialized>(lsp::InitializedParams {})
+        .await
+        .map_err(LaunchError::Protocol)?;
+    Ok(diagnostics)
+}
+
 /// Tells roslyn what to load: it does not discover projects itself.
 async fn load_dotnet_projects(conn: &Connection, root: &Path) -> Result<(), LaunchError> {
     let uri = |path: &Path| {
-        url::Url::from_file_path(path)
-            .map(String::from)
-            .map_err(|()| LaunchError::Protocol(format!("{} is not an absolute path", path.display())))
+        file_uri(path)
+            .map(|u| u.as_str().to_owned())
+            .ok_or_else(|| LaunchError::Protocol(format!("{} is not an absolute path", path.display())))
     };
     let load = dotnet::find(root).await.map_err(LaunchError::Protocol)?;
     let (method, params) = match load {
@@ -188,34 +232,19 @@ async fn load_dotnet_projects(conn: &Connection, root: &Path) -> Result<(), Laun
 }
 
 /// The root if it holds a root marker (or the config has none); else the
-/// directories below it that do, so a repository with the project in a
-/// subdirectory still works.
-fn workspace_folders(root: &Path, config: &ServerConfig) -> Vec<PathBuf> {
+/// outermost projects below it, found as restoring finds them, so a repository
+/// with the project in a subdirectory still works.
+async fn workspace_folders(root: &Path, config: &ServerConfig) -> Vec<PathBuf> {
     let has_marker = |dir: &Path| config.root_markers.iter().any(|m| dir.join(m).exists());
     if config.root_markers.is_empty() || has_marker(root) {
         return vec![root.to_owned()];
     }
-    let mut found = Vec::new();
-    let mut level = vec![root.to_owned()];
-    for _ in 0..3 {
-        let mut next = Vec::new();
-        for dir in level {
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                let skip = name.starts_with('.') || matches!(name.as_ref(), "node_modules" | "target" | "vendor");
-                if entry.file_type().is_ok_and(|t| t.is_dir()) && !skip {
-                    if has_marker(&entry.path()) {
-                        found.push(entry.path());
-                    } else {
-                        next.push(entry.path());
-                    }
-                }
-            }
-        }
-        level = next;
-    }
+    let markers: Vec<&str> = config.root_markers.iter().map(String::as_str).collect();
+    let files = list_files(root).await.unwrap_or_default();
+    let mut found: Vec<PathBuf> = discover::outermost(discover::candidates(&files, &markers))
+        .iter()
+        .map(|dir| root.join(dir))
+        .collect();
     if found.is_empty() {
         found.push(root.to_owned());
     }
@@ -259,5 +288,68 @@ fn client_capabilities() -> lsp::ClientCapabilities {
         }),
         experimental: Some(json!({"serverStatusNotification": true})),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command(compiler: Option<&str>) -> ServerCommand {
+        ServerCommand {
+            program: "server".into(),
+            compiler: compiler.map(PathBuf::from),
+        }
+    }
+
+    #[test]
+    fn typescript_is_told_where_its_compiler_is_and_other_languages_are_told_nothing() {
+        let typescript = language::TYPESCRIPT.backend();
+        let options = initialization_options(typescript.config(), &command(Some("/p/typescript/lib/tsserver.js")));
+        assert_eq!(
+            options,
+            Some(json!({"tsserver": {"path": "/p/typescript/lib/tsserver.js"}}))
+        );
+        assert_eq!(initialization_options(typescript.config(), &command(None)), None);
+
+        let rust = language::RUST.backend();
+        assert_eq!(initialization_options(rust.config(), &command(Some("/x"))), None);
+    }
+
+    fn touch(root: &Path, name: &str) {
+        let path = root.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_root_with_a_marker_is_the_only_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(dir.path(), "Cargo.toml");
+        touch(dir.path(), "sub/Cargo.toml");
+        let config = language::RUST.backend().config().clone();
+        assert_eq!(workspace_folders(dir.path(), &config).await, [dir.path().to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn without_a_marker_at_the_root_the_outermost_projects_below_it_are_the_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(dir.path(), "svc/b/Cargo.toml");
+        touch(dir.path(), "svc/a/Cargo.toml");
+        touch(dir.path(), "svc/a/inner/Cargo.toml");
+        touch(dir.path(), "svc/a/node_modules/dep/Cargo.toml");
+        touch(dir.path(), ".hidden/Cargo.toml");
+        touch(dir.path(), "a/b/c/d/e/Cargo.toml");
+        let config = language::RUST.backend().config().clone();
+        assert_eq!(
+            workspace_folders(dir.path(), &config).await,
+            [dir.path().join("svc/a"), dir.path().join("svc/b")]
+        );
+
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(
+            workspace_folders(empty.path(), &config).await,
+            [empty.path().to_owned()]
+        );
     }
 }
