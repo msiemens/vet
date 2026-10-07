@@ -34,8 +34,9 @@ export interface Loaded {
 
 export interface Hooks extends BarActions, SemanticHooks {
   /** A hover tooltip is on screen; `ms` runs from the start of the hover query to its paint. */
-  hoverShown(ms: number): void;
-  keydown(event: KeyboardEvent): void;
+  hoverShown?(ms: number): void;
+  /** A key went down in the target editor. */
+  keydown?(event: KeyboardEvent): void;
 }
 
 export interface Handle {
@@ -76,7 +77,7 @@ export function mountFile(
 ): Handle {
   const targetField = reviewField(sideConfig(loaded.hunks, "target", hooks), states);
   const diffConfig = { override: backendDiff(loaded.base, loaded.target, loaded.changes) };
-  const shown = (ms: number) => hooks.hoverShown(ms);
+  const shown = (ms: number) => hooks.hoverShown?.(ms);
   const target: Extension[] = [
     minimalSetup,
     targetField,
@@ -84,7 +85,7 @@ export function mountFile(
     highlightExtension(loaded.targetHighlights),
     barText,
     ...extra,
-    EditorView.domEventHandlers({ keydown: (event) => (hooks.keydown(event), false) }),
+    EditorView.domEventHandlers({ keydown: (event) => (hooks.keydown?.(event), false) }),
     ...semanticExtensions(path, "target", hooks, shown),
   ];
   if (mode === "unified") {

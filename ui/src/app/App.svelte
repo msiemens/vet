@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import DevTools from "../dev/DevTools.svelte";
-  import { hudListeners } from "../dev/hud.svelte";
+  import { probe } from "../dev/probe.svelte";
   import type { WatchDegraded } from "../generated/WatchDegraded";
   import Banner from "../lib/ui/Banner.svelte";
   import {
@@ -210,7 +210,7 @@
     <ToolRail bind:active={left.tool} bind:open={left.open} />
     <ReviewScreen
       backend={changeset.backend}
-      hud={hudListeners}
+      {probe}
       leftTool={left.tool}
       leftOpen={left.open}
       rightTool={right.tool}

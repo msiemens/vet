@@ -16,14 +16,14 @@
   import "./editor/highlights.css";
   import "./editor/hover.css";
   import "./editor/threadCard.css";
-  import { type Hud, ReviewController } from "./ReviewController";
+  import { type Probe, ReviewController } from "./ReviewController";
   import { kindOf, pathOf } from "./Tabs.svelte";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
   let {
     backend,
-    hud,
+    probe,
     leftTool,
     leftOpen,
     rightTool,
@@ -35,7 +35,8 @@
     onfile,
   }: {
     backend: Backend;
-    hud: Hud;
+    /** The dev tools' measurements of the editors, if they are on. */
+    probe?: Probe;
     /** Unified or side by side; the owner applies a change to the controller. */
     mode: Mode;
     onmode: (mode: Mode) => void;
@@ -55,7 +56,7 @@
   let menu = $state<{ path: string; dir: boolean; x: number; y: number }>();
   // The backend is fixed for a mounted screen.
   // svelte-ignore state_referenced_locally
-  const controller = new ReviewController(backend, hud, (path, x, y) => (menu = { path, dir: false, x, y }));
+  const controller = new ReviewController(backend, (path, x, y) => (menu = { path, dir: false, x, y }), probe);
   // svelte-ignore state_referenced_locally
   controller.mode = mode;
   const tabs = controller.tabs;

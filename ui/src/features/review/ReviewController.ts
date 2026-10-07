@@ -1,6 +1,5 @@
-// Ties the backend, the views of the open tabs and the keybindings together, and
-// records the live latencies shown in the dev HUD. Each tab's pane hands its scroll
-// root to `attach`; the controller builds the tab's view in it.
+// Ties the backend, the views of the open tabs and the keybindings together. Each tab's
+// pane hands its scroll root to `attach`; the controller builds the tab's view in it.
 
 import { tick } from "svelte";
 import type { Manifest } from "../../generated/Manifest";
@@ -19,16 +18,13 @@ import type { Mode } from "../../lib/viewMode";
 import { TextView } from "./editor/TextView";
 import { CHANGES, type TabId, Tabs, fileTab, kindOf, pathOf, textTab } from "./Tabs.svelte";
 
-/** Live latencies for the dev HUD. */
-export interface Hud {
-  keystroke(ms: number): void;
-  hover(ms: number): void;
-  /** A binding that must never fire on text input fired. */
-  collision(total: number): void;
+/** How the dev tools measure and test the controller's editors; the controller itself records nothing. */
+export interface Probe {
+  /** The hooks to give the editors, in place of the controller's own (to time the ones it wraps). */
+  hooks(hooks: ViewHooks): ViewHooks;
+  /** A key reached the window and no binding took it; true if the probe did. */
+  key(event: KeyboardEvent): boolean;
 }
-
-/** Bound only to count collisions in the manual input check: AltGr types these keys on a German layout. */
-const BAIT = ["Ctrl-Alt-q", "Ctrl-Alt-e", "Ctrl-Alt-7", "Ctrl-Alt-8", "Ctrl-Alt-9", "Ctrl-Alt-0", "Ctrl-Alt-m"];
 
 /** Space types in a field or editor and presses a focused control; it marks the current item only when none of those has the focus. */
 const takesSpace = (el: Element | null) =>
@@ -42,15 +38,20 @@ export class ReviewController {
   private texts = new Map<TabId, TextView>();
   private roots = new Map<TabId, HTMLElement>();
   mode: Mode = "unified";
-  collisions = 0;
-  tooltipLatencies: number[] = [];
+  private hooks: ViewHooks;
 
   constructor(
     readonly backend: Backend,
-    private hud: Hud,
     /** Context menu on a file's header in a view. */
     private fileMenu: (path: string, x: number, y: number) => void,
+    private probe?: Probe,
   ) {
+    const hooks: ViewHooks = {
+      hover: (revision, side, path, line, col) => semantic.hover(revision, side, path, line, col),
+      definition: (revision, side, path, line, col) => void this.goToDefinition(revision, side, path, line, col),
+      diagnostics: (revision, path) => semantic.diagnostics(revision, path),
+    };
+    this.hooks = probe ? probe.hooks(hooks) : hooks;
     window.addEventListener("keydown", this.onKey, true);
     semantic.reset(); // the controller belongs to one repository's screen
     const offReview = changeset.onReview((u) => {
@@ -125,25 +126,7 @@ export class ReviewController {
       // Jump to Source: the file of the Changes stream's caret, at its line.
       const caret = this.tabs.active === CHANGES ? view.caret() : undefined;
       if (caret) run(() => void this.openSource(caret.path, caret.line));
-    } else if (BAIT.some((spec) => matches(spec, e))) run(() => this.hud.collision(++this.collisions));
-  };
-
-  private keydown = (event: KeyboardEvent) => {
-    if (event.key.length !== 1 && event.key !== "Backspace" && event.key !== "Enter") return;
-    void nextPaint().then(() => this.hud.keystroke(performance.now() - event.timeStamp));
-  };
-
-  private hooks: ViewHooks = {
-    hover: async (revision, side, path, line, col) => {
-      const t0 = performance.now();
-      const hover = await semantic.hover(revision, side, path, line, col);
-      this.hud.hover(performance.now() - t0);
-      return hover;
-    },
-    definition: (revision, side, path, line, col) => void this.goToDefinition(revision, side, path, line, col),
-    diagnostics: (revision, path) => semantic.diagnostics(revision, path),
-    hoverShown: (ms: number) => this.tooltipLatencies.push(ms),
-    keydown: this.keydown,
+    } else if (this.probe?.key(e)) e.preventDefault();
   };
 
   /** The file of the focused file or text tab; none for the Changes tab. */

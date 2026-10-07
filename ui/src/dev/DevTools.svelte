@@ -2,7 +2,7 @@
   import type { ReviewController } from "../features/review";
   import { runBenchmark } from "./bench";
   import CardGallery from "./CardGallery.svelte";
-  import { hud } from "./hud.svelte";
+  import { hud } from "./probe.svelte";
   import { type BenchConfig, benchConfig, rendererMemoryMb, saveResults } from "./host";
   import { type Row, cells, formatTable } from "./metrics";
 

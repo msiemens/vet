@@ -6,6 +6,7 @@ import type { ReviewController as Shell } from "../features/review";
 import { nextPaint } from "../lib/nextPaint";
 import { changeset } from "../state/changeset.svelte";
 import { type Row, percentile95, row } from "./metrics";
+import { tooltipLatencies } from "./probe.svelte";
 
 export interface BenchOptions {
   /** Seconds the full-changeset scroll takes (the speed follows from the height). */
@@ -304,19 +305,19 @@ async function mode(
 async function hoverToTooltip(shell: Shell, o: BenchOptions): Promise<number[]> {
   const editor = (await shell.changes.goToFile(0)).view;
   const lines = [...editor.contentDOM.querySelectorAll<HTMLElement>(".cm-line")].filter((l) => l.textContent);
-  shell.tooltipLatencies.length = 0;
+  tooltipLatencies.length = 0;
   const move = (x: number, y: number) =>
     editor.contentDOM.dispatchEvent(new MouseEvent("mousemove", { clientX: x, clientY: y, bubbles: true }));
   for (let i = 0; i < Math.min(30, lines.length * 2); i++) {
     const rect = lines[i % lines.length].getBoundingClientRect();
     move(rect.left + 3, rect.top - 40); // away from the previous tooltip
     await sleep(80);
-    const before = shell.tooltipLatencies.length;
+    const before = tooltipLatencies.length;
     move(rect.left + 12 + ((i * 11) % 60), rect.top + rect.height / 2);
-    for (let waited = 0; shell.tooltipLatencies.length === before && waited < 2000; waited += 20) await sleep(20);
+    for (let waited = 0; tooltipLatencies.length === before && waited < 2000; waited += 20) await sleep(20);
   }
-  o.progress(`hover: ${shell.tooltipLatencies.length} tooltips`);
-  return [...shell.tooltipLatencies];
+  o.progress(`hover: ${tooltipLatencies.length} tooltips`);
+  return [...tooltipLatencies];
 }
 
 export async function runBenchmark(shell: Shell, root: HTMLElement, o: BenchOptions): Promise<Row[]> {
