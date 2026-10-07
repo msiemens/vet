@@ -20,7 +20,8 @@ import { lineOf, lineStart, selectedLines } from "./positions";
 import { setCurrent, setStates } from "./reviewState";
 import { Stops, hunkAt } from "./stops";
 import type { Section } from "./section";
-import { COLLAPSE, type Metrics, hiddenAt, sectionLayout } from "./sectionLayout";
+import { SectionHeights, readMetrics } from "./sectionHeights";
+import { COLLAPSE } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
 import { type ThreadListeners, ThreadLayer, threadState } from "./threadLayer";
 
@@ -28,8 +29,6 @@ import { type ThreadListeners, ThreadLayer, threadState } from "./threadLayer";
 const MOUNT_BUDGET_MS = 6;
 /** Scrolling counts as stopped after this long without a scroll event. */
 const SETTLE_MS = 120;
-
-const px = (style: CSSStyleDeclaration, name: string) => parseFloat(style.getPropertyValue(name));
 
 /** The editor hooks as the owner provides them: the semantic requests still name the view's revision. */
 export type ViewHooks = Omit<Hooks, keyof BarActions | keyof SemanticHooks> & SemanticSource;
@@ -70,7 +69,7 @@ export class ChangesetView {
   private mounted = new Set<number>();
   /** Sections whose cards show their image previews. */
   private previewing = new Set<number>();
-  private m: Metrics;
+  private heights: SectionHeights;
   current = -1;
   /** While the viewer scrolls only what is in view mounts; the surroundings follow once the scrolling stops. */
   private onScroll = (e: Event) => {
@@ -95,7 +94,7 @@ export class ChangesetView {
     readonly revision: number,
     files: FileChange[],
     private source: FileSource,
-    public mode: Mode,
+    mode: Mode,
     private hooks: ViewHooks,
     private listeners: Listeners,
     /** Collapse unchanged regions (the Changes tab); otherwise the full file is shown. */
@@ -103,27 +102,20 @@ export class ChangesetView {
   ) {
     // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
     root.style.containerType = "inline-size";
-    const style = getComputedStyle(root);
-    this.m = {
-      line: px(style, "--h-line"),
-      hunk: px(style, "--h-hunk"),
-      header: px(style, "--h-section"),
-      collapsed: px(style, "--h-collapsed"),
-      gap: px(style, "--h-section-gap"),
-      preview: px(style, "--h-preview"),
-    };
+    const metrics = readMetrics(root);
     this.threads = new ThreadLayer(
       {
         revision,
         sections: this.sections,
         root,
-        line: this.m.line,
-        estimate: (s, known) => this.estimate(s, known),
-        resize: (s, height) => this.resize(s, height),
+        line: metrics.line,
+        estimate: (s, known) => this.heights.estimate(s, known),
+        resize: (s, height) => this.heights.resize(s, height),
       },
       listeners.threads,
       collapse,
     );
+    this.heights = new SectionHeights(root, this.sections, metrics, this.threads, mode, collapse);
     let hunks = 0;
     for (const file of files) {
       hunks += file.hunks.length;
@@ -175,9 +167,10 @@ export class ChangesetView {
     this.totalHunks = hunks;
     this.stops = new Stops(this.sections.map((s) => ({ cards: s.cards.length, hunks: s.file.hunks.length })));
     this.root.replaceChildren(...(this.threads.lead ? [this.threads.lead] : []), ...this.sections.map((s) => s.el));
-    this.layout();
+    for (const s of this.sections) renderCount(s, s.completion);
+    this.heights.layout();
     this.root.addEventListener("scroll", this.onScroll, { passive: true });
-    this.root.addEventListener("click", this.onExpand, true);
+    this.root.addEventListener("click", this.heights.onExpand, true);
   }
 
   destroy() {
@@ -186,7 +179,7 @@ export class ChangesetView {
     this.later = undefined;
     clearTimeout(this.settle);
     this.root.removeEventListener("scroll", this.onScroll);
-    this.root.removeEventListener("click", this.onExpand, true);
+    this.root.removeEventListener("click", this.heights.onExpand, true);
     for (const fi of this.mounted) this.sections[fi].handle?.destroy();
     this.mounted.clear();
     for (const fi of this.previewing) this.sections[fi].cards.forEach((c) => c.setPreview(false));
@@ -196,68 +189,7 @@ export class ChangesetView {
   }
 
   get totalHeight(): number {
-    const last = this.sections.at(-1);
-    return last ? last.top + last.height : 0;
-  }
-
-  /** Estimates every section's height; the section's own bottom border is one more pixel. */
-  private layout() {
-    let top = this.threads.leadHeight;
-    for (const s of this.sections) {
-      s.top = top;
-      s.height = this.estimate(s);
-      s.el.style.height = `${s.height}px`;
-      top += s.height;
-      renderCount(s, s.completion);
-    }
-  }
-
-  /**
-   * Sets a section's height; sections above the viewport shift what is shown, so the scroll position follows.
-   * `scrollTop` is the caller's reading of it: a read after the height writes of a loop forces a layout each time.
-   * Returns how far the scroll position moved.
-   */
-  private resize(s: Section, height: number, scrollTop = this.root.scrollTop): number {
-    const delta = height - s.height;
-    if (Math.abs(delta) < 0.5) return 0;
-    const above = s.top + s.height <= scrollTop;
-    s.height = height;
-    s.el.style.height = `${height}px`;
-    let top = s.top + height;
-    for (const next of this.sections.slice(this.sections.indexOf(s) + 1)) {
-      next.top = top;
-      top += next.height;
-    }
-    if (above) this.root.scrollTop = scrollTop + delta;
-    return above ? delta : 0;
-  }
-
-  /**
-   * Expanding a collapsed region reveals the lines the bar stood for, which is exact; the
-   * editor's own height is not a reliable measure, as CodeMirror estimates what is off screen.
-   */
-  private onExpand = (e: MouseEvent) => {
-    const bar = e.target instanceof Element ? e.target.closest(".cm-collapsedLines") : null;
-    if (!bar) return;
-    const s = this.sections.find((s) => s.el.contains(bar));
-    const view = s?.handle?.views.find((v) => v.dom.contains(bar));
-    if (!s || !view) return;
-    // The bar sits where the hidden lines start, which is also where the merge extension keys it.
-    const line = lineOf(view.state.doc, view.posAtDOM(bar));
-    const lines = hiddenAt(s.file, this.collapse, view === s.handle?.view ? "target" : "base", line);
-    if (lines) this.resize(s, s.height + lines * this.m.line - this.m.collapsed);
-  };
-
-  /** Lays the section out from the manifest; its own bottom border is one more pixel. `known`: see `ThreadLayer.count`. */
-  private estimate(s: Section, known = new Map<string, number>()): number {
-    const space = this.threads.space(s, known);
-    const layout = sectionLayout(s.file, this.mode, this.m, this.collapse, space);
-    s.hunkTops = layout.hunkTops;
-    s.cardTops = layout.cardTops;
-    s.cardsHeight = layout.cardsHeight;
-    this.threads.count(s, space, layout.drawn, known);
-    s.el.style.setProperty("--vet-cards", `${layout.cardsHeight}px`);
-    return layout.height + 1;
+    return this.heights.total;
   }
 
   /** Drops the editor; the regions it had expanded are collapsed again when it is mounted anew. */
@@ -265,15 +197,15 @@ export class ChangesetView {
     s.handle?.destroy();
     s.handle = undefined;
     s.body.textContent = "";
-    return this.resize(s, this.estimate(s), scrollTop);
+    return this.heights.reset(s, scrollTop);
   }
 
   setMode(mode: Mode) {
-    const fi = this.indexAt(this.root.scrollTop);
+    const fi = this.heights.indexAt(this.root.scrollTop);
     for (const i of this.mounted) this.unmount(this.sections[i]);
     this.mounted.clear();
-    this.mode = mode;
-    this.layout();
+    this.heights.mode = mode;
+    this.heights.layout();
     if (this.sections.length) this.root.scrollTop = this.sections[fi].top;
     this.sync();
   }
@@ -281,17 +213,6 @@ export class ChangesetView {
   /** Index of the file with this path, if it is in the view. */
   indexOf(path: string): number {
     return this.sections.findIndex((s) => s.file.path === path);
-  }
-
-  private indexAt(y: number): number {
-    let lo = 0;
-    let hi = this.sections.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (this.sections[mid].top <= y) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
   }
 
   load(fi: number): Promise<Loaded> {
@@ -329,7 +250,7 @@ export class ChangesetView {
       s.file.path,
       s.loaded,
       s.review.hunks,
-      this.mode,
+      this.heights.mode,
       s.hooks,
       this.collapse ? COLLAPSE : undefined,
       [this.threads.extension(s)],
@@ -368,9 +289,9 @@ export class ChangesetView {
     let top = this.root.scrollTop;
     const h = this.root.clientHeight;
     const near = wide
-      ? [this.indexAt(Math.max(0, top - h)), this.indexAt(top + 2 * h)]
-      : [this.indexAt(top), this.indexAt(top + h)];
-    const far = [this.indexAt(Math.max(0, top - 2 * h)), this.indexAt(top + 3 * h)];
+      ? [this.heights.indexAt(Math.max(0, top - h)), this.heights.indexAt(top + 2 * h)]
+      : [this.heights.indexAt(top), this.heights.indexAt(top + h)];
+    const far = [this.heights.indexAt(Math.max(0, top - 2 * h)), this.heights.indexAt(top + 3 * h)];
     for (const fi of [...this.mounted]) {
       if (fi < far[0] || fi > far[1]) {
         top += this.unmount(this.sections[fi], top);
@@ -646,7 +567,9 @@ export class ChangesetView {
       const s = this.sections[fi];
       drift = Math.max(
         drift,
-        Math.abs(s.body.scrollHeight + this.m.header + s.cardsHeight + s.block + this.m.gap + 1 - s.height),
+        Math.abs(
+          s.body.scrollHeight + this.heights.m.header + s.cardsHeight + s.block + this.heights.m.gap + 1 - s.height,
+        ),
       );
     }
     return drift;
