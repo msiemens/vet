@@ -10,14 +10,15 @@ import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { nextPaint } from "../../../lib/nextPaint";
+import type { HoverText } from "../../../state/backend";
 import { isMac } from "../../../state/host";
 import { hoverContent } from "./hoverContent";
 import { offsetAt } from "./positions";
 
 /** What an editor asks of its owner, which knows the view's revision and what to do with an answer. */
 export interface SemanticHooks {
-  /** Markdown; empty if there is nothing to show. */
-  hover(side: Side, path: string, line: number, col: number): Promise<string>;
+  /** Markdown; its text is empty if there is nothing to show. */
+  hover(side: Side, path: string, line: number, col: number): Promise<HoverText>;
   /** Goes to the definition; the owner opens the target. */
   definition(side: Side, path: string, line: number, col: number): void;
   /** The target-side diagnostics of the file, empty if there are none or the server is unavailable. */
@@ -113,15 +114,15 @@ export function semanticExtensions(
     hoverTooltip(
       async (view, pos) => {
         const started = performance.now();
-        const text = await hooks.hover(side, path, ...at(view, pos));
-        if (!text) return null;
+        const hover = await hooks.hover(side, path, ...at(view, pos));
+        if (!hover.text) return null;
         return {
           pos,
           above: true,
           create: () => {
             const dom = document.createElement("div");
             dom.className = "vet-hover";
-            dom.append(hoverContent(text, path));
+            dom.append(hoverContent(hover));
             if (hoverShown) void nextPaint().then(() => hoverShown(performance.now() - started));
             return { dom };
           },

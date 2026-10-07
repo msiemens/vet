@@ -14,6 +14,7 @@ import { iconSvg } from "../../../lib/ui/icons";
 import type { Backend } from "../../../state/backend";
 import { type Card, changeCard } from "./changeCard";
 import type { BarActions } from "./hunkBar";
+import { NO_HIGHLIGHTS, decodeHighlights } from "./highlights";
 import { lineDelta } from "./lineDelta";
 import { type Handle, type Hooks, type Loaded, type Mode, mountFile } from "./mount";
 import { baseLineToTarget } from "./positions";
@@ -375,10 +376,28 @@ export class ChangesetView {
     const { file } = s;
     // A file without text lines (binary, content unavailable) has nothing to fetch; the backend refuses it.
     if (!s.loading && !file.hunks.length && !file.baseLines && !file.targetLines)
-      s.loading = Promise.resolve((s.loaded = { base: "", target: "", hunks: [], changes: [], marks: [] }));
+      s.loading = Promise.resolve(
+        (s.loaded = {
+          base: "",
+          target: "",
+          hunks: [],
+          changes: [],
+          baseHighlights: NO_HIGHLIGHTS,
+          targetHighlights: NO_HIGHLIGHTS,
+          marks: [],
+        }),
+      );
     s.loading ??= this.backend.fileContents(file.path).then((r) => {
       if (r.revision !== this.revision) throw new Error("stale revision");
-      s.loaded = { base: r.base ?? "", target: r.target ?? "", hunks: file.hunks, changes: r.changes, marks: r.marks };
+      s.loaded = {
+        base: r.base ?? "",
+        target: r.target ?? "",
+        hunks: file.hunks,
+        changes: r.changes,
+        baseHighlights: decodeHighlights(r.baseHighlights),
+        targetHighlights: decodeHighlights(r.targetHighlights),
+        marks: r.marks,
+      };
       // Mounting waits for the next frame, so a large reply's parse and an editor's creation never share one.
       this.syncNextFrame(true);
       return s.loaded;

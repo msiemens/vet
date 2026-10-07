@@ -8,8 +8,11 @@ import type { Diagnostic } from "../generated/Diagnostic";
 import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { Side } from "../generated/Side";
 import type { Unavailable } from "../generated/Unavailable";
+import type { HoverText } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { type SemanticSummary, summarize } from "./semanticSummary";
+
+const NOTHING: HoverText = { text: "", code: [] };
 
 class SemanticStore {
   private revision = -1;
@@ -53,16 +56,16 @@ class SemanticStore {
     if (unavailable && this.enter(revision)) this.missing.set(path, unavailable);
   }
 
-  /** Markdown; empty if the server has nothing to say or the request is stale. */
-  async hover(revision: number, side: Side, path: string, line: number, col: number): Promise<string> {
+  /** Markdown; the text is empty if the server has nothing to say or the request is stale. */
+  async hover(revision: number, side: Side, path: string, line: number, col: number): Promise<HoverText> {
     const backend = changeset.backend;
-    if (!backend) return "";
+    if (!backend) return NOTHING;
     try {
       const r = await backend.hover(revision, side, path, line, col);
       this.note(revision, path, r.unavailable);
-      return r.text;
+      return { text: r.text, code: r.code };
     } catch {
-      return "";
+      return NOTHING;
     }
   }
 

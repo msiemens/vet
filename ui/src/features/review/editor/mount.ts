@@ -16,7 +16,9 @@ import { deletedLines } from "./deletedLines";
 import { backendDiff } from "./backendDiff";
 import type { BarActions } from "./hunkBar";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
-import { syntax } from "./language";
+import { deletedHighlights } from "./deletedHighlights";
+import { highlightExtension } from "./highlightExtension";
+import type { Highlights } from "./highlights";
 import { type ReviewState, deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
 
 export type Mode = "unified" | "split";
@@ -27,6 +29,9 @@ export interface Loaded {
   hunks: Hunk[];
   /** The diff, down to the words that differ; highlighting and chunks come from it. */
   changes: TextChange[];
+  /** The syntax highlighting of each side's text. */
+  baseHighlights: Highlights;
+  targetHighlights: Highlights;
   marks: Mark[];
 }
 
@@ -88,7 +93,7 @@ export function mountFile(
     minimalSetup,
     targetField,
     lineNumbers(),
-    syntax(path),
+    highlightExtension(loaded.targetHighlights),
     barText,
     ...extra,
     EditorView.domEventHandlers({ keydown: (event) => (hooks.keydown(event), false) }),
@@ -105,9 +110,11 @@ export function mountFile(
           mergeControls: false,
           gutter: true,
           highlightChanges: true,
+          syntaxHighlightDeletions: false,
           collapseUnchanged,
           diffConfig,
         }),
+        deletedHighlights(loaded.baseHighlights),
         deletedChunkStyle(targetField),
         deletedLines(path, hooks, shown),
       ],
@@ -117,7 +124,7 @@ export function mountFile(
   const base: Extension[] = [
     reviewField(sideConfig(loaded.hunks, "base", review.symbols, null), [], review.states),
     lineNumbers(),
-    syntax(path),
+    highlightExtension(loaded.baseHighlights),
     barText,
     EditorState.readOnly.of(true),
     EditorView.editable.of(false),

@@ -6,9 +6,9 @@
   import type { Reachability } from "../../generated/Reachability";
   import type { RemovalImpact } from "../../generated/RemovalImpact";
   import type { Side } from "../../generated/Side";
-  import { codeBlock } from "../review";
+  import { codeBlock, signatureOf } from "../review";
   import DerivedSection from "./DerivedSection.svelte";
-  import { containerOf, describeFate, nameOf, type OpenLocation, place, signatureOf } from "./symbolList";
+  import { containerOf, describeFate, nameOf, type OpenLocation, place } from "./symbolList";
   import { symbols } from "./symbols.svelte";
 
   let { symbol, onopen }: { symbol: ChangedSymbol; onopen: OpenLocation } = $props();
@@ -32,7 +32,7 @@
     <p class="note err">{signature.message}</p>
   {:else if signature.value.text}
     <div class="block">
-      <code class="mono selectable" use:codeBlock={{ code: signatureOf(signature.value.text), path: id.path }}></code>
+      <code class="mono selectable" use:codeBlock={signatureOf(signature.value)}></code>
     </div>
   {:else}
     <p class="note">{signature.value.unavailable?.message ?? "The language server has no text for it"}</p>

@@ -72,11 +72,11 @@ export function deletedLines(path: string, hooks: SemanticHooks, hoverShown: (ms
         const at = baseAt(this.view, event);
         if (!at) return;
         const started = performance.now();
-        const text = await hooks.hover("base", path, at.line, at.col);
-        if (!text || seq !== this.seq) return;
+        const hover = await hooks.hover("base", path, at.line, at.col);
+        if (!hover.text || seq !== this.seq) return;
         const tip = document.createElement("div");
         tip.className = "cm-tooltip vet-hover vet-hover-floating";
-        tip.append(hoverContent(text, path));
+        tip.append(hoverContent(hover));
         tip.style.left = `${x}px`;
         tip.style.top = `${y - 8}px`;
         document.body.append(tip);

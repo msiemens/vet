@@ -8,7 +8,8 @@ import type { NoTextReason } from "../../../generated/NoTextReason";
 import type { TextContent } from "../../../generated/TextContent";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { iconSvg } from "../../../lib/ui/icons";
-import { syntax } from "./language";
+import { highlightExtension } from "./highlightExtension";
+import { decodeHighlights } from "./highlights";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 
 const NO_TEXT: Record<NoTextReason, string> = {
@@ -41,7 +42,7 @@ export class TextView {
     fetch().then(
       (reply) => {
         if (this.destroyed || reply.revision !== revision) return;
-        if (reply.content.type === "text") this.mountEditor(reply.content.text);
+        if (reply.content.type === "text") this.mountEditor(reply.content.text, reply.content.highlights);
         else this.placeholder(NO_TEXT[reply.content.reason]);
       },
       (error: unknown) => {
@@ -50,13 +51,13 @@ export class TextView {
     );
   }
 
-  private mountEditor(text: string) {
+  private mountEditor(text: string, highlights: number[]) {
     this.view = new EditorView({
       parent: this.root,
       doc: text,
       extensions: [
         lineNumbers(),
-        syntax(this.path),
+        highlightExtension(decodeHighlights(highlights)),
         // Read-only but focusable, so the caret and Mod+B work.
         EditorState.readOnly.of(true),
         semanticExtensions(this.path, "target", this.hooks),

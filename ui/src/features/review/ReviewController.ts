@@ -139,9 +139,9 @@ export class ReviewController {
   private hooks: ViewHooks = {
     hover: async (revision, side, path, line, col) => {
       const t0 = performance.now();
-      const text = await semantic.hover(revision, side, path, line, col);
+      const hover = await semantic.hover(revision, side, path, line, col);
       this.hud.hover(performance.now() - t0);
-      return text;
+      return hover;
     },
     definition: (revision, side, path, line, col) => void this.goToDefinition(revision, side, path, line, col),
     diagnostics: (revision, path) => semantic.diagnostics(revision, path),

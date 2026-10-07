@@ -37,6 +37,12 @@ export type RunNeedsApproval = Extract<Response, { type: "runNeedsApproval" }>;
 export type RunStarted = Extract<Response, { type: "runStarted" }>;
 export type RunAnswer = RunNeedsApproval | RunStarted;
 
+/** A language server's Markdown, with the highlights of each of its fenced code blocks, in order. */
+export interface HoverText {
+  text: string;
+  code: number[][];
+}
+
 export interface BaseCandidates {
   branches: BranchInfo[];
   /** Newest first. */
@@ -170,12 +176,12 @@ export class Backend {
     path: string,
     line: number,
     col: number,
-  ): Promise<{ text: string; unavailable?: Unavailable }> {
+  ): Promise<HoverText & { unavailable?: Unavailable }> {
     const r = expect(
       await this.conn.request({ type: "hover", session: this.sid, revision, side, path, line, col }),
       "hover",
     );
-    return { text: r.text ?? "", unavailable: r.unavailable ?? undefined };
+    return { text: r.text ?? "", code: r.codeHighlights, unavailable: r.unavailable ?? undefined };
   }
 
   /** Where the symbol at the position is defined, in `side`'s snapshot; otherwise like `hover`. */

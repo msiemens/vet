@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol.ts";
 import type { SymbolChange } from "../../generated/SymbolChange.ts";
-import { describeFate, fileEntries, groupByFile, keyOf, signatureOf, symbolAt } from "./symbolList.ts";
+import { describeFate, fileEntries, groupByFile, keyOf, symbolAt } from "./symbolList.ts";
 
 const sym = (path: string, name: string[], from: number, to: number, change: SymbolChange): ChangedSymbol => ({
   symbol: {
@@ -64,12 +64,6 @@ void test("a removed symbol is found on the base side only", () => {
 void test("keys tell container chains apart", () => {
   assert.notEqual(keyOf({ path: "a.rs", name: ["A", "f"] }), keyOf({ path: "a.rs", name: ["B", "f"] }));
   assert.notEqual(keyOf({ path: "a.rs", name: ["A", "f"] }), keyOf({ path: "a.rs", name: ["A\0f"] }));
-});
-
-void test("the signature is the last code block of a hover", () => {
-  const hover = "```rust\ndemo\n```\n\n```rust\nfn delay(n: u32) -> u32\n```\n\nDocs.";
-  assert.equal(signatureOf(hover), "fn delay(n: u32) -> u32");
-  assert.equal(signatureOf(" def f(x) "), "def f(x)");
 });
 
 void test("fates read as words, the broken one as the bad tone", () => {

@@ -108,14 +108,5 @@ export function describeFate(fate: CallFate): { label: string; tone: FateTone; d
   }
 }
 
-/**
- * The definition out of a markdown hover: servers put the container (a module path) in a
- * code block of its own before the signature, and prose after it. Text without a block is shown whole.
- */
-export function signatureOf(hover: string): string {
-  const blocks = [...hover.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1].trim()).filter(Boolean);
-  return blocks.length ? blocks[blocks.length - 1] : hover.trim();
-}
-
 /** `path:line` with a 1-based line, as editors print it. */
 export const place = (path: string, at: Position): string => `${path}:${at.line + 1}`;
