@@ -22,6 +22,36 @@ export interface BenchOptions {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/**
+ * How often the page was hidden (a minimised or fully covered window) or the window lost the
+ * focus since the run started. A hidden page gets no frames, so every timing that waits for a
+ * paint stretches over the absence.
+ */
+const presence = { hidden: 0, blurred: 0 };
+
+function watchPresence(): () => void {
+  presence.hidden = presence.blurred = 0;
+  const onVisibility = () => {
+    if (document.visibilityState === "hidden") presence.hidden++;
+  };
+  const onBlur = () => presence.blurred++;
+  document.addEventListener("visibilitychange", onVisibility);
+  window.addEventListener("blur", onBlur);
+  return () => {
+    document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener("blur", onBlur);
+  };
+}
+
+const shown = () => document.visibilityState === "visible";
+
+/** Waits until the page is shown. */
+async function whileHidden(o: BenchOptions) {
+  if (shown()) return;
+  o.progress("waiting for the window to be shown");
+  while (!shown()) await sleep(100);
+}
+
 async function time(action: () => void | Promise<void>): Promise<number> {
   const t0 = performance.now();
   await action();
@@ -388,8 +418,21 @@ async function mode(
 
   o.progress(`${tag} open`);
   const opens: number[] = [];
-  for (let i = 0; i < 10; i++) opens.push(await shell.open(false));
-  rows.push(row(`Open changeset → first hunk painted ${tag}`, opens, "ms", 300));
+  let hiddenOpens = 0;
+  for (let i = 0; i < 10; i++) {
+    await whileHidden(o);
+    const before = presence.hidden;
+    const ms = await shell.open(false);
+    // A hidden page paints no frames: the sample timed the window's absence, not the open.
+    if (presence.hidden === before) opens.push(ms);
+    else hiddenOpens++;
+  }
+  const hidden = hiddenOpens ? `${hiddenOpens} of 10 opens dropped: the window was hidden` : undefined;
+  rows.push(
+    opens.length
+      ? row(`Open changeset → first hunk painted ${tag}`, opens, "ms", 300, "<", hidden)
+      : check(`Open changeset → first hunk painted ${tag}`, false, hidden),
+  );
   await shell.open(true);
   const view = shell.changes;
   const probe = changesProbe();
@@ -474,13 +517,22 @@ async function mode(
 /** Hovers real lines with synthetic mouse moves and times query → painted tooltip. */
 async function hoverToTooltip(shell: Shell, o: BenchOptions): Promise<number[]> {
   const editor = (await shell.changes.goToFile(0)).view;
-  const lines = [...editor.contentDOM.querySelectorAll<HTMLElement>(".cm-line")].filter((l) => l.textContent);
+  const root = shell.changesRoot.getBoundingClientRect();
+  // Lines in view: a pointer event goes to what is painted under it.
+  const lines = [...editor.contentDOM.querySelectorAll<HTMLElement>(".cm-line")].filter((l) => {
+    const { top, bottom } = l.getBoundingClientRect();
+    return l.textContent && top >= root.top && bottom <= root.bottom;
+  });
   tooltipLatencies.length = 0;
+  // As a real pointer's, the event targets the element under it: the editor hovers only a line's text.
   const move = (x: number, y: number) =>
-    editor.contentDOM.dispatchEvent(new MouseEvent("mousemove", { clientX: x, clientY: y, bubbles: true }));
+    document
+      .elementFromPoint(x, y)
+      ?.dispatchEvent(new MouseEvent("mousemove", { clientX: x, clientY: y, bubbles: true }));
+  const gutter = editor.dom.getBoundingClientRect().left + 2;
   for (let i = 0; i < Math.min(30, lines.length * 2); i++) {
     const rect = lines[i % lines.length].getBoundingClientRect();
-    move(rect.left + 3, rect.top - 40); // away from the previous tooltip
+    move(gutter, rect.top + rect.height / 2); // off the text, which closes the previous tooltip
     await sleep(80);
     const before = tooltipLatencies.length;
     move(rect.left + 12 + ((i * 11) % 60), rect.top + rect.height / 2);
@@ -492,8 +544,18 @@ async function hoverToTooltip(shell: Shell, o: BenchOptions): Promise<number[]> 
 
 export async function runBenchmark(shell: Shell, root: HTMLElement, o: BenchOptions): Promise<Row[]> {
   shell.tabs.active = "changes"; // the benchmark measures the Changes tab
+  const unwatch = watchPresence();
+  await whileHidden(o);
   const interval = await refreshInterval();
   const rows: Row[] = [];
+  if (import.meta.env.DEV)
+    rows.push(
+      check(
+        "Release build",
+        false,
+        "a development build (Vite dev server, Svelte dev mode): the timings are indicative, not a measurement of the release",
+      ),
+    );
   rows.push(...(await mode(shell, root, "unified", o, interval)));
   rows.push(...(await mode(shell, root, "split", o, interval)));
 
@@ -514,5 +576,16 @@ export async function runBenchmark(shell: Shell, root: HTMLElement, o: BenchOpti
       ? row(`Hover → tooltip painted (${topology})`, tooltips, "ms", 100, "<", note)
       : check(`Hover → tooltip painted (${topology})`, false, `only ${tooltips.length} tooltips appeared`),
   );
+  unwatch();
+  rows.push(
+    check(
+      "Window shown throughout the run",
+      presence.hidden === 0,
+      presence.hidden
+        ? `hidden ${presence.hidden} times: timings that wait for a paint include the absence`
+        : undefined,
+    ),
+  );
+  if (presence.blurred) rows.push(info("Window lost the focus during the run", presence.blurred, "times"));
   return rows;
 }
