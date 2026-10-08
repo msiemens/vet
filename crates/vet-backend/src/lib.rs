@@ -9,6 +9,8 @@ mod accounts;
 mod announce;
 mod caches;
 mod changesets;
+#[cfg(test)]
+mod contract;
 mod events;
 mod fetch;
 mod highlight;
