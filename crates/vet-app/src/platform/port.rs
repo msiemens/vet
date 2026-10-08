@@ -1,6 +1,7 @@
 //! The port to a hosting platform; implemented over HTTP by `vet-infra`, one adapter per
 //! platform.
 
+use super::checks::{CheckLog, CommitChecks};
 use super::model::{PlatformError, PlatformTraits, PullRequest, PullRequestDetail, PullRequestQuery, Viewer};
 use super::queue::{PullRequestRow, rows};
 use super::remote::RemoteKey;
@@ -27,6 +28,21 @@ pub trait Platform {
         remote: &RemoteKey,
         number: u64,
     ) -> impl Future<Output = Result<PullRequestDetail, PlatformError>> + Send;
+
+    /// The checks of `commit` in `remote`. A platform keeps what it has already learnt of a
+    /// commit whose checks are all done, and asks again for one that has some running.
+    fn checks(
+        &self,
+        remote: &RemoteKey,
+        commit: &str,
+    ) -> impl Future<Output = Result<CommitChecks, PlatformError>> + Send;
+
+    /// The log of the check `check` (a [`Check::id`] of `remote`), with where it failed.
+    fn check_log(
+        &self,
+        remote: &RemoteKey,
+        check: &str,
+    ) -> impl Future<Output = Result<CheckLog, PlatformError>> + Send;
 }
 
 /// The queue's rows for `query`.
@@ -70,6 +86,14 @@ mod tests {
         }
 
         async fn pull_request(&self, _: &RemoteKey, _: u64) -> Result<PullRequestDetail, PlatformError> {
+            unreachable!("the queue lists")
+        }
+
+        async fn checks(&self, _: &RemoteKey, _: &str) -> Result<CommitChecks, PlatformError> {
+            unreachable!("the queue lists")
+        }
+
+        async fn check_log(&self, _: &RemoteKey, _: &str) -> Result<CheckLog, PlatformError> {
             unreachable!("the queue lists")
         }
     }

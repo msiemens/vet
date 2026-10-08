@@ -304,7 +304,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
-    use crate::platform::{Credential, PullRequest, PullRequestDetail, ReviewRequest, Viewer, pr, viewer};
+    use crate::platform::{
+        CheckLog, CommitChecks, Credential, PullRequest, PullRequestDetail, ReviewRequest, Viewer, pr, viewer,
+    };
     use crate::ports::{FetchAuth, GitError};
     use crate::progress::Tasks;
 
@@ -451,6 +453,14 @@ mod tests {
                 base: "b0".to_owned(),
                 pushes: Vec::new(),
             })
+        }
+
+        async fn checks(&self, _: &RemoteKey, _: &str) -> Result<CommitChecks, PlatformError> {
+            unreachable!("pull requests are listed and fetched")
+        }
+
+        async fn check_log(&self, _: &RemoteKey, _: &str) -> Result<CheckLog, PlatformError> {
+            unreachable!("pull requests are listed and fetched")
         }
     }
 

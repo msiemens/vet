@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    Account, Base, BaseDiff, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow, CommitInfo,
-    CommitUnit, Diagnostic, DirEntry, Highlights, Impact, Lens, Locations, Manifest, ProjectId, PullRequestRow,
-    PullRequestSource, Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo, Side, SymbolSignature,
-    Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable, VersionInfo,
+    Account, Base, BaseDiff, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow, CheckLog,
+    CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, Highlights, Impact, Lens, Locations, Manifest,
+    ProjectId, PullRequestRow, PullRequestSource, Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo,
+    Side, SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable, VersionInfo,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -51,6 +51,14 @@ pub enum Response {
         rows: Vec<PullRequestRow>,
         sources: Vec<PullRequestSource>,
     },
+    /// The answer to `Checks`, in the order of the commits asked for.
+    Checks {
+        checks: Vec<CommitChecks>,
+        /// Why the commits that are left out could not be answered for, fit to show.
+        error: Option<String>,
+    },
+    /// The answer to `CheckLog`.
+    CheckLog(CheckLog),
     /// The versions of the open review, oldest first.
     Versions {
         versions: Vec<VersionInfo>,

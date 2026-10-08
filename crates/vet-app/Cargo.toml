@@ -12,6 +12,8 @@ vet-semantic.workspace = true
 # The runtime-agnostic async mutex that serializes a session's review state, and the
 # timeout on a CLI tool's answer.
 tokio = { version = "1.53.2", features = ["sync", "time"] }
+# Asking a platform for several commits' checks at once.
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
 # What `az` prints.
 serde_json = "1.0.151"
 

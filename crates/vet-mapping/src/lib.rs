@@ -5,7 +5,7 @@ pub mod progress;
 pub mod semantic;
 
 use vet_app::changeset::{BaseChoice, CommitId, Lens, RemoteKey, Source, VersionOrigin};
-use vet_app::platform::{CiState, PlatformError};
+use vet_app::platform::{CheckLog, CiState, CommitChecks, PlatformError};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
 use vet_app::session::{
@@ -468,6 +468,46 @@ pub fn pull_requests(list: &PullRequestList, reviews: &[RowReview]) -> p::Respon
             })
             .collect(),
     }
+}
+
+/// The answer to `Checks`; `error` is why some commit could not be answered for.
+pub fn checks(found: &[CommitChecks], error: Option<&PlatformError>) -> p::Response {
+    p::Response::Checks {
+        checks: found
+            .iter()
+            .map(|commit| p::CommitChecks {
+                commit: commit.commit.clone(),
+                state: commit.state().map(ci_state),
+                runs: commit
+                    .checks
+                    .iter()
+                    .map(|check| p::CheckRun {
+                        id: check.id.clone(),
+                        name: check.name.clone(),
+                        state: ci_state(check.state),
+                        duration: check
+                            .started
+                            .zip(check.finished)
+                            .map(|(from, to)| unix_secs((to - from).max(0))),
+                        url: check.url.clone(),
+                        log: check.log,
+                    })
+                    .collect(),
+                url: commit.url.clone(),
+            })
+            .collect(),
+        error: error.map(ToString::to_string),
+    }
+}
+
+pub fn check_log(log: &CheckLog) -> p::Response {
+    p::Response::CheckLog(p::CheckLog {
+        text: log.text.clone(),
+        failure: log.failure.as_ref().map(|f| p::LogFailure {
+            line: f.line,
+            step: f.step.clone(),
+        }),
+    })
 }
 
 pub fn manifest(project: p::ProjectId, m: &ManifestView, restore_failures: &[RestoreFailure]) -> p::Manifest {

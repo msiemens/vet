@@ -20,8 +20,8 @@ use azure_devops_rust_api::ims::models::QueryMembership;
 use futures::future::try_join_all;
 use url::Url;
 use vet_app::platform::{
-    CiState, CredentialProvider, Platform, PlatformError, PlatformKind, PlatformTraits, PullRequest, PullRequestDetail,
-    PullRequestQuery, QueueTab, RemoteKey, Viewer, matches,
+    CheckLog, CiState, CommitChecks, CredentialProvider, Platform, PlatformError, PlatformKind, PlatformTraits,
+    PullRequest, PullRequestDetail, PullRequestQuery, QueueTab, RemoteKey, Viewer, matches,
 };
 
 use crate::clock::unix_now;
@@ -442,6 +442,21 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             pushes,
         })
     }
+
+    async fn checks(&self, remote: &RemoteKey, _: &str) -> Result<CommitChecks, PlatformError> {
+        Err(not_yet(remote))
+    }
+
+    async fn check_log(&self, remote: &RemoteKey, _: &str) -> Result<CheckLog, PlatformError> {
+        Err(not_yet(remote))
+    }
+}
+
+fn not_yet(remote: &RemoteKey) -> PlatformError {
+    PlatformError::Unexpected(format!(
+        "Vet does not show the checks of commits on {} yet",
+        remote.host
+    ))
 }
 
 fn repository(remote: &RemoteKey) -> Result<Repository<'_>, PlatformError> {

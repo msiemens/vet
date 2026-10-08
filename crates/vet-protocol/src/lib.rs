@@ -5,6 +5,7 @@
 
 mod account;
 mod changeset;
+mod checks;
 mod envelope;
 mod event;
 mod file;
@@ -22,6 +23,7 @@ mod version;
 
 pub use account::*;
 pub use changeset::*;
+pub use checks::*;
 pub use envelope::*;
 pub use event::*;
 pub use file::*;

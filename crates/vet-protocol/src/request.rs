@@ -77,6 +77,23 @@ pub enum Request {
     ListPullRequests {
         project: ProjectId,
     },
+    /// The checks (CI runs and statuses) the platform has of each commit, in the repository of the
+    /// pull request on view; none for any other changeset. Asks the platform, which keeps what
+    /// it has learnt of a commit whose checks are all done and asks again for one that has some
+    /// running, so call it again while a commit's state is `Pending`. A commit the platform
+    /// cannot answer for is left out, and why is in `error` beside the others; a missing
+    /// credential is also announced as `CredentialsNeeded`. Answers with `Response::Checks`.
+    Checks {
+        project: ProjectId,
+        commits: Vec<String>,
+    },
+    /// The log of a run of `Checks` that has one, as lines of text without the platform's
+    /// timestamps, and where it failed. Fails with a message fit to show. Answers with
+    /// `Response::CheckLog`.
+    CheckLog {
+        project: ProjectId,
+        run: String,
+    },
     /// Puts a changeset on view in place of the one that is: one is on view per project.
     /// Every subscriber, including the requester, gets `ChangesetOpened`; fetch the
     /// manifest again. A branch whose tip or merge base moved since it was last on view

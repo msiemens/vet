@@ -645,3 +645,220 @@ async fn github_smoke() {
     let detail = client.pull_request(&remote, found[0].number).await.unwrap();
     println!("{detail:?}");
 }
+
+/// The checks of the head of the repository's newest pull request, and the log of a failed
+/// Actions job among them if there is one:
+/// `cargo test -p vet-infra github_checks_smoke -- --ignored --nocapture`.
+#[tokio::test]
+#[ignore = "talks to github.com"]
+async fn github_checks_smoke() {
+    let token = std::process::Command::new("gh")
+        .args(["auth", "token"])
+        .output()
+        .unwrap();
+    let token: &'static str = Box::leak(
+        String::from_utf8(token.stdout)
+            .unwrap()
+            .trim()
+            .to_owned()
+            .into_boxed_str(),
+    );
+    let client = GitHubClient::new(Signed::cli(token));
+    let remote = RemoteKey {
+        host: "github.com".to_owned(),
+        path: std::env::var("VET_SMOKE_REPO").unwrap_or_else(|_| "cli/cli".to_owned()),
+    };
+    let found = client.list_pull_requests(&remote, &all_open()).await.unwrap();
+    for pr in found.iter().take(5) {
+        let checks = client.checks(&remote, &pr.head).await.unwrap();
+        println!(
+            "#{} {} {:?} {}",
+            pr.number,
+            pr.head,
+            checks.state(),
+            checks.checks.len()
+        );
+        for check in &checks.checks {
+            println!("  {check:?}");
+        }
+        let failed = checks.checks.iter().find(|c| c.log && c.state == CiState::Failure);
+        if let Some(check) = failed {
+            let log = client.check_log(&remote, &check.id).await.unwrap();
+            println!(
+                "  log of {}: {} lines, failure {:?}",
+                check.name,
+                log.text.lines().count(),
+                log.failure
+            );
+            if let Some(failure) = log.failure {
+                println!(
+                    "  > {}",
+                    log.text.lines().nth(failure.line as usize).unwrap_or_default()
+                );
+            }
+            return;
+        }
+    }
+}
+
+const RUNS: &str = r#"{"total_count":3,"check_runs":[
+{"id":11,"name":"test (ubuntu)","status":"completed","conclusion":"failure","started_at":"2024-05-01T12:00:00Z","completed_at":"2024-05-01T12:04:40Z","html_url":"https://github.com/acme/app/actions/runs/5/job/11","app":{"slug":"github-actions"}},
+{"id":12,"name":"build","status":"completed","conclusion":"success","started_at":"2024-05-01T12:00:00Z","completed_at":"2024-05-01T12:03:12Z","html_url":"https://github.com/acme/app/actions/runs/5/job/12","app":{"slug":"github-actions"}},
+{"id":13,"name":"lint","status":"completed","conclusion":"cancelled","started_at":"2024-05-01T12:00:00Z","completed_at":"2024-05-01T12:00:05Z","html_url":null,"app":{"slug":"github-actions"}}
+]}"#;
+
+const STATUSES: &str = r#"{"state":"success","statuses":[
+{"id":21,"context":"deploy/preview","state":"success","target_url":"https://preview.example/1","created_at":"2024-05-01T12:00:00Z","updated_at":"2024-05-01T12:02:00Z"}
+]}"#;
+
+fn checks_server(runs: Arc<Mutex<String>>) -> Fake {
+    Fake::start(move |request, _| {
+        if request.path.starts_with("/repos/acme/app/commits/abc123/check-runs") {
+            Canned::json(&runs.lock().unwrap())
+        } else if request.path.starts_with("/repos/acme/app/commits/abc123/status") {
+            Canned::json(STATUSES)
+        } else {
+            Canned::status(404, r#"{"message":"Not Found"}"#)
+        }
+    })
+}
+
+fn requests_to(fake: &Fake, what: &str) -> usize {
+    fake.requests().iter().filter(|r| r.path.contains(what)).count()
+}
+
+#[tokio::test]
+async fn the_checks_of_a_commit_are_its_runs_and_its_statuses() {
+    let fake = checks_server(Arc::new(Mutex::new(RUNS.to_owned())));
+    let found = client(&fake).checks(&remote(), "abc123").await.unwrap();
+
+    let summary: Vec<_> = found
+        .checks
+        .iter()
+        .map(|c| {
+            (
+                c.name.as_str(),
+                c.state,
+                c.finished.zip(c.started).map(|(f, s)| f - s),
+                c.log,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("test (ubuntu)", CiState::Failure, Some(280), true),
+            ("build", CiState::Success, Some(192), true),
+            ("lint", CiState::Neutral, Some(5), true),
+            ("deploy/preview", CiState::Success, Some(120), false),
+        ]
+    );
+    assert_eq!(found.state(), Some(CiState::Failure));
+    assert_eq!(found.checks[0].id, "11");
+    assert_eq!(
+        found.checks[0].url.as_deref(),
+        Some("https://github.com/acme/app/actions/runs/5/job/11")
+    );
+    assert_eq!(found.checks[3].url.as_deref(), Some("https://preview.example/1"));
+    assert_eq!(
+        found.url.as_deref(),
+        Some("https://github.com/acme/app/commit/abc123/checks")
+    );
+    assert_eq!(fake.requests()[0].header("authorization"), Some("Bearer gho_secret"));
+}
+
+#[tokio::test]
+async fn checks_that_are_done_are_asked_for_once_and_running_ones_again() {
+    let running = RUNS.replace(
+        r#""status":"completed","conclusion":"success""#,
+        r#""status":"in_progress","conclusion":null"#,
+    );
+    let runs = Arc::new(Mutex::new(running));
+    let fake = checks_server(runs.clone());
+    let client = client(&fake);
+
+    let first = client.checks(&remote(), "abc123").await.unwrap();
+    assert_eq!(first.state(), Some(CiState::Pending));
+    client.checks(&remote(), "abc123").await.unwrap();
+    assert_eq!(
+        requests_to(&fake, "check-runs"),
+        2,
+        "a commit with a running check is asked again"
+    );
+
+    *runs.lock().unwrap() = RUNS.to_owned();
+    let done = client.checks(&remote(), "abc123").await.unwrap();
+    assert_eq!(done.state(), Some(CiState::Failure));
+    assert_eq!(client.checks(&remote(), "abc123").await.unwrap(), done);
+    assert_eq!(
+        requests_to(&fake, "check-runs"),
+        3,
+        "a commit whose checks are done is kept"
+    );
+}
+
+#[tokio::test]
+async fn something_that_is_not_a_commit_id_is_not_sent() {
+    let fake = checks_server(Arc::new(Mutex::new(RUNS.to_owned())));
+    let error = client(&fake).checks(&remote(), "../orgs").await.unwrap_err();
+    assert!(matches!(error, PlatformError::Unexpected(_)), "{error:?}");
+    assert!(fake.requests().is_empty());
+}
+
+const JOB: &str = r#"{"id":11,"steps":[
+{"name":"Set up job","number":1,"conclusion":"success","started_at":"2024-05-01T12:00:00.000Z"},
+{"name":"Test","number":2,"conclusion":"failure","started_at":"2024-05-01T12:00:10.000Z"},
+{"name":"Post job cleanup","number":3,"conclusion":"success","started_at":"2024-05-01T12:00:14.000Z"}]}"#;
+
+const JOB_LOG: &str = "\
+2024-05-01T12:00:00.0000000Z Current runner version
+2024-05-01T12:00:10.0000000Z ##[group]Run cargo test
+2024-05-01T12:00:12.0000000Z test expired_key_is_rejected ... FAILED
+2024-05-01T12:00:13.0000000Z ##[error]Process completed with exit code 101.
+2024-05-01T12:00:14.0000000Z Post job cleanup.
+";
+
+#[tokio::test]
+async fn a_jobs_log_is_fetched_without_the_token_and_says_where_the_job_failed() {
+    let fake = Fake::start(|request, base| {
+        if request.path == "/repos/acme/app/actions/jobs/11" {
+            Canned::json(JOB)
+        } else if request.path == "/repos/acme/app/actions/jobs/11/logs" {
+            Canned::status(302, "").with("Location", format!("{base}/signed/logs/11"))
+        } else if request.path == "/signed/logs/11" {
+            Canned::json(JOB_LOG)
+        } else {
+            Canned::status(404, r#"{"message":"Not Found"}"#)
+        }
+    });
+    let log = client(&fake).check_log(&remote(), "11").await.unwrap();
+
+    assert_eq!(
+        log.text.lines().nth(3),
+        Some("##[error]Process completed with exit code 101.")
+    );
+    assert_eq!(
+        log.failure,
+        Some(vet_app::platform::LogFailure {
+            line: 3,
+            step: Some("Test".to_owned())
+        })
+    );
+    let blob = fake
+        .requests()
+        .into_iter()
+        .find(|r| r.path == "/signed/logs/11")
+        .unwrap();
+    assert_eq!(
+        blob.header("authorization"),
+        None,
+        "the signed address is not sent the token"
+    );
+}
+
+#[tokio::test]
+async fn a_log_of_a_job_the_platform_does_not_know_says_so() {
+    let fake = Fake::start(|_, _| Canned::status(404, r#"{"message":"Not Found"}"#));
+    let error = client(&fake).check_log(&remote(), "11").await.unwrap_err();
+    assert!(matches!(error, PlatformError::NotFound(_)), "{error:?}");
+}

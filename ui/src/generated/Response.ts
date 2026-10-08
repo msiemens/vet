@@ -7,6 +7,8 @@ import type { BranchInfo } from "./BranchInfo";
 import type { ChangedSymbols } from "./ChangedSymbols";
 import type { ChangesetKey } from "./ChangesetKey";
 import type { ChangesetRow } from "./ChangesetRow";
+import type { CheckLog } from "./CheckLog";
+import type { CommitChecks } from "./CommitChecks";
 import type { CommitInfo } from "./CommitInfo";
 import type { CommitUnit } from "./CommitUnit";
 import type { Diagnostic } from "./Diagnostic";
@@ -36,7 +38,11 @@ export type Response = { "type": "pong", payload: string, } | { "type": "project
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "changesets", rows: Array<ChangesetRow>, onView: ChangesetKey, } | { "type": "pullRequests", rows: Array<PullRequestRow>, sources: Array<PullRequestSource>, } | { "type": "versions", versions: Array<VersionInfo>, } | { "type": "commits", revision: number, lens: Lens, commits: Array<CommitUnit>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
+root: string, } | { "type": "done" } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "changesets", rows: Array<ChangesetRow>, onView: ChangesetKey, } | { "type": "pullRequests", rows: Array<PullRequestRow>, sources: Array<PullRequestSource>, } | { "type": "checks", checks: Array<CommitChecks>, 
+/**
+ * Why the commits that are left out could not be answered for, fit to show.
+ */
+error: string | null, } | { "type": "checkLog" } & CheckLog | { "type": "versions", versions: Array<VersionInfo>, } | { "type": "commits", revision: number, lens: Lens, commits: Array<CommitUnit>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
 /**
  * The changed ranges of the hunks in order, down to the words that differ within a
  * replaced region: line-snapped, one block per hunk (see [`TextChange`]).

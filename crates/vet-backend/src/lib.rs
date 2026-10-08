@@ -221,6 +221,8 @@ impl Orchestrator {
             }
             Request::ListChangesets { project } => self.list_changesets(project).await,
             Request::ListPullRequests { project } => self.list_pull_requests(project).await,
+            Request::Checks { project, commits } => self.checks(project, commits).await,
+            Request::CheckLog { project, run } => self.check_log(project, run).await,
             Request::OpenChangeset { project, changeset } => self.open_changeset(project, changeset).await,
             Request::Tasks { project } => self.tasks(project).await,
             Request::FinishReview { project } => self.finish_review(project).await,

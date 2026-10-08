@@ -2,6 +2,7 @@
 //! the pull requests it lists.
 
 mod accounts;
+mod checks;
 mod cli;
 mod credentials;
 mod host;
@@ -12,6 +13,7 @@ mod queue;
 mod remote;
 
 pub use accounts::{Account, AccountError, AccountState, Accounts};
+pub use checks::{Check, CheckLog, CommitChecks, LogFailure, commits_checks};
 pub use credentials::{Credential, CredentialProvider, CredentialSource, CredentialValidator, Token, ValidationError};
 pub use host::{PlatformKind, normalize_host};
 pub use model::{

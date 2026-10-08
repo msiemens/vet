@@ -1,7 +1,7 @@
 //! Requests about which changeset is on view and which there are.
 
-use vet_app::changeset::Source;
-use vet_app::platform::{PlatformError, PlatformKind};
+use vet_app::changeset::{RemoteKey, Source};
+use vet_app::platform::{Platform, PlatformError, PlatformKind, commits_checks};
 use vet_app::pull_request::{self, FetchError, hosted_repositories, hosts_to_ask_about, on_github};
 use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
@@ -55,6 +55,38 @@ impl Orchestrator {
             .collect();
         let reviews = open.session.reviews_of(&sources).await.map_err(message)?;
         Ok(mapping::pull_requests(&list, &reviews))
+    }
+
+    /// The repository of the pull request on view, if one is and GitHub hosts it.
+    async fn hosted_pull_request(&self, project: ProjectId) -> Result<Option<RemoteKey>, String> {
+        let open = self.ready(project).await?;
+        Ok(match open.session.source().await {
+            Source::PullRequest { remote, .. } if remote.kind() == PlatformKind::GitHub => Some(remote),
+            _ => None,
+        })
+    }
+
+    pub(crate) async fn checks(&self, project: ProjectId, commits: Vec<String>) -> Result<Response, String> {
+        let Some(remote) = self.hosted_pull_request(project).await? else {
+            return Ok(mapping::checks(&[], None));
+        };
+        let (found, error) = commits_checks(&*self.github, &remote, &commits).await;
+        if let Some(error) = &error {
+            self.refused(error, &remote.host);
+        }
+        Ok(mapping::checks(&found, error.as_ref()))
+    }
+
+    pub(crate) async fn check_log(&self, project: ProjectId, run: String) -> Result<Response, String> {
+        let remote = self
+            .hosted_pull_request(project)
+            .await?
+            .ok_or("the changeset on view is not a pull request on GitHub")?;
+        let log = self.github.check_log(&remote, &run).await.map_err(|error| {
+            self.refused(&error, &remote.host);
+            message(error)
+        })?;
+        Ok(mapping::check_log(&log))
     }
 
     pub(crate) async fn open_changeset(&self, project: ProjectId, changeset: ChangesetKey) -> Result<Response, String> {

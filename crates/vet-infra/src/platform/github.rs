@@ -23,14 +23,15 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use vet_app::platform::{
-    Credential, CredentialProvider, Platform, PlatformError, PlatformKind, PlatformTraits, PullRequest,
-    PullRequestDetail, PullRequestQuery, QueueTab, RemoteKey, Viewer, pushes_from_force_pushes,
+    CheckLog, CommitChecks, Credential, CredentialProvider, Platform, PlatformError, PlatformKind, PlatformTraits,
+    PullRequest, PullRequestDetail, PullRequestQuery, QueueTab, RemoteKey, Viewer, pushes_from_force_pushes,
 };
 
 use crate::clock::unix_now;
 use crate::http::http_client;
 use wire::{DetailData, SearchData};
 
+mod checks;
 mod wire;
 
 #[cfg(test)]
@@ -129,6 +130,8 @@ struct State {
     /// Lists by repository, then search; with the time they were fetched.
     lists: HashMap<RemoteKey, HashMap<String, (i64, Vec<PullRequest>)>>,
     viewers: HashMap<String, (i64, Viewer)>,
+    /// The checks of commits whose checks are all done, which nothing changes any more.
+    checks: HashMap<(RemoteKey, String), CommitChecks>,
 }
 
 pub struct GitHubClient<C> {
@@ -438,6 +441,14 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
         let mut detail = detail.ok_or_else(not_found)?;
         detail.pushes = pushes_from_force_pushes(&force_pushes, &detail.pull_request.head);
         Ok(detail)
+    }
+
+    async fn checks(&self, remote: &RemoteKey, commit: &str) -> Result<CommitChecks, PlatformError> {
+        self.commit_checks(remote, commit).await
+    }
+
+    async fn check_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
+        self.job_log(remote, check).await
     }
 }
 

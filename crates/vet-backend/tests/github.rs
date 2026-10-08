@@ -73,4 +73,15 @@ async fn a_pull_request_from_a_fork_is_opened_and_reviewed_against_its_target() 
     assert_eq!(manifest.target.name, format!("#{number}"));
     assert_eq!(manifest.review, ReviewInfo::Browsing);
     assert!(!manifest.files.is_empty());
+
+    let Response::Commits { commits, .. } = client.call(Request::Commits { project }).await.unwrap() else {
+        panic!("not the commits")
+    };
+    let ids = commits.iter().map(|c| c.commit.id.clone()).collect();
+    let Response::Checks { checks, error } = client.call(Request::Checks { project, commits: ids }).await.unwrap()
+    else {
+        panic!("not the checks")
+    };
+    println!("checks {checks:#?}, error {error:?}");
+    assert_eq!(error, None);
 }
