@@ -526,6 +526,83 @@ async fn a_review_is_one_pending_review_filled_and_submitted_with_its_verdict() 
     assert_eq!(posted.failed, None);
 }
 
+fn conversation_only() -> Submission {
+    Submission {
+        verdict: "COMMENT".to_owned(),
+        body: None,
+        commit: "c2c2c2".to_owned(),
+        threads: vec![],
+        replies: vec![],
+        comments: vec![
+            NewConversationComment {
+                key: 5,
+                body: "Overall: good.".to_owned(),
+            },
+            NewConversationComment {
+                key: 6,
+                body: "And again.".to_owned(),
+            },
+        ],
+    }
+}
+
+#[tokio::test]
+async fn comments_on_the_pull_request_alone_are_posted_without_a_review() {
+    set_now(NOW);
+    let fake = reviewing("");
+
+    let posted = client(&fake)
+        .submit_review(&remote(), 482, &conversation_only())
+        .await
+        .unwrap();
+
+    assert_eq!(calls(&fake), ["pullRequest", "addComment", "addComment"]);
+    assert_eq!(posted.comments.iter().map(|c| c.key).collect::<Vec<_>>(), [5, 6]);
+    assert_eq!(posted.failed, None);
+}
+
+#[tokio::test]
+async fn a_verdict_or_a_summary_makes_a_review_even_without_lines() {
+    set_now(NOW);
+    for (verdict, body) in [("APPROVE", None), ("COMMENT", Some("Looks fine."))] {
+        let fake = reviewing("");
+        let submission = Submission {
+            verdict: verdict.to_owned(),
+            body: body.map(str::to_owned),
+            ..conversation_only()
+        };
+
+        client(&fake).submit_review(&remote(), 482, &submission).await.unwrap();
+
+        assert_eq!(
+            calls(&fake),
+            [
+                "pullRequest",
+                "addPullRequestReview",
+                "submitPullRequestReview",
+                "addComment",
+                "addComment"
+            ],
+            "{verdict}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_refused_comment_on_the_pull_request_alone_stops_the_ones_after_it() {
+    set_now(NOW);
+    let fake = reviewing("addComment");
+
+    let posted = client(&fake)
+        .submit_review(&remote(), 482, &conversation_only())
+        .await
+        .unwrap();
+
+    assert_eq!(calls(&fake), ["pullRequest", "addComment"]);
+    assert!(posted.comments.is_empty());
+    assert!(posted.failed.is_some());
+}
+
 #[tokio::test]
 async fn a_review_that_cannot_be_filled_is_deleted_and_posts_nothing() {
     set_now(NOW);

@@ -673,22 +673,48 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             ))
         })?;
 
-        // Everything of the review goes into a pending review that is submitted at the end, or
-        // deleted so that none of it stays on GitHub.
+        let mut posted = if needs_review(submission) {
+            self.post_pending_review(host, &clients, &pull_request, submission)
+                .await?
+        } else {
+            // A review without lines, verdict or summary would be an empty "Commented" review, or refused.
+            Submitted::default()
+        };
+        for new in &submission.comments {
+            match self.post_conversation_comment(host, &clients, &pull_request, new).await {
+                Ok(comment) => posted.comments.push(comment),
+                Err(e) => {
+                    posted.failed = Some(e);
+                    break;
+                }
+            }
+        }
+        Ok(posted)
+    }
+
+    /// Everything of the review goes into a pending review that is submitted at the end, or
+    /// deleted so that none of it stays on GitHub.
+    async fn post_pending_review(
+        &self,
+        host: &str,
+        clients: &Clients,
+        pull_request: &str,
+        submission: &Submission,
+    ) -> Result<Submitted, PlatformError> {
         let started = self
             .mutate(
                 host,
-                &clients,
+                clients,
                 &mutation("addPullRequestReview", "pullRequestReview { id }"),
                 json!({ "pullRequestId": pull_request, "commitOID": submission.commit }),
             )
             .await?;
         let review: String = dig(&started, "/addPullRequestReview/pullRequestReview/id")?;
-        let filled = self.fill_review(host, &clients, &review, submission).await;
-        let mut posted = match filled {
+        let filled = self.fill_review(host, clients, &review, submission).await;
+        let posted = match filled {
             Ok(posted) => posted,
             Err(e) => {
-                self.discard_review(host, &clients, &review).await;
+                self.discard_review(host, clients, &review).await;
                 return Err(e);
             }
         };
@@ -699,24 +725,14 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         let submitted = self
             .mutate(
                 host,
-                &clients,
+                clients,
                 &mutation("submitPullRequestReview", "pullRequestReview { id }"),
                 body,
             )
             .await;
         if let Err(e) = submitted {
-            self.discard_review(host, &clients, &review).await;
+            self.discard_review(host, clients, &review).await;
             return Err(e);
-        }
-
-        for new in &submission.comments {
-            match self.post_conversation_comment(host, &clients, &pull_request, new).await {
-                Ok(comment) => posted.comments.push(comment),
-                Err(e) => {
-                    posted.failed = Some(e);
-                    break;
-                }
-            }
         }
         Ok(posted)
     }
@@ -823,4 +839,13 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             )
             .await;
     }
+}
+
+/// Whether a submission is a review: comments on the lines or in threads, a verdict other than a
+/// plain comment, or a summary. Comments on the pull request as a whole are not.
+fn needs_review(submission: &Submission) -> bool {
+    !submission.threads.is_empty()
+        || !submission.replies.is_empty()
+        || submission.body.is_some()
+        || submission.verdict != "COMMENT"
 }
