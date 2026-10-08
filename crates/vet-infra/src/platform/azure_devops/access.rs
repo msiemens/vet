@@ -9,7 +9,7 @@ use azure_core::http::headers::HeaderName;
 use azure_core::http::policies::{RetryHeaders, RetryPolicy};
 use azure_core::http::{RetryOptions, StatusCode, Transport, Url};
 use azure_core::time::{Duration, OffsetDateTime};
-use azure_devops_rust_api::{Credential as ApiCredential, git, ims, profile};
+use azure_devops_rust_api::{Credential as ApiCredential, build, git, ims, policy, profile};
 use serde::Deserialize;
 use vet_app::platform::{Credential, CredentialSource, PlatformError};
 
@@ -59,6 +59,24 @@ impl Access {
     /// Pull requests, their threads, statuses and iterations.
     pub(crate) fn git(&self, endpoint: &str) -> Result<git::Client, PlatformError> {
         Ok(git::ClientBuilder::new(self.credential.clone())
+            .endpoint(url(endpoint)?)
+            .transport(self.transport.clone())
+            .retry(retries())
+            .build())
+    }
+
+    /// Builds, their timelines and logs.
+    pub(crate) fn builds(&self, endpoint: &str) -> Result<build::Client, PlatformError> {
+        Ok(build::ClientBuilder::new(self.credential.clone())
+            .endpoint(url(endpoint)?)
+            .transport(self.transport.clone())
+            .retry(retries())
+            .build())
+    }
+
+    /// The evaluations of a pull request's policies.
+    pub(crate) fn policies(&self, endpoint: &str) -> Result<policy::Client, PlatformError> {
+        Ok(policy::ClientBuilder::new(self.credential.clone())
             .endpoint(url(endpoint)?)
             .transport(self.transport.clone())
             .retry(retries())

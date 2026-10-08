@@ -22,13 +22,13 @@ pub(super) struct Me {
 }
 
 impl Me {
-    fn is(&self, identity: &IdentityRef) -> bool {
+    pub(super) fn is(&self, identity: &IdentityRef) -> bool {
         let same = |a: &Option<String>, b: &str| a.as_deref().is_some_and(|a| a.eq_ignore_ascii_case(b));
         same(&self.id, &identity.id) || identity.unique_name.as_deref().is_some_and(|n| same(&self.email, n))
     }
 
     /// The name the rest of Vet knows `identity` by.
-    fn name(&self, identity: &IdentityRef) -> String {
+    pub(super) fn name(&self, identity: &IdentityRef) -> String {
         if self.is(identity) {
             return self.login.clone();
         }
@@ -41,7 +41,7 @@ impl Me {
 }
 
 /// `refs/heads/main` is the branch `main`.
-fn branch(reference: &str) -> String {
+pub(super) fn branch(reference: &str) -> String {
     reference.strip_prefix("refs/heads/").unwrap_or(reference).to_owned()
 }
 
@@ -115,15 +115,12 @@ pub(super) fn pull_request(pr: &GitPullRequest, me: &Me, web: &str) -> Option<ve
     })
 }
 
-/// The rolled-up state of a pull request's statuses: the newest of each context counts,
-/// as far as it is on the newest iteration that has statuses.
-pub(super) fn ci_state(statuses: &[GitPullRequestStatus]) -> Option<CiState> {
-    let newest_iteration = statuses.iter().filter_map(|s| s.iteration_id).max();
+/// The newest status of each context among `statuses`.
+pub(super) fn newest_per_context<'a>(
+    statuses: impl Iterator<Item = &'a GitPullRequestStatus>,
+) -> Vec<&'a GitPullRequestStatus> {
     let mut newest: HashMap<(Option<&str>, Option<&str>), &GitPullRequestStatus> = HashMap::new();
-    for status in statuses
-        .iter()
-        .filter(|s| s.iteration_id.is_none() || s.iteration_id == newest_iteration)
-    {
+    for status in statuses {
         let context = status.git_status.context.as_ref();
         let key = (
             context.and_then(|c| c.genre.as_deref()),
@@ -134,7 +131,21 @@ pub(super) fn ci_state(statuses: &[GitPullRequestStatus]) -> Option<CiState> {
             newest.insert(key, status);
         }
     }
-    let states: Vec<&StatusState> = newest.values().filter_map(|s| s.git_status.state.as_ref()).collect();
+    let mut found: Vec<_> = newest.into_values().collect();
+    found.sort_by_key(|s| s.git_status.id);
+    found
+}
+
+/// The rolled-up state of a pull request's statuses: the newest of each context counts,
+/// as far as it is on the newest iteration that has statuses.
+pub(super) fn ci_state(statuses: &[GitPullRequestStatus]) -> Option<CiState> {
+    let newest_iteration = statuses.iter().filter_map(|s| s.iteration_id).max();
+    let current = newest_per_context(
+        statuses
+            .iter()
+            .filter(|s| s.iteration_id.is_none() || s.iteration_id == newest_iteration),
+    );
+    let states: Vec<&StatusState> = current.iter().filter_map(|s| s.git_status.state.as_ref()).collect();
     let any = |wanted: &[StatusState]| states.iter().any(|s| wanted.contains(s));
     if any(&[StatusState::Failed, StatusState::Error]) {
         Some(CiState::Failure)

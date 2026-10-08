@@ -10,6 +10,9 @@ use super::*;
 use crate::http::client_builder;
 use crate::platform::fake::{Canned, Fake, Seen, Signed};
 
+mod checks;
+mod discussion;
+
 const NOW: i64 = 1_700_000_000;
 
 thread_local! {

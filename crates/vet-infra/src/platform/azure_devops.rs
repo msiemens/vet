@@ -10,6 +10,8 @@
 //!
 //! The token goes to the host's API and nowhere else: no redirect is followed. Nothing
 //! here logs a request or a response.
+//!
+//! A pull request's threads, votes and checks are in `discussion` and `checks`.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
@@ -20,8 +22,9 @@ use azure_devops_rust_api::ims::models::QueryMembership;
 use futures::future::try_join_all;
 use url::Url;
 use vet_app::platform::{
-    CheckLog, CiState, CommitChecks, CredentialProvider, Platform, PlatformError, PlatformKind, PlatformTraits,
-    PullRequest, PullRequestDetail, PullRequestQuery, QueueTab, RemoteKey, Viewer, matches,
+    CheckLog, CiState, CommentRef, CommitChecks, CredentialProvider, Discussion, Platform, PlatformComment,
+    PlatformError, PlatformKind, PlatformTraits, PullRequest, PullRequestDetail, PullRequestQuery, QueueTab, RemoteKey,
+    Submission, Submitted, Viewer, matches,
 };
 
 use crate::clock::unix_now;
@@ -30,6 +33,8 @@ use access::{Access, PROFILE_ENDPOINT, failure};
 use wire::Me;
 
 pub(crate) mod access;
+mod checks;
+mod discussion;
 mod wire;
 
 #[cfg(test)]
@@ -91,6 +96,10 @@ struct State {
     teams: HashMap<(String, String), (i64, Vec<String>)>,
     /// By repository and pull request: the head they were read for, and when.
     extras: HashMap<(RemoteKey, u64), (i64, String, Extras)>,
+    /// The pull request each commit that an iteration has as its source was seen in.
+    pull_requests_of_commits: HashMap<(RemoteKey, String), i32>,
+    /// The checks of commits whose checks are all done, which nothing changes any more.
+    checks: HashMap<(RemoteKey, String), CommitChecks>,
 }
 
 pub struct AzureDevOpsClient<C> {
@@ -110,6 +119,15 @@ struct Repository<'a> {
     organization: &'a str,
     project: &'a str,
     name: &'a str,
+}
+
+/// What a request about one repository starts from.
+struct Call<'a> {
+    remote: &'a RemoteKey,
+    repository: Repository<'a>,
+    access: Access,
+    git: azure_devops_rust_api::git::Client,
+    me: Me,
 }
 
 impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
@@ -258,6 +276,20 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             id: profile.id,
             email: profile.email_address,
             teams,
+        })
+    }
+
+    async fn call<'a>(&self, remote: &'a RemoteKey) -> Result<Call<'a>, PlatformError> {
+        let repository = repository(remote)?;
+        let access = self.access(&remote.host).await?;
+        let me = self.me(&access, remote, &repository).await?;
+        let git = access.git(&self.endpoints().api)?;
+        Ok(Call {
+            remote,
+            repository,
+            access,
+            git,
+            me,
         })
     }
 
@@ -431,6 +463,14 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             .await?;
 
         let (base, pushes) = wire::pushes(&iterations, &pull_request.head);
+        {
+            let mut state = self.state();
+            for push in &pushes {
+                state
+                    .pull_requests_of_commits
+                    .insert((remote.clone(), push.head.clone()), id);
+            }
+        }
         let base = base
             .or_else(|| found.last_merge_target_commit.as_ref()?.commit_id.clone())
             .ok_or_else(|| {
@@ -443,20 +483,51 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         })
     }
 
-    async fn checks(&self, remote: &RemoteKey, _: &str) -> Result<CommitChecks, PlatformError> {
-        Err(not_yet(remote))
+    async fn checks(&self, remote: &RemoteKey, commit: &str) -> Result<CommitChecks, PlatformError> {
+        self.commit_checks(remote, commit).await
     }
 
-    async fn check_log(&self, remote: &RemoteKey, _: &str) -> Result<CheckLog, PlatformError> {
-        Err(not_yet(remote))
+    async fn check_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
+        self.build_log(remote, check).await
     }
-}
 
-fn not_yet(remote: &RemoteKey) -> PlatformError {
-    PlatformError::Unexpected(format!(
-        "Vet does not show the checks of commits on {} yet",
-        remote.host
-    ))
+    async fn discussion(&self, remote: &RemoteKey, number: u64) -> Result<Discussion, PlatformError> {
+        self.read_discussion(remote, number).await
+    }
+
+    async fn comment(&self, remote: &RemoteKey, comment: &CommentRef) -> Result<PlatformComment, PlatformError> {
+        self.read_comment(remote, comment).await
+    }
+
+    async fn edit_comment(
+        &self,
+        remote: &RemoteKey,
+        comment: &CommentRef,
+        body: &str,
+    ) -> Result<PlatformComment, PlatformError> {
+        self.write_comment(remote, comment, body).await
+    }
+
+    async fn delete_comment(&self, remote: &RemoteKey, comment: &CommentRef) -> Result<(), PlatformError> {
+        self.remove_comment(remote, comment).await
+    }
+
+    async fn set_thread_resolved(&self, remote: &RemoteKey, thread: &str, resolved: bool) -> Result<(), PlatformError> {
+        self.resolve_thread(remote, thread, resolved).await
+    }
+
+    async fn submit_review(
+        &self,
+        remote: &RemoteKey,
+        number: u64,
+        submission: &Submission,
+    ) -> Result<Submitted, PlatformError> {
+        self.post_in_turn(remote, number, submission).await
+    }
+
+    async fn vote(&self, remote: &RemoteKey, number: u64, verdict: &str) -> Result<(), PlatformError> {
+        self.set_vote(remote, number, verdict).await
+    }
 }
 
 fn repository(remote: &RemoteKey) -> Result<Repository<'_>, PlatformError> {
@@ -475,6 +546,11 @@ fn repository(remote: &RemoteKey) -> Result<Repository<'_>, PlatformError> {
 
 /// The address of a repository's pull requests in the browser, up to the number.
 fn web_address(remote: &RemoteKey, repository: &Repository<'_>) -> String {
+    address(remote, repository, &["_git", repository.name, "pullrequest", ""])
+}
+
+/// The address in the browser of `rest` in the repository's project.
+fn address(remote: &RemoteKey, repository: &Repository<'_>, rest: &[&str]) -> String {
     let mut url = Url::parse(&format!("https://{}", remote.host)).expect("a host name is an address");
     {
         let mut path = url.path_segments_mut().expect("a web address has a path");
@@ -482,7 +558,8 @@ fn web_address(remote: &RemoteKey, repository: &Repository<'_>) -> String {
         if remote.host == "dev.azure.com" {
             path.push(repository.organization);
         }
-        path.extend([repository.project, "_git", repository.name, "pullrequest", ""]);
+        path.push(repository.project);
+        path.extend(rest);
     }
     url.to_string()
 }

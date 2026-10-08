@@ -11,6 +11,7 @@ use vet_app::platform::{Credential, CredentialProvider, CredentialSource, Token}
 
 #[derive(Clone, Debug)]
 pub(crate) struct Seen {
+    pub method: String,
     pub path: String,
     pub headers: HashMap<String, String>,
     pub body: String,
@@ -116,7 +117,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Seen> {
     let mut line = String::new();
     reader.read_line(&mut line).ok()?;
     let mut parts = line.split_whitespace();
-    parts.next()?;
+    let method = parts.next()?.to_owned();
     // The Azure DevOps crate puts a slash after an address that ends in one.
     let path = parts.next()?;
     let path = path
@@ -139,6 +140,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Seen> {
     let mut body = vec![0; length];
     reader.read_exact(&mut body).ok()?;
     Some(Seen {
+        method,
         path,
         headers,
         body: String::from_utf8(body).ok()?,
