@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use reqwest::StatusCode;
-use vet_app::platform::{Credential, CredentialValidator, PlatformError, PlatformKind, ValidationError};
+use vet_app::platform::{Credential, CredentialValidator, Owner, PlatformError, PlatformKind, ValidationError};
 
 use crate::clock::unix_now;
 use crate::http::http_client;
@@ -41,12 +41,35 @@ impl HttpValidator {
         default()
     }
 
-    async fn github_user(&self, host: &str, credential: &Credential) -> Result<String, ValidationError> {
+    /// The user, and the token's end from the header GitHub adds for a token that expires.
+    async fn github_user(&self, host: &str, credential: &Credential) -> Result<Owner, ValidationError> {
         let base = self.endpoint(|| github::Endpoints::of(host).rest);
         let unusable = |_| ValidationError::Unreachable(format!("cannot set up the client for {host}"));
         let crab = github::client(self.http()?, &base, credential, false).map_err(unusable)?;
-        match crab.current().user().await {
-            Ok(user) => Ok(user.login),
+        let answer = match crab._get("/user").await {
+            Ok(response) => octocrab::map_github_error(response).await,
+            Err(e) => Err(e),
+        };
+        match answer {
+            Ok(response) => {
+                let expires_at = response
+                    .headers()
+                    .get("github-authentication-token-expiration")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(github_time);
+                let body = crab
+                    .body_to_string(response)
+                    .await
+                    .map_err(|_| ValidationError::Unreachable(format!("{host} answered in a way Vet cannot read")))?;
+                let login = serde_json::from_str::<serde_json::Value>(&body)
+                    .ok()
+                    .and_then(|user| Some(user.get("login")?.as_str()?.to_owned()))
+                    .ok_or_else(|| ValidationError::Unreachable(format!("{host} answered without a user")))?;
+                Ok(Owner {
+                    user: login,
+                    expires_at,
+                })
+            }
             Err(octocrab::Error::GitHub { source, .. }) => {
                 let status = source.status_code;
                 // A token the host does not know is refused, a host that is not GitHub is
@@ -62,7 +85,8 @@ impl HttpValidator {
         }
     }
 
-    async fn azure_devops_user(&self, host: &str, credential: &Credential) -> Result<String, ValidationError> {
+    /// Azure DevOps tells a token nothing of its own end: only an Entra token may list them.
+    async fn azure_devops_user(&self, host: &str, credential: &Credential) -> Result<Owner, ValidationError> {
         let Some(organization) = host.strip_prefix("dev.azure.com/") else {
             return Err(ValidationError::Rejected(format!(
                 "{host} is not the account of an Azure DevOps organization, e.g. dev.azure.com/contoso"
@@ -78,12 +102,13 @@ impl HttpValidator {
             })?;
         me.display_name
             .or(me.email_address)
+            .map(Owner::named)
             .ok_or_else(|| ValidationError::Rejected(format!("{host} refused the token: the profile has no name")))
     }
 }
 
 impl CredentialValidator for HttpValidator {
-    async fn user(&self, host: &str, kind: PlatformKind, credential: &Credential) -> Result<String, ValidationError> {
+    async fn user(&self, host: &str, kind: PlatformKind, credential: &Credential) -> Result<Owner, ValidationError> {
         let answer = match kind {
             PlatformKind::GitHub => self.github_user(host, credential).await,
             PlatformKind::AzureDevOps => self.azure_devops_user(host, credential).await,
@@ -94,6 +119,49 @@ impl CredentialValidator for HttpValidator {
         }
         answer
     }
+}
+
+/// Unix seconds of a time as GitHub's token header writes it: `2026-11-01 12:00:00 UTC`, or with
+/// an offset such as `+0200` in place of `UTC`.
+fn github_time(text: &str) -> Option<i64> {
+    let mut parts = text.split_whitespace();
+    let (date, time, zone) = (parts.next()?, parts.next()?, parts.next()?);
+    let numbers = |s: &str, sep: char| -> Option<Vec<i64>> { s.split(sep).map(|n| n.parse().ok()).collect() };
+    let (date, time) = (numbers(date, '-')?, numbers(time, ':')?);
+    let ([year, month, day], [hour, minute, second]) = (date.as_slice(), time.as_slice()) else {
+        return None;
+    };
+    let offset = match zone {
+        "UTC" | "Z" => 0,
+        _ => {
+            let (sign, digits) = zone.split_at_checked(1)?;
+            let sign = match sign {
+                "+" => 1,
+                "-" => -1,
+                _ => return None,
+            };
+            if digits.len() != 4 {
+                return None;
+            }
+            let (h, m): (i64, i64) = (digits[..2].parse().ok()?, digits[2..].parse().ok()?);
+            sign * (h * 3600 + m * 60)
+        }
+    };
+    let days = days_from_civil(*year, *month, *day)?;
+    Some(days * 86_400 + hour * 3600 + minute * 60 + second - offset)
+}
+
+/// Days since 1970-01-01 of a date of the proleptic Gregorian calendar.
+fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some(era * 146_097 + day_of_era - 719_468)
 }
 
 fn refusal(host: &str, status: StatusCode, reason: &str) -> ValidationError {
@@ -141,14 +209,34 @@ mod tests {
     #[tokio::test]
     async fn the_github_user_is_its_login_and_the_token_goes_as_a_bearer() {
         let fake = Fake::start(|_, _| Canned::json(&github_user_json("octocat")));
-        let user = validator(&fake)
+        let owner = validator(&fake)
             .user("github.com", PlatformKind::GitHub, &credential(CredentialSource::Pat))
             .await
             .unwrap();
-        assert_eq!(user, "octocat");
+        assert_eq!(owner, Owner::named("octocat"));
         let requests = fake.requests();
         assert_eq!(requests[0].path, "/user");
         assert_eq!(requests[0].header("authorization"), Some("Bearer secret"));
+    }
+
+    #[tokio::test]
+    async fn a_github_token_that_expires_says_when_in_utc_or_with_an_offset() {
+        for (header, expected) in [
+            ("2026-11-01 12:00:00 UTC", 1_793_534_400),
+            ("2024-02-29 10:30:00 +0200", 1_709_195_400),
+            ("2024-02-29 01:30:00 -0700", 1_709_195_400),
+        ] {
+            let fake = Fake::start(move |_, _| {
+                Canned::json(&github_user_json("octocat")).with("GitHub-Authentication-Token-Expiration", header)
+            });
+            let owner = validator(&fake)
+                .user("github.com", PlatformKind::GitHub, &credential(CredentialSource::Pat))
+                .await
+                .unwrap();
+            assert_eq!(owner.expires_at, Some(expected), "{header}");
+        }
+        assert_eq!(github_time("tomorrow"), None);
+        assert_eq!(github_time("2026-13-01 12:00:00 UTC"), None);
     }
 
     #[tokio::test]
@@ -225,7 +313,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(user, "Ada Lovelace");
+        assert_eq!(user, Owner::named("Ada Lovelace"));
         let request = &fake.requests()[0];
         assert_eq!(request.path, "/contoso/_apis/connectionData");
         // base64 of ":secret".
@@ -239,7 +327,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(user, "Ada Lovelace");
+        assert_eq!(user, Owner::named("Ada Lovelace"));
         assert_eq!(fake.requests()[1].header("authorization"), Some("Bearer secret"));
     }
 

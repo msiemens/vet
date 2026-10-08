@@ -10,7 +10,18 @@ const account = (over: Partial<Account>): Account => ({
   user: "octocat",
   state: { type: "signedIn" },
   inUse: true,
+  expiresAt: null,
   ...over,
+});
+
+void test("a token's end is shown where the platform tells it, and pointed out a week ahead and after", () => {
+  const day = 24 * 3600;
+  const now = 1_800_000_000;
+  const at = (expiresAt: number) => accountRow(account({ expiresAt }), true, now * 1000).expiry;
+  assert.equal(accountRow(account({}), true, now * 1000).expiry, undefined);
+  assert.deepEqual([at(now + 30 * day)?.label.startsWith("Expires on "), at(now + 30 * day)?.soon], [true, false]);
+  assert.equal(at(now + 3 * day)?.soon, true);
+  assert.deepEqual([at(now - day)?.label.startsWith("Expired on "), at(now - day)?.soon], [true, true]);
 });
 
 void test("a CLI credential names the CLI and is not Vet's to remove", () => {

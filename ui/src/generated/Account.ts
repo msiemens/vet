@@ -19,4 +19,9 @@ user: string | null, state: AccountState,
  * This is the credential the backend uses for the host: a host's CLI credential
  * comes before its personal access token.
  */
-inUse: boolean, };
+inUse: boolean, 
+/**
+ * When the credential stops working (unix seconds), if the platform told: GitHub does
+ * for personal access tokens that expire, Azure DevOps does not tell a token its own end.
+ */
+expiresAt: number | null, };

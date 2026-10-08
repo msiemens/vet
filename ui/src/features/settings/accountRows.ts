@@ -25,6 +25,25 @@ export interface AccountRow {
   note?: string;
   /** Only a personal access token is Vet's to remove or replace. */
   removable: boolean;
+  /** When the token stops working, where the platform says: "Expires on 3 Nov 2026" or "Expired on …". */
+  expiry?: { label: string; soon: boolean };
+}
+
+/** A token that ends within this many days is pointed out. */
+const EXPIRY_WARNING_DAYS = 7;
+
+function expiry(expiresAt: number | null, now: number): AccountRow["expiry"] {
+  if (expiresAt === null) return undefined;
+  const date = new Date(expiresAt * 1000).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  const past = expiresAt * 1000 <= now;
+  return {
+    label: `${past ? "Expired" : "Expires"} on ${date}`,
+    soon: expiresAt * 1000 - now < EXPIRY_WARNING_DAYS * 24 * 3600 * 1000,
+  };
 }
 
 const CLI_NAMES: Record<PlatformKind, string> = { github: "gh CLI", azureDevOps: "az CLI" };
@@ -44,8 +63,8 @@ const PLATFORM_MARKS: Record<PlatformKind, { icon: IconName; name: string }> = {
   azureDevOps: { icon: "azureDevOps", name: "Azure DevOps" },
 };
 
-/** `keychain`: whether the host keeps personal access tokens in the system keychain. */
-export function accountRow(account: Account, keychain: boolean): AccountRow {
+/** `keychain`: whether the host keeps personal access tokens in the system keychain; `now` in milliseconds. */
+export function accountRow(account: Account, keychain: boolean, now = Date.now()): AccountRow {
   const { state } = account;
   const cli = account.source === "cli";
   const note = account.inUse ? undefined : "Not used: the signed-in CLI for this host comes first.";
@@ -61,5 +80,6 @@ export function accountRow(account: Account, keychain: boolean): AccountRow {
     problem: state.type === "signedIn" ? undefined : state.message,
     note,
     removable: !cli,
+    expiry: expiry(account.expiresAt, now),
   };
 }

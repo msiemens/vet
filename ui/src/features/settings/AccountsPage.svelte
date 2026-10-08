@@ -92,6 +92,10 @@
       <dd>{selected.storage}</dd>
       <dt>Status</dt>
       <dd class="status {selected.status}">{selected.statusLabel}</dd>
+      {#if selected.expiry}
+        <dt>Expiry</dt>
+        <dd class:soon={selected.expiry.soon}>{selected.expiry.label}</dd>
+      {/if}
       {#if selected.problem}
         <dt></dt>
         <dd class="problem">{selected.problem}</dd>
@@ -241,7 +245,8 @@
   .status.signedIn {
     color: var(--add-text);
   }
-  .status.rejected {
+  .status.rejected,
+  .soon {
     color: var(--del-text);
   }
   .hint {

@@ -63,13 +63,31 @@ impl<T: CredentialProvider + ?Sized> CredentialProvider for std::sync::Arc<T> {
     }
 }
 
+/// What a platform says about a credential it accepts.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Owner {
+    /// The platform's name for the credential's owner.
+    pub user: String,
+    /// When the credential stops working (unix seconds), if the platform says.
+    pub expires_at: Option<i64>,
+}
+
+impl Owner {
+    /// An owner whose credential's end the platform does not tell.
+    pub fn named(user: impl Into<String>) -> Self {
+        Self {
+            user: user.into(),
+            expires_at: None,
+        }
+    }
+}
+
 /// Asks a platform whom a credential belongs to; implemented over HTTP by `vet-infra`.
 pub trait CredentialValidator {
-    /// The platform's name for the credential's owner.
     fn user(
         &self,
         host: &str,
         kind: PlatformKind,
         credential: &Credential,
-    ) -> impl Future<Output = Result<String, ValidationError>> + Send;
+    ) -> impl Future<Output = Result<Owner, ValidationError>> + Send;
 }

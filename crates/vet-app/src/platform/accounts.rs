@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use super::cli;
 use super::credentials::{
-    Credential, CredentialProvider, CredentialSource, CredentialValidator, Token, ValidationError,
+    Credential, CredentialProvider, CredentialSource, CredentialValidator, Owner, Token, ValidationError,
 };
 use super::host::{PlatformKind, normalize_host};
 use crate::ports::{Command, ProcessEvent, ProcessRunner, RunningProcess};
@@ -26,8 +26,9 @@ const CLI_TOKEN_LIFETIME: i64 = 300;
 const EXPIRY_MARGIN: i64 = 120;
 
 /// Hosts whose CLI is looked at even before anything asks for them, so that a signed-in
-/// `gh` shows up in the accounts. An `az` token is of no organization in particular, so it
-/// shows up with the organizations that are asked for.
+/// `gh` shows up in the accounts, besides the GitHub Enterprise hosts `gh` says it is signed
+/// in to. An `az` token is of no organization in particular, so it shows up with the
+/// organizations that are asked for.
 const DEFAULT_HOSTS: [&str; 1] = ["github.com"];
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -49,6 +50,8 @@ pub struct Account {
     pub state: AccountState,
     /// This is the credential [`Accounts::credential`] hands out for the host.
     pub in_use: bool,
+    /// When the credential stops working (unix seconds), if the platform said.
+    pub expires_at: Option<i64>,
 }
 
 /// Why a credential was not accepted. Every message is fit to show.
@@ -73,7 +76,7 @@ impl fmt::Display for AccountError {
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Identity {
     Unchecked,
-    User(String),
+    User(Owner),
     Rejected(String),
     Unreachable(String),
 }
@@ -234,10 +237,14 @@ where
     /// credential before its personal access token. Credentials the platform was not
     /// asked about yet are asked about now.
     pub async fn accounts(&self, now: i64) -> Vec<Account> {
+        let signed_in = match self.run(&cli::hosts_command(&self.cwd)).await {
+            Some(stdout) => cli::parse_hosts(&stdout),
+            None => Vec::new(),
+        };
         let hosts: BTreeSet<String> = {
             let state = self.state();
             let known = state.hosts.keys().cloned();
-            known.chain(DEFAULT_HOSTS.map(str::to_owned)).collect()
+            known.chain(DEFAULT_HOSTS.map(str::to_owned)).chain(signed_in).collect()
         };
         for host in &hosts {
             self.cli_token(host, now).await;
@@ -257,8 +264,8 @@ where
             };
             for (source, held) in [(CredentialSource::Cli, &slot.cli), (CredentialSource::Pat, &slot.pat)] {
                 let Some(held) = held else { continue };
-                let (user, state) = match &held.identity {
-                    Identity::User(user) => (Some(user.clone()), AccountState::SignedIn),
+                let (owner, state) = match &held.identity {
+                    Identity::User(owner) => (Some(owner), AccountState::SignedIn),
                     Identity::Rejected(why) => (None, AccountState::Rejected(why.clone())),
                     Identity::Unreachable(why) => (None, AccountState::Unverified(why.clone())),
                     Identity::Unchecked => (None, AccountState::Unverified("not checked yet".to_owned())),
@@ -267,9 +274,10 @@ where
                     host: host.clone(),
                     kind: PlatformKind::of_host(host),
                     source,
-                    user,
+                    user: owner.map(|o| o.user.clone()),
                     state,
                     in_use: source == in_use,
+                    expires_at: owner.and_then(|o| o.expires_at),
                 });
             }
         }
@@ -388,7 +396,8 @@ mod tests {
     use super::*;
 
     /// The CLIs on this machine: what each program prints and its exit code, changeable
-    /// between calls. A program that is not in the script is not installed.
+    /// between calls. A program that is not in the script is not installed. A script for a
+    /// command line (`gh auth status`) comes before the program's own.
     #[derive(Clone, Default)]
     struct Machine {
         programs: Arc<Mutex<HashMap<String, (i32, String)>>>,
@@ -423,12 +432,13 @@ mod tests {
 
         fn spawn(&self, command: &Command) -> Result<Script, String> {
             self.spawned.lock().unwrap().push(command.program.clone());
-            let (code, stdout) = self
-                .programs
-                .lock()
-                .unwrap()
-                .get(&command.program)
-                .cloned()
+            let line = format!("{} {} ", command.program, command.args.join(" "));
+            let programs = self.programs.lock().unwrap();
+            let (code, stdout) = programs
+                .iter()
+                .filter(|(script, _)| line.starts_with(&format!("{script} ")))
+                .max_by_key(|(script, _)| script.len())
+                .map(|(_, answer)| answer.clone())
                 .ok_or_else(|| format!("{}: not found", command.program))?;
             let events = vec![
                 ProcessEvent::Stdout(stdout.into_bytes()),
@@ -441,7 +451,7 @@ mod tests {
     /// The platforms: which token belongs to whom, and what they were asked.
     #[derive(Clone, Default)]
     struct Platforms {
-        tokens: Arc<Mutex<HashMap<String, Result<String, ValidationError>>>>,
+        tokens: Arc<Mutex<HashMap<String, Result<Owner, ValidationError>>>>,
         asked: Arc<Mutex<Vec<(String, PlatformKind, CredentialSource)>>>,
     }
 
@@ -450,7 +460,15 @@ mod tests {
             self.tokens
                 .lock()
                 .unwrap()
-                .insert(token.to_owned(), answer.map(str::to_owned));
+                .insert(token.to_owned(), answer.map(Owner::named));
+        }
+
+        fn knows_expiring(&self, token: &str, user: &str, expires_at: i64) {
+            let owner = Owner {
+                user: user.to_owned(),
+                expires_at: Some(expires_at),
+            };
+            self.tokens.lock().unwrap().insert(token.to_owned(), Ok(owner));
         }
     }
 
@@ -460,7 +478,7 @@ mod tests {
             host: &str,
             kind: PlatformKind,
             credential: &Credential,
-        ) -> Result<String, ValidationError> {
+        ) -> Result<Owner, ValidationError> {
             self.asked
                 .lock()
                 .unwrap()
@@ -663,9 +681,22 @@ mod tests {
                 user: Some("octocat".into()),
                 state: AccountState::SignedIn,
                 in_use: true,
+                expires_at: None,
             }
         );
         assert_eq!(token_for(&f.accounts, "github.com", 0).await.unwrap().0, "ghp_good");
+    }
+
+    #[tokio::test]
+    async fn a_token_shows_when_it_expires_if_the_platform_says() {
+        let f = fixture();
+        f.platforms.knows_expiring("ghp_fine", "octocat", 1_900_000_000);
+        f.accounts
+            .set_credentials("github.com", "ghp_fine", false, 0)
+            .await
+            .unwrap();
+        let accounts = f.accounts.accounts(0).await;
+        assert_eq!(accounts[0].expires_at, Some(1_900_000_000));
     }
 
     #[tokio::test]
@@ -753,6 +784,38 @@ mod tests {
                 ("github.com", CredentialSource::Cli, Some("octocat"), true),
                 ("github.com", CredentialSource::Pat, Some("octocat-work"), false),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_accounts_show_every_host_gh_is_signed_in_to_with_that_hosts_token() {
+        let f = fixture();
+        f.machine.install(
+            "gh auth status",
+            0,
+            r#"{"hosts":{"ghe.corp.example":[{"active":true,"login":"ada","state":"success"}]}}"#,
+        );
+        f.machine
+            .install("gh auth token --hostname ghe.corp.example", 0, "gho_enterprise");
+        f.platforms.knows("gho_enterprise", Ok("ada"));
+
+        let accounts = f.accounts.accounts(0).await;
+        let summary: Vec<_> = accounts
+            .iter()
+            .map(|a| (a.host.as_str(), a.kind, a.source, a.user.as_deref()))
+            .collect();
+        assert_eq!(
+            summary,
+            [(
+                "ghe.corp.example",
+                PlatformKind::GitHub,
+                CredentialSource::Cli,
+                Some("ada")
+            )]
+        );
+        assert_eq!(
+            token_for(&f.accounts, "ghe.corp.example", 0).await,
+            Some(("gho_enterprise".into(), CredentialSource::Cli))
         );
     }
 

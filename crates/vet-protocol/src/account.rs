@@ -82,6 +82,9 @@ pub struct Account {
     /// This is the credential the backend uses for the host: a host's CLI credential
     /// comes before its personal access token.
     pub in_use: bool,
+    /// When the credential stops working (unix seconds), if the platform told: GitHub does
+    /// for personal access tokens that expire, Azure DevOps does not tell a token its own end.
+    pub expires_at: Option<u32>,
 }
 
 #[cfg(test)]

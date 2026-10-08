@@ -40,6 +40,29 @@ pub fn command(kind: PlatformKind, host: &str, cwd: &Path) -> Command {
     }
 }
 
+/// The command that lists the hosts `gh` is signed in to, GitHub Enterprise ones too.
+pub fn hosts_command(cwd: &Path) -> Command {
+    Command {
+        program: "gh".to_owned(),
+        args: ["auth", "status", "--active", "--json", "hosts"]
+            .map(str::to_owned)
+            .into(),
+        cwd: cwd.to_owned(),
+        env: Vec::new(),
+    }
+}
+
+/// The hosts in what `hosts_command` printed, in lower case; none if it is not that.
+pub fn parse_hosts(stdout: &str) -> Vec<String> {
+    let Ok(answer) = serde_json::from_str::<serde_json::Value>(stdout) else {
+        return Vec::new();
+    };
+    let Some(hosts) = answer.get("hosts").and_then(serde_json::Value::as_object) else {
+        return Vec::new();
+    };
+    hosts.keys().map(|host| host.to_lowercase()).collect()
+}
+
 /// The token in what the command printed, `None` if there is none.
 pub fn parse(kind: PlatformKind, stdout: &str) -> Option<CliToken> {
     match kind {
@@ -68,6 +91,16 @@ mod tests {
         assert_eq!(cli.token.expose(), "gho_abc");
         assert_eq!(cli.expires_at, None);
         assert!(parse(PlatformKind::GitHub, "\n").is_none());
+    }
+
+    #[test]
+    fn gh_lists_the_hosts_it_is_signed_in_to() {
+        let out = r#"{"hosts":{"github.com":[{"active":true,"host":"github.com","login":"octocat","state":"success"}],
+"GHE.corp.example":[{"active":true,"host":"GHE.corp.example","login":"ada","state":"success"}]}}"#;
+        let mut hosts = parse_hosts(out);
+        hosts.sort();
+        assert_eq!(hosts, ["ghe.corp.example", "github.com"]);
+        assert!(parse_hosts("You are not logged into any GitHub hosts.").is_empty());
     }
 
     #[test]

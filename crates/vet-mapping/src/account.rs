@@ -25,6 +25,7 @@ pub fn account(account: &Account) -> p::Account {
             },
         },
         in_use: account.in_use,
+        expires_at: account.expires_at.and_then(|at| u32::try_from(at).ok()),
     }
 }
 
