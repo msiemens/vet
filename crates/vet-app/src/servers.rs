@@ -323,7 +323,10 @@ mod tests {
 
         servers.set_custom_path("rust", Some("/opt/ra".into())).await.unwrap();
         for _ in 0..5 {
-            assert_eq!(servers.locate(&config("rust"), project).await.unwrap().program, "/opt/ra");
+            assert_eq!(
+                servers.locate(&config("rust"), project).await.unwrap().program,
+                "/opt/ra"
+            );
         }
         servers.status(project).await.unwrap();
         assert_eq!(servers.settings.1.load(std::sync::atomic::Ordering::SeqCst), 3);
