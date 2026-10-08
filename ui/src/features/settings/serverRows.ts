@@ -7,6 +7,14 @@ import type { InstallProgress } from "../../state/installLog";
 /** `installing` and `failed` are the page's own: the protocol only knows found and missing. */
 export type ServerStatus = "found" | "custom" | "missing" | "installing" | "failed";
 
+/** The `tsserver` a TypeScript server answers with, as its note says. */
+export interface Tsserver {
+  /** Which `typescript` it is, e.g. "the project's typescript 5.9.2 (/path)"; absent if there is none. */
+  whose?: string;
+  /** Why there is none, when there is none. */
+  why?: string;
+}
+
 export interface ServerRow {
   language: string;
   title: string;
@@ -14,9 +22,15 @@ export interface ServerRow {
   status: ServerStatus;
   statusLabel: string;
   path?: string;
+  /** Where the found server came from, in full. */
   origin?: string;
+  /** Where the found server came from, short enough for the table: the path if it is a custom one. */
+  source: string;
   version?: string;
+  /** Notes other than the `tsserver` one. */
   notes: string[];
+  /** Present for a server that answers through a `tsserver`. */
+  tsserver?: Tsserver;
   /** Why the server is missing, or why the install failed. */
   problem?: string;
   /** The path the user set, found or not. */
@@ -32,7 +46,13 @@ const ORIGINS: Record<ServerOrigin, string> = {
   custom: "Custom path",
   project: "Project toolchain",
   installed: "Installed by Vet",
-  path: "On PATH",
+  path: "PATH",
+};
+
+const SHORT_ORIGINS: Record<Exclude<ServerOrigin, "custom">, string> = {
+  project: "Project toolchain",
+  installed: "Vet",
+  path: "PATH",
 };
 
 const STATUS_LABELS: Record<ServerStatus, string> = {
@@ -43,6 +63,14 @@ const STATUS_LABELS: Record<ServerStatus, string> = {
   failed: "Install failed",
 };
 
+const TSSERVER_NOTE = "tsserver: ";
+const NO_TSSERVER = `${TSSERVER_NOTE}none`;
+
+function tsserver(note: string): Tsserver {
+  const text = note.slice(TSSERVER_NOTE.length);
+  return note.startsWith(NO_TSSERVER) ? { why: text.replace(/^none;\s*/, "") } : { whose: text };
+}
+
 export function serverRow(info: ServerInfo, install?: InstallProgress): ServerRow {
   const { state } = info;
   let status: ServerStatus;
@@ -52,6 +80,8 @@ export function serverRow(info: ServerInfo, install?: InstallProgress): ServerRo
   else status = state.origin === "custom" ? "custom" : "found";
 
   const found = state.type === "found" ? state : undefined;
+  const notes = found?.notes ?? [];
+  const tsserverNote = notes.find((n) => n.startsWith(TSSERVER_NOTE));
   return {
     language: info.language,
     title: info.title,
@@ -60,8 +90,10 @@ export function serverRow(info: ServerInfo, install?: InstallProgress): ServerRo
     statusLabel: STATUS_LABELS[status],
     path: found?.path,
     origin: found ? ORIGINS[found.origin] : undefined,
+    source: !found ? "" : found.origin === "custom" ? found.path : SHORT_ORIGINS[found.origin],
     version: found?.version ?? undefined,
-    notes: found?.notes ?? [],
+    notes: notes.filter((n) => n !== tsserverNote),
+    tsserver: tsserverNote ? tsserver(tsserverNote) : undefined,
     problem: install?.error ?? (state.type === "missing" ? state.reason : undefined),
     customPath: info.customPath ?? undefined,
     pinnedVersion: info.pinnedVersion ?? undefined,

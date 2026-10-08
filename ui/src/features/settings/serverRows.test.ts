@@ -40,6 +40,29 @@ void test("a custom origin is the custom status and keeps the path to reset", ()
   assert.equal(row.customPath, "/bin/ra");
 });
 
+void test("the table names the source short, and a custom one by its path", () => {
+  assert.equal(serverRow(found("installed")).source, "Vet");
+  assert.equal(serverRow(found("path")).source, "PATH");
+  assert.equal(serverRow(found("project")).source, "Project toolchain");
+  assert.equal(serverRow(found("custom")).source, "/bin/ra");
+  assert.equal(serverRow(missing).source, "");
+});
+
+void test("the tsserver note becomes its own entry, found or not", () => {
+  const withNote = (note: string): ServerInfo => {
+    const info = found("path");
+    if (info.state.type === "found") info.state.notes = [note, "other"];
+    return info;
+  };
+  const using = serverRow(withNote("tsserver: the project's typescript 5.9.2 (/p/tsserver.js)"));
+  assert.equal(using.tsserver?.whose, "the project's typescript 5.9.2 (/p/tsserver.js)");
+  assert.deepEqual(using.notes, ["other"]);
+  const none = serverRow(withNote("tsserver: none; the project has no typescript"));
+  assert.equal(none.tsserver?.whose, undefined);
+  assert.equal(none.tsserver?.why, "the project has no typescript");
+  assert.equal(serverRow(found("path")).tsserver, undefined);
+});
+
 void test("a missing server carries the reason and the backend's title and can be installed when the backend says so", () => {
   const row = serverRow(missing);
   assert.equal(row.status, "missing");
