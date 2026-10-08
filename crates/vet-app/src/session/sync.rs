@@ -775,7 +775,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             .flat_map(|t| t.messages.iter().filter_map(|m| Some(m.remote.as_ref()?.id.clone())))
             .collect();
         for (thread, message) in posting {
-            let t = find_thread(st, thread)?.clone();
+            // A flat thread goes with the last of its comments found on the platform.
+            let Ok(t) = find_thread(st, thread).cloned() else {
+                continue;
+            };
             let Some(m) = t.messages.iter().find(|m| m.id == message).cloned() else {
                 continue;
             };
