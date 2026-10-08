@@ -81,7 +81,11 @@ impl ReviewWriter {
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
             .foreign_keys(true)
-            .busy_timeout(Duration::from_secs(5));
+            .busy_timeout(Duration::from_secs(5))
+            // A commit in WAL mode is an append; a checkpoint copies it into the database and
+            // then truncates the log, so on Apple systems it flushes the drive (as content
+            // batches do) before the log goes. Elsewhere SQLite ignores it.
+            .pragma("checkpoint_fullfsync", "ON");
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options)
