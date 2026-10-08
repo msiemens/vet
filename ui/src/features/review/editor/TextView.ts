@@ -1,33 +1,51 @@
-// A read-only view of one file's text in the target snapshot (Jump to Source): a CodeMirror
-// editor with syntax highlighting, line numbers, the semantic layer (hover, go to definition,
-// diagnostics) and, for a changed file, marks on the changed lines, or a small placeholder when
-// the file has no text to show.
+// A read-only view of one file's text in the target snapshot (the File view of a changed file, and
+// Jump to Source): a CodeMirror editor with syntax highlighting, line numbers, the semantic layer
+// (hover, go to definition, diagnostics) and, for a changed file, its changes drawn in the text
+// (`fileChanges`), or a small placeholder when the file has no text to show.
 
-import { EditorState, type Extension } from "@codemirror/state";
+import { EditorState, type StateField, Text } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import type { FileChange } from "../../../generated/FileChange";
 import type { HunkState } from "../../../generated/HunkState";
 import type { NoTextReason } from "../../../generated/NoTextReason";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { errorText } from "../../../lib/errorText";
-import { decodeHighlights } from "../../../lib/highlights";
+import { type Highlights, decodeHighlights } from "../../../lib/highlights";
 import { iconSvg } from "../../../lib/ui/icons";
-import { changeMarks, setMarkStates } from "./changeMarks";
 import { currentLine } from "./currentLine";
+import { closeChangeCard, showChangeCard } from "./fileCard";
+import {
+  type ChangesSource,
+  type ChangesState,
+  type HunkActions,
+  changesField,
+  fileChanges,
+  setCurrentHunk,
+  setPeek,
+  setStates,
+} from "./fileChanges";
+import { hunkAtLine, oldLinesOf, stepHunk } from "./fileLayout";
 import { type FileSource, StaleRevision } from "./fileSource";
 import { highlightExtension } from "./highlightExtension";
-import { type HunkActions, closeHunkPopover, openHunkPopover } from "./hunkPopover";
-import { oldLines } from "./markedLines";
+import { hunkToolbar } from "./hunkToolbar";
 import type { Loaded } from "./mount";
 import { lineOf, lineStart } from "./positions";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { softWrap, wrapsByDefault } from "./softWrap";
+
+export type { HunkActions } from "./fileChanges";
 
 const NO_TEXT: Record<NoTextReason, string> = {
   binary: "Binary file: there is no text to show.",
   unavailable: "The content of this file is not available: it is over the size limit, or it could not be read.",
   notAFile: "Not a regular file: a symlink or a submodule has no text.",
 };
+
+/** What a changed file's text draws its changes from. */
+interface Drawn {
+  source: ChangesSource;
+  field: StateField<ChangesState>;
+}
 
 export class TextView {
   private view?: EditorView;
@@ -38,6 +56,7 @@ export class TextView {
   private span?: TextSpan;
   /** The review state of each of the file's hunks, as the backend last sent it. */
   private states: HunkState[];
+  private drawn?: Drawn;
 
   /**
    * Fills `root` with the file's text from `source`. A reply of another revision is dropped:
@@ -48,34 +67,42 @@ export class TextView {
     private path: string,
     private source: FileSource,
     private hooks: SemanticHooks,
-    /** The changeset's change to the file, if it changes it: its lines are marked, and a mark offers the hunk's actions. */
+    /** The changeset's change to the file, if it changes it: its hunks are drawn, and the owner acts on them. */
     private changes?: { file: FileChange; actions: HunkActions },
   ) {
     this.states = changes?.file.review.hunks ?? [];
     root.replaceChildren();
     root.classList.add("vet-text");
-    source.text(path).then(
-      (content) => {
-        if (this.destroyed) return;
-        if (content.type === "text") this.mountEditor(content.text, content.highlights);
-        else this.placeholder(NO_TEXT[content.reason]);
-      },
-      (error: unknown) => {
-        if (!this.destroyed && !(error instanceof StaleRevision)) this.placeholder(errorText(error));
-      },
-    );
+    const fail = (error: unknown) => {
+      if (!this.destroyed && !(error instanceof StaleRevision)) this.placeholder(errorText(error));
+    };
+    if (changes?.file.hunks.length) {
+      // The changes come with the text, and the old lines the removals and the cards show.
+      source.contents(changes.file).then((loaded) => {
+        if (!this.destroyed) this.mountEditor(loaded.target, loaded.targetHighlights, loaded);
+      }, fail);
+      return;
+    }
+    source.text(path).then((content) => {
+      if (this.destroyed) return;
+      if (content.type === "text") this.mountEditor(content.text, decodeHighlights(content.highlights));
+      else this.placeholder(NO_TEXT[content.reason]);
+    }, fail);
   }
 
-  private mountEditor(text: string, highlights: number[]) {
+  private mountEditor(text: string, highlights: Highlights, loaded?: Loaded) {
+    const drawn = loaded && this.changes && this.draw(this.changes, loaded);
+    this.drawn = drawn;
     this.view = new EditorView({
       parent: this.root,
       doc: text,
       extensions: [
         softWrap(wrapsByDefault(this.path)),
-        ...this.markExtension(),
-        lineNumbers(),
+        ...(drawn
+          ? [...fileChanges(drawn.source, drawn.field), hunkToolbar(drawn.source, drawn.field)]
+          : [lineNumbers()]),
         currentLine,
-        highlightExtension(decodeHighlights(highlights)),
+        highlightExtension(highlights),
         // Read-only but focusable, so the caret and Mod+B work.
         EditorState.readOnly.of(true),
         semanticExtensions(this.path, "target", this.hooks),
@@ -86,32 +113,107 @@ export class TextView {
     this.refreshDiagnostics();
   }
 
-  private markExtension(): Extension[] {
-    const changes = this.changes;
-    if (!changes?.file.hunks.length) return [];
-    const { file, actions } = changes;
-    let contents: Promise<Loaded> | undefined;
-    return [
-      changeMarks(file.hunks, this.states, (index, mark) => {
-        const hunk = file.hunks[index];
-        openHunkPopover(
-          mark,
-          {
-            index,
-            hunk,
-            state: this.states[index],
-            oldLines: async () => oldLines((await (contents ??= this.source.contents(file))).base, hunk),
-          },
-          actions,
-        );
-      }),
-    ];
+  private draw({ file, actions }: { file: FileChange; actions: HunkActions }, loaded: Loaded): Drawn {
+    const source: ChangesSource = {
+      hunks: file.hunks,
+      changes: loaded.changes,
+      base: Text.of(loaded.base.split(/\r\n?|\n/)),
+      actions,
+      card: (view, line) => this.showCard(view, line),
+    };
+    return { source, field: changesField(source, this.states) };
   }
 
   /** The hunks' review states changed. */
   applyReview(states: HunkState[]) {
     this.states = states;
-    this.view?.dispatch({ effects: setMarkStates.of(states) });
+    if (this.drawn) this.view?.dispatch({ effects: setStates.of(states) });
+  }
+
+  /** The file has hunks to step through. */
+  get hasHunks(): boolean {
+    return !!this.changes?.file.hunks.length;
+  }
+
+  /** The hunk the caret is in, or that was chosen last; -1 for none. */
+  get current(): number {
+    const { view, drawn } = this;
+    return (view && drawn && view.state.field(drawn.field).current) ?? -1;
+  }
+
+  /** Puts the caret on the hunk's first line (below the wedge, for a removal, whose lines then show) and centres it. */
+  goToHunk(hunk: number) {
+    const { view, drawn } = this;
+    if (!view || !drawn) return;
+    const h = drawn.source.hunks[hunk];
+    const pos = lineStart(view.state.doc, h.targetStart);
+    view.dispatch({
+      selection: { anchor: pos },
+      effects: [
+        EditorView.scrollIntoView(pos, { y: "center" }),
+        setCurrentHunk.of(hunk),
+        ...(h.targetLen === 0 ? [setPeek.of({ hunk, open: true })] : []),
+      ],
+    });
+  }
+
+  /** Goes to the hunk `delta` stops from the current one, or from the caret when there is none. */
+  step(delta: number) {
+    const { view, drawn } = this;
+    if (!view || !drawn) return;
+    const caret = lineOf(view.state.doc, view.state.selection.main.head);
+    const to = stepHunk(drawn.source.hunks, this.current, caret, delta);
+    if (to >= 0) this.goToHunk(to);
+  }
+
+  /** Flips the current hunk; answers whether there was one. */
+  toggleCurrent(): boolean {
+    const hunk = this.current;
+    if (hunk < 0 || !this.drawn) return false;
+    this.drawn.source.actions.toggleSeen(hunk);
+    return true;
+  }
+
+  /** Marks the current hunk seen again if it is seen against an old base; answers whether there was such a hunk. */
+  reconfirmCurrent(): boolean {
+    const hunk = this.current;
+    if (hunk < 0 || this.states[hunk] !== "seenAgainstOldBase" || !this.drawn) return false;
+    this.drawn.source.actions.toggleSeen(hunk);
+    return true;
+  }
+
+  /** Asks for a comment on the current hunk; answers whether there was one. */
+  commentHere(): boolean {
+    const hunk = this.current;
+    if (hunk < 0 || !this.drawn) return false;
+    this.drawn.source.actions.comment(hunk);
+    return true;
+  }
+
+  /** Opens the change card of the caret's line; answers whether the line is a changed one. */
+  showCaretCard(): boolean {
+    const { view } = this;
+    if (!view) return false;
+    return this.showCard(view, lineOf(view.state.doc, view.state.selection.main.head));
+  }
+
+  private showCard(view: EditorView, line: number): boolean {
+    const { drawn } = this;
+    if (!drawn) return false;
+    const { layout } = view.state.field(drawn.field);
+    const hunk = hunkAtLine(layout, line);
+    if (hunk === undefined) return false;
+    view.dispatch({ effects: setCurrentHunk.of(hunk) });
+    const block = view.lineBlockAt(lineStart(view.state.doc, line));
+    const top = view.documentTop + block.top;
+    showChangeCard(
+      { left: view.contentDOM.getBoundingClientRect().left, top, bottom: top + block.height },
+      {
+        old: oldLinesOf(drawn.source.hunks[hunk], line, drawn.source.changes, drawn.source.base),
+        state: this.states[hunk],
+      },
+    );
+    return true;
   }
 
   /** Asks for the file's diagnostics again (the first time, or after the servers changed). */
@@ -154,7 +256,7 @@ export class TextView {
 
   destroy() {
     this.destroyed = true;
-    closeHunkPopover();
+    closeChangeCard();
     this.view?.destroy();
     this.root.classList.remove("vet-text");
     this.root.replaceChildren();

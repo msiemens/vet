@@ -37,7 +37,7 @@ export interface CommandContext {
    * is what the tab shows: a file's path, or for a log tab the check run it is the log of.
    */
   tab?: { kind: TabKind; path?: string };
-  /** The active tab shows a diff view, whose hunks the commands step through. */
+  /** The active tab shows hunks to step through: a diff view, or a changed file's text. */
   diffView: boolean;
   /** Index of the current hunk in the active view, -1 for none. */
   hunk: number;

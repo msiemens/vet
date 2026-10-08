@@ -82,6 +82,10 @@
   --add-text: light-dark(#2b8546, #6fcf97);
   --del-bg: light-dark(#fbe8e7, #3e2629);
   --del-text: light-dark(#bf3a2e, #f28b82);
+  /* A text's changed lines and words once seen (the File view): the same colours, fainter. */
+  --add-bg-faint: color-mix(in srgb, var(--add-bg) 40%, var(--bg-editor));
+  --add-word: color-mix(in srgb, var(--add-text) 25%, transparent);
+  --add-word-faint: color-mix(in srgb, var(--add-text) 12%, transparent);
 
   /* Syntax */
   --syn-keyword: light-dark(#8b2dae, #c79bff);

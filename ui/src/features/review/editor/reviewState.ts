@@ -82,6 +82,9 @@ for (const cls of Object.values(CLASS)) {
   })();
 }
 
+/** The strip's marker for a changed line of a hunk in `state`. */
+export const stripMarker = (state: HunkState): GutterMarker => gutterMarkers[CLASS[state]];
+
 function build(state: Omit<ReviewState, "decos">, doc: Text, side: SideConfig): DecorationSet {
   const out: Range<Decoration>[] = [];
   state.spans.forEach((span, i) => {

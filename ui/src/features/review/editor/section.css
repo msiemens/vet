@@ -207,20 +207,20 @@
 }
 
 /* Review state (SPEC §10): a 3px strip, solid blue seen, diagonal amber stripes seen against an old base, none unseen. */
-.file .cm-editor .vet-strip {
+.cm-editor .vet-strip {
   min-width: 3px;
   width: 3px;
 }
-.file .cm-editor .vet-strip .vet-seen {
+.cm-editor .vet-strip .vet-seen {
   background: var(--seen);
 }
-.file .cm-editor .vet-strip .vet-old {
+.cm-editor .vet-strip .vet-old {
   background: var(--old-base-stripes);
 }
-.file .cm-editor .vet-strip .vet-info {
+.cm-editor .vet-strip .vet-info {
   background: var(--note);
 }
-.file .cm-editor .vet-strip .vet-unapplied {
+.cm-editor .vet-strip .vet-unapplied {
   background: var(--warn);
 }
 .file .cm-editor .cm-deletedChunk {

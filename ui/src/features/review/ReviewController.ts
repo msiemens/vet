@@ -27,8 +27,7 @@ import type { ViewProbe } from "./editor/viewProbe";
 import { bindRevision, focusedEditor } from "./editor/semantic";
 import type { Mode } from "../../lib/viewMode";
 import { type CommandContext, commands } from "../../state/commands";
-import type { HunkActions } from "./editor/hunkPopover";
-import { TextView } from "./editor/TextView";
+import { type HunkActions, TextView } from "./editor/TextView";
 import { type SavedView, restoredTabs } from "./changesetViews";
 import { keyId } from "../../state/changesetKey";
 import { type ViewActions, viewCommands } from "./reviewCommands";
@@ -220,15 +219,22 @@ export class ReviewController {
     return this.views.get(this.tabs.active);
   }
 
+  /** The text of the focused tab, if it is a changed file's and has hunks to step through. */
+  private get activeText(): TextView | undefined {
+    const text = this.texts.get(this.tabs.active);
+    return text?.hasHunks ? text : undefined;
+  }
+
   /** The facts about the review screen that commands read. */
   private facts(): Partial<CommandContext> {
     const id = this.tabs.active;
     const view = this.views.get(id);
+    const text = this.activeText;
     return {
       tab: { kind: kindOf(id), path: subjectOf(id) },
-      diffView: view !== undefined,
+      diffView: view !== undefined || text !== undefined,
       byCommit: this.changeset.shownCommit !== undefined,
-      hunk: view?.current ?? -1,
+      hunk: view?.current ?? text?.current ?? -1,
       editor: focusedEditor(document.activeElement),
     };
   }
@@ -237,14 +243,19 @@ export class ReviewController {
     return {
       step: (delta) => this.stepHunk(delta),
       toggleSeen: () => {
+        const text = this.activeText;
+        if (text) return text.toggleCurrent();
         const view = this.active;
         return !!view && this.toggleBySpace(view);
       },
       reconfirm: () => {
+        const text = this.activeText;
+        if (text) return text.reconfirmCurrent();
         const done = this.active?.reconfirmCurrent();
         return done !== undefined;
       },
-      comment: () => this.active?.commentHere() ?? false,
+      comment: () => this.activeText?.commentHere() ?? this.active?.commentHere() ?? false,
+      showCard: () => this.activeText?.showCaretCard() ?? false,
       jumpToSource: () => {
         const caret = this.tabs.active === CHANGES ? this.active?.caret() : undefined;
         if (!caret) return false;
@@ -536,7 +547,7 @@ export class ReviewController {
     if (line !== undefined) this.texts.get(textTab(path))?.goToLine(line);
   }
 
-  /** What a change mark in the file's text tab offers for the file's hunks. */
+  /** What the file's text tab offers for the file's hunks. */
   private hunkActions(file: FileChange, revision: number): HunkActions {
     return {
       toggleSeen: (hunk) =>
@@ -544,19 +555,18 @@ export class ReviewController {
           () => this.changeset.toggleHunk(revision, file.path, hunk),
           () => undefined,
         ),
-      comment: (hunk) => void this.openHunk(file, hunk, true),
-      openInDiff: (hunk) => void this.openHunk(file, hunk, false),
+      comment: (hunk) => void this.commentOnHunk(file, hunk),
     };
   }
 
-  /** Opens the file's diff tab at its `hunk`-th hunk, with the form for a comment on it if asked. */
-  private async openHunk(file: FileChange, hunk: number, comment: boolean) {
+  /** Opens the file's diff tab at its `hunk`-th hunk, with the form for a comment on it. */
+  private async commentOnHunk(file: FileChange, hunk: number) {
     this.tabs.show(file.path);
     await tick(); // a new tab's pane attaches and builds its view
     const view = this.views.get(fileTab(file.path));
     if (!view) return;
     await view.goToHunk(file.nonText.length + hunk);
-    if (comment) view.commentOnHunk(hunk);
+    view.commentOnHunk(hunk);
   }
 
   /** Opens the file's diff tab, or focuses it if it is open, and goes to a 0-based target `line` if given. */
@@ -674,6 +684,11 @@ export class ReviewController {
 
   /** Goes to the hunk `delta` away from the current one in the focused tab. */
   stepHunk(delta: number) {
+    const text = this.activeText;
+    if (text) {
+      text.step(delta);
+      return;
+    }
     const view = this.active;
     if (!view) return;
     // By commit, the next hunk after a commit's last one is the next commit's first.

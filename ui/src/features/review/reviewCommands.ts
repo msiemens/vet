@@ -15,6 +15,8 @@ export interface ViewActions {
   reconfirm(): boolean;
   /** Opens the comment form for the selection, else the current hunk; answers whether there was somewhere to comment. */
   comment(): boolean;
+  /** Opens the change card of the caret's line in a changed file's text; answers whether the line is a changed one. */
+  showCard(): boolean;
   /** Opens the file of the Changes stream's caret at its line; answers whether there was a caret. */
   jumpToSource(): boolean;
   /** Shows the commit `delta` away from the one on view; answers whether there was one. */
@@ -57,6 +59,14 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
     { id: "review.toggleSeen", label: "Toggle seen", binding: "Space", enabled: inView, run: () => a.toggleSeen() },
     { id: "review.reconfirm", label: "Re-confirm", binding: "r", enabled: inView, run: () => a.reconfirm() },
     { id: "review.comment", label: "Add comment", binding: "Ctrl-Alt-c", enabled: inView, run: () => a.comment() },
+    {
+      id: "review.changeCard",
+      label: "Show change card",
+      binding: "Alt-F1",
+      inFields: true,
+      enabled: (c) => c.diffView && c.tab?.kind === "text",
+      run: () => a.showCard(),
+    },
     {
       id: "review.jumpToSource",
       label: "Jump to source",
@@ -160,6 +170,7 @@ export const fileHeaderMenu: MenuSpec = treeMenu(false);
 /** The context menu of a diff or text editor. */
 export const editorMenu: MenuSpec = [
   { command: "review.goToDefinition" },
+  { command: "review.changeCard" },
   { command: "review.jumpToSource" },
   "-",
   { command: "review.comment" },

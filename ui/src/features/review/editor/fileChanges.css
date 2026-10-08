@@ -1,0 +1,208 @@
+/* A changed file's text (`fileChanges.ts`): the lines its hunks added or changed are tinted, the
+   changed words of a modified line darker; what was seen is faint. The review strip is the diff
+   views' (`section.css`). */
+.vet-text .cm-editor .vet-fl-full {
+  background: var(--add-bg);
+}
+.vet-text .cm-editor .vet-fl-faint {
+  background: var(--add-bg-faint);
+}
+.vet-text .cm-editor .vet-fw-full {
+  background: var(--add-word);
+}
+.vet-text .cm-editor .vet-fw-faint {
+  background: var(--add-word-faint);
+}
+.vet-text .cm-editor .vet-strip .cm-gutterElement,
+.vet-text .cm-editor .vet-edges .cm-gutterElement {
+  cursor: pointer;
+}
+
+/* The gutter of wedges and the current hunk's bracket, between the line numbers and the strip. */
+.vet-text .cm-editor .vet-edges {
+  min-width: 10px;
+  width: 10px;
+}
+.vet-text .cm-editor .vet-edges .cm-gutterElement {
+  position: relative;
+}
+.vet-edge {
+  position: absolute;
+  inset: 0;
+}
+/* Where lines were removed: a wedge pointing at the gap, on the edge between two lines. */
+.vet-wedge {
+  position: absolute;
+  left: 0;
+  width: 7px;
+  height: 9px;
+  background: var(--del-text);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+.vet-wedge-above {
+  top: -4px;
+}
+.vet-wedge-below {
+  bottom: -4px;
+}
+.vet-wedge-seen {
+  background: color-mix(in srgb, var(--del-text) 40%, transparent);
+}
+.vet-wedge-seenAgainstOldBase {
+  background: var(--old-base);
+}
+.vet-wedge-informational {
+  background: var(--note);
+}
+.vet-wedge-unapplied {
+  background: var(--warn);
+}
+.vet-bracket {
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  box-sizing: border-box;
+  border-left: 2px solid var(--accent);
+}
+.vet-bracket-first,
+.vet-bracket-only {
+  top: 1px;
+  border-top: 2px solid var(--accent);
+}
+.vet-bracket-last,
+.vet-bracket-only {
+  bottom: 1px;
+  border-bottom: 2px solid var(--accent);
+}
+
+/* The lines a removal took, between the lines it sat between. */
+.vet-peek {
+  margin: 4px 16px 4px 12px;
+  border: 1px solid color-mix(in srgb, var(--del-text) 35%, transparent);
+  border-radius: var(--radius);
+  background: var(--del-bg);
+  font-size: var(--fs-mono);
+  user-select: none;
+}
+.vet-peek-seen {
+  background: color-mix(in srgb, var(--del-bg) 40%, var(--bg-editor));
+}
+.vet-peek-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 8px;
+  color: var(--text-2);
+}
+.vet-peek-head .ctl {
+  height: 20px;
+  padding: 0 8px;
+  font-size: var(--fs-mono-s);
+}
+.vet-peek-head .grow {
+  flex: 1;
+}
+.vet-peek-lines {
+  max-height: calc(12 * var(--h-line));
+  overflow: auto;
+  padding-bottom: 2px;
+}
+.vet-peek-line {
+  display: flex;
+  height: var(--h-line);
+  line-height: var(--h-line);
+  white-space: pre;
+}
+.vet-peek-no {
+  flex: none;
+  width: 40px;
+  padding-right: 12px;
+  box-sizing: border-box;
+  text-align: right;
+  color: var(--text-3);
+}
+
+/* The current hunk's toolbar over its top right: it fades and lets clicks through while code under it is
+   in use (`hunkToolbar.ts`). */
+.vet-fltools {
+  position: absolute;
+  z-index: 250;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  transition: opacity 0.12s;
+}
+.vet-fltools .vet-fltools-seen {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius);
+  font-size: var(--fs-ctl);
+  color: var(--text-2);
+}
+.vet-fltools-faded {
+  opacity: 0.25;
+  pointer-events: none;
+}
+
+/* The change card of a line. */
+.vet-fcard {
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 280px;
+  max-width: min(640px, calc(100vw - 8px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+}
+.vet-fcard-old {
+  padding: 4px 0;
+  background: var(--del-bg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+  user-select: text;
+}
+.vet-fcard-line {
+  display: flex;
+  gap: 8px;
+  padding: 0 10px;
+  line-height: var(--h-line);
+  white-space: pre;
+}
+.vet-fcard-sign {
+  flex: none;
+  color: var(--del-text);
+}
+.vet-fcard-changed {
+  background: color-mix(in srgb, var(--del-text) 25%, transparent);
+}
+.vet-fcard-footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 10px;
+  font-size: var(--fs-mono-s);
+  color: var(--text-3);
+}
+/* Where the line came from; empty until blame is available. */
+.vet-fcard-origin {
+  flex: 1;
+  font-family: var(--font-mono);
+}
+.vet-fcard-seen {
+  color: var(--seen);
+}
+.vet-fcard-seenAgainstOldBase {
+  color: var(--old-base);
+}
+.vet-fcard-unapplied {
+  color: var(--warn);
+}
