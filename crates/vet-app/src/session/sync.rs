@@ -148,7 +148,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// What the platform last said of the pull request on view besides its threads; `None` for
     /// another changeset, and before the first sync.
     pub async fn discussion(&self) -> Option<DiscussionView> {
-        let st = self.state.lock().await;
+        let st = self.hold().await;
         let Source::PullRequest { number, .. } = &st.source else {
             return None;
         };
@@ -175,7 +175,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// drafts in it. Fails, changing nothing, if the platform cannot be asked.
     pub async fn sync_threads<P: Platform + Sync>(&self, platform: &P) -> Result<SyncReport> {
         let _exchange = self.exchange.lock().await;
-        let source = self.state.lock().await.source.clone();
+        let source = self.hold().await.source.clone();
         let Source::PullRequest { remote, number } = &source else {
             return Err(SessionError::Invalid(
                 "the changeset on view is not a pull request".into(),
@@ -184,7 +184,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let discussion = platform.discussion(remote, *number).await?;
 
         let (plan, pushes, settled) = {
-            let mut st = self.state.lock().await;
+            let mut st = self.hold().await;
             if st.source != source {
                 return Ok(SyncReport::default());
             }
@@ -195,7 +195,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         let (pushed, problem) = push(platform, remote, pushes).await;
 
-        let mut st = self.state.lock().await;
+        let mut st = self.hold().await;
         if st.source != source {
             return Ok(SyncReport::default());
         }
@@ -426,7 +426,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         let _exchange = self.exchange.lock().await;
         let (thread, mut edited, remote, comment) = {
-            let mut st = self.state.lock().await;
+            let mut st = self.hold().await;
             let (thread, old) = find_message(&st, message)?;
             if !old.mine {
                 return Err(SessionError::Invalid("only your own comments can be edited".into()));
@@ -487,7 +487,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     ) -> Result<ThreadView> {
         let _exchange = self.exchange.lock().await;
         let (thread, mut kept, comment, remote) = {
-            let st = self.state.lock().await;
+            let st = self.hold().await;
             let (thread, old) = find_message(&st, message)?;
             let conflict = old
                 .remote
@@ -526,7 +526,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     pub async fn remove_message<P: Platform + Sync>(&self, platform: &P, message: MessageId) -> Result<()> {
         let _exchange = self.exchange.lock().await;
         let (thread, ends_thread, posted) = {
-            let st = self.state.lock().await;
+            let st = self.hold().await;
             let (thread, old) = find_message(&st, message)?;
             if !old.mine {
                 return Err(SessionError::Invalid("only your own comments can be removed".into()));
@@ -546,7 +546,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 Err(e) => return Err(e.into()),
             }
         }
-        let mut st = self.state.lock().await;
+        let mut st = self.hold().await;
         if ends_thread {
             self.acquisition.store.delete_thread(thread).await?;
             st.threads.retain(|t| t.id != thread);
@@ -565,7 +565,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// platform that keeps a thread with its other comments, they stay.
     pub async fn delete_thread<P: Platform + Sync>(&self, platform: &P, thread: ThreadId) -> Result<()> {
         let first = {
-            let st = self.state.lock().await;
+            let st = self.hold().await;
             let thread = find_thread(&st, thread)?;
             thread
                 .is_posted()
@@ -575,7 +575,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if let Some(first) = first {
             return self.remove_message(platform, first).await;
         }
-        let mut st = self.state.lock().await;
+        let mut st = self.hold().await;
         find_thread(&st, thread)?;
         self.acquisition.store.delete_thread(thread).await?;
         st.threads.retain(|t| t.id != thread);
@@ -632,7 +632,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if !traits.verdicts.iter().any(|v| v.id == verdict) {
             return Err(SessionError::Invalid(format!("the platform has no verdict {verdict}")));
         }
-        let (remote, number) = pull_request(&*self.state.lock().await)?;
+        let st = self.hold().await;
+        let (remote, number) = pull_request(&st)?;
+        drop(st);
         platform.vote(&remote, number, verdict).await?;
         Ok(())
     }
@@ -646,7 +648,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     ) -> Result<SubmitReport> {
         let _exchange = self.exchange.lock().await;
         let (remote, number, submission, skipped) = {
-            let mut st = self.state.lock().await;
+            let mut st = self.hold().await;
             let (remote, number) = pull_request(&st)?;
             self.ensure_changes(&mut st).await?;
             let (submission, skipped) = drafts_of(&st, verdict, body.clone());
@@ -682,7 +684,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             problem: posted.failed.clone(),
             not_posted: not_posted(&submission, &posted),
         };
-        let mut st = self.state.lock().await;
+        let mut st = self.hold().await;
         report.posted = self.record_posted(&mut st, &posted).await?;
         report.failed = self.settle_unposted(&mut st, &submission, &posted, whole).await?;
         Ok(report)
@@ -968,14 +970,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         let _exchange = self.exchange.lock().await;
         let remote = {
-            let st = self.state.lock().await;
+            let st = self.hold().await;
             own_conversation_comment(&st, comment)?;
             pull_request(&st)?.0
         };
         let posted = platform
             .edit_comment(&remote, &conversation_ref(comment), &body)
             .await?;
-        let mut st = self.state.lock().await;
+        let mut st = self.hold().await;
         if let Some(item) = conversation_mut(&mut st).and_then(|c| c.iter_mut().find(|i| i.id == comment)) {
             item.body = posted.body;
         }
@@ -987,7 +989,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     pub async fn remove_conversation_comment<P: Platform + Sync>(&self, platform: &P, comment: &str) -> Result<()> {
         let _exchange = self.exchange.lock().await;
         let remote = {
-            let st = self.state.lock().await;
+            let st = self.hold().await;
             own_conversation_comment(&st, comment)?;
             pull_request(&st)?.0
         };
@@ -995,7 +997,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             Ok(()) | Err(PlatformError::NotFound(_)) => {}
             Err(e) => return Err(e.into()),
         }
-        let mut st = self.state.lock().await;
+        let mut st = self.hold().await;
         if let Some(conversation) = conversation_mut(&mut st) {
             conversation.retain(|i| i.id != comment);
         }
@@ -1004,13 +1006,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     async fn store_message(&self, thread: ThreadId, message: Message) -> Result<()> {
         self.acquisition.store.replace_message(message.clone()).await?;
-        let mut st = self.state.lock().await;
+        let mut st = self.hold().await;
         edit_thread(&mut st, thread, |t| replace(t, &message));
         Ok(())
     }
 
     async fn view_of(&self, thread: ThreadId) -> Result<ThreadView> {
-        let mut st = self.state.lock().await;
+        let mut st = self.hold().await;
         self.ensure_changes(&mut st).await?;
         thread_by_id(&st, thread)
     }

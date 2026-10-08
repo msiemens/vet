@@ -79,7 +79,7 @@ pub(super) struct Interdiffed {
 }
 
 /// The review state remapped onto one diff.
-#[derive(Default)]
+#[derive(Clone, Default)]
 #[cfg_attr(test, derive(PartialEq, Debug))]
 pub(super) struct Remapped {
     /// Each recorded span as it is now. A span's remap depends on the span and the diff only, so
@@ -162,6 +162,7 @@ pub(super) fn files_of(pieces: &[ReviewedSpan]) -> impl Iterator<Item = &RepoPat
 }
 
 /// The current revision's diff, held by the engine, and the review state remapped onto it.
+#[derive(Clone)]
 pub(super) struct Changes {
     pub(super) diffed: Arc<Diffed>,
     pub(super) remapped: Remapped,
@@ -188,6 +189,7 @@ impl Changes {
 }
 
 /// The commits of the changeset, held by the engine, and the review state remapped onto each.
+#[derive(Clone)]
 pub(super) struct Commits {
     pub(super) units: Arc<Vec<CommitUnit>>,
     /// One per unit.
@@ -195,6 +197,7 @@ pub(super) struct Commits {
 }
 
 /// A started review.
+#[derive(Clone)]
 pub(super) struct OpenReview {
     pub(super) id: ReviewId,
     /// The number of the changeset's latest version.
@@ -207,6 +210,7 @@ pub(super) struct OpenReview {
     pub(super) summary: Option<ReviewSummary>,
 }
 
+#[derive(Clone)]
 pub(super) struct State {
     /// What the changeset on view is: its target comes from here.
     pub(super) source: Source,

@@ -4,7 +4,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use tokio::sync::MutexGuard;
 use vet_core::completion::Completion;
 use vet_core::content::{
     BlobId, EntryKind, FileDiff, NonTextChange, RenameMap, RepoPath, Snapshot, SnapshotDiff, SnapshotId,
@@ -16,6 +15,7 @@ use vet_core::review::{Anchor, CommentTarget, FileRemapInput, ReviewedSpan, Side
 
 use super::blobs::Texts;
 use super::derived::{CommitUnit, CommitsBetween, DiffOf, Diffed};
+use super::hold::Held;
 use super::interdiff::Interdiffing;
 use super::manifest::changeset_completion;
 use super::state::{Changes, Interdiffed, Remapped, Shown, State, View, acknowledged, files_of};
@@ -159,13 +159,13 @@ where
     /// What is derived (a diff, an interdiff, the commits) is awaited with the state released, so
     /// that other requests go on meanwhile and requests of the same value share its computation;
     /// only the remap of the review state onto it runs under the state.
-    pub(super) async fn viewing(&self, view: View) -> Result<(MutexGuard<'_, State>, Shown)> {
+    pub(super) async fn viewing(&self, view: View) -> Result<(Held<'_>, Shown)> {
         self.prepared(view, matches!(view, View::Commit { .. })).await
     }
 
     /// Like [`LiveSession::viewing`]; with `commits`, the commits of the changeset are computed too.
-    pub(super) async fn prepared(&self, view: View, commits: bool) -> Result<(MutexGuard<'_, State>, Shown)> {
-        let mut st = self.state.lock().await;
+    pub(super) async fn prepared(&self, view: View, commits: bool) -> Result<(Held<'_>, Shown)> {
+        let mut st = self.hold().await;
         loop {
             let missing = match self.missing(&mut st, view, commits).await? {
                 Ok(shown) => return Ok((st, shown)),
@@ -174,7 +174,7 @@ where
             let revision = st.revision;
             drop(st);
             let derived = self.derive(missing).await;
-            st = self.state.lock().await;
+            st = self.hold().await;
             if st.revision != revision {
                 continue;
             }

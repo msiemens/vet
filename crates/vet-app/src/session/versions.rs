@@ -7,6 +7,7 @@ use std::sync::Arc;
 use vet_core::content::{BlobId, LineDelta, RepoPath, Snapshot};
 use vet_core::version_diff::{VersionSides, version_diff};
 
+use super::derived::Diffed;
 use super::{LiveSession, Result};
 use crate::changeset::{ChangedFile, VersionChange, VersionOrigin};
 use crate::ports::{CommitInfo, GitRepo, LiveStore};
@@ -32,7 +33,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// recorded only while a review is open.
     pub async fn versions(&self) -> Result<Vec<VersionView>> {
         let (changeset, last_reviewed) = {
-            let st = self.state.lock().await;
+            let st = self.hold().await;
             match (st.changeset, &st.review) {
                 (Some(changeset), Some(review)) => (changeset, review.last_reviewed),
                 _ => return Ok(Vec::new()),
@@ -55,17 +56,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// What the version of `base` and `target` changed against `previous`, the base and the target
-    /// of the version before it; with none, against its own base, which is the changeset's diff.
-    /// Content that cannot be read leaves its file counted as a change without lines.
+    /// of the version before it. Content that cannot be read leaves its file counted as a change
+    /// without lines.
     pub(super) async fn change_of(
         &self,
-        previous: Option<(&Arc<Snapshot>, &Arc<Snapshot>)>,
+        (base_a, target_a): (&Arc<Snapshot>, &Arc<Snapshot>),
         base: &Arc<Snapshot>,
         target: &Arc<Snapshot>,
     ) -> Result<VersionChange> {
-        let Some((base_a, target_a)) = previous else {
-            return Ok(change(self.diff_of(base, target).await?.diff.changed_files()));
-        };
         let sides = VersionSides {
             base_a,
             target_a,
@@ -80,6 +78,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         Ok(change(version_diff(sides, &paths, &mut blobs).diff.changed_files()))
     }
+}
+
+/// What the first version of a review changed: the changeset's diff.
+pub(super) fn first_change(diffed: &Diffed) -> VersionChange {
+    change(diffed.diff.changed_files())
 }
 
 fn change(files: Vec<(RepoPath, LineDelta)>) -> VersionChange {

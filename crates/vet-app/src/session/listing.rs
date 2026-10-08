@@ -82,7 +82,7 @@ fn offered_remote(divergence: Option<Divergence>, age_days: i64, keep: bool) -> 
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// The working tree, every local branch, and the remote branches worth reviewing.
     pub async fn changesets(&self) -> Result<ChangesetList> {
-        let on_view = self.state.lock().await.source.clone();
+        let on_view = self.published.read().source.clone();
         let git = &self.acquisition.git;
         let default = match git.default_reference().await? {
             Some(reference) => git.resolve_commit(&reference).await.ok(),

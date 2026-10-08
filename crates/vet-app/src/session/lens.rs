@@ -101,7 +101,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Remembers the lens the changeset on view is reviewed in.
     pub async fn set_lens(&self, lens: Lens) -> Result<()> {
-        let st = self.state.lock().await;
+        let st = self.hold().await;
         if st.source == Source::WorkingTree {
             return Err(SessionError::Invalid(
                 "the working tree has no commits of its own to review by".into(),

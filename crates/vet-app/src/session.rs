@@ -51,6 +51,7 @@ mod blobs;
 mod browse;
 mod content;
 mod derived;
+mod hold;
 mod interdiff;
 mod lens;
 mod lines;
@@ -69,7 +70,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::Mutex;
 use vet_core::content::{EntryKind, FileDiff, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
@@ -81,6 +82,7 @@ pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};
 use self::derived::{Derived, DiffOf};
+use self::hold::{Held, Published, Writer};
 pub use self::lens::{CommitKind, CommitUnitView, CommitsView};
 use self::lines::LinesBetween;
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
@@ -90,6 +92,7 @@ use self::state::{OpenReview, Shown, State, check_revision, lifecycle_of};
 pub use self::sync::{DiscussionView, Keep, SubmitReport, SyncNotice, SyncReport};
 pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsView};
 pub use self::versions::VersionView;
+use self::versions::first_change;
 pub use self::views::{
     BaseView, EntryInfo, FileStatus, FileView, InterdiffView, ItemView, Lifecycle, ManifestView, ModeChange, Outcome,
     ReviewUpdateView, ReviewView, SemanticSides, TargetView,
@@ -183,16 +186,17 @@ pub struct LiveSession<G, S> {
     /// The repository root, which with a source is the key a changeset is stored under.
     repo: String,
     clock: UnixClock,
-    /// Serializes everything that reads or edits review state: of the changeset on view.
-    state: Mutex<State>,
-    /// The changesets that were on view and are not now, by source. Locked after `state`.
-    parked: Mutex<HashMap<Source, State>>,
+    /// The review state of the changeset on view, as the last command left it.
+    published: Published,
+    /// Held by the one command that changes review state at a time, which asks for it in the order
+    /// the viewer acted in. It guards the changesets that were on view and are not now.
+    token: Mutex<Writer>,
     /// Why the working tree is polled instead of watched, if it is.
     degraded: std::sync::Mutex<Option<Degraded>>,
     /// Told every time the revision on view moves, so that work for an older one stops.
     revisions: Arc<Revisions>,
     /// Held while threads are exchanged with a platform, so two exchanges never overlap. Locked
-    /// before `state`, which is not held across the platform's answers.
+    /// before the token, which is not held across the platform's answers.
     exchange: Mutex<()>,
     /// The line deltas between commits that the list of changesets shows.
     lines: Engine<LinesBetween>,
@@ -303,8 +307,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             name,
             repo,
             clock,
-            state: Mutex::new(state),
-            parked: Mutex::default(),
+            published: Published::new(state),
+            token: Mutex::default(),
             degraded: std::sync::Mutex::new(None),
             revisions: Arc::default(),
             exchange: Mutex::new(()),
@@ -414,12 +418,17 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(())
     }
 
-    /// What `view` shows, for a command that starts the review if none is open. Starting it keeps
-    /// the working tree's dirty content in the store, which can take a while, or wait for a copy
-    /// ahead under way: that is done first, with the state released, so readers are answered
-    /// meanwhile and [`LiveSession::begin`] finds the content held. If the revision moved
-    /// meanwhile, it starts over.
-    async fn beginning(&self, view: View) -> Result<(MutexGuard<'_, State>, Shown)> {
+    /// The write token, with the state as the last command left it.
+    async fn hold(&self) -> Held<'_> {
+        Held::new(self.token.lock().await, &self.published)
+    }
+
+    /// What `view` shows, for a command that starts the review if none is open. Starting it needs
+    /// the working tree's dirty content in the store, which can take a while, or a copy ahead under
+    /// way to end: that is done first, without the token, so the other commands go on meanwhile and
+    /// the token's holder never waits for a copy. If the revision moved meanwhile, it starts over.
+    /// What it returns has the content held: [`LiveSession::begin`] copies nothing.
+    async fn beginning(&self, view: View) -> Result<(Held<'_>, Shown)> {
         let mut copied = None;
         loop {
             let (st, shown) = self.viewing(view).await?;
@@ -436,11 +445,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// Starts the review (SPEC "Session lifecycle"): records the base, `HEAD`
-    /// and the current target, which becomes version 1, copies the target's
-    /// dirty content into the store (what `copy_ahead` and
-    /// [`LiveSession::beginning`] have not, normally nothing) and takes the
-    /// changeset's refs. Does nothing if a review is open. Returns whether it
-    /// started one.
+    /// and the current target, which becomes version 1, and takes the
+    /// changeset's refs. The target's dirty content is in the store already:
+    /// [`LiveSession::beginning`] saw to it. Does nothing if a review is open.
+    /// Returns whether it started one.
     async fn begin(&self, st: &mut State) -> Result<bool> {
         if st.review.is_some() {
             return Ok(false);
@@ -449,15 +457,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let (git, store) = (&acquisition.git, &acquisition.store);
         // A committed target stays in git, which the version's refs keep.
         let head = match st.source {
-            Source::WorkingTree => {
-                let diffed = match &st.changes {
-                    Some(changes) => changes.diffed.clone(),
-                    None => self.diff_of(&st.base, &st.target).await?,
-                };
-                let sides = (&st.base, &st.target, &st.target_status);
-                self.retained(&self.acquisition, sides, diffed).await?;
-                git.head().await?
-            }
+            Source::WorkingTree => git.head().await?,
             _ => st.head.clone(),
         };
         let now = (self.clock)();
@@ -475,7 +475,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             tip: head.clone(),
             at: now,
             origin: VersionOrigin::Settled,
-            change: self.change_of(None, &st.base, &st.target).await?,
+            change: first_change(&st.changes().diffed),
         };
         let (changeset, id) = store
             .start_review(
@@ -504,7 +504,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Whether a review is open, and its version.
     pub async fn lifecycle(&self) -> Lifecycle {
-        lifecycle_of(&*self.state.lock().await)
+        let st = self.hold().await;
+        lifecycle_of(&st)
     }
 
     /// Ends the review: releases its refs, records whether it was complete, and
@@ -537,6 +538,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         st.known.clear();
         st.revision += 1;
         st.changes = None;
+        st.publish();
         self.revisions.advance(st.revision);
         Ok(complete)
     }
@@ -550,7 +552,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// revision.
     pub async fn set_base(&self, choice: BaseChoice) -> Result<(BaseView, u32)> {
         let git = &self.acquisition.git;
-        let mut st = self.state.lock().await;
+        let mut st = self.hold().await;
         // A merge base is where the target's history left the reference's: `HEAD` for the live tree.
         let tip = match st.source {
             Source::WorkingTree => git.head().await?,
@@ -585,9 +587,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                         tip: st.head.clone(),
                         at: now,
                         origin: VersionOrigin::BaseMoved,
-                        change: self
-                            .change_of(Some((&st.base, &st.target)), &snapshot, &st.target)
-                            .await?,
+                        change: self.change_of((&st.base, &st.target), &snapshot, &st.target).await?,
                     };
                     let previous = store.versions(changeset).await?.pop();
                     store.append_version(changeset, version.clone()).await?;
@@ -604,6 +604,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             st.base_commit = commit;
             st.revision += 1;
             st.changes = None;
+            st.publish();
             self.revisions.advance(st.revision);
         }
         Ok((self.base_view(&st, &git.branches().await?).await?, st.revision))
@@ -612,7 +613,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// The base as it displays now. How far its branch has moved on is read again, so the answer
     /// changes after a fetch while the base itself stays where it is.
     pub async fn base(&self) -> Result<BaseView> {
-        let st = self.state.lock().await;
+        let st = self.hold().await;
         self.base_view(&st, &self.acquisition.git.branches().await?).await
     }
 
@@ -637,14 +638,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// is open, and bumps the revision; completion and the excluded counts
     /// follow with the next manifest. Returns the revision.
     pub async fn set_filter(&self, filter: ReviewFilter) -> Result<u32> {
-        self.replace_filter(&mut *self.state.lock().await, filter).await
+        self.replace_filter(&mut self.hold().await, filter).await
     }
 
     /// Adds the file at `path`, or with `directory` everything below the folder at `path`, to the
     /// filter's excluded globs, and bumps the revision unless it was excluded already. Returns
     /// the revision.
     pub async fn exclude_path(&self, path: &str, directory: bool) -> Result<u32> {
-        let mut st = self.state.lock().await;
+        let mut st = self.hold().await;
         let mut filter = st.filter.clone();
         let glob = exclude_glob(path, directory);
         if !filter.exclude.contains(&glob) {
@@ -653,7 +654,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.replace_filter(&mut st, filter).await
     }
 
-    async fn replace_filter(&self, st: &mut State, filter: ReviewFilter) -> Result<u32> {
+    async fn replace_filter(&self, st: &mut Held<'_>, filter: ReviewFilter) -> Result<u32> {
         let filter = filter.normalized();
         filter.validate().map_err(SessionError::Invalid)?;
         if st.filter == filter {
@@ -665,12 +666,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             .await?;
         st.filter = filter;
         st.revision += 1;
-        self.revisions.advance(st.revision);
         if st.changes.is_some() {
             for view in st.remapped_views() {
                 remap::recount(st, view);
             }
         }
+        st.publish();
+        self.revisions.advance(st.revision);
         self.note_progress(st).await?;
         Ok(st.revision)
     }
@@ -681,7 +683,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     pub async fn revision(&self) -> u32 {
-        self.state.lock().await.revision
+        self.hold().await.revision
     }
 
     /// The newest revision on view, as the session announces it. Semantic work for
@@ -702,7 +704,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// The latest settled target: what the review last showed.
     pub async fn target_snapshot(&self) -> Arc<Snapshot> {
-        self.state.lock().await.target.clone()
+        self.hold().await.target.clone()
     }
 
     /// What knows the origin of the session's snapshots, for serving them to a
@@ -714,7 +716,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// The snapshots of `revision`: what the semantic layer asks about. Fails
     /// if `revision` is no longer current.
     pub async fn semantic_sides(&self, revision: u32) -> Result<SemanticSides> {
-        let st = self.state.lock().await;
+        let st = self.hold().await;
         check_revision(&st, revision)?;
         Ok(SemanticSides {
             base: st.base.id,
@@ -733,7 +735,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         limit: usize,
         key_of: impl Fn(&RepoPath) -> Option<K>,
     ) -> Result<Vec<(K, RepoPath)>> {
-        let st = self.state.lock().await;
+        let st = self.hold().await;
         check_revision(&st, revision)?;
         let mut found: Vec<(K, RepoPath)> = Vec::new();
         for path in st.target.entries.keys() {
@@ -753,7 +755,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// computed with the state released, and the state is left as it is.
     pub async fn changed_files(&self, revision: u32) -> Result<Vec<FileDiff>> {
         let (base, target) = {
-            let st = self.state.lock().await;
+            let st = self.hold().await;
             check_revision(&st, revision)?;
             let key = DiffOf {
                 old: st.base.id,
@@ -773,7 +775,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// The initial scan identifies the settled snapshot, so settling does not
     /// report it again.
     pub async fn settled_snapshot(&self) -> SnapshotId {
-        self.state.lock().await.target.id
+        self.hold().await.target.id
     }
 
     /// Makes a settled snapshot the target and returns the new revision. While a
@@ -783,16 +785,18 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// then reads the worktree, or shows the file as unavailable.
     /// It is the working tree's, wherever that is: on view, or parked while a branch is.
     pub async fn settled(&self, scan: Scan) -> Result<(u32, Option<BlobError>)> {
-        let mut guard = self.state.lock().await;
-        if guard.source == Source::WorkingTree {
-            let settled = self.settle_tree(&mut guard, scan).await?;
+        let mut held = self.hold().await;
+        if held.source == Source::WorkingTree {
+            let settled = self.settle_tree(&mut held, scan).await?;
+            held.publish();
             self.revisions.advance(settled.0);
             return Ok(settled);
         }
-        let mut parked = self.parked.lock().await;
-        let tree = parked
+        let tree = held
+            .parked()
             .get_mut(&Source::WorkingTree)
             .expect("the working tree is parked while another changeset is on view");
+        let tree = Arc::make_mut(tree);
         let settled = self.settle_tree(tree, scan).await?;
         // Nothing asks for the manifest of a tree that is not on view, so the progress of its new version is measured here.
         if tree.review.is_some()
@@ -834,9 +838,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 tip: st.head.clone(),
                 at: now,
                 origin: VersionOrigin::Settled,
-                change: self
-                    .change_of(Some((&st.base, &st.target)), &st.base, &snapshot)
-                    .await?,
+                change: self.change_of((&st.base, &st.target), &st.base, &snapshot).await?,
             };
             store.append_version(changeset, version).await?;
         }
@@ -892,7 +894,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                         tracing::warn!(revision, error = %e, "could not keep the content of the revision");
                     }
                     self.set_degraded(settling.degraded());
-                    if self.state.lock().await.source == Source::WorkingTree {
+                    if self.hold().await.source == Source::WorkingTree {
                         on_settled(revision);
                     }
                 }

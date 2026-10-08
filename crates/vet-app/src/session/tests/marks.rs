@@ -82,7 +82,7 @@ impl Rng {
 /// Remaps the whole review afresh and asserts that every view's review state and completion are
 /// what the marks left, and that the stored progress is the fresh one's.
 async fn assert_as_remapped_afresh(fx: &Fixture, step: &str) -> HashMap<View, Completion> {
-    let mut st = fx.session.state.lock().await;
+    let mut st = fx.session.hold().await;
     let views = st.remapped_views();
     assert_eq!(views.len(), 4, "the changeset and its three commits");
     let left: Vec<Remapped> = views.iter().map(|&v| std::mem::take(st.remapped_in_mut(v))).collect();
@@ -181,7 +181,9 @@ async fn a_mark_remaps_only_the_spans_of_its_file() {
     fx.session.set_seen(0, "a.txt", &[0, 2, 4], true).await.unwrap();
     fx.session.set_seen(0, "a.txt", &[1], true).await.unwrap();
     let remaps = |st: &State, file: &str| st.changes().remaps.get(&path(file)).copied().unwrap_or(0);
-    let marked_a = remaps(&*fx.session.state.lock().await, "a.txt");
+    let st = fx.session.hold().await;
+    let marked_a = remaps(&st, "a.txt");
+    drop(st);
     assert!(marked_a > 0);
 
     fx.session.set_seen(0, "b.txt", &[0], true).await.unwrap();
@@ -189,7 +191,7 @@ async fn a_mark_remaps_only_the_spans_of_its_file() {
     fx.session.set_seen(0, "b.txt", &[0], false).await.unwrap();
     fx.session.set_seen(0, "a.txt", &[3], true).await.unwrap();
 
-    let st = fx.session.state.lock().await;
+    let st = fx.session.hold().await;
     assert_eq!(
         remaps(&st, "a.txt"),
         marked_a + 2,
@@ -206,7 +208,7 @@ async fn a_mark_remaps_only_the_spans_of_its_file() {
     let edited = numbered(&[(2, "a"), (8, "a"), (14, "a"), (20, "a"), (26, "a"), (29, "new")]);
     fx.settle(&[("a.txt", &edited), ("b.txt", &b)]).await;
     fx.session.manifest(View::Changeset).await.unwrap();
-    let st = fx.session.state.lock().await;
+    let st = fx.session.hold().await;
     let anchors_in_a = (st.recorded.iter())
         .flat_map(|r| r.span.base.iter().chain(&r.span.target))
         .filter(|a| a.file == path("a.txt"))
@@ -229,7 +231,7 @@ async fn unmarking_cuts_spans_with_only_one_side() {
         assert_eq!(answer.review.hunks, [HunkState::Unseen], "{file}");
     }
 
-    assert!(fx.session.state.lock().await.recorded.is_empty());
+    assert!(fx.session.hold().await.recorded.is_empty());
 }
 
 #[tokio::test]

@@ -775,9 +775,8 @@ impl LiveSession<FakeGit, MemStore> {
         hunks: &[u32],
         seen: bool,
     ) -> Result<Outcome<ReviewUpdateView>> {
-        let mut st = self.state.lock().await;
+        let (mut st, _) = self.beginning(View::Changeset).await?;
         check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
         let started = seen && self.begin(&mut st).await?;
         self.mark_hunks(&mut st, View::Changeset, path, hunks, seen).await?;
         Ok(outcome(&st, update_of(&st, path)?, started))
@@ -790,9 +789,8 @@ impl LiveSession<FakeGit, MemStore> {
         kind: NonTextKind,
         acknowledged: bool,
     ) -> Result<Outcome<ReviewUpdateView>> {
-        let mut st = self.state.lock().await;
+        let (mut st, _) = self.beginning(View::Changeset).await?;
         check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
         let started = acknowledged && self.begin(&mut st).await?;
         self.mark_item(&mut st, View::Changeset, path, kind, acknowledged)
             .await?;
@@ -839,7 +837,8 @@ impl Fixture {
     }
 
     pub(crate) async fn begin(&self) {
-        self.session.begin(&mut *self.session.state.lock().await).await.unwrap();
+        let (mut st, _) = self.session.beginning(View::Changeset).await.unwrap();
+        self.session.begin(&mut st).await.unwrap();
     }
 
     /// The tree settles at `files`.
@@ -2288,7 +2287,7 @@ async fn the_filter_excludes_files_and_directories_without_a_passing_file() {
         ("d.rs", "d\n"),
     ];
     let fx = Fixture::open(&files, &files).await;
-    fx.session.state.lock().await.filter.include = vec!["*.rs".into()];
+    fx.session.hold().await.filter.include = vec!["*.rs".into()];
 
     let root = fx.session.list_directory("").await.unwrap();
     assert_eq!(
@@ -2420,7 +2419,7 @@ async fn target_text_reads_unchanged_files_and_explains_missing_text() {
     )
     .await;
     // The target is a plain file; make `link` a symlink entry.
-    let mut st = fx.session.state.lock().await;
+    let mut st = fx.session.hold().await;
     Arc::make_mut(&mut st.target)
         .entries
         .get_mut(&path("link"))
@@ -2441,7 +2440,7 @@ async fn target_text_reads_unchanged_files_and_explains_missing_text() {
     // Over the cap, and not retained by the store (as the scan would do).
     let big = "x".repeat(100);
     fx.git.snapshot(&[("big.txt", &big)]);
-    let mut st = fx.session.state.lock().await;
+    let mut st = fx.session.hold().await;
     Arc::make_mut(&mut st.target)
         .entries
         .insert(path("big.txt"), entry(&big, 0o100644));
@@ -2694,7 +2693,7 @@ async fn an_edit_inside_the_range_is_inferred_until_confirmed() {
     );
     let stored = fx.store.0.lock().unwrap().threads[0].thread.target.clone();
     let CommentTarget::Range(anchor) = stored else { panic!() };
-    assert_eq!(anchor.snapshot, fx.session.state.lock().await.target.id);
+    assert_eq!(anchor.snapshot, fx.session.hold().await.target.id);
     // An exact anchor cannot be confirmed again.
     let err = fx.session.confirm_anchor(rev, id).await.unwrap_err();
     assert!(matches!(err, SessionError::Invalid(_)));

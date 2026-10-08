@@ -8,6 +8,7 @@ use vet_core::content::Snapshot;
 use vet_core::filter::ReviewFilter;
 use vet_core::review::Thread;
 
+use super::hold::Held;
 use super::state::State;
 use super::{LiveSession, Result, SessionError, UnixClock};
 use crate::acquisition::Acquisition;
@@ -50,7 +51,7 @@ pub(super) async fn tip_of<G: GitRepo>(git: &G, source: &Source) -> Result<Commi
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// The source of the changeset on view.
     pub async fn source(&self) -> Source {
-        self.state.lock().await.source.clone()
+        self.hold().await.source.clone()
     }
 
     /// How the platform last named the pull request of `source`, as stored.
@@ -105,27 +106,28 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// higher than any shown so far, or `None` if `source` was on view already and nothing
     /// moved. Fails, changing nothing, if the branch does not exist.
     pub async fn open_changeset(&self, source: Source) -> Result<Option<u32>> {
-        let mut st = self.state.lock().await;
+        let mut st = self.hold().await;
         if st.source == source {
             return self.observe_on_view(&mut st).await;
         }
-        let mut parked = self.parked.lock().await;
-        let was_parked = parked.contains_key(&source);
-        let mut incoming = match parked.remove(&source) {
+        let was_parked = st.parked().contains_key(&source);
+        let mut incoming = match st.parked().remove(&source) {
             Some(state) => state,
-            None => self.enter(&source, &st.filter).await?,
+            None => Arc::new(self.enter(&source, &st.filter).await?),
         };
-        if let Err(e) = self.observe_in(&mut incoming).await {
+        if let Err(e) = self.observe_in(Arc::make_mut(&mut incoming)).await {
             if was_parked {
-                parked.insert(source, incoming);
+                st.parked().insert(source, incoming);
             }
             return Err(e);
         }
+        let tree = Arc::make_mut(&mut incoming);
         // The filter is the project's, and was perhaps changed while this one was off view.
-        incoming.filter = st.filter.clone();
-        incoming.revision = st.revision.max(incoming.revision) + 1;
-        let outgoing = std::mem::replace(&mut *st, incoming);
-        parked.insert(outgoing.source.clone(), outgoing);
+        tree.filter = st.filter.clone();
+        tree.revision = st.revision.max(tree.revision) + 1;
+        let outgoing = st.replace(incoming);
+        st.parked().insert(outgoing.source.clone(), outgoing);
+        st.publish();
         self.revisions.advance(st.revision);
         Ok(Some(st.revision))
     }
@@ -135,13 +137,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// a review is open that is its next version. Returns the new revision, or `None` if nothing
     /// moved or the changeset on view is not a branch's.
     pub async fn observe(&self) -> Result<Option<u32>> {
-        self.observe_on_view(&mut *self.state.lock().await).await
+        self.observe_on_view(&mut self.hold().await).await
     }
 
     /// [`LiveSession::observe_in`] on the state on view, whose new revision is announced.
-    async fn observe_on_view(&self, st: &mut State) -> Result<Option<u32>> {
+    async fn observe_on_view(&self, st: &mut Held<'_>) -> Result<Option<u32>> {
         let moved = self.observe_in(st).await?;
         if let Some(revision) = moved {
+            st.publish();
             self.revisions.advance(revision);
         }
         Ok(moved)
@@ -191,7 +194,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 tip: tip.clone(),
                 at: now,
                 origin: VersionOrigin::Observed,
-                change: self.change_of(Some((&st.base, &st.target)), &base, &target).await?,
+                change: self.change_of((&st.base, &st.target), &base, &target).await?,
             };
             let previous = store.versions(changeset).await?.pop();
             store.append_version(changeset, version.clone()).await?;
