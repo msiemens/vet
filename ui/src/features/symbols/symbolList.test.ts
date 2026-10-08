@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol.ts";
 import type { SymbolChange } from "../../generated/SymbolChange.ts";
-import { describeFate, fileEntries, groupByFile, searchEntries } from "./symbolList.ts";
+import { describeFate, fileEntries, groupByFile, rowClick, searchEntries } from "./symbolList.ts";
 
 const sym = (path: string, name: string[], from: number, to: number, change: SymbolChange): ChangedSymbol => ({
   symbol: {
@@ -74,4 +74,17 @@ void test("fates read as words, the broken one as the bad tone", () => {
   });
   assert.deepEqual([moved.label, moved.detail], ["binds elsewhere now", "u.rs:10"]);
   assert.equal(describeFate({ type: "unknown", reason: "no server" }).detail, "no server");
+});
+
+void test("a double click selects on its first click and reveals on its second without selecting again", () => {
+  assert.deepEqual(rowClick(1, false), { select: true, reveal: false });
+  assert.deepEqual(rowClick(2, true), { select: false, reveal: true });
+});
+
+void test("a double click whose first click went to another row selects as it reveals", () => {
+  assert.deepEqual(rowClick(2, false), { select: true, reveal: true });
+});
+
+void test("a click from the keyboard selects", () => {
+  assert.deepEqual(rowClick(0, false), { select: true, reveal: false });
 });

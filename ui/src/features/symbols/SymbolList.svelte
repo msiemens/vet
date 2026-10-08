@@ -8,7 +8,7 @@
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { keyOf } from "../../state/symbolKey";
   import { symbols } from "../../state/symbols.svelte";
-  import { containerOf, fileEntries, nameOf, searchEntries } from "./symbolList";
+  import { containerOf, fileEntries, nameOf, rowClick, searchEntries } from "./symbolList";
 
   /** A double-click: show the symbol where it is reviewed. */
   let { onreveal }: { onreveal: (symbol: ChangedSymbol) => void } = $props();
@@ -26,6 +26,12 @@
   const entries = $derived(searched?.entries ?? listed);
   const selectedKey = $derived(symbols.selected && keyOf(symbols.selected.symbol.id));
   const SIGN = { added: "+", modified: "~", removed: "−" } as const;
+
+  function clickRow(e: MouseEvent, s: ChangedSymbol) {
+    const { select, reveal } = rowClick(e.detail, keyOf(s.symbol.id) === selectedKey);
+    if (select) symbols.select(s);
+    if (reveal) onreveal(s);
+  }
 
   // The review moved to another file: bring its group into view (the list is not a stream, so this is cheap).
   $effect(() => {
@@ -75,8 +81,7 @@
             type="button"
             aria-pressed={keyOf(s.symbol.id) === selectedKey}
             title="Double-click to show it in the review"
-            onclick={() => symbols.select(s)}
-            ondblclick={() => onreveal(s)}
+            onclick={(e) => clickRow(e, s)}
           >
             <span class="sign {s.change}" title={s.change}>{SIGN[s.change]}</span>
             <span class="mono name" class:gone={s.change === "removed"}
