@@ -8,13 +8,24 @@
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { threads } from "../../state/threads.svelte";
+  import PanelTabs from "../../lib/ui/PanelTabs.svelte";
+  import { platform } from "../../state/platform.svelte";
   import { attachMenu, threadCommands } from "./commentCommands";
-  import { candidates, detachedReason, groupThreads, placeLabel, preview } from "./groups";
+  import ConversationList from "./ConversationList.svelte";
+  import { candidates, detachedReason, draftCount, groupThreads, openedBy, placeLabel, preview } from "./groups";
+  import PullRequestBlock from "./PullRequestBlock.svelte";
+  import SubmitReview from "./SubmitReview.svelte";
 
   let { onselect }: { onselect: (thread: Thread) => void } = $props();
 
   const groups = $derived(groupThreads(threads.items));
   const empty = $derived(threads.items.length === 0);
+  const info = $derived(platform.info);
+  type Tab = "review" | "conversation";
+  let tab = $state<Tab>("review");
+  const pick = (id: Tab) => (tab = id);
+  // A platform without a conversation feed has nothing to switch to.
+  const showing = $derived(info?.traits.conversationFeed ? tab : "review");
 
   let composing = $state(false);
   let body = $state("");
@@ -46,6 +57,9 @@
           {#if showPath}{thread.path}
           {/if}{placeLabel(thread)} · {thread.messages.length}
           {thread.messages.length === 1 ? "message" : "messages"}
+          {#if openedBy(thread)}· by {openedBy(thread)}{/if}
+          {#if draftCount(thread)}· {draftCount(thread)} draft{/if}
+          {#if thread.platform && !thread.platform.posted}· local only{/if}
         </span>
       </span>
     </button>
@@ -126,18 +140,38 @@
       </div>
     </div>
   {/if}
-  {#if empty && !composing}
-    <p class="empty">
-      No comments yet. Select lines and press {commands.binding("review.comment")?.label}, or use a hunk's comment
-      button.
-    </p>
+  {#if info}
+    <PullRequestBlock {info} />
+    <SubmitReview {info} />
+    {#if info.traits.conversationFeed}
+      <PanelTabs
+        label="Pull request"
+        value={showing}
+        onchange={pick}
+        tabs={[
+          { id: "review", label: "Review", count: threads.items.length },
+          { id: "conversation", label: "Conversation", count: info.conversation.length },
+        ]}
+      />
+    {/if}
   {/if}
-  {#if groups.detached.length}{@render group("Detached", groups.detached, true, "detached")}{/if}
-  {#if groups.moved.length}{@render group("Moved", groups.moved, true, "moved")}{/if}
-  {#if groups.changeset.length}{@render group("Changeset", groups.changeset, false, "changeset")}{/if}
-  {#each groups.files as file (file.path)}
-    {@render group(file.path, file.threads, false, `file:${file.path}`)}
-  {/each}
+  {#if info && showing === "conversation"}
+    <ConversationList entries={info.conversation} />
+  {:else}
+    {#if empty && !composing}
+      <p class="empty">
+        No comments yet. Select lines and press {commands.binding("review.comment")?.label}, or use a hunk's comment
+        button.
+      </p>
+    {/if}
+    {#if groups.conflicts.length}{@render group("Conflicts", groups.conflicts, true, "conflicts")}{/if}
+    {#if groups.detached.length}{@render group("Detached", groups.detached, true, "detached")}{/if}
+    {#if groups.moved.length}{@render group("Moved", groups.moved, true, "moved")}{/if}
+    {#if groups.changeset.length}{@render group("Changeset", groups.changeset, false, "changeset")}{/if}
+    {#each groups.files as file (file.path)}
+      {@render group(file.path, file.threads, false, `file:${file.path}`)}
+    {/each}
+  {/if}
 </aside>
 
 <style>

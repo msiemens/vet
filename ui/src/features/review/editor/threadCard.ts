@@ -3,7 +3,10 @@
 // Its height depends on the text, so the view measures it (`ChangesetView`); the estimate of
 // `threadPlacement.ts` only holds the place until then.
 
+import type { EditChoice } from "../../../generated/EditChoice";
+import type { EditConflict } from "../../../generated/EditConflict";
 import type { Thread } from "../../../generated/Thread";
+import type { ThreadMessage } from "../../../generated/ThreadMessage";
 import type { ThreadStatus } from "../../../generated/ThreadStatus";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
 import { canSubmit, isSubmitKey } from "../../../lib/composer.ts";
@@ -11,6 +14,7 @@ import { lineRange } from "../../../lib/lineRange.ts";
 import { movedTitle } from "../../../lib/movedTitle.ts";
 import { el, iconButton } from "./dom.ts";
 import type { CardData } from "./threadPlacement.ts";
+import { markDifferences } from "./wordDiff.ts";
 
 /** What a card asks of its owner; each resolves whether the request went through. */
 export interface ThreadActions {
@@ -18,6 +22,12 @@ export interface ThreadActions {
   reply(thread: number, body: string): Promise<boolean>;
   setStatus(thread: number, status: ThreadStatus): Promise<boolean>;
   remove(thread: number): Promise<boolean>;
+  /** Edits one of the viewer's own comments. */
+  editMessage(message: number, body: string): Promise<boolean>;
+  /** Removes one of the viewer's own comments; a thread's first takes the thread with it. */
+  removeMessage(message: number): Promise<boolean>;
+  /** Settles a comment that was edited here and on the platform. */
+  keepEdit(message: number, keep: EditChoice): Promise<boolean>;
   confirm(thread: number): Promise<boolean>;
   /** The form was dismissed. */
   cancelDraft(): void;
@@ -91,6 +101,117 @@ function draftCard(target: ThreadTarget, actions: ThreadActions): HTMLElement {
   return card;
 }
 
+/** A message that only Vet has, in a thread the platform has or will have: posted with the review. */
+const isDraft = (thread: Thread, message: ThreadMessage) => !!thread.platform && !message.posted;
+
+/** The author's picture, or a disc with their initials. */
+export function avatar(author: string, url: string | null): HTMLElement {
+  if (url) {
+    const img = el("img", "vet-avatar");
+    img.src = url;
+    img.alt = "";
+    return img;
+  }
+  const initials = el("span", "vet-avatar vet-avatar-initials", author.slice(0, 2).toUpperCase());
+  initials.style.background = `var(--avatar-${avatarColor(author)})`;
+  return initials;
+}
+
+/** Which of the six avatar colours (1-6) a name gets, the same every time. */
+export function avatarColor(name: string): number {
+  let hash = 0;
+  for (const c of name) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
+  return (hash % 6) + 1;
+}
+
+/** The two texts of a comment that was edited in two places, side by side with Keep under each. */
+function conflictCard(message: ThreadMessage, conflict: EditConflict, actions: ThreadActions): HTMLElement {
+  const box = el("div", "vet-conflict");
+  box.append(el("div", "vet-conflict-title", "Edited in two places"));
+  const columns = el("div", "vet-conflict-columns");
+  const column = (title: string, text: string, other: string, keep: EditChoice) => {
+    const side = el("div", "vet-conflict-side");
+    const body = el("div", "vet-msg-body selectable");
+    for (const piece of markDifferences(text, other)) {
+      if (piece.changed) body.append(el("mark", "vet-diff", piece.text));
+      else body.append(document.createTextNode(piece.text));
+    }
+    side.append(
+      el("div", "vet-conflict-label", title),
+      body,
+      button(`Keep ${title}`, "ctl vet-thread-small", () => void actions.keepEdit(message.id, keep)),
+    );
+    return side;
+  };
+  columns.append(
+    column("Vet", message.body, conflict.remoteBody, "vet"),
+    column("GitHub", conflict.remoteBody, message.body, "remote"),
+  );
+  box.append(columns);
+  return box;
+}
+
+/** The form that replaces a message's text while it is edited. */
+function editForm(message: ThreadMessage, actions: ThreadActions, close: () => void): HTMLElement {
+  const form = el("div", "vet-msg-edit");
+  const { field, send } = composer(2, "Comment…", "Save", async (body) => {
+    const saved = await actions.editMessage(message.id, body);
+    if (saved) close();
+    return saved;
+  });
+  field.value = message.body;
+  send.disabled = !canSubmit(field.value, false);
+  field.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close();
+  });
+  const foot = el("div", "vet-thread-foot");
+  foot.append(button("Cancel", "ctl vet-thread-small", close), send);
+  form.append(field, foot);
+  requestAnimationFrame(() => field.focus());
+  return form;
+}
+
+/** A message with who wrote it and when; the viewer's own can be edited and removed. */
+function messageParts(thread: Thread, message: ThreadMessage, actions: ThreadActions): HTMLElement[] {
+  const meta = el("div", "vet-msg-meta");
+  meta.append(avatar(message.author, message.avatar), el("span", "vet-msg-author", message.author));
+  meta.append(el("span", "vet-msg-time", time(message.at)));
+  if (message.editedAt !== null) meta.append(el("span", "vet-msg-edited", "edited"));
+  if (isDraft(thread, message)) meta.append(el("span", "badge vet-msg-draft", "Draft"));
+  const body = el(
+    "div",
+    message.conflict || isDraft(thread, message) ? "vet-msg-body selectable vet-draft" : "vet-msg-body selectable",
+  );
+  body.textContent = message.body;
+  const shown = message.conflict ? conflictCard(message, message.conflict, actions) : body;
+  const parts = [meta, shown];
+  if (message.mine) {
+    const edit = iconButton(
+      "Edit the comment",
+      "edit",
+      () => {
+        const form = editForm(message, actions, () => form.replaceWith(shown));
+        shown.replaceWith(form);
+      },
+      "vet-thread-btn",
+      11,
+      2,
+    );
+    const remove = iconButton(
+      thread.messages[0] === message ? "Delete the thread" : "Remove the comment",
+      "close",
+      () => void actions.removeMessage(message.id),
+      "vet-thread-btn",
+      11,
+      2,
+    );
+    // A thread of no platform has the head's delete button for its opening message.
+    const opening = thread.messages[0] === message && !thread.platform;
+    meta.append(el("span", "vet-thread-grow"), ...(message.conflict ? [] : [edit]), ...(opening ? [] : [remove]));
+  }
+  return parts;
+}
+
 function threadCard(thread: Thread, open: boolean, actions: ThreadActions): HTMLElement {
   const resolved = thread.status === "resolved";
   const folded = resolved && !open;
@@ -128,23 +249,29 @@ function threadCard(thread: Thread, open: boolean, actions: ThreadActions): HTML
   }
   head.append(el("span", "vet-thread-grow"));
   if (!folded) {
-    head.append(
-      button(
-        resolved ? "Reopen" : "Resolve",
-        "ctl vet-thread-small",
-        () => void actions.setStatus(thread.id, resolved ? "open" : "resolved"),
-      ),
-      iconButton("Delete the thread", "close", () => void actions.remove(thread.id), "vet-thread-btn", 11, 2),
-    );
+    if (resolved && thread.platform?.resolvedBy) {
+      head.append(el("span", "vet-thread-by", `by ${thread.platform.resolvedBy}`));
+    }
+    // A comment on the pull request as a whole cannot be resolved.
+    if (thread.platform?.resolvable !== false) {
+      head.append(
+        button(
+          resolved ? "Reopen" : "Resolve",
+          "ctl vet-thread-small",
+          () => void actions.setStatus(thread.id, resolved ? "open" : "resolved"),
+        ),
+      );
+    }
+    if (!thread.platform) {
+      head.append(
+        iconButton("Delete the thread", "close", () => void actions.remove(thread.id), "vet-thread-btn", 11, 2),
+      );
+    }
   }
   card.append(head);
   if (folded) return card;
 
-  for (const message of thread.messages) {
-    const meta = el("div", "vet-msg-meta");
-    meta.append(el("span", "vet-msg-author", message.author), el("span", "vet-msg-time", time(message.at)));
-    card.append(meta, el("div", "vet-msg-body selectable", message.body));
-  }
+  for (const message of thread.messages) card.append(...messageParts(thread, message, actions));
   const reply = el("div", "vet-thread-reply");
   const { field, send } = composer(1, "Reply…", "Reply", (body) => actions.reply(thread.id, body));
   reply.append(field, send);

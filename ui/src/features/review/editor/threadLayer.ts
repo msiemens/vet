@@ -90,6 +90,9 @@ export class ThreadLayer {
       reply: listeners.reply,
       setStatus: listeners.setStatus,
       remove: listeners.remove,
+      editMessage: listeners.editMessage,
+      removeMessage: listeners.removeMessage,
+      keepEdit: listeners.keepEdit,
       confirm: listeners.confirm,
       cancelDraft: () => this.setDraft(undefined),
       toggle: (thread) => {

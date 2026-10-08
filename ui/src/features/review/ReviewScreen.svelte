@@ -8,6 +8,7 @@
   import type { Changeset } from "../../state/changeset.svelte";
   import { type CommandContext, commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
+  import { platform } from "../../state/platform.svelte";
   import { session } from "../../state/session.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -115,6 +116,7 @@
 
   onMount(() => {
     const stopThreads = threads.start(backend);
+    const stopPlatform = platform.start(backend);
     const stopVersions = versions.start(backend);
     const stopCommands = commands.register(
       ...fileCommands({
@@ -132,6 +134,7 @@
     );
     return () => {
       stopThreads();
+      stopPlatform();
       stopVersions();
       stopCommands();
       controller.destroy();

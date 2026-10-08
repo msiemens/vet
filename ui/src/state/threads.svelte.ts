@@ -1,6 +1,7 @@
 // Comment threads as the backend resolved them. Where a thread's anchor is now (exact,
 // moved, detached) is the backend's; this holds and distributes it (SPEC I5).
 
+import type { EditChoice } from "../generated/EditChoice";
 import type { Thread } from "../generated/Thread";
 import type { ThreadStatus } from "../generated/ThreadStatus";
 import type { ThreadTarget } from "../generated/ThreadTarget";
@@ -80,6 +81,28 @@ class ThreadStore {
       this.items.filter((t) => t.id !== thread),
       this.revision,
     );
+    return true;
+  }
+
+  /** Edits one of the viewer's own comments. */
+  async editMessage(message: number, body: string): Promise<boolean> {
+    return this.change(this.backend?.editMessage(message, body));
+  }
+
+  /** Settles a comment that was edited here and on the platform. */
+  async keepEdit(message: number, keep: EditChoice): Promise<boolean> {
+    return this.change(this.backend?.keepEdit(message, keep));
+  }
+
+  /** Removes one of the viewer's own comments; the thread goes with its first. */
+  async removeMessage(message: number): Promise<boolean> {
+    try {
+      await this.backend?.removeMessage(message);
+    } catch (error) {
+      this.fail(error);
+      return false;
+    }
+    await this.reload();
     return true;
   }
 

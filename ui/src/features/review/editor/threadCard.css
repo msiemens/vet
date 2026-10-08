@@ -97,6 +97,67 @@
   margin-top: 6px;
   justify-content: flex-end;
 }
+.vet-thread-by {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+.vet-avatar {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.vet-avatar-initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--on-avatar);
+  font-size: 8px;
+  font-weight: 600;
+}
+.vet-msg-edited {
+  font-style: italic;
+}
+/* A message that waits for Submit review is shaded. */
+.vet-draft {
+  padding: 0 6px;
+  background: color-mix(in srgb, var(--note) 10%, transparent);
+  border-radius: var(--radius);
+}
+.vet-msg-edit .vet-thread-field {
+  display: block;
+  width: 100%;
+}
+.vet-conflict {
+  padding: 4px 6px 6px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+}
+.vet-conflict-title {
+  color: var(--warn);
+  font-weight: 600;
+}
+.vet-conflict-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.vet-conflict-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.vet-conflict-label {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+.vet-diff {
+  background: color-mix(in srgb, var(--warn) 30%, transparent);
+  color: inherit;
+}
 .vet-thread-hint {
   flex: 1;
   color: var(--text-3);

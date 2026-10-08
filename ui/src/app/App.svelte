@@ -16,6 +16,7 @@
     toggleTool,
   } from "../features/chrome";
   import { ChecksButton } from "../features/checks";
+  import { NotificationCards, PlatformFooter } from "../features/platform";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, targetLabel } from "../features/queue";
   import { ReviewScreen, type ReviewController, summarize } from "../features/review";
   import { SettingsDialog } from "../features/settings";
@@ -45,6 +46,7 @@
   import { contextMenus } from "../state/contextMenu.svelte";
   import { keymap } from "../state/keymap.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
+  import { platform } from "../state/platform.svelte";
   import { progress as backgroundTasks } from "../state/progress.svelte";
   import { queue } from "../state/queue.svelte";
   import { recent } from "../state/recent.svelte";
@@ -206,6 +208,11 @@
     settingsPage = page;
     dialog = d;
   }
+
+  // The platform's footer item, its notifications and the review's Submit ask for the page that signs in.
+  $effect(() => {
+    if (platform.accountsRequests > 0) untrack(() => showDialog("settings", "accounts"));
+  });
 
   /** Asks for a pull request by its number, in the repository the project has on GitHub. */
   async function openPullRequest() {
@@ -407,6 +414,8 @@
   {/key}
 {/if}
 
+<NotificationCards />
+
 {#if dialog === "settings"}
   <SettingsDialog
     bind:page={settingsPage}
@@ -451,7 +460,7 @@
 <DevTools bind:this={tools} {controller} bind:open={devOpen} />
 
 <StatusFooter info={footer} onserver={() => showDialog("settings", "servers")}>
-  {#snippet progress()}<TaskProgress tasks={backgroundTasks.tasks} />{/snippet}
+  {#snippet progress()}<TaskProgress tasks={backgroundTasks.tasks} /><PlatformFooter />{/snippet}
   {#snippet end()}<button class="flat dev" type="button" aria-pressed={devOpen} onclick={() => (devOpen = !devOpen)}
       >Dev</button
     >{/snippet}

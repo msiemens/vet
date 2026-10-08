@@ -6,7 +6,18 @@ import type { LineLocation } from "../../generated/LineLocation";
 import type { Thread } from "../../generated/Thread";
 import { lineRange } from "../../lib/lineRange.ts";
 
+/** A comment of the thread was edited here and on the platform, and waits for the viewer to choose. */
+export const hasConflict = (t: Thread) => t.messages.some((m) => m.conflict !== null);
+
+/** How many of the thread's messages wait for Submit review. */
+export const draftCount = (t: Thread) => (t.platform ? t.messages.filter((m) => !m.posted).length : 0);
+
+/** Who opened a thread the platform has, if it was not the viewer. */
+export const openedBy = (t: Thread) => (t.platform?.posted && !t.messages[0]?.mine ? t.messages[0]?.author : undefined);
+
 export interface Groups {
+  /** Threads with an edit to settle; shown first, wherever they are. */
+  conflicts: Thread[];
   /** Ambiguous or stale: no place to show, offered "Attach to N" or "Discard". */
   detached: Thread[];
   /** Found by evidence, not where they were put: offered "Confirm". */
@@ -20,10 +31,11 @@ const isDetached = (t: Thread) => t.anchor?.type === "stale" || t.anchor?.type =
 
 /** Threads are given in creation order, which each group keeps unless it says otherwise. */
 export function groupThreads(threads: readonly Thread[]): Groups {
-  const groups: Groups = { detached: [], moved: [], changeset: [], files: [] };
+  const groups: Groups = { conflicts: [], detached: [], moved: [], changeset: [], files: [] };
   const byPath = new Map<string, Thread[]>();
   for (const thread of threads) {
-    if (isDetached(thread)) groups.detached.push(thread);
+    if (hasConflict(thread)) groups.conflicts.push(thread);
+    else if (isDetached(thread)) groups.detached.push(thread);
     else if (thread.anchor?.type === "inferred") groups.moved.push(thread);
     else if (thread.kind === "changeset") groups.changeset.push(thread);
     else if (thread.path !== null) byPath.set(thread.path, [...(byPath.get(thread.path) ?? []), thread]);

@@ -1,8 +1,30 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Thread } from "../../generated/Thread.ts";
-import { candidateLabel, candidates, detachedReason, groupThreads, placeLabel, preview } from "./groups.ts";
+import type { ThreadMessage } from "../../generated/ThreadMessage.ts";
+import {
+  candidateLabel,
+  candidates,
+  detachedReason,
+  draftCount,
+  groupThreads,
+  openedBy,
+  placeLabel,
+  preview,
+} from "./groups.ts";
 
+const message = (over: Partial<ThreadMessage> = {}): ThreadMessage => ({
+  id: 1,
+  author: "me",
+  body: "hello\nworld",
+  at: 0,
+  mine: true,
+  avatar: null,
+  posted: false,
+  editedAt: null,
+  conflict: null,
+  ...over,
+});
 const thread = (id: number, over: Partial<Thread> = {}): Thread => ({
   id,
   kind: "range",
@@ -11,8 +33,9 @@ const thread = (id: number, over: Partial<Thread> = {}): Thread => ({
   original: { path: "a.rs", start: 4, len: 2 },
   location: { path: "a.rs", start: 4, len: 2 },
   anchor: { type: "exact", whitespaceChanged: false },
-  messages: [{ author: "me", body: "hello\nworld", at: 0 }],
+  messages: [message()],
   status: "open",
+  platform: null,
   ...over,
 });
 const ids = (list: Thread[]) => list.map((t) => t.id);
@@ -34,6 +57,29 @@ void test("detached and moved threads leave their file's group", () => {
   );
 });
 
+void test("a thread with an edit to settle is listed first, wherever it is", () => {
+  const conflict = { remoteBody: "theirs", remoteAt: 1 };
+  const groups = groupThreads([thread(1), thread(2, { messages: [message({ posted: true, conflict })] })]);
+  assert.deepEqual(ids(groups.conflicts), [2]);
+  assert.deepEqual(
+    groups.files.map((f) => ids(f.threads)),
+    [[1]],
+  );
+});
+
+void test("on a platform a thread counts the messages that wait for the review and names who else opened it", () => {
+  const platform = { posted: true, resolvable: true, resolvedBy: null };
+  const theirs = thread(1, {
+    platform,
+    messages: [message({ author: "lena", mine: false, posted: true }), message({ id: 2 })],
+  });
+  assert.equal(draftCount(theirs), 1);
+  assert.equal(openedBy(theirs), "lena");
+  // Without a platform every message is only Vet's, which is not a draft of anything.
+  assert.equal(draftCount(thread(2)), 0);
+  assert.equal(openedBy(thread(2, { platform })), undefined);
+});
+
 void test("files are sorted by path, a file's own thread first, then lines in text order", () => {
   const at = (start: number) => ({ location: { path: "b.rs", start, len: 1 }, path: "b.rs" });
   const groups = groupThreads([
@@ -53,7 +99,7 @@ void test("files are sorted by path, a file's own thread first, then lines in te
 
 void test("labels name the lines, the reason and the candidates", () => {
   assert.equal(preview(thread(1)), "hello");
-  assert.equal(preview(thread(1, { messages: [{ author: "me", body: "x".repeat(100), at: 0 }] }), 10), "xxxxxxxxx…");
+  assert.equal(preview(thread(1, { messages: [message({ body: "x".repeat(100) })] }), 10), "xxxxxxxxx…");
   assert.equal(placeLabel(thread(1)), "L5–6");
   // A detached range is where it was recorded.
   assert.equal(placeLabel(thread(1, { location: null, original: { path: "a.rs", start: 0, len: 1 } })), "L1");

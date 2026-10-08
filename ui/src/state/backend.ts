@@ -17,11 +17,13 @@ import type { CommitInfo } from "../generated/CommitInfo";
 import type { CommitUnit } from "../generated/CommitUnit";
 import type { Diagnostic } from "../generated/Diagnostic";
 import type { DirEntry } from "../generated/DirEntry";
+import type { EditChoice } from "../generated/EditChoice";
 import type { Event as ServerEvent } from "../generated/Event";
 import type { Impact } from "../generated/Impact";
 import type { Lens } from "../generated/Lens";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
+import type { PullRequestInfo } from "../generated/PullRequestInfo";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestSource } from "../generated/PullRequestSource";
 import type { Reachability } from "../generated/Reachability";
@@ -29,6 +31,7 @@ import type { RecentProject } from "../generated/RecentProject";
 import type { RemovalImpact } from "../generated/RemovalImpact";
 import type { Response } from "../generated/Response";
 import type { ReviewFilter } from "../generated/ReviewFilter";
+import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { ServerInfo } from "../generated/ServerInfo";
@@ -479,6 +482,41 @@ export class Backend {
 
   async deleteThread(thread: number): Promise<void> {
     expect(await this.conn.request({ type: "deleteThread", project: this.pid, thread }), "done");
+  }
+
+  /** Edits one of the viewer's own comments; a posted one is edited on the platform too. */
+  async editMessage(message: number, body: string): Promise<Thread> {
+    const request = { type: "editMessage", project: this.pid, message, body } as const;
+    return asThread(expect(await this.conn.request(request), "thread"));
+  }
+
+  /** Removes one of the viewer's own comments; removing a thread's first removes the thread. */
+  async removeMessage(message: number): Promise<void> {
+    expect(await this.conn.request({ type: "removeMessage", project: this.pid, message }), "done");
+  }
+
+  /** Settles a comment that was edited here and on the platform by keeping one of the texts. */
+  async keepEdit(message: number, keep: EditChoice): Promise<Thread> {
+    const request = { type: "keepEdit", project: this.pid, message, keep } as const;
+    return asThread(expect(await this.conn.request(request), "thread"));
+  }
+
+  /** Syncs the threads of the pull request on view with its platform now. */
+  async syncThreads(): Promise<void> {
+    expect(await this.conn.request({ type: "syncThreads", project: this.pid }), "done");
+  }
+
+  /** Posts the drafts as one review with the verdict (an id of `PullRequestInfo.traits.verdicts`). */
+  async submitReview(verdict: string, body: string | null): Promise<ReviewSubmitted> {
+    const request = { type: "submitReview", project: this.pid, verdict, body } as const;
+    const { posted, skipped } = expect(await this.conn.request(request), "reviewSubmitted");
+    return { posted, skipped };
+  }
+
+  /** What the platform said of the pull request on view at the last sync; fails before the first. */
+  async pullRequestInfo(): Promise<PullRequestInfo> {
+    const request = { type: "pullRequestInfo", project: this.pid } as const;
+    return expect(await this.conn.request(request), "pullRequestInfo");
   }
 
   /** Re-anchors an inferred thread where it is now. */

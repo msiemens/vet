@@ -360,6 +360,9 @@ export class ReviewController {
         reply: (thread, body) => threads.reply(thread, body),
         setStatus: (thread, status) => threads.setStatus(thread, status),
         remove: (thread) => threads.remove(thread),
+        editMessage: (message, body) => threads.editMessage(message, body),
+        removeMessage: (message) => threads.removeMessage(message),
+        keepEdit: (message, keep) => threads.keepEdit(message, keep),
         confirm: (thread) => threads.confirm(thread),
       },
     };
