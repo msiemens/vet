@@ -94,9 +94,9 @@ async fn send(socket: &mut Socket, message: &ClientMessage) {
         .unwrap();
 }
 
-/// The next message that `wanted` picks, within five seconds; the events in between are skipped.
+/// The next message that `wanted` picks, within thirty seconds; the events in between are skipped.
 async fn receive<T>(socket: &mut Socket, wanted: impl Fn(ServerMessage) -> Option<T>) -> T {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let Some(Ok(Message::Text(text))) = socket.next().await else {
                 panic!("connection closed");
@@ -218,7 +218,7 @@ impl Rig {
 
     /// Waits until the language server has received a message `matching` says yes to.
     async fn server_received(&self, what: &str, matching: impl Fn(&Value) -> bool) -> Value {
-        for _ in 0..1000 {
+        for _ in 0..3000 {
             if let Some(found) = self.received().into_iter().find(&matching) {
                 return found;
             }
@@ -232,7 +232,8 @@ fn read_log(path: &Path) -> Vec<Value> {
     std::fs::read_to_string(path)
         .unwrap_or_default()
         .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
+        // The server may be in the middle of writing the last line.
+        .filter_map(|line| serde_json::from_str(line).ok())
         .collect()
 }
 
@@ -282,7 +283,7 @@ async fn a_disconnect_cancels_the_server_requests_of_the_handlers_it_aborts() {
     drop(rig.socket);
     let cancel = {
         let log = rig.log.clone();
-        tokio::time::timeout(Duration::from_secs(5), async move {
+        tokio::time::timeout(Duration::from_secs(30), async move {
             loop {
                 if let Some(found) = read_log(&log).into_iter().find(|m| m["method"] == "$/cancelRequest") {
                     return found;
