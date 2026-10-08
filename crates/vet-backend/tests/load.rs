@@ -333,8 +333,10 @@ fn borrowed(files: &[(String, String)]) -> Vec<(&str, &str)> {
 
 /// A review request answers within this long. It is not a latency target (`< 100 ms` is
 /// SPEC §13's): it only turns a request that waits for stuck semantic work into a failure
-/// and not a hang.
-const ANSWERED: Duration = Duration::from_secs(10);
+/// and not a hang. Work that is stuck on a gate never ends by itself, so the bound is far
+/// above what the first mark costs (the diff of 300 files, seconds in a debug build, more
+/// in a parallel run), and the result does not depend on the machine's load.
+const ANSWERED: Duration = Duration::from_secs(120);
 
 /// The servers, their identity probes and their starts wait on a gate, and 36 analyses and
 /// hovers wait on them. The store, the repository and the backend are the real ones. The
