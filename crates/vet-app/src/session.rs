@@ -69,7 +69,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 use vet_core::content::{EntryKind, FileDiff, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
@@ -86,7 +86,7 @@ use self::lines::LinesBetween;
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
 use self::source::Stored;
 pub use self::state::View;
-use self::state::{OpenReview, State, check_revision, lifecycle_of};
+use self::state::{OpenReview, Shown, State, check_revision, lifecycle_of};
 pub use self::sync::{DiscussionView, Keep, SubmitReport, SyncNotice, SyncReport};
 pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsView};
 pub use self::versions::VersionView;
@@ -412,9 +412,31 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(())
     }
 
+    /// What `view` shows, for a command that starts the review if none is open. Starting it keeps
+    /// the working tree's dirty content in the store, which can take a while, or wait for a copy
+    /// ahead under way: that is done first, with the state released, so readers are answered
+    /// meanwhile and [`LiveSession::begin`] finds the content held. If the revision moved
+    /// meanwhile, it starts over.
+    async fn beginning(&self, view: View) -> Result<(MutexGuard<'_, State>, Shown)> {
+        let mut copied = None;
+        loop {
+            let (st, shown) = self.viewing(view).await?;
+            if st.review.is_some() || st.source != Source::WorkingTree || copied == Some(st.revision) {
+                return Ok((st, shown));
+            }
+            copied = Some(st.revision);
+            let (base, target, status) = (st.base.clone(), st.target.clone(), st.target_status.clone());
+            let diffed = st.changes().diffed.clone();
+            drop(st);
+            self.retained(&self.acquisition, (&base, &target, &status), diffed)
+                .await?;
+        }
+    }
+
     /// Starts the review (SPEC "Session lifecycle"): records the base, `HEAD`
     /// and the current target, which becomes version 1, copies the target's
-    /// dirty content into the store (what `copy_ahead` has not) and takes the
+    /// dirty content into the store (what `copy_ahead` and
+    /// [`LiveSession::beginning`] have not, normally nothing) and takes the
     /// changeset's refs. Does nothing if a review is open. Returns whether it
     /// started one.
     async fn begin(&self, st: &mut State) -> Result<bool> {

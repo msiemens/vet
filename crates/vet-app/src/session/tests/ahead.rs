@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::task::{Context, Waker};
+use std::time::Duration;
 
 use super::derived::announcing;
 use super::*;
@@ -49,6 +50,37 @@ async fn the_first_mark_copies_only_what_changed_since_the_copy() {
     fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
 
     assert_eq!(put(&fx)[copied..], [BlobId::of(edited.as_bytes())]);
+}
+
+#[tokio::test]
+async fn a_manifest_asked_while_the_first_mark_waits_for_the_copy_is_answered_meanwhile() {
+    let base = numbered(10, &[]);
+    // The binary file is not among the diff's texts, so the copy reads it, which the test holds.
+    let fx = Fixture::open(
+        &[("a.txt", &base)],
+        &[("a.txt", &numbered(10, &[3])), ("c.bin", "\0bin\n")],
+    )
+    .await;
+    fx.session.manifest(View::Changeset).await.unwrap();
+
+    let paused = fx.git.paused.lock().await;
+    let mut copy = Box::pin(fx.session.copy_ahead());
+    let mut mark = Box::pin(fx.session.toggle_hunk(0, View::Changeset, "a.txt", 0));
+    let mut cx = Context::from_waker(Waker::noop());
+    assert!(copy.as_mut().poll(&mut cx).is_pending(), "the copy reads the tree");
+    assert!(mark.as_mut().poll(&mut cx).is_pending(), "the mark waits for the copy");
+
+    let manifest = tokio::time::timeout(Duration::from_secs(10), fx.session.manifest(View::Changeset)).await;
+    assert_eq!(manifest.expect("answered while the mark waits").unwrap().files.len(), 2);
+    assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
+
+    drop(paused);
+    let (copied, marked) = futures::future::join(copy, mark).await;
+    copied.unwrap();
+    assert!(matches!(
+        marked.unwrap().started,
+        Some(Lifecycle::Open { version: 1, .. })
+    ));
 }
 
 #[tokio::test]

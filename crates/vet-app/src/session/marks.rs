@@ -30,7 +30,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         path: &str,
         hunk: u32,
     ) -> Result<Outcome<ReviewUpdateView>> {
-        let (mut st, shown) = self.viewing(view).await?;
+        let (mut st, shown) = self.beginning(view).await?;
         check_revision(&st, revision)?;
         check_markable(&shown)?;
         let state = *update_in(&st, &shown, path)?
@@ -78,7 +78,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         path: &str,
         kind: NonTextKind,
     ) -> Result<Outcome<ReviewUpdateView>> {
-        let (mut st, shown) = self.viewing(view).await?;
+        let (mut st, shown) = self.beginning(view).await?;
         check_revision(&st, revision)?;
         check_markable(&shown)?;
         let acknowledged = !update_in(&st, &shown, path)?.review.acknowledged.contains(&kind);
@@ -95,7 +95,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// if none is open. In an interdiff only what the newer version's changeset has to
     /// review is marked.
     pub async fn toggle_file_seen(&self, revision: u32, view: View, path: &str) -> Result<Outcome<ReviewUpdateView>> {
-        let (mut st, shown) = self.viewing(view).await?;
+        let (mut st, shown) = self.beginning(view).await?;
         check_revision(&st, revision)?;
         check_markable(&shown)?;
         let update = update_in(&st, &shown, path)?;

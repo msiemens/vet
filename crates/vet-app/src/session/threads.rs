@@ -218,7 +218,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         body: String,
         now: i64,
     ) -> Result<Outcome<ThreadView>> {
-        let (mut st, shown) = self.viewing(view).await?;
+        let (mut st, shown) = self.beginning(view).await?;
         check_revision(&st, revision)?;
         check_commentable(&shown)?;
         if let (
