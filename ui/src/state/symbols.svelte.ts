@@ -45,6 +45,8 @@ class SymbolsState {
   // A reply of an older request is dropped.
   private listRun = 0;
   private detailRun = 0;
+  // The requests about the selected symbol; aborted when the selection moves.
+  private asking?: AbortController;
 
   constructor() {
     $effect.root(() => {
@@ -94,38 +96,46 @@ class SymbolsState {
   select(symbol: ChangedSymbol) {
     const { backend, revision } = this;
     if (!backend || revision === undefined) return;
-    const run = ++this.detailRun;
+    const run = this.leaveSelection();
+    const { signal } = (this.asking = new AbortController());
     this.selected = symbol;
     const { id } = symbol.symbol;
     this.impact = this.reach = this.removal = undefined;
     this.signature = this.start(
       run,
-      () => backend.signature(revision, id),
+      () => backend.signature(revision, id, signal),
       (l) => (this.signature = l),
     );
     if (symbol.change === "removed") {
       this.removal = this.start(
         run,
-        () => backend.removalImpact(revision, id),
+        () => backend.removalImpact(revision, id, signal),
         (l) => (this.removal = l),
       );
     } else {
       this.impact = this.start(
         run,
-        () => backend.impact(revision, id),
+        () => backend.impact(revision, id, signal),
         (l) => (this.impact = l),
       );
       this.reach = this.start(
         run,
-        () => backend.reachability(revision, id),
+        () => backend.reachability(revision, id, signal),
         (l) => (this.reach = l),
       );
     }
   }
 
   clearSelection() {
-    this.detailRun++;
+    this.leaveSelection();
     this.selected = this.signature = this.impact = this.reach = this.removal = undefined;
+  }
+
+  /** Cancels the requests about the selected symbol, in the backend too; returns the number of the next selection. */
+  private leaveSelection(): number {
+    this.asking?.abort();
+    this.asking = undefined;
+    return ++this.detailRun;
   }
 
   /** Runs `query`, hands the settled state to `set` unless another selection came first; returns the pending state. */
