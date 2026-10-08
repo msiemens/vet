@@ -19,7 +19,7 @@ pub async fn start_at_head<G: GitRepo, S: Store>(acq: &Acquisition<G, S>) -> Sta
     let head = acq.git.head().await.unwrap();
     let base = acq.git.commit_snapshot(&head).await.unwrap();
     let scan = acq.reconcile(Dirty::All).await.unwrap();
-    acq.retain(&[&base], &scan.snapshot, &scan.status, &Default::default())
+    acq.retain(&[&base], &scan.snapshot, &scan.status, &Default::default(), |_, _| {})
         .await
         .unwrap();
     acq.record_commit(base.id, head.clone());

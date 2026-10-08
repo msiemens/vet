@@ -8,13 +8,14 @@
 use std::sync::Arc;
 
 use vet_core::content::{Snapshot, SnapshotId, SnapshotStatus};
-use vet_engine::{Computed, Kind, Retention};
+use vet_engine::{Computed, Engine, Kind, Limits, Progress, Retention};
 
 use super::derived::Diffed;
 use super::{LiveSession, Result, SessionError};
 use crate::acquisition::Acquisition;
 use crate::changeset::Source;
 use crate::ports::{GitRepo, LiveStore};
+use crate::progress::{TaskKind, Tasks};
 
 /// The content `target` has that `base` does not, in the store.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -32,6 +33,13 @@ impl Kind for Retained {
     fn retention(&self) -> Retention {
         Retention::InFlight
     }
+}
+
+/// The engine of the copies, each reporting as a task with how many files it stored.
+pub(super) fn copies(tasks: &Tasks) -> Engine<Retained> {
+    let tasks = tasks.clone();
+    Engine::new(Limits::entries(0))
+        .observing(move |_| Some(Arc::new(tasks.start(TaskKind::Store, "Storing changed files")) as _))
 }
 
 impl<G, S> LiveSession<G, S>
@@ -53,11 +61,14 @@ where
             base: base.id,
             target: target.id,
         };
-        let compute = |_| {
+        let compute = |progress: Progress| {
             let acquisition = Arc::clone(acquisition);
             let (base, target, status) = (base.clone(), target.clone(), status.clone());
             async move {
-                acquisition.retain(&[&base], &target, &status, &diffed.blobs).await?;
+                let report = |done, total| progress.report(Some((done, total)), None);
+                acquisition
+                    .retain(&[&base], &target, &status, &diffed.blobs, report)
+                    .await?;
                 Ok(Computed::new((), false))
             }
         };

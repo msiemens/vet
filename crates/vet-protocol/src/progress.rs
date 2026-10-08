@@ -23,6 +23,8 @@ pub enum TaskKind {
     Analyse,
     /// Fetching the repository's remotes.
     Fetch,
+    /// Keeping the working tree's changed files in Vet's store, ahead of a review.
+    Store,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

@@ -127,12 +127,14 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
     /// taken from `read` if it has them, else read from git or the worktree, and
     /// put in batches of about [`RETAIN_BATCH`] bytes. Fails if a blob's content
     /// is not what `target` says it is: the file changed while it was copied.
+    /// `report` is told how many of how many missing blobs were taken.
     pub async fn retain(
         &self,
         known: &[&Snapshot],
         target: &Snapshot,
         status: &SnapshotStatus,
         read: &BTreeMap<BlobId, Vec<u8>>,
+        report: impl Fn(u32, u32),
     ) -> Result<(), BlobError> {
         let mut wanted: BTreeMap<BlobId, &RepoPath> = BTreeMap::new();
         for (path, entry) in &target.entries {
@@ -155,7 +157,9 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
         };
         let missing = self.store.missing_blobs(wanted.keys().copied().collect()).await?;
         let (mut batch, mut bytes) = (Vec::new(), 0);
-        for blob in missing {
+        let total = missing.len() as u32;
+        for (done, blob) in missing.into_iter().enumerate() {
+            report(done as u32, total);
             let path = wanted[&blob];
             let content = match read.get(&blob) {
                 Some(content) => content.clone(),
@@ -168,7 +172,9 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
                 bytes = 0;
             }
         }
-        put(batch).await
+        put(batch).await?;
+        report(total, total);
+        Ok(())
     }
 }
 

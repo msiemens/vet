@@ -10,10 +10,10 @@ use futures::future::join_all;
 use super::*;
 use crate::progress::{Task, TaskKind, Tasks};
 
-type Heard = Arc<Mutex<Vec<Task>>>;
+pub(super) type Heard = Arc<Mutex<Vec<Task>>>;
 
 /// Like [`Fixture::open`], with the session's tasks heard.
-async fn announcing(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> (Fixture, Heard) {
+pub(super) async fn announcing(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> (Fixture, Heard) {
     let git = FakeGit::default();
     *git.base.lock().unwrap() = Some(git.snapshot(base));
     let first = git.snapshot(dirty);

@@ -4,7 +4,9 @@
 use std::collections::BTreeSet;
 use std::task::{Context, Waker};
 
+use super::derived::announcing;
 use super::*;
+use crate::progress::{Task, TaskKind, TaskState};
 
 /// The blobs put into the store so far.
 fn put(fx: &Fixture) -> Vec<BlobId> {
@@ -47,6 +49,32 @@ async fn the_first_mark_copies_only_what_changed_since_the_copy() {
     fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
 
     assert_eq!(put(&fx)[copied..], [BlobId::of(edited.as_bytes())]);
+}
+
+#[tokio::test]
+async fn a_copy_is_a_task_that_counts_the_files_it_stores_and_ends() {
+    let base = numbered(10, &[]);
+    let (fx, heard) = announcing(
+        &[("a.txt", &base)],
+        &[("a.txt", &numbered(10, &[3])), ("new.txt", "n\n")],
+    )
+    .await;
+
+    fx.session.copy_ahead().await.unwrap();
+
+    let heard = heard.lock().unwrap();
+    let copy: Vec<&Task> = heard.iter().filter(|t| t.kind == TaskKind::Store).collect();
+    assert!(!copy.is_empty(), "the copy was announced");
+    assert!(
+        copy.iter()
+            .all(|t| t.id == copy[0].id && t.title == "Storing changed files")
+    );
+    assert_eq!(copy[0].state, TaskState::Running);
+    let last = copy.last().unwrap();
+    assert_eq!(
+        (last.done, last.total, &last.state),
+        (Some(2), Some(2), &TaskState::Finished)
+    );
 }
 
 #[tokio::test]

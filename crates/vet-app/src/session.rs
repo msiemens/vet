@@ -296,6 +296,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Self {
             author: author_of(&acquisition.git).await,
             derived: Derived::new(&acquisition.tasks),
+            ahead: ahead::copies(&acquisition.tasks),
             copying: acquisition.clone(),
             acquisition,
             name,
@@ -307,7 +308,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             revisions: Arc::default(),
             exchange: Mutex::new(()),
             lines: Engine::new(Limits::entries(KEPT_LINE_DELTAS)),
-            ahead: Engine::new(Limits::entries(0)),
         }
     }
 
@@ -786,7 +786,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
             retained = self
                 .acquisition
-                .retain(&[&st.base, &st.target], &scan.snapshot, &scan.status, &BTreeMap::new())
+                .retain(
+                    &[&st.base, &st.target],
+                    &scan.snapshot,
+                    &scan.status,
+                    &BTreeMap::new(),
+                    |_, _| {},
+                )
                 .await
                 .err();
             let store = &self.acquisition.store;
