@@ -8,6 +8,7 @@ use vet_mapping as mapping;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
 use crate::fetch::Held;
+use crate::sync::sync_in_background;
 use crate::{Open, Orchestrator, message, start_servers_in_background};
 
 impl Orchestrator {
@@ -107,6 +108,9 @@ impl Orchestrator {
                 changeset: mapping::changeset_key(&source),
             });
             start_servers_in_background(open.open.clone());
+        }
+        if matches!(source, Source::PullRequest { .. }) {
+            sync_in_background(open.open.clone());
         }
         Ok(Response::Done)
     }

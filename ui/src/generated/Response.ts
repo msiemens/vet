@@ -17,11 +17,13 @@ import type { Impact } from "./Impact";
 import type { Lens } from "./Lens";
 import type { Locations } from "./Locations";
 import type { Manifest } from "./Manifest";
+import type { PullRequestInfo } from "./PullRequestInfo";
 import type { PullRequestRow } from "./PullRequestRow";
 import type { PullRequestSource } from "./PullRequestSource";
 import type { Reachability } from "./Reachability";
 import type { RecentProject } from "./RecentProject";
 import type { RemovalImpact } from "./RemovalImpact";
+import type { ReviewSubmitted } from "./ReviewSubmitted";
 import type { ReviewUpdate } from "./ReviewUpdate";
 import type { ServerInfo } from "./ServerInfo";
 import type { Side } from "./Side";
@@ -60,4 +62,4 @@ targetHighlights: Array<number>, } | { "type": "review" } & ReviewUpdate | { "ty
 /**
  * How many of `diagnostics` to tell the viewer about: hints are not counted.
  */
-count: number, unavailable: Unavailable | null, } | { "type": "changedSymbols" } & ChangedSymbols | { "type": "signature", revision: number, signature: SymbolSignature | null, unavailable: Unavailable | null, } | { "type": "impact" } & Impact | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "base" } & Base | { "type": "reviewFinished", complete: boolean, } | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "commentTarget", target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread;
+count: number, unavailable: Unavailable | null, } | { "type": "changedSymbols" } & ChangedSymbols | { "type": "signature", revision: number, signature: SymbolSignature | null, unavailable: Unavailable | null, } | { "type": "impact" } & Impact | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "base" } & Base | { "type": "reviewFinished", complete: boolean, } | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "commentTarget", target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread | { "type": "pullRequestInfo" } & PullRequestInfo | { "type": "reviewSubmitted" } & ReviewSubmitted;

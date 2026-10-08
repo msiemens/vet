@@ -12,6 +12,7 @@ mod references;
 mod review;
 mod semantic;
 mod servers;
+mod sync;
 mod threads;
 
 use std::path::Path;
@@ -311,6 +312,12 @@ impl Orchestrator {
                 status,
             } => self.set_thread_status(project, from, thread, status).await,
             Request::DeleteThread { project, thread } => self.delete_thread(project, from, thread).await,
+            Request::EditMessage { project, message, body } => self.edit_message(project, from, message, body).await,
+            Request::RemoveMessage { project, message } => self.remove_message(project, from, message).await,
+            Request::KeepEdit { project, message, keep } => self.keep_edit(project, from, message, keep).await,
+            Request::SyncThreads { project } => self.sync_threads(project).await,
+            Request::SubmitReview { project, verdict, body } => self.submit_review(project, verdict, body).await,
+            Request::PullRequestInfo { project } => self.pull_request_info(project).await,
             Request::ConfirmAnchor {
                 project,
                 revision,

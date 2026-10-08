@@ -6,8 +6,9 @@ use ts_rs::TS;
 use crate::{
     Account, Base, BaseDiff, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow, CheckLog,
     CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, Highlights, Impact, Lens, Locations, Manifest,
-    ProjectId, PullRequestRow, PullRequestSource, Reachability, RecentProject, RemovalImpact, ReviewUpdate, ServerInfo,
-    Side, SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable, VersionInfo,
+    ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject, RemovalImpact,
+    ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange, TextContent, Thread,
+    ThreadTarget, Unavailable, VersionInfo,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -170,4 +171,9 @@ pub enum Response {
     },
     /// One thread after a change, resolved at the current revision.
     Thread(Thread),
+    /// The answer to `PullRequestInfo`. Boxed like the manifest, which it is rarely near in size
+    /// to but need not widen every response for.
+    PullRequestInfo(Box<PullRequestInfo>),
+    /// The answer to `SubmitReview`.
+    ReviewSubmitted(ReviewSubmitted),
 }

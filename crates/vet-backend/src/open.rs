@@ -5,6 +5,7 @@
 //! the first request that needs it, or by the task `open` spawns, whichever is
 //! first; the others wait for it. Meanwhile the scan reports as a task.
 
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,7 +32,7 @@ use vet_infra::restore::ToolRestorer;
 use vet_infra::store::SqliteStore;
 use vet_infra::watch::FsWatcher;
 use vet_mapping as mapping;
-use vet_protocol::{Event, ProjectId, Response};
+use vet_protocol::{Event, PlatformConnection, ProjectId, Response};
 use vet_semantic::ports::Backend;
 
 use crate::events::{Connection, settled};
@@ -78,6 +79,8 @@ pub struct Wired {
     pub azure_devops: Arc<AzureDevOps>,
     /// What the platform called the pull requests it has told of.
     pub pull_requests: KnownPullRequests,
+    /// How the last sync with each platform host went, to announce a stop once and not on every try.
+    connections: Mutex<HashMap<String, PlatformConnection>>,
     plan: Plan,
     booted: OnceCell<Result<Arc<Booted>, String>>,
     settling: Mutex<Option<AbortHandle>>,
@@ -101,6 +104,18 @@ impl Wired {
     /// The session if it has scanned successfully already.
     pub fn booted_now(&self) -> Option<&Arc<Booted>> {
         self.booted.get()?.as_ref().ok()
+    }
+
+    /// Records how syncing with `host` went and answers how it went before.
+    pub fn set_connection(&self, host: &str, now: PlatformConnection) -> Option<PlatformConnection> {
+        let mut all = self.connections.lock().unwrap_or_else(PoisonError::into_inner);
+        all.insert(host.to_owned(), now)
+    }
+
+    /// How syncing with `host` went last, if it was tried.
+    pub fn connection(&self, host: &str) -> Option<PlatformConnection> {
+        let all = self.connections.lock().unwrap_or_else(PoisonError::into_inner);
+        all.get(host).cloned()
     }
 
     /// Hands over the task that fetches periodically, which ends with the session.
@@ -286,6 +301,7 @@ impl Orchestrator {
             azure_devops: self.azure_devops.clone(),
             pull_requests: KnownPullRequests::default(),
             tasks,
+            connections: Mutex::default(),
             plan: Plan {
                 id,
                 repo,

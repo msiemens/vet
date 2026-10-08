@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    BaseChoice, ChangesetKey, CommentAt, Lens, NonTextKind, ProjectId, ReviewFilter, Secret, Side, SymbolId,
-    ThreadStatus, ThreadTarget, View,
+    BaseChoice, ChangesetKey, CommentAt, EditChoice, Lens, NonTextKind, ProjectId, ReviewFilter, Secret, Side,
+    SymbolId, ThreadStatus, ThreadTarget, View,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -421,10 +421,61 @@ pub enum Request {
         thread: u32,
         status: ThreadStatus,
     },
-    /// Deletes a thread; this is also how a detached one is discarded.
+    /// Deletes a thread; this is also how a detached one is discarded. A thread the platform
+    /// has is removed there too, which only its author can; the request fails with a message
+    /// fit to show for anyone else's, or when the platform cannot do it.
     DeleteThread {
         project: ProjectId,
         thread: u32,
+    },
+    /// Replaces the text of one of the viewer's own comments. A draft changes here. A comment
+    /// the platform has is changed there at once; if its text there is not the one this edit
+    /// started from, nothing is sent and the message carries both texts as a `conflict` until
+    /// `KeepEdit` chooses one. A comment the platform cannot be told about now fails the request
+    /// with the reason; the new text is kept and the next sync sends it. Answers with
+    /// `Response::Thread`.
+    EditMessage {
+        project: ProjectId,
+        message: u32,
+        body: String,
+    },
+    /// Removes one of the viewer's own comments; removing a thread's first removes the thread.
+    /// A comment the platform has is removed there first. Answers with `Response::Done`.
+    RemoveMessage {
+        project: ProjectId,
+        message: u32,
+    },
+    /// Settles a comment that was edited here and on the platform by keeping one of the texts.
+    /// Answers with `Response::Thread`.
+    KeepEdit {
+        project: ProjectId,
+        message: u32,
+        keep: EditChoice,
+    },
+    /// Brings the threads of the pull request on view up to date with the platform's, both ways
+    /// (a status the viewer changed since the last sync is sent and wins), then announces
+    /// `ThreadsChanged`, `PlatformStatus` and any `Notification` to every subscriber. The backend
+    /// does this on its own when a pull request opens, on fetch and after `SubmitReview`; this is
+    /// for after the viewer signed in again. Fails if the changeset on view is no pull request.
+    /// A platform that cannot be asked is a `PlatformStatus`, not a failure. Answers with
+    /// `Response::Done`.
+    SyncThreads {
+        project: ProjectId,
+    },
+    /// Posts the viewer's drafts of the pull request on view as one review with `verdict` (an id
+    /// from `PlatformTraits::verdicts`) and an optional text, then syncs. Nothing of the review
+    /// is posted if the platform refuses it, and the request fails with the reason. Answers with
+    /// `Response::ReviewSubmitted`.
+    SubmitReview {
+        project: ProjectId,
+        verdict: String,
+        body: Option<String>,
+    },
+    /// What the Comments tool window shows of the pull request on view above its threads, as
+    /// the last sync found it. Fails if the changeset on view is no pull request or was not
+    /// synced yet. Answers with `Response::PullRequestInfo`.
+    PullRequestInfo {
+        project: ProjectId,
     },
     /// Re-anchors a thread whose anchor is `Inferred` at its current location,
     /// which makes it `Exact`. Fails if `revision` is no longer current or the

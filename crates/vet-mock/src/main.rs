@@ -288,6 +288,12 @@ impl Handler for Mock {
             | Request::Reply { .. }
             | Request::SetThreadStatus { .. }
             | Request::DeleteThread { .. }
+            | Request::EditMessage { .. }
+            | Request::RemoveMessage { .. }
+            | Request::KeepEdit { .. }
+            | Request::SyncThreads { .. }
+            | Request::SubmitReview { .. }
+            | Request::PullRequestInfo { .. }
             | Request::ConfirmAnchor { .. }
             | Request::AttachAnchor { .. } => Err("the corpus has no threads".into()),
             Request::Hover {

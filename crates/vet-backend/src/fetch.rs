@@ -14,6 +14,7 @@ use vet_protocol::{Event, ProjectId, Response};
 use crate::changesets::bring_in;
 use crate::events::settled;
 use crate::open::Booted;
+use crate::sync::sync_pull_request;
 use crate::{Open, Orchestrator, PlatformAccounts, start_servers_in_background};
 
 /// The accounts the process holds, as the credentials a fetch uses.
@@ -51,6 +52,7 @@ async fn fetch_and_report(open: &Arc<Open>) {
         });
     }
     follow_pull_request(open, booted).await;
+    sync_pull_request(open, booted).await;
 }
 
 /// If a pull request is on view, fetches it again and, when its head or target moved, has the

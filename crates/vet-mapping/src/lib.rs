@@ -5,13 +5,16 @@ pub mod progress;
 pub mod semantic;
 
 use vet_app::changeset::{BaseChoice, CommitId, Lens, RemoteKey, Source, VersionOrigin};
-use vet_app::platform::{CheckLog, CiState, CommitChecks, PlatformError};
+use vet_app::platform::{
+    CheckLog, CiState, CommitChecks, PlatformError, PlatformKind, PullRequestState, ReviewVerdict, ReviewerState,
+};
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
 use vet_app::session::{
     BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView, DirEntryKind,
-    DirListing, EntryInfo, FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView, ModeChange, NewThread,
-    NoText, ReviewUpdateView, ReviewView, RowReview, TargetText, ThreadView, ThreadsView, VersionView, View,
+    DirListing, DiscussionView, EntryInfo, FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView,
+    ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, RowReview, SubmitReport, SyncNotice, TargetText,
+    ThreadView, ThreadsView, VersionView, View,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
@@ -745,13 +748,178 @@ pub fn thread(t: &ThreadView) -> p::Thread {
             .messages
             .iter()
             .map(|m| p::ThreadMessage {
+                id: sat_u32(m.id.0),
                 author: m.author.clone(),
                 body: m.body.clone(),
                 at: unix_secs(m.at),
+                mine: m.mine,
+                avatar: m.avatar.clone(),
+                posted: m.remote.is_some(),
+                edited_at: m.edited_at.map(unix_secs),
+                conflict: m
+                    .remote
+                    .as_ref()
+                    .and_then(|r| r.conflict.as_ref())
+                    .map(|c| p::EditConflict {
+                        remote_body: c.remote_body.clone(),
+                        remote_at: unix_secs(c.remote_at),
+                    }),
             })
             .collect(),
         status: thread_status(t.status),
+        platform: t.platform.as_ref().map(|pt| p::ThreadPlatform {
+            posted: pt.remote_id.is_some(),
+            resolvable: pt.resolvable,
+            resolved_by: pt.resolved_by.clone(),
+        }),
     }
+}
+
+fn reviewer_state(s: ReviewerState) -> p::ReviewerState {
+    match s {
+        ReviewerState::Waiting => p::ReviewerState::Waiting,
+        ReviewerState::Approved => p::ReviewerState::Approved,
+        ReviewerState::ChangesRequested => p::ReviewerState::ChangesRequested,
+        ReviewerState::Commented => p::ReviewerState::Commented,
+    }
+}
+
+/// The properties of a platform the UI branches on.
+pub fn platform_traits(kind: PlatformKind) -> p::PlatformTraits {
+    match kind {
+        PlatformKind::GitHub => p::PlatformTraits {
+            conversation_feed: true,
+            batched_review: true,
+            verdicts: [
+                ("COMMENT", "Comment"),
+                ("APPROVE", "Approve"),
+                ("REQUEST_CHANGES", "Request changes"),
+            ]
+            .into_iter()
+            .map(|(id, label)| p::Verdict {
+                id: id.into(),
+                label: label.into(),
+            })
+            .collect(),
+            verdict_separate: false,
+        },
+        PlatformKind::AzureDevOps => p::PlatformTraits {
+            conversation_feed: false,
+            batched_review: false,
+            verdicts: Vec::new(),
+            verdict_separate: true,
+        },
+    }
+}
+
+/// How the backend gets on with a platform, after `result` of talking to it.
+pub fn platform_connection(result: Option<&PlatformError>) -> p::PlatformConnection {
+    match result {
+        None => p::PlatformConnection::Ok,
+        Some(PlatformError::SignedOut(_)) => p::PlatformConnection::SignedOut,
+        Some(PlatformError::Rejected(message)) => p::PlatformConnection::TokenExpired {
+            message: message.clone(),
+        },
+        Some(other) => p::PlatformConnection::Failed {
+            message: other.to_string(),
+        },
+    }
+}
+
+pub fn platform_status(host: &str, kind: PlatformKind, connection: p::PlatformConnection) -> p::PlatformStatus {
+    p::PlatformStatus {
+        host: host.to_owned(),
+        kind: match kind {
+            PlatformKind::GitHub => p::PlatformKind::GitHub,
+            PlatformKind::AzureDevOps => p::PlatformKind::AzureDevOps,
+        },
+        connection,
+    }
+}
+
+/// What the Comments tool window shows above the threads of the pull request `v` is.
+pub fn pull_request_info(v: &DiscussionView, kind: PlatformKind, platform: p::PlatformStatus) -> p::PullRequestInfo {
+    let d = &v.discussion;
+    let traits = platform_traits(kind);
+    let mut blocking = Vec::new();
+    if v.unresolved_threads > 0 {
+        blocking.push(p::Blocker::Threads {
+            count: v.unresolved_threads,
+        });
+    }
+    if matches!(d.ci, Some(CiState::Failure | CiState::Pending)) {
+        blocking.push(p::Blocker::Checks);
+    }
+    if d.reviewers.iter().any(|r| r.state == ReviewerState::ChangesRequested) {
+        blocking.push(p::Blocker::ChangesRequested);
+    }
+    p::PullRequestInfo {
+        number: sat_u32(v.number),
+        title: d.title.clone(),
+        url: d.url.clone(),
+        draft: d.draft,
+        state: match d.state {
+            PullRequestState::Open => p::PullRequestState::Open,
+            PullRequestState::Closed => p::PullRequestState::Closed,
+            PullRequestState::Merged => p::PullRequestState::Merged,
+        },
+        author: d.author.clone(),
+        author_avatar: d.author_avatar.clone(),
+        source_branch: d.source_branch.clone(),
+        target_branch: d.target_branch.clone(),
+        reviewers: (d.reviewers.iter())
+            .map(|r| p::Reviewer {
+                name: r.name.clone(),
+                state: reviewer_state(r.state),
+            })
+            .collect(),
+        labels: d.labels.clone(),
+        ci: d.ci.map(ci_state),
+        blocking,
+        conversation: if traits.conversation_feed {
+            (d.conversation.iter())
+                .map(|c| p::ConversationEntry {
+                    author: c.author.clone(),
+                    avatar: c.avatar.clone(),
+                    at: unix_secs(c.at),
+                    verdict: c.verdict.and_then(|v| match v {
+                        ReviewVerdict::Approved => Some(p::ReviewerState::Approved),
+                        ReviewVerdict::ChangesRequested => Some(p::ReviewerState::ChangesRequested),
+                        ReviewVerdict::Commented => Some(p::ReviewerState::Commented),
+                        ReviewVerdict::Dismissed => None,
+                    }),
+                    body: c.body.clone(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
+        traits,
+        synced_at: Some(unix_secs(v.synced_at)),
+        platform,
+    }
+}
+
+pub fn notification(n: &SyncNotice) -> p::Notification {
+    match n {
+        SyncNotice::ThreadDeleted { place, dropped } => p::Notification {
+            kind: p::NotificationKind::Info,
+            text: if dropped.is_empty() {
+                format!("Thread on {place} was deleted on GitHub.")
+            } else {
+                format!("Thread on {place} was deleted on GitHub. Your draft reply was removed.")
+            },
+            copy_text: (!dropped.is_empty()).then(|| dropped.join("\n\n")),
+            host: None,
+        },
+    }
+}
+
+pub fn review_submitted(r: &SubmitReport) -> p::Response {
+    p::Response::ReviewSubmitted(p::ReviewSubmitted {
+        posted: r.posted,
+        skipped: r.skipped,
+    })
 }
 
 pub fn threads(v: &ThreadsView) -> p::Response {

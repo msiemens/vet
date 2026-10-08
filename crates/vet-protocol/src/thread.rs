@@ -69,10 +69,47 @@ pub enum ThreadKind {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ThreadMessage {
+    /// What `EditMessage`, `RemoveMessage` and `KeepEdit` take.
+    pub id: u32,
     pub author: String,
     pub body: String,
     /// Unix seconds.
     pub at: u32,
+    /// The viewer wrote it, here or on the platform: it can be edited and removed.
+    pub mine: bool,
+    /// The platform's picture of the author; without one the UI shows the author's initials.
+    pub avatar: Option<String>,
+    /// The platform has the comment. On a thread with a `platform`, a message that is not posted
+    /// is a draft, which `SubmitReview` posts.
+    pub posted: bool,
+    /// Unix seconds of the viewer's last edit of the text.
+    pub edited_at: Option<u32>,
+    /// Set when the text was edited here and on the platform since the last sync: both are kept
+    /// until `KeepEdit` chooses one, and nothing is posted from the thread meanwhile.
+    pub conflict: Option<EditConflict>,
+}
+
+/// The platform's text of a comment that was also edited here.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EditConflict {
+    pub remote_body: String,
+    /// Unix seconds the platform's edit was made.
+    pub remote_at: u32,
+}
+
+/// What a thread is on a platform.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ThreadPlatform {
+    /// The platform has the thread; otherwise it is a draft.
+    pub posted: bool,
+    /// A flat comment on the whole pull request cannot be resolved.
+    pub resolvable: bool,
+    /// Who resolved it on the platform.
+    pub resolved_by: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -148,4 +185,6 @@ pub struct Thread {
     /// The first one opened the thread.
     pub messages: Vec<ThreadMessage>,
     pub status: ThreadStatus,
+    /// `None` for a thread of a changeset that is not on a platform.
+    pub platform: Option<ThreadPlatform>,
 }

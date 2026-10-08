@@ -4,6 +4,7 @@ import type { LineLocation } from "./LineLocation";
 import type { Side } from "./Side";
 import type { ThreadKind } from "./ThreadKind";
 import type { ThreadMessage } from "./ThreadMessage";
+import type { ThreadPlatform } from "./ThreadPlatform";
 import type { ThreadStatus } from "./ThreadStatus";
 
 /**
@@ -44,4 +45,8 @@ anchor: AnchorState | null,
 /**
  * The first one opened the thread.
  */
-messages: Array<ThreadMessage>, status: ThreadStatus, };
+messages: Array<ThreadMessage>, status: ThreadStatus, 
+/**
+ * `None` for a thread of a changeset that is not on a platform.
+ */
+platform: ThreadPlatform | null, };

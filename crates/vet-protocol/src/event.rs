@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{Base, ChangesetKey, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate, Task};
+use crate::{
+    Base, ChangesetKey, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate, Task,
+};
 
 /// Events are invalidations or small state updates; the client re-requests
 /// whatever it displays.
@@ -60,4 +62,13 @@ pub enum Event {
     /// Background work of the project started, progressed or ended. Sent to every
     /// subscriber; a task that ended (`Finished` or `Failed`) is not announced again.
     Task(Task),
+    /// How the backend gets on with the platform of the pull request on view, after it tried to
+    /// sync with it. Sent to every subscriber each time, so a late one need not ask.
+    PlatformStatus { project: ProjectId, status: PlatformStatus },
+    /// Something the viewer should hear about, to every subscriber of the project: a card in the
+    /// window's corner that the bell in the footer keeps in its list.
+    Notification {
+        project: ProjectId,
+        notification: Notification,
+    },
 }
