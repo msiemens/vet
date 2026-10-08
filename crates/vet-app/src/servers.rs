@@ -215,7 +215,7 @@ mod tests {
                     },
                     origin: ServerOrigin::Custom,
                     version: None,
-                    notes: Vec::new(),
+                    tsserver: None,
                 }),
                 None => ServerState::Missing {
                     reason: format!("no {} server", language.0),

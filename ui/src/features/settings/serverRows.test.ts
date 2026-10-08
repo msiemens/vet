@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ServerInfo } from "../../generated/ServerInfo.ts";
+import type { Tsserver } from "../../generated/Tsserver.ts";
 import { serverRow } from "./serverRows.ts";
 
 const found = (origin: "custom" | "project" | "installed" | "path"): ServerInfo => ({
   language: "rust",
   title: "Rust",
   server: "rust-analyzer",
-  state: { type: "found", path: "/bin/ra", origin, version: "1.2", notes: ["note"] },
+  state: { type: "found", path: "/bin/ra", origin, version: "1.2", tsserver: null },
   customPath: origin === "custom" ? "/bin/ra" : null,
   pinnedVersion: "2026-01-01",
   installBlocker: null,
@@ -31,7 +32,6 @@ void test("a found server shows where it came from", () => {
   assert.equal(row.origin, "Installed by Vet");
   assert.equal(row.path, "/bin/ra");
   assert.equal(row.version, "1.2");
-  assert.deepEqual(row.notes, ["note"]);
 });
 
 void test("a custom origin is the custom status and keeps the path to reset", () => {
@@ -48,18 +48,16 @@ void test("the table names the source short, and a custom one by its path", () =
   assert.equal(serverRow(missing).source, "");
 });
 
-void test("the tsserver note becomes its own entry, found or not", () => {
-  const withNote = (note: string): ServerInfo => {
+void test("the tsserver of a found server is carried over, and a server without one has none", () => {
+  const withTsserver = (tsserver: Tsserver): ServerInfo => {
     const info = found("path");
-    if (info.state.type === "found") info.state.notes = [note, "other"];
+    if (info.state.type === "found") info.state.tsserver = tsserver;
     return info;
   };
-  const using = serverRow(withNote("tsserver: the project's typescript 5.9.2 (/p/tsserver.js)"));
-  assert.equal(using.tsserver?.whose, "the project's typescript 5.9.2 (/p/tsserver.js)");
-  assert.deepEqual(using.notes, ["other"]);
-  const none = serverRow(withNote("tsserver: none; the project has no typescript"));
-  assert.equal(none.tsserver?.whose, undefined);
-  assert.equal(none.tsserver?.why, "the project has no typescript");
+  const using: Tsserver = { type: "using", whose: "the project's typescript 5.9.2", path: "/p/tsserver.js" };
+  assert.deepEqual(serverRow(withTsserver(using)).tsserver, using);
+  const none: Tsserver = { type: "missing", reason: "the project has no typescript" };
+  assert.deepEqual(serverRow(withTsserver(none)).tsserver, none);
   assert.equal(serverRow(found("path")).tsserver, undefined);
 });
 

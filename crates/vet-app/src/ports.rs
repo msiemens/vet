@@ -608,8 +608,23 @@ pub struct FoundServer {
     pub origin: ServerOrigin,
     /// Learned by [`ServerResolver::version`]; `resolve` leaves it empty.
     pub version: Option<String>,
-    /// Facts that shape its answers, e.g. which `tsserver` it uses.
-    pub notes: Vec<String>,
+    /// The `tsserver` it answers through; only a TypeScript server has one.
+    pub tsserver: Option<Tsserver>,
+}
+
+/// Which `tsserver` a TypeScript language server answers through.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Tsserver {
+    Using {
+        /// Which `typescript` it is, e.g. "the project's typescript 5.9.2". Fit to show.
+        whose: String,
+        /// Its `lib/tsserver.js`.
+        path: PathBuf,
+    },
+    Missing {
+        /// Why there is none. Fit to show.
+        reason: String,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]

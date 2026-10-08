@@ -180,8 +180,8 @@
         {#if selected.tsserver}
           <dt>tsserver</dt>
           <dd class="tsserver">
-            {#if selected.tsserver.whose}
-              <span>{selected.tsserver.whose}</span>
+            {#if selected.tsserver.type === "using"}
+              <span>{selected.tsserver.whose} ({selected.tsserver.path})</span>
             {:else}
               <span class="bad">Not found</span>
               {#if selected.pinnedVersion}
@@ -195,16 +195,12 @@
               {/if}
             {/if}
           </dd>
-          {#if selected.tsserver.why}
+          {#if selected.tsserver.type === "missing"}
             <dt></dt>
-            <dd class="hint">{selected.tsserver.why}</dd>
+            <dd class="hint">{selected.tsserver.reason}</dd>
           {/if}
         {/if}
 
-        {#each selected.notes as note (note)}
-          <dt></dt>
-          <dd class="hint">{note}</dd>
-        {/each}
         {#if busy}
           <dt></dt>
           <dd class="hint">Installing…</dd>

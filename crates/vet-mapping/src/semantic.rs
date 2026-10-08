@@ -1,6 +1,6 @@
 //! Semantic results and language server status to protocol DTOs.
 
-use vet_app::ports::{FoundServer, ServerOrigin, ServerState};
+use vet_app::ports::{FoundServer, ServerOrigin, ServerState, Tsserver};
 use vet_app::servers::ServerStatus;
 use vet_core::content::RepoPath;
 use vet_protocol as p;
@@ -241,12 +241,18 @@ fn server_state(state: &ServerState) -> p::ServerState {
             command,
             origin: o,
             version,
-            notes,
+            tsserver,
         }) => p::ServerState::Found {
             path: command.program.clone(),
             origin: origin(*o),
             version: version.clone(),
-            notes: notes.clone(),
+            tsserver: tsserver.as_ref().map(|t| match t {
+                Tsserver::Using { whose, path } => p::Tsserver::Using {
+                    whose: whose.clone(),
+                    path: path.to_string_lossy().into_owned(),
+                },
+                Tsserver::Missing { reason } => p::Tsserver::Missing { reason: reason.clone() },
+            }),
         },
         ServerState::Missing { reason } => p::ServerState::Missing { reason: reason.clone() },
     }

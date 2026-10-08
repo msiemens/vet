@@ -17,6 +17,23 @@ pub enum ServerOrigin {
     Path,
 }
 
+/// The `tsserver` a TypeScript language server answers through.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum Tsserver {
+    Using {
+        /// Which `typescript` it is, e.g. "the project's typescript 5.9.2". Fit to show.
+        whose: String,
+        /// Its `lib/tsserver.js`.
+        path: String,
+    },
+    Missing {
+        /// Why there is none. Fit to show.
+        reason: String,
+    },
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
@@ -26,8 +43,8 @@ pub enum ServerState {
         origin: ServerOrigin,
         /// If it is cheap to learn.
         version: Option<String>,
-        /// Facts that shape its answers, e.g. which `tsserver` it uses.
-        notes: Vec<String>,
+        /// The `tsserver` it uses; only a TypeScript server has one.
+        tsserver: Option<Tsserver>,
     },
     Missing {
         /// What was looked for and where, and what to do. Fit to show.

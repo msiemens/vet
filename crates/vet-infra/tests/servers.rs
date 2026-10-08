@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use tempfile::TempDir;
-use vet_app::ports::{ServerOrigin, ServerResolver, ServerState};
+use vet_app::ports::{ServerOrigin, ServerResolver, ServerState, Tsserver};
 use vet_app::servers::Servers;
 use vet_core::content::RepoPath;
 use vet_infra::lsp::{LspLauncher, NoRestore, config};
@@ -99,7 +99,11 @@ async fn typescript_installs_and_uses_the_project_typescript() {
     else {
         panic!("not found");
     };
-    assert!(found.notes[0].contains("Vet's fallback"), "{:?}", found.notes);
+    assert!(
+        matches!(&found.tsserver, Some(Tsserver::Using { whose, .. }) if whose.contains("Vet's fallback")),
+        "{:?}",
+        found.tsserver
+    );
 
     let launcher = LspLauncher::new(servers(&setup), NoRestore);
     let server = launcher

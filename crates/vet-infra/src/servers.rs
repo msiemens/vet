@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use vet_app::ports::{
     Command, FoundServer, ProcessEvent, ProcessRunner, RunningProcess, ServerCommand, ServerOrigin, ServerResolver,
-    ServerState,
+    ServerState, Tsserver,
 };
 use vet_semantic::ports::BackendId;
 
@@ -205,20 +205,20 @@ impl ServerResolver for ToolResolver {
             };
         };
 
-        let mut notes = Vec::new();
+        let mut tsserver = None;
         let mut compiler = None;
         if spec.compiler == Compiler::TypeScript {
-            match self.tsserver(spec, project) {
-                Some((tsserver, whose)) => {
-                    notes.push(format!("tsserver: {whose} ({})", tsserver.display()));
-                    compiler = Some(tsserver);
+            tsserver = Some(match self.tsserver(spec, project) {
+                Some((path, whose)) => {
+                    compiler = Some(path.clone());
+                    Tsserver::Using { whose, path }
                 }
-                None => notes.push(
-                    "tsserver: none; the project has no typescript with lib/tsserver.js (TypeScript 7 ships none) \
-                     and Vet's fallback is not installed"
+                None => Tsserver::Missing {
+                    reason: "the project has no typescript with lib/tsserver.js (TypeScript 7 ships none) \
+                             and Vet's fallback is not installed"
                         .into(),
-                ),
-            }
+                },
+            });
         }
         ServerState::Found(FoundServer {
             command: ServerCommand {
@@ -227,7 +227,7 @@ impl ServerResolver for ToolResolver {
             },
             origin,
             version: None,
-            notes,
+            tsserver,
         })
     }
 
@@ -440,13 +440,23 @@ mod tests {
         assert_eq!(server.origin, ServerOrigin::Path);
         let tsserver = project.path().join("node_modules/typescript/lib/tsserver.js");
         assert_eq!(server.command.compiler.as_deref(), Some(tsserver.as_path()));
-        assert!(server.notes[0].contains("5.9.2"), "{:?}", server.notes);
+        assert_eq!(
+            server.tsserver,
+            Some(Tsserver::Using {
+                whose: "the project's typescript 5.9.2".into(),
+                path: tsserver,
+            })
+        );
 
         // A project without a usable typescript (none, or TypeScript 7, which has no tsserver.js).
         let bare = tempfile::tempdir().unwrap();
         let server = found(resolver.resolve(&language("typescript"), bare.path(), None).await);
         assert!(server.command.compiler.is_none());
-        assert!(server.notes[0].starts_with("tsserver: none"), "{:?}", server.notes);
+        assert!(
+            matches!(server.tsserver, Some(Tsserver::Missing { .. })),
+            "{:?}",
+            server.tsserver
+        );
 
         let fallback = data.path().join("servers/typescript/node_modules/typescript");
         touch(&fallback.join("lib/tsserver.js"));
@@ -455,13 +465,17 @@ mod tests {
             server.command.compiler.as_deref(),
             Some(fallback.join("lib/tsserver.js").as_path())
         );
-        assert!(server.notes[0].contains("Vet's fallback"), "{:?}", server.notes);
+        assert!(
+            matches!(&server.tsserver, Some(Tsserver::Using { whose, .. }) if whose.contains("Vet's fallback")),
+            "{:?}",
+            server.tsserver
+        );
         // The project's own still wins over the fallback.
         let server = found(resolver.resolve(&language("typescript"), project.path(), None).await);
         assert!(
-            server.notes[0].contains("the project's typescript 5.9.2"),
+            matches!(&server.tsserver, Some(Tsserver::Using { whose, .. }) if whose.contains("the project's typescript 5.9.2")),
             "{:?}",
-            server.notes
+            server.tsserver
         );
     }
 
