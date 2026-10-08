@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::content::{FileDiff, LineRange, NonTextChange, RepoPath};
 use crate::filter::ReviewFilter;
-use crate::review::{ReviewedSpan, Side, SpanState};
+use crate::review::{ReviewedSpan, Side, SpanState, sides};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Completion {
@@ -106,7 +106,7 @@ impl<'a> Coverage<'a> {
             .iter()
             .map(|h| {
                 self.state_of(
-                    diff.sides(h)
+                    sides(diff, h)
                         .into_iter()
                         .filter_map(|(side, file, range)| file.map(|f| (f, side, range))),
                 )
@@ -119,7 +119,7 @@ impl<'a> Coverage<'a> {
         diff.hunks
             .iter()
             .map(|h| {
-                (diff.sides(h).into_iter())
+                (sides(diff, h).into_iter())
                     .filter_map(|(side, file, range)| file.map(|f| (f, side, range)))
                     .map(|(f, side, range)| {
                         let (seen, any) = self.lines(f, side, range);
@@ -174,7 +174,7 @@ impl<'a> Coverage<'a> {
                 c.seen_hunks += states.iter().filter(|&&s| s == HunkState::Seen).count() as u32;
             }
             for h in &d.hunks {
-                for (side, file, range) in d.sides(h) {
+                for (side, file, range) in sides(d, h) {
                     let Some(file) = file else { continue };
                     if !passes {
                         c.excluded_lines += range.len();

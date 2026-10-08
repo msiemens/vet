@@ -1,7 +1,7 @@
 //! Creating spans for hunks (SPEC §5.2).
 
 use crate::content::{FileDiff, Hunk, LineRange, RepoPath, SnapshotId};
-use crate::review::{Anchor, ReviewedSpan, Side, SpanState};
+use crate::review::{Anchor, ReviewedSpan, Side, SpanState, sides};
 
 /// Lines of one file on one side.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -13,7 +13,7 @@ pub struct Region {
 
 /// The non-empty sides of `hunk`.
 pub fn hunk_regions(diff: &FileDiff, hunk: &Hunk) -> Vec<Region> {
-    (diff.sides(hunk).into_iter())
+    (sides(diff, hunk).into_iter())
         .filter(|(_, _, range)| !range.is_empty())
         .filter_map(|(side, file, range)| {
             file.map(|file| Region {

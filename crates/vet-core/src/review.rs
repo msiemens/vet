@@ -8,15 +8,13 @@ pub enum Side {
     Target,
 }
 
-impl FileDiff {
-    /// The two sides of `hunk` in this file: the lines it covers on each, and the path they are in
-    /// (`None` on the side the file does not exist on).
-    pub fn sides(&self, hunk: &Hunk) -> [(Side, Option<&RepoPath>, LineRange); 2] {
-        [
-            (Side::Base, self.old_path.as_ref(), hunk.old),
-            (Side::Target, self.new_path.as_ref(), hunk.new),
-        ]
-    }
+/// The two sides of `hunk` in `diff`: the lines it covers on each, and the path they are in
+/// (`None` on the side the file does not exist on).
+pub fn sides<'a>(diff: &'a FileDiff, hunk: &Hunk) -> [(Side, Option<&'a RepoPath>, LineRange); 2] {
+    [
+        (Side::Base, diff.old_path.as_ref(), hunk.old),
+        (Side::Target, diff.new_path.as_ref(), hunk.new),
+    ]
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -279,7 +277,7 @@ mod tests {
             hunks: vec![hunk],
         };
         assert_eq!(
-            renamed.sides(&hunk),
+            sides(&renamed, &hunk),
             [
                 (Side::Base, path("a").as_ref(), hunk.old),
                 (Side::Target, path("b").as_ref(), hunk.new)
@@ -289,7 +287,7 @@ mod tests {
             old_path: None,
             ..renamed
         };
-        assert_eq!(added.sides(&hunk)[0].1, None);
+        assert_eq!(sides(&added, &hunk)[0].1, None);
     }
 
     #[test]
