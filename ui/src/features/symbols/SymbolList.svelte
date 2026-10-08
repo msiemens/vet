@@ -8,7 +8,7 @@
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { keyOf } from "../../state/symbolKey";
   import { symbols } from "../../state/symbols.svelte";
-  import { containerOf, fileEntries, nameOf, rowClick, searchEntries } from "./symbolList";
+  import { containerOf, fileEntries, nameOf, rowClick, rowKeys, searchEntries } from "./symbolList";
 
   /** A double-click: show the symbol where it is reviewed. */
   let { onreveal }: { onreveal: (symbol: ChangedSymbol) => void } = $props();
@@ -75,7 +75,8 @@
           <span class="path"><bdi>{entry.path}</bdi></span>
           {#if entry.note}<span class="fnote">{entry.note}</span>{/if}
         </div>
-        {#each entry.symbols as s (keyOf(s.symbol.id) + s.change)}
+        {@const keys = rowKeys(entry.symbols)}
+        {#each entry.symbols as s, i (keys[i])}
           <button
             class="flat row"
             type="button"

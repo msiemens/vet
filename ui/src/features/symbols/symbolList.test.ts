@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol.ts";
 import type { SymbolChange } from "../../generated/SymbolChange.ts";
-import { describeFate, fileEntries, groupByFile, rowClick, searchEntries } from "./symbolList.ts";
+import { describeFate, fileEntries, groupByFile, rowClick, rowKeys, searchEntries } from "./symbolList.ts";
 
 const sym = (path: string, name: string[], from: number, to: number, change: SymbolChange): ChangedSymbol => ({
   symbol: {
@@ -74,6 +74,19 @@ void test("fates read as words, the broken one as the bad tone", () => {
   });
   assert.deepEqual([moved.label, moved.detail], ["binds elsewhere now", "u.rs:10"]);
   assert.equal(describeFate({ type: "unknown", reason: "no server" }).detail, "no server");
+});
+
+void test("rows of symbols with the same id get distinct keys, and the same rows the same keys again", () => {
+  // Two object literals with a property `a` in one test file.
+  const [entry] = groupByFile([
+    sym("t.ts", ["a"], 3, 3, "added"),
+    sym("t.ts", ["a"], 9, 9, "added"),
+    sym("t.ts", ["a"], 12, 12, "removed"),
+    sym("t.ts", ["b"], 14, 14, "added"),
+  ]);
+  const keys = rowKeys(entry.symbols);
+  assert.equal(new Set(keys).size, keys.length);
+  assert.deepEqual(rowKeys(entry.symbols), keys);
 });
 
 void test("a double click selects on its first click and reveals on its second without selecting again", () => {

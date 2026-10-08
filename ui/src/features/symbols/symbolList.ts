@@ -8,6 +8,7 @@ import type { Position } from "../../generated/Position";
 import type { Side } from "../../generated/Side";
 import type { SymbolId } from "../../generated/SymbolId";
 import { match, type Range } from "../../lib/speedSearch.ts";
+import { keyOf } from "../../state/symbolKey.ts";
 
 /** Opens a file at a 0-based `line` of `side`; no line opens it where it is. */
 export type OpenLocation = (path: string, line: number | undefined, side: Side) => void;
@@ -74,6 +75,20 @@ export function searchEntries(
     if (symbols.length) found.push({ ...entry, symbols });
   }
   return { entries: found, ranges };
+}
+
+/**
+ * The each-block keys of a file's symbol rows: the symbol's key and change, and for a symbol whose
+ * id repeats (two object literals with the same property in one file) its count among those before.
+ */
+export function rowKeys(symbols: readonly ChangedSymbol[]): string[] {
+  const seen = new Map<string, number>();
+  return symbols.map((s) => {
+    const key = keyOf(s.symbol.id) + s.change;
+    const n = seen.get(key) ?? 0;
+    seen.set(key, n + 1);
+    return n ? `${key}#${n}` : key;
+  });
 }
 
 /**
