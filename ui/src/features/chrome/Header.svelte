@@ -105,7 +105,9 @@
         {#if review?.state === "open"}
           <VersionLabel version={review.version} updatedAt={review.updatedAt} />
         {:else if target}
-          <span class="target mono" data-tauri-drag-region>{target.head ?? target.name}</span>
+          <span class="target mono" data-tauri-drag-region
+            >{target.changeset.type === "branch" && target.head ? target.head.slice(0, 7) : target.name}</span
+          >
         {/if}
         {#if target?.changeset.type === "workingTree"}<span
             class="live-dot"

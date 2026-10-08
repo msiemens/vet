@@ -18,7 +18,8 @@ name: string,
  */
 branch?: string, 
 /**
- * A branch's tip commit, by its short id; absent for the working tree.
+ * The full id of the commit the target is: a branch's or a pull request's tip; absent for the
+ * working tree.
  */
 head?: string, 
 /**

@@ -100,7 +100,7 @@ pub struct TargetView {
     pub name: String,
     /// The branch the target is built on: the checked-out one for the working tree, if any.
     pub branch: Option<String>,
-    /// A branch's tip commit, by its short id; `None` for the working tree.
+    /// The full id of a branch's or a pull request's tip; `None` for the working tree.
     pub head: Option<String>,
 }
 

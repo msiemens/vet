@@ -155,7 +155,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             name: self.name.clone(),
             lifecycle: lifecycle_of(st),
             base,
-            target: target_view(&st.source, &branches),
+            target: target_view(&st.source, &st.head, &branches),
             filter: st.filter.clone(),
             completion: sum(files.iter().map(|f| f.completion)),
             delta: files.iter().map(|f| f.delta).sum(),

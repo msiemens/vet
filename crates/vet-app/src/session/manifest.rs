@@ -11,7 +11,7 @@ use vet_core::filter::ReviewFilter;
 use super::state::{Changes, State, View, acknowledged, find_diff, lifecycle_of, shown_items};
 use super::views::{FileStatus, FileView, ManifestView, ReviewUpdateView, ReviewView, TargetView};
 use super::{LiveSession, Result, SessionError};
-use crate::changeset::Source;
+use crate::changeset::{CommitId, Source};
 use crate::editor::line_count;
 use crate::ports::{BranchInfo, GitRepo, LiveStore};
 use crate::review::ReviewSummary;
@@ -42,7 +42,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             name: self.name.clone(),
             lifecycle: lifecycle_of(&st),
             base,
-            target: target_view(&st.source, &branches),
+            target: target_view(&st.source, &st.head, &branches),
             filter: st.filter.clone(),
             completion: changeset_completion(&cov, &st.filter, &changes.diff, &acked),
             delta: files.iter().map(|f| f.delta).sum(),
@@ -80,23 +80,21 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 }
 
-/// What the changeset of `source` is the target of; `branches` are the repository's.
-pub(super) fn target_view(source: &Source, branches: &[BranchInfo]) -> TargetView {
+/// What the changeset of `source`, built on the commit `tip`, is the target of; `branches` are the
+/// repository's.
+pub(super) fn target_view(source: &Source, tip: &CommitId, branches: &[BranchInfo]) -> TargetView {
     match source {
         Source::Branch { name } => TargetView {
             source: source.clone(),
             name: name.clone(),
             branch: Some(name.clone()),
-            head: branches
-                .iter()
-                .find(|b| b.name == *name)
-                .map(|b| b.commit.short().to_owned()),
+            head: Some(tip.0.clone()),
         },
         Source::PullRequest { number, .. } => TargetView {
             source: source.clone(),
             name: format!("#{number}"),
             branch: None,
-            head: None,
+            head: Some(tip.0.clone()),
         },
         Source::WorkingTree => TargetView {
             source: source.clone(),
@@ -254,7 +252,7 @@ pub(super) fn empty_completion() -> Completion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::changeset::CommitId;
+    use crate::changeset::RemoteKey;
 
     fn branch(name: &str, remote: bool, commit: &str, current: bool) -> BranchInfo {
         BranchInfo {
@@ -268,16 +266,31 @@ mod tests {
     }
 
     #[test]
-    fn a_branch_target_carries_its_tips_short_id_and_the_working_tree_none() {
+    fn a_branch_or_pull_request_target_carries_its_tips_full_id_and_the_working_tree_none() {
         let branches = [
             branch("main", false, "aaaaaaaaaaaaaaaa", true),
             branch("origin/feature", true, "bbbbbbbbbbbbbbbb", false),
         ];
+        let tip = CommitId("cccccccccccccccc".into());
         let remote = Source::Branch {
             name: "origin/feature".into(),
         };
-        assert_eq!(target_view(&remote, &branches).head.as_deref(), Some("bbbbbbb"));
-        let tree = target_view(&Source::WorkingTree, &branches);
+        assert_eq!(
+            target_view(&remote, &tip, &branches).head.as_deref(),
+            Some("cccccccccccccccc")
+        );
+        let pull_request = Source::PullRequest {
+            remote: RemoteKey {
+                host: "github.com".into(),
+                path: "acme/app".into(),
+            },
+            number: 7,
+        };
+        assert_eq!(
+            target_view(&pull_request, &tip, &branches).head.as_deref(),
+            Some("cccccccccccccccc")
+        );
+        let tree = target_view(&Source::WorkingTree, &tip, &branches);
         assert_eq!(tree.head, None);
         assert_eq!(tree.branch.as_deref(), Some("main"));
     }

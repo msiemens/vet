@@ -3,7 +3,6 @@
   import type { CommitChecks } from "../../generated/CommitChecks";
   import { ciIcon } from "../../lib/ciStatus";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
-  import Icon from "../../lib/ui/Icon.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import { errorText } from "../../lib/errorText";
   import { openUrl } from "../../state/host";
@@ -25,6 +24,7 @@
 
   let open = $state(false);
   const look = $derived(ciIcon(checks.state));
+  const title = $derived(look && `${look.title}: ${checks.runs.length} ${checks.runs.length === 1 ? "run" : "runs"}`);
 
   async function openInBrowser(url: string) {
     open = false;
@@ -39,14 +39,8 @@
 {#if look}
   <Popover bind:open align="right">
     {#snippet trigger(toggle)}
-      <button
-        class="ctl badge {look.tone}"
-        type="button"
-        aria-expanded={open}
-        title={`${look.title}: ${checks.runs.length} ${checks.runs.length === 1 ? "run" : "runs"}`}
-        onclick={toggle}
-      >
-        <Icon name={look.icon} size={12} stroke={2.2} />
+      <button class="ctl status" type="button" aria-expanded={open} {title} onclick={toggle}>
+        <CiStatus state={checks.state} size={12} {title} />
         <span class="mono">{badgeCount(checks)}</span>
       </button>
     {/snippet}
@@ -84,22 +78,8 @@
 {/if}
 
 <style>
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 24px;
-    padding: 0 8px;
+  .status {
     margin-right: 6px;
-  }
-  .badge.ok {
-    color: var(--add-text);
-  }
-  .badge.failing {
-    color: var(--del-text);
-  }
-  .badge.running {
-    color: var(--old-base);
   }
   .runs {
     min-width: 300px;

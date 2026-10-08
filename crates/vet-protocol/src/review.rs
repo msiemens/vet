@@ -75,7 +75,8 @@ pub struct Target {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub branch: Option<String>,
-    /// A branch's tip commit, by its short id; absent for the working tree.
+    /// The full id of the commit the target is: a branch's or a pull request's tip; absent for the
+    /// working tree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub head: Option<String>,

@@ -109,11 +109,9 @@
   });
   const baseChangedLeft = $derived(changeset.baseChanged ? changeset.baseChangedFiles().length : 0);
 
-  /** The head commit of a pull request: the last of its commits, else its latest version's tip, else the target's short id. */
+  /** The head commit of a pull request, whose checks the toolbar shows. */
   const headId = $derived(
-    changeset.manifest?.target.changeset.type === "pullRequest"
-      ? (changeset.commits.at(-1)?.commit.id ?? versions.items.at(-1)?.tip?.id ?? changeset.manifest.target.head)
-      : undefined,
+    changeset.manifest?.target.changeset.type === "pullRequest" ? changeset.manifest.target.head : undefined,
   );
   /** The commits whose checks the views show: the commits by commit, the pushed versions and the head. */
   const checkedCommits = $derived(

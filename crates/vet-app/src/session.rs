@@ -575,7 +575,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             BaseChoice::MergeBase { reference } => Some(reference.as_str()),
             _ => None,
         };
-        let own = manifest::target_view(&st.source, branches).branch;
+        let own = manifest::target_view(&st.source, &st.head, branches).branch;
         Ok(BaseView {
             choice: st.base_choice.clone(),
             commit: git.commit_info(&st.base_commit).await?,
