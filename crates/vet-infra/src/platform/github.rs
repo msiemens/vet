@@ -24,8 +24,8 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use vet_app::platform::{
     CheckLog, CommentRef, CommitChecks, Credential, CredentialProvider, Discussion, Platform, PlatformComment,
-    PlatformError, PlatformKind, PlatformTraits, PullRequest, PullRequestDetail, PullRequestQuery, QueueTab, RemoteKey,
-    Submission, Submitted, Viewer, pushes_from_force_pushes,
+    PlatformError, PlatformKind, PlatformTraits, PullRequestDetail, PullRequestListing, PullRequestQuery, QueueTab,
+    RemoteKey, Submission, Submitted, Viewer, pushes_from_force_pushes,
 };
 
 use crate::clock::unix_now;
@@ -130,7 +130,7 @@ struct State {
     /// What the probe saw last, by repository.
     probed: HashMap<RemoteKey, Option<Newest>>,
     /// Lists by repository, then search; with the time they were fetched.
-    lists: HashMap<RemoteKey, HashMap<String, (i64, Vec<PullRequest>)>>,
+    lists: HashMap<RemoteKey, HashMap<String, (i64, PullRequestListing)>>,
     viewers: HashMap<String, (i64, Viewer)>,
     /// The checks of commits whose checks are all done, which nothing changes any more.
     checks: HashMap<(RemoteKey, String), CommitChecks>,
@@ -360,7 +360,7 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
         &self,
         remote: &RemoteKey,
         query: &PullRequestQuery,
-    ) -> Result<Vec<PullRequest>, PlatformError> {
+    ) -> Result<PullRequestListing, PlatformError> {
         let (owner, name) = repository(remote)?;
         let search = search_string(owner, name, query);
         let now = (self.now)();
@@ -379,7 +379,7 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
             self.state().lists.remove(remote);
         }
 
-        let mut found = Vec::new();
+        let mut found = PullRequestListing::default();
         let mut after: Option<String> = None;
         loop {
             let data: SearchData = self
@@ -391,11 +391,15 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
                 )
                 .await?;
             for node in data.search.nodes.into_iter().flatten() {
-                found.push(node.into_pull_request()?);
+                found.pull_requests.push(node.into_pull_request()?);
             }
-            match data.search.page_info.end_cursor {
-                Some(cursor) if data.search.page_info.has_next_page && found.len() < MAX_LISTED => after = Some(cursor),
-                _ => break,
+            let page = data.search.page_info;
+            match page.end_cursor {
+                Some(cursor) if page.has_next_page && found.pull_requests.len() < MAX_LISTED => after = Some(cursor),
+                _ => {
+                    found.truncated = page.has_next_page;
+                    break;
+                }
             }
         }
         self.state()

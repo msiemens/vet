@@ -3,7 +3,7 @@
 
 use super::checks::{CheckLog, CommitChecks};
 use super::discussion::{CommentRef, Discussion, PlatformComment, Submission, Submitted};
-use super::model::{PlatformError, PlatformTraits, PullRequest, PullRequestDetail, PullRequestQuery, Viewer};
+use super::model::{PlatformError, PlatformTraits, PullRequestDetail, PullRequestListing, PullRequestQuery, Viewer};
 use super::queue::{PullRequestRow, rows};
 use super::remote::RemoteKey;
 
@@ -15,13 +15,13 @@ pub trait Platform {
     fn viewer(&self, remote: &RemoteKey) -> impl Future<Output = Result<Viewer, PlatformError>> + Send;
 
     /// The open pull requests of `remote` that `query` may ask for, narrowed as far as the
-    /// platform can, most recently updated first. The platform lists a bounded number;
-    /// [`list_rows`] applies the exact rule and the limit.
+    /// platform can, most recently updated first. The platform lists a bounded number, and says
+    /// when it stopped there; [`list_rows`] applies the exact rule and the limit.
     fn list_pull_requests(
         &self,
         remote: &RemoteKey,
         query: &PullRequestQuery,
-    ) -> impl Future<Output = Result<Vec<PullRequest>, PlatformError>> + Send;
+    ) -> impl Future<Output = Result<PullRequestListing, PlatformError>> + Send;
 
     /// One pull request, with the states of its source branch the platform lets us know of.
     fn pull_request(
@@ -128,15 +128,26 @@ fn unsupported(what: &str) -> PlatformError {
     PlatformError::Unexpected(format!("{what} is not supported on this platform yet"))
 }
 
+/// What [`list_rows`] answers.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ListedRows {
+    pub rows: Vec<PullRequestRow>,
+    /// The platform stopped at the most it lists: a pull request that is not here may still be open.
+    pub truncated: bool,
+}
+
 /// The queue's rows for `query`.
 pub async fn list_rows<P: Platform>(
     platform: &P,
     remote: &RemoteKey,
     query: &PullRequestQuery,
-) -> Result<Vec<PullRequestRow>, PlatformError> {
+) -> Result<ListedRows, PlatformError> {
     let viewer = platform.viewer(remote).await?;
-    let candidates = platform.list_pull_requests(remote, query).await?;
-    Ok(rows(candidates, &viewer, query))
+    let listing = platform.list_pull_requests(remote, query).await?;
+    Ok(ListedRows {
+        rows: rows(listing.pull_requests, &viewer, query),
+        truncated: listing.truncated,
+    })
 }
 
 /// The checks of each of `commits` in `remote`, asked for together, in the order of `commits`. A
@@ -162,7 +173,7 @@ pub async fn commits_checks<P: Platform>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::model::{QueueTab, ReviewRequest};
+    use crate::platform::model::{PullRequest, QueueTab, ReviewRequest};
     use crate::platform::queue::tests::{pr, viewer};
 
     /// Knows the checks of some commits and fails for the others.
@@ -181,7 +192,7 @@ mod tests {
             &self,
             _: &RemoteKey,
             _: &PullRequestQuery,
-        ) -> Result<Vec<PullRequest>, PlatformError> {
+        ) -> Result<PullRequestListing, PlatformError> {
             unreachable!("only checks are asked for")
         }
 
@@ -238,8 +249,11 @@ mod tests {
             &self,
             _: &RemoteKey,
             _: &PullRequestQuery,
-        ) -> Result<Vec<PullRequest>, PlatformError> {
-            Ok(self.prs.clone())
+        ) -> Result<PullRequestListing, PlatformError> {
+            Ok(PullRequestListing {
+                pull_requests: self.prs.clone(),
+                truncated: false,
+            })
         }
 
         async fn pull_request(&self, _: &RemoteKey, _: u64) -> Result<PullRequestDetail, PlatformError> {
@@ -271,6 +285,6 @@ mod tests {
         };
         let query = PullRequestQuery::new(QueueTab::WaitingForMe);
         let listed = list_rows(&platform, &remote(), &query).await.unwrap();
-        assert_eq!(listed.iter().map(|r| r.number).collect::<Vec<_>>(), [1]);
+        assert_eq!(listed.rows.iter().map(|r| r.number).collect::<Vec<_>>(), [1]);
     }
 }

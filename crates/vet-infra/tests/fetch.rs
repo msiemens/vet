@@ -309,6 +309,55 @@ async fn refs_outside_vets_namespace_are_refused_and_so_is_a_ref_the_remote_lack
 }
 
 #[tokio::test]
+async fn the_refs_of_fetched_pull_requests_are_listed_and_deleted_and_no_other_ref_is() {
+    let fx = Fixture::new();
+    fx.open_pull_request(7, "pr.txt", "p1");
+    let repo = GixRepo::new(&fx.clone);
+    repo.fetch_refs(
+        "origin",
+        vec![
+            update("refs/pull/7/head", "refs/vet/pr/github_com/acme/app/7/head"),
+            update("refs/heads/feature", "refs/vet/pr/github_com/acme/app/7/target"),
+            update("refs/heads/feature", "refs/vet/pr/github_com/acme/lib/7/target"),
+        ],
+        None,
+    )
+    .await
+    .unwrap();
+    let main = git(&fx.clone, &["rev-parse", "HEAD"]);
+    git(&fx.clone, &["update-ref", "refs/vet/changesets/1/1/target", &main]);
+    let before = fx.outside_remotes();
+
+    let app = repo.refs_below("refs/vet/pr/github_com/acme/app/").await.unwrap();
+    assert_eq!(
+        app,
+        [
+            "refs/vet/pr/github_com/acme/app/7/head",
+            "refs/vet/pr/github_com/acme/app/7/target"
+        ]
+    );
+
+    let outside = repo
+        .delete_refs(vec![app[0].clone(), "refs/vet/changesets/1/1/target".to_owned()])
+        .await
+        .unwrap_err();
+    assert!(outside.0.contains("refs/vet/changesets/1/1/target"), "{}", outside.0);
+    let escaping = repo
+        .delete_refs(vec!["refs/vet/pr/../changesets/1/1/target".to_owned()])
+        .await;
+    assert!(escaping.is_err());
+    assert_eq!(fx.outside_remotes(), before, "nothing is deleted when one is refused");
+
+    let mut doomed = app.clone();
+    doomed.push("refs/vet/pr/github_com/acme/app/8/head".to_owned());
+    repo.delete_refs(doomed).await.unwrap();
+    assert_eq!(
+        git(&fx.clone, &["for-each-ref", "--format=%(refname)", "refs/vet/"]),
+        "refs/vet/changesets/1/1/target\nrefs/vet/pr/github_com/acme/lib/7/target"
+    );
+}
+
+#[tokio::test]
 async fn the_remotes_are_listed_with_their_urls() {
     let fx = Fixture::new();
     git(

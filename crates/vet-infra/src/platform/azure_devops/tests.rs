@@ -244,7 +244,9 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
     );
     let mut client = client(&fake);
     small_pages(&mut client);
-    let found = client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let listing = client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    assert!(!listing.truncated);
+    let found = listing.pull_requests;
 
     assert_eq!(
         found.iter().map(|p| p.number).collect::<Vec<_>>(),
@@ -293,6 +295,29 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
         (ReviewDecision::Approved, ReviewDecision::Undecided),
         "the reviewers' votes add up"
     );
+}
+
+#[tokio::test]
+async fn a_list_that_stops_at_the_most_it_holds_says_it_was_cut_short_whatever_it_narrows_to() {
+    set_now(NOW);
+    let docs: Vec<Doc> = (1..=MAX_LISTED as i32 + 1).map(Doc::new).collect();
+    let fake = repository(docs, vec![], vec![]);
+    let many = client(&fake);
+
+    let listing = many.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    assert!(listing.truncated);
+    assert_eq!(listing.pull_requests.len(), MAX_LISTED);
+
+    // The pull request waiting for the viewer may be on a page that was never asked for.
+    let waiting = many
+        .list_pull_requests(&remote(), &PullRequestQuery::new(QueueTab::WaitingForMe))
+        .await
+        .unwrap();
+    assert!(waiting.truncated);
+
+    let small = repository(vec![Doc::new(1), Doc::new(2)], vec![], vec![]);
+    let listing = client(&small).list_pull_requests(&remote(), &all_open()).await.unwrap();
+    assert!(!listing.truncated);
 }
 
 #[tokio::test]
@@ -357,7 +382,11 @@ async fn a_pull_request_was_updated_by_its_newest_thread_or_status_and_the_list_
             Canned::json(&no_value())
         }
     });
-    let found = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let found = client(&fake)
+        .list_pull_requests(&remote(), &all_open())
+        .await
+        .unwrap()
+        .pull_requests;
     let updated: Vec<_> = found.iter().map(|p| (p.number, p.updated_at)).collect();
     assert_eq!(
         updated,
@@ -414,7 +443,8 @@ async fn the_tabs_and_the_rule_decide_who_is_waiting_for_the_viewer() {
     let numbers = |rows: Vec<vet_app::platform::PullRequestRow>| rows.iter().map(|r| r.number).collect::<Vec<_>>();
     let waiting = list_rows(&client, &remote(), &PullRequestQuery::new(QueueTab::WaitingForMe))
         .await
-        .unwrap();
+        .unwrap()
+        .rows;
     assert_eq!(
         numbers(waiting),
         [2, 1],
@@ -423,7 +453,8 @@ async fn the_tabs_and_the_rule_decide_who_is_waiting_for_the_viewer() {
 
     let mine = list_rows(&client, &remote(), &PullRequestQuery::new(QueueTab::Mine))
         .await
-        .unwrap();
+        .unwrap()
+        .rows;
     assert_eq!(numbers(mine), [4]);
     let search = fake
         .requests()
@@ -436,7 +467,8 @@ async fn the_tabs_and_the_rule_decide_who_is_waiting_for_the_viewer() {
 
     let assigned = list_rows(&client, &remote(), &PullRequestQuery::new(QueueTab::Assigned))
         .await
-        .unwrap();
+        .unwrap()
+        .rows;
     assert!(assigned.is_empty(), "Azure DevOps has no assignees");
 }
 
@@ -449,7 +481,11 @@ async fn a_vote_is_a_review_of_the_head() {
     rejected.reviewers = vec![reviewer(ada(), -5)];
     let fake = repository(vec![approved, rejected], vec![], vec![]);
     let client = client(&fake);
-    let found = client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let found = client
+        .list_pull_requests(&remote(), &all_open())
+        .await
+        .unwrap()
+        .pull_requests;
     let review = |n: u64| found.iter().find(|p| p.number == n).unwrap().viewer_review.clone();
     assert_eq!(
         review(1),
@@ -459,7 +495,7 @@ async fn a_vote_is_a_review_of_the_head() {
         })
     );
     assert_eq!(review(2).map(|r| r.verdict), Some(ReviewVerdict::ChangesRequested));
-    let rows = list_rows(&client, &remote(), &all_open()).await.unwrap();
+    let rows = list_rows(&client, &remote(), &all_open()).await.unwrap().rows;
     assert!(rows.iter().all(|r| matches!(r.review, ReviewState::Reviewed(_))));
 }
 
@@ -481,7 +517,11 @@ async fn a_token_that_may_not_read_threads_or_groups_still_lists() {
             )
         }
     });
-    let found = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let found = client(&fake)
+        .list_pull_requests(&remote(), &all_open())
+        .await
+        .unwrap()
+        .pull_requests;
     assert_eq!((found[0].ci, found[0].unresolved_threads), (Some(CiState::Success), 0));
 }
 
@@ -745,13 +785,18 @@ async fn azure_devops_smoke() {
         let found = client
             .list_pull_requests(&remote, &PullRequestQuery::new(tab))
             .await
-            .unwrap();
+            .unwrap()
+            .pull_requests;
         println!("{tab:?}: {} pull requests in {:?}", found.len(), started.elapsed());
         if let Some(first) = found.first() {
             println!("  {first:?}");
         }
     }
-    let found = client.list_pull_requests(&remote, &all_open()).await.unwrap();
+    let found = client
+        .list_pull_requests(&remote, &all_open())
+        .await
+        .unwrap()
+        .pull_requests;
     if let Some(first) = found.first() {
         let detail = client.pull_request(&remote, first.number).await.unwrap();
         println!("{detail:?}");

@@ -383,6 +383,15 @@ impl Fetcher for GixRepo {
         self.blocking(move |i| fetch::fetch_refs(i.open()?, &remote, updates, auth))
             .await
     }
+
+    async fn refs_below(&self, prefix: &str) -> Result<Vec<String>, GitError> {
+        let prefix = prefix.to_owned();
+        self.blocking(move |i| fetch::refs_below(&i.open()?, &prefix)).await
+    }
+
+    async fn delete_refs(&self, names: Vec<String>) -> Result<(), GitError> {
+        self.blocking(move |i| fetch::delete_refs(&i.open()?, &names)).await
+    }
 }
 
 impl ChangesetRefs for GixRepo {

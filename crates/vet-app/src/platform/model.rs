@@ -223,6 +223,15 @@ pub struct PullRequest {
     pub updated_at: i64,
 }
 
+/// What a platform lists of a repository's open pull requests for a query.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct PullRequestListing {
+    /// Most recently updated first.
+    pub pull_requests: Vec<PullRequest>,
+    /// The platform stopped at the most it lists: more may be open than are here.
+    pub truncated: bool,
+}
+
 /// How the platform last named a pull request: what a view of it is headed with. It is stored with
 /// the changeset, so a review of it is headed before the platform is asked again.
 #[derive(Clone, PartialEq, Eq, Debug)]

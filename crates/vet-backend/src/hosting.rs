@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use vet_app::platform::{
     CheckLog, CommentRef, CommitChecks, Discussion, Platform, PlatformComment, PlatformError, PlatformKind,
-    PlatformTraits, PullRequest, PullRequestDetail, PullRequestQuery, RemoteKey, Submission, Submitted, Viewer,
+    PlatformTraits, PullRequestDetail, PullRequestListing, PullRequestQuery, RemoteKey, Submission, Submitted, Viewer,
 };
 
 use crate::{AzureDevOps, GitHub};
@@ -47,7 +47,7 @@ impl Platform for Hosting {
         &self,
         remote: &RemoteKey,
         query: &PullRequestQuery,
-    ) -> Result<Vec<PullRequest>, PlatformError> {
+    ) -> Result<PullRequestListing, PlatformError> {
         on!(self, p => p.list_pull_requests(remote, query).await)
     }
 

@@ -285,7 +285,8 @@ pub struct RefUpdate {
 }
 
 /// Brings in what remotes have. Read-only: it writes objects and remote-tracking
-/// refs and touches no other ref, the index or the worktree.
+/// refs and touches no other ref, the index or the worktree; of what it fetched below
+/// `refs/vet/pr/`, it deletes what is no longer needed.
 pub trait Fetcher {
     /// The remotes that have a fetch URL.
     fn remotes(&self) -> impl Future<Output = Result<Vec<RemoteInfo>, GitError>> + Send;
@@ -303,6 +304,12 @@ pub trait Fetcher {
         updates: Vec<RefUpdate>,
         auth: Option<FetchAuth>,
     ) -> impl Future<Output = Result<(), GitError>> + Send;
+    /// The full names of the refs whose names start with `prefix`.
+    fn refs_below(&self, prefix: &str) -> impl Future<Output = Result<Vec<String>, GitError>> + Send;
+    /// Deletes the refs `names`, which must all be below `refs/vet/pr/`, where the refs of fetched
+    /// pull requests are kept. Fails, deleting nothing, if one is not; a ref that is not there is
+    /// left out.
+    fn delete_refs(&self, names: Vec<String>) -> impl Future<Output = Result<(), GitError>> + Send;
 }
 
 /// The refs that keep a changeset's commits alive.

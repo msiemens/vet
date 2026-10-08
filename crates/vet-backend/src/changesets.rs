@@ -1,14 +1,17 @@
 //! Requests about which changeset is on view and which there are.
 
 use vet_app::changeset::{RemoteKey, Source};
+use vet_app::fetch::FetchMark;
 use vet_app::platform::{Platform, PlatformError, PlatformKind, commits_checks};
-use vet_app::pull_request::{self, FetchError, hosted_repositories, hosts_to_ask_about, on_github};
+use vet_app::pull_request::{self, FetchError, PullRequestList, hosted_repositories, hosts_to_ask_about, on_github};
+use vet_app::session::RowReview;
 use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
 use crate::accounts::Held;
 use crate::hosting::Hosting;
+use crate::open::Ready;
 use crate::sync::sync_in_background;
 use crate::{Live, Open, Orchestrator, message, start_servers_in_background};
 
@@ -41,9 +44,13 @@ impl Orchestrator {
             _ => None,
         };
         let on_view = on_view.as_ref().map(|(remote, number)| (remote, *number));
+        let since = open.open.fetch.mark();
         let list = pull_request::list_pull_requests(&*self.github, &github, on_view)
             .await
             .and(pull_request::list_pull_requests(&*self.azure_devops, &azure_devops, on_view).await);
+        if let Err(error) = prune_pull_request_refs(&open, &list, since).await {
+            tracing::warn!(%error, "deleting the refs of pull requests no longer listed failed");
+        }
         for source in &list.sources {
             if let Some(error) = &source.error {
                 self.refused(error, &source.remote.account());
@@ -141,6 +148,39 @@ impl Orchestrator {
                 .broadcast(Event::CredentialsNeeded { host: host.to_owned() });
         }
     }
+}
+
+/// Deletes the refs of the pull requests fetched before `since` that `list` no longer has, unless
+/// one is on view or a review of it is open: those may need their commits before the platform can
+/// be asked again (a closed pull request's branch may be gone).
+async fn prune_pull_request_refs(open: &Ready, list: &PullRequestList, since: FetchMark) -> Result<(), String> {
+    let unlisted = pull_request::unlisted_fetched(&open.open.fetch, list).await?;
+    if unlisted.is_empty() {
+        return Ok(());
+    }
+    let sources: Vec<Source> = unlisted
+        .iter()
+        .map(|(remote, number)| Source::PullRequest {
+            remote: remote.clone(),
+            number: *number,
+        })
+        .collect();
+    let reviews = open.session.reviews_of(&sources).await.map_err(message)?;
+    let on_view = open.session.source().await;
+    let doomed: Vec<_> = unlisted
+        .into_iter()
+        .zip(sources.iter().zip(reviews))
+        .filter(|(_, (source, review))| **source != on_view && !matches!(review, RowReview::Open { .. }))
+        .map(|(pull_request, _)| pull_request)
+        .collect();
+    let deleted = pull_request::delete_pull_request_refs(&open.open.fetch, &doomed, since).await?;
+    if !deleted.is_empty() {
+        tracing::info!(
+            refs = deleted.len(),
+            "deleted the refs of pull requests no longer listed"
+        );
+    }
+    Ok(())
 }
 
 /// Fetches the head of pull request `number` of `remote` and its target branch, and stores how the

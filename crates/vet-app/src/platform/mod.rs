@@ -29,10 +29,10 @@ pub(crate) use fake::FakeHosting;
 pub use host::{PlatformKind, normalize_host};
 pub use model::{
     BlockingSource, ChangedLines, ChangesetThreads, CiState, ForcePush, PlatformError, PlatformTraits, Posting,
-    PullRequest, PullRequestDetail, PullRequestHead, PullRequestQuery, Push, QueueStatus, QueueTab, ReviewDecision,
-    ReviewRequest, ReviewVerdict, Verdict, Viewer, ViewerReview,
+    PullRequest, PullRequestDetail, PullRequestHead, PullRequestListing, PullRequestQuery, Push, QueueStatus, QueueTab,
+    ReviewDecision, ReviewRequest, ReviewVerdict, Verdict, Viewer, ViewerReview,
 };
-pub use port::{Platform, commits_checks, list_rows};
+pub use port::{ListedRows, Platform, commits_checks, list_rows};
 pub use pushes::pushes_from_force_pushes;
 #[cfg(test)]
 pub(crate) use queue::tests::{pr, viewer};

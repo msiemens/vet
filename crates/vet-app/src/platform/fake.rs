@@ -9,7 +9,9 @@ use super::discussion::{
     CommentRef, DiffSide, Discussion, NewThread, PlatformComment, PlatformThreadData, PostedComment, PostedThread,
     PullRequestState, Submission, Submitted,
 };
-use super::model::{PlatformError, PlatformTraits, Posting, PullRequest, PullRequestDetail, PullRequestQuery, Viewer};
+use super::model::{
+    PlatformError, PlatformTraits, Posting, PullRequestDetail, PullRequestListing, PullRequestQuery, Viewer,
+};
 use super::port::Platform;
 use super::remote::RemoteKey;
 
@@ -282,7 +284,11 @@ impl Platform for FakeHosting {
         })
     }
 
-    async fn list_pull_requests(&self, _: &RemoteKey, _: &PullRequestQuery) -> Result<Vec<PullRequest>, PlatformError> {
+    async fn list_pull_requests(
+        &self,
+        _: &RemoteKey,
+        _: &PullRequestQuery,
+    ) -> Result<PullRequestListing, PlatformError> {
         unreachable!("the tests of threads list nothing")
     }
 

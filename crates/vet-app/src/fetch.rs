@@ -3,6 +3,8 @@
 //! that cannot be done (offline, refused) ends its task as failed and is otherwise
 //! harmless: the review does not wait for it or depend on it.
 
+use std::collections::HashMap;
+use std::sync::{Mutex as StdMutex, PoisonError};
 use std::time::Duration;
 
 use tokio::sync::Mutex;
@@ -22,9 +24,16 @@ pub trait Credentials {
 pub struct Fetch<G> {
     git: G,
     tasks: Tasks,
-    /// A fetch started while another runs waits for it: both write the same refs.
+    /// A fetch started while another runs waits for it: both write the same refs. Refs are
+    /// deleted under it too.
     running: Mutex<()>,
+    /// How many times [`Fetch::refs`] was called, and the count when each ref was last fetched.
+    fetched: StdMutex<(u64, HashMap<String, u64>)>,
 }
+
+/// A moment in the life of a [`Fetch`]: refs fetched after it are newer than anything known at it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FetchMark(u64);
 
 impl<G: Fetcher> Fetch<G> {
     pub fn new(git: G, tasks: Tasks) -> Self {
@@ -32,7 +41,44 @@ impl<G: Fetcher> Fetch<G> {
             git,
             tasks,
             running: Mutex::new(()),
+            fetched: StdMutex::default(),
         }
+    }
+
+    fn fetched(&self) -> std::sync::MutexGuard<'_, (u64, HashMap<String, u64>)> {
+        self.fetched.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Now, for [`Fetch::delete_refs`] to keep what is fetched after it.
+    pub fn mark(&self) -> FetchMark {
+        FetchMark(self.fetched().0)
+    }
+
+    /// The full names of the refs whose names start with `prefix`.
+    pub async fn refs_below(&self, prefix: &str) -> Result<Vec<String>, String> {
+        self.git.refs_below(prefix).await.map_err(|e| e.0)
+    }
+
+    /// Deletes those of the refs `names` that were not fetched since `since`, which must all be
+    /// below `refs/vet/pr/`. Answers with the names it did not keep, there or not.
+    pub async fn delete_refs(&self, names: Vec<String>, since: FetchMark) -> Result<Vec<String>, String> {
+        let _only_one = self.running.lock().await;
+        let doomed: Vec<String> = {
+            let fetched = self.fetched();
+            names
+                .into_iter()
+                .filter(|name| fetched.1.get(name).is_none_or(|at| *at <= since.0))
+                .collect()
+        };
+        if doomed.is_empty() {
+            return Ok(doomed);
+        }
+        self.git.delete_refs(doomed.clone()).await.map_err(|e| e.0)?;
+        let mut fetched = self.fetched();
+        for name in &doomed {
+            fetched.1.remove(name);
+        }
+        Ok(doomed)
     }
 
     /// The remotes that have a fetch URL.
@@ -50,6 +96,14 @@ impl<G: Fetcher> Fetch<G> {
         title: String,
     ) -> Result<(), String> {
         let _only_one = self.running.lock().await;
+        {
+            let mut fetched = self.fetched();
+            fetched.0 += 1;
+            let at = fetched.0;
+            for update in &updates {
+                fetched.1.insert(update.destination.clone(), at);
+            }
+        }
         let task = self.tasks.start(TaskKind::Fetch, title);
         let auth = authentication(credentials, remote).await;
         match self.git.fetch_refs(&remote.name, updates, auth).await {
@@ -177,6 +231,14 @@ mod tests {
                 return Err(GitError("connection refused".into()));
             }
             Ok(())
+        }
+
+        async fn refs_below(&self, _: &str) -> Result<Vec<String>, GitError> {
+            unreachable!("nothing is deleted")
+        }
+
+        async fn delete_refs(&self, _: Vec<String>) -> Result<(), GitError> {
+            unreachable!("nothing is deleted")
         }
     }
 

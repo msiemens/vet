@@ -1,6 +1,7 @@
 //! Fetching a repository's remotes, read-only: objects are written and
 //! remote-tracking refs updated, nothing else. HEAD, local branches, tags, the
 //! index and the worktree are never touched, whatever the remote's refspecs say.
+//! The refs of fetched pull requests, below `refs/vet/pr/`, are the only ones deleted.
 //!
 //! HTTPS authenticates with the platform credential for the remote's host when
 //! one is given, else with git's credential helpers, else anonymously. SSH runs
@@ -112,6 +113,33 @@ pub(super) fn fetch_refs(
         )));
     }
     run(repo, name, auth, Specs::Refs(updates)).map(drop)
+}
+
+/// Where the refs of fetched pull requests are kept: the only refs a fetch may delete.
+const DELETABLE: &str = "refs/vet/pr/";
+
+pub(super) fn refs_below(repo: &gix::Repository, prefix: &str) -> Result<Vec<String>, GitError> {
+    let platform = repo.references().map_err(err)?;
+    let mut names = Vec::new();
+    for reference in platform.prefixed(prefix).map_err(err)? {
+        names.push(reference.map_err(err)?.name().as_bstr().to_str_lossy().into_owned());
+    }
+    Ok(names)
+}
+
+/// Deletes the refs `names` that exist, all or none if one is outside [`DELETABLE`].
+pub(super) fn delete_refs(repo: &gix::Repository, names: &[String]) -> Result<(), GitError> {
+    if let Some(outside) = names.iter().find(|n| !n.starts_with(DELETABLE) || n.contains("..")) {
+        return Err(GitError(format!(
+            "{outside} is not below {DELETABLE}, so Vet does not delete it"
+        )));
+    }
+    for name in names {
+        if let Some(reference) = repo.try_find_reference(name.as_str()).map_err(err)? {
+            reference.delete().map_err(err)?;
+        }
+    }
+    Ok(())
 }
 
 fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs) -> Result<usize, GitError> {

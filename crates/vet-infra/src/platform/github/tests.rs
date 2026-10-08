@@ -164,7 +164,9 @@ fn all_open() -> PullRequestQuery {
 async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
     set_now(NOW);
     let fake = repository(Arc::new(Mutex::new("v1")));
-    let found = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let listing = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
+    assert!(!listing.truncated, "the last page says there is no next one");
+    let found = listing.pull_requests;
 
     assert_eq!(found.iter().map(|p| p.number).collect::<Vec<_>>(), [101, 102, 103]);
     let graphql = fake.graphql_requests();
@@ -252,10 +254,29 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
 }
 
 #[tokio::test]
+async fn a_list_that_stops_at_the_most_it_holds_says_it_was_cut_short() {
+    set_now(NOW);
+    // Every page says there is another.
+    let fake = Fake::start(|request, _| {
+        if is_probe(request) {
+            return Canned::json(&newest("v1"));
+        }
+        Canned::json(SEARCH_PAGE_1)
+    });
+    let listing = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
+    assert!(listing.truncated);
+    assert_eq!(listing.pull_requests.len(), MAX_LISTED);
+}
+
+#[tokio::test]
 async fn what_is_listed_decides_who_is_waiting() {
     set_now(NOW);
     let fake = repository(Arc::new(Mutex::new("v1")));
-    let found = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let found = client(&fake)
+        .list_pull_requests(&remote(), &all_open())
+        .await
+        .unwrap()
+        .pull_requests;
     let viewer = Viewer {
         login: "ada".to_owned(),
         teams: vec!["acme/reviewers".to_owned()],
@@ -650,7 +671,8 @@ async fn github_smoke() {
         let found = client
             .list_pull_requests(&remote, &PullRequestQuery::new(tab))
             .await
-            .unwrap();
+            .unwrap()
+            .pull_requests;
         println!("{tab:?}: {} pull requests in {:?}", found.len(), started.elapsed());
         if let Some(first) = found.first() {
             println!("  {first:?}");
@@ -659,7 +681,11 @@ async fn github_smoke() {
     let again = std::time::Instant::now();
     client.list_pull_requests(&remote, &all_open()).await.unwrap();
     println!("again: {:?}", again.elapsed());
-    let found = client.list_pull_requests(&remote, &all_open()).await.unwrap();
+    let found = client
+        .list_pull_requests(&remote, &all_open())
+        .await
+        .unwrap()
+        .pull_requests;
     let detail = client.pull_request(&remote, found[0].number).await.unwrap();
     println!("{detail:?}");
 }
@@ -698,7 +724,11 @@ async fn github_checks_smoke() {
         }
         return;
     }
-    let found = client.list_pull_requests(&remote, &all_open()).await.unwrap();
+    let found = client
+        .list_pull_requests(&remote, &all_open())
+        .await
+        .unwrap()
+        .pull_requests;
     for pr in found.iter().take(5) {
         let checks = client.checks(&remote, &pr.head).await.unwrap();
         println!(

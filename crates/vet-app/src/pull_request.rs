@@ -2,7 +2,7 @@
 //! which of a project's remotes are hosted repositories, the pull requests the project's
 //! repositories list, and bringing one in to review.
 
-use crate::fetch::{Credentials, Fetch};
+use crate::fetch::{Credentials, Fetch, FetchMark};
 use crate::platform::{
     Platform, PlatformError, PlatformKind, PullRequest, PullRequestHead, PullRequestQuery, PullRequestRow, QueueTab,
     RemoteKey, list_rows, parse_remote, rows,
@@ -21,6 +21,15 @@ pub struct PullRequestRefs {
 
 impl PullRequestRefs {
     pub fn of(remote: &RemoteKey, number: u64) -> Self {
+        let prefix = format!("{}{number}", Self::of_repository(remote));
+        Self {
+            head: format!("{prefix}/{HEAD}"),
+            target: format!("{prefix}/{TARGET}"),
+        }
+    }
+
+    /// What the refs of every pull request of `remote` start with.
+    fn of_repository(remote: &RemoteKey) -> String {
         // A ref name cannot hold what a host with a port or a repository name may.
         let key: String = remote
             .to_string()
@@ -33,11 +42,14 @@ impl PullRequestRefs {
                 }
             })
             .collect();
-        let prefix = format!("refs/vet/pr/{key}/{number}");
-        Self {
-            head: format!("{prefix}/head"),
-            target: format!("{prefix}/target"),
-        }
+        format!("refs/vet/pr/{key}/")
+    }
+
+    /// The number of the pull request of `remote` that `name` is a ref of, if it is one.
+    fn number_of(remote: &RemoteKey, name: &str) -> Option<u64> {
+        let (number, which) = name.strip_prefix(&Self::of_repository(remote))?.split_once('/')?;
+        let parsed: u64 = number.parse().ok()?;
+        (parsed.to_string() == number && matches!(which, HEAD | TARGET)).then_some(parsed)
     }
 
     /// What to fetch from the platform's repository to have both refs: the pull request's head and
@@ -64,6 +76,9 @@ impl PullRequestRefs {
         ]
     }
 }
+
+const HEAD: &str = "head";
+const TARGET: &str = "target";
 
 /// A repository of a platform that one of the project's git remotes is.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -127,6 +142,16 @@ pub struct RepositoryStatus {
     pub remote: RemoteKey,
     /// Why the platform could not list the repository's pull requests.
     pub error: Option<PlatformError>,
+    /// The platform stopped at the most it lists: a pull request that is not listed may still
+    /// wait for the viewer or be theirs.
+    pub truncated: bool,
+}
+
+impl RepositoryStatus {
+    /// The repository's pull requests that wait for the viewer or are theirs are all listed.
+    pub fn listed_whole(&self) -> bool {
+        self.error.is_none() && !self.truncated
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -163,11 +188,13 @@ pub async fn list_pull_requests<P: Platform>(
     let mut sources = Vec::new();
     for remote in repositories {
         let mut error = None;
+        let mut truncated = false;
         let mut listed: Vec<PullRequestRow> = Vec::new();
         for tab in [QueueTab::WaitingForMe, QueueTab::Mine] {
             match list_rows(platform, remote, &PullRequestQuery::new(tab)).await {
                 Ok(found) => {
-                    for row in found {
+                    truncated |= found.truncated;
+                    for row in found.rows {
                         if !listed.iter().any(|r| r.number == row.number) {
                             listed.push(row);
                         }
@@ -194,6 +221,7 @@ pub async fn list_pull_requests<P: Platform>(
         sources.push(RepositoryStatus {
             remote: remote.clone(),
             error,
+            truncated,
         });
     }
     sort_newest_first(&mut rows);
@@ -258,13 +286,64 @@ pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
     Ok(PullRequestHead::of(&detail.pull_request))
 }
 
+/// The pull requests that were fetched into the repository and that `list` no longer has, of the
+/// repositories it lists whole: those closed since, or no longer waiting for the viewer, each once.
+/// A repository whose refs are named like another's of `list` is left out, as its refs cannot be
+/// told apart.
+pub async fn unlisted_fetched<G: Fetcher>(
+    fetch: &Fetch<G>,
+    list: &PullRequestList,
+) -> Result<Vec<(RemoteKey, u64)>, String> {
+    let mut found = Vec::new();
+    for source in list.sources.iter().filter(|s| s.listed_whole()) {
+        let remote = &source.remote;
+        let prefix = PullRequestRefs::of_repository(remote);
+        let shared = list
+            .sources
+            .iter()
+            .any(|other| other.remote != *remote && PullRequestRefs::of_repository(&other.remote) == prefix);
+        if shared {
+            continue;
+        }
+        for name in fetch.refs_below(&prefix).await? {
+            let Some(number) = PullRequestRefs::number_of(remote, &name) else {
+                continue;
+            };
+            let listed = list.rows.iter().any(|l| l.remote == *remote && l.row.number == number);
+            let pull_request = (remote.clone(), number);
+            if !listed && !found.contains(&pull_request) {
+                found.push(pull_request);
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Deletes the refs of `pull_requests`, except those fetched since `since`: a pull request being
+/// brought in meanwhile keeps its refs. Answers with the names of the refs that are gone.
+pub async fn delete_pull_request_refs<G: Fetcher>(
+    fetch: &Fetch<G>,
+    pull_requests: &[(RemoteKey, u64)],
+    since: FetchMark,
+) -> Result<Vec<String>, String> {
+    let names = pull_requests
+        .iter()
+        .flat_map(|(remote, number)| {
+            let refs = PullRequestRefs::of(remote, *number);
+            [refs.head, refs.target]
+        })
+        .collect();
+    fetch.delete_refs(names, since).await
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
     use crate::platform::{
-        CheckLog, CommitChecks, Credential, PullRequest, PullRequestDetail, ReviewRequest, Viewer, pr, viewer,
+        CheckLog, CommitChecks, Credential, PullRequest, PullRequestDetail, PullRequestListing, ReviewRequest, Viewer,
+        pr, viewer,
     };
     use crate::ports::{FetchAuth, GitError};
     use crate::progress::Tasks;
@@ -370,10 +449,12 @@ mod tests {
         assert_eq!(names, [("origin", "acme/app"), ("fork", "ada/app")]);
     }
 
-    /// Lists a fixed set of pull requests per repository, or fails for some.
+    /// Lists a fixed set of pull requests per repository, or fails for some, or says it stopped
+    /// at its bound for some.
     struct Hosting {
         prs: Vec<(RemoteKey, Vec<PullRequest>)>,
         failing: Vec<RemoteKey>,
+        truncated: Vec<RemoteKey>,
     }
 
     impl Platform for Hosting {
@@ -389,16 +470,19 @@ mod tests {
             &self,
             remote: &RemoteKey,
             _: &PullRequestQuery,
-        ) -> Result<Vec<PullRequest>, PlatformError> {
+        ) -> Result<PullRequestListing, PlatformError> {
             if self.failing.contains(remote) {
                 return Err(PlatformError::Rejected("github.com refused the token".to_owned()));
             }
-            Ok(self
-                .prs
-                .iter()
-                .find(|(r, _)| r == remote)
-                .map(|(_, prs)| prs.clone())
-                .unwrap_or_default())
+            Ok(PullRequestListing {
+                pull_requests: self
+                    .prs
+                    .iter()
+                    .find(|(r, _)| r == remote)
+                    .map(|(_, prs)| prs.clone())
+                    .unwrap_or_default(),
+                truncated: self.truncated.contains(remote),
+            })
         }
 
         async fn pull_request(&self, remote: &RemoteKey, number: u64) -> Result<PullRequestDetail, PlatformError> {
@@ -440,10 +524,14 @@ mod tests {
     /// The git remote and the refs of each fetch.
     type Fetched = Arc<Mutex<Vec<(String, Vec<RefUpdate>)>>>;
 
-    /// Git remotes that record what they were asked to fetch.
+    /// The refs of the repository.
+    type Refs = Arc<Mutex<Vec<String>>>;
+
+    /// Git remotes that record what they were asked to fetch, into refs.
     struct Remotes {
         remotes: Vec<RemoteInfo>,
         fetched: Fetched,
+        refs: Refs,
     }
 
     impl Fetcher for Remotes {
@@ -461,7 +549,24 @@ mod tests {
             updates: Vec<RefUpdate>,
             _: Option<FetchAuth>,
         ) -> Result<(), GitError> {
+            let mut refs = self.refs.lock().unwrap();
+            for update in &updates {
+                if !refs.contains(&update.destination) {
+                    refs.push(update.destination.clone());
+                }
+            }
             self.fetched.lock().unwrap().push((remote.to_owned(), updates));
+            Ok(())
+        }
+
+        async fn refs_below(&self, prefix: &str) -> Result<Vec<String>, GitError> {
+            let refs = self.refs.lock().unwrap();
+            Ok(refs.iter().filter(|r| r.starts_with(prefix)).cloned().collect())
+        }
+
+        async fn delete_refs(&self, names: Vec<String>) -> Result<(), GitError> {
+            assert!(names.iter().all(|n| n.starts_with("refs/vet/pr/")), "{names:?}");
+            self.refs.lock().unwrap().retain(|r| !names.contains(r));
             Ok(())
         }
     }
@@ -475,12 +580,20 @@ mod tests {
     }
 
     fn fetching(remotes: Vec<RemoteInfo>) -> (Fetch<Remotes>, Fetched) {
+        let (fetch, fetched, _) = fetching_into(remotes, &[]);
+        (fetch, fetched)
+    }
+
+    /// A repository with the refs `refs` already.
+    fn fetching_into(remotes: Vec<RemoteInfo>, refs: &[&str]) -> (Fetch<Remotes>, Fetched, Refs) {
         let fetched = Arc::default();
+        let refs: Refs = Arc::new(Mutex::new(refs.iter().map(|r| (*r).to_owned()).collect()));
         let git = Remotes {
             remotes,
             fetched: Arc::clone(&fetched),
+            refs: Arc::clone(&refs),
         };
-        (Fetch::new(git, Tasks::default()), fetched)
+        (Fetch::new(git, Tasks::default()), fetched, refs)
     }
 
     #[tokio::test]
@@ -488,6 +601,7 @@ mod tests {
         let platform = Hosting {
             prs: vec![],
             failing: vec![],
+            truncated: vec![],
         };
         let (fetch, fetched) = fetching(vec![
             info("fork", "https://github.com/ada/app"),
@@ -517,6 +631,7 @@ mod tests {
         let platform = Hosting {
             prs: vec![],
             failing: vec![],
+            truncated: vec![],
         };
         let (fetch, fetched) = fetching(vec![
             info("origin", "https://github.com/acme/app"),
@@ -551,6 +666,7 @@ mod tests {
         let platform = Hosting {
             prs: vec![],
             failing: vec![],
+            truncated: vec![],
         };
         let (fetch, _) = fetching(vec![info("origin", "https://github.com/acme/app")]);
 
@@ -573,6 +689,7 @@ mod tests {
         let platform = Hosting {
             prs: vec![],
             failing: vec![app.clone()],
+            truncated: vec![],
         };
         let (fetch, fetched) = fetching(vec![info("origin", "https://github.com/acme/app")]);
 
@@ -592,6 +709,7 @@ mod tests {
         let platform = Hosting {
             prs: vec![],
             failing: vec![],
+            truncated: vec![],
         };
         let (fetch, fetched) = fetching(vec![info("origin", "https://github.com/ada/app")]);
 
@@ -612,6 +730,7 @@ mod tests {
         let platform = Hosting {
             prs: vec![(app.clone(), vec![waiting(1, 100), mine(2, 300), pr(3), mine(4, 200)])],
             failing: vec![],
+            truncated: vec![],
         };
 
         let list = list_pull_requests(&platform, std::slice::from_ref(&app), None).await;
@@ -622,7 +741,8 @@ mod tests {
             list.sources,
             [RepositoryStatus {
                 remote: app.clone(),
-                error: None
+                error: None,
+                truncated: false
             }]
         );
     }
@@ -633,6 +753,7 @@ mod tests {
         let platform = Hosting {
             prs: vec![(app.clone(), vec![mine(2, 300)])],
             failing: vec![],
+            truncated: vec![],
         };
         let list = list_pull_requests(&platform, std::slice::from_ref(&app), Some((&app, 3))).await;
 
@@ -655,6 +776,7 @@ mod tests {
         let platform = Hosting {
             prs: vec![(lib.clone(), vec![mine(9, 50)])],
             failing: vec![app.clone()],
+            truncated: vec![],
         };
 
         let list = list_pull_requests(&platform, &[app.clone(), lib.clone()], None).await;
@@ -668,13 +790,99 @@ mod tests {
             [
                 RepositoryStatus {
                     remote: app,
-                    error: Some(PlatformError::Rejected("github.com refused the token".to_owned()))
+                    error: Some(PlatformError::Rejected("github.com refused the token".to_owned())),
+                    truncated: false
                 },
                 RepositoryStatus {
                     remote: lib,
-                    error: None
+                    error: None,
+                    truncated: false
                 },
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn the_fetched_pull_requests_a_list_no_longer_has_are_those_of_repositories_it_lists_whole() {
+        let (app, lib, svc) = (github("acme/app"), github("acme/lib"), github("acme/svc"));
+        let platform = Hosting {
+            prs: vec![(app.clone(), vec![mine(1, 10)]), (svc.clone(), vec![mine(3, 10)])],
+            failing: vec![lib.clone()],
+            truncated: vec![svc.clone()],
+        };
+        let of = |remote: &RemoteKey, number| PullRequestRefs::of(remote, number);
+        let refs = [
+            of(&app, 1).head,
+            of(&app, 1).target,
+            of(&app, 5).head,
+            of(&app, 5).target,
+            of(&app, 6).target,
+            of(&lib, 2).head,
+            of(&svc, 4).head,
+            // Not the refs of a pull request of app.
+            "refs/vet/pr/github_com/acme/app/7/merge".to_owned(),
+            "refs/vet/pr/github_com/acme/app/08/head".to_owned(),
+            "refs/vet/pr/github_com/acme/app/x/head".to_owned(),
+            "refs/vet/changesets/3/1/target".to_owned(),
+        ];
+        let refs: Vec<&str> = refs.iter().map(String::as_str).collect();
+        let (fetch, _, _) = fetching_into(vec![], &refs);
+
+        let list = list_pull_requests(&platform, &[app.clone(), lib, svc], None).await;
+        let unlisted = unlisted_fetched(&fetch, &list).await.unwrap();
+
+        assert_eq!(
+            unlisted,
+            [(app.clone(), 5), (app, 6)],
+            "a repository that failed or was cut short may still have them open"
+        );
+    }
+
+    #[tokio::test]
+    async fn repositories_whose_refs_are_named_alike_are_not_told_apart_so_neither_loses_any() {
+        let (dotted, underscored) = (github("acme/a.b"), github("acme/a_b"));
+        let platform = Hosting {
+            prs: vec![],
+            failing: vec![],
+            truncated: vec![],
+        };
+        let stale = PullRequestRefs::of(&dotted, 5).head;
+        assert_eq!(stale, PullRequestRefs::of(&underscored, 5).head);
+        let (fetch, _, _) = fetching_into(vec![], &[&stale]);
+
+        let list = list_pull_requests(&platform, &[dotted.clone(), underscored], None).await;
+        assert_eq!(unlisted_fetched(&fetch, &list).await.unwrap(), []);
+
+        let list = list_pull_requests(&platform, std::slice::from_ref(&dotted), None).await;
+        assert_eq!(unlisted_fetched(&fetch, &list).await.unwrap(), [(dotted, 5)]);
+    }
+
+    #[tokio::test]
+    async fn the_refs_of_a_pull_request_fetched_after_the_mark_are_not_deleted() {
+        let app = github("acme/app");
+        let platform = Hosting {
+            prs: vec![],
+            failing: vec![],
+            truncated: vec![],
+        };
+        let of = |number| PullRequestRefs::of(&app, number);
+        let before = [of(5).head, of(5).target, of(6).head, of(6).target];
+        let before: Vec<&str> = before.iter().map(String::as_str).collect();
+        let (fetch, _, refs) = fetching_into(vec![info("origin", "https://github.com/acme/app")], &before);
+        fetch_pull_request(&platform, &fetch, &Anonymous, &app, 4)
+            .await
+            .unwrap();
+
+        let since = fetch.mark();
+        // Opened while the list was being asked for.
+        fetch_pull_request(&platform, &fetch, &Anonymous, &app, 5)
+            .await
+            .unwrap();
+        let deleted = delete_pull_request_refs(&fetch, &[(app.clone(), 4), (app.clone(), 5), (app.clone(), 6)], since)
+            .await
+            .unwrap();
+
+        assert_eq!(deleted, [of(4).head, of(4).target, of(6).head, of(6).target]);
+        assert_eq!(*refs.lock().unwrap(), [of(5).head, of(5).target]);
     }
 }

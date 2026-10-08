@@ -28,8 +28,8 @@ use futures::future::try_join_all;
 use url::Url;
 use vet_app::platform::{
     CheckLog, CiState, CommentRef, CommitChecks, CredentialProvider, Discussion, Platform, PlatformComment,
-    PlatformError, PlatformKind, PlatformTraits, PullRequest, PullRequestDetail, PullRequestQuery, QueueTab, RemoteKey,
-    Submission, Submitted, Viewer, matches,
+    PlatformError, PlatformKind, PlatformTraits, PullRequest, PullRequestDetail, PullRequestListing, PullRequestQuery,
+    QueueTab, RemoteKey, Submission, Submitted, Viewer, matches,
 };
 
 use crate::clock::unix_now;
@@ -420,7 +420,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         &self,
         remote: &RemoteKey,
         query: &PullRequestQuery,
-    ) -> Result<Vec<PullRequest>, PlatformError> {
+    ) -> Result<PullRequestListing, PlatformError> {
         let repository = repository(remote)?;
         let access = self.access(&remote.account()).await?;
         let me = self.me(&access, remote, &repository).await?;
@@ -429,7 +429,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
 
         let mut found = Vec::new();
         let mut skip = 0;
-        loop {
+        let truncated = loop {
             let mut request = git
                 .pull_requests_client()
                 .get_pull_requests(repository.organization, repository.name, repository.project)
@@ -444,10 +444,13 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             self.learn_project(remote, page.first());
             found.extend(page.iter().filter_map(|pr| wire::pull_request(pr, &me, &web)));
             skip += self.page_size;
-            if page.len() < usize::try_from(self.page_size).unwrap_or(usize::MAX) || found.len() >= MAX_LISTED {
-                break;
+            if page.len() < usize::try_from(self.page_size).unwrap_or(usize::MAX) {
+                break false;
             }
-        }
+            if found.len() >= MAX_LISTED {
+                break true;
+            }
+        };
 
         // Checks and threads are asked for what the list is going to hold. The check
         // filter waits for them.
@@ -464,10 +467,14 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         let newest_first =
             |a: &PullRequest, b: &PullRequest| b.updated_at.cmp(&a.updated_at).then(b.number.cmp(&a.number));
         found.sort_by(newest_first);
+        let truncated = truncated || found.len() > MAX_LISTED;
         found.truncate(MAX_LISTED);
         self.enrich(&access, &git, remote, &repository, &mut found).await?;
         found.sort_by(newest_first);
-        Ok(found)
+        Ok(PullRequestListing {
+            pull_requests: found,
+            truncated,
+        })
     }
 
     async fn pull_request(&self, remote: &RemoteKey, number: u64) -> Result<PullRequestDetail, PlatformError> {

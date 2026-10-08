@@ -202,7 +202,11 @@ async fn a_pull_request_is_blocked_by_a_blocking_policy_that_failed_and_by_nothi
         (3, vec![evaluation("g", "broken", "Required reviewers", true, None)]),
     ]);
 
-    let found = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let found = client(&fake)
+        .list_pull_requests(&remote(), &all_open())
+        .await
+        .unwrap()
+        .pull_requests;
 
     let blocked = |n: u64| found.iter().find(|p| p.number == n).unwrap().blocked;
     assert_eq!(
