@@ -16,6 +16,8 @@ use tokio::process::Command as TokioCommand;
 use tokio::sync::{Notify, mpsc};
 use vet_app::ports::{Command, ProcessEvent, ProcessRunner, RunningProcess};
 
+use crate::budget::Budget;
+
 pub use output::{LineSplitter, Tail};
 pub use program::{Host, invocation, is_file, parse_pathext};
 
@@ -32,6 +34,7 @@ pub fn dotnet_env() -> Vec<(String, String)> {
 
 /// `program` as this host runs it, with `env` added, piped output and no input.
 /// The process dies with its handle.
+#[allow(clippy::disallowed_methods, reason = "the one place that spawns processes")]
 pub fn command(program: &str, args: &[String], cwd: Option<&Path>, env: &[(String, String)]) -> TokioCommand {
     let (invoked, args) = invocation(program, args);
     let mut command = TokioCommand::new(invoked);
@@ -55,13 +58,16 @@ pub struct Captured {
 }
 
 /// Runs a program to completion with a time limit; it is killed when the limit passes.
+/// It runs once `budget` has a unit free, and the time limit counts from then.
 pub async fn capture(
+    budget: &Budget,
     program: &str,
     args: &[String],
     cwd: Option<&Path>,
     env: &[(String, String)],
     timeout: Duration,
 ) -> Result<Captured, String> {
+    let _turn = budget.acquire().await;
     let mut child = command(program, args, cwd, env)
         .spawn()
         .map_err(|e| format!("{program}: {e}"))?;

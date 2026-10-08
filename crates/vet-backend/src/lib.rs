@@ -2,6 +2,9 @@
 //! logic lives in `vet-app`; this crate wires adapters to it and maps its views
 //! to protocol messages.
 
+// Tests build their repositories with git.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
 mod accounts;
 mod announce;
 mod caches;
@@ -33,6 +36,7 @@ use vet_app::registry::{Entry, Registry, Subscribers};
 use vet_app::semantics::Semantics;
 use vet_app::servers::Servers;
 use vet_app::session::LiveSession;
+use vet_infra::budget::Budgets;
 use vet_infra::clock::unix_now;
 use vet_infra::credentials::HttpValidator;
 use vet_infra::exec::TokioRunner;
@@ -103,6 +107,8 @@ pub struct Orchestrator {
     servers: Arc<LanguageServers>,
     backends: Arc<[Backend]>,
     highlighter: highlight::Highlighter,
+    /// What blocking work and probe processes draw on, shared by every project.
+    budgets: Budgets,
     /// The materialized snapshots kept between launches (§8).
     trees: Arc<KeptTrees>,
     /// The answers of the language servers kept between launches (§8).
@@ -137,11 +143,14 @@ fn recent_projects(list: Result<Vec<RecentProject>, StoreError>) -> Result<Respo
 
 impl Orchestrator {
     pub fn new(store: SqliteStore, config: Config) -> Self {
+        let budgets = Budgets::default();
+        let store = store.budgeted(budgets.review_io.clone());
         let backends: Arc<[Backend]> = lsp_config::defaults().into();
         let languages = backends.iter().map(|b| b.config().backend.clone()).collect();
-        let resolver = ToolResolver::new(store.dir().to_owned());
+        let resolver = ToolResolver::new(store.dir().to_owned()).probing(budgets.probes.clone());
         let referenced = Arc::new(StoreReferences(store.clone()));
-        let trees = KeptTrees::new(store.dir().join("materialized"), Limits::default(), referenced);
+        let trees = KeptTrees::new(store.dir().join("materialized"), Limits::default(), referenced)
+            .budgeted(budgets.semantic_io.clone());
         let process_subscribers = Subscribers::<Connection>::default();
         let needed = process_subscribers.clone();
         let accounts = Arc::new(Accounts::new(
@@ -159,7 +168,8 @@ impl Orchestrator {
             process_subscribers,
             servers: Arc::new(Servers::new(resolver, store.clone(), languages)),
             backends,
-            highlighter: Default::default(),
+            highlighter: highlight::Highlighter::new(budgets.review_io.clone()),
+            budgets,
             trees: Arc::new(trees),
             answers: Arc::new(PersistentAnswers::new(store.dir().to_owned())),
             recent: RecentProjects::new(store.clone()),
@@ -167,6 +177,11 @@ impl Orchestrator {
             config,
             projects: Projects::default(),
         }
+    }
+
+    /// The budgets every project's blocking work and probes draw on.
+    pub fn budgets(&self) -> &Budgets {
+        &self.budgets
     }
 
     /// The open project `id`. The request being answered is about it from here on, and its

@@ -1,6 +1,8 @@
 //! Acquisition and line diff against real temporary repositories. `git` is used
 //! only to build fixtures.
 
+#![allow(clippy::disallowed_methods)]
+
 mod common;
 
 use std::collections::HashMap;
@@ -539,4 +541,36 @@ async fn repeated_scans_follow_edits_through_the_stat_cache() {
     let last = repo.scan(Dirty::All).await.unwrap().snapshot;
     assert_eq!(last.entries[&path("new.txt")].blob, blob(b"bbbb\n"));
     assert_eq!(last.entries[&path("tracked.txt")].blob, blob(b"v\n"));
+}
+
+#[tokio::test]
+async fn a_read_waits_only_for_the_budget_of_the_handle_it_is_made_through() {
+    use std::time::Duration;
+    use vet_infra::budget::Budget;
+
+    let dir = repo();
+    write(dir.path(), "a.txt", b"one\n");
+    commit(dir.path());
+    let (review, semantic) = (Budget::new(2), Budget::new(2));
+    let on_review = GixRepo::new(dir.path()).budgeted(review.clone());
+    let on_semantic = on_review.budgeted(semantic.clone());
+    let read = |repo: &GixRepo| {
+        let repo = repo.clone();
+        async move { repo.read_blob(&path("a.txt"), blob(b"one\n")).await }
+    };
+
+    let held = semantic.acquire_all().await;
+    let answered = tokio::time::timeout(Duration::from_secs(30), read(&on_review)).await;
+    assert_eq!(
+        answered.expect("the review's read waited").unwrap().as_deref(),
+        Some(&b"one\n"[..])
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), read(&on_semantic))
+            .await
+            .is_err(),
+        "the semantic read took no unit of its own budget"
+    );
+    drop(held);
+    assert_eq!(read(&on_semantic).await.unwrap().as_deref(), Some(&b"one\n"[..]));
 }

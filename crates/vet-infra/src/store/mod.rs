@@ -41,6 +41,7 @@ use vet_core::review::{
     Anchor, CommentTarget, Message, MessageId, PlatformThread, ReviewedSpan, ThreadId, ThreadStatus,
 };
 
+use crate::budget::{Budget, REVIEW_IO};
 use codec::*;
 use content::ContentStore;
 use entity::*;
@@ -53,6 +54,8 @@ pub struct SqliteStore {
     reader: StoreReader,
     content: Arc<ContentStore>,
     dir: PathBuf,
+    /// What reads and writes of content draw on.
+    io: Budget,
 }
 
 fn db_err(e: impl std::fmt::Display) -> DbErr {
@@ -218,7 +221,13 @@ impl SqliteStore {
             reader,
             content: Arc::new(content),
             dir: dir.to_owned(),
+            io: Budget::new(REVIEW_IO),
         })
+    }
+
+    /// The same store, its content read and written on `io`.
+    pub fn budgeted(&self, io: Budget) -> Self {
+        Self { io, ..self.clone() }
     }
 
     /// The data directory the store lives in.
@@ -231,9 +240,7 @@ impl SqliteStore {
         f: impl FnOnce(&ContentStore) -> io::Result<T> + Send + 'static,
     ) -> Result<T, StoreError> {
         let content = self.content.clone();
-        Ok(tokio::task::spawn_blocking(move || f(&content))
-            .await
-            .map_err(db_err)??)
+        Ok(self.io.blocking(move || f(&content)).await.map_err(db_err)??)
     }
 
     /// Reads in one transaction, so that what takes several statements is one state of the file.

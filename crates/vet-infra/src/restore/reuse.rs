@@ -14,6 +14,7 @@ use serde_json::Value;
 
 use super::Step;
 use super::record::Digest;
+use crate::budget::Budget;
 use crate::git::list_files;
 use vet_core::content::Hash;
 
@@ -27,11 +28,18 @@ pub(super) enum Reused {
 }
 
 /// Whether `step`, a restore of the copy at `root`, is done by what `donor`
-/// (the working tree) has restored. If so, the copy has the result.
-pub(super) async fn reuse(donor: &Path, root: &Path, step: &Step) -> Option<Reused> {
+/// (the working tree) has restored. If so, the copy has the result. The files are
+/// read and linked on `io`.
+pub(super) async fn reuse(io: &Budget, donor: &Path, root: &Path, step: &Step) -> Option<Reused> {
     match step.program {
-        "npm" | "pnpm" | "yarn" => node_modules(donor, root, step).map(Reused::Linked),
-        "dotnet" => dotnet_assets(donor, root).await.then_some(Reused::Copied),
+        "npm" | "pnpm" | "yarn" => {
+            let (donor, root, step) = (donor.to_owned(), root.to_owned(), step.clone());
+            io.blocking(move || node_modules(&donor, &root, &step))
+                .await
+                .ok()?
+                .map(Reused::Linked)
+        }
+        "dotnet" => dotnet_assets(io, donor, root).await.then_some(Reused::Copied),
         _ => None,
     }
 }
@@ -187,6 +195,10 @@ fn link_dir(target: &Path, link: &Path) -> io::Result<()> {
 /// A junction, which needs no privilege, unlike a symbolic link.
 #[cfg(windows)]
 fn link_dir(target: &Path, link: &Path) -> io::Result<()> {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "a junction is made by the shell and nothing else"
+    )]
     let out = std::process::Command::new("cmd")
         .args(["/C", "mklink", "/J"])
         .arg(link)
@@ -239,30 +251,35 @@ fn is_restore_output(name: &str) -> bool {
 /// Copies the donor's restore output into the copy's projects if the projects
 /// and everything else a restore reads are the same on both sides. The
 /// packages themselves are in the global packages folder, which both share.
-async fn dotnet_assets(donor: &Path, root: &Path) -> bool {
-    let (Ok(theirs), Ok(ours)) = (list_files(donor).await, list_files(root).await) else {
+async fn dotnet_assets(io: &Budget, donor: &Path, root: &Path) -> bool {
+    let (Ok(theirs), Ok(ours)) = (list_files(io, donor).await, list_files(io, root).await) else {
         return false;
     };
-    let inputs =
-        |files: Vec<PathBuf>| -> BTreeSet<PathBuf> { files.into_iter().filter(|f| is_dotnet_input(f)).collect() };
-    let (theirs, ours) = (inputs(theirs), inputs(ours));
-    if ours.is_empty() || theirs != ours || !ours.iter().all(|f| read(donor.join(f)) == read(root.join(f))) {
-        return false;
-    }
-    let projects: Vec<&Path> = ours
-        .iter()
-        .filter(|f| is_project(f))
-        .filter_map(|f| f.parent())
-        .collect();
-    if !projects
-        .iter()
-        .all(|dir| donor.join(dir).join("obj/project.assets.json").is_file())
-    {
-        return false;
-    }
-    projects
-        .iter()
-        .all(|dir| copy_restore_output(&donor.join(dir).join("obj"), &root.join(dir).join("obj")).is_ok())
+    let (donor, root) = (donor.to_owned(), root.to_owned());
+    io.blocking(move || {
+        let inputs =
+            |files: Vec<PathBuf>| -> BTreeSet<PathBuf> { files.into_iter().filter(|f| is_dotnet_input(f)).collect() };
+        let (theirs, ours) = (inputs(theirs), inputs(ours));
+        if ours.is_empty() || theirs != ours || !ours.iter().all(|f| read(donor.join(f)) == read(root.join(f))) {
+            return false;
+        }
+        let projects: Vec<&Path> = ours
+            .iter()
+            .filter(|f| is_project(f))
+            .filter_map(|f| f.parent())
+            .collect();
+        if !projects
+            .iter()
+            .all(|dir| donor.join(dir).join("obj/project.assets.json").is_file())
+        {
+            return false;
+        }
+        projects
+            .iter()
+            .all(|dir| copy_restore_output(&donor.join(dir).join("obj"), &root.join(dir).join("obj")).is_ok())
+    })
+    .await
+    .unwrap_or(false)
 }
 
 fn copy_restore_output(from: &Path, to: &Path) -> io::Result<()> {
@@ -412,7 +429,7 @@ mod tests {
             ("obj/Debug/App.dll", "binary"),
         ]);
         let copy = tree(&[("App.csproj", PROJECT), ("Program.cs", "base")]);
-        assert!(dotnet_assets(donor.path(), copy.path()).await);
+        assert!(dotnet_assets(&Budget::new(1), donor.path(), copy.path()).await);
         assert!(copy.path().join("obj/project.assets.json").is_file());
         assert!(copy.path().join("obj/App.csproj.nuget.g.props").is_file());
         assert!(!copy.path().join("obj/Debug").exists());
@@ -422,12 +439,13 @@ mod tests {
     async fn another_package_reference_or_a_missing_restore_means_a_restore() {
         let donor = tree(&[("App.csproj", PROJECT), ("obj/project.assets.json", "{}")]);
         let other = tree(&[("App.csproj", "<Project/>")]);
-        assert!(!dotnet_assets(donor.path(), other.path()).await);
+        let io = Budget::new(1);
+        assert!(!dotnet_assets(&io, donor.path(), other.path()).await);
         let extra = tree(&[("App.csproj", PROJECT), ("Directory.Build.props", "<Project/>")]);
-        assert!(!dotnet_assets(donor.path(), extra.path()).await);
+        assert!(!dotnet_assets(&io, donor.path(), extra.path()).await);
         assert!(!other.path().join("obj").exists() && !extra.path().join("obj").exists());
 
         let unrestored = tree(&[("App.csproj", PROJECT)]);
-        assert!(!dotnet_assets(unrestored.path(), unrestored.path()).await);
+        assert!(!dotnet_assets(&io, unrestored.path(), unrestored.path()).await);
     }
 }

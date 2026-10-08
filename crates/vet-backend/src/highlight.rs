@@ -7,6 +7,7 @@ use std::sync::Arc;
 use vet_app::session::{FileText, TargetText};
 use vet_core::content::BlobId;
 use vet_highlight::{Cache, Language};
+use vet_infra::budget::Budget;
 use vet_protocol::{Response, Side, SymbolSignature, Unavailable};
 use vet_semantic::signature::Signature;
 
@@ -18,17 +19,18 @@ const CAPACITY: usize = 64 << 20;
 #[derive(Clone)]
 pub struct Highlighter {
     cache: Arc<Cache<BlobId>>,
-}
-
-impl Default for Highlighter {
-    fn default() -> Self {
-        Self {
-            cache: Arc::new(Cache::new(CAPACITY)),
-        }
-    }
+    /// What parsing draws on: it answers a view of a file, so it is the review lane's.
+    io: Budget,
 }
 
 impl Highlighter {
+    pub fn new(io: Budget) -> Self {
+        Self {
+            cache: Arc::new(Cache::new(CAPACITY)),
+            io,
+        }
+    }
+
     /// The highlights of `text`, a file's content at `path`; empty if there is no text or its
     /// language has no grammar.
     async fn text(&self, path: &str, text: Option<&str>) -> Vec<u32> {
@@ -36,7 +38,8 @@ impl Highlighter {
             return Vec::new();
         };
         let (cache, text) = (self.cache.clone(), text.to_owned());
-        tokio::task::spawn_blocking(move || cache.get(&BlobId::of(text.as_bytes()), &text, language).to_vec())
+        self.io
+            .blocking(move || cache.get(&BlobId::of(text.as_bytes()), &text, language).to_vec())
             .await
             .unwrap_or_default()
     }

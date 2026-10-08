@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 
@@ -15,7 +15,7 @@ pub struct Acquisition<G, S> {
     pub git: G,
     pub store: S,
     /// The commit whose objects back each snapshot's committed blobs.
-    commits: Mutex<HashMap<SnapshotId, CommitId>>,
+    commits: Arc<Mutex<HashMap<SnapshotId, CommitId>>>,
     /// Where scans and diffs report.
     pub tasks: Tasks,
 }
@@ -25,8 +25,20 @@ impl<G, S> Acquisition<G, S> {
         Self {
             git,
             store,
-            commits: Mutex::default(),
+            commits: Arc::default(),
             tasks: Tasks::default(),
+        }
+    }
+
+    /// The same acquisition over other handles on the same repository and store: what
+    /// it knows of the snapshots is shared, so one lane records a commit and another
+    /// serves its snapshot. The handles tell the lanes apart by what they draw on.
+    pub fn through<G2, S2>(&self, git: G2, store: S2) -> Acquisition<G2, S2> {
+        Acquisition {
+            git,
+            store,
+            commits: self.commits.clone(),
+            tasks: self.tasks.clone(),
         }
     }
 

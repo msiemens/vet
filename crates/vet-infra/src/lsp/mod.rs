@@ -13,6 +13,7 @@ mod rpc;
 mod server;
 mod uri;
 
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -27,6 +28,7 @@ use vet_semantic::ports::{
     Backend, BackendId, LaunchError, Restored, Restorer, ServerConfig, ServerIdentity, ServerLauncher, Started, Tree,
 };
 
+use crate::budget::{Budget, Budgets, SEMANTIC_IO};
 use crate::git::list_files;
 use crate::language::{self, Compiler};
 use crate::restore::discover;
@@ -51,6 +53,8 @@ pub struct LspLauncher<L, R> {
     pub tasks: Tasks,
     /// Tells servers apart (I2), and remembers what that cost.
     pub identities: Identities,
+    /// Where the files of a start are looked at.
+    pub semantic_io: Budget,
 }
 
 impl<L, R> LspLauncher<L, R> {
@@ -61,7 +65,24 @@ impl<L, R> LspLauncher<L, R> {
             restorer,
             tasks: Tasks::default(),
             identities: Identities::new(UserEnv::current()),
+            semantic_io: Budget::new(SEMANTIC_IO),
         }
+    }
+
+    /// Looks at files and runs probes on `budgets`.
+    pub fn budgeted(mut self, budgets: &Budgets) -> Self {
+        self.identities = self.identities.budgeted(budgets);
+        self.semantic_io = budgets.semantic_io.clone();
+        self
+    }
+
+    /// `path` with links resolved, on the lane's blocking threads.
+    async fn canonical(&self, path: &Path) -> io::Result<PathBuf> {
+        let path = path.to_owned();
+        self.semantic_io
+            .blocking(move || std::fs::canonicalize(path))
+            .await
+            .map_err(io::Error::other)?
     }
 
     /// Reports every start to `tasks`.
@@ -161,7 +182,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
             .await
             .map_err(LaunchError::NotInstalled)?;
         let folders = phases
-            .run("workspace folders", workspace_folders(root, config))
+            .run("workspace folders", workspace_folders(&self.semantic_io, root, config))
             .await
             .iter()
             .filter_map(|dir| {
@@ -223,7 +244,8 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
         policy: AnalysisPolicy,
     ) -> Result<Launched, LaunchError> {
         let config = backend.config();
-        let root = tokio::fs::canonicalize(root)
+        let root = self
+            .canonical(root)
             .await
             .map_err(|e| LaunchError::Spawn(format!("{}: {e}", root.display())))?;
         let Prepared {
@@ -246,7 +268,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
 
         if matches!(backend, Backend::Roslyn(_)) {
             let phase = Instant::now();
-            load_dotnet_projects(&conn, &root).await?;
+            load_dotnet_projects(&self.semantic_io, &conn, &root).await?;
             if !conn.wait_for(self.ready_timeout, |s| s.projects_loaded).await {
                 return Err(LaunchError::NotReady(conn.describe(format!(
                     "{} did not load the projects within {}s",
@@ -349,20 +371,27 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
             started,
         );
         Ok(Started {
-            server: LspServer::new(conn, root, tree, diagnostics, config.loads_project_on_open),
+            server: LspServer::new(
+                conn,
+                root,
+                tree,
+                diagnostics,
+                config.loads_project_on_open,
+                self.semantic_io.clone(),
+            ),
             identity,
             restore,
         })
     }
 
     async fn identify(&self, root: &Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
-        let root = tokio::fs::canonicalize(root).await.unwrap_or_else(|_| root.to_owned());
+        let root = self.canonical(root).await.unwrap_or_else(|_| root.to_owned());
         let command = (self.locator.locate(backend.config(), &root).await).map_err(LaunchError::NotInstalled)?;
         self.identities.of(&root, backend, &command).await
     }
 
     async fn recorded_restore(&self, root: &Path, backend: &Backend, policy: AnalysisPolicy) -> Option<Hash> {
-        let root = tokio::fs::canonicalize(root).await.ok()?;
+        let root = self.canonical(root).await.ok()?;
         self.restorer.recorded(&root, backend, policy).await
     }
 
@@ -410,13 +439,13 @@ async fn handshake(
 }
 
 /// Tells roslyn what to load: it does not discover projects itself.
-async fn load_dotnet_projects(conn: &Connection, root: &Path) -> Result<(), LaunchError> {
+async fn load_dotnet_projects(io: &Budget, conn: &Connection, root: &Path) -> Result<(), LaunchError> {
     let uri = |path: &Path| {
         file_uri(path)
             .map(|u| u.as_str().to_owned())
             .ok_or_else(|| LaunchError::Protocol(format!("{} is not an absolute path", path.display())))
     };
-    let load = dotnet::find(root).await.map_err(LaunchError::Protocol)?;
+    let load = dotnet::find(io, root).await.map_err(LaunchError::Protocol)?;
     let (method, params) = match load {
         Some(dotnet::Load::Solution(solution)) => ("solution/open", json!({"solution": uri(&solution)?})),
         Some(dotnet::Load::Projects(projects)) => {
@@ -435,13 +464,17 @@ async fn load_dotnet_projects(conn: &Connection, root: &Path) -> Result<(), Laun
 /// The root if it holds a root marker (or the config has none); else the
 /// outermost projects below it, found as restoring finds them, so a repository
 /// with the project in a subdirectory still works.
-async fn workspace_folders(root: &Path, config: &ServerConfig) -> Vec<PathBuf> {
-    let has_marker = |dir: &Path| config.root_markers.iter().any(|m| dir.join(m).exists());
-    if config.root_markers.is_empty() || has_marker(root) {
+async fn workspace_folders(io: &Budget, root: &Path, config: &ServerConfig) -> Vec<PathBuf> {
+    let (at, markers) = (root.to_owned(), config.root_markers.clone());
+    let has_marker = io
+        .blocking(move || markers.iter().any(|m| at.join(m).exists()))
+        .await
+        .unwrap_or(false);
+    if config.root_markers.is_empty() || has_marker {
         return vec![root.to_owned()];
     }
     let markers: Vec<&str> = config.root_markers.iter().map(String::as_str).collect();
-    let files = list_files(root).await.unwrap_or_default();
+    let files = list_files(io, root).await.unwrap_or_default();
     let mut found: Vec<PathBuf> = discover::outermost(discover::candidates(&files, &markers))
         .iter()
         .map(|dir| root.join(dir))
@@ -529,7 +562,10 @@ mod tests {
         touch(dir.path(), "Cargo.toml");
         touch(dir.path(), "sub/Cargo.toml");
         let config = language::RUST.backend().config().clone();
-        assert_eq!(workspace_folders(dir.path(), &config).await, [dir.path().to_owned()]);
+        assert_eq!(
+            workspace_folders(&Budget::new(1), dir.path(), &config).await,
+            [dir.path().to_owned()]
+        );
     }
 
     #[tokio::test]
@@ -542,14 +578,15 @@ mod tests {
         touch(dir.path(), ".hidden/Cargo.toml");
         touch(dir.path(), "a/b/c/d/e/Cargo.toml");
         let config = language::RUST.backend().config().clone();
+        let io = Budget::new(1);
         assert_eq!(
-            workspace_folders(dir.path(), &config).await,
+            workspace_folders(&io, dir.path(), &config).await,
             [dir.path().join("svc/a"), dir.path().join("svc/b")]
         );
 
         let empty = tempfile::tempdir().unwrap();
         assert_eq!(
-            workspace_folders(empty.path(), &config).await,
+            workspace_folders(&io, empty.path(), &config).await,
             [empty.path().to_owned()]
         );
     }

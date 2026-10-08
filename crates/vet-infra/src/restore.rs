@@ -50,6 +50,7 @@ use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, RestoreFailure, Restored, Restorer};
 
+use crate::budget::{Budget, Budgets, SEMANTIC_IO};
 use crate::exec::{OUTPUT_TAIL_LINES, Tail, dotnet_env};
 use crate::git::list_files;
 use crate::language::{self, Language, Restore};
@@ -68,6 +69,7 @@ const MAX_PROJECTS: usize = 16;
 /// The `.venv` of a Python restore: uv's `UV_PROJECT_ENVIRONMENT` is set to it.
 const VENV: &str = ".venv";
 
+#[derive(Clone)]
 struct Step {
     program: &'static str,
     args: Vec<String>,
@@ -157,6 +159,8 @@ pub struct ToolRestorer {
     versions: Mutex<HashMap<String, String>>,
     /// Where the steps of a restore report.
     tasks: Tasks,
+    /// Where plans read the tree and a donor's output is taken over.
+    semantic_io: Budget,
 }
 
 impl Default for ToolRestorer {
@@ -164,9 +168,10 @@ impl Default for ToolRestorer {
         Self {
             env: Vec::new(),
             donor: None,
-            tools: Arc::new(Programs),
+            tools: Arc::new(Programs::default()),
             versions: Mutex::default(),
             tasks: Tasks::default(),
+            semantic_io: Budget::new(SEMANTIC_IO),
         }
     }
 }
@@ -186,6 +191,16 @@ impl ToolRestorer {
         self
     }
 
+    /// Draws on `budgets`: version probes, steps and the reading of trees each on their own.
+    pub fn budgeted(mut self, budgets: &Budgets) -> Self {
+        self.tools = Arc::new(Programs {
+            probes: budgets.probes.clone(),
+            restores: budgets.restores.clone(),
+        });
+        self.semantic_io = budgets.semantic_io.clone();
+        self
+    }
+
     /// Reports each restore that runs as a task with a step per tool run. A
     /// restore taken from a kept tree runs nothing and reports nothing.
     pub fn reporting(mut self, tasks: Tasks) -> Self {
@@ -200,26 +215,37 @@ impl ToolRestorer {
         self
     }
 
-    async fn plan(&self, root: &Path, language: &Language) -> Plan {
+    async fn plan(&self, root: &Path, language: &'static Language) -> Plan {
         let mut plan = Plan::default();
         if language.restore == Restore::Dotnet {
-            Self::csharp(root, &mut plan).await;
+            Self::csharp(&self.semantic_io, root, &mut plan).await;
             return plan;
         }
-        let files = match list_files(root).await {
+        let files = match list_files(&self.semantic_io, root).await {
             Ok(files) => files,
             Err(why) => {
                 plan.failures.push(failure(Path::new(""), "vet", why));
                 return plan;
             }
         };
-        match language.restore {
-            Restore::Cargo => Self::rust(root, &files, &mut plan),
-            Restore::Javascript => Self::javascript(root, &files, &mut plan),
-            Restore::Python => Self::python(root, &files, &mut plan),
-            Restore::Dotnet => {}
-        }
-        plan
+        let root = root.to_owned();
+        let planned = self
+            .semantic_io
+            .blocking(move || {
+                match language.restore {
+                    Restore::Cargo => Self::rust(&root, &files, &mut plan),
+                    Restore::Javascript => Self::javascript(&root, &files, &mut plan),
+                    Restore::Python => Self::python(&root, &files, &mut plan),
+                    Restore::Dotnet => {}
+                }
+                plan
+            })
+            .await;
+        planned.unwrap_or_else(|e| {
+            let mut plan = Plan::default();
+            plan.failures.push(failure(Path::new(""), "vet", e.to_string()));
+            plan
+        })
     }
 
     fn rust(root: &Path, files: &[PathBuf], plan: &mut Plan) {
@@ -299,8 +325,8 @@ impl ToolRestorer {
         }
     }
 
-    async fn csharp(root: &Path, plan: &mut Plan) {
-        let targets = match dotnet::find(root).await {
+    async fn csharp(io: &Budget, root: &Path, plan: &mut Plan) {
+        let targets = match dotnet::find(io, root).await {
             Ok(Some(dotnet::Load::Solution(solution))) => vec![solution],
             Ok(Some(dotnet::Load::Projects(projects))) => projects,
             Ok(None) => Vec::new(),
@@ -486,7 +512,7 @@ impl ToolRestorer {
             }
             restored.ran.push((label(&step.project), step.program.to_owned()));
             if let Some(donor) = &self.donor
-                && let Some(reused) = reuse::reuse(donor, root, step).await
+                && let Some(reused) = reuse::reuse(&self.semantic_io, donor, root, step).await
             {
                 records.push(step.record(match reused {
                     Reused::Linked(inputs) => Outcome::Linked {
@@ -642,7 +668,7 @@ impl ToolRestorer {
         policy: AnalysisPolicy,
     ) -> Restored {
         let started = Instant::now();
-        let Ok(_turn) = layout.lock_restore().await else {
+        let Ok(_turn) = layout.lock_restore(&self.semantic_io).await else {
             return self.execute(root, language, plan, policy).await.0;
         };
         let Standing {
@@ -677,7 +703,7 @@ impl ToolRestorer {
         restored.fingerprint = Some(record.fingerprint());
         // Without the record the next use restores again, which is only slower.
         let _ = record.write(&file);
-        layout.measure().await;
+        layout.measure(&self.semantic_io).await;
         vet_semantic::trace::log(|| format!("restore {} (built)", language.id), started);
         restored
     }

@@ -29,6 +29,7 @@ use vet_app::ports::{
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
 
+use crate::budget::{Budget, REVIEW_IO};
 use crate::paths;
 use checkout::Pending;
 use stat_cache::StatCache;
@@ -53,20 +54,29 @@ pub fn find_root(path: &Path) -> Result<PathBuf, String> {
 /// worktree what git sees (the scan's candidates, so ignored files are left
 /// out); in a directory that is not one, every file, since it holds nothing but
 /// its own. A name the platform cannot represent is left out.
-pub async fn list_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+/// The work runs on `io`.
+pub async fn list_files(io: &Budget, root: &Path) -> Result<Vec<PathBuf>, String> {
+    let root = root.to_owned();
     // `.git` is how git marks a worktree's root, as a directory or a file.
-    if root.join(".git").exists() {
-        let files = GixRepo::new(root).list_files().await.map_err(|e| e.0)?;
+    let is_worktree = {
+        let root = root.clone();
+        io.blocking(move || root.join(".git").exists())
+            .await
+            .map_err(|e| e.to_string())?
+    };
+    if is_worktree {
+        let files = GixRepo::new(&root)
+            .budgeted(io.clone())
+            .list_files()
+            .await
+            .map_err(|e| e.0)?;
         return Ok(files
             .iter()
             .filter_map(|f| paths::to_path(&f.0).ok())
             .map(Path::to_owned)
             .collect());
     }
-    let root = root.to_owned();
-    tokio::task::spawn_blocking(move || walk(&root))
-        .await
-        .map_err(|e| e.to_string())?
+    io.blocking(move || walk(&root)).await.map_err(|e| e.to_string())?
 }
 
 fn walk(root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -88,9 +98,10 @@ fn walk(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(found)
 }
 
-/// Cheap to clone: clones share the caches.
+/// Cheap to clone: clones share the caches. Its blocking work draws on a budget; clones
+/// made with [`GixRepo::budgeted`] draw on another.
 #[derive(Clone)]
-pub struct GixRepo(Arc<Inner>);
+pub struct GixRepo(Arc<Inner>, Budget);
 
 struct Inner {
     root: PathBuf,
@@ -102,24 +113,36 @@ struct Inner {
 }
 
 impl GixRepo {
+    /// A repository with a budget of its own.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self(Arc::new(Inner {
-            root: root.into(),
-            cap: DEFAULT_CAP,
-            blobs: BlobCache::default(),
-            stats: StatCache::default(),
-            opened: OnceLock::new(),
-        }))
+        Self(
+            Arc::new(Inner {
+                root: root.into(),
+                cap: DEFAULT_CAP,
+                blobs: BlobCache::default(),
+                stats: StatCache::default(),
+                opened: OnceLock::new(),
+            }),
+            Budget::new(REVIEW_IO),
+        )
     }
 
     pub fn with_cap(self, cap: u64) -> Self {
-        Self(Arc::new(Inner {
-            root: self.0.root.clone(),
-            cap,
-            blobs: BlobCache::default(),
-            stats: StatCache::default(),
-            opened: OnceLock::new(),
-        }))
+        Self(
+            Arc::new(Inner {
+                root: self.0.root.clone(),
+                cap,
+                blobs: BlobCache::default(),
+                stats: StatCache::default(),
+                opened: OnceLock::new(),
+            }),
+            self.1,
+        )
+    }
+
+    /// The same repository, with its caches, drawing on `io`.
+    pub fn budgeted(&self, io: Budget) -> Self {
+        Self(self.0.clone(), io)
     }
 
     /// Every file of the tree as git sees it, read from none: the index plus
@@ -133,7 +156,7 @@ impl GixRepo {
         f: impl FnOnce(&Inner) -> Result<T, GitError> + Send + 'static,
     ) -> Result<T, GitError> {
         let inner = self.0.clone();
-        tokio::task::spawn_blocking(move || f(&inner)).await.map_err(err)?
+        self.1.blocking(move || f(&inner)).await.map_err(err)?
     }
 
     async fn write_batch(&self, root: &Path, batch: Vec<Pending>) -> Result<Vec<BlobId>, GitError> {

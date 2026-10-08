@@ -15,6 +15,7 @@ use vet_app::ports::{
 };
 use vet_semantic::ports::BackendId;
 
+use crate::budget::{Budget, PROBES};
 use crate::exec::{
     Captured, Host, LineSplitter, OUTPUT_TAIL_LINES, Tail, TokioRunner, capture as run_to_end, dotnet_env, is_file,
 };
@@ -26,6 +27,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct ToolResolver {
     data_dir: PathBuf,
     host: Host,
+    /// The processes that only answer a question: versions and the project's toolchain.
+    probes: Budget,
 }
 
 impl ToolResolver {
@@ -35,7 +38,17 @@ impl ToolResolver {
     }
 
     pub fn with_host(data_dir: PathBuf, host: Host) -> Self {
-        Self { data_dir, host }
+        Self {
+            data_dir,
+            host,
+            probes: Budget::new(PROBES),
+        }
+    }
+
+    /// Runs its probes on `probes`.
+    pub fn probing(mut self, probes: Budget) -> Self {
+        self.probes = probes;
+        self
     }
 
     fn spec(language: &BackendId) -> Option<&'static Language> {
@@ -72,7 +85,10 @@ impl ToolResolver {
                     "--tool-path".into(),
                     dir.to_string_lossy().into_owned(),
                 ];
-                let out = capture("dotnet", &args, None).await.ok().filter(|o| o.ok)?;
+                let out = capture(&self.probes, "dotnet", &args, None)
+                    .await
+                    .ok()
+                    .filter(|o| o.ok)?;
                 tool_list_version(&out.stdout, package)
             }
         }
@@ -83,7 +99,7 @@ impl ToolResolver {
             return Err("rustup is not on PATH".into());
         };
         let args = ["which".to_owned(), "rust-analyzer".to_owned()];
-        let out = capture(&rustup.to_string_lossy(), &args, Some(project)).await?;
+        let out = capture(&self.probes, &rustup.to_string_lossy(), &args, Some(project)).await?;
         if !out.ok {
             let why = out.stderr.lines().next().unwrap_or("it failed").trim().to_owned();
             return Err(format!("`rustup which rust-analyzer` failed: {why}"));
@@ -126,9 +142,9 @@ impl ToolResolver {
 }
 
 /// What `program --version` says in its first line, for a language whose server has such a flag.
-pub(crate) async fn probe_version(spec: &Language, program: &Path) -> Option<String> {
+pub(crate) async fn probe_version(probes: &Budget, spec: &Language, program: &Path) -> Option<String> {
     let flag = spec.version_flag?;
-    let out = capture(&program.to_string_lossy(), &[flag.to_owned()], None)
+    let out = capture(probes, &program.to_string_lossy(), &[flag.to_owned()], None)
         .await
         .ok()?;
     out.ok
@@ -154,8 +170,13 @@ fn tool_list_version(table: &str, package: &str) -> Option<String> {
     })
 }
 
-pub(crate) async fn capture(program: &str, args: &[String], cwd: Option<&Path>) -> Result<Captured, String> {
-    run_to_end(program, args, cwd, &[], PROBE_TIMEOUT).await
+pub(crate) async fn capture(
+    probes: &Budget,
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+) -> Result<Captured, String> {
+    run_to_end(probes, program, args, cwd, &[], PROBE_TIMEOUT).await
 }
 
 impl ServerResolver for ToolResolver {
@@ -235,7 +256,7 @@ impl ServerResolver for ToolResolver {
         let spec = Self::spec(language)?;
         match found.origin {
             ServerOrigin::Installed => self.installed_version(spec).await,
-            _ => probe_version(spec, Path::new(&found.command.program)).await,
+            _ => probe_version(&self.probes, spec, Path::new(&found.command.program)).await,
         }
     }
 

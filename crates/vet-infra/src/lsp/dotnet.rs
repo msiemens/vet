@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::budget::Budget;
 use crate::git::list_files;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -23,8 +24,8 @@ fn has_extension(path: &Path, extensions: &[&str]) -> bool {
 
 /// The solution (`.sln` or `.slnx`) directly in `root` if there is exactly one,
 /// else every `.csproj` of the tree. `None` if there is nothing to load.
-pub async fn find(root: &Path) -> Result<Option<Load>, String> {
-    let files = list_files(root).await?;
+pub async fn find(io: &Budget, root: &Path) -> Result<Option<Load>, String> {
+    let files = list_files(io, root).await?;
     let mut solutions: Vec<PathBuf> = (files.iter())
         .filter(|f| f.components().count() == 1 && has_extension(f, &["sln", "slnx"]))
         .map(|f| root.join(f))
@@ -45,6 +46,10 @@ mod tests {
     use std::process::Command;
 
     use super::*;
+
+    fn io() -> Budget {
+        Budget::new(1)
+    }
 
     fn touch(root: &Path, name: &str) {
         let path = root.join(name);
@@ -77,7 +82,7 @@ mod tests {
         touch(dir.path(), "App.sln");
         touch(dir.path(), "src/App.csproj");
         assert_eq!(
-            find(dir.path()).await.unwrap(),
+            find(&io(), dir.path()).await.unwrap(),
             Some(Load::Solution(dir.path().join("App.sln")))
         );
     }
@@ -90,7 +95,7 @@ mod tests {
         touch(dir.path(), "src/App/App.csproj");
         touch(dir.path(), "a/b/c/d/e/Deep.csproj");
         assert_eq!(
-            find(dir.path()).await.unwrap(),
+            find(&io(), dir.path()).await.unwrap(),
             Some(Load::Projects(vec![
                 dir.path().join("a/b/c/d/e/Deep.csproj"),
                 dir.path().join("src/App/App.csproj"),
@@ -111,7 +116,7 @@ mod tests {
         touch(dir.path(), "src/App/obj/Generated.csproj");
         touch(dir.path(), "build-output/Other.csproj");
         assert_eq!(
-            find(dir.path()).await.unwrap(),
+            find(&io(), dir.path()).await.unwrap(),
             Some(Load::Projects(vec![
                 dir.path().join("src/App/App.csproj"),
                 dir.path().join("src/New/New.csproj"),
@@ -123,6 +128,6 @@ mod tests {
     async fn nothing_to_load_is_none() {
         let dir = tempfile::tempdir().unwrap();
         touch(dir.path(), "readme.md");
-        assert_eq!(find(dir.path()).await.unwrap(), None);
+        assert_eq!(find(&io(), dir.path()).await.unwrap(), None);
     }
 }

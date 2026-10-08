@@ -1,5 +1,11 @@
 //! Adapters. No business logic: each module implements one port.
 
+// Tests build their fixtures with git, fake servers and threads of their own.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+
+/// Bounds on blocking work and processes.
+pub mod budget;
+
 /// `vet_app::ports::GitRepo` over gitoxide.
 pub mod git;
 

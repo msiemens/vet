@@ -24,6 +24,7 @@ use vet_engine::{Computed, Engine, Kind, Limits, Retention};
 use vet_semantic::ports::{Backend, BackendId, LaunchError, ServerIdentity};
 
 use super::{client_capabilities, initialization_options};
+use crate::budget::{Budget, Budgets, PROBES, SEMANTIC_IO};
 use crate::exec::{Host, is_file};
 use crate::language::{self, Install, Language, UserFile};
 use crate::restore::record::Digest;
@@ -128,6 +129,10 @@ pub struct Identities {
     toolchains: Engine<Toolchain>,
     /// How often the servers of each backend were replaced.
     generations: Mutex<HashMap<BackendId, u64>>,
+    /// Where files are read and hashed.
+    semantic_io: Budget,
+    /// Where `--version` and the toolchain are asked.
+    probes: Budget,
 }
 
 /// Toolchain probes kept.
@@ -141,7 +146,21 @@ impl Identities {
             versions: Mutex::default(),
             toolchains: Engine::new(Limits::entries(TOOLCHAINS_KEPT)),
             generations: Mutex::default(),
+            semantic_io: Budget::new(SEMANTIC_IO),
+            probes: Budget::new(PROBES),
         }
+    }
+
+    /// Reads files and runs probes on `budgets`.
+    pub fn budgeted(mut self, budgets: &Budgets) -> Self {
+        self.semantic_io = budgets.semantic_io.clone();
+        self.probes = budgets.probes.clone();
+        self
+    }
+
+    /// Runs `work` on the semantic lane's blocking threads.
+    async fn off_thread<T: Send + 'static>(&self, work: impl FnOnce() -> T + Send + 'static) -> T {
+        self.semantic_io.blocking(work).await.expect("a blocking task")
     }
 
     /// The servers of `backend` are replaced: its toolchain is probed anew by the next identity.
@@ -163,8 +182,10 @@ impl Identities {
     ) -> Result<ServerIdentity, LaunchError> {
         let config = backend.config();
         let spec = language::by_id(&config.backend.0);
-        let program = Host::current()
-            .find(&command.program, is_file)
+        let named = command.program.clone();
+        let program = self
+            .off_thread(move || Host::current().find(&named, is_file))
+            .await
             .ok_or_else(|| LaunchError::NotInstalled(format!("{} was not found", command.program)))?;
         let binary = self
             .binary_hash(&program)
@@ -185,7 +206,7 @@ impl Identities {
             .field(&binary.to_hex())
             .field(version.as_deref().unwrap_or("no version"));
         if spec.is_some_and(|s| matches!(s.install, Install::Npm { .. })) {
-            digest.field("package").field(&package_manifest(&program));
+            digest.field("package").field(&self.package_manifest(&program).await);
         }
         digest.field("args").field(&config.args.len().to_string());
         config.args.iter().for_each(|arg| {
@@ -230,8 +251,13 @@ impl Identities {
         digest
             .field(&compiler.to_string_lossy())
             .field(&hash.to_hex())
-            .field(&package_manifest(compiler));
+            .field(&self.package_manifest(compiler).await);
         Ok(())
+    }
+
+    async fn package_manifest(&self, path: &Path) -> String {
+        let path = path.to_owned();
+        self.off_thread(move || package_manifest(&path)).await
     }
 
     /// The toolchain in the root and the configuration outside the repository that the
@@ -244,19 +270,37 @@ impl Identities {
             let seen = self.toolchain(backend, program, args, root).await;
             digest.field(program).field(&seen);
         }
+        let above: Vec<(String, PathBuf)> = root
+            .ancestors()
+            .skip(1)
+            .enumerate()
+            .flat_map(|(level, dir)| {
+                config
+                    .above_root
+                    .iter()
+                    .map(move |name| (format!("{level}/{name}"), dir.join(name)))
+            })
+            .collect();
+        let user: Vec<(String, Option<PathBuf>)> = config
+            .user_files
+            .iter()
+            .map(|file| (format!("{file:?}"), self.user.file(file)))
+            .collect();
+        let (above, user) = self
+            .off_thread(move || {
+                (
+                    hashed(above),
+                    hashed(user.into_iter().filter_map(|(k, p)| Some((k, p?)))),
+                )
+            })
+            .await;
         digest.field("above the root");
-        for (level, dir) in root.ancestors().skip(1).enumerate() {
-            for name in config.above_root {
-                if let Some(hash) = hash_of_file(&dir.join(name)) {
-                    digest.field(&format!("{level}/{name}")).field(&hash.to_hex());
-                }
-            }
+        for (label, hash) in above {
+            digest.field(&label).field(&hash.to_hex());
         }
         digest.field("user files");
-        for file in config.user_files {
-            if let Some(hash) = self.user.file(file).and_then(|path| hash_of_file(&path)) {
-                digest.field(&format!("{file:?}")).field(&hash.to_hex());
-            }
+        for (label, hash) in user {
+            digest.field(&label).field(&hash.to_hex());
         }
         digest.field("environment");
         for name in config.env {
@@ -284,14 +328,16 @@ impl Identities {
             root: root.to_owned(),
             generation,
         };
-        let probe = key.clone();
+        let (probe, probes) = (key.clone(), self.probes.clone());
         let seen = self
             .toolchains
             .get(key, move |_| async move {
-                Ok(match capture(&probe.program, &probe.args, Some(&probe.root)).await {
-                    Ok(out) if out.ok => Computed::new(format!("{}{}", out.stdout.trim(), out.stderr.trim()), true),
-                    _ => Computed::new("unavailable".to_owned(), false),
-                })
+                Ok(
+                    match capture(&probes, &probe.program, &probe.args, Some(&probe.root)).await {
+                        Ok(out) if out.ok => Computed::new(format!("{}{}", out.stdout.trim(), out.stderr.trim()), true),
+                        _ => Computed::new("unavailable".to_owned(), false),
+                    },
+                )
             })
             .await;
         match seen {
@@ -302,14 +348,15 @@ impl Identities {
 
     /// The hash of the file's content, read again only if its size or modification time changed.
     async fn binary_hash(&self, path: &Path) -> io::Result<Hash> {
-        let (size, modified) = stamp(path)?;
+        let owned = path.to_owned();
+        let (size, modified) = self.off_thread(move || stamp(&owned)).await?;
         if let Some(hash) = remembered(&self.binaries, path, size, modified) {
             return Ok(hash);
         }
         let owned = path.to_owned();
-        let hash = tokio::task::spawn_blocking(move || Hash::of_reader(std::fs::File::open(owned)?))
-            .await
-            .map_err(io::Error::other)??;
+        let hash = self
+            .off_thread(move || Hash::of_reader(std::fs::File::open(owned)?))
+            .await?;
         remember(&self.binaries, path, size, modified, hash);
         Ok(hash)
     }
@@ -317,11 +364,12 @@ impl Identities {
     /// What `--version` printed, probed again only if the file changed. A probe that
     /// failed is not remembered: the next one may succeed.
     async fn version(&self, spec: &Language, program: &Path) -> Option<String> {
-        let (size, modified) = stamp(program).ok()?;
+        let owned = program.to_owned();
+        let (size, modified) = self.off_thread(move || stamp(&owned)).await.ok()?;
         if let Some(version) = remembered(&self.versions, program, size, modified) {
             return Some(version);
         }
-        let version = probe_version(spec, program).await?;
+        let version = probe_version(&self.probes, spec, program).await?;
         remember(&self.versions, program, size, modified, version.clone());
         Some(version)
     }
@@ -329,6 +377,14 @@ impl Identities {
 
 fn hash_of_file(path: &Path) -> Option<Hash> {
     std::fs::read(path).ok().map(|bytes| Hash::of(&bytes))
+}
+
+/// The files of `labelled` that exist, with the hash of their content.
+fn hashed(labelled: impl IntoIterator<Item = (String, PathBuf)>) -> Vec<(String, Hash)> {
+    labelled
+        .into_iter()
+        .filter_map(|(label, path)| Some((label, hash_of_file(&path)?)))
+        .collect()
 }
 
 /// The `package.json` of the npm package `path` is in, or is a link into: what says which

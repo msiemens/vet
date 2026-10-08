@@ -6,6 +6,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
 
+use crate::budget::{Budget, PROBES, RESTORES};
 use crate::exec::{Captured, capture};
 
 pub(super) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -30,15 +31,26 @@ pub(super) trait Tools: Send + Sync {
     ) -> BoxFuture<'a, Result<Captured, String>>;
 }
 
-/// The programs on this host's `PATH`.
-#[derive(Default)]
-pub(super) struct Programs;
+/// The programs on this host's `PATH`. Version probes and restore steps each draw on a budget.
+pub(super) struct Programs {
+    pub probes: Budget,
+    pub restores: Budget,
+}
+
+impl Default for Programs {
+    fn default() -> Self {
+        Self {
+            probes: Budget::new(PROBES),
+            restores: Budget::new(RESTORES),
+        }
+    }
+}
 
 impl Tools for Programs {
     fn version<'a>(&'a self, program: &'a str) -> BoxFuture<'a, String> {
         Box::pin(async move {
             let args = ["--version".to_owned()];
-            match capture(program, &args, None, &[], VERSION_TIMEOUT).await {
+            match capture(&self.probes, program, &args, None, &[], VERSION_TIMEOUT).await {
                 Ok(out) if out.ok => out.stdout.lines().next().unwrap_or_default().trim().to_owned(),
                 _ => UNAVAILABLE.to_owned(),
             }
@@ -53,6 +65,6 @@ impl Tools for Programs {
         env: &'a [(String, String)],
         timeout: Duration,
     ) -> BoxFuture<'a, Result<Captured, String>> {
-        Box::pin(capture(program, args, Some(cwd), env, timeout))
+        Box::pin(capture(&self.restores, program, args, Some(cwd), env, timeout))
     }
 }

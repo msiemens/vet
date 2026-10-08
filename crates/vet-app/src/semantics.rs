@@ -101,6 +101,9 @@ where
     M: Materializer,
 {
     semantic: Arc<Semantic<M, L>>,
+    /// Where the texts of the files come from when they are not the session's own: the
+    /// semantic lane reads them on its own budget.
+    texts: Option<Arc<Acquisition<G, S>>>,
     _session: PhantomData<fn(&LiveSession<G, S>)>,
     revisions: Arc<Revisions>,
     /// Kept current by the launcher's restorer (`Limiting`).
@@ -293,6 +296,7 @@ where
         let tasks = links.tasks;
         Self {
             semantic: Arc::new(Semantic::new(pool, backends)),
+            texts: None,
             _session: PhantomData,
             revisions: links.revisions,
             limits: links.limits,
@@ -307,6 +311,12 @@ where
     fn configured(mut self, configure: impl FnOnce(Semantic<M, L>) -> Semantic<M, L>) -> Self {
         let semantic = Arc::into_inner(self.semantic).expect("semantics are configured before they are used");
         self.semantic = Arc::new(configure(semantic));
+        self
+    }
+
+    /// Reads the texts the changed symbols are made from through `acquisition`, not the session's.
+    pub fn reading(mut self, acquisition: Arc<Acquisition<G, S>>) -> Self {
+        self.texts = Some(acquisition);
         self
     }
 
@@ -469,7 +479,7 @@ where
                 epoch: self.epoch.load(Ordering::SeqCst),
             };
             let pair = self.semantic.pair(base, target);
-            let texts = Content(session.acquisition());
+            let texts = Content(self.texts.clone().unwrap_or_else(|| session.acquisition()));
             let found = self
                 .changes
                 .get(key, move |progress| {

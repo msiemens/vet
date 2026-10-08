@@ -33,6 +33,7 @@ use super::QUIET;
 use super::capabilities::Diagnostics;
 use super::rpc::{Connection, State};
 use super::uri::{file_uri, key, path_of};
+use crate::budget::Budget;
 use crate::language::language_id;
 use crate::paths;
 
@@ -162,6 +163,8 @@ pub struct LspServer {
     /// Numbers the in-memory documents of `text_symbols`, so concurrent calls
     /// for one file do not share a URI.
     virtual_docs: AtomicU64,
+    /// Where the files the server is told about are read.
+    io: Budget,
 }
 
 fn err(e: impl std::fmt::Display) -> QueryError {
@@ -196,6 +199,7 @@ impl LspServer {
         tree: Tree,
         diagnostics: Diagnostics,
         loads_project_on_open: bool,
+        io: Budget,
     ) -> Self {
         Self {
             conn,
@@ -205,6 +209,7 @@ impl LspServer {
             docs: tokio::sync::Mutex::new(Docs::default()),
             loads_project_on_open,
             virtual_docs: AtomicU64::new(0),
+            io,
         }
     }
 
@@ -391,8 +396,13 @@ impl LspServer {
     /// between, so a dropped query never leaves `docs` out of step with the server.
     async fn refresh(&self, docs: &mut Vec<Doc>, file: &RepoPath) -> Result<bool, QueryError> {
         let path = self.absolute(file)?;
-        let text = tokio::fs::read(&path)
+        let read = path.clone();
+        let text = self
+            .io
+            .blocking(move || std::fs::read(read))
             .await
+            .map_err(std::io::Error::other)
+            .and_then(|read| read)
             .map(|b| String::from_utf8_lossy(&b).into_owned());
         let index = docs.iter().position(|d| &d.file == file);
         let text = match (text, index) {
@@ -879,7 +889,7 @@ mod tests {
         let (conn, fake) = fake::start(behave);
         let root = std::fs::canonicalize(dir.path()).unwrap();
         (
-            LspServer::new(conn, root, Tree::Live, Diagnostics::Pull, false),
+            LspServer::new(conn, root, Tree::Live, Diagnostics::Pull, false, Budget::new(1)),
             fake,
             dir,
         )
@@ -990,7 +1000,7 @@ mod tests {
                 }
             });
             let root = std::fs::canonicalize(dir.path()).unwrap();
-            let server = LspServer::new(conn, root, Tree::Live, Diagnostics::Pull, false);
+            let server = LspServer::new(conn, root, Tree::Live, Diagnostics::Pull, false, Budget::new(1));
             server.document_symbols(&path("a.rs")).await.unwrap();
 
             let steps: Vec<_> = fake

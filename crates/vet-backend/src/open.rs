@@ -25,6 +25,7 @@ use vet_app::registry::{Resident, Subscribers};
 use vet_app::semantics::{Links, Semantics};
 use vet_app::settle::Settling;
 use vet_app::trust::Trust;
+use vet_infra::budget::Budgets;
 use vet_infra::clock::{TokioClock, unix_now};
 use vet_infra::git::GixRepo;
 use vet_infra::lsp::LspLauncher;
@@ -61,6 +62,7 @@ struct Plan {
     repo: PathBuf,
     root: String,
     store: SqliteStore,
+    budgets: Budgets,
     debounce: Duration,
     poll: Duration,
     servers: Arc<LanguageServers>,
@@ -139,6 +141,7 @@ impl Wired {
             repo,
             root,
             store,
+            budgets,
             debounce,
             poll,
             servers,
@@ -149,7 +152,7 @@ impl Wired {
         let id = *id;
         // Watching starts before the initial scan, so no edit falls between them.
         let watcher = FsWatcher::open(repo, *poll).map_err(message)?;
-        let git = GixRepo::new(repo);
+        let git = GixRepo::new(repo).budgeted(budgets.review_io.clone());
         let session = Arc::new(
             Live::open_reporting(git.clone(), store.clone(), root.clone(), unix_now, self.tasks.clone())
                 .await
@@ -160,7 +163,7 @@ impl Wired {
         }
 
         let settling = Settling::new(
-            IgnoringWatcher::new(watcher, git),
+            IgnoringWatcher::new(watcher, git.clone()),
             TokioClock::new(),
             debounce.as_millis() as u64,
             Some(session.settled_snapshot().await),
@@ -180,9 +183,18 @@ impl Wired {
         };
         *self.settling.lock().unwrap_or_else(PoisonError::into_inner) = Some(task.abort_handle());
 
+        // The semantic lane reads the same repository and store through handles of its own, so
+        // what it reads draws on its budget and never on the review's.
+        let reading = Arc::new(session.acquisition().through(
+            git.budgeted(budgets.semantic_io.clone()),
+            store.budgeted(budgets.semantic_io.clone()),
+        ));
         let limits = RestoreLimits::default();
         let restorer = Limiting::new(
-            ToolRestorer::new().reusing(repo.clone()).reporting(self.tasks.clone()),
+            ToolRestorer::new()
+                .budgeted(budgets)
+                .reusing(repo.clone())
+                .reporting(self.tasks.clone()),
             limits.clone(),
             {
                 let subscribers = subscribers.clone();
@@ -193,8 +205,10 @@ impl Wired {
             },
         );
         let mut semantics = Semantics::new(
-            Materialize::new(session.acquisition(), self.trees.clone()),
-            LspLauncher::new(servers.clone(), restorer).reporting(self.tasks.clone()),
+            Materialize::new(reading.clone(), self.trees.clone()),
+            LspLauncher::new(servers.clone(), restorer)
+                .budgeted(budgets)
+                .reporting(self.tasks.clone()),
             repo.clone(),
             backends.to_vec(),
             Trust::Local,
@@ -203,7 +217,8 @@ impl Wired {
                 limits,
                 tasks: self.tasks.clone(),
             },
-        );
+        )
+        .reading(reading);
         if let Some(store) = self.answers.store().await {
             semantics = semantics.persisting(store);
         }
@@ -298,6 +313,8 @@ impl Orchestrator {
             Box::new(move |task| announced.broadcast(Event::Task(mapping::progress::task(id, &task)))),
         );
         Ok(Wired {
+            // A fetch holds its thread for as long as the network takes, so it has a budget of
+            // its own: it must not take the review's threads, nor the semantic lane's.
             fetch: Fetch::new(GixRepo::new(&repo), tasks.clone()),
             accounts: self.accounts.clone(),
             github: self.github.clone(),
@@ -310,6 +327,7 @@ impl Orchestrator {
                 repo,
                 root,
                 store: self.store.clone(),
+                budgets: self.budgets.clone(),
                 debounce: self.config.debounce,
                 poll: self.config.poll,
                 servers: self.servers.clone(),

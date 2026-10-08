@@ -33,6 +33,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use vet_core::content::SnapshotId;
 use vet_semantic::policy::AnalysisPolicy;
 
+use crate::budget::{Budget, SEMANTIC_IO};
+
+/// How often a restore waits for the lock of its tree to be free.
+const LOCK_POLL: Duration = Duration::from_millis(100);
+
 const STAGING: &str = ".staging";
 const LOCKS: &str = ".locks";
 const TRASH: &str = ".trash";
@@ -130,6 +135,7 @@ pub struct KeptTrees {
     staged: AtomicU64,
     /// Builds of one key in this process, so two languages starting on one tree build it once.
     gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    io: Budget,
 }
 
 struct Key {
@@ -157,8 +163,8 @@ fn io_message(path: &Path, e: &io::Error) -> String {
     format!("{}: {e}", path.display())
 }
 
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
-    tokio::task::spawn_blocking(work).await.expect("a blocking task")
+async fn blocking<T: Send + 'static>(io: &Budget, work: impl FnOnce() -> T + Send + 'static) -> T {
+    io.blocking(work).await.expect("a blocking task")
 }
 
 impl KeptTrees {
@@ -171,7 +177,14 @@ impl KeptTrees {
             launch: OnceLock::new(),
             staged: AtomicU64::new(0),
             gates: Mutex::default(),
+            io: Budget::new(SEMANTIC_IO),
         }
+    }
+
+    /// Reads and writes the trees on `io`.
+    pub fn budgeted(mut self, io: Budget) -> Self {
+        self.io = io;
+        self
     }
 
     /// The directories, and this launch's lock, which a staging directory is judged dead by.
@@ -227,7 +240,7 @@ impl KeptTrees {
         // A collection can take a tree between its being built and being locked.
         for _ in 0..3 {
             let (base, k) = (self.base.clone(), key.clone());
-            if let Some(lease) = blocking(move || lease(&base, &k)).await.map_err(Error::Io)? {
+            if let Some(lease) = blocking(&self.io, move || lease(&base, &k)).await.map_err(Error::Io)? {
                 return Ok(Acquired { lease, built });
             }
             let staging = self
@@ -236,12 +249,14 @@ impl KeptTrees {
                 .join(format!("{launch}-{}", self.staged.fetch_add(1, Ordering::Relaxed)));
             let mut staged = Staged(Some(staging.clone()));
             let dir = staging.clone();
-            blocking(move || create_staging(&dir))
+            blocking(&self.io, move || create_staging(&dir))
                 .await
                 .map_err(|e| Error::Io(io_message(&staging, &e)))?;
             build(staging.join(TREE)).await.map_err(Error::Build)?;
             let (base, k, dir) = (self.base.clone(), key.clone(), staging.clone());
-            blocking(move || publish(&base, &k, &dir)).await.map_err(Error::Io)?;
+            blocking(&self.io, move || publish(&base, &k, &dir))
+                .await
+                .map_err(Error::Io)?;
             // Published, or removed by `publish`.
             staged.0 = None;
             built = true;
@@ -255,7 +270,7 @@ impl KeptTrees {
     /// Nothing is built and nothing is locked: a collection may take the tree at any time.
     pub async fn kept(&self, snapshot: SnapshotId, policy: AnalysisPolicy) -> Option<PathBuf> {
         let (base, key) = (self.base.clone(), Key::new(snapshot, policy));
-        blocking(move || {
+        blocking(&self.io, move || {
             let dir = base.join(&key.name);
             is_complete(&dir, &key).then(|| dir.join(TREE))
         })
@@ -268,7 +283,7 @@ impl KeptTrees {
             return 0;
         };
         let base = self.base.clone();
-        blocking(move || sweep_in(&base, &launch)).await
+        blocking(&self.io, move || sweep_in(&base, &launch)).await
     }
 
     /// Removes trees that are not in use and not referenced when they have been
@@ -276,7 +291,7 @@ impl KeptTrees {
     pub async fn collect(&self, now: SystemTime) -> Collected {
         let referenced = self.referenced.snapshots().await;
         let (base, limits) = (self.base.clone(), self.limits);
-        blocking(move || {
+        blocking(&self.io, move || {
             collect_in(
                 &base,
                 &Plan::Retention {
@@ -292,7 +307,7 @@ impl KeptTrees {
     /// Removes every tree that is not in use, referenced or not.
     pub async fn clear(&self) -> Collected {
         let base = self.base.clone();
-        blocking(move || collect_in(&base, &Plan::Everything)).await
+        blocking(&self.io, move || collect_in(&base, &Plan::Everything)).await
     }
 }
 
@@ -587,7 +602,9 @@ impl Layout {
     }
 
     /// Held while a language restores the tree: the restores of one tree run one at a time.
-    pub(crate) async fn lock_restore(&self) -> io::Result<File> {
+    /// Waiting for the lock takes no thread: a restore can take minutes, and a thread of
+    /// `io` that waited would be missing for every other read in that time.
+    pub(crate) async fn lock_restore(&self, io: &Budget) -> io::Result<File> {
         let name = self.dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
         let path = self
             .dir
@@ -595,21 +612,31 @@ impl Layout {
             .unwrap_or(&self.dir)
             .join(LOCKS)
             .join(format!("{name}.restore"));
-        blocking(move || {
-            if let Some(locks) = path.parent() {
-                std::fs::create_dir_all(locks)?;
+        loop {
+            let at = path.clone();
+            let taken = blocking(io, move || {
+                if let Some(locks) = at.parent() {
+                    std::fs::create_dir_all(locks)?;
+                }
+                let lock = open_lock(&at)?;
+                match lock.try_lock() {
+                    Ok(()) => Ok(Some(lock)),
+                    Err(TryLockError::WouldBlock) => Ok(None),
+                    Err(TryLockError::Error(e)) => Err(e),
+                }
+            })
+            .await?;
+            match taken {
+                Some(lock) => return Ok(lock),
+                None => tokio::time::sleep(LOCK_POLL).await,
             }
-            let lock = open_lock(&path)?;
-            lock.lock()?;
-            Ok(lock)
-        })
-        .await
+        }
     }
 
     /// Re-measures the tree after a restore added to it.
-    pub(crate) async fn measure(&self) {
+    pub(crate) async fn measure(&self, io: &Budget) {
         let (tree, size) = (self.dir.join(TREE), self.meta().join(SIZE));
-        blocking(move || {
+        blocking(io, move || {
             let _ = std::fs::write(size, tree_size(&tree).to_string());
         })
         .await;
