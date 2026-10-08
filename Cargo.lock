@@ -5770,6 +5770,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "vet-engine"
+version = "0.0.0"
+
+[[package]]
 name = "vet-highlight"
 version = "0.0.0"
 dependencies = [
@@ -5875,6 +5879,7 @@ version = "0.0.0"
 dependencies = [
  "tracing",
  "vet-core",
+ "vet-engine",
  "vet-highlight",
 ]
 
