@@ -16,9 +16,9 @@ use super::threads::{ThreadView, edit_thread, find_thread, side_snapshot, thread
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
 use crate::platform::{
-    CommentKind, CommentRef, DiffSide, Discussion, MessageSync, NewConversationComment, NewReply, NewThread, Platform,
-    PlatformComment, PlatformError, PlatformThreadData, PostedComment, Posting, RemoteKey, StatusSync, Submission,
-    Submitted, SyncPlan, reconcile,
+    CommentKind, CommentRef, ConversationItem, ConversationKind, DiffSide, Discussion, MessageSync,
+    NewConversationComment, NewReply, NewThread, Platform, PlatformComment, PlatformError, PlatformThreadData,
+    PostedComment, Posting, RemoteKey, StatusSync, Submission, Submitted, SyncPlan, reconcile,
 };
 use crate::ports::{GitRepo, LiveStore};
 use crate::review::visible_threads;
@@ -693,9 +693,25 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             }
         }
         // A comment on the whole pull request is a thread of its own, which the platform has once
-        // its first comment is there.
+        // its first comment is there. A flat one belongs to the platform's conversation once posted,
+        // and is shown there.
         for comment in &posted.comments {
             let Some(id) = thread_of(st, comment) else { continue };
+            if find_thread(st, id)?.is_flat() {
+                self.drop_message(st, id, MessageId(comment.key)).await?;
+                if let Some((_, discussion)) = st.discussion.as_mut() {
+                    discussion.conversation.push(ConversationItem {
+                        id: comment.comment.id.clone(),
+                        author: comment.comment.author.clone(),
+                        avatar: comment.comment.avatar.clone(),
+                        at: comment.comment.created_at,
+                        kind: ConversationKind::Comment { mine: true },
+                        body: comment.comment.body.clone(),
+                    });
+                }
+                count += 1;
+                continue;
+            }
             self.record_comment(st, id, MessageId(comment.key), &comment.comment)
                 .await?;
             let thread = find_thread(st, id)?;
@@ -735,6 +751,66 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         });
         self.acquisition.store.replace_message(posted.clone()).await?;
         edit_thread(st, thread, |t| replace(t, &posted));
+        Ok(())
+    }
+
+    /// Removes `message` from `thread`, and the thread with its last message.
+    async fn drop_message(&self, st: &mut State, thread: ThreadId, message: MessageId) -> Result<()> {
+        let store = &self.acquisition.store;
+        if find_thread(st, thread)?.messages.iter().all(|m| m.id == message) {
+            store.delete_thread(thread).await?;
+            st.threads.retain(|t| t.id != thread);
+        } else {
+            store.delete_message(message).await?;
+            edit_thread(st, thread, |t| t.messages.retain(|m| m.id != message));
+        }
+        Ok(())
+    }
+
+    /// Changes the text of one of the viewer's comments in the conversation of the pull request on
+    /// view, on the platform at once.
+    pub async fn edit_conversation_comment<P: Platform + Sync>(
+        &self,
+        platform: &P,
+        comment: &str,
+        body: String,
+    ) -> Result<()> {
+        if body.trim().is_empty() {
+            return Err(SessionError::Invalid("a message cannot be empty".into()));
+        }
+        let _exchange = self.exchange.lock().await;
+        let remote = {
+            let st = self.state.lock().await;
+            own_conversation_comment(&st, comment)?;
+            pull_request(&st)?.0
+        };
+        let posted = platform
+            .edit_comment(&remote, &conversation_ref(comment), &body)
+            .await?;
+        let mut st = self.state.lock().await;
+        if let Some(item) = conversation_mut(&mut st).and_then(|c| c.iter_mut().find(|i| i.id == comment)) {
+            item.body = posted.body;
+        }
+        Ok(())
+    }
+
+    /// Deletes one of the viewer's comments in the conversation of the pull request on view, on the
+    /// platform at once.
+    pub async fn remove_conversation_comment<P: Platform + Sync>(&self, platform: &P, comment: &str) -> Result<()> {
+        let _exchange = self.exchange.lock().await;
+        let remote = {
+            let st = self.state.lock().await;
+            own_conversation_comment(&st, comment)?;
+            pull_request(&st)?.0
+        };
+        match platform.delete_comment(&remote, &conversation_ref(comment)).await {
+            Ok(()) | Err(PlatformError::NotFound(_)) => {}
+            Err(e) => return Err(e.into()),
+        }
+        let mut st = self.state.lock().await;
+        if let Some(conversation) = conversation_mut(&mut st) {
+            conversation.retain(|i| i.id != comment);
+        }
         Ok(())
     }
 
@@ -790,6 +866,32 @@ fn thread_of(st: &State, posted: &PostedComment) -> Option<ThreadId> {
         .iter()
         .find(|t| t.messages.iter().any(|m| m.id.0 == posted.key))
         .map(|t| t.id)
+}
+
+fn conversation_ref(comment: &str) -> CommentRef {
+    CommentRef {
+        id: comment.to_owned(),
+        kind: CommentKind::Conversation,
+    }
+}
+
+fn conversation_mut(st: &mut State) -> Option<&mut Vec<ConversationItem>> {
+    st.discussion.as_mut().map(|(_, d)| &mut d.conversation)
+}
+
+/// Fails unless `comment` is a comment of the viewer's in the conversation the last sync found.
+fn own_conversation_comment(st: &State, comment: &str) -> Result<()> {
+    let item = st
+        .discussion
+        .as_ref()
+        .and_then(|(_, d)| d.conversation.iter().find(|i| i.id == comment))
+        .ok_or_else(|| SessionError::NotFound(format!("comment {comment}")))?;
+    match item.kind {
+        ConversationKind::Comment { mine: true } => Ok(()),
+        _ => Err(SessionError::Invalid(
+            "only your own comments on the pull request can be changed".into(),
+        )),
+    }
 }
 
 fn replace(thread: &mut Thread, message: &Message) {

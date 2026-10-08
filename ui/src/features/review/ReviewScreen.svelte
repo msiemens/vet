@@ -198,7 +198,10 @@
 {#if leftOpen}
   <SideBar side="left" defaultWidth="var(--w-tree)">
     {#if leftTool === "comments"}
-      <CommentsPanel onselect={(thread) => void controller.goToThread(thread)} />
+      <CommentsPanel
+        onselect={(thread) => void controller.goToThread(thread)}
+        card={(thread, open, toggle) => controller.threadCard(thread, open, toggle)}
+      />
     {:else}
       <FileTree
         bind:this={tree}

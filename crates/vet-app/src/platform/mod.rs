@@ -22,9 +22,9 @@ pub use credentials::{
     Credential, CredentialProvider, CredentialSource, CredentialValidator, Owner, Token, ValidationError,
 };
 pub use discussion::{
-    CommentKind, CommentRef, ConversationItem, DiffSide, Discussion, NewConversationComment, NewReply, NewThread,
-    PlatformComment, PlatformThreadData, PostedComment, PostedThread, PullRequestState, Reviewer, ReviewerState,
-    Submission, Submitted,
+    CommentKind, CommentRef, ConversationItem, ConversationKind, DiffSide, Discussion, NewConversationComment,
+    NewReply, NewThread, PlatformComment, PlatformThreadData, PostedComment, PostedThread, PullRequestState, Reviewer,
+    ReviewerState, Submission, Submitted,
 };
 #[cfg(test)]
 pub(crate) use fake::FakeHosting;

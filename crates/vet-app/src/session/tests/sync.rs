@@ -55,6 +55,12 @@ fn remote_id(thread: &ThreadView) -> Option<&str> {
     thread.platform.as_ref()?.remote_id.as_deref()
 }
 
+/// The texts of the conversation of the pull request on view, as Vet knows it.
+async fn conversation(fx: &Fixture) -> Vec<String> {
+    let view = fx.session.discussion().await.expect("synced");
+    view.discussion.conversation.iter().map(|i| i.body.clone()).collect()
+}
+
 #[tokio::test]
 async fn the_platforms_threads_are_pulled_in_where_they_were_made_with_their_ids_and_authors() {
     let (fx, hosting) = on_a_pull_request().await;
@@ -496,18 +502,21 @@ async fn drafts_stay_local_until_the_review_is_submitted_as_one_with_its_verdict
     );
     assert_eq!(submission.comments.len(), 1);
 
-    // Everything is the platform's now, and a sync finds nothing to add or change.
+    // Everything is the platform's now, and a sync finds nothing to add or change. The comment on
+    // the whole pull request is in its conversation, and no thread of Vet's.
     let all = fx.all().await;
     assert!(all.iter().all(|t| t.messages.iter().all(|m| m.remote.is_some())));
-    assert!(all.iter().all(|t| t.id != overall || remote_id(t).is_some()));
+    assert!(all.iter().all(|t| t.id != overall));
     assert!(
         all.iter()
             .filter(|t| t.id == new_thread)
             .all(|t| remote_id(t).is_some())
     );
+    assert_eq!(conversation(&fx).await, ["why?"]);
     let again = fx.sync(&hosting).await;
     assert!(!again.changed, "no thread is added twice: {again:?}");
-    assert_eq!(fx.all().await.len(), 3);
+    assert_eq!(fx.all().await.len(), 2);
+    assert_eq!(conversation(&fx).await, ["why?"]);
 }
 
 #[tokio::test]
@@ -595,15 +604,14 @@ async fn a_comment_on_the_whole_pull_request_the_platform_refuses_is_reported_wi
 async fn a_flat_comment_on_the_whole_pull_request_takes_no_reply_and_a_draft_in_one_is_never_a_reply_of_the_review() {
     let (fx, hosting) = on_a_pull_request().await;
     let overall = fx.thread(NewThread::Changeset).await;
-    fx.session.submit_review(&hosting, "COMMENT", None).await.unwrap();
 
-    let refused = fx.session.reply(overall, "One more thing.".into(), 8).await;
+    let refused = fx.session.reply(overall, "One more thing.".into(), 108).await;
     assert!(matches!(refused, Err(SessionError::Invalid(_))), "{refused:?}");
     assert_eq!(bodies(&fx.view(overall).await), ["why?"]);
 
     // A draft such a comment holds from before replies were refused there.
     fx.store
-        .add_message(overall, Message::written("ada".into(), "One more thing.".into(), 8))
+        .add_message(overall, Message::written("ada".into(), "One more thing.".into(), 108))
         .await
         .unwrap();
     hosting.thread("a.txt", (4, 4), "pr1", "marco", "Why 3?");
@@ -612,14 +620,45 @@ async fn a_flat_comment_on_the_whole_pull_request_takes_no_reply_and_a_draft_in_
 
     let report = fx.session.submit_review(&hosting, "COMMENT", None).await.unwrap();
 
-    assert_eq!((report.posted, report.problem), (2, None), "the review went through");
-    let submission = hosting.0.lock().unwrap().submissions[1].clone();
+    assert_eq!((report.posted, report.problem), (3, None), "the review went through");
+    let submission = hosting.0.lock().unwrap().submissions[0].clone();
     assert!(submission.replies.is_empty(), "{submission:?}");
     assert_eq!(submission.threads.len(), 1);
     assert_eq!(
         submission.comments.iter().map(|c| c.body.as_str()).collect::<Vec<_>>(),
-        ["One more thing."]
+        ["why?", "One more thing."]
     );
+    assert!(fx.all().await.iter().all(|t| t.id != overall));
+    assert_eq!(conversation(&fx).await, ["why?", "One more thing."]);
+}
+
+#[tokio::test]
+async fn own_comments_in_the_conversation_are_edited_and_deleted_on_the_platform_and_no_one_elses() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let mine = hosting.say_on_the_pull_request("ada", true, "Looks good.");
+    let theirs = hosting.say_on_the_pull_request("marco", false, "Thanks!");
+    fx.sync(&hosting).await;
+
+    fx.session
+        .edit_conversation_comment(&hosting, &mine, "Looks good to me.".into())
+        .await
+        .unwrap();
+
+    assert_eq!(hosting.conversation(), ["Looks good to me.", "Thanks!"]);
+    assert_eq!(conversation(&fx).await, ["Looks good to me.", "Thanks!"]);
+    let edited = fx
+        .session
+        .edit_conversation_comment(&hosting, &theirs, "Mine now.".into())
+        .await;
+    let removed = fx.session.remove_conversation_comment(&hosting, &theirs).await;
+    for refused in [edited, removed] {
+        assert!(matches!(refused, Err(SessionError::Invalid(_))), "{refused:?}");
+    }
+
+    fx.session.remove_conversation_comment(&hosting, &mine).await.unwrap();
+
+    assert_eq!(hosting.conversation(), ["Thanks!"]);
+    assert_eq!(conversation(&fx).await, ["Thanks!"]);
 }
 
 #[tokio::test]
@@ -760,8 +799,7 @@ async fn comments_on_a_changeset_that_is_no_pull_request_are_never_drafts() {
 /// Drafts for a platform that takes one comment at a time: a new thread, a reply in marco's
 /// thread, and a comment on the whole pull request.
 async fn with_three_drafts() -> (Fixture, FakeHosting) {
-    let (fx, _) = on_a_pull_request().await;
-    let hosting = FakeHosting::per_comment();
+    let (fx, hosting) = on_an_azure_devops_pull_request().await;
     hosting.thread("a.txt", (4, 4), "pr1", "marco", "Why 3?");
     fx.sync(&hosting).await;
     let on_theirs = fx.all().await[0].id;

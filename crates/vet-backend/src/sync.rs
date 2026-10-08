@@ -66,6 +66,37 @@ impl Orchestrator {
         Ok(thread_changed(&open, from, &thread).await)
     }
 
+    pub(crate) async fn edit_conversation_comment(
+        &self,
+        project: ProjectId,
+        from: &Connection,
+        comment: &str,
+        body: String,
+    ) -> Result<Response, String> {
+        let open = self.ready(project).await?;
+        (open.session)
+            .edit_conversation_comment(&open.hosting().await, comment, body)
+            .await
+            .map_err(message)?;
+        threads_changed(&open, from).await;
+        Ok(Response::Done)
+    }
+
+    pub(crate) async fn delete_conversation_comment(
+        &self,
+        project: ProjectId,
+        from: &Connection,
+        comment: &str,
+    ) -> Result<Response, String> {
+        let open = self.ready(project).await?;
+        (open.session)
+            .remove_conversation_comment(&open.hosting().await, comment)
+            .await
+            .map_err(message)?;
+        threads_changed(&open, from).await;
+        Ok(Response::Done)
+    }
+
     pub(crate) async fn sync_threads(&self, project: ProjectId) -> Result<Response, String> {
         let open = self.ready(project).await?;
         if !matches!(open.session.source().await, Source::PullRequest { .. }) {

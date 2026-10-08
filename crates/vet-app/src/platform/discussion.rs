@@ -55,9 +55,16 @@ pub struct ConversationItem {
     pub avatar: Option<String>,
     /// Unix seconds.
     pub at: i64,
-    /// Present for a review: what the reviewer concluded.
-    pub verdict: Option<ReviewVerdict>,
+    pub kind: ConversationKind,
     pub body: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ConversationKind {
+    /// A comment on the pull request; one the viewer wrote they can edit and delete.
+    Comment { mine: bool },
+    /// A review that was given, with what the reviewer concluded.
+    Review { verdict: Option<ReviewVerdict> },
 }
 
 /// Whether the pull request still takes changes.

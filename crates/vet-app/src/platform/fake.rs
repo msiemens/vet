@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use super::checks::{CheckLog, CommitChecks};
 use super::discussion::{
-    CommentRef, DiffSide, Discussion, NewThread, PlatformComment, PlatformThreadData, PostedComment, PostedThread,
-    PullRequestState, Submission, Submitted,
+    CommentKind, CommentRef, ConversationItem, ConversationKind, DiffSide, Discussion, NewThread, PlatformComment,
+    PlatformThreadData, PostedComment, PostedThread, PullRequestState, Submission, Submitted,
 };
 use super::model::{
     PlatformError, PlatformTraits, Posting, PullRequestDetail, PullRequestListing, PullRequestQuery, Viewer,
@@ -61,6 +61,17 @@ impl Default for FakeHosting {
             traits: PlatformTraits::github(),
             clock: 1_000,
         })))
+    }
+}
+
+fn conversation_item(comment: &PlatformComment) -> ConversationItem {
+    ConversationItem {
+        id: comment.id.clone(),
+        author: comment.author.clone(),
+        avatar: None,
+        at: comment.created_at,
+        kind: ConversationKind::Comment { mine: comment.mine },
+        body: comment.body.clone(),
     }
 }
 
@@ -222,6 +233,20 @@ impl FakeHosting {
         id
     }
 
+    /// A comment on the whole pull request, in its conversation. Answers with its id.
+    pub fn say_on_the_pull_request(&self, author: &str, mine: bool, body: &str) -> String {
+        let mut hosted = self.0.lock().unwrap();
+        let comment = hosted.comment(author, mine, body, None);
+        hosted.discussion.conversation.push(conversation_item(&comment));
+        comment.id
+    }
+
+    /// The texts of the conversation of the pull request, in order.
+    pub fn conversation(&self) -> Vec<String> {
+        let hosted = self.0.lock().unwrap();
+        hosted.discussion.conversation.iter().map(|i| i.body.clone()).collect()
+    }
+
     /// Someone edits a comment in the browser.
     pub fn edit(&self, comment: &str, body: &str) {
         let mut hosted = self.0.lock().unwrap();
@@ -328,6 +353,20 @@ impl Platform for FakeHosting {
         let mut hosted = self.0.lock().unwrap();
         hosted.check(format!("edit {} {body}", comment.id))?;
         let at = hosted.tick();
+        let said = hosted.discussion.conversation.iter_mut().find(|i| i.id == comment.id);
+        if let (CommentKind::Conversation, Some(item)) = (comment.kind, said) {
+            item.body = body.to_owned();
+            return Ok(PlatformComment {
+                id: item.id.clone(),
+                author: item.author.clone(),
+                avatar: None,
+                body: item.body.clone(),
+                created_at: item.at,
+                edited_at: at,
+                commit: None,
+                mine: true,
+            });
+        }
         let found = hosted
             .find(&comment.id)
             .ok_or_else(|| PlatformError::NotFound(format!("no comment {}", comment.id)))?;
@@ -339,6 +378,7 @@ impl Platform for FakeHosting {
     async fn delete_comment(&self, _: &RemoteKey, comment: &CommentRef) -> Result<(), PlatformError> {
         let mut hosted = self.0.lock().unwrap();
         hosted.check(format!("delete {}", comment.id))?;
+        hosted.discussion.conversation.retain(|i| i.id != comment.id);
         if hosted.traits.first_comment_ends_thread {
             hosted.discussion.threads.retain(|t| t.comments[0].id != comment.id);
         }
@@ -436,6 +476,7 @@ impl Platform for FakeHosting {
                 break;
             }
             let comment = hosted.comment("ada", true, &new.body, None);
+            hosted.discussion.conversation.push(conversation_item(&comment));
             posted.comments.push(PostedComment { key: new.key, comment });
         }
         Ok(posted)

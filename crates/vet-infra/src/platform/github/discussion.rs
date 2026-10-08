@@ -10,9 +10,9 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use vet_app::platform::{
-    CommentKind, CommentRef, ConversationItem, CredentialProvider, DiffSide, Discussion, NewConversationComment,
-    NewThread, PlatformComment, PlatformError, PlatformThreadData, PostedComment, PostedThread, PullRequestState,
-    RemoteKey, ReviewRequest, ReviewVerdict, Reviewer, ReviewerState, Submission, Submitted,
+    CommentKind, CommentRef, ConversationItem, ConversationKind, CredentialProvider, DiffSide, Discussion,
+    NewConversationComment, NewThread, PlatformComment, PlatformError, PlatformThreadData, PostedComment, PostedThread,
+    PullRequestState, RemoteKey, ReviewRequest, ReviewVerdict, Reviewer, ReviewerState, Submission, Submitted,
 };
 
 use super::wire::{
@@ -383,7 +383,7 @@ fn conversation(
             author: comment.author,
             avatar: comment.avatar,
             at: comment.created_at,
-            verdict: None,
+            kind: ConversationKind::Comment { mine: comment.mine },
             body: comment.body,
         });
     }
@@ -407,7 +407,7 @@ fn conversation(
             author,
             avatar,
             at,
-            verdict,
+            kind: ConversationKind::Review { verdict },
             body: review.body,
         });
     }

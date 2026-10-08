@@ -423,6 +423,12 @@ impl Orchestrator {
             Request::EditMessage { project, message, body } => reply(self.edit_message(project, from, message, body)),
             Request::RemoveMessage { project, message } => reply(self.remove_message(project, from, message)),
             Request::KeepEdit { project, message, keep } => reply(self.keep_edit(project, from, message, keep)),
+            Request::EditConversationComment { project, comment, body } => {
+                reply(async move { self.edit_conversation_comment(project, from, &comment, body).await })
+            }
+            Request::DeleteConversationComment { project, comment } => {
+                reply(async move { self.delete_conversation_comment(project, from, &comment).await })
+            }
             Request::SyncThreads { project } => reply(self.sync_threads(project)),
             Request::SubmitReview { project, verdict, body } => reply(self.submit_review(project, verdict, body)),
             Request::PostDrafts { project } => reply(self.post_drafts(project)),

@@ -2,8 +2,8 @@
 //! GitHub's GraphQL API does.
 
 use vet_app::platform::{
-    CommentKind, CommentRef, DiffSide, NewConversationComment, NewReply, NewThread, PullRequestState, ReviewerState,
-    Submission,
+    CommentKind, CommentRef, ConversationKind, DiffSide, NewConversationComment, NewReply, NewThread, PullRequestState,
+    ReviewerState, Submission,
 };
 
 use super::*;
@@ -52,6 +52,9 @@ fn first_page(threads: Value, next: Option<&str>) -> String {
         "comments": { "nodes": [{
             "id": "IC1", "body": "Looks good to me", "createdAt": "2024-05-01T10:00:00Z", "lastEditedAt": null,
             "viewerDidAuthor": false, "author": { "login": "jonas", "avatarUrl": null }
+        }, {
+            "id": "IC2", "body": "Thanks!", "createdAt": "2024-05-01T12:00:00Z", "lastEditedAt": null,
+            "viewerDidAuthor": true, "author": { "login": "ada", "avatarUrl": null }
         }] },
         "reviews": { "nodes": [
             { "id": "R1", "state": "APPROVED", "body": "", "submittedAt": "2024-05-01T11:00:00Z",
@@ -224,12 +227,23 @@ async fn the_pull_request_block_says_who_reviews_what_blocks_and_what_was_said()
         found
             .conversation
             .iter()
-            .map(|i| (i.id.as_str(), i.verdict))
+            .map(|i| (i.id.as_str(), i.kind))
             .collect::<Vec<_>>(),
         [
-            ("R3", Some(ReviewVerdict::Commented)),
-            ("IC1", None),
-            ("R1", Some(ReviewVerdict::Approved))
+            (
+                "R3",
+                ConversationKind::Review {
+                    verdict: Some(ReviewVerdict::Commented)
+                }
+            ),
+            ("IC1", ConversationKind::Comment { mine: false }),
+            (
+                "R1",
+                ConversationKind::Review {
+                    verdict: Some(ReviewVerdict::Approved)
+                }
+            ),
+            ("IC2", ConversationKind::Comment { mine: true }),
         ],
         "oldest first; a review with line comments only says nothing, and one not submitted is not shown"
     );

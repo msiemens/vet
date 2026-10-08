@@ -574,6 +574,18 @@ export class Backend {
     return asThread(expect(await this.conn.request(request), "thread"));
   }
 
+  /** Edits one of the viewer's comments in the conversation of the pull request, on the platform. */
+  async editConversationComment(comment: string, body: string): Promise<void> {
+    const request = { type: "editConversationComment", project: this.pid, comment, body } as const;
+    expect(await this.conn.request(request), "done");
+  }
+
+  /** Deletes one of the viewer's comments in the conversation of the pull request, on the platform. */
+  async deleteConversationComment(comment: string): Promise<void> {
+    const request = { type: "deleteConversationComment", project: this.pid, comment } as const;
+    expect(await this.conn.request(request), "done");
+  }
+
   /** Syncs the threads of the pull request on view with its platform now. */
   async syncThreads(): Promise<void> {
     expect(await this.conn.request({ type: "syncThreads", project: this.pid }), "done");

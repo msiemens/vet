@@ -6,8 +6,8 @@ pub mod semantic;
 
 use vet_app::changeset::{BaseChoice, CommitId, Lens, RemoteKey, Source, VersionOrigin};
 use vet_app::platform::{
-    ChangesAsked, CheckLog, CiState, CommitChecks, PlatformError, PlatformKind, PlatformTraits, Posting,
-    PullRequestState, QueueStatus, ReviewVerdict, ReviewerState,
+    ChangesAsked, CheckLog, CiState, CommitChecks, ConversationKind, PlatformError, PlatformKind, PlatformTraits,
+    Posting, PullRequestState, QueueStatus, ReviewVerdict, ReviewerState,
 };
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
@@ -920,15 +920,21 @@ pub fn pull_request_info(v: &DiscussionView, kind: PlatformKind, platform: p::Pl
         conversation: if traits.conversation_feed {
             (d.conversation.iter())
                 .map(|c| p::ConversationEntry {
+                    id: c.id.clone(),
                     author: c.author.clone(),
                     avatar: c.avatar.clone(),
                     at: unix_secs(c.at),
-                    verdict: c.verdict.and_then(|v| match v {
-                        ReviewVerdict::Approved => Some(p::ReviewerState::Approved),
-                        ReviewVerdict::ChangesRequested => Some(p::ReviewerState::ChangesRequested),
-                        ReviewVerdict::Commented => Some(p::ReviewerState::Commented),
-                        ReviewVerdict::Dismissed => None,
-                    }),
+                    kind: match c.kind {
+                        ConversationKind::Comment { mine } => p::ConversationKind::Comment { mine },
+                        ConversationKind::Review { verdict } => p::ConversationKind::Review {
+                            verdict: verdict.and_then(|v| match v {
+                                ReviewVerdict::Approved => Some(p::ReviewVerdict::Approved),
+                                ReviewVerdict::ChangesRequested => Some(p::ReviewVerdict::ChangesRequested),
+                                ReviewVerdict::Commented => Some(p::ReviewVerdict::Commented),
+                                ReviewVerdict::Dismissed => None,
+                            }),
+                        },
+                    },
                     body: c.body.clone(),
                 })
                 .collect()

@@ -88,13 +88,34 @@ pub struct PlatformTraits {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ConversationEntry {
+    /// The platform's id: what `EditConversationComment` and `DeleteConversationComment` take.
+    pub id: String,
     pub author: String,
     pub avatar: Option<String>,
     /// Unix seconds.
     pub at: u32,
-    /// Present for a review that was given: what the reviewer concluded.
-    pub verdict: Option<ReviewerState>,
+    pub kind: ConversationKind,
     pub body: String,
+}
+
+/// What an entry of the conversation is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum ConversationKind {
+    /// A comment on the pull request; `mine` when the viewer wrote it, who can edit and delete it.
+    Comment { mine: bool },
+    /// A review that was given, with what the reviewer concluded; none for one that was withdrawn.
+    Review { verdict: Option<ReviewVerdict> },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ReviewVerdict {
+    Approved,
+    ChangesRequested,
+    Commented,
 }
 
 /// How the backend gets on with a hosting platform.

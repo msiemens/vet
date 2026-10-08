@@ -11,6 +11,7 @@ import type { ThreadStatus } from "../../../generated/ThreadStatus";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
 import { avatarColor } from "../../../lib/avatar.ts";
 import { canSubmit, isSubmitKey } from "../../../lib/composer.ts";
+import { isFlat } from "../../../lib/flatThread.ts";
 import { lineRange } from "../../../lib/lineRange.ts";
 import { movedTitle } from "../../../lib/movedTitle.ts";
 import { el, iconButton } from "./dom.ts";
@@ -131,9 +132,6 @@ function draftCard(target: ThreadTarget, actions: ThreadActions): HTMLElement {
   requestAnimationFrame(() => focus(30));
   return card;
 }
-
-/** A comment on the pull request in the platform's flat conversation: it has no status and takes no replies. */
-export const isFlat = (thread: Thread) => thread.kind === "changeset" && thread.platform?.resolvable === false;
 
 /** A message that only Vet has, in a thread the platform has or will have: posted with the review. */
 const isDraft = (thread: Thread, message: ThreadMessage) => !!thread.platform && !message.posted;

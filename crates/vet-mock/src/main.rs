@@ -290,6 +290,8 @@ impl Handler for Mock {
             | Request::EditMessage { .. }
             | Request::RemoveMessage { .. }
             | Request::KeepEdit { .. }
+            | Request::EditConversationComment { .. }
+            | Request::DeleteConversationComment { .. }
             | Request::SyncThreads { .. }
             | Request::SubmitReview { .. }
             | Request::PostDrafts { .. }

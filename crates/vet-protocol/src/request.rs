@@ -481,6 +481,21 @@ pub enum Request {
         message: u32,
         keep: EditChoice,
     },
+    /// Replaces the text of one of the viewer's comments in the conversation of the pull request
+    /// on view (`ConversationKind::Comment` with `mine`), on the platform at once. Fails with the
+    /// reason if the platform does not take it, or for anyone else's comment. Answers with
+    /// `Response::Done`.
+    EditConversationComment {
+        project: ProjectId,
+        comment: String,
+        body: String,
+    },
+    /// Deletes one of the viewer's comments in the conversation of the pull request on view, on
+    /// the platform at once. Answers with `Response::Done`.
+    DeleteConversationComment {
+        project: ProjectId,
+        comment: String,
+    },
     /// Brings the threads of the pull request on view up to date with the platform's, both ways
     /// (a status the viewer changed since the last sync is sent and wins), then announces
     /// `ThreadsChanged`, `PlatformStatus` and any `Notification` to every subscriber. The backend

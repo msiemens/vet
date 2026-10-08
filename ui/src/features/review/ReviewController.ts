@@ -26,6 +26,8 @@ import { ChangesetView, type Listeners, type ScrollPosition, type ViewHooks } fr
 import { fileSource } from "./editor/fileSource";
 import { LogView } from "./editor/LogView";
 import type { ViewProbe } from "./editor/viewProbe";
+import { type ThreadActions, buildCard } from "./editor/threadCard";
+import type { ThreadListeners } from "./editor/threadLayer";
 import { bindRevision, focusedEditor } from "./editor/semantic";
 import type { SoftWrap } from "../../lib/softWrap";
 import type { Mode } from "../../lib/viewMode";
@@ -373,30 +375,48 @@ export class ReviewController {
           : undefined,
       fileMenu: this.fileMenu,
       openSource: (path, line) => void this.openSource(path, line),
-      threads: {
-        create: (revision, target, body) =>
-          this.editing(
-            () => threads.create(revision, target, body),
-            () => false,
-          ),
-        commentTarget: (revision, path, at) =>
-          this.editing(
-            () => this.backend.commentTarget(revision, path, at, this.changeset.view),
-            () => {
-              throw new Error(READ_ONLY_NOTE);
-            },
-          ),
-        reply: (thread, body) => threads.reply(thread, body),
-        setStatus: (thread, status) => threads.setStatus(thread, status),
-        remove: (thread) => threads.remove(thread),
-        editMessage: (message, body) => threads.editMessage(message, body),
-        removeMessage: (message) => threads.removeMessage(message),
-        keepEdit: (message, keep) => threads.keepEdit(message, keep),
-        platformName: () => (platform.status ? platformName(platform.status.kind) : "the platform"),
-        confirm: (thread) => threads.confirm(thread),
-      },
+      threads: this.threadListeners(),
     };
     return this.probe ? this.probe.listeners(listeners) : listeners;
+  }
+
+  private threadListeners(): ThreadListeners {
+    return {
+      create: (revision, target, body) =>
+        this.editing(
+          () => threads.create(revision, target, body),
+          () => false,
+        ),
+      commentTarget: (revision, path, at) =>
+        this.editing(
+          () => this.backend.commentTarget(revision, path, at, this.changeset.view),
+          () => {
+            throw new Error(READ_ONLY_NOTE);
+          },
+        ),
+      reply: (thread, body) => threads.reply(thread, body),
+      setStatus: (thread, status) => threads.setStatus(thread, status),
+      remove: (thread) => threads.remove(thread),
+      editMessage: (message, body) => threads.editMessage(message, body),
+      removeMessage: (message) => threads.removeMessage(message),
+      keepEdit: (message, keep) => threads.keepEdit(message, keep),
+      platformName: () => (platform.status ? platformName(platform.status.kind) : "the platform"),
+      confirm: (thread) => threads.confirm(thread),
+    };
+  }
+
+  /**
+   * A thread as the card the editors show, for a place outside them (the Comments tool window), with
+   * the same actions; `toggle` opens or folds a resolved one.
+   */
+  threadCard(thread: Thread, open: boolean, toggle: () => void): HTMLElement {
+    const actions: ThreadActions = {
+      ...this.threadListeners(),
+      create: () => Promise.resolve(false),
+      cancelDraft: () => undefined,
+      toggle,
+    };
+    return buildCard({ thread, open }, actions);
   }
 
   /** The threads were read for the revision and the range `manifest` is of. */

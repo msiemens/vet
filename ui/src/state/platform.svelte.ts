@@ -111,6 +111,28 @@ class PlatformStore {
     return posted;
   }
 
+  /** Edits one of the viewer's comments in the conversation; resolves whether the platform took it. */
+  async editComment(comment: string, body: string): Promise<boolean> {
+    return this.changeConversation(this.backend?.editConversationComment(comment, body), "edit the comment");
+  }
+
+  /** Deletes one of the viewer's comments in the conversation; resolves whether the platform took it. */
+  async deleteComment(comment: string): Promise<boolean> {
+    return this.changeConversation(this.backend?.deleteConversationComment(comment), "delete the comment");
+  }
+
+  private async changeConversation(request: Promise<void> | undefined, what: string): Promise<boolean> {
+    if (!request) return false;
+    try {
+      await request;
+    } catch (error) {
+      session.notice = `Could not ${what}: ${errorText(error)}`;
+      return false;
+    }
+    await this.reload();
+    return true;
+  }
+
   /** Sets the viewer's vote; resolves whether the platform took it. */
   async vote(verdict: string): Promise<boolean> {
     try {

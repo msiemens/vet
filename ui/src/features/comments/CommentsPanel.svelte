@@ -12,6 +12,7 @@
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import { platform } from "../../state/platform.svelte";
   import { attachMenu, threadCommands } from "./commentCommands";
+  import { changesetThreads, draftComments, reviewThreads } from "./conversation";
   import ConversationList from "./ConversationList.svelte";
   import {
     RESOLVED_SHOWN,
@@ -25,17 +26,31 @@
   } from "./groups";
   import PullRequestBlock from "./PullRequestBlock.svelte";
   import SubmitReview from "./SubmitReview.svelte";
+  import ThreadCards from "./ThreadCards.svelte";
 
-  let { onselect }: { onselect: (thread: Thread) => void } = $props();
+  let {
+    onselect,
+    card,
+  }: {
+    onselect: (thread: Thread) => void;
+    /** Draws a thread as the diff's card, for the threads on the pull request as a whole where they are threads. */
+    card: (thread: Thread, open: boolean, toggle: () => void) => HTMLElement;
+  } = $props();
 
-  const groups = $derived(groupThreads(threads.items));
-  const empty = $derived(threads.items.length === 0);
   const info = $derived(platform.info);
+  const listed = $derived(reviewThreads(threads.items, info !== undefined));
+  const groups = $derived(groupThreads(listed));
+  const empty = $derived(listed.length === 0);
+  const drafts = $derived(draftComments(threads.items));
+  const onWhole = $derived(changesetThreads(threads.items));
+  const conversationCount = $derived(
+    info?.traits.conversationFeed ? info.conversation.length + drafts.length : onWhole.length,
+  );
   type Tab = "review" | "conversation";
   let tab = $state<Tab>("review");
   const pick = (id: Tab) => (tab = id);
-  // A platform without a conversation feed has nothing to switch to.
-  const showing = $derived(info?.traits.conversationFeed ? tab : "review");
+  // A changeset that is no pull request has no conversation to switch to.
+  const showing = $derived(info ? tab : "review");
 
   type GroupId = "conflicts" | "open" | "resolved";
   let folded = $state<GroupId[]>([]);
@@ -45,6 +60,13 @@
   let composing = $state(false);
   let body = $state("");
   let sending = $state(false);
+  /** A comment on the changeset is written below its conversation, where it will be; without a pull request, below the threads. */
+  const composeHere = $derived(composing && showing === (info ? "conversation" : "review"));
+
+  function compose() {
+    composing = !composing;
+    if (composing) tab = "conversation";
+  }
 
   onMount(() => commands.register(...threadCommands({ attach: (thread, at) => void threads.attach(thread, at) })));
 
@@ -144,33 +166,31 @@
       <div class="sh sh-bar">
         <span>Comments</span>
         <span class="grow"></span>
-        <IconButton
-          icon="comments"
-          label="Comment on the changeset"
-          size={22}
-          iconSize={13}
-          onclick={() => (composing = !composing)}
-        />
+        <IconButton icon="comments" label="Comment on the changeset" size={22} iconSize={13} onclick={compose} />
       </div>
       {#if info}
         <PullRequestBlock {info} />
         <SubmitReview {info} />
-        {#if info.traits.conversationFeed}
-          <PanelTabs
-            label="Pull request"
-            value={showing}
-            onchange={pick}
-            tabs={[
-              { id: "review", label: "Review", count: threads.items.length },
-              { id: "conversation", label: "Conversation", count: info.conversation.length },
-            ]}
-          />
-        {/if}
+        <PanelTabs
+          label="Pull request"
+          value={showing}
+          onchange={pick}
+          tabs={[
+            { id: "review", label: "Review", count: listed.length },
+            { id: "conversation", label: "Conversation", count: conversationCount },
+          ]}
+        />
       {/if}
       {#if info && showing === "conversation"}
-        <ConversationList entries={info.conversation} />
+        {#if info.traits.conversationFeed}
+          <ConversationList entries={info.conversation} {drafts} />
+        {:else if onWhole.length}
+          <ThreadCards list={onWhole} {card} />
+        {:else if !composeHere}
+          <p class="empty">Nothing was said on the pull request as a whole.</p>
+        {/if}
       {:else}
-        {#if empty && !composing}
+        {#if empty && !composeHere}
           <p class="empty">
             No comments yet. Select lines and press {commands.binding("review.comment")?.label}, or use a hunk's comment
             button.
@@ -180,7 +200,7 @@
         {#if groups.open.length}{@render group("Open", groups.open, "open")}{/if}
         {#if groups.resolved.length}{@render group("Resolved", groups.resolved, "resolved")}{/if}
       {/if}
-      {#if composing}
+      {#if composeHere}
         <div
           class="compose"
           {@attach (box: HTMLElement) => {
