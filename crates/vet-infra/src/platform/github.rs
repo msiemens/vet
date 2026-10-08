@@ -554,6 +554,8 @@ fn refusal(host: &str, status: StatusCode, message: &str) -> PlatformError {
         StatusCode::UNAUTHORIZED => PlatformError::Rejected(reason("refused the token")),
         StatusCode::FORBIDDEN => PlatformError::Forbidden(reason("does not allow the token this")),
         StatusCode::NOT_FOUND => PlatformError::NotFound(reason("does not know this, or the token cannot see it")),
+        // The log of a job that ran longer ago than the repository keeps logs.
+        StatusCode::GONE => PlatformError::NotFound(format!("{host} no longer has this: it was deleted or expired")),
         s if s.is_server_error() => PlatformError::Unreachable(format!("{host} answered {status}")),
         _ => PlatformError::Unexpected(reason("answered")),
     }

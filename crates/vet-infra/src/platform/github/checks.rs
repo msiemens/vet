@@ -256,7 +256,26 @@ pub(super) fn parse_instant(text: &str) -> Option<i64> {
     Some(parse_timestamp(&format!("{date}T{clock}Z"))? - offset)
 }
 
-/// The log's lines without the time Actions puts before each, and where the job failed.
+/// `line` without the colour codes tools print (`ESC [ … m`), which an editor shows as garbage.
+fn without_colours(line: &str) -> String {
+    let mut plain = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            for skipped in chars.by_ref() {
+                if skipped.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
+}
+
+/// The log's lines without the time Actions puts before each and the colour codes in them, and
+/// where the job failed.
 ///
 /// Actions marks a failure with a `##[error]` line, which ends the step that failed. With the
 /// failed step from the job's API (its name and when it started) the failure is the first error
@@ -272,11 +291,11 @@ pub(super) fn process_log(raw: &str, failed_step: Option<(&str, Option<i64>)>) -
         match parse_instant(stamp) {
             Some(at) => {
                 times.push(Some(at));
-                texts.push(text);
+                texts.push(without_colours(text));
             }
             None => {
                 times.push(None);
-                texts.push(line);
+                texts.push(without_colours(line));
             }
         }
     }
@@ -288,8 +307,15 @@ pub(super) fn process_log(raw: &str, failed_step: Option<(&str, Option<i64>)>) -
     } else if let Some(line) = (0..texts.len()).find(|&i| is_error(i)) {
         Some((line, None))
     } else {
+        // Times in the job's steps are whole seconds, so the step before it may have started in
+        // the same second: its header is the last one in that second.
+        let header = |s: i64| {
+            (0..texts.len())
+                .rev()
+                .find(|&i| texts[i].starts_with("##[group]") && times[i] == Some(s))
+        };
         started
-            .and_then(|s| times.iter().position(|t| t.is_some_and(|t| t >= s)))
+            .and_then(|s| header(s).or_else(|| times.iter().position(|t| t.is_some_and(|t| t >= s))))
             .zip(failed_step.map(|(name, _)| name))
             .map(|(line, name)| (line, Some(name)))
     };
@@ -368,6 +394,31 @@ mod tests {
                 step: Some("Build".to_owned())
             })
         );
+    }
+
+    #[test]
+    fn a_step_that_failed_without_an_error_line_starts_at_the_last_header_of_the_second_it_began() {
+        let log = "\
+2024-05-01T12:00:05.1000000Z ##[group]Run first
+2024-05-01T12:00:05.2000000Z fine
+2024-05-01T12:00:05.9000000Z ##[group]Run second
+2024-05-01T12:00:06.5000000Z boom
+2024-05-01T12:00:09.0000000Z ##[group]Run third
+";
+        let found = process_log(log, Some(("second", at("12:00:05"))));
+        assert_eq!(
+            found.failure,
+            Some(LogFailure {
+                line: 2,
+                step: Some("second".to_owned())
+            })
+        );
+    }
+
+    #[test]
+    fn colour_codes_are_cut_from_the_text() {
+        let log = process_log("2024-05-01T12:00:00Z \u{1b}[31;1mFAILED\u{1b}[0m test\n", None);
+        assert_eq!(log.text, "FAILED test");
     }
 
     #[test]

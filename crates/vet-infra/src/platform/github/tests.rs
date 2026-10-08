@@ -647,7 +647,7 @@ async fn github_smoke() {
 }
 
 /// The checks of the head of the repository's newest pull request, and the log of a failed
-/// Actions job among them if there is one:
+/// Actions job among them if there is one (or of the job `VET_SMOKE_JOB` names):
 /// `cargo test -p vet-infra github_checks_smoke -- --ignored --nocapture`.
 #[tokio::test]
 #[ignore = "talks to github.com"]
@@ -668,6 +668,18 @@ async fn github_checks_smoke() {
         host: "github.com".to_owned(),
         path: std::env::var("VET_SMOKE_REPO").unwrap_or_else(|_| "cli/cli".to_owned()),
     };
+    if let Ok(job) = std::env::var("VET_SMOKE_JOB") {
+        let log = client.check_log(&remote, &job).await.unwrap();
+        println!(
+            "log of {job}: {} lines, failure {:?}",
+            log.text.lines().count(),
+            log.failure
+        );
+        if let Some(failure) = log.failure {
+            println!("> {}", log.text.lines().nth(failure.line as usize).unwrap_or_default());
+        }
+        return;
+    }
     let found = client.list_pull_requests(&remote, &all_open()).await.unwrap();
     for pr in found.iter().take(5) {
         let checks = client.checks(&remote, &pr.head).await.unwrap();
