@@ -1,9 +1,10 @@
 //! Conversions between `RepoPath` bytes (git's: `/`-separated, relative to the
 //! repository root) and filesystem paths. A name the platform cannot represent
-//! (non-UTF-8 on Windows) is an error: nothing is replaced or dropped.
+//! (non-UTF-8 on Windows) is an error: nothing is replaced or dropped. Also the
+//! plain form of a canonical path on Windows, which is the one shown and handed on.
 
-use std::fmt;
-use std::path::{Component, Path, Prefix};
+use std::path::{Component, Path, PathBuf, Prefix};
+use std::{fmt, io};
 
 use vet_core::content::RepoPath;
 
@@ -83,9 +84,147 @@ pub fn from_absolute(path: &Path) -> Result<RepoPath, PathError> {
     ))
 }
 
+/// `path` with links resolved, in the plain form wherever that names the same file.
+pub fn canonical(path: &Path) -> io::Result<PathBuf> {
+    std::fs::canonicalize(path).map(simplified)
+}
+
+/// `path` without the verbatim prefix `canonicalize` puts on every path on Windows
+/// (`\\?\C:\…`, `\\?\UNC\server\share\…`), which few programs accept and nobody wants
+/// to read. A path the plain form cannot name stays verbatim: one too long for
+/// `MAX_PATH`, or with a name Windows reads differently without it (`CON`, `a.`).
+pub fn simplified(path: PathBuf) -> PathBuf {
+    if !cfg!(windows) {
+        return path;
+    }
+    match path.to_str().and_then(plain_form) {
+        Some(plain) => PathBuf::from(plain),
+        None => path,
+    }
+}
+
+/// `MAX_PATH`, which counts the terminating NUL.
+const MAX_PATH: usize = 260;
+
+/// The plain form of `path`, a Windows verbatim path, if it names the same file.
+fn plain_form(path: &str) -> Option<String> {
+    let rest = path.strip_prefix(r"\\?\")?;
+    let (plain, names) = match rest.strip_prefix(r"UNC\") {
+        Some(unc) => {
+            let mut parts = unc.splitn(3, '\\');
+            let (server, share) = (parts.next()?, parts.next()?);
+            if !is_plain_name(server) || !is_plain_name(share) {
+                return None;
+            }
+            (format!(r"\\{unc}"), parts.next().unwrap_or(""))
+        }
+        None => {
+            let bytes = rest.as_bytes();
+            if !(bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':') {
+                return None;
+            }
+            let names = match &rest[2..] {
+                "" => "",
+                after => after.strip_prefix('\\')?,
+            };
+            (rest.to_owned(), names)
+        }
+    };
+    let names = names.strip_suffix('\\').unwrap_or(names);
+    let fits = plain.encode_utf16().count() < MAX_PATH;
+    (fits && (names.is_empty() || names.split('\\').all(is_plain_name))).then_some(plain)
+}
+
+/// Whether Windows reads `name` as itself outside a verbatim path: it does not trim
+/// trailing dots and spaces, take a reserved device name for the device, or split at `/`.
+fn is_plain_name(name: &str) -> bool {
+    const RESERVED: [&str; 22] = [
+        "AUX", "NUL", "PRN", "CON", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1",
+        "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
+    !name.is_empty()
+        && name.encode_utf16().count() <= 255
+        && !name.ends_with(['.', ' '])
+        && !name
+            .chars()
+            .any(|c| c < ' ' || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'))
+        && !RESERVED.iter().any(|reserved| stem.eq_ignore_ascii_case(reserved))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_verbatim_drive_path_loses_its_prefix() {
+        assert_eq!(plain_form(r"\\?\D:\work\my repo").as_deref(), Some(r"D:\work\my repo"));
+        assert_eq!(plain_form(r"\\?\D:\work\").as_deref(), Some(r"D:\work\"));
+        assert_eq!(plain_form(r"\\?\D:\").as_deref(), Some(r"D:\"));
+    }
+
+    #[test]
+    fn a_verbatim_share_path_becomes_a_plain_share_path() {
+        assert_eq!(
+            plain_form(r"\\?\UNC\server\share\repo").as_deref(),
+            Some(r"\\server\share\repo")
+        );
+        assert_eq!(
+            plain_form(r"\\?\UNC\wsl.localhost\Ubuntu\home\me").as_deref(),
+            Some(r"\\wsl.localhost\Ubuntu\home\me")
+        );
+        assert_eq!(plain_form(r"\\?\UNC\server").as_deref(), None);
+    }
+
+    #[test]
+    fn a_name_windows_reads_differently_keeps_the_path_verbatim() {
+        for path in [
+            r"\\?\D:\work\CON",
+            r"\\?\D:\work\con.txt",
+            r"\\?\D:\work\Lpt1 .rs",
+            r"\\?\D:\work\trailing.",
+            r"\\?\D:\work\trailing ",
+            r"\\?\D:\work\..\x",
+            r"\\?\D:\work\a/b",
+            r"\\?\UNC\server\share\aux",
+        ] {
+            assert_eq!(plain_form(path), None, "{path}");
+        }
+        assert!(plain_form(r"\\?\D:\work\console\com10\a.con").is_some());
+    }
+
+    #[test]
+    fn a_path_too_long_for_max_path_stays_verbatim() {
+        let fits = format!(r"\\?\D:\{}\{}", "a".repeat(127), "b".repeat(128));
+        assert_eq!(plain_form(&fits).map(|p| p.len()), Some(MAX_PATH - 1));
+        let long = format!(r"\\?\D:\{}\{}", "a".repeat(128), "b".repeat(128));
+        assert_eq!(plain_form(&long), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_canonical_path_on_windows_is_in_the_plain_form() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = canonical(dir.path()).unwrap();
+        assert!(!path.to_str().unwrap().starts_with(r"\\?\"), "{}", path.display());
+        assert_eq!(
+            std::fs::canonicalize(&path).unwrap(),
+            std::fs::canonicalize(dir.path()).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_path_that_is_not_verbatim_is_left_alone() {
+        for path in [
+            r"D:\work",
+            r"\\server\share",
+            r"\\.\pipe\x",
+            r"\\?\GLOBALROOT\Device\x",
+            r"\\?\D:x",
+        ] {
+            assert_eq!(plain_form(path), None, "{path}");
+        }
+    }
 
     #[test]
     fn a_relative_path_round_trips_through_repo_bytes() {

@@ -975,17 +975,20 @@ async fn an_orphaned_project_is_released_but_stays_open_for_the_next_open() {
 async fn a_subfolder_opens_the_repository_root_and_both_paths_share_one_project() {
     let fx = fixture(&[("sub/dir/a.txt", "x\n")], &[]).await;
     let client = Client::new(&fx.handler);
-    let root = fx.repo.path().canonicalize().unwrap();
     let call = |path: &Path| {
         client.call(Request::OpenProject {
             repo: path.to_str().unwrap().into(),
         })
     };
 
-    let Response::Project { project, root: found } = call(&fx.repo.path().join("sub/dir")).await.unwrap() else {
+    let Response::Project { project, root } = call(&fx.repo.path().join("sub/dir")).await.unwrap() else {
         panic!("not a project");
     };
-    assert_eq!(found, root.to_str().unwrap());
+    assert_eq!(
+        Path::new(&root).canonicalize().unwrap(),
+        fx.repo.path().canonicalize().unwrap()
+    );
+    assert!(!root.starts_with(r"\\?\"), "shown without the verbatim prefix: {root}");
     let Response::Project {
         project: again,
         root: found,
@@ -993,7 +996,7 @@ async fn a_subfolder_opens_the_repository_root_and_both_paths_share_one_project(
     else {
         panic!("not a project");
     };
-    assert_eq!((again, found.as_str()), (project, root.to_str().unwrap()));
+    assert_eq!((again, found), (project, root));
 }
 
 #[tokio::test]

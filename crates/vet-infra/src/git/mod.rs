@@ -40,14 +40,15 @@ pub(crate) use blob_cache::BlobCache;
 pub const DEFAULT_CAP: u64 = 50 * 1024 * 1024;
 
 /// The root of the working tree containing `path`, found the way git does and
-/// canonicalized. The error is fit to show to a user.
+/// canonicalized (in the plain form on Windows wherever that names it). The
+/// error is fit to show to a user.
 pub fn find_root(path: &Path) -> Result<PathBuf, String> {
     let not_a_repo = || format!("Not a git repository: {}", path.display());
     let repo = gix::discover(path).map_err(|_| not_a_repo())?;
     let workdir = repo
         .workdir()
         .ok_or_else(|| "Bare repositories are not supported".to_string())?;
-    workdir.canonicalize().map_err(|_| not_a_repo())
+    paths::canonical(workdir).map_err(|_| not_a_repo())
 }
 
 /// The files of the tree at `root`, relative to it, without reading any: in a

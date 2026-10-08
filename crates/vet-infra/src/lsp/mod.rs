@@ -31,6 +31,7 @@ use vet_semantic::ports::{
 use crate::budget::{Budget, Budgets, SEMANTIC_IO};
 use crate::git::list_files;
 use crate::language::{self, Compiler};
+use crate::paths;
 use crate::restore::discover;
 use capabilities::Diagnostics;
 use rpc::Connection;
@@ -76,11 +77,12 @@ impl<L, R> LspLauncher<L, R> {
         self
     }
 
-    /// `path` with links resolved, on the lane's blocking threads.
+    /// `path` with links resolved, on the lane's blocking threads. Servers and the
+    /// tools they run get the plain form: many reject a verbatim path on Windows.
     async fn canonical(&self, path: &Path) -> io::Result<PathBuf> {
         let path = path.to_owned();
         self.semantic_io
-            .blocking(move || std::fs::canonicalize(path))
+            .blocking(move || paths::canonical(&path))
             .await
             .map_err(io::Error::other)?
     }
