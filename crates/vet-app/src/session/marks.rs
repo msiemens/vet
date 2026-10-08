@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{BlobId, NonTextKind, RepoPath};
-use vet_core::marking::{Region, hunk_regions, hunk_span};
+use vet_core::marking::{Region, hunk_regions, hunk_spans};
 use vet_core::prepared::PreparedFile;
 use vet_core::remap::cut_recorded;
 use vet_core::review::{ReviewedSpan, Side};
@@ -157,19 +157,18 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let diffed = st.diffed_in(view);
             let diff = find_diff(&diffed.diff, path).ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
             let blob_text = |blob: Option<BlobId>| blob.and_then(|b| diffed.blobs.get(&b)).map(Vec::as_slice);
-            let ids = (base, target);
-            let (mut regions, mut add) = (Vec::new(), Vec::new());
-            for &i in hunks {
-                let hunk = diff
-                    .hunks
-                    .get(i as usize)
-                    .ok_or_else(|| SessionError::NotFound(format!("hunk {i}")))?;
-                regions.extend(hunk_regions(diff, hunk));
-                if seen {
-                    let texts = (blob_text(diff.old_blob), blob_text(diff.new_blob));
-                    add.push(hunk_span(diff, hunk, ids, texts).ok_or_else(|| SessionError::NotText(path.into()))?);
-                }
-            }
+            let chosen = (hunks.iter())
+                .map(|&i| (diff.hunks.get(i as usize)).ok_or_else(|| SessionError::NotFound(format!("hunk {i}"))))
+                .collect::<Result<Vec<_>>>()?;
+            let regions = chosen.iter().flat_map(|hunk| hunk_regions(diff, hunk)).collect();
+            let add = if seen {
+                let texts = (blob_text(diff.old_blob), blob_text(diff.new_blob));
+                (hunk_spans(diff, &chosen, (base, target), texts).into_iter())
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| SessionError::NotText(path.into()))?
+            } else {
+                Vec::new()
+            };
             (regions, add)
         };
         self.apply_marks(st, view, regions, add, origin, seen).await

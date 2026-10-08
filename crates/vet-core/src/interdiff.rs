@@ -93,14 +93,15 @@ pub fn interdiff(base_a: &[u8], target_a: &[u8], base_b: &[u8], target_b: &[u8])
     }
 }
 
-/// What marking an interdiff hunk seen records in B's changeset (design-changesets §2.4): the
-/// lines of `squash` (B's own diff of the file) the hunk covers, and a `Seen` span for them per
-/// squash hunk they fall in, two-sided where both sides have one range there. `texts` are the
-/// base and target text of the file in the snapshots `snapshots` (B's base and target). `None`
-/// if a text is missing or the squash lacks the file on a side the hunk has lines on.
+/// What marking interdiff hunks seen records in B's changeset (design-changesets §2.4): for each
+/// of `hunks`, the lines of `squash` (B's own diff of the file) it covers, and a `Seen` span for
+/// them per squash hunk they fall in, two-sided where both sides have one range there. `texts`
+/// are the base and target text of the file in the snapshots `snapshots` (B's base and target),
+/// each split into lines and hashed once. `None` if a text is missing or the squash lacks the
+/// file on a side a hunk has lines on.
 pub fn squash_marks(
     squash: &FileDiff,
-    hunk: &InterdiffHunk,
+    hunks: &[&InterdiffHunk],
     snapshots: (SnapshotId, SnapshotId),
     texts: (Option<&[u8]>, Option<&[u8]>),
 ) -> Option<(Vec<Region>, Vec<ReviewedSpan>)> {
@@ -111,11 +112,15 @@ pub fn squash_marks(
         });
         clipped.filter(|r| !r.is_empty()).collect()
     };
-    let anchor = |side, file: &Option<RepoPath>, snapshot, text: Option<&[u8]>, range| {
-        Anchor::from_text(side, snapshot, file.clone()?, text?, range)
+    let texts = (texts.0.map(Text::new), texts.1.map(Text::new));
+    let anchor = |side, file: &Option<RepoPath>, snapshot, text: Option<&Text>, range| {
+        text?.anchor(side, snapshot, file.clone()?, range)
     };
     let (mut regions, mut spans) = (Vec::new(), Vec::new());
-    for h in &squash.hunks {
+    for (hunk, h) in hunks
+        .iter()
+        .flat_map(|hunk| squash.hunks.iter().map(move |h| (hunk, h)))
+    {
         let target = clip(&hunk.target_lines, h.new);
         let base = clip(&hunk.base_lines, h.old);
         for &range in &target {
@@ -137,8 +142,8 @@ pub fn squash_marks(
             target,
             state: SpanState::Seen,
         };
-        let on_target = |range| anchor(Side::Target, &squash.new_path, snapshots.1, texts.1, range);
-        let on_base = |range| anchor(Side::Base, &squash.old_path, snapshots.0, texts.0, range);
+        let on_target = |range| anchor(Side::Target, &squash.new_path, snapshots.1, texts.1.as_ref(), range);
+        let on_base = |range| anchor(Side::Base, &squash.old_path, snapshots.0, texts.0.as_ref(), range);
         if let ([t], [b]) = (&target[..], &base[..]) {
             spans.push(span(Some(on_base(*b)?), Some(on_target(*t)?)));
         } else {
@@ -180,6 +185,40 @@ mod tests {
             base_b.as_bytes(),
             target_b.as_bytes(),
         )
+    }
+
+    #[test]
+    fn the_marks_of_many_hunks_split_each_text_once_and_equal_those_of_each_hunk_alone() {
+        use crate::content::Hash;
+        use crate::text::SPLITS;
+
+        let base = lines("l", 300);
+        let target = base.replace("5\n", "5 edited\n");
+        // Version A changed nothing, so every hunk of the interdiff is one of B's changeset.
+        let inter = run(&base, &base, &base, &target);
+        let squash = FileDiff {
+            old_path: Some(RepoPath::from("a")),
+            new_path: Some(RepoPath::from("a")),
+            old_blob: None,
+            new_blob: None,
+            hunks: changed_lines(base.as_bytes(), target.as_bytes()),
+        };
+        let snapshots = (SnapshotId(Hash([1; 32])), SnapshotId(Hash([2; 32])));
+        let texts = (Some(base.as_bytes()), Some(target.as_bytes()));
+        let hunks: Vec<&InterdiffHunk> = inter.hunks.iter().collect();
+        assert!(hunks.len() >= 10);
+
+        let before = SPLITS.with(|n| n.get());
+        let (regions, spans) = squash_marks(&squash, &hunks, snapshots, texts).unwrap();
+        assert_eq!(SPLITS.with(|n| n.get()) - before, 2);
+
+        let (mut alone_regions, mut alone_spans) = (Vec::new(), Vec::new());
+        for hunk in &hunks {
+            let (r, s) = squash_marks(&squash, &[hunk], snapshots, texts).unwrap();
+            alone_regions.extend(r);
+            alone_spans.extend(s);
+        }
+        assert_eq!((regions, spans), (alone_regions, alone_spans));
     }
 
     #[test]

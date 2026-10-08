@@ -22,7 +22,7 @@ use vet_app::session::{
 use vet_core::completion::{Completion, Coverage};
 use vet_core::content::{FileDiff, Hash, LineDelta, RepoPath, SnapshotId};
 use vet_core::filter::ReviewFilter;
-use vet_core::marking::hunk_span;
+use vet_core::marking::hunk_spans;
 use vet_core::review::{ReviewedSpan, target_line};
 use vet_highlight::{Cache, Language};
 use vet_protocol::{ProjectId, Request, Response};
@@ -73,9 +73,8 @@ impl Mock {
             .zip(&diffs)
             .map(|(f, diff)| {
                 let texts = (Some(f.base.as_bytes()), Some(f.target.as_bytes()));
-                (diff.hunks.iter())
-                    .map(|h| hunk_span(diff, h, (SNAPSHOT, SNAPSHOT), texts))
-                    .collect()
+                let hunks: Vec<_> = diff.hunks.iter().collect();
+                hunk_spans(diff, &hunks, (SNAPSHOT, SNAPSHOT), texts)
             })
             .collect();
         let seen = Mutex::new(corpus.files.iter().map(|f| vec![false; f.hunks.len()]).collect());

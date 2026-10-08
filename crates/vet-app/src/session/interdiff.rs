@@ -8,8 +8,7 @@ use std::sync::Arc;
 use vet_core::completion::{Completion, Coverage, HunkState};
 use vet_core::content::{FileDiff, NonTextChange, RepoPath};
 use vet_core::interdiff::squash_marks;
-use vet_core::marking::Region;
-use vet_core::review::{ReviewedSpan, Side};
+use vet_core::review::Side;
 
 use super::derived::{Compared, Interdiff};
 use super::manifest::{file_views, target_view};
@@ -152,19 +151,17 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let inter = &id.compared.hunks[diff.path()];
             let blob_text =
                 |blob: Option<vet_core::content::BlobId>| blob.and_then(|b| changeset.blobs.get(&b)).map(Vec::as_slice);
-            let (mut regions, mut add): (Vec<Region>, Vec<ReviewedSpan>) = (Vec::new(), Vec::new());
-            for &i in hunks {
-                let hunk = inter
-                    .get(i as usize)
-                    .ok_or_else(|| SessionError::NotFound(format!("hunk {i}")))?;
-                let Some(squash) = squash else { continue };
-                let texts = (blob_text(squash.old_blob), blob_text(squash.new_blob));
-                let (r, s) = squash_marks(squash, hunk, (st.base.id, st.target.id), texts)
-                    .ok_or_else(|| SessionError::NotText(path.into()))?;
-                regions.extend(r);
-                add.extend(s);
+            let chosen = (hunks.iter())
+                .map(|&i| (inter.get(i as usize)).ok_or_else(|| SessionError::NotFound(format!("hunk {i}"))))
+                .collect::<Result<Vec<_>>>()?;
+            match squash {
+                Some(squash) => {
+                    let texts = (blob_text(squash.old_blob), blob_text(squash.new_blob));
+                    squash_marks(squash, &chosen, (st.base.id, st.target.id), texts)
+                        .ok_or_else(|| SessionError::NotText(path.into()))?
+                }
+                None => (Vec::new(), Vec::new()),
             }
-            (regions, add)
         };
         self.apply_marks(
             st,

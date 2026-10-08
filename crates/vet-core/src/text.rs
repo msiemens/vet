@@ -107,8 +107,16 @@ pub(crate) struct Text<'a> {
     hashes: OnceLock<Vec<Hash>>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many texts this thread split into lines.
+    pub(crate) static SPLITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl<'a> Text<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
+        #[cfg(test)]
+        SPLITS.with(|n| n.set(n.get() + 1));
         let raw: Vec<_> = bytes.split_inclusive(|&b| b == b'\n').collect();
         let norm = raw.iter().map(|l| l.trim_ascii_end()).collect();
         Self {
