@@ -18,7 +18,20 @@
   cursor: pointer;
 }
 
-/* The gutter of wedges and the current hunk's bracket, between the line numbers and the strip. */
+/* The current hunk: a light blue over its lines, on the green of the change (and with the caret's
+   line on top), and a stronger blue on its line numbers. */
+.vet-text .cm-editor .cm-line.vet-current-hunk {
+  background-image: linear-gradient(var(--current-hunk), var(--current-hunk));
+}
+.vet-text .cm-editor .cm-line.vet-current-hunk.vet-current-line {
+  background-image:
+    linear-gradient(var(--current-line), var(--current-line)), linear-gradient(var(--current-hunk), var(--current-hunk));
+}
+.vet-text .cm-editor .cm-lineNumbers .cm-gutterElement.vet-current-hunk {
+  background: var(--current-hunk-gutter);
+}
+
+/* The gutter of wedges, between the line numbers and the strip. */
 .vet-text .cm-editor .vet-edges {
   min-width: 10px;
   width: 10px;
@@ -56,25 +69,6 @@
 }
 .vet-wedge-unapplied {
   background: var(--warn);
-}
-.vet-bracket {
-  position: absolute;
-  left: 3px;
-  top: 0;
-  bottom: 0;
-  width: 4px;
-  box-sizing: border-box;
-  border-left: 2px solid var(--accent);
-}
-.vet-bracket-first,
-.vet-bracket-only {
-  top: 1px;
-  border-top: 2px solid var(--accent);
-}
-.vet-bracket-last,
-.vet-bracket-only {
-  bottom: 1px;
-  border-bottom: 2px solid var(--accent);
 }
 
 /* The lines a removal took, between the lines it sat between. */

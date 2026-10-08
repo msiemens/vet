@@ -1,9 +1,10 @@
 // The changes of a file drawn in its text (the File view): changed lines tinted by their hunk's
 // review state with the changed words of modified lines, the review strip, a wedge where lines were
-// removed and the peek of those lines, and a bracket beside the hunk the caret is in. The layout
-// comes from `fileLayout`; this module keeps it with the review states and draws it.
+// removed and the peek of those lines, and the hunk the caret is in tinted blue over all of that,
+// with its line numbers a stronger blue. The layout comes from `fileLayout`; this module keeps it
+// with the review states and draws it.
 
-import { type Extension, type Range, StateEffect, StateField, type Text } from "@codemirror/state";
+import { type Extension, type Range, RangeSet, StateEffect, StateField, type Text } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
@@ -12,6 +13,7 @@ import {
   type ViewUpdate,
   WidgetType,
   gutter,
+  lineNumberMarkers,
   lineNumbers,
 } from "@codemirror/view";
 import type { Hunk } from "../../../generated/Hunk";
@@ -55,6 +57,9 @@ export interface ChangesState {
   /** The removals whose lines are shown. */
   peeks: ReadonlySet<number>;
   decos: DecorationSet;
+  /** The current hunk's lines and their line numbers. */
+  currentLines: DecorationSet;
+  currentNumbers: RangeSet<GutterMarker>;
 }
 
 const lineDecos: Record<Tint, Decoration> = {
@@ -65,6 +70,27 @@ const wordDecos: Record<Tint, Decoration> = {
   full: Decoration.mark({ class: "vet-fw vet-fw-full" }),
   faint: Decoration.mark({ class: "vet-fw vet-fw-faint" }),
 };
+
+const currentHunkLine = Decoration.line({ class: "vet-current-hunk" });
+const currentHunkNumber = new (class extends GutterMarker {
+  elementClass = "vet-current-hunk";
+})();
+
+/** The current hunk's changed lines (a removal has none), as line decorations and line number markers. */
+function currentMarks(
+  layout: FileLayout,
+  current: number | null,
+  doc: Text,
+): Pick<ChangesState, "currentLines" | "currentNumbers"> {
+  const starts: number[] = [];
+  if (current !== null)
+    for (const [line, hunk] of layout.lineHunk) if (hunk === current) starts.push(doc.line(line + 1).from);
+  starts.sort((a, b) => a - b);
+  return {
+    currentLines: Decoration.set(starts.map((from) => currentHunkLine.range(from))),
+    currentNumbers: RangeSet.of(starts.map((from) => currentHunkNumber.range(from))),
+  };
+}
 
 /** What the peek's button does to a removal in each state. */
 const PEEK_LABEL: Record<HunkState, string> = {
@@ -127,7 +153,7 @@ class Peek extends WidgetType {
 /** The lines of each removal, kept so that a redrawn peek is the same widget. */
 const removed = new WeakMap<Hunk, { number: number; text: string }[]>();
 
-function build(source: ChangesSource, s: Omit<ChangesState, "decos">, doc: Text): DecorationSet {
+function build(source: ChangesSource, s: Pick<ChangesState, "layout" | "states" | "peeks">, doc: Text): DecorationSet {
   const out: Range<Decoration>[] = [];
   for (const [line, hunk] of s.layout.lineHunk)
     out.push(lineDecos[tintOf(s.states[hunk])].range(doc.line(line + 1).from));
@@ -154,7 +180,7 @@ export function changesField(source: ChangesSource, states: HunkState[]): StateF
     create(state) {
       const layout = fileLayout(source.hunks, source.changes, state.doc);
       const base = { layout, states, current: null, peeks: new Set<number>() };
-      return { ...base, decos: build(source, base, state.doc) };
+      return { ...base, decos: build(source, base, state.doc), ...currentMarks(layout, null, state.doc) };
     },
     update(value, tr) {
       let next = value;
@@ -179,39 +205,40 @@ export function changesField(source: ChangesSource, states: HunkState[]): StateF
         const current = hunkAtLine(next.layout, lineOf(tr.state.doc, tr.selection.main.head)) ?? null;
         if (current !== next.current) next = { ...next, current };
       }
+      if (next.current !== value.current) next = { ...next, ...currentMarks(next.layout, next.current, tr.state.doc) };
       return rebuild ? { ...next, decos: build(source, next, tr.state.doc) } : next;
     },
-    provide: (f) => EditorView.decorations.from(f, (s) => s.decos),
+    provide: (f) => [
+      EditorView.decorations.from(f, (s) => s.decos),
+      EditorView.decorations.from(f, (s) => s.currentLines),
+      lineNumberMarkers.from(f, (s) => s.currentNumbers),
+    ],
   });
 }
 
-/** The wedge where lines were removed, and the bracket beside the current hunk, in one gutter element. */
-class Edge extends GutterMarker {
+/** The wedge where lines were removed. */
+class Wedge extends GutterMarker {
   constructor(
-    readonly wedge: { at: "above" | "below"; state: HunkState } | null,
-    readonly bracket: "only" | "first" | "middle" | "last" | null,
+    readonly at: "above" | "below",
+    readonly state: HunkState,
   ) {
     super();
   }
 
-  eq(other: Edge): boolean {
-    return (
-      other.bracket === this.bracket && other.wedge?.at === this.wedge?.at && other.wedge?.state === this.wedge?.state
-    );
+  eq(other: Wedge): boolean {
+    return other.at === this.at && other.state === this.state;
   }
 
   toDOM(): HTMLElement {
     const edge = el("div", "vet-edge");
-    if (this.wedge) edge.append(el("span", `vet-wedge vet-wedge-${this.wedge.at} vet-wedge-${this.wedge.state}`));
-    if (this.bracket) edge.append(el("span", `vet-bracket vet-bracket-${this.bracket}`));
+    edge.append(el("span", `vet-wedge vet-wedge-${this.at} vet-wedge-${this.state}`));
     return edge;
   }
 }
 
 /**
  * The extensions that draw a file's changes: line numbers (a press on one of a changed line asks for
- * its card), the gutter of wedges and the current hunk's bracket, the review strip and the tints.
- * `field` is the file's `changesField`.
+ * its card), the gutter of wedges, the review strip and the tints. `field` is the file's `changesField`.
  */
 export function fileChanges(source: ChangesSource, field: StateField<ChangesState>): Extension[] {
   const changed = (line: number, view: EditorView) => view.state.field(field).layout.lineHunk.has(line);
@@ -236,14 +263,7 @@ export function fileChanges(source: ChangesSource, field: StateField<ChangesStat
         const doc = view.state.doc;
         const line = lineOf(doc, block.from);
         const removal = s.layout.deletions.find((d) => wedgeAt(d, doc.lines).line === line);
-        const wedge = removal && { at: wedgeAt(removal, doc.lines).at, state: s.states[removal.hunk] };
-        let bracket: "only" | "first" | "middle" | "last" | null = null;
-        if (s.current !== null && s.layout.lineHunk.get(line) === s.current) {
-          const h = source.hunks[s.current];
-          const [first, last] = [h.targetStart, h.targetStart + h.targetLen - 1];
-          bracket = first === last ? "only" : line === first ? "first" : line === last ? "last" : "middle";
-        }
-        return wedge || bracket ? new Edge(wedge ?? null, bracket) : null;
+        return removal ? new Wedge(wedgeAt(removal, doc.lines).at, s.states[removal.hunk]) : null;
       },
       domEventHandlers: {
         mousedown(view, block) {
