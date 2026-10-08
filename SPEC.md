@@ -382,7 +382,7 @@ GitHub and ADO ship in M1; the other columns show the model covers them, and are
 
 How the UI follows the traits:
 
-- **Conversation tab** in the comments tool window exists only when `conversation_feed` is true.
+- **Review and Conversation tabs** in the comments tool window, on every platform with a pull request: Review holds the threads on files and lines; Conversation holds what concerns the pull request as a whole — with `conversation_feed`, the platform's flat feed (comments and review summaries with their verdict), own comments editable there and answered by a new comment rather than a reply; without it, the changeset threads with replies and Resolve.
 - **The comments tool window** shows "Submit review" with the verdict menu for `BatchedReview`, or "Post" for `PerComment`, next to the drafts it posts; a separate vote control appears beside it when `verdict_separate` is true.
 - **Blocking marker** on a thread, and the queue's blocking status, mean whatever `blocking` says. A Bitbucket task is a flag on its thread.
 - **Revision-scoped platforms**: Vet still anchors to its own snapshots; a remote comment's patch set maps to the snapshot built from that patch set.
