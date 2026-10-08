@@ -176,6 +176,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_refused_token_is_logged_with_its_host_and_status_and_without_the_token() {
+        let capture = vet_log::capture::Capture::default();
+        let _logging = capture.install(vet_log::filter(None).0);
+        let fake = Fake::start(|_, _| Canned::status(401, r#"{"message":"Bad credentials"}"#));
+        let github = validator(&fake)
+            .user("github.com", PlatformKind::GitHub, &credential(CredentialSource::Pat))
+            .await;
+        assert!(github.is_err());
+        let fake = Fake::start(|_, _| Canned::status(401, ""));
+        let azure = validator(&fake)
+            .user(
+                "dev.azure.com/contoso",
+                PlatformKind::AzureDevOps,
+                &credential(CredentialSource::Pat),
+            )
+            .await;
+        assert!(azure.is_err());
+
+        let log = capture.text();
+        assert!(
+            log.contains("WARN") && log.contains("github.com") && log.contains("401"),
+            "{log}"
+        );
+        assert!(log.contains("dev.azure.com/contoso"), "{log}");
+        // The token itself, and its base64 as the Basic header carries it.
+        assert!(!log.contains("secret") && !log.contains("OnNlY3JldA"), "{log}");
+    }
+
+    #[tokio::test]
     async fn the_azure_devops_user_is_asked_of_the_organization_and_a_personal_token_has_no_user_name() {
         // A token of one organization is refused by the global profile, which is not asked.
         let fake = Fake::start(|seen, _| {

@@ -9,14 +9,15 @@ cd "$(dirname "$0")/.."
 declare -A ALLOWED=(
     [vet-core]=""
     [vet-protocol]=""
+    [vet-log]=""
     [vet-transport]="vet-protocol"
     [vet-highlight]="vet-core"
-    [vet-mock]="vet-core vet-protocol vet-transport vet-highlight vet-app vet-mapping"
+    [vet-mock]="vet-core vet-protocol vet-transport vet-highlight vet-app vet-mapping vet-log"
     [vet-semantic]="vet-core vet-highlight"
     [vet-app]="vet-core vet-semantic"
-    [vet-infra]="vet-core vet-semantic vet-app"
+    [vet-infra]="vet-core vet-semantic vet-app vet-log"
     [vet-mapping]="vet-core vet-protocol vet-semantic vet-app"
-    [vet-backend]="vet-core vet-protocol vet-transport vet-semantic vet-app vet-infra vet-highlight vet-mapping"
+    [vet-backend]="vet-core vet-protocol vet-transport vet-semantic vet-app vet-infra vet-highlight vet-mapping vet-log"
 )
 
 # External crates the pure layers must never depend on.

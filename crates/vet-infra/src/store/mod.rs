@@ -148,7 +148,7 @@ async fn write_filter(db: &impl ConnectionTrait, repo: &str, filter: &ReviewFilt
 impl SqliteStore {
     /// The per-platform data directory; in WSL the Linux home, never `/mnt/*`.
     pub fn default_dir() -> Option<PathBuf> {
-        dirs::data_dir().map(|d| d.join("vet"))
+        vet_log::data_dir()
     }
 
     /// A database written by another version of Vet (it applied migrations
@@ -157,6 +157,7 @@ impl SqliteStore {
         std::fs::create_dir_all(dir)?;
         let mut db = connect(dir).await?;
         if migration::is_foreign(&db).await? {
+            tracing::warn!(dir = %dir.display(), "the database was written by another version of Vet; creating it anew");
             db.close().await?;
             for suffix in ["", "-wal", "-shm"] {
                 match std::fs::remove_file(dir.join(format!("{DATABASE}{suffix}"))) {

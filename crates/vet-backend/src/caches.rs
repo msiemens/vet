@@ -28,7 +28,7 @@ impl PersistentAnswers {
                     Ok(cache) => Some(Arc::new(cache)),
                     // Only speed is lost without it.
                     Err(why) => {
-                        eprintln!("vet: no semantic cache between launches: {why}");
+                        tracing::warn!(error = %why, "no semantic cache between launches");
                         None
                     }
                 }

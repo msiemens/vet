@@ -20,6 +20,7 @@ use bench::Bench;
 use startup::Startup;
 
 pub fn run() {
+    let mut log = vet_log::data_dir().map(|dir| vet_log::init(&dir.join(vet_log::LOGS)));
     let app = tauri::Builder::default()
         .plugin(
             tauri_plugin_decoration::builder()
@@ -34,7 +35,7 @@ pub fn run() {
                 return;
             }
             if let Err(e) = app.emit("vet-menu", event.id().0.clone()) {
-                eprintln!("cannot forward menu event: {e}");
+                tracing::warn!(error = %e, "cannot forward menu event");
             }
         })
         .on_window_event(geometry::on_window_event)
@@ -55,6 +56,7 @@ pub fn run() {
             startup::startup_progress,
             bench::bench_config,
             browser::open_url,
+            browser::show_folder,
             credentials::stored_credentials,
             credentials::stored_credential,
             credentials::store_credential,
@@ -70,12 +72,14 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building the Vet shell");
 
-    app.run(|handle, event| {
+    app.run(move |handle, event| {
         if let RunEvent::Exit = event {
             geometry::persist(handle);
             if let Some(backend) = handle.try_state::<Backend>() {
                 backend.kill();
             }
+            // The process ends after this: the log file takes what is buffered first.
+            drop(log.take());
         }
     });
 }

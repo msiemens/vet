@@ -115,7 +115,7 @@ impl Saved {
 
     fn parse(text: &str) -> Self {
         serde_json::from_str(text).unwrap_or_else(|e| {
-            eprintln!("ignoring the saved window geometry: {e}");
+            tracing::warn!(error = %e, "ignoring the saved window geometry");
             Self::default()
         })
     }
@@ -211,10 +211,10 @@ impl Windows {
         let Some(file) = &self.file else { return };
         let text = match serde_json::to_string_pretty(&self.lock().saved) {
             Ok(text) => text,
-            Err(e) => return eprintln!("cannot encode the window geometry: {e}"),
+            Err(e) => return tracing::warn!(error = %e, "cannot encode the window geometry"),
         };
         if let Err(e) = write(file, &text) {
-            eprintln!("cannot save the window geometry to {}: {e}", file.display());
+            tracing::warn!(file = %file.display(), error = %e, "cannot save the window geometry");
         }
     }
 }

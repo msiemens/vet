@@ -106,7 +106,7 @@ struct Prepared {
     phases: Phases,
 }
 
-/// How long each phase of a server start took, for `VET_TIMING`.
+/// How long each phase of a server start took, for the timing lines of the log.
 #[derive(Default)]
 struct Phases(Vec<(&'static str, Duration)>);
 
@@ -194,6 +194,19 @@ struct Launched {
     phases: Phases,
 }
 
+/// A server that did not come up. The message can carry what the server wrote to stderr, which
+/// can quote code, so only its first line is logged above `debug`.
+fn warn_not_started(server: &str, tree: Tree, why: &LaunchError) {
+    let message = why.to_string();
+    tracing::warn!(
+        server,
+        ?tree,
+        reason = vet_log::first_line(&message),
+        "the language server did not start"
+    );
+    tracing::debug!(server, ?tree, reason = %message, "the language server's failure in full");
+}
+
 /// The server's name as a person knows it.
 fn server_name(config: &ServerConfig) -> &str {
     language::by_id(&config.backend.0).map_or(config.binary.as_str(), |l| l.display_name)
@@ -275,6 +288,9 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
             .tasks
             .start(TaskKind::ServerStart, format!("Starting {name}{side}"));
         let launched = self.launch(root, tree, backend, policy).await;
+        if let Err(why) = &launched {
+            warn_not_started(name, tree, why);
+        }
         starting.conclude(&launched);
         let Launched {
             conn,
@@ -306,10 +322,18 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
             if let Some(indexing) = indexing {
                 indexing.fail(why.clone());
             }
-            return Err(LaunchError::NotReady(conn.describe(why)));
+            let why = LaunchError::NotReady(conn.describe(why));
+            warn_not_started(name, tree, &why);
+            return Err(why);
         }
         phases.mark("ready wait", phase);
-        crate::timing::log(
+        tracing::info!(
+            server = name,
+            ?tree,
+            took_ms = started.elapsed().as_millis() as u64,
+            "language server ready"
+        );
+        vet_semantic::trace::log(
             || {
                 format!(
                     "starting {} on {} ({tree:?}: {})",

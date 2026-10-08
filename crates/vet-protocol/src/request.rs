@@ -56,6 +56,9 @@ pub enum Request {
     /// that no running Vet uses. Only speed is lost; review state and results stay as
     /// they are. They belong to the backend, not to a project. Answers with `Response::Done`.
     ClearSemanticCaches,
+    /// Where the backend writes its log files, as a path of the machine it runs on. They belong to
+    /// the backend, not to a project. Answers with `Response::LogDirectory`.
+    LogDirectory,
     /// Opens the working tree of the repository containing `repo`, which may be
     /// any folder inside it, against its current branch, and subscribes this
     /// connection to the project's events. The repository's open review is

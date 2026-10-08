@@ -167,7 +167,10 @@ impl Orchestrator {
         }
     }
 
+    /// The open project `id`. The request being answered is about it from here on, and its
+    /// log lines say so.
     async fn find(&self, id: ProjectId) -> Result<Arc<Open>, String> {
+        tracing::Span::current().record("project", id);
         self.projects.find(id).await.map_err(message)
     }
 
@@ -177,10 +180,11 @@ impl Orchestrator {
         let swept = self.trees.sweep().await;
         let collected = self.trees.collect(SystemTime::now()).await;
         if swept + collected.removed > 0 {
-            eprintln!(
-                "vet: removed {swept} leftovers and {} kept trees ({} MB)",
-                collected.removed,
-                collected.freed >> 20
+            tracing::info!(
+                swept,
+                removed = collected.removed,
+                freed_mb = collected.freed >> 20,
+                "removed leftovers and kept trees"
             );
         }
     }
@@ -200,19 +204,7 @@ impl Orchestrator {
 
 impl Handler for Orchestrator {
     async fn handle(&self, request: Request, events: Events) -> Result<Response, String> {
-        let from = Connection(events);
-        if !vet_infra::timing::enabled() {
-            return self.answer(request, &from).await;
-        }
-        let name = format!("{request:?}")
-            .split([' ', '{', '('])
-            .next()
-            .unwrap_or_default()
-            .to_owned();
-        let started = std::time::Instant::now();
-        let response = self.answer(request, &from).await;
-        vet_infra::timing::log(|| format!("request {name}"), started);
-        response
+        self.answer(request, &Connection(events)).await
     }
 }
 
@@ -246,6 +238,11 @@ impl Orchestrator {
             Request::ClearSemanticCaches => reply(async move {
                 self.clear_semantic_caches().await;
                 Ok(Response::Done)
+            }),
+            Request::LogDirectory => reply(async move {
+                Ok(Response::LogDirectory {
+                    path: self.store.dir().join(vet_log::LOGS).to_string_lossy().into_owned(),
+                })
             }),
             Request::OpenProject { repo } => reply(async move {
                 let (project, root) = self.open(&repo, from.clone()).await?;
@@ -453,18 +450,12 @@ fn start_servers_in_background(open: Arc<Open>) {
     });
 }
 
-/// The store in the per-platform data directory (§8).
-pub async fn open_default_store() -> Result<SqliteStore, String> {
-    let dir = SqliteStore::default_dir().ok_or("no data directory")?;
-    open_store(&dir).await
-}
-
 /// Opens the store and collects what its retention no longer keeps. A failed
 /// collection only leaves the garbage for the next start.
 pub async fn open_store(dir: &Path) -> Result<SqliteStore, String> {
     let store = SqliteStore::open(dir).await.map_err(|e| e.0)?;
     if let Err(e) = vet_app::gc::collect(&store, unix_now(), &Retention::default()).await {
-        eprintln!("vet: garbage collection failed: {}", e.0);
+        tracing::warn!(error = %e.0, "garbage collection of the store failed");
     }
     Ok(store)
 }

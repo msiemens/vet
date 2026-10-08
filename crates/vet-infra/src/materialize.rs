@@ -69,8 +69,9 @@ impl<G: History + Checkout + Send + Sync, S: Store + Send + Sync> Materializer f
             .map_err(|e| match e {
                 Error::Build(why) => why,
                 Error::Io(why) => NotMaterializable::Other(format!("materialize directory: {why}")),
-            })?;
-        crate::timing::log(
+            })
+            .inspect_err(|why| tracing::warn!(snapshot = %&id.0.to_hex()[..12], reason = %why, "cannot materialize the snapshot"))?;
+        vet_semantic::trace::log(
             || {
                 format!(
                     "materialize {} ({})",

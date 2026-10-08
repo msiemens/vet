@@ -1,0 +1,16 @@
+[package]
+name = "vet-log"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Vet's one log: the subscriber the backend and the shell install, and where its file lives.
+# Depends on no other crate of the workspace, so the shell, which is built on its own, can use it.
+[dependencies]
+dirs = "7.0.0"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "std", "tracing-log", "ansi"] }
+
+[lints]
+workspace = true

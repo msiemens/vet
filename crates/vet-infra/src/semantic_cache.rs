@@ -133,6 +133,7 @@ impl SqliteSemanticCache {
             Ok(pool) => pool,
             Err(Unusable::Failed(why)) => return Err(why),
             Err(Unusable::Foreign) => {
+                tracing::warn!(file = %path.display(), "the semantic cache was written by another version of Vet; creating it anew");
                 for suffix in ["", "-wal", "-shm"] {
                     match std::fs::remove_file(dir.join(format!("{FILE}{suffix}"))) {
                         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(message(e)),
@@ -240,7 +241,7 @@ async fn write_all(pool: SqlitePool, mut jobs: mpsc::UnboundedReceiver<Job>, bud
         if unchecked >= CHECK_EVERY || flushed {
             unchecked = 0;
             if let Err(e) = keep_within(&pool, budget).await {
-                eprintln!("vet: semantic cache: {e}");
+                tracing::warn!(error = %e, "the semantic cache could not be kept within its budget");
             }
         }
         for ack in acks {
@@ -305,7 +306,7 @@ async fn apply(pool: &SqlitePool, batch: Vec<Job>, clock: &Clock) -> Vec<Ack> {
     }
     .await;
     if let Err(e) = result {
-        eprintln!("vet: semantic cache: {e}");
+        tracing::warn!(error = %e, "the semantic cache could not apply its writes");
     }
     if acks.iter().any(|a| matches!(a, Ack::Cleared(..))) {
         // Hands the space back to the file system.

@@ -15,6 +15,8 @@ vet-highlight.workspace = true
 vet-mapping.workspace = true
 vet-protocol.workspace = true
 vet-transport.workspace = true
+vet-log.workspace = true
+tracing = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [lints]

@@ -25,6 +25,10 @@ pub enum Response {
     },
     /// Acknowledges a request that has no result.
     Done,
+    /// The folder of the backend's log files.
+    LogDirectory {
+        path: String,
+    },
     /// The recent list after the request, most recent first.
     RecentProjects {
         projects: Vec<RecentProject>,

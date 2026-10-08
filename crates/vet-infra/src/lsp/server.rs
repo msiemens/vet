@@ -34,7 +34,7 @@ use super::capabilities::Diagnostics;
 use super::rpc::{Connection, State};
 use super::uri::{file_uri, key, path_of};
 use crate::language::language_id;
-use crate::{paths, timing};
+use crate::paths;
 
 /// Documents kept open at once; the oldest are closed beyond this.
 const MAX_OPEN_DOCS: usize = 64;
@@ -80,7 +80,7 @@ enum Needs {
     Project,
 }
 
-/// What making the server see a file took and did, for `VET_TIMING`.
+/// What making the server see a file took and did, for the timing lines of the log.
 #[derive(Default)]
 struct Synced {
     /// The file was opened or its text changed.
@@ -333,7 +333,7 @@ impl LspServer {
 
     /// The timing line of a query: `what` names the thing asked about.
     fn log_query(&self, request: &str, what: impl Display, timed: &Timed, detail: &str) {
-        timing::log(
+        vet_semantic::trace::log(
             || format!("{request} {:?} {what} ({}{detail})", self.tree, timed.describe()),
             timed.started,
         );
@@ -341,7 +341,7 @@ impl LspServer {
 
     /// The timing line of a request that needs no sync of its own.
     fn log_request(&self, request: &str, what: impl Display, detail: &str, started: Instant) {
-        timing::log(|| format!("{request} {:?} {what} ({detail})", self.tree), started);
+        vet_semantic::trace::log(|| format!("{request} {:?} {what} ({detail})", self.tree), started);
     }
 
     /// Makes the server see `file`; on the live tree also mirrors every open

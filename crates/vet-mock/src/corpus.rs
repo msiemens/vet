@@ -126,7 +126,7 @@ pub fn ensure_repo(cfg: &Config) -> Result<(), String> {
     if cfg.repo.join(".git").exists() && have(&cfg.base) && have(&cfg.head) {
         return Ok(());
     }
-    eprintln!(
+    tracing::info!(
         "fetching {} {}..{} into {}",
         cfg.url,
         cfg.base,

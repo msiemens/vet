@@ -22,7 +22,7 @@ pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static 
     use tauri_plugin_decoration::WebviewWindowExt;
 
     async fn native(window: &tauri::WebviewWindow, cause: impl std::fmt::Display) -> Result<&'static str, String> {
-        eprintln!("app-drawn title bar unavailable, using the native frame: {cause}");
+        tracing::warn!(%cause, "app-drawn title bar unavailable, using the native frame");
         let restored = window.restore_decoration().await;
         reveal(window).map_err(|e| format!("{cause}; showing the native frame failed: {e}"))?;
         restored
@@ -36,7 +36,7 @@ pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static 
     std::thread::spawn(move || {
         std::thread::sleep(SHOW_WITHIN);
         if let Err(e) = reveal(&shown) {
-            eprintln!("cannot show the window: {e}");
+            tracing::warn!(error = %e, "cannot show the window");
         }
     });
     let mut attempt = 1;
@@ -44,7 +44,7 @@ pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static 
         if attempt == DECORATION_ATTEMPTS {
             return native(&window, e).await;
         }
-        eprintln!("app-drawn title bar, attempt {attempt} of {DECORATION_ATTEMPTS} failed: {e}");
+        tracing::warn!(attempt, of = DECORATION_ATTEMPTS, error = %e, "app-drawn title bar failed");
         attempt += 1;
     }
     // Centres the traffic lights in the 40px header: the plugin centres them in a titlebar of

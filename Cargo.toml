@@ -11,6 +11,7 @@ members = [
     "crates/vet-backend",
     "crates/vet-highlight",
     "crates/vet-mapping",
+    "crates/vet-log",
 ]
 
 # The Tauri host pulls in a large dependency tree and system webview libraries;
@@ -33,6 +34,7 @@ vet-app = { path = "crates/vet-app" }
 vet-infra = { path = "crates/vet-infra" }
 vet-highlight = { path = "crates/vet-highlight" }
 vet-mapping = { path = "crates/vet-mapping" }
+vet-log = { path = "crates/vet-log" }
 
 # `deny`, not `forbid`: a forbidden lint cannot be re-allowed, and the Windows watcher
 # and job-object modules in vet-infra need a narrow `#![allow(unsafe_code)]`. They are the only ones.

@@ -332,6 +332,7 @@ impl Handler for Mock {
             | Request::InstallServer { .. }
             | Request::SetServerPath { .. }
             | Request::ClearSemanticCaches => Err("the corpus has no language servers".into()),
+            Request::LogDirectory => Err("the corpus keeps no log".into()),
             Request::ListChangesets { .. }
             | Request::ListPullRequests { .. }
             | Request::OpenChangeset { .. }
@@ -348,9 +349,10 @@ async fn main() -> std::io::Result<()> {
     if flag("--exit-on-stdin-close") {
         exit_when_stdin_closes();
     }
+    let _log = vet_log::data_dir().map(|dir| vet_log::init(&dir.join(vet_log::LOGS)));
     let config = Config::from_args(&args);
     let fail = |error: String| -> ! {
-        eprintln!("cannot load the corpus: {error}");
+        tracing::error!("cannot load the corpus: {error}");
         std::process::exit(2);
     };
     if flag("--prepare") {
@@ -360,15 +362,19 @@ async fn main() -> std::io::Result<()> {
     let corpus = corpus::load(&config).unwrap_or_else(|e| fail(e));
 
     let stats = corpus.stats();
-    eprintln!(
+    tracing::info!(
         "corpus {}: {} files, {} hunks, biggest file {} ({} lines)",
-        corpus.name, stats.files, stats.hunks, stats.biggest.0, stats.biggest.1
+        corpus.name,
+        stats.files,
+        stats.hunks,
+        stats.biggest.0,
+        stats.biggest.1
     );
-    eprintln!("hunks are counted as zero-context regions (like git diff -U0)");
+    tracing::info!("hunks are counted as zero-context regions (like git diff -U0)");
     if flag("--stats") {
         let problems = stats.problems();
         for problem in &problems {
-            eprintln!("below the spike's corpus thresholds: {problem}");
+            tracing::warn!("below the spike's corpus thresholds: {problem}");
         }
         std::process::exit(i32::from(!problems.is_empty()));
     }

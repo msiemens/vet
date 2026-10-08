@@ -63,7 +63,7 @@ impl Startup {
         *self.lock() = progress.clone();
         self.changed.notify_all();
         if let Err(e) = app.emit_to(SPLASH, EVENT, progress) {
-            eprintln!("cannot report startup progress: {e}");
+            tracing::warn!(error = %e, "cannot report startup progress");
         }
     }
 
@@ -109,7 +109,7 @@ pub fn show_splash(app: &AppHandle) {
         .center()
         .build();
     if let Err(e) = built {
-        eprintln!("cannot open the splash window: {e}");
+        tracing::warn!(error = %e, "cannot open the splash window");
     }
 }
 
@@ -118,7 +118,7 @@ pub fn close_splash(app: &AppHandle) {
     if let Some(splash) = app.get_webview_window(SPLASH)
         && let Err(e) = splash.close()
     {
-        eprintln!("cannot close the splash window: {e}");
+        tracing::warn!(error = %e, "cannot close the splash window");
     }
 }
 
@@ -134,7 +134,7 @@ pub fn launch(app: &AppHandle) {
                 startup.report(&app, Step::LoadingUi);
             }
             Err(message) => {
-                eprintln!("startup failed: {message}");
+                tracing::error!(%message, "startup failed");
                 startup.fail(&app, message);
             }
         }

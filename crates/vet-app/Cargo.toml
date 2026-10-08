@@ -16,6 +16,7 @@ tokio = { version = "1.53.2", features = ["sync", "time"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 # What `az` prints.
 serde_json = "1.0.151"
+tracing = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["macros", "rt", "time"] }

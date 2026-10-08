@@ -58,6 +58,7 @@ impl<G: Fetcher> Fetch<G> {
                 Ok(())
             }
             Err(e) => {
+                tracing::warn!(remote = %remote.name, error = %e.0, "fetching refs failed");
                 let message = format!("{}: {}", remote.name, e.0);
                 task.fail(message.clone());
                 Err(message)
@@ -81,6 +82,7 @@ impl<G: Fetcher> Fetch<G> {
             task.report(Some((done as u32, total)), Some(remote.name.clone()));
             let auth = authentication(credentials, remote).await;
             if let Err(e) = self.git.fetch(&remote.name, auth).await {
+                tracing::warn!(remote = %remote.name, error = %e.0, "fetch failed");
                 failures.push(format!("{}: {}", remote.name, e.0));
             }
         }

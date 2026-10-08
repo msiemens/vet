@@ -356,7 +356,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         if scan.snapshot.id != self.settled_snapshot().await {
             let (revision, retained) = self.settled(scan).await?;
             if let Some(e) = retained {
-                eprintln!("vet: could not keep the content of revision {revision}: {e}");
+                tracing::warn!(revision, error = %e, "could not keep the content of the revision");
             }
         }
         Ok(())
@@ -778,26 +778,26 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                     match self.observe().await {
                         Ok(Some(revision)) => on_settled(revision),
                         Ok(None) => {}
-                        Err(e) => eprintln!("vet: could not look at the branch on view: {e}"),
+                        Err(e) => tracing::warn!(error = %e, "could not look at the branch on view"),
                     }
                     continue;
                 }
                 Err(e) => {
-                    eprintln!("vet: reconciliation failed: {}", e.0);
+                    tracing::warn!(error = %e.0, "reconciliation failed");
                     continue;
                 }
             };
             match self.settled(scan).await {
                 Ok((revision, retained)) => {
                     if let Some(e) = retained {
-                        eprintln!("vet: could not keep the content of revision {revision}: {e}");
+                        tracing::warn!(revision, error = %e, "could not keep the content of the revision");
                     }
                     self.set_degraded(settling.degraded());
                     if self.state.lock().await.source == Source::WorkingTree {
                         on_settled(revision);
                     }
                 }
-                Err(e) => eprintln!("vet: could not record a settled snapshot: {e}"),
+                Err(e) => tracing::warn!(error = %e, "could not record a settled snapshot"),
             }
         }
     }

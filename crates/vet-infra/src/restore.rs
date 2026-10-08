@@ -500,6 +500,14 @@ impl ToolRestorer {
             match self.run(root, step).await {
                 Ok(()) => records.push(step.record(Outcome::Ran)),
                 Err(why) => {
+                    // The tool's output can quote code: only its first line is logged above `debug`.
+                    tracing::warn!(
+                        project = %label(&step.project),
+                        tool = step.program,
+                        reason = vet_log::first_line(&why),
+                        "a restore step failed"
+                    );
+                    tracing::debug!(project = %label(&step.project), tool = step.program, output = %why, "the failed restore step's output");
                     records.push(step.record(Outcome::Failed(why.clone())));
                     restored.failures.push(step.failure(why));
                     failed.push(&step.project);
@@ -645,7 +653,7 @@ impl ToolRestorer {
             record,
         } = self.standing(layout, root, language, plan, policy).await;
         if let Some(record) = record {
-            crate::timing::log(|| format!("restore {} (kept)", language.id), started);
+            vet_semantic::trace::log(|| format!("restore {} (kept)", language.id), started);
             return Restored {
                 failures: plan.failures.clone(),
                 ran: steps
@@ -670,7 +678,7 @@ impl ToolRestorer {
         // Without the record the next use restores again, which is only slower.
         let _ = record.write(&file);
         layout.measure().await;
-        crate::timing::log(|| format!("restore {} (built)", language.id), started);
+        vet_semantic::trace::log(|| format!("restore {} (built)", language.id), started);
         restored
     }
 }

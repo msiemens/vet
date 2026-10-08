@@ -6,12 +6,13 @@
 //! authenticated connection are handled concurrently, so a slow query never
 //! blocks a hover.
 
+mod log;
 pub mod shell;
 
 use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use subtle::ConstantTimeEq;
@@ -19,6 +20,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tokio_tungstenite::tungstenite::Message;
+use tracing::Instrument;
 use vet_protocol::{ClientMessage, Event, PROTOCOL_VERSION, Ready, Request, Response, ServerMessage};
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -86,7 +88,7 @@ impl Server {
             let (handler, token) = (handler.clone(), token.clone());
             tokio::spawn(async move {
                 if let Err(error) = connection(stream, &token, handler).await {
-                    eprintln!("connection closed: {error}");
+                    tracing::warn!(%error, "connection closed");
                 }
             });
         }
@@ -145,23 +147,48 @@ async fn connection<H: Handler>(
     });
 
     let running = Running::default();
+    let mut ui_budget = log::UiBudget::new(Instant::now());
     while let Some(message) = source.next().await {
         let Message::Text(text) = message? else { continue };
         match serde_json::from_str::<ClientMessage>(text.as_str()) {
             Ok(ClientMessage::Request { id, request }) => {
                 let (handler, replies) = (handler.clone(), replies.clone());
-                running.start(id, |finish| async move {
-                    let reply = match handler.handle(request, Events(replies.clone())).await {
-                        Ok(response) => ServerMessage::Response { id, response },
-                        Err(message) => ServerMessage::Error { id: Some(id), message },
-                    };
-                    let _ = replies.send(reply);
-                    finish.done();
+                // The span carries what every line logged while the request runs is about; the
+                // handler adds the project once it knows it.
+                let span =
+                    tracing::info_span!("request", id, kind = %log::kind(&request), project = tracing::field::Empty);
+                running.start(id, |finish| {
+                    async move {
+                        let started = Instant::now();
+                        let reply = match handler.handle(request, Events(replies.clone())).await {
+                            Ok(response) => {
+                                tracing::debug!(target: "timing", took_ms = started.elapsed().as_millis() as u64, "answered");
+                                ServerMessage::Response { id, response }
+                            }
+                            Err(message) => {
+                                tracing::debug!(target: "timing", took_ms = started.elapsed().as_millis() as u64, error = %message, "failed");
+                                ServerMessage::Error { id: Some(id), message }
+                            }
+                        };
+                        let _ = replies.send(reply);
+                        finish.done();
+                    }
+                    .instrument(span)
                 });
             }
             Ok(ClientMessage::Cancel { id }) => {
                 if running.cancel(id) {
+                    tracing::debug!(id, "request cancelled");
                     let _ = replies.send(ServerMessage::Cancelled { id });
+                }
+            }
+            Ok(ClientMessage::Log {
+                level,
+                message,
+                context,
+            }) => {
+                if ui_budget.admit(Instant::now()) {
+                    log::from_ui(level, &message, &context);
                 }
             }
             Ok(ClientMessage::Hello { .. }) => {
@@ -171,6 +198,7 @@ async fn connection<H: Handler>(
                 });
             }
             Err(error) => {
+                tracing::warn!(%error, "malformed message");
                 let _ = replies.send(ServerMessage::Error {
                     id: None,
                     message: format!("malformed message: {error}"),

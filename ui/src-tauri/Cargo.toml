@@ -20,6 +20,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 vet-protocol = { path = "../../crates/vet-protocol" }
+vet-log = { path = "../../crates/vet-log" }
+tracing = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }

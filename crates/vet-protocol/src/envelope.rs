@@ -35,6 +35,25 @@ pub enum ClientMessage {
     Cancel {
         id: u32,
     },
+    /// An entry for the backend's log, which the UI has no file for: an uncaught error, an
+    /// unhandled rejection or a failed request. Answered by nothing. The backend logs it under the
+    /// target `ui`.
+    Log {
+        level: LogLevel,
+        message: String,
+        /// Where it came from (`window.onerror`, `request hover`), a short label.
+        context: String,
+    },
+}
+
+/// How serious an entry of the UI's log is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum LogLevel {
+    Error,
+    Warn,
+    Info,
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]

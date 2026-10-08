@@ -223,7 +223,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             Err(error) => error,
         };
         let now = (self.now)();
-        Err(match error {
+        let failed = match error {
             octocrab::Error::GitHub { source, .. } => {
                 let (status, message) = (source.status_code, source.message);
                 if status == StatusCode::TOO_MANY_REQUESTS
@@ -242,7 +242,9 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             },
             octocrab::Error::Hyper { .. } => PlatformError::Unreachable(format!("cannot reach {host}")),
             other => PlatformError::Unexpected(format!("{host} sent something that Vet cannot use: {}", short(&other))),
-        })
+        };
+        tracing::warn!(host, reason = %failed, "GitHub request failed");
+        Err(failed)
     }
 
     async fn graphql<T: DeserializeOwned>(

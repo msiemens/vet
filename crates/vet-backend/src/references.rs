@@ -18,7 +18,7 @@ impl Referenced for StoreReferences {
     fn snapshots(&self) -> Pin<Box<dyn Future<Output = HashSet<SnapshotId>> + Send + '_>> {
         Box::pin(async move {
             open_bases(&self.0).await.unwrap_or_else(|e| {
-                eprintln!("vet: cannot read which kept trees are referenced: {}", e.0);
+                tracing::warn!(error = %e.0, "cannot read which kept trees are referenced");
                 HashSet::new()
             })
         })

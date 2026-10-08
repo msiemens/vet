@@ -40,7 +40,5 @@ pub mod servers;
 /// `vet_semantic::reuse::SemanticCache`.
 pub mod semantic_cache;
 
-pub mod timing;
-
 /// `RepoPath` to and from filesystem paths.
 pub(crate) mod paths;
