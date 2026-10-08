@@ -8,8 +8,7 @@ use vet_core::completion::{Completion, Coverage};
 use vet_core::content::{BlobId, FileDiff, LineDelta, NonTextChange, RepoPath, SnapshotDiff};
 use vet_core::filter::ReviewFilter;
 
-use super::interdiff::View;
-use super::state::{Changes, State, acknowledged, find_diff, lifecycle_of, shown_items};
+use super::state::{Changes, State, View, acknowledged, find_diff, lifecycle_of, shown_items};
 use super::views::{FileStatus, FileView, ManifestView, ReviewUpdateView, ReviewView, TargetView};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::Source;
@@ -212,6 +211,20 @@ pub(super) fn changeset_completion(
     acked: &[NonTextChange],
 ) -> Completion {
     cov.completion(filter, &diff.files, &diff.non_text, acked)
+}
+
+pub(super) fn empty_completion() -> Completion {
+    Completion {
+        lines: 0,
+        seen_lines: 0,
+        old_base_lines: 0,
+        items: 0,
+        acknowledged_items: 0,
+        hunks: 0,
+        seen_hunks: 0,
+        excluded_lines: 0,
+        excluded_items: 0,
+    }
 }
 
 #[cfg(test)]

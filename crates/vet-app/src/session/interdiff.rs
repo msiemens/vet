@@ -7,46 +7,20 @@ use std::collections::BTreeMap;
 
 use vet_core::completion::{Completion, Coverage, HunkState};
 use vet_core::content::{FileDiff, NonTextChange, RepoPath, Snapshot, SnapshotId};
-use vet_core::interdiff::{InterdiffHunk, squash_marks};
+use vet_core::interdiff::squash_marks;
 use vet_core::marking::Region;
 use vet_core::review::{ReviewedSpan, Side};
 use vet_core::version_diff::{VersionSides, version_diff};
 
-use super::manifest::{file_views, target_view};
-use super::state::{Changes, State, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
+use super::manifest::{empty_completion, file_views, target_view};
+use super::state::{Interdiffed, State, View, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
 use super::views::{InterdiffView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
 use crate::base;
-use crate::changeset::{BaseChoice, Version};
+use crate::changeset::BaseChoice;
 use crate::ports::{GitRepo, LiveStore};
 use crate::progress::TaskKind;
 use crate::review::SpanOrigin;
-
-/// What a request about the changeset's files reads: the changeset itself, the interdiff of
-/// two of the review's versions, or one commit's own diff.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub enum View {
-    #[default]
-    Changeset,
-    /// Version `from` against the later version `to`.
-    Interdiff { from: u32, to: u32 },
-    /// The `index`th commit of the changeset, oldest first: what it changed against its parent
-    /// (for a merge, against the automatic merge of its parents).
-    Commit { index: u32 },
-}
-
-/// An interdiff computed at the current revision.
-pub(super) struct Interdiffed {
-    /// A's target rebased onto B's base against B's target, shaped like the changeset's changes
-    /// with no review state of its own (nothing remapped, no threads resolved).
-    pub(super) changes: Changes,
-    /// The hunks of each text file in `changes.diff`, with what they cover in B's changeset.
-    hunks: BTreeMap<RepoPath, Vec<InterdiffHunk>>,
-    from: Version,
-    to: Version,
-    /// `to` is the latest version, the one the review state is remapped onto.
-    markable: bool,
-}
 
 impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Computes what `view` shows, if it is not yet.
@@ -412,20 +386,6 @@ impl<'a> Lens<'a> {
             },
             completion,
         )
-    }
-}
-
-pub(super) fn empty_completion() -> Completion {
-    Completion {
-        lines: 0,
-        seen_lines: 0,
-        old_base_lines: 0,
-        items: 0,
-        acknowledged_items: 0,
-        hunks: 0,
-        seen_hunks: 0,
-        excluded_lines: 0,
-        excluded_items: 0,
     }
 }
 

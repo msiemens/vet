@@ -10,9 +10,9 @@ use vet_core::review::{
     ThreadStatus, target_line,
 };
 
-use super::interdiff::{View, check_commentable, markable};
+use super::interdiff::{check_commentable, markable};
 use super::manifest::{old_path_of, status_of};
-use super::state::{Changes, State, check_revision, find_diff, outcome, shown_items};
+use super::state::{Changes, State, View, check_revision, find_diff, outcome, shown_items};
 use super::views::{FileStatus, Outcome};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::Source;

@@ -7,16 +7,72 @@ use vet_core::content::{
     BlobId, FileDiff, NonTextChange, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
+use vet_core::interdiff::InterdiffHunk;
 use vet_core::resolve::Resolution;
 use vet_core::review::{Anchor, CommentTarget, ReviewedSpan, Thread, ThreadId};
 
-use super::interdiff::{Interdiffed, View};
-use super::lens::CommitUnit;
 use super::views::{ItemView, Lifecycle, Outcome};
 use super::{Result, SessionError};
-use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source};
+use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version};
 use crate::platform::Discussion;
+use crate::ports::CommitDetail;
 use crate::review::{NonTextAck, RecordedSpan, ReviewId, SpanId};
+
+/// What a request about the changeset's files reads: the changeset itself, the interdiff of
+/// two of the review's versions, or one commit's own diff.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum View {
+    #[default]
+    Changeset,
+    /// Version `from` against the later version `to`.
+    Interdiff { from: u32, to: u32 },
+    /// The `index`th commit of the changeset, oldest first: what it changed against its parent
+    /// (for a merge, against the automatic merge of its parents).
+    Commit { index: u32 },
+}
+
+/// An interdiff computed at the current revision.
+pub(super) struct Interdiffed {
+    /// A's target rebased onto B's base against B's target, shaped like the changeset's changes
+    /// with no review state of its own (nothing remapped, no threads resolved).
+    pub(super) changes: Changes,
+    /// The hunks of each text file in `changes.diff`, with what they cover in B's changeset.
+    pub(super) hunks: BTreeMap<RepoPath, Vec<InterdiffHunk>>,
+    pub(super) from: Version,
+    pub(super) to: Version,
+    /// `to` is the latest version, the one the review state is remapped onto.
+    pub(super) markable: bool,
+}
+
+/// One commit of the changeset with its own diff.
+pub(super) struct CommitUnit {
+    pub(super) detail: CommitDetail,
+    pub(super) kind: UnitKind,
+    /// What the commit is compared with: its parent, or the automatic merge of a merge's parents.
+    pub(super) old: Snapshot,
+    pub(super) new: Snapshot,
+    pub(super) changes: Changes,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum UnitKind {
+    Commit,
+    /// `remerged`: compared with the automatic merge of its parents. A merge of more than two
+    /// parents, or one whose automatic merge could not be made, is compared with its first
+    /// parent instead.
+    Merge {
+        remerged: bool,
+    },
+}
+
+impl CommitUnit {
+    /// A merge whose automatic merge it equals: nothing was decided in it.
+    pub(super) fn clean_merge(&self) -> bool {
+        self.kind == UnitKind::Merge { remerged: true }
+            && self.changes.diff.files.is_empty()
+            && self.changes.diff.non_text.is_empty()
+    }
+}
 
 /// What the current revision's diff needs, computed on first use.
 #[derive(Default)]

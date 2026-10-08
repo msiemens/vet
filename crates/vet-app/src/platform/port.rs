@@ -139,11 +139,85 @@ pub async fn list_rows<P: Platform>(
     Ok(rows(candidates, &viewer, query))
 }
 
+/// The checks of each of `commits` in `remote`, asked for together, in the order of `commits`. A
+/// commit the platform cannot answer for is left out, and the first reason is returned beside the
+/// rest, so one commit that was garbage collected does not hide the others.
+pub async fn commits_checks<P: Platform>(
+    platform: &P,
+    remote: &RemoteKey,
+    commits: &[String],
+) -> (Vec<CommitChecks>, Option<PlatformError>) {
+    let answers = futures::future::join_all(commits.iter().map(|commit| platform.checks(remote, commit))).await;
+    let mut found = Vec::new();
+    let mut error = None;
+    for answer in answers {
+        match answer {
+            Ok(checks) => found.push(checks),
+            Err(e) => error = error.or(Some(e)),
+        }
+    }
+    (found, error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::platform::model::{QueueTab, ReviewRequest};
     use crate::platform::queue::tests::{pr, viewer};
+
+    /// Knows the checks of some commits and fails for the others.
+    struct Known(Vec<CommitChecks>);
+
+    impl Platform for Known {
+        fn traits(&self) -> PlatformTraits {
+            PlatformTraits::github()
+        }
+
+        async fn viewer(&self, _: &RemoteKey) -> Result<Viewer, PlatformError> {
+            unreachable!("only checks are asked for")
+        }
+
+        async fn list_pull_requests(
+            &self,
+            _: &RemoteKey,
+            _: &PullRequestQuery,
+        ) -> Result<Vec<PullRequest>, PlatformError> {
+            unreachable!("only checks are asked for")
+        }
+
+        async fn pull_request(&self, _: &RemoteKey, _: u64) -> Result<PullRequestDetail, PlatformError> {
+            unreachable!("only checks are asked for")
+        }
+
+        async fn checks(&self, _: &RemoteKey, commit: &str) -> Result<CommitChecks, PlatformError> {
+            self.0
+                .iter()
+                .find(|c| c.commit == commit)
+                .cloned()
+                .ok_or_else(|| PlatformError::NotFound(format!("no commit {commit}")))
+        }
+
+        async fn check_log(&self, _: &RemoteKey, _: &str) -> Result<CheckLog, PlatformError> {
+            unreachable!("only checks are asked for")
+        }
+    }
+
+    fn commit_of(id: &str) -> CommitChecks {
+        CommitChecks {
+            commit: id.to_owned(),
+            checks: Vec::new(),
+            url: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_commit_the_platform_does_not_know_does_not_hide_the_others() {
+        let platform = Known(vec![commit_of("b"), commit_of("d")]);
+        let asked: Vec<String> = ["a", "b", "c", "d"].iter().map(|c| (*c).to_owned()).collect();
+        let (found, error) = commits_checks(&platform, &remote(), &asked).await;
+        assert_eq!(found.iter().map(|c| c.commit.as_str()).collect::<Vec<_>>(), ["b", "d"]);
+        assert_eq!(error, Some(PlatformError::NotFound("no commit a".to_owned())));
+    }
 
     /// A platform that lists the same pull requests for every query, as one that cannot
     /// narrow by the query would.

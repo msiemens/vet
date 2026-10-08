@@ -11,27 +11,14 @@ use vet_core::completion::{Completion, Coverage};
 use vet_core::content::{LineDelta, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::merkle;
 
-use super::interdiff::empty_completion;
-use super::manifest::{changeset_completion, file_completion, file_views, review_of, target_view};
-use super::remap::Frame;
-use super::state::{Changes, State, acknowledged, commits, lifecycle_of};
+use super::manifest::{changeset_completion, empty_completion, file_completion, file_views, review_of, target_view};
+use super::state::{CommitUnit, State, UnitKind, View, acknowledged, commits, lifecycle_of};
 use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{BaseChoice, CommitId, Lens, Source};
-use crate::ports::{CommitDetail, CommitInfo, GitRepo, LiveStore};
+use crate::ports::{CommitInfo, GitRepo, LiveStore};
 use crate::progress::TaskKind;
 use crate::review::SpanOrigin;
-use vet_core::content::RenameMap;
-
-/// One commit of the changeset with its own diff.
-pub(super) struct CommitUnit {
-    pub(super) detail: CommitDetail,
-    pub(super) kind: UnitKind,
-    /// What the commit is compared with: its parent, or the automatic merge of a merge's parents.
-    pub(super) old: Snapshot,
-    pub(super) new: Snapshot,
-    pub(super) changes: Changes,
-}
 
 /// What a manifest says about the lenses, whatever view it is of.
 pub(super) struct LensFacts {
@@ -43,26 +30,6 @@ pub(super) struct LensFacts {
     pub(super) files: u32,
     /// The completion of the changeset as a whole.
     pub(super) completion: Completion,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum UnitKind {
-    Commit,
-    /// `remerged`: compared with the automatic merge of its parents. A merge of more than two
-    /// parents, or one whose automatic merge could not be made, is compared with its first
-    /// parent instead.
-    Merge {
-        remerged: bool,
-    },
-}
-
-impl CommitUnit {
-    /// A merge whose automatic merge it equals: nothing was decided in it.
-    fn clean_merge(&self) -> bool {
-        self.kind == UnitKind::Merge { remerged: true }
-            && self.changes.diff.files.is_empty()
-            && self.changes.diff.non_text.is_empty()
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -201,7 +168,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         st.changes.as_mut().expect("computed").commits = Some(units);
         self.load_known(st).await?;
         for index in 0..count as u32 {
-            self.remap_view(st, super::interdiff::View::Commit { index }).await?;
+            self.remap_view(st, View::Commit { index }).await?;
         }
         Ok(())
     }
@@ -274,8 +241,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
 
     /// Puts the snapshots a commit's marks are anchored in into the store, so that they can be
     /// loaded when the session no longer holds them.
-    pub(super) async fn keep_snapshots(&self, st: &State, view: super::interdiff::View) -> Result<()> {
-        let super::interdiff::View::Commit { index } = view else {
+    pub(super) async fn keep_snapshots(&self, st: &State, view: View) -> Result<()> {
+        let View::Commit { index } = view else {
             return Ok(());
         };
         let unit = &commits(st.changes.as_ref().expect("computed"))[index as usize];
@@ -331,22 +298,11 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 }
 
-/// The frame of the commit `index`: its own two snapshots, the marks made in it being the ones of its own origin.
-pub(super) fn commit_frame(st: &State, index: u32, renames: RenameMap) -> Frame<'_> {
-    let unit = &commits(st.changes.as_ref().expect("computed"))[index as usize];
-    Frame {
-        base: &unit.old,
-        target: &unit.new,
-        origin: SpanOrigin::Commit(unit.detail.info.id.clone()),
-        renames,
-    }
-}
-
 /// The two snapshots of the changeset or commit view `view` and what marks made in it are
 /// recorded as coming from.
-pub(super) fn view_unit(st: &State, view: super::interdiff::View) -> (SnapshotId, SnapshotId, SpanOrigin) {
+pub(super) fn view_unit(st: &State, view: View) -> (SnapshotId, SnapshotId, SpanOrigin) {
     match view {
-        super::interdiff::View::Commit { index } => {
+        View::Commit { index } => {
             let unit = &commits(st.changes.as_ref().expect("computed"))[index as usize];
             (
                 unit.old.id,
@@ -392,7 +348,6 @@ mod tests {
     use vet_core::completion::HunkState;
     use vet_core::review::Side;
 
-    use super::super::interdiff::View;
     use super::super::{CommentAt, NewThread};
     use super::*;
     use crate::session::tests::Fixture;

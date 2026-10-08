@@ -6,8 +6,7 @@ use std::time::Duration;
 
 use vet_core::content::SnapshotId;
 
-use crate::changeset::ChangesetId;
-use crate::ports::{ChangesetStore, GcReport, GcStore, StoreError};
+use crate::ports::{ChangesetStore, GcFacts, GcPlan, GcReport, GcStore, StoreError};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Retention {
@@ -26,34 +25,6 @@ impl Default for Retention {
             grace: Duration::from_secs(3600),
         }
     }
-}
-
-/// A changeset and everything it keeps alive.
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct ChangesetFacts {
-    pub id: ChangesetId,
-    pub has_open_review: bool,
-    /// Unix seconds the latest closed review ended; `None` if none has.
-    pub last_closed_at: Option<i64>,
-    pub has_open_thread: bool,
-    /// The bases and targets of its versions, and the snapshots its anchors name.
-    pub snapshots: Vec<SnapshotId>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct GcFacts {
-    pub changesets: Vec<ChangesetFacts>,
-    /// Every stored snapshot and when it was stored (unix seconds).
-    pub snapshots: Vec<(SnapshotId, i64)>,
-}
-
-/// What to delete. Tree nodes and content follow from what remains.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct GcPlan {
-    pub changesets: Vec<ChangesetId>,
-    pub snapshots: Vec<SnapshotId>,
-    /// Unreferenced content younger than this stays.
-    pub content_grace: Duration,
 }
 
 /// A changeset expires once its last review closed longer ago than the
@@ -103,6 +74,8 @@ mod tests {
     use vet_core::content::Hash;
 
     use super::*;
+    use crate::changeset::ChangesetId;
+    use crate::ports::ChangesetFacts;
 
     const DAY: i64 = 24 * 3600;
     const NOW: i64 = 100 * DAY;

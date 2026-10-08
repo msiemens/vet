@@ -7,8 +7,8 @@ use vet_core::hunks::changed_lines;
 use vet_core::review::{Anchor, Side, SpanState};
 use vet_core::text::Lines;
 
-use super::interdiff::{View, update_in};
-use super::state::{State, check_revision, find_diff};
+use super::interdiff::update_in;
+use super::state::{State, View, check_revision, find_diff};
 use super::{LiveSession, Result, SessionError};
 use crate::ports::{CommitInfo, GitRepo, LiveStore};
 

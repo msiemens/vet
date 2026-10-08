@@ -9,8 +9,7 @@ use vet_core::inline::TextChange;
 use vet_core::review::Side;
 
 use super::blobs::{NoText, image_media_type};
-use super::interdiff::View;
-use super::state::{check_revision, find_diff, find_non_text};
+use super::state::{View, check_revision, find_diff, find_non_text};
 use super::{LiveSession, Result, SessionError};
 use crate::editor;
 use crate::ports::{BlobRead, GitRepo, LiveStore};

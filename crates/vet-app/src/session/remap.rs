@@ -10,9 +10,7 @@ use vet_core::resolve::{Resolution, resolve_anchor};
 use vet_core::review::{Anchor, CommentTarget, FileRemapInput, ReviewedSpan, Side, Thread, ThreadId};
 
 use super::blobs::image_media_type;
-use super::interdiff::View;
-use super::lens::commit_frame;
-use super::state::{Changes, State};
+use super::state::{Changes, State, View, commits};
 use super::views::{ItemView, ModeChange};
 use super::{LiveSession, Result};
 use crate::ports::{GitRepo, LiveStore};
@@ -62,6 +60,17 @@ pub(super) fn frame_of(st: &State, view: View, renames: RenameMap) -> Frame<'_> 
             origin: SpanOrigin::Squash,
             renames,
         },
+    }
+}
+
+/// The frame of the commit `index`: its own two snapshots, the marks made in it being the ones of its own origin.
+fn commit_frame(st: &State, index: u32, renames: RenameMap) -> Frame<'_> {
+    let unit = &commits(st.changes.as_ref().expect("computed"))[index as usize];
+    Frame {
+        base: &unit.old,
+        target: &unit.new,
+        origin: SpanOrigin::Commit(unit.detail.info.id.clone()),
+        renames,
     }
 }
 

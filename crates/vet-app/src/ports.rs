@@ -3,6 +3,7 @@
 //! `Materializer` are owned by `vet-semantic`, which consumes them.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use vet_core::content::{BlobId, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
@@ -10,7 +11,6 @@ use vet_core::review::{CommentTarget, Message, MessageId, PlatformThread, Review
 use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
-use crate::gc::{GcFacts, GcPlan};
 use crate::platform::{Credential, PlatformKind};
 use crate::review::{ChangesetThread, NonTextAck, Review, ReviewId, SpanId, SpanOrigin};
 
@@ -342,6 +342,34 @@ pub struct GcReport {
     pub snapshots_deleted: usize,
     pub nodes_deleted: usize,
     pub blobs_deleted: usize,
+}
+
+/// A changeset and everything it keeps alive.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ChangesetFacts {
+    pub id: ChangesetId,
+    pub has_open_review: bool,
+    /// Unix seconds the latest closed review ended; `None` if none has.
+    pub last_closed_at: Option<i64>,
+    pub has_open_thread: bool,
+    /// The bases and targets of its versions, and the snapshots its anchors name.
+    pub snapshots: Vec<SnapshotId>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct GcFacts {
+    pub changesets: Vec<ChangesetFacts>,
+    /// Every stored snapshot and when it was stored (unix seconds).
+    pub snapshots: Vec<(SnapshotId, i64)>,
+}
+
+/// What to delete. Tree nodes and content follow from what remains.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct GcPlan {
+    pub changesets: Vec<ChangesetId>,
+    pub snapshots: Vec<SnapshotId>,
+    /// Unreferenced content younger than this stays.
+    pub content_grace: Duration,
 }
 
 /// Content and snapshots (§8). One implementation backs this, [`ChangesetStore`],

@@ -6,7 +6,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait};
 use vet_app::changeset::ChangesetId;
-use vet_app::gc::{ChangesetFacts, GcFacts, GcPlan};
+use vet_app::ports::{ChangesetFacts, GcFacts, GcPlan};
 use vet_app::ports::{GcReport, GcStore, StoreError};
 use vet_core::content::{BlobId, SnapshotId};
 

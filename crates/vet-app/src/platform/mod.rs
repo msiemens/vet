@@ -17,7 +17,7 @@ mod remote;
 mod sync;
 
 pub use accounts::{Account, AccountError, AccountState, Accounts};
-pub use checks::{Check, CheckLog, CommitChecks, LogFailure, commits_checks};
+pub use checks::{Check, CheckLog, CommitChecks, LogFailure};
 pub use credentials::{Credential, CredentialProvider, CredentialSource, CredentialValidator, Token, ValidationError};
 pub use discussion::{
     CommentKind, CommentRef, ConversationItem, DiffSide, Discussion, NewConversationComment, NewReply, NewThread,
@@ -32,7 +32,7 @@ pub use model::{
     PullRequest, PullRequestDetail, PullRequestQuery, Push, QueueTab, ReviewRequest, ReviewVerdict, Verdict, Viewer,
     ViewerReview,
 };
-pub use port::{Platform, list_rows};
+pub use port::{Platform, commits_checks, list_rows};
 pub use pushes::pushes_from_force_pushes;
 #[cfg(test)]
 pub(crate) use queue::tests::{pr, viewer};
