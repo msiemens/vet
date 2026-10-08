@@ -10,11 +10,12 @@ declare -A ALLOWED=(
     [vet-core]=""
     [vet-protocol]=""
     [vet-log]=""
+    [vet-engine]=""
     [vet-transport]="vet-protocol"
     [vet-highlight]="vet-core"
     [vet-mock]="vet-core vet-protocol vet-transport vet-highlight vet-app vet-mapping vet-log"
-    [vet-semantic]="vet-core vet-highlight"
-    [vet-app]="vet-core vet-semantic"
+    [vet-semantic]="vet-core vet-highlight vet-engine"
+    [vet-app]="vet-core vet-semantic vet-engine"
     [vet-infra]="vet-core vet-semantic vet-app vet-log"
     [vet-mapping]="vet-core vet-protocol vet-semantic vet-app"
     [vet-backend]="vet-core vet-protocol vet-transport vet-semantic vet-app vet-infra vet-highlight vet-mapping vet-log"
@@ -22,7 +23,7 @@ declare -A ALLOWED=(
 
 # External crates the pure layers must never depend on.
 DENY='^(tokio|async-std|smol|futures|gix|gix-.*|git2|rusqlite|sqlx|notify|reqwest|hyper|tungstenite|tokio-tungstenite)$'
-PURE="vet-core vet-semantic vet-protocol"
+PURE="vet-core vet-semantic vet-protocol vet-engine"
 
 metadata=$(cargo metadata --format-version 1 --no-deps)
 status=0

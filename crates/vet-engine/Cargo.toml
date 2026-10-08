@@ -1,0 +1,12 @@
+[package]
+name = "vet-engine"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+# Pure: depends on nothing, not even the rest of the workspace. Enforced by
+# ci/check-deps.sh.
+[dependencies]
+
+[lints]
+workspace = true
