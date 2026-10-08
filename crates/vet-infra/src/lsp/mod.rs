@@ -78,6 +78,10 @@ impl Restorer for NoRestore {
     async fn restore(&self, _root: &Path, _backend: &Backend, _policy: AnalysisPolicy) -> Restored {
         Restored::default()
     }
+
+    async fn recorded(&self, _root: &Path, _backend: &Backend, _policy: AnalysisPolicy) -> Option<Hash> {
+        None
+    }
 }
 
 /// Runs the backend's own `binary`, found on `PATH`, with no settings. For tests
@@ -327,6 +331,11 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
         let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned());
         let command = (self.locator.locate(backend.config(), &root).await).map_err(LaunchError::NotInstalled)?;
         self.identities.of(&root, backend, &command).await
+    }
+
+    async fn recorded_restore(&self, root: &Path, backend: &Backend, policy: AnalysisPolicy) -> Option<Hash> {
+        let root = std::fs::canonicalize(root).ok()?;
+        self.restorer.recorded(&root, backend, policy).await
     }
 }
 

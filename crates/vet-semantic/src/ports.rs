@@ -41,6 +41,11 @@ pub trait Materializer {
         snapshot: SnapshotId,
         policy: AnalysisPolicy,
     ) -> impl Future<Output = Result<Materialized<Self::Guard>, NotMaterializable>> + Send;
+
+    /// The directory of a tree that is kept already, or `None` if `materialize` would
+    /// have to build one. Nothing is built, locked or used: the tree may be gone by the
+    /// time the caller reads it.
+    fn kept(&self, snapshot: SnapshotId, policy: AnalysisPolicy) -> impl Future<Output = Option<PathBuf>> + Send;
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -318,6 +323,16 @@ pub trait Restorer {
         backend: &Backend,
         policy: AnalysisPolicy,
     ) -> impl Future<Output = Restored> + Send;
+
+    /// The fingerprint that `restore` of the same arguments would return if it took
+    /// the restore from the tree's record: nothing is restored, and nothing is written.
+    /// `None` if it would restore, or the tree has no record.
+    fn recorded(
+        &self,
+        root: &std::path::Path,
+        backend: &Backend,
+        policy: AnalysisPolicy,
+    ) -> impl Future<Output = Option<Hash>> + Send;
 }
 
 /// Who answered (I2): two servers with equal identities answer equal questions
@@ -399,6 +414,16 @@ pub trait ServerLauncher {
         root: &std::path::Path,
         backend: &Backend,
     ) -> impl Future<Output = Result<ServerIdentity, LaunchError>> + Send;
+
+    /// The fingerprint of the restore a server started now on the immutable tree
+    /// `root` would be started on, without starting it or restoring anything (see
+    /// [`Restorer::recorded`]). `None`: it would restore, or nothing is recorded.
+    fn recorded_restore(
+        &self,
+        root: &std::path::Path,
+        backend: &Backend,
+        policy: AnalysisPolicy,
+    ) -> impl Future<Output = Option<Hash>> + Send;
 }
 
 #[cfg(test)]

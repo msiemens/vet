@@ -5,6 +5,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, RestoreFailure, Restored, Restorer};
 
@@ -64,6 +65,10 @@ impl<R: Restorer + Sync> Restorer for Limiting<R> {
             (self.changed)(all);
         }
         restored
+    }
+
+    async fn recorded(&self, root: &Path, backend: &Backend, policy: AnalysisPolicy) -> Option<Hash> {
+        self.restorer.recorded(root, backend, policy).await
     }
 }
 

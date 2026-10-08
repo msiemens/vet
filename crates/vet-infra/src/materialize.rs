@@ -85,4 +85,8 @@ impl<G: History + Checkout + Send + Sync, S: Store + Send + Sync> Materializer f
             guard: acquired.lease,
         })
     }
+
+    async fn kept(&self, id: SnapshotId, policy: AnalysisPolicy) -> Option<PathBuf> {
+        self.trees.kept(id, policy).await
+    }
 }

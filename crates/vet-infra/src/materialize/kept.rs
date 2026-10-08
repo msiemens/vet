@@ -251,6 +251,17 @@ impl KeptTrees {
         ))
     }
 
+    /// The directory of the kept tree of `snapshot` under `policy`, if there is one.
+    /// Nothing is built and nothing is locked: a collection may take the tree at any time.
+    pub async fn kept(&self, snapshot: SnapshotId, policy: AnalysisPolicy) -> Option<PathBuf> {
+        let (base, key) = (self.base.clone(), Key::new(snapshot, policy));
+        blocking(move || {
+            let dir = base.join(&key.name);
+            is_complete(&dir, &key).then(|| dir.join(TREE))
+        })
+        .await
+    }
+
     /// Removes what a dead launch left and trees that are not complete. Returns how many were removed.
     pub async fn sweep(&self) -> usize {
         let Ok(launch) = self.launch().map(|l| l.id.clone()) else {
@@ -682,6 +693,25 @@ mod tests {
         assert_eq!(builds.load(Ordering::SeqCst), 0);
         assert_eq!(again.lease.tree(), root);
         assert_eq!(std::fs::read_to_string(root.join("restored")).unwrap(), "node_modules");
+    }
+
+    #[tokio::test]
+    async fn a_tree_is_found_without_being_built_or_locked_only_while_it_is_kept() {
+        let data = tempfile::tempdir().unwrap();
+        let trees = trees(data.path());
+        assert_eq!(trees.kept(snapshot(1), POLICY).await, None);
+
+        let built = acquire(&trees, 1, 1).await;
+        let root = built.lease.tree().to_owned();
+        drop(built);
+        assert_eq!(trees.kept(snapshot(1), POLICY).await, Some(root));
+        assert_eq!(
+            trees.kept(snapshot(1), AnalysisPolicy { allow_executing: true }).await,
+            None
+        );
+        assert_eq!(trees.kept(snapshot(2), POLICY).await, None);
+        assert_eq!(trees.clear().await.removed, 1, "looking took no lock");
+        assert_eq!(trees.kept(snapshot(1), POLICY).await, None);
     }
 
     #[tokio::test]

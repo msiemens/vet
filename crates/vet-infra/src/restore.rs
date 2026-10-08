@@ -599,6 +599,30 @@ impl ToolRestorer {
             })
     }
 
+    /// The restore of `plan` as it would run now, and the kept tree's record of it if
+    /// the record stands for it.
+    async fn standing<'p>(
+        &self,
+        layout: &Layout,
+        root: &Path,
+        language: &Language,
+        plan: &'p Plan,
+        policy: AnalysisPolicy,
+    ) -> Standing<'p> {
+        let steps: Vec<&Step> = allowed(plan, policy).collect();
+        let tools = self.versions(&steps).await;
+        let inputs = self.inputs(plan, &steps, &tools, policy);
+        let file = layout.meta().join(format!("restore-{}.json", language.id));
+        let record = Record::read(&file).filter(|record| self.reusable(record, inputs, root, &steps));
+        Standing {
+            steps,
+            tools,
+            inputs,
+            file,
+            record,
+        }
+    }
+
     /// Restores a kept tree unless its record says it is restored. The tree's
     /// languages take turns.
     async fn restore_kept(
@@ -613,13 +637,14 @@ impl ToolRestorer {
         let Ok(_turn) = layout.lock_restore().await else {
             return self.execute(root, language, plan, policy).await.0;
         };
-        let steps: Vec<&Step> = allowed(plan, policy).collect();
-        let tools = self.versions(&steps).await;
-        let inputs = self.inputs(plan, &steps, &tools, policy);
-        let file = layout.meta().join(format!("restore-{}.json", language.id));
-        if let Some(record) = Record::read(&file)
-            && self.reusable(&record, inputs, root, &steps)
-        {
+        let Standing {
+            steps,
+            tools,
+            inputs,
+            file,
+            record,
+        } = self.standing(layout, root, language, plan, policy).await;
+        if let Some(record) = record {
             crate::timing::log(|| format!("restore {} (kept)", language.id), started);
             return Restored {
                 failures: plan.failures.clone(),
@@ -650,6 +675,17 @@ impl ToolRestorer {
     }
 }
 
+/// A restore as it would run now, and the record that stands for it.
+struct Standing<'p> {
+    steps: Vec<&'p Step>,
+    tools: Vec<(String, String)>,
+    inputs: Hash,
+    /// Where the record of the language is kept.
+    file: PathBuf,
+    /// The kept tree's record, if the restore would be taken from it.
+    record: Option<Record>,
+}
+
 /// The steps the policy lets run.
 fn allowed(plan: &Plan, policy: AnalysisPolicy) -> impl Iterator<Item = &Step> {
     plan.steps.iter().filter(move |s| policy.allow_executing || !s.executes)
@@ -665,6 +701,14 @@ impl Restorer for ToolRestorer {
             Some(layout) => self.restore_kept(&layout, root, language, &plan, policy).await,
             None => self.execute(root, language, &plan, policy).await.0,
         }
+    }
+
+    async fn recorded(&self, root: &Path, backend: &Backend, policy: AnalysisPolicy) -> Option<Hash> {
+        let language = language::by_id(&backend.config().backend.0)?;
+        let layout = Layout::of_tree(root)?;
+        let plan = self.plan(root, language).await;
+        let standing = self.standing(&layout, root, language, &plan, policy).await;
+        standing.record.map(|record| record.fingerprint())
     }
 }
 
@@ -1096,6 +1140,93 @@ mod tests {
         let second = restorer(&tools).restore(&root, &backend("rust"), NO_EXEC).await;
         assert_eq!(tools.runs(), ["cargo fetch"], "nothing ran again");
         assert_eq!(second, first);
+    }
+
+    #[tokio::test]
+    async fn the_recorded_restore_of_a_kept_tree_is_found_without_restoring_while_the_restore_would_be_taken_from_it() {
+        let (_dir, root) = kept(&[("Cargo.toml", "")]);
+        let tools = Arc::new(FakeTools::default());
+        let rust = backend("rust");
+        assert_eq!(
+            restorer(&tools).recorded(&root, &rust, NO_EXEC).await,
+            None,
+            "no record yet"
+        );
+        assert!(tools.runs().is_empty());
+
+        let restored = restorer(&tools).restore(&root, &rust, NO_EXEC).await;
+        assert_eq!(
+            restorer(&tools).recorded(&root, &rust, NO_EXEC).await,
+            restored.fingerprint
+        );
+        assert_eq!(tools.runs(), ["cargo fetch"], "looking did not restore");
+
+        // Anything that would make a start restore again leaves the record without standing.
+        let upgraded = Arc::new(FakeTools::default());
+        assert_eq!(
+            restorer(&upgraded.version_of("cargo", "2.0"))
+                .recorded(&root, &rust, NO_EXEC)
+                .await,
+            None,
+            "a tool of another version"
+        );
+        std::fs::create_dir_all(root.join("svc")).unwrap();
+        std::fs::write(root.join("svc/Cargo.toml"), "").unwrap();
+        assert_eq!(
+            restorer(&tools).recorded(&root, &rust, NO_EXEC).await,
+            None,
+            "another layout of manifests"
+        );
+        assert_eq!(
+            restorer(&tools)
+                .recorded(&root, &rust, AnalysisPolicy { allow_executing: true })
+                .await,
+            None,
+            "another policy"
+        );
+        assert_eq!(tools.runs(), ["cargo fetch"]);
+    }
+
+    #[tokio::test]
+    async fn a_record_of_a_failed_restore_or_of_a_stale_link_is_not_found() {
+        let (_dir, root) = kept(&[("Cargo.toml", "")]);
+        let tools = Arc::new(FakeTools::default());
+        tools.fail("cargo", true);
+        restorer(&tools).restore(&root, &backend("rust"), NO_EXEC).await;
+        assert_eq!(restorer(&tools).recorded(&root, &backend("rust"), NO_EXEC).await, None);
+
+        let (_dir, root) = kept(&[("package.json", PACKAGE), ("package-lock.json", "lock")]);
+        let donor = tree(&[
+            ("package.json", PACKAGE),
+            ("package-lock.json", "lock"),
+            ("node_modules/a/index.js", ""),
+        ]);
+        let reusing = || restorer(&tools).reusing(donor.path().to_owned());
+        let typescript = backend("typescript");
+        let linked = reusing().restore(&root, &typescript, NO_EXEC).await;
+        assert_eq!(
+            reusing().recorded(&root, &typescript, NO_EXEC).await,
+            linked.fingerprint
+        );
+
+        std::fs::write(donor.path().join("package-lock.json"), "other lock").unwrap();
+        assert_eq!(reusing().recorded(&root, &typescript, NO_EXEC).await, None);
+        assert_eq!(
+            restorer(&tools).recorded(&root, &typescript, NO_EXEC).await,
+            None,
+            "a restorer with no donor would restore"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_tree_outside_the_kept_layout_has_no_recorded_restore() {
+        let dir = tree(&[("Cargo.toml", "")]);
+        let tools = Arc::new(FakeTools::default());
+        restorer(&tools).restore(dir.path(), &backend("rust"), NO_EXEC).await;
+        assert_eq!(
+            restorer(&tools).recorded(dir.path(), &backend("rust"), NO_EXEC).await,
+            None
+        );
     }
 
     #[tokio::test]

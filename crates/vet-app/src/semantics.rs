@@ -650,6 +650,16 @@ mod tests {
         hovers_asked: AtomicUsize,
         /// Hovers asked and given up on.
         hovers_dropped: AtomicUsize,
+        /// Trees made for snapshots.
+        materialized: AtomicUsize,
+        /// A tree of a snapshot is on disk: made by this run, or kept by an earlier one.
+        tree_kept: std::sync::atomic::AtomicBool,
+        /// Added to what the server's binary is: another number is another binary.
+        binary: std::sync::atomic::AtomicU8,
+        /// Added to what the restore of a tree was: another number is another restore.
+        restore: std::sync::atomic::AtomicU8,
+        /// The tree's restore left no record.
+        unrecorded: std::sync::atomic::AtomicBool,
     }
 
     /// Counts a hover as given up on when its request is dropped.
@@ -674,7 +684,7 @@ mod tests {
             root: &Path,
             tree: Tree,
             backend: &Backend,
-            _: AnalysisPolicy,
+            policy: AnalysisPolicy,
         ) -> Result<Started<FakeServer>, LaunchError> {
             let c = &self.0;
             if tree == Tree::Immutable && c.live_started.load(Ordering::SeqCst) < 2 {
@@ -693,16 +703,24 @@ mod tests {
             Ok(Started {
                 server: FakeServer(c.clone(), tree),
                 identity: self.identify(root, backend).await?,
-                restore: None,
+                restore: match tree {
+                    Tree::Immutable => self.recorded_restore(root, backend, policy).await,
+                    Tree::Live => None,
+                },
             })
         }
 
         async fn identify(&self, _: &Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
             Ok(ServerIdentity {
                 backend: backend.config().backend.clone(),
-                fingerprint: Hash([7; 32]),
+                fingerprint: Hash([7 + self.0.binary.load(Ordering::SeqCst); 32]),
                 label: format!("fake {}", backend.config().binary),
             })
+        }
+
+        async fn recorded_restore(&self, _: &Path, _: &Backend, _: AnalysisPolicy) -> Option<Hash> {
+            let c = &self.0;
+            (!c.unrecorded.load(Ordering::SeqCst)).then(|| Hash([9 + c.restore.load(Ordering::SeqCst); 32]))
         }
     }
 
@@ -772,16 +790,22 @@ mod tests {
     }
 
     /// Serves every snapshot from one fixed directory.
-    struct FakeMaterializer;
+    struct FakeMaterializer(Arc<Counters>);
 
     impl Materializer for FakeMaterializer {
         type Guard = ();
 
         async fn materialize(&self, _: SnapshotId, _: AnalysisPolicy) -> Result<Materialized<()>, NotMaterializable> {
+            self.0.materialized.fetch_add(1, Ordering::SeqCst);
+            self.0.tree_kept.store(true, Ordering::SeqCst);
             Ok(Materialized {
                 root: "/snap".into(),
                 guard: (),
             })
+        }
+
+        async fn kept(&self, _: SnapshotId, _: AnalysisPolicy) -> Option<std::path::PathBuf> {
+            self.0.tree_kept.load(Ordering::SeqCst).then(|| "/snap".into())
         }
     }
 
@@ -813,7 +837,7 @@ mod tests {
         let fx = Fixture::open(base, target).await;
         let counters = Arc::new(Counters::default());
         let semantics = Semantics::new(
-            FakeMaterializer,
+            FakeMaterializer(counters.clone()),
             FakeLauncher(counters.clone()),
             "/live".into(),
             vec![backend("rust", "rs"), backend("python", "py"), backend("go", "go")],
@@ -917,9 +941,10 @@ mod tests {
         .await;
         let heard = Arc::new(Mutex::new(Vec::new()));
         let sink = heard.clone();
+        let counters = Arc::<Counters>::default();
         let semantics = Semantics::new(
-            FakeMaterializer,
-            FakeLauncher(Arc::default()),
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters),
             "/live".into(),
             vec![backend("rust", "rs"), backend("python", "py")],
             Trust::Local,
@@ -1164,7 +1189,7 @@ mod tests {
         for _ in 0..2 {
             let counters = Arc::new(Counters::default());
             let semantics = Semantics::new(
-                FakeMaterializer,
+                FakeMaterializer(counters.clone()),
                 FakeLauncher(counters.clone()),
                 "/live".into(),
                 vec![backend("rust", "rs"), backend("python", "py"), backend("go", "go")],
@@ -1181,5 +1206,112 @@ mod tests {
             launched.push(counters.text_symbol_requests.load(Ordering::SeqCst));
         }
         assert_eq!(launched, [4, 0]);
+    }
+
+    type FakeSemantics = Semantics<FakeGit, MemStore, FakeLauncher, FakeMaterializer>;
+
+    /// Asks the base side what a snapshot's server answers and a store keeps: the answer
+    /// of each and whether it was reused.
+    async fn ask_the_base(fx: &Fixture, semantics: &FakeSemantics) -> Vec<(String, bool)> {
+        let file = RepoPath(b"a.rs".to_vec());
+        let at = At {
+            file: file.clone(),
+            pos: Pos { line: 0, col: 0 },
+        };
+        let mut answers = Vec::new();
+        let hover = semantics.hover(&fx.session, 0, Side::Base, &at).await.unwrap();
+        answers.push((format!("{:?}", hover.result), hover.provenance.unwrap().from_cache));
+        let definition = semantics.definition(&fx.session, 0, Side::Base, &at).await.unwrap();
+        answers.push((
+            format!("{:?}", definition.result),
+            definition.provenance.unwrap().from_cache,
+        ));
+        let references = semantics.references(&fx.session, 0, Side::Base, &at).await.unwrap();
+        answers.push((
+            format!("{:?}", references.result),
+            references.provenance.unwrap().from_cache,
+        ));
+        let pair = semantics.pair(&fx.session, 0).await.unwrap();
+        let diagnostics = pair.diagnostics(Side::Base, &file).await.unwrap();
+        answers.push((format!("{:?}", diagnostics.value), diagnostics.provenance.from_cache));
+        let symbols = pair.document_symbols(Side::Base, &file).await.unwrap();
+        answers.push((format!("{:?}", symbols.value), symbols.provenance.from_cache));
+        answers
+    }
+
+    #[tokio::test]
+    async fn reopening_a_review_answers_the_base_from_the_store_until_an_input_of_the_answers_changed() {
+        type Change = fn(&Counters);
+        // What changed since the first launch, how many servers the reopened one starts, and
+        // how many of the five answers it reuses.
+        let changes: [(&str, Change, usize, usize); 5] = [
+            ("nothing", |_| {}, 0, 5),
+            ("the server binary", |c| c.binary.store(1, Ordering::SeqCst), 1, 0),
+            (
+                "the restore of the tree",
+                |c| c.restore.store(1, Ordering::SeqCst),
+                1,
+                0,
+            ),
+            (
+                "the record of the restore",
+                |c| c.unrecorded.store(true, Ordering::SeqCst),
+                1,
+                0,
+            ),
+            // The server that is started to ask finds the answers in the store too.
+            ("the kept tree", |c| c.tree_kept.store(false, Ordering::SeqCst), 1, 5),
+        ];
+        for (name, change, starts, reused) in changes {
+            let (fx, ..) = semantics().await;
+            let store = Arc::new(MemoryCache::default());
+            let launch = |counters: &Arc<Counters>| -> FakeSemantics {
+                Semantics::new(
+                    FakeMaterializer(counters.clone()),
+                    FakeLauncher(counters.clone()),
+                    "/live".into(),
+                    vec![backend("rust", "rs")],
+                    Trust::Local,
+                    Links {
+                        revisions: fx.session.revisions(),
+                        limits: RestoreLimits::default(),
+                        tasks: Tasks::default(),
+                    },
+                )
+                .persisting(store.clone())
+            };
+
+            let first = Arc::new(Counters::default());
+            let answers = ask_the_base(&fx, &launch(&first)).await;
+            assert!(answers.iter().all(|(_, reused)| !reused), "{name}");
+            assert_eq!(
+                first.started.load(Ordering::SeqCst),
+                1,
+                "{name}: the first launch starts"
+            );
+            assert_eq!(first.materialized.load(Ordering::SeqCst), 1, "{name}");
+
+            let reopened = Arc::new(Counters::default());
+            reopened.tree_kept.store(true, Ordering::SeqCst);
+            change(&reopened);
+            let again = ask_the_base(&fx, &launch(&reopened)).await;
+            let values = |all: &[(String, bool)]| all.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>();
+            assert_eq!(values(&again), values(&answers), "{name}");
+            assert_eq!(
+                reopened.started.load(Ordering::SeqCst),
+                starts,
+                "{name}: servers started"
+            );
+            assert_eq!(
+                reopened.materialized.load(Ordering::SeqCst),
+                starts,
+                "{name}: snapshots materialized"
+            );
+            assert_eq!(
+                again.iter().filter(|(_, reused)| *reused).count(),
+                reused,
+                "{name}: answers reused"
+            );
+        }
     }
 }

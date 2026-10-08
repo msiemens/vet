@@ -11,7 +11,9 @@
 //! Answers outlive their server: they are kept by the pool under keys that name
 //! the server's identity (I2, `reuse`), so a server that starts later with an
 //! equal identity on an equal tree answers from them. Those that persist also
-//! outlive the process, in the store the pool is given.
+//! outlive the process, in the store the pool is given. A question whose key can be
+//! worked out without a server (`recall`) is looked up in both before any server is
+//! leased, so a tree whose answers are kept is neither materialized nor started on.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -77,6 +79,38 @@ pub fn admit(backend: &Backend, policy: AnalysisPolicy) -> Result<(), PoolError>
     Ok(())
 }
 
+/// The key of a question about a whole immutable tree.
+fn project_key(server: &ServerIdentity, basis: Basis, query: ProjectQuery) -> Key {
+    Key::Project {
+        server: server.clone(),
+        basis,
+        query,
+    }
+}
+
+/// The key of the symbols `text` declares as the content of `file`.
+fn text_key(server: &ServerIdentity, file: &RepoPath, text: &str) -> Key {
+    Key::Text {
+        server: server.clone(),
+        extension: file.extension().unwrap_or_default().to_vec(),
+        blob: BlobId::of(text.as_bytes()),
+    }
+}
+
+/// An answer kept for the same text under another name names its symbols after that one.
+fn named_after(file: &RepoPath, symbols: &mut [SymbolInfo]) {
+    for symbol in symbols {
+        symbol.sym.file = file.clone();
+    }
+}
+
+fn answered<T>(value: T, server: ServerIdentity, from_cache: bool) -> Answered<T> {
+    Answered {
+        value,
+        provenance: Provenance { server, from_cache },
+    }
+}
+
 /// A running server, shared by its leases. It answers from the pool's kept
 /// answers when it can (I2), and says who answered. Fields drop in order:
 /// server first, then the materialized directory.
@@ -99,24 +133,10 @@ impl<S: LanguageServer, G: Send + Sync + 'static> Entry<S, G> {
         &self.identity
     }
 
-    fn answered<T>(&self, value: T, from_cache: bool) -> Answered<T> {
-        Answered {
-            value,
-            provenance: Provenance {
-                server: self.identity.clone(),
-                from_cache,
-            },
-        }
-    }
-
     /// The key of a question about the whole tree; none on the live tree, which
     /// changes under the server.
     fn project(&self, query: ProjectQuery) -> Option<Key> {
-        self.basis.map(|basis| Key::Project {
-            server: self.identity.clone(),
-            basis,
-            query,
-        })
+        self.basis.map(|basis| project_key(&self.identity, basis, query))
     }
 
     /// The answer under `key`, or the server's. The server's answer is kept only if
@@ -134,7 +154,7 @@ impl<S: LanguageServer, G: Send + Sync + 'static> Entry<S, G> {
             Ok(Computed { value, keep })
         };
         let (value, from_cache) = self.answers.get(key.as_ref(), asked).await?;
-        Ok(self.answered(value, from_cache))
+        Ok(answered(value, self.identity.clone(), from_cache))
     }
 
     /// Without a text the symbols are those of the file as the tree has it: only a tree that never changes has them under a key.
@@ -146,16 +166,9 @@ impl<S: LanguageServer, G: Send + Sync + 'static> Entry<S, G> {
     /// The symbols `text` declares as the content of `file`. They depend on the text
     /// and the language alone, so any tree has them under one key.
     pub async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
-        let key = Key::Text {
-            server: self.identity.clone(),
-            extension: file.extension().unwrap_or_default().to_vec(),
-            blob: BlobId::of(text.as_bytes()),
-        };
+        let key = text_key(&self.identity, file, text);
         let mut answered = self.reuse(Some(key), self.server.text_symbols(file, text)).await?;
-        // An answer kept for the same text under another name names its symbols after that one.
-        for symbol in &mut answered.value {
-            symbol.sym.file = file.clone();
-        }
+        named_after(file, &mut answered.value);
         Ok(answered)
     }
 
@@ -329,6 +342,63 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
     /// Drops the answers kept in memory; the stored ones are the store's.
     pub fn forget_answers(&self) {
         self.answers.forget();
+    }
+
+    /// What a server for `key` would be, as far as the keys of its answers go, worked
+    /// out without starting one: its identity and, on an immutable tree, the basis, from
+    /// the restore the tree's record stands for. Nothing is materialized: a snapshot
+    /// with no kept tree has no such server yet. The basis is none on the live tree and
+    /// for a tree with no usable record; the answers about the whole tree have no key then.
+    async fn foreseen(&self, key: &PoolKey, backend: &Backend) -> Option<(ServerIdentity, Option<Basis>)> {
+        admit(backend, key.policy).ok()?;
+        let (root, snapshot) = match key.target {
+            Target::Live => (self.live_root.clone(), None),
+            Target::Snapshot(snapshot) => (self.materializer.kept(snapshot, key.policy).await?, Some(snapshot)),
+        };
+        let identity = self.launcher.identify(&root, backend).await.ok()?;
+        let basis = match snapshot {
+            Some(snapshot) => self
+                .launcher
+                .recorded_restore(&root, backend, key.policy)
+                .await
+                .map(|fingerprint| Basis {
+                    snapshot,
+                    policy: key.policy,
+                    restore: Restore::Recorded(fingerprint),
+                }),
+            None => None,
+        };
+        Some((identity, basis))
+    }
+
+    /// The answer to a question about the whole tree of `key` if it is kept, in memory or
+    /// in the store, found without a server (I2): the key is worked out as a start
+    /// would, from the identity of the server and the restore recorded for the tree.
+    /// `None` means only that a server is to be asked.
+    pub async fn recall<T: Reused>(
+        &self,
+        key: &PoolKey,
+        backend: &Backend,
+        query: ProjectQuery,
+    ) -> Option<Answered<T>> {
+        let (identity, basis) = self.foreseen(key, backend).await?;
+        let value = self.answers.recall(&project_key(&identity, basis?, query)).await?;
+        Some(answered(value, identity, true))
+    }
+
+    /// Like [`Pool::recall`], for the symbols `text` declares as the content of `file`.
+    pub async fn recall_text_symbols(
+        &self,
+        key: &PoolKey,
+        backend: &Backend,
+        file: &RepoPath,
+        text: &str,
+    ) -> Option<Answered<Vec<SymbolInfo>>> {
+        let (identity, _) = self.foreseen(key, backend).await?;
+        let value: Vec<SymbolInfo> = self.answers.recall(&text_key(&identity, file, text)).await?;
+        let mut recalled = answered(value, identity, true);
+        named_after(file, &mut recalled.value);
+        Some(recalled)
     }
 
     /// The server for `key`: the running one, the one being started, or a new one.
@@ -659,6 +729,11 @@ mod tests {
                 guard: Guard(self.0.clone()),
             })
         }
+
+        /// A tree stays after it was made, whatever pool made it.
+        async fn kept(&self, _: SnapshotId, _: AnalysisPolicy) -> Option<PathBuf> {
+            (self.0.materialized.load(Ordering::SeqCst) > 0).then(|| PathBuf::from("/snap"))
+        }
     }
 
     struct FakeLauncher(Arc<Counters>);
@@ -674,22 +749,30 @@ mod tests {
             root: &std::path::Path,
             tree: Tree,
             backend: &Backend,
-            _: AnalysisPolicy,
+            policy: AnalysisPolicy,
         ) -> Result<Started<FakeServer>, LaunchError> {
             self.0.started.fetch_add(1, Ordering::SeqCst);
             yield_once().await;
             if self.0.fail_start.load(Ordering::SeqCst) {
                 return Err(LaunchError::Spawn("boom".into()));
             }
-            let restore = match (tree, self.0.restore.load(Ordering::SeqCst)) {
-                (Tree::Immutable, n) if n != 0 => Some(Hash([n; 32])),
-                _ => None,
+            let restore = match tree {
+                Tree::Immutable => self.recorded_restore(root, backend, policy).await,
+                Tree::Live => None,
             };
             Ok(Started {
                 server: FakeServer(self.0.clone()),
                 identity: self.identify(root, backend).await?,
                 restore,
             })
+        }
+
+        /// What the tree's record says; 0: it has none.
+        async fn recorded_restore(&self, _: &std::path::Path, _: &Backend, _: AnalysisPolicy) -> Option<Hash> {
+            match self.0.restore.load(Ordering::SeqCst) {
+                0 => None,
+                n => Some(Hash([n; 32])),
+            }
         }
 
         /// A binary that is replaced between two starts: the version it has when the server starts.
@@ -1058,6 +1141,115 @@ mod tests {
         assert_eq!(values(&later), values(&first));
         let reused: Vec<_> = later.iter().map(|(_, reused)| *reused).collect();
         assert_eq!(reused, [true, true, true, true, true, true, true, false, true]);
+    }
+
+    /// What `recall` finds of every cached kind of question: the kind and what was found.
+    fn recall_all(pool: &TestPool, key: &PoolKey, ask: &Ask) -> Vec<(&'static str, String)> {
+        let be = backend(false);
+        let (file, at) = (&ask.file, &ask.at);
+        block_on(async {
+            let mut found = Vec::new();
+            macro_rules! recalled {
+                ($kind:expr, $answered:expr) => {
+                    if let Some(answered) = $answered.await {
+                        assert!(answered.provenance.from_cache);
+                        found.push(($kind, format!("{:?}", answered.value)));
+                    }
+                };
+            }
+            let project = |query| pool.recall::<Vec<SymbolInfo>>(key, &be, query);
+            recalled!("document_symbols", project(ProjectQuery::DocumentSymbols(file.clone())));
+            recalled!("text_symbols", pool.recall_text_symbols(key, &be, file, ask.text));
+            recalled!(
+                "definition",
+                pool.recall::<Vec<Location>>(key, &be, ProjectQuery::Definition(at.clone()))
+            );
+            recalled!(
+                "references",
+                pool.recall::<Vec<Location>>(key, &be, ProjectQuery::References(at.clone()))
+            );
+            recalled!(
+                "hover",
+                pool.recall::<Option<String>>(key, &be, ProjectQuery::Hover(at.clone()))
+            );
+            recalled!("incoming_calls", project(ProjectQuery::Incoming(at.clone())));
+            recalled!("outgoing_calls", project(ProjectQuery::Outgoing(at.clone())));
+            recalled!(
+                "workspace_symbols",
+                project(ProjectQuery::Workspace(ask.query.to_owned()))
+            );
+            recalled!(
+                "diagnostics",
+                pool.recall::<Vec<Diagnostic>>(key, &be, ProjectQuery::Diagnostics(file.clone()))
+            );
+            found
+        })
+    }
+
+    fn kinds(found: &[(&'static str, String)]) -> Vec<&'static str> {
+        found.iter().map(|(kind, _)| *kind).collect()
+    }
+
+    /// The kinds a store keeps between launches.
+    fn stored() -> Vec<&'static str> {
+        ALL.into_iter().filter(|kind| *kind != "workspace_symbols").collect()
+    }
+
+    #[test]
+    fn a_later_launch_finds_what_persists_without_materializing_a_tree_or_starting_a_server() {
+        let counters = Arc::new(Counters::default());
+        let store = Arc::new(MemoryCache::default());
+        let (first, _) = ask_in(&launch_over(&counters, &store), &counters, &snapshot_key(1), &ask());
+        let (started, materialized) = (
+            counters.started.load(Ordering::SeqCst),
+            counters.materialized.load(Ordering::SeqCst),
+        );
+        assert_eq!((started, materialized), (1, 1), "the first launch starts a server");
+
+        let found = recall_all(&launch_over(&counters, &store), &snapshot_key(1), &ask());
+        assert_eq!(kinds(&found), stored());
+        for (kind, value) in &found {
+            let asked = ALL.iter().position(|k| k == kind).expect("a kind of question");
+            assert_eq!(*value, first[asked].0, "{kind}");
+        }
+        assert_eq!(counters.started.load(Ordering::SeqCst), started);
+        assert_eq!(counters.materialized.load(Ordering::SeqCst), materialized);
+    }
+
+    #[test]
+    fn changing_any_one_key_input_leaves_a_later_launch_nothing_to_find_for_what_depends_on_it() {
+        for (name, change, asks_again) in key_input_cases() {
+            let counters = Arc::new(Counters::default());
+            let store = Arc::new(MemoryCache::default());
+            let (mut key, mut asked_about) = (snapshot_key(1), ask());
+            ask_in(&launch_over(&counters, &store), &counters, &key, &asked_about);
+
+            change(&counters, &mut key, &mut asked_about);
+            let found = recall_all(&launch_over(&counters, &store), &key, &asked_about);
+            let expected: Vec<_> = stored().into_iter().filter(|kind| !asks_again.contains(kind)).collect();
+            assert_eq!(kinds(&found), expected, "after changing {name}");
+        }
+    }
+
+    #[test]
+    fn nothing_is_found_for_a_snapshot_whose_tree_is_not_kept() {
+        let counters = Arc::new(Counters::default());
+        let store = Arc::new(MemoryCache::default());
+        // The answers are stored, but the tree they were made on has not been made by this world.
+        ask_in(&launch_over(&counters, &store), &counters, &snapshot_key(1), &ask());
+        counters.materialized.store(0, Ordering::SeqCst);
+        let found = recall_all(&launch_over(&counters, &store), &snapshot_key(1), &ask());
+        assert_eq!(kinds(&found), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn a_running_servers_answers_are_found_in_memory_and_the_live_trees_only_for_a_text() {
+        let (pool, counters) = pool(4);
+        ask_in(&pool, &counters, &snapshot_key(1), &ask());
+        assert_eq!(kinds(&recall_all(&pool, &snapshot_key(1), &ask())), ALL);
+
+        ask_in(&pool, &counters, &live_key(), &ask());
+        assert_eq!(kinds(&recall_all(&pool, &live_key(), &ask())), ["text_symbols"]);
     }
 
     #[test]

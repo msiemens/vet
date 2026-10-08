@@ -14,7 +14,7 @@ use crate::ports::{
     Answered, At, Backend, BackendId, Diagnostic, Location, Materializer, QueryError, ServerLauncher, SymbolInfo,
     backend_for,
 };
-use crate::reuse::SemanticCache;
+use crate::reuse::{ProjectQuery, Reused, SemanticCache};
 
 /// What a side of a comparison is served from, and what analysis it may run.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -129,12 +129,37 @@ where
     }
 
     async fn lease(&self, served: &Served, backend: &Backend) -> Result<Lease<'_, M, L>, SemanticError> {
-        let key = PoolKey {
+        self.pool
+            .lease(&self.pool_key(served, backend), backend)
+            .await
+            .map_err(SemanticError::Pool)
+    }
+
+    fn pool_key(&self, served: &Served, backend: &Backend) -> PoolKey {
+        PoolKey {
             target: served.target,
             backend: backend.config().backend.clone(),
             policy: served.policy,
-        };
-        self.pool.lease(&key, backend).await.map_err(SemanticError::Pool)
+        }
+    }
+
+    /// The answer to a question about the whole tree of `served` if one is kept, found
+    /// without leasing a server.
+    async fn recall<T: Reused>(&self, served: &Served, file: &RepoPath, query: ProjectQuery) -> Option<Answered<T>> {
+        let backend = backend_for(&self.backends, file)?;
+        self.pool.recall(&self.pool_key(served, backend), backend, query).await
+    }
+
+    async fn recall_text_symbols(
+        &self,
+        served: &Served,
+        file: &RepoPath,
+        text: &str,
+    ) -> Option<Answered<Vec<SymbolInfo>>> {
+        let backend = backend_for(&self.backends, file)?;
+        self.pool
+            .recall_text_symbols(&self.pool_key(served, backend), backend, file, text)
+            .await
     }
 
     async fn lease_for(&self, served: &Served, file: &RepoPath) -> Result<Lease<'_, M, L>, SemanticError> {
@@ -167,8 +192,12 @@ impl<M: Materializer, L: ServerLauncher> Pair<'_, M, L> {
     }
 }
 
+/// The answer kept for `$query` if there is one, else the server's.
 macro_rules! ask {
-    ($self:ident, $side:expr, $file:expr, $method:ident($($arg:expr),*)) => {{
+    ($self:ident, $side:expr, $file:expr, $query:expr, $method:ident($($arg:expr),*)) => {{
+        if let Some(kept) = $self.semantic.recall($self.served($side), $file, $query).await {
+            return Ok(kept);
+        }
         let lease = $self.semantic.lease_for($self.served($side), $file).await?;
         let answer = lease.$method($($arg),*).await;
         lease.release().await;
@@ -183,34 +212,77 @@ where
     L::Server: Send,
 {
     async fn document_symbols(&self, side: Side, file: &RepoPath) -> Asked<Vec<SymbolInfo>> {
-        ask!(self, side, file, document_symbols(file))
+        ask!(
+            self,
+            side,
+            file,
+            ProjectQuery::DocumentSymbols(file.clone()),
+            document_symbols(file)
+        )
     }
 
     async fn text_symbols(&self, file: &RepoPath, text: &str) -> Asked<Vec<SymbolInfo>> {
-        ask!(self, Side::Target, file, text_symbols(file, text))
+        let served = self.served(Side::Target);
+        if let Some(kept) = self.semantic.recall_text_symbols(served, file, text).await {
+            return Ok(kept);
+        }
+        let lease = self.semantic.lease_for(served, file).await?;
+        let answer = lease.text_symbols(file, text).await;
+        lease.release().await;
+        answer.map_err(SemanticError::Query)
     }
 
     async fn definition(&self, side: Side, at: &At) -> Asked<Vec<Location>> {
-        ask!(self, side, &at.file, definition(at))
+        ask!(
+            self,
+            side,
+            &at.file,
+            ProjectQuery::Definition(at.clone()),
+            definition(at)
+        )
     }
 
     async fn references(&self, side: Side, at: &At) -> Asked<Vec<Location>> {
-        ask!(self, side, &at.file, references(at))
+        ask!(
+            self,
+            side,
+            &at.file,
+            ProjectQuery::References(at.clone()),
+            references(at)
+        )
     }
 
     async fn hover(&self, side: Side, at: &At) -> Asked<Option<String>> {
-        ask!(self, side, &at.file, hover(at))
+        ask!(self, side, &at.file, ProjectQuery::Hover(at.clone()), hover(at))
     }
 
     async fn incoming_calls(&self, side: Side, at: &At) -> Asked<Vec<SymbolInfo>> {
-        ask!(self, side, &at.file, incoming_calls(at))
+        ask!(
+            self,
+            side,
+            &at.file,
+            ProjectQuery::Incoming(at.clone()),
+            incoming_calls(at)
+        )
     }
 
     async fn outgoing_calls(&self, side: Side, at: &At) -> Asked<Vec<SymbolInfo>> {
-        ask!(self, side, &at.file, outgoing_calls(at))
+        ask!(
+            self,
+            side,
+            &at.file,
+            ProjectQuery::Outgoing(at.clone()),
+            outgoing_calls(at)
+        )
     }
 
     async fn diagnostics(&self, side: Side, file: &RepoPath) -> Asked<Vec<Diagnostic>> {
-        ask!(self, side, file, diagnostics(file))
+        ask!(
+            self,
+            side,
+            file,
+            ProjectQuery::Diagnostics(file.clone()),
+            diagnostics(file)
+        )
     }
 }

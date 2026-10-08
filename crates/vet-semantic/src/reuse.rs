@@ -245,6 +245,35 @@ impl<K: Eq + Hash + Clone, V: Clone> Memo<K, V> {
         }
     }
 
+    /// The value for `key` if one is kept; nothing is computed or waited for.
+    pub fn peek(&self, key: &K) -> Option<V> {
+        let mut state = self.lock();
+        state.tick += 1;
+        let tick = state.tick;
+        match state.slots.get_mut(key) {
+            Some(Slot::Done { value, used }) => {
+                *used = tick;
+                Some(value.clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Keeps `value` under `key` unless the key has a value or is being computed.
+    pub fn keep(&self, key: &K, value: V) {
+        if self.limit == 0 {
+            return;
+        }
+        let mut state = self.lock();
+        if state.slots.contains_key(key) {
+            return;
+        }
+        state.tick += 1;
+        let used = state.tick;
+        state.slots.insert(key.clone(), Slot::Done { value, used });
+        self.evict(&mut state);
+    }
+
     /// Drops the values; those being computed stay, with their waiters.
     pub fn clear(&self) {
         self.lock().slots.retain(|_, slot| matches!(slot, Slot::Pending(_)));
@@ -324,6 +353,19 @@ impl Answers {
     /// Drops the answers kept in memory. Those being computed are left to finish.
     pub fn forget(&self) {
         self.memo.clear();
+    }
+
+    /// The answer under `key` if one is kept, in memory or in the store; no server is
+    /// asked and nothing is computed. An answer from the store is kept in memory too.
+    pub async fn recall<T: Reused>(&self, key: &Key) -> Option<T> {
+        if let Some(value) = self.memo.peek(key) {
+            return T::from_kept(value);
+        }
+        let store = self.store.as_deref().filter(|_| key.persists())?;
+        let value = store.get(key).await?;
+        let recalled = T::from_kept(value.clone())?;
+        self.memo.keep(key, value);
+        Some(recalled)
     }
 
     /// The answer under `key` and whether it was reused. Without a key, or if the
