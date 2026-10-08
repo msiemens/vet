@@ -50,13 +50,11 @@ const entry = (kind: ConversationEntry["kind"]): ConversationEntry => ({
 });
 const ids = (list: Thread[]) => list.map((t) => t.id);
 
-void test("on a pull request the Review tab lists the threads on files and lines, and the rest is the conversation's", () => {
+void test("the Review tab lists the threads on files and lines, and those on the whole changeset are apart", () => {
   const file = line(2, { kind: "file", location: null, original: null });
   const all = [line(1), file, whole(3, true)];
-  assert.deepEqual(ids(reviewThreads(all, true)), [1, 2]);
+  assert.deepEqual(ids(reviewThreads(all)), [1, 2]);
   assert.deepEqual(ids(changesetThreads(all)), [3]);
-  // Without a pull request there is no Conversation tab to show the comments on the whole changeset.
-  assert.deepEqual(ids(reviewThreads(all, false)), [1, 2, 3]);
 });
 
 void test("the comments on the pull request that wait for Submit review are the unposted ones of flat threads, oldest first", () => {

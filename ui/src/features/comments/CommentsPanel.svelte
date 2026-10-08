@@ -38,7 +38,7 @@
   } = $props();
 
   const info = $derived(platform.info);
-  const listed = $derived(reviewThreads(threads.items, info !== undefined));
+  const listed = $derived(reviewThreads(threads.items));
   const groups = $derived(groupThreads(listed));
   const empty = $derived(listed.length === 0);
   const drafts = $derived(draftComments(threads.items));
@@ -189,7 +189,9 @@
           <p class="empty">Nothing was said on the pull request as a whole.</p>
         {/if}
       {:else}
-        {#if empty && !composeHere}
+        <!-- Without a pull request there is no Conversation tab: the changeset's own threads come first here. -->
+        {#if !info && onWhole.length}<ThreadCards list={onWhole} {card} />{/if}
+        {#if empty && (info !== undefined || !onWhole.length) && !composeHere}
           <p class="empty">
             No comments yet. Select lines and press {commands.binding("review.comment")?.label}, or use a hunk's comment
             button.

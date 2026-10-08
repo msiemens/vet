@@ -8,12 +8,10 @@ import type { Thread } from "../../generated/Thread";
 import type { ThreadMessage } from "../../generated/ThreadMessage";
 import { isFlat } from "../../lib/flatThread.ts";
 
-/** The threads the Review tab lists. Without a pull request there is no Conversation tab, so it lists every thread. */
-export function reviewThreads(threads: readonly Thread[], pullRequest: boolean): Thread[] {
-  return pullRequest ? threads.filter((t) => t.kind !== "changeset") : [...threads];
-}
+/** The threads the Review tab lists: those on files and lines. */
+export const reviewThreads = (threads: readonly Thread[]): Thread[] => threads.filter((t) => t.kind !== "changeset");
 
-/** The threads on the pull request as a whole, which the Conversation tab shows where there is no feed. */
+/** The threads on the changeset as a whole, drawn as cards: in the Conversation tab where there is no feed, and without a pull request above the Review tab's list. */
 export const changesetThreads = (threads: readonly Thread[]): Thread[] => threads.filter((t) => t.kind === "changeset");
 
 /** A comment of the viewer's on the pull request that waits for Submit review. */

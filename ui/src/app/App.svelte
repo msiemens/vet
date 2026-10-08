@@ -322,15 +322,10 @@
     void controller?.revealInChanges(path);
   }
 
+  /** Shows a thread where it is: at its code, or in the Comments tool window's Conversation tab. */
   function openThread(thread: Thread) {
     screen = "review";
-    void controller?.goToThread(thread);
-  }
-
-  /** Shows an outgoing comment where it is: at its lines, or in the Comments tool window's Conversation tab. */
-  function openOutgoing(thread: Thread) {
-    if (thread.kind !== "changeset") return openThread(thread);
-    screen = "review";
+    if (thread.kind !== "changeset") return void controller?.goToThread(thread);
     Object.assign(left, { tool: "comments", open: true });
     platform.commentsTab = "conversation";
   }
@@ -384,7 +379,7 @@
   {/snippet}
   {#snippet outgoingComments()}
     <!-- A changeset that is no pull request has nowhere to post to. -->
-    {#if headId !== undefined}<OutgoingButton onopen={openOutgoing} />{/if}
+    {#if headId !== undefined}<OutgoingButton onopen={openThread} />{/if}
   {/snippet}
   {#snippet projectSwitcher()}
     {#if session.repo}

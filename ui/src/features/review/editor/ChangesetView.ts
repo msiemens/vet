@@ -125,13 +125,11 @@ export class ChangesetView {
       {
         revision,
         sections: this.sections,
-        root,
         line: metrics.line,
         estimate: (s, known) => this.heights.estimate(s, known),
         resize: (s, height) => this.heights.resize(s, height),
       },
       listeners.threads,
-      collapse,
     );
     this.actions = new ReviewActions(revision, listeners);
     this.heights = new SectionHeights(root, this.sections, metrics, this.threads, mode, collapse);
@@ -220,7 +218,7 @@ export class ChangesetView {
         listeners.pinned?.(at === undefined ? undefined : this.sections[at].file.path);
       },
     });
-    this.root.replaceChildren(...(this.threads.lead ? [this.threads.lead] : []), ...this.sections.map((s) => s.el));
+    this.root.replaceChildren(...this.sections.map((s) => s.el));
     for (const s of this.sections) renderProgress(s, s.review, s.completion);
     this.heights.layout();
     this.pin.update(root.scrollTop);
@@ -810,8 +808,7 @@ export class ChangesetView {
   async goToThread(thread: Thread): Promise<boolean> {
     const at = this.threads.find(thread);
     if (!at) return false;
-    if (at === "lead") this.root.scrollTop = 0;
-    else if (at.line !== undefined) await this.goToLine(at.index, at.line);
+    if (at.line !== undefined) await this.goToLine(at.index, at.line);
     else await this.goToFile(at.index);
     return true;
   }

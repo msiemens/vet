@@ -35,7 +35,6 @@ export const threadState = (blockEl: HTMLElement): ThreadState => ({
 export interface ThreadHost {
   readonly revision: number;
   readonly sections: Section[];
-  readonly root: HTMLElement;
   readonly line: number;
   /** Lays the section out again, counting its cards as `known` heights say. */
   estimate(s: Section, known: Map<string, number>): void;
@@ -59,26 +58,16 @@ export class ThreadLayer {
   private opened = new Set<number>();
   /** Measured heights by `heightKey`; they estimate a card of an unmounted section. */
   private heights = new Map<string, number>();
-  /** The cards on screen, so a measured size finds its section (none: the lead). */
-  private drawn = new WeakMap<Element, { card: CardData; section?: Section }>();
+  /** The cards on screen, so a measured size finds its section. */
+  private drawn = new WeakMap<Element, { card: CardData; section: Section }>();
   private sizes = new ResizeObserver((entries) => entries.forEach((e) => this.onCardSize(e)));
   private destroyed = false;
-  /** Cards above the first section, for the changeset's own threads: only the Changes stream has them. */
-  readonly lead?: HTMLElement;
-  private leadSignature = "";
-  private leadCounted = new Map<string, number>();
-  leadHeight = 0;
   private actions: ThreadActions;
 
   constructor(
     private host: ThreadHost,
     private listeners: ThreadListeners,
-    withLead: boolean,
   ) {
-    if (withLead) {
-      this.lead = document.createElement("div");
-      this.lead.className = "vet-thread-block vet-lead";
-    }
     this.actions = {
       create: async (target, body) => {
         const sent = await listeners.create(host.revision, target, body);
@@ -152,12 +141,12 @@ export class ThreadLayer {
     this.show();
   }
 
+  /** The changeset's own threads are not about code and live in the Comments tool window only. */
   private show() {
     const byPath = new Map<string, Thread[]>();
-    const changeset: Thread[] = [];
     for (const thread of this.threads) {
-      if (thread.kind === "changeset") changeset.push(thread);
-      else if (thread.path !== null) byPath.set(thread.path, [...(byPath.get(thread.path) ?? []), thread]);
+      if (thread.kind !== "changeset" && thread.path !== null)
+        byPath.set(thread.path, [...(byPath.get(thread.path) ?? []), thread]);
     }
     const open = (thread: Thread) => this.opened.has(thread.id);
     for (const s of this.host.sections) {
@@ -187,11 +176,6 @@ export class ThreadLayer {
       s.handle?.dispatchAll(setThreadCards.of(inline));
       this.host.resize(s, s.height + sum(s.counted.values()) - before);
     }
-    if (this.lead)
-      this.drawLead(
-        this.lead,
-        changeset.map((thread) => ({ thread, open: open(thread) })),
-      );
   }
 
   /** A form being typed in stays as it is: a block is only redrawn when its cards changed. */
@@ -203,26 +187,8 @@ export class ThreadLayer {
     s.blockEl.replaceChildren(...s.blockCards.map((card) => this.draw(card, s)));
   }
 
-  private drawLead(lead: HTMLElement, cards: CardData[]) {
-    const signature = JSON.stringify(cards);
-    if (signature === this.leadSignature) return;
-    this.leadSignature = signature;
-    for (const child of lead.children) this.sizes.unobserve(child);
-    lead.replaceChildren(...cards.map((card) => this.draw(card)));
-    this.leadCounted = new Map(cards.map((card) => [cardKey(card), this.heightOf(card)]));
-    this.moveLead(sum(this.leadCounted.values()) - this.leadHeight);
-  }
-
-  /** The sections below follow the lead's height, and so does the viewer's place in them. */
-  private moveLead(delta: number) {
-    if (Math.abs(delta) < 0.5) return;
-    this.leadHeight += delta;
-    for (const s of this.host.sections) s.top += delta;
-    if (this.host.root.scrollTop > 0) this.host.root.scrollTop += delta;
-  }
-
   /** Editor widgets and blocks build and measure their cards the same way. */
-  private draw(card: CardData, section?: Section): HTMLElement {
+  private draw(card: CardData, section: Section): HTMLElement {
     const el = buildCard(card, this.actions);
     this.drawn.set(el, { card, section });
     this.sizes.observe(el);
@@ -245,18 +211,14 @@ export class ThreadLayer {
     const key = cardKey(drawn.card);
     this.heights.set(heightKey(drawn.card), height);
     const s = drawn.section;
-    const counted = s ? s.counted : this.leadCounted;
-    const delta = height - (counted.get(key) ?? 0);
+    const delta = height - (s.counted.get(key) ?? 0);
     if (Math.abs(delta) < 0.5) return;
-    counted.set(key, height);
-    if (!s) this.moveLead(delta);
-    else {
-      if (s.blockCards.some((card) => cardKey(card) === key)) {
-        s.block += delta;
-        s.el.style.setProperty("--vet-threads", `${s.block}px`);
-      }
-      this.host.resize(s, s.height + delta);
+    s.counted.set(key, height);
+    if (s.blockCards.some((card) => cardKey(card) === key)) {
+      s.block += delta;
+      s.el.style.setProperty("--vet-threads", `${s.block}px`);
     }
+    this.host.resize(s, s.height + delta);
   }
 
   private setDraft(draft: Draft | undefined) {
@@ -289,10 +251,10 @@ export class ThreadLayer {
 
   /**
    * Where a thread is shown: the index of its section and the line of its card, if it has one in
-   * the editor; `lead` for the changeset's own; none if it is not in this view.
+   * the editor; none if it is not in this view, as the changeset's own never are.
    */
-  find(thread: Thread): { index: number; line?: number } | "lead" | undefined {
-    if (thread.kind === "changeset") return this.lead ? "lead" : undefined;
+  find(thread: Thread): { index: number; line?: number } | undefined {
+    if (thread.kind === "changeset") return undefined;
     const index = thread.path === null ? -1 : this.host.sections.findIndex((s) => s.file.path === thread.path);
     if (index < 0) return undefined;
     const card = this.host.sections[index].placement.inline.find((c) => c.thread.id === thread.id);

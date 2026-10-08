@@ -85,7 +85,7 @@ export class SectionHeights {
 
   /** Estimates every section's height but the ones at the indices `keep`; the section's own bottom border is one more pixel. */
   layout(keep: ReadonlySet<number> = new Set()) {
-    let top = this.threads.leadHeight;
+    let top = 0;
     for (const [i, s] of this.sections.entries()) {
       s.top = top;
       if (!keep.has(i)) {

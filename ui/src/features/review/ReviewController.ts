@@ -431,8 +431,9 @@ export class ReviewController {
     for (const view of this.views.values()) view.setThreads(this.shownThreads(), threads.revision);
   }
 
-  /** Shows a thread in the Changes tab: its card, or its file or the changeset's top. */
+  /** Shows a thread on code in the Changes tab: its card, or its file. The changeset's own threads are in no diff. */
   async goToThread(thread: Thread): Promise<boolean> {
+    if (thread.kind === "changeset") return false;
     this.tabs.active = CHANGES;
     return this.views.get(CHANGES)?.goToThread(thread) ?? false;
   }
