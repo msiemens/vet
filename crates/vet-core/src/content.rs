@@ -298,6 +298,21 @@ pub struct SnapshotDiff {
     pub renames: RenameMap,
 }
 
+impl SnapshotDiff {
+    /// The files the diff changes, by path, with the lines they gain and lose. A file with no
+    /// text lines to count (a mode change, a binary file) has none.
+    pub fn changed_files(&self) -> Vec<(RepoPath, LineDelta)> {
+        let mut files: BTreeMap<RepoPath, LineDelta> = BTreeMap::new();
+        for file in &self.files {
+            files.insert(file.path().clone(), LineDelta::of(&file.hunks));
+        }
+        for item in &self.non_text {
+            files.entry(item.path.clone()).or_default();
+        }
+        files.into_iter().collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

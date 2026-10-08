@@ -8,16 +8,17 @@ use vet_core::prepared::PreparedFile;
 use vet_core::remap::cut_recorded;
 use vet_core::review::ReviewedSpan;
 
+use super::blobs::Texts;
 use super::interdiff::{check_markable, squash_item, update_in};
 use super::lens::view_unit;
 use super::remap::{Prepared, frame_of};
-use super::state::{State, View, ack_of, check_revision, find_diff, find_non_text, outcome, shown_items};
+use super::state::{Shown, State, View, ack_of, check_revision, find_diff, find_non_text, outcome, shown_items};
 use super::views::{Outcome, ReviewUpdateView};
 use super::{LiveSession, Result, SessionError};
 use crate::ports::{GitRepo, LiveStore};
 use crate::review::{RecordedSpan, SpanOrigin};
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// Flips one hunk: seen becomes unseen, anything else (unseen, or seen against an old base)
     /// becomes seen. Marking starts the review if none is open.
     pub async fn toggle_hunk(
@@ -27,11 +28,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         path: &str,
         hunk: u32,
     ) -> Result<Outcome<ReviewUpdateView>> {
-        let mut st = self.state.lock().await;
+        let (mut st, shown) = self.viewing(view).await?;
         check_revision(&st, revision)?;
-        self.ensure_view(&mut st, view).await?;
-        check_markable(&st, view)?;
-        let state = *update_in(&st, view, path)?
+        check_markable(&shown)?;
+        let state = *update_in(&st, &shown, path)?
             .review
             .hunks
             .get(hunk as usize)
@@ -41,17 +41,16 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         }
         let seen = state != HunkState::Seen;
         let started = seen && self.begin(&mut st).await?;
-        self.mark_hunks_in(&mut st, view, path, &[hunk], seen).await?;
-        Ok(outcome(&st, update_in(&st, view, path)?, started))
+        self.mark_hunks_in(&mut st, &shown, path, &[hunk], seen).await?;
+        Ok(outcome(&st, update_in(&st, &shown, path)?, started))
     }
 
     /// Marks the hunks of a file that are seen against an old base seen again, against the base
     /// now, and leaves the others as they are. Fails if the file has none.
     pub async fn reconfirm_file(&self, revision: u32, path: &str) -> Result<Outcome<ReviewUpdateView>> {
-        let mut st = self.state.lock().await;
+        let (mut st, shown) = self.viewing(View::Changeset).await?;
         check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
-        let hunks: Vec<u32> = update_in(&st, View::Changeset, path)?
+        let hunks: Vec<u32> = update_in(&st, &shown, path)?
             .review
             .hunks
             .iter()
@@ -65,7 +64,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             ));
         }
         self.mark_hunks(&mut st, View::Changeset, path, &hunks, true).await?;
-        Ok(outcome(&st, update_in(&st, View::Changeset, path)?, false))
+        Ok(outcome(&st, update_in(&st, &shown, path)?, false))
     }
 
     /// Flips the acknowledgement of one non-text item. Acknowledging starts the review if none
@@ -77,17 +76,16 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         path: &str,
         kind: NonTextKind,
     ) -> Result<Outcome<ReviewUpdateView>> {
-        let mut st = self.state.lock().await;
+        let (mut st, shown) = self.viewing(view).await?;
         check_revision(&st, revision)?;
-        self.ensure_view(&mut st, view).await?;
-        check_markable(&st, view)?;
-        let acknowledged = !update_in(&st, view, path)?.review.acknowledged.contains(&kind);
-        if matches!(view, View::Interdiff { .. }) && !self.has_counterpart(&st, view, path, kind) {
+        check_markable(&shown)?;
+        let acknowledged = !update_in(&st, &shown, path)?.review.acknowledged.contains(&kind);
+        if matches!(view, View::Interdiff { .. }) && !has_counterpart(&st, &shown, path, kind) {
             return Err(SessionError::Invalid("nothing is left to review in this change".into()));
         }
         let started = acknowledged && self.begin(&mut st).await?;
         self.mark_item(&mut st, view, path, kind, acknowledged).await?;
-        Ok(outcome(&st, update_in(&st, view, path)?, started))
+        Ok(outcome(&st, update_in(&st, &shown, path)?, started))
     }
 
     /// Marks everything of a file seen: all its hunks and its non-text items; if it
@@ -95,54 +93,45 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// if none is open. In an interdiff only what the newer version's changeset has to
     /// review is marked.
     pub async fn toggle_file_seen(&self, revision: u32, view: View, path: &str) -> Result<Outcome<ReviewUpdateView>> {
-        let mut st = self.state.lock().await;
+        let (mut st, shown) = self.viewing(view).await?;
         check_revision(&st, revision)?;
-        self.ensure_view(&mut st, view).await?;
-        check_markable(&st, view)?;
-        let update = update_in(&st, view, path)?;
+        check_markable(&shown)?;
+        let update = update_in(&st, &shown, path)?;
         let seen = !update.completion.is_complete();
         let started = seen && self.begin(&mut st).await?;
         let (hunks, kinds): (Vec<u32>, Vec<NonTextKind>) = {
-            let diff = &st.changes_in(view).diff;
+            let diff = &shown.diffed(&st).diff;
             let hunks = (0..find_diff(diff, path).map_or(0, |d| d.hunks.len() as u32))
                 .filter(|&i| update.review.hunks[i as usize] != HunkState::Informational)
                 .collect();
             let kinds = shown_items(diff, &st.filter, path)
                 .iter()
-                .filter(|n| !matches!(view, View::Interdiff { .. }) || self.has_counterpart(&st, view, path, n.kind))
+                .filter(|n| !matches!(view, View::Interdiff { .. }) || has_counterpart(&st, &shown, path, n.kind))
                 .filter(|n| update.review.acknowledged.contains(&n.kind) != seen)
                 .map(|n| n.kind)
                 .collect();
             (hunks, kinds)
         };
         if !hunks.is_empty() {
-            self.mark_hunks_in(&mut st, view, path, &hunks, seen).await?;
+            self.mark_hunks_in(&mut st, &shown, path, &hunks, seen).await?;
         }
         for kind in kinds {
             self.mark_item(&mut st, view, path, kind, seen).await?;
         }
-        Ok(outcome(&st, update_in(&st, view, path)?, started))
+        Ok(outcome(&st, update_in(&st, &shown, path)?, started))
     }
 
     /// The review state of `path` in the changeset itself, for telling those who show it that a
     /// mark made in an interdiff changed it.
     pub async fn changeset_update(&self, path: &str) -> Result<ReviewUpdateView> {
-        let mut st = self.state.lock().await;
-        self.ensure_changes(&mut st).await?;
-        update_in(&st, View::Changeset, path)
+        let (st, shown) = self.viewing(View::Changeset).await?;
+        update_in(&st, &shown, path)
     }
 
-    /// Whether the newer version's changeset has the change of kind `kind` at `path` to review.
-    fn has_counterpart(&self, st: &State, view: View, path: &str, kind: NonTextKind) -> bool {
-        shown_items(&st.changes_in(view).diff, &st.filter, path)
-            .iter()
-            .any(|n| n.kind == kind && squash_item(st, n).is_some())
-    }
-
-    async fn mark_hunks_in(&self, st: &mut State, view: View, path: &str, hunks: &[u32], seen: bool) -> Result<()> {
-        match view {
-            View::Changeset | View::Commit { .. } => self.mark_hunks(st, view, path, hunks, seen).await,
-            View::Interdiff { from, to } => self.mark_interdiff_hunks(st, (from, to), path, hunks, seen).await,
+    async fn mark_hunks_in(&self, st: &mut State, shown: &Shown, path: &str, hunks: &[u32], seen: bool) -> Result<()> {
+        match shown {
+            Shown::Interdiff(id) => self.mark_interdiff_hunks(st, id, path, hunks, seen).await,
+            _ => self.mark_hunks(st, shown.view(), path, hunks, seen).await,
         }
     }
 
@@ -163,9 +152,9 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             self.keep_snapshots(st, view).await?;
         }
         let (regions, add) = {
-            let changes = st.changes_in(view);
-            let diff = find_diff(&changes.diff, path).ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
-            let blob_text = |blob: Option<BlobId>| blob.and_then(|b| changes.blobs.get(&b)).map(Vec::as_slice);
+            let diffed = st.diffed_in(view);
+            let diff = find_diff(&diffed.diff, path).ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
+            let blob_text = |blob: Option<BlobId>| blob.and_then(|b| diffed.blobs.get(&b)).map(Vec::as_slice);
             let ids = (base, target);
             let (mut regions, mut add) = (Vec::new(), Vec::new());
             for &i in hunks {
@@ -196,16 +185,21 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         seen: bool,
     ) -> Result<()> {
         self.load_known(st).await?;
-        let mut changes = std::mem::take(st.changes_in_mut(view));
+        let mut anchored = std::mem::take(&mut st.changes.as_mut().expect("computed").anchored);
+        let diffed = st.diffed_in(view);
         let prepared = {
-            let frame = frame_of(st, view, changes.diff.renames.clone());
-            self.prepare(st, &frame, &mut changes).await
+            let frame = frame_of(st, view, diffed.diff.renames.clone());
+            self.prepare(st, &frame, diffed, &mut anchored).await
         };
         let cut = prepared.map(
             |Prepared {
                  inputs, spans: slots, ..
              }| {
-                let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &changes.blobs)).collect();
+                let texts = Texts {
+                    diffed: &diffed.blobs,
+                    other: &anchored,
+                };
+                let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &texts)).collect();
                 let mut remove = Vec::new();
                 let mut kept: Vec<(ReviewedSpan, SpanOrigin)> = Vec::new();
                 for (rec, &(b, t)) in st.recorded.iter().zip(&slots) {
@@ -219,7 +213,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 (remove, kept)
             },
         );
-        *st.changes_in_mut(view) = changes;
+        st.changes.as_mut().expect("computed").anchored = anchored;
         let (remove, add) = cut?;
         // Without a review there is nothing to un-mark and nothing to store.
         let ids = match &st.review {
@@ -273,7 +267,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             View::Changeset
         };
         let change = {
-            let diff = &st.changes_in(view).diff;
+            let diff = &st.diffed_in(view).diff;
             find_non_text(diff, kind, path).ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?
         };
         let ack = ack_of(change);
@@ -295,4 +289,11 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         }
         self.note_progress(st).await
     }
+}
+
+/// Whether the newer version's changeset has the change of kind `kind` at `path` to review.
+fn has_counterpart(st: &State, shown: &Shown, path: &str, kind: NonTextKind) -> bool {
+    shown_items(&shown.diffed(st).diff, &st.filter, path)
+        .iter()
+        .any(|n| n.kind == kind && squash_item(st, n).is_some())
 }

@@ -3,8 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use vet_core::content::{BlobId, Snapshot};
-use vet_core::merkle::empty_snapshot;
+use vet_core::content::{BlobId, LineDelta, RepoPath, Snapshot};
 use vet_core::version_diff::{VersionSides, version_diff};
 
 use super::{LiveSession, Result};
@@ -27,7 +26,7 @@ pub struct VersionView {
     pub change: VersionChange,
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// The versions of the open review, oldest first; none while browsing, as versions are
     /// recorded only while a review is open.
     pub async fn versions(&self) -> Result<Vec<VersionView>> {
@@ -55,16 +54,17 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 
     /// What the version of `base` and `target` changed against `previous`, the base and the target
-    /// of the version before it; with none, against its own base. Content that cannot be read
-    /// leaves its file counted as a change without lines.
+    /// of the version before it; with none, against its own base, which is the changeset's diff.
+    /// Content that cannot be read leaves its file counted as a change without lines.
     pub(super) async fn change_of(
         &self,
         previous: Option<(&Snapshot, &Snapshot)>,
         base: &Snapshot,
         target: &Snapshot,
-    ) -> VersionChange {
-        let empty = empty_snapshot();
-        let (base_a, target_a) = previous.unwrap_or((&empty, &empty));
+    ) -> Result<VersionChange> {
+        let Some((base_a, target_a)) = previous else {
+            return Ok(change(self.diff_of(base, target).await?.diff.changed_files()));
+        };
         let sides = VersionSides {
             base_a,
             target_a,
@@ -75,14 +75,17 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let mut blobs: BTreeMap<BlobId, Vec<u8>> = BTreeMap::new();
         for (path, blob) in sides.blobs(&paths) {
             // Unreadable content is a file without text.
-            let _ = self.load(&mut blobs, &path, blob).await;
+            let _ = self.acquisition.load(&mut blobs, &path, blob).await;
         }
-        let files = version_diff(sides, &paths, &mut blobs).changed_files();
-        VersionChange {
-            files: files
-                .into_iter()
-                .map(|(path, delta)| ChangedFile { path, delta })
-                .collect(),
-        }
+        Ok(change(version_diff(sides, &paths, &mut blobs).diff.changed_files()))
+    }
+}
+
+fn change(files: Vec<(RepoPath, LineDelta)>) -> VersionChange {
+    VersionChange {
+        files: files
+            .into_iter()
+            .map(|(path, delta)| ChangedFile { path, delta })
+            .collect(),
     }
 }

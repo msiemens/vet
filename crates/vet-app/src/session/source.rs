@@ -45,7 +45,7 @@ pub(super) async fn tip_of<G: GitRepo>(git: &G, source: &Source) -> Result<Commi
     }
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// The source of the changeset on view.
     pub async fn source(&self) -> Source {
         self.state.lock().await.source.clone()
@@ -185,7 +185,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 tip: tip.clone(),
                 at: now,
                 origin: VersionOrigin::Observed,
-                change: self.change_of(Some((&st.base, &st.target)), &base, &target).await,
+                change: self.change_of(Some((&st.base, &st.target)), &base, &target).await?,
             };
             let previous = store.versions(changeset).await?.pop();
             store.append_version(changeset, version.clone()).await?;

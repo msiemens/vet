@@ -97,6 +97,6 @@ async fn lines_between<G: GitRepo, S: LiveStore + Sync>(
     let git = &acquisition.git;
     let old = git.commit_snapshot(base).await.map_err(|e| e.0)?;
     let new = git.commit_snapshot(tip).await.map_err(|e| e.0)?;
-    let diff = git.diff(&acquisition.store, &old, &new).await.map_err(|e| e.0)?;
+    let diff = git.diff(&acquisition.store, &old, &new).await.map_err(|e| e.0)?.diff;
     Ok(diff.files.iter().map(|file| LineDelta::of(&file.hunks)).sum())
 }

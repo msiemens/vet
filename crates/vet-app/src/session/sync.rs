@@ -139,7 +139,7 @@ struct Pushed {
     edits: HashMap<MessageId, String>,
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// What the platform last said of the pull request on view besides its threads; `None` for
     /// another changeset, and before the first sync.
     pub async fn discussion(&self) -> Option<DiscussionView> {
@@ -337,6 +337,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         st.threads = visible_threads(self.acquisition.store.threads(changeset).await?, open);
         if let Some(changes) = st.changes.as_mut() {
             changes
+                .remapped
                 .resolutions
                 .retain(|id, _| st.threads.iter().any(|t| t.id == *id));
             self.remap(st).await
@@ -382,7 +383,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             return Ok(fallback());
         };
         let mut blobs = BTreeMap::new();
-        if !self.fetch(&mut blobs, &path, entry.blob, true).await? || is_binary(&blobs[&entry.blob]) {
+        if !self.acquisition.fetch(&mut blobs, &path, entry.blob, true).await? || is_binary(&blobs[&entry.blob]) {
             return Ok(fallback());
         }
         let range = LineRange {
@@ -543,7 +544,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             self.acquisition.store.delete_thread(thread).await?;
             st.threads.retain(|t| t.id != thread);
             if let Some(changes) = st.changes.as_mut() {
-                changes.resolutions.remove(&thread);
+                changes.remapped.resolutions.remove(&thread);
             }
         } else {
             self.acquisition.store.delete_message(message).await?;
@@ -572,7 +573,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         self.acquisition.store.delete_thread(thread).await?;
         st.threads.retain(|t| t.id != thread);
         if let Some(changes) = st.changes.as_mut() {
-            changes.resolutions.remove(&thread);
+            changes.remapped.resolutions.remove(&thread);
         }
         Ok(())
     }

@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::classify::{Change, changes, classify};
-use crate::content::{BlobId, EntryKind, FileDiff, FileEntry, LineDelta, RepoPath, Snapshot, SnapshotDiff, is_binary};
+use crate::content::{BlobId, EntryKind, FileDiff, FileEntry, RepoPath, Snapshot, SnapshotDiff, is_binary};
 use crate::hunks::line_hunks;
 use crate::interdiff::{FileInterdiff, InterdiffHunk, interdiff};
 
@@ -61,21 +61,6 @@ pub struct VersionDiff {
     pub diff: SnapshotDiff,
     /// The hunks of each text file in `diff`, by its path, aligned with the file's own hunks.
     pub hunks: BTreeMap<RepoPath, Vec<InterdiffHunk>>,
-}
-
-impl VersionDiff {
-    /// The files the interdiff changes, by path, with the lines they gain and lose. A file with
-    /// no text lines to count (a mode change, a binary file) has none.
-    pub fn changed_files(&self) -> Vec<(RepoPath, LineDelta)> {
-        let mut files: BTreeMap<RepoPath, LineDelta> = BTreeMap::new();
-        for file in &self.diff.files {
-            files.insert(file.path().clone(), LineDelta::of(&file.hunks));
-        }
-        for item in &self.diff.non_text {
-            files.entry(item.path.clone()).or_default();
-        }
-        files.into_iter().collect()
-    }
 }
 
 /// The interdiff of `paths` (see [`VersionSides::paths`]). `blobs` holds the content of
@@ -175,7 +160,7 @@ fn rebased_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content::{LineRange, NonTextKind};
+    use crate::content::{LineDelta, LineRange, NonTextKind};
     use crate::merkle;
 
     fn entry(content: &str, mode: u32, kind: EntryKind) -> FileEntry {
@@ -395,7 +380,7 @@ mod tests {
         let result = run(&contents, &base, &base, &base, &now);
 
         assert_eq!(
-            result.changed_files(),
+            result.diff.changed_files(),
             [
                 (RepoPath::from("added"), LineDelta { added: 2, removed: 0 }),
                 (RepoPath::from("edit"), LineDelta { added: 2, removed: 2 }),

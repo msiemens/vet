@@ -2,19 +2,21 @@
 //! anchors onto them.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
-use vet_core::content::{BlobId, EntryKind, NonTextKind, RenameMap, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
+use tokio::sync::MutexGuard;
+use vet_core::content::{BlobId, EntryKind, RenameMap, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
 use vet_core::prepared::PreparedFile;
 use vet_core::remap::{RemapMode, remap_span};
 use vet_core::resolve::{Resolution, resolve_anchor};
 use vet_core::review::{Anchor, CommentTarget, FileRemapInput, ReviewedSpan, Side, Thread, ThreadId};
 
-use super::blobs::image_media_type;
-use super::state::{Changes, State, View, commits};
-use super::views::{ItemView, ModeChange};
-use super::{LiveSession, Result};
+use super::blobs::Texts;
+use super::derived::{CommitUnit, CommitsBetween, DiffOf, Diffed};
+use super::interdiff::Interdiffing;
+use super::state::{Changes, Interdiffed, Remapped, Shown, State, View};
+use super::{LiveSession, Result, SessionError};
 use crate::ports::{GitRepo, LiveStore};
-use crate::progress::{Running, TaskKind};
 use crate::review::{RecordedSpan, SpanId, SpanOrigin};
 
 /// Indices into the prepared files of a recorded span's base and target side.
@@ -65,7 +67,7 @@ pub(super) fn frame_of(st: &State, view: View, renames: RenameMap) -> Frame<'_> 
 
 /// The frame of the commit `index`: its own two snapshots, the marks made in it being the ones of its own origin.
 fn commit_frame(st: &State, index: u32, renames: RenameMap) -> Frame<'_> {
-    let unit = &commits(st.changes.as_ref().expect("computed"))[index as usize];
+    let unit = &st.units()[index as usize];
     Frame {
         base: &unit.old,
         target: &unit.new,
@@ -74,76 +76,126 @@ fn commit_frame(st: &State, index: u32, renames: RenameMap) -> Frame<'_> {
     }
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+/// What the state lacks to show a view, computed with the state released.
+enum Missing {
+    Diff { base: Snapshot, target: Snapshot },
+    Commits(CommitsBetween),
+    Interdiff(Box<Interdiffing>),
+}
+
+/// A value computed for what was [`Missing`].
+enum Derivation {
+    Diff(Arc<Diffed>),
+    Commits(Arc<Vec<CommitUnit>>),
+    Interdiff(Box<Interdiffed>),
+}
+
+impl<G, S> LiveSession<G, S>
+where
+    G: GitRepo + Send + Sync + 'static,
+    S: LiveStore + Send + Sync + 'static,
+{
+    /// The changes of the current revision, computing the diff if the state has none. A command
+    /// that holds the state calls this; requests that start out with it use [`LiveSession::viewing`].
     pub(super) async fn ensure_changes(&self, st: &mut State) -> Result<()> {
         if st.changes.is_some() {
             return Ok(());
         }
-        let task = self.acquisition.tasks.start(TaskKind::Diff, "Diffing the changes");
-        let diffed = self.diffed(&st.base, &st.target, &task).await;
-        task.conclude(&diffed);
-        let (diff, blobs) = diffed?;
-        st.changes = Some(self.changes_of(diff, blobs).await);
-        self.remap(st).await
+        let diffed = self.diff_of(&st.base, &st.target).await?;
+        self.install_diff(st, diffed).await
     }
 
-    /// The changes of `diff` with nothing remapped onto them yet; `blobs` has the text of its files.
-    pub(super) async fn changes_of(&self, diff: SnapshotDiff, blobs: BTreeMap<BlobId, Vec<u8>>) -> Changes {
-        let mut items = Vec::new();
-        for n in &diff.non_text {
-            let before_path = n.from.as_ref().unwrap_or(&n.path);
-            items.push(ItemView {
-                kind: n.kind,
-                before: self.describe(before_path, n.before.as_ref(), n.kind).await,
-                after: self.describe(&n.path, n.after.as_ref(), n.kind).await,
-                has_preview: n.kind == NonTextKind::Binary
-                    && image_media_type(&n.path).is_some()
-                    && (n.before.is_some() || n.after.is_some()),
-                mode_change: (n.kind == NonTextKind::Mode).then(|| ModeChange::of(n.before.as_ref(), n.after.as_ref())),
-            });
-        }
-        let changed = diff
-            .files
-            .iter()
-            .flat_map(|d| [&d.old_path, &d.new_path])
-            .flatten()
-            .chain(
-                diff.non_text
-                    .iter()
-                    .flat_map(|n| [Some(&n.path), n.from.as_ref()])
-                    .flatten(),
-            )
-            .cloned()
-            .collect();
-        Changes {
-            diff,
-            changed,
-            blobs,
-            items,
-            ..Default::default()
-        }
+    /// The state on view with what `view` shows computed, and what of it is not kept in the state.
+    /// What is derived (a diff, an interdiff, the commits) is awaited with the state released, so
+    /// that other requests go on meanwhile and requests of the same value share its computation;
+    /// only the remap of the review state onto it runs under the state.
+    pub(super) async fn viewing(&self, view: View) -> Result<(MutexGuard<'_, State>, Shown)> {
+        self.prepared(view, matches!(view, View::Commit { .. })).await
     }
 
-    /// The diff of two snapshots, and the content of every text file it changes; `task` reports
-    /// the files loaded.
-    pub(super) async fn diffed(
-        &self,
-        old: &Snapshot,
-        new: &Snapshot,
-        task: &Running,
-    ) -> Result<(SnapshotDiff, BTreeMap<BlobId, Vec<u8>>)> {
-        let diff = self.acquisition.git.diff(&self.acquisition.store, old, new).await?;
-        let mut blobs = BTreeMap::new();
-        let total = diff.files.len() as u32;
-        for (done, d) in diff.files.iter().enumerate() {
-            task.report(Some((done as u32, total)), Some(d.path().to_string_lossy()));
-            for (path, blob) in [(&d.old_path, d.old_blob), (&d.new_path, d.new_blob)] {
-                if let (Some(path), Some(blob)) = (path, blob) {
-                    self.load(&mut blobs, path, blob).await?;
+    /// Like [`LiveSession::viewing`]; with `commits`, the commits of the changeset are computed too.
+    pub(super) async fn prepared(&self, view: View, commits: bool) -> Result<(MutexGuard<'_, State>, Shown)> {
+        let mut st = self.state.lock().await;
+        loop {
+            let missing = match self.missing(&mut st, view, commits).await? {
+                Ok(shown) => return Ok((st, shown)),
+                Err(missing) => missing,
+            };
+            let revision = st.revision;
+            drop(st);
+            let derived = self.derive(missing).await;
+            st = self.state.lock().await;
+            if st.revision != revision {
+                continue;
+            }
+            match derived? {
+                Derivation::Diff(diffed) => {
+                    if st.changes.is_none() {
+                        self.install_diff(&mut st, diffed).await?;
+                    }
                 }
+                Derivation::Commits(units) => {
+                    if st.changes.as_ref().is_some_and(|c| c.commits.is_none()) {
+                        self.install_commits(&mut st, units).await?;
+                    }
+                }
+                Derivation::Interdiff(interdiffed) => return Ok((st, Shown::Interdiff(interdiffed))),
             }
         }
-        Ok((diff, blobs))
+    }
+
+    /// What `view` shows if the state and the kept values have it, else what is missing.
+    async fn missing(&self, st: &mut State, view: View, commits: bool) -> Result<std::result::Result<Shown, Missing>> {
+        if st.changes.is_none() {
+            let key = DiffOf {
+                old: st.base.id,
+                new: st.target.id,
+            };
+            let Some(diffed) = self.derived.diffs.peek(&key) else {
+                let (base, target) = (st.base.clone(), st.target.clone());
+                return Ok(Err(Missing::Diff { base, target }));
+            };
+            self.install_diff(st, diffed).await?;
+        }
+        if commits && st.changes().commits.is_none() {
+            let units = match self.commits_key(st) {
+                None => Arc::default(),
+                Some(key) => match self.derived.commits.peek(&key) {
+                    Some(units) => units,
+                    None => return Ok(Err(Missing::Commits(key))),
+                },
+            };
+            self.install_commits(st, units).await?;
+        }
+        match view {
+            View::Changeset => Ok(Ok(Shown::Changeset)),
+            View::Commit { index } if (index as usize) < st.units().len() => Ok(Ok(Shown::Commit { index })),
+            View::Commit { index } => Err(SessionError::NotFound(format!("commit {index}"))),
+            View::Interdiff { from, to } => {
+                let asked = self.interdiffing(st, from, to).await?;
+                Ok(match self.derived.interdiffs.peek(&asked.key) {
+                    Some(compared) => Ok(Shown::Interdiff(Box::new(asked.with(compared)))),
+                    None => Err(Missing::Interdiff(Box::new(asked))),
+                })
+            }
+        }
+    }
+
+    async fn derive(&self, missing: Missing) -> Result<Derivation> {
+        Ok(match missing {
+            Missing::Diff { base, target } => Derivation::Diff(self.diff_of(&base, &target).await?),
+            Missing::Commits(key) => Derivation::Commits(self.commits_of(key).await?),
+            Missing::Interdiff(asked) => {
+                let compared = self.interdiff_of(asked.key.clone()).await?;
+                Derivation::Interdiff(Box::new(asked.with(compared)))
+            }
+        })
+    }
+
+    /// Makes `diffed` the current revision's diff and remaps the review state onto it.
+    async fn install_diff(&self, st: &mut State, diffed: Arc<Diffed>) -> Result<()> {
+        st.changes = Some(Changes::new(diffed));
+        self.remap(st).await
     }
 
     /// Remaps every recorded span onto the changeset and, once computed, each commit's own diff
@@ -152,11 +204,9 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     pub(super) async fn remap(&self, st: &mut State) -> Result<()> {
         self.load_known(st).await?;
         let mut result = self.remap_view(st, View::Changeset).await;
-        let count = st
-            .changes
-            .as_ref()
+        let count = (st.changes.as_ref())
             .and_then(|c| c.commits.as_ref())
-            .map_or(0, |units| units.len());
+            .map_or(0, |commits| commits.units.len());
         for index in 0..count as u32 {
             if result.is_ok() {
                 result = self.remap_view(st, View::Commit { index }).await;
@@ -168,34 +218,38 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
 
     /// Remaps onto one view of the changeset or of a commit; only the changeset resolves threads.
     pub(super) async fn remap_view(&self, st: &mut State, view: View) -> Result<()> {
-        let mut changes = std::mem::take(st.changes_in_mut(view));
-        let remapped = self.remapped(st, view, &mut changes).await;
-        *st.changes_in_mut(view) = changes;
-        remapped
+        let mut anchored = std::mem::take(&mut st.changes.as_mut().expect("computed").anchored);
+        let remapped = self.remapped(st, view, &mut anchored).await;
+        st.changes.as_mut().expect("computed").anchored = anchored;
+        *st.remapped_in_mut(view) = remapped?;
+        Ok(())
     }
 
-    async fn remapped(&self, st: &State, view: View, changes: &mut Changes) -> Result<()> {
-        let frame = frame_of(st, view, changes.diff.renames.clone());
-        let Prepared { inputs, spans, threads } = self.prepare(st, &frame, changes).await?;
+    /// The review state remapped onto the diff of `view`; `anchored` receives the texts it reads
+    /// that the diff does not have.
+    async fn remapped(&self, st: &State, view: View, anchored: &mut BTreeMap<BlobId, Vec<u8>>) -> Result<Remapped> {
+        let diffed = st.diffed_in(view);
+        let frame = frame_of(st, view, diffed.diff.renames.clone());
+        let Prepared { inputs, spans, threads } = self.prepare(st, &frame, diffed, anchored).await?;
+        let texts = Texts {
+            diffed: &diffed.blobs,
+            other: anchored,
+        };
         let resolving = view == View::Changeset;
         let to = vet_core::content::Changeset {
             base: frame.base.id,
             target: frame.target.id,
         };
-        let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &changes.blobs)).collect();
+        let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &texts)).collect();
 
         // Moved content is searched for among the changed files of the anchor's side.
         let (base_inputs, target_inputs) = if resolving && threads.iter().any(Option::is_some) {
-            changed_inputs(&changes.diff)
+            changed_inputs(&diffed.diff)
         } else {
             Default::default()
         };
-        let base_changed: Vec<PreparedFile> = (base_inputs.iter())
-            .map(|i| PreparedFile::new(i, &changes.blobs))
-            .collect();
-        let target_changed: Vec<PreparedFile> = (target_inputs.iter())
-            .map(|i| PreparedFile::new(i, &changes.blobs))
-            .collect();
+        let base_changed: Vec<PreparedFile> = (base_inputs.iter()).map(|i| PreparedFile::new(i, &texts)).collect();
+        let target_changed: Vec<PreparedFile> = (target_inputs.iter()).map(|i| PreparedFile::new(i, &texts)).collect();
         let resolutions: HashMap<ThreadId, Resolution> = st
             .threads
             .iter()
@@ -223,11 +277,11 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 (rec.id, remap_span(&rec.span, to, b, t, frame.mode_of(rec)))
             })
             .collect();
-        drop(prepared);
-        changes.flat = remapped.iter().flat_map(|(_, s)| s.iter().cloned()).collect();
-        changes.remapped = remapped;
-        changes.resolutions = resolutions;
-        Ok(())
+        Ok(Remapped {
+            flat: remapped.iter().flat_map(|(_, s)| s.iter().cloned()).collect(),
+            spans: remapped,
+            resolutions,
+        })
     }
 
     /// Loads the snapshots the recorded spans and the range threads are anchored in, and drops
@@ -246,8 +300,14 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 
     /// The file pairs of the anchors' sides, and for each recorded span and
-    /// thread the indices of its pairs. Loads the texts into `changes.blobs`.
-    pub(super) async fn prepare(&self, st: &State, frame: &Frame<'_>, changes: &mut Changes) -> Result<Prepared> {
+    /// thread the indices of its pairs. Loads the texts `diffed` does not have into `anchored`.
+    pub(super) async fn prepare(
+        &self,
+        st: &State,
+        frame: &Frame<'_>,
+        diffed: &Diffed,
+        anchored: &mut BTreeMap<BlobId, Vec<u8>>,
+    ) -> Result<Prepared> {
         let anchors = |r: &RecordedSpan| {
             [(true, r.span.base.clone()), (false, r.span.target.clone())]
                 .into_iter()
@@ -265,7 +325,6 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             _ => st.snapshot(id),
         };
 
-        let mut blobs = std::mem::take(&mut changes.blobs);
         let renames = &frame.renames;
         let file_entry = |snapshot: Option<&Snapshot>, path: &RepoPath| {
             snapshot
@@ -313,13 +372,13 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         for input in &inputs {
             for (path, blob) in [(&input.old_path, input.old_blob), (&input.new_path, input.new_blob)] {
                 if let (Some(path), Some(blob)) = (path, blob)
-                    && let Err(e) = self.load(&mut blobs, path, blob).await
+                    && !diffed.blobs.contains_key(&blob)
+                    && let Err(e) = self.acquisition.load(anchored, path, blob).await
                 {
                     loaded = Err(e);
                 }
             }
         }
-        changes.blobs = blobs;
         loaded.map(|()| Prepared { inputs, spans, threads })
     }
 }

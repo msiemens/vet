@@ -24,10 +24,10 @@ use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
     BaseCandidates, BlobRead, BlobReader, BranchInfo, ChangesetRefs, Checkout, CheckoutError, CommitDetail, CommitInfo,
     Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefUpdate, Remerged, RemoteInfo, Scan, Scanner,
-    Store,
+    Store, TextDiff,
 };
 use vet_core::classify::{changes, text_blobs};
-use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot, SnapshotDiff};
+use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot};
 
 use crate::budget::{Budget, REVIEW_IO};
 use crate::paths;
@@ -200,12 +200,7 @@ impl Inner {
         Ok(self.read_blob(path, blob)?.map_or(BlobRead::Missing, BlobRead::Found))
     }
 
-    fn diff(
-        &self,
-        stored: BTreeMap<BlobId, Vec<u8>>,
-        old: &Snapshot,
-        new: &Snapshot,
-    ) -> Result<SnapshotDiff, GitError> {
+    fn diff(&self, stored: BTreeMap<BlobId, Vec<u8>>, old: &Snapshot, new: &Snapshot) -> Result<TextDiff, GitError> {
         let repo = self.open()?;
         let mut wt = scan::Worktree::new(&repo, &self.blobs, &self.stats, self.cap)?;
         diff::diff(&repo, &mut wt, &self.blobs, self.cap, stored, old, new)
@@ -429,7 +424,7 @@ impl ChangesetRefs for GixRepo {
 }
 
 impl Differ for GixRepo {
-    async fn diff<S: Store + Sync>(&self, store: &S, old: &Snapshot, new: &Snapshot) -> Result<SnapshotDiff, GitError> {
+    async fn diff<S: Store + Sync>(&self, store: &S, old: &Snapshot, new: &Snapshot) -> Result<TextDiff, GitError> {
         let mut stored = BTreeMap::new();
         for (_, blob) in text_blobs(&changes(old, new)) {
             if let Some(bytes) = store.blob(blob).await.map_err(|e| GitError(e.0))? {

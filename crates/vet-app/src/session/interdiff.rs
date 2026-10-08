@@ -3,61 +3,46 @@
 //! its own. Its marks are not review state of its own: they are recorded in the changeset of the
 //! newer version, which is the one the review remaps, so seen state carries over.
 
-use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use vet_core::completion::{Completion, Coverage, HunkState};
-use vet_core::content::{FileDiff, NonTextChange, RepoPath, Snapshot, SnapshotId};
+use vet_core::content::{FileDiff, NonTextChange, RepoPath};
 use vet_core::interdiff::squash_marks;
 use vet_core::marking::Region;
 use vet_core::review::{ReviewedSpan, Side};
-use vet_core::version_diff::{VersionSides, version_diff};
 
+use super::derived::{Compared, Interdiff};
 use super::manifest::{empty_completion, file_views, target_view};
-use super::state::{Interdiffed, State, View, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
+use super::state::{Interdiffed, Shown, State, View, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
 use super::views::{InterdiffView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
 use crate::base;
-use crate::changeset::BaseChoice;
+use crate::changeset::{BaseChoice, Version};
 use crate::ports::{GitRepo, LiveStore};
-use crate::progress::TaskKind;
 use crate::review::SpanOrigin;
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
-    /// Computes what `view` shows, if it is not yet.
-    pub(super) async fn ensure_view(&self, st: &mut State, view: View) -> Result<()> {
-        self.ensure_changes(st).await?;
-        let (from, to) = match view {
-            View::Changeset => return Ok(()),
-            View::Commit { index } => return self.ensure_commit(st, index).await,
-            View::Interdiff { from, to } => (from, to),
-        };
-        if st
-            .changes
-            .as_ref()
-            .expect("computed")
-            .interdiffs
-            .contains_key(&(from, to))
-        {
-            return Ok(());
-        }
-        let task = self.acquisition.tasks.start(TaskKind::Diff, "Comparing versions");
-        let interdiffed = self.interdiffed(st, from, to, &task).await;
-        task.conclude(&interdiffed);
-        st.changes
-            .as_mut()
-            .expect("computed")
-            .interdiffs
-            .insert((from, to), interdiffed?);
-        Ok(())
-    }
+/// An interdiff asked for: what it compares, before it is computed.
+pub(super) struct Interdiffing {
+    pub(super) key: Interdiff,
+    from: Version,
+    to: Version,
+    markable: bool,
+}
 
-    async fn interdiffed(
-        &self,
-        st: &State,
-        from: u32,
-        to: u32,
-        task: &crate::progress::Running,
-    ) -> Result<Interdiffed> {
+impl Interdiffing {
+    pub(super) fn with(self, compared: Arc<Compared>) -> Interdiffed {
+        Interdiffed {
+            compared,
+            from: self.from,
+            to: self.to,
+            markable: self.markable,
+        }
+    }
+}
+
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
+    /// The interdiff of the versions `from` and `to` of the open review.
+    pub(super) async fn interdiffing(&self, st: &State, from: u32, to: u32) -> Result<Interdiffing> {
         let (Some(changeset), Some(review)) = (st.changeset, &st.review) else {
             return Err(SessionError::Invalid(
                 "versions are recorded once a review has started".into(),
@@ -73,50 +58,24 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             (versions.iter().find(|v| v.n == n).cloned()).ok_or_else(|| SessionError::NotFound(format!("version {n}")))
         };
         let (a, b) = (find(from)?, find(to)?);
-        let base_a = self.snapshot_of(st, a.base).await?;
-        let target_a = self.snapshot_of(st, a.target).await?;
-        let base_b = self.snapshot_of(st, b.base).await?;
-        let target_b = self.snapshot_of(st, b.target).await?;
-        let sides = VersionSides {
-            base_a: &base_a,
-            target_a: &target_a,
-            base_b: &base_b,
-            target_b: &target_b,
+        let key = Interdiff {
+            base_a: a.base,
+            target_a: a.target,
+            base_b: b.base,
+            target_b: b.target,
         };
-
-        let paths = sides.paths();
-        let wanted = sides.blobs(&paths);
-        let mut blobs = BTreeMap::new();
-        for (done, (path, blob)) in wanted.iter().enumerate() {
-            task.report(Some((done as u32, wanted.len() as u32)), Some(path.to_string_lossy()));
-            self.load(&mut blobs, path, *blob).await?;
-        }
-        let compared = version_diff(sides, &paths, &mut blobs);
-        Ok(Interdiffed {
-            changes: self.changes_of(compared.diff, blobs).await,
-            hunks: compared.hunks,
+        Ok(Interdiffing {
+            key,
             markable: b.n == review.version,
             from: a,
             to: b,
         })
     }
 
-    /// A version's snapshot: the session's own if it holds it, else the stored one.
-    async fn snapshot_of(&self, st: &State, id: SnapshotId) -> Result<Snapshot> {
-        if let Some(held) = st.snapshot(id) {
-            return Ok(held.clone());
-        }
-        match self.acquisition.store.snapshot(id).await? {
-            Some((snapshot, _)) => Ok(snapshot),
-            None => Err(SessionError::NotFound("snapshot of the version".into())),
-        }
-    }
-
-    /// The manifest of the interdiff of `from` and `to`, which `ensure_view` computed.
-    pub(super) async fn interdiff_manifest(&self, st: &State, from: u32, to: u32) -> Result<ManifestView> {
-        let id = &st.changes.as_ref().expect("computed").interdiffs[&(from, to)];
+    /// The manifest of the interdiff `id`.
+    pub(super) async fn interdiff_manifest(&self, st: &State, id: &Interdiffed) -> Result<ManifestView> {
         let lens = Lens::new(st, id);
-        let files = file_views(&id.changes, &st.filter, |diff, items| lens.state(diff, items));
+        let files = file_views(&id.compared.diffed, &st.filter, |diff, items| lens.state(diff, items));
         let git = &self.acquisition.git;
         let branches = git.branches().await?;
         let commit = git.commit_info(&id.to.base_commit).await?;
@@ -130,7 +89,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             contained_in: None,
         };
         let facts = self.lens_facts(st).await?;
-        let conflicts = (id.hunks.values().flatten()).any(|h| h.flags.conflict);
+        let conflicts = (id.compared.hunks.values().flatten()).any(|h| h.flags.conflict);
         let mut limits = vec![if id.markable {
             format!(
                 "The old side is version {} rebased onto the base of version {}, a synthetic tree: hover, definitions and \
@@ -166,8 +125,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             changeset_files: facts.files,
             changeset_completion: facts.completion,
             interdiff: Some(InterdiffView {
-                from,
-                to,
+                from: id.from.n,
+                to: id.to.n,
                 rebased: id.from.base != id.to.base,
                 markable: id.markable,
                 limits,
@@ -180,20 +139,19 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     pub(super) async fn mark_interdiff_hunks(
         &self,
         st: &mut State,
-        key: (u32, u32),
+        id: &Interdiffed,
         path: &str,
         hunks: &[u32],
         seen: bool,
     ) -> Result<()> {
         let (regions, add) = {
-            let changes = st.changes.as_ref().expect("computed");
-            let id = &changes.interdiffs[&key];
-            let squash = find_diff(&changes.diff, path);
-            let diff =
-                find_diff(&id.changes.diff, path).ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
-            let inter = &id.hunks[diff.path()];
+            let changeset = &st.changes().diffed;
+            let squash = find_diff(&changeset.diff, path);
+            let diff = find_diff(&id.compared.diffed.diff, path)
+                .ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
+            let inter = &id.compared.hunks[diff.path()];
             let blob_text =
-                |blob: Option<vet_core::content::BlobId>| blob.and_then(|b| changes.blobs.get(&b)).map(Vec::as_slice);
+                |blob: Option<vet_core::content::BlobId>| blob.and_then(|b| changeset.blobs.get(&b)).map(Vec::as_slice);
             let (mut regions, mut add): (Vec<Region>, Vec<ReviewedSpan>) = (Vec::new(), Vec::new());
             for &i in hunks {
                 let hunk = inter
@@ -222,8 +180,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
 
 /// What a request in an interdiff view may do: marks and comments land in the changeset of the
 /// newer version, which only the latest version's has.
-pub(super) fn check_markable(st: &State, view: View) -> Result<()> {
-    if markable(st, view) {
+pub(super) fn check_markable(shown: &Shown) -> Result<()> {
+    if shown.markable() {
         Ok(())
     } else {
         Err(SessionError::Invalid(
@@ -232,42 +190,33 @@ pub(super) fn check_markable(st: &State, view: View) -> Result<()> {
     }
 }
 
-/// Whether marks can be made in `view`, which `ensure_view` computed.
-pub(super) fn markable(st: &State, view: View) -> bool {
-    match view {
-        View::Changeset | View::Commit { .. } => true,
-        View::Interdiff { from, to } => st.changes.as_ref().expect("computed").interdiffs[&(from, to)].markable,
-    }
-}
-
 /// What a request to comment may do: comments are on the changeset and its interdiffs, not on one
 /// commit's own diff.
-pub(super) fn check_commentable(st: &State, view: View) -> Result<()> {
-    if matches!(view, View::Commit { .. }) {
+pub(super) fn check_commentable(shown: &Shown) -> Result<()> {
+    if matches!(shown, Shown::Commit { .. }) {
         return Err(SessionError::Invalid(
             "comments are made in All changes, not in one commit".into(),
         ));
     }
-    check_markable(st, view)
+    check_markable(shown)
 }
 
-/// The review state of `path` in `view` with the completions it implies.
-pub(super) fn update_in(st: &State, view: View, path: &str) -> Result<ReviewUpdateView> {
-    let (from, to) = match view {
-        View::Changeset => return super::manifest::update_of(st, path),
-        View::Commit { index } => return super::lens::commit_update(st, index, path),
-        View::Interdiff { from, to } => (from, to),
+/// The review state of `path` in the view `shown` with the completions it implies.
+pub(super) fn update_in(st: &State, shown: &Shown, path: &str) -> Result<ReviewUpdateView> {
+    let id = match shown {
+        Shown::Changeset => return super::manifest::update_of(st, path),
+        Shown::Commit { index } => return super::lens::commit_update(st, *index, path),
+        Shown::Interdiff(id) => id,
     };
-    let id = &st.changes.as_ref().expect("computed").interdiffs[&(from, to)];
     let lens = Lens::new(st, id);
-    let diff = find_diff(&id.changes.diff, path);
-    let items = shown_items(&id.changes.diff, &st.filter, path);
+    let diff = find_diff(&id.compared.diffed.diff, path);
+    let items = shown_items(&id.compared.diffed.diff, &st.filter, path);
     let file = diff
         .map(|d| d.path().clone())
         .or_else(|| items.first().map(|n| n.path.clone()))
         .ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
     let (review, completion) = lens.state(diff, &items);
-    let files = file_views(&id.changes, &st.filter, |d, i| lens.state(d, i));
+    let files = file_views(&id.compared.diffed, &st.filter, |d, i| lens.state(d, i));
     Ok(ReviewUpdateView {
         revision: st.revision,
         path: file,
@@ -279,8 +228,7 @@ pub(super) fn update_in(st: &State, view: View, path: &str) -> Result<ReviewUpda
 
 /// The squash change whose acknowledgement an interdiff item stands for, if the squash has one.
 pub(super) fn squash_item<'a>(st: &'a State, item: &NonTextChange) -> Option<&'a NonTextChange> {
-    let squash = &st.changes.as_ref().expect("computed").diff;
-    find_non_text(squash, item.kind, &item.path.to_string_lossy())
+    find_non_text(&st.changes().diffed.diff, item.kind, &item.path.to_string_lossy())
 }
 
 /// Review state of an interdiff's files, read from the changeset of the newer version.
@@ -294,7 +242,7 @@ impl<'a> Lens<'a> {
     fn new(st: &'a State, id: &'a Interdiffed) -> Self {
         // Coverage is remapped onto the latest version only.
         let spans = if id.markable {
-            &st.changes.as_ref().expect("computed").flat[..]
+            &st.changes().remapped.flat[..]
         } else {
             &[]
         };
@@ -306,16 +254,13 @@ impl<'a> Lens<'a> {
     }
 
     fn squash(&self, path: &RepoPath) -> Option<&'a FileDiff> {
-        find_diff(
-            &self.st.changes.as_ref().expect("computed").diff,
-            &path.to_string_lossy(),
-        )
+        find_diff(&self.st.changes().diffed.diff, &path.to_string_lossy())
     }
 
     /// The state of each hunk of `diff`.
     fn hunk_states(&self, diff: &FileDiff) -> Vec<HunkState> {
         let squash = self.squash(diff.path());
-        (self.id.hunks[diff.path()].iter())
+        (self.id.compared.hunks[diff.path()].iter())
             .map(|h| {
                 if h.flags.informational {
                     return HunkState::Informational;
@@ -345,7 +290,11 @@ impl<'a> Lens<'a> {
         let mut old_base_lines = vec![0; states.len()];
         if let Some(d) = diff {
             let squash = self.squash(d.path());
-            for ((h, state), old_base) in self.id.hunks[d.path()].iter().zip(&states).zip(&mut old_base_lines) {
+            for ((h, state), old_base) in self.id.compared.hunks[d.path()]
+                .iter()
+                .zip(&states)
+                .zip(&mut old_base_lines)
+            {
                 if *state == HunkState::Informational {
                     continue;
                 }

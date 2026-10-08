@@ -38,15 +38,17 @@
 //! last fetched) or the merge base move.
 //!
 //! This module is the lifecycle and persistence of a review. The rest of the
-//! session is split by what it does with the state: `remap` computes a
-//! revision's changes, `manifest` and `content` and `browse` show them, `marks`
-//! and `threads` edit the review, `blobs` reads the content they all need, and
-//! `source` and `listing` are about which changeset is on view.
+//! session is split by what it does with the state: `derived` computes the
+//! diffs, interdiffs and commits without touching it, `remap` puts a revision's
+//! review state onto them, `manifest` and `content` and `browse` show them,
+//! `marks` and `threads` edit the review, `blobs` reads the content they all
+//! need, and `source` and `listing` are about which changeset is on view.
 
 mod base_diff;
 mod blobs;
 mod browse;
 mod content;
+mod derived;
 mod interdiff;
 mod lens;
 mod lines;
@@ -76,6 +78,7 @@ pub use self::base_diff::{BaseDiffKind, BaseDiffRow, BaseDiffView};
 pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};
+use self::derived::{Derived, DiffOf};
 pub use self::lens::{CommitKind, CommitUnitView, CommitsView};
 use self::lines::LinesBetween;
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
@@ -102,7 +105,7 @@ use crate::review::{ReviewId, visible_threads};
 use crate::revisions::Revisions;
 use crate::settle::{Settled, Settling};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum SessionError {
     Git(GitError),
     Store(StoreError),
@@ -192,6 +195,8 @@ pub struct LiveSession<G, S> {
     exchange: Mutex<()>,
     /// The line deltas between commits that the list of changesets shows.
     lines: Engine<LinesBetween>,
+    /// The diffs, interdiffs and commits the review state is remapped onto.
+    derived: Derived,
 }
 
 /// How many line deltas the list of changesets keeps.
@@ -212,7 +217,7 @@ async fn author_of<G: GitRepo>(git: &G) -> String {
         .unwrap_or_else(|| "You".into())
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// Resumes the open review of the working tree of the repository at `repo`
     /// (the root, as the key changesets are recorded under), or else starts out
     /// browsing the tree against the current branch's tip. The threads that are
@@ -284,6 +289,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     ) -> Self {
         Self {
             author: author_of(&acquisition.git).await,
+            derived: Derived::new(&acquisition.tasks),
             acquisition,
             name,
             repo,
@@ -422,7 +428,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             tip: head.clone(),
             at: now,
             origin: VersionOrigin::Settled,
-            change: self.change_of(None, &st.base, &st.target).await,
+            change: self.change_of(None, &st.base, &st.target).await?,
         };
         let (changeset, id) = store
             .start_review(
@@ -460,15 +466,15 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// remain in the finished review. Returns whether it was complete. Fails if
     /// no review is open. Bumps the revision.
     pub async fn finish_review(&self) -> Result<bool> {
-        let mut st = self.state.lock().await;
+        let (mut st, _) = self.viewing(View::Changeset).await?;
         let (Some(id), Some(changeset)) = (st.review.as_ref().map(|r| r.id), st.changeset) else {
             return Err(SessionError::Invalid("no review is open".into()));
         };
-        self.ensure_changes(&mut st).await?;
         let complete = {
-            let changes = st.changes.as_ref().expect("computed");
-            let acked = acknowledged(&st, &changes.diff);
-            changeset_completion(&Coverage::new(&changes.flat), &st.filter, &changes.diff, &acked).is_complete()
+            let changes = st.changes();
+            let diff = &changes.diffed.diff;
+            let acked = acknowledged(&st, diff);
+            changeset_completion(&Coverage::new(&changes.remapped.flat), &st.filter, diff, &acked).is_complete()
         };
         // What the open threads are anchored in must outlive the refs.
         let open = |t: &&Thread| t.status == ThreadStatus::Open;
@@ -539,7 +545,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                         origin: VersionOrigin::BaseMoved,
                         change: self
                             .change_of(Some((&st.base, &st.target)), &snapshot, &st.target)
-                            .await,
+                            .await?,
                     };
                     let previous = store.versions(changeset).await?.pop();
                     store.append_version(changeset, version.clone()).await?;
@@ -696,12 +702,25 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         Ok(found)
     }
 
-    /// The text diff of `revision`, for the analyses that map symbols to hunks.
+    /// The text diff of `revision`, for the analyses that map symbols to hunks. It is read, or
+    /// computed with the state released, and the state is left as it is.
     pub async fn changed_files(&self, revision: u32) -> Result<Vec<FileDiff>> {
-        let mut st = self.state.lock().await;
-        check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
-        Ok(st.changes.as_ref().expect("computed").diff.files.clone())
+        let (base, target) = {
+            let st = self.state.lock().await;
+            check_revision(&st, revision)?;
+            let key = DiffOf {
+                old: st.base.id,
+                new: st.target.id,
+            };
+            match st.changes.as_ref().map(|c| c.diffed.clone()) {
+                Some(diffed) => return Ok(diffed.diff.files.clone()),
+                None => match self.derived.diffs.peek(&key) {
+                    Some(diffed) => return Ok(diffed.diff.files.clone()),
+                    None => (st.base.clone(), st.target.clone()),
+                },
+            }
+        };
+        Ok(self.diff_of(&base, &target).await?.diff.files.clone())
     }
 
     /// The initial scan identifies the settled snapshot, so settling does not
@@ -762,7 +781,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 origin: VersionOrigin::Settled,
                 change: self
                     .change_of(Some((&st.base, &st.target)), &st.base, &scan.snapshot)
-                    .await,
+                    .await?,
             };
             store.append_version(changeset, version).await?;
         }

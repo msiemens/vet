@@ -3,10 +3,11 @@
 
 use std::collections::BTreeMap;
 
-use vet_core::content::{BlobId, EntryKind, FileEntry, NonTextKind, RepoPath, decode_text};
+use vet_core::content::{BlobId, BlobSource, EntryKind, FileEntry, NonTextKind, RepoPath, decode_text};
 
+use super::Result;
 use super::views::EntryInfo;
-use super::{LiveSession, Result};
+use crate::acquisition::Acquisition;
 use crate::ports::{BlobRead, GitRepo, LiveStore};
 
 /// Why a file has no text to show.
@@ -33,7 +34,20 @@ pub(super) fn image_media_type(path: &RepoPath) -> Option<&'static str> {
     })
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+/// Texts looked up in two maps: those of a diff, which the engine holds, and others read for a
+/// purpose of their own.
+pub(super) struct Texts<'a> {
+    pub(super) diffed: &'a BTreeMap<BlobId, Vec<u8>>,
+    pub(super) other: &'a BTreeMap<BlobId, Vec<u8>>,
+}
+
+impl BlobSource for Texts<'_> {
+    fn blob(&self, id: BlobId) -> Option<&[u8]> {
+        self.diffed.blob(id).or_else(|| self.other.blob(id))
+    }
+}
+
+impl<G: GitRepo + Sync, S: LiveStore + Sync> Acquisition<G, S> {
     /// Unavailable content leaves `target` and `size` empty.
     pub(super) async fn describe(
         &self,
@@ -45,7 +59,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         if entry.kind == EntryKind::Submodule {
             return Some(EntryInfo {
                 entry: entry.clone(),
-                target: self.acquisition.git.submodule_commit(entry.blob).await.ok().flatten(),
+                target: self.git.submodule_commit(entry.blob).await.ok().flatten(),
                 size: None,
             });
         }
@@ -90,7 +104,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         if blobs.contains_key(&blob) {
             return Ok(true);
         }
-        Ok(match self.acquisition.blob(path, blob, capped).await? {
+        Ok(match self.blob(path, blob, capped).await? {
             BlobRead::Found(bytes) => {
                 blobs.insert(blob, bytes);
                 true
@@ -100,17 +114,19 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 
     /// The text of a blob, or why there is none. Content over the capture cap is
-    /// not read.
+    /// not read, unless `known` has it.
     pub(super) async fn text_of(
         &self,
-        blobs: &mut BTreeMap<BlobId, Vec<u8>>,
+        known: &BTreeMap<BlobId, Vec<u8>>,
         path: &RepoPath,
         blob: BlobId,
     ) -> Result<std::result::Result<String, NoText>> {
-        Ok(if !self.fetch(blobs, path, blob, true).await? {
-            Err(NoText::Unavailable)
-        } else {
-            decode_text(&blobs[&blob]).ok_or(NoText::Binary)
-        })
+        let mut read = BTreeMap::new();
+        let bytes = match known.get(&blob) {
+            Some(bytes) => bytes,
+            None if self.fetch(&mut read, path, blob, true).await? => &read[&blob],
+            None => return Ok(Err(NoText::Unavailable)),
+        };
+        Ok(decode_text(bytes).ok_or(NoText::Binary))
     }
 }

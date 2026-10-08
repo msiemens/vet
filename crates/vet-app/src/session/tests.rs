@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use vet_core::classify::{changes, classify};
+use vet_core::classify::{changes, classify, text_blobs};
 use vet_core::content::{
     BlobId, EntryKind, FileDiff, FileEntry, Hunk, LineDelta, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotDiff,
     SnapshotId, SnapshotStatus,
@@ -25,7 +25,7 @@ use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, RemoteKey, Sourc
 use crate::platform::{FakeHosting, PullRequestHead};
 use crate::ports::{
     BlobRead, BlobReader, BranchInfo, ChangesetRefs, ChangesetStore, Checkout, CommitDetail, CommitInfo, Differ, Dirty,
-    GitError, History, Remerged, ReviewStore, Scan, Scanner, Store, StoreError, ThreadStore,
+    GitError, History, Remerged, ReviewStore, Scan, Scanner, Store, StoreError, TextDiff, ThreadStore,
 };
 use crate::pull_request::PullRequestRefs;
 use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
@@ -129,6 +129,8 @@ pub(crate) struct FakeGit {
     remerges: Arc<Mutex<HashMap<CommitId, Remerged>>>,
     /// How many diffs were asked for.
     diffs: Arc<AtomicUsize>,
+    /// Held by a test, diffs and blob reads wait until it lets go.
+    pub(crate) paused: Arc<tokio::sync::Mutex<()>>,
 }
 
 fn clock() -> i64 {
@@ -258,6 +260,7 @@ impl Checkout for FakeGit {
 
 impl BlobReader for FakeGit {
     async fn read_blob(&self, _: &RepoPath, blob: BlobId) -> std::result::Result<Option<Vec<u8>>, GitError> {
+        drop(self.paused.lock().await);
         Ok(self.blobs.lock().unwrap().get(&blob).cloned())
     }
     async fn read_blob_capped(&self, _: &RepoPath, blob: BlobId) -> std::result::Result<BlobRead, GitError> {
@@ -407,12 +410,18 @@ impl ChangesetRefs for FakeGit {
 impl Differ for FakeGit {
     async fn diff<St: Store + Sync>(
         &self,
-        _: &St,
+        store: &St,
         old: &Snapshot,
         new: &Snapshot,
-    ) -> std::result::Result<SnapshotDiff, GitError> {
+    ) -> std::result::Result<TextDiff, GitError> {
         self.diffs.fetch_add(1, Ordering::Relaxed);
-        let blobs: BTreeMap<_, _> = self.blobs.lock().unwrap().clone().into_iter().collect();
+        drop(self.paused.lock().await);
+        let mut blobs: BTreeMap<_, _> = self.blobs.lock().unwrap().clone().into_iter().collect();
+        for (_, blob) in text_blobs(&changes(old, new)) {
+            if let Some(bytes) = store.blob(blob).await.map_err(|e| GitError(e.0))? {
+                blobs.insert(blob, bytes);
+            }
+        }
         let mut out = SnapshotDiff::default();
         out.renames.0.extend(self.renames.lock().unwrap().iter().cloned());
         for change in changes(old, new) {
@@ -429,7 +438,12 @@ impl Differ for FakeGit {
                 });
             }
         }
-        Ok(out)
+        let texts = (out.files.iter())
+            .flat_map(|f| [f.old_blob, f.new_blob])
+            .flatten()
+            .filter_map(|b| Some((b, blobs.get(&b)?.clone())))
+            .collect();
+        Ok(TextDiff { diff: out, texts })
     }
 }
 
@@ -3686,4 +3700,5 @@ async fn a_pull_request_has_lines_once_it_was_fetched_and_the_working_tree_has_n
     );
 }
 
+mod derived;
 mod sync;

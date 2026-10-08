@@ -10,9 +10,10 @@ use vet_core::review::{
     ThreadStatus, target_line,
 };
 
-use super::interdiff::{check_commentable, markable};
+use super::derived::Diffed;
+use super::interdiff::check_commentable;
 use super::manifest::{old_path_of, status_of};
-use super::state::{Changes, State, View, check_revision, find_diff, outcome, shown_items};
+use super::state::{Shown, State, View, check_revision, find_diff, outcome, shown_items};
 use super::views::{FileStatus, Outcome};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::Source;
@@ -90,22 +91,21 @@ pub struct ThreadsView {
     pub threads: Vec<ThreadView>,
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// Every thread, with range anchors resolved at the current revision. An interdiff shows the
     /// threads on the new side of the latest version, and none for another.
     pub async fn threads(&self, view: View) -> Result<ThreadsView> {
-        let mut st = self.state.lock().await;
-        self.ensure_view(&mut st, view).await?;
-        let shown = |t: &&Thread| match view {
-            View::Changeset => true,
-            View::Interdiff { .. } => {
-                markable(&st, view) && matches!(&t.target, CommentTarget::Range(a) if a.side == Side::Target)
+        let (st, shown) = self.viewing(view).await?;
+        let on_view = |t: &&Thread| match &shown {
+            Shown::Changeset => true,
+            Shown::Interdiff(id) => {
+                id.markable && matches!(&t.target, CommentTarget::Range(a) if a.side == Side::Target)
             }
-            View::Commit { .. } => false,
+            Shown::Commit { .. } => false,
         };
         Ok(ThreadsView {
             revision: st.revision,
-            threads: st.threads.iter().filter(shown).map(|t| thread_view(&st, t)).collect(),
+            threads: st.threads.iter().filter(on_view).map(|t| thread_view(&st, t)).collect(),
         })
     }
 
@@ -113,9 +113,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// that places a thread's card (`ThreadView::target_line`). Fails if `revision` is no longer
     /// current.
     pub async fn line_in_target(&self, revision: u32, view: View, side: Side, path: &str, line: u32) -> Result<u32> {
-        let mut st = self.state.lock().await;
+        let (st, shown) = self.viewing(view).await?;
         check_revision(&st, revision)?;
-        self.ensure_view(&mut st, view).await?;
         let location = Location {
             file: RepoPath::from(path),
             range: LineRange {
@@ -123,18 +122,17 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 end: line.saturating_add(1),
             },
         };
-        Ok(card_line(st.changes_in(view), side, &location))
+        Ok(card_line(shown.diffed(&st), side, &location))
     }
 
     /// What a comment on part of the changeset file at `path` attaches to (see [`CommentSpot`]).
     /// Fails if `revision` is no longer current, or the file or hunk is not in the changeset. In an
     /// interdiff a comment goes on the new side only, and only on the latest version's.
     pub async fn comment_target(&self, revision: u32, view: View, path: &str, at: CommentAt) -> Result<CommentSpot> {
-        let mut st = self.state.lock().await;
+        let (st, shown) = self.viewing(view).await?;
         check_revision(&st, revision)?;
-        self.ensure_view(&mut st, view).await?;
-        check_commentable(&st, view)?;
-        let spot = self.spot(&st, view, path, at)?;
+        check_commentable(&shown)?;
+        let spot = self.spot(&st, &shown, path, at)?;
         match (&spot.target, view) {
             (
                 NewThread::Range { side: Side::Base, .. } | NewThread::File { side: Side::Base, .. },
@@ -144,8 +142,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         }
     }
 
-    fn spot(&self, st: &State, view: View, path: &str, at: CommentAt) -> Result<CommentSpot> {
-        let changes = st.changes_in(view);
+    fn spot(&self, st: &State, shown: &Shown, path: &str, at: CommentAt) -> Result<CommentSpot> {
+        let changes = shown.diffed(st);
         let diff = find_diff(&changes.diff, path);
         let items = shown_items(&changes.diff, &st.filter, path);
         if diff.is_none() && items.is_empty() {
@@ -220,10 +218,9 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         body: String,
         now: i64,
     ) -> Result<Outcome<ThreadView>> {
-        let mut st = self.state.lock().await;
+        let (mut st, shown) = self.viewing(view).await?;
         check_revision(&st, revision)?;
-        self.ensure_view(&mut st, view).await?;
-        check_commentable(&st, view)?;
+        check_commentable(&shown)?;
         if let (
             View::Interdiff { .. },
             NewThread::Range { side: Side::Base, .. } | NewThread::File { side: Side::Base, .. },
@@ -275,8 +272,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 
     pub async fn reply(&self, thread: ThreadId, body: String, now: i64) -> Result<ThreadView> {
-        let mut st = self.state.lock().await;
-        self.ensure_changes(&mut st).await?;
+        let (mut st, _) = self.viewing(View::Changeset).await?;
         find_thread(&st, thread)?;
         let message = self.message(body, now)?;
         let id = self.acquisition.store.add_message(thread, message.clone()).await?;
@@ -287,8 +283,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Resolves or reopens a thread. On a platform the change is sent with the next sync, and
     /// wins there over what the platform says meanwhile.
     pub async fn set_thread_status(&self, thread: ThreadId, status: ThreadStatus) -> Result<ThreadView> {
-        let mut st = self.state.lock().await;
-        self.ensure_changes(&mut st).await?;
+        let (mut st, _) = self.viewing(View::Changeset).await?;
         let platform = find_thread(&st, thread)?.platform.clone();
         if let Some(mut platform) = platform {
             if !platform.resolvable {
@@ -313,9 +308,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Re-anchors an `Inferred` thread at its current location, which makes it
     /// `Exact`. Fails if `revision` is no longer current.
     pub async fn confirm_anchor(&self, revision: u32, thread: ThreadId) -> Result<ThreadView> {
-        let mut st = self.state.lock().await;
+        let (mut st, _) = self.viewing(View::Changeset).await?;
         check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
         let location = match resolution_of(&st, thread)? {
             Resolution {
                 state: AnchorState::Inferred { .. },
@@ -329,9 +323,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// Re-anchors an `Ambiguous` thread at one of its candidates (an index into
     /// the candidates of its state). Fails if `revision` is no longer current.
     pub async fn attach_anchor(&self, revision: u32, thread: ThreadId, candidate: usize) -> Result<ThreadView> {
-        let mut st = self.state.lock().await;
+        let (mut st, _) = self.viewing(View::Changeset).await?;
         check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
         let location = match &resolution_of(&st, thread)?.state {
             AnchorState::Ambiguous { candidates } => candidates
                 .get(candidate)
@@ -371,7 +364,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             .filter(|e| e.kind == EntryKind::File)
             .ok_or_else(|| SessionError::NotFound(format!("file {}", path.to_string_lossy())))?;
         let mut blobs = BTreeMap::new();
-        if !self.fetch(&mut blobs, path, entry.blob, true).await? || is_binary(&blobs[&entry.blob]) {
+        if !self.acquisition.fetch(&mut blobs, path, entry.blob, true).await? || is_binary(&blobs[&entry.blob]) {
             return Err(SessionError::NotText(path.to_string_lossy()));
         }
         Anchor::from_text(side, snapshot.id, path.clone(), &blobs[&entry.blob], range)
@@ -402,8 +395,8 @@ pub(super) fn edit_thread(st: &mut State, id: ThreadId, edit: impl FnOnce(&mut T
 /// The resolution of a range thread at the current revision.
 fn resolution_of(st: &State, id: ThreadId) -> Result<&Resolution> {
     find_thread(st, id)?;
-    let changes = st.changes.as_ref().expect("computed");
-    changes
+    st.changes()
+        .remapped
         .resolutions
         .get(&id)
         .ok_or_else(|| SessionError::Invalid("only a range thread has an anchor".into()))
@@ -416,16 +409,16 @@ pub(super) fn thread_by_id(st: &State, id: ThreadId) -> Result<ThreadView> {
 /// File threads follow a git-detected rename and detach only when the file is
 /// gone; changeset threads never detach.
 pub(super) fn thread_view(st: &State, t: &Thread) -> ThreadView {
-    let changes = st.changes.as_ref().expect("computed");
+    let changes = st.changes();
     let (path, state, location) = match &t.target {
         CommentTarget::Range(a) => {
-            let r = &changes.resolutions[&t.id];
+            let r = &changes.remapped.resolutions[&t.id];
             let path = r.location.as_ref().map_or(&a.file, |l| &l.file);
             (Some(path.clone()), Some(r.state.clone()), r.location.clone())
         }
         CommentTarget::File { side, path } => {
             let moved = (*side == Side::Target && !st.target.entries.contains_key(path))
-                .then(|| changes.diff.renames.0.get(path))
+                .then(|| changes.diffed.diff.renames.0.get(path))
                 .flatten()
                 .filter(|new| st.target.entries.contains_key(*new));
             let state = if moved.is_some() || side_snapshot(st, *side).entries.contains_key(path) {
@@ -442,7 +435,7 @@ pub(super) fn thread_view(st: &State, t: &Thread) -> ThreadView {
         CommentTarget::Changeset => (None, None, None),
     };
     let target_line = match (&t.target, &location) {
-        (CommentTarget::Range(a), Some(l)) => Some(card_line(changes, a.side, l)),
+        (CommentTarget::Range(a), Some(l)) => Some(card_line(&changes.diffed, a.side, l)),
         _ => None,
     };
     ThreadView {
@@ -460,7 +453,7 @@ pub(super) fn thread_view(st: &State, t: &Thread) -> ThreadView {
 
 /// The target line a range thread's card is shown below: the line its range ends on, as the
 /// target text has it, but not past the last line of the file.
-fn card_line(changes: &Changes, side: Side, location: &Location) -> u32 {
+fn card_line(changes: &Diffed, side: Side, location: &Location) -> u32 {
     let diff = changes.diff.files.iter().find(|d| {
         let path = if side == Side::Base { &d.old_path } else { &d.new_path };
         path.as_ref() == Some(&location.file)

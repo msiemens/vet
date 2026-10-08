@@ -2,11 +2,12 @@
 //! what the base has there now (§5.2).
 
 use vet_core::completion::HunkState;
-use vet_core::content::{LineRange, SnapshotId};
+use vet_core::content::{BlobSource, LineRange, SnapshotId};
 use vet_core::hunks::changed_lines;
 use vet_core::review::{Anchor, Side, SpanState};
 use vet_core::text::Lines;
 
+use super::blobs::Texts;
 use super::interdiff::update_in;
 use super::state::{State, View, check_revision, find_diff};
 use super::{LiveSession, Result, SessionError};
@@ -37,18 +38,13 @@ pub struct BaseDiffView {
     pub rows: Vec<BaseDiffRow>,
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// The base-side lines of the hunk `hunk` of `path` as they were when it was marked seen, as
     /// a diff to the lines the base has now. Fails if the hunk is not seen against an old base.
     pub async fn base_diff(&self, revision: u32, path: &str, hunk: u32) -> Result<BaseDiffView> {
-        let mut st = self.state.lock().await;
+        let (st, shown) = self.viewing(View::Changeset).await?;
         check_revision(&st, revision)?;
-        self.ensure_changes(&mut st).await?;
-        let state = update_in(&st, View::Changeset, path)?
-            .review
-            .hunks
-            .get(hunk as usize)
-            .copied();
+        let state = update_in(&st, &shown, path)?.review.hunks.get(hunk as usize).copied();
         match state {
             None => return Err(SessionError::NotFound(format!("hunk {hunk}"))),
             Some(HunkState::SeenAgainstOldBase) => {}
@@ -87,22 +83,21 @@ struct Excerpt {
 /// The base lines recorded for hunk `hunk` of `path` and the base's lines there now, with the
 /// snapshot the recorded ones are of.
 fn base_texts(st: &State, path: &str, hunk: usize) -> Result<(Excerpt, Excerpt, SnapshotId)> {
-    let changes = st.changes.as_ref().expect("computed");
-    let diff = find_diff(&changes.diff, path).ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
+    let changes = st.changes();
+    let diff = find_diff(&changes.diffed.diff, path).ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
     let h = diff
         .hunks
         .get(hunk)
         .ok_or_else(|| SessionError::NotFound(format!("hunk {hunk}")))?;
-    let text_of = |blob| {
-        changes
-            .blobs
-            .get(&blob)
-            .map(|b| String::from_utf8_lossy(b).into_owned())
+    let texts = Texts {
+        diffed: &changes.diffed.blobs,
+        other: &changes.anchored,
     };
+    let text_of = |blob| texts.blob(blob).map(|b| String::from_utf8_lossy(b).into_owned());
     let unavailable = || SessionError::Invalid("the base this was seen against is not available".into());
 
     let mut anchors: Vec<&Anchor> = Vec::new();
-    for (rec, (_, pieces)) in st.recorded.iter().zip(&changes.remapped) {
+    for (rec, (_, pieces)) in st.recorded.iter().zip(&changes.remapped.spans) {
         let covers = pieces.iter().any(|p| {
             p.state == SpanState::SeenAgainstOldBase
                 && p.target.as_ref().is_some_and(|t| {

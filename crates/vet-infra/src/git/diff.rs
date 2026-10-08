@@ -1,7 +1,7 @@
 //! Snapshot diff (§5, §6.1): line hunks for text, one item per non-text change,
 //! renames detected by gitoxide's rewrite tracker.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::convert::Infallible;
 
 use gix::ObjectId;
@@ -12,7 +12,7 @@ use gix::objs::{
     Find, FindHeader, Kind,
     tree::{EntryKind as GitKind, EntryMode},
 };
-use vet_app::ports::GitError;
+use vet_app::ports::{GitError, TextDiff};
 use vet_core::classify::{Change, changes, classify, text_blobs};
 use vet_core::content::{BlobId, BlobSource, EntryKind, FileDiff, RenameMap, RepoPath, Snapshot, SnapshotDiff};
 use vet_core::hunks::line_hunks;
@@ -22,6 +22,7 @@ use super::{BlobCache, err};
 
 /// `contents` holds what the content store had; the rest is looked up in git
 /// or the worktree. Anything unavailable ends up as a `ContentUnavailable` item.
+/// The content read comes with the diff, so that it is read once.
 pub(crate) fn diff(
     repo: &gix::Repository,
     wt: &mut Worktree,
@@ -30,7 +31,7 @@ pub(crate) fn diff(
     mut contents: BTreeMap<BlobId, Vec<u8>>,
     old: &Snapshot,
     new: &Snapshot,
-) -> Result<SnapshotDiff, GitError> {
+) -> Result<TextDiff, GitError> {
     let mut changes = changes(old, new);
     for (path, blob) in text_blobs(&changes) {
         if contents.blob(blob).is_none()
@@ -72,7 +73,15 @@ pub(crate) fn diff(
             });
         }
     }
-    Ok(out)
+    let texts: BTreeSet<BlobId> = (out.files.iter())
+        .flat_map(|f| [f.old_blob, f.new_blob])
+        .flatten()
+        .collect();
+    contents.retain(|blob, _| texts.contains(blob));
+    Ok(TextDiff {
+        diff: out,
+        texts: contents,
+    })
 }
 
 fn take(changes: &mut Vec<Change>, f: impl Fn(&Change) -> bool) -> Option<Change> {

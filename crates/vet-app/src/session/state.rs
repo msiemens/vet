@@ -1,21 +1,21 @@
 //! The review state a session keeps behind its lock, and the lookups every
 //! part of the session makes in it.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use vet_core::content::{
-    BlobId, FileDiff, NonTextChange, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
+    BlobId, FileDiff, NonTextChange, NonTextKind, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
-use vet_core::interdiff::InterdiffHunk;
 use vet_core::resolve::Resolution;
 use vet_core::review::{Anchor, CommentTarget, ReviewedSpan, Thread, ThreadId};
 
-use super::views::{ItemView, Lifecycle, Outcome};
+use super::derived::{CommitUnit, Compared, Diffed};
+use super::views::{Lifecycle, Outcome};
 use super::{Result, SessionError};
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version};
 use crate::platform::Discussion;
-use crate::ports::CommitDetail;
 use crate::review::{NonTextAck, RecordedSpan, ReviewId, ReviewSummary, SpanId};
 
 /// What a request about the changeset's files reads: the changeset itself, the interdiff of
@@ -31,68 +31,88 @@ pub enum View {
     Commit { index: u32 },
 }
 
-/// An interdiff computed at the current revision.
+/// What a request about one view reads beside the state: for an interdiff, the interdiff itself,
+/// which has no review state of its own and so is not kept in the state.
+pub(super) enum Shown {
+    Changeset,
+    Commit { index: u32 },
+    Interdiff(Box<Interdiffed>),
+}
+
+impl Shown {
+    pub(super) fn view(&self) -> View {
+        match self {
+            Self::Changeset => View::Changeset,
+            Self::Commit { index } => View::Commit { index: *index },
+            Self::Interdiff(id) => View::Interdiff {
+                from: id.from.n,
+                to: id.to.n,
+            },
+        }
+    }
+
+    /// The diff the view shows.
+    pub(super) fn diffed<'a>(&'a self, st: &'a State) -> &'a Diffed {
+        match self {
+            Self::Interdiff(id) => &id.compared.diffed,
+            _ => st.diffed_in(self.view()),
+        }
+    }
+
+    /// Whether marks can be made in the view.
+    pub(super) fn markable(&self) -> bool {
+        match self {
+            Self::Changeset | Self::Commit { .. } => true,
+            Self::Interdiff(id) => id.markable,
+        }
+    }
+}
+
+/// The interdiff of two of the review's versions.
 pub(super) struct Interdiffed {
-    /// A's target rebased onto B's base against B's target, shaped like the changeset's changes
-    /// with no review state of its own (nothing remapped, no threads resolved).
-    pub(super) changes: Changes,
-    /// The hunks of each text file in `changes.diff`, with what they cover in B's changeset.
-    pub(super) hunks: BTreeMap<RepoPath, Vec<InterdiffHunk>>,
+    pub(super) compared: Arc<Compared>,
     pub(super) from: Version,
     pub(super) to: Version,
     /// `to` is the latest version, the one the review state is remapped onto.
     pub(super) markable: bool,
 }
 
-/// One commit of the changeset with its own diff.
-pub(super) struct CommitUnit {
-    pub(super) detail: CommitDetail,
-    pub(super) kind: UnitKind,
-    /// What the commit is compared with: its parent, or the automatic merge of a merge's parents.
-    pub(super) old: Snapshot,
-    pub(super) new: Snapshot,
-    pub(super) changes: Changes,
+/// The review state remapped onto one diff.
+#[derive(Default)]
+pub(super) struct Remapped {
+    /// Recorded spans as they are now.
+    pub(super) spans: Vec<(SpanId, Vec<ReviewedSpan>)>,
+    pub(super) flat: Vec<ReviewedSpan>,
+    /// Range threads resolved from their recorded anchors; only in the changeset.
+    pub(super) resolutions: HashMap<ThreadId, Resolution>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum UnitKind {
-    Commit,
-    /// `remerged`: compared with the automatic merge of its parents. A merge of more than two
-    /// parents, or one whose automatic merge could not be made, is compared with its first
-    /// parent instead.
-    Merge {
-        remerged: bool,
-    },
+/// The current revision's diff, held by the engine, and the review state remapped onto it.
+pub(super) struct Changes {
+    pub(super) diffed: Arc<Diffed>,
+    pub(super) remapped: Remapped,
+    /// Texts of what recorded spans and threads are anchored in that the diffs do not have.
+    pub(super) anchored: BTreeMap<BlobId, Vec<u8>>,
+    /// The commits of the changeset, once the by-commit lens asked.
+    pub(super) commits: Option<Commits>,
 }
 
-impl CommitUnit {
-    /// A merge whose automatic merge it equals: nothing was decided in it.
-    pub(super) fn clean_merge(&self) -> bool {
-        self.kind == UnitKind::Merge { remerged: true }
-            && self.changes.diff.files.is_empty()
-            && self.changes.diff.non_text.is_empty()
+impl Changes {
+    pub(super) fn new(diffed: Arc<Diffed>) -> Self {
+        Self {
+            diffed,
+            remapped: Remapped::default(),
+            anchored: BTreeMap::new(),
+            commits: None,
+        }
     }
 }
 
-/// What the current revision's diff needs, computed on first use.
-#[derive(Default)]
-pub(super) struct Changes {
-    pub(super) diff: SnapshotDiff,
-    /// Every path the diff mentions, on either side.
-    pub(super) changed: BTreeSet<RepoPath>,
-    /// Text of the diffed files and of what recorded spans were marked in.
-    pub(super) blobs: BTreeMap<BlobId, Vec<u8>>,
-    /// Recorded spans as they are now.
-    pub(super) remapped: Vec<(SpanId, Vec<ReviewedSpan>)>,
-    pub(super) flat: Vec<ReviewedSpan>,
-    /// Range threads resolved from their recorded anchors.
-    pub(super) resolutions: HashMap<ThreadId, Resolution>,
-    /// Both sides of each `diff.non_text` change.
-    pub(super) items: Vec<ItemView>,
-    /// The interdiffs asked for at this revision, by the versions they compare.
-    pub(super) interdiffs: HashMap<(u32, u32), Interdiffed>,
-    /// The commits of the changeset, each with its own diff, once the by-commit lens asked.
-    pub(super) commits: Option<Vec<CommitUnit>>,
+/// The commits of the changeset, held by the engine, and the review state remapped onto each.
+pub(super) struct Commits {
+    pub(super) units: Arc<Vec<CommitUnit>>,
+    /// One per unit.
+    pub(super) remapped: Vec<Remapped>,
 }
 
 /// A started review.
@@ -137,22 +157,41 @@ pub(super) struct State {
 }
 
 impl State {
-    /// The computed changes `view` shows.
-    pub(super) fn changes_in(&self, view: View) -> &Changes {
-        let changes = self.changes.as_ref().expect("computed");
+    /// The changes of the current revision, which the caller made sure are computed.
+    pub(super) fn changes(&self) -> &Changes {
+        self.changes.as_ref().expect("computed")
+    }
+
+    /// The commit units, which the caller made sure are computed.
+    pub(super) fn units(&self) -> &[CommitUnit] {
+        &self.changes().commits.as_ref().expect("computed").units
+    }
+
+    /// The diff of the changeset or of one of its commits.
+    pub(super) fn diffed_in(&self, view: View) -> &Diffed {
         match view {
-            View::Changeset => changes,
-            View::Interdiff { from, to } => &changes.interdiffs[&(from, to)].changes,
-            View::Commit { index } => &commits(changes)[index as usize].changes,
+            View::Commit { index } => &self.units()[index as usize].diffed,
+            View::Changeset => &self.changes().diffed,
+            View::Interdiff { .. } => unreachable!("an interdiff is not kept in the state"),
         }
     }
 
-    pub(super) fn changes_in_mut(&mut self, view: View) -> &mut Changes {
+    /// The review state remapped onto the changeset or onto one of its commits.
+    pub(super) fn remapped_in(&self, view: View) -> &Remapped {
+        let changes = self.changes();
+        match view {
+            View::Commit { index } => &changes.commits.as_ref().expect("computed").remapped[index as usize],
+            View::Changeset => &changes.remapped,
+            View::Interdiff { .. } => unreachable!("an interdiff has no review state of its own"),
+        }
+    }
+
+    pub(super) fn remapped_in_mut(&mut self, view: View) -> &mut Remapped {
         let changes = self.changes.as_mut().expect("computed");
         match view {
-            View::Changeset => changes,
-            View::Interdiff { from, to } => &mut changes.interdiffs.get_mut(&(from, to)).expect("computed").changes,
-            View::Commit { index } => &mut changes.commits.as_mut().expect("computed")[index as usize].changes,
+            View::Commit { index } => &mut changes.commits.as_mut().expect("computed").remapped[index as usize],
+            View::Changeset => &mut changes.remapped,
+            View::Interdiff { .. } => unreachable!("an interdiff has no review state of its own"),
         }
     }
 
@@ -176,11 +215,6 @@ impl State {
             self.known.get(&id)
         }
     }
-}
-
-/// The commit units of `changes`, which `ensure_view` computed for a commit view.
-pub(super) fn commits(changes: &Changes) -> &[CommitUnit] {
-    changes.commits.as_deref().expect("computed")
 }
 
 pub(super) fn outcome<T>(st: &State, value: T, started: bool) -> Outcome<T> {

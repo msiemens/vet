@@ -2,7 +2,7 @@
 
 use vet_core::content::{EntryKind, RepoPath};
 
-use super::{LiveSession, Result, SessionError};
+use super::{LiveSession, Result, SessionError, View};
 use crate::ports::{GitRepo, LiveStore};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -30,12 +30,11 @@ pub struct DirListing {
     pub entries: Vec<DirItem>,
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// The children of `path` (`""` is the root) in the target snapshot.
     pub async fn list_directory(&self, path: &str) -> Result<DirListing> {
-        let mut st = self.state.lock().await;
-        self.ensure_changes(&mut st).await?;
-        let changes = st.changes.as_ref().expect("computed");
+        let (st, _) = self.viewing(View::Changeset).await?;
+        let changes = &st.changes().diffed;
         let compiled = st.filter.compile();
         let prefix = if path.is_empty() {
             String::new()

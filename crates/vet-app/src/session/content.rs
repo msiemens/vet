@@ -48,12 +48,11 @@ pub enum ItemBlob {
     Unavailable,
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// Both sides of a file with text, at the current revision.
     pub async fn file_text(&self, view: View, path: &str) -> Result<FileText> {
-        let mut st = self.state.lock().await;
-        self.ensure_view(&mut st, view).await?;
-        let changes = st.changes_in(view);
+        let (st, shown) = self.viewing(view).await?;
+        let changes = shown.diffed(&st);
         type Side = Option<(RepoPath, BlobId)>;
         let diff = find_diff(&changes.diff, path);
         let hunks = diff.map(|d| d.hunks.clone()).unwrap_or_default();
@@ -71,22 +70,14 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         } else {
             return Err(SessionError::NotFound(format!("file {path}")));
         };
-        let mut blobs = std::mem::take(&mut st.changes_in_mut(view).blobs);
         let mut texts = [None, None];
-        let mut result = Ok(());
         for (text, side) in texts.iter_mut().zip([old, new]) {
             let Some((p, b)) = side else { continue };
-            match self.text_of(&mut blobs, &p, b).await {
-                Ok(Ok(t)) => *text = Some(t),
-                Ok(Err(_)) => result = Err(SessionError::NotText(p.to_string_lossy())),
-                Err(e) => result = Err(e),
-            }
-            if result.is_err() {
-                break;
+            match self.acquisition.text_of(&changes.blobs, &p, b).await? {
+                Ok(t) => *text = Some(t),
+                Err(_) => return Err(SessionError::NotText(p.to_string_lossy())),
             }
         }
-        st.changes_in_mut(view).blobs = blobs;
-        result?;
         let [base, target] = texts;
         let changes = editor::text_changes(
             base.as_deref().unwrap_or_default(),
@@ -111,7 +102,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             .get(&key)
             .ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
         let content = match entry.kind {
-            EntryKind::File => self.text_of(&mut BTreeMap::new(), &key, entry.blob).await?,
+            EntryKind::File => self.acquisition.text_of(&BTreeMap::new(), &key, entry.blob).await?,
             EntryKind::Symlink | EntryKind::Submodule => Err(NoText::NotAFile),
         };
         Ok(TargetText {
@@ -129,10 +120,9 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         kind: NonTextKind,
         side: Side,
     ) -> Result<ItemBlob> {
-        let mut st = self.state.lock().await;
+        let (st, shown) = self.viewing(view).await?;
         check_revision(&st, revision)?;
-        self.ensure_view(&mut st, view).await?;
-        let change = find_non_text(&st.changes_in(view).diff, kind, path)
+        let change = find_non_text(&shown.diffed(&st).diff, kind, path)
             .ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?;
         let (file, entry) = match side {
             Side::Base => (change.from.as_ref().unwrap_or(&change.path), &change.before),

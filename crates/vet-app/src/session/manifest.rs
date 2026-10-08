@@ -8,7 +8,8 @@ use vet_core::completion::{Completion, Coverage};
 use vet_core::content::{BlobId, FileDiff, LineDelta, NonTextChange, RepoPath, SnapshotDiff};
 use vet_core::filter::ReviewFilter;
 
-use super::state::{Changes, State, View, acknowledged, find_diff, lifecycle_of, shown_items};
+use super::derived::Diffed;
+use super::state::{Shown, State, View, acknowledged, find_diff, lifecycle_of, shown_items};
 use super::views::{FileStatus, FileView, ManifestView, ReviewUpdateView, ReviewView, TargetView};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
@@ -16,22 +17,21 @@ use crate::editor::line_count;
 use crate::ports::{BranchInfo, GitRepo, LiveStore};
 use crate::review::ReviewSummary;
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     pub async fn manifest(&self, view: View) -> Result<ManifestView> {
-        let mut st = self.state.lock().await;
-        self.ensure_view(&mut st, view).await?;
-        match view {
-            View::Interdiff { from, to } => return self.interdiff_manifest(&st, from, to).await,
-            View::Commit { index } => return self.commit_manifest(&st, index).await,
-            View::Changeset => {}
+        let (st, shown) = self.viewing(view).await?;
+        match &shown {
+            Shown::Interdiff(id) => return self.interdiff_manifest(&st, id).await,
+            Shown::Commit { index } => return self.commit_manifest(&st, *index).await,
+            Shown::Changeset => {}
         }
         let branches = self.acquisition.git.branches().await?;
         let base = self.base_view(&st, &branches).await?;
         let facts = self.lens_facts(&st).await?;
-        let changes = st.changes.as_ref().expect("computed");
-        let cov = Coverage::new(&changes.flat);
-        let acked = acknowledged(&st, &changes.diff);
-        let files = file_views(changes, &st.filter, |diff, items| {
+        let changes = st.changes();
+        let cov = Coverage::new(&changes.remapped.flat);
+        let acked = acknowledged(&st, &changes.diffed.diff);
+        let files = file_views(&changes.diffed, &st.filter, |diff, items| {
             (
                 review_of(&cov, diff, items, &acked),
                 file_completion(&cov, &st.filter, diff, items, &acked),
@@ -44,7 +44,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             base,
             target: target_view(&st.source, &st.head, &branches),
             filter: st.filter.clone(),
-            completion: changeset_completion(&cov, &st.filter, &changes.diff, &acked),
+            completion: changeset_completion(&cov, &st.filter, &changes.diffed.diff, &acked),
             delta: files.iter().map(|f| f.delta).sum(),
             files,
             degraded: self.degraded_for(&st.source),
@@ -57,7 +57,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// Stores how far the open review is when it differs from what is stored, so that the list of
     /// changesets shows it without remapping the marks of every review. Does nothing while the
     /// changes are not computed: the next remap measures.
@@ -65,8 +65,9 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let (Some(review), Some(changes)) = (&st.review, &st.changes) else {
             return Ok(());
         };
-        let acked = acknowledged(st, &changes.diff);
-        let completion = changeset_completion(&Coverage::new(&changes.flat), &st.filter, &changes.diff, &acked);
+        let diff = &changes.diffed.diff;
+        let acked = acknowledged(st, diff);
+        let completion = changeset_completion(&Coverage::new(&changes.remapped.flat), &st.filter, diff, &acked);
         let summary = ReviewSummary::of(&completion);
         if review.summary == Some(summary) {
             return Ok(());
@@ -108,7 +109,7 @@ pub(super) fn target_view(source: &Source, tip: &CommitId, branches: &[BranchInf
 /// The files of `changes` the filter shows. `state` gives a file's review state and completion
 /// from its text diff and its shown non-text changes.
 pub(super) fn file_views(
-    changes: &Changes,
+    changes: &Diffed,
     filter: &ReviewFilter,
     state: impl Fn(Option<&FileDiff>, &[NonTextChange]) -> (ReviewView, Completion),
 ) -> Vec<FileView> {
@@ -196,11 +197,12 @@ pub(super) fn review_of(
 
 /// The review state of one file and the changeset's completion.
 pub(super) fn update_of(st: &State, path: &str) -> Result<ReviewUpdateView> {
-    let changes = st.changes.as_ref().expect("computed");
-    let cov = Coverage::new(&changes.flat);
-    let acked = acknowledged(st, &changes.diff);
-    let diff = find_diff(&changes.diff, path);
-    let items = shown_items(&changes.diff, &st.filter, path);
+    let changes = st.changes();
+    let cov = Coverage::new(&changes.remapped.flat);
+    let whole = &changes.diffed.diff;
+    let acked = acknowledged(st, whole);
+    let diff = find_diff(whole, path);
+    let items = shown_items(whole, &st.filter, path);
     let file = diff
         .map(|d| d.path().clone())
         .or_else(|| items.first().map(|n| n.path.clone()))
@@ -210,7 +212,7 @@ pub(super) fn update_of(st: &State, path: &str) -> Result<ReviewUpdateView> {
         path: file,
         review: review_of(&cov, diff, &items, &acked),
         completion: file_completion(&cov, &st.filter, diff, &items, &acked),
-        changeset: changeset_completion(&cov, &st.filter, &changes.diff, &acked),
+        changeset: changeset_completion(&cov, &st.filter, whole, &acked),
     })
 }
 

@@ -2,6 +2,7 @@
 //! implementation or a test seam. `LanguageServer`, `ServerLauncher` and
 //! `Materializer` are owned by `vet-semantic`, which consumes them.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -77,7 +78,7 @@ pub struct Scan {
     pub status: SnapshotStatus,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct GitError(pub String);
 
 impl std::fmt::Display for GitError {
@@ -181,7 +182,15 @@ pub trait Differ {
         store: &S,
         old: &Snapshot,
         new: &Snapshot,
-    ) -> impl Future<Output = Result<SnapshotDiff, GitError>> + Send;
+    ) -> impl Future<Output = Result<TextDiff, GitError>> + Send;
+}
+
+/// A diff of two snapshots and the content it compared.
+#[derive(Clone, Debug, Default)]
+pub struct TextDiff {
+    pub diff: SnapshotDiff,
+    /// The content of both sides of every file in `diff.files` that could be read.
+    pub texts: BTreeMap<BlobId, Vec<u8>>,
 }
 
 /// The content of blobs git has.
@@ -332,7 +341,7 @@ pub trait GitRepo: Scanner + Checkout + Differ + BlobReader + History + Changese
 
 impl<T: Scanner + Checkout + Differ + BlobReader + History + ChangesetRefs> GitRepo for T {}
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StoreError(pub String);
 
 /// Lets adapters use `?` on their own error types; `StoreError` must never

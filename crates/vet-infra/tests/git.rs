@@ -14,7 +14,7 @@ use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
 use vet_app::changeset::ChangesetId;
 use vet_app::ports::{
-    BlobRead, BlobReader, ChangesetRefs, Differ, Dirty, History, IgnoreRules, Scanner, Store, StoreError,
+    BlobRead, BlobReader, ChangesetRefs, Differ, Dirty, History, IgnoreRules, Scanner, Store, StoreError, TextDiff,
 };
 use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_infra::git::GixRepo;
@@ -233,7 +233,12 @@ async fn files_over_the_cap_are_hashed_but_not_retained() {
     assert_eq!(opened.target.entries[&path("big.txt")].blob, blob(&big));
     assert!(acq.store.blob(blob(&big)).await.unwrap().is_none());
 
-    let diff = acq.git.diff(&acq.store, &opened.base, &opened.target).await.unwrap();
+    let diff = acq
+        .git
+        .diff(&acq.store, &opened.base, &opened.target)
+        .await
+        .unwrap()
+        .diff;
     assert_eq!(diff.non_text.len(), 1);
     assert_eq!(diff.non_text[0].kind, NonTextKind::ContentUnavailable);
 }
@@ -281,8 +286,13 @@ async fn pin_copies_dirty_content_and_diff_survives_later_edits() {
 
     // The worktree moves on; the pinned content still diffs.
     write(dir.path(), "a.txt", b"unrelated\n");
-    let diff = acq.git.diff(&acq.store, &opened.base, &opened.target).await.unwrap();
+    let TextDiff { diff, texts } = acq.git.diff(&acq.store, &opened.base, &opened.target).await.unwrap();
     assert_eq!(diff.files.len(), 2);
+    assert_eq!(
+        texts.get(&blob(b"1\nTWO\n3\n")).map(Vec::as_slice),
+        Some(&b"1\nTWO\n3\n"[..]),
+        "the diff comes with the content it compared, as it was pinned"
+    );
     let a = &diff.files[0];
     assert_eq!(a.new_path, Some(path("a.txt")));
     assert_eq!((a.hunks[0].old.start, a.hunks[0].old.end), (1, 2));
@@ -308,7 +318,11 @@ async fn renames_are_detected_with_their_edits() {
     write(dir.path(), "dir/pure2.txt", b"pure rename content\nmore\n");
     let repo = GixRepo::new(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
-    let diff = repo.diff(&MemStore::default(), &base, &scan.snapshot).await.unwrap();
+    let diff = repo
+        .diff(&MemStore::default(), &base, &scan.snapshot)
+        .await
+        .unwrap()
+        .diff;
     assert_eq!(diff.renames.0.get(&path("old.txt")), Some(&path("dir/new.txt")));
     assert_eq!(diff.renames.0.get(&path("pure.txt")), Some(&path("dir/pure2.txt")));
     assert_eq!(diff.files.len(), 1);
@@ -333,7 +347,11 @@ async fn binary_mode_and_symlink_changes_are_non_text_items() {
     std::os::unix::fs::symlink("b", dir.path().join("link")).unwrap();
     let repo = GixRepo::new(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
-    let diff = repo.diff(&MemStore::default(), &base, &scan.snapshot).await.unwrap();
+    let diff = repo
+        .diff(&MemStore::default(), &base, &scan.snapshot)
+        .await
+        .unwrap()
+        .diff;
     assert!(diff.files.is_empty());
     let kinds: Vec<_> = diff.non_text.iter().map(|i| (i.path.clone(), i.kind)).collect();
     assert_eq!(
@@ -359,7 +377,11 @@ async fn added_and_deleted_empty_files_are_items_and_text_to_empty_stays_a_text_
     write(dir.path(), "filled.txt", b"x\n");
     let repo = GixRepo::new(dir.path());
     let (base, scan) = head_and_scan(dir.path(), &repo).await;
-    let diff = repo.diff(&MemStore::default(), &base, &scan.snapshot).await.unwrap();
+    let diff = repo
+        .diff(&MemStore::default(), &base, &scan.snapshot)
+        .await
+        .unwrap()
+        .diff;
 
     let items: Vec<_> = diff
         .non_text

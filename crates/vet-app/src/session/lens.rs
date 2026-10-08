@@ -5,19 +5,18 @@
 //! to review. Marks are shared with the changeset through content: the same lines are seen in
 //! both views (I3).
 
-use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use vet_core::completion::{Completion, Coverage};
-use vet_core::content::{LineDelta, Snapshot, SnapshotId, SnapshotStatus};
-use vet_core::merkle;
+use vet_core::content::{LineDelta, SnapshotId, SnapshotStatus};
 
+use super::derived::{CommitUnit, CommitsBetween, UnitKind};
 use super::manifest::{changeset_completion, empty_completion, file_completion, file_views, review_of, target_view};
-use super::state::{CommitUnit, State, UnitKind, View, acknowledged, commits, lifecycle_of};
+use super::state::{Commits, Remapped, State, View, acknowledged, lifecycle_of};
 use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{BaseChoice, CommitId, Lens, Source};
 use crate::ports::{CommitInfo, GitRepo, LiveStore};
-use crate::progress::TaskKind;
 use crate::review::SpanOrigin;
 
 /// What a manifest says about the lenses, whatever view it is of.
@@ -65,22 +64,22 @@ pub struct CommitsView {
     pub commits: Vec<CommitUnitView>,
 }
 
-impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
+impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// The commits of the changeset on view, each with its own diff and progress, and the lens it
     /// is reviewed in. The working tree has no commits of its own.
     pub async fn commits(&self) -> Result<CommitsView> {
-        let mut st = self.state.lock().await;
-        self.ensure_commits(&mut st).await?;
+        let (st, _) = self.prepared(View::Changeset, true).await?;
         let lens = match &st.source {
             Source::WorkingTree => Lens::Squash,
             source => (self.acquisition.store.lens(self.repo.clone(), source.clone()).await?).unwrap_or_default(),
         };
-        let changes = st.changes.as_ref().expect("computed");
-        let acked = |unit: &CommitUnit| acknowledged(&st, &unit.changes.diff);
-        let commits = commits(changes)
+        let acked = |unit: &CommitUnit| acknowledged(&st, &unit.diffed.diff);
+        let commits = st
+            .units()
             .iter()
-            .map(|unit| {
-                let cov = Coverage::new(&unit.changes.flat);
+            .enumerate()
+            .map(|(index, unit)| {
+                let cov = Coverage::new(&st.remapped_in(View::Commit { index: index as u32 }).flat);
                 CommitUnitView {
                     info: unit.detail.info.clone(),
                     body: unit.detail.body.clone(),
@@ -92,8 +91,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                             remerged,
                         },
                     },
-                    delta: unit.changes.diff.files.iter().map(|f| LineDelta::of(&f.hunks)).sum(),
-                    completion: changeset_completion(&cov, &st.filter, &unit.changes.diff, &acked(unit)),
+                    delta: unit.diffed.diff.files.iter().map(|f| LineDelta::of(&f.hunks)).sum(),
+                    completion: changeset_completion(&cov, &st.filter, &unit.diffed.diff, &acked(unit)),
                 }
             })
             .collect();
@@ -129,8 +128,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 git.first_parent_range(&st.base_commit, &st.head).await?.len() as u32,
             ),
         };
-        let changes = st.changes.as_ref().expect("computed");
-        let files = file_views(changes, &st.filter, |_, _| {
+        let changes = st.changes();
+        let files = file_views(&changes.diffed, &st.filter, |_, _| {
             (
                 ReviewView {
                     hunks: Vec::new(),
@@ -141,10 +140,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             )
         });
         let completion = changeset_completion(
-            &Coverage::new(&changes.flat),
+            &Coverage::new(&changes.remapped.flat),
             &st.filter,
-            &changes.diff,
-            &acknowledged(st, &changes.diff),
+            &changes.diffed.diff,
+            &acknowledged(st, &changes.diffed.diff),
         );
         Ok(LensFacts {
             lens,
@@ -154,89 +153,25 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         })
     }
 
-    /// Computes the commits of the changeset, each with its own diff, if that is not done.
-    pub(super) async fn ensure_commits(&self, st: &mut State) -> Result<()> {
-        self.ensure_changes(st).await?;
-        if st.changes.as_ref().is_some_and(|c| c.commits.is_some()) {
-            return Ok(());
-        }
-        let task = self.acquisition.tasks.start(TaskKind::Diff, "Comparing the commits");
-        let units = self.units(st, &task).await;
-        task.conclude(&units);
-        let units = units?;
+    /// What the commits of the changeset of `st` are the commits between; none for the working
+    /// tree, which has no commits of its own.
+    pub(super) fn commits_key(&self, st: &State) -> Option<CommitsBetween> {
+        (st.source != Source::WorkingTree).then(|| CommitsBetween {
+            base: st.base_commit.clone(),
+            tip: st.head.clone(),
+        })
+    }
+
+    /// Makes `units` the commits of the changeset and remaps the review state onto each.
+    pub(super) async fn install_commits(&self, st: &mut State, units: Arc<Vec<CommitUnit>>) -> Result<()> {
         let count = units.len();
-        st.changes.as_mut().expect("computed").commits = Some(units);
+        let remapped = (0..count).map(|_| Remapped::default()).collect();
+        st.changes.as_mut().expect("computed").commits = Some(Commits { units, remapped });
         self.load_known(st).await?;
         for index in 0..count as u32 {
             self.remap_view(st, View::Commit { index }).await?;
         }
         Ok(())
-    }
-
-    /// Computes the commits, and that of `index` is among them.
-    pub(super) async fn ensure_commit(&self, st: &mut State, index: u32) -> Result<()> {
-        self.ensure_commits(st).await?;
-        if (index as usize) < commits(st.changes.as_ref().expect("computed")).len() {
-            Ok(())
-        } else {
-            Err(SessionError::NotFound(format!("commit {index}")))
-        }
-    }
-
-    async fn units(&self, st: &State, task: &crate::progress::Running) -> Result<Vec<CommitUnit>> {
-        if st.source == Source::WorkingTree {
-            return Ok(Vec::new());
-        }
-        let acquisition = &self.acquisition;
-        let (git, store) = (&acquisition.git, &acquisition.store);
-        let range = git.first_parent_range(&st.base_commit, &st.head).await?;
-        let mut units: Vec<CommitUnit> = Vec::new();
-        for (n, commit) in range.iter().enumerate() {
-            let detail = git.commit_detail(commit).await?;
-            let new = git.commit_snapshot(commit).await?;
-            acquisition.record_commit(new.id, commit.clone());
-            let previous = units
-                .last()
-                .filter(|u| detail.parents.first() == Some(&u.detail.info.id));
-            let parent = async |parent: &CommitId| match previous {
-                Some(unit) => Ok(unit.new.clone()),
-                None => git.commit_snapshot(parent).await,
-            };
-            let (old, kind) = match detail.parents.as_slice() {
-                [] => (empty_snapshot(), UnitKind::Commit),
-                [first] => (parent(first).await?, UnitKind::Commit),
-                [first, _] => match git.remerge(commit).await {
-                    Ok(Some(merged)) => {
-                        // The merged files are in no git object: the store holds them.
-                        for content in merged.contents {
-                            store.put_blob(content).await?;
-                        }
-                        (merged.snapshot, UnitKind::Merge { remerged: true })
-                    }
-                    Ok(None) | Err(_) => (parent(first).await?, UnitKind::Merge { remerged: false }),
-                },
-                [first, ..] => (parent(first).await?, UnitKind::Merge { remerged: false }),
-            };
-            if !matches!(kind, UnitKind::Merge { remerged: true })
-                && let Some(first) = detail.parents.first()
-            {
-                acquisition.record_commit(old.id, first.clone());
-            }
-            let (diff, blobs) = self.diffed(&old, &new, task).await?;
-            let changes = self.changes_of(diff, blobs).await;
-            task.report(
-                Some((n as u32 + 1, range.len() as u32)),
-                Some(commit.short().to_owned()),
-            );
-            units.push(CommitUnit {
-                detail,
-                kind,
-                old,
-                new,
-                changes,
-            });
-        }
-        Ok(units)
     }
 
     /// Puts the snapshots a commit's marks are anchored in into the store, so that they can be
@@ -245,7 +180,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let View::Commit { index } = view else {
             return Ok(());
         };
-        let unit = &commits(st.changes.as_ref().expect("computed"))[index as usize];
+        let unit = &st.units()[index as usize];
         let now = (self.clock)();
         for snapshot in [&unit.old, &unit.new] {
             self.acquisition
@@ -258,10 +193,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
 
     /// The manifest of one commit's own diff, which `ensure_view` computed.
     pub(super) async fn commit_manifest(&self, st: &State, index: u32) -> Result<ManifestView> {
-        let unit = &commits(st.changes.as_ref().expect("computed"))[index as usize];
-        let cov = Coverage::new(&unit.changes.flat);
-        let acked = acknowledged(st, &unit.changes.diff);
-        let files = file_views(&unit.changes, &st.filter, |diff, items| {
+        let unit = &st.units()[index as usize];
+        let cov = Coverage::new(&st.remapped_in(View::Commit { index }).flat);
+        let acked = acknowledged(st, &unit.diffed.diff);
+        let files = file_views(&unit.diffed, &st.filter, |diff, items| {
             (
                 review_of(&cov, diff, items, &acked),
                 file_completion(&cov, &st.filter, diff, items, &acked),
@@ -285,7 +220,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             base,
             target: target_view(&st.source, &st.head, &git.branches().await?),
             filter: st.filter.clone(),
-            completion: changeset_completion(&cov, &st.filter, &unit.changes.diff, &acked),
+            completion: changeset_completion(&cov, &st.filter, &unit.diffed.diff, &acked),
             delta: files.iter().map(|f| f.delta).sum(),
             files,
             degraded: None,
@@ -303,7 +238,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
 pub(super) fn view_unit(st: &State, view: View) -> (SnapshotId, SnapshotId, SpanOrigin) {
     match view {
         View::Commit { index } => {
-            let unit = &commits(st.changes.as_ref().expect("computed"))[index as usize];
+            let unit = &st.units()[index as usize];
             (
                 unit.old.id,
                 unit.new.id,
@@ -317,11 +252,11 @@ pub(super) fn view_unit(st: &State, view: View) -> (SnapshotId, SnapshotId, Span
 /// The review state of `path` in the commit `index`, with the completions it implies.
 pub(super) fn commit_update(st: &State, index: u32, path: &str) -> Result<ReviewUpdateView> {
     use super::state::{find_diff, shown_items};
-    let unit = &commits(st.changes.as_ref().expect("computed"))[index as usize];
-    let cov = Coverage::new(&unit.changes.flat);
-    let acked = acknowledged(st, &unit.changes.diff);
-    let diff = find_diff(&unit.changes.diff, path);
-    let items = shown_items(&unit.changes.diff, &st.filter, path);
+    let unit = &st.units()[index as usize];
+    let cov = Coverage::new(&st.remapped_in(View::Commit { index }).flat);
+    let acked = acknowledged(st, &unit.diffed.diff);
+    let diff = find_diff(&unit.diffed.diff, path);
+    let items = shown_items(&unit.diffed.diff, &st.filter, path);
     let file = diff
         .map(|d| d.path().clone())
         .or_else(|| items.first().map(|n| n.path.clone()))
@@ -331,16 +266,8 @@ pub(super) fn commit_update(st: &State, index: u32, path: &str) -> Result<Review
         path: file,
         review: review_of(&cov, diff, &items, &acked),
         completion: file_completion(&cov, &st.filter, diff, &items, &acked),
-        changeset: changeset_completion(&cov, &st.filter, &unit.changes.diff, &acked),
+        changeset: changeset_completion(&cov, &st.filter, &unit.diffed.diff, &acked),
     })
-}
-
-fn empty_snapshot() -> Snapshot {
-    let entries = BTreeMap::new();
-    Snapshot {
-        id: merkle::snapshot_id(&entries),
-        entries,
-    }
 }
 
 #[cfg(test)]
