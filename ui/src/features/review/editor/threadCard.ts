@@ -207,7 +207,7 @@ function editForm(message: ThreadMessage, actions: ThreadActions, close: () => v
 
 /** A message with who wrote it and when; the viewer's own can be edited and removed. */
 function messageParts(thread: Thread, message: ThreadMessage, actions: ThreadActions): HTMLElement[] {
-  const meta = el("div", "vet-msg-meta");
+  const meta = el("div", thread.messages[0] === message ? "vet-msg-meta" : "vet-msg-meta vet-msg-next");
   meta.append(avatar(message.author, message.avatar), el("span", "vet-msg-author", message.author));
   meta.append(el("span", "vet-msg-time", time(message.at)));
   if (message.editedAt !== null) meta.append(el("span", "vet-msg-edited", "edited"));

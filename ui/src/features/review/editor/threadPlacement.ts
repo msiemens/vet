@@ -61,6 +61,8 @@ const CARD_PAD = 14;
 const REPLY = 34;
 /** A new comment's form: a field of three rows and the buttons below. */
 const FORM = 92;
+/** The line above every message but the first, with its space (`.vet-msg-next`). */
+const BETWEEN = 9;
 /** Characters a message line holds before it wraps, in a card of ordinary width. */
 const WRAP = 100;
 
@@ -75,5 +77,6 @@ export function cardHeight(card: CardData, m: CardMetrics): number {
   if (!thread) return CARD_PAD + m.line + FORM;
   if (thread.status === "resolved" && !card.open) return CARD_PAD + m.line;
   const messages = thread.messages.reduce((h, msg) => h + m.line + bodyRows(msg.body) * m.line, 0);
-  return CARD_PAD + m.line + messages + REPLY;
+  const between = Math.max(0, thread.messages.length - 1) * BETWEEN;
+  return CARD_PAD + m.line + messages + between + REPLY;
 }

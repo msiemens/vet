@@ -273,6 +273,9 @@
     list-style: none;
     border-bottom: 1px solid var(--line-soft);
   }
+  li + li {
+    border-top: 1px solid var(--line-soft);
+  }
   li.resolved .preview {
     color: var(--text-3);
   }

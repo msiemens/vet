@@ -16,6 +16,8 @@
   /* Lines and text */
   --line: light-dark(#d2d2d6, #3c3f45);
   --line-soft: light-dark(#e6e6e9, #313338);
+  /* Between parts of one thing, such as the messages of a thread: fainter than what parts things. */
+  --line-faint: color-mix(in srgb, var(--line-soft) 55%, transparent);
   --text: light-dark(#1d1f23, #dfe1e5);
   --text-2: light-dark(#575d67, #a9aeb6);
   --text-3: light-dark(#6a707a, #8e939b);
