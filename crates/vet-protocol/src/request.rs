@@ -482,7 +482,8 @@ pub enum Request {
         body: String,
     },
     /// Removes one of the viewer's own comments; removing a thread's first removes the thread.
-    /// A comment the platform has is removed there first. Answers with `Response::Done`.
+    /// A comment the platform has is removed there first. A draft or a failed one goes locally;
+    /// one that is being posted fails the request. Answers with `Response::Done`.
     RemoveMessage {
         project: ProjectId,
         message: u32,

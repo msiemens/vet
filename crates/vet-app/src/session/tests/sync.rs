@@ -628,6 +628,41 @@ async fn a_review_the_platform_refuses_posts_nothing_and_fails_each_draft_with_t
 }
 
 #[tokio::test]
+async fn a_failed_draft_is_discarded_alone_and_the_rest_post_on_retry() {
+    let (fx, hosting) = on_a_pull_request().await;
+    fx.thread(on("a.txt", 20, 21)).await;
+    let reply = fx.thread(on("a.txt", 3, 4)).await;
+    fx.session.reply(reply, "and this".into(), 6).await.unwrap();
+    hosting.fail("submit", PlatformError::Rejected("line not in the diff".to_owned()));
+    fx.session.submit_review(&hosting, "COMMENT", None).await.unwrap();
+    let refused = fx.all().await.iter().find(|t| t.id == reply).unwrap().messages[1].clone();
+    assert_eq!(refused.outgoing, failed("line not in the diff"));
+
+    fx.session.remove_message(&hosting, refused.id).await.unwrap();
+    assert_eq!(bodies(&fx.view(reply).await), ["why?"]);
+
+    hosting.recover();
+    let report = fx.session.submit_review(&hosting, "COMMENT", None).await.unwrap();
+    assert_eq!((report.posted, report.failed), (2, 0));
+    assert!(outgoing(&fx).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_draft_being_posted_cannot_be_removed() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let thread = fx.thread(on("a.txt", 20, 21)).await;
+    hosting.lose_answers();
+    fx.session.submit_review(&hosting, "COMMENT", None).await.unwrap();
+    let posting = fx.view(thread).await.messages[0].clone();
+    assert!(matches!(posting.outgoing, Outgoing::Posting { .. }));
+
+    let refused = fx.session.remove_message(&hosting, posting.id).await;
+
+    assert!(matches!(refused, Err(SessionError::Invalid(_))), "{refused:?}");
+    assert_eq!(bodies(&fx.view(thread).await), ["why?"]);
+}
+
+#[tokio::test]
 async fn drafts_are_marked_posting_before_the_platform_is_asked_and_one_it_took_is_found_there_after_a_restart() {
     let (fx, hosting) = on_a_pull_request().await;
     let theirs = hosting.thread("a.txt", (4, 4), "pr1", "marco", "Why 3?");

@@ -107,13 +107,15 @@
               iconSize={11}
               onclick={() => edit(key, message.body)}
             />
-            <IconButton
-              icon="close"
-              label="Delete the comment"
-              size={20}
-              iconSize={11}
-              onclick={() => void threads.removeMessage(message.id)}
-            />
+            {#if message.state.type !== "posting"}
+              <IconButton
+                icon="close"
+                label="Delete the comment"
+                size={20}
+                iconSize={11}
+                onclick={() => void threads.removeMessage(message.id)}
+              />
+            {/if}
           {/if}
         </div>
         {#if editing === key}

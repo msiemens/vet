@@ -69,6 +69,12 @@
               <button
                 class="ctl small"
                 type="button"
+                disabled={busy}
+                onclick={() => void threads.removeMessage(message.id)}>Discard</button
+              >
+              <button
+                class="ctl small"
+                type="button"
                 disabled={busy || blocked !== undefined}
                 onclick={() => void send()}>Retry</button
               >

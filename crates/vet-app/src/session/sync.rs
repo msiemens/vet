@@ -528,7 +528,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// Removes one of the viewer's comments. A thread's first removes the thread, unless the thread
     /// is posted to a platform that keeps it with its other posted comments
     /// ([`crate::platform::PlatformTraits::first_comment_ends_thread`]). A posted one is removed on
-    /// the platform first.
+    /// the platform first. One that is being posted stays until that is settled.
     pub async fn remove_message<P: Platform + Sync>(&self, platform: &P, message: MessageId) -> Result<()> {
         let _exchange = self.exchange.lock().await;
         let (thread, ends_thread, posted) = {
@@ -536,6 +536,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let (thread, old) = find_message(&st, message)?;
             if !old.mine {
                 return Err(SessionError::Invalid("only your own comments can be removed".into()));
+            }
+            if matches!(old.outgoing, Outgoing::Posting { .. }) {
+                return Err(SessionError::Invalid(
+                    "this comment is being posted: remove it once that is done".into(),
+                ));
             }
             let posted = comment_ref(thread, old)
                 .map(|c| pull_request(&st).map(|(remote, _)| (remote, c)))
