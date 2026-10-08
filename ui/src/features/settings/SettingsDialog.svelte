@@ -7,6 +7,7 @@
   import Segmented from "../../lib/ui/Segmented.svelte";
   import { platform } from "../../state/platform.svelte";
   import AccountsPage from "./AccountsPage.svelte";
+  import GeneralPage from "./GeneralPage.svelte";
   import KeymapPage from "./KeymapPage.svelte";
   import ProjectPage from "./ProjectPage.svelte";
   import ServersPage from "./ServersPage.svelte";
@@ -30,8 +31,9 @@
     onfilter: (filter: ReviewFilter) => Promise<string | undefined>;
   } = $props();
 
-  // Pages without settings of their own yet (General, Backends) are not listed.
+  // A Backends page is not listed: SPEC names no setting of its own for it.
   const PAGES = [
+    { id: "general", label: "General" },
     { id: "appearance", label: "Appearance" },
     { id: "keymap", label: "Keymap" },
     { id: "review", label: "Review" },
@@ -57,7 +59,9 @@
     </nav>
     <ScrollArea>
       <div class="page">
-        {#if page === "keymap"}
+        {#if page === "general"}
+          <GeneralPage />
+        {:else if page === "keymap"}
           <KeymapPage />
         {:else if page === "review"}
           <ProjectPage

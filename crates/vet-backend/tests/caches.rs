@@ -58,7 +58,10 @@ async fn a_smaller_budget_shrinks_the_file_at_once_and_is_kept_for_the_next_laun
     let before = usage(client.call(Request::SemanticCacheUsage).await);
     assert!(before > 4_000_000, "{before}");
 
-    let settings = BackendSettings { semantic_cache_mb: 1 };
+    let settings = BackendSettings {
+        semantic_cache_mb: 1,
+        finished_review_days: 7,
+    };
     let answer = client.call(Request::SetSettings { settings }).await;
     assert!(
         matches!(answer, Ok(Response::Settings { settings: s }) if s == settings),

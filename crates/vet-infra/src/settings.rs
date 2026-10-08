@@ -6,6 +6,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -16,17 +17,26 @@ const FILE: &str = "settings.json";
 pub struct Settings {
     /// Megabytes the semantic cache's answers may take.
     pub semantic_cache_mb: u32,
+    /// Days a changeset is kept after its last review was finished.
+    pub finished_review_days: u32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { semantic_cache_mb: 256 }
+        Self {
+            semantic_cache_mb: 256,
+            finished_review_days: 30,
+        }
     }
 }
 
 impl Settings {
     pub fn semantic_cache_bytes(&self) -> u64 {
         u64::from(self.semantic_cache_mb) << 20
+    }
+
+    pub fn finished_review_retention(&self) -> Duration {
+        Duration::from_secs(u64::from(self.finished_review_days) * 24 * 3600)
     }
 }
 
@@ -63,7 +73,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(load(dir.path()), Settings::default());
 
-        let changed = Settings { semantic_cache_mb: 64 };
+        let changed = Settings {
+            semantic_cache_mb: 64,
+            finished_review_days: 7,
+        };
         save(dir.path(), &changed).unwrap();
         assert_eq!(load(dir.path()), changed);
 

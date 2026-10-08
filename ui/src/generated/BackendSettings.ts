@@ -5,4 +5,9 @@ export type BackendSettings = {
  * Megabytes the answers of the language servers kept between launches may take; beyond
  * it the least recently used go.
  */
-semanticCacheMb: number, };
+semanticCacheMb: number, 
+/**
+ * Days a changeset is kept after its last review was finished, unless a thread of it is
+ * open; it is removed at the first start after that.
+ */
+finishedReviewDays: number, };

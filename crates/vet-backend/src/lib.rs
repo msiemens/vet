@@ -237,25 +237,33 @@ impl Orchestrator {
         Response::Settings {
             settings: BackendSettings {
                 semantic_cache_mb: settings.semantic_cache_mb,
+                finished_review_days: settings.finished_review_days,
             },
         }
     }
 
-    /// Keeps the settings, then applies them.
+    /// Keeps the settings, then applies them. How long finished reviews are kept applies
+    /// at the next start, which is when the store is collected.
     async fn set_settings(&self, new: BackendSettings) -> Result<Response, String> {
         if new.semantic_cache_mb == 0 {
             return Err("the semantic cache needs at least 1 MB".into());
         }
+        if new.finished_review_days == 0 {
+            return Err("finished reviews are kept for at least a day".into());
+        }
         let settings = Settings {
             semantic_cache_mb: new.semantic_cache_mb,
+            finished_review_days: new.finished_review_days,
         };
-        {
+        let old = {
             let mut current = self.settings.lock().await;
             vet_infra::settings::save(self.store.dir(), &settings)
                 .map_err(|e| format!("the settings cannot be kept: {e}"))?;
-            *current = settings;
+            std::mem::replace(&mut *current, settings)
+        };
+        if old.semantic_cache_mb != settings.semantic_cache_mb {
+            self.answers.set_budget(settings.semantic_cache_bytes()).await;
         }
-        self.answers.set_budget(settings.semantic_cache_bytes()).await;
         Ok(self.settings().await)
     }
 }
@@ -512,11 +520,15 @@ fn start_servers_in_background(open: Arc<Open>) {
     });
 }
 
-/// Opens the store and collects what its retention no longer keeps. A failed
-/// collection only leaves the garbage for the next start.
+/// Opens the store and collects what its retention, as the settings in `dir` have it, no
+/// longer keeps. A failed collection only leaves the garbage for the next start.
 pub async fn open_store(dir: &Path) -> Result<SqliteStore, String> {
     let store = SqliteStore::open(dir).await.map_err(|e| e.0)?;
-    if let Err(e) = vet_app::gc::collect(&store, unix_now(), &Retention::default()).await {
+    let retention = Retention {
+        closed_changesets: vet_infra::settings::load(store.dir()).finished_review_retention(),
+        ..Retention::default()
+    };
+    if let Err(e) = vet_app::gc::collect(&store, unix_now(), &retention).await {
         tracing::warn!(error = %e.0, "garbage collection of the store failed");
     }
     Ok(store)
