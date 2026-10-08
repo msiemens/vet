@@ -1,6 +1,7 @@
 <!-- A table: a header naming the columns over the rows its owner draws. Each element of class
-     `row` in the body is laid out on the header's grid. The viewer resizes a column by dragging
-     its edge in the header or with the arrow keys on it, and a double click puts it back; the
+     `row` in the body is laid out on the header's grid, and a divider in the header parts each two
+     columns. The viewer resizes a column by dragging its divider or with the arrow keys on it, and a
+     double click puts it back; the
      widths are kept under `name`. The rest props go to the element holding the rows, `body`.
 
      Its owner sizes it with `--table-gap` (between columns), `--table-pad` and `--table-pad-end`
@@ -111,6 +112,9 @@
       {@const side = handleSide(columns, index)}
       <span class="cell" class:right={column.align === "right"}>
         <span class="label">{column.label}</span>
+        {#if index < columns.length - 1 && side !== "end" && handleSide(columns, index + 1) !== "start"}
+          <span class="divider"></span>
+        {/if}
         {#if side}
           <!-- A focusable separator is a widget (WAI-ARIA window splitter). -->
           <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -197,7 +201,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* A grip in the middle of the gap between two columns. */
+  /* A grip in the middle of the gap between two columns, drawn as the divider there. */
   .edge {
     position: absolute;
     z-index: 1;
@@ -213,12 +217,28 @@
   .edge.start {
     left: calc((var(--gap) + var(--w-splitter)) / -2);
   }
-  .edge:hover {
-    background: var(--toggle-press);
+  .edge::before,
+  .divider {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--line);
   }
-  .edge.dragging,
+  .edge::before {
+    content: "";
+    left: calc(50% - 0.5px);
+  }
+  /* Between two columns neither of which this gap resizes. */
+  .divider {
+    right: calc(var(--gap) / -2 - 0.5px);
+  }
+  .edge:hover::before,
+  .edge.dragging::before,
+  .edge:focus-visible::before {
+    background: var(--accent);
+  }
   .edge:focus-visible {
     outline: none;
-    background: var(--focus);
   }
 </style>
