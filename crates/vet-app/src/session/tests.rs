@@ -452,6 +452,8 @@ impl Differ for FakeGit {
 #[derive(Default)]
 struct Mem {
     blobs: HashMap<BlobId, Vec<u8>>,
+    /// Every blob given to `put_blobs`, in order.
+    put: Vec<BlobId>,
     snapshots: HashMap<SnapshotId, (Snapshot, SnapshotStatus)>,
     /// The repository and source of the changeset, once a review started.
     changeset: Option<(String, Source)>,
@@ -496,6 +498,7 @@ impl Store for MemStore {
             .map(|bytes| {
                 let id = BlobId::of(&bytes);
                 mem.blobs.insert(id, bytes);
+                mem.put.push(id);
                 id
             })
             .collect())
@@ -567,6 +570,7 @@ impl ReviewStore for MemStore {
         let mut mem = self.0.lock().unwrap();
         *mem = Mem {
             blobs: std::mem::take(&mut mem.blobs),
+            put: std::mem::take(&mut mem.put),
             snapshots: std::mem::take(&mut mem.snapshots),
             threads: std::mem::take(&mut mem.threads),
             next_message: mem.next_message,
@@ -3710,5 +3714,6 @@ async fn a_pull_request_has_lines_once_it_was_fetched_and_the_working_tree_has_n
     );
 }
 
+mod ahead;
 mod derived;
 mod sync;

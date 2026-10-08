@@ -87,6 +87,8 @@ pub struct Wired {
     booted: OnceCell<Result<Arc<Booted>, String>>,
     settling: Mutex<Option<AbortHandle>>,
     fetching: Mutex<Option<AbortHandle>>,
+    /// The copy of the working tree's content ahead of a review; a newer tree's replaces it.
+    copying: Mutex<Option<AbortHandle>>,
     closed: AtomicBool,
     trees: Arc<KeptTrees>,
     /// The answers of the language servers kept between launches.
@@ -132,6 +134,21 @@ impl Wired {
         *self.fetching.lock().unwrap_or_else(PoisonError::into_inner) = Some(task);
     }
 
+    /// Copies the working tree's content into the store in the background, so the first mark
+    /// finds it there. The copy of an older tree stops, unless a mark is waiting for it.
+    fn copy_ahead(&self, session: &Arc<Live>) {
+        let session = session.clone();
+        let task = tokio::spawn(async move {
+            if let Err(e) = session.copy_ahead().await {
+                tracing::warn!(error = %e, "could not copy the working tree's content ahead of a review");
+            }
+        });
+        let mut copying = self.copying.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(older) = copying.replace(task.abort_handle()) {
+            older.abort();
+        }
+    }
+
     async fn boot(&self) -> Result<Arc<Booted>, String> {
         let Plan {
             id,
@@ -172,6 +189,7 @@ impl Wired {
                     .follow(settling, |revision| {
                         settled(&subscribers, id, revision);
                         if let Some(open) = entry.get().and_then(Weak::upgrade) {
+                            open.copy_ahead(&session);
                             start_servers_in_background(open);
                         }
                     })
@@ -179,6 +197,7 @@ impl Wired {
             })
         };
         *self.settling.lock().unwrap_or_else(PoisonError::into_inner) = Some(task.abort_handle());
+        self.copy_ahead(&session);
 
         // The semantic lane reads the same repository and store through handles of its own, so
         // what it reads draws on its budget and never on the review's.
@@ -232,6 +251,9 @@ impl Resident for Wired {
         }
         if let Some(settling) = self.settling.lock().unwrap_or_else(PoisonError::into_inner).take() {
             settling.abort();
+        }
+        if let Some(copying) = self.copying.lock().unwrap_or_else(PoisonError::into_inner).take() {
+            copying.abort();
         }
         if let Some(Ok(booted)) = self.booted.get() {
             booted.semantics.shutdown().await;
@@ -335,6 +357,7 @@ impl Orchestrator {
             booted: OnceCell::new(),
             settling: Mutex::new(None),
             fetching: Mutex::new(None),
+            copying: Mutex::new(None),
             closed: AtomicBool::new(false),
             trees: self.trees.clone(),
             answers: self.answers.clone(),

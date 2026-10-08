@@ -108,16 +108,48 @@ async fn toggle(client: &Client, project: ProjectId, revision: u32, path: &str, 
     took
 }
 
+/// How long until the content store in `data` holds every one of `texts`.
+async fn copied(data: &Path, texts: &[String]) -> Duration {
+    let started = Instant::now();
+    for text in texts {
+        let hex = vet_core::content::BlobId::of(text.as_bytes()).0.to_hex();
+        let path = data.join("content").join(&hex[..2]).join(&hex[2..]);
+        while !path.exists() {
+            assert!(
+                started.elapsed() < Duration::from_secs(120),
+                "the copy ahead never finished"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+    started.elapsed()
+}
+
 /// Opens the repository on the store in `data`, then marks `marks` hunks, one in each of the
-/// files from `first` on; with `every`, then marks every file seen. Prints how long each step
-/// took.
-async fn session(label: &str, data: &Path, repo: &Path, names: &[String], (first, marks): (usize, usize), every: bool) {
+/// files from `first` on; with `every`, then marks every file seen. With `ahead`, the marks
+/// wait until the store holds these texts, which the session copies into it in the background.
+/// Prints how long each step took.
+async fn session(
+    label: &str,
+    data: &Path,
+    repo: &Path,
+    names: &[String],
+    (first, marks): (usize, usize),
+    every: bool,
+    ahead: Option<&[String]>,
+) {
     let handler = Arc::new(Orchestrator::new(open_store(data).await.unwrap(), config()));
     let client = Client::new(&handler);
     let (project, open) = timed(client.open(repo)).await;
     let (revision, manifest) = timed(client.revision(project)).await;
     let (_, second_manifest) = timed(client.revision(project)).await;
     println!("{label}: open {open:?}, first manifest {manifest:?}, second manifest {second_manifest:?}");
+    if let Some(texts) = ahead {
+        println!(
+            "{label}: the copy ahead finished {:?} after the second manifest",
+            copied(data, texts).await
+        );
+    }
     let mut took = Vec::new();
     for path in names.iter().skip(first).take(marks) {
         took.push(toggle(&client, project, revision, path, 0).await);
@@ -183,8 +215,21 @@ async fn the_first_marks_on_a_large_changeset() {
     let names: Vec<_> = files.iter().map(|(n, _)| n.clone()).collect();
     let data = tempfile::tempdir().unwrap();
 
-    // The first mark starts the review.
-    session("cold", data.path(), repo.path(), &names, (0, 20), false).await;
+    // The first mark starts the review, while the target's content is still being copied.
+    session("cold", data.path(), repo.path(), &names, (0, 20), false, None).await;
     // The review is open now, with 20 marks to remap; the store keeps the target's content.
-    session("reopened", data.path(), repo.path(), &names, (20, 20), true).await;
+    session("reopened", data.path(), repo.path(), &names, (20, 20), true, None).await;
+    // On a store of its own, the first mark comes once the target's content was copied.
+    let fresh = tempfile::tempdir().unwrap();
+    let texts: Vec<String> = files.iter().map(|(_, text)| edited(text)).collect();
+    session(
+        "copied ahead",
+        fresh.path(),
+        repo.path(),
+        &names,
+        (0, 20),
+        false,
+        Some(&texts),
+    )
+    .await;
 }

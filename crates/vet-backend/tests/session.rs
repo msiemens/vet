@@ -476,6 +476,36 @@ async fn mark_edit_settle_remap_and_revert() {
     );
 }
 
+/// Whether the content store in `data` holds `content`, waiting up to 10 s for it.
+async fn stored(data: &Path, content: &str) -> bool {
+    let hex = vet_core::content::BlobId::of(content.as_bytes()).0.to_hex();
+    let path = data.join("content").join(&hex[..2]).join(&hex[2..]);
+    for _ in 0..200 {
+        if path.exists() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    false
+}
+
+#[tokio::test]
+async fn the_working_trees_content_is_copied_into_the_store_before_a_review_starts() {
+    let base = text(40, &[]);
+    let dirty = text(40, &[5]);
+    let fx = fixture(&[("a.txt", &base)], &[("a.txt", &dirty)]).await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    client.manifest(project).await;
+    assert!(stored(fx._data.path(), &dirty).await, "copied once the project opened");
+
+    let edited = text(40, &[5, 30]);
+    write(fx.repo.path(), "a.txt", &edited);
+    client.settled().await;
+    assert!(stored(fx._data.path(), &edited).await, "copied once the tree settled");
+    assert_eq!(client.manifest(project).await.review, ReviewInfo::Browsing);
+}
+
 #[tokio::test]
 async fn a_seen_region_with_an_edit_in_the_middle_is_split() {
     let region: Vec<usize> = (5..25).collect();

@@ -42,8 +42,10 @@
 //! diffs, interdiffs and commits without touching it, `remap` puts a revision's
 //! review state onto them, `manifest` and `content` and `browse` show them,
 //! `marks` and `threads` edit the review, `blobs` reads the content they all
-//! need, and `source` and `listing` are about which changeset is on view.
+//! need, `ahead` copies the working tree's content before a review needs it,
+//! and `source` and `listing` are about which changeset is on view.
 
+mod ahead;
 mod base_diff;
 mod blobs;
 mod browse;
@@ -74,6 +76,7 @@ use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
 use vet_engine::{Engine, Limits};
 
+use self::ahead::Retained;
 pub use self::base_diff::{BaseDiffKind, BaseDiffRow, BaseDiffView};
 pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing};
@@ -197,6 +200,8 @@ pub struct LiveSession<G, S> {
     lines: Engine<LinesBetween>,
     /// The diffs, interdiffs and commits the review state is remapped onto.
     derived: Derived,
+    /// The copies of the working tree's content into the store under way.
+    ahead: Engine<Retained>,
 }
 
 /// How many line deltas the list of changesets keeps.
@@ -300,6 +305,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             revisions: Arc::default(),
             exchange: Mutex::new(()),
             lines: Engine::new(Limits::entries(KEPT_LINE_DELTAS)),
+            ahead: Engine::new(Limits::entries(0)),
         }
     }
 
@@ -397,8 +403,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Starts the review (SPEC "Session lifecycle"): records the base, `HEAD`
     /// and the current target, which becomes version 1, copies the target's
-    /// dirty content into the store and takes the changeset's refs. Does nothing
-    /// if a review is open. Returns whether it started one.
+    /// dirty content into the store (what `copy_ahead` has not) and takes the
+    /// changeset's refs. Does nothing if a review is open. Returns whether it
+    /// started one.
     async fn begin(&self, st: &mut State) -> Result<bool> {
         if st.review.is_some() {
             return Ok(false);
@@ -408,7 +415,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         // A committed target stays in git, which the version's refs keep.
         let head = match st.source {
             Source::WorkingTree => {
-                acquisition.retain(&[&st.base], &st.target, &st.target_status).await?;
+                self.retained(&st.base, &st.target, &st.target_status).await?;
                 git.head().await?
             }
             _ => st.head.clone(),
