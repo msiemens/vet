@@ -18,6 +18,7 @@
     toolFor,
   } from "../features/chrome";
   import { ChecksButton } from "../features/checks";
+  import { OutgoingButton } from "../features/comments";
   import { NotificationCards, PlatformFooter } from "../features/platform";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, targetLabel } from "../features/queue";
   import { ReviewScreen, type ReviewController, summarize } from "../features/review";
@@ -356,6 +357,10 @@
       <ChecksButton checks={head} shortId={headId.slice(0, 7)} onlog={(run) => void controller?.openLog(run)} />
     {/if}
   {/snippet}
+  {#snippet outgoingComments()}
+    <!-- A changeset that is no pull request has nowhere to post to. -->
+    {#if headId !== undefined}<OutgoingButton />{/if}
+  {/snippet}
   {#snippet projectSwitcher()}
     {#if session.repo}
       <ProjectSwitcher
@@ -390,6 +395,7 @@
     back={backToChangeset}
     filtered={changeset.baseChanged ? baseChangedActions : undefined}
     checks={headChecks}
+    outgoing={outgoingComments}
     base={changeset.manifest?.base}
     target={changeset.manifest?.target}
     review={changeset.manifest?.review}

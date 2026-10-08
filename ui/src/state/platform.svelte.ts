@@ -33,6 +33,10 @@ class PlatformStore {
   accountsRequests = $state(0);
   /** The Submit review form, kept here so that switching tool windows does not empty it. */
   review = $state({ open: false, verdict: undefined as string | undefined, body: "" });
+  /** The viewer's comments are being posted. */
+  sending = $state(false);
+  /** The tab the Comments tool window shows. */
+  commentsTab = $state<"review" | "conversation">("review");
   private signingIn = false;
   private backend?: Backend;
   private seq = 0;

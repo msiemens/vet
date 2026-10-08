@@ -27,7 +27,7 @@ export const RESOLVED_SHOWN = 3;
 const start = (t: Thread) => (t.kind === "file" ? -1 : (t.location?.start ?? t.original?.start ?? 0));
 
 /** The changeset's own threads first, then by file, a file's own thread before its lines in text order. */
-const inOrder = (a: Thread, b: Thread) =>
+export const inOrder = (a: Thread, b: Thread) =>
   (a.path ?? "").localeCompare(b.path ?? "") || start(a) - start(b) || a.id - b.id;
 
 /** Every thread is in exactly one group, each in the order of `inOrder`. */
@@ -58,11 +58,14 @@ export function rowTitle(thread: Thread): string {
   return thread.kind === "range" && at ? `${name}:${at.start + 1}` : name;
 }
 
-/** The first line of the opening message, cut to `max` characters. */
-export function preview(thread: Thread, max = 80): string {
-  const first = thread.messages[0]?.body.split("\n")[0].trim() ?? "";
+/** The first line of `text`, cut to `max` characters. */
+export function firstLine(text: string, max = 80): string {
+  const first = text.split("\n")[0].trim();
   return first.length > max ? `${first.slice(0, max - 1)}…` : first;
 }
+
+/** The first line of the opening message, cut to `max` characters. */
+export const preview = (thread: Thread, max = 80): string => firstLine(thread.messages[0]?.body ?? "", max);
 
 /** Where the thread is: its lines, or the file or changeset. A detached range is where it was recorded. */
 export function placeLabel(thread: Thread): string {

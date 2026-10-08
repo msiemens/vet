@@ -37,6 +37,7 @@
     back,
     filtered,
     checks,
+    outgoing,
   }: {
     /** Which screen shows: the queue of changesets, or the review of the one on view. */
     screen: Screen;
@@ -68,8 +69,10 @@
     back?: Snippet;
     /** While the review view shows a filtered part of the changeset: what acts on it and the way back, before the progress. */
     filtered?: Snippet;
-    /** The head commit's checks, after the progress. */
+    /** The head commit's checks, after Finish review. */
     checks?: Snippet;
+    /** The viewer's comments on their way to the platform, at the end. */
+    outgoing?: Snippet;
   } = $props();
   const seen = $derived(completion?.seenPercent ?? 0);
   const oldBase = $derived(completion?.oldBasePercent ?? 0);
@@ -134,7 +137,6 @@
       />
       <span class="mono pct">{Math.round(seen)}%</span>
     </span>
-    {@render checks?.()}
     {#if review?.state === "open"}
       <button
         class="ctl finish"
@@ -143,6 +145,8 @@
         onclick={onfinish}>Finish review</button
       >
     {/if}
+    {@render checks?.()}
+    {@render outgoing?.()}
   {/if}
   <IconButton icon="search" label="Search everywhere" />
 </TitleBar>
