@@ -40,19 +40,35 @@ function describe(error: unknown): string {
   return stack ? stack.slice(0, STACK_CHARS) : errorText(error);
 }
 
+/** The script position an `error` event names, if any. */
+function position({ filename, lineno, colno }: ErrorEvent): string {
+  return filename ? ` at ${filename}:${String(lineno)}:${String(colno)}` : "";
+}
+
 /**
  * Reports what `target` (the window) sees go uncaught. A request given up on is no error. Returns
  * the function that stops reporting.
  */
 export function reportUncaught(report: Report, target: EventTarget = window): () => void {
   const onError = (event: Event) => {
-    const { message } = event as ErrorEvent;
     const error: unknown = (event as ErrorEvent).error;
-    report("error", error === undefined ? message : describe(error), "uncaught error");
+    // Without an error object (null for a ResizeObserver loop) only the message says what happened.
+    if (error !== undefined && error !== null) {
+      report("error", describe(error), "uncaught error");
+      return;
+    }
+    const message = (event as ErrorEvent).message || "an error event without a message";
+    // The browser delivers the remaining notifications in the next frame: nothing is lost.
+    const level = message.startsWith("ResizeObserver loop") ? "warn" : "error";
+    report(level, message + position(event as ErrorEvent), "uncaught error");
   };
   const onRejection = (event: Event) => {
     const reason: unknown = (event as PromiseRejectionEvent).reason;
-    if (!isAbort(reason)) report("error", describe(reason), "unhandled rejection");
+    if (isAbort(reason)) return;
+    // A promise rejected with nothing carries no stack: say so instead of printing "null".
+    const message =
+      reason === undefined || reason === null ? `a promise rejected with ${String(reason)}` : describe(reason);
+    report("error", message, "unhandled rejection");
   };
   target.addEventListener("error", onError);
   target.addEventListener("unhandledrejection", onRejection);

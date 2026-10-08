@@ -32,6 +32,36 @@ void test("uncaught errors and unhandled rejections are reported, and a given-up
   assert.equal(reports.length, 2);
 });
 
+void test("an error event without an error object is reported by its message and position, a ResizeObserver loop as a warning", () => {
+  const reports: [string, string, string][] = [];
+  const report: Report = (level, message, context) => reports.push([level, message, context]);
+  const target = new EventTarget();
+  reportUncaught(report, target);
+
+  target.dispatchEvent(
+    Object.assign(new Event("error"), {
+      message: "ResizeObserver loop completed with undelivered notifications.",
+      error: null,
+      filename: "",
+    }),
+  );
+  target.dispatchEvent(
+    Object.assign(new Event("error"), {
+      message: "Script error.",
+      error: null,
+      filename: "http://localhost/src/App.svelte",
+      lineno: 12,
+      colno: 3,
+    }),
+  );
+  target.dispatchEvent(Object.assign(new Event("unhandledrejection"), { reason: null }));
+  assert.deepEqual(reports, [
+    ["warn", "ResizeObserver loop completed with undelivered notifications.", "uncaught error"],
+    ["error", "Script error. at http://localhost/src/App.svelte:12:3", "uncaught error"],
+    ["error", "a promise rejected with null", "unhandled rejection"],
+  ]);
+});
+
 void test("a failed request is reported by its kind alone, and a cancelled one is not", () => {
   const reports: [string, string, string][] = [];
   const report: Report = (level, message, context) => reports.push([level, message, context]);
