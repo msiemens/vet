@@ -383,7 +383,7 @@ GitHub and ADO ship in M1; the other columns show the model covers them, and are
 How the UI follows the traits:
 
 - **Conversation tab** in the comments tool window exists only when `conversation_feed` is true.
-- **Toolbar** shows "Submit review" with the verdict menu for `BatchedReview`, or "Post" for `PerComment`; a separate vote control appears when `verdict_separate` is true.
+- **The comments tool window** shows "Submit review" with the verdict menu for `BatchedReview`, or "Post" for `PerComment`, next to the drafts it posts; a separate vote control appears beside it when `verdict_separate` is true.
 - **Blocking marker** on a thread, and the queue's blocking status, mean whatever `blocking` says. A Bitbucket task is a flag on its thread.
 - **Revision-scoped platforms**: Vet still anchors to its own snapshots; a remote comment's patch set maps to the snapshot built from that patch set.
 
@@ -446,7 +446,7 @@ Grouped by area; areas and the items within each are in priority order.
 #### Reviewing changes
 
 - Sticky headers in every diff view: while scrolling, the current file's header and the current hunk's bar stay pinned at the top until the next one pushes them out
-- The Changes tab marks the file the viewer is in (in the tab and the file tree), and reopens the review at the scroll position it was left at
+- The file tree marks the file the viewer is in (the one pinned at the top of the Changes tab, or the file tab's), and the Changes tab reopens the review at the scroll position it was left at
 - The base chosen while browsing is kept per repository: reopening the repository without an open review shows the tree against it again (§5.3)
 - Double-clicking a line in the Changes tab opens the file's tab at that line, highlighted
 - The file icon of a file in the Changes tab opens the file's tab, like the hunk bar's; a changed file's tab switches between file and diff view
