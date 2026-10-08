@@ -223,7 +223,9 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
         policy: AnalysisPolicy,
     ) -> Result<Launched, LaunchError> {
         let config = backend.config();
-        let root = std::fs::canonicalize(root).map_err(|e| LaunchError::Spawn(format!("{}: {e}", root.display())))?;
+        let root = tokio::fs::canonicalize(root)
+            .await
+            .map_err(|e| LaunchError::Spawn(format!("{}: {e}", root.display())))?;
         let Prepared {
             command,
             restored,
@@ -352,13 +354,13 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher
     }
 
     async fn identify(&self, root: &Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
-        let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned());
+        let root = tokio::fs::canonicalize(root).await.unwrap_or_else(|_| root.to_owned());
         let command = (self.locator.locate(backend.config(), &root).await).map_err(LaunchError::NotInstalled)?;
         self.identities.of(&root, backend, &command).await
     }
 
     async fn recorded_restore(&self, root: &Path, backend: &Backend, policy: AnalysisPolicy) -> Option<Hash> {
-        let root = std::fs::canonicalize(root).ok()?;
+        let root = tokio::fs::canonicalize(root).await.ok()?;
         self.restorer.recorded(&root, backend, policy).await
     }
 }

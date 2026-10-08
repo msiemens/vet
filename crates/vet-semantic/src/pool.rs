@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::Deref;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -30,7 +30,7 @@ use crate::ports::{
     Answered, At, Backend, BackendId, Diagnostic, LanguageServer, LaunchError, Location, Materializer,
     NotMaterializable, Provenance, QueryError, ServerIdentity, ServerLauncher, Started, SymbolInfo, Tree,
 };
-use crate::reuse::{Answers, Basis, Computed, KEPT, Key, ProjectQuery, Restore, Reused, SemanticCache};
+use crate::reuse::{Answers, Basis, Computed, KEPT, Key, Memo, ProjectQuery, Restore, Reused, SemanticCache};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Target {
@@ -237,10 +237,20 @@ pub struct Pool<M: Materializer, L: ServerLauncher> {
     limit: usize,
     store: Option<Arc<dyn SemanticCache>>,
     answers: Arc<Answers>,
+    /// What `foreseen` worked out, by server key, root and generation of the backend.
+    identities: Memo<ForeseenKey, ServerIdentity>,
+    bases: Memo<ForeseenKey, Basis>,
     /// Numbers the servers started on trees whose restore left no record.
     instances: AtomicU64,
     state: Mutex<State<L::Server, M::Guard>>,
 }
+
+/// A server key, the directory it would run in and the generation of its backend:
+/// a restart makes a new generation, so nothing worked out before it is reused.
+type ForeseenKey = (PoolKey, PathBuf, u64);
+
+/// Identities and bases worked out and kept.
+const FORESEEN_KEPT: usize = 64;
 
 type EntryOf<M, L> = Entry<<L as ServerLauncher>::Server, <M as Materializer>::Guard>;
 
@@ -315,6 +325,8 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             limit: KEPT,
             store: None,
             answers: Arc::new(Answers::new(KEPT)),
+            identities: Memo::new(FORESEEN_KEPT),
+            bases: Memo::new(FORESEEN_KEPT),
             instances: AtomicU64::new(0),
             state: Mutex::new(State {
                 tick: 0,
@@ -350,25 +362,78 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
     /// with no kept tree has no such server yet. The basis is none on the live tree and
     /// for a tree with no usable record; the answers about the whole tree have no key then.
     async fn foreseen(&self, key: &PoolKey, backend: &Backend) -> Option<(ServerIdentity, Option<Basis>)> {
-        admit(backend, key.policy).ok()?;
-        let (root, snapshot) = match key.target {
-            Target::Live => (self.live_root.clone(), None),
-            Target::Snapshot(snapshot) => (self.materializer.kept(snapshot, key.policy).await?, Some(snapshot)),
-        };
-        let identity = self.launcher.identify(&root, backend).await.ok()?;
+        let (root, snapshot) = self.foreseen_root(key, backend).await?;
+        let identity = self.foreseen_identity(key, backend, &root).await?;
         let basis = match snapshot {
-            Some(snapshot) => self
-                .launcher
-                .recorded_restore(&root, backend, key.policy)
-                .await
-                .map(|fingerprint| Basis {
-                    snapshot,
-                    policy: key.policy,
-                    restore: Restore::Recorded(fingerprint),
-                }),
+            Some(snapshot) => self.foreseen_basis(key, backend, &root, snapshot).await,
             None => None,
         };
         Some((identity, basis))
+    }
+
+    /// Where a server for `key` would run, and the snapshot it would serve; none if
+    /// the backend is not admitted or the snapshot has no kept tree.
+    async fn foreseen_root(&self, key: &PoolKey, backend: &Backend) -> Option<(PathBuf, Option<SnapshotId>)> {
+        admit(backend, key.policy).ok()?;
+        Some(match key.target {
+            Target::Live => (self.live_root.clone(), None),
+            Target::Snapshot(snapshot) => (self.materializer.kept(snapshot, key.policy).await?, Some(snapshot)),
+        })
+    }
+
+    /// The identity a server for `key` would have, worked out once per backend generation
+    /// and root: the launcher probes toolchains, reads settings and hashes binaries for it.
+    async fn foreseen_identity(&self, key: &PoolKey, backend: &Backend, root: &Path) -> Option<ServerIdentity> {
+        let known = (key.clone(), root.to_owned(), self.generation(&key.backend));
+        let worked_out = self
+            .identities
+            .get(&known, async {
+                let identity = self.launcher.identify(root, backend).await.map_err(drop)?;
+                Ok::<_, ()>(Computed {
+                    value: identity,
+                    keep: true,
+                })
+            })
+            .await;
+        worked_out.ok().map(|(identity, _)| identity)
+    }
+
+    /// The basis of the kept tree of `snapshot` from the restore recorded for it, worked
+    /// out once per backend generation and root. A tree with no usable record has none
+    /// and is looked at again; every start drops what was found, because its restore
+    /// may have recorded one.
+    async fn foreseen_basis(
+        &self,
+        key: &PoolKey,
+        backend: &Backend,
+        root: &Path,
+        snapshot: SnapshotId,
+    ) -> Option<Basis> {
+        let known = (key.clone(), root.to_owned(), self.generation(&key.backend));
+        let recorded = self
+            .bases
+            .get(&known, async {
+                let fingerprint = self
+                    .launcher
+                    .recorded_restore(root, backend, key.policy)
+                    .await
+                    .ok_or(())?;
+                Ok::<_, ()>(Computed {
+                    value: Basis {
+                        snapshot,
+                        policy: key.policy,
+                        restore: Restore::Recorded(fingerprint),
+                    },
+                    keep: true,
+                })
+            })
+            .await;
+        recorded.ok().map(|(basis, _)| basis)
+    }
+
+    /// How often `backend` was restarted.
+    fn generation(&self, backend: &BackendId) -> u64 {
+        self.lock().generations.get(backend).copied().unwrap_or(0)
     }
 
     /// The answer to a question about the whole tree of `key` if it is kept, in memory or
@@ -394,7 +459,8 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         file: &RepoPath,
         text: &str,
     ) -> Option<Answered<Vec<SymbolInfo>>> {
-        let (identity, _) = self.foreseen(key, backend).await?;
+        let (root, _) = self.foreseen_root(key, backend).await?;
+        let identity = self.foreseen_identity(key, backend, &root).await?;
         let value: Vec<SymbolInfo> = self.answers.recall(&text_key(&identity, file, text)).await?;
         let mut recalled = answered(value, identity, true);
         named_after(file, &mut recalled.value);
@@ -488,6 +554,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             }
             entry
         };
+        self.bases.clear();
         guard.end(Ok(()));
         Ok(entry)
     }

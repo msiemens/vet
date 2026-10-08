@@ -20,6 +20,7 @@ use std::time::SystemTime;
 use vet_app::ports::ServerCommand;
 use vet_core::content::Hash;
 use vet_semantic::ports::{Backend, LaunchError, ServerIdentity};
+use vet_semantic::reuse::{self, Computed};
 
 use super::{client_capabilities, initialization_options};
 use crate::exec::{Host, is_file};
@@ -93,7 +94,12 @@ pub struct Identities {
     user: UserEnv,
     binaries: Memo<Hash>,
     versions: Memo<String>,
+    /// What each toolchain program printed in a root: program, arguments, root.
+    toolchains: reuse::Memo<(String, Vec<String>, PathBuf), String>,
 }
+
+/// Toolchain probes kept.
+const TOOLCHAINS_KEPT: usize = 256;
 
 impl Identities {
     pub fn new(user: UserEnv) -> Self {
@@ -101,6 +107,7 @@ impl Identities {
             user,
             binaries: Mutex::default(),
             versions: Mutex::default(),
+            toolchains: reuse::Memo::new(TOOLCHAINS_KEPT),
         }
     }
 
@@ -191,10 +198,7 @@ impl Identities {
         digest.field("toolchain");
         for (program, args) in config.toolchain {
             let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
-            let seen = match capture(program, &args, Some(root)).await {
-                Ok(out) if out.ok => format!("{}{}", out.stdout.trim(), out.stderr.trim()),
-                _ => "unavailable".to_owned(),
-            };
+            let seen = self.toolchain(program, args, root).await;
             digest.field(program).field(&seen);
         }
         digest.field("above the root");
@@ -216,6 +220,29 @@ impl Identities {
             if let Some(value) = self.user.vars.get(*name) {
                 digest.field(name).field(value);
             }
+        }
+    }
+
+    /// What the toolchain program printed in `root`, probed once per program and root
+    /// for as long as these identities live, and shared by concurrent callers. A probe
+    /// that failed is not remembered: the next one may succeed.
+    async fn toolchain(&self, program: &str, args: Vec<String>, root: &Path) -> String {
+        let key = (program.to_owned(), args, root.to_owned());
+        let probe = async {
+            Ok::<_, std::convert::Infallible>(match capture(program, &key.1, Some(root)).await {
+                Ok(out) if out.ok => Computed {
+                    value: format!("{}{}", out.stdout.trim(), out.stderr.trim()),
+                    keep: true,
+                },
+                _ => Computed {
+                    value: "unavailable".to_owned(),
+                    keep: false,
+                },
+            })
+        };
+        match self.toolchains.get(&key, probe).await {
+            Ok((seen, _)) => seen,
+            Err(never) => match never {},
         }
     }
 
