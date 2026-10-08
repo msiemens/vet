@@ -1,7 +1,9 @@
 // 24x24 icons. `fill` icons are solid shapes, the rest are strokes.
 export const ICONS = {
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
-  queue: '<path d="M4 6h16M4 12h16M4 18h10"/>',
+  // Lucide's inbox (ISC).
+  queue:
+    '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
   // Lucide's file-diff (ISC).
   review:
     '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M9 10h6M12 13V7M9 17h6"/>',
