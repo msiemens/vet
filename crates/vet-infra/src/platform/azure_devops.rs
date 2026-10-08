@@ -6,7 +6,8 @@
 //! request (the API has no batch for either). Those are asked for the pull requests
 //! that are on the requested list only, concurrently, and reused for a while while the
 //! source branch stays where it was. Votes carry no commit and the list no time of the
-//! last change; the wire module says what stands in for them.
+//! last change; the wire module says what stands in for them. The time comes with the
+//! threads and statuses, so the list is ordered by it once they are in.
 //!
 //! The token goes to the host's API and nowhere else: no redirect is followed. A failed
 //! request is logged with the account, the status and the platform's message; nothing
@@ -90,6 +91,8 @@ struct Extras {
     comments: u32,
     /// A policy that holds the merge back has failed.
     blocked: bool,
+    /// When the pull request last changed, as its threads and statuses say.
+    updated_at: i64,
 }
 
 #[derive(Default)]
@@ -356,11 +359,13 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         };
         let (statuses, threads, evaluations) = futures::future::join3(statuses, threads, evaluations).await;
         let threads = Self::or_nothing(threads)?;
+        let statuses = Self::or_nothing(statuses)?;
         let extras = Extras {
-            ci: wire::ci_state(&Self::or_nothing(statuses)?),
+            ci: wire::ci_state(&statuses),
             unresolved_threads: wire::unresolved_threads(&threads),
             comments: wire::comment_count(&threads),
             blocked: checks::blocked_by(&evaluations?),
+            updated_at: wire::last_activity(pr.updated_at, &threads, &statuses),
         };
         self.state().extras.insert(key, (now, pr.head.clone(), extras));
         Ok(extras)
@@ -389,6 +394,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
                 pr.unresolved_threads = extras.unresolved_threads;
                 pr.comments = extras.comments;
                 pr.blocked = extras.blocked;
+                pr.updated_at = extras.updated_at;
             }
         }
         Ok(())
@@ -454,9 +460,13 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             ..query.clone()
         };
         found.retain(|pr| matches(pr, &viewer, &without_ci));
-        found.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(b.number.cmp(&a.number)));
+        // The newest created are kept; the threads and statuses then say when each last changed.
+        let newest_first =
+            |a: &PullRequest, b: &PullRequest| b.updated_at.cmp(&a.updated_at).then(b.number.cmp(&a.number));
+        found.sort_by(newest_first);
         found.truncate(MAX_LISTED);
         self.enrich(&access, &git, remote, &repository, &mut found).await?;
+        found.sort_by(newest_first);
         Ok(found)
     }
 

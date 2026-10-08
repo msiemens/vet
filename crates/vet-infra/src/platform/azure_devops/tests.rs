@@ -327,6 +327,49 @@ async fn a_refresh_asks_for_the_list_once_per_page_and_for_checks_and_threads_on
 }
 
 #[tokio::test]
+async fn a_pull_request_was_updated_by_its_newest_thread_or_status_and_the_list_is_ordered_by_that() {
+    set_now(NOW);
+    let fake = Fake::start(|request, _| {
+        let path = request.path.split('?').next().unwrap();
+        let of = |n: u32| path.contains(&format!("/pullRequests/{n}/"));
+        let list = |value: Value| Canned::json(&json!({ "value": value }).to_string());
+        if path.ends_with("/_apis/connectionData") {
+            Canned::json(&profile())
+        } else if path == "/contoso/_apis/identities" {
+            Canned::json(&no_value())
+        } else if path == PULLS {
+            Canned::json(&list_of(&[Doc::new(1), Doc::new(2), Doc::new(3)]))
+        } else if path.ends_with("/threads") && of(1) {
+            list(json!([
+                // What the system writes when someone votes.
+                { "id": 1, "lastUpdatedDate": "2024-06-01T00:00:00Z",
+                  "comments": [{ "commentType": "system", "content": "Ada voted 10" }] },
+                { "id": 2, "lastUpdatedDate": "2024-05-02T00:00:00Z", "status": "active",
+                  "comments": [{ "commentType": "text", "content": "x" }] },
+                { "id": 3, "lastUpdatedDate": "2024-07-01T00:00:00Z", "isDeleted": true, "comments": [] },
+            ]))
+        } else if path.ends_with("/statuses") && of(2) {
+            let mut posted = status(1, "succeeded", "build");
+            posted["creationDate"] = json!("2024-05-10T00:00:00Z");
+            posted["updatedDate"] = json!("2024-05-15T00:00:00Z");
+            list(json!([posted]))
+        } else {
+            Canned::json(&no_value())
+        }
+    });
+    let found = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let updated: Vec<_> = found.iter().map(|p| (p.number, p.updated_at)).collect();
+    assert_eq!(
+        updated,
+        [
+            (1, 1_717_200_000), // the vote, not the deleted thread after it
+            (2, 1_715_731_200), // the status
+            (3, 1_714_564_803), // nothing since it was created
+        ]
+    );
+}
+
+#[tokio::test]
 async fn what_is_known_of_a_pull_request_is_asked_again_when_its_source_branch_moved() {
     set_now(NOW);
     let head = Arc::new(Mutex::new("a".to_owned()));

@@ -137,7 +137,8 @@ pub(super) fn pull_request(pr: &GitPullRequest, me: &Me, web: &str) -> Option<ve
         ),
         // Takes the policies, asked for with the checks and threads.
         blocked: false,
-        // The list says when a pull request was created, not when it last changed.
+        // The list says when a pull request was created, not when it last changed: that is
+        // `last_activity`, from the threads and statuses.
         updated_at: pr.creation_date.unix_timestamp(),
     })
 }
@@ -212,6 +213,28 @@ pub(super) fn comment_count(threads: &[GitPullRequestCommentThread]) -> u32 {
         .filter(|c| c.is_deleted != Some(true) && !matches!(c.comment_type, Some(CommentType::System)))
         .count();
     u32::try_from(count).unwrap_or(u32::MAX)
+}
+
+/// When a pull request created at `created` last changed: the newest of its threads not
+/// deleted and of its statuses. The system writes threads of its own for pushes, votes,
+/// reviewers and merge attempts, so they count too.
+pub(super) fn last_activity(
+    created: i64,
+    threads: &[GitPullRequestCommentThread],
+    statuses: &[GitPullRequestStatus],
+) -> i64 {
+    let threads = threads
+        .iter()
+        .map(|t| &t.comment_thread)
+        .filter(|t| t.is_deleted != Some(true))
+        .filter_map(|t| t.last_updated_date);
+    let statuses = statuses
+        .iter()
+        .filter_map(|s| s.git_status.updated_date.or(s.git_status.creation_date));
+    threads
+        .chain(statuses)
+        .map(|at| at.unix_timestamp())
+        .fold(created, i64::max)
 }
 
 /// The states of the source branch the iterations record, oldest first, ending in
