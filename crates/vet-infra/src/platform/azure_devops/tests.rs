@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 use vet_app::platform::{
-    Credential, CredentialSource, ReviewDecision, ReviewRequest, ReviewState, ReviewVerdict, Token, ViewerReview,
-    list_rows,
+    ChangesAsked, ChangesRequest, Credential, CredentialSource, ReviewDecision, ReviewRequest, ReviewState,
+    ReviewVerdict, Token, ViewerReview, list_rows,
 };
 
 use super::*;
@@ -497,6 +497,46 @@ async fn a_vote_is_a_review_of_the_head() {
     assert_eq!(review(2).map(|r| r.verdict), Some(ReviewVerdict::ChangesRequested));
     let rows = list_rows(&client, &remote(), &all_open()).await.unwrap().rows;
     assert!(rows.iter().all(|r| matches!(r.review, ReviewState::Reviewed(_))));
+}
+
+#[tokio::test]
+async fn a_rejection_and_a_wait_for_the_author_are_told_apart_by_reviewer() {
+    set_now(NOW);
+    let mut held = Doc::new(1);
+    let mut declined = identity("x", "x@contoso.com", false);
+    declined["hasDeclined"] = json!(true);
+    held.reviewers = vec![
+        reviewer(ada(), 10),
+        reviewer(
+            json!({ "id": "l", "displayName": "Linus T", "uniqueName": "linus@contoso.com", "isContainer": false }),
+            -10,
+        ),
+        reviewer(team(), -5),
+        reviewer(declined, -10),
+    ];
+    let fake = repository(vec![held, Doc::new(3)], vec![], vec![]);
+    let found = client(&fake)
+        .list_pull_requests(&remote(), &all_open())
+        .await
+        .unwrap()
+        .pull_requests;
+    let of = |n: u64| found.iter().find(|p| p.number == n).unwrap().changes_requested.clone();
+
+    assert_eq!(
+        of(1),
+        [
+            ChangesRequest {
+                reviewer: "Linus T".to_owned(),
+                how: ChangesAsked::Rejected
+            },
+            ChangesRequest {
+                reviewer: "[Shop]\\Reviewers".to_owned(),
+                how: ChangesAsked::WaitingForAuthor
+            },
+        ],
+        "named as people see them; who declined to review holds nothing back"
+    );
+    assert_eq!(of(3), []);
 }
 
 #[tokio::test]

@@ -7,7 +7,9 @@ use azure_devops_rust_api::git::models::{
     comment::CommentType, comment_thread::Status as ThreadStatus, git_pull_request_iteration::Reason,
     git_status::State as StatusState,
 };
-use vet_app::platform::{CiState, Push, ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview};
+use vet_app::platform::{
+    ChangesAsked, ChangesRequest, CiState, Push, ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview,
+};
 
 /// The signed-in user, as the reviewers of a pull request name them.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -72,6 +74,15 @@ pub(super) fn decision(votes: impl IntoIterator<Item = i64>) -> ReviewDecision {
     }
 }
 
+/// How a vote holds a pull request back, if it does: -10 rejects, -5 waits for the author.
+fn changes_asked(vote: i64) -> Option<ChangesAsked> {
+    match vote {
+        ..=-10 => Some(ChangesAsked::Rejected),
+        -9..=-1 => Some(ChangesAsked::WaitingForAuthor),
+        _ => None,
+    }
+}
+
 /// A pull request as the list shows it, without what takes a request of its own: checks,
 /// threads and policies. `None` for one without a source commit. `web` is the address the
 /// number is appended to.
@@ -79,9 +90,20 @@ pub(super) fn pull_request(pr: &GitPullRequest, me: &Me, web: &str) -> Option<ve
     let head = pr.last_merge_source_commit.as_ref()?.commit_id.clone()?;
     let mut review_requests = Vec::new();
     let mut viewer_review = None;
+    let mut changes_requested = Vec::new();
     for reviewer in &pr.reviewers {
         let identity = &reviewer.identity_ref;
         let vote = reviewer.vote.unwrap_or(0);
+        if let Some(how) = changes_asked(vote).filter(|_| reviewer.has_declined != Some(true)) {
+            changes_requested.push(ChangesRequest {
+                reviewer: identity
+                    .graph_subject_base
+                    .display_name
+                    .clone()
+                    .unwrap_or_else(|| me.name(identity)),
+                how,
+            });
+        }
         if identity.is_container == Some(true) {
             if vote == 0 && reviewer.has_declined != Some(true) {
                 let name = identity.graph_subject_base.display_name.clone();
@@ -135,6 +157,7 @@ pub(super) fn pull_request(pr: &GitPullRequest, me: &Me, web: &str) -> Option<ve
                 .filter(|r| r.has_declined != Some(true))
                 .map(|r| r.vote.unwrap_or(0)),
         ),
+        changes_requested,
         // Takes the policies, asked for with the checks and threads.
         blocked: false,
         // The list says when a pull request was created, not when it last changed: that is

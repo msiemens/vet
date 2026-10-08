@@ -2,14 +2,14 @@
 
 use serde::Deserialize;
 use vet_app::platform::{
-    ChangedLines, CiState, ForcePush, PlatformError, PullRequest, PullRequestDetail, ReviewDecision, ReviewRequest,
-    ReviewVerdict, ViewerReview,
+    ChangedLines, ChangesAsked, ChangesRequest, CiState, ForcePush, PlatformError, PullRequest, PullRequestDetail,
+    ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview,
 };
 
 /// The fields of a pull request that the queue shows. One request per page asks for these
 /// for every pull request on it; each connection counts once per pull request against
-/// the rate limit (5 of them: labels, assignees, review requests, review threads,
-/// commits).
+/// the rate limit (6 of them: labels, assignees, review requests, the reviewers' latest
+/// verdicts, review threads, commits).
 const PULL_REQUEST_FIELDS: &str = "
 fragment PullRequestFields on PullRequest {
   number
@@ -41,6 +41,7 @@ fragment PullRequestFields on PullRequest {
     }
   }
   viewerLatestReview { state commit { oid } }
+  latestOpinionatedReviews(first: 20, writersOnly: true) { nodes { state author { login } } }
   reviewThreads(first: 100) { nodes { isResolved } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 }";
@@ -196,6 +197,14 @@ struct ReviewNode {
     commit: Option<Oid>,
 }
 
+/// A reviewer's latest review that approves or requests changes.
+#[derive(Deserialize)]
+struct OpinionNode {
+    state: String,
+    /// Null for an account that was deleted.
+    author: Option<Login>,
+}
+
 #[derive(Deserialize)]
 struct ThreadNode {
     #[serde(rename = "isResolved")]
@@ -253,6 +262,7 @@ pub(super) struct PullRequestNode {
     assignees: Nodes<Login>,
     review_requests: Nodes<RequestNode>,
     viewer_latest_review: Option<ReviewNode>,
+    latest_opinionated_reviews: Nodes<OpinionNode>,
     review_threads: Nodes<ThreadNode>,
     commits: Nodes<CommitNode>,
 }
@@ -348,6 +358,15 @@ impl PullRequestNode {
                 })
             }),
             decision: decision(self.review_decision.as_deref()),
+            changes_requested: self
+                .latest_opinionated_reviews
+                .present()
+                .filter(|r| r.state == "CHANGES_REQUESTED")
+                .map(|r| ChangesRequest {
+                    reviewer: r.author.map_or_else(|| "ghost".to_owned(), |a| a.login),
+                    how: ChangesAsked::Requested,
+                })
+                .collect(),
             blocked: is_blocked(self.merge_state_status.as_deref()),
             updated_at,
         })

@@ -26,6 +26,7 @@
     queueRows,
     reviewedOf,
     sourceText,
+    statusTitle,
     tabCounts,
     updatedText,
   } from "./queueRows";
@@ -147,7 +148,12 @@
             onkeydown={(e) => move(e, index)}
           >
             <span class="title"><ChangesetName label={labelOf(row)} /></span>
-            <span><StatusChip status={row.pullRequest?.status} /></span>
+            <span
+              ><StatusChip
+                status={row.pullRequest?.status}
+                title={row.pullRequest && statusTitle(row.pullRequest)}
+              /></span
+            >
             <span class="author" class:muted={author?.muted}>
               {#if author}
                 {#if !author.muted}<Avatar name={author.name} url={author.avatar ?? null} />{/if}

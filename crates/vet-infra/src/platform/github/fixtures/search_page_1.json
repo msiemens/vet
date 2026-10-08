@@ -28,6 +28,13 @@
             ]
           },
           "viewerLatestReview": { "state": "COMMENTED", "commit": { "oid": "c1c1c1" } },
+          "latestOpinionatedReviews": {
+            "nodes": [
+              { "state": "APPROVED", "author": { "login": "ada" } },
+              { "state": "CHANGES_REQUESTED", "author": { "login": "linus" } },
+              { "state": "CHANGES_REQUESTED", "author": null }
+            ]
+          },
           "reviewThreads": { "nodes": [{ "isResolved": true }, { "isResolved": false }, { "isResolved": false }] },
           "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "FAILURE" } } }] }
         },
@@ -55,6 +62,7 @@
             ]
           },
           "viewerLatestReview": { "state": "PENDING", "commit": { "oid": "d4d4d4" } },
+          "latestOpinionatedReviews": { "nodes": [] },
           "reviewThreads": { "nodes": [] },
           "commits": { "nodes": [{ "commit": { "statusCheckRollup": null } }] }
         }

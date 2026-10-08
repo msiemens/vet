@@ -2,8 +2,8 @@
 //! row shows. Pure: the platforms only supply the pull requests.
 
 use super::model::{
-    ChangedLines, CiState, PullRequest, PullRequestQuery, QueueStatus, QueueTab, ReviewDecision, ReviewRequest,
-    ReviewVerdict, Viewer,
+    ChangedLines, ChangesRequest, CiState, PullRequest, PullRequestQuery, QueueStatus, QueueTab, ReviewDecision,
+    ReviewRequest, ReviewVerdict, Viewer,
 };
 
 /// What the viewer's earlier review says about the pull request as it is now.
@@ -37,6 +37,8 @@ pub struct PullRequestRow {
     pub draft: bool,
     /// Where the pull request stands for the viewer; none when no status applies.
     pub status: Option<QueueStatus>,
+    /// Who asked for changes, and how, when that is the status.
+    pub changes_requested: Vec<ChangesRequest>,
     pub labels: Vec<String>,
     /// Unix seconds.
     pub updated_at: i64,
@@ -112,10 +114,16 @@ pub fn queue_status(draft: bool, blocked: bool, decision: ReviewDecision, waitin
 
 fn row(pr: PullRequest, viewer: &Viewer) -> PullRequestRow {
     let waiting_for_me = is_waiting_for_me(&pr, viewer);
+    let status = queue_status(pr.draft, pr.blocked, pr.decision, waiting_for_me);
     PullRequestRow {
         review: review_state(&pr),
         waiting_for_me,
-        status: queue_status(pr.draft, pr.blocked, pr.decision, waiting_for_me),
+        status,
+        changes_requested: if status == Some(QueueStatus::ChangesRequested) {
+            pr.changes_requested
+        } else {
+            Vec::new()
+        },
         number: pr.number,
         title: pr.title,
         url: pr.url,
@@ -149,7 +157,7 @@ pub fn rows(prs: Vec<PullRequest>, viewer: &Viewer, query: &PullRequestQuery) ->
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::platform::model::ViewerReview;
+    use crate::platform::model::{ChangesAsked, ViewerReview};
 
     pub(crate) fn viewer() -> Viewer {
         Viewer {
@@ -179,6 +187,7 @@ pub(crate) mod tests {
             review_requests: Vec::new(),
             viewer_review: None,
             decision: ReviewDecision::Undecided,
+            changes_requested: Vec::new(),
             blocked: false,
             updated_at: 1_000 + number as i64,
         }
@@ -354,6 +363,26 @@ pub(crate) mod tests {
         assert_eq!(status(&p), Some(QueueStatus::Approved));
         p.decision = ReviewDecision::Undecided;
         assert_eq!(status(&p), None);
+    }
+
+    #[test]
+    fn a_row_names_who_asked_for_changes_only_when_that_is_its_status() {
+        let mut p = pr(1);
+        p.decision = ReviewDecision::ChangesRequested;
+        p.changes_requested = vec![ChangesRequest {
+            reviewer: "Linus".to_owned(),
+            how: ChangesAsked::Rejected,
+        }];
+        let row =
+            |p: &PullRequest| rows(vec![p.clone()], &viewer(), &PullRequestQuery::new(QueueTab::AllOpen)).remove(0);
+        assert_eq!(row(&p).changes_requested, p.changes_requested);
+        p.draft = true;
+        assert_eq!(row(&p).status, Some(QueueStatus::Draft));
+        assert_eq!(
+            row(&p).changes_requested,
+            [],
+            "the chip says draft, not who asked for changes"
+        );
     }
 
     #[test]

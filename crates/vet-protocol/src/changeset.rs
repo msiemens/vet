@@ -143,6 +143,29 @@ pub enum QueueStatus {
     Approved,
 }
 
+/// How a reviewer holds a pull request back from approval.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ChangesAsked {
+    /// GitHub's review that requests changes.
+    Requested,
+    /// Azure DevOps' vote "Rejected".
+    Rejected,
+    /// Azure DevOps' vote "Waiting for author".
+    WaitingForAuthor,
+}
+
+/// A reviewer who holds a pull request back from approval, and how.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ChangesRequest {
+    /// As the platform shows the reviewer to people.
+    pub reviewer: String,
+    pub how: ChangesAsked,
+}
+
 /// An open pull request that waits for the viewer or is the viewer's own.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -178,6 +201,8 @@ pub struct PullRequestRow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub status: Option<QueueStatus>,
+    /// Who asked for changes, and how, in the platform's order; empty unless that is the status.
+    pub changes_requested: Vec<ChangesRequest>,
     /// Review is asked of the viewer or their team, and they have not reviewed it as it is now.
     pub waiting_for_me: bool,
     pub unresolved_threads: u32,

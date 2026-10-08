@@ -145,6 +145,26 @@ export function statusText(status: QueueStatus): string {
   }
 }
 
+/**
+ * What a pull request's status chip says on hover: who asked for changes and how, one reviewer a line, for the
+ * one "Changes requested" chip that rejections, waits for the author and requested changes share.
+ */
+export function statusTitle(pullRequest: PullRequestRow): string | undefined {
+  if (pullRequest.status !== "changesRequested" || pullRequest.changesRequested.length === 0) return undefined;
+  return pullRequest.changesRequested
+    .map(({ reviewer, how }) => {
+      switch (how) {
+        case "requested":
+          return `Changes requested by ${reviewer}`;
+        case "rejected":
+          return `Rejected by ${reviewer}`;
+        case "waitingForAuthor":
+          return `Waiting for the author (${reviewer})`;
+      }
+    })
+    .join("\n");
+}
+
 export interface Author {
   name: string;
   /** The address of the platform's picture of the author, when it has one. */

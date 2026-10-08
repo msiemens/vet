@@ -2,11 +2,11 @@
   import type { QueueStatus } from "../../generated/QueueStatus";
   import { statusText } from "./queueRows";
 
-  /** Where a pull request stands for the viewer; nothing is drawn without one. */
-  let { status }: { status?: QueueStatus } = $props();
+  /** Where a pull request stands for the viewer; nothing is drawn without one. `title` is what it says on hover. */
+  let { status, title }: { status?: QueueStatus; title?: string } = $props();
 </script>
 
-{#if status}<span class="chip {status}">{statusText(status)}</span>{/if}
+{#if status}<span class="chip {status}" {title}>{statusText(status)}</span>{/if}
 
 <style>
   .chip {

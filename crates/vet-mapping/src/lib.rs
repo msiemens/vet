@@ -6,8 +6,8 @@ pub mod semantic;
 
 use vet_app::changeset::{BaseChoice, CommitId, Lens, RemoteKey, Source, VersionOrigin};
 use vet_app::platform::{
-    CheckLog, CiState, CommitChecks, PlatformError, PlatformKind, PlatformTraits, Posting, PullRequestState,
-    QueueStatus, ReviewVerdict, ReviewerState,
+    ChangesAsked, CheckLog, CiState, CommitChecks, PlatformError, PlatformKind, PlatformTraits, Posting,
+    PullRequestState, QueueStatus, ReviewVerdict, ReviewerState,
 };
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
@@ -435,6 +435,14 @@ fn queue_status(status: QueueStatus) -> p::QueueStatus {
     }
 }
 
+fn changes_asked(how: ChangesAsked) -> p::ChangesAsked {
+    match how {
+        ChangesAsked::Requested => p::ChangesAsked::Requested,
+        ChangesAsked::Rejected => p::ChangesAsked::Rejected,
+        ChangesAsked::WaitingForAuthor => p::ChangesAsked::WaitingForAuthor,
+    }
+}
+
 fn ci_state(state: CiState) -> p::CiState {
     match state {
         CiState::Pending => p::CiState::Pending,
@@ -479,6 +487,14 @@ pub fn pull_requests(list: &PullRequestList, reviews: &[RowReview]) -> p::Respon
                     ci: row.ci.map(ci_state),
                     draft: row.draft,
                     status: row.status.map(queue_status),
+                    changes_requested: row
+                        .changes_requested
+                        .iter()
+                        .map(|c| p::ChangesRequest {
+                            reviewer: c.reviewer.clone(),
+                            how: changes_asked(c.how),
+                        })
+                        .collect(),
                     waiting_for_me: row.waiting_for_me,
                     unresolved_threads: row.unresolved_threads,
                     updated_at: unix_secs(row.updated_at),

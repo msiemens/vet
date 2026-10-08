@@ -15,6 +15,7 @@ import {
   queueRows,
   reviewedOf,
   sourceText,
+  statusTitle,
   tabCounts,
   targetLabel,
   updatedText,
@@ -109,6 +110,7 @@ const pr: PullRequestRow = {
   updatedAt: NOW / 1000 - 3 * 3600,
   review: { state: "none" },
   url: "https://github.com/acme/app/pull/482",
+  changesRequested: [],
 };
 const fromFork: PullRequestRow = {
   ...pr,
@@ -205,6 +207,24 @@ void test("the header names a pull request by number and title, and by number al
   });
   assert.deepEqual(targetLabel(target(key, "#482")), { text: "#482" });
   assert.deepEqual(targetLabel(target({ type: "branch", name: "feat/x" }, "feat/x")), { text: "feat/x" });
+});
+
+void test("the changes requested chip names who asked for changes and how, and no other chip names anyone", () => {
+  const held: PullRequestRow = {
+    ...pr,
+    status: "changesRequested",
+    changesRequested: [
+      { reviewer: "Linus T", how: "rejected" },
+      { reviewer: "[Shop]\\Reviewers", how: "waitingForAuthor" },
+    ],
+  };
+  assert.equal(statusTitle(held), "Rejected by Linus T\nWaiting for the author ([Shop]\\Reviewers)");
+  assert.equal(
+    statusTitle({ ...held, changesRequested: [{ reviewer: "linus", how: "requested" }] }),
+    "Changes requested by linus",
+  );
+  assert.equal(statusTitle({ ...held, changesRequested: [] }), undefined, "the platform did not say who");
+  assert.equal(statusTitle({ ...held, status: "approved" }), undefined);
 });
 
 void test("a pull request is asked for by its number, with or without the hash", () => {

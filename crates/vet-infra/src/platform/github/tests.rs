@@ -4,7 +4,8 @@ use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 
 use vet_app::platform::{
-    ChangedLines, CiState, ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview, is_waiting_for_me,
+    ChangedLines, ChangesAsked, ChangesRequest, CiState, ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview,
+    is_waiting_for_me,
 };
 
 use super::*;
@@ -238,6 +239,21 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
     assert_eq!(draft.comments, 0);
     assert_eq!(found[2].fork, None, "a branch of the repository itself");
 
+    assert_eq!(
+        first.changes_requested,
+        [
+            ChangesRequest {
+                reviewer: "linus".to_owned(),
+                how: ChangesAsked::Requested
+            },
+            ChangesRequest {
+                reviewer: "ghost".to_owned(),
+                how: ChangesAsked::Requested
+            }
+        ],
+        "who requested changes, not who approved"
+    );
+    assert_eq!(draft.changes_requested, []);
     assert_eq!(
         (first.decision, first.blocked, first.author_avatar.as_deref()),
         (

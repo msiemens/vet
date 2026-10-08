@@ -167,6 +167,25 @@ pub enum ReviewDecision {
     ChangesRequested,
 }
 
+/// How a reviewer holds a pull request back from approval.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ChangesAsked {
+    /// GitHub's review that requests changes.
+    Requested,
+    /// Azure DevOps' vote "Rejected".
+    Rejected,
+    /// Azure DevOps' vote "Waiting for author".
+    WaitingForAuthor,
+}
+
+/// A reviewer who holds a pull request back from approval, and how.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ChangesRequest {
+    /// As the platform shows the reviewer to people.
+    pub reviewer: String,
+    pub how: ChangesAsked,
+}
+
 /// Where a pull request stands, as the queue's Status column says it. The first that applies of
 /// these, in this order, is the pull request's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -217,6 +236,9 @@ pub struct PullRequest {
     pub viewer_review: Option<ViewerReview>,
     /// What the reviewers decided together.
     pub decision: ReviewDecision,
+    /// Who holds it back from approval, in the platform's order: what a decision to ask for
+    /// changes is made of.
+    pub changes_requested: Vec<ChangesRequest>,
     /// The platform holds the merge back: a blocking policy or branch protection is not met.
     pub blocked: bool,
     /// Unix seconds.
