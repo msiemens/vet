@@ -1527,8 +1527,13 @@ async fn review_branch(client: &mut Client, project: ProjectId, name: &str) {
         })
         .await
         .unwrap();
-    let Event::ChangesetOpened { revision, .. } = client.event().await else {
-        panic!("not told which changeset is on view")
+    // A fetch the app made by itself on opening may say what it found before or after.
+    let revision = loop {
+        match client.event().await {
+            Event::ChangesetOpened { revision, .. } => break revision,
+            Event::BaseChanged { .. } | Event::ChangesetsChanged { .. } => {}
+            other => panic!("not told which changeset is on view: {other:?}"),
+        }
     };
     client.toggle_hunk(project, revision, 0).await;
     // The marker is told of its mark too; a fetch at opening may say what it found.
