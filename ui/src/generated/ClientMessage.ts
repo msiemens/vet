@@ -5,4 +5,4 @@ import type { Request } from "./Request";
  * First message on every connection must be `Hello` with the token from
  * [`Ready`]; there is no unauthenticated endpoint.
  */
-export type ClientMessage = { "type": "hello", token: string, protocolVersion: number, } | { "type": "request", id: number, request: Request, };
+export type ClientMessage = { "type": "hello", token: string, protocolVersion: number, } | { "type": "request", id: number, request: Request, } | { "type": "cancel", id: number, };

@@ -2,4 +2,4 @@
 import type { Event } from "./Event";
 import type { Response } from "./Response";
 
-export type ServerMessage = { "type": "helloAck", protocolVersion: number, } | { "type": "response", id: number, response: Response, } | { "type": "error", id: number | null, message: string, } | { "type": "event", event: Event, };
+export type ServerMessage = { "type": "helloAck", protocolVersion: number, } | { "type": "response", id: number, response: Response, } | { "type": "error", id: number | null, message: string, } | { "type": "cancelled", id: number, } | { "type": "event", event: Event, };

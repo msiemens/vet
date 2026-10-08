@@ -8,14 +8,16 @@
 
 pub mod shell;
 
+use std::collections::HashMap;
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use subtle::ConstantTimeEq;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
+use tokio::task::AbortHandle;
 use tokio_tungstenite::tungstenite::Message;
 use vet_protocol::{ClientMessage, Event, PROTOCOL_VERSION, Ready, Request, Response, ServerMessage};
 
@@ -142,18 +144,25 @@ async fn connection<H: Handler>(
         }
     });
 
+    let running = Running::default();
     while let Some(message) = source.next().await {
         let Message::Text(text) = message? else { continue };
         match serde_json::from_str::<ClientMessage>(text.as_str()) {
             Ok(ClientMessage::Request { id, request }) => {
                 let (handler, replies) = (handler.clone(), replies.clone());
-                tokio::spawn(async move {
+                running.start(id, |finish| async move {
                     let reply = match handler.handle(request, Events(replies.clone())).await {
                         Ok(response) => ServerMessage::Response { id, response },
                         Err(message) => ServerMessage::Error { id: Some(id), message },
                     };
                     let _ = replies.send(reply);
+                    finish.done();
                 });
+            }
+            Ok(ClientMessage::Cancel { id }) => {
+                if running.cancel(id) {
+                    let _ = replies.send(ServerMessage::Cancelled { id });
+                }
             }
             Ok(ClientMessage::Hello { .. }) => {
                 let _ = replies.send(ServerMessage::Error {
@@ -172,4 +181,51 @@ async fn connection<H: Handler>(
     // A handler may still hold an `Events` clone, so the outbox never closes by itself.
     writer.abort();
     Ok(())
+}
+
+type Table = Arc<Mutex<HashMap<u32, AbortHandle>>>;
+
+/// The handlers of one connection that have not answered yet, by request id.
+/// Dropping it aborts them all, so a closed connection leaves none running; an
+/// aborted handler drops its futures at the next await, which is how a query
+/// down in the language server layer learns it is no longer wanted.
+#[derive(Default)]
+struct Running(Table);
+
+impl Running {
+    /// Runs `handler`, which gets what removes its entry once it has answered, as the task of request `id`.
+    fn start<F: Future<Output = ()> + Send + 'static>(&self, id: u32, handler: impl FnOnce(Finish) -> F) {
+        // Held across the spawn, so a task that ends at once finds its entry.
+        let mut table = self.0.lock().expect("not poisoned");
+        let task = tokio::spawn(handler(Finish(self.0.clone(), id)));
+        table.insert(id, task.abort_handle());
+    }
+
+    /// Aborts the handler of `id`; whether it was still running.
+    fn cancel(&self, id: u32) -> bool {
+        match self.0.lock().expect("not poisoned").remove(&id) {
+            Some(handle) => {
+                handle.abort();
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        for handle in self.0.lock().expect("not poisoned").values() {
+            handle.abort();
+        }
+    }
+}
+
+/// Takes a finished handler out of its connection's table.
+struct Finish(Table, u32);
+
+impl Finish {
+    fn done(self) {
+        self.0.lock().expect("not poisoned").remove(&self.1);
+    }
 }

@@ -5,7 +5,7 @@ use ts_rs::TS;
 
 use crate::{Event, Request, Response};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The one line the backend prints to stdout once it is listening. The shell
 /// reads it to learn the port and the per-launch random token.
@@ -22,8 +22,19 @@ pub struct Ready {
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
 pub enum ClientMessage {
-    Hello { token: String, protocol_version: u32 },
-    Request { id: u32, request: Request },
+    Hello {
+        token: String,
+        protocol_version: u32,
+    },
+    Request {
+        id: u32,
+        request: Request,
+    },
+    /// Gives up the request `id`: its handler is dropped and answered with
+    /// [`ServerMessage::Cancelled`]. Meaningless for a request that has been answered.
+    Cancel {
+        id: u32,
+    },
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -41,6 +52,10 @@ pub enum ServerMessage {
     Error {
         id: Option<u32>,
         message: String,
+    },
+    /// The request `id` was cancelled and will get no `Response` or `Error`.
+    Cancelled {
+        id: u32,
     },
     /// Pushed without a request. A connection receives the events of the projects
     /// it opened, until it closes them or disconnects, and the events that belong to

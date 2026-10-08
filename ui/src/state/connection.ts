@@ -11,7 +11,7 @@ import type { ServerMessage } from "../generated/ServerMessage";
 import { hashParams, inTauri, invoke } from "./host";
 
 // Must match PROTOCOL_VERSION in crates/vet-protocol.
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 
 /** The backend's `Ready` line and the repository to open; none shows the start screen. */
 type Address = Ready & { repo: string | null };
