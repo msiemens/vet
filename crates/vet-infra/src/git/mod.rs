@@ -17,7 +17,7 @@ mod tree;
 use std::collections::BTreeMap;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use gix::bstr::ByteSlice;
 use vet_app::changeset::{ChangesetId, CommitId};
@@ -63,6 +63,13 @@ pub async fn list_files(root: &Path) -> Result<Vec<PathBuf>, String> {
             .map(Path::to_owned)
             .collect());
     }
+    let root = root.to_owned();
+    tokio::task::spawn_blocking(move || walk(&root))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn walk(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut found = Vec::new();
     let mut pending = vec![root.to_owned()];
     while let Some(dir) = pending.pop() {
@@ -90,6 +97,8 @@ struct Inner {
     cap: u64,
     blobs: BlobCache,
     stats: StatCache,
+    /// Opened on the first read of a blob.
+    opened: OnceLock<gix::ThreadSafeRepository>,
 }
 
 impl GixRepo {
@@ -99,6 +108,7 @@ impl GixRepo {
             cap: DEFAULT_CAP,
             blobs: BlobCache::default(),
             stats: StatCache::default(),
+            opened: OnceLock::new(),
         }))
     }
 
@@ -108,6 +118,7 @@ impl GixRepo {
             cap,
             blobs: BlobCache::default(),
             stats: StatCache::default(),
+            opened: OnceLock::new(),
         }))
     }
 
@@ -136,8 +147,18 @@ impl Inner {
         gix::open(&self.root).map_err(err)
     }
 
+    /// A handle on the repository opened once and kept for the reads of blobs, which
+    /// come by the hundreds when the changed symbols are found.
+    fn open_shared(&self) -> Result<gix::Repository, GitError> {
+        if let Some(opened) = self.opened.get() {
+            return Ok(opened.to_thread_local());
+        }
+        let opened = gix::ThreadSafeRepository::open(&self.root).map_err(err)?;
+        Ok(self.opened.get_or_init(|| opened).to_thread_local())
+    }
+
     fn read_blob(&self, path: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
-        let repo = self.open()?;
+        let repo = self.open_shared()?;
         if let Some(bytes) = self.blobs.odb_content(&repo, blob, u64::MAX)? {
             return Ok(Some(bytes));
         }
@@ -148,7 +169,7 @@ impl Inner {
 
     /// The object's size is checked before its content is read.
     fn read_blob_capped(&self, path: &RepoPath, blob: BlobId) -> Result<BlobRead, GitError> {
-        let repo = self.open()?;
+        let repo = self.open_shared()?;
         if self.blobs.odb_size(&repo, blob)?.is_some_and(|size| size > self.cap) {
             return Ok(BlobRead::TooLarge);
         }
