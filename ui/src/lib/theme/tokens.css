@@ -30,6 +30,10 @@
   --current-hunk: light-dark(rgba(45, 111, 216, 0.1), rgba(107, 156, 247, 0.12));
   --current-hunk-gutter: light-dark(rgba(45, 111, 216, 0.26), rgba(107, 156, 247, 0.3));
   --accent: light-dark(#2d6fd8, #6b9cf7);
+  /* The file whose hunk is current (the Changes tab): a frame round its section and a light blue
+     header, opaque since the header is pinned over the text. */
+  --current-file-frame: var(--accent);
+  --current-file-header: color-mix(in srgb, var(--accent) 12%, var(--bg-panel));
   /* The thumb of a scroll bar, and while it is hovered or dragged; translucent, so the marks under it show. */
   --scroll-thumb: light-dark(rgba(0, 0, 0, 0.2), rgba(255, 255, 255, 0.2));
   --scroll-thumb-active: light-dark(rgba(0, 0, 0, 0.32), rgba(255, 255, 255, 0.32));

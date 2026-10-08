@@ -74,6 +74,8 @@ export class ChangesetView {
   private windowing: Windowing;
   private actions: ReviewActions;
   current = -1;
+  /** The section framed as the current stop's file. */
+  private framed?: number;
   private destroyed = false;
   private threads: ThreadLayer;
   private pin: StickyHunk;
@@ -98,7 +100,7 @@ export class ChangesetView {
     mode: Mode,
     private hooks: ViewHooks,
     private listeners: Listeners,
-    /** Collapse unchanged regions (the Changes tab); otherwise the full file is shown. */
+    /** Collapse unchanged regions and frame the current file (the Changes tab); otherwise the full file is shown. */
     private collapse: boolean,
     /** Hands the dev tools what they measure; production owners leave it out. */
     inspect?: (probe: ViewProbe) => void,
@@ -448,8 +450,18 @@ export class ChangesetView {
     if (this.current === stop) return;
     if (this.current >= 0) this.markCurrent(this.current, false);
     this.current = stop;
+    this.frameCurrent();
     this.markCurrent(stop, true);
     this.pin.refresh();
+  }
+
+  /** Frames the section of the current stop's file, in the Changes tab only (`section.css`). */
+  private frameCurrent() {
+    const fi = this.collapse && this.current >= 0 && this.stops.total ? this.stops.locate(this.current)[0] : undefined;
+    if (fi === this.framed) return;
+    if (this.framed !== undefined) this.sections[this.framed].el.classList.remove("current-file");
+    if (fi !== undefined) this.sections[fi].el.classList.add("current-file");
+    this.framed = fi;
   }
 
   /** The stop of hunk `hi` of file `fi`. */
@@ -513,6 +525,7 @@ export class ChangesetView {
     if (si < cards) {
       if (this.current >= 0 && this.current !== stop) this.markCurrent(this.current, false);
       this.current = stop;
+      this.frameCurrent();
       // A card's position is exact, whether or not the section's editor is mounted.
       this.root.scrollTop = Math.max(0, s.top + s.cardTops[si] - this.root.clientHeight / 2);
       this.sync();
@@ -526,6 +539,7 @@ export class ChangesetView {
 
     if (this.current >= 0 && this.current !== stop) this.markCurrent(this.current, false);
     this.current = stop;
+    this.frameCurrent();
 
     const handle = this.reveal(fi, hunk.targetStart, hi);
     handle.dispatchAll(setCurrent.of(hi));
@@ -642,6 +656,7 @@ export class ChangesetView {
     const card = anchor.card ? file.nonText.findIndex((i) => i.kind === anchor.card) : -1;
     const hunks = file.hunks.map((h) => h.targetStart);
     this.current = this.stops.nearest(fi, cards.length, card, hunks, anchor.line) ?? this.current;
+    this.frameCurrent();
   }
 
   /** Renders a file's review state and progress as the backend sent them; a base diff of a hunk that is no longer seen against an old base closes. */

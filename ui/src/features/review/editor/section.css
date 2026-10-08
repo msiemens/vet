@@ -15,6 +15,22 @@
   top: 0;
   z-index: 400;
 }
+/* The file whose hunk is current (the Changes tab): a frame drawn over the section's edges, so the
+   section keeps its height, above the pinned header; and a tinted header. */
+.file.current-file {
+  position: relative;
+}
+.file.current-file::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--current-file-frame);
+  z-index: 401;
+  pointer-events: none;
+}
+.file.current-file > header {
+  background: var(--current-file-header);
+}
 .file > header {
   height: var(--h-section);
   box-sizing: border-box;
