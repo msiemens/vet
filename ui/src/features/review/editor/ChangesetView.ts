@@ -24,7 +24,7 @@ import { type ReviewRequests, ReviewActions, renderReview } from "./reviewAction
 import { setBaseDiffs, setCurrent } from "./reviewState";
 import { StickyHunk } from "./stickyHunk";
 import { ScrollMarks, sectionMarks } from "./scrollMarks";
-import { Stops, hunkAt } from "./stops";
+import { Stops, firstStopFrom, hunkAt, hunkOverlapping } from "./stops";
 import type { Section } from "./section";
 import { SectionHeights, charWidth, readFont, readMetrics } from "./sectionHeights";
 import { COLLAPSE, type WrappedSides, baseDiffHeight } from "./sectionLayout";
@@ -85,6 +85,8 @@ export class ChangesetView {
   private measured = new Set<Section>();
   private measuring?: number;
   private marks?: ScrollMarks;
+  /** A file `goToFile` could not bring to the top, as the last short files cannot: it is the file the view is at while the view stays scrolled to `top`. */
+  private reached?: { file: number; top: number };
 
   constructor(
     private root: HTMLElement,
@@ -202,7 +204,11 @@ export class ChangesetView {
       mode: () => this.heights.mode,
       current: (fi, hi) => this.current === this.stopOf(fi, hi),
       press: (fi, hi) => this.select(this.stopOf(fi, hi)),
-      pinned: (fi) => listeners.pinned?.(fi === undefined ? undefined : this.sections[fi].file.path),
+      pinned: (fi) => {
+        if (this.reached && Math.abs(this.root.scrollTop - this.reached.top) >= 1) this.reached = undefined;
+        const at = this.reached?.file ?? fi;
+        listeners.pinned?.(at === undefined ? undefined : this.sections[at].file.path);
+      },
     });
     this.root.replaceChildren(...(this.threads.lead ? [this.threads.lead] : []), ...this.sections.map((s) => s.el));
     for (const s of this.sections) renderProgress(s, s.review, s.completion);
@@ -428,6 +434,7 @@ export class ChangesetView {
   async goToFile(fi: number): Promise<Handle> {
     await this.load(fi);
     this.root.scrollTop = this.sections[fi].top;
+    this.reached = this.root.scrollTop < this.sections[fi].top - 1 ? { file: fi, top: this.root.scrollTop } : undefined;
     const handle = this.mount(fi);
     this.sync();
     const { cards, file } = this.sections[fi];
@@ -524,6 +531,21 @@ export class ChangesetView {
     this.pin.refresh();
   }
 
+  /**
+   * Goes to the hunk that touches a span of `side`'s text of the file at `path` (a base path is the
+   * file's old one if it was renamed). Answers whether the view has such a hunk.
+   */
+  async goToSymbol(path: string, side: Side, span: TextSpan): Promise<boolean> {
+    const fi = this.sections.findIndex(
+      (s) => (side === "base" ? (s.file.oldPath ?? s.file.path) : s.file.path) === path,
+    );
+    if (fi < 0) return false;
+    const hi = hunkOverlapping(this.sections[fi].file.hunks, side, span);
+    if (hi < 0) return false;
+    await this.goToHunk(this.stopOf(fi, hi));
+    return true;
+  }
+
   /** Where the view is scrolled to, as a file and the distance below its section's top; none for an empty view. */
   position(): ScrollPosition | undefined {
     if (!this.sections.length) return undefined;
@@ -531,11 +553,17 @@ export class ChangesetView {
     return { path: s.file.path, offset: this.root.scrollTop - s.top };
   }
 
-  /** Scrolls to `at` if its file is in the view, and starts loading what comes into view; answers whether it is. */
+  /**
+   * Scrolls to `at` if its file is in the view, makes the first hunk or card from there on the
+   * current stop, and starts loading what comes into view; answers whether the file is in the view.
+   */
   restore(at: ScrollPosition): boolean {
     const fi = this.indexOf(at.path);
     if (fi < 0) return false;
     this.root.scrollTop = Math.max(0, this.sections[fi].top + at.offset);
+    const tops = this.sections.flatMap((s) => [...s.cardTops, ...s.hunkTops].map((y) => s.top + y));
+    const stop = firstStopFrom(tops, this.root.scrollTop);
+    if (stop >= 0) this.select(stop);
     void this.load(fi).catch(() => undefined);
     this.sync();
     return true;

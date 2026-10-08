@@ -12,7 +12,7 @@
 </script>
 
 {#if label && status}
-  <button class="flat platform" class:warn={label.warn} type="button" title={label.title} onclick={signIn}>
+  <button class="flat footer-item platform" class:warn={label.warn} type="button" title={label.title} onclick={signIn}>
     <Icon name={status.kind === "github" ? "github" : "azureDevOps"} size={12} />
     <span class="dot" class:ok={!label.warn}></span>
     {label.text}
@@ -21,7 +21,7 @@
 {#if platform.notified.length}
   <span class="bell">
     <button
-      class="flat"
+      class="flat footer-item"
       type="button"
       aria-label="Notifications"
       aria-expanded={listing}
@@ -35,13 +35,6 @@
 {/if}
 
 <style>
-  .platform {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    color: var(--text-2);
-    font-size: 12px;
-  }
   .platform.warn {
     color: var(--warn);
   }
@@ -56,5 +49,6 @@
   }
   .bell {
     position: relative;
+    display: flex;
   }
 </style>

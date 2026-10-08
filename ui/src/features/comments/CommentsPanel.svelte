@@ -149,6 +149,7 @@
       onclick={() => (composing = !composing)}
     />
   </div>
+  {#if info}<PullRequestBlock {info} />{/if}
   {#if composing}
     <div class="compose">
       <!-- svelte-ignore a11y_autofocus -->
@@ -173,7 +174,6 @@
     </div>
   {/if}
   {#if info}
-    <PullRequestBlock {info} />
     <SubmitReview {info} />
     {#if info.traits.conversationFeed}
       <PanelTabs

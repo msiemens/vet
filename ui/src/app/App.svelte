@@ -427,7 +427,10 @@
         }}
         onclose={() => (controller = undefined)}
       >
-        {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel onopen={openLocation} />{/if}{/snippet}
+        {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel
+              onopen={openLocation}
+              onreveal={(symbol) => void controller?.revealSymbol(symbol)}
+            />{/if}{/snippet}
         {#snippet bottom({ selected, select })}
           {#if timelineOpen}
             <TimelinePanel
@@ -516,8 +519,11 @@
 
 <StatusFooter info={footer} onserver={() => showDialog("settings", "servers")}>
   {#snippet progress()}<TaskProgress tasks={backgroundTasks.tasks} /><PlatformFooter />{/snippet}
-  {#snippet end()}<button class="flat dev" type="button" aria-pressed={devOpen} onclick={() => (devOpen = !devOpen)}
-      >Dev</button
+  {#snippet end()}<button
+      class="flat footer-item dev"
+      type="button"
+      aria-pressed={devOpen}
+      onclick={() => (devOpen = !devOpen)}>Dev</button
     >{/snippet}
 </StatusFooter>
 
@@ -545,9 +551,6 @@
     color: var(--text-2);
   }
   .dev {
-    height: 18px;
-    padding: 0 6px;
-    border-radius: var(--radius);
     color: var(--text-3);
     font-size: 11px;
   }

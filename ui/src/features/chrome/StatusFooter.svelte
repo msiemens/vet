@@ -34,23 +34,24 @@
 </script>
 
 <footer>
-  {#if info.range}<span class="mono small" title="The versions the review shows">{info.range}</span>{/if}
-  {#if info.commit}<span class="mono small" title="The commit on view">{info.commit}</span>{/if}
+  {#if info.range}<span class="footer-item mono small" title="The versions the review shows">{info.range}</span>{/if}
+  {#if info.commit}<span class="footer-item mono small" title="The commit on view">{info.commit}</span>{/if}
   {#if info.languageServer}
     {@const server = info.languageServer}
-    <button class="flat server" type="button" title={server.title ?? "Language servers"} onclick={onserver}
+    <button class="flat footer-item" type="button" title={server.title ?? "Language servers"} onclick={onserver}
       >{server.name}{#if server.state}<span class="state"> · {server.state}</span>{/if}</button
     >
   {/if}
   {#if info.topology}
-    <span class="topology"><span class="dot" class:ok={info.topology.ok}></span>{info.topology.label}</span>
+    <span class="footer-item"><span class="dot" class:ok={info.topology.ok}></span>{info.topology.label}</span>
   {/if}
   <span class="grow"></span>
   {#if progress}{@render progress()}{/if}
-  {#if info.diagnostics !== undefined}<span title="Diagnostics">{info.diagnostics} diagnostics</span>{/if}
-  {#if info.cursor}<span class="mono small">{info.cursor}</span>{/if}
-  {#if info.eol}<span>{info.eol}</span>{/if}
-  {#if info.encoding}<span>{info.encoding}</span>{/if}
+  {#if info.diagnostics !== undefined}<span class="footer-item" title="Diagnostics">{info.diagnostics} diagnostics</span
+    >{/if}
+  {#if info.cursor}<span class="footer-item mono small">{info.cursor}</span>{/if}
+  {#if info.eol}<span class="footer-item">{info.eol}</span>{/if}
+  {#if info.encoding}<span class="footer-item">{info.encoding}</span>{/if}
   {#if end}{@render end()}{/if}
 </footer>
 
@@ -58,24 +59,14 @@
   footer {
     display: flex;
     flex-wrap: wrap;
-    gap: 16px;
-    align-items: center;
+    align-items: stretch;
     min-height: var(--h-footer);
-    padding: 0 10px;
     box-sizing: border-box;
     border-top: 1px solid var(--line);
     background: var(--bg-window);
     color: var(--text-2);
     font-size: 12px;
     flex: none;
-  }
-  .server {
-    height: calc(var(--h-footer) - 4px);
-    padding: 0 6px;
-    margin: 0 -6px;
-    border-radius: var(--radius);
-    color: inherit;
-    font-size: inherit;
   }
   .state {
     color: var(--text-3);
@@ -85,11 +76,6 @@
   }
   .grow {
     flex: 1;
-  }
-  .topology {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
   }
   .dot {
     width: 6px;

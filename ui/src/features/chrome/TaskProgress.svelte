@@ -20,7 +20,13 @@
 {#if head}
   <Popover bind:open above align="right">
     {#snippet trigger(toggle)}
-      <button class="flat running" type="button" aria-expanded={open} title="Background tasks" onclick={toggle}>
+      <button
+        class="flat footer-item running"
+        type="button"
+        aria-expanded={open}
+        title="Background tasks"
+        onclick={toggle}
+      >
         <span class="title">{head.title}</span>
         <span class="bar"><ProgressBar fraction={head.fraction} label={head.title} /></span>
         {#if head.more > 0}<span class="more">+{head.more} more</span>{/if}
@@ -40,14 +46,7 @@
 
 <style>
   .running {
-    display: inline-flex;
-    align-items: center;
     gap: 8px;
-    height: calc(var(--h-footer) - 4px);
-    padding: 0 6px;
-    border-radius: var(--radius);
-    color: var(--text-2);
-    font-size: inherit;
     min-width: 0;
   }
   .title {

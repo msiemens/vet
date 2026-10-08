@@ -1,12 +1,16 @@
 <script lang="ts">
   // The changed symbols by file, with the current file's group in view.
   import { tick } from "svelte";
+  import type { ChangedSymbol } from "../../generated/ChangedSymbol";
   import Marked from "../../lib/ui/Marked.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { keyOf } from "../../state/symbolKey";
   import { symbols } from "../../state/symbols.svelte";
   import { containerOf, fileEntries, nameOf, searchEntries } from "./symbolList";
+
+  /** A double-click: show the symbol where it is reviewed. */
+  let { onreveal }: { onreveal: (symbol: ChangedSymbol) => void } = $props();
 
   let list = $state<HTMLElement>();
 
@@ -68,7 +72,9 @@
           class="flat row"
           type="button"
           aria-pressed={keyOf(s.symbol.id) === selectedKey}
+          title="Double-click to show it in the review"
           onclick={() => symbols.select(s)}
+          ondblclick={() => onreveal(s)}
         >
           <span class="sign {s.change}" title={s.change}>{SIGN[s.change]}</span>
           <span class="mono name" class:gone={s.change === "removed"}

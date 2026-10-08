@@ -4,6 +4,7 @@
 
 import { tick } from "svelte";
 import type { CheckLog } from "../../generated/CheckLog";
+import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { CheckRun } from "../../generated/CheckRun";
 import type { FileChange } from "../../generated/FileChange";
 import type { Manifest } from "../../generated/Manifest";
@@ -315,6 +316,17 @@ export class ReviewController {
       await tick();
       await this.views.get(fileTab(file.path))?.goToSpan(0, side, span);
     } else await this.openFile(file.path, side === "target" ? line : undefined);
+  }
+
+  /**
+   * Shows a changed symbol where it is reviewed: its hunk in the Changes tab, made the current one;
+   * else the file's tab at the symbol (its text tab when the file is unchanged).
+   */
+  async revealSymbol({ symbol, change }: ChangedSymbol) {
+    const side: Side = change === "removed" ? "base" : "target";
+    this.tabs.active = CHANGES;
+    if (await this.views.get(CHANGES)?.goToSymbol(symbol.id.path, side, symbol.span)) return;
+    await this.openLocation(symbol.id.path, symbol.span.start.line, side, symbol.span);
   }
 
   /** Scrolls the Changes tab to a changed file; answers whether `path` is one. */

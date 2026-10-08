@@ -94,7 +94,7 @@ function use(view: EditorView): false {
  * selection and cursor, and the caret keys. No undo history, no editing keys and no fallback
  * highlight style (highlights come from the backend).
  */
-const readOnlySetup: Extension = [highlightSpecialChars(), drawSelectionOnUse, keymap.of(standardKeymap), currentLine];
+const readOnlySetup: Extension = [highlightSpecialChars(), drawSelectionOnUse, keymap.of(standardKeymap)];
 
 /** The editors wrap long lines; the owner lays them out by an estimate and hears of the height they measure. */
 export interface Wrapping {
@@ -128,6 +128,7 @@ export function mountFile(
   const wrap: Extension = wrapping ? [softWrap(true), reportHeight(() => wrapping.heightChanged())] : [];
   const target: Extension[] = [
     readOnlySetup,
+    currentLine(host, 1),
     wrap,
     targetField,
     longLines(targetField, columns),
@@ -165,7 +166,7 @@ export function mountFile(
   }
   const baseField = reviewField(sideConfig(loaded.hunks, "base", null, barMetrics), review, baseDiffs);
   const base: Extension[] = [
-    currentLine,
+    currentLine(host, 0),
     wrap,
     baseField,
     longLines(baseField, columns),

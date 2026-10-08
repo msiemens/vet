@@ -90,6 +90,18 @@ button {
   box-sizing: border-box;
   white-space: nowrap;
 }
+/* `.footer-item`: one item of the footer, a block as tall as the footer; a button among them takes the
+   hover background over the whole block. */
+.footer-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 0;
+  color: inherit;
+  font-size: inherit;
+  white-space: nowrap;
+}
 :is(.flat, .tool):enabled:hover {
   background: var(--hover);
 }

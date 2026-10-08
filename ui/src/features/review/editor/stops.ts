@@ -1,6 +1,10 @@
 // The stops of hunk navigation: every change card and every hunk of every file, numbered over
 // the whole view. A file's stops are its cards first, then its hunks.
 
+import type { Hunk } from "../../../generated/Hunk";
+import type { Side } from "../../../generated/Side";
+import type { TextSpan } from "../../../generated/TextSpan";
+
 export interface FileStops {
   cards: number;
   hunks: number;
@@ -62,6 +66,27 @@ export function hunkAt(starts: number[], line: number): number {
     if (start <= line) hunk = i;
   });
   return hunk;
+}
+
+/** The index of the first stop at or below `y` among stops in order, else the last one; -1 without stops. */
+export function firstStopFrom(tops: readonly number[], y: number): number {
+  const at = tops.findIndex((top) => top >= y);
+  return at < 0 ? tops.length - 1 : at;
+}
+
+/**
+ * The index of the first hunk whose lines on `side` meet the 0-based `span`; -1 if none does. A hunk
+ * with no lines on that side (a pure insertion seen from the base) sits at its start.
+ */
+export function hunkOverlapping(hunks: readonly Hunk[], side: Side, span: TextSpan): number {
+  const first = span.start.line;
+  // The end is exclusive: an end at column 0 belongs to the line before.
+  const end = Math.max(first + 1, span.end.col === 0 ? span.end.line : span.end.line + 1);
+  return hunks.findIndex((h) => {
+    const start = side === "base" ? h.baseStart : h.targetStart;
+    const stop = start + Math.max(1, side === "base" ? h.baseLen : h.targetLen);
+    return start < end && first < stop;
+  });
 }
 
 /** The index of the hunk whose start is nearest to `line`, the first of equals; -1 without hunks. */

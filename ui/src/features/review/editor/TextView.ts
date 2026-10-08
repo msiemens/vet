@@ -115,7 +115,7 @@ export class TextView {
               }),
             ]
           : [lineNumbers()]),
-        currentLine,
+        currentLine(),
         highlightExtension(highlights),
         // Read-only but focusable, so the caret and Mod+B work.
         EditorState.readOnly.of(true),
