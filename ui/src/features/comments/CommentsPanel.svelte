@@ -152,31 +152,8 @@
           onclick={() => (composing = !composing)}
         />
       </div>
-      {#if info}<PullRequestBlock {info} />{/if}
-      {#if composing}
-        <div class="compose">
-          <!-- svelte-ignore a11y_autofocus -->
-          <textarea
-            class="field"
-            rows="3"
-            placeholder="Comment on the changeset…"
-            autofocus
-            bind:value={body}
-            onkeydown={(e) => {
-              if (isSubmitKey(e)) {
-                e.preventDefault();
-                void post();
-              } else if (e.key === "Escape") composing = false;
-            }}></textarea>
-          <div class="buttons">
-            <button class="ctl" type="button" onclick={() => (composing = false)}>Cancel</button>
-            <button class="ctl primary" type="button" disabled={!canSubmit(body, sending)} onclick={() => void post()}>
-              Comment
-            </button>
-          </div>
-        </div>
-      {/if}
       {#if info}
+        <PullRequestBlock {info} />
         <SubmitReview {info} />
         {#if info.traits.conversationFeed}
           <PanelTabs
@@ -203,6 +180,34 @@
         {#if groups.open.length}{@render group("Open", groups.open, "open")}{/if}
         {#if groups.resolved.length}{@render group("Resolved", groups.resolved, "resolved")}{/if}
       {/if}
+      {#if composing}
+        <div
+          class="compose"
+          {@attach (box: HTMLElement) => {
+            box.scrollIntoView({ block: "nearest" });
+          }}
+        >
+          <!-- svelte-ignore a11y_autofocus -->
+          <textarea
+            class="field"
+            rows="3"
+            placeholder="Comment on the changeset…"
+            autofocus
+            bind:value={body}
+            onkeydown={(e) => {
+              if (isSubmitKey(e)) {
+                e.preventDefault();
+                void post();
+              } else if (e.key === "Escape") composing = false;
+            }}></textarea>
+          <div class="buttons">
+            <button class="ctl" type="button" onclick={() => (composing = false)}>Cancel</button>
+            <button class="ctl primary" type="button" disabled={!canSubmit(body, sending)} onclick={() => void post()}>
+              Comment
+            </button>
+          </div>
+        </div>
+      {/if}
     </div>
   </ScrollArea>
 </aside>
@@ -227,7 +232,6 @@
     flex-direction: column;
     gap: 6px;
     padding: 8px 10px;
-    border-bottom: 1px solid var(--line-soft);
   }
   textarea {
     width: 100%;
