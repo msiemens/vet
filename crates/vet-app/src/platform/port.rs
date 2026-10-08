@@ -98,9 +98,9 @@ pub trait Platform {
         async { Err(unsupported("resolving a thread")) }
     }
 
-    /// Posts the viewer's drafts as one review with a verdict, on platforms that batch them
-    /// ([`super::PlatformTraits::posting`]). Nothing stays pending on the platform: if the
-    /// review cannot be posted whole, none of it is.
+    /// Posts the viewer's drafts ([`super::PlatformTraits::posting`]). Where they batch, as one
+    /// review with a verdict, and nothing stays pending on the platform: if the review cannot be
+    /// posted whole, none of it is. Where they do not, one draft after the other.
     fn submit_review(
         &self,
         remote: &RemoteKey,
@@ -109,6 +109,18 @@ pub trait Platform {
     ) -> impl Future<Output = Result<Submitted, PlatformError>> + Send {
         let _ = (remote, number, submission);
         async { Err(unsupported("submitting a review")) }
+    }
+
+    /// Sets the viewer's vote on a platform that keeps it apart from posting
+    /// ([`super::PlatformTraits::verdict_separate`]); `verdict` is the id of one of its verdicts.
+    fn vote(
+        &self,
+        remote: &RemoteKey,
+        number: u64,
+        verdict: &str,
+    ) -> impl Future<Output = Result<(), PlatformError>> + Send {
+        let _ = (remote, number, verdict);
+        async { Err(unsupported("voting")) }
     }
 }
 

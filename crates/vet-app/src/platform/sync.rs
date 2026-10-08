@@ -238,6 +238,7 @@ mod tests {
             author: "lena".to_owned(),
             author_avatar: None,
             reviewers: Vec::new(),
+            viewer_verdict: None,
             labels: Vec::new(),
             ci: None,
             conversation: Vec::new(),

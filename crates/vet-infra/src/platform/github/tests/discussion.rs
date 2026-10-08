@@ -497,7 +497,7 @@ async fn a_review_is_one_pending_review_filled_and_submitted_with_its_verdict() 
             .collect::<Vec<_>>(),
         [(5, "IC5")]
     );
-    assert_eq!(posted.comments_failed, None);
+    assert_eq!(posted.failed, None);
 }
 
 #[tokio::test]
@@ -543,8 +543,8 @@ async fn a_comment_on_the_pull_request_that_is_refused_is_reported_after_the_rev
     assert_eq!(posted.threads.len(), 2, "the review is there");
     assert!(posted.comments.is_empty());
     assert!(
-        matches!(posted.comments_failed, Some(PlatformError::Unexpected(_))),
+        matches!(posted.failed, Some(PlatformError::Unexpected(_))),
         "{:?}",
-        posted.comments_failed
+        posted.failed
     );
 }

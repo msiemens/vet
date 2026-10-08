@@ -97,6 +97,9 @@ pub struct Discussion {
     pub author: String,
     pub author_avatar: Option<String>,
     pub reviewers: Vec<Reviewer>,
+    /// The id of the platform's verdict the viewer has voted, on a platform that keeps the vote
+    /// apart from the review ([`super::PlatformTraits::verdict_separate`]).
+    pub viewer_verdict: Option<String>,
     pub labels: Vec<String>,
     pub ci: Option<CiState>,
     /// Oldest first.
@@ -152,10 +155,12 @@ pub struct NewConversationComment {
     pub body: String,
 }
 
-/// Everything Vet posts at once: one review with a verdict.
+/// Everything Vet posts at once: one review with a verdict, or on a platform that takes comments
+/// one at a time the drafts to post in turn.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Submission {
-    /// The id of one of the platform's verdicts (`PlatformTraits::verdicts`).
+    /// The id of one of the platform's verdicts (`PlatformTraits::verdicts`); empty where posting
+    /// has none ([`super::Posting::PerComment`]).
     pub verdict: String,
     pub body: Option<String>,
     /// The head commit the lines of `threads` are numbered in.
@@ -180,13 +185,16 @@ pub struct PostedComment {
     pub comment: PlatformComment,
 }
 
-/// What a [`Submission`] became. The review is either all there or not at all; the comments on
-/// the pull request as a whole follow it one by one, so one that failed is missing from `comments`
-/// and the reason is in `comments_failed`.
+/// What a [`Submission`] became. On a platform that batches (GitHub) the review is either all there
+/// or not at all, and the comments on the pull request as a whole follow it one by one. On one that
+/// takes a comment at a time (Azure DevOps) everything is posted one by one, a comment on the pull
+/// request as a whole being a thread of its own, among `threads`. Posting stops at the first draft
+/// the platform refuses: the drafts before it are here, the reason is in `failed`, and the rest was
+/// not tried.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct Submitted {
     pub threads: Vec<PostedThread>,
     pub replies: Vec<PostedComment>,
     pub comments: Vec<PostedComment>,
-    pub comments_failed: Option<PlatformError>,
+    pub failed: Option<PlatformError>,
 }

@@ -557,6 +557,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             author,
             author_avatar,
             reviewers: reviewers(node.latest_reviews, node.review_requests),
+            viewer_verdict: None,
             labels: node.labels.present().map(|l| l.name).collect(),
             ci: latest_ci(node.commits),
             conversation: conversation(node.comments, node.reviews)?,
@@ -708,7 +709,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             match self.post_conversation_comment(host, &clients, &pull_request, new).await {
                 Ok(comment) => posted.comments.push(comment),
                 Err(e) => {
-                    posted.comments_failed = Some(e);
+                    posted.failed = Some(e);
                     break;
                 }
             }

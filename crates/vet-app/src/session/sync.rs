@@ -17,8 +17,8 @@ use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
 use crate::platform::{
     CommentKind, CommentRef, DiffSide, Discussion, MessageSync, NewConversationComment, NewReply, NewThread, Platform,
-    PlatformComment, PlatformError, PlatformThreadData, PostedComment, RemoteKey, StatusSync, Submission, Submitted,
-    SyncPlan, reconcile,
+    PlatformComment, PlatformError, PlatformThreadData, PostedComment, Posting, RemoteKey, StatusSync, Submission,
+    Submitted, SyncPlan, reconcile,
 };
 use crate::ports::{GitRepo, LiveStore};
 use crate::review::visible_threads;
@@ -67,9 +67,10 @@ pub struct SubmitReport {
     /// Drafts that were not posted, because the code they were on is gone or because the thread
     /// waits for an edit conflict to be settled.
     pub skipped: u32,
-    /// Why a comment on the pull request as a whole was not taken by the platform.
+    /// Why posting stopped short: the platform refused a comment on the pull request as a whole,
+    /// or on a platform that takes comments one at a time, the next draft.
     pub problem: Option<PlatformError>,
-    /// The texts of those comments, which stay drafts.
+    /// The texts of the drafts that were not posted, which stay drafts.
     pub not_posted: Vec<String>,
 }
 
@@ -582,12 +583,57 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         verdict: &str,
         body: Option<String>,
     ) -> Result<SubmitReport> {
-        let _exchange = self.exchange.lock().await;
         let traits = platform.traits();
+        if traits.posting != Posting::BatchedReview {
+            return Err(SessionError::Invalid(
+                "this platform takes comments one at a time: post them instead".into(),
+            ));
+        }
         if !traits.verdicts.iter().any(|v| v.id == verdict) {
             return Err(SessionError::Invalid(format!("the platform has no verdict {verdict}")));
         }
         let body = body.map(|b| b.trim().to_owned()).filter(|b| !b.is_empty());
+        self.send_drafts(platform, verdict, body, verdict != "COMMENT").await
+    }
+
+    /// Posts the viewer's drafts one after the other, on a platform that takes comments one at a
+    /// time, and records where they are on the platform. Drafts whose code is gone, and those in a
+    /// thread with an edit conflict, wait. Stops at the first the platform refuses; what was
+    /// posted before it stays posted.
+    pub async fn post_drafts<P: Platform + Sync>(&self, platform: &P) -> Result<SubmitReport> {
+        if platform.traits().posting != Posting::PerComment {
+            return Err(SessionError::Invalid(
+                "this platform takes the drafts as a review: submit it instead".into(),
+            ));
+        }
+        self.send_drafts(platform, "", None, false).await
+    }
+
+    /// Sets the viewer's vote on a platform that keeps it apart from posting; `verdict` is an id of
+    /// the platform's.
+    pub async fn set_vote<P: Platform + Sync>(&self, platform: &P, verdict: &str) -> Result<()> {
+        let traits = platform.traits();
+        if !traits.verdict_separate {
+            return Err(SessionError::Invalid(
+                "this platform sets the vote with the review".into(),
+            ));
+        }
+        if !traits.verdicts.iter().any(|v| v.id == verdict) {
+            return Err(SessionError::Invalid(format!("the platform has no verdict {verdict}")));
+        }
+        let (remote, number) = pull_request(&*self.state.lock().await)?;
+        platform.vote(&remote, number, verdict).await?;
+        Ok(())
+    }
+
+    async fn send_drafts<P: Platform + Sync>(
+        &self,
+        platform: &P,
+        verdict: &str,
+        body: Option<String>,
+        allow_empty: bool,
+    ) -> Result<SubmitReport> {
+        let _exchange = self.exchange.lock().await;
         let (remote, number, submission, skipped) = {
             let mut st = self.state.lock().await;
             let (remote, number) = pull_request(&st)?;
@@ -599,20 +645,16 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             && submission.replies.is_empty()
             && submission.comments.is_empty()
             && body.is_none()
-            && verdict == "COMMENT"
+            && !allow_empty
         {
             return Err(SessionError::Invalid("there is nothing to submit".into()));
         }
         let posted = platform.submit_review(&remote, number, &submission).await?;
-        let not_posted = (submission.comments.iter())
-            .filter(|c| !posted.comments.iter().any(|p| p.key == c.key))
-            .map(|c| c.body.clone())
-            .collect();
         let mut report = SubmitReport {
             posted: 0,
             skipped,
-            problem: posted.comments_failed.clone(),
-            not_posted,
+            problem: posted.failed.clone(),
+            not_posted: not_posted(&submission, &posted),
         };
         let mut st = self.state.lock().await;
         report.posted = self.record_posted(&mut st, &posted).await?;
@@ -708,6 +750,38 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         self.ensure_changes(&mut st).await?;
         thread_by_id(&st, thread)
     }
+}
+
+/// The texts of the drafts of `submission` that `posted` does not hold.
+fn not_posted(submission: &Submission, posted: &Submitted) -> Vec<String> {
+    let mut texts = Vec::new();
+    let has_reply = |key: u64| {
+        posted.replies.iter().any(|p| p.key == key)
+            || posted.threads.iter().any(|t| t.replies.iter().any(|p| p.key == key))
+    };
+    for new in &submission.threads {
+        if !posted.threads.iter().any(|t| t.key == new.key) {
+            texts.push(new.body.clone());
+        }
+        texts.extend(new.replies.iter().filter(|r| !has_reply(r.key)).map(|r| r.body.clone()));
+    }
+    texts.extend(
+        submission
+            .replies
+            .iter()
+            .filter(|r| !has_reply(r.key))
+            .map(|r| r.body.clone()),
+    );
+    texts.extend(
+        submission
+            .comments
+            .iter()
+            .filter(|c| {
+                !posted.comments.iter().any(|p| p.key == c.key) && !posted.threads.iter().any(|t| t.key == c.key)
+            })
+            .map(|c| c.body.clone()),
+    );
+    texts
 }
 
 /// The thread the draft that `posted` is the platform's version of is in.

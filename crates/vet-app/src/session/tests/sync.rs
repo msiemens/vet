@@ -680,3 +680,100 @@ async fn comments_on_a_changeset_that_is_no_pull_request_are_never_drafts() {
     let error = fx.session.sync_threads(&FakeHosting::default()).await.unwrap_err();
     assert!(matches!(error, SessionError::Invalid(_)));
 }
+
+/// Drafts for a platform that takes one comment at a time: a new thread, a reply in marco's
+/// thread, and a comment on the whole pull request.
+async fn with_three_drafts() -> (Fixture, FakeHosting) {
+    let (fx, _) = on_a_pull_request().await;
+    let hosting = FakeHosting::per_comment();
+    hosting.thread("a.txt", (4, 4), "pr1", "marco", "Why 3?");
+    fx.sync(&hosting).await;
+    let on_theirs = fx.all().await[0].id;
+    fx.thread(on("a.txt", 20, 21)).await;
+    fx.session.reply(on_theirs, "Agreed.".into(), 7).await.unwrap();
+    let revision = fx.session.revision().await;
+    let create = fx
+        .session
+        .create_thread(revision, View::Changeset, NewThread::Changeset, "Overall.".into(), 100);
+    create.await.unwrap();
+    (fx, hosting)
+}
+
+#[tokio::test]
+async fn on_a_platform_that_takes_one_comment_at_a_time_the_drafts_are_posted_in_turn() {
+    let (fx, hosting) = with_three_drafts().await;
+
+    let report = fx.session.post_drafts(&hosting).await.unwrap();
+
+    assert_eq!((report.posted, report.skipped, report.problem), (3, 0, None));
+    let posts: Vec<_> = hosting.calls().into_iter().filter(|c| c.starts_with("post")).collect();
+    assert_eq!(posts, ["post why?", "post Agreed.", "post Overall."]);
+    let all = fx.all().await;
+    assert!(all.iter().all(|t| t.messages.iter().all(|m| m.remote.is_some())));
+    assert!(
+        all.iter().all(|t| remote_id(t).is_some()),
+        "the comment on the pull request is a thread"
+    );
+    let again = fx.sync(&hosting).await;
+    assert!(!again.changed, "nothing is added twice: {again:?}");
+    assert_eq!(fx.all().await.len(), 3);
+}
+
+#[tokio::test]
+async fn posting_stops_at_the_first_draft_the_platform_refuses_and_keeps_the_rest_as_drafts() {
+    let (fx, hosting) = with_three_drafts().await;
+    hosting.fail("post Agreed.", PlatformError::Forbidden("no access".to_owned()));
+
+    let report = fx.session.post_drafts(&hosting).await.unwrap();
+
+    assert_eq!(report.posted, 1, "the new thread went through");
+    assert!(matches!(report.problem, Some(PlatformError::Forbidden(_))));
+    assert_eq!(report.not_posted, ["Agreed.", "Overall."]);
+    assert!(
+        hosting.calls().iter().all(|c| c != "post Overall."),
+        "nothing after the refusal was tried"
+    );
+    let drafts: Vec<String> = fx
+        .all()
+        .await
+        .iter()
+        .flat_map(|t| t.messages.iter().filter(|m| m.remote.is_none()).map(|m| m.body.clone()))
+        .collect();
+    assert_eq!(drafts, ["Agreed.", "Overall."]);
+
+    // Once the platform takes them, the next post sends what is left.
+    hosting.recover();
+    let report = fx.session.post_drafts(&hosting).await.unwrap();
+    assert_eq!((report.posted, report.problem), (2, None));
+}
+
+#[tokio::test]
+async fn a_platform_is_posted_to_the_way_it_takes_comments_and_an_empty_post_is_refused() {
+    let (fx, github) = on_a_pull_request().await;
+    let azure = FakeHosting::per_comment();
+
+    let batched = fx.session.post_drafts(&github).await;
+    let single = fx.session.submit_review(&azure, "approved", None).await;
+    let empty = fx.session.post_drafts(&azure).await;
+
+    for refused in [batched, single, empty] {
+        assert!(matches!(refused, Err(SessionError::Invalid(_))), "{refused:?}");
+    }
+    assert!(github.calls().is_empty() && azure.calls().is_empty());
+}
+
+#[tokio::test]
+async fn the_vote_is_sent_alone_and_only_where_the_platform_keeps_it_apart_and_knows_the_verdict() {
+    let (fx, github) = on_a_pull_request().await;
+    let azure = FakeHosting::per_comment();
+
+    fx.session.set_vote(&azure, "wait-for-author").await.unwrap();
+    let unknown = fx.session.set_vote(&azure, "APPROVE").await;
+    let joined = fx.session.set_vote(&github, "APPROVE").await;
+
+    assert_eq!(azure.votes(), ["wait-for-author"]);
+    assert!(matches!(unknown, Err(SessionError::Invalid(_))));
+    assert!(matches!(joined, Err(SessionError::Invalid(_))));
+    assert!(github.votes().is_empty());
+    assert!(azure.0.lock().unwrap().submissions.is_empty(), "a vote posts no drafts");
+}

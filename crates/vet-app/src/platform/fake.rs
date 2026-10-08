@@ -6,10 +6,10 @@ use std::sync::{Arc, Mutex};
 
 use super::checks::{CheckLog, CommitChecks};
 use super::discussion::{
-    CommentRef, DiffSide, Discussion, PlatformComment, PlatformThreadData, PostedComment, PostedThread,
+    CommentRef, DiffSide, Discussion, NewThread, PlatformComment, PlatformThreadData, PostedComment, PostedThread,
     PullRequestState, Submission, Submitted,
 };
-use super::model::{PlatformError, PlatformTraits, PullRequest, PullRequestDetail, PullRequestQuery, Viewer};
+use super::model::{PlatformError, PlatformTraits, Posting, PullRequest, PullRequestDetail, PullRequestQuery, Viewer};
 use super::port::Platform;
 use super::remote::RemoteKey;
 
@@ -21,6 +21,9 @@ pub(crate) struct Hosted {
     /// Calls whose description starts with the text fail with the error.
     pub failing: Vec<(String, PlatformError)>,
     pub submissions: Vec<Submission>,
+    /// The ids of the verdicts the viewer voted, in order.
+    pub votes: Vec<String>,
+    pub traits: PlatformTraits,
     /// Edit times, so a platform edit is later than any before it.
     clock: i64,
 }
@@ -41,6 +44,7 @@ impl Default for FakeHosting {
                 author: "lena".to_owned(),
                 author_avatar: None,
                 reviewers: Vec::new(),
+                viewer_verdict: None,
                 labels: Vec::new(),
                 ci: None,
                 conversation: Vec::new(),
@@ -51,6 +55,8 @@ impl Default for FakeHosting {
             calls: Vec::new(),
             failing: Vec::new(),
             submissions: Vec::new(),
+            votes: Vec::new(),
+            traits: PlatformTraits::github(),
             clock: 1_000,
         })))
     }
@@ -89,6 +95,64 @@ impl Hosted {
             .find(|c| c.id == id)
     }
 
+    /// Posts the drafts in turn, as a platform that takes one comment at a time does: each is a
+    /// call `post <text>`, the first that fails ends it, and a comment on the whole pull request
+    /// is a thread of its own.
+    fn post_one_by_one(&mut self, submission: &Submission) -> Submitted {
+        let mut posted = Submitted::default();
+        let thread_of = |hosted: &mut Self, key: u64, new: Option<&NewThread>, body: &str| {
+            hosted.check(format!("post {body}"))?;
+            let first = hosted.comment("ada", true, body, Some(&submission.commit));
+            let thread = hosted.id("T");
+            hosted.discussion.threads.push(PlatformThreadData {
+                id: thread.clone(),
+                path: new.map(|n| n.path.clone()).unwrap_or_default(),
+                side: new.map_or(DiffSide::Right, |n| n.side),
+                lines: new.and_then(|n| n.lines),
+                outdated: false,
+                resolved: false,
+                resolved_by: None,
+                comments: vec![first.clone()],
+            });
+            Ok::<_, PlatformError>(PostedThread {
+                key,
+                thread,
+                comment: first,
+                replies: Vec::new(),
+            })
+        };
+        let reply = |hosted: &mut Self, thread: &str, key: u64, body: &str| {
+            hosted.check(format!("post {body}"))?;
+            let comment = hosted.comment("ada", true, body, Some(&submission.commit));
+            let found = hosted.discussion.threads.iter_mut().find(|t| t.id == thread);
+            found
+                .ok_or_else(|| PlatformError::NotFound(format!("no thread {thread}")))?
+                .comments
+                .push(comment.clone());
+            Ok::<_, PlatformError>(PostedComment { key, comment })
+        };
+        let result = (|| {
+            for new in &submission.threads {
+                let made = thread_of(self, new.key, Some(new), &new.body)?;
+                let thread = made.thread.clone();
+                posted.threads.push(made);
+                for r in &new.replies {
+                    let comment = reply(self, &thread, r.key, &r.body)?;
+                    posted.threads.last_mut().expect("pushed").replies.push(comment);
+                }
+            }
+            for r in &submission.replies {
+                posted.replies.push(reply(self, &r.thread, r.key, &r.body)?);
+            }
+            for c in &submission.comments {
+                posted.threads.push(thread_of(self, c.key, None, &c.body)?);
+            }
+            Ok::<_, PlatformError>(())
+        })();
+        posted.failed = result.err();
+        posted
+    }
+
     fn check(&mut self, call: String) -> Result<(), PlatformError> {
         let failure = self
             .failing
@@ -101,6 +165,17 @@ impl Hosted {
 }
 
 impl FakeHosting {
+    /// A platform that takes comments one at a time and keeps the vote apart, as Azure DevOps does.
+    pub fn per_comment() -> Self {
+        let hosting = Self::default();
+        hosting.0.lock().unwrap().traits = PlatformTraits::azure_devops();
+        hosting
+    }
+
+    pub fn votes(&self) -> Vec<String> {
+        self.0.lock().unwrap().votes.clone()
+    }
+
     /// A thread of someone else's on lines `first..=last` of `path` at `commit`. Answers with
     /// its id.
     pub fn thread(&self, path: &str, lines: (u32, u32), commit: &str, author: &str, body: &str) -> String {
@@ -197,7 +272,7 @@ impl FakeHosting {
 
 impl Platform for FakeHosting {
     fn traits(&self) -> PlatformTraits {
-        PlatformTraits::github()
+        self.0.lock().unwrap().traits.clone()
     }
 
     async fn viewer(&self, _: &RemoteKey) -> Result<Viewer, PlatformError> {
@@ -276,10 +351,20 @@ impl Platform for FakeHosting {
         unreachable!("the tests of threads ask for no checks")
     }
 
+    async fn vote(&self, _: &RemoteKey, _: u64, verdict: &str) -> Result<(), PlatformError> {
+        let mut hosted = self.0.lock().unwrap();
+        hosted.check(format!("vote {verdict}"))?;
+        hosted.votes.push(verdict.to_owned());
+        Ok(())
+    }
+
     async fn submit_review(&self, _: &RemoteKey, _: u64, submission: &Submission) -> Result<Submitted, PlatformError> {
         let mut hosted = self.0.lock().unwrap();
         hosted.check(format!("submit {}", submission.verdict))?;
         hosted.submissions.push(submission.clone());
+        if hosted.traits.posting == Posting::PerComment {
+            return Ok(hosted.post_one_by_one(submission));
+        }
         let mut posted = Submitted::default();
         for new in &submission.threads {
             let first = hosted.comment("ada", true, &new.body, Some(&submission.commit));
@@ -331,7 +416,7 @@ impl Platform for FakeHosting {
         }
         for new in &submission.comments {
             if let Err(error) = hosted.check("flat comment".to_owned()) {
-                posted.comments_failed = Some(error);
+                posted.failed = Some(error);
                 break;
             }
             let comment = hosted.comment("ada", true, &new.body, None);
