@@ -8,6 +8,7 @@
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
+  import { type Sort, sortRows } from "../../lib/ui/sorting";
   import { backendSettings } from "../../state/backendSettings.svelte";
   import { servers } from "../../state/servers.svelte";
   import ServerPathSheet from "./ServerPathSheet.svelte";
@@ -18,8 +19,8 @@
   /** Why going back to the automatic server failed, with its language. */
   let pathError = $state<{ language: string; message: string }>();
 
-  const COLUMNS: Column[] = [
-    { id: "language", label: "Language", width: 90, min: 60 },
+  const COLUMNS: Column<ServerRow>[] = [
+    { id: "language", label: "Language", width: 90, min: 60, sortBy: (row) => row.title },
     { id: "server", label: "Server", flex: true, min: 80 },
     { id: "version", label: "Version", width: 80, min: 50 },
     { id: "source", label: "Source", width: 120, min: 60 },
@@ -28,13 +29,18 @@
 
   const search = new SpeedSearch();
   let tableEl = $state<HTMLElement>();
+  let sort = $state<Sort>();
   const rows = $derived(
-    servers.servers
-      .map((info) => serverRow(info, servers.installs[info.language]))
-      .flatMap((row) => {
-        const m = match(search.query, row.title);
-        return m ? [{ ...row, ranges: m.ranges }] : [];
-      }),
+    sortRows(
+      servers.servers
+        .map((info) => serverRow(info, servers.installs[info.language]))
+        .flatMap((row) => {
+          const m = match(search.query, row.title);
+          return m ? [{ ...row, ranges: m.ranges }] : [];
+        }),
+      COLUMNS,
+      sort,
+    ),
   );
   let selectedLanguage = $state<string>();
   const selected = $derived(rows.find((r) => r.language === selectedLanguage) ?? rows.at(0));
@@ -91,6 +97,7 @@
       <Table
         name="servers"
         columns={COLUMNS}
+        bind:sort
         scroll={false}
         ruled
         bind:body={tableEl}

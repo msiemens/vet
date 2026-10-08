@@ -1,7 +1,7 @@
 // The columns of a `Table`: their widths as the viewer set them, the grid they lay out, and which
 // edge of the header resizes which column.
 
-export interface Column {
+export interface Column<R = unknown> {
   id: string;
   /** The header's text; empty for a column of icons. */
   label: string;
@@ -16,6 +16,13 @@ export interface Column {
   /** Keeps its width: the viewer cannot resize it. */
   fixed?: boolean;
   align?: "right";
+  /**
+   * Makes the column sortable: what a row sorts by in it, text by the locale or a number. A row
+   * without one comes last in either direction.
+   */
+  sortBy?: (row: R) => string | number | undefined;
+  /** The direction of the first click on a sortable column's header. */
+  firstSort?: "ascending" | "descending";
 }
 
 /** The widths the viewer set, in px by column id; a column not in it has its default. */
@@ -23,12 +30,15 @@ export type Widths = Readonly<Partial<Record<string, number>>>;
 
 const DEFAULT_MIN = 40;
 
-export const minOf = (column: Column) => column.min ?? DEFAULT_MIN;
+/** A column of any table, as far as its layout goes. */
+type Sized = Omit<Column, "sortBy">;
 
-const resizable = (column: Column) => !column.flex && !column.fixed;
+export const minOf = (column: Sized) => column.min ?? DEFAULT_MIN;
+
+const resizable = (column: Sized) => !column.flex && !column.fixed;
 
 /** The `grid-template-columns` of the header and the rows. */
-export function gridTemplate(columns: readonly Column[], widths: Widths): string {
+export function gridTemplate(columns: readonly Sized[], widths: Widths): string {
   return columns.map((c) => (c.flex ? "minmax(0, 1fr)" : `${widths[c.id] ?? c.width ?? minOf(c)}px`)).join(" ");
 }
 
@@ -37,7 +47,7 @@ export function gridTemplate(columns: readonly Column[], widths: Widths): string
  * resized by its right edge and one right of it by its left edge, so the edge follows the pointer
  * while the flexible column takes up the difference.
  */
-export function handleSide(columns: readonly Column[], index: number): "start" | "end" | undefined {
+export function handleSide(columns: readonly Sized[], index: number): "start" | "end" | undefined {
   if (!resizable(columns[index])) return undefined;
   const flex = columns.findIndex((c) => c.flex);
   return flex < 0 || index < flex ? "end" : "start";
@@ -48,7 +58,7 @@ export function handleSide(columns: readonly Column[], index: number): "start" |
  * drag started: at least the column's minimum, and at most what the flexible column can give
  * (`room`: how far it is above its own minimum).
  */
-export function resized(column: Column, side: "start" | "end", start: number, delta: number, room = Infinity): number {
+export function resized(column: Sized, side: "start" | "end", start: number, delta: number, room = Infinity): number {
   const wanted = start + (side === "end" ? delta : -delta);
   return Math.round(Math.max(minOf(column), Math.min(start + Math.max(0, room), wanted)));
 }
@@ -68,7 +78,7 @@ export function serializeWidths(widths: Widths): string | undefined {
 }
 
 /** Stored widths for these columns: others are dropped, and none is narrower than its minimum. */
-export function parseWidths(columns: readonly Column[], text: string | undefined): Widths {
+export function parseWidths(columns: readonly Sized[], text: string | undefined): Widths {
   if (text === undefined) return {};
   let value: unknown;
   try {

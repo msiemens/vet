@@ -4,19 +4,27 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
+  import { type Sort, sortRows } from "../../lib/ui/sorting";
   import { hasKeychain } from "../../state/host";
   import AccountSheet from "./AccountSheet.svelte";
   import { accountRow, type AccountRow } from "./accountRows";
 
-  const COLUMNS: Column[] = [
+  const COLUMNS: Column<AccountRow>[] = [
     { id: "platform", label: "", width: 50, fixed: true },
-    { id: "host", label: "Host", flex: true, min: 80 },
+    { id: "host", label: "Host", flex: true, min: 80, sortBy: (row) => row.host },
     { id: "account", label: "Account", width: 130, min: 60 },
     { id: "credential", label: "Credential", width: 100, min: 60 },
     { id: "status", label: "", width: 28, fixed: true },
   ];
 
-  const rows = $derived(accounts.accounts.map((a) => accountRow(a, hasKeychain)));
+  let sort = $state<Sort>();
+  const rows = $derived(
+    sortRows(
+      accounts.accounts.map((a) => accountRow(a, hasKeychain)),
+      COLUMNS,
+      sort,
+    ),
+  );
   let selectedKey = $state<string>();
   const selected = $derived<AccountRow | undefined>(rows.find((r) => r.key === selectedKey) ?? rows[0]);
 
@@ -58,6 +66,7 @@
       <Table
         name="accounts"
         columns={COLUMNS}
+        bind:sort
         scroll={false}
         ruled
         role="listbox"

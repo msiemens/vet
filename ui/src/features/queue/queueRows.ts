@@ -186,6 +186,20 @@ export function updatedText(row: QueueRow, nowMs = Date.now()): string {
   return row.lastCommit === undefined ? "" : shortTime(row.lastCommit, nowMs);
 }
 
+const STATUS_ORDER: readonly QueueStatus[] = ["blocked", "changesRequested", "waitingForYou", "approved", "draft"];
+
+/** Where a row sorts by its status: the statuses most in need of attention first; nowhere without one. */
+export function statusOrder(row: QueueRow): number | undefined {
+  const status = row.pullRequest?.status;
+  return status && STATUS_ORDER.indexOf(status);
+}
+
+/** When a row changed, in seconds, for sorting: the live working tree is the newest. */
+export function updatedAt(row: QueueRow): number | undefined {
+  if (row.pullRequest) return row.pullRequest.updatedAt;
+  return row.key.type === "workingTree" ? Infinity : row.lastCommit;
+}
+
 export function tabCounts(rows: readonly QueueRow[]): Record<QueueTab, number> {
   return {
     all: rows.length,

@@ -9,6 +9,7 @@
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
+  import { type Sort, sortRows } from "../../lib/ui/sorting";
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { queue } from "../../state/queue.svelte";
@@ -28,8 +29,10 @@
     queueRows,
     reviewedOf,
     sourceText,
+    statusOrder,
     statusTitle,
     tabCounts,
+    updatedAt,
     updatedText,
   } from "./queueRows";
   import QueueComments from "./QueueComments.svelte";
@@ -54,24 +57,33 @@
     onsignin: () => void;
   } = $props();
 
-  const COLUMNS: Column[] = [
-    { id: "changeset", label: "Changeset", flex: true, min: 120 },
-    { id: "status", label: "Status", width: 130, min: 60 },
-    { id: "author", label: "Author", width: 150, min: 60 },
+  const COLUMNS: Column<QueueRow>[] = [
+    { id: "changeset", label: "Changeset", flex: true, min: 120, sortBy: (row) => labelOf(row).text },
+    { id: "status", label: "Status", width: 130, min: 60, sortBy: statusOrder },
+    { id: "author", label: "Author", width: 150, min: 60, sortBy: (row) => authorOf(row)?.name },
     { id: "source", label: "Source", width: 150, min: 60 },
     { id: "changes", label: "Changes", width: 110, min: 60 },
     { id: "reviewed", label: "Reviewed", width: 190, min: 80 },
     { id: "icons", label: "", name: "checks and comments", width: 80 },
-    { id: "updated", label: "Updated", width: 90, min: 50, align: "right" },
+    {
+      id: "updated",
+      label: "Updated",
+      width: 90,
+      min: 50,
+      align: "right",
+      sortBy: updatedAt,
+      firstSort: "descending",
+    },
   ];
 
   let tab = $state<QueueTab>("all");
   let query = $state("");
   let panel = $state<"details" | "files" | "comments">("details");
+  let sort = $state<Sort>();
 
   const rows = $derived(queueRows(queue.local, queue.pullRequests));
   const counts = $derived(tabCounts(rows));
-  const shown = $derived(filterRows(rows, tab, query));
+  const shown = $derived(sortRows(filterRows(rows, tab, query), COLUMNS, sort));
   /** The repositories whose pull requests could not be listed. */
   const unlisted = $derived(tab === "all" || tab === "prs" ? queue.sources.filter((s) => s.error !== undefined) : []);
   const manifest = $derived(changeset.manifest);
@@ -129,7 +141,7 @@
     {#if queue.loading}<ProgressBar label="Loading changesets" />{/if}
   </div>
 
-  <Table name="queue" columns={COLUMNS} aria-label="Changesets">
+  <Table name="queue" columns={COLUMNS} bind:sort aria-label="Changesets">
     {#each shown as row, index (keyId(row.key))}
       {@const id = keyId(row.key)}
       {@const numbers = ownOf(row)}

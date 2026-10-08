@@ -4,7 +4,10 @@ import type { ChangesetRow } from "../../generated/ChangesetRow";
 import type { Completion } from "../../generated/Completion";
 import type { PullRequestRow } from "../../generated/PullRequestRow";
 import type { Target } from "../../generated/Target";
+import type { Column } from "../../lib/ui/columns.ts";
+import { sortRows } from "../../lib/ui/sorting.ts";
 import {
+  type QueueRow,
   authorOf,
   changesOf,
   commentCount,
@@ -15,9 +18,11 @@ import {
   queueRows,
   reviewedOf,
   sourceText,
+  statusOrder,
   statusTitle,
   tabCounts,
   targetLabel,
+  updatedAt,
   updatedText,
 } from "./queueRows.ts";
 
@@ -225,6 +230,36 @@ void test("the changes requested chip names who asked for changes and how, and n
   );
   assert.equal(statusTitle({ ...held, changesRequested: [] }), undefined, "the platform did not say who");
   assert.equal(statusTitle({ ...held, status: "approved" }), undefined);
+});
+
+void test("by status the rows most in need of attention come first and rows without a status last", () => {
+  const withStatus = (number: number, status?: PullRequestRow["status"]) =>
+    pullRequestRow({ ...pr, key: { ...pr.key, number }, title: status ?? "none", status });
+  const shuffled = [
+    retry,
+    withStatus(1, "draft"),
+    withStatus(2),
+    withStatus(3, "approved"),
+    withStatus(4, "waitingForYou"),
+    withStatus(5, "blocked"),
+    withStatus(6, "changesRequested"),
+  ];
+  const column: Column<QueueRow> = { id: "status", label: "Status", sortBy: statusOrder };
+  const sorted = sortRows(shuffled, [column], { column: "status", direction: "ascending" });
+  assert.deepEqual(
+    sorted.map((r) => r.title),
+    ["blocked", "changesRequested", "waitingForYou", "approved", "draft", "feat/retry-policy", "none"],
+  );
+});
+
+void test("by when they changed the working tree is the newest and a branch without commits comes last", () => {
+  const column: Column<QueueRow> = { id: "updated", label: "Updated", sortBy: updatedAt };
+  const rows = [skew, { ...retry, lastCommit: undefined, title: "empty" }, pullRequestRow(pr), tree];
+  const sorted = sortRows(rows, [column], { column: "updated", direction: "descending" });
+  assert.deepEqual(
+    sorted.map((r) => r.title),
+    ["Working tree", "Add idempotency keys to sync jobs", "fix/clock-skew", "empty"],
+  );
 });
 
 void test("a pull request is asked for by its number, with or without the hash", () => {

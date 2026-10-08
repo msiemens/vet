@@ -1,8 +1,9 @@
 <!-- A table: a header naming the columns over the rows its owner draws. Each element of class
      `row` in the body is laid out on the header's grid, and a divider in the header parts each two
      columns. The viewer resizes a column by dragging its divider or with the arrow keys on it, and a
-     double click puts it back; the
-     widths are kept under `name`. The rest props go to the element holding the rows, `body`.
+     double click puts it back. A click on a sortable column's header sets `sort`, by which the owner
+     orders its rows (`sortRows`). The widths and the sort are kept under `name`. The rest props go
+     to the element holding the rows, `body`.
 
      Its owner sizes it with `--table-gap` (between columns), `--table-pad` and `--table-pad-end`
      (before the first column and after the last), `--table-row` and `--table-head` (heights),
@@ -11,6 +12,7 @@
   import type { Snippet } from "svelte";
   import type { HTMLAttributes } from "svelte/elements";
   import { readStored, writeStored } from "../storage";
+  import Icon from "./Icon.svelte";
   import {
     type Column,
     gridTemplate,
@@ -23,19 +25,24 @@
     withoutWidth,
   } from "./columns";
   import ScrollArea from "./ScrollArea.svelte";
+  import { type Sort, nextSort, parseSort, serializeSort } from "./sorting";
 
   let {
     name,
     columns,
+    sort = $bindable(),
     scroll = true,
     ruled = false,
     body = $bindable(),
     children,
     ...rest
   }: {
-    /** Keeps the column widths under this name. */
+    /** Keeps the column widths and the sort under this name. */
     name: string;
-    columns: readonly Column[];
+    /** Of rows of any kind: the table itself never reads a row. */
+    columns: readonly Column<never>[];
+    /** The column the rows are sorted by; none for the default order. */
+    sort?: Sort;
     /** The rows scroll under the header, with a scroll bar; without it the table is as tall as its rows. */
     scroll?: boolean;
     /** A line under each row. */
@@ -52,6 +59,19 @@
   // svelte-ignore state_referenced_locally
   let widths = $state(parseWidths(columns, readStored(storageKey)));
   const template = $derived(gridTemplate(columns, widths));
+  const sortKey = `${storageKey}.sort`;
+  // svelte-ignore state_referenced_locally
+  sort = parseSort(columns, readStored(sortKey));
+
+  function sortBy(column: Column<never>) {
+    sort = nextSort(sort, column);
+    writeStored(sortKey, serializeSort(sort));
+  }
+
+  function ariaSort(column: Column<never>) {
+    if (!column.sortBy) return undefined;
+    return sort?.column === column.id ? sort.direction : "none";
+  }
 
   let head: HTMLElement;
   let drag: { index: number; at: number; start: number; room: number } | undefined;
@@ -107,11 +127,19 @@
 </script>
 
 <div class="table" class:scroll class:ruled style:--columns={template}>
-  <div class="head" bind:this={head}>
+  <div class="head" role="row" bind:this={head}>
     {#each columns as column, index (column.id)}
       {@const side = handleSide(columns, index)}
-      <span class="cell" class:right={column.align === "right"}>
-        <span class="label">{column.label}</span>
+      {@const sorted = sort?.column === column.id ? sort.direction : undefined}
+      <span class="cell" class:right={column.align === "right"} role="columnheader" aria-sort={ariaSort(column)}>
+        {#if column.sortBy}
+          <button class="flat sort" type="button" onclick={() => sortBy(column)}>
+            <span class="label">{column.label}</span>
+            {#if sorted}<Icon name={sorted === "ascending" ? "up" : "down"} size={11} />{/if}
+          </button>
+        {:else}
+          <span class="label">{column.label}</span>
+        {/if}
         {#if index < columns.length - 1 && side !== "end" && handleSide(columns, index + 1) !== "start"}
           <span class="divider"></span>
         {/if}
@@ -195,6 +223,21 @@
   }
   .cell.right {
     justify-content: flex-end;
+  }
+  .sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    min-width: 0;
+    height: calc(100% - 4px);
+    margin: 0 -4px;
+    padding: 0 4px;
+    border-radius: var(--radius);
+    color: inherit;
+    font: inherit;
+  }
+  .sort :global(svg) {
+    flex: none;
   }
   .label {
     overflow: hidden;

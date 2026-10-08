@@ -7,9 +7,10 @@
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
+  import { type Sort, sortRows } from "../../lib/ui/sorting";
   import { checks } from "../../state/checks.svelte";
   import { type Range, rowRange } from "../../state/timelineRange";
-  import { type RangeFile, timelineRows } from "./timelineRows";
+  import { type RangeFile, type TimelineRow, timelineRows } from "./timelineRows";
 
   let {
     versions,
@@ -33,15 +34,16 @@
     onclose: () => void;
   } = $props();
 
-  const COLUMNS: Column[] = [
+  const COLUMNS: Column<TimelineRow>[] = [
     { id: "version", label: "Version", width: 56 },
-    { id: "time", label: "Time", width: 96, min: 50 },
+    { id: "time", label: "Time", width: 96, min: 50, sortBy: (row) => row.at, firstSort: "descending" },
     { id: "files", label: "Files", flex: true, min: 80 },
     { id: "ci", label: "", width: 14, fixed: true },
     { id: "lines", label: "Lines", width: 70, align: "right" },
   ];
 
-  const rows = $derived(timelineRows(versions, range));
+  let sort = $state<Sort>();
+  const rows = $derived(sortRows(timelineRows(versions, range), COLUMNS, sort));
   /** The version clicked last, which a shift-click runs the range from. */
   let anchor = $state<number>();
 
@@ -70,6 +72,7 @@
       <Table
         name="timeline"
         columns={COLUMNS}
+        bind:sort
         --table-pad="14px"
         --table-pad-end="12px"
         --table-row="26px"
@@ -77,7 +80,7 @@
         --table-head-color="var(--text-3)"
         --table-head-size="var(--fs-mono-s)"
       >
-        <ul class="rows" aria-label="Versions, newest first">
+        <ul class="rows" aria-label="Versions">
           {#each rows as row (row.n)}
             <li>
               <button
