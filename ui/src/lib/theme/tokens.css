@@ -144,6 +144,10 @@
   --w-indent: 12px;
   /* A comment thread card, as wide as a comfortable line of text. */
   --w-thread: 720px;
+  /* The hover popup, and the one-line notice that stands in for it; the fade over the end of its scrolling docs. */
+  --w-hover: 520px;
+  --w-hover-notice: 460px;
+  --h-hover-fade: 36px;
   --radius: 5px;
   /* Floating sheets: menus, popovers, dialogs, toasts. */
   --radius-sheet: 8px;

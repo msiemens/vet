@@ -4,6 +4,7 @@
 
 import { type Extension } from "@codemirror/state";
 import { EditorView, ViewPlugin } from "@codemirror/view";
+import { fadeOnOverflow } from "./hoverContent";
 import { type HoverKeyed, HoverPopup } from "./hoverPopup";
 
 /** A viewport rectangle. */
@@ -31,7 +32,7 @@ let openPopup: { close(): void } | undefined;
  */
 export function hoverPopups<T extends HoverAnchor>(
   resolve: (view: EditorView, event: MouseEvent) => T | undefined,
-  build: (anchor: T, signal: AbortSignal) => Promise<(() => HTMLElement) | undefined>,
+  build: (anchor: T, signal: AbortSignal, view: EditorView) => Promise<(() => HTMLElement) | undefined>,
 ): Extension {
   return ViewPlugin.define((view) => {
     /** The symbol of the last resolved event: while the pointer is inside it, there is nothing to resolve. */
@@ -46,7 +47,7 @@ export function hoverPopups<T extends HoverAnchor>(
     };
 
     const popup = new HoverPopup<T, () => HTMLElement>({
-      query: build,
+      query: (anchor, signal) => build(anchor, signal, view),
       open(anchor, create) {
         if (openPopup && openPopup !== popup) openPopup.close();
         const dom = create();
@@ -55,6 +56,7 @@ export function hoverPopups<T extends HoverAnchor>(
         dom.addEventListener("mouseleave", onLeave);
         document.body.append(dom);
         place(dom, anchor.rect);
+        fadeOnOverflow(dom);
         el = dom;
         document.addEventListener("scroll", onScroll, true);
         document.addEventListener("keydown", onKey, true);

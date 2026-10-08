@@ -48,6 +48,7 @@ import type { Unavailable } from "../generated/Unavailable";
 import type { VersionInfo } from "../generated/VersionInfo";
 import type { View } from "../generated/View";
 import { Connection } from "./connection";
+import type { ServerLine } from "./serverStatus";
 import { StaleRequests } from "./staleRequests";
 
 export type FileContents = Extract<Response, { type: "fileContents" }>;
@@ -59,6 +60,15 @@ export type SessionEvent = Exclude<ServerEvent, { type: "credentialsNeeded" }>;
 export interface HoverText {
   text: string;
   code: number[][];
+  /** Why there is no text, when the backend knows. */
+  unavailable?: Unavailable;
+}
+
+/** A hover's text with what the popup says around it: the file's server, and the key that goes to a definition. */
+export interface HoverAnswer extends HoverText {
+  server?: ServerLine;
+  /** The label of the go to definition shortcut, if it has one. */
+  definitionKey?: string;
 }
 
 export interface PullRequestList {
@@ -374,7 +384,7 @@ export class Backend {
     line: number,
     col: number,
     signal?: AbortSignal,
-  ): Promise<HoverText & { unavailable?: Unavailable }> {
+  ): Promise<HoverText> {
     const request = { type: "hover", project: this.pid, revision, side, path, line, col } as const;
     const r = expect(await this.semantic(revision, request, signal), "hover");
     return { text: r.text ?? "", code: r.codeHighlights, unavailable: r.unavailable ?? undefined };

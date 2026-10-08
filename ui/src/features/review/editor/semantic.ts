@@ -3,14 +3,15 @@
 // snapshot its positions are in (the target editor, or the base editor of a side-by-side view).
 // Diagnostics exist for the target side only.
 
-import { type Diagnostic as LintDiagnostic, lintGutter, setDiagnostics } from "@codemirror/lint";
+import { type Diagnostic as LintDiagnostic, linter, lintGutter, setDiagnostics } from "@codemirror/lint";
 import { type Extension, Facet, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, tooltips } from "@codemirror/view";
 import type { Diagnostic } from "../../../generated/Diagnostic";
+import type { Position } from "../../../generated/Position";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { nextPaint } from "../../../lib/nextPaint";
-import type { HoverText } from "../../../state/backend";
+import type { HoverAnswer } from "../../../state/backend";
 import { isMac } from "../../../state/host";
 import { type Span, outsideHidden } from "./hiddenRanges";
 import { hoverContent } from "./hoverContent";
@@ -21,7 +22,7 @@ import { lineOf, lineStart, offsetAt } from "./positions";
 /** What an editor asks of its owner, which knows the view's revision and what to do with an answer. */
 export interface SemanticHooks {
   /** Markdown; its text is empty if there is nothing to show or `signal` aborted the request. */
-  hover(side: Side, path: string, line: number, col: number, signal?: AbortSignal): Promise<HoverText>;
+  hover(side: Side, path: string, line: number, col: number, signal?: AbortSignal): Promise<HoverAnswer>;
   /** Goes to the definition; the owner opens the target. */
   definition(side: Side, path: string, line: number, col: number): void;
   /** The target-side diagnostics of the file, empty if there are none or the server is unavailable. */
@@ -52,24 +53,27 @@ export interface TextPosition {
 
 /**
  * Asks for the hover text at a position of `side` and returns what builds its tooltip body, or
- * nothing when there is no text. `hoverShown` gets the time from the query to the body's paint
- * once the body has been built and put on screen.
+ * nothing when there is nothing to show. `diagnostics` are those at the symbol, which the popup
+ * shows with the text. `hoverShown` gets the time from the query to the body's paint once the
+ * body has been built and put on screen.
  */
 export async function queryHover(
   hooks: SemanticHooks,
   side: Side,
   path: string,
   at: TextPosition,
+  diagnostics: readonly Diagnostic[],
   hoverShown?: (ms: number) => void,
   signal?: AbortSignal,
 ): Promise<(() => HTMLElement) | undefined> {
   const started = performance.now();
   const hover = await hooks.hover(side, path, at.line, at.col, signal);
-  if (!hover.text) return undefined;
+  // An aborted hover is an empty answer, which says nothing and is not an error.
+  if (signal?.aborted) return undefined;
+  const build = hoverContent(hover, diagnostics);
+  if (!build) return undefined;
   return () => {
-    const dom = document.createElement("div");
-    dom.className = "vet-hover";
-    dom.append(hoverContent(hover));
+    const dom = build();
     if (hoverShown) void nextPaint().then(() => hoverShown(performance.now() - started));
     return dom;
   };
@@ -224,7 +228,10 @@ const at = (view: EditorView, pos: number): TextPosition => {
  * The word of the document under the pointer, if it is on text: a hover over a block widget (a
  * deleted chunk, a thread card), the line numbers or blank space is none.
  */
-function wordUnderPointer(view: EditorView, event: MouseEvent): (HoverAnchor & { at: TextPosition }) | undefined {
+function wordUnderPointer(
+  view: EditorView,
+  event: MouseEvent,
+): (HoverAnchor & { at: TextPosition; endCol: number }) | undefined {
   if (!(event.target instanceof Element && event.target.closest(".cm-line"))) return undefined;
   const { clientX: x, clientY: y } = event;
   const pos = view.posAtCoords({ x, y });
@@ -244,7 +251,22 @@ function wordUnderPointer(view: EditorView, event: MouseEvent): (HoverAnchor & {
   };
   if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return undefined;
   const lineIndex = line.number - 1;
-  return { key: `${lineIndex}:${word.from}-${word.to}`, rect, at: { line: lineIndex, col: word.from } };
+  return {
+    key: `${lineIndex}:${word.from}-${word.to}`,
+    rect,
+    at: { line: lineIndex, col: word.from },
+    endCol: word.to,
+  };
+}
+
+const before = (a: Position, b: Position) => a.line < b.line || (a.line === b.line && a.col < b.col);
+
+/** The diagnostics the editor shows that touch the word `at`..`endCol`. */
+function diagnosticsAt(view: EditorView, at: TextPosition, endCol: number): readonly Diagnostic[] {
+  const word = { start: at, end: { line: at.line, col: endCol } };
+  return (view.state.field(diagnosticList, false) ?? []).filter(
+    (d) => before(d.span.start, word.end) && before(word.start, d.span.end),
+  );
 }
 
 /** The editor with the focus, if `active` (the document's active element) is one with the semantic layer. */
@@ -283,7 +305,9 @@ export function semanticExtensions(
     targetField,
     // A side by side pane clips what it contains; the tooltips of diagnostics live in the body.
     tooltips({ parent: document.body }),
-    hoverPopups(wordUnderPointer, (anchor, signal) => queryHover(hooks, side, path, anchor.at, hoverShown, signal)),
+    hoverPopups(wordUnderPointer, (anchor, signal, view) =>
+      queryHover(hooks, side, path, anchor.at, diagnosticsAt(view, anchor.at, anchor.endCol), hoverShown, signal),
+    ),
     EditorView.domEventHandlers({
       mousedown: (event, view) =>
         gotoOnClick(event, hooks, side, path, () => {
@@ -292,6 +316,9 @@ export function semanticExtensions(
         }),
     }),
     semanticTarget.of({ side, path, hooks }),
-    ...(side === "target" ? [lintGutter(), diagnosticList, diagnosticsFollowCollapse] : []),
+    // The hover popup shows the diagnostics at its symbol, so the squiggles have no tooltip of their own.
+    ...(side === "target"
+      ? [lintGutter(), linter(null, { tooltipFilter: () => [] }), diagnosticList, diagnosticsFollowCollapse]
+      : []),
   ];
 }

@@ -2,16 +2,136 @@
    reached, and the diagnostics' tooltip. */
 .vet-hover {
   user-select: text;
-  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  max-width: min(var(--w-hover), 90vw);
+  max-height: 40vh;
+  overflow: hidden;
   background: var(--bg-sheet);
   color: var(--text);
   border: 1px solid var(--line);
-  max-width: min(80ch, 90vw);
-  max-height: 40vh;
-  overflow: auto;
+  border-radius: var(--radius-sheet);
+  box-shadow: var(--shadow);
   font-family: var(--font-ui);
   font-size: var(--fs-ctl);
   line-height: 1.45;
+}
+.vet-hover > * {
+  flex: none;
+}
+.vet-hover-detail,
+.vet-hover-footer,
+.vet-hover-path {
+  color: var(--text-3);
+  font-size: var(--fs-mono-s);
+}
+
+/* The diagnostics at the symbol. */
+.vet-hover-diagnostic {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.vet-hover-diagnostic .vet-hover-icon {
+  margin-top: 2px;
+}
+.vet-hover-diagnostic-text {
+  flex: 1;
+  min-width: 0;
+}
+.vet-hover-diagnostic code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+}
+.vet-hover-icon {
+  display: flex;
+  flex: none;
+}
+.vet-hover-icon.error {
+  color: var(--del-text);
+}
+.vet-hover-icon.warning {
+  color: var(--warn);
+}
+.vet-hover-icon.info {
+  color: var(--text-3);
+}
+
+/* The signature: code blocks without a box, the first of them an item's path when another follows. */
+.vet-hover-signature {
+  padding: 8px 12px 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono);
+}
+.vet-hover-signature:only-child {
+  padding: 6px 12px;
+}
+.vet-md.vet-hover-signature pre {
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  white-space: pre-wrap;
+}
+.vet-md .vet-hover-path code {
+  font-size: inherit;
+}
+.vet-hover-path span {
+  color: inherit;
+}
+
+/* The docs are what scrolls; the end of them fades while there is more below. */
+.vet-hover-body {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  min-height: 0;
+}
+.vet-hover-docs {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 8px 12px;
+  scrollbar-width: thin;
+}
+.vet-hover-signature + .vet-hover-body > .vet-hover-docs {
+  padding: 2px 12px 10px;
+}
+.vet-hover-body[data-more]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--h-hover-fade);
+  background: linear-gradient(transparent, var(--bg-sheet));
+  pointer-events: none;
+}
+
+.vet-hover-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+/* One line saying why there is no hover. */
+.vet-hover-notice {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  max-width: min(var(--w-hover-notice), 90vw);
+  padding: 6px 12px;
+  color: var(--text-2);
+}
+.vet-hover-notice .vet-hover-icon {
+  color: var(--text-3);
 }
 /* The Markdown of a hover (editor/hoverContent.ts); code is highlighted with the editor's theme tokens. */
 .vet-md > :first-child {
@@ -58,9 +178,9 @@
 }
 .vet-md pre {
   margin: 0.5em 0;
-  padding: 4px 8px;
+  padding: 6px 10px;
   overflow-x: auto;
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: var(--bg-editor);
   border: 1px solid var(--line-soft);
 }

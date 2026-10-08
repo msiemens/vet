@@ -19,6 +19,8 @@ export interface ServerLine {
   state?: string;
   /** The backend's explanation, when there is one. */
   title?: string;
+  /** Set while the server indexes; `fraction` (0..1) is how far, if it says. */
+  indexing?: { fraction?: number };
 }
 
 /**
@@ -56,6 +58,7 @@ export function serverLine(
       name: server.server,
       state: fraction === undefined ? "indexing" : `indexing ${Math.round(fraction * 100)}%`,
       title: indexing.detail ?? indexing.title,
+      indexing: { fraction },
     };
   }
   const starting = own.find((t) => t.kind === "serverStart");

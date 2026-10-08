@@ -9,20 +9,24 @@ import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { Side } from "../generated/Side";
 import type { Unavailable } from "../generated/Unavailable";
 import { isAbort } from "../lib/abort";
-import type { HoverText } from "./backend";
+import type { HoverAnswer } from "./backend";
 import { changeset } from "./changeset.svelte";
+import { commands } from "./commands";
 import { InFlight } from "./inFlight";
+import { progress } from "./progress.svelte";
 import { type SemanticSummary, summarize } from "./semanticSummary";
+import { serverLine } from "./serverStatus";
+import { servers } from "./servers.svelte";
 import { session } from "./session.svelte";
 
-const NOTHING: HoverText = { text: "", code: [] };
+const NOTHING: HoverAnswer = { text: "", code: [] };
 
 class SemanticStore {
   private revision = -1;
   /** Bumped when the cache is dropped, so an answer to an earlier question is not stored. */
   private epoch = 0;
   private pending = new Map<string, Promise<Diagnostic[]>>();
-  private hovering = new InFlight<HoverText>();
+  private hovering = new InFlight<HoverAnswer>();
   /** The number of diagnostics to tell the viewer about, per file asked about at `revision`. */
   private counts = new SvelteMap<string, number>();
   /** The files the backend could not answer for, and why. */
@@ -73,7 +77,7 @@ class SemanticStore {
     line: number,
     col: number,
     signal?: AbortSignal,
-  ): Promise<HoverText> {
+  ): Promise<HoverAnswer> {
     const backend = session.backend;
     if (!backend) return NOTHING;
     try {
@@ -82,7 +86,11 @@ class SemanticStore {
         async (shared) => {
           const r = await backend.hover(revision, side, path, line, col, shared);
           this.note(revision, path, r.unavailable);
-          return { text: r.text, code: r.code };
+          return {
+            ...r,
+            server: serverLine(path, servers.servers, progress.tasks, this.summary(path)),
+            definitionKey: commands.binding("review.goToDefinition")?.label,
+          };
         },
         signal,
       );

@@ -89,6 +89,6 @@ export function deletedLines(path: string, hooks: SemanticHooks, hoverShown: (ms
   );
   return [
     goto,
-    hoverPopups(deletedWordAt, (anchor, signal) => queryHover(hooks, "base", path, anchor.at, hoverShown, signal)),
+    hoverPopups(deletedWordAt, (anchor, signal) => queryHover(hooks, "base", path, anchor.at, [], hoverShown, signal)),
   ];
 }
