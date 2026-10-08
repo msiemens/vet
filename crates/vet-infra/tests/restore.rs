@@ -3,6 +3,8 @@
 //! Caches are redirected to temporary directories with each tool's documented
 //! variable where there is one, so the user's own caches are left alone.
 
+#![allow(clippy::disallowed_methods)]
+
 use std::path::Path;
 use std::process::Command;
 

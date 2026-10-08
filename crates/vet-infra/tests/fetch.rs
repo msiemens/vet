@@ -1,6 +1,8 @@
 //! Fetching against local bare repositories as remotes, over `file://`. `git` is
 //! used only to build the fixtures and to look at the result.
 
+#![allow(clippy::disallowed_methods)]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

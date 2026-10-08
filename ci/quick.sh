@@ -24,6 +24,8 @@ for f in "${changed[@]}"; do
         ui/src-tauri/*) tauri=true ;;
         ui/src/generated/*) ;;
         ui/*) exists "$f" && ui_files+=("${f#ui/}") ;;
+        # The lint configuration of every crate.
+        crates/clippy.toml) for d in crates/*/; do crates+=("$(basename "$d")"); done ;;
         crates/*)
             crates+=("$(cut -d/ -f2 <<<"$f")")
             [[ $f == *.rs ]] && exists "$f" && rust_files+=("$f")

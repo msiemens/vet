@@ -20,6 +20,10 @@ pub fn announce(server: &Server) -> io::Result<()> {
 /// Exits the process when stdin reaches EOF. The shell keeps the backend's stdin
 /// pipe open, so a shell that dies without killing its child (Ctrl-C, crash) does
 /// not leave the backend running, which on Windows also locks its .exe.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a thread of its own that waits on stdin for the life of the process; it is no blocking work to bound"
+)]
 pub fn exit_when_stdin_closes() {
     std::thread::spawn(|| {
         let _ = io::copy(&mut io::stdin(), &mut io::sink());

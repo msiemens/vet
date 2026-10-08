@@ -1,6 +1,8 @@
 //! Materializing snapshots from real temporary repositories (§6.1, §7.2).
 //! `git` is used only to build fixtures.
 
+#![allow(clippy::disallowed_methods)]
+
 mod common;
 
 use std::collections::{HashMap, HashSet};

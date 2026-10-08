@@ -1,6 +1,8 @@
 //! The automatic merge of a merge commit's parents against a real temporary repository: what
 //! `git show --remerge-diff` compares the commit with. `git` is used only to build the fixture.
 
+#![allow(clippy::disallowed_methods)]
+
 use std::path::Path;
 use std::process::Command;
 

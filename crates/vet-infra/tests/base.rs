@@ -1,6 +1,8 @@
 //! Base resolution and candidate listing against a real temporary repository.
 //! `git` is used only to build the fixture.
 
+#![allow(clippy::disallowed_methods)]
+
 use std::path::Path;
 use std::process::Command;
 

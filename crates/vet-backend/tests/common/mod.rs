@@ -1,5 +1,7 @@
 //! Shared by the tests that drive the handler like a connection would.
 #![allow(dead_code)]
+// Tests build their repositories with git.
+#![allow(clippy::disallowed_methods)]
 
 use std::path::Path;
 use std::process::Command;

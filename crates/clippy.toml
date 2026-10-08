@@ -1,0 +1,10 @@
+# Blocking work and processes go through `vet_infra::budget` and `vet_infra::exec`, which are
+# bounded; a bare spawn is not. The two modules allow these calls with
+# `#[allow(clippy::disallowed_methods)]`.
+disallowed-methods = [
+    { path = "tokio::task::spawn_blocking", reason = "go through vet_infra::budget::Budget::blocking" },
+    { path = "tokio::runtime::Handle::spawn_blocking", reason = "go through vet_infra::budget::Budget::blocking" },
+    { path = "std::thread::spawn", reason = "blocking work goes through vet_infra::budget::Budget::blocking" },
+    { path = "std::process::Command::new", reason = "processes are spawned by vet_infra::exec" },
+    { path = "tokio::process::Command::new", reason = "processes are spawned by vet_infra::exec" },
+]

@@ -2,6 +2,8 @@
 //! edit, settle, remap, revert (SPEC §12 criterion 1's split and revert cases,
 //! and criterion 4's settle path). `git` is used only to build the fixture.
 
+#![allow(clippy::disallowed_methods)]
+
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;

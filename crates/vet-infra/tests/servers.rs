@@ -3,6 +3,8 @@
 //! `VET_TEST_INSTALL` lists the languages to try (`typescript,python,csharp`);
 //! run it alone (`--test-threads=1`).
 
+#![allow(clippy::disallowed_methods)]
+
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;

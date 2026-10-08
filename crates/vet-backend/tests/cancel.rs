@@ -2,6 +2,8 @@
 //! over its WebSocket, with a language server that never answers a hover and records
 //! what it is sent. Needs `python3` for that server and is skipped without it.
 
+#![allow(clippy::disallowed_methods)]
+
 mod common;
 
 use std::os::unix::fs::PermissionsExt;

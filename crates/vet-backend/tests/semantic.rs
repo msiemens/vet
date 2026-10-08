@@ -2,6 +2,8 @@
 //! needs a real rust-analyzer and is skipped without one; run it alone
 //! (`--test-threads=1`): it starts two servers.
 
+#![allow(clippy::disallowed_methods)]
+
 mod common;
 
 use std::process::Command;

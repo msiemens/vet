@@ -4,6 +4,9 @@
 //! Default: ruff 0.11.12..0.11.13 (649 files, ~5k hunks, a 10k-line file),
 //! shallow-fetched into `.corpus/ruff` on first use.
 
+// A development tool that runs git once at startup; it has no budget to draw on.
+#![allow(clippy::disallowed_methods)]
+
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

@@ -1,6 +1,8 @@
 //! The LSP client against a real rust-analyzer on a tiny cargo project.
 //! Skipped (passes) when the binary is not installed.
 
+#![allow(clippy::disallowed_methods)]
+
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
