@@ -3740,4 +3740,5 @@ async fn a_pull_request_has_lines_once_it_was_fetched_and_the_working_tree_has_n
 mod ahead;
 mod derived;
 mod marks;
+mod publish;
 mod sync;
