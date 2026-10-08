@@ -1,6 +1,7 @@
 //! Language servers on this machine (§7.1): what each language resolves to,
 //! the user's custom paths, and installing the pinned servers.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 
@@ -63,6 +64,11 @@ pub struct Servers<R, S> {
     languages: Vec<BackendId>,
     /// One install at a time: they share the data directory.
     installing: Mutex<()>,
+    /// The custom path of each language, read from `settings` once and kept current by
+    /// `set_custom_path`, so that locating a server does not wait for the store, which
+    /// the review's writes share. The lock is held across a read or a write of the store,
+    /// so a read cannot overwrite a newer write.
+    custom_paths: Mutex<HashMap<BackendId, Option<String>>>,
 }
 
 impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
@@ -72,7 +78,18 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
             settings,
             languages,
             installing: Mutex::new(()),
+            custom_paths: Mutex::new(HashMap::new()),
         }
+    }
+
+    async fn custom_path(&self, language: &BackendId) -> Result<Option<String>, StoreError> {
+        let mut paths = self.custom_paths.lock().await;
+        if let Some(path) = paths.get(language) {
+            return Ok(path.clone());
+        }
+        let path = self.settings.custom_server_path(language.0.clone()).await?;
+        paths.insert(language.clone(), path.clone());
+        Ok(path)
     }
 
     fn known(&self, language: &str) -> Result<&BackendId, ServersError> {
@@ -86,7 +103,7 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
     pub async fn status(&self, project: &Path) -> Result<Vec<ServerStatus>, ServersError> {
         let mut all = Vec::new();
         for language in &self.languages {
-            let custom_path = self.settings.custom_server_path(language.0.clone()).await?;
+            let custom_path = self.custom_path(language).await?;
             let mut state = self.resolver.resolve(language, project, custom_path.as_deref()).await;
             if let ServerState::Found(found) = &mut state {
                 found.version = self.resolver.version(language, found).await;
@@ -110,7 +127,12 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
     pub async fn set_custom_path(&self, language: &str, path: Option<String>) -> Result<(), ServersError> {
         let language = self.known(language)?;
         let path = path.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty());
-        Ok(self.settings.set_custom_server_path(language.0.clone(), path).await?)
+        let mut paths = self.custom_paths.lock().await;
+        self.settings
+            .set_custom_server_path(language.0.clone(), path.clone())
+            .await?;
+        paths.insert(language.clone(), path);
+        Ok(())
     }
 
     /// Installs the pinned server of `language`; `progress` gets the tool's output.
@@ -131,8 +153,7 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> ServerLocator for Serve
     async fn locate(&self, config: &ServerConfig, project: &Path) -> Result<ServerCommand, String> {
         let language = &config.backend;
         let custom = self
-            .settings
-            .custom_server_path(language.0.clone())
+            .custom_path(language)
             .await
             .map_err(|e| format!("cannot read the language server settings: {}", e.0))?;
         match self.resolver.resolve(language, project, custom.as_deref()).await {
@@ -160,11 +181,13 @@ mod tests {
     use super::*;
     use crate::ports::{FoundServer, ServerOrigin};
 
+    /// The stored paths, and how often they were read.
     #[derive(Default)]
-    struct Settings(StdMutex<HashMap<String, String>>);
+    struct Settings(StdMutex<HashMap<String, String>>, std::sync::atomic::AtomicUsize);
 
     impl ServerSettings for Settings {
         async fn custom_server_path(&self, language: String) -> Result<Option<String>, StoreError> {
+            self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(self.0.lock().unwrap().get(&language).cloned())
         }
 
@@ -287,6 +310,23 @@ mod tests {
 
         servers.set_custom_path("rust", Some("   ".into())).await.unwrap();
         assert!(servers.locate(&config("rust"), project).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn locating_servers_reads_the_store_once_per_language_and_sees_every_change() {
+        let servers = servers();
+        let project = Path::new("/p");
+        for _ in 0..5 {
+            assert!(servers.locate(&config("rust"), project).await.is_err());
+        }
+        assert_eq!(servers.settings.1.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        servers.set_custom_path("rust", Some("/opt/ra".into())).await.unwrap();
+        for _ in 0..5 {
+            assert_eq!(servers.locate(&config("rust"), project).await.unwrap().program, "/opt/ra");
+        }
+        servers.status(project).await.unwrap();
+        assert_eq!(servers.settings.1.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
