@@ -44,9 +44,10 @@ class QueueStore {
     session.onConnect((backend) => {
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
-        // Which changeset is on view, what has a review, how many threads are open, and where the branches are.
-        if (event.type === "changesetOpened" || event.type === "reviewStarted" || event.type === "changesetsChanged")
-          void this.loadAll();
+        // Which changeset is on view and what has a review. Where the branches are is the local list's
+        // alone: the pull requests are listed when the queue is shown and on a refresh, not on each fetch.
+        if (event.type === "changesetOpened" || event.type === "reviewStarted") void this.loadAll();
+        else if (event.type === "changesetsChanged") void this.load();
         else if (event.type === "threadsChanged") void this.load(false);
       });
       // Another credential may list other pull requests, or list them where it could not before.
@@ -111,15 +112,15 @@ class QueueStore {
     await Promise.all([this.load(), this.loadPullRequests()]);
   }
 
-  /** Fetches the remotes, then lists again. */
+  /** Fetches the remotes, then lists again, the pull requests too. */
   async refresh() {
     if (this.refreshing) return;
     this.refreshing = true;
     const before = this.seq.local;
     try {
       await changeset.fetch();
-      // A fetch that brought something announced `changesetsChanged`, which listed again already.
-      if (this.seq.local === before) await this.loadAll();
+      // A fetch that brought something announced `changesetsChanged`, which listed the local ones already.
+      await Promise.all([this.seq.local === before ? this.load() : undefined, this.loadPullRequests()]);
     } finally {
       this.refreshing = false;
     }
