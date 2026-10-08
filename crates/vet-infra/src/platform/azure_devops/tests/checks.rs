@@ -50,7 +50,7 @@ fn building(statuses: Vec<Value>, evaluations: Vec<Value>) -> Fake {
     Fake::start(move |request, _| {
         let path = request.path.split('?').next().unwrap().to_ascii_lowercase();
         let list = |items: &[Value]| Canned::json(&json!({ "count": items.len(), "value": items }).to_string());
-        if path.starts_with("/_apis/profile") {
+        if path.ends_with("/_apis/connectiondata") {
             Canned::json(&profile())
         } else if path == "/contoso/_apis/identities" {
             Canned::json(&no_value())
@@ -187,7 +187,7 @@ async fn a_token_that_may_not_read_policies_still_has_the_statuses() {
     set_now(NOW);
     let fake = Fake::start(|request, _| {
         let path = request.path.split('?').next().unwrap().to_ascii_lowercase();
-        if path.starts_with("/_apis/profile") {
+        if path.ends_with("/_apis/connectiondata") {
             Canned::json(&profile())
         } else if path == "/contoso/_apis/identities" {
             Canned::json(&no_value())
@@ -218,7 +218,7 @@ fn building_with_log(log: Canned) -> Fake {
     let log = std::sync::Mutex::new(Some(log));
     Fake::start(move |request, _| {
         let path = request.path.split('?').next().unwrap().to_ascii_lowercase();
-        if path.starts_with("/_apis/profile") {
+        if path.ends_with("/_apis/connectiondata") {
             Canned::json(&profile())
         } else if path == "/contoso/_apis/identities" {
             Canned::json(&no_value())

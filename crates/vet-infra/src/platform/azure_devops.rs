@@ -8,8 +8,12 @@
 //! source branch stays where it was. Votes carry no commit and the list no time of the
 //! last change; the wire module says what stands in for them.
 //!
-//! The token goes to the host's API and nowhere else: no redirect is followed. Nothing
-//! here logs a request or a response.
+//! The token goes to the host's API and nowhere else: no redirect is followed. A failed
+//! request is logged with the account, the status and the platform's message; nothing
+//! else of a request or a response is.
+//!
+//! Accounts are of one organization (`dev.azure.com/<organization>`), and who the user
+//! is comes from that organization's `connectionData`, which takes a token scoped to it.
 //!
 //! A pull request's threads, votes and checks are in `discussion` and `checks`.
 
@@ -29,7 +33,7 @@ use vet_app::platform::{
 
 use crate::clock::unix_now;
 use crate::http::http_client;
-use access::{Access, PROFILE_ENDPOINT, failure};
+use access::{API_ENDPOINT, Access, failure};
 use wire::Me;
 
 pub(crate) mod access;
@@ -61,21 +65,19 @@ const EXTRAS_MAX_AGE: i64 = 180;
 /// How long who the viewer is, and their groups, are reused.
 const VIEWER_MAX_AGE: i64 = 600;
 
-/// Where the services are: the pull requests, the identities and the profile.
+/// Where the services are: the organizations (pull requests, who the user is) and the identities.
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Endpoints {
     api: String,
     identities: String,
-    profile: String,
 }
 
 impl Endpoints {
     /// An organization at `<organization>.visualstudio.com` is also at `dev.azure.com`.
     fn services() -> Self {
         Self {
-            api: "https://dev.azure.com".to_owned(),
+            api: API_ENDPOINT.to_owned(),
             identities: "https://vssps.dev.azure.com".to_owned(),
-            profile: PROFILE_ENDPOINT.to_owned(),
         }
     }
 }
@@ -233,7 +235,8 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
 
     /// Who the user is in `repository`'s organization.
     async fn me(&self, access: &Access, remote: &RemoteKey, repository: &Repository<'_>) -> Result<Me, PlatformError> {
-        let host = remote.host.as_str();
+        let host = remote.account();
+        let host = host.as_str();
         let now = (self.now)();
         let cached = self
             .state()
@@ -244,7 +247,9 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         let profile = match cached {
             Some(profile) => profile,
             None => {
-                let profile = access.me(&self.endpoints().profile, host, now).await?;
+                let profile = access
+                    .me(&self.endpoints().api, repository.organization, host, now)
+                    .await?;
                 self.state().profiles.insert(host.to_owned(), (now, profile.clone()));
                 profile
             }
@@ -281,7 +286,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
 
     async fn call<'a>(&self, remote: &'a RemoteKey) -> Result<Call<'a>, PlatformError> {
         let repository = repository(remote)?;
-        let access = self.access(&remote.host).await?;
+        let access = self.access(&remote.account()).await?;
         let me = self.me(&access, remote, &repository).await?;
         let git = access.git(&self.endpoints().api)?;
         Ok(Call {
@@ -322,14 +327,14 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
                 .pull_request_statuses_client()
                 .list(organization, name, id, project)
                 .await;
-            self.settle(&remote.host, list).map(|list| list.value)
+            self.settle(&remote.account(), list).map(|list| list.value)
         };
         let threads = async {
             let list = git
                 .pull_request_threads_client()
                 .list(organization, name, id, project)
                 .await;
-            self.settle(&remote.host, list).map(|list| list.value)
+            self.settle(&remote.account(), list).map(|list| list.value)
         };
         let (statuses, threads) = futures::future::join(statuses, threads).await;
         let threads = Self::or_nothing(threads)?;
@@ -369,7 +374,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
 
     async fn viewer(&self, remote: &RemoteKey) -> Result<Viewer, PlatformError> {
         let repository = repository(remote)?;
-        let access = self.access(&remote.host).await?;
+        let access = self.access(&remote.account()).await?;
         let me = self.me(&access, remote, &repository).await?;
         Ok(Viewer {
             login: me.login,
@@ -383,7 +388,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         query: &PullRequestQuery,
     ) -> Result<Vec<PullRequest>, PlatformError> {
         let repository = repository(remote)?;
-        let access = self.access(&remote.host).await?;
+        let access = self.access(&remote.account()).await?;
         let me = self.me(&access, remote, &repository).await?;
         let git = access.git(&self.endpoints().api)?;
         let web = web_address(remote, &repository);
@@ -401,7 +406,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             if let (QueueTab::Mine, Some(id)) = (query.tab, &me.id) {
                 request = request.search_criteria_creator_id(id.clone());
             }
-            let page = self.settle(&remote.host, request.await)?.value;
+            let page = self.settle(&remote.account(), request.await)?.value;
             found.extend(page.iter().filter_map(|pr| wire::pull_request(pr, &me, &web)));
             skip += self.page_size;
             if page.len() < usize::try_from(self.page_size).unwrap_or(usize::MAX) || found.len() >= MAX_LISTED {
@@ -436,11 +441,11 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         let not_found = || {
             PlatformError::NotFound(format!(
                 "{organization}/{project}/{name}#{number} was not found on {}, or the token cannot see it",
-                remote.host
+                remote.account()
             ))
         };
         let id = i32::try_from(number).map_err(|_| not_found())?;
-        let access = self.access(&remote.host).await?;
+        let access = self.access(&remote.account()).await?;
         let me = self.me(&access, remote, &repository).await?;
         let git = access.git(&self.endpoints().api)?;
 
@@ -448,7 +453,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             .pull_requests_client()
             .get_pull_request(organization, name, id, project)
             .await;
-        let found = self.settle(&remote.host, found).map_err(|e| match e {
+        let found = self.settle(&remote.account(), found).map_err(|e| match e {
             PlatformError::NotFound(_) => not_found(),
             other => other,
         })?;
@@ -458,7 +463,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             .pull_request_iterations_client()
             .list(organization, name, id, project)
             .await;
-        let iterations = self.settle(&remote.host, iterations)?.value;
+        let iterations = self.settle(&remote.account(), iterations)?.value;
         self.enrich(&git, remote, &repository, std::slice::from_mut(&mut pull_request))
             .await?;
 
@@ -474,7 +479,10 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         let base = base
             .or_else(|| found.last_merge_target_commit.as_ref()?.commit_id.clone())
             .ok_or_else(|| {
-                PlatformError::Unexpected(format!("{} says nothing of where {number} branched off", remote.host))
+                PlatformError::Unexpected(format!(
+                    "{} says nothing of where {number} branched off",
+                    remote.account()
+                ))
             })?;
         Ok(PullRequestDetail {
             pull_request,

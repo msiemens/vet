@@ -26,8 +26,9 @@ const CLI_TOKEN_LIFETIME: i64 = 300;
 const EXPIRY_MARGIN: i64 = 120;
 
 /// Hosts whose CLI is looked at even before anything asks for them, so that a signed-in
-/// `gh` or `az` shows up in the accounts.
-const DEFAULT_HOSTS: [&str; 2] = ["github.com", "dev.azure.com"];
+/// `gh` shows up in the accounts. An `az` token is of no organization in particular, so it
+/// shows up with the organizations that are asked for.
+const DEFAULT_HOSTS: [&str; 1] = ["github.com"];
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum AccountState {
@@ -701,7 +702,7 @@ mod tests {
         let f = fixture();
         f.platforms.knows("pat", Ok("someone"));
         f.accounts
-            .set_credentials("dev.azure.com", "pat", true, 0)
+            .set_credentials("https://Contoso.visualstudio.com", "pat", true, 0)
             .await
             .unwrap();
         f.accounts
@@ -709,7 +710,11 @@ mod tests {
             .await
             .unwrap();
         let asked = f.platforms.asked.lock().unwrap().clone();
-        assert!(asked.contains(&("dev.azure.com".into(), PlatformKind::AzureDevOps, CredentialSource::Pat)));
+        assert!(asked.contains(&(
+            "dev.azure.com/contoso".into(),
+            PlatformKind::AzureDevOps,
+            CredentialSource::Pat
+        )));
         assert!(asked.contains(&("ghe.corp.example".into(), PlatformKind::GitHub, CredentialSource::Pat)));
     }
 

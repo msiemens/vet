@@ -1,6 +1,6 @@
 //! Which repository on which host a remote URL names.
 
-use super::host::PlatformKind;
+use super::host::{PlatformKind, azure_devops_account};
 
 /// A repository on a hosting platform: `github.com` and `owner/repo`, or
 /// `dev.azure.com` and `organization/project/repo`. The same for every URL form that
@@ -14,6 +14,16 @@ pub struct RemoteKey {
 impl RemoteKey {
     pub fn kind(&self) -> PlatformKind {
         PlatformKind::of_host(&self.host)
+    }
+
+    /// The host of the account that reaches the repository: the host itself, except for
+    /// Azure DevOps, whose accounts are of one organization (`dev.azure.com/<organization>`,
+    /// whichever of its hosts the remote names).
+    pub fn account(&self) -> String {
+        match (self.kind(), self.segments().next()) {
+            (PlatformKind::AzureDevOps, Some(organization)) => azure_devops_account(organization),
+            _ => self.host.clone(),
+        }
     }
 
     /// The segments of the path: owner and repository for GitHub, organization, project
@@ -253,5 +263,20 @@ mod tests {
         assert_eq!(key.kind(), PlatformKind::AzureDevOps);
         assert_eq!(key.to_string(), "dev.azure.com/contoso/Shop/api");
         assert_eq!(key.segments().collect::<Vec<_>>(), ["contoso", "Shop", "api"]);
+    }
+
+    #[test]
+    fn an_azure_devops_remote_is_reached_by_the_account_of_its_organization() {
+        for url in [
+            "https://dev.azure.com/Contoso/Shop/_git/api",
+            "https://contoso.visualstudio.com/Shop/_git/api",
+            "git@ssh.dev.azure.com:v3/contoso/Shop/api",
+        ] {
+            assert_eq!(parse_remote(url).unwrap().account(), "dev.azure.com/contoso", "{url}");
+        }
+        let other = parse_remote("https://dev.azure.com/fabrikam/Shop/_git/api").unwrap();
+        assert_eq!(other.account(), "dev.azure.com/fabrikam");
+        let github = parse_remote("https://ghe.corp.example/team/service").unwrap();
+        assert_eq!(github.account(), "ghe.corp.example");
     }
 }

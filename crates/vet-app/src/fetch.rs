@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use tokio::sync::Mutex;
 
-use crate::platform::{Credential, PlatformKind};
+use crate::platform::{Credential, PlatformKind, parse_remote};
 use crate::ports::{FetchAuth, Fetcher, RefUpdate, RemoteInfo};
 use crate::progress::{TaskKind, Tasks};
 
@@ -99,7 +99,12 @@ impl<G: Fetcher> Fetch<G> {
 /// one for.
 async fn authentication(credentials: &(impl Credentials + Sync), remote: &RemoteInfo) -> Option<FetchAuth> {
     let host = remote.https_host.as_ref()?;
-    credentials.credential(host).await.map(|credential| FetchAuth {
+    // An Azure DevOps remote is reached by the account of its organization.
+    let account = match PlatformKind::of_host(host) {
+        PlatformKind::AzureDevOps => parse_remote(&remote.url)?.account(),
+        PlatformKind::GitHub => host.clone(),
+    };
+    credentials.credential(&account).await.map(|credential| FetchAuth {
         host: host.clone(),
         kind: PlatformKind::of_host(host),
         credential,

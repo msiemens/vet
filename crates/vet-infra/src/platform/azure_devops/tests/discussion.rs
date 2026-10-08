@@ -102,7 +102,7 @@ fn hosting(threads: Vec<Value>) -> (Fake, Arc<Mutex<Hosted>>) {
                 .map(|(_, rest)| rest.split('/').filter_map(|p| p.parse().ok()).collect())
                 .unwrap_or_default()
         };
-        if path.starts_with("/_apis/profile/profiles/me") {
+        if path.ends_with("/_apis/connectiondata") {
             Canned::json(&profile())
         } else if path == "/contoso/_apis/identities" {
             Canned::json(&no_value())
@@ -568,7 +568,7 @@ async fn a_thread_is_still_posted_when_the_changes_of_the_iteration_cannot_be_re
     set_now(NOW);
     let fake = Fake::start(|request, _| {
         let path = request.path.split('?').next().unwrap().to_ascii_lowercase();
-        if path.starts_with("/_apis/profile") {
+        if path.ends_with("/_apis/connectiondata") {
             Canned::json(&profile())
         } else if path == "/contoso/_apis/identities" {
             Canned::json(&no_value())

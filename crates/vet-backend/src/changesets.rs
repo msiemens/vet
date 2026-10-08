@@ -47,7 +47,7 @@ impl Orchestrator {
             .and(pull_request::list_pull_requests(&*self.azure_devops, &azure_devops, on_view, known).await);
         for source in &list.sources {
             if let Some(error) = &source.error {
-                self.refused(error, &source.remote.host);
+                self.refused(error, &source.remote.account());
             }
         }
         let sources: Vec<_> = list
@@ -75,7 +75,7 @@ impl Orchestrator {
         let hosting = Hosting::of(remote.kind(), &self.github, &self.azure_devops);
         let (found, error) = commits_checks(&hosting, &remote, &commits).await;
         if let Some(error) = &error {
-            self.refused(error, &remote.host);
+            self.refused(error, &remote.account());
         }
         Ok(mapping::checks(&found, error.as_ref()))
     }
@@ -87,7 +87,7 @@ impl Orchestrator {
             .ok_or("the changeset on view is not a pull request")?;
         let hosting = Hosting::of(remote.kind(), &self.github, &self.azure_devops);
         let log = hosting.check_log(&remote, &run).await.map_err(|error| {
-            self.refused(&error, &remote.host);
+            self.refused(&error, &remote.account());
             message(error)
         })?;
         Ok(mapping::check_log(&log))
@@ -99,7 +99,7 @@ impl Orchestrator {
         if let Source::PullRequest { remote, number } = &source {
             let brought = bring_in(&open.open, remote, *number).await;
             if let Err(FetchError::Platform(error)) = &brought {
-                self.refused(error, &remote.host);
+                self.refused(error, &remote.account());
             }
             brought.map_err(|e| format!("cannot fetch pull request #{number}: {e}"))?;
         }

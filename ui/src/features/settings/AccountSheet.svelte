@@ -19,10 +19,16 @@
   } = $props();
 
   type Platform = "github" | "ghe" | "azureDevOps";
-  const PLATFORMS: Record<Platform, { label: string; host: string; kind: PlatformKind }> = {
-    github: { label: "GitHub", host: GITHUB_HOST, kind: "github" },
-    ghe: { label: "GitHub Enterprise", host: "", kind: "github" },
-    azureDevOps: { label: "Azure DevOps", host: "dev.azure.com", kind: "azureDevOps" },
+  // An Azure DevOps account is of one organization, which the host names.
+  const PLATFORMS: Record<Platform, { label: string; host: string; example: string; kind: PlatformKind }> = {
+    github: { label: "GitHub", host: GITHUB_HOST, example: "github.com", kind: "github" },
+    ghe: { label: "GitHub Enterprise", host: "", example: "git.example.com", kind: "github" },
+    azureDevOps: {
+      label: "Azure DevOps",
+      host: "dev.azure.com/",
+      example: "dev.azure.com/contoso",
+      kind: "azureDevOps",
+    },
   };
 
   let sheet: HTMLDialogElement;
@@ -58,7 +64,7 @@
     busy = true;
     const result = await accounts.addToken(host, token);
     busy = false;
-    if (result.ok) ondone(`${host.trim().toLowerCase()}/pat`, result.warning);
+    if (result.ok) ondone(`${result.host}/pat`, result.warning);
     else error = result.error;
   }
 </script>
@@ -93,7 +99,7 @@
       <input
         class="field mono"
         type="text"
-        placeholder="git.example.com"
+        placeholder={PLATFORMS[platform].example}
         autocomplete="off"
         spellcheck="false"
         disabled={replace !== undefined}

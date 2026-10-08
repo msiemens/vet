@@ -30,9 +30,11 @@ serde = { version = "1.0.229", features = ["derive"] }
 # `azure_core` always enables the aws-lc TLS provider, so aws-lc gets compiled. It is not
 # used: `ring` is installed as the default.
 octocrab = { version = "0.54.2", default-features = false, features = ["reqwest", "retry", "jwt-rust-crypto"] }
-azure_devops_rust_api = { version = "0.39.1", default-features = false, features = ["reqwest", "git", "ims", "profile", "build", "policy"] }
+azure_devops_rust_api = { version = "0.39.1", default-features = false, features = ["reqwest", "git", "ims", "build", "policy"] }
 azure_core = { version = "1", default-features = false, features = ["reqwest"] }
 async-trait = "0.1"
+# Failures of the platforms are logged as structured events; the subscriber is the binary's.
+tracing = "0.1"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 
 [target.'cfg(not(windows))'.dependencies]

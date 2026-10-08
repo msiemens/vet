@@ -4,7 +4,9 @@ use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
-use vet_app::platform::{CredentialSource, ReviewRequest, ReviewState, ReviewVerdict, ViewerReview, list_rows};
+use vet_app::platform::{
+    Credential, CredentialSource, ReviewRequest, ReviewState, ReviewVerdict, Token, ViewerReview, list_rows,
+};
 
 use super::*;
 use crate::http::client_builder;
@@ -40,7 +42,6 @@ fn client_with<C: CredentialProvider + Sync>(fake: &Fake, credentials: C) -> Azu
         endpoints: Some(Endpoints {
             api: fake.base(),
             identities: fake.base(),
-            profile: fake.base(),
         }),
         page_size: PAGE_SIZE,
         now,
@@ -134,8 +135,14 @@ fn no_value() -> String {
     r#"{"count":0,"value":[]}"#.to_owned()
 }
 
+/// What an organization's `connectionData` says of the signed-in user.
 fn profile() -> String {
-    json!({ "id": "me-id", "displayName": "Ada Lovelace", "emailAddress": "ada@contoso.com" }).to_string()
+    json!({ "authenticatedUser": {
+        "id": "me-id",
+        "providerDisplayName": "Ada Lovelace",
+        "properties": { "Account": { "$type": "System.String", "$value": "ada@contoso.com" } }
+    } })
+    .to_string()
 }
 
 fn status(id: i32, state: &str, name: &str) -> Value {
@@ -151,7 +158,7 @@ fn thread(status: &str, comment_type: &str) -> Value {
 fn repository(docs: Vec<Doc>, statuses: Vec<Value>, threads: Vec<Value>) -> Fake {
     Fake::start(move |request, _| {
         let path = request.path.split('?').next().unwrap();
-        if path.starts_with("/_apis/profile/profiles/me") {
+        if path.ends_with("/_apis/connectionData") {
             Canned::json(&profile())
         } else if path == "/contoso/_apis/identities" {
             if query_has(request, "identityIds=me-id") {
@@ -320,7 +327,7 @@ async fn what_is_known_of_a_pull_request_is_asked_again_when_its_source_branch_m
     let served = head.clone();
     let fake = Fake::start(move |request, _| {
         let path = request.path.split('?').next().unwrap();
-        if path.starts_with("/_apis/profile") {
+        if path.ends_with("/_apis/connectionData") {
             Canned::json(&profile())
         } else if path == "/contoso/_apis/identities" {
             Canned::json(&no_value())
@@ -412,7 +419,7 @@ async fn a_token_that_may_not_read_threads_or_groups_still_lists() {
     set_now(NOW);
     let fake = Fake::start(|request, _| {
         let path = request.path.split('?').next().unwrap();
-        if path.starts_with("/_apis/profile") {
+        if path.ends_with("/_apis/connectionData") {
             Canned::json(&profile())
         } else if path == PULLS {
             Canned::json(&list_of(&[Doc::new(1)]))
@@ -434,7 +441,7 @@ async fn a_pull_request_comes_with_its_iterations_as_pushes_and_the_merge_base()
     set_now(NOW);
     let fake = Fake::start(|request, _| {
         let path = request.path.split('?').next().unwrap();
-        if path.starts_with("/_apis/profile") {
+        if path.ends_with("/_apis/connectionData") {
             Canned::json(&profile())
         } else if path == "/contoso/_apis/identities" || path.ends_with("/statuses") || path.ends_with("/threads") {
             Canned::json(&no_value())
@@ -481,7 +488,7 @@ async fn a_pull_request_comes_with_its_iterations_as_pushes_and_the_merge_base()
     assert_eq!(
         error,
         PlatformError::NotFound(
-            "contoso/Shop/api#8 was not found on dev.azure.com, or the token cannot see it".to_owned()
+            "contoso/Shop/api#8 was not found on dev.azure.com/contoso, or the token cannot see it".to_owned()
         )
     );
 }
@@ -535,7 +542,7 @@ async fn a_rejected_token_a_forbidden_repository_a_rate_limit_and_a_down_server_
     let answer = Arc::new(Mutex::new((401, "")));
     let served = answer.clone();
     let fake = Fake::start(move |request, _| {
-        if request.path.starts_with("/_apis/profile") {
+        if request.path.ends_with("/_apis/connectionData") {
             return Canned::json(&profile());
         }
         if request.path.starts_with("/contoso/_apis/identities") {
@@ -562,7 +569,7 @@ async fn a_rejected_token_a_forbidden_repository_a_rate_limit_and_a_down_server_
     assert_eq!(
         error,
         PlatformError::RateLimited {
-            message: "dev.azure.com asks to slow down; try again in 2 minutes".to_owned(),
+            message: "dev.azure.com/contoso asks to slow down; try again in 2 minutes".to_owned(),
             retry_at: Some(NOW + 120)
         }
     );
@@ -571,7 +578,7 @@ async fn a_rejected_token_a_forbidden_repository_a_rate_limit_and_a_down_server_
     let error = client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
     assert_eq!(
         error,
-        PlatformError::Unreachable("dev.azure.com answered 500".to_owned())
+        PlatformError::Unreachable("dev.azure.com/contoso answered 500".to_owned())
     );
 }
 
@@ -582,7 +589,7 @@ async fn nothing_is_sent_without_a_credential_or_for_another_platforms_repositor
         .list_pull_requests(&remote(), &all_open())
         .await
         .unwrap_err();
-    assert_eq!(error, PlatformError::SignedOut("dev.azure.com".to_owned()));
+    assert_eq!(error, PlatformError::SignedOut("dev.azure.com/contoso".to_owned()));
 
     let github = RemoteKey {
         host: "github.com".to_owned(),
@@ -594,6 +601,38 @@ async fn nothing_is_sent_without_a_credential_or_for_another_platforms_repositor
         .unwrap_err();
     assert!(matches!(error, PlatformError::Unexpected(_)));
     assert!(fake.requests().is_empty());
+}
+
+/// Hands out a token for the accounts it is told of.
+struct Accounts(&'static [&'static str]);
+
+impl CredentialProvider for Accounts {
+    fn credential(&self, host: &str, _: i64) -> impl Future<Output = Option<Credential>> + Send {
+        std::future::ready(self.0.contains(&host).then(|| Credential {
+            token: Token::new("secret").unwrap(),
+            source: CredentialSource::Pat,
+        }))
+    }
+}
+
+#[tokio::test]
+async fn a_remote_is_reached_by_the_account_of_its_organization_and_by_no_other() {
+    set_now(NOW);
+    let fake = repository(vec![], vec![], vec![]);
+    let client = client_with(&fake, Accounts(&["dev.azure.com/contoso"]));
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let old_address = RemoteKey {
+        host: "contoso.visualstudio.com".to_owned(),
+        path: "contoso/Shop/api".to_owned(),
+    };
+    client.list_pull_requests(&old_address, &all_open()).await.unwrap();
+
+    let other = RemoteKey {
+        host: "dev.azure.com".to_owned(),
+        path: "fabrikam/Shop/api".to_owned(),
+    };
+    let error = client.list_pull_requests(&other, &all_open()).await.unwrap_err();
+    assert_eq!(error, PlatformError::SignedOut("dev.azure.com/fabrikam".to_owned()));
 }
 
 #[test]

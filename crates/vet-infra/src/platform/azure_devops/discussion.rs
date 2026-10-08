@@ -302,7 +302,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
     ) -> Result<Discussion, PlatformError> {
         let call = self.call(remote).await?;
         let id = pull_request_id(remote, number)?;
-        let host = remote.host.as_str();
+        let host = &remote.account();
         let Repository {
             organization,
             project,
@@ -378,8 +378,9 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         remote: &vet_app::platform::RemoteKey,
         comment_ref: &CommentRef,
     ) -> Result<PlatformComment, PlatformError> {
-        let (pull_request, thread, comment_number) = parse_comment(&comment_ref.id)
-            .ok_or_else(|| PlatformError::NotFound(format!("{} has no comment {}", remote.host, comment_ref.id)))?;
+        let (pull_request, thread, comment_number) = parse_comment(&comment_ref.id).ok_or_else(|| {
+            PlatformError::NotFound(format!("{} has no comment {}", remote.account(), comment_ref.id))
+        })?;
         let call = self.call(remote).await?;
         let Repository {
             organization,
@@ -391,9 +392,9 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .pull_request_thread_comments_client()
             .get(organization, name, pull_request, thread, comment_number, project)
             .await;
-        let found = self.settle(&remote.host, found)?;
+        let found = self.settle(&remote.account(), found)?;
         self::comment(pull_request, thread, &found, &call.me, None)
-            .ok_or_else(|| PlatformError::NotFound(format!("{} has no comment {}", remote.host, comment_ref.id)))
+            .ok_or_else(|| PlatformError::NotFound(format!("{} has no comment {}", remote.account(), comment_ref.id)))
     }
 
     pub(super) async fn write_comment(
@@ -402,8 +403,9 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         comment_ref: &CommentRef,
         body: &str,
     ) -> Result<PlatformComment, PlatformError> {
-        let (pull_request, thread, comment_number) = parse_comment(&comment_ref.id)
-            .ok_or_else(|| PlatformError::NotFound(format!("{} has no comment {}", remote.host, comment_ref.id)))?;
+        let (pull_request, thread, comment_number) = parse_comment(&comment_ref.id).ok_or_else(|| {
+            PlatformError::NotFound(format!("{} has no comment {}", remote.account(), comment_ref.id))
+        })?;
         let call = self.call(remote).await?;
         let Repository {
             organization,
@@ -427,9 +429,12 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
                 project,
             )
             .await;
-        let updated = self.settle(&remote.host, updated)?;
+        let updated = self.settle(&remote.account(), updated)?;
         self::comment(pull_request, thread, &updated, &call.me, None).ok_or_else(|| {
-            PlatformError::Unexpected(format!("{} answered an edit with something but a comment", remote.host))
+            PlatformError::Unexpected(format!(
+                "{} answered an edit with something but a comment",
+                remote.account()
+            ))
         })
     }
 
@@ -438,8 +443,9 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         remote: &vet_app::platform::RemoteKey,
         comment_ref: &CommentRef,
     ) -> Result<(), PlatformError> {
-        let (pull_request, thread, comment_number) = parse_comment(&comment_ref.id)
-            .ok_or_else(|| PlatformError::NotFound(format!("{} has no comment {}", remote.host, comment_ref.id)))?;
+        let (pull_request, thread, comment_number) = parse_comment(&comment_ref.id).ok_or_else(|| {
+            PlatformError::NotFound(format!("{} has no comment {}", remote.account(), comment_ref.id))
+        })?;
         let call = self.call(remote).await?;
         let Repository {
             organization,
@@ -451,7 +457,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .pull_request_thread_comments_client()
             .delete(organization, name, pull_request, thread, comment_number, project)
             .await;
-        self.settle(&remote.host, removed)
+        self.settle(&remote.account(), removed)
     }
 
     pub(super) async fn resolve_thread(
@@ -461,7 +467,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         resolve: bool,
     ) -> Result<(), PlatformError> {
         let (pull_request, thread) = parse_thread(thread_ref)
-            .ok_or_else(|| PlatformError::NotFound(format!("{} has no thread {thread_ref}", remote.host)))?;
+            .ok_or_else(|| PlatformError::NotFound(format!("{} has no thread {thread_ref}", remote.account())))?;
         let call = self.call(remote).await?;
         let Repository {
             organization,
@@ -485,7 +491,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .pull_request_threads_client()
             .update(organization, update, name, pull_request, thread, project)
             .await;
-        self.settle(&remote.host, updated).map(|_| ())
+        self.settle(&remote.account(), updated).map(|_| ())
     }
 
     pub(super) async fn set_vote(
@@ -495,14 +501,13 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         verdict: &str,
     ) -> Result<(), PlatformError> {
         let vote = vote_of(verdict)
-            .ok_or_else(|| PlatformError::Unexpected(format!("{} has no verdict {verdict}", remote.host)))?;
+            .ok_or_else(|| PlatformError::Unexpected(format!("{} has no verdict {verdict}", remote.account())))?;
         let id = pull_request_id(remote, number)?;
         let call = self.call(remote).await?;
-        let me = call
-            .me
-            .id
-            .clone()
-            .ok_or_else(|| PlatformError::Unexpected(format!("{} did not say who the user is", remote.host)))?;
+        let me =
+            call.me.id.clone().ok_or_else(|| {
+                PlatformError::Unexpected(format!("{} did not say who the user is", remote.account()))
+            })?;
         let Repository {
             organization,
             project,
@@ -517,7 +522,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .pull_request_reviewers_client()
             .create_pull_request_reviewer(organization, body, name, id, me, project)
             .await;
-        self.settle(&remote.host, voted).map(|_| ())
+        self.settle(&remote.account(), voted).map(|_| ())
     }
 
     /// Posts the drafts of `submission` one after the other. Posting stops at the first the platform
@@ -545,7 +550,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             project,
             name,
         } = call.repository;
-        let host = call.remote.host.as_str();
+        let host = &call.remote.account();
         let list = call
             .git
             .pull_request_iterations_client()
@@ -656,11 +661,11 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .pull_request_threads_client()
             .create(organization, body, name, pull_request, project)
             .await;
-        let created = self.settle(&call.remote.host, created)?;
+        let created = self.settle(&call.remote.account(), created)?;
         let unexpected = || {
             PlatformError::Unexpected(format!(
                 "{} answered a new thread with something but a thread",
-                call.remote.host
+                call.remote.account()
             ))
         };
         let id = created.comment_thread.id.ok_or_else(unexpected)?;
@@ -687,7 +692,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         commit: &str,
     ) -> Result<PostedComment, PlatformError> {
         let (pull_request, thread) = parse_thread(thread_ref)
-            .ok_or_else(|| PlatformError::NotFound(format!("{} has no thread {thread_ref}", call.remote.host)))?;
+            .ok_or_else(|| PlatformError::NotFound(format!("{} has no thread {thread_ref}", call.remote.account())))?;
         let Repository {
             organization,
             project,
@@ -698,11 +703,11 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .pull_request_thread_comments_client()
             .create(organization, new_comment(body, 1), name, pull_request, thread, project)
             .await;
-        let added = self.settle(&call.remote.host, added)?;
+        let added = self.settle(&call.remote.account(), added)?;
         let comment = comment(pull_request, thread, &added, &call.me, Some(&commit.to_owned())).ok_or_else(|| {
             PlatformError::Unexpected(format!(
                 "{} answered a new comment with something but a comment",
-                call.remote.host
+                call.remote.account()
             ))
         })?;
         Ok(PostedComment { key, comment })

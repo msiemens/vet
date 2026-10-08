@@ -5743,6 +5743,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "tracing",
  "url",
  "vet-app",
  "vet-core",

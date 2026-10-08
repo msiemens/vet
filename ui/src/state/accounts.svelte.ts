@@ -8,7 +8,7 @@ import type { Backend } from "./backend";
 import { removeStoredCredential, storeCredential, storedCredential, storedCredentials } from "./host";
 import { session } from "./session.svelte";
 
-export type AddResult = { ok: true; warning?: string } | { ok: false; error: string };
+export type AddResult = { ok: true; host: string; warning?: string } | { ok: false; error: string };
 
 class AccountsStore {
   accounts = $state.raw<Account[]>([]);
@@ -67,8 +67,9 @@ class AccountsStore {
     const backend = session.backend;
     if (!backend) return { ok: false, error: "not connected to the backend" };
     let warning: string | undefined;
+    let account: Account;
     try {
-      const account = await backend.setCredentials(host, token, true);
+      account = await backend.setCredentials(host, token, true);
       try {
         await storeCredential(account.host, token);
       } catch (e) {
@@ -78,7 +79,7 @@ class AccountsStore {
       return { ok: false, error: errorText(e) };
     }
     await this.load();
-    return { ok: true, warning };
+    return { ok: true, host: account.host, warning };
   }
 
   /**

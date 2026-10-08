@@ -1,6 +1,7 @@
 //! `vet_app::platform::CredentialValidator`: asks GitHub or Azure DevOps whom a token
 //! belongs to. The token goes in a request header to the host it is for and nowhere
-//! else; nothing here logs a request or a response.
+//! else; a refusal is logged with its host and the platform's reason, never a token, a
+//! request or a response.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -10,7 +11,7 @@ use vet_app::platform::{Credential, CredentialValidator, PlatformError, Platform
 
 use crate::clock::unix_now;
 use crate::http::http_client;
-use crate::platform::azure_devops::access::{Access, PROFILE_ENDPOINT};
+use crate::platform::azure_devops::access::{API_ENDPOINT, Access};
 use crate::platform::github;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -62,9 +63,14 @@ impl HttpValidator {
     }
 
     async fn azure_devops_user(&self, host: &str, credential: &Credential) -> Result<String, ValidationError> {
-        let endpoint = self.endpoint(|| PROFILE_ENDPOINT.to_owned());
+        let Some(organization) = host.strip_prefix("dev.azure.com/") else {
+            return Err(ValidationError::Rejected(format!(
+                "{host} is not the account of an Azure DevOps organization, e.g. dev.azure.com/contoso"
+            )));
+        };
+        let endpoint = self.endpoint(|| API_ENDPOINT.to_owned());
         let me = Access::new(credential, self.http()?)
-            .me(&endpoint, host, unix_now())
+            .me(&endpoint, organization, host, unix_now())
             .await
             .map_err(|e| match e {
                 PlatformError::Rejected(why) | PlatformError::Forbidden(why) => ValidationError::Rejected(why),
@@ -78,10 +84,15 @@ impl HttpValidator {
 
 impl CredentialValidator for HttpValidator {
     async fn user(&self, host: &str, kind: PlatformKind, credential: &Credential) -> Result<String, ValidationError> {
-        match kind {
+        let answer = match kind {
             PlatformKind::GitHub => self.github_user(host, credential).await,
             PlatformKind::AzureDevOps => self.azure_devops_user(host, credential).await,
+        };
+        if let Err(error) = &answer {
+            let (ValidationError::Rejected(why) | ValidationError::Unreachable(why)) = error;
+            tracing::warn!(host, ?kind, reason = %why, "a credential could not be validated");
         }
+        answer
     }
 }
 
@@ -165,15 +176,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_azure_devops_user_is_the_name_in_the_profile_and_a_personal_token_has_no_user_name() {
-        let fake = Fake::start(|_, _| {
-            Canned::json(
-                r#"{"displayName":"Ada Lovelace","publicAlias":"1f","emailAddress":"ada@example.com","id":"a1"}"#,
-            )
+    async fn the_azure_devops_user_is_asked_of_the_organization_and_a_personal_token_has_no_user_name() {
+        // A token of one organization is refused by the global profile, which is not asked.
+        let fake = Fake::start(|seen, _| {
+            if seen.path == "/contoso/_apis/connectionData" {
+                Canned::json(
+                    r#"{"authenticatedUser":{"id":"a1","providerDisplayName":"Ada Lovelace",
+"properties":{"Account":{"$type":"System.String","$value":"ada@example.com"}}}}"#,
+                )
+            } else {
+                Canned::status(401, r#"{"message":"VS30063: You are not authorized"}"#)
+            }
         });
         let user = validator(&fake)
             .user(
-                "dev.azure.com",
+                "dev.azure.com/contoso",
                 PlatformKind::AzureDevOps,
                 &credential(CredentialSource::Pat),
             )
@@ -181,17 +198,13 @@ mod tests {
             .unwrap();
         assert_eq!(user, "Ada Lovelace");
         let request = &fake.requests()[0];
-        assert!(
-            request.path.starts_with("/_apis/profile/profiles/me"),
-            "{}",
-            request.path
-        );
+        assert_eq!(request.path, "/contoso/_apis/connectionData");
         // base64 of ":secret".
         assert_eq!(request.header("authorization"), Some("Basic OnNlY3JldA=="));
 
         let user = validator(&fake)
             .user(
-                "dev.azure.com",
+                "dev.azure.com/contoso",
                 PlatformKind::AzureDevOps,
                 &credential(CredentialSource::Cli),
             )
@@ -214,7 +227,7 @@ mod tests {
             });
             let error = validator(&fake)
                 .user(
-                    "dev.azure.com",
+                    "dev.azure.com/contoso",
                     PlatformKind::AzureDevOps,
                     &credential(CredentialSource::Pat),
                 )
@@ -225,11 +238,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_refused_azure_devops_token_carries_the_platforms_reason() {
+        let fake = Fake::start(|_, _| Canned::status(401, r#"{"message":"TF400813: The user is not authorized"}"#));
+        let error = validator(&fake)
+            .user(
+                "dev.azure.com/contoso",
+                PlatformKind::AzureDevOps,
+                &credential(CredentialSource::Pat),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ValidationError::Rejected(
+                "dev.azure.com/contoso refused the token: TF400813: The user is not authorized (401)".to_owned()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn an_azure_devops_account_without_an_organization_is_not_asked() {
+        let fake = Fake::start(|_, _| Canned::status(200, "{}"));
+        let error = validator(&fake)
+            .user(
+                "dev.azure.com",
+                PlatformKind::AzureDevOps,
+                &credential(CredentialSource::Pat),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ValidationError::Rejected(_)), "{error:?}");
+        assert!(fake.requests().is_empty());
+    }
+
+    #[tokio::test]
     async fn an_azure_devops_server_error_is_not_a_refusal() {
         let fake = Fake::start(|_, _| Canned::status(500, ""));
         let error = validator(&fake)
             .user(
-                "dev.azure.com",
+                "dev.azure.com/contoso",
                 PlatformKind::AzureDevOps,
                 &credential(CredentialSource::Pat),
             )

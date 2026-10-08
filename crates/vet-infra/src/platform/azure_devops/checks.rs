@@ -137,7 +137,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             project,
             name,
         } = call.repository;
-        let host = remote.host.as_str();
+        let host = &remote.account();
         let (pr, iterations) = futures::future::try_join(
             async {
                 let found = call
@@ -187,7 +187,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .pull_request_query_client()
             .get(organization, query, name, project)
             .await;
-        let answer = Self::or_nothing(self.settle(&call.remote.host, answer))?;
+        let answer = Self::or_nothing(self.settle(&call.remote.account(), answer))?;
         // The answer is a list of maps from a commit to the pull requests that have it.
         let found = answer
             .results
@@ -220,7 +220,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             project,
             name,
         } = call.repository;
-        let host = call.remote.host.as_str();
+        let host = &call.remote.account();
         let number = pr.pull_request_id;
         let source = |i: &GitPullRequestIteration| i.source_ref_commit.as_ref().and_then(|c| c.commit_id.clone());
         let of_commit: Vec<i32> = iterations
@@ -290,12 +290,12 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
     /// The log of the step of build `check` that failed, with the line of its first error.
     pub(super) async fn build_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
         let build = build_number(check)
-            .ok_or_else(|| PlatformError::NotFound(format!("{} has no log for {check}", remote.host)))?;
+            .ok_or_else(|| PlatformError::NotFound(format!("{} has no log for {check}", remote.account())))?;
         let call = self.call(remote).await?;
         let Repository {
             organization, project, ..
         } = call.repository;
-        let host = remote.host.as_str();
+        let host = &remote.account();
         let builds = call.access.builds(&self.endpoints().api)?;
         let timeline = builds.timeline_client().get(organization, project, build, "").await;
         let timeline = self.settle(host, timeline)?;

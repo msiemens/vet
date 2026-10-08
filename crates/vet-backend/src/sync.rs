@@ -129,8 +129,9 @@ impl Orchestrator {
             return Err("the changeset on view is not a pull request".into());
         };
         let view = (open.session.discussion().await).ok_or("the pull request was not synced yet")?;
-        let connection = open.open.connection(&remote.host).unwrap_or(PlatformConnection::Ok);
-        let status = mapping::platform_status(&remote.host, remote.kind(), connection);
+        let account = remote.account();
+        let connection = open.open.connection(&account).unwrap_or(PlatformConnection::Ok);
+        let status = mapping::platform_status(&account, remote.kind(), connection);
         Ok(Response::PullRequestInfo(Box::new(mapping::pull_request_info(
             &view,
             remote.kind(),
@@ -164,7 +165,7 @@ pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) {
     announce(
         open,
         booted,
-        &remote.host,
+        &remote.account(),
         remote.kind(),
         problem.as_ref(),
         report.as_ref(),
