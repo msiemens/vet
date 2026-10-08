@@ -17,9 +17,10 @@ exists() { [[ -e $1 ]]; }
 
 step() { printf '\n== %s\n' "$*"; }
 
-rust_files=() crates=() tauri=false protocol=false deps=false ui_files=()
+rust_files=() crates=() tauri=false protocol=false deps=false cycle_tool=false ui_files=()
 for f in "${changed[@]}"; do
     case $f in
+        tools/module-cycles/* | ci/check-module-cycles.sh | ci/fixtures/module-cycle/*) cycle_tool=true ;;
         ui/src-tauri/*) tauri=true ;;
         ui/src/generated/*) ;;
         ui/*) exists "$f" && ui_files+=("${f#ui/}") ;;
@@ -59,6 +60,15 @@ fi
 if $deps; then
     step "check-deps"
     ci/check-deps.sh
+fi
+if $cycle_tool; then
+    step "cargo fmt (tools/module-cycles)"
+    cargo fmt --manifest-path tools/module-cycles/Cargo.toml --check
+    step "cargo clippy (tools/module-cycles)"
+    cargo clippy --manifest-path tools/module-cycles/Cargo.toml -- -D warnings
+    step "module cycles (self-test, whole workspace)"
+    ci/check-module-cycles.sh --self-test
+    ci/check-module-cycles.sh
 fi
 if $tauri; then
     step "cargo fmt (ui/src-tauri)"

@@ -10,8 +10,11 @@ step() { printf '\n== %s\n' "$*"; }
 step "cargo fmt"
 cargo fmt --all --check
 cargo fmt --manifest-path ui/src-tauri/Cargo.toml --check
+cargo fmt --manifest-path tools/module-cycles/Cargo.toml --check
 step "cargo clippy"
 cargo clippy --workspace --all-targets -- -D warnings
+step "cargo clippy (tools/module-cycles)"
+cargo clippy --manifest-path tools/module-cycles/Cargo.toml -- -D warnings
 step "cargo clippy (ui/src-tauri)"
 tauri_clippy=(cargo clippy --manifest-path ui/src-tauri/Cargo.toml --all-targets -- -D warnings)
 if [[ $(uname) != Linux ]] || pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
@@ -47,6 +50,7 @@ step "cargo sweep"
 if command -v cargo-sweep >/dev/null; then
     cargo sweep --maxsize 10GB
     cargo sweep --maxsize 10GB ui/src-tauri
+    cargo sweep --maxsize 10GB tools/module-cycles
 else
     echo "SKIPPED: cargo-sweep is not installed (cargo install cargo-sweep)"
 fi
