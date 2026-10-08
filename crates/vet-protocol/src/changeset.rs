@@ -23,6 +23,18 @@ pub enum ChangesetKey {
     },
 }
 
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CommitInfo {
+    pub id: String,
+    pub short_id: String,
+    pub subject: String,
+    pub author: String,
+    /// Unix seconds.
+    pub time: u32,
+}
+
 /// How far a branch is from the repository's default branch.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

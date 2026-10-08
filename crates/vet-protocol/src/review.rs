@@ -3,16 +3,10 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{ChangesetKey, FileChange, FileReview, InterdiffInfo, Lens, LineDelta, ProjectId, RestoreFailure};
-
-/// A side of the changeset.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub enum Side {
-    Base,
-    Target,
-}
+use crate::{
+    ChangesetKey, CommitInfo, Completion, FileChange, FileReview, InterdiffInfo, Lens, LineDelta, ProjectId,
+    RestoreFailure,
+};
 
 /// What the review shows and counts (§5.2). A path passes if it is under one of
 /// `roots` (or there are none), matches `include` (or there is none) and does not
@@ -124,18 +118,6 @@ pub struct BranchInfo {
     pub default: bool,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct CommitInfo {
-    pub id: String,
-    pub short_id: String,
-    pub subject: String,
-    pub author: String,
-    /// Unix seconds.
-    pub time: u32,
-}
-
 /// A hunk seen against an old base: the base-side lines as they were when it was marked, as a diff
 /// to the lines the base has now.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -181,30 +163,6 @@ pub struct ReviewUpdate {
     pub completion: Completion,
     /// The changeset's completion after the change.
     pub changeset: Completion,
-}
-
-/// Progress against the review filter (§5.2): changed lines (counted per side),
-/// text hunks and non-text items. A shell shows these as they are.
-#[derive(Clone, Copy, Default, PartialEq, Debug, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export)]
-pub struct Completion {
-    pub lines: u32,
-    pub seen_lines: u32,
-    /// Lines seen against an older base; they count as unseen in `seen_lines`.
-    pub old_base_lines: u32,
-    pub hunks: u32,
-    /// Hunks whose changed lines are all seen; one seen against an older base is not.
-    pub seen_hunks: u32,
-    pub items: u32,
-    pub acknowledged_items: u32,
-    /// Everything counted here is seen: all lines and all non-text items.
-    pub complete: bool,
-    /// How much of the lines and non-text items together is seen, in percent; 0 with
-    /// nothing to review.
-    pub seen_percent: f32,
-    /// How much of them is seen against an older base only, in percent.
-    pub old_base_percent: f32,
 }
 
 /// The changeset as displayed through the repository's review filter.

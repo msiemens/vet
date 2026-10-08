@@ -1,7 +1,16 @@
-//! How a text is shown: its syntax highlighting and its changed ranges.
+//! How a text is shown: its sides, syntax highlighting and changed ranges.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+/// A side of the changeset.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Side {
+    Base,
+    Target,
+}
 
 /// Syntax highlighting of a text, as the plain numbers of a `Vec<u32>`: three per coloured
 /// range, in order and not overlapping: the gap since the end of the previous range (since the

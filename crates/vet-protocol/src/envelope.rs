@@ -84,6 +84,3 @@ pub enum ServerMessage {
         event: Event,
     },
 }
-
-/// Assigned by the backend in [`Response::Project`]: the handle to an open repository.
-pub type ProjectId = u32;
