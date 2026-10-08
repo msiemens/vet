@@ -71,21 +71,46 @@
     drag = { x: e.clientX, y: e.clientY, start: { w: sheet.offsetWidth, h: sheet.offsetHeight }, dx, dy };
   }
 
+  /** Sets the size, kept within the window and above the smallest. */
+  function resize(w: number, h: number) {
+    size = {
+      w: Math.min(innerWidth - 32, Math.max(MIN.w, w)),
+      h: Math.min(innerHeight * (1 - TOP) - 16, Math.max(MIN.h, h)),
+    };
+  }
+
+  function keep() {
+    if (resizable) writeStored(storageKey(resizable), JSON.stringify(size));
+  }
+
   function onpointermove(e: PointerEvent) {
     if (!drag) return;
     // Centred, so a side moves by half of what the width changes by.
     const w = drag.start.w + 2 * drag.dx * (e.clientX - drag.x);
     const h = drag.start.h + drag.dy * (e.clientY - drag.y);
-    size = {
-      w: Math.min(innerWidth - 32, Math.max(MIN.w, drag.dx ? w : drag.start.w)),
-      h: Math.min(innerHeight * (1 - TOP) - 16, Math.max(MIN.h, h)),
-    };
+    resize(drag.dx ? w : drag.start.w, h);
   }
 
   function onpointerup() {
     if (!drag) return;
     drag = undefined;
-    if (resizable) writeStored(storageKey(resizable), JSON.stringify(size));
+    keep();
+  }
+
+  const STEP = 16;
+
+  /** The right edge widens with the right arrow, the bottom one lengthens with the down arrow; Shift steps further. */
+  function onkeydown(e: KeyboardEvent, edge: "right" | "bottom") {
+    const [less, more] = edge === "right" ? ["ArrowLeft", "ArrowRight"] : ["ArrowUp", "ArrowDown"];
+    const sign = e.key === more ? 1 : e.key === less ? -1 : 0;
+    if (!sign) return;
+    e.preventDefault();
+    const step = sign * STEP * (e.shiftKey ? 4 : 1);
+    const [w, h] = [sheet.offsetWidth, sheet.offsetHeight];
+    // Centred, so the width grows on both sides: twice the step moves the edge by one.
+    if (edge === "right") resize(w + 2 * step, h);
+    else resize(w, h + step);
+    keep();
   }
 
   onMount(() => {
@@ -124,13 +149,31 @@
   {#if actions}<footer>{@render actions()}</footer>{/if}
   {#if resizable}
     {#each EDGES as edge (edge.name)}
-      <div
-        class="edge {edge.name}"
-        aria-hidden="true"
-        onpointerdown={(e) => onpointerdown(e, edge.dx, edge.dy)}
-        {onpointermove}
-        {onpointerup}
-      ></div>
+      {#if edge.name === "right" || edge.name === "bottom"}
+        {@const name = edge.name}
+        <!-- The right and bottom edges are also the keyboard's way to resize: focusable window splitters. -->
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+        <div
+          class="edge {name}"
+          role="separator"
+          aria-orientation={name === "right" ? "vertical" : "horizontal"}
+          aria-label={name === "right" ? "Dialog width" : "Dialog height"}
+          aria-valuenow={size && (name === "right" ? size.w : size.h)}
+          tabindex="0"
+          onpointerdown={(e) => onpointerdown(e, edge.dx, edge.dy)}
+          {onpointermove}
+          {onpointerup}
+          onkeydown={(e) => onkeydown(e, name)}
+        ></div>
+      {:else}
+        <div
+          class="edge {edge.name}"
+          aria-hidden="true"
+          onpointerdown={(e) => onpointerdown(e, edge.dx, edge.dy)}
+          {onpointermove}
+          {onpointerup}
+        ></div>
+      {/if}
     {/each}
   {/if}
 </dialog>
@@ -178,6 +221,10 @@
   .edge {
     position: absolute;
     touch-action: none;
+  }
+  .edge:focus-visible {
+    outline: none;
+    background: var(--focus);
   }
   .left,
   .right {
