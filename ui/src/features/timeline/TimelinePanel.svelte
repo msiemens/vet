@@ -5,6 +5,8 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
+  import Table from "../../lib/ui/Table.svelte";
+  import type { Column } from "../../lib/ui/columns";
   import { checks } from "../../state/checks.svelte";
   import { type Range, rowRange } from "../../state/timelineRange";
   import { type RangeFile, timelineRows } from "./timelineRows";
@@ -31,6 +33,14 @@
     onclose: () => void;
   } = $props();
 
+  const COLUMNS: Column[] = [
+    { id: "version", label: "Version", width: 56 },
+    { id: "time", label: "Time", width: 96, min: 50 },
+    { id: "files", label: "Files", flex: true, min: 80 },
+    { id: "ci", label: "", width: 14, fixed: true },
+    { id: "lines", label: "Lines", width: 70, align: "right" },
+  ];
+
   const rows = $derived(timelineRows(versions, range));
   /** The version clicked last, which a shift-click runs the range from. */
   let anchor = $state<number>();
@@ -56,11 +66,17 @@
     <IconButton icon="minus" label="Collapse the timeline" size={22} iconSize={14} onclick={onclose} />
   </header>
   <div class="body">
-    <div class="table">
-      <div class="row head">
-        <span>Version</span><span>Time</span><span>Files</span><span></span><span class="right">Lines</span>
-      </div>
-      <ScrollArea>
+    <div class="versions">
+      <Table
+        name="timeline"
+        columns={COLUMNS}
+        --table-pad="14px"
+        --table-pad-end="12px"
+        --table-row="26px"
+        --table-head="24px"
+        --table-head-color="var(--text-3)"
+        --table-head-size="var(--fs-mono-s)"
+      >
         <ul class="rows" aria-label="Versions, newest first">
           {#each rows as row (row.n)}
             <li>
@@ -95,7 +111,7 @@
             <li class="empty">Versions start when you first mark something seen, acknowledge a change or comment.</li>
           {/each}
         </ul>
-      </ScrollArea>
+      </Table>
     </div>
     <div class="files">
       <ScrollArea>
@@ -152,7 +168,7 @@
     min-height: 0;
     display: flex;
   }
-  .table {
+  .versions {
     flex: 1;
     min-width: 0;
     display: flex;
@@ -166,26 +182,7 @@
     list-style: none;
   }
   .row {
-    display: grid;
-    grid-template-columns: 56px 96px minmax(0, 1fr) 14px auto;
-    align-items: center;
-    column-gap: 12px;
-    width: 100%;
-    height: 26px;
-    padding: 0 12px 0 14px;
-    box-sizing: border-box;
-    text-align: left;
     font-size: var(--fs-ctl);
-    border-radius: 0;
-  }
-  /* Over the rows' scroll bar too, so the columns line up. */
-  .head {
-    flex: none;
-    padding-right: calc(12px + var(--w-scrollbar));
-    height: 24px;
-    color: var(--text-3);
-    border-bottom: 1px solid var(--line-soft);
-    font-size: var(--fs-mono-s);
   }
   .row.edge,
   .row.inside {

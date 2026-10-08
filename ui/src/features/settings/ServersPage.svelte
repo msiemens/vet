@@ -6,6 +6,8 @@
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
+  import Table from "../../lib/ui/Table.svelte";
+  import type { Column } from "../../lib/ui/columns";
   import { backendSettings } from "../../state/backendSettings.svelte";
   import { servers } from "../../state/servers.svelte";
   import ServerPathSheet from "./ServerPathSheet.svelte";
@@ -15,6 +17,14 @@
   let editing = $state<ServerRow>();
   /** Why going back to the automatic server failed, with its language. */
   let pathError = $state<{ language: string; message: string }>();
+
+  const COLUMNS: Column[] = [
+    { id: "language", label: "Language", width: 90, min: 60 },
+    { id: "server", label: "Server", flex: true, min: 80 },
+    { id: "version", label: "Version", width: 80, min: 50 },
+    { id: "source", label: "Source", width: 120, min: 60 },
+    { id: "status", label: "", width: 28, fixed: true },
+  ];
 
   const search = new SpeedSearch();
   let tableEl = $state<HTMLElement>();
@@ -78,21 +88,27 @@
   {:else}
     {#if search.active}<SpeedSearchField query={search.query} found={rows.length > 0} />{/if}
     <div class="box">
-      <div
-        bind:this={tableEl}
-        class="table"
+      <Table
+        name="servers"
+        columns={COLUMNS}
+        scroll={false}
+        ruled
+        bind:body={tableEl}
         role="listbox"
         aria-label="Language servers"
-        tabindex="-1"
+        tabindex={-1}
         onkeydown={(e) => search.keydown(e, tableEl, "button:enabled")}
         {...search.attributes}
+        --table-gap="8px"
+        --table-pad="10px"
+        --table-pad-end="6px"
+        --table-row="30px"
+        --table-head="30px"
+        --table-head-color="var(--text-3)"
       >
-        <div class="head">
-          <span>Language</span><span>Server</span><span>Version</span><span>Source</span><span></span>
-        </div>
         {#each rows as row (row.language)}
           <button
-            class="row"
+            class="flat row"
             type="button"
             role="option"
             aria-selected={row === selected}
@@ -106,7 +122,7 @@
           </button>
         {/each}
         {#if !rows.length}<p class="empty pad">No language server matches.</p>{/if}
-      </div>
+      </Table>
     </div>
 
     {#if selected}
@@ -271,39 +287,8 @@
     background: var(--bg-editor);
     overflow: hidden;
   }
-  .table {
-    display: flex;
-    flex-direction: column;
-  }
-  .head,
-  .row {
-    display: grid;
-    grid-template-columns: 0.8fr 1.5fr 0.7fr 1fr 28px;
-    align-items: center;
-    column-gap: 8px;
-    padding: 0 6px 0 10px;
-    height: 30px;
-    text-align: left;
-  }
-  .head {
-    color: var(--text-3);
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .row {
-    border: 0;
-    border-bottom: 1px solid var(--line-soft);
-    background: transparent;
-    color: var(--text);
-    font: inherit;
-  }
-  .row:last-child {
+  .box .row:last-child {
     border-bottom: 0;
-  }
-  .row:hover {
-    background: var(--hover);
-  }
-  .row[aria-selected="true"] {
-    background: var(--toggle);
   }
   .clip {
     min-width: 0;

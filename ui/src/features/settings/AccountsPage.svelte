@@ -2,9 +2,19 @@
   import { onMount } from "svelte";
   import { accounts } from "../../state/accounts.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import Table from "../../lib/ui/Table.svelte";
+  import type { Column } from "../../lib/ui/columns";
   import { hasKeychain } from "../../state/host";
   import AccountSheet from "./AccountSheet.svelte";
   import { accountRow, type AccountRow } from "./accountRows";
+
+  const COLUMNS: Column[] = [
+    { id: "platform", label: "", width: 50, fixed: true },
+    { id: "host", label: "Host", flex: true, min: 80 },
+    { id: "account", label: "Account", width: 130, min: 60 },
+    { id: "credential", label: "Credential", width: 100, min: 60 },
+    { id: "status", label: "", width: 28, fixed: true },
+  ];
 
   const rows = $derived(accounts.accounts.map((a) => accountRow(a, hasKeychain)));
   let selectedKey = $state<string>();
@@ -44,32 +54,44 @@
     <p class="problem">{accounts.loadError}</p>
   {/if}
   <div class="box">
-    <div class="table" role="listbox" aria-label="Accounts">
-      <div class="head">
-        <span></span><span>Host</span><span>Account</span><span>Credential</span><span></span>
-      </div>
-      {#each rows as row (row.key)}
-        <button
-          class="row"
-          type="button"
-          role="option"
-          aria-selected={row === selected}
-          onclick={() => (selectedKey = row.key)}
-        >
-          <span class="mark" title={row.platform.name}><Icon name={row.platform.icon} size={16} /></span>
-          <span class="host">{row.host}</span>
-          <span>{row.user ?? ""}</span>
-          <span>{row.credential}</span>
-          <span class="dot {row.status}" title={row.statusLabel}></span>
-        </button>
-      {/each}
-      {#if !rows.length}
-        <p class="empty">
-          {accounts.loading
-            ? "Looking for accounts…"
-            : "No accounts yet. Sign in with gh auth login or az login, or add a personal access token."}
-        </p>
-      {/if}
+    <div class="list">
+      <Table
+        name="accounts"
+        columns={COLUMNS}
+        scroll={false}
+        ruled
+        role="listbox"
+        aria-label="Accounts"
+        --table-gap="4px"
+        --table-pad="10px"
+        --table-pad-end="6px"
+        --table-row="30px"
+        --table-head="30px"
+        --table-head-color="var(--text-3)"
+      >
+        {#each rows as row (row.key)}
+          <button
+            class="flat row"
+            type="button"
+            role="option"
+            aria-selected={row === selected}
+            onclick={() => (selectedKey = row.key)}
+          >
+            <span class="mark" title={row.platform.name}><Icon name={row.platform.icon} size={16} /></span>
+            <span class="host">{row.host}</span>
+            <span>{row.user ?? ""}</span>
+            <span>{row.credential}</span>
+            <span class="dot {row.status}" title={row.statusLabel}></span>
+          </button>
+        {/each}
+        {#if !rows.length}
+          <p class="empty">
+            {accounts.loading
+              ? "Looking for accounts…"
+              : "No accounts yet. Sign in with gh auth login or az login, or add a personal access token."}
+          </p>
+        {/if}
+      </Table>
     </div>
     <div class="strip">
       <button type="button" aria-label="Add account" onclick={() => (sheet = "add")}>+</button>
@@ -149,37 +171,8 @@
     background: var(--bg-editor);
     overflow: hidden;
   }
-  .table {
+  .list {
     min-height: 150px;
-    display: flex;
-    flex-direction: column;
-  }
-  .head,
-  .row {
-    display: grid;
-    grid-template-columns: 50px 1.6fr 1fr 0.8fr 28px;
-    align-items: center;
-    column-gap: 4px;
-    padding: 0 6px 0 10px;
-    height: 30px;
-    text-align: left;
-  }
-  .head {
-    color: var(--text-3);
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .row {
-    border: 0;
-    border-bottom: 1px solid var(--line-soft);
-    background: transparent;
-    color: var(--text);
-    font: inherit;
-  }
-  .row:hover {
-    background: var(--hover);
-  }
-  .row[aria-selected="true"] {
-    background: var(--toggle);
   }
   .host,
   .mono {
