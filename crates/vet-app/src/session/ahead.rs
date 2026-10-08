@@ -54,7 +54,7 @@ where
     pub(super) async fn retained(
         &self,
         acquisition: &Arc<Acquisition<G, S>>,
-        (base, target, status): (&Snapshot, &Snapshot, &SnapshotStatus),
+        (base, target, status): (&Arc<Snapshot>, &Arc<Snapshot>, &SnapshotStatus),
         diffed: Arc<Diffed>,
     ) -> Result<()> {
         let key = Retained {
@@ -63,11 +63,11 @@ where
         };
         let compute = |progress: Progress| {
             let acquisition = Arc::clone(acquisition);
-            let (base, target, status) = (base.clone(), target.clone(), status.clone());
+            let (base, target, status) = (Arc::clone(base), Arc::clone(target), status.clone());
             async move {
                 let report = |done, total| progress.report(Some((done, total)), None);
                 acquisition
-                    .retain(&[&base], &target, &status, &diffed.blobs, report)
+                    .retain(&[&*base], &target, &status, &diffed.blobs, report)
                     .await?;
                 Ok(Computed::new((), false))
             }

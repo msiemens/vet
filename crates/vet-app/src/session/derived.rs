@@ -215,14 +215,14 @@ where
     S: LiveStore + Send + Sync + 'static,
 {
     /// The diff of `old` and `new`: kept, joined while it is computed, or computed.
-    pub(super) async fn diff_of(&self, old: &Snapshot, new: &Snapshot) -> Result<Arc<Diffed>> {
+    pub(super) async fn diff_of(&self, old: &Arc<Snapshot>, new: &Arc<Snapshot>) -> Result<Arc<Diffed>> {
         let key = DiffOf {
             old: old.id,
             new: new.id,
         };
         let compute = |_| {
             let acquisition = Arc::clone(&self.acquisition);
-            let (old, new) = (old.clone(), new.clone());
+            let (old, new) = (Arc::clone(old), Arc::clone(new));
             async move {
                 let diffed = diffed(&acquisition, &old, &new).await?;
                 Ok(Computed::new(Arc::new(diffed), true))

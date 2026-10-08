@@ -128,7 +128,7 @@ pub(super) fn part_completion(st: &State, view: View, files: &HashSet<RepoPath>)
 
 /// What the state lacks to show a view, computed with the state released.
 enum Missing {
-    Diff { base: Snapshot, target: Snapshot },
+    Diff { base: Arc<Snapshot>, target: Arc<Snapshot> },
     Commits(CommitsBetween),
     Interdiff(Box<Interdiffing>),
 }
@@ -418,7 +418,7 @@ where
             if st.snapshot(id).is_none()
                 && let Some((snapshot, _)) = self.acquisition.store.snapshot(id).await?
             {
-                st.known.insert(id, snapshot);
+                st.known.insert(id, Arc::new(snapshot));
             }
         }
         st.known.retain(|id, _| referenced.contains(id));

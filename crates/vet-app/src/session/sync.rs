@@ -4,6 +4,7 @@
 //! lock released, so what the viewer does meanwhile is never held up by the network.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
 use vet_core::content::{EntryKind, LineRange, RepoPath, Snapshot, SnapshotStatus, is_binary};
 use vet_core::review::{
@@ -371,11 +372,15 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let Some((first, last)) = data.lines else {
             return Ok(fallback());
         };
-        let snapshot: Option<Snapshot> = match (side, data.comments.first().and_then(|c| c.commit.clone())) {
+        let snapshot: Option<Arc<Snapshot>> = match (side, data.comments.first().and_then(|c| c.commit.clone())) {
             (Side::Base, _) => Some(st.base.clone()),
-            (Side::Target, Some(commit)) if commit != st.head.0 => {
-                self.acquisition.git.commit_snapshot(&CommitId(commit)).await.ok()
-            }
+            (Side::Target, Some(commit)) if commit != st.head.0 => self
+                .acquisition
+                .git
+                .commit_snapshot(&CommitId(commit))
+                .await
+                .ok()
+                .map(Arc::new),
             (Side::Target, _) => Some(st.target.clone()),
         };
         let Some(snapshot) = snapshot else {
@@ -398,7 +403,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         // The snapshot the anchor is placed in must outlive git dropping the commit.
         let store = &self.acquisition.store;
         store
-            .put_snapshot(snapshot.clone(), SnapshotStatus::of(&snapshot), now)
+            .put_snapshot(Snapshot::clone(&snapshot), SnapshotStatus::of(&snapshot), now)
             .await?;
         self.acquisition.keep(&path, entry.blob).await?;
         Ok(CommentTarget::Range(anchor))

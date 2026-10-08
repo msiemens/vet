@@ -2,7 +2,9 @@
 //! them, and a branch's tip and base as they are observed to move.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use vet_core::content::Snapshot;
 use vet_core::filter::ReviewFilter;
 use vet_core::review::Thread;
 
@@ -164,11 +166,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if tip == st.head && base_commit == st.base_commit {
             return Ok(None);
         }
-        let target = git.commit_snapshot(&tip).await?;
+        let target = Arc::new(git.commit_snapshot(&tip).await?);
         let base = if base_commit == st.base_commit {
             st.base.clone()
         } else {
-            git.commit_snapshot(&base_commit).await?
+            Arc::new(git.commit_snapshot(&base_commit).await?)
         };
         let now = (self.clock)();
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
@@ -176,9 +178,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             // The old base's content is kept apart from git, which may drop its objects.
             self.retain_anchored(st, st.anchors()).await?;
             store
-                .put_snapshot(target.clone(), SnapshotStatus::of(&target), now)
+                .put_snapshot(Snapshot::clone(&target), SnapshotStatus::of(&target), now)
                 .await?;
-            store.put_snapshot(base.clone(), SnapshotStatus::of(&base), now).await?;
+            store
+                .put_snapshot(Snapshot::clone(&base), SnapshotStatus::of(&base), now)
+                .await?;
             let version = Version {
                 n: review.version + 1,
                 base: base.id,
@@ -229,8 +233,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             _ => base::default_for_branch(git, &tip).await,
         }
         .map_err(SessionError::Base)?;
-        let base = git.commit_snapshot(&base_commit).await?;
-        let target = git.commit_snapshot(&tip).await?;
+        let base = Arc::new(git.commit_snapshot(&base_commit).await?);
+        let target = Arc::new(git.commit_snapshot(&tip).await?);
         acquisition.record_commit(base.id, base_commit.clone());
         acquisition.record_commit(target.id, tip.clone());
         Ok(State {

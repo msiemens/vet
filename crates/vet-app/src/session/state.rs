@@ -216,17 +216,19 @@ pub(super) struct State {
     /// `None` while browsing.
     pub(super) review: Option<OpenReview>,
     pub(super) filter: ReviewFilter,
-    pub(super) base: Snapshot,
+    /// The snapshots are shared: a command copies the state it changes, and a tree of 100k
+    /// entries is not copied with it.
+    pub(super) base: Arc<Snapshot>,
     pub(super) base_choice: BaseChoice,
     /// The commit `base` is the tree of.
     pub(super) base_commit: CommitId,
     /// The commit target snapshots are built on: `HEAD`, as of the review's
     /// start while one is open.
     pub(super) head: CommitId,
-    pub(super) target: Snapshot,
+    pub(super) target: Arc<Snapshot>,
     pub(super) target_status: SnapshotStatus,
     /// Other snapshots that recorded spans refer to.
-    pub(super) known: HashMap<SnapshotId, Snapshot>,
+    pub(super) known: HashMap<SnapshotId, Arc<Snapshot>>,
     pub(super) recorded: Vec<RecordedSpan>,
     pub(super) acks: Vec<NonTextAck>,
     pub(super) threads: Vec<Thread>,
@@ -301,7 +303,7 @@ impl State {
         } else if id == self.target.id {
             Some(&self.target)
         } else {
-            self.known.get(&id)
+            self.known.get(&id).map(|s| &**s)
         }
     }
 }

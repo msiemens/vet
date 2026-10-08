@@ -2,6 +2,7 @@
 //! one changed.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use vet_core::content::{BlobId, LineDelta, RepoPath, Snapshot};
 use vet_core::version_diff::{VersionSides, version_diff};
@@ -58,9 +59,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// Content that cannot be read leaves its file counted as a change without lines.
     pub(super) async fn change_of(
         &self,
-        previous: Option<(&Snapshot, &Snapshot)>,
-        base: &Snapshot,
-        target: &Snapshot,
+        previous: Option<(&Arc<Snapshot>, &Arc<Snapshot>)>,
+        base: &Arc<Snapshot>,
+        target: &Arc<Snapshot>,
     ) -> Result<VersionChange> {
         let Some((base_a, target_a)) = previous else {
             return Ok(change(self.diff_of(base, target).await?.diff.changed_files()));

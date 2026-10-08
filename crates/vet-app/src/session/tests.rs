@@ -2421,7 +2421,11 @@ async fn target_text_reads_unchanged_files_and_explains_missing_text() {
     .await;
     // The target is a plain file; make `link` a symlink entry.
     let mut st = fx.session.state.lock().await;
-    st.target.entries.get_mut(&path("link")).unwrap().kind = EntryKind::Symlink;
+    Arc::make_mut(&mut st.target)
+        .entries
+        .get_mut(&path("link"))
+        .unwrap()
+        .kind = EntryKind::Symlink;
     drop(st);
 
     let text = fx.session.target_text("a.txt").await.unwrap();
@@ -2438,7 +2442,9 @@ async fn target_text_reads_unchanged_files_and_explains_missing_text() {
     let big = "x".repeat(100);
     fx.git.snapshot(&[("big.txt", &big)]);
     let mut st = fx.session.state.lock().await;
-    st.target.entries.insert(path("big.txt"), entry(&big, 0o100644));
+    Arc::make_mut(&mut st.target)
+        .entries
+        .insert(path("big.txt"), entry(&big, 0o100644));
     drop(st);
     *fx.git.cap.lock().unwrap() = Some(10);
     assert_eq!(

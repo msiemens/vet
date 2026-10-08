@@ -257,11 +257,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             Some(found) => found,
             None => base::default_choice(&git.branches().await?, &head),
         };
-        let base = git.commit_snapshot(&base_commit).await?;
+        let base = Arc::new(git.commit_snapshot(&base_commit).await?);
         let Scan {
             snapshot: target,
             status,
         } = acquisition.reconcile(Dirty::All).await?;
+        let target = Arc::new(target);
         acquisition.record_commit(base.id, base_commit.clone());
         acquisition.record_commit(target.id, head.clone());
         let state = State {
@@ -344,6 +345,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let Ok(base) = acquisition.git.commit_snapshot(&latest.base_commit).await else {
             return Ok(None);
         };
+        let (base, target) = (Arc::new(base), Arc::new(target));
         // The review keeps its base however far the branches have moved since:
         // commits made while Vet was closed are part of what is under review,
         // and re-resolving would turn every mark against the old base into
@@ -460,10 +462,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         let now = (self.clock)();
         store
-            .put_snapshot(st.base.clone(), SnapshotStatus::of(&st.base), now)
+            .put_snapshot(Snapshot::clone(&st.base), SnapshotStatus::of(&st.base), now)
             .await?;
         store
-            .put_snapshot(st.target.clone(), st.target_status.clone(), now)
+            .put_snapshot(Snapshot::clone(&st.target), st.target_status.clone(), now)
             .await?;
         let first = Version {
             n: 1,
@@ -555,7 +557,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             _ => st.head.clone(),
         };
         let (choice, commit) = base::resolve(git, choice, &tip).await.map_err(SessionError::Base)?;
-        let snapshot = git.commit_snapshot(&commit).await?;
+        let snapshot = Arc::new(git.commit_snapshot(&commit).await?);
 
         if st.source == Source::WorkingTree {
             self.acquisition
@@ -571,7 +573,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 self.retain_anchored(&st, st.anchors()).await?;
                 let now = (self.clock)();
                 store
-                    .put_snapshot(snapshot.clone(), SnapshotStatus::of(&snapshot), now)
+                    .put_snapshot(Snapshot::clone(&snapshot), SnapshotStatus::of(&snapshot), now)
                     .await?;
                 store.set_base(id, choice.clone()).await?;
                 if commit != st.base_commit {
@@ -699,7 +701,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// The latest settled target: what the review last showed.
-    pub async fn target_snapshot(&self) -> Snapshot {
+    pub async fn target_snapshot(&self) -> Arc<Snapshot> {
         self.state.lock().await.target.clone()
     }
 
@@ -804,14 +806,16 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// Settles `scan` into `st`, which need not be the one on view: only the revision of
     /// the one on view is announced, by the caller.
     async fn settle_tree(&self, st: &mut State, scan: Scan) -> Result<(u32, Option<BlobError>)> {
+        let Scan { snapshot, status } = scan;
+        let snapshot = Arc::new(snapshot);
         let mut retained = None;
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
             retained = self
                 .acquisition
                 .retain(
-                    &[&st.base, &st.target],
-                    &scan.snapshot,
-                    &scan.status,
+                    &[&*st.base, &*st.target],
+                    &snapshot,
+                    &status,
                     &BTreeMap::new(),
                     |_, _| {},
                 )
@@ -820,26 +824,26 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let store = &self.acquisition.store;
             let now = (self.clock)();
             store
-                .put_snapshot(scan.snapshot.clone(), scan.status.clone(), now)
+                .put_snapshot(Snapshot::clone(&snapshot), status.clone(), now)
                 .await?;
             let version = Version {
                 n: review.version + 1,
                 base: st.base.id,
                 base_commit: st.base_commit.clone(),
-                target: scan.snapshot.id,
+                target: snapshot.id,
                 tip: st.head.clone(),
                 at: now,
                 origin: VersionOrigin::Settled,
                 change: self
-                    .change_of(Some((&st.base, &st.target)), &st.base, &scan.snapshot)
+                    .change_of(Some((&st.base, &st.target)), &st.base, &snapshot)
                     .await?,
             };
             store.append_version(changeset, version).await?;
         }
         // Older versions stay materializable (§7.2).
-        self.acquisition.record_commit(scan.snapshot.id, st.head.clone());
-        let old = std::mem::replace(&mut st.target, scan.snapshot);
-        st.target_status = scan.status;
+        self.acquisition.record_commit(snapshot.id, st.head.clone());
+        let old = std::mem::replace(&mut st.target, snapshot);
+        st.target_status = status;
         if let Some(review) = &mut st.review {
             st.known.insert(old.id, old);
             review.version += 1;
