@@ -12,7 +12,16 @@
   import { platform } from "../../state/platform.svelte";
   import { attachMenu, threadCommands } from "./commentCommands";
   import ConversationList from "./ConversationList.svelte";
-  import { candidates, detachedReason, draftCount, groupThreads, openedBy, placeLabel, preview } from "./groups";
+  import {
+    RESOLVED_SHOWN,
+    candidates,
+    detachedReason,
+    draftCount,
+    groupThreads,
+    preview,
+    rowTitle,
+    shown,
+  } from "./groups";
   import PullRequestBlock from "./PullRequestBlock.svelte";
   import SubmitReview from "./SubmitReview.svelte";
 
@@ -26,6 +35,11 @@
   const pick = (id: Tab) => (tab = id);
   // A platform without a conversation feed has nothing to switch to.
   const showing = $derived(info?.traits.conversationFeed ? tab : "review");
+
+  type GroupId = "conflicts" | "open" | "resolved";
+  let folded = $state<GroupId[]>([]);
+  let showAllResolved = $state(false);
+  const fold = (id: GroupId) => (folded = folded.includes(id) ? folded.filter((f) => f !== id) : [...folded, id]);
 
   let composing = $state(false);
   let body = $state("");
@@ -42,25 +56,32 @@
   }
 </script>
 
-{#snippet row(thread: Thread, showPath: boolean)}
+{#snippet row(thread: Thread)}
+  {@const author = thread.messages[0]?.author}
   <li class:resolved={thread.status === "resolved"}>
     <button class="flat main" type="button" onclick={() => onselect(thread)}>
-      <span class="status">
-        {#if thread.status === "resolved"}<Icon name="check" size={12} stroke={2.2} />{:else}<Icon
-            name="comments"
-            size={12}
-          />{/if}
-      </span>
       <span class="text">
-        <span class="preview">{preview(thread)}</span>
-        <span class="mono meta">
-          {#if showPath}{thread.path}
-          {/if}{placeLabel(thread)} · {thread.messages.length}
-          {thread.messages.length === 1 ? "message" : "messages"}
-          {#if openedBy(thread)}· by {openedBy(thread)}{/if}
-          {#if draftCount(thread)}· {draftCount(thread)} draft{/if}
-          {#if thread.platform && !thread.platform.posted}· local only{/if}
+        <span class="top">
+          <span class="mono where" title={thread.path ?? undefined}>{rowTitle(thread)}</span>
+          {#if author}<span class="author" class:mine={thread.messages[0]?.mine}
+              >{thread.messages[0]?.mine ? "You" : author}</span
+            >{/if}
+          <span class="grow"></span>
+          {#if draftCount(thread)}<span class="draft">{draftCount(thread)} draft</span>{/if}
+          {#if thread.status === "resolved" && thread.platform?.resolvedBy}
+            <span class="by">by {thread.platform.resolvedBy}</span>
+          {/if}
+          {#if thread.platform}
+            <span
+              class="sync"
+              class:local={!thread.platform.posted}
+              title={thread.platform.posted ? "On the platform" : "Only in Vet until the review is submitted"}
+            >
+              {#if thread.platform.posted}<Icon name="github" size={11} />{/if}
+            </span>
+          {/if}
         </span>
+        <span class="preview">{preview(thread)}</span>
       </span>
     </button>
     {@render actions(thread)}
@@ -92,16 +113,24 @@
   {/if}
 {/snippet}
 
-{#snippet group(title: string, list: Thread[], showPath: boolean, id: string)}
+{#snippet group(title: string, list: Thread[], id: GroupId)}
+  {@const cut = shown(list, id === "resolved" && showAllResolved, RESOLVED_SHOWN)}
   <section aria-label={title} data-group={id}>
-    <div class="sh">
-      <Icon name="open" size={10} />
-      <span class="title" class:mono={id.startsWith("file:")}>{title}</span>
+    <button class="flat sh head" type="button" aria-expanded={!folded.includes(id)} onclick={() => fold(id)}>
+      <Icon name={folded.includes(id) ? "closed" : "open"} size={10} />
+      <span class="title" class:conflict={id === "conflicts"}>{title}</span>
       <span class="mono n">{list.length}</span>
-    </div>
-    <ul>
-      {#each list as thread (thread.id)}{@render row(thread, showPath)}{/each}
-    </ul>
+    </button>
+    {#if !folded.includes(id)}
+      <ul>
+        {#each id === "resolved" ? cut.rows : list as thread (thread.id)}{@render row(thread)}{/each}
+      </ul>
+      {#if id === "resolved" && cut.more > 0}
+        <button class="flat more" type="button" onclick={() => (showAllResolved = true)}>
+          <Icon name="closed" size={10} />{cut.more} more
+        </button>
+      {/if}
+    {/if}
   </section>
 {/snippet}
 
@@ -164,13 +193,9 @@
         button.
       </p>
     {/if}
-    {#if groups.conflicts.length}{@render group("Conflicts", groups.conflicts, true, "conflicts")}{/if}
-    {#if groups.detached.length}{@render group("Detached", groups.detached, true, "detached")}{/if}
-    {#if groups.moved.length}{@render group("Moved", groups.moved, true, "moved")}{/if}
-    {#if groups.changeset.length}{@render group("Changeset", groups.changeset, false, "changeset")}{/if}
-    {#each groups.files as file (file.path)}
-      {@render group(file.path, file.threads, false, `file:${file.path}`)}
-    {/each}
+    {#if groups.conflicts.length}{@render group("Conflicts", groups.conflicts, "conflicts")}{/if}
+    {#if groups.open.length}{@render group("Open", groups.open, "open")}{/if}
+    {#if groups.resolved.length}{@render group("Resolved", groups.resolved, "resolved")}{/if}
   {/if}
 </aside>
 
@@ -213,43 +238,73 @@
     list-style: none;
     border-bottom: 1px solid var(--line-soft);
   }
-  li.resolved .preview,
-  li.resolved .status {
+  li.resolved .preview {
     color: var(--text-3);
+  }
+  .head {
+    width: 100%;
+    text-align: left;
+  }
+  .conflict {
+    color: var(--warn);
   }
   .main {
     width: 100%;
     display: flex;
     align-items: flex-start;
-    gap: 8px;
     padding: 3px 10px 3px 26px;
     text-align: left;
     font-size: var(--fs-ctl);
   }
-  .status {
-    flex: none;
-    display: inline-flex;
-    height: 18px;
-    align-items: center;
-    margin-left: -16px;
-    color: var(--text-2);
-  }
   .text {
+    flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
+  }
+  .top {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: var(--fs-mono-s);
+  }
+  .author {
+    color: var(--note);
+  }
+  .author.mine {
+    color: var(--accent);
+  }
+  .draft {
+    color: var(--note);
+  }
+  .by {
+    color: var(--text-3);
+  }
+  .sync {
+    display: inline-flex;
+    align-items: center;
+    color: var(--ok);
+  }
+  .sync.local {
+    width: 9px;
+    height: 9px;
+    box-sizing: border-box;
+    border: 1px solid var(--text-3);
+    border-radius: 2px;
   }
   .preview {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .meta {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--fs-mono-s);
-    color: var(--text-3);
+  .more {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 4px 10px;
+    color: var(--text-2);
+    font-size: var(--fs-ctl);
   }
   .actions {
     display: flex;

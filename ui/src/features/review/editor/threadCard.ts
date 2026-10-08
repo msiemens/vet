@@ -9,6 +9,7 @@ import type { Thread } from "../../../generated/Thread";
 import type { ThreadMessage } from "../../../generated/ThreadMessage";
 import type { ThreadStatus } from "../../../generated/ThreadStatus";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
+import { avatarColor } from "../../../lib/avatar.ts";
 import { canSubmit, isSubmitKey } from "../../../lib/composer.ts";
 import { lineRange } from "../../../lib/lineRange.ts";
 import { movedTitle } from "../../../lib/movedTitle.ts";
@@ -52,14 +53,31 @@ function button(label: string, className: string, onclick: () => void) {
 
 const time = (at: number) => new Date(at * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-/** A text field and its submit button, which stays disabled while the text is blank or a request runs. */
-function composer(rows: number, placeholder: string, label: string, submit: (body: string) => Promise<boolean>) {
+/**
+ * What the viewer has typed in cards and not sent, by form (`reply:3`, `edit:7`, `new:…`). A card is
+ * drawn again when the threads change, which must not cost the text; a form that is open has an entry,
+ * possibly empty.
+ */
+const unsent = new Map<string, string>();
+
+/**
+ * A text field and its submit button, which stays disabled while the text is blank or a request runs.
+ * With a `key` its text outlives the card.
+ */
+function composer(
+  rows: number,
+  placeholder: string,
+  label: string,
+  submit: (body: string) => Promise<boolean>,
+  key?: string,
+) {
   const field = el("textarea", "field vet-thread-field");
   field.rows = rows;
   field.placeholder = placeholder;
   field.spellcheck = true;
   const send = button(label, "ctl primary vet-thread-send", () => void run());
-  send.disabled = true;
+  if (key !== undefined) field.value = unsent.get(key) ?? "";
+  send.disabled = !canSubmit(field.value, false);
   let busy = false;
   async function run() {
     if (!canSubmit(field.value, busy)) return;
@@ -67,10 +85,16 @@ function composer(rows: number, placeholder: string, label: string, submit: (bod
     send.disabled = true;
     const sent = await submit(field.value.trim());
     busy = false;
-    if (sent) field.value = "";
+    if (sent) {
+      field.value = "";
+      if (key !== undefined) unsent.delete(key);
+    }
     send.disabled = !canSubmit(field.value, busy);
   }
-  field.addEventListener("input", () => (send.disabled = !canSubmit(field.value, busy)));
+  field.addEventListener("input", () => {
+    send.disabled = !canSubmit(field.value, busy);
+    if (key !== undefined) unsent.set(key, field.value);
+  });
   field.addEventListener("keydown", (e) => {
     if (isSubmitKey(e)) {
       e.preventDefault();
@@ -84,10 +108,15 @@ function draftCard(target: ThreadTarget, actions: ThreadActions): HTMLElement {
   const card = el("div", "vet-thread vet-thread-draft");
   const head = el("div", "vet-thread-head");
   head.append(el("span", "vet-thread-title", draftTitle(target)));
-  const { field, send } = composer(3, "Comment…", "Comment", (body) => actions.create(target, body));
-  const cancel = button("Cancel", "ctl", () => actions.cancelDraft());
+  const key = `new:${JSON.stringify(target)}`;
+  const { field, send } = composer(3, "Comment…", "Comment", (body) => actions.create(target, body), key);
+  const dismiss = () => {
+    unsent.delete(key);
+    actions.cancelDraft();
+  };
+  const cancel = button("Cancel", "ctl", dismiss);
   field.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") actions.cancelDraft();
+    if (e.key === "Escape") dismiss();
   });
   const foot = el("div", "vet-thread-foot");
   foot.append(el("span", "vet-thread-hint", "Ctrl+Enter to post"), cancel, send);
@@ -115,13 +144,6 @@ export function avatar(author: string, url: string | null): HTMLElement {
   const initials = el("span", "vet-avatar vet-avatar-initials", author.slice(0, 2).toUpperCase());
   initials.style.background = `var(--avatar-${avatarColor(author)})`;
   return initials;
-}
-
-/** Which of the six avatar colours (1-6) a name gets, the same every time. */
-export function avatarColor(name: string): number {
-  let hash = 0;
-  for (const c of name) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
-  return (hash % 6) + 1;
 }
 
 /** The two texts of a comment that was edited in two places, side by side with Keep under each. */
@@ -153,19 +175,28 @@ function conflictCard(message: ThreadMessage, conflict: EditConflict, actions: T
 
 /** The form that replaces a message's text while it is edited. */
 function editForm(message: ThreadMessage, actions: ThreadActions, close: () => void): HTMLElement {
+  const key = `edit:${message.id}`;
+  const leave = () => {
+    unsent.delete(key);
+    close();
+  };
   const form = el("div", "vet-msg-edit");
-  const { field, send } = composer(2, "Comment…", "Save", async (body) => {
-    const saved = await actions.editMessage(message.id, body);
-    if (saved) close();
-    return saved;
-  });
-  field.value = message.body;
-  send.disabled = !canSubmit(field.value, false);
+  const { field, send } = composer(
+    2,
+    "Comment…",
+    "Save",
+    async (body) => {
+      const saved = await actions.editMessage(message.id, body);
+      if (saved) leave();
+      return saved;
+    },
+    key,
+  );
   field.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") close();
+    if (e.key === "Escape") leave();
   });
   const foot = el("div", "vet-thread-foot");
-  foot.append(button("Cancel", "ctl vet-thread-small", close), send);
+  foot.append(button("Cancel", "ctl vet-thread-small", leave), send);
   form.append(field, foot);
   requestAnimationFrame(() => field.focus());
   return form;
@@ -185,18 +216,17 @@ function messageParts(thread: Thread, message: ThreadMessage, actions: ThreadAct
   body.textContent = message.body;
   const shown = message.conflict ? conflictCard(message, message.conflict, actions) : body;
   const parts = [meta, shown];
+  const editKey = `edit:${message.id}`;
+  const makeForm = () => {
+    if (!unsent.has(editKey)) unsent.set(editKey, message.body);
+    const form: HTMLElement = editForm(message, actions, () => form.replaceWith(shown));
+    return form;
+  };
+  const showForm = () => shown.replaceWith(makeForm());
+  // A form left open by a card that was drawn again is open again, with its text.
+  if (message.mine && !message.conflict && unsent.has(editKey)) parts[1] = makeForm();
   if (message.mine) {
-    const edit = iconButton(
-      "Edit the comment",
-      "edit",
-      () => {
-        const form = editForm(message, actions, () => form.replaceWith(shown));
-        shown.replaceWith(form);
-      },
-      "vet-thread-btn",
-      11,
-      2,
-    );
+    const edit = iconButton("Edit the comment", "edit", showForm, "vet-thread-btn", 11, 2);
     const remove = iconButton(
       thread.messages[0] === message ? "Delete the thread" : "Remove the comment",
       "close",
@@ -273,7 +303,13 @@ function threadCard(thread: Thread, open: boolean, actions: ThreadActions): HTML
 
   for (const message of thread.messages) card.append(...messageParts(thread, message, actions));
   const reply = el("div", "vet-thread-reply");
-  const { field, send } = composer(1, "Reply…", "Reply", (body) => actions.reply(thread.id, body));
+  const { field, send } = composer(
+    1,
+    "Reply…",
+    "Reply",
+    (body) => actions.reply(thread.id, body),
+    `reply:${thread.id}`,
+  );
   reply.append(field, send);
   card.append(reply);
   return card;

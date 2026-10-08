@@ -1,6 +1,5 @@
-// How the Comments tool window lists threads (SPEC §5.1, §10): detached ones first, then the
-// ones whose anchor moved, the changeset's own, and the rest by file. Which group a thread is in
-// follows from its anchor as the backend resolved it; nothing is decided here.
+// How the Comments tool window lists threads (SPEC §5.1, §10): the ones with an edit to settle,
+// the open ones and the resolved ones. A thread that is detached or moved says so in its row.
 
 import type { LineLocation } from "../../generated/LineLocation";
 import type { Thread } from "../../generated/Thread";
@@ -16,36 +15,47 @@ export const draftCount = (t: Thread) => (t.platform ? t.messages.filter((m) => 
 export const openedBy = (t: Thread) => (t.platform?.posted && !t.messages[0]?.mine ? t.messages[0]?.author : undefined);
 
 export interface Groups {
-  /** Threads with an edit to settle; shown first, wherever they are. */
+  /** Threads with an edit to settle, whatever their status. */
   conflicts: Thread[];
-  /** Ambiguous or stale: no place to show, offered "Attach to N" or "Discard". */
-  detached: Thread[];
-  /** Found by evidence, not where they were put: offered "Confirm". */
-  moved: Thread[];
-  changeset: Thread[];
-  /** By path; a file's own threads first, then its lines in text order. */
-  files: { path: string; threads: Thread[] }[];
+  open: Thread[];
+  resolved: Thread[];
 }
 
-const isDetached = (t: Thread) => t.anchor?.type === "stale" || t.anchor?.type === "ambiguous";
+/** How many resolved threads are listed before "N more". */
+export const RESOLVED_SHOWN = 3;
 
-/** Threads are given in creation order, which each group keeps unless it says otherwise. */
+const start = (t: Thread) => (t.kind === "file" ? -1 : (t.location?.start ?? t.original?.start ?? 0));
+
+/** The changeset's own threads first, then by file, a file's own thread before its lines in text order. */
+const inOrder = (a: Thread, b: Thread) =>
+  (a.path ?? "").localeCompare(b.path ?? "") || start(a) - start(b) || a.id - b.id;
+
+/** Every thread is in exactly one group, each in the order of `inOrder`. */
 export function groupThreads(threads: readonly Thread[]): Groups {
-  const groups: Groups = { conflicts: [], detached: [], moved: [], changeset: [], files: [] };
-  const byPath = new Map<string, Thread[]>();
+  const groups: Groups = { conflicts: [], open: [], resolved: [] };
   for (const thread of threads) {
     if (hasConflict(thread)) groups.conflicts.push(thread);
-    else if (isDetached(thread)) groups.detached.push(thread);
-    else if (thread.anchor?.type === "inferred") groups.moved.push(thread);
-    else if (thread.kind === "changeset") groups.changeset.push(thread);
-    else if (thread.path !== null) byPath.set(thread.path, [...(byPath.get(thread.path) ?? []), thread]);
+    else if (thread.status === "resolved") groups.resolved.push(thread);
+    else groups.open.push(thread);
   }
-  const start = (t: Thread) => (t.kind === "file" ? -1 : (t.location?.start ?? 0));
-  for (const path of [...byPath.keys()].sort()) {
-    const list = byPath.get(path) ?? [];
-    groups.files.push({ path, threads: [...list].sort((a, b) => start(a) - start(b) || a.id - b.id) });
-  }
+  groups.conflicts.sort(inOrder);
+  groups.open.sort(inOrder);
+  groups.resolved.sort(inOrder);
   return groups;
+}
+
+/** The threads of `list` shown now: all, or the first few of a long list that is not `expanded`. */
+export function shown<T>(list: readonly T[], expanded: boolean, limit = RESOLVED_SHOWN): { rows: T[]; more: number } {
+  if (expanded || list.length <= limit) return { rows: [...list], more: 0 };
+  return { rows: list.slice(0, limit), more: list.length - limit };
+}
+
+/** `file.rs:12`, `file.rs` for a comment on the file, `Changeset` for the changeset's own. */
+export function rowTitle(thread: Thread): string {
+  if (thread.kind === "changeset" || thread.path === null) return "Changeset";
+  const name = thread.path.split("/").at(-1) ?? thread.path;
+  const at = thread.location ?? thread.original;
+  return thread.kind === "range" && at ? `${name}:${at.start + 1}` : name;
 }
 
 /** The first line of the opening message, cut to `max` characters. */

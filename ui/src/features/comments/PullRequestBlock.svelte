@@ -1,100 +1,97 @@
 <script lang="ts">
   import type { PullRequestInfo } from "../../generated/PullRequestInfo";
-  import type { ReviewerState } from "../../generated/ReviewerState";
+  import Avatar from "../../lib/ui/Avatar.svelte";
   import { blockerText, reviewerMark, stateLabel } from "./pullRequest";
 
   let { info }: { info: PullRequestInfo } = $props();
-
-  const verdictClass = (state: ReviewerState) => `verdict-${state}`;
 </script>
 
-<div class="pr">
-  <div class="line">
-    <span class="state state-{info.state}">{stateLabel(info)}</span>
-    <span class="who">{info.author}</span>
-    <span class="mono branches" title="{info.sourceBranch} into {info.targetBranch}">
-      {info.sourceBranch} → {info.targetBranch}
-    </span>
-  </div>
+<dl class="pr">
+  <dt>State</dt>
+  <dd><span class="dot state-{info.state}"></span>{stateLabel(info)}</dd>
+  <dt>Author</dt>
+  <dd class="author"><Avatar name={info.author} url={info.authorAvatar} />{info.author}</dd>
+  <dt>Branch</dt>
+  <dd class="mono branches" title="{info.sourceBranch} into {info.targetBranch}">
+    {info.sourceBranch} → {info.targetBranch}
+  </dd>
   {#if info.reviewers.length}
-    <ul class="reviewers" aria-label="Reviewers">
+    <dt>Reviewers</dt>
+    <dd class="list">
       {#each info.reviewers as reviewer (reviewer.name)}
-        <li class={verdictClass(reviewer.state)} title={reviewer.state}>
-          <span class="mark" aria-hidden="true">{reviewerMark(reviewer.state)}</span>{reviewer.name}
-        </li>
+        <span class="verdict-{reviewer.state}" title={reviewer.state}>
+          <span aria-hidden="true">{reviewerMark(reviewer.state)}</span>
+          {reviewer.name}
+        </span>
       {/each}
-    </ul>
+    </dd>
   {/if}
   {#if info.labels.length}
-    <ul class="labels" aria-label="Labels">
-      {#each info.labels as label (label)}<li class="badge">{label}</li>{/each}
-    </ul>
+    <dt>Labels</dt>
+    <dd class="list">
+      {#each info.labels as label (label)}<span class="badge">{label}</span>{/each}
+    </dd>
   {/if}
-  {#if info.ci}<div class="ci ci-{info.ci}">Checks: {info.ci}</div>{/if}
+  {#if info.ci}
+    <dt>Checks</dt>
+    <dd class="ci-{info.ci}">{info.ci}</dd>
+  {/if}
   {#if info.blocking.length}
-    <div class="blocking" role="status">Blocking: {info.blocking.map(blockerText).join(", ")}</div>
+    <dt>Blocking</dt>
+    <dd class="blocking">{info.blocking.map(blockerText).join(" · ")}</dd>
   {/if}
-</div>
+</dl>
 
 <style>
   .pr {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    margin: 0;
     padding: 8px 10px;
     border-bottom: 1px solid var(--line-soft);
     font-size: var(--fs-ctl);
   }
-  .line {
+  dt {
+    color: var(--text-3);
+  }
+  dd {
+    margin: 0;
+    min-width: 0;
     display: flex;
     align-items: center;
-    gap: 8px;
-    min-width: 0;
+    gap: 6px;
   }
-  .state {
-    padding: 0 6px;
-    border-radius: 8px;
+  .author {
+    gap: 6px;
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
     background: var(--ok);
-    color: var(--on-primary);
-    font-size: 11px;
   }
-  .state-closed {
+  .dot.state-closed {
     background: var(--warn);
   }
-  .state-merged {
+  .dot.state-merged {
     background: var(--note);
   }
-  .who {
-    font-weight: 600;
-  }
   .branches {
-    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--text-3);
     font-size: var(--fs-mono-s);
   }
-  ul {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
+  .list {
     flex-wrap: wrap;
     gap: 4px 10px;
   }
-  .mark {
-    margin-right: 3px;
-  }
-  .verdict-approved .mark {
+  .verdict-approved span {
     color: var(--ok);
   }
-  .verdict-changesRequested .mark {
+  .verdict-changesRequested span {
     color: var(--warn);
-  }
-  .verdict-waiting,
-  .verdict-commented {
-    color: var(--text-2);
   }
   .ci-failure {
     color: var(--warn);
@@ -104,6 +101,5 @@
   }
   .blocking {
     color: var(--warn);
-    font-weight: 600;
   }
 </style>

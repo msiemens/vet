@@ -30,6 +30,8 @@ class PlatformStore {
   notified = $state.raw<Notified[]>([]);
   /** Counts the asks for Settings on the Accounts page; the app window opens the dialog on each. */
   accountsRequests = $state(0);
+  /** The Submit review form, kept here so that switching tool windows does not empty it. */
+  review = $state({ open: false, verdict: undefined as string | undefined, body: "" });
   private signingIn = false;
   private backend?: Backend;
   private seq = 0;

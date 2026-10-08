@@ -12,13 +12,7 @@
 </script>
 
 {#if label && status}
-  <button
-    class="flat platform"
-    class:warn={label.warn}
-    type="button"
-    title={label.title}
-    onclick={signIn}
-  >
+  <button class="flat platform" class:warn={label.warn} type="button" title={label.title} onclick={signIn}>
     <Icon name={status.kind === "github" ? "github" : "azureDevOps"} size={12} />
     <span class="dot" class:ok={!label.warn}></span>
     {label.text}

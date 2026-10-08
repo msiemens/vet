@@ -10,18 +10,17 @@
   const drafts = $derived(draftsToSubmit(threads.items));
   const blocked = $derived(submitBlock(info.platform.connection));
 
-  let open = $state(false);
-  let chosen = $state<string>();
-  const verdict = $derived(chosen ?? info.traits.verdicts.at(0)?.id ?? "");
-  let body = $state("");
+  // The form's state is the store's, so it outlives this panel.
+  const form = platform.review;
+  const verdict = $derived(form.verdict ?? info.traits.verdicts.at(0)?.id ?? "");
   let sending = $state(false);
 
   async function submit() {
     sending = true;
-    const done = await platform.submit(verdict, body);
+    const done = await platform.submit(verdict, form.body);
     sending = false;
     if (!done) return;
-    [open, body] = [false, ""];
+    [form.open, form.body] = [false, ""];
     session.notice =
       done.skipped > 0
         ? `Review submitted. ${done.skipped} ${done.skipped === 1 ? "draft waits" : "drafts wait"}: its code is gone or its thread has an edit to settle.`
@@ -35,25 +34,25 @@
     type="button"
     disabled={blocked !== undefined}
     title={blocked}
-    aria-expanded={open}
-    onclick={() => (open = !open)}
+    aria-expanded={form.open}
+    onclick={() => (form.open = !form.open)}
   >
     Submit review{#if drafts > 0}<span class="n">{drafts}</span>{/if}
   </button>
   {#if blocked}
     <button class="flat link" type="button" onclick={() => platform.openAccounts()}>Sign in…</button>
   {/if}
-  {#if open && !blocked}
+  {#if form.open && !blocked}
     <div class="form">
       <label>
         <span>Verdict</span>
-        <select class="field" value={verdict} onchange={(e) => (chosen = e.currentTarget.value)}>
+        <select class="field" value={verdict} onchange={(e) => (form.verdict = e.currentTarget.value)}>
           {#each info.traits.verdicts as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
         </select>
       </label>
-      <textarea class="field" rows="3" placeholder="Leave a summary (optional)" bind:value={body}></textarea>
+      <textarea class="field" rows="3" placeholder="Leave a summary (optional)" bind:value={form.body}></textarea>
       <div class="buttons">
-        <button class="ctl" type="button" onclick={() => (open = false)}>Cancel</button>
+        <button class="ctl" type="button" onclick={() => (form.open = false)}>Cancel</button>
         <button class="ctl primary" type="button" disabled={sending} onclick={() => void submit()}>Submit</button>
       </div>
     </div>

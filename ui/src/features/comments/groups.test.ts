@@ -11,6 +11,8 @@ import {
   openedBy,
   placeLabel,
   preview,
+  rowTitle,
+  shown,
 } from "./groups.ts";
 
 const message = (over: Partial<ThreadMessage> = {}): ThreadMessage => ({
@@ -40,31 +42,31 @@ const thread = (id: number, over: Partial<Thread> = {}): Thread => ({
 });
 const ids = (list: Thread[]) => list.map((t) => t.id);
 
-void test("detached and moved threads leave their file's group", () => {
+void test("every thread is in one group: an edit to settle, open or resolved, whatever its anchor", () => {
+  const conflict = { remoteBody: "theirs", remoteAt: 1 };
   const groups = groupThreads([
     thread(1),
-    thread(2, { anchor: { type: "stale", reason: "contextChanged" }, location: null }),
-    thread(3, { anchor: { type: "inferred", strategy: "contextWindow", confidence: "low" } }),
-    thread(4, { anchor: { type: "ambiguous", candidates: [{ path: "a.rs", start: 1, len: 1 }] }, location: null }),
-    thread(5, { kind: "changeset", path: null, location: null, original: null, side: null, anchor: null }),
+    thread(2, { messages: [message({ posted: true, conflict })], status: "resolved" }),
+    thread(3, { anchor: { type: "stale", reason: "contextChanged" }, location: null }),
+    thread(4, { anchor: { type: "inferred", strategy: "contextWindow", confidence: "low" } }),
+    thread(5, { status: "resolved" }),
   ]);
-  assert.deepEqual(ids(groups.detached), [2, 4]);
-  assert.deepEqual(ids(groups.moved), [3]);
-  assert.deepEqual(ids(groups.changeset), [5]);
-  assert.deepEqual(
-    groups.files.map((f) => [f.path, ids(f.threads)]),
-    [["a.rs", [1]]],
-  );
+  assert.deepEqual(ids(groups.conflicts), [2]);
+  assert.deepEqual(ids(groups.open), [1, 3, 4]);
+  assert.deepEqual(ids(groups.resolved), [5]);
 });
 
-void test("a thread with an edit to settle is listed first, wherever it is", () => {
-  const conflict = { remoteBody: "theirs", remoteAt: 1 };
-  const groups = groupThreads([thread(1), thread(2, { messages: [message({ posted: true, conflict })] })]);
-  assert.deepEqual(ids(groups.conflicts), [2]);
-  assert.deepEqual(
-    groups.files.map((f) => ids(f.threads)),
-    [[1]],
-  );
+void test("a long list is cut after a few rows and says how many more there are", () => {
+  const list = [1, 2, 3, 4, 5];
+  assert.deepEqual(shown(list, false), { rows: [1, 2, 3], more: 2 });
+  assert.deepEqual(shown(list, true), { rows: list, more: 0 });
+  assert.deepEqual(shown([1, 2, 3], false), { rows: [1, 2, 3], more: 0 });
+});
+
+void test("a row is titled by file and line, the file alone or the changeset", () => {
+  assert.equal(rowTitle(thread(1, { path: "src/job.rs" })), "job.rs:5");
+  assert.equal(rowTitle(thread(1, { kind: "file", path: "src/job.rs", location: null, original: null })), "job.rs");
+  assert.equal(rowTitle(thread(1, { kind: "changeset", path: null, location: null, original: null })), "Changeset");
 });
 
 void test("on a platform a thread counts the messages that wait for the review and names who else opened it", () => {
@@ -80,21 +82,16 @@ void test("on a platform a thread counts the messages that wait for the review a
   assert.equal(openedBy(thread(2, { platform })), undefined);
 });
 
-void test("files are sorted by path, a file's own thread first, then lines in text order", () => {
+void test("a group is in file order: the changeset's own first, a file's own thread before its lines in text order", () => {
   const at = (start: number) => ({ location: { path: "b.rs", start, len: 1 }, path: "b.rs" });
   const groups = groupThreads([
     thread(1, at(30)),
     thread(2, at(5)),
     thread(3, { kind: "file", path: "b.rs", location: null, original: null }),
     thread(4, { path: "a.rs" }),
+    thread(5, { kind: "changeset", path: null, location: null, original: null }),
   ]);
-  assert.deepEqual(
-    groups.files.map((f) => [f.path, ids(f.threads)]),
-    [
-      ["a.rs", [4]],
-      ["b.rs", [3, 2, 1]],
-    ],
-  );
+  assert.deepEqual(ids(groups.open), [5, 4, 3, 2, 1]);
 });
 
 void test("labels name the lines, the reason and the candidates", () => {

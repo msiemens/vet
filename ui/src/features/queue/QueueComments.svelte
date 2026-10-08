@@ -1,17 +1,16 @@
 <script lang="ts">
   import type { Thread } from "../../generated/Thread";
   import Icon from "../../lib/ui/Icon.svelte";
-  import { groupThreads, placeLabel, preview } from "../comments";
+  import { groupThreads, preview, rowTitle } from "../comments";
 
   let { threads, onopen }: { threads: readonly Thread[]; onopen: (thread: Thread) => void } = $props();
 
   const groups = $derived(groupThreads(threads));
   const sections = $derived(
     [
-      { id: "detached", title: "Detached", list: groups.detached },
-      { id: "moved", title: "Moved", list: groups.moved },
-      { id: "changeset", title: "Changeset", list: groups.changeset },
-      ...groups.files.map((f) => ({ id: `file:${f.path}`, title: f.path, list: f.threads })),
+      { id: "conflicts", title: "Conflicts", list: groups.conflicts },
+      { id: "open", title: "Open", list: groups.open },
+      { id: "resolved", title: "Resolved", list: groups.resolved },
     ].filter((s) => s.list.length),
   );
   let selected = $state<number>();
@@ -20,7 +19,7 @@
 {#each sections as section (section.id)}
   <section aria-label={section.title}>
     <div class="head">
-      <span class="title" class:mono={section.id.startsWith("file:")}>{section.title}</span>
+      <span class="title">{section.title}</span>
       <span class="mono n">{section.list.length}</span>
     </div>
     {#each section.list as thread (thread.id)}
@@ -42,7 +41,7 @@
             />{/if}</span
         >
         <span class="preview">{preview(thread)}</span>
-        <span class="mono place">{placeLabel(thread)}</span>
+        <span class="mono place">{rowTitle(thread)}</span>
       </button>
     {/each}
   </section>
