@@ -15,8 +15,8 @@ import { commands } from "./commands";
 import { InFlight } from "./inFlight";
 import { progress } from "./progress.svelte";
 import { type SemanticSummary, summarize } from "./semanticSummary";
+import { serverList } from "./serverList.svelte";
 import { serverLine } from "./serverStatus";
-import { servers } from "./servers.svelte";
 import { session } from "./session.svelte";
 
 const NOTHING: HoverAnswer = { text: "", code: [] };
@@ -88,7 +88,7 @@ class SemanticStore {
           this.note(revision, path, r.unavailable);
           return {
             ...r,
-            server: serverLine(path, servers.servers, progress.tasks, this.summary(path)),
+            server: serverLine(path, serverList.servers, progress.tasks, this.summary(path)),
             definitionKey: commands.binding("review.goToDefinition")?.label,
           };
         },

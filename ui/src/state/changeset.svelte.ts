@@ -99,7 +99,8 @@ class ChangesetStore {
           this.commitIndex = undefined;
           this.lastCommit = 0;
           void this.refresh();
-        } else if (event.type === "snapshotSettled") void this.refresh();
+        } else if (event.type === "snapshotSettled" || event.type === "targetChanged") void this.refresh();
+        else if (event.type === "lensChanged") void this.followLens(event.lens);
         // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
         else if (event.type === "reviewChanged" && event.revision === this.manifest?.revision) {
           if (this.shownCommit !== undefined) this.applyTotals(event.update);
@@ -210,14 +211,20 @@ class ChangesetStore {
     return true;
   }
 
-  /** Reviews the changeset in `lens`, which the backend remembers for it, and shows the view that goes with it. */
+  /**
+   * Reviews the changeset in `lens`, which the backend remembers for it. The backend pushes `lensChanged`, which
+   * shows the view that goes with it.
+   */
   async showLens(lens: Lens) {
     try {
       await session.connected().setLens(lens);
     } catch (error) {
       session.notice = errorText(error);
-      return;
     }
+  }
+
+  /** The changeset is reviewed in `lens` now, as this window or another chose: shows the view that goes with it. */
+  private async followLens(lens: Lens) {
     this.range = undefined;
     this.commitIndex = lens === "perCommit" ? this.lastCommit : undefined;
     try {

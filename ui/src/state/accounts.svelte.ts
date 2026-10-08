@@ -14,53 +14,76 @@ class AccountsStore {
   accounts = $state.raw<Account[]>([]);
   loading = $state(false);
   loadError = $state<string>();
+  /** The reading of the accounts underway. */
+  private reading?: Promise<void>;
+  /** Something changed since the reading underway started: it reads once more. */
+  private stale = false;
 
   constructor() {
     session.onConnect((backend) => {
       backend.onCredentialsNeeded((host) => void this.restore(backend, host));
+      // A change of the accounts, by this window or another.
+      backend.onAccountsChanged(() => void this.load());
       void this.restoreAll(backend);
     });
     // A backend the host started again holds no tokens.
     session.onResync((backend) => void this.restoreAll(backend));
   }
 
-  /** Subscribes the connection to the backend's calls for credentials, then hands it every token the keychain holds. */
+  /**
+   * Subscribes the connection to the backend's events, then hands it every token the keychain holds; each that it
+   * did not hold is announced, which reads the accounts.
+   */
   private async restoreAll(backend: Backend) {
     await this.load();
     try {
       const stored = await storedCredentials();
       for (const { host, token } of stored) await backend.setCredentials(host, token, false);
-      if (stored.length) await this.load();
     } catch (e) {
       session.notice = `Cannot restore the saved access tokens: ${errorText(e)}`;
     }
   }
 
-  /** Answers a call for `host`'s credential with the keychain's token, if there is one. */
+  /** Answers a call for `host`'s credential with the keychain's token, if there is one; the backend announces it. */
   private async restore(backend: Backend, host: string) {
     try {
       const token = await storedCredential(host);
-      if (token === null) return;
-      await backend.setCredentials(host, token, false);
-      await this.load();
+      if (token !== null) await backend.setCredentials(host, token, false);
     } catch (e) {
       session.notice = `Cannot read the access token of ${host}: ${errorText(e)}`;
     }
   }
 
-  /** Asks the backend for the accounts, which also has it look each one up at its platform. */
-  async load() {
-    const backend = session.backend;
-    if (!backend) return;
-    this.loading = true;
-    try {
-      this.accounts = await backend.accounts();
-      this.loadError = undefined;
-    } catch (e) {
-      this.loadError = errorText(e);
-    } finally {
-      this.loading = false;
+  /**
+   * Asks the backend for the accounts, which also has it look each one up at its platform. Asked again while a
+   * reading is underway, it reads once more after that one; it resolves when the accounts are current.
+   */
+  load(): Promise<void> {
+    this.stale = true;
+    this.reading ??= this.read().finally(() => (this.reading = undefined));
+    return this.reading;
+  }
+
+  private async read() {
+    while (this.stale) {
+      this.stale = false;
+      const backend = session.backend;
+      if (!backend) return;
+      this.loading = true;
+      try {
+        this.accounts = await backend.accounts();
+        this.loadError = undefined;
+      } catch (e) {
+        this.loadError = errorText(e);
+      } finally {
+        this.loading = false;
+      }
     }
+  }
+
+  /** Waits for the reading a change of the accounts started, or reads them. */
+  private async current() {
+    await (this.reading ?? this.load());
   }
 
   /**
@@ -82,7 +105,7 @@ class AccountsStore {
     } catch (e) {
       return { ok: false, error: errorText(e) };
     }
-    await this.load();
+    await this.current();
     return { ok: true, host: account.host, warning };
   }
 

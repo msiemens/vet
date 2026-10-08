@@ -59,6 +59,13 @@ class SymbolsState {
         });
       });
     });
+    // A server installed or reconfigured may answer for files it had no answer for.
+    session.onConnect((backend) =>
+      backend.onEvent((event) => {
+        if (event.type !== "serversChanged" || event.project !== backend.project) return;
+        if (this.backend === backend && this.revision !== undefined) void this.load(backend, this.revision, true);
+      }),
+    );
   }
 
   /** Back to nothing: no repository is open. */
@@ -69,9 +76,12 @@ class SymbolsState {
     this.clearSelection();
   }
 
-  /** Loads the changed symbols of `revision`, keeping the selection if its symbol is still changed. */
-  private async load(backend: Backend, revision: number) {
-    if (this.backend === backend && this.revision === revision) return;
+  /**
+   * Loads the changed symbols of `revision`, keeping the selection if its symbol is still changed. Those of the
+   * revision loaded already are loaded again only when `again`.
+   */
+  private async load(backend: Backend, revision: number, again = false) {
+    if (!again && this.backend === backend && this.revision === revision) return;
     this.backend = backend;
     this.revision = revision;
     const run = ++this.listRun;

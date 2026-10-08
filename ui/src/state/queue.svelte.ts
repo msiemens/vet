@@ -37,16 +37,24 @@ class QueueStore {
   lines = new SvelteMap<string, LineDelta | null>();
   /** Only the latest load of each kind counts. */
   private seq = { local: 0, pullRequests: 0, lines: 0 };
+  /** How many times an account changed: a listing of the pull requests that began before the last change lists again. */
+  private accountChanges = 0;
 
   constructor() {
-    session.onConnect((backend) =>
+    session.onConnect((backend) => {
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
-        // Which changeset is on view, what has a review, and how many threads are open.
-        if (event.type === "changesetOpened" || event.type === "reviewStarted") void this.loadAll();
+        // Which changeset is on view, what has a review, how many threads are open, and where the branches are.
+        if (event.type === "changesetOpened" || event.type === "reviewStarted" || event.type === "changesetsChanged")
+          void this.loadAll();
         else if (event.type === "threadsChanged") void this.load(false);
-      }),
-    );
+      });
+      // Another credential may list other pull requests, or list them where it could not before.
+      backend.onAccountsChanged(() => {
+        this.accountChanges++;
+        if (backend.project !== undefined && !this.listingPullRequests) void this.loadPullRequests();
+      });
+    });
     session.onResync(() => {
       if (session.repo !== undefined) void this.loadAll();
     });
@@ -85,14 +93,17 @@ class QueueStore {
   /** Asks the platform for the pull requests, which takes a moment: the ones listed stay until it answers. */
   async loadPullRequests() {
     const seq = ++this.seq.pullRequests;
+    const changes = this.accountChanges;
     this.listingPullRequests = true;
     const listed = await changeset.listPullRequests();
     if (seq !== this.seq.pullRequests) return;
     this.listingPullRequests = false;
-    if (!listed) return;
-    this.pullRequests = listed.rows;
-    this.sources = listed.sources;
-    void this.countLines(true);
+    if (listed) {
+      this.pullRequests = listed.rows;
+      this.sources = listed.sources;
+      void this.countLines(true);
+    }
+    if (this.accountChanges !== changes) void this.loadPullRequests();
   }
 
   /** The local changesets show as soon as they are listed, the pull requests when the platform answers. */
@@ -104,9 +115,11 @@ class QueueStore {
   async refresh() {
     if (this.refreshing) return;
     this.refreshing = true;
+    const before = this.seq.local;
     try {
       await changeset.fetch();
-      await this.loadAll();
+      // A fetch that brought something announced `changesetsChanged`, which listed again already.
+      if (this.seq.local === before) await this.loadAll();
     } finally {
       this.refreshing = false;
     }

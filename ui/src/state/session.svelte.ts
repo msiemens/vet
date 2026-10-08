@@ -42,7 +42,7 @@ class SessionStore {
       backend.onReconnect(() => void this.resync(backend));
       for (const listener of this.connectListeners) listener(backend);
       this.backend = backend;
-      await recent.load(backend);
+      await recent.start(backend);
       if (backend.initialRepo) await this.openRepo(backend.initialRepo);
     } catch (error) {
       this.status = errorText(error);
