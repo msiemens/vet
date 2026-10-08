@@ -42,6 +42,15 @@ void test("a version made by a base move names the new base instead of files", (
   assert.equal(row.rebasedOnto, "c03d55f");
 });
 
+void test("a pushed version names its commit for its checks, a move of the base has none", () => {
+  const tip = { id: "e91a4d0ff", shortId: "e91a4d0", subject: "", author: "", time: 0 };
+  const rows = timelineRows([version(1, { tip }), version(2, { origin: "baseMoved", tip })]);
+  assert.deepEqual(
+    rows.map((r) => r.commit),
+    [undefined, "e91a4d0ff"],
+  );
+});
+
 void test("the last reviewed version carries the eye", () => {
   const rows = timelineRows([version(1), version(2, { reviewedHere: true }), version(3)]);
   assert.deepEqual(

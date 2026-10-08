@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { CommitUnit } from "../../generated/CommitUnit";
+  import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Meter from "../../lib/ui/Meter.svelte";
+  import { checks } from "../../state/checks.svelte";
   import { commitRow } from "./commitRows";
 
   let {
@@ -69,6 +71,7 @@
           {#if row.done}<span class="done" title="Everything of it is seen"
               ><Icon name="check" size={12} stroke={2.4} /></span
             >{/if}
+          <CiStatus state={checks.of(commits[index].commit.id)?.state} size={12} />
         </span>
       </span>
     </button>

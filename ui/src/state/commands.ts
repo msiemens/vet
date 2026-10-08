@@ -9,7 +9,7 @@ import { type MenuSpec, resolveMenu } from "../lib/commandMenu";
 import { bindingSignal } from "./bindingSignal.svelte";
 import { isMac } from "./host";
 
-export type TabKind = "changes" | "file" | "text";
+export type TabKind = "changes" | "file" | "text" | "log";
 
 /** The editor that has the focus. */
 export interface FocusedEditor {
@@ -30,7 +30,10 @@ export interface CommandContext {
   /** A review has started and can be finished. */
   reviewOpen: boolean;
   canQuit: boolean;
-  /** The tab commands apply to: the active one, or the one a tab's context menu was opened on. */
+  /**
+   * The tab commands apply to: the active one, or the one a tab's context menu was opened on. `path`
+   * is what the tab shows: a file's path, or for a log tab the check run it is the log of.
+   */
   tab?: { kind: TabKind; path?: string };
   /** The active tab shows a diff view, whose hunks the commands step through. */
   diffView: boolean;

@@ -2,14 +2,12 @@
 // belongs to, the words of its Source and Updated columns, and what its progress column shows.
 
 import type { ChangesetRow } from "../../generated/ChangesetRow";
-import type { CiState } from "../../generated/CiState";
 import type { Completion } from "../../generated/Completion";
 import type { LineDelta } from "../../generated/LineDelta";
 import type { PullRequestRow } from "../../generated/PullRequestRow";
 import type { RowReview } from "../../generated/RowReview";
 import type { Target } from "../../generated/Target";
 import { shortTime } from "../../lib/shortTime.ts";
-import type { IconName } from "../../lib/ui/icons.ts";
 
 /** A row of the queue: a local changeset, or a pull request with what the platform lists of it. */
 export type QueueRow = ChangesetRow & { pullRequest?: PullRequestRow };
@@ -58,22 +56,6 @@ export function pullRequestNumber(typed: string): number | undefined {
   const match = /^#?(\d+)$/.exec(typed.trim());
   const number = match ? Number(match[1]) : 0;
   return number > 0 && Number.isSafeInteger(number) && number <= 0xffff_ffff ? number : undefined;
-}
-
-/** How the checks of a pull request's head commit show in the row's status column; none for no checks. */
-export function ciIcon(
-  ci: CiState | undefined,
-): { icon: IconName; tone: "ok" | "failing" | "running"; title: string } | undefined {
-  switch (ci) {
-    case "success":
-      return { icon: "check", tone: "ok", title: "Checks passed" };
-    case "failure":
-      return { icon: "close", tone: "failing", title: "Checks failing" };
-    case "pending":
-      return { icon: "timeline", tone: "running", title: "Checks running" };
-    default:
-      return undefined;
-  }
 }
 
 export type QueueTab = "all" | "blocking" | "local" | "prs";

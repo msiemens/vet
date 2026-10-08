@@ -1,8 +1,10 @@
 <script lang="ts">
   import type { LineDelta } from "../../generated/LineDelta";
   import type { VersionInfo } from "../../generated/VersionInfo";
+  import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import { checks } from "../../state/checks.svelte";
   import { type Range, rowRange } from "../../state/timelineRange";
   import { type RangeFile, timelineRows } from "./timelineRows";
 
@@ -55,7 +57,7 @@
   <div class="body">
     <div class="table">
       <div class="row head">
-        <span>Version</span><span>Time</span><span>Files</span><span class="right">Lines</span>
+        <span>Version</span><span>Time</span><span>Files</span><span></span><span class="right">Lines</span>
       </div>
       <ul class="rows" aria-label="Versions, newest first">
         {#each rows as row (row.n)}
@@ -80,6 +82,7 @@
                 {/if}
                 {#if row.reviewed}<span class="eye" title="Last reviewed here"><Icon name="eye" size={13} /></span>{/if}
               </span>
+              <span class="ci"><CiStatus state={checks.of(row.commit)?.state} size={12} /></span>
               <span class="right">
                 {#if row.lines}{@render counts(row.lines)}{:else}<span class="none">–</span>{/if}
               </span>
@@ -153,7 +156,7 @@
   }
   .row {
     display: grid;
-    grid-template-columns: 56px 96px minmax(0, 1fr) auto;
+    grid-template-columns: 56px 96px minmax(0, 1fr) 14px auto;
     align-items: center;
     column-gap: 12px;
     width: 100%;
@@ -183,6 +186,10 @@
   }
   .right {
     text-align: right;
+  }
+  .ci {
+    display: inline-flex;
+    justify-content: center;
   }
   .names {
     display: flex;

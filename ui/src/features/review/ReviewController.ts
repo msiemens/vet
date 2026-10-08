@@ -3,6 +3,8 @@
 // the tab's view in it.
 
 import { tick } from "svelte";
+import type { CheckLog } from "../../generated/CheckLog";
+import type { CheckRun } from "../../generated/CheckRun";
 import type { FileChange } from "../../generated/FileChange";
 import type { Manifest } from "../../generated/Manifest";
 import type { Side } from "../../generated/Side";
@@ -15,8 +17,10 @@ import { session } from "../../state/session.svelte";
 import { threads } from "../../state/threads.svelte";
 import { rangeKey } from "../../state/timelineRange";
 import type { Thread } from "../../generated/Thread";
+import { errorText } from "../../lib/errorText";
 import { ChangesetView, type Listeners, type ScrollPosition, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
+import { LogView } from "./editor/LogView";
 import type { ViewProbe } from "./editor/viewProbe";
 import { bindRevision, focusedEditor } from "./editor/semantic";
 import type { Mode } from "../../lib/viewMode";
@@ -27,7 +31,18 @@ import { type SavedView, restoredTabs } from "./changesetViews";
 import { keyId } from "../../state/changesetKey";
 import { type ViewActions, viewCommands } from "./reviewCommands";
 import { readPosition, writePosition } from "./savedPosition";
-import { CHANGES, type TabId, Tabs, fileTab, kindOf, pathOf, textTab } from "./Tabs.svelte";
+import {
+  CHANGES,
+  type TabId,
+  Tabs,
+  fileTab,
+  kindOf,
+  logTab,
+  pathOf,
+  showsDiff,
+  subjectOf,
+  textTab,
+} from "./Tabs.svelte";
 
 /** How the dev tools measure and test the controller's editors; the controller itself records nothing. */
 export interface Probe {
@@ -77,6 +92,10 @@ export class ReviewController {
   private views = new Map<TabId, ChangesetView>();
   /** The view of each attached text tab. */
   private texts = new Map<TabId, TextView>();
+  /** The logs fetched for the log tabs, which are built from them whenever their pane attaches. */
+  private logs = new Map<TabId, CheckLog>();
+  /** The view of each attached log tab. */
+  private logViews = new Map<TabId, LogView>();
   private roots = new Map<TabId, HTMLElement>();
   mode: Mode = "unified";
   private hooks: ViewHooks;
@@ -148,6 +167,8 @@ export class ReviewController {
     this.views.clear();
     for (const text of this.texts.values()) text.destroy();
     this.texts.clear();
+    for (const log of this.logViews.values()) log.destroy();
+    this.logViews.clear();
   }
 
   get files() {
@@ -202,7 +223,7 @@ export class ReviewController {
     const id = this.tabs.active;
     const view = this.views.get(id);
     return {
-      tab: { kind: kindOf(id), path: pathOf(id) },
+      tab: { kind: kindOf(id), path: subjectOf(id) },
       diffView: view !== undefined,
       byCommit: this.changeset.shownCommit !== undefined,
       hunk: view?.current ?? -1,
@@ -369,7 +390,7 @@ export class ReviewController {
    */
   private build(id: TabId, manifest: Manifest, previous?: ChangesetView) {
     const root = this.roots.get(id);
-    if (!root) return;
+    if (!root || kindOf(id) === "log") return;
     const path = pathOf(id);
     if (kindOf(id) === "text" && path !== undefined) {
       this.texts.get(id)?.destroy();
@@ -444,7 +465,8 @@ export class ReviewController {
     this.roots.set(id, root);
     // The Changes tab is built by `open`, which fetches the manifest first.
     const manifest = this.changeset.currentManifest();
-    if (id !== CHANGES && manifest) this.build(id, manifest);
+    if (kindOf(id) === "log") this.buildLog(id, root);
+    else if (id !== CHANGES && manifest) this.build(id, manifest);
     // Registered before the view is, so it hears the scroll that the view's own listener stops.
     if (id === CHANGES) root.addEventListener("scroll", this.onChangesScroll, { passive: true });
     return () => {
@@ -453,8 +475,40 @@ export class ReviewController {
       this.views.delete(id);
       this.texts.get(id)?.destroy();
       this.texts.delete(id);
+      this.logViews.get(id)?.destroy();
+      this.logViews.delete(id);
       this.roots.delete(id);
     };
+  }
+
+  private buildLog(id: TabId, root: HTMLElement) {
+    const log = this.logs.get(id);
+    if (log) this.logViews.set(id, new LogView(root, log.text, log.failure?.line));
+  }
+
+  /**
+   * Shows the log of a failed check run in a tab of its own, scrolled to the line where the job
+   * failed. The log is fetched the first time; a log that cannot be had is reported and opens no tab.
+   */
+  async openLog(run: CheckRun) {
+    const id = logTab(run.id);
+    let log = this.logs.get(id);
+    if (!log) {
+      try {
+        log = await this.backend.checkLog(run.id);
+      } catch (error) {
+        session.notice = `Could not load the log of ${run.name}: ${errorText(error)}`;
+        return;
+      }
+      this.logs.set(id, log);
+    }
+    const step = log.failure?.step;
+    this.tabs.showLog(run.id, {
+      title: `${run.name} · log`,
+      hint: step ? `${run.name}: the step "${step}" failed` : undefined,
+    });
+    await tick(); // a new tab's pane attaches and builds its view
+    this.logViews.get(id)?.goToFailure();
   }
 
   /**
@@ -534,7 +588,7 @@ export class ReviewController {
     // Another range is another set of files: its views start at the top. So does the Changes tab when
     // it shows other files.
     if ((rangeChanged || filterChanged) && !switching) {
-      const tabs = this.tabs.open.filter((tab) => kindOf(tab) !== "text" && (rangeChanged || tab === CHANGES));
+      const tabs = this.tabs.open.filter((tab) => showsDiff(tab) && (rangeChanged || tab === CHANGES));
       this.restore = { scroll: new Map(tabs.map((tab) => [tab, 0])) };
     }
     this.show(manifest);
@@ -583,9 +637,7 @@ export class ReviewController {
     this.tabs.open = open;
     this.tabs.active = active;
     // Every diff tab builds with its saved position, those not mounted yet when they attach.
-    const scroll = new Map(
-      open.filter((tab) => kindOf(tab) !== "text").map((tab) => [tab, saved?.scroll.get(tab) ?? 0]),
-    );
+    const scroll = new Map(open.filter(showsDiff).map((tab) => [tab, saved?.scroll.get(tab) ?? 0]));
     this.restore = { scroll, anchor: saved?.anchor };
   }
 

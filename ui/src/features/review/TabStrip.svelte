@@ -23,14 +23,18 @@
 <div class="tabs" role="tablist" aria-label="Open views">
   {#each tabs.open as id (id)}
     {@const path = pathOf(id)}
+    {@const log = tabs.logs.get(id)}
     <Tab
       selected={tabs.active === id}
-      title={path ?? (commit ? commit.commit.subject : "Every changed file")}
+      title={log ? (log.hint ?? log.title) : (path ?? (commit ? commit.commit.subject : "Every changed file"))}
       onselect={() => (tabs.active = id)}
       onclose={id === CHANGES ? undefined : () => tabs.close(id)}
       onmenu={(x, y) => onmenu(id, x, y)}
     >
-      {#if path === undefined && commit}
+      {#if log}
+        <Icon name="file" size={12} />
+        {log.title}
+      {:else if path === undefined && commit}
         <Icon name={commit.kind.type === "merge" ? "merge" : "commit"} size={12} />
         <span class="mono hash">{commit.commit.shortId}</span>
         <span class="subject">{commit.commit.subject}</span>

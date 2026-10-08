@@ -25,7 +25,7 @@
   import { type Probe, ReviewController } from "./ReviewController";
   import { editorMenu, fileCommands, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
   import CommitHeader from "./CommitHeader.svelte";
-  import { CHANGES, kindOf, pathOf, tabOf } from "./Tabs.svelte";
+  import { CHANGES, kindOf, pathOf, showsDiff, subjectOf, tabOf } from "./Tabs.svelte";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
@@ -214,14 +214,14 @@
       {tabs}
       files={changeset.shownFiles}
       {commit}
-      onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: pathOf(id) } })}
+      onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: subjectOf(id) } })}
     />
     <span class="grow"></span>
     <ViewControls
       {mode}
       {onmode}
       onstep={(delta) => controller.stepHunk(delta)}
-      diff={kindOf(tabs.active) !== "text"}
+      diff={showsDiff(tabs.active)}
       {shown}
       onshow={(view) => view !== shown && void controller.toggleFileView()}
     />

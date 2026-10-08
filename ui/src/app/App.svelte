@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { type ComponentProps, onMount } from "svelte";
+  import { type ComponentProps, onMount, untrack } from "svelte";
   import DevTools from "../dev/DevTools.svelte";
   import { probe } from "../dev/probe.svelte";
   import {
@@ -15,6 +15,7 @@
     type Screen,
     toggleTool,
   } from "../features/chrome";
+  import { ChecksButton } from "../features/checks";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, targetLabel } from "../features/queue";
   import { ReviewScreen, type ReviewController, summarize } from "../features/review";
   import { SettingsDialog } from "../features/settings";
@@ -28,6 +29,7 @@
   import Toast from "../lib/ui/Toast.svelte";
   import type { Mode } from "../lib/viewMode";
   import { changeset } from "../state/changeset.svelte";
+  import { checks } from "../state/checks.svelte";
   import {
     appVersion,
     canQuit,
@@ -53,6 +55,9 @@
   import { defaultRange } from "../state/timelineRange";
   import { versions } from "../state/versions.svelte";
 
+  /** How many of a pull request's latest versions have their checks asked for, for the timeline. */
+  const MAX_CHECKED_VERSIONS = 20;
+
   let controller = $state.raw<ReviewController>();
   // The selected tool of each rail, and whether its sidebar is shown.
   const left = $state({ tool: "files", open: true });
@@ -72,6 +77,29 @@
   let host = $state<string>();
   const reviewOpen = $derived(changeset.manifest?.review.state === "open");
   const baseChangedLeft = $derived(changeset.baseChanged ? changeset.baseChangedFiles().length : 0);
+
+  /** The head commit of a pull request: the last of its commits, else its latest version's tip, else the target's short id. */
+  const headId = $derived(
+    changeset.manifest?.target.changeset.type === "pullRequest"
+      ? (changeset.commits.at(-1)?.commit.id ?? versions.items.at(-1)?.tip?.id ?? changeset.manifest.target.head)
+      : undefined,
+  );
+  /** The commits whose checks the views show: the commits by commit, the pushed versions and the head. */
+  const checkedCommits = $derived(
+    headId === undefined
+      ? []
+      : [
+          ...new Set([
+            ...changeset.commits.map((c) => c.commit.id),
+            ...versions.items.slice(-MAX_CHECKED_VERSIONS).flatMap((v) => (v.tip ? [v.tip.id] : [])),
+            headId,
+          ]),
+        ],
+  );
+  $effect(() => {
+    const wanted = checkedCommits;
+    untrack(() => checks.want(wanted));
+  });
 
   const semanticSummary = $derived(semantic.summary(controller?.activePath));
   const range = $derived(changeset.range);
@@ -255,6 +283,12 @@
       >Back to all changes</button
     >
   {/snippet}
+  {#snippet headChecks()}
+    {@const head = checks.of(headId)}
+    {#if head && headId}
+      <ChecksButton checks={head} shortId={headId.slice(0, 7)} onlog={(run) => void controller?.openLog(run)} />
+    {/if}
+  {/snippet}
   {#snippet projectSwitcher()}
     {#if session.repo}
       <ProjectSwitcher
@@ -288,6 +322,7 @@
     chips={range ? rangeChips : undefined}
     back={backToChangeset}
     filtered={changeset.baseChanged ? baseChangedActions : undefined}
+    checks={headChecks}
     base={changeset.manifest?.base}
     target={changeset.manifest?.target}
     review={changeset.manifest?.review}

@@ -157,6 +157,10 @@
 .vet-text .cm-editor {
   height: 100%;
 }
+/* Where a CI job failed, in its log's tab. */
+.vet-text .cm-editor .vet-log-failure {
+  background: var(--del-bg);
+}
 .vet-notext {
   display: flex;
   align-items: center;

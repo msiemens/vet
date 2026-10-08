@@ -80,13 +80,14 @@ export interface FileActions {
   copyText(text: string): void;
   excludePath(path: string, dir: boolean): void;
   reviewOnly(path: string): void;
-  closeTab(kind: "file" | "text", path: string): void;
+  closeTab(kind: Exclude<TabKind, "changes">, path: string): void;
   /** Closes every tab but the Changes tab and this one, which gets the focus. */
   closeOtherTabs(kind: TabKind, path?: string): void;
 }
 
 export function fileCommands(a: FileActions): Command<CommandContext>[] {
-  const pathOf = (c: CommandContext) => c.target?.path ?? c.tab?.path;
+  // A log tab has no path: what it shows is a check run.
+  const pathOf = (c: CommandContext) => c.target?.path ?? (c.tab?.kind === "log" ? undefined : c.tab?.path);
   return [
     {
       id: "path.copy",

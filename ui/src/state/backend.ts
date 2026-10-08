@@ -10,6 +10,8 @@ import type { BranchInfo } from "../generated/BranchInfo";
 import type { ChangedSymbols } from "../generated/ChangedSymbols";
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { ChangesetRow } from "../generated/ChangesetRow";
+import type { CheckLog } from "../generated/CheckLog";
+import type { CommitChecks } from "../generated/CommitChecks";
 import type { CommentAt } from "../generated/CommentAt";
 import type { CommitInfo } from "../generated/CommitInfo";
 import type { CommitUnit } from "../generated/CommitUnit";
@@ -71,6 +73,9 @@ function expect<T extends Response["type"]>(response: Response, type: T): Extrac
   if (response.type !== type) throw new Error("unexpected response");
   return response as Extract<Response, { type: T }>;
 }
+
+/** The `checkLog` response carries the log's fields beside its tag. */
+const asCheckLog = (response: Extract<Response, { type: "checkLog" }>): CheckLog => response;
 
 /** The `thread` response carries the thread's fields beside its tag. */
 const asThread = (response: Extract<Response, { type: "thread" }>): Thread => response;
@@ -268,6 +273,20 @@ export class Backend {
       "pullRequests",
     );
     return { rows, sources };
+  }
+
+  /**
+   * The checks of the commits on the platform of the pull request on view: none for another changeset.
+   * `error` says why the commits left out of `checks` could not be answered for.
+   */
+  async checks(commits: string[]): Promise<{ checks: CommitChecks[]; error?: string }> {
+    const { checks, error } = expect(await this.conn.request({ type: "checks", project: this.pid, commits }), "checks");
+    return { checks, error: error ?? undefined };
+  }
+
+  /** The log of a run of `checks` that has one. Rejects with the reason it could not be had. */
+  async checkLog(run: string): Promise<CheckLog> {
+    return asCheckLog(expect(await this.conn.request({ type: "checkLog", project: this.pid, run }), "checkLog"));
   }
 
   /**

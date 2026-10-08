@@ -1,6 +1,10 @@
 <script lang="ts">
   import type { CommitUnit } from "../../generated/CommitUnit";
+  import { ciIcon } from "../../lib/ciStatus";
   import { shortTime } from "../../lib/shortTime";
+  import Icon from "../../lib/ui/Icon.svelte";
+  import { checks } from "../../state/checks.svelte";
+  import { passed } from "../checks";
 
   /** What the Changes tab says of the commit it shows: who wrote it, when, and what they said. */
   let { commit }: { commit: CommitUnit } = $props();
@@ -10,6 +14,9 @@
   const hue = $derived(Array.from(info.author, (c) => c.charCodeAt(0)).reduce((sum, c) => (sum * 31 + c) % 360, 7));
   const initial = $derived(Array.from(info.author)[0]?.toUpperCase());
   const parents = $derived(commit.kind.type === "merge" ? commit.parents.map((p) => p.slice(0, 7)) : []);
+  const checked = $derived(checks.of(info.id));
+  const look = $derived(ciIcon(checked?.state));
+  const count = $derived(checked ? passed(checked) : { passed: 0, total: 0 });
 </script>
 
 <header>
@@ -21,6 +28,12 @@
     </span>
     <span class="meta">{shortTime(info.time)}</span>
     <span class="mono meta">{info.shortId}</span>
+    {#if checked && look}
+      <span class="meta ci {look.tone}" title={`${count.passed} of ${count.total} checks passed`}>
+        <Icon name={look.icon} size={12} stroke={2.2} />
+        <span class="mono">{count.passed}/{count.total}</span>
+      </span>
+    {/if}
   </div>
   {#if parents.length}
     <p class="parents selectable">Merge of <span class="mono">{parents.join(" and ")}</span></p>
@@ -72,6 +85,20 @@
     color: var(--text-2);
     font-size: var(--fs-mono-s);
     white-space: nowrap;
+  }
+  .ci {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .ci.ok {
+    color: var(--add-text);
+  }
+  .ci.failing {
+    color: var(--del-text);
+  }
+  .ci.running {
+    color: var(--old-base);
   }
   .parents,
   .body {

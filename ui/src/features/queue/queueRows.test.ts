@@ -5,7 +5,6 @@ import type { Completion } from "../../generated/Completion";
 import type { PullRequestRow } from "../../generated/PullRequestRow";
 import type { Target } from "../../generated/Target";
 import {
-  ciIcon,
   commentCount,
   filterRows,
   labelOf,
@@ -190,11 +189,4 @@ void test("a pull request is asked for by its number, with or without the hash",
   assert.equal(pullRequestNumber(" #482 "), 482);
   for (const typed of ["", "#", "0", "-3", "4x", "4 8", "99999999999"])
     assert.equal(pullRequestNumber(typed), undefined, typed);
-});
-
-void test("only checks that passed, failed or run have an icon", () => {
-  assert.deepEqual(
-    (["success", "failure", "pending", "neutral", "skipped", undefined] as const).map((s) => ciIcon(s)?.tone),
-    ["ok", "failing", "running", undefined, undefined, undefined],
-  );
 });

@@ -22,6 +22,8 @@ export interface TimelineRow {
   at: number;
   /** A move of the base: the files are not shown, the new base is. */
   rebasedOnto?: string;
+  /** The commit the version was pushed as, whose checks the row shows; none for a move of the base. */
+  commit?: string;
   /** The short names of the files the version changed, comma separated. */
   files: string;
   /** The lines the version changed; none when it changed no line. */
@@ -41,6 +43,7 @@ export function timelineRows(versions: readonly VersionInfo[], range?: Range): T
         n: v.n,
         at: v.at,
         rebasedOnto: v.origin === "baseMoved" ? (v.base?.shortId ?? "") : undefined,
+        commit: v.origin === "baseMoved" ? undefined : v.tip?.id,
         files: v.files.map((f) => basename(f.path)).join(", "),
         lines: added || removed ? { added, removed } : undefined,
         reviewed: v.reviewedHere,

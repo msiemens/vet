@@ -1,0 +1,40 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { CheckRun } from "../../generated/CheckRun.ts";
+import type { CommitChecks } from "../../generated/CommitChecks.ts";
+import { badgeCount, durationText, passed } from "./checkRows.ts";
+
+const run = (state: CheckRun["state"]): CheckRun => ({ id: "1", name: "build", state, log: false });
+const commit = (...states: CheckRun["state"][]): CommitChecks => ({
+  commit: "abc",
+  runs: states.map(run),
+  // The combined state is the backend's; these cases only need the states that can come out of it.
+  state: states.includes("pending")
+    ? "pending"
+    : states.includes("failure")
+      ? "failure"
+      : states.includes("success")
+        ? "success"
+        : "neutral",
+});
+
+void test("a run that was skipped or decided nothing does not count against the commit", () => {
+  assert.deepEqual(passed(commit("success", "skipped", "neutral", "failure", "pending")), { passed: 3, total: 5 });
+});
+
+void test("the badge counts what the combined state is about", () => {
+  assert.equal(badgeCount(commit("success", "failure", "failure")), 2);
+  assert.equal(badgeCount(commit("success", "pending", "failure")), 1);
+  assert.equal(badgeCount(commit("success", "success", "skipped")), 3);
+});
+
+void test("durations read as the platform shows them", () => {
+  assert.deepEqual([12, 65, 192, 280, 3600, 3725].map(durationText), [
+    "12s",
+    "1m 05s",
+    "3m 12s",
+    "4m 40s",
+    "1h 00m",
+    "1h 02m",
+  ]);
+});

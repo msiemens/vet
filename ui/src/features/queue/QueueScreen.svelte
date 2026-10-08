@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { Thread } from "../../generated/Thread";
+  import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import { changeset } from "../../state/changeset.svelte";
@@ -13,7 +14,6 @@
     type QueueRow,
     type QueueTab,
     TABS,
-    ciIcon,
     commentCount,
     filterRows,
     labelOf,
@@ -120,7 +120,6 @@
         {@const id = keyId(row.key)}
         {@const numbers = ownOf(row)}
         {@const lines = shownLines(row, numbers?.delta)}
-        {@const ci = ciIcon(row.pullRequest?.ci)}
         {@const comments = commentCount(row)}
         <button
           class="flat row"
@@ -142,7 +141,7 @@
           </span>
           <span><ReviewedCell reviewed={reviewedOf(row.review, numbers?.completion)} /></span>
           <span class="icons">
-            {#if ci}<span class="ci {ci.tone}" title={ci.title}><Icon name={ci.icon} size={13} /></span>{/if}
+            <CiStatus state={row.pullRequest?.ci} />
             {#if comments > 0}
               <span
                 class="threads"
@@ -300,18 +299,6 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-  }
-  .ci {
-    display: inline-flex;
-  }
-  .ci.ok {
-    color: var(--add-text);
-  }
-  .ci.failing {
-    color: var(--del-text);
-  }
-  .ci.running {
-    color: var(--old-base);
   }
   .unlisted {
     margin: 8px 16px;

@@ -140,6 +140,12 @@ export async function removeStoredCredential(host: string): Promise<void> {
   if (inTauri) await invoke("remove_credential", { host });
 }
 
+/** Shows a web address in the user's browser. A plain browser opens a tab. Rejects with a message if it cannot. */
+export async function openUrl(url: string): Promise<void> {
+  if (inTauri) await invoke("open_url", { url });
+  else window.open(url, "_blank", "noopener,noreferrer");
+}
+
 /** The native file dialog; `null` if cancelled. Rejects with a message for a file the backend cannot see. */
 export async function pickFile(): Promise<string | null> {
   return inTauri ? invoke<string | null>("pick_file") : null;

@@ -36,6 +36,7 @@
     chips,
     back,
     filtered,
+    checks,
   }: {
     /** Which screen shows: the queue of changesets, or the review of the one on view. */
     screen: Screen;
@@ -67,6 +68,8 @@
     back?: Snippet;
     /** While the review view shows a filtered part of the changeset: what acts on it and the way back, before the progress. */
     filtered?: Snippet;
+    /** The head commit's checks, after the progress. */
+    checks?: Snippet;
   } = $props();
   const seen = $derived(completion?.seenPercent ?? 0);
   const oldBase = $derived(completion?.oldBasePercent ?? 0);
@@ -129,6 +132,7 @@
       />
       <span class="mono pct">{Math.round(seen)}%</span>
     </span>
+    {@render checks?.()}
     {#if review?.state === "open"}
       <button
         class="ctl finish"
