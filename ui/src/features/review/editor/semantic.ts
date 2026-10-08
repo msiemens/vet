@@ -13,7 +13,7 @@ import type { TextSpan } from "../../../generated/TextSpan";
 import { nextPaint } from "../../../lib/nextPaint";
 import type { HoverAnswer } from "../../../state/backend";
 import { isMac } from "../../../state/host";
-import { type Span, outsideHidden } from "./hiddenRanges";
+import { type Span, collapsedRegions, outsideHidden } from "./hiddenRanges";
 import { hoverContent } from "./hoverContent";
 import { type HoverAnchor, hoverPopups } from "./hoverDom";
 import { wordRange } from "./hoverPopup";
@@ -143,26 +143,18 @@ const diagnosticList = StateField.define<readonly Diagnostic[]>({
   },
 });
 
-/** `type` of the bar `@codemirror/merge` puts over a collapsed region. */
-const COLLAPSED_BAR = "collapsed-unchanged-code";
-
 /** The regions hidden behind an "N unchanged lines" bar. */
-function collapsedRegions(view: EditorView): Span[] {
-  const regions: Span[] = [];
-  for (const source of view.state.facet(EditorView.decorations)) {
-    const set = typeof source === "function" ? source(view) : source;
-    set.between(0, view.state.doc.length, (from, to, deco) => {
-      const widget = (deco.spec as { widget?: { type?: string } }).widget;
-      if (widget?.type === COLLAPSED_BAR) regions.push({ from, to });
-    });
-  }
-  return regions;
+function hiddenRegions(view: EditorView): Span[] {
+  const sets = view.state
+    .facet(EditorView.decorations)
+    .map((source) => (typeof source === "function" ? source(view) : source));
+  return collapsedRegions(sets, view.state.doc.length);
 }
 
 /** Draws the stored diagnostics: gutter markers and underlines, with the message in a tooltip, but nothing in or on a collapsed region. */
 function drawDiagnostics(view: EditorView, stored: readonly Diagnostic[], store: boolean) {
   const { doc } = view.state;
-  const hidden = collapsedRegions(view);
+  const hidden = hiddenRegions(view);
   const lint = stored.flatMap((d): LintDiagnostic[] => {
     const from = offsetAt(doc, d.span.start);
     const span = { from, to: Math.max(from, offsetAt(doc, d.span.end)) };
@@ -191,7 +183,7 @@ const diagnosticsFollowCollapse = ViewPlugin.fromClass(
     }
 
     private keyOf(view: EditorView) {
-      return collapsedRegions(view)
+      return hiddenRegions(view)
         .map((r) => `${r.from}-${r.to}`)
         .join();
     }
