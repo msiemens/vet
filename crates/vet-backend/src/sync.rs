@@ -99,7 +99,8 @@ impl Orchestrator {
     }
 
     /// Tells what went wrong while posting, if anything, and syncs to bring back what is on the
-    /// platform now.
+    /// platform now. Posted drafts are no drafts anymore, which every subscriber is told, the
+    /// requester included, also when the sync finds nothing else to change.
     async fn after_posting(
         &self,
         open: &crate::open::Ready,
@@ -110,7 +111,13 @@ impl Orchestrator {
             open.subscribers
                 .broadcast(Event::Notification { project, notification });
         }
-        sync_pull_request(&open.open, open).await;
+        let announced = sync_pull_request(&open.open, open).await;
+        if report.posted > 0 && !announced {
+            open.subscribers.broadcast(Event::ThreadsChanged {
+                project,
+                revision: open.session.revision().await,
+            });
+        }
         Ok(mapping::review_submitted(report))
     }
 
@@ -152,16 +159,17 @@ pub(crate) fn sync_in_background(open: Arc<Open>) {
 
 /// Syncs the threads of the pull request on view, if one is, and tells every subscriber what
 /// came of it. A platform that cannot be asked is reported as its status and not as a failure.
-pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) {
+/// Answers whether the subscribers were told that threads changed.
+pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) -> bool {
     let Source::PullRequest { remote, .. } = booted.session.source().await else {
-        return;
+        return false;
     };
     let hosting = open.hosting(remote.kind());
     let (problem, report) = match booted.session.sync_threads(&hosting).await {
         Ok(report) => (report.problem.clone(), Some(report)),
         Err(SessionError::Platform(error)) => (Some(error), None),
         // The changeset on view changed meanwhile.
-        Err(_) => return,
+        Err(_) => return false,
     };
     announce(
         open,
@@ -171,9 +179,10 @@ pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) {
         problem.as_ref(),
         report.as_ref(),
     )
-    .await;
+    .await
 }
 
+/// Answers whether the subscribers were told that threads changed.
 async fn announce(
     open: &Open,
     booted: &Booted,
@@ -181,7 +190,7 @@ async fn announce(
     kind: vet_app::platform::PlatformKind,
     problem: Option<&PlatformError>,
     report: Option<&SyncReport>,
-) {
+) -> bool {
     let connection = mapping::platform_connection(problem);
     let was = open.set_connection(host, connection.clone());
     let stopped = matches!(
@@ -207,7 +216,7 @@ async fn announce(
         status: mapping::platform_status(host, kind, connection),
     });
     let Some(report) = report else {
-        return;
+        return false;
     };
     if report.changed {
         open.subscribers.broadcast(Event::ThreadsChanged {
@@ -220,5 +229,77 @@ async fn announce(
             project: open.id,
             notification: mapping::notification(notice, kind),
         });
+    }
+    report.changed
+}
+
+#[cfg(test)]
+mod tests {
+    use vet_app::session::SubmitReport;
+    use vet_protocol::ServerMessage;
+    use vet_transport::Events;
+
+    use super::*;
+    use crate::{Config, open_store};
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    /// How many announcements that threads changed are waiting for the connection.
+    fn threads_changed(inbox: &mut tokio::sync::mpsc::UnboundedReceiver<ServerMessage>) -> usize {
+        std::iter::from_fn(|| inbox.try_recv().ok())
+            .filter(|m| {
+                matches!(
+                    m,
+                    ServerMessage::Event {
+                        event: Event::ThreadsChanged { .. }
+                    }
+                )
+            })
+            .count()
+    }
+
+    fn posted(posted: u32) -> SubmitReport {
+        SubmitReport {
+            posted,
+            skipped: 0,
+            problem: None,
+            not_posted: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_window_that_posted_drafts_is_told_that_threads_changed() {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-q"]);
+        std::fs::write(repo.path().join("a.txt"), "a\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(
+            repo.path(),
+            &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "a"],
+        );
+        let data = tempfile::tempdir().unwrap();
+        let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), Config::default());
+        let (events, mut inbox) = Events::channel();
+        let (project, _) = orchestrator
+            .open(repo.path().to_str().unwrap(), Connection(events))
+            .await
+            .unwrap();
+        let open = orchestrator.ready(project).await.unwrap();
+        threads_changed(&mut inbox);
+
+        orchestrator.after_posting(&open, project, &posted(0)).await.unwrap();
+        assert_eq!(threads_changed(&mut inbox), 0, "nothing was posted");
+
+        orchestrator.after_posting(&open, project, &posted(2)).await.unwrap();
+        assert_eq!(threads_changed(&mut inbox), 1);
     }
 }
