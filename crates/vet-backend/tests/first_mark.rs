@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use common::{Client, config, git, init, write};
 use vet_backend::{Orchestrator, open_store};
-use vet_protocol::{ProjectId, Request, Response, View};
+use vet_protocol::{Event, ProjectId, Request, Response, ServerMessage, TaskKind, TaskState, View};
 
 /// This repository's source files over 1 KB, in path order, at most `limit`.
 fn sources(limit: usize) -> Vec<(String, String)> {
@@ -108,27 +108,31 @@ async fn toggle(client: &Client, project: ProjectId, revision: u32, path: &str, 
     took
 }
 
-/// How long until the content store in `data` holds every one of `texts`.
-async fn copied(data: &Path, texts: &[String]) -> Duration {
+/// How long until the copy of the working tree into the store ended, as the client hears from
+/// its task.
+async fn copied(client: &mut Client) -> Duration {
     let started = Instant::now();
-    for text in texts {
-        let hex = vet_core::content::BlobId::of(text.as_bytes()).0.to_hex();
-        let path = data.join("content").join(&hex[..2]).join(&hex[2..]);
-        while !path.exists() {
-            assert!(
-                started.elapsed() < Duration::from_secs(120),
-                "the copy ahead never finished"
-            );
-            tokio::time::sleep(Duration::from_millis(5)).await;
+    loop {
+        let message = tokio::time::timeout(Duration::from_secs(120), client.inbox.recv())
+            .await
+            .expect("the copy ahead never ended")
+            .expect("the connection is open");
+        if let ServerMessage::Event {
+            event: Event::Task(task),
+        } = message
+            && task.kind == TaskKind::Store
+            && task.state != TaskState::Running
+        {
+            assert_eq!(task.state, TaskState::Finished, "the copy ahead failed");
+            return started.elapsed();
         }
     }
-    started.elapsed()
 }
 
 /// Opens the repository on the store in `data`, then marks `marks` hunks, one in each of the
 /// files from `first` on; with `every`, then marks every file seen. With `ahead`, the marks
-/// wait until the store holds these texts, which the session copies into it in the background.
-/// Prints how long each step took.
+/// wait until the session's copy of the working tree into the store, which it starts once the
+/// tree was quiet for a while, has ended. Prints how long each step took.
 async fn session(
     label: &str,
     data: &Path,
@@ -136,18 +140,18 @@ async fn session(
     names: &[String],
     (first, marks): (usize, usize),
     every: bool,
-    ahead: Option<&[String]>,
+    ahead: bool,
 ) {
     let handler = Arc::new(Orchestrator::new(open_store(data).await.unwrap(), config()));
-    let client = Client::new(&handler);
+    let mut client = Client::new(&handler);
     let (project, open) = timed(client.open(repo)).await;
     let (revision, manifest) = timed(client.revision(project)).await;
     let (_, second_manifest) = timed(client.revision(project)).await;
     println!("{label}: open {open:?}, first manifest {manifest:?}, second manifest {second_manifest:?}");
-    if let Some(texts) = ahead {
+    if ahead {
         println!(
-            "{label}: the copy ahead finished {:?} after the second manifest",
-            copied(data, texts).await
+            "{label}: the copy ahead ended {:?} after the second manifest",
+            copied(&mut client).await
         );
     }
     let mut took = Vec::new();
@@ -198,8 +202,9 @@ async fn session(
         panic!("no manifest");
     };
     println!(
-        "{label}: every file seen ({} hunks), the slowest (file {slowest_at}) took {slowest:?}",
-        manifest.completion.seen_hunks
+        "{label}: every file seen ({} hunks), the slowest (file {slowest_at}, {}) took {slowest:?}",
+        manifest.completion.seen_hunks,
+        names[slowest_at - 1],
     );
     let undo = toggle(&client, project, revision, &names[0], 0).await;
     let redo = toggle(&client, project, revision, &names[0], 0).await;
@@ -217,21 +222,12 @@ async fn the_first_marks_on_a_large_changeset() {
     let names: Vec<_> = files.iter().map(|(n, _)| n.clone()).collect();
     let data = tempfile::tempdir().unwrap();
 
-    // The first mark starts the review, while the target's content is still being copied.
-    session("cold", data.path(), repo.path(), &names, (0, 20), false, None).await;
+    // The first mark starts the review before the tree was quiet long enough to be copied ahead:
+    // the mark copies the target's content itself.
+    session("cold", data.path(), repo.path(), &names, (0, 20), false, false).await;
     // The review is open now, with 20 marks to remap; the store keeps the target's content.
-    session("reopened", data.path(), repo.path(), &names, (20, 20), true, None).await;
-    // On a store of its own, the first mark comes once the target's content was copied.
+    session("reopened", data.path(), repo.path(), &names, (20, 20), true, false).await;
+    // On a store of its own, the first mark comes once the target's content was copied ahead.
     let fresh = tempfile::tempdir().unwrap();
-    let texts: Vec<String> = files.iter().map(|(_, text)| edited(text)).collect();
-    session(
-        "copied ahead",
-        fresh.path(),
-        repo.path(),
-        &names,
-        (0, 20),
-        false,
-        Some(&texts),
-    )
-    .await;
+    session("copied ahead", fresh.path(), repo.path(), &names, (0, 20), false, true).await;
 }
