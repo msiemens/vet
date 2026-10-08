@@ -1,6 +1,12 @@
 //! `vet_app::ports::Store`, `ChangesetStore`, `ReviewStore` and `ThreadStore`: a
 //! content directory plus one SQLite file (WAL) accessed through SeaORM, both
 //! under the backend side's data directory (§8).
+//!
+//! The file is reached through two kinds of connection. Every write goes through the one
+//! [`ReviewWriter`] connection, so writers queue in the order they asked. Every read goes
+//! through a [`StoreReader`] pool of read-only connections. In WAL mode a reader never
+//! waits for the writer, and the writer never waits for a reader, so a long read (a snapshot
+//! loaded level by level, the listing of a project) and a mark are independent.
 
 mod codec;
 mod content;
@@ -20,8 +26,9 @@ use std::time::Duration;
 
 use sea_orm::sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sea_orm::{
-    ActiveModelBehavior, ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait,
-    IntoActiveModel, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Set, SqlxSqliteConnector, TransactionTrait,
+    ActiveModelBehavior, ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    DbErr, EntityTrait, IntoActiveModel, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Set, SqlxSqliteConnector,
+    TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait;
 use vet_app::changeset::{BaseChoice, ChangesetId, Lens, Source, Version};
@@ -42,7 +49,8 @@ type Res<T> = Result<T, DbErr>;
 
 #[derive(Clone)]
 pub struct SqliteStore {
-    db: DatabaseConnection,
+    writer: ReviewWriter,
+    reader: StoreReader,
     content: Arc<ContentStore>,
     dir: PathBuf,
 }
@@ -53,21 +61,56 @@ fn db_err(e: impl std::fmt::Display) -> DbErr {
 
 const DATABASE: &str = "vet.sqlite";
 
-async fn connect(dir: &Path) -> Result<DatabaseConnection, DbErr> {
-    let options = SqliteConnectOptions::new()
-        .filename(dir.join(DATABASE))
-        .create_if_missing(true)
-        .journal_mode(SqliteJournalMode::Wal)
-        .foreign_keys(true)
-        .busy_timeout(Duration::from_secs(5));
-    // One connection serializes writers; WAL readers would not need it, but
-    // nothing here is read-heavy.
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(options)
-        .await
-        .map_err(db_err)?;
-    Ok(SqlxSqliteConnector::from_sqlx_sqlite_pool(pool))
+/// Read-only connections in the pool.
+const READERS: u32 = 4;
+
+/// The only connection that writes. One connection serializes the writers.
+#[derive(Clone)]
+struct ReviewWriter {
+    db: DatabaseConnection,
+}
+
+impl ReviewWriter {
+    async fn connect(dir: &Path) -> Result<Self, DbErr> {
+        let options = SqliteConnectOptions::new()
+            .filename(dir.join(DATABASE))
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .foreign_keys(true)
+            .busy_timeout(Duration::from_secs(5));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .map_err(db_err)?;
+        Ok(Self {
+            db: SqlxSqliteConnector::from_sqlx_sqlite_pool(pool),
+        })
+    }
+}
+
+/// A pool of read-only connections. The file is in WAL mode already, which the writer's
+/// connection put it in.
+#[derive(Clone)]
+struct StoreReader {
+    db: DatabaseConnection,
+}
+
+impl StoreReader {
+    async fn connect(dir: &Path) -> Result<Self, DbErr> {
+        let options = SqliteConnectOptions::new()
+            .filename(dir.join(DATABASE))
+            .read_only(true)
+            .busy_timeout(Duration::from_secs(5));
+        let pool = SqlitePoolOptions::new()
+            .max_connections(READERS)
+            .connect_with(options)
+            .await
+            .map_err(db_err)?;
+        Ok(Self {
+            db: SqlxSqliteConnector::from_sqlx_sqlite_pool(pool),
+        })
+    }
 }
 
 /// SQLite allows 32766 bound variables per statement.
@@ -155,22 +198,24 @@ impl SqliteStore {
     /// this one does not have) is deleted and created anew, losing its reviews.
     pub async fn open(dir: &Path) -> Result<Self, StoreError> {
         std::fs::create_dir_all(dir)?;
-        let mut db = connect(dir).await?;
-        if migration::is_foreign(&db).await? {
+        let mut writer = ReviewWriter::connect(dir).await?;
+        if migration::is_foreign(&writer.db).await? {
             tracing::warn!(dir = %dir.display(), "the database was written by another version of Vet; creating it anew");
-            db.close().await?;
+            writer.db.close().await?;
             for suffix in ["", "-wal", "-shm"] {
                 match std::fs::remove_file(dir.join(format!("{DATABASE}{suffix}"))) {
                     Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e.into()),
                     _ => {}
                 }
             }
-            db = connect(dir).await?;
+            writer = ReviewWriter::connect(dir).await?;
         }
-        migration::Migrator::up(&db, None).await?;
+        migration::Migrator::up(&writer.db, None).await?;
+        let reader = StoreReader::connect(dir).await?;
         let content = ContentStore::open(dir.join("content"))?;
         Ok(Self {
-            db,
+            writer,
+            reader,
             content: Arc::new(content),
             dir: dir.to_owned(),
         })
@@ -191,18 +236,23 @@ impl SqliteStore {
             .map_err(db_err)??)
     }
 
-    async fn load_review(&self, id: ReviewId) -> Res<Option<Review>> {
+    /// Reads in one transaction, so that what takes several statements is one state of the file.
+    async fn read(&self) -> Res<DatabaseTransaction> {
+        self.reader.db.begin().await
+    }
+
+    async fn load_review(db: &impl ConnectionTrait, id: ReviewId) -> Res<Option<Review>> {
         let rid = id.0 as i64;
-        let Some(row) = review::Entity::find_by_id(rid).one(&self.db).await? else {
+        let Some(row) = review::Entity::find_by_id(rid).one(db).await? else {
             return Ok(None);
         };
         let spans = span::Entity::find()
             .filter(span::Column::Review.eq(rid))
             .order_by_asc(span::Column::Id)
-            .all(&self.db)
+            .all(db)
             .await?;
         let anchors = find_anchors(
-            &self.db,
+            db,
             spans
                 .iter()
                 .flat_map(|s| [s.base_anchor, s.target_anchor])
@@ -217,20 +267,20 @@ impl SqliteStore {
             acks: ack::Entity::find()
                 .filter(ack::Column::Review.eq(rid))
                 .order_by_asc(ack::Column::Id)
-                .all(&self.db)
+                .all(db)
                 .await?,
         };
         review_from(rows).map(Some)
     }
 
-    async fn load_threads(&self, changeset: ChangesetId) -> Res<Vec<ChangesetThread>> {
+    async fn load_threads(db: &impl ConnectionTrait, changeset: ChangesetId) -> Res<Vec<ChangesetThread>> {
         let cid = changeset.0 as i64;
         let threads = thread::Entity::find()
             .filter(thread::Column::Changeset.eq(cid))
             .order_by_asc(thread::Column::Id)
-            .all(&self.db)
+            .all(db)
             .await?;
-        let anchors = find_anchors(&self.db, threads.iter().filter_map(|t| t.anchor).collect()).await?;
+        let anchors = find_anchors(db, threads.iter().filter_map(|t| t.anchor).collect()).await?;
         let thread_ids = thread::Entity::find()
             .filter(thread::Column::Changeset.eq(cid))
             .select_only()
@@ -238,7 +288,7 @@ impl SqliteStore {
         let messages = message::Entity::find()
             .filter(message::Column::Thread.in_subquery(thread_ids.into_query()))
             .order_by_asc(message::Column::Id)
-            .all(&self.db)
+            .all(db)
             .await?;
         threads_from(threads, anchors, messages)
     }
@@ -265,7 +315,7 @@ impl Store for SqliteStore {
         if root != snapshot.id {
             return Err(StoreError("snapshot id does not match its entries".into()));
         }
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         let key = root.0.0.to_vec();
         if snapshot::Entity::find_by_id(key.clone()).one(&txn).await?.is_none() {
             snapshot::ActiveModel {
@@ -306,8 +356,9 @@ impl Store for SqliteStore {
     }
 
     async fn snapshot(&self, id: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
+        let db = self.read().await?;
         let key = id.0.0.to_vec();
-        if snapshot::Entity::find_by_id(key.clone()).one(&self.db).await?.is_none() {
+        if snapshot::Entity::find_by_id(key.clone()).one(&db).await?.is_none() {
             return Ok(None);
         }
         // Load the tree level by level.
@@ -319,7 +370,7 @@ impl Store for SqliteStore {
             for chunk in keys.chunks(1000) {
                 for row in tree_child::Entity::find()
                     .filter(tree_child::Column::Node.is_in(chunk.to_vec()))
-                    .all(&self.db)
+                    .all(&db)
                     .await?
                 {
                     rows.entry(row.node.clone()).or_default().push(row);
@@ -339,7 +390,7 @@ impl Store for SqliteStore {
             snapshot_path::Entity::find()
                 .filter(snapshot_path::Column::Snapshot.eq(key))
                 .order_by_asc(snapshot_path::Column::Id)
-                .all(&self.db)
+                .all(&db)
                 .await?,
         );
         Ok(Some((Snapshot { id, entries }, status)))
@@ -348,7 +399,7 @@ impl Store for SqliteStore {
 
 impl ChangesetStore for SqliteStore {
     async fn changeset(&self, repo: String, source: Source) -> Result<Option<ChangesetId>, StoreError> {
-        Ok(find_changeset(&self.db, repo, &source)
+        Ok(find_changeset(&self.reader.db, repo, &source)
             .await?
             .map(|id| ChangesetId(id as u64)))
     }
@@ -359,13 +410,13 @@ impl ChangesetStore for SqliteStore {
             .filter(changeset::Column::Repo.eq(repo))
             .filter(changeset::Column::Kind.eq(kind))
             .filter(changeset::Column::Key.eq(key))
-            .one(&self.db)
+            .one(&self.reader.db)
             .await?;
         Ok(row.and_then(|r| r.lens).map(Into::into))
     }
 
     async fn set_lens(&self, repo: String, source: Source, lens: Lens) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         match find_changeset(&txn, repo.clone(), &source).await? {
             Some(id) => {
                 changeset::ActiveModel {
@@ -393,7 +444,7 @@ impl ChangesetStore for SqliteStore {
     }
 
     async fn ensure_changeset(&self, repo: String, source: Source) -> Result<ChangesetId, StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         let id = match find_changeset(&txn, repo.clone(), &source).await? {
             Some(id) => id,
             None => insert_changeset(&txn, repo, &source).await?,
@@ -410,22 +461,23 @@ impl ChangesetStore for SqliteStore {
             .distinct()
             .order_by_asc(review::Column::Changeset)
             .into_tuple()
-            .all(&self.db)
+            .all(&self.reader.db)
             .await?;
         Ok(ids.into_iter().map(|id| ChangesetId(id as u64)).collect())
     }
 
     async fn versions(&self, changeset: ChangesetId) -> Result<Vec<Version>, StoreError> {
+        let db = self.read().await?;
         let rows = version::Entity::find()
             .filter(version::Column::Changeset.eq(changeset.0 as i64))
             .order_by_asc(version::Column::N)
-            .all(&self.db)
+            .all(&db)
             .await?;
         let mut files: HashMap<i64, Vec<version_file::Model>> = HashMap::new();
         for file in version_file::Entity::find()
             .filter(version_file::Column::Version.is_in(rows.iter().map(|r| r.id)))
             .order_by_asc(version_file::Column::Id)
-            .all(&self.db)
+            .all(&db)
             .await?
         {
             files.entry(file.version).or_default().push(file);
@@ -438,7 +490,7 @@ impl ChangesetStore for SqliteStore {
     }
 
     async fn append_version(&self, changeset: ChangesetId, version: Version) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         insert_version(&txn, changeset, &version).await?;
         Ok(txn.commit().await?)
     }
@@ -453,7 +505,7 @@ impl ReviewStore for SqliteStore {
         first: Version,
         now: i64,
     ) -> Result<(ChangesetId, ReviewId), StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         let changeset = match find_changeset(&txn, repo.clone(), &source).await? {
             Some(id) => id,
             None => insert_changeset(&txn, repo, &source).await?,
@@ -485,7 +537,7 @@ impl ReviewStore for SqliteStore {
             complete: Set(complete),
             ..Default::default()
         }
-        .update(&self.db)
+        .update(&self.writer.db)
         .await?;
         Ok(())
     }
@@ -498,7 +550,7 @@ impl ReviewStore for SqliteStore {
             .select_only()
             .column(review::Column::Id)
             .into_tuple()
-            .one(&self.db)
+            .one(&self.reader.db)
             .await?;
         Ok(id.map(|i| ReviewId(i as u64)))
     }
@@ -510,41 +562,42 @@ impl ReviewStore for SqliteStore {
             .select_only()
             .column(review::Column::Id)
             .into_tuple()
-            .one(&self.db)
+            .one(&self.reader.db)
             .await?;
         Ok(id.map(|i| ReviewId(i as u64)))
     }
 
     async fn review(&self, id: ReviewId) -> Result<Option<Review>, StoreError> {
-        Ok(self.load_review(id).await?)
+        Ok(Self::load_review(&self.read().await?, id).await?)
     }
 
     async fn filter(&self, repo: String) -> Result<ReviewFilter, StoreError> {
-        let Some(row) = project_filter::Entity::find_by_id(repo.clone()).one(&self.db).await? else {
+        let db = self.read().await?;
+        let Some(row) = project_filter::Entity::find_by_id(repo.clone()).one(&db).await? else {
             return Ok(ReviewFilter::default());
         };
         let items = project_filter_item::Entity::find()
             .filter(project_filter_item::Column::Repo.eq(repo))
             .order_by_asc(project_filter_item::Column::Id)
-            .all(&self.db)
+            .all(&db)
             .await?;
         Ok(filter_from(row.hide_binary, items)?)
     }
 
     async fn set_filter(&self, repo: String, filter: ReviewFilter) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         project_filter::Entity::delete_by_id(repo.clone()).exec(&txn).await?;
         write_filter(&txn, &repo, &filter).await?;
         Ok(txn.commit().await?)
     }
 
     async fn browsing_base(&self, repo: String) -> Result<Option<BaseChoice>, StoreError> {
-        let row = project_base::Entity::find_by_id(repo).one(&self.db).await?;
+        let row = project_base::Entity::find_by_id(repo).one(&self.reader.db).await?;
         Ok(row.map(|r| base_from(r.base_kind, r.base_value)))
     }
 
     async fn set_browsing_base(&self, repo: String, choice: BaseChoice) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         project_base::Entity::delete_by_id(repo.clone()).exec(&txn).await?;
         let (base_kind, base_value) = base_columns(choice);
         project_base::ActiveModel {
@@ -565,7 +618,7 @@ impl ReviewStore for SqliteStore {
             base_value: Set(value),
             ..Default::default()
         }
-        .update(&self.db)
+        .update(&self.writer.db)
         .await?;
         Ok(())
     }
@@ -576,7 +629,7 @@ impl ReviewStore for SqliteStore {
             last_reviewed: Set(Some(version.into())),
             ..Default::default()
         }
-        .update(&self.db)
+        .update(&self.writer.db)
         .await?;
         Ok(())
     }
@@ -587,7 +640,7 @@ impl ReviewStore for SqliteStore {
         remove: Vec<SpanId>,
         add: Vec<(ReviewedSpan, SpanOrigin)>,
     ) -> Result<Vec<SpanId>, StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         let rid = id.0 as i64;
         let changeset = review::Entity::find_by_id(rid)
             .one(&txn)
@@ -631,7 +684,7 @@ impl ReviewStore for SqliteStore {
     }
 
     async fn acknowledge(&self, id: ReviewId, ack: NonTextAck) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         let rid = id.0 as i64;
         let existing = ack::Entity::find()
             .filter(ack::Column::Review.eq(rid))
@@ -648,7 +701,7 @@ impl ReviewStore for SqliteStore {
         ack::Entity::delete_many()
             .filter(ack::Column::Review.eq(id.0 as i64))
             .filter(ack_filter(&ack))
-            .exec(&self.db)
+            .exec(&self.writer.db)
             .await?;
         Ok(())
     }
@@ -656,7 +709,7 @@ impl ReviewStore for SqliteStore {
 
 impl ThreadStore for SqliteStore {
     async fn threads(&self, changeset: ChangesetId) -> Result<Vec<ChangesetThread>, StoreError> {
-        Ok(self.load_threads(changeset).await?)
+        Ok(Self::load_threads(&self.read().await?, changeset).await?)
     }
 
     async fn add_thread(
@@ -668,7 +721,7 @@ impl ThreadStore for SqliteStore {
         platform: Option<PlatformThread>,
         status: ThreadStatus,
     ) -> Result<(ThreadId, MessageId), StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         let cid = changeset.0 as i64;
         let anchor = match &target {
             CommentTarget::Range(a) => put_anchor(&txn, cid, Some(a)).await?,
@@ -689,24 +742,26 @@ impl ThreadStore for SqliteStore {
     }
 
     async fn add_message(&self, thread: ThreadId, m: Message) -> Result<MessageId, StoreError> {
-        Self::find_thread(&self.db, thread).await?;
-        let row = message_row(thread.0 as i64, &m).insert(&self.db).await?;
+        Self::find_thread(&self.writer.db, thread).await?;
+        let row = message_row(thread.0 as i64, &m).insert(&self.writer.db).await?;
         Ok(MessageId(row.id as u64))
     }
 
     async fn replace_message(&self, m: Message) -> Result<(), StoreError> {
         let old = message::Entity::find_by_id(m.id.0 as i64)
-            .one(&self.db)
+            .one(&self.writer.db)
             .await?
             .ok_or_else(|| DbErr::RecordNotFound(format!("message {}", m.id.0)))?;
         let mut row = message_row(old.thread, &m);
         row.id = Set(old.id);
-        row.update(&self.db).await?;
+        row.update(&self.writer.db).await?;
         Ok(())
     }
 
     async fn delete_message(&self, message: MessageId) -> Result<(), StoreError> {
-        message::Entity::delete_by_id(message.0 as i64).exec(&self.db).await?;
+        message::Entity::delete_by_id(message.0 as i64)
+            .exec(&self.writer.db)
+            .await?;
         Ok(())
     }
 
@@ -716,7 +771,7 @@ impl ThreadStore for SqliteStore {
             status: Set(status.into()),
             ..Default::default()
         }
-        .update(&self.db)
+        .update(&self.writer.db)
         .await?;
         Ok(())
     }
@@ -727,12 +782,12 @@ impl ThreadStore for SqliteStore {
             ..Default::default()
         };
         set_platform(&mut row, Some(&platform));
-        row.update(&self.db).await?;
+        row.update(&self.writer.db).await?;
         Ok(())
     }
 
     async fn set_thread_target(&self, thread: ThreadId, target: CommentTarget) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         let old = Self::find_thread(&txn, thread).await?;
         if let Some(a) = old.anchor {
             anchor::Entity::delete_by_id(a).exec(&txn).await?;
@@ -751,7 +806,7 @@ impl ThreadStore for SqliteStore {
     }
 
     async fn delete_thread(&self, thread: ThreadId) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         let old = Self::find_thread(&txn, thread).await?;
         thread::Entity::delete_by_id(old.id).exec(&txn).await?;
         if let Some(a) = old.anchor {

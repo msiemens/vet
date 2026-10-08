@@ -176,7 +176,7 @@ impl SqliteStore {
         &self,
         decide: &(dyn Fn(&GcFacts) -> GcPlan + Send + Sync),
     ) -> Res<(GcReport, HashSet<BlobId>, Duration)> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         let plan = decide(&facts(&txn).await?);
         let changesets_deleted = delete_in::<changeset::Entity, _>(
             &txn,

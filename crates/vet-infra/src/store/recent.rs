@@ -10,7 +10,7 @@ impl RecentStore for SqliteStore {
     async fn recent_projects(&self) -> Result<Vec<RecentProject>, StoreError> {
         let rows = recent_project::Entity::find()
             .order_by_desc(recent_project::Column::Id)
-            .all(&self.db)
+            .all(&self.reader.db)
             .await?;
         Ok(rows
             .into_iter()
@@ -22,7 +22,7 @@ impl RecentStore for SqliteStore {
     }
 
     async fn set_recent_projects(&self, projects: Vec<RecentProject>) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         recent_project::Entity::delete_many().exec(&txn).await?;
         for project in projects.into_iter().rev() {
             recent_project::ActiveModel {

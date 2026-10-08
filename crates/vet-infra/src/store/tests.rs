@@ -162,7 +162,7 @@ async fn the_filter_is_stored_per_repository_and_replaced_as_a_whole() {
 #[tokio::test]
 async fn a_database_of_another_version_is_recreated_and_one_of_this_version_is_kept() {
     let dir = tempfile::tempdir().unwrap();
-    let db = connect(dir.path()).await.unwrap();
+    let db = ReviewWriter::connect(dir.path()).await.unwrap().db;
     // What an earlier version left behind: its migrations and a differently shaped session table.
     for sql in [
         "CREATE TABLE seaql_migrations (version VARCHAR NOT NULL PRIMARY KEY, applied_at BIGINT NOT NULL)",
@@ -715,7 +715,7 @@ async fn what_a_version_changed_is_stored_with_it_in_order_and_goes_with_its_rev
     assert_eq!(versions[1].change, change);
 
     review(&store, SnapshotId(h(6)), SnapshotId(h(7))).await;
-    let rows = version_file::Entity::find().all(&store.db).await.unwrap();
+    let rows = version_file::Entity::find().all(&store.reader.db).await.unwrap();
     assert!(rows.is_empty(), "the files of the replaced versions are gone");
 }
 
@@ -876,7 +876,7 @@ async fn gc_grace_protects_fresh_content() {
 }
 
 async fn node_count(store: &SqliteStore) -> u64 {
-    tree_node::Entity::find().count(&store.db).await.unwrap()
+    tree_node::Entity::find().count(&store.reader.db).await.unwrap()
 }
 
 #[tokio::test]
@@ -943,7 +943,7 @@ async fn a_long_run_of_versions_over_a_large_tree_stays_small() {
     }
     // 101 nodes for the first snapshot (which includes edit 0), then a root and one directory per later edit.
     assert_eq!(node_count(&store).await, 101 + 2 * 49);
-    let rows = tree_child::Entity::find().count(&store.db).await.unwrap();
+    let rows = tree_child::Entity::find().count(&store.reader.db).await.unwrap();
     assert!(rows < 2000 + 100 + 50 * 125, "{rows} child rows");
     let last = store.versions(changeset).await.unwrap().last().unwrap().target;
     assert_eq!(store.snapshot(last).await.unwrap().unwrap().0.entries, entries);
@@ -1023,4 +1023,64 @@ async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
 
     store.edit_spans(id, ids, vec![]).await.unwrap();
     assert_eq!(remapped(o).await, 0, "un-marked");
+}
+
+/// Longer than any answer of an idle store takes, short enough to fail a test that hangs.
+const PROMPT: Duration = Duration::from_secs(3);
+
+#[tokio::test]
+async fn a_mark_is_written_while_a_long_read_is_open_and_the_read_does_not_see_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let (_, id) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+
+    let reading = store.read().await.unwrap();
+    assert!(span::Entity::find().all(&reading).await.unwrap().is_empty());
+
+    let span = ReviewedSpan {
+        base: None,
+        target: Some(anchor(Side::Target, 2)),
+        state: SpanState::Seen,
+    };
+    tokio::time::timeout(PROMPT, store.edit_spans(id, vec![], vec![(span, SpanOrigin::Squash)]))
+        .await
+        .expect("a write waits for a read")
+        .unwrap();
+
+    assert!(
+        span::Entity::find().all(&reading).await.unwrap().is_empty(),
+        "the read stays one state of the file"
+    );
+    drop(reading);
+    assert_eq!(store.review(id).await.unwrap().unwrap().spans.len(), 1);
+}
+
+#[tokio::test]
+async fn reads_are_answered_while_a_write_is_open_and_see_only_what_was_committed() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let (changeset, _) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+
+    let writing = store.writer.db.begin().await.unwrap();
+    let other = insert_changeset(&writing, "/other".into(), &Source::WorkingTree)
+        .await
+        .unwrap();
+
+    let all_reads = async {
+        let found = store.changeset("/other".into(), Source::WorkingTree).await.unwrap();
+        let versions = store.versions(changeset).await.unwrap();
+        let threads = store.threads(changeset).await.unwrap();
+        let snapshot = store.snapshot(SnapshotId(h(1))).await.unwrap();
+        (found, versions.len(), threads.len(), snapshot)
+    };
+    let (found, versions, threads, snapshot) = tokio::time::timeout(PROMPT, all_reads)
+        .await
+        .expect("a read waits for a write");
+    assert_eq!((found, versions, threads, snapshot), (None, 1, 0, None));
+
+    writing.commit().await.unwrap();
+    assert_eq!(
+        store.changeset("/other".into(), Source::WorkingTree).await.unwrap(),
+        Some(ChangesetId(other as u64))
+    );
 }

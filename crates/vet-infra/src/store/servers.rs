@@ -10,13 +10,13 @@ impl ServerSettings for SqliteStore {
     async fn custom_server_path(&self, language: String) -> Result<Option<String>, StoreError> {
         let row = server_path::Entity::find()
             .filter(server_path::Column::Language.eq(language))
-            .one(&self.db)
+            .one(&self.reader.db)
             .await?;
         Ok(row.map(|r| r.path))
     }
 
     async fn set_custom_server_path(&self, language: String, path: Option<String>) -> Result<(), StoreError> {
-        let txn = self.db.begin().await?;
+        let txn = self.writer.db.begin().await?;
         server_path::Entity::delete_many()
             .filter(server_path::Column::Language.eq(language.clone()))
             .exec(&txn)
