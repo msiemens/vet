@@ -660,6 +660,8 @@ mod tests {
         restore: std::sync::atomic::AtomicU8,
         /// The tree's restore left no record.
         unrecorded: std::sync::atomic::AtomicBool,
+        /// Identities worked out: each stands for a `--version` probe, a settings read and more.
+        identified: AtomicUsize,
     }
 
     /// Counts a hover as given up on when its request is dropped.
@@ -711,6 +713,7 @@ mod tests {
         }
 
         async fn identify(&self, _: &Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
+            self.0.identified.fetch_add(1, Ordering::SeqCst);
             Ok(ServerIdentity {
                 backend: backend.config().backend.clone(),
                 fingerprint: Hash([7 + self.0.binary.load(Ordering::SeqCst); 32]),
@@ -1106,6 +1109,67 @@ mod tests {
         let third = semantics.changed_symbols(&fx.session, 0).await.unwrap();
         assert_eq!(third.value, first.value);
         assert_eq!(counters.text_symbol_requests.load(Ordering::SeqCst), 4);
+    }
+
+    // Bug: every analysis of a symbol (signature, impact, reachability) runs the revision's
+    // changed symbols again, each with its own "Finding the changed symbols" task, and
+    // nothing ends the runs of a selection the viewer has left; the log of a large C#
+    // review shows 12 such runs over 97 files, each taking 300 s.
+    #[tokio::test]
+    #[ignore = "bug: the changed symbols of a revision are found once per caller"]
+    async fn the_analyses_of_one_revision_share_one_search_for_its_changed_symbols() {
+        let fx = Fixture::open(
+            &[("a.rs", "one\n"), ("b.py", "one\n")],
+            &[("a.rs", "two\n"), ("b.py", "two\n")],
+        )
+        .await;
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let sink = heard.clone();
+        let counters = Arc::<Counters>::default();
+        let semantics = Semantics::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters.clone()),
+            "/live".into(),
+            vec![backend("rust", "rs"), backend("python", "py")],
+            Trust::Local,
+            Links {
+                revisions: fx.session.revisions(),
+                limits: RestoreLimits::default(),
+                tasks: Tasks::new(
+                    std::time::Duration::ZERO,
+                    Box::new(move |t| sink.lock().unwrap().push(t)),
+                ),
+            },
+        );
+        // Four selections of a symbol, three analyses each.
+        let all = bounded(12, 0..12, |_| semantics.changed_symbols(&fx.session, 0)).await;
+        assert!(all.iter().all(Result::is_ok));
+
+        let heard = heard.lock().unwrap();
+        let searches: std::collections::BTreeSet<_> = heard
+            .iter()
+            .filter(|t| t.kind == TaskKind::Analyse)
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(searches.len(), 1, "one search, not one per caller");
+    }
+
+    // Bug: whether a kept answer can serve a text's symbols is found out by working out the
+    // server's identity again for every text (`Pool::foreseen`): on the real launcher that runs
+    // `dotnet --version` or `node --version`, reads the server settings from the store's only
+    // connection, and on a kept tree lists all its files for the restore plan.
+    #[tokio::test]
+    #[ignore = "bug: the server's identity is worked out once per text the changed symbols read"]
+    async fn the_identity_of_a_server_is_worked_out_independently_of_how_many_files_changed() {
+        async fn identities(files: usize) -> usize {
+            let names: Vec<_> = (0..files).map(|i| format!("r{i}.rs")).collect();
+            let before: Vec<_> = names.iter().map(|p| (p.as_str(), "one\n")).collect();
+            let after: Vec<_> = names.iter().map(|p| (p.as_str(), "two\n")).collect();
+            let (fx, semantics, counters) = semantics_over(&before, &after).await;
+            semantics.changed_symbols(&fx.session, 0).await.unwrap();
+            counters.identified.load(Ordering::SeqCst)
+        }
+        assert_eq!(identities(2).await, identities(16).await);
     }
 
     #[tokio::test]
