@@ -19,6 +19,15 @@ export function rowWindow(
   return { start: Math.min(count, Math.max(0, first - overscan)), end: Math.min(count, last + overscan) };
 }
 
+/**
+ * The row indices of `window` that exist in a list of `count` rows. The window is measured after the
+ * list changes, so a list that just shrank may still have a window reaching past its end.
+ */
+export function windowIndices({ start, end }: RowWindow, count: number): number[] {
+  const last = Math.min(end, count);
+  return Array.from({ length: Math.max(0, last - start) }, (_, i) => start + i);
+}
+
 /** The scroll offset that brings row `index` fully into view with the least movement, or `scrollTop` if it already is. */
 export function scrollToRow(index: number, scrollTop: number, viewport: number, rowHeight: number): number {
   const top = index * rowHeight;

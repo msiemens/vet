@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { rowWindow, scrollToRow } from "./rowWindow.ts";
+import { rowWindow, scrollToRow, windowIndices } from "./rowWindow.ts";
 
 void test("the window covers the viewport plus overscan", () => {
   // 220 px of 22 px rows at the top: rows 0..10, plus 5 below.
@@ -27,6 +27,16 @@ void test("an empty list or a zero height mounts nothing", () => {
 void test("the window stays small for a huge list", () => {
   const { start, end } = rowWindow(220_000, 600, 22, 20_000, 8);
   assert.ok(end - start <= 600 / 22 + 1 + 16);
+});
+
+void test("a window measured before the list shrank mounts only the rows that exist", () => {
+  // The Changes tree: 7 rows after a folder collapsed, and the excluded group as one more row past them.
+  const rows = ["a", "b", "c", "d", "e", "f", "g"];
+  const key = (i: number) => rows.at(i) ?? "excluded";
+  const stale = rowWindow(0, 220, 22, 20, 5);
+  const keys = windowIndices(stale, rows.length + 1).map(key);
+  assert.deepEqual(keys, [...rows, "excluded"]);
+  assert.deepEqual(windowIndices({ start: 30, end: 40 }, 8), []);
 });
 
 void test("scrollToRow moves only as far as needed", () => {

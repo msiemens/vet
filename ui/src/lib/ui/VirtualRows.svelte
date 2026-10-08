@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack, type Snippet } from "svelte";
-  import { rowWindow, scrollToRow } from "./rowWindow";
+  import { rowWindow, scrollToRow, windowIndices } from "./rowWindow";
 
   let {
     count,
@@ -25,7 +25,8 @@
   let start = $state(0);
   let end = $state(0);
 
-  const indices = $derived(Array.from({ length: end - start }, (_, i) => start + i));
+  // The window catches up with `count` in an effect, after the rows render with the caller's new keys.
+  const indices = $derived(windowIndices({ start, end }, count));
 
   function update(rows = count) {
     if (!el || !rowHeight) return;
