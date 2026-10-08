@@ -11,6 +11,7 @@ import type { Reachability } from "../generated/Reachability";
 import type { RemovalImpact } from "../generated/RemovalImpact";
 import type { SymbolSignature } from "../generated/SymbolSignature";
 import type { Unavailable } from "../generated/Unavailable";
+import { isAbort } from "../lib/abort";
 import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
@@ -77,6 +78,8 @@ class SymbolsState {
     try {
       loaded = { state: "done", value: await backend.changedSymbols(revision) };
     } catch (error) {
+      // The changeset moved on: the load of its new revision replaces this one.
+      if (isAbort(error)) return;
       loaded = { state: "failed", message: errorText(error) };
     }
     if (run !== this.listRun) return;
@@ -129,7 +132,8 @@ class SymbolsState {
   private start<T>(run: number, query: () => Promise<T>, set: (load: Load<T>) => void): Load<T> {
     query().then(
       (value) => run === this.detailRun && set({ state: "done", value }),
-      (error: unknown) => run === this.detailRun && set({ state: "failed", message: errorText(error) }),
+      (error: unknown) =>
+        run === this.detailRun && !isAbort(error) && set({ state: "failed", message: errorText(error) }),
     );
     return { state: "loading" };
   }

@@ -106,6 +106,80 @@ void test("a symbol the pointer already left is not shown when its answer comes 
   assert.deepEqual(built, []);
 });
 
+const never = () => undefined;
+
+/** A host whose queries never answer, and the signals they were given. */
+function silent() {
+  const signals: AbortSignal[] = [];
+  const popup = new HoverPopup<Target, string>({
+    query: (_, signal) => {
+      signals.push(signal);
+      return new Promise<string | undefined>(never);
+    },
+    open: () => never,
+  });
+  return { popup, signals };
+}
+
+void test("a query is aborted when the pointer moves to another symbol or off the symbol", () => {
+  const { popup, signals } = silent();
+  popup.pointer(foo);
+  mock.timers.tick(HOVER_MS);
+  popup.pointer(bar);
+  assert.deepEqual(
+    signals.map((s) => s.aborted),
+    [true],
+  );
+
+  mock.timers.tick(HOVER_MS);
+  popup.pointer(undefined);
+  assert.deepEqual(
+    signals.map((s) => s.aborted),
+    [true, true],
+  );
+});
+
+void test("a query is aborted when the popup is closed or dismissed", () => {
+  const { popup, signals } = silent();
+  popup.pointer(foo);
+  mock.timers.tick(HOVER_MS);
+  popup.dismiss();
+  popup.pointer(bar);
+  mock.timers.tick(HOVER_MS);
+  popup.close();
+  assert.deepEqual(
+    signals.map((s) => s.aborted),
+    [true, true],
+  );
+});
+
+void test("a query the pointer stays on is left running", () => {
+  const { popup, signals } = silent();
+  popup.pointer(foo);
+  mock.timers.tick(HOVER_MS);
+  popup.pointer(foo);
+  mock.timers.tick(HOVER_MS * 10);
+  assert.deepEqual(
+    signals.map((s) => s.aborted),
+    [false],
+  );
+});
+
+void test("a query that rejects as an abort leaves no popup and no error", async () => {
+  const popup = new HoverPopup<Target, string>({
+    query: (_, signal) =>
+      new Promise((_, reject) =>
+        signal.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError"))),
+      ),
+    open: () => assert.fail("nothing to show"),
+  });
+  popup.pointer(foo);
+  mock.timers.tick(HOVER_MS);
+  popup.pointer(undefined);
+  await answered();
+  assert.equal(popup.isOpen, false);
+});
+
 void test("a symbol with nothing to show leaves the earlier popup to its grace period", async () => {
   const { popup, onScreen } = setup();
   await hoverFor(popup, foo);

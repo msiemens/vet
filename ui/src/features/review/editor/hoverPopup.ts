@@ -3,6 +3,8 @@
 // neither rebuilt nor moved while the pointer stays on that range, and the pointer may cross over
 // into the popup within a grace period. Only a different symbol replaces it.
 
+import { isAbort } from "../../../lib/abort.ts";
+
 /** How long the pointer rests on a symbol before the hover query is sent. */
 export const HOVER_MS = 50;
 
@@ -27,8 +29,11 @@ export interface HoverKeyed {
 }
 
 export interface HoverHost<T extends HoverKeyed, C> {
-  /** What builds the popup for a target, or nothing if there is nothing to show. */
-  query(target: T): Promise<C | undefined>;
+  /**
+   * What builds the popup for a target, or nothing if there is nothing to show. `signal` aborts
+   * when the answer is no longer wanted: the pointer moved on, or the popup closed.
+   */
+  query(target: T, signal: AbortSignal): Promise<C | undefined>;
   /** Draws the popup and returns what removes it. */
   open(target: T, content: C): () => void;
 }
@@ -39,6 +44,8 @@ export class HoverPopup<T extends HoverKeyed, C> {
   private grace?: ReturnType<typeof setTimeout>;
   /** Identifies the latest wish for a popup, so a slow answer to an earlier one is dropped. */
   private seq = 0;
+  /** The query underway, if any. */
+  private asking?: AbortController;
   /** A symbol whose popup was dismissed, which stays closed until the pointer has left the symbol. */
   private dismissed?: string;
 
@@ -95,10 +102,15 @@ export class HoverPopup<T extends HoverKeyed, C> {
 
   private async fetch(target: T) {
     const seq = this.seq;
+    const asking = new AbortController();
+    this.asking = asking;
     let content: C | undefined;
     try {
-      content = await this.host.query(target);
+      content = await this.host.query(target, asking.signal);
+    } catch (error) {
+      if (!isAbort(error)) throw error;
     } finally {
+      if (this.asking === asking) this.asking = undefined;
       if (seq === this.seq) this.pending = undefined;
     }
     if (seq !== this.seq || content === undefined) return;
@@ -109,6 +121,8 @@ export class HoverPopup<T extends HoverKeyed, C> {
 
   private cancelPending() {
     this.seq++;
+    this.asking?.abort();
+    this.asking = undefined;
     if (this.pending) clearTimeout(this.pending.timer);
     this.pending = undefined;
   }

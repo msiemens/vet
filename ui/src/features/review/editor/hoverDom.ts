@@ -26,11 +26,12 @@ let openPopup: { close(): void } | undefined;
 
 /**
  * Hover popups for `view`. `resolve` finds the symbol under a pointer event; `build` makes the
- * popup's element for it, or nothing if there is none to show.
+ * popup's element for it, or nothing if there is none to show, and gives up when its signal aborts
+ * (the pointer moved on or the popup closed).
  */
 export function hoverPopups<T extends HoverAnchor>(
   resolve: (view: EditorView, event: MouseEvent) => T | undefined,
-  build: (anchor: T) => Promise<(() => HTMLElement) | undefined>,
+  build: (anchor: T, signal: AbortSignal) => Promise<(() => HTMLElement) | undefined>,
 ): Extension {
   return ViewPlugin.define((view) => {
     /** The symbol of the last resolved event: while the pointer is inside it, there is nothing to resolve. */

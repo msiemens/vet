@@ -29,6 +29,7 @@ import type { PullRequestSource } from "../generated/PullRequestSource";
 import type { Reachability } from "../generated/Reachability";
 import type { RecentProject } from "../generated/RecentProject";
 import type { RemovalImpact } from "../generated/RemovalImpact";
+import type { Request } from "../generated/Request";
 import type { Response } from "../generated/Response";
 import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
@@ -47,6 +48,7 @@ import type { Unavailable } from "../generated/Unavailable";
 import type { VersionInfo } from "../generated/VersionInfo";
 import type { View } from "../generated/View";
 import { Connection } from "./connection";
+import { StaleRequests } from "./staleRequests";
 
 export type FileContents = Extract<Response, { type: "fileContents" }>;
 
@@ -90,11 +92,20 @@ export class Backend {
   /** The open project, if any; one at a time. */
   project?: number;
 
+  /** The semantic requests underway, which the changeset moving on aborts. */
+  private stale = new StaleRequests();
+
   private constructor(
     private conn: Connection,
     /** The repository the host (or the URL hash) named, if any. */
     readonly initialRepo: string | null,
-  ) {}
+  ) {
+    conn.onEvent((event) => {
+      if ((event.type === "snapshotSettled" || event.type === "changesetOpened") && event.project === this.project) {
+        this.stale.moveTo(event.revision);
+      }
+    });
+  }
 
   static async connect(): Promise<Backend> {
     const conn = await Connection.open();
@@ -335,6 +346,19 @@ export class Backend {
   }
 
   /**
+   * A request about the changeset at `revision`. Aborting `signal` cancels it in the backend, down to the
+   * language server, and so does the changeset moving to a newer revision; either rejects with an abort.
+   */
+  private async semantic(revision: number, request: Request, signal?: AbortSignal): Promise<Response> {
+    const tracked = this.stale.track(revision, signal);
+    try {
+      return await this.conn.request(request, tracked.signal);
+    } finally {
+      tracked.release();
+    }
+  }
+
+  /**
    * Hover at a 0-based line and UTF-16 column of `side`'s text at `revision`, the manifest's (the
    * backend rejects a stale one). `text` is empty if the server has nothing to say there.
    */
@@ -344,11 +368,10 @@ export class Backend {
     path: string,
     line: number,
     col: number,
+    signal?: AbortSignal,
   ): Promise<HoverText & { unavailable?: Unavailable }> {
-    const r = expect(
-      await this.conn.request({ type: "hover", project: this.pid, revision, side, path, line, col }),
-      "hover",
-    );
+    const request = { type: "hover", project: this.pid, revision, side, path, line, col } as const;
+    const r = expect(await this.semantic(revision, request, signal), "hover");
     return { text: r.text ?? "", code: r.codeHighlights, unavailable: r.unavailable ?? undefined };
   }
 
@@ -359,11 +382,10 @@ export class Backend {
     path: string,
     line: number,
     col: number,
+    signal?: AbortSignal,
   ): Promise<{ locations: SemanticLocation[]; unavailable?: Unavailable }> {
-    const r = expect(
-      await this.conn.request({ type: "definition", project: this.pid, revision, side, path, line, col }),
-      "definition",
-    );
+    const request = { type: "definition", project: this.pid, revision, side, path, line, col } as const;
+    const r = expect(await this.semantic(revision, request, signal), "definition");
     return { locations: r.locations, unavailable: r.unavailable ?? undefined };
   }
 
@@ -374,11 +396,10 @@ export class Backend {
   async diagnostics(
     revision: number,
     path: string,
+    signal?: AbortSignal,
   ): Promise<{ diagnostics: Diagnostic[]; count: number; unavailable?: Unavailable }> {
-    const r = expect(
-      await this.conn.request({ type: "diagnostics", project: this.pid, revision, path }),
-      "diagnostics",
-    );
+    const request = { type: "diagnostics", project: this.pid, revision, path } as const;
+    const r = expect(await this.semantic(revision, request, signal), "diagnostics");
     return { diagnostics: r.diagnostics, count: r.count, unavailable: r.unavailable ?? undefined };
   }
 
@@ -399,38 +420,38 @@ export class Backend {
   }
 
   /** The symbols the changeset touches, as of `revision` (the manifest's; a stale one is rejected). */
-  async changedSymbols(revision: number): Promise<ChangedSymbols> {
-    return expect(await this.conn.request({ type: "changedSymbols", project: this.pid, revision }), "changedSymbols");
+  async changedSymbols(revision: number, signal?: AbortSignal): Promise<ChangedSymbols> {
+    const request = { type: "changedSymbols", project: this.pid, revision } as const;
+    return expect(await this.semantic(revision, request, signal), "changedSymbols");
   }
 
   /** The declaration of a changed symbol; `signature` is unset if the server has nothing, `unavailable` says why. */
   async signature(
     revision: number,
     symbol: SymbolId,
+    signal?: AbortSignal,
   ): Promise<{ signature?: SymbolSignature; unavailable?: Unavailable }> {
-    const r = expect(await this.conn.request({ type: "signature", project: this.pid, revision, symbol }), "signature");
+    const request = { type: "signature", project: this.pid, revision, symbol } as const;
+    const r = expect(await this.semantic(revision, request, signal), "signature");
     return { signature: r.signature ?? undefined, unavailable: r.unavailable ?? undefined };
   }
 
   /** References and callers of an added or modified changed symbol; may take a while on a cold server. */
-  async impact(revision: number, symbol: SymbolId): Promise<Impact> {
-    return expect(await this.conn.request({ type: "impact", project: this.pid, revision, symbol }), "impact");
+  async impact(revision: number, symbol: SymbolId, signal?: AbortSignal): Promise<Impact> {
+    const request = { type: "impact", project: this.pid, revision, symbol } as const;
+    return expect(await this.semantic(revision, request, signal), "impact");
   }
 
   /** What became of the references to a removed changed symbol. */
-  async removalImpact(revision: number, symbol: SymbolId): Promise<RemovalImpact> {
-    return expect(
-      await this.conn.request({ type: "removalImpact", project: this.pid, revision, symbol }),
-      "removalImpact",
-    );
+  async removalImpact(revision: number, symbol: SymbolId, signal?: AbortSignal): Promise<RemovalImpact> {
+    const request = { type: "removalImpact", project: this.pid, revision, symbol } as const;
+    return expect(await this.semantic(revision, request, signal), "removalImpact");
   }
 
   /** Whether an added or modified changed symbol is reached from an entry point. */
-  async reachability(revision: number, symbol: SymbolId): Promise<Reachability> {
-    return expect(
-      await this.conn.request({ type: "reachability", project: this.pid, revision, symbol }),
-      "reachability",
-    );
+  async reachability(revision: number, symbol: SymbolId, signal?: AbortSignal): Promise<Reachability> {
+    const request = { type: "reachability", project: this.pid, revision, symbol } as const;
+    return expect(await this.semantic(revision, request, signal), "reachability");
   }
 
   /** Every thread with its anchor resolved at `revision`, the current one, in creation order. */

@@ -8,6 +8,7 @@ import type { Diagnostic } from "../generated/Diagnostic";
 import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { Side } from "../generated/Side";
 import type { Unavailable } from "../generated/Unavailable";
+import { isAbort } from "../lib/abort";
 import type { HoverText } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { InFlight } from "./inFlight";
@@ -61,22 +62,33 @@ class SemanticStore {
   }
 
   /**
-   * Markdown; the text is empty if the server has nothing to say or the request is stale. The same
-   * position asked again while its answer is underway (an editor re-fires its hover when it updates)
-   * joins that request.
+   * Markdown; the text is empty if the server has nothing to say, the request is stale or `signal`
+   * aborted it. The same position asked again while its answer is underway (an editor re-fires its
+   * hover when it updates) joins that request, which is cancelled once no caller wants it.
    */
-  hover(revision: number, side: Side, path: string, line: number, col: number): Promise<HoverText> {
+  async hover(
+    revision: number,
+    side: Side,
+    path: string,
+    line: number,
+    col: number,
+    signal?: AbortSignal,
+  ): Promise<HoverText> {
     const backend = session.backend;
-    if (!backend) return Promise.resolve(NOTHING);
-    return this.hovering.share(JSON.stringify([revision, side, path, line, col]), async () => {
-      try {
-        const r = await backend.hover(revision, side, path, line, col);
-        this.note(revision, path, r.unavailable);
-        return { text: r.text, code: r.code };
-      } catch {
-        return NOTHING;
-      }
-    });
+    if (!backend) return NOTHING;
+    try {
+      return await this.hovering.share(
+        JSON.stringify([revision, side, path, line, col]),
+        async (shared) => {
+          const r = await backend.hover(revision, side, path, line, col, shared);
+          this.note(revision, path, r.unavailable);
+          return { text: r.text, code: r.code };
+        },
+        signal,
+      );
+    } catch {
+      return NOTHING;
+    }
   }
 
   /** The definitions at the position, in `side`'s snapshot; `undefined` after telling the viewer why there are none. */
@@ -96,7 +108,9 @@ class SemanticStore {
       else if (!r.locations.length) session.notice = "No definition found";
       else return r.locations;
     } catch (error) {
-      changeset.reportFailure(error, revision);
+      // Only the changeset moving on aborts a definition: the view that asked is about to be replaced.
+      if (isAbort(error)) session.notice = "Changes arrived — try again";
+      else changeset.reportFailure(error, revision);
     }
     return undefined;
   }

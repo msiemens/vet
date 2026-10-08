@@ -20,8 +20,8 @@ import { lineOf, lineStart, offsetAt } from "./positions";
 
 /** What an editor asks of its owner, which knows the view's revision and what to do with an answer. */
 export interface SemanticHooks {
-  /** Markdown; its text is empty if there is nothing to show. */
-  hover(side: Side, path: string, line: number, col: number): Promise<HoverText>;
+  /** Markdown; its text is empty if there is nothing to show or `signal` aborted the request. */
+  hover(side: Side, path: string, line: number, col: number, signal?: AbortSignal): Promise<HoverText>;
   /** Goes to the definition; the owner opens the target. */
   definition(side: Side, path: string, line: number, col: number): void;
   /** The target-side diagnostics of the file, empty if there are none or the server is unavailable. */
@@ -38,7 +38,7 @@ export type SemanticSource = {
 /** Fixes the revision of a view's requests: an answer to another revision is the backend's to reject. */
 export function bindRevision(source: SemanticSource, revision: number): SemanticHooks {
   return {
-    hover: (side, path, line, col) => source.hover(revision, side, path, line, col),
+    hover: (side, path, line, col, signal) => source.hover(revision, side, path, line, col, signal),
     definition: (side, path, line, col) => source.definition(revision, side, path, line, col),
     diagnostics: (path) => source.diagnostics(revision, path),
   };
@@ -61,9 +61,10 @@ export async function queryHover(
   path: string,
   at: TextPosition,
   hoverShown?: (ms: number) => void,
+  signal?: AbortSignal,
 ): Promise<(() => HTMLElement) | undefined> {
   const started = performance.now();
-  const hover = await hooks.hover(side, path, at.line, at.col);
+  const hover = await hooks.hover(side, path, at.line, at.col, signal);
   if (!hover.text) return undefined;
   return () => {
     const dom = document.createElement("div");
@@ -282,7 +283,7 @@ export function semanticExtensions(
     targetField,
     // A side by side pane clips what it contains; the tooltips of diagnostics live in the body.
     tooltips({ parent: document.body }),
-    hoverPopups(wordUnderPointer, (anchor) => queryHover(hooks, side, path, anchor.at, hoverShown)),
+    hoverPopups(wordUnderPointer, (anchor, signal) => queryHover(hooks, side, path, anchor.at, hoverShown, signal)),
     EditorView.domEventHandlers({
       mousedown: (event, view) =>
         gotoOnClick(event, hooks, side, path, () => {

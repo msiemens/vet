@@ -8,7 +8,9 @@ import type { Ready } from "../generated/Ready";
 import type { Request } from "../generated/Request";
 import type { Response } from "../generated/Response";
 import type { ServerMessage } from "../generated/ServerMessage";
+import { abortError } from "../lib/abort";
 import { hashParams, inTauri, invoke } from "./host";
+import { Pending } from "./pending";
 
 // Must match PROTOCOL_VERSION in crates/vet-protocol.
 const PROTOCOL_VERSION = 2;
@@ -33,7 +35,7 @@ async function backendAddress(): Promise<Address> {
 
 export class Connection {
   private nextId = 0;
-  private pending = new Map<number, { resolve: (r: Response) => void; reject: (e: Error) => void }>();
+  private pending = new Pending<Response>();
   private listeners = new Set<(event: ServerEvent) => void>();
 
   private constructor(
@@ -70,17 +72,20 @@ export class Connection {
     return new Connection(socket, repo);
   }
 
-  request(request: Request): Promise<Response> {
+  /** Aborting `signal` gives the request up: the backend is told to cancel it and the promise rejects with an abort. */
+  request(request: Request, signal?: AbortSignal): Promise<Response> {
+    if (signal?.aborted) return Promise.reject(abortError());
+    if (this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error("connection closed"));
     const id = this.nextId++;
-    const message: ClientMessage = { type: "request", id, request };
-    return new Promise((resolve, reject) => {
-      if (this.socket.readyState !== WebSocket.OPEN) {
-        reject(new Error("connection closed"));
-        return;
-      }
-      this.pending.set(id, { resolve, reject });
-      this.socket.send(JSON.stringify(message));
+    const answer = this.pending.wait(id, signal, (cancelled) => {
+      if (this.socket.readyState === WebSocket.OPEN) this.send({ type: "cancel", id: cancelled });
     });
+    this.send({ type: "request", id, request });
+    return answer;
+  }
+
+  private send(message: ClientMessage) {
+    this.socket.send(JSON.stringify(message));
   }
 
   /** Events of the projects opened on this connection; returns the unsubscribe function. */
@@ -93,20 +98,19 @@ export class Connection {
     if (message.type === "event") {
       for (const listener of this.listeners) listener(message.event);
     } else if (message.type === "response") {
-      this.pending.get(message.id)?.resolve(message.response);
-      this.pending.delete(message.id);
+      this.pending.resolve(message.id, message.response);
     } else if (message.type === "error") {
       if (message.id === null) {
         console.error("backend:", message.message);
         return;
       }
-      this.pending.get(message.id)?.reject(new Error(message.message));
-      this.pending.delete(message.id);
+      this.pending.reject(message.id, new Error(message.message));
+    } else if (message.type === "cancelled") {
+      this.pending.reject(message.id, abortError());
     }
   }
 
   private failAll(error: Error) {
-    for (const { reject } of this.pending.values()) reject(error);
-    this.pending.clear();
+    this.pending.rejectAll(error);
   }
 }

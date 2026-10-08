@@ -124,8 +124,8 @@ export class ReviewController {
   ) {
     // The semantic layer reads the changeset's snapshots: in a range only the new side of the latest version is one.
     const hooks: ViewHooks = {
-      hover: (revision, side, path, line, col) =>
-        this.analysable(side) ? semantic.hover(revision, side, path, line, col) : Promise.resolve(NO_HOVER),
+      hover: (revision, side, path, line, col, signal) =>
+        this.analysable(side) ? semantic.hover(revision, side, path, line, col, signal) : Promise.resolve(NO_HOVER),
       definition: (revision, side, path, line, col) => {
         if (this.analysable(side)) void this.goToDefinition(revision, side, path, line, col);
       },
