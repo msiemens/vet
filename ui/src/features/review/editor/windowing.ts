@@ -105,7 +105,8 @@ export class Windowing {
    * budget goes; the rest follows in the next frames.
    */
   sync(wide = true) {
-    if (this.destroyed) return; // a load that finished after the view was replaced
+    // A load that finished after the view was replaced; an empty changeset has no section to mount.
+    if (this.destroyed || !this.sections.length) return;
     let top = this.root.scrollTop;
     const h = this.root.clientHeight;
     const { near, far } = windowRanges((y) => this.heights.indexAt(y), top, h, wide);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Section } from "./section.ts";
-import type { SectionHeights } from "./sectionHeights.ts";
+import { type SectionHeights, sectionAt } from "./sectionHeights.ts";
 import { Windowing, windowRanges } from "./windowing.ts";
 
 // Ten sections of 100px each.
@@ -26,9 +26,9 @@ void test("near the top the range starts at the first section", () => {
   assert.deepEqual([near[0], far[0]], [0, 0]);
 });
 
-/** A column of ten loaded 100px sections scrolled to 500px, and the frames a test steps through. */
-function column(msPerMount: number, viewport = 200) {
-  const sections = Array.from({ length: 10 }, (_, i) => ({
+/** A column of `count` loaded 100px sections scrolled to 500px, and the frames a test steps through. */
+function column(msPerMount: number, viewport = 200, count = 10) {
+  const sections = Array.from({ length: count }, (_, i) => ({
     top: i * 100,
     height: 100,
     cards: [],
@@ -57,7 +57,8 @@ function column(msPerMount: number, viewport = 200) {
     addEventListener: (_type: string, listener: (e: Event) => void) => (scrolled = listener),
     removeEventListener: () => undefined,
   };
-  const windowing = new Windowing(root, sections as unknown as Section[], { indexAt } as unknown as SectionHeights, {
+  const heights = { indexAt: (y: number) => sectionAt(sections, y) } as unknown as SectionHeights;
+  const windowing = new Windowing(root, sections as unknown as Section[], heights, {
     mount: (fi) => {
       sections[fi].handle = { views: [] };
       windowing.mounted.add(fi);
@@ -92,6 +93,15 @@ void test("a frame mounts editors until its time budget is spent, the rest follo
   try {
     // Sections 5 to 7 are in view, 4 ms each: the third is over the 6 ms budget.
     assert.deepEqual([view.frame(true), view.frame(false), view.frame(false)], [2, 1, 0]);
+  } finally {
+    view.restore();
+  }
+});
+
+void test("an empty changeset mounts nothing and scrolls without failing", () => {
+  const view = column(4, 200, 0);
+  try {
+    assert.equal(view.frame(true), 0);
   } finally {
     view.restore();
   }
