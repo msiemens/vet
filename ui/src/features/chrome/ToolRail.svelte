@@ -26,10 +26,13 @@
     active = $bindable(),
     open = $bindable(true),
     unavailable = {},
+    counts = {},
     timeline = false,
     ontimeline,
   }: {
     side?: "left" | "right";
+    /** A number on a tool's icon: what is new there. */
+    counts?: Record<string, number>;
     /** Tools that are shown but cannot be picked now, with the reason for the tooltip. */
     unavailable?: Record<string, string>;
     /** The selected tool; it stays selected while its sidebar is hidden. */
@@ -51,14 +54,18 @@
 
 <nav class={side} aria-label={side === "left" ? "Tool windows" : "Right tool windows"}>
   {#each TOOLS[side] as tool (tool.id)}
-    <IconButton
-      icon={ICONS[tool.id]}
-      label={tool.label}
-      title={unavailable[tool.id] ?? commands.tooltip(toolCommand(tool.id))}
-      disabled={tool.id in unavailable}
-      active={open && tool.id === active}
-      onclick={() => select(tool.id)}
-    />
+    {@const count = counts[tool.id] ?? 0}
+    <span class="tool">
+      <IconButton
+        icon={ICONS[tool.id]}
+        label={count > 0 ? `${tool.label}, ${count} new` : tool.label}
+        title={unavailable[tool.id] ?? commands.tooltip(toolCommand(tool.id))}
+        disabled={tool.id in unavailable}
+        active={open && tool.id === active}
+        onclick={() => select(tool.id)}
+      />
+      {#if count > 0}<span class="count mono" aria-hidden="true">{count > 99 ? "99+" : count}</span>{/if}
+    </span>
   {/each}
   {#if ontimeline}
     <span class="bottom"><IconButton icon="timeline" label="Timeline" active={timeline} onclick={ontimeline} /></span>
@@ -79,6 +86,26 @@
   }
   .bottom {
     margin-top: auto;
+  }
+  .tool {
+    position: relative;
+    display: inline-flex;
+  }
+  .count {
+    position: absolute;
+    top: -3px;
+    right: -4px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    box-sizing: border-box;
+    border-radius: 7px;
+    background: var(--primary);
+    color: var(--on-primary);
+    font-size: 9.5px;
+    line-height: 14px;
+    text-align: center;
+    pointer-events: none;
   }
   .left {
     border-right: 1px solid var(--line);

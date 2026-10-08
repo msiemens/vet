@@ -63,8 +63,8 @@ pub struct ConversationItem {
 pub enum ConversationKind {
     /// A comment on the pull request; one the viewer wrote they can edit and delete.
     Comment { mine: bool },
-    /// A review that was given, with what the reviewer concluded.
-    Review { verdict: Option<ReviewVerdict> },
+    /// A review that was given, with what the reviewer concluded; `mine` when the viewer gave it.
+    Review { verdict: Option<ReviewVerdict>, mine: bool },
 }
 
 /// Whether the pull request still takes changes.

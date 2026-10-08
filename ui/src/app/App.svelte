@@ -18,7 +18,7 @@
     toolFor,
   } from "../features/chrome";
   import { ChecksButton } from "../features/checks";
-  import { OutgoingButton } from "../features/comments";
+  import { OutgoingButton, commentsSeen, seenKey, seenNow, unreadCount } from "../features/comments";
   import { NotificationCards, PlatformFooter } from "../features/platform";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, targetLabel } from "../features/queue";
   import { ReviewScreen, type ReviewController, summarize } from "../features/review";
@@ -63,6 +63,7 @@
   import { serverList } from "../state/serverList.svelte";
   import { serverLine } from "../state/serverStatus";
   import { session } from "../state/session.svelte";
+  import { threads } from "../state/threads.svelte";
   import { defaultRange } from "../state/timelineRange";
   import { versions } from "../state/versions.svelte";
   import ConnectionNotice from "./ConnectionNotice.svelte";
@@ -134,6 +135,22 @@
     const wanted = checkedCommits;
     untrack(() => checks.want(wanted));
   });
+
+  /** Where the time the pull request's Comments tool window was last open is kept; none for another changeset. */
+  const seenUnder = $derived(seenKey(changeset.manifest?.target.changeset));
+  const commentsShown = $derived(screen === "review" && left.open && left.tool === "comments");
+  // While the tool window is open, what comes in is seen.
+  $effect(() => {
+    const key = seenUnder;
+    if (!commentsShown || key === undefined) return;
+    const at = seenNow(platform.info, threads.items, Math.floor(Date.now() / 1000));
+    untrack(() => commentsSeen.mark(key, at));
+  });
+  const unreadComments = $derived(
+    seenUnder === undefined || commentsShown
+      ? 0
+      : unreadCount(platform.info, threads.items, commentsSeen.at(seenUnder)),
+  );
 
   const semanticSummary = $derived(semantic.summary(controller?.activePath));
   const range = $derived(changeset.range);
@@ -435,6 +452,7 @@
         unavailable={commitCount > 1
           ? {}
           : { commits: "Only a changeset of several commits can be reviewed by commit" }}
+        counts={{ comments: unreadComments }}
         timeline={timelineOpen}
         ontimeline={toggleTimeline}
       />

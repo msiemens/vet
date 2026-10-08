@@ -105,8 +105,9 @@ pub struct ConversationEntry {
 pub enum ConversationKind {
     /// A comment on the pull request; `mine` when the viewer wrote it, who can edit and delete it.
     Comment { mine: bool },
-    /// A review that was given, with what the reviewer concluded; none for one that was withdrawn.
-    Review { verdict: Option<ReviewVerdict> },
+    /// A review that was given, with what the reviewer concluded (none for one that was withdrawn);
+    /// `mine` when the viewer gave it.
+    Review { verdict: Option<ReviewVerdict>, mine: bool },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

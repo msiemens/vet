@@ -58,12 +58,15 @@ fn first_page(threads: Value, next: Option<&str>) -> String {
         }] },
         "reviews": { "nodes": [
             { "id": "R1", "state": "APPROVED", "body": "", "submittedAt": "2024-05-01T11:00:00Z",
-              "author": { "login": "marco", "avatarUrl": null } },
+              "viewerDidAuthor": false, "author": { "login": "marco", "avatarUrl": null } },
             { "id": "R2", "state": "COMMENTED", "body": "", "submittedAt": "2024-05-01T11:30:00Z",
-              "author": { "login": "jonas", "avatarUrl": null } },
+              "viewerDidAuthor": false, "author": { "login": "jonas", "avatarUrl": null } },
             { "id": "R3", "state": "COMMENTED", "body": "A few notes.", "submittedAt": "2024-05-01T09:00:00Z",
-              "author": { "login": "jonas", "avatarUrl": null } },
-            { "id": "R4", "state": "PENDING", "body": "mine, not yet", "submittedAt": null, "author": null }
+              "viewerDidAuthor": false, "author": { "login": "jonas", "avatarUrl": null } },
+            { "id": "R4", "state": "PENDING", "body": "mine, not yet", "submittedAt": null, "viewerDidAuthor": true,
+              "author": null },
+            { "id": "R5", "state": "COMMENTED", "body": "Answered inline.", "submittedAt": "2024-05-01T12:30:00Z",
+              "viewerDidAuthor": true, "author": { "login": "ada", "avatarUrl": null } }
         ] },
         "reviewThreads": { "nodes": threads, "pageInfo": { "hasNextPage": next.is_some(), "endCursor": next } }
     } } } })
@@ -233,17 +236,26 @@ async fn the_pull_request_block_says_who_reviews_what_blocks_and_what_was_said()
             (
                 "R3",
                 ConversationKind::Review {
-                    verdict: Some(ReviewVerdict::Commented)
+                    verdict: Some(ReviewVerdict::Commented),
+                    mine: false
                 }
             ),
             ("IC1", ConversationKind::Comment { mine: false }),
             (
                 "R1",
                 ConversationKind::Review {
-                    verdict: Some(ReviewVerdict::Approved)
+                    verdict: Some(ReviewVerdict::Approved),
+                    mine: false
                 }
             ),
             ("IC2", ConversationKind::Comment { mine: true }),
+            (
+                "R5",
+                ConversationKind::Review {
+                    verdict: Some(ReviewVerdict::Commented),
+                    mine: true
+                }
+            ),
         ],
         "oldest first; a review with line comments only says nothing, and one not submitted is not shown"
     );

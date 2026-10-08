@@ -937,13 +937,14 @@ pub fn pull_request_info(v: &DiscussionView, kind: PlatformKind, platform: p::Pl
                     at: unix_secs(c.at),
                     kind: match c.kind {
                         ConversationKind::Comment { mine } => p::ConversationKind::Comment { mine },
-                        ConversationKind::Review { verdict } => p::ConversationKind::Review {
+                        ConversationKind::Review { verdict, mine } => p::ConversationKind::Review {
                             verdict: verdict.and_then(|v| match v {
                                 ReviewVerdict::Approved => Some(p::ReviewVerdict::Approved),
                                 ReviewVerdict::ChangesRequested => Some(p::ReviewVerdict::ChangesRequested),
                                 ReviewVerdict::Commented => Some(p::ReviewVerdict::Commented),
                                 ReviewVerdict::Dismissed => None,
                             }),
+                            mine,
                         },
                     },
                     body: c.body.clone(),

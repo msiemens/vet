@@ -4,4 +4,4 @@ import type { ReviewVerdict } from "./ReviewVerdict";
 /**
  * What an entry of the conversation is.
  */
-export type ConversationKind = { "type": "comment", mine: boolean, } | { "type": "review", verdict: ReviewVerdict | null, };
+export type ConversationKind = { "type": "comment", mine: boolean, } | { "type": "review", verdict: ReviewVerdict | null, mine: boolean, };

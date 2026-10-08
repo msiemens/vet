@@ -64,7 +64,7 @@ fn discussion_query() -> String {
       latestReviews(first: 30) {{ nodes {{ state author {{ login }} }} }}
       commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }}
       comments(last: 50) {{ nodes {{ {ISSUE_COMMENT} }} }}
-      reviews(last: 50) {{ nodes {{ id state body submittedAt author {{ login avatarUrl }} }} }}
+      reviews(last: 50) {{ nodes {{ id state body submittedAt viewerDidAuthor author {{ login avatarUrl }} }} }}
       reviewThreads(first: {THREAD_PAGE}, after: $after) {{
         nodes {{ ...ThreadFields }}
         pageInfo {{ hasNextPage endCursor }}
@@ -277,6 +277,7 @@ struct ReviewNode {
     state: String,
     body: String,
     submitted_at: Option<String>,
+    viewer_did_author: bool,
     author: Option<Actor>,
 }
 
@@ -407,7 +408,10 @@ fn conversation(
             author,
             avatar,
             at,
-            kind: ConversationKind::Review { verdict },
+            kind: ConversationKind::Review {
+                verdict,
+                mine: review.viewer_did_author,
+            },
             body: review.body,
         });
     }
