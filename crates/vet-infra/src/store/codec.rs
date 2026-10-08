@@ -14,7 +14,10 @@ use vet_core::content::{
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::TreeNode;
-use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanState, Thread, ThreadId, ThreadStatus};
+use vet_core::review::{
+    Anchor, CommentTarget, EditConflict, Message, MessageId, PlatformThread, RemoteComment, ReviewedSpan, Side,
+    SpanState, Thread, ThreadId, ThreadStatus,
+};
 
 use super::entity::{
     ack, anchor, kinds, message, project_filter_item, review, snapshot_path, span, thread, tree_child, version,
@@ -484,26 +487,89 @@ pub fn threads_from(
     let anchors: HashMap<i64, anchor::Model> = anchors.into_iter().map(|a| (a.id, a)).collect();
     let mut by_thread: HashMap<i64, Vec<Message>> = HashMap::new();
     for m in messages {
-        by_thread.entry(m.thread).or_default().push(Message {
-            author: m.author,
-            body: m.body,
-            at: m.at,
-        });
+        by_thread.entry(m.thread).or_default().push(message_from(m)?);
     }
     threads
         .into_iter()
         .map(|t| {
+            let mut messages = by_thread.remove(&t.id).unwrap_or_default();
+            if t.on_platform {
+                // What the platform has comes in its order, the viewer's drafts after it.
+                messages.sort_by_key(|m| (m.remote.is_none(), m.at, m.id));
+            }
             Ok(ChangesetThread {
                 thread: Thread {
                     id: ThreadId(t.id as u64),
                     target: target_from(&t, t.anchor.and_then(|a| anchors.get(&a)))?,
-                    messages: by_thread.remove(&t.id).unwrap_or_default(),
+                    messages,
                     status: t.status.into(),
+                    platform: t.on_platform.then(|| PlatformThread {
+                        remote_id: t.remote_id.clone(),
+                        resolvable: t.resolvable,
+                        resolved_by: t.resolved_by.clone(),
+                        status_pending: t.status_pending,
+                    }),
                 },
                 review: t.review.map(|r| ReviewId(r as u64)),
             })
         })
         .collect()
+}
+
+pub fn message_from(m: message::Model) -> Result<Message, DbErr> {
+    let remote = match (m.remote_id, m.synced) {
+        (Some(id), Some(synced)) => Some(RemoteComment {
+            id,
+            synced,
+            conflict: match (m.conflict_body, m.conflict_at) {
+                (Some(remote_body), Some(remote_at)) => Some(EditConflict { remote_body, remote_at }),
+                _ => None,
+            },
+        }),
+        (None, None) => None,
+        _ => return Err(corrupt("a comment's remote id and synced text go together")),
+    };
+    Ok(Message {
+        id: MessageId(m.id as u64),
+        author: m.author,
+        body: m.body,
+        at: m.at,
+        mine: m.mine,
+        avatar: m.avatar,
+        edited_at: m.edited_at,
+        remote,
+    })
+}
+
+/// The columns of `message` in `thread`; the row id is the caller's.
+pub fn message_row(thread: i64, m: &Message) -> message::ActiveModel {
+    message::ActiveModel {
+        thread: Set(thread),
+        author: Set(m.author.clone()),
+        body: Set(m.body.clone()),
+        at: Set(m.at),
+        mine: Set(m.mine),
+        avatar: Set(m.avatar.clone()),
+        edited_at: Set(m.edited_at),
+        remote_id: Set(m.remote.as_ref().map(|r| r.id.clone())),
+        synced: Set(m.remote.as_ref().map(|r| r.synced.clone())),
+        conflict_body: Set(conflict(m).map(|c| c.remote_body.clone())),
+        conflict_at: Set(conflict(m).map(|c| c.remote_at)),
+        ..Default::default()
+    }
+}
+
+fn conflict(m: &Message) -> Option<&EditConflict> {
+    m.remote.as_ref().and_then(|r| r.conflict.as_ref())
+}
+
+/// Sets the platform columns of a thread row.
+pub fn set_platform(row: &mut thread::ActiveModel, platform: Option<&PlatformThread>) {
+    row.on_platform = Set(platform.is_some());
+    row.remote_id = Set(platform.and_then(|p| p.remote_id.clone()));
+    row.resolvable = Set(platform.is_some_and(|p| p.resolvable));
+    row.resolved_by = Set(platform.and_then(|p| p.resolved_by.clone()));
+    row.status_pending = Set(platform.is_some_and(|p| p.status_pending));
 }
 
 /// Sets the target columns; `anchor` is the row id of a `Range` target's anchor.

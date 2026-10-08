@@ -140,24 +140,24 @@ pub(super) struct Oid {
 }
 
 #[derive(Deserialize)]
-struct Nodes<T> {
+pub(super) struct Nodes<T> {
     nodes: Vec<Option<T>>,
 }
 
 impl<T> Nodes<T> {
-    fn present(self) -> impl Iterator<Item = T> {
+    pub(super) fn present(self) -> impl Iterator<Item = T> {
         self.nodes.into_iter().flatten()
     }
 }
 
 #[derive(Deserialize)]
-struct Login {
-    login: String,
+pub(super) struct Login {
+    pub login: String,
 }
 
 #[derive(Deserialize)]
-struct Name {
-    name: String,
+pub(super) struct Name {
+    pub name: String,
 }
 
 #[derive(Deserialize)]
@@ -167,7 +167,7 @@ struct HeadRepository {
 }
 
 #[derive(Deserialize)]
-struct RequestNode {
+pub(super) struct RequestNode {
     #[serde(rename = "requestedReviewer")]
     requested_reviewer: Option<Reviewer>,
 }
@@ -194,8 +194,17 @@ struct ThreadNode {
 }
 
 #[derive(Deserialize)]
-struct CommitNode {
+pub(super) struct CommitNode {
     commit: CommitRollup,
+}
+
+/// The rolled-up checks of the last of `commits`, if it has any.
+pub(super) fn latest_ci(commits: Nodes<CommitNode>) -> Option<CiState> {
+    commits
+        .present()
+        .last()
+        .and_then(|c| c.commit.status_check_rollup)
+        .and_then(|r| ci_state(&r.state))
 }
 
 #[derive(Deserialize)]
@@ -236,12 +245,12 @@ pub(super) struct PullRequestNode {
     commits: Nodes<CommitNode>,
 }
 
-fn unexpected(what: &str) -> PlatformError {
+pub(super) fn unexpected(what: &str) -> PlatformError {
     PlatformError::Unexpected(format!("GitHub sent {what} that Vet cannot read"))
 }
 
 /// The rolled-up state of GitHub's check suites and commit statuses.
-fn ci_state(state: &str) -> Option<CiState> {
+pub(super) fn ci_state(state: &str) -> Option<CiState> {
     match state {
         "SUCCESS" => Some(CiState::Success),
         "FAILURE" | "ERROR" => Some(CiState::Failure),
@@ -250,7 +259,7 @@ fn ci_state(state: &str) -> Option<CiState> {
     }
 }
 
-fn review_verdict(state: &str) -> Option<ReviewVerdict> {
+pub(super) fn review_verdict(state: &str) -> Option<ReviewVerdict> {
     match state {
         "APPROVED" => Some(ReviewVerdict::Approved),
         "CHANGES_REQUESTED" => Some(ReviewVerdict::ChangesRequested),
@@ -261,7 +270,7 @@ fn review_verdict(state: &str) -> Option<ReviewVerdict> {
     }
 }
 
-fn review_request(node: RequestNode) -> Option<ReviewRequest> {
+pub(super) fn review_request(node: RequestNode) -> Option<ReviewRequest> {
     let reviewer = node.requested_reviewer?;
     match reviewer.type_name.as_str() {
         "User" | "Mannequin" => reviewer.login.map(ReviewRequest::User),
@@ -276,12 +285,7 @@ fn review_request(node: RequestNode) -> Option<ReviewRequest> {
 impl PullRequestNode {
     pub(super) fn into_pull_request(self) -> Result<PullRequest, PlatformError> {
         let updated_at = parse_timestamp(&self.updated_at).ok_or_else(|| unexpected("a time"))?;
-        let ci = self
-            .commits
-            .present()
-            .last()
-            .and_then(|c| c.commit.status_check_rollup)
-            .and_then(|r| ci_state(&r.state));
+        let ci = latest_ci(self.commits);
         let unresolved_threads = self.review_threads.present().filter(|t| !t.is_resolved).count();
         Ok(PullRequest {
             number: self.number,

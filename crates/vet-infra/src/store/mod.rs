@@ -30,7 +30,9 @@ use vet_app::review::{ChangesetThread, NonTextAck, Review, ReviewId, SpanId, Spa
 use vet_core::content::{BlobId, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::{self, TreeNode};
-use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
+use vet_core::review::{
+    Anchor, CommentTarget, Message, MessageId, PlatformThread, ReviewedSpan, ThreadId, ThreadStatus,
+};
 
 use codec::*;
 use content::ContentStore;
@@ -104,6 +106,19 @@ async fn find_changeset(db: &impl ConnectionTrait, repo: String, source: &Source
         .into_tuple()
         .one(db)
         .await
+}
+
+async fn insert_changeset(db: &impl ConnectionTrait, repo: String, source: &Source) -> Res<i64> {
+    let (kind, key) = source_columns(source);
+    Ok(changeset::ActiveModel {
+        repo: Set(repo),
+        kind: Set(kind),
+        key: Set(key),
+        ..Default::default()
+    }
+    .insert(db)
+    .await?
+    .id)
 }
 
 /// The anchors with these ids.
@@ -376,6 +391,16 @@ impl ChangesetStore for SqliteStore {
         Ok(txn.commit().await?)
     }
 
+    async fn ensure_changeset(&self, repo: String, source: Source) -> Result<ChangesetId, StoreError> {
+        let txn = self.db.begin().await?;
+        let id = match find_changeset(&txn, repo.clone(), &source).await? {
+            Some(id) => id,
+            None => insert_changeset(&txn, repo, &source).await?,
+        };
+        txn.commit().await?;
+        Ok(ChangesetId(id as u64))
+    }
+
     async fn open_changesets(&self) -> Result<Vec<ChangesetId>, StoreError> {
         let ids: Vec<i64> = review::Entity::find()
             .filter(review::Column::ClosedAt.is_null())
@@ -430,18 +455,7 @@ impl ReviewStore for SqliteStore {
         let txn = self.db.begin().await?;
         let changeset = match find_changeset(&txn, repo.clone(), &source).await? {
             Some(id) => id,
-            None => {
-                let (kind, key) = source_columns(&source);
-                changeset::ActiveModel {
-                    repo: Set(repo),
-                    kind: Set(kind),
-                    key: Set(key),
-                    ..Default::default()
-                }
-                .insert(&txn)
-                .await?
-                .id
-            }
+            None => insert_changeset(&txn, repo, &source).await?,
         };
         version::Entity::delete_many()
             .filter(version::Column::Changeset.eq(changeset))
@@ -650,7 +664,9 @@ impl ThreadStore for SqliteStore {
         review: Option<ReviewId>,
         target: CommentTarget,
         opener: Message,
-    ) -> Result<ThreadId, StoreError> {
+        platform: Option<PlatformThread>,
+        status: ThreadStatus,
+    ) -> Result<(ThreadId, MessageId), StoreError> {
         let txn = self.db.begin().await?;
         let cid = changeset.0 as i64;
         let anchor = match &target {
@@ -660,35 +676,36 @@ impl ThreadStore for SqliteStore {
         let mut row = thread::ActiveModel {
             changeset: Set(cid),
             review: Set(review.map(|r| r.0 as i64)),
-            status: Set(ThreadStatus::Open.into()),
+            status: Set(status.into()),
             ..Default::default()
         };
         set_target(&mut row, &target, anchor);
+        set_platform(&mut row, platform.as_ref());
         let thread = row.insert(&txn).await?.id;
-        message::ActiveModel {
-            thread: Set(thread),
-            author: Set(opener.author),
-            body: Set(opener.body),
-            at: Set(opener.at),
-            ..Default::default()
-        }
-        .insert(&txn)
-        .await?;
+        let message = message_row(thread, &opener).insert(&txn).await?.id;
         txn.commit().await?;
-        Ok(ThreadId(thread as u64))
+        Ok((ThreadId(thread as u64), MessageId(message as u64)))
     }
 
-    async fn add_message(&self, thread: ThreadId, m: Message) -> Result<(), StoreError> {
+    async fn add_message(&self, thread: ThreadId, m: Message) -> Result<MessageId, StoreError> {
         Self::find_thread(&self.db, thread).await?;
-        message::ActiveModel {
-            thread: Set(thread.0 as i64),
-            author: Set(m.author),
-            body: Set(m.body),
-            at: Set(m.at),
-            ..Default::default()
-        }
-        .insert(&self.db)
-        .await?;
+        let row = message_row(thread.0 as i64, &m).insert(&self.db).await?;
+        Ok(MessageId(row.id as u64))
+    }
+
+    async fn replace_message(&self, m: Message) -> Result<(), StoreError> {
+        let old = message::Entity::find_by_id(m.id.0 as i64)
+            .one(&self.db)
+            .await?
+            .ok_or_else(|| DbErr::RecordNotFound(format!("message {}", m.id.0)))?;
+        let mut row = message_row(old.thread, &m);
+        row.id = Set(old.id);
+        row.update(&self.db).await?;
+        Ok(())
+    }
+
+    async fn delete_message(&self, message: MessageId) -> Result<(), StoreError> {
+        message::Entity::delete_by_id(message.0 as i64).exec(&self.db).await?;
         Ok(())
     }
 
@@ -700,6 +717,16 @@ impl ThreadStore for SqliteStore {
         }
         .update(&self.db)
         .await?;
+        Ok(())
+    }
+
+    async fn set_thread_platform(&self, thread: ThreadId, platform: PlatformThread) -> Result<(), StoreError> {
+        let mut row = thread::ActiveModel {
+            id: Set(thread.0 as i64),
+            ..Default::default()
+        };
+        set_platform(&mut row, Some(&platform));
+        row.update(&self.db).await?;
         Ok(())
     }
 

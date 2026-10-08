@@ -417,7 +417,7 @@ pub mod ack {
 
 /// `kind`: 0 range (uses `anchor`), 1 file (`file_side`, `file_path`), 2 changeset.
 /// `review` is the review a local thread was opened in; it only says where the
-/// thread came from.
+/// thread came from. The platform columns are set for a thread of a pull request.
 pub mod thread {
     use super::kinds::*;
     use sea_orm::entity::prelude::*;
@@ -434,6 +434,13 @@ pub mod thread {
         pub file_path: Option<Vec<u8>>,
         pub anchor: Option<i64>,
         pub status: ThreadStatus,
+        /// The thread is on a platform: the changeset is a pull request's. Without a `remote_id` it
+        /// is a draft.
+        pub on_platform: bool,
+        pub remote_id: Option<String>,
+        pub resolvable: bool,
+        pub resolved_by: Option<String>,
+        pub status_pending: bool,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -469,6 +476,15 @@ pub mod message {
         pub author: String,
         pub body: String,
         pub at: i64,
+        pub mine: bool,
+        pub avatar: Option<String>,
+        pub edited_at: Option<i64>,
+        /// The platform's id of the comment; none for a draft or a message outside a platform.
+        pub remote_id: Option<String>,
+        /// The text the platform had at the last sync.
+        pub synced: Option<String>,
+        pub conflict_body: Option<String>,
+        pub conflict_at: Option<i64>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -12,7 +12,10 @@ use vet_core::content::{
     SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
-use vet_core::review::{Anchor, CommentTarget, Message, ReviewedSpan, Side, SpanState, ThreadStatus};
+use vet_core::review::{
+    Anchor, CommentTarget, EditConflict, Message, PlatformThread, RemoteComment, ReviewedSpan, Side, SpanState,
+    ThreadStatus,
+};
 
 use super::*;
 
@@ -70,11 +73,21 @@ fn anchor(side: Side, snapshot: u8) -> Anchor {
 }
 
 fn message(body: &str) -> Message {
-    Message {
-        author: "me".into(),
-        body: body.into(),
-        at: 1_700_000_000,
-    }
+    Message::written("me".into(), body.into(), 1_700_000_000)
+}
+
+async fn add_thread(
+    store: &SqliteStore,
+    changeset: ChangesetId,
+    review: Option<ReviewId>,
+    target: CommentTarget,
+    opener: Message,
+) -> ThreadId {
+    store
+        .add_thread(changeset, review, target, opener, None, ThreadStatus::Open)
+        .await
+        .unwrap()
+        .0
 }
 
 fn commit(id: &str) -> CommitId {
@@ -399,31 +412,26 @@ async fn threads_belong_to_the_changeset_and_outlive_its_review() {
     let store = open(&dir).await;
     let (changeset, first) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
 
-    let range = store
-        .add_thread(
-            changeset,
-            Some(first),
-            CommentTarget::Range(anchor(Side::Target, 2)),
-            message("why?"),
-        )
-        .await
-        .unwrap();
-    let file = store
-        .add_thread(
-            changeset,
-            Some(first),
-            CommentTarget::File {
-                side: Side::Base,
-                path: RepoPath(b"a/b".to_vec()),
-            },
-            message("file"),
-        )
-        .await
-        .unwrap();
-    let overall = store
-        .add_thread(changeset, None, CommentTarget::Changeset, message("overall"))
-        .await
-        .unwrap();
+    let range = add_thread(
+        &store,
+        changeset,
+        Some(first),
+        CommentTarget::Range(anchor(Side::Target, 2)),
+        message("why?"),
+    )
+    .await;
+    let file = add_thread(
+        &store,
+        changeset,
+        Some(first),
+        CommentTarget::File {
+            side: Side::Base,
+            path: RepoPath(b"a/b".to_vec()),
+        },
+        message("file"),
+    )
+    .await;
+    let overall = add_thread(&store, changeset, None, CommentTarget::Changeset, message("overall")).await;
     store.add_message(range, message("because")).await.unwrap();
     store.set_thread_status(file, ThreadStatus::Resolved).await.unwrap();
 
@@ -443,7 +451,8 @@ async fn threads_belong_to_the_changeset_and_outlive_its_review() {
         "a thread keeps the review it was opened in"
     );
     assert_eq!(threads[0].thread.target, CommentTarget::Range(anchor(Side::Target, 2)));
-    assert_eq!(threads[0].thread.messages, vec![message("why?"), message("because")]);
+    let bodies: Vec<_> = threads[0].thread.messages.iter().map(|m| m.body.as_str()).collect();
+    assert_eq!(bodies, ["why?", "because"]);
     assert_eq!(threads[1].thread.status, ThreadStatus::Resolved);
     assert_eq!(
         threads[1].thread.target,
@@ -465,6 +474,138 @@ async fn threads_belong_to_the_changeset_and_outlive_its_review() {
         threads.iter().map(|t| &t.thread.target).collect::<Vec<_>>(),
         vec![&moved, &CommentTarget::Changeset]
     );
+}
+
+fn posted(id: &str, synced: &str, body: &str) -> Message {
+    Message {
+        mine: false,
+        avatar: Some("https://avatars.example/lena".into()),
+        remote: Some(RemoteComment {
+            id: id.into(),
+            synced: synced.into(),
+            conflict: None,
+        }),
+        ..Message::written("lena".into(), body.into(), T0)
+    }
+}
+
+#[tokio::test]
+async fn what_a_platform_has_of_a_thread_survives_a_restart_and_a_thread_needs_no_review() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let source = Source::PullRequest {
+        remote: RemoteKey {
+            host: "github.com".into(),
+            path: "acme/app".into(),
+        },
+        number: 7,
+    };
+    let changeset = store.ensure_changeset("/repo".into(), source.clone()).await.unwrap();
+    assert_eq!(
+        store.ensure_changeset("/repo".into(), source.clone()).await.unwrap(),
+        changeset
+    );
+    assert_eq!(
+        store.open_review(changeset).await.unwrap(),
+        None,
+        "no review is started by it"
+    );
+
+    let platform = PlatformThread {
+        remote_id: Some("T1".into()),
+        resolvable: true,
+        resolved_by: Some("lena".into()),
+        status_pending: false,
+    };
+    let (thread, opener) = store
+        .add_thread(
+            changeset,
+            None,
+            CommentTarget::Range(anchor(Side::Target, 2)),
+            posted("C1", "why?", "why?"),
+            Some(platform.clone()),
+            ThreadStatus::Resolved,
+        )
+        .await
+        .unwrap();
+    // A draft of the viewer's is written after the platform's reply, which then comes second.
+    let draft = store.add_message(thread, message("agreed")).await.unwrap();
+    let reply = store.add_message(thread, posted("C2", "no", "no")).await.unwrap();
+
+    let edited = Message {
+        id: opener,
+        body: "why not?".into(),
+        edited_at: Some(T0 + 5),
+        remote: Some(RemoteComment {
+            id: "C1".into(),
+            synced: "why?".into(),
+            conflict: Some(EditConflict {
+                remote_body: "why so?".into(),
+                remote_at: T0 + 9,
+            }),
+        }),
+        ..posted("C1", "why?", "why?")
+    };
+    store.replace_message(edited.clone()).await.unwrap();
+    store.delete_message(reply).await.unwrap();
+    store
+        .set_thread_platform(
+            thread,
+            PlatformThread {
+                status_pending: true,
+                ..platform.clone()
+            },
+        )
+        .await
+        .unwrap();
+
+    drop(store);
+    let store = open(&dir).await;
+    assert_eq!(store.changeset("/repo".into(), source).await.unwrap(), Some(changeset));
+    let [found] = <[_; 1]>::try_from(store.threads(changeset).await.unwrap()).expect("one thread");
+    let found = found.thread;
+    assert_eq!(found.status, ThreadStatus::Resolved);
+    assert_eq!(
+        found.platform,
+        Some(PlatformThread {
+            status_pending: true,
+            ..platform
+        })
+    );
+    assert!(found.is_posted());
+    assert_eq!(found.messages.len(), 2, "the reply was removed");
+    assert_eq!(found.messages[0], edited);
+    assert_eq!(
+        (found.messages[1].id, found.messages[1].remote.clone()),
+        (draft, None),
+        "a draft has no remote"
+    );
+    assert!(found.messages[1].mine);
+}
+
+#[tokio::test]
+async fn a_thread_outside_a_platform_has_none_and_a_review_started_later_finds_the_changeset() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let (changeset, first) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
+    add_thread(
+        &store,
+        changeset,
+        Some(first),
+        CommentTarget::Changeset,
+        message("local"),
+    )
+    .await;
+
+    let [found] = <[_; 1]>::try_from(store.threads(changeset).await.unwrap()).expect("one thread");
+
+    assert_eq!(found.thread.platform, None);
+    assert!(!found.thread.is_posted());
+    let again = store
+        .ensure_changeset("/repo".into(), Source::WorkingTree)
+        .await
+        .unwrap();
+    assert_eq!(again, changeset);
 }
 
 #[tokio::test]
@@ -656,10 +797,7 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
     assert!(store.review(id).await.unwrap().is_some());
 
     // An open thread keeps an expired changeset.
-    let thread = store
-        .add_thread(changeset, Some(id), CommentTarget::Changeset, message("todo"))
-        .await
-        .unwrap();
+    let thread = add_thread(&store, changeset, Some(id), CommentTarget::Changeset, message("todo")).await;
     assert_eq!(gc(&store, now + 31 * DAY).await, Default::default());
     store.set_thread_status(thread, ThreadStatus::Resolved).await.unwrap();
 
@@ -702,10 +840,14 @@ async fn gc_keeps_what_an_open_thread_of_a_closed_review_is_anchored_in() {
         snapshot: snaps[2].id,
         ..anchor(Side::Target, 0)
     };
-    store
-        .add_thread(changeset, Some(id), CommentTarget::Range(anchored), message("open"))
-        .await
-        .unwrap();
+    add_thread(
+        &store,
+        changeset,
+        Some(id),
+        CommentTarget::Range(anchored),
+        message("open"),
+    )
+    .await;
     store.close_review(id, T0, false).await.unwrap();
 
     let report = gc(&store, T0 + 100 * DAY).await;

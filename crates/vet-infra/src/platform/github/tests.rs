@@ -9,6 +9,8 @@ use super::*;
 use crate::http::client_builder;
 use crate::platform::fake::{Canned, Fake, Seen, Signed};
 
+mod discussion;
+
 const SEARCH_PAGE_1: &str = include_str!("fixtures/search_page_1.json");
 const SEARCH_PAGE_2: &str = include_str!("fixtures/search_page_2.json");
 const DETAIL_PAGE_1: &str = include_str!("fixtures/detail_page_1.json");

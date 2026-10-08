@@ -23,8 +23,9 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use vet_app::platform::{
-    CheckLog, CommitChecks, Credential, CredentialProvider, Platform, PlatformError, PlatformKind, PlatformTraits,
-    PullRequest, PullRequestDetail, PullRequestQuery, QueueTab, RemoteKey, Viewer, pushes_from_force_pushes,
+    CheckLog, CommentRef, CommitChecks, Credential, CredentialProvider, Discussion, Platform, PlatformComment,
+    PlatformError, PlatformKind, PlatformTraits, PullRequest, PullRequestDetail, PullRequestQuery, QueueTab, RemoteKey,
+    Submission, Submitted, Viewer, pushes_from_force_pushes,
 };
 
 use crate::clock::unix_now;
@@ -32,6 +33,7 @@ use crate::http::http_client;
 use wire::{DetailData, SearchData};
 
 mod checks;
+mod discussion;
 mod wire;
 
 #[cfg(test)]
@@ -449,6 +451,40 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
 
     async fn check_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
         self.job_log(remote, check).await
+    }
+
+    async fn discussion(&self, remote: &RemoteKey, number: u64) -> Result<Discussion, PlatformError> {
+        self.read_discussion(remote, number).await
+    }
+
+    async fn comment(&self, remote: &RemoteKey, comment: &CommentRef) -> Result<PlatformComment, PlatformError> {
+        self.read_comment(&remote.host, comment).await
+    }
+
+    async fn edit_comment(
+        &self,
+        remote: &RemoteKey,
+        comment: &CommentRef,
+        body: &str,
+    ) -> Result<PlatformComment, PlatformError> {
+        self.write_comment(&remote.host, comment, body).await
+    }
+
+    async fn delete_comment(&self, remote: &RemoteKey, comment: &CommentRef) -> Result<(), PlatformError> {
+        self.remove_comment(&remote.host, comment).await
+    }
+
+    async fn set_thread_resolved(&self, remote: &RemoteKey, thread: &str, resolved: bool) -> Result<(), PlatformError> {
+        self.resolve_thread(&remote.host, thread, resolved).await
+    }
+
+    async fn submit_review(
+        &self,
+        remote: &RemoteKey,
+        number: u64,
+        submission: &Submission,
+    ) -> Result<Submitted, PlatformError> {
+        self.post_review(remote, number, submission).await
     }
 }
 
