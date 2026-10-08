@@ -3,6 +3,8 @@
 //! Runs the backend on the real store with a language server that takes its time over
 //! every file; needs `python3` for that server and is skipped without it.
 
+#![allow(clippy::disallowed_methods)]
+
 mod common;
 
 use std::os::unix::fs::PermissionsExt;
@@ -338,23 +340,40 @@ fn borrowed(files: &[(String, String)]) -> Vec<(&str, &str)> {
 /// in a parallel run), and the result does not depend on the machine's load.
 const ANSWERED: Duration = Duration::from_secs(120);
 
+/// Where the semantic requests are stuck.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stuck {
+    /// The servers' identity probes and starts wait on a gate.
+    Starts,
+    /// The servers have started and their requests wait on a gate.
+    Requests,
+    /// Every permit of the semantic lane's budgets is held: nothing semantic gets a thread
+    /// to read with or a process to probe with.
+    Permits,
+}
+
 /// The servers, their identity probes and their starts wait on a gate, and 36 analyses and
-/// hovers wait on them. The store, the repository and the backend are the real ones. The
-/// permits of `notes/design-concurrency.md` (`probes`, `semantic_io`) do not exist yet; the
-/// stuck probes and servers stand in for them.
+/// hovers wait on them. The store, the repository and the backend are the real ones.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn review_actions_answer_while_the_servers_and_their_probes_are_stuck() {
-    review_actions_answer_while_semantic_work_is_stuck(false).await;
+    review_actions_answer_while_semantic_work_is_stuck(Stuck::Starts).await;
 }
 
 /// The servers have started, and the 36 requests are past reading the revision's sides and
 /// wait on the servers' answers.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn review_actions_answer_while_the_servers_are_started_and_every_request_is_stuck() {
-    review_actions_answer_while_semantic_work_is_stuck(true).await;
+    review_actions_answer_while_semantic_work_is_stuck(Stuck::Requests).await;
 }
 
-async fn review_actions_answer_while_semantic_work_is_stuck(servers_start: bool) {
+/// Every permit of `probes` and `semantic_io` is taken. The review lane has budgets of its own,
+/// so no review request needs anything the semantic work holds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn review_actions_answer_while_every_semantic_permit_is_taken() {
+    review_actions_answer_while_semantic_work_is_stuck(Stuck::Permits).await;
+}
+
+async fn review_actions_answer_while_semantic_work_is_stuck(stuck: Stuck) {
     if !python_available() {
         eprintln!("skipped: python3 is not installed");
         return;
@@ -375,8 +394,11 @@ async fn review_actions_answer_while_semantic_work_is_stuck(servers_start: bool)
         start: tools.path().join("start-gate"),
         requests: tools.path().join("request-gate"),
     };
-    if servers_start {
+    if stuck != Stuck::Starts {
         gates.open_start();
+    }
+    if stuck == Stuck::Permits {
+        gates.open_requests();
     }
     let script = tools.path().join("gated-server");
     std::fs::write(
@@ -402,6 +424,16 @@ async fn review_actions_answer_while_semantic_work_is_stuck(servers_start: bool)
         })
         .await
         .unwrap();
+
+    let held = if stuck == Stuck::Permits {
+        let budgets = handler.budgets();
+        Some((
+            budgets.semantic_io.acquire_all().await,
+            budgets.probes.acquire_all().await,
+        ))
+    } else {
+        None
+    };
 
     let symbol = SymbolId {
         path: names[0].clone(),
@@ -430,19 +462,21 @@ async fn review_actions_answer_while_semantic_work_is_stuck(servers_start: bool)
         }
     }
     // Until the probes have been asked for, or the servers their first request.
-    let first = if servers_start {
-        "textDocument/hover"
-    } else {
-        "--version"
+    let first = match stuck {
+        Stuck::Starts => Some("--version"),
+        Stuck::Requests => Some("textDocument/hover"),
+        Stuck::Permits => None,
     };
-    let stuck = async {
-        while count(&log, first) == 0 {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    };
-    tokio::time::timeout(ANSWERED, stuck)
-        .await
-        .expect("nothing semantic started");
+    if let Some(first) = first {
+        let started = async {
+            while count(&log, first) == 0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        };
+        tokio::time::timeout(ANSWERED, started)
+            .await
+            .expect("nothing semantic started");
+    }
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(semantic.try_join_next().is_none(), "the semantic requests are stuck");
     let slowest = std::cell::Cell::new(Duration::ZERO);
@@ -506,7 +540,9 @@ async fn review_actions_answer_while_semantic_work_is_stuck(servers_start: bool)
     assert_eq!(threads.iter().map(|t| t.id).collect::<Vec<_>>(), [thread.id]);
     println!("the slowest review request took {:?}", slowest.get());
 
-    // Nothing was dropped on the way: with the servers released, the analyses answer too.
+    // Nothing was dropped on the way: with the servers and the permits released, the analyses
+    // answer too.
+    drop(held);
     gates.open_start();
     gates.open_requests();
     let answered = async {
