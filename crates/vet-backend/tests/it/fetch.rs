@@ -2,13 +2,11 @@
 //! reached over `file://`: on demand, at open and on a timer, with the base's
 //! "behind" following and a remote that fails leaving the review working.
 
-mod common;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{Client, config, git, init, write};
+use crate::common::{Client, config, git, init, write};
 use tempfile::TempDir;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{

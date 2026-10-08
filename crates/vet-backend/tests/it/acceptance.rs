@@ -8,14 +8,12 @@
 //! tests drive a `LiveSession` over real git with a scripted `Watcher`; the one
 //! test that goes through the real watcher is a write storm.
 
-mod common;
-
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{git, handler, init, repo_with, write};
+use crate::common::{git, handler, init, repo_with, write};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;

@@ -1,10 +1,8 @@
 //! A GitHub pull request as a changeset, against the real GitHub with the `gh` CLI's token.
-//! Not part of the suite: `cargo test -p vet-backend --test github -- --ignored --nocapture`.
+//! Not part of the suite: `cargo test -p vet-backend --test it github -- --ignored --nocapture`.
 //! `VET_SMOKE_REPO` (`owner/name`, public) and `VET_SMOKE_PR` choose the pull request.
 
-mod common;
-
-use common::{Client, git, handler};
+use crate::common::{Client, git, handler};
 use vet_protocol::{ChangesetKey, Request, Response, ReviewInfo, View};
 
 #[tokio::test]

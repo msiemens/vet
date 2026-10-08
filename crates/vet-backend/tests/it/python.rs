@@ -2,9 +2,7 @@
 //! Pyright from npm into a temporary data directory, so it runs only when
 //! `VET_TEST_INSTALL` lists `python`. Run it alone (`--test-threads=1`).
 
-mod common;
-
-use common::{Client, find, handler, repo_with, write};
+use crate::common::{Client, find, handler, repo_with, write};
 use vet_protocol::{Request, Response, Severity, Side, SymbolChange};
 
 fn wanted() -> bool {

@@ -1,4 +1,4 @@
-// Each test binary uses a part of this module.
+// Each test module uses a part of this one.
 #![allow(dead_code)]
 
 use vet_app::acquisition::Acquisition;

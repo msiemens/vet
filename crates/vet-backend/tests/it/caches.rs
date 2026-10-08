@@ -1,10 +1,8 @@
 //! "Clear semantic caches" and the cache's budget reach the file the answers are kept in.
 
-mod common;
-
 use std::sync::Arc;
 
-use common::{Client, config, handler};
+use crate::common::{Client, config, handler};
 use vet_backend::{Orchestrator, open_store};
 use vet_core::content::{BlobId, Hash};
 use vet_infra::semantic_cache::SqliteSemanticCache;

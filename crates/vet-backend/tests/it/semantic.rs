@@ -4,13 +4,11 @@
 
 #![allow(clippy::disallowed_methods)]
 
-mod common;
-
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{Client, config, find, git, repo_with, write};
+use crate::common::{Client, config, find, git, repo_with, write};
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{
     CallFate, Event, Reach, Request, Response, ServerMessage, ServerState, Side, SymbolChange, SymbolId,

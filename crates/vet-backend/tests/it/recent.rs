@@ -1,8 +1,6 @@
 //! The recent-projects list over the protocol: it belongs to the backend, not to a project.
 
-mod common;
-
-use common::{Client, handler};
+use crate::common::{Client, handler};
 use vet_protocol::{RecentProject, Request, Response};
 
 async fn projects(client: &Client, request: Request) -> Vec<RecentProject> {

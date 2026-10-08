@@ -2,18 +2,16 @@
 //! measurement, not a check: it is ignored, prints its timings and asserts nothing about
 //! them. Run it alone, in the build to measure:
 //!
-//! `cargo test --release -p vet-backend --test first_mark -- --ignored --nocapture`
+//! `cargo test --release -p vet-backend --test it first_mark -- --ignored --nocapture`
 //!
 //! The changeset is `VET_MEASURE_FILES` (300) of this repository's own source files, edited
 //! in the working tree. They are named `*.txt`, so that no language server starts.
-
-mod common;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{Client, config, git, init, write};
+use crate::common::{Client, config, git, init, write};
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{Event, ProjectId, Request, Response, ServerMessage, TaskKind, TaskState, View};
 

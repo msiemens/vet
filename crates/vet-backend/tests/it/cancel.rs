@@ -4,14 +4,12 @@
 
 #![allow(clippy::disallowed_methods)]
 
-mod common;
-
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use common::{config, repo_with};
+use crate::common::{config, repo_with};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio_tungstenite::tungstenite::Message;

@@ -3,14 +3,13 @@
 
 #![allow(clippy::disallowed_methods)]
 
-mod common;
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
+use crate::common;
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
 use vet_app::ports::{Checkout, CheckoutError, History, Scanner, Store, StoreError};

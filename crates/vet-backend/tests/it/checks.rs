@@ -1,8 +1,6 @@
 //! The checks of commits are those of a pull request on GitHub, and of no other changeset.
 
-mod common;
-
-use common::{Client, handler, repo_with};
+use crate::common::{Client, handler, repo_with};
 use vet_protocol::{Request, Response};
 
 #[tokio::test]

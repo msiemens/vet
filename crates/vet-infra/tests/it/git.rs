@@ -3,13 +3,12 @@
 
 #![allow(clippy::disallowed_methods)]
 
-mod common;
-
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Mutex;
 
+use crate::common;
 use tempfile::TempDir;
 use vet_app::acquisition::Acquisition;
 use vet_app::changeset::ChangesetId;

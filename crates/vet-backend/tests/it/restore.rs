@@ -6,11 +6,9 @@
 //! temporary data directory; the package caches are the user's own, which is
 //! the sharing a restore is meant to have.
 
-mod common;
-
 use std::path::Path;
 
-use common::{Client, find, git, handler, repo_with, run, write};
+use crate::common::{Client, find, git, handler, repo_with, run, write};
 use vet_infra::exec::{Host, is_file};
 use vet_protocol::{Event, Locations, Request, Response, ServerMessage, Side};
 

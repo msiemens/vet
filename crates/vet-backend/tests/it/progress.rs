@@ -1,9 +1,7 @@
 //! Background progress: opening answers before the first scan, and the scan
 //! and the diff are announced as tasks that end.
 
-mod common;
-
-use common::{Client, handler, init, repo_with};
+use crate::common::{Client, handler, init, repo_with};
 use vet_protocol::{Event, Request, Response, ServerMessage, Task, TaskKind, TaskState};
 
 /// The task events waiting for the client, in order.

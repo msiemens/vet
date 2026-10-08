@@ -5,15 +5,13 @@
 
 #![allow(clippy::disallowed_methods)]
 
-mod common;
-
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use common::{Client, config, repo_with};
+use crate::common::{Client, config, repo_with};
 use serde_json::Value;
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{Event, Request, Response, ServerMessage, Side, SymbolId, TaskKind, ThreadTarget, View};
