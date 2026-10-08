@@ -65,7 +65,11 @@ impl Orchestrator {
         }
         for source in &list.sources {
             if let Some(error) = &source.error {
+                tracing::warn!(repository = %source.remote, %error, "listing the pull requests failed");
                 self.refused(error, &source.remote.account());
+            } else {
+                let listed = list.rows.iter().filter(|r| r.remote == source.remote).count();
+                tracing::debug!(repository = %source.remote, listed, truncated = source.truncated, "listed pull requests");
             }
         }
         let sources: Vec<_> = list
