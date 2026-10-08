@@ -38,6 +38,7 @@
   import {
     appVersion,
     canQuit,
+    canRestartBackend,
     canShowFolder,
     hasNativeDialogs,
     hasNativeMenu,
@@ -63,6 +64,7 @@
   import { session } from "../state/session.svelte";
   import { defaultRange } from "../state/timelineRange";
   import { versions } from "../state/versions.svelte";
+  import ConnectionNotice from "./ConnectionNotice.svelte";
 
   /** How many of a pull request's latest versions have their checks asked for, for the timeline. */
   const MAX_CHECKED_VERSIONS = 20;
@@ -477,6 +479,8 @@
   <TitleBar />
   <p class="message">{session.status}</p>
 {/if}
+
+<ConnectionNotice link={session.link} canRestart={canRestartBackend} onrestart={() => session.restartBackend()} />
 
 {#if session.notice}
   {#key session.notice}

@@ -16,12 +16,16 @@ class AccountsStore {
   loadError = $state<string>();
 
   constructor() {
-    session.onConnect((backend) => void this.connect(backend));
+    session.onConnect((backend) => {
+      backend.onCredentialsNeeded((host) => void this.restore(backend, host));
+      void this.restoreAll(backend);
+    });
+    // A backend the host started again holds no tokens.
+    session.onResync((backend) => void this.restoreAll(backend));
   }
 
-  /** Subscribes to the backend's calls for credentials, then hands it every token the keychain holds. */
-  private async connect(backend: Backend) {
-    backend.onCredentialsNeeded((host) => void this.restore(backend, host));
+  /** Subscribes the connection to the backend's calls for credentials, then hands it every token the keychain holds. */
+  private async restoreAll(backend: Backend) {
     await this.load();
     try {
       const stored = await storedCredentials();

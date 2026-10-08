@@ -1,8 +1,6 @@
 //! Benchmark mode (SPEC §12.0): `VET_BENCH=1` runs it on startup and exits with the
 //! verdict; `VET_BENCH=manual` opens the same corpus and leaves starting it to the Dev panel.
 
-use std::sync::PoisonError;
-
 use crate::backend::{Backend, wsl_distro};
 
 enum Mode {
@@ -87,8 +85,9 @@ pub fn renderer_memory(backend: tauri::State<Backend>) -> Option<u64> {
         }
     };
     let own = descendants(Pid::from_u32(std::process::id()));
-    let backend_pid = backend.child.lock().unwrap_or_else(PoisonError::into_inner).id();
-    let excluded = descendants(Pid::from_u32(backend_pid));
+    let excluded = backend
+        .pid()
+        .map_or_else(Vec::new, |pid| descendants(Pid::from_u32(pid)));
     let total = own
         .iter()
         .skip(1)

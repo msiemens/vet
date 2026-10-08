@@ -128,7 +128,10 @@ pub fn launch(app: &AppHandle) {
     std::thread::spawn(move || {
         let startup = app.state::<Startup>();
         let bench = app.state::<Bench>();
-        match backend::start_backend(&bench, |step| startup.report(&app, step)) {
+        let launched = Backend::launch(backend::repo_path(&bench), backend::spawner(&bench), |step| {
+            startup.report(&app, step)
+        });
+        match launched {
             Ok(backend) => {
                 app.manage(backend);
                 startup.report(&app, Step::LoadingUi);
@@ -154,7 +157,8 @@ pub fn retry_startup(app: AppHandle, startup: tauri::State<Startup>) {
     }
 }
 
-/// The main window's connection to the backend, once the backend is up.
+/// The main window's connection to the backend, once the backend is up. After the backend exited it
+/// is the one started in its place; none while that starts.
 #[tauri::command]
 pub async fn backend_connection(app: AppHandle) -> Result<backend::Connection, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -162,5 +166,16 @@ pub async fn backend_connection(app: AppHandle) -> Result<backend::Connection, S
         app.state::<Backend>().connection()
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
+}
+
+/// Ends the backend and starts another; returns once the new one listens.
+#[tauri::command]
+pub async fn restart_backend(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let backend = app.try_state::<Backend>().ok_or("the backend never started")?;
+        backend.restart()
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

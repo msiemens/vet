@@ -27,6 +27,7 @@ class CheckStore {
         if (event.type === "baseChanged" || event.type === "snapshotSettled") void this.load();
       }),
     );
+    session.onResync(() => void this.load());
     session.onClose(() => {
       this.want([]);
       this.items.clear();

@@ -110,6 +110,9 @@ class ChangesetStore {
         else if (event.type === "baseChanged" && this.manifest) this.manifest = { ...this.manifest, base: event.base };
       }),
     );
+    session.onResync(() => {
+      if (this.manifest) this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
+    });
     session.onClose(() => {
       this.manifest = undefined;
       this.range = undefined;

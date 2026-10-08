@@ -3,6 +3,7 @@
 // the running ones and hides a step that is over in a blink.
 
 import type { Task } from "../generated/Task";
+import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { session } from "./session.svelte";
 import { TaskBoard } from "./taskBoard";
@@ -25,19 +26,25 @@ class ProgressStore {
         this.publish();
       }),
     );
-    session.onOpen((backend) => {
-      void backend.tasks().then(
-        (tasks) => {
-          this.board.replace(tasks, performance.now(), this.delay());
-          this.publish();
-        },
-        (error: unknown) => console.error(error),
-      );
+    session.onOpen((backend) => this.list(backend));
+    session.onResync((backend) => {
+      if (session.repo !== undefined) this.list(backend);
     });
     session.onClose(() => {
       this.board.clear();
       this.publish();
     });
+  }
+
+  /** Replaces the tasks with those the backend has running. */
+  private list(backend: Backend) {
+    void backend.tasks().then(
+      (tasks) => {
+        this.board.replace(tasks, performance.now(), this.delay());
+        this.publish();
+      },
+      (error: unknown) => console.error(error),
+    );
   }
 
   /** While the project opens the footer is all there is to see, so its tasks show at once. */

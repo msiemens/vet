@@ -89,6 +89,14 @@ export async function retryStartup(): Promise<void> {
   await invoke("retry_startup");
 }
 
+/** Only the host can start the backend again. */
+export const canRestartBackend = inTauri;
+
+/** Ends the backend and starts another; resolves once the new one listens. */
+export async function restartBackend(): Promise<void> {
+  await invoke("restart_backend");
+}
+
 /** Where the backend runs, as a project list names it: WSL, or this machine's system; none in a plain browser. */
 export async function hostLabel(): Promise<string | undefined> {
   if (!inTauri) return undefined;

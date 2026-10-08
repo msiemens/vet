@@ -52,6 +52,7 @@ pub fn run() {
             window::activate_and_show,
             geometry::set_window_mode,
             startup::backend_connection,
+            startup::restart_backend,
             startup::retry_startup,
             startup::startup_progress,
             bench::bench_config,
@@ -76,7 +77,7 @@ pub fn run() {
         if let RunEvent::Exit = event {
             geometry::persist(handle);
             if let Some(backend) = handle.try_state::<Backend>() {
-                backend.kill();
+                backend.stop();
             }
             // The process ends after this: the log file takes what is buffered first.
             drop(log.take());

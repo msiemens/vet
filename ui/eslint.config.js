@@ -77,9 +77,9 @@ export default defineConfig(
     },
   },
   {
-    // Only state/backend.ts talks to the connection.
+    // Only state/backend.ts talks to the connection, and the connection's tests.
     files: ["src/**"],
-    ignores: ["src/state/backend.ts"],
+    ignores: ["src/state/backend.ts", "src/state/connection.test.ts"],
     rules: { "no-restricted-imports": ["error", { patterns: connectionPatterns }] },
   },
   {

@@ -49,9 +49,31 @@ import type { ThreadTarget } from "../generated/ThreadTarget";
 import type { Unavailable } from "../generated/Unavailable";
 import type { VersionInfo } from "../generated/VersionInfo";
 import type { View } from "../generated/View";
-import { Connection } from "./connection";
+import { type Address, Connection, type Dialer, type LinkState } from "./connection";
+import { reportUncaught } from "./errorLog";
+import { hashParams, inTauri, invoke } from "./host";
 import type { ServerLine } from "./serverStatus";
 import { StaleRequests } from "./staleRequests";
+
+export type { LinkState };
+
+/**
+ * In Tauri the host spawned the backend, read its Ready line and took the repository from its command
+ * line; after the backend exited the host starts another and answers with its line. In a plain browser
+ * (development only, not a supported target) pass both in the URL hash: `#port=1234&token=...&repo=/path`
+ * (without `repo`, the start screen asks for one).
+ */
+const hostDialer: Dialer = {
+  address: async (): Promise<Address> => {
+    if (inTauri) return invoke<Address>("backend_connection");
+    const params = hashParams();
+    const port = Number(params.get("port"));
+    const token = params.get("token");
+    if (!port || !token) throw new Error("open with #port=<port>&token=<token> outside Tauri");
+    return { port, token, repo: params.get("repo") };
+  },
+  socket: (url) => new WebSocket(url),
+};
 
 export type FileContents = Extract<Response, { type: "fileContents" }>;
 
@@ -120,8 +142,24 @@ export class Backend {
   }
 
   static async connect(): Promise<Backend> {
-    const conn = await Connection.open();
+    const conn = await Connection.open(hostDialer);
+    reportUncaught((level, message, context) => conn.log(level, message, context));
     return new Backend(conn, conn.repo);
+  }
+
+  /** Calls `listener` whenever the connection drops, stalls or is up again. */
+  onLinkState(listener: (state: LinkState) => void): () => void {
+    return this.conn.onState(listener);
+  }
+
+  /** Calls `listener` when the connection is up again after it dropped; the project is to be opened again. */
+  onReconnect(listener: () => void): () => void {
+    return this.conn.onReconnect(listener);
+  }
+
+  /** Tries to connect again at once, for after the backend was restarted. */
+  retryConnection() {
+    this.conn.retryNow();
   }
 
   /** The recently opened repositories, most recent first. They belong to the backend, not to a project. */

@@ -47,6 +47,9 @@ class QueueStore {
         else if (event.type === "threadsChanged") void this.load(false);
       }),
     );
+    session.onResync(() => {
+      if (session.repo !== undefined) void this.loadAll();
+    });
     session.onClose(() => {
       this.seq.local++;
       this.seq.pullRequests++;

@@ -26,8 +26,10 @@ class VersionStore {
       )
         void this.reload(backend);
     });
+    const offResync = session.onResync(() => void this.reload(backend));
     return () => {
       off();
+      offResync();
       this.seq++;
       this.items = [];
     };

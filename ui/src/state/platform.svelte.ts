@@ -55,8 +55,10 @@ class PlatformStore {
         void this.reload();
       }
     });
+    const offResync = session.onResync(() => void this.reload());
     return () => {
       off();
+      offResync();
       this.backend = undefined;
       this.info = undefined;
       this.status = undefined;

@@ -14,6 +14,9 @@ class ServerList {
       }),
     );
     session.onOpen(() => void this.load());
+    session.onResync(() => {
+      if (session.repo !== undefined) void this.load();
+    });
     session.onClose(() => (this.servers = []));
   }
 

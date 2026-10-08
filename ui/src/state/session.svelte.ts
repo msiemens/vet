@@ -3,8 +3,8 @@
 // the backend and report failures from here.
 
 import { errorText } from "../lib/errorText";
-import { Backend } from "./backend";
-import { hasNativeDialogs, pickRepository, setWindowMode } from "./host";
+import { Backend, type LinkState } from "./backend";
+import { hasNativeDialogs, pickRepository, restartBackend, setWindowMode } from "./host";
 import { recent } from "./recent.svelte";
 import { RepoOpener } from "./repoOpener";
 
@@ -13,6 +13,8 @@ class SessionStore {
   /** A short message for the viewer about a request that did not go through. */
   notice = $state<string>();
   backend = $state.raw<Backend>();
+  /** Whether the connection to the backend is up; it connects again by itself when it drops. */
+  link = $state<LinkState>("connected");
   /** The root of the open repository; none shows the welcome screen. */
   repo = $state<string>();
   /** Why the last attempt to open a repository failed. */
@@ -20,6 +22,7 @@ class SessionStore {
   private connectListeners = new Set<(backend: Backend) => void>();
   private openListeners = new Set<(backend: Backend) => void>();
   private closeListeners = new Set<() => void>();
+  private resyncListeners = new Set<(backend: Backend) => void>();
   private opener = new RepoOpener({
     release: () => this.release(),
     open: (path) => this.connected().open(path),
@@ -35,6 +38,8 @@ class SessionStore {
   async connect() {
     try {
       const backend = await Backend.connect();
+      backend.onLinkState((state) => (this.link = state));
+      backend.onReconnect(() => void this.resync(backend));
       for (const listener of this.connectListeners) listener(backend);
       this.backend = backend;
       await recent.load(backend);
@@ -44,9 +49,47 @@ class SessionStore {
     }
   }
 
+  /**
+   * The connection is up again after it dropped, maybe to a backend the host started anew: the open
+   * repository is opened again on it, which subscribes to its events, and every store reads anew.
+   */
+  private async resync(backend: Backend) {
+    const repo = this.repo;
+    if (repo !== undefined) {
+      try {
+        await backend.open(repo);
+      } catch (error) {
+        await this.abandon(error);
+        return;
+      }
+    }
+    void recent.load(backend);
+    for (const listener of this.resyncListeners) listener(backend);
+  }
+
   /** Called with the backend once it is connected, before anything is opened. */
   onConnect(listener: (backend: Backend) => void) {
     this.connectListeners.add(listener);
+  }
+
+  /**
+   * Called when the connection is up again after it dropped and the open repository, if any, is open
+   * on it again. What a store holds may be out of date by then: it reads it again. Returns the
+   * unsubscribe function.
+   */
+  onResync(listener: (backend: Backend) => void): () => void {
+    this.resyncListeners.add(listener);
+    return () => this.resyncListeners.delete(listener);
+  }
+
+  /** Ends the backend and has the host start another, for when the connection does not come back. */
+  async restartBackend() {
+    try {
+      await restartBackend();
+      this.connected().retryConnection();
+    } catch (error) {
+      this.notice = `Could not restart the backend: ${errorText(error)}`;
+    }
   }
 
   /**
