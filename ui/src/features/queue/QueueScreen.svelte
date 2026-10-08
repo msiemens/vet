@@ -7,6 +7,8 @@
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import ProgressBar from "../../lib/ui/ProgressBar.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
+  import Table from "../../lib/ui/Table.svelte";
+  import type { Column } from "../../lib/ui/columns";
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { queue } from "../../state/queue.svelte";
@@ -51,6 +53,17 @@
     /** Opens Settings at the accounts, for a repository that has none of the credential it needs. */
     onsignin: () => void;
   } = $props();
+
+  const COLUMNS: Column[] = [
+    { id: "changeset", label: "Changeset", flex: true, min: 120 },
+    { id: "status", label: "Status", width: 130, min: 60 },
+    { id: "author", label: "Author", width: 150, min: 60 },
+    { id: "source", label: "Source", width: 150, min: 60 },
+    { id: "changes", label: "Changes", width: 110, min: 60 },
+    { id: "reviewed", label: "Reviewed", width: 190, min: 80 },
+    { id: "icons", label: "", name: "checks and comments", width: 80 },
+    { id: "updated", label: "Updated", width: 90, min: 50, align: "right" },
+  ];
 
   let tab = $state<QueueTab>("all");
   let query = $state("");
@@ -116,86 +129,69 @@
     {#if queue.loading}<ProgressBar label="Loading changesets" />{/if}
   </div>
 
-  <div class="table">
-    <div class="row head">
-      <span>Changeset</span>
-      <span>Status</span>
-      <span>Author</span>
-      <span>Source</span>
-      <span>Changes</span>
-      <span>Reviewed</span>
-      <span></span>
-      <span class="right">Updated</span>
-    </div>
-    <ScrollArea>
-      <div class="rows" aria-label="Changesets">
-        {#each shown as row, index (keyId(row.key))}
-          {@const id = keyId(row.key)}
-          {@const numbers = ownOf(row)}
-          {@const changes = changesOf(row, numbers?.delta, queue.lines.get(id))}
-          {@const author = authorOf(row)}
-          {@const comments = commentCount(row)}
-          <button
-            class="flat row"
-            class:on={id === onViewId}
-            type="button"
-            aria-current={id === onViewId}
-            onclick={() => select(row)}
-            ondblclick={() => {
-              select(row);
-              onopen();
-            }}
-            onkeydown={(e) => move(e, index)}
-          >
-            <span class="title"><ChangesetName label={labelOf(row)} /></span>
-            <span
-              ><StatusChip
-                status={row.pullRequest?.status}
-                title={row.pullRequest && statusTitle(row.pullRequest)}
-              /></span
-            >
-            <span class="author" class:muted={author?.muted}>
-              {#if author}
-                {#if !author.muted}<Avatar name={author.name} url={author.avatar ?? null} />{/if}
-                <span class="name" title={author.name}>{author.name}</span>
-              {/if}
-            </span>
-            <span class="source">{sourceText(row)}</span>
-            <span class="delta"><ChangesCell {changes} /></span>
-            <span><ReviewedCell reviewed={reviewedOf(row.review, numbers?.completion)} /></span>
-            <span class="icons">
-              <CiStatus state={row.pullRequest?.ci} />
-              {#if comments > 0}
-                <span
-                  class="threads"
-                  title={row.pullRequest
-                    ? `${comments} ${comments === 1 ? "comment" : "comments"}`
-                    : `${comments} open ${comments === 1 ? "thread" : "threads"}`}
-                  ><Icon name="comments" size={13} />{comments}</span
-                >
-              {/if}
-            </span>
-            <span class="right when">{updatedText(row)}</span>
-          </button>
-        {:else}
-          {#if !unlisted.length}
-            <p class="empty">
-              {queue.loading ? "Loading…" : rows.length ? "No matching changesets" : "No changesets"}
-            </p>
+  <Table name="queue" columns={COLUMNS} aria-label="Changesets">
+    {#each shown as row, index (keyId(row.key))}
+      {@const id = keyId(row.key)}
+      {@const numbers = ownOf(row)}
+      {@const changes = changesOf(row, numbers?.delta, queue.lines.get(id))}
+      {@const author = authorOf(row)}
+      {@const comments = commentCount(row)}
+      <button
+        class="flat row"
+        class:on={id === onViewId}
+        type="button"
+        aria-current={id === onViewId}
+        onclick={() => select(row)}
+        ondblclick={() => {
+          select(row);
+          onopen();
+        }}
+        onkeydown={(e) => move(e, index)}
+      >
+        <span class="title"><ChangesetName label={labelOf(row)} /></span>
+        <span
+          ><StatusChip status={row.pullRequest?.status} title={row.pullRequest && statusTitle(row.pullRequest)} /></span
+        >
+        <span class="author" class:muted={author?.muted}>
+          {#if author}
+            {#if !author.muted}<Avatar name={author.name} url={author.avatar ?? null} />{/if}
+            <span class="name" title={author.name}>{author.name}</span>
           {/if}
-        {/each}
-        {#if shown.length && queue.listingPullRequests && (tab === "all" || tab === "prs")}
-          <p class="pending">Loading pull requests…</p>
-        {/if}
-        {#each unlisted as source (source.remote)}
-          <p class="unlisted">
-            {source.remote}: {source.error}
-            {#if source.signedOut}<button class="link" type="button" onclick={onsignin}>Sign in…</button>{/if}
-          </p>
-        {/each}
-      </div>
-    </ScrollArea>
-  </div>
+        </span>
+        <span class="source">{sourceText(row)}</span>
+        <span class="delta"><ChangesCell {changes} /></span>
+        <span><ReviewedCell reviewed={reviewedOf(row.review, numbers?.completion)} /></span>
+        <span class="icons">
+          <CiStatus state={row.pullRequest?.ci} />
+          {#if comments > 0}
+            <span
+              class="threads"
+              title={row.pullRequest
+                ? `${comments} ${comments === 1 ? "comment" : "comments"}`
+                : `${comments} open ${comments === 1 ? "thread" : "threads"}`}
+              ><Icon name="comments" size={13} />{comments}</span
+            >
+          {/if}
+        </span>
+        <span class="right when">{updatedText(row)}</span>
+      </button>
+    {:else}
+      {#if !unlisted.length}
+        <p class="empty">
+          {queue.loading ? "Loading…" : rows.length ? "No matching changesets" : "No changesets"}
+        </p>
+      {/if}
+    {/each}
+    {#if shown.length && queue.listingPullRequests && (tab === "all" || tab === "prs")}
+      <p class="pending">Loading pull requests…</p>
+    {/if}
+    {#each unlisted as source (source.remote)}
+      <p class="unlisted">
+        {source.remote}: {source.error}
+        {#if source.signedOut}<button class="link" type="button" onclick={onsignin}>Sign in…</button>{/if}
+      </p>
+    {/each}
+  </Table>
 
   <div class="panel">
     <PanelTabs
@@ -262,36 +258,8 @@
     height: 22px;
     padding-left: 26px;
   }
-  .table {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .row {
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) 130px minmax(0, 1fr) minmax(0, 1fr) 110px 190px 80px 90px;
-    align-items: center;
-    column-gap: 12px;
-    width: 100%;
-    height: var(--h-queue-row);
-    padding: 0 16px;
-    box-sizing: border-box;
-    border-radius: 0;
-    text-align: left;
-    font-size: var(--fs);
-  }
   .row.on {
     background: var(--toggle);
-  }
-  /* Over the rows' scroll bar too, so the columns line up. */
-  .head {
-    flex: none;
-    padding-right: calc(16px + var(--w-scrollbar));
-    height: 26px;
-    border-bottom: 1px solid var(--line-soft);
-    color: var(--text-2);
-    font-size: var(--fs-ctl);
   }
   .title,
   .source {
