@@ -5,26 +5,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use vet_app::changeset::Source;
-use vet_app::fetch::Credentials;
-use vet_app::platform::Credential;
-use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::{Event, ProjectId, Response};
 
+use crate::accounts::Held;
 use crate::changesets::bring_in;
 use crate::events::settled;
 use crate::open::Booted;
 use crate::sync::sync_pull_request;
-use crate::{Open, Orchestrator, PlatformAccounts, start_servers_in_background};
-
-/// The accounts the process holds, as the credentials a fetch uses.
-pub(crate) struct Held<'a>(pub(crate) &'a PlatformAccounts);
-
-impl Credentials for Held<'_> {
-    async fn credential(&self, host: &str) -> Option<Credential> {
-        self.0.credential(host, unix_now()).await
-    }
-}
+use crate::{Open, Orchestrator, start_servers_in_background};
 
 impl Orchestrator {
     /// Fetches now. A fetch that fails fails its task and not this request.

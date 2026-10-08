@@ -1,12 +1,23 @@
 //! Requests about the credentials for hosting platforms, which belong to the process
 //! and not to a session.
 
+use vet_app::fetch::Credentials;
+use vet_app::platform::Credential;
 use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::{Response, Secret};
 
 use crate::events::Connection;
-use crate::{Orchestrator, message};
+use crate::{Orchestrator, PlatformAccounts, message};
+
+/// The accounts the process holds, as the credentials a fetch uses.
+pub(crate) struct Held<'a>(pub(crate) &'a PlatformAccounts);
+
+impl Credentials for Held<'_> {
+    async fn credential(&self, host: &str) -> Option<Credential> {
+        self.0.credential(host, unix_now()).await
+    }
+}
 
 impl Orchestrator {
     /// The accounts, for a connection that from now on hears when a credential is needed.

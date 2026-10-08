@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::ops::Deref;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use std::time::{Duration, SystemTime};
@@ -26,7 +26,7 @@ use vet_app::semantics::{Links, Semantics};
 use vet_app::settle::Settling;
 use vet_app::trust::Trust;
 use vet_infra::clock::{TokioClock, unix_now};
-use vet_infra::git::{GixRepo, find_root};
+use vet_infra::git::GixRepo;
 use vet_infra::lsp::LspLauncher;
 use vet_infra::materialize::Materialize;
 use vet_infra::materialize::kept::KeptTrees;
@@ -39,7 +39,6 @@ use vet_semantic::ports::Backend;
 
 use crate::caches::PersistentAnswers;
 use crate::events::{Connection, settled};
-use crate::fetch::fetch_periodically;
 use crate::hosting::Hosting;
 use crate::{
     AzureDevOps, GitHub, LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, message,
@@ -280,34 +279,12 @@ impl Orchestrator {
         })
     }
 
-    /// The project id and the root of the repository containing `repo`. The first
-    /// scan has not necessarily happened yet; requests that need it wait for it.
-    pub(crate) async fn open(&self, repo: &str, events: Connection) -> Result<(ProjectId, String), String> {
-        let repo = find_root(Path::new(repo))?;
-        let root = repo.to_string_lossy().into_owned();
-        let entry: Arc<OnceLock<Weak<Open>>> = Arc::default();
-        let (open, created) = self
-            .projects
-            .open(&repo, events, |id, subscribers| {
-                self.wire(id, subscribers, repo.clone(), root.clone(), entry.clone())
-            })
-            .await?;
-        if created {
-            let _ = entry.set(Arc::downgrade(&open));
-            let (projects, id, grace) = (self.projects.clone(), open.id, self.config.orphan_grace);
-            tokio::spawn(async move { projects.reap(id, grace, &TokioClock::new()).await });
-            start_servers_in_background(open.clone());
-            fetch_periodically(&open, self.config.fetch_interval);
-        }
-        Ok((open.id, root))
-    }
-
     /// Unsubscribes the connection; the last one to leave closes the project.
     pub(crate) async fn close(&self, id: ProjectId, from: &Connection) -> Result<(), String> {
         self.projects.close(id, from).await.map_err(message)
     }
 
-    async fn wire(
+    pub(crate) async fn wire(
         &self,
         id: ProjectId,
         subscribers: Subscribers<Connection>,

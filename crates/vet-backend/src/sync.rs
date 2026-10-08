@@ -11,7 +11,8 @@ use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::{EditChoice, Event, Notification, NotificationKind, PlatformConnection, ProjectId, Response};
 
-use crate::events::{Connection, thread_changed, threads_changed};
+use crate::announce::{thread_changed, threads_changed};
+use crate::events::Connection;
 use crate::open::Booted;
 use crate::{Open, Orchestrator, message};
 

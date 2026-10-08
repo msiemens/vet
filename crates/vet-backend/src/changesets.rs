@@ -7,7 +7,7 @@ use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
-use crate::fetch::Held;
+use crate::accounts::Held;
 use crate::hosting::Hosting;
 use crate::sync::sync_in_background;
 use crate::{Open, Orchestrator, message, start_servers_in_background};

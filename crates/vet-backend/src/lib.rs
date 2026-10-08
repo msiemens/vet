@@ -3,6 +3,7 @@
 //! to protocol messages.
 
 mod accounts;
+mod announce;
 mod caches;
 mod changesets;
 mod events;
@@ -10,6 +11,7 @@ mod fetch;
 mod highlight;
 mod hosting;
 mod open;
+mod projects;
 mod references;
 mod review;
 mod semantic;

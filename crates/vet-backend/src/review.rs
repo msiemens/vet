@@ -6,7 +6,8 @@ use vet_app::changeset::Source;
 use vet_mapping as mapping;
 use vet_protocol::{ProjectId, Response};
 
-use crate::events::{Connection, announce_start, review_changed, settled};
+use crate::announce::{announce_start, review_changed};
+use crate::events::{Connection, settled};
 use crate::open::Ready;
 use crate::{Orchestrator, message, start_servers_in_background};
 

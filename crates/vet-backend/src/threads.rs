@@ -5,7 +5,8 @@ use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::{ProjectId, Response};
 
-use crate::events::{Connection, thread_changed, threads_changed};
+use crate::announce::{announce_start, thread_changed, threads_changed};
+use crate::events::Connection;
 use crate::{Orchestrator, message};
 
 impl Orchestrator {
@@ -53,7 +54,7 @@ impl Orchestrator {
             )
             .await
             .map_err(message)?;
-        crate::events::announce_start(&open, thread.started);
+        announce_start(&open, thread.started);
         Ok(thread_changed(&open, from, &thread).await)
     }
 
