@@ -8,6 +8,7 @@
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use vet_core::content::{FileDiff, RepoPath};
@@ -23,7 +24,7 @@ use vet_semantic::ports::{
     Sym, SymbolInfo, prefer_openable,
 };
 use vet_semantic::query::{Asked, Pair, Primitives, Semantic, SemanticError, Served};
-use vet_semantic::reuse::SemanticCache;
+use vet_semantic::reuse::{Computed, Memo, SemanticCache};
 use vet_semantic::signature::{Signature, signature};
 use vet_semantic::trace;
 
@@ -105,6 +106,15 @@ where
     trust: Trust,
     /// Where the changed-symbols analysis reports its files done.
     tasks: Tasks,
+    /// The changed symbols of the revision being viewed, keyed by it and by the
+    /// `epoch` of the servers they were found with: every analysis of the revision
+    /// joins one search. The memo keeps the latest revision only, so a session that
+    /// moves on drops the older one's result; the search itself lives in the futures
+    /// of its callers, so it ends with the last of them (see `changed_symbols`).
+    changes: Memo<(u32, u64), Derived<Changes>>,
+    /// Bumped when the servers or their answers are replaced: what was found with the
+    /// old ones is not reused.
+    epoch: AtomicU64,
 }
 
 /// The file contents of both sides of a revision, as the acquisition keeps them.
@@ -177,6 +187,8 @@ where
             limits: links.limits,
             trust,
             tasks: links.tasks,
+            changes: Memo::new(1),
+            epoch: AtomicU64::new(0),
         }
     }
 
@@ -194,7 +206,14 @@ where
 
     /// Drops the answers kept in memory; the next question is asked again (or read from the store).
     pub fn forget_answers(&self) {
+        self.replaced();
         self.semantic.pool().forget_answers();
+    }
+
+    /// What was derived from the servers' answers so far is not reused.
+    fn replaced(&self) {
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        self.changes.clear();
     }
 
     /// The language that serves `file`; `None`: it is unsupported.
@@ -362,9 +381,26 @@ where
     /// server only if no answer for that text is kept (I2): a revision that changed
     /// one file asks for that one, however many it has, and one that changed none
     /// (a filter, a finished review) asks for none.
+    ///
+    /// All callers for a revision share one search with one progress task. The caller
+    /// that came first runs it and the others wait for it; if that caller is dropped
+    /// (its request was cancelled), a waiter runs it next, and when the last caller is
+    /// dropped the search stops, keeping the answers it got per text (I2). A revision
+    /// that is superseded drops every caller and with them the search.
     pub async fn changed_symbols(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<Derived<Changes>> {
-        self.current(revision, Box::pin(self.find_changes(session, revision)))
-            .await
+        let key = (revision, self.epoch.load(Ordering::SeqCst));
+        let work = async {
+            let found = self
+                .changes
+                .get(&key, async {
+                    self.find_changes(session, revision)
+                        .await
+                        .map(|value| Computed { value, keep: true })
+                })
+                .await;
+            found.map(|(changes, _)| changes)
+        };
+        self.current(revision, Box::pin(work)).await
     }
 
     async fn find_changes(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<Derived<Changes>> {
@@ -549,6 +585,7 @@ where
 
     /// Drops the servers of `language`: their executable or settings changed.
     pub async fn restart(&self, language: &BackendId) {
+        self.replaced();
         self.semantic.pool().restart(language).await;
     }
 
@@ -1111,12 +1148,9 @@ mod tests {
         assert_eq!(counters.text_symbol_requests.load(Ordering::SeqCst), 4);
     }
 
-    // Bug: every analysis of a symbol (signature, impact, reachability) runs the revision's
-    // changed symbols again, each with its own "Finding the changed symbols" task, and
-    // nothing ends the runs of a selection the viewer has left; the log of a large C#
-    // review shows 12 such runs over 97 files, each taking 300 s.
+    // Every analysis of a symbol (signature, impact, reachability) needs the revision's
+    // changed symbols; they are found once, under one "Finding the changed symbols" task.
     #[tokio::test]
-    #[ignore = "bug: the changed symbols of a revision are found once per caller"]
     async fn the_analyses_of_one_revision_share_one_search_for_its_changed_symbols() {
         let fx = Fixture::open(
             &[("a.rs", "one\n"), ("b.py", "one\n")],
@@ -1154,12 +1188,10 @@ mod tests {
         assert_eq!(searches.len(), 1, "one search, not one per caller");
     }
 
-    // Bug: whether a kept answer can serve a text's symbols is found out by working out the
-    // server's identity again for every text (`Pool::foreseen`): on the real launcher that runs
-    // `dotnet --version` or `node --version`, reads the server settings from the store's only
-    // connection, and on a kept tree lists all its files for the restore plan.
+    // Whether a kept answer can serve a text's symbols needs the server's identity, which on
+    // the real launcher runs toolchain probes and reads the server settings: it is worked out
+    // once, not per text.
     #[tokio::test]
-    #[ignore = "bug: the server's identity is worked out once per text the changed symbols read"]
     async fn the_identity_of_a_server_is_worked_out_independently_of_how_many_files_changed() {
         async fn identities(files: usize) -> usize {
             let names: Vec<_> = (0..files).map(|i| format!("r{i}.rs")).collect();
