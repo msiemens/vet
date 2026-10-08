@@ -5,6 +5,7 @@
 
 import { EditorState, type StateField, Text } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
+import type { CommentAt } from "../../../generated/CommentAt";
 import type { FileChange } from "../../../generated/FileChange";
 import type { HunkState } from "../../../generated/HunkState";
 import type { NoTextReason } from "../../../generated/NoTextReason";
@@ -16,10 +17,10 @@ import { iconSvg } from "../../../lib/ui/icons";
 import { type MarkLayout, type ScrollMark, Scrollbar } from "../../../lib/ui/scrollbar";
 import { currentLine } from "./currentLine";
 import { closeChangeCard, showChangeCard } from "./fileCard";
+import { type EditorSelection, fileViewComment, hunkComment } from "./commentAnchor";
 import {
   type ChangesSource,
   type ChangesState,
-  type HunkActions,
   changesField,
   fileChanges,
   setCurrentHunk,
@@ -36,7 +37,11 @@ import { markKind } from "./scrollMarks";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { softWrap, wraps } from "./softWrap";
 
-export type { HunkActions } from "./fileChanges";
+/** What the owner does for the file's hunks: a comment goes where `commentAnchor` puts it. */
+export interface TextActions {
+  toggleSeen(hunk: number): void;
+  comment(at: CommentAt): void;
+}
 
 const NO_TEXT: Record<NoTextReason, string> = {
   binary: "Binary file: there is no text to show.",
@@ -61,6 +66,8 @@ export class TextView {
   private states: HunkState[];
   private drawn?: Drawn;
   private scrollbar?: Scrollbar;
+  /** The reviewer was in the editor, or navigation put its caret on a line: comments go on its selection. */
+  private entered = false;
 
   /**
    * Fills `root` with the file's text from `source`. A reply of another revision is dropped:
@@ -74,7 +81,7 @@ export class TextView {
     /** Which files wrap their long lines; a change builds the view anew. */
     private wrap: SoftWrap,
     /** The changeset's change to the file, if it changes it: its hunks are drawn, and the owner acts on them. */
-    private changes?: { file: FileChange; actions: HunkActions },
+    private changes?: { file: FileChange; actions: TextActions },
   ) {
     this.states = changes?.file.review.hunks ?? [];
     root.replaceChildren();
@@ -123,6 +130,12 @@ export class TextView {
         highlightExtension(highlights),
         // Read-only but focusable, so the caret and Mod+B work.
         EditorState.readOnly.of(true),
+        EditorView.domEventHandlers({
+          focus: () => {
+            this.entered = true;
+            return false;
+          },
+        }),
         semanticExtensions(this.path, "target", this.hooks),
       ],
     });
@@ -149,12 +162,15 @@ export class TextView {
     return { total: view.contentHeight, marks };
   }
 
-  private draw({ file, actions }: { file: FileChange; actions: HunkActions }, loaded: Loaded): Drawn {
+  private draw({ file, actions }: { file: FileChange; actions: TextActions }, loaded: Loaded): Drawn {
     const source: ChangesSource = {
       hunks: file.hunks,
       changes: loaded.changes,
       base: Text.of(loaded.base.split(/\r\n?|\n/)),
-      actions,
+      actions: {
+        toggleSeen: (hunk) => actions.toggleSeen(hunk),
+        comment: (hunk) => actions.comment(hunkComment(file.hunks, hunk, this.selection())),
+      },
       card: (view, line) => this.showCard(view, line),
     };
     return { source, field: changesField(source, this.states) };
@@ -183,6 +199,7 @@ export class TextView {
     if (!view || !drawn) return;
     const h = drawn.source.hunks[hunk];
     const pos = lineStart(view.state.doc, h.targetStart);
+    this.entered = true;
     view.dispatch({
       selection: { anchor: pos },
       effects: [
@@ -218,11 +235,20 @@ export class TextView {
     return true;
   }
 
-  /** Asks for a comment on the current hunk; answers whether there was one. */
+  /** The editor's selection once the reviewer was in it. */
+  private selection(): EditorSelection | undefined {
+    const { view } = this;
+    if (!view || !this.entered) return undefined;
+    const { from, to } = view.state.selection.main;
+    return { side: "target", doc: view.state.doc, from, to };
+  }
+
+  /** Asks for a comment on the selection, the caret's line or the current hunk; answers whether there was somewhere to comment. */
   commentHere(): boolean {
-    const hunk = this.current;
-    if (hunk < 0 || !this.drawn) return false;
-    this.drawn.source.actions.comment(hunk);
+    const { drawn, changes } = this;
+    const at = drawn && fileViewComment(drawn.source.hunks, this.current, this.selection());
+    if (!at || !changes) return false;
+    changes.actions.comment(at);
     return true;
   }
 
@@ -264,6 +290,7 @@ export class TextView {
   /** Puts the caret on a 0-based line and centres it. */
   goToLine(line: number) {
     this.line = line;
+    this.entered = true;
     const view = this.view;
     if (!view) return;
     const from = lineStart(view.state.doc, line);
@@ -279,6 +306,7 @@ export class TextView {
   /** Selects and marks a span, and centres it. */
   goToSpan(span: TextSpan) {
     this.span = span;
+    this.entered = true;
     if (this.view) revealSpan(this.view, span, true);
   }
 

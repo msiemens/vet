@@ -6,6 +6,7 @@ import { tick } from "svelte";
 import type { CheckLog } from "../../generated/CheckLog";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { CheckRun } from "../../generated/CheckRun";
+import type { CommentAt } from "../../generated/CommentAt";
 import type { FileChange } from "../../generated/FileChange";
 import type { Manifest } from "../../generated/Manifest";
 import type { Side } from "../../generated/Side";
@@ -29,7 +30,7 @@ import { bindRevision, focusedEditor } from "./editor/semantic";
 import type { SoftWrap } from "../../lib/softWrap";
 import type { Mode } from "../../lib/viewMode";
 import { type CommandContext, commands } from "../../state/commands";
-import { type HunkActions, TextView } from "./editor/TextView";
+import { type TextActions, TextView } from "./editor/TextView";
 import { type SavedView, restoredTabs } from "./changesetViews";
 import { keyId } from "../../state/changesetKey";
 import { type ViewActions, viewCommands } from "./reviewCommands";
@@ -433,7 +434,7 @@ export class ReviewController {
         fileSource(this.backend, manifest.revision, this.changeset.view),
         bindRevision(this.hooks, manifest.revision),
         this.softWrap,
-        file && { file, actions: this.hunkActions(file, manifest.revision) },
+        file && { file, actions: this.textActions(file, manifest.revision) },
       );
       this.texts.set(id, text);
       return;
@@ -565,25 +566,26 @@ export class ReviewController {
   }
 
   /** What the file's text tab offers for the file's hunks. */
-  private hunkActions(file: FileChange, revision: number): HunkActions {
+  private textActions(file: FileChange, revision: number): TextActions {
     return {
       toggleSeen: (hunk) =>
         void this.editing(
           () => this.changeset.toggleHunk(revision, file.path, hunk),
           () => undefined,
         ),
-      comment: (hunk) => void this.commentOnHunk(file, hunk),
+      comment: (at) => void this.commentInDiff(file, at),
     };
   }
 
-  /** Opens the file's diff tab at its `hunk`-th hunk, with the form for a comment on it. */
-  private async commentOnHunk(file: FileChange, hunk: number) {
+  /** Opens the file's diff tab at a hunk or the first of some target lines, with the form for a comment on them. */
+  private async commentInDiff(file: FileChange, at: CommentAt) {
     this.tabs.show(file.path);
     await tick(); // a new tab's pane attaches and builds its view
     const view = this.views.get(fileTab(file.path));
     if (!view) return;
-    await view.goToHunk(file.nonText.length + hunk);
-    view.commentOnHunk(hunk);
+    if (at.type === "hunk") await view.goToHunk(file.nonText.length + at.index);
+    else if (at.type === "lines") await view.goToLine(0, at.start);
+    view.commentOn(at);
   }
 
   /** Opens the file's diff tab, or focuses it if it is open, and goes to a 0-based target `line` if given. */

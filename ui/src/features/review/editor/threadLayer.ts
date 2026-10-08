@@ -6,11 +6,9 @@
 import { type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { CommentAt } from "../../../generated/CommentAt";
-import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
-import { takesKeys } from "./dom";
-import { lineEnd, lineOf, lineStart, selectedLines } from "./positions";
+import { lineEnd } from "./positions";
 import type { Section, ThreadState } from "./section";
 import type { ThreadSpace } from "./sectionLayout";
 import { type ThreadActions, buildCard } from "./threadCard";
@@ -290,29 +288,6 @@ export class ThreadLayer {
   }
 
   /**
-   * Opens the form for a comment on the selection of the focused editor among the `sections`' (its
-   * caret line without one). Answers whether an editor had the focus.
-   */
-  commentOnSelection(sections: Iterable<Section>): boolean {
-    for (const s of sections) {
-      const view = s.handle?.views.find(takesKeys);
-      if (!s.handle || !view) continue;
-      const { main } = view.state.selection;
-      const { doc } = view.state;
-      const [first, last] = [lineOf(doc, main.from), lineOf(doc, main.to)];
-      const { start, len } = selectedLines(first, last, !main.empty && main.to === lineStart(doc, last));
-      this.commentOnLines(s, view === s.handle.view ? "target" : "base", start, len);
-      return true;
-    }
-    return false;
-  }
-
-  /** `len` lines from line `start` (0-based) of a side. */
-  private commentOnLines(s: Section, side: Side, start: number, len: number) {
-    this.commentOn(s, { type: "lines", side, start, len });
-  }
-
-  /**
    * Where a thread is shown: the index of its section and the line of its card, if it has one in
    * the editor; `lead` for the changeset's own; none if it is not in this view.
    */
@@ -325,7 +300,7 @@ export class ThreadLayer {
   }
 
   /** Opens the form for a comment where the backend says it attaches. */
-  private commentOn({ file }: Section, at: CommentAt) {
+  commentOn({ file }: Section, at: CommentAt) {
     // A newer revision replaces the view, and the request fails then.
     void this.listeners.commentTarget(this.host.revision, file.path, at).then(
       ({ target, line }) => {

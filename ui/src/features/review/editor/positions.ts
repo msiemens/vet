@@ -40,12 +40,12 @@ export function targetLineOfBase(hunks: readonly Hunk[], baseLine: number): numb
   return baseLine + shift;
 }
 
-/** The text range a selection covers, as whole lines: a selection ending at a line start does not include that line. */
-export function selectedLines(
-  startLine: number,
-  endLine: number,
-  endsAtLineStart: boolean,
-): { start: number; len: number } {
-  const last = endsAtLineStart && endLine > startLine ? endLine - 1 : endLine;
-  return { start: startLine, len: last - startLine + 1 };
+/**
+ * The 0-based lines the selection `from`..`to` covers, a caret its own line: a selection ending at
+ * a line start does not include that line.
+ */
+export function selectedLines(doc: LineDoc, from: number, to: number): { start: number; len: number } {
+  const [first, end] = [lineOf(doc, from), lineOf(doc, to)];
+  const last = to > from && end > first && to === lineStart(doc, end) ? end - 1 : end;
+  return { start: first, len: last - first + 1 };
 }

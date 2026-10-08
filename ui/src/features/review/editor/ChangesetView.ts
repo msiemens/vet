@@ -5,6 +5,7 @@
 
 import { EditorView } from "@codemirror/view";
 import type { BaseDiff } from "../../../generated/BaseDiff";
+import type { CommentAt } from "../../../generated/CommentAt";
 import type { FileChange } from "../../../generated/FileChange";
 import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
@@ -15,6 +16,7 @@ import { Scrollbar } from "../../../lib/ui/scrollbar";
 import type { SoftWrap } from "../../../lib/softWrap";
 import type { Mode } from "../../../lib/viewMode";
 import { changeCard } from "./changeCard";
+import { type EditorSelection, hunkComment, linesAt } from "./commentAnchor";
 import { takesKeys } from "./dom";
 import { fileHeader, renderProgress } from "./fileHeader";
 import type { FileSource } from "./fileSource";
@@ -91,6 +93,8 @@ export class ChangesetView {
   private scrollbar: Scrollbar;
   /** A file `goToFile` could not bring to the top, as the last short files cannot: it is the file the view is at while the view stays scrolled to `top`. */
   private reached?: { file: number; top: number };
+  /** The editor the reviewer was in last, or put the caret in by navigating; it counts while its section keeps that editor mounted. */
+  private lastEditor?: { section: Section; handle: Handle; side: Side };
 
   constructor(
     private root: HTMLElement,
@@ -172,7 +176,7 @@ export class ChangesetView {
       el.addEventListener("pointerdown", (e) => this.selectAt(index, e));
       const actions: BarActions = {
         toggleSeen: (h) => void this.actions.hunk(this.sections[index], h),
-        comment: (h) => this.threads.commentOnHunk(this.sections[index], h),
+        comment: (h) => this.commentOnHunk(this.sections[index], h),
         openSource: (h) => listeners.openSource(file.path, file.hunks[h].targetStart),
         toggleBaseDiff: listeners.baseDiff && ((h) => void this.toggleBaseDiff(this.sections[index], h)),
       };
@@ -222,6 +226,7 @@ export class ChangesetView {
     this.pin.update(root.scrollTop);
     this.windowing.start();
     this.root.addEventListener("click", this.heights.onExpand, true);
+    this.root.addEventListener("focusin", this.onFocusIn);
     this.widths.observe(root);
     inspect?.(
       viewProbe({ sections: this.sections, mounted: this.windowing.mounted, heights: this.heights, stops: this.stops }),
@@ -236,6 +241,7 @@ export class ChangesetView {
     this.widths.disconnect();
     if (this.measuring !== undefined) cancelAnimationFrame(this.measuring);
     this.root.removeEventListener("click", this.heights.onExpand, true);
+    this.root.removeEventListener("focusin", this.onFocusIn);
     for (const fi of this.windowing.mounted) this.sections[fi].handle?.destroy();
     this.windowing.mounted.clear();
     this.threads.destroy();
@@ -443,6 +449,8 @@ export class ChangesetView {
     this.reached = this.root.scrollTop < this.sections[fi].top - 1 ? { file: fi, top: this.root.scrollTop } : undefined;
     const handle = this.mount(fi);
     this.sync();
+    // The reviewer moved to the file, not into one of its lines.
+    this.lastEditor = undefined;
     const { cards, file } = this.sections[fi];
     if (cards.length + file.hunks.length) this.select(this.stops.start(fi));
     return handle;
@@ -529,6 +537,7 @@ export class ChangesetView {
       if (this.current >= 0 && this.current !== stop) this.markCurrent(this.current, false);
       this.current = stop;
       this.frameCurrent();
+      this.lastEditor = undefined;
       // A card's position is exact, whether or not the section's editor is mounted.
       this.root.scrollTop = Math.max(0, s.top + s.cardTops[si] - this.root.clientHeight / 2);
       this.sync();
@@ -602,8 +611,30 @@ export class ChangesetView {
     this.sync();
     const pos = lineStart(handle.view.state.doc, line);
     handle.view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: "center" }) });
+    this.lastEditor = { section: s, handle, side: "target" };
     this.sync();
     return handle;
+  }
+
+  /** The reviewer went into an editor: comments go on its selection from now on. */
+  private onFocusIn = (e: FocusEvent) => {
+    for (const fi of this.windowing.mounted) {
+      const s = this.sections[fi];
+      const handle = s.handle;
+      const view = handle?.views.find((v) => v.contentDOM === e.target);
+      if (!handle || !view) continue;
+      this.lastEditor = { section: s, handle, side: view === handle.view ? "target" : "base" };
+      return;
+    }
+  };
+
+  /** The selection of the editor the reviewer was in last, while it is mounted. */
+  private remembered(): { section: Section; selection: EditorSelection } | undefined {
+    const last = this.lastEditor;
+    if (!last || last.section.handle !== last.handle) return undefined;
+    const view = last.side === "target" ? last.handle.view : last.handle.views[0];
+    const { from, to } = view.state.selection.main;
+    return { section: last.section, selection: { side: last.side, doc: view.state.doc, from, to } };
   }
 
   /**
@@ -749,20 +780,30 @@ export class ChangesetView {
   }
 
   /**
-   * Opens the form for a comment on the focused editor's selection (its caret line without one),
-   * else on the current hunk. Answers whether there was somewhere to comment.
+   * Opens the form for a comment on the selection of the editor the reviewer was in last (its caret
+   * line without one), else on the current stop. Answers whether there was somewhere to comment.
    */
   commentHere(): boolean {
-    if (this.threads.commentOnSelection([...this.windowing.mounted].map((fi) => this.sections[fi]))) return true;
+    const last = this.remembered();
+    if (last) {
+      this.threads.commentOn(last.section, linesAt(last.selection));
+      return true;
+    }
     if (this.current < 0 || !this.stops.total) return false;
     const [fi, si] = this.stops.locate(this.current);
     this.threads.commentOnStop(this.sections[fi], si);
     return true;
   }
 
-  /** Opens the form for a comment on the `hunk`-th hunk of a one-file view. */
-  commentOnHunk(hunk: number) {
-    this.threads.commentOnHunk(this.sections[0], hunk);
+  /** A hunk's Comment button: the whole hunk, or the remembered selection when it lies inside the hunk. */
+  private commentOnHunk(s: Section, hunk: number) {
+    const last = this.remembered();
+    this.threads.commentOn(s, hunkComment(s.file.hunks, hunk, last?.section === s ? last.selection : undefined));
+  }
+
+  /** Opens the form for a comment on part of the file of a one-file view. */
+  commentOn(at: CommentAt) {
+    this.threads.commentOn(this.sections[0], at);
   }
 
   /** Scrolls to where a thread is shown; answers whether it is in this view. */

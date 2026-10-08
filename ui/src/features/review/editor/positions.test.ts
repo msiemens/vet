@@ -24,10 +24,18 @@ void test("lines map to offsets and back; a line past the end is the last", () =
   assert.equal(lineOf(doc, 5), 2);
 });
 
+void test("a selection covers the lines it touches, a caret its own line", () => {
+  assert.deepEqual(selectedLines(doc, 1, 5), { start: 0, len: 3 });
+  assert.deepEqual(selectedLines(doc, 5, 5), { start: 2, len: 1 });
+  assert.deepEqual(selectedLines(doc, 4, 4), { start: 2, len: 1 });
+});
+
 void test("a selection ending at the start of a line does not include it", () => {
-  assert.deepEqual(selectedLines(3, 5, false), { start: 3, len: 3 });
-  assert.deepEqual(selectedLines(3, 5, true), { start: 3, len: 2 });
-  assert.deepEqual(selectedLines(3, 3, true), { start: 3, len: 1 });
+  assert.deepEqual(selectedLines(doc, 0, 4), { start: 0, len: 2 });
+  // Up to the start of the empty line: only the first line.
+  assert.deepEqual(selectedLines(doc, 0, 3), { start: 0, len: 1 });
+  // A selection that starts at a line start keeps its line.
+  assert.deepEqual(selectedLines(doc, 3, 4), { start: 1, len: 1 });
 });
 
 void test("a position maps to its offset", () => {

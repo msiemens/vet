@@ -13,7 +13,7 @@ export interface ViewActions {
   toggleSeen(): boolean;
   /** Marks the hunk at the caret, else the current one, seen again if it is seen against an old base; answers whether there was one. */
   reconfirm(): boolean;
-  /** Opens the comment form for the selection, else the current hunk; answers whether there was somewhere to comment. */
+  /** Opens the comment form for the last editor's selection or caret line, else the current hunk; answers whether there was somewhere to comment. */
   comment(): boolean;
   /** Opens the change card of the caret's line in a changed file's text; answers whether the line is a changed one. */
   showCard(): boolean;
