@@ -146,6 +146,14 @@ export async function openUrl(url: string): Promise<void> {
   else window.open(url, "_blank", "noopener,noreferrer");
 }
 
+/** Whether the host can show a folder of the backend's machine in the file manager. */
+export const canShowFolder = inTauri;
+
+/** Shows a folder (a path of the backend's machine) in the file manager. Rejects with a message if it cannot. */
+export async function showFolder(path: string): Promise<void> {
+  await invoke("show_folder", { path });
+}
+
 /** The native file dialog; `null` if cancelled. Rejects with a message for a file the backend cannot see. */
 export async function pickFile(): Promise<string | null> {
   return inTauri ? invoke<string | null>("pick_file") : null;

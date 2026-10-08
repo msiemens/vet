@@ -37,6 +37,7 @@ const actions: AppActions = {
   setTheme: (theme) => calls.push(`theme ${theme}`),
   toggleDevPanel: () => calls.push("dev"),
   clearSemanticCaches: () => calls.push("clearCaches"),
+  showLog: () => calls.push("showLog"),
 };
 
 const registry = new CommandRegistry<CommandContext>(open, "Ctrl");
@@ -121,6 +122,14 @@ void test("Clear Semantic Caches runs without a repository: the caches belong to
   calls.length = 0;
   assert.equal(registry.run("semantic.clearCaches", { ...open, repoOpen: false, reviewOpen: false }), true);
   assert.deepEqual(calls, ["clearCaches"]);
+});
+
+void test("Show Log is in the Help menu and needs no repository", () => {
+  const help = menu({}, { repoOpen: false }).find((m) => m.id === "help");
+  assert.equal(help?.children?.find((i) => i.id === "help.showLog")?.enabled, undefined);
+  calls.length = 0;
+  assert.equal(registry.run("help.showLog", { ...open, repoOpen: false, reviewOpen: false }), true);
+  assert.deepEqual(calls, ["showLog"]);
 });
 
 void test("items carry their argument, including paths with colons", () => {

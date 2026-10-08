@@ -195,6 +195,11 @@ export class Backend {
     expect(await this.conn.request({ type: "clearSemanticCaches" }), "done");
   }
 
+  /** The folder of the backend's log files, as a path of the machine it runs on. */
+  async logDirectory(): Promise<string> {
+    return expect(await this.conn.request({ type: "logDirectory" }), "logDirectory").path;
+  }
+
   /** The background tasks of the open project that are running now. */
   async tasks(): Promise<Task[]> {
     return expect(await this.conn.request({ type: "tasks", project: this.pid }), "tasks").tasks;

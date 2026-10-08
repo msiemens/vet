@@ -33,6 +33,8 @@ export interface AppActions {
   toggleDevPanel(): void;
   /** Clears the backend's semantic caches. */
   clearSemanticCaches(): void;
+  /** Opens the folder of the log files, or says where it is. */
+  showLog(): void;
 }
 
 export function appCommands(a: AppActions): Command<CommandContext>[] {
@@ -117,6 +119,7 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
       },
     },
     { id: "semantic.clearCaches", label: "Clear Semantic Caches", run: () => a.clearSemanticCaches() },
+    { id: "help.showLog", label: "Show Log", run: () => a.showLog() },
     { id: "dev.panel", label: "Developer Panel", run: () => a.toggleDevPanel() },
   ];
 }

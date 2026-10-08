@@ -24,10 +24,23 @@ The benchmark: `VET_BENCH=1` runs it on startup and quits with the verdict;
 webview's inspector with the window (debug builds only):
 `VET_DEVTOOLS=1 VET_BENCH=manual pnpm tauri dev`.
 
-`VET_TIMING=1` makes the backend print to stderr how long each request from the
-UI, each language-server start and each language-server symbol request took
-(with how much of it went to making the server see the file, including the wait
-after opening it).
+## Log
+
+The shell and the backend write one log: a daily file `vet.log.<date>` in the
+`logs` folder of Vet's data directory, five days kept (macOS
+`~/Library/Application Support/vet/logs`, Windows `%APPDATA%\vet\logs`, Linux and
+the backend in WSL `~/.local/share/vet/logs`). Debug builds print it to stderr too.
+Errors of the UI and failed requests land there under the target `ui`.
+Help > Show Log opens the folder; with the backend in WSL that is the folder in
+the distro, while the shell's own lines are in the Windows folder.
+
+`VET_LOG` sets the level in `RUST_LOG` syntax, `info` by default:
+`VET_LOG=debug`, `VET_LOG=vet_infra=debug,info`. `VET_LOG=timing=debug,info` adds
+how long each request from the UI, each language-server start and each
+language-server symbol request took (with how much of it went to making the
+server see the file, including the wait after opening it). Tokens, credentials
+and file contents are not logged at `info` or above. The backend reads
+`VET_LOG` from its own environment; in WSL list it in `WSLENV`.
 
 ## WSL split
 

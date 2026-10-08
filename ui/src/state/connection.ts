@@ -4,11 +4,13 @@
 
 import type { ClientMessage } from "../generated/ClientMessage";
 import type { Event as ServerEvent } from "../generated/Event";
+import type { LogLevel } from "../generated/LogLevel";
 import type { Ready } from "../generated/Ready";
 import type { Request } from "../generated/Request";
 import type { Response } from "../generated/Response";
 import type { ServerMessage } from "../generated/ServerMessage";
 import { abortError } from "../lib/abort";
+import { LogBudget, reportFailedRequest, reportUncaught } from "./errorLog";
 import { hashParams, inTauri, invoke } from "./host";
 import { Pending } from "./pending";
 
@@ -37,6 +39,7 @@ export class Connection {
   private nextId = 0;
   private pending = new Pending<Response>();
   private listeners = new Set<(event: ServerEvent) => void>();
+  private logBudget = new LogBudget();
 
   private constructor(
     private socket: WebSocket,
@@ -44,7 +47,11 @@ export class Connection {
     readonly repo: string | null,
   ) {
     socket.addEventListener("message", (event) => this.onMessage(JSON.parse(event.data as string) as ServerMessage));
-    socket.addEventListener("close", () => this.failAll(new Error("connection closed")));
+    const stopReporting = reportUncaught((level, message, context) => this.log(level, message, context));
+    socket.addEventListener("close", () => {
+      stopReporting();
+      this.failAll(new Error("connection closed"));
+    });
   }
 
   static async open(): Promise<Connection> {
@@ -81,7 +88,16 @@ export class Connection {
       if (this.socket.readyState === WebSocket.OPEN) this.send({ type: "cancel", id: cancelled });
     });
     this.send({ type: "request", id, request });
+    void answer.catch((error: unknown) =>
+      reportFailedRequest((level, message, context) => this.log(level, message, context), request.type, error),
+    );
     return answer;
+  }
+
+  /** Adds an entry to the backend's log; a few per interval are sent, the rest dropped. */
+  private log(level: LogLevel, message: string, context: string) {
+    if (this.socket.readyState !== WebSocket.OPEN || !this.logBudget.admit(performance.now())) return;
+    this.send({ type: "log", level, message, context });
   }
 
   private send(message: ClientMessage) {

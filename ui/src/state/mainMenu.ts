@@ -58,7 +58,11 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     },
   ];
   const vcs: MenuSpec = [{ command: "git.fetch" }];
-  const help: MenuSpec = [...(s.native ? [] : [about]), { command: "dev.panel", checked: s.devPanel }];
+  const help: MenuSpec = [
+    ...(s.native ? [] : [about]),
+    { command: "help.showLog" },
+    { command: "dev.panel", checked: s.devPanel },
+  ];
 
   return [
     ...(s.native ? [{ id: "app", label: "Vet", items: [about, "-", settings, "-", quit] as MenuSpec }] : []),

@@ -24,6 +24,7 @@
   import { type RangeFile, RangeChips, TimelinePanel } from "../features/timeline";
   import { ProjectSwitcher, WelcomeScreen } from "../features/welcome";
   import type { Thread } from "../generated/Thread";
+  import { errorText } from "../lib/errorText";
   import { repoName } from "../lib/paths";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import ContextMenu from "../lib/ui/ContextMenu.svelte";
@@ -34,11 +35,13 @@
   import {
     appVersion,
     canQuit,
+    canShowFolder,
     hasNativeDialogs,
     hasNativeMenu,
     hostLabel,
     inTauri,
     quit,
+    showFolder,
     showWindow,
   } from "../state/host";
   import { appCommands } from "../state/appCommands";
@@ -144,6 +147,7 @@
       setTheme: (t) => applyTheme((theme = t)),
       toggleDevPanel: () => (devOpen = !devOpen),
       clearSemanticCaches: () => void servers.clearCaches(),
+      showLog: () => void showLog(),
     }),
   );
   keymap.load();
@@ -215,6 +219,17 @@
   $effect(() => {
     if (platform.accountsRequests > 0) untrack(() => showDialog("settings", "accounts"));
   });
+
+  /** Opens the folder of the log files in the file manager; a plain browser says where it is. */
+  async function showLog() {
+    try {
+      const path = await session.connected().logDirectory();
+      if (canShowFolder) await showFolder(path);
+      else session.notice = `The log is in ${path}`;
+    } catch (e) {
+      session.notice = `Cannot show the log: ${errorText(e)}`;
+    }
+  }
 
   /** Asks for a pull request by its number, in the repository the project has on GitHub. */
   async function openPullRequest() {
