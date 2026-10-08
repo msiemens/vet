@@ -37,7 +37,10 @@ pure crate pulls in an async runtime, git or IO.
 `check-module-cycles.sh` needs `cargo install cargo-modules --locked`. It fails if
 the module graph of a library or binary has a cycle, ignoring edges to a module's
 own ancestors (`use super::X`). `cargo modules --acyclic` is not used directly: it
-counts every type and its methods as a cycle.
+counts every type and its methods as a cycle. The targets are analysed in parallel
+(each run loads the whole dependency graph into rust-analyzer). `--self-test` runs
+the check on `ci/fixtures/module-cycle`, which contains a cycle, and fails if it is
+not reported; `check.sh` runs it first.
 
 Formatting-only commits are listed in `.git-blame-ignore-revs`; enable them with
 `git config blame.ignoreRevsFile .git-blame-ignore-revs`.

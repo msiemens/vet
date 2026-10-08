@@ -26,6 +26,7 @@ cargo nextest run --workspace
 step "check-deps"
 ci/check-deps.sh
 step "module cycles"
+ci/check-module-cycles.sh --self-test
 ci/check-module-cycles.sh
 
 cd ui
