@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ChangedSymbol } from "../../generated/ChangedSymbol";
+  import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import Splitter from "../../lib/ui/Splitter.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import SymbolDetail from "./SymbolDetail.svelte";
@@ -38,11 +39,13 @@
     />
   </div>
   <div class="detail">
-    {#if symbols.selected}
-      <SymbolDetail symbol={symbols.selected} {onopen} />
-    {:else}
-      <p class="empty">No symbol selected</p>
-    {/if}
+    <ScrollArea>
+      {#if symbols.selected}
+        <SymbolDetail symbol={symbols.selected} {onopen} />
+      {:else}
+        <p class="empty">No symbol selected</p>
+      {/if}
+    </ScrollArea>
   </div>
 </aside>
 
@@ -69,7 +72,8 @@
   .detail {
     flex: 1;
     min-height: 0;
-    overflow: hidden auto;
+    display: flex;
+    flex-direction: column;
   }
   .empty {
     margin: 12px 10px;

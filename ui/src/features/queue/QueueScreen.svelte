@@ -6,6 +6,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import ProgressBar from "../../lib/ui/ProgressBar.svelte";
+  import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { queue } from "../../state/queue.svelte";
@@ -125,67 +126,69 @@
       <span></span>
       <span class="right">Updated</span>
     </div>
-    <div class="rows" aria-label="Changesets">
-      {#each shown as row, index (keyId(row.key))}
-        {@const id = keyId(row.key)}
-        {@const numbers = ownOf(row)}
-        {@const changes = changesOf(row, numbers?.delta, queue.lines.get(id))}
-        {@const author = authorOf(row)}
-        {@const comments = commentCount(row)}
-        <button
-          class="flat row"
-          class:on={id === onViewId}
-          type="button"
-          aria-current={id === onViewId}
-          onclick={() => select(row)}
-          ondblclick={() => {
-            select(row);
-            onopen();
-          }}
-          onkeydown={(e) => move(e, index)}
-        >
-          <span class="title"><ChangesetName label={labelOf(row)} /></span>
-          <span><StatusChip status={row.pullRequest?.status} /></span>
-          <span class="author" class:muted={author?.muted}>
-            {#if author}
-              {#if !author.muted}<Avatar name={author.name} url={author.avatar ?? null} />{/if}
-              <span class="name" title={author.name}>{author.name}</span>
-            {/if}
-          </span>
-          <span class="source">{sourceText(row)}</span>
-          <span class="delta"><ChangesCell {changes} /></span>
-          <span><ReviewedCell reviewed={reviewedOf(row.review, numbers?.completion)} /></span>
-          <span class="icons">
-            <CiStatus state={row.pullRequest?.ci} />
-            {#if comments > 0}
-              <span
-                class="threads"
-                title={row.pullRequest
-                  ? `${comments} ${comments === 1 ? "comment" : "comments"}`
-                  : `${comments} open ${comments === 1 ? "thread" : "threads"}`}
-                ><Icon name="comments" size={13} />{comments}</span
-              >
-            {/if}
-          </span>
-          <span class="right when">{updatedText(row)}</span>
-        </button>
-      {:else}
-        {#if !unlisted.length}
-          <p class="empty">
-            {queue.loading ? "Loading…" : rows.length ? "No matching changesets" : "No changesets"}
-          </p>
+    <ScrollArea>
+      <div class="rows" aria-label="Changesets">
+        {#each shown as row, index (keyId(row.key))}
+          {@const id = keyId(row.key)}
+          {@const numbers = ownOf(row)}
+          {@const changes = changesOf(row, numbers?.delta, queue.lines.get(id))}
+          {@const author = authorOf(row)}
+          {@const comments = commentCount(row)}
+          <button
+            class="flat row"
+            class:on={id === onViewId}
+            type="button"
+            aria-current={id === onViewId}
+            onclick={() => select(row)}
+            ondblclick={() => {
+              select(row);
+              onopen();
+            }}
+            onkeydown={(e) => move(e, index)}
+          >
+            <span class="title"><ChangesetName label={labelOf(row)} /></span>
+            <span><StatusChip status={row.pullRequest?.status} /></span>
+            <span class="author" class:muted={author?.muted}>
+              {#if author}
+                {#if !author.muted}<Avatar name={author.name} url={author.avatar ?? null} />{/if}
+                <span class="name" title={author.name}>{author.name}</span>
+              {/if}
+            </span>
+            <span class="source">{sourceText(row)}</span>
+            <span class="delta"><ChangesCell {changes} /></span>
+            <span><ReviewedCell reviewed={reviewedOf(row.review, numbers?.completion)} /></span>
+            <span class="icons">
+              <CiStatus state={row.pullRequest?.ci} />
+              {#if comments > 0}
+                <span
+                  class="threads"
+                  title={row.pullRequest
+                    ? `${comments} ${comments === 1 ? "comment" : "comments"}`
+                    : `${comments} open ${comments === 1 ? "thread" : "threads"}`}
+                  ><Icon name="comments" size={13} />{comments}</span
+                >
+              {/if}
+            </span>
+            <span class="right when">{updatedText(row)}</span>
+          </button>
+        {:else}
+          {#if !unlisted.length}
+            <p class="empty">
+              {queue.loading ? "Loading…" : rows.length ? "No matching changesets" : "No changesets"}
+            </p>
+          {/if}
+        {/each}
+        {#if shown.length && queue.listingPullRequests && (tab === "all" || tab === "prs")}
+          <p class="pending">Loading pull requests…</p>
         {/if}
-      {/each}
-      {#if shown.length && queue.listingPullRequests && (tab === "all" || tab === "prs")}
-        <p class="pending">Loading pull requests…</p>
-      {/if}
-      {#each unlisted as source (source.remote)}
-        <p class="unlisted">
-          {source.remote}: {source.error}
-          {#if source.signedOut}<button class="link" type="button" onclick={onsignin}>Sign in…</button>{/if}
-        </p>
-      {/each}
-    </div>
+        {#each unlisted as source (source.remote)}
+          <p class="unlisted">
+            {source.remote}: {source.error}
+            {#if source.signedOut}<button class="link" type="button" onclick={onsignin}>Sign in…</button>{/if}
+          </p>
+        {/each}
+      </div>
+    </ScrollArea>
   </div>
 
   <div class="panel">
@@ -203,11 +206,14 @@
       {#if !current}
         <p class="empty">Select a changeset</p>
       {:else if panel === "details"}
-        <QueueDetails groups={detailGroups(current, manifest)} onlink={() => void openBaseChanged()} />
+        <ScrollArea>
+          <QueueDetails groups={detailGroups(current, manifest)} onlink={() => void openBaseChanged()} />
+        </ScrollArea>
       {:else if panel === "files"}
+        <!-- The list scrolls by itself. -->
         <QueueFiles paths={changeset.paths} fileOf={(path) => changeset.file(path)} onopen={onopenfile} />
       {:else}
-        <QueueComments threads={threads.items} onopen={onopenthread} />
+        <ScrollArea><QueueComments threads={threads.items} onopen={onopenthread} /></ScrollArea>
       {/if}
     </div>
   </div>
@@ -256,11 +262,6 @@
     display: flex;
     flex-direction: column;
   }
-  .rows {
-    flex: 1;
-    min-height: 0;
-    overflow: hidden auto;
-  }
   .row {
     display: grid;
     grid-template-columns: minmax(0, 2fr) 130px minmax(0, 1fr) minmax(0, 1fr) 110px 190px 80px 90px;
@@ -277,8 +278,10 @@
   .row.on {
     background: var(--toggle);
   }
+  /* Over the rows' scroll bar too, so the columns line up. */
   .head {
     flex: none;
+    padding-right: calc(16px + var(--w-scrollbar));
     height: 26px;
     border-bottom: 1px solid var(--line-soft);
     color: var(--text-2);
@@ -368,7 +371,6 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    overflow: hidden auto;
   }
   .empty {
     margin: 12px 16px;

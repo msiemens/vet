@@ -4,6 +4,7 @@
   import AppLogo from "../../lib/ui/AppLogo.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
+  import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { shortTime } from "../../lib/shortTime";
   import { avatarColour, initials, searchRecent } from "./recentList";
 
@@ -121,30 +122,32 @@
       </div>
     {/if}
 
-    <ul class="projects" bind:this={list} role="listbox" aria-label="Recent projects">
-      {#each found as { project, name, nameRanges, pathRanges }, i (project.path)}
-        <li role="option" aria-selected={i === current}>
-          <button
-            class="flat row"
-            class:on={i === current}
-            type="button"
-            tabindex="-1"
-            title={project.path}
-            onclick={() => onopen(project.path)}
-          >
-            <span class="avatar" style:background="var(--avatar-{avatarColour(project.path)})">{initials(name)}</span>
-            <span class="text">
-              <span class="name"><Marked text={name} ranges={nameRanges} /></span>
-              <span class="mono path"><Marked text={project.path} ranges={pathRanges} /></span>
-            </span>
-            <span class="when">{shortTime(project.openedAt)}</span>
-          </button>
-        </li>
-      {/each}
-    </ul>
-    {#if !found.length}
-      <p class="empty">{recent.length ? "No matching projects" : "No recent projects"}</p>
-    {/if}
+    <ScrollArea>
+      <ul class="projects" bind:this={list} role="listbox" aria-label="Recent projects">
+        {#each found as { project, name, nameRanges, pathRanges }, i (project.path)}
+          <li role="option" aria-selected={i === current}>
+            <button
+              class="flat row"
+              class:on={i === current}
+              type="button"
+              tabindex="-1"
+              title={project.path}
+              onclick={() => onopen(project.path)}
+            >
+              <span class="avatar" style:background="var(--avatar-{avatarColour(project.path)})">{initials(name)}</span>
+              <span class="text">
+                <span class="name"><Marked text={name} ranges={nameRanges} /></span>
+                <span class="mono path"><Marked text={project.path} ranges={pathRanges} /></span>
+              </span>
+              <span class="when">{shortTime(project.openedAt)}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
+      {#if !found.length}
+        <p class="empty">{recent.length ? "No matching projects" : "No recent projects"}</p>
+      {/if}
+    </ScrollArea>
   </main>
 </div>
 
@@ -261,11 +264,9 @@
     background: var(--del-bg);
     font-size: var(--fs-ctl);
   }
+  /* The scroll bar's gutter is the margin on the right. */
   .projects {
-    flex: 0 1 auto;
-    min-height: 0;
-    overflow: hidden auto;
-    padding: 0 12px;
+    padding: 0 0 0 12px;
   }
   .row {
     width: 100%;

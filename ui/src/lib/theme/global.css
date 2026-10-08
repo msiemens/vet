@@ -254,6 +254,55 @@ textarea.field {
   background: var(--window-close);
 }
 
+/* `.vet-scrollbar`: Vet's own scroll bar (`lib/ui/scrollbar.ts`), a gutter beside its scroller with
+   the marks under a translucent thumb. `.vet-scroller` hides the platform's vertical bar; a
+   horizontal one stays, drawn like the thumb. */
+.vet-scrollbar {
+  position: relative;
+  flex: none;
+  width: var(--w-scrollbar);
+  touch-action: none;
+}
+/* Wider than the marks, so its edges show beside them. */
+.vet-scrollbar-thumb {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  border-radius: calc(var(--w-scrollbar) / 2 - 1px);
+  background: var(--scroll-thumb);
+}
+.vet-scrollbar-thumb:hover,
+.vet-scrollbar.dragging .vet-scrollbar-thumb {
+  background: var(--scroll-thumb-active);
+}
+.vet-scrollmark {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  border-radius: 1px;
+}
+.vet-scroller::-webkit-scrollbar {
+  width: 0;
+  height: var(--w-scrollbar);
+  background: transparent;
+}
+.vet-scroller::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: calc(var(--w-scrollbar) / 2);
+  background: var(--scroll-thumb) padding-box;
+}
+.vet-scroller::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-active) padding-box;
+}
+.vet-scroller::-webkit-scrollbar-corner {
+  background: transparent;
+}
+@supports not selector(::-webkit-scrollbar) {
+  .vet-scroller {
+    scrollbar-width: none;
+  }
+}
+
 /* The dot on what follows the working tree: the target, and the end of a range. */
 .live-dot {
   display: inline-block;

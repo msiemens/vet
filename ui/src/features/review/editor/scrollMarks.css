@@ -1,26 +1,4 @@
-/* The marks beside a view's scroll bar (`scrollMarks.ts`). They lie over the bar and let every pointer event through. */
-.vet-scrollmarks {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 10px;
-  z-index: 450;
-  pointer-events: none;
-}
-.vet-scrollmarks-band {
-  position: absolute;
-  left: 0;
-  right: 0;
-  border-radius: 2px;
-  background: var(--track);
-}
-.vet-scrollmark {
-  position: absolute;
-  left: 2px;
-  right: 2px;
-  border-radius: 1px;
-}
+/* The colours of the hunk marks in a view's scroll bar (`scrollMarks.ts`). */
 .vet-scrollmark-seen {
   background: var(--seen);
 }

@@ -4,6 +4,7 @@
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { checks } from "../../state/checks.svelte";
   import { type Range, rowRange } from "../../state/timelineRange";
   import { type RangeFile, timelineRows } from "./timelineRows";
@@ -59,51 +60,63 @@
       <div class="row head">
         <span>Version</span><span>Time</span><span>Files</span><span></span><span class="right">Lines</span>
       </div>
-      <ul class="rows" aria-label="Versions, newest first">
-        {#each rows as row (row.n)}
-          <li>
-            <button
-              class="flat row"
-              class:edge={row.band === "end"}
-              class:inside={row.band === "inside"}
-              type="button"
-              aria-current={row.band ? "true" : undefined}
-              onclick={(e) => choose(row.n, e.shiftKey)}
-            >
-              <span class="mono n">v{row.n}</span>
-              <span class="mono time">{time(row.at)}</span>
-              <span class="names">
-                {#if row.rebasedOnto !== undefined}
-                  <span class="rebased"
-                    ><Icon name="branch" size={13} /> rebased onto <span class="mono">{row.rebasedOnto}</span></span
-                  >
-                {:else}
-                  {row.files}
-                {/if}
-                {#if row.reviewed}<span class="eye" title="Last reviewed here"><Icon name="eye" size={13} /></span>{/if}
-              </span>
-              <span class="ci"><CiStatus state={checks.of(row.commit)?.state} size={12} /></span>
-              <span class="right">
-                {#if row.lines}{@render counts(row.lines)}{:else}<span class="none">–</span>{/if}
-              </span>
-            </button>
-          </li>
-        {:else}
-          <li class="empty">Versions start when you first mark something seen, acknowledge a change or comment.</li>
-        {/each}
-      </ul>
+      <ScrollArea>
+        <ul class="rows" aria-label="Versions, newest first">
+          {#each rows as row (row.n)}
+            <li>
+              <button
+                class="flat row"
+                class:edge={row.band === "end"}
+                class:inside={row.band === "inside"}
+                type="button"
+                aria-current={row.band ? "true" : undefined}
+                onclick={(e) => choose(row.n, e.shiftKey)}
+              >
+                <span class="mono n">v{row.n}</span>
+                <span class="mono time">{time(row.at)}</span>
+                <span class="names">
+                  {#if row.rebasedOnto !== undefined}
+                    <span class="rebased"
+                      ><Icon name="branch" size={13} /> rebased onto <span class="mono">{row.rebasedOnto}</span></span
+                    >
+                  {:else}
+                    {row.files}
+                  {/if}
+                  {#if row.reviewed}<span class="eye" title="Last reviewed here"><Icon name="eye" size={13} /></span
+                    >{/if}
+                </span>
+                <span class="ci"><CiStatus state={checks.of(row.commit)?.state} size={12} /></span>
+                <span class="right">
+                  {#if row.lines}{@render counts(row.lines)}{:else}<span class="none">–</span>{/if}
+                </span>
+              </button>
+            </li>
+          {:else}
+            <li class="empty">Versions start when you first mark something seen, acknowledge a change or comment.</li>
+          {/each}
+        </ul>
+      </ScrollArea>
     </div>
-    <ul class="files" aria-label="Files changed in the range">
-      {#each files as file (file.path)}
-        <li>
-          <button class="flat file" class:on={file.path === selected} type="button" onclick={() => onselect(file.path)}>
-            <span class="path">{file.path}</span>
-            {#if file.mode}<span class="mono mode">{file.mode}</span>{/if}
-            {@render counts(file.delta)}
-          </button>
-        </li>
-      {/each}
-    </ul>
+    <div class="files">
+      <ScrollArea>
+        <ul class="list" aria-label="Files changed in the range">
+          {#each files as file (file.path)}
+            <li>
+              <button
+                class="flat file"
+                class:on={file.path === selected}
+                type="button"
+                onclick={() => onselect(file.path)}
+              >
+                <span class="path">{file.path}</span>
+                {#if file.mode}<span class="mono mode">{file.mode}</span>{/if}
+                {@render counts(file.delta)}
+              </button>
+            </li>
+          {/each}
+        </ul>
+      </ScrollArea>
+    </div>
   </div>
 </section>
 
@@ -146,13 +159,11 @@
     flex-direction: column;
     background: var(--bg-editor);
   }
-  .rows {
-    flex: 1;
-    min-height: 0;
+  .rows,
+  .list {
     margin: 0;
     padding: 0;
     list-style: none;
-    overflow-y: auto;
   }
   .row {
     display: grid;
@@ -167,8 +178,10 @@
     font-size: var(--fs-ctl);
     border-radius: 0;
   }
+  /* Over the rows' scroll bar too, so the columns line up. */
   .head {
     flex: none;
+    padding-right: calc(12px + var(--w-scrollbar));
     height: 24px;
     color: var(--text-3);
     border-bottom: 1px solid var(--line-soft);
@@ -220,10 +233,8 @@
   .files {
     flex: none;
     width: var(--w-timeline-files);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
     border-left: 1px solid var(--line);
   }
   .file {

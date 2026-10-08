@@ -26,6 +26,9 @@
   /* The editor line the caret is on; translucent, so it lies over the backgrounds of added and deleted lines. */
   --current-line: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.06));
   --accent: light-dark(#2d6fd8, #6b9cf7);
+  /* The thumb of a scroll bar, and while it is hovered or dragged; translucent, so the marks under it show. */
+  --scroll-thumb: light-dark(rgba(0, 0, 0, 0.2), rgba(255, 255, 255, 0.2));
+  --scroll-thumb-active: light-dark(rgba(0, 0, 0, 0.32), rgba(255, 255, 255, 0.32));
   --shadow: 0 14px 40px light-dark(rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.5));
   /* Behind a modal dialog. */
   --scrim: light-dark(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.45));
@@ -151,6 +154,8 @@
   --w-side-min: 180px;
   --w-side-max: 640px;
   --w-splitter: 5px;
+  /* The gutter of a scroll bar, and the height of a horizontal one. */
+  --w-scrollbar: 12px;
   --w-chev: 14px;
   --w-indent: 12px;
   /* A comment thread card, as wide as a comfortable line of text. */

@@ -11,8 +11,8 @@ import type { ChangesSource, ChangesState } from "./fileChanges";
 import { LABEL } from "./hunkBar";
 import { lineStart } from "./positions";
 
-/** Space kept between the toolbar and the editor's right edge, which the scroll marks use. */
-const RIGHT_MARGIN = 14;
+/** Space kept between the toolbar and the editor's right edge. */
+const RIGHT_MARGIN = 8;
 
 interface Reading {
   /** Where the toolbar goes, in px of the editor's box; none when the hunk is out of view. */

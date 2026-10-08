@@ -12,6 +12,7 @@ import type { TextSpan } from "../../../generated/TextSpan";
 import { errorText } from "../../../lib/errorText";
 import { type Highlights, decodeHighlights } from "../../../lib/highlights";
 import { iconSvg } from "../../../lib/ui/icons";
+import { type MarkLayout, type ScrollMark, Scrollbar } from "../../../lib/ui/scrollbar";
 import { currentLine } from "./currentLine";
 import { closeChangeCard, showChangeCard } from "./fileCard";
 import {
@@ -30,7 +31,7 @@ import { highlightExtension } from "./highlightExtension";
 import { hunkToolbar } from "./hunkToolbar";
 import type { Loaded } from "./mount";
 import { lineOf, lineStart } from "./positions";
-import { type MarkLayout, type ScrollMark, ScrollMarks, markKind } from "./scrollMarks";
+import { markKind } from "./scrollMarks";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { softWrap, wrapsByDefault } from "./softWrap";
 
@@ -58,7 +59,7 @@ export class TextView {
   /** The review state of each of the file's hunks, as the backend last sent it. */
   private states: HunkState[];
   private drawn?: Drawn;
-  private marks?: ScrollMarks;
+  private scrollbar?: Scrollbar;
 
   /**
    * Fills `root` with the file's text from `source`. A reply of another revision is dropped:
@@ -111,7 +112,7 @@ export class TextView {
                   u.docChanged ||
                   u.startState.field(drawn.field) !== u.state.field(drawn.field)
                 )
-                  this.marks?.refresh();
+                  this.scrollbar?.refresh();
               }),
             ]
           : [lineNumbers()]),
@@ -122,16 +123,15 @@ export class TextView {
         semanticExtensions(this.path, "target", this.hooks),
       ],
     });
-    if (drawn) {
-      const view = this.view;
-      this.marks = new ScrollMarks(view.dom, view.scrollDOM, () => this.markLayout(view, drawn));
-    }
+    const view = this.view;
+    this.scrollbar = new Scrollbar(view.scrollDOM, { marks: drawn && (() => this.markLayout(view, drawn)) });
+    this.root.after(this.scrollbar.dom);
     if (this.span) this.goToSpan(this.span);
     else if (this.line !== undefined) this.goToLine(this.line);
     this.refreshDiagnostics();
   }
 
-  /** Where the hunks lie in the editor's content, for the marks beside its scroll bar. */
+  /** Where the hunks lie in the editor's content, for the marks in its scroll bar. */
   private markLayout(view: EditorView, { source, field }: Drawn): MarkLayout {
     const { states } = view.state.field(field);
     const { doc } = view.state;
@@ -290,7 +290,7 @@ export class TextView {
   destroy() {
     this.destroyed = true;
     closeChangeCard();
-    this.marks?.destroy();
+    this.scrollbar?.destroy();
     this.view?.destroy();
     this.root.classList.remove("vet-text");
     this.root.replaceChildren();

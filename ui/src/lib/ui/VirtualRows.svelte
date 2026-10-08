@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, untrack, type Snippet } from "svelte";
   import { rowWindow, scrollToRow, windowIndices } from "./rowWindow";
+  import ScrollArea from "./ScrollArea.svelte";
 
   let {
     count,
@@ -56,18 +57,18 @@
   });
 </script>
 
-<div class="rows" bind:this={el} onscroll={() => update()}>
-  <div style:height="{start * rowHeight}px"></div>
-  {#each indices as index (key(index))}
-    {@render row(index)}
-  {/each}
-  <div style:height="{Math.max(0, count - end) * rowHeight}px"></div>
-</div>
+<ScrollArea bind:viewport={el} onscroll={() => update()}>
+  <div class="rows">
+    <div style:height="{start * rowHeight}px"></div>
+    {#each indices as index (key(index))}
+      {@render row(index)}
+    {/each}
+    <div style:height="{Math.max(0, count - end) * rowHeight}px"></div>
+  </div>
+</ScrollArea>
 
 <style>
   .rows {
     padding: 4px 0;
-    overflow: hidden auto;
-    min-height: 0;
   }
 </style>

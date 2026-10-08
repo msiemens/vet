@@ -3,6 +3,7 @@
   import type { ReviewFilter } from "../../generated/ReviewFilter";
   import { THEMES, type Theme } from "../../lib/theme/theme";
   import Dialog from "../../lib/ui/Dialog.svelte";
+  import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import { platform } from "../../state/platform.svelte";
   import AccountsPage from "./AccountsPage.svelte";
@@ -54,29 +55,31 @@
         >
       {/each}
     </nav>
-    <div class="page">
-      {#if page === "keymap"}
-        <KeymapPage />
-      {:else if page === "review"}
-        <ProjectPage
-          filter={project?.filter}
-          excluded={{ lines: project?.excludedLines ?? 0, items: project?.excludedItems ?? 0 }}
-          onsave={onfilter}
-        />
-      {:else if page === "servers"}
-        <ServersPage />
-      {:else if page === "accounts"}
-        <AccountsPage />
-      {:else}
-        <div class="row">
-          <div class="text">
-            <span>Theme</span>
-            <span class="hint">System follows the operating system's light or dark setting.</span>
+    <ScrollArea>
+      <div class="page">
+        {#if page === "keymap"}
+          <KeymapPage />
+        {:else if page === "review"}
+          <ProjectPage
+            filter={project?.filter}
+            excluded={{ lines: project?.excludedLines ?? 0, items: project?.excludedItems ?? 0 }}
+            onsave={onfilter}
+          />
+        {:else if page === "servers"}
+          <ServersPage />
+        {:else if page === "accounts"}
+          <AccountsPage />
+        {:else}
+          <div class="row">
+            <div class="text">
+              <span>Theme</span>
+              <span class="hint">System follows the operating system's light or dark setting.</span>
+            </div>
+            <Segmented label="Theme" value={theme} onchange={ontheme} options={THEMES} />
           </div>
-          <Segmented label="Theme" value={theme} onchange={ontheme} options={THEMES} />
-        </div>
-      {/if}
-    </div>
+        {/if}
+      </div>
+    </ScrollArea>
   </div>
 </Dialog>
 
@@ -113,11 +116,9 @@
   nav button[aria-current="page"] {
     background: var(--toggle);
   }
+  /* Less on the right, where the scroll bar's gutter adds its own. */
   .page {
-    flex: 1;
-    min-width: 0;
-    padding: 16px;
-    overflow: auto;
+    padding: 16px calc(16px - var(--w-scrollbar)) 16px 16px;
   }
   .row {
     display: flex;

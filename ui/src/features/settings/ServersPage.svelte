@@ -3,6 +3,7 @@
   import { errorText } from "../../lib/errorText";
   import { match } from "../../lib/speedSearch";
   import Marked from "../../lib/ui/Marked.svelte";
+  import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { hasNativeDialogs, pickFile } from "../../state/host";
@@ -222,7 +223,9 @@
               ontoggle={(e) => servers.setLogOpen(selected.language, e.currentTarget.open)}
             >
               <summary>Install output</summary>
-              <pre class="log selectable">{log.join("\n")}</pre>
+              <div class="log">
+                <ScrollArea><pre class="selectable">{log.join("\n")}</pre></ScrollArea>
+              </div>
             </details>
           </dd>
         {/if}
@@ -382,10 +385,14 @@
   .log {
     margin: 4px 0 0;
     max-height: 160px;
-    overflow: auto;
-    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
     background: var(--bg-panel);
     border: 1px solid var(--line-soft);
+  }
+  .log pre {
+    margin: 0;
+    padding: 6px 8px;
     font-family: var(--font-mono);
     font-size: var(--fs-mono-s);
     white-space: pre-wrap;

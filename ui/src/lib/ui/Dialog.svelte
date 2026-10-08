@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { readStored, writeStored } from "../storage";
   import IconButton from "./IconButton.svelte";
+  import ScrollArea from "./ScrollArea.svelte";
 
   let {
     title,
@@ -22,7 +23,7 @@
     height?: string;
     /** Lets the viewer drag the dialog's edges; the size is kept under this name. */
     resizable?: string;
-    /** Without it the content runs edge to edge, for a dialog that lays out its own panes. */
+    /** Without it the content runs edge to edge and does not scroll, for a dialog that lays out its own panes. */
     padded?: boolean;
     children: Snippet;
     /** Buttons in the footer, right-aligned. */
@@ -115,7 +116,11 @@
     <h2>{title}</h2>
     <IconButton icon="close" label="Close" size={22} iconSize={12} onclick={onclose} />
   </header>
-  <div class="content" class:padded>{@render children()}</div>
+  {#if padded}
+    <ScrollArea><div class="padded">{@render children()}</div></ScrollArea>
+  {:else}
+    <div class="content">{@render children()}</div>
+  {/if}
   {#if actions}<footer>{@render actions()}</footer>{/if}
   {#if resizable}
     {#each EDGES as edge (edge.name)}
@@ -164,9 +169,9 @@
   .sheet.resizable {
     max-height: calc(100vh - 12vh - 16px);
   }
+  /* Content that lays out its own panes fills the dialog and scrolls them itself. */
   .content {
     flex: 1 1 auto;
-    overflow: auto;
     min-height: 0;
   }
   /* Grips on the sides and bottom, straddling the border; the top stays put. */
@@ -208,8 +213,9 @@
     right: calc(var(--w-splitter) / -2);
     cursor: nwse-resize;
   }
-  .content.padded {
-    padding: 16px;
+  /* Less on the right, where the scroll bar's gutter adds its own. */
+  .padded {
+    padding: 16px calc(16px - var(--w-scrollbar)) 16px 16px;
   }
   footer {
     display: flex;

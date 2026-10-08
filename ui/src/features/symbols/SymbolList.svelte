@@ -3,6 +3,7 @@
   import { tick } from "svelte";
   import type { ChangedSymbol } from "../../generated/ChangedSymbol";
   import Marked from "../../lib/ui/Marked.svelte";
+  import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { keyOf } from "../../state/symbolKey";
@@ -54,37 +55,39 @@
   >
 </div>
 {#if search.active}<SpeedSearchField query={search.query} found={entries.length > 0} />{/if}
-<div class="list" bind:this={list} onkeydown={(e) => search.keydown(e, list, "button.row")} {...search.attributes}>
-  {#if !changed || changed.state === "loading"}
-    <p class="note">Loading…</p>
-  {:else if changed.state === "failed"}
-    <p class="note err">{changed.message}</p>
-  {:else if !entries.length}
-    <p class="note">{changed.value.symbols.length ? "No changed symbols in this file" : "No changed symbols"}</p>
-  {:else}
-    {#each entries as entry (entry.path)}
-      <div class="file" class:current={entry.path === symbols.file} data-path={entry.path} title={entry.path}>
-        <span class="path"><bdi>{entry.path}</bdi></span>
-        {#if entry.note}<span class="fnote">{entry.note}</span>{/if}
-      </div>
-      {#each entry.symbols as s (keyOf(s.symbol.id) + s.change)}
-        <button
-          class="flat row"
-          type="button"
-          aria-pressed={keyOf(s.symbol.id) === selectedKey}
-          title="Double-click to show it in the review"
-          onclick={() => symbols.select(s)}
-          ondblclick={() => onreveal(s)}
-        >
-          <span class="sign {s.change}" title={s.change}>{SIGN[s.change]}</span>
-          <span class="mono name" class:gone={s.change === "removed"}
-            ><Marked text={nameOf(s.symbol.id)} ranges={searched?.ranges.get(s)} /></span
+<div class="list">
+  <ScrollArea bind:viewport={list} onkeydown={(e) => search.keydown(e, list, "button.row")} {...search.attributes}>
+    {#if !changed || changed.state === "loading"}
+      <p class="note">Loading…</p>
+    {:else if changed.state === "failed"}
+      <p class="note err">{changed.message}</p>
+    {:else if !entries.length}
+      <p class="note">{changed.value.symbols.length ? "No changed symbols in this file" : "No changed symbols"}</p>
+    {:else}
+      {#each entries as entry (entry.path)}
+        <div class="file" class:current={entry.path === symbols.file} data-path={entry.path} title={entry.path}>
+          <span class="path"><bdi>{entry.path}</bdi></span>
+          {#if entry.note}<span class="fnote">{entry.note}</span>{/if}
+        </div>
+        {#each entry.symbols as s (keyOf(s.symbol.id) + s.change)}
+          <button
+            class="flat row"
+            type="button"
+            aria-pressed={keyOf(s.symbol.id) === selectedKey}
+            title="Double-click to show it in the review"
+            onclick={() => symbols.select(s)}
+            ondblclick={() => onreveal(s)}
           >
-          <span class="mono container">{containerOf(s.symbol.id)}</span>
-        </button>
+            <span class="sign {s.change}" title={s.change}>{SIGN[s.change]}</span>
+            <span class="mono name" class:gone={s.change === "removed"}
+              ><Marked text={nameOf(s.symbol.id)} ranges={searched?.ranges.get(s)} /></span
+            >
+            <span class="mono container">{containerOf(s.symbol.id)}</span>
+          </button>
+        {/each}
       {/each}
-    {/each}
-  {/if}
+    {/if}
+  </ScrollArea>
 </div>
 
 <style>
@@ -95,9 +98,10 @@
     font-weight: 400;
   }
   .list {
-    overflow: hidden auto;
     flex: 1;
     min-height: 0;
+    display: flex;
+    flex-direction: column;
     border-bottom: 1px solid var(--line);
   }
   .note {

@@ -5,6 +5,7 @@
   import { movedTitle } from "../../lib/movedTitle";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -138,68 +139,72 @@
 {/snippet}
 
 <aside aria-label="Comments">
-  <div class="sh sh-bar">
-    <span>Comments</span>
-    <span class="grow"></span>
-    <IconButton
-      icon="comments"
-      label="Comment on the changeset"
-      size={22}
-      iconSize={13}
-      onclick={() => (composing = !composing)}
-    />
-  </div>
-  {#if info}<PullRequestBlock {info} />{/if}
-  {#if composing}
-    <div class="compose">
-      <!-- svelte-ignore a11y_autofocus -->
-      <textarea
-        class="field"
-        rows="3"
-        placeholder="Comment on the changeset…"
-        autofocus
-        bind:value={body}
-        onkeydown={(e) => {
-          if (isSubmitKey(e)) {
-            e.preventDefault();
-            void post();
-          } else if (e.key === "Escape") composing = false;
-        }}></textarea>
-      <div class="buttons">
-        <button class="ctl" type="button" onclick={() => (composing = false)}>Cancel</button>
-        <button class="ctl primary" type="button" disabled={!canSubmit(body, sending)} onclick={() => void post()}>
-          Comment
-        </button>
+  <ScrollArea>
+    <div class="content">
+      <div class="sh sh-bar">
+        <span>Comments</span>
+        <span class="grow"></span>
+        <IconButton
+          icon="comments"
+          label="Comment on the changeset"
+          size={22}
+          iconSize={13}
+          onclick={() => (composing = !composing)}
+        />
       </div>
+      {#if info}<PullRequestBlock {info} />{/if}
+      {#if composing}
+        <div class="compose">
+          <!-- svelte-ignore a11y_autofocus -->
+          <textarea
+            class="field"
+            rows="3"
+            placeholder="Comment on the changeset…"
+            autofocus
+            bind:value={body}
+            onkeydown={(e) => {
+              if (isSubmitKey(e)) {
+                e.preventDefault();
+                void post();
+              } else if (e.key === "Escape") composing = false;
+            }}></textarea>
+          <div class="buttons">
+            <button class="ctl" type="button" onclick={() => (composing = false)}>Cancel</button>
+            <button class="ctl primary" type="button" disabled={!canSubmit(body, sending)} onclick={() => void post()}>
+              Comment
+            </button>
+          </div>
+        </div>
+      {/if}
+      {#if info}
+        <SubmitReview {info} />
+        {#if info.traits.conversationFeed}
+          <PanelTabs
+            label="Pull request"
+            value={showing}
+            onchange={pick}
+            tabs={[
+              { id: "review", label: "Review", count: threads.items.length },
+              { id: "conversation", label: "Conversation", count: info.conversation.length },
+            ]}
+          />
+        {/if}
+      {/if}
+      {#if info && showing === "conversation"}
+        <ConversationList entries={info.conversation} />
+      {:else}
+        {#if empty && !composing}
+          <p class="empty">
+            No comments yet. Select lines and press {commands.binding("review.comment")?.label}, or use a hunk's comment
+            button.
+          </p>
+        {/if}
+        {#if groups.conflicts.length}{@render group("Conflicts", groups.conflicts, "conflicts")}{/if}
+        {#if groups.open.length}{@render group("Open", groups.open, "open")}{/if}
+        {#if groups.resolved.length}{@render group("Resolved", groups.resolved, "resolved")}{/if}
+      {/if}
     </div>
-  {/if}
-  {#if info}
-    <SubmitReview {info} />
-    {#if info.traits.conversationFeed}
-      <PanelTabs
-        label="Pull request"
-        value={showing}
-        onchange={pick}
-        tabs={[
-          { id: "review", label: "Review", count: threads.items.length },
-          { id: "conversation", label: "Conversation", count: info.conversation.length },
-        ]}
-      />
-    {/if}
-  {/if}
-  {#if info && showing === "conversation"}
-    <ConversationList entries={info.conversation} />
-  {:else}
-    {#if empty && !composing}
-      <p class="empty">
-        No comments yet. Select lines and press {commands.binding("review.comment")?.label}, or use a hunk's comment
-        button.
-      </p>
-    {/if}
-    {#if groups.conflicts.length}{@render group("Conflicts", groups.conflicts, "conflicts")}{/if}
-    {#if groups.open.length}{@render group("Open", groups.open, "open")}{/if}
-    {#if groups.resolved.length}{@render group("Resolved", groups.resolved, "resolved")}{/if}
-  {/if}
+  </ScrollArea>
 </aside>
 
 <style>
@@ -208,7 +213,10 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    overflow: hidden auto;
+  }
+  .content {
+    display: flex;
+    flex-direction: column;
   }
   .empty {
     margin: 12px 10px;

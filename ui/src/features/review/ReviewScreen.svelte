@@ -304,12 +304,12 @@
     margin: 12px 16px;
     color: var(--text-3);
   }
-  /* Every tab keeps its pane laid out, so scroll positions and editors survive switching. */
+  /* Every tab keeps its pane laid out, so scroll positions and editors survive switching. The view
+     puts its scroll bar's gutter beside `.scroll`. */
   .pane {
     position: absolute;
     inset: 0;
     display: flex;
-    flex-direction: column;
   }
   /* Not `visibility: visible` on the active pane: that would show it through a hidden ancestor. */
   .pane:not(.active) {
@@ -318,7 +318,7 @@
   .scroll {
     flex: 1;
     overflow-y: auto;
-    min-height: 0;
+    min-width: 0;
     overflow-anchor: none;
   }
 </style>

@@ -3,6 +3,7 @@
 
 import { EditorState } from "@codemirror/state";
 import { Decoration, EditorView, lineNumbers } from "@codemirror/view";
+import { Scrollbar } from "../../../lib/ui/scrollbar";
 import { lineStart } from "./positions";
 
 const failure = Decoration.line({ class: "vet-log-failure" });
@@ -10,6 +11,7 @@ const failure = Decoration.line({ class: "vet-log-failure" });
 export class LogView {
   private view: EditorView;
   private line?: number;
+  private scrollbar: Scrollbar;
 
   /** Fills `root` with `text`, with the 0-based line `failedAt` marked. */
   constructor(
@@ -28,6 +30,8 @@ export class LogView {
       doc,
       extensions: [lineNumbers(), EditorState.readOnly.of(true), EditorView.decorations.of(marks)],
     });
+    this.scrollbar = new Scrollbar(this.view.scrollDOM);
+    root.after(this.scrollbar.dom);
     this.goToFailure();
   }
 
@@ -39,6 +43,7 @@ export class LogView {
   }
 
   destroy() {
+    this.scrollbar.destroy();
     this.view.destroy();
     this.root.classList.remove("vet-text");
     this.root.replaceChildren();

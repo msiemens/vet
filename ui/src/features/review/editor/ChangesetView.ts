@@ -11,6 +11,7 @@ import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
 import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
+import { Scrollbar } from "../../../lib/ui/scrollbar";
 import type { Mode } from "../../../lib/viewMode";
 import { changeCard } from "./changeCard";
 import { takesKeys } from "./dom";
@@ -23,7 +24,7 @@ import { lineOf, lineStart } from "./positions";
 import { type ReviewRequests, ReviewActions, renderReview } from "./reviewActions";
 import { setBaseDiffs, setCurrent } from "./reviewState";
 import { StickyHunk } from "./stickyHunk";
-import { ScrollMarks, sectionMarks } from "./scrollMarks";
+import { sectionMarks } from "./scrollMarks";
 import { Stops, firstStopFrom, hunkAt, hunkOverlapping } from "./stops";
 import type { Section } from "./section";
 import { SectionHeights, charWidth, readFont, readMetrics } from "./sectionHeights";
@@ -84,7 +85,7 @@ export class ChangesetView {
   /** Wrapping sections whose editor measured another height than the section has. */
   private measured = new Set<Section>();
   private measuring?: number;
-  private marks?: ScrollMarks;
+  private scrollbar: Scrollbar;
   /** A file `goToFile` could not bring to the top, as the last short files cannot: it is the file the view is at while the view stays scrolled to `top`. */
   private reached?: { file: number; top: number };
 
@@ -125,13 +126,13 @@ export class ChangesetView {
     );
     this.actions = new ReviewActions(revision, listeners);
     this.heights = new SectionHeights(root, this.sections, metrics, this.threads, mode, collapse);
-    // The marks sit beside the scroll bar, in the pane that holds the scrolling root.
-    if (root.parentElement) {
-      this.marks = new ScrollMarks(root.parentElement, root, () =>
-        sectionMarks(this.sections, this.heights.total, this.heights.mode, this.heights.m),
-      );
-      this.heights.changed = this.marks.refresh;
-    }
+    // The scroll bar follows the height model, not thousands of sections; its gutter goes beside the root.
+    this.scrollbar = new Scrollbar(root, {
+      marks: () => sectionMarks(this.sections, this.heights.total, this.heights.mode, this.heights.m),
+      watchContent: false,
+    });
+    root.after(this.scrollbar.dom);
+    this.heights.changed = this.scrollbar.refresh;
     this.publishPane();
     this.windowing = new Windowing(root, this.sections, this.heights, {
       mount: (fi) => void this.mount(fi),
@@ -225,7 +226,7 @@ export class ChangesetView {
   destroy() {
     this.destroyed = true;
     this.windowing.destroy();
-    this.marks?.destroy();
+    this.scrollbar.destroy();
     this.pin.destroy();
     this.widths.disconnect();
     if (this.measuring !== undefined) cancelAnimationFrame(this.measuring);
@@ -650,7 +651,7 @@ export class ChangesetView {
     renderReview(s, update);
     for (const hi of s.baseDiffs.keys()) if (s.review.hunks[hi] !== "seenAgainstOldBase") this.setBaseDiff(s, hi);
     this.pin.refresh();
-    this.marks?.refresh();
+    this.scrollbar.refresh();
   }
 
   /** Opens the base diff of a hunk of `s` seen against an old base, or closes it if it is open. */
