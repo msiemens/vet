@@ -7,11 +7,11 @@
 
 use std::sync::Arc;
 
-use vet_core::completion::{Completion, Coverage};
+use vet_core::completion::Completion;
 use vet_core::content::{LineDelta, SnapshotId, SnapshotStatus};
 
 use super::derived::{CommitUnit, CommitsBetween, UnitKind};
-use super::manifest::{changeset_completion, empty_completion, file_completion, file_views, review_of, target_view};
+use super::manifest::{file_completion, file_views, review_of, target_view, update_from};
 use super::state::{Commits, Remapped, State, View, acknowledged, lifecycle_of};
 use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
@@ -73,27 +73,23 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             Source::WorkingTree => Lens::Squash,
             source => (self.acquisition.store.lens(self.repo.clone(), source.clone()).await?).unwrap_or_default(),
         };
-        let acked = |unit: &CommitUnit| acknowledged(&st, &unit.diffed.diff);
         let commits = st
             .units()
             .iter()
             .enumerate()
-            .map(|(index, unit)| {
-                let cov = Coverage::new(&st.remapped_in(View::Commit { index: index as u32 }).flat);
-                CommitUnitView {
-                    info: unit.detail.info.clone(),
-                    body: unit.detail.body.clone(),
-                    parents: unit.detail.parents.clone(),
-                    kind: match unit.kind {
-                        UnitKind::Commit => CommitKind::Commit,
-                        UnitKind::Merge { remerged } => CommitKind::Merge {
-                            clean: unit.clean_merge(),
-                            remerged,
-                        },
+            .map(|(index, unit)| CommitUnitView {
+                info: unit.detail.info.clone(),
+                body: unit.detail.body.clone(),
+                parents: unit.detail.parents.clone(),
+                kind: match unit.kind {
+                    UnitKind::Commit => CommitKind::Commit,
+                    UnitKind::Merge { remerged } => CommitKind::Merge {
+                        clean: unit.clean_merge(),
+                        remerged,
                     },
-                    delta: unit.diffed.diff.files.iter().map(|f| LineDelta::of(&f.hunks)).sum(),
-                    completion: changeset_completion(&cov, &st.filter, &unit.diffed.diff, &acked(unit)),
-                }
+                },
+                delta: unit.diffed.diff.files.iter().map(|f| LineDelta::of(&f.hunks)).sum(),
+                completion: st.remapped_in(View::Commit { index: index as u32 }).completion,
             })
             .collect();
         Ok(CommitsView {
@@ -136,20 +132,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                     acknowledged: Vec::new(),
                     old_base_lines: Vec::new(),
                 },
-                empty_completion(),
+                Completion::default(),
             )
         });
-        let completion = changeset_completion(
-            &Coverage::new(&changes.remapped.flat),
-            &st.filter,
-            &changes.diffed.diff,
-            &acknowledged(st, &changes.diffed.diff),
-        );
         Ok(LensFacts {
             lens,
             commits,
             files: files.len() as u32,
-            completion,
+            completion: changes.remapped.completion,
         })
     }
 
@@ -194,8 +184,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// The manifest of one commit's own diff, which `ensure_view` computed.
     pub(super) async fn commit_manifest(&self, st: &State, index: u32) -> Result<ManifestView> {
         let unit = &st.units()[index as usize];
-        let cov = Coverage::new(&st.remapped_in(View::Commit { index }).flat);
-        let acked = acknowledged(st, &unit.diffed.diff);
+        let remapped = st.remapped_in(View::Commit { index });
+        let cov = remapped.coverage();
+        let acked = acknowledged(st, &unit.diffed.diff.non_text);
         let files = file_views(&unit.diffed, &st.filter, |diff, items| {
             (
                 review_of(&cov, diff, items, &acked),
@@ -220,7 +211,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             base,
             target: target_view(&st.source, &st.head, &git.branches().await?),
             filter: st.filter.clone(),
-            completion: changeset_completion(&cov, &st.filter, &unit.diffed.diff, &acked),
+            completion: remapped.completion,
             delta: files.iter().map(|f| f.delta).sum(),
             files,
             degraded: None,
@@ -251,23 +242,8 @@ pub(super) fn view_unit(st: &State, view: View) -> (SnapshotId, SnapshotId, Span
 
 /// The review state of `path` in the commit `index`, with the completions it implies.
 pub(super) fn commit_update(st: &State, index: u32, path: &str) -> Result<ReviewUpdateView> {
-    use super::state::{find_diff, shown_items};
     let unit = &st.units()[index as usize];
-    let cov = Coverage::new(&st.remapped_in(View::Commit { index }).flat);
-    let acked = acknowledged(st, &unit.diffed.diff);
-    let diff = find_diff(&unit.diffed.diff, path);
-    let items = shown_items(&unit.diffed.diff, &st.filter, path);
-    let file = diff
-        .map(|d| d.path().clone())
-        .or_else(|| items.first().map(|n| n.path.clone()))
-        .ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
-    Ok(ReviewUpdateView {
-        revision: st.revision,
-        path: file,
-        review: review_of(&cov, diff, &items, &acked),
-        completion: file_completion(&cov, &st.filter, diff, &items, &acked),
-        changeset: changeset_completion(&cov, &st.filter, &unit.diffed.diff, &acked),
-    })
+    update_from(st, &unit.diffed.diff, st.remapped_in(View::Commit { index }), path)
 }
 
 #[cfg(test)]

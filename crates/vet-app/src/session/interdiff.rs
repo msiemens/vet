@@ -12,7 +12,7 @@ use vet_core::marking::Region;
 use vet_core::review::{ReviewedSpan, Side};
 
 use super::derived::{Compared, Interdiff};
-use super::manifest::{empty_completion, file_views, target_view};
+use super::manifest::{file_views, target_view};
 use super::state::{Interdiffed, Shown, State, View, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
 use super::views::{InterdiffView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
@@ -116,7 +116,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             base,
             target: target_view(&st.source, &st.head, &branches),
             filter: st.filter.clone(),
-            completion: sum(files.iter().map(|f| f.completion)),
+            completion: files.iter().map(|f| f.completion).sum(),
             delta: files.iter().map(|f| f.delta).sum(),
             files,
             degraded: self.degraded_for(&st.source),
@@ -222,7 +222,7 @@ pub(super) fn update_in(st: &State, shown: &Shown, path: &str) -> Result<ReviewU
         path: file,
         review,
         completion,
-        changeset: sum(files.iter().map(|f| f.completion)),
+        changeset: files.iter().map(|f| f.completion).sum(),
     })
 }
 
@@ -241,16 +241,12 @@ struct Lens<'a> {
 impl<'a> Lens<'a> {
     fn new(st: &'a State, id: &'a Interdiffed) -> Self {
         // Coverage is remapped onto the latest version only.
-        let spans = if id.markable {
-            &st.changes().remapped.flat[..]
+        let coverage = if id.markable {
+            st.changes().remapped.coverage()
         } else {
-            &[]
+            Coverage::new([])
         };
-        Self {
-            st,
-            id,
-            coverage: Coverage::new(spans),
-        }
+        Self { st, id, coverage }
     }
 
     fn squash(&self, path: &RepoPath) -> Option<&'a FileDiff> {
@@ -286,7 +282,7 @@ impl<'a> Lens<'a> {
     /// non-text changes. Only what the newer version's changeset has to review counts.
     fn state(&self, diff: Option<&FileDiff>, items: &[NonTextChange]) -> (ReviewView, Completion) {
         let states = diff.map(|d| self.hunk_states(d)).unwrap_or_default();
-        let mut completion = empty_completion();
+        let mut completion = Completion::default();
         let mut old_base_lines = vec![0; states.len()];
         if let Some(d) = diff {
             let squash = self.squash(d.path());
@@ -336,20 +332,6 @@ impl<'a> Lens<'a> {
             completion,
         )
     }
-}
-
-fn sum(parts: impl Iterator<Item = Completion>) -> Completion {
-    parts.fold(empty_completion(), |a, b| Completion {
-        lines: a.lines + b.lines,
-        seen_lines: a.seen_lines + b.seen_lines,
-        old_base_lines: a.old_base_lines + b.old_base_lines,
-        items: a.items + b.items,
-        acknowledged_items: a.acknowledged_items + b.acknowledged_items,
-        hunks: a.hunks + b.hunks,
-        seen_hunks: a.seen_hunks + b.seen_hunks,
-        excluded_lines: a.excluded_lines + b.excluded_lines,
-        excluded_items: a.excluded_items + b.excluded_items,
-    })
 }
 
 #[cfg(test)]

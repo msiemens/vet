@@ -70,7 +70,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use vet_core::completion::Coverage;
 use vet_core::content::{EntryKind, FileDiff, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
@@ -85,10 +84,9 @@ use self::derived::{Derived, DiffOf};
 pub use self::lens::{CommitKind, CommitUnitView, CommitsView};
 use self::lines::LinesBetween;
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
-use self::manifest::changeset_completion;
 use self::source::Stored;
 pub use self::state::View;
-use self::state::{OpenReview, State, acknowledged, check_revision, lifecycle_of};
+use self::state::{OpenReview, State, check_revision, lifecycle_of};
 pub use self::sync::{DiscussionView, Keep, SubmitReport, SyncNotice, SyncReport};
 pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsView};
 pub use self::versions::VersionView;
@@ -477,12 +475,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let (Some(id), Some(changeset)) = (st.review.as_ref().map(|r| r.id), st.changeset) else {
             return Err(SessionError::Invalid("no review is open".into()));
         };
-        let complete = {
-            let changes = st.changes();
-            let diff = &changes.diffed.diff;
-            let acked = acknowledged(&st, diff);
-            changeset_completion(&Coverage::new(&changes.remapped.flat), &st.filter, diff, &acked).is_complete()
-        };
+        let complete = st.changes().remapped.completion.is_complete();
         // What the open threads are anchored in must outlive the refs.
         let open = |t: &&Thread| t.status == ThreadStatus::Open;
         let anchors = st.threads.iter().filter(open).filter_map(|t| match &t.target {
@@ -631,6 +624,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         st.filter = filter;
         st.revision += 1;
         self.revisions.advance(st.revision);
+        if st.changes.is_some() {
+            for view in st.remapped_views() {
+                remap::recount(st, view);
+            }
+        }
         self.note_progress(st).await?;
         Ok(st.revision)
     }

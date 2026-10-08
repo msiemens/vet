@@ -1,12 +1,14 @@
 //! Completion and per-hunk review state relative to a `ReviewFilter` (SPEC §5.2).
 
 use std::collections::BTreeMap;
+use std::iter::Sum;
+use std::ops::{Add, Sub};
 
 use crate::content::{FileDiff, LineRange, NonTextChange, RepoPath};
 use crate::filter::ReviewFilter;
 use crate::review::{ReviewedSpan, Side, SpanState, sides};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub struct Completion {
     /// Changed lines passing the filter, counted on both sides.
     pub lines: u32,
@@ -47,6 +49,44 @@ impl Completion {
             part as f32 / total as f32 * 100.0
         }
     }
+
+    fn zip(self, other: Self, op: impl Fn(u32, u32) -> u32) -> Self {
+        Self {
+            lines: op(self.lines, other.lines),
+            seen_lines: op(self.seen_lines, other.seen_lines),
+            old_base_lines: op(self.old_base_lines, other.old_base_lines),
+            items: op(self.items, other.items),
+            acknowledged_items: op(self.acknowledged_items, other.acknowledged_items),
+            hunks: op(self.hunks, other.hunks),
+            seen_hunks: op(self.seen_hunks, other.seen_hunks),
+            excluded_lines: op(self.excluded_lines, other.excluded_lines),
+            excluded_items: op(self.excluded_items, other.excluded_items),
+        }
+    }
+}
+
+/// The completion of two disjoint parts of a changeset together.
+impl Add for Completion {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        self.zip(other, |a, b| a + b)
+    }
+}
+
+/// The completion of a changeset without one of its parts.
+impl Sub for Completion {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        self.zip(other, |a, b| a - b)
+    }
+}
+
+impl Sum for Completion {
+    fn sum<I: Iterator<Item = Self>>(parts: I) -> Self {
+        parts.fold(Self::default(), Add::add)
+    }
 }
 
 /// Display state of one hunk, derived from spans.
@@ -77,7 +117,7 @@ pub struct Coverage<'a> {
 }
 
 impl<'a> Coverage<'a> {
-    pub fn new(spans: &'a [ReviewedSpan]) -> Self {
+    pub fn new(spans: impl IntoIterator<Item = &'a ReviewedSpan>) -> Self {
         let mut seen = Ranges::new();
         let mut any = Ranges::new();
         for s in spans {
@@ -147,25 +187,15 @@ impl<'a> Coverage<'a> {
     }
 
     /// `acknowledged` holds the acknowledged non-text changes.
-    pub fn completion(
+    pub fn completion<'d>(
         &self,
         filter: &ReviewFilter,
-        diffs: &[FileDiff],
+        diffs: impl IntoIterator<Item = &'d FileDiff>,
         non_text: &[NonTextChange],
         acknowledged: &[NonTextChange],
     ) -> Completion {
         let compiled = filter.compile();
-        let mut c = Completion {
-            lines: 0,
-            seen_lines: 0,
-            old_base_lines: 0,
-            items: 0,
-            acknowledged_items: 0,
-            hunks: 0,
-            seen_hunks: 0,
-            excluded_lines: 0,
-            excluded_items: 0,
-        };
+        let mut c = Completion::default();
         for d in diffs {
             let passes = compiled.passes(d.path());
             if passes {

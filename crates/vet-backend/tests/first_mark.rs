@@ -170,7 +170,7 @@ async fn session(
     if !every {
         return;
     }
-    // Each mark remaps every recorded span.
+    // A mark remaps the spans of its file only, so it should not grow with what is seen.
     let mut slowest = Duration::ZERO;
     for (n, path) in names.iter().enumerate() {
         let (answer, took) = timed(client.call(Request::ToggleFileSeen {

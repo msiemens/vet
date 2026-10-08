@@ -267,7 +267,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             status: ThreadStatus::Open,
             platform,
         });
-        self.remap(&mut st).await?;
+        self.resolve_threads(&mut st).await?;
+        // A review the thread started has its progress stored from the start.
+        self.note_progress(&mut st).await?;
         Ok(outcome(&st, thread_by_id(&st, id)?, started))
     }
 
@@ -351,7 +353,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let target = CommentTarget::Range(self.anchor_at(st, side, &location.file, location.range).await?);
         self.acquisition.store.set_thread_target(thread, target.clone()).await?;
         edit_thread(st, thread, |t| t.target = target);
-        self.remap(st).await?;
+        self.resolve_threads(st).await?;
         thread_by_id(st, thread)
     }
 

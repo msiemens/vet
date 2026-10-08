@@ -1,11 +1,12 @@
 //! The review state a session keeps behind its lock, and the lookups every
 //! part of the session makes in it.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
+use vet_core::completion::{Completion, Coverage};
 use vet_core::content::{
-    BlobId, FileDiff, NonTextChange, NonTextKind, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
+    BlobId, FileDiff, NonTextChange, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::resolve::Resolution;
@@ -79,12 +80,85 @@ pub(super) struct Interdiffed {
 
 /// The review state remapped onto one diff.
 #[derive(Default)]
+#[cfg_attr(test, derive(PartialEq, Debug))]
 pub(super) struct Remapped {
-    /// Recorded spans as they are now.
-    pub(super) spans: Vec<(SpanId, Vec<ReviewedSpan>)>,
-    pub(super) flat: Vec<ReviewedSpan>,
+    /// Each recorded span as it is now. A span's remap depends on the span and the diff only, so
+    /// a mark remaps the spans it records and leaves the others as they are.
+    spans: HashMap<SpanId, Vec<ReviewedSpan>>,
+    /// The spans with a piece in each file.
+    files: HashMap<RepoPath, HashSet<SpanId>>,
     /// Range threads resolved from their recorded anchors; only in the changeset.
     pub(super) resolutions: HashMap<ThreadId, Resolution>,
+    /// The completion of the whole diff under the state's filter and acknowledgements.
+    pub(super) completion: Completion,
+}
+
+impl Remapped {
+    /// The remapped spans and resolved threads, with the completion still to count.
+    pub(super) fn of(spans: Vec<(SpanId, Vec<ReviewedSpan>)>, resolutions: HashMap<ThreadId, Resolution>) -> Self {
+        let mut remapped = Self {
+            resolutions,
+            ..Self::default()
+        };
+        for (id, pieces) in spans {
+            remapped.insert(id, pieces);
+        }
+        remapped
+    }
+
+    /// The recorded span `id` as it is now; empty if nothing of it is left.
+    pub(super) fn span(&self, id: SpanId) -> &[ReviewedSpan] {
+        self.spans.get(&id).map_or(&[], Vec::as_slice)
+    }
+
+    pub(super) fn insert(&mut self, id: SpanId, pieces: Vec<ReviewedSpan>) {
+        for file in files_of(&pieces) {
+            self.files.entry(file.clone()).or_default().insert(id);
+        }
+        self.spans.insert(id, pieces);
+    }
+
+    pub(super) fn remove(&mut self, id: SpanId) {
+        let Some(pieces) = self.spans.remove(&id) else { return };
+        for file in files_of(&pieces) {
+            if let Some(ids) = self.files.get_mut(file) {
+                ids.remove(&id);
+                if ids.is_empty() {
+                    self.files.remove(file);
+                }
+            }
+        }
+    }
+
+    /// The files the pieces of the span `id` are in.
+    pub(super) fn files(&self, id: SpanId) -> impl Iterator<Item = &RepoPath> {
+        files_of(self.span(id))
+    }
+
+    /// The coverage of every span.
+    pub(super) fn coverage(&self) -> Coverage<'_> {
+        Coverage::new(self.spans.values().flatten())
+    }
+
+    /// A coverage that answers for `files` as [`Remapped::coverage`] does, made of the spans with a
+    /// piece in them only.
+    pub(super) fn coverage_of<'f>(&self, files: impl IntoIterator<Item = &'f RepoPath>) -> Coverage<'_> {
+        let ids: HashSet<SpanId> = files
+            .into_iter()
+            .filter_map(|f| self.files.get(f))
+            .flatten()
+            .copied()
+            .collect();
+        Coverage::new(ids.into_iter().flat_map(|id| self.span(id)))
+    }
+}
+
+/// The files the anchors of `pieces` are in.
+pub(super) fn files_of(pieces: &[ReviewedSpan]) -> impl Iterator<Item = &RepoPath> {
+    pieces
+        .iter()
+        .flat_map(|p| p.base.iter().chain(&p.target))
+        .map(|a| &a.file)
 }
 
 /// The current revision's diff, held by the engine, and the review state remapped onto it.
@@ -95,6 +169,9 @@ pub(super) struct Changes {
     pub(super) anchored: BTreeMap<BlobId, Vec<u8>>,
     /// The commits of the changeset, once the by-commit lens asked.
     pub(super) commits: Option<Commits>,
+    /// How often a recorded span anchored in each file was remapped, onto any view.
+    #[cfg(test)]
+    pub(super) remaps: HashMap<RepoPath, usize>,
 }
 
 impl Changes {
@@ -104,6 +181,8 @@ impl Changes {
             remapped: Remapped::default(),
             anchored: BTreeMap::new(),
             commits: None,
+            #[cfg(test)]
+            remaps: HashMap::new(),
         }
     }
 }
@@ -186,6 +265,16 @@ impl State {
         }
     }
 
+    /// The views the review state is remapped onto: the changeset and, once computed, each commit.
+    pub(super) fn remapped_views(&self) -> Vec<View> {
+        let commits = (self.changes.as_ref())
+            .and_then(|c| c.commits.as_ref())
+            .map_or(0, |c| c.units.len() as u32);
+        std::iter::once(View::Changeset)
+            .chain((0..commits).map(|index| View::Commit { index }))
+            .collect()
+    }
+
     pub(super) fn remapped_in_mut(&mut self, view: View) -> &mut Remapped {
         let changes = self.changes.as_mut().expect("computed");
         match view {
@@ -253,10 +342,10 @@ pub(super) fn ack_of(change: &NonTextChange) -> NonTextAck {
     }
 }
 
-/// The changes of `diff` that are acknowledged.
-pub(super) fn acknowledged(st: &State, diff: &SnapshotDiff) -> Vec<NonTextChange> {
-    diff.non_text
-        .iter()
+/// The changes of `changes` that are acknowledged.
+pub(super) fn acknowledged<'a>(st: &State, changes: impl IntoIterator<Item = &'a NonTextChange>) -> Vec<NonTextChange> {
+    changes
+        .into_iter()
         .filter(|n| st.acks.contains(&ack_of(n)))
         .cloned()
         .collect()

@@ -1,11 +1,14 @@
 //! Computing a revision's changes, and remapping recorded spans and thread
 //! anchors onto them.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::MutexGuard;
-use vet_core::content::{BlobId, EntryKind, RenameMap, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
+use vet_core::completion::Completion;
+use vet_core::content::{
+    BlobId, EntryKind, FileDiff, NonTextChange, RenameMap, RepoPath, Snapshot, SnapshotDiff, SnapshotId,
+};
 use vet_core::prepared::PreparedFile;
 use vet_core::remap::{RemapMode, remap_span};
 use vet_core::resolve::{Resolution, resolve_anchor};
@@ -14,7 +17,8 @@ use vet_core::review::{Anchor, CommentTarget, FileRemapInput, ReviewedSpan, Side
 use super::blobs::Texts;
 use super::derived::{CommitUnit, CommitsBetween, DiffOf, Diffed};
 use super::interdiff::Interdiffing;
-use super::state::{Changes, Interdiffed, Remapped, Shown, State, View};
+use super::manifest::changeset_completion;
+use super::state::{Changes, Interdiffed, Remapped, Shown, State, View, acknowledged, files_of};
 use super::{LiveSession, Result, SessionError};
 use crate::ports::{GitRepo, LiveStore};
 use crate::review::{RecordedSpan, SpanId, SpanOrigin};
@@ -74,6 +78,52 @@ fn commit_frame(st: &State, index: u32, renames: RenameMap) -> Frame<'_> {
         origin: SpanOrigin::Commit(unit.detail.info.id.clone()),
         renames,
     }
+}
+
+/// The file a recorded anchor of a side is remapped into in `frame`: the base side stays at its
+/// path; the target side follows a rename from `HEAD` if its file is gone.
+pub(super) fn landing(frame: &Frame<'_>, is_base: bool, anchor: &Anchor) -> Option<RepoPath> {
+    if is_base || frame.target.entries.contains_key(&anchor.file) {
+        Some(anchor.file.clone())
+    } else {
+        frame.renames.0.get(&anchor.file).cloned()
+    }
+}
+
+/// What of the review state a remap reads.
+#[derive(Clone, Copy)]
+enum Remapping<'a> {
+    /// Every recorded span and, in the changeset, every thread.
+    All,
+    /// The threads only.
+    Threads,
+    /// These recorded spans only.
+    Spans(&'a [SpanId]),
+}
+
+/// Counts the completion of `view` from all of its review state.
+pub(super) fn recount(st: &mut State, view: View) {
+    let diff = &st.diffed_in(view).diff;
+    let acked = acknowledged(st, &diff.non_text);
+    let completion = changeset_completion(&st.remapped_in(view).coverage(), &st.filter, diff, &acked);
+    st.remapped_in_mut(view).completion = completion;
+}
+
+/// The completion of what in `view` lies in `files`: the text diffs with a side there and the
+/// non-text changes of them. A mark or an acknowledgement in `files` changes this part of the
+/// view's completion and leaves the rest as it is.
+pub(super) fn part_completion(st: &State, view: View, files: &HashSet<RepoPath>) -> Completion {
+    let diff = &st.diffed_in(view).diff;
+    let within = |p: Option<&RepoPath>| p.is_some_and(|p| files.contains(p));
+    let diffs: Vec<&FileDiff> = (diff.files.iter())
+        .filter(|d| within(d.old_path.as_ref()) || within(d.new_path.as_ref()))
+        .collect();
+    let items: Vec<NonTextChange> = (diff.non_text.iter())
+        .filter(|n| within(Some(&n.path)) || within(n.from.as_ref()))
+        .cloned()
+        .collect();
+    let coverage = (st.remapped_in(view)).coverage_of(diffs.iter().flat_map(|d| d.old_path.iter().chain(&d.new_path)));
+    coverage.completion(&st.filter, diffs, &items, &acknowledged(st, &items))
 }
 
 /// What the state lacks to show a view, computed with the state released.
@@ -203,34 +253,116 @@ where
     /// was recorded.
     pub(super) async fn remap(&self, st: &mut State) -> Result<()> {
         self.load_known(st).await?;
-        let mut result = self.remap_view(st, View::Changeset).await;
-        let count = (st.changes.as_ref())
-            .and_then(|c| c.commits.as_ref())
-            .map_or(0, |commits| commits.units.len());
-        for index in 0..count as u32 {
+        let mut result = Ok(());
+        for view in st.remapped_views() {
             if result.is_ok() {
-                result = self.remap_view(st, View::Commit { index }).await;
+                result = self.remap_view(st, view).await;
             }
         }
         result?;
         self.note_progress(st).await
     }
 
-    /// Remaps onto one view of the changeset or of a commit; only the changeset resolves threads.
+    /// Remaps onto one view of the changeset or of a commit, and counts its completion; only the
+    /// changeset resolves threads.
     pub(super) async fn remap_view(&self, st: &mut State, view: View) -> Result<()> {
-        let mut anchored = std::mem::take(&mut st.changes.as_mut().expect("computed").anchored);
-        let remapped = self.remapped(st, view, &mut anchored).await;
-        st.changes.as_mut().expect("computed").anchored = anchored;
-        *st.remapped_in_mut(view) = remapped?;
+        let (pieces, resolutions) = self.remapped(st, view, Remapping::All).await?;
+        *st.remapped_in_mut(view) = Remapped::of(pieces, resolutions);
+        recount(st, view);
         Ok(())
     }
 
-    /// The review state remapped onto the diff of `view`; `anchored` receives the texts it reads
-    /// that the diff does not have.
-    async fn remapped(&self, st: &State, view: View, anchored: &mut BTreeMap<BlobId, Vec<u8>>) -> Result<Remapped> {
+    /// Resolves every range thread's anchor in the changeset again, after the threads changed;
+    /// the spans stay as they are remapped.
+    pub(super) async fn resolve_threads(&self, st: &mut State) -> Result<()> {
+        self.load_known(st).await?;
+        let (_, resolutions) = self.remapped(st, View::Changeset, Remapping::Threads).await?;
+        st.remapped_in_mut(View::Changeset).resolutions = resolutions;
+        Ok(())
+    }
+
+    /// Brings every view up to date with a mark, which recorded the spans `added` and dropped the
+    /// spans `removed`: only the added spans are remapped, and each view's completion changes by
+    /// the files the added and the dropped spans are in.
+    pub(super) async fn remap_marks(&self, st: &mut State, removed: &[SpanId], added: &[SpanId]) -> Result<()> {
+        self.load_known(st).await?;
+        for view in st.remapped_views() {
+            let (pieces, _) = self.remapped(st, view, Remapping::Spans(added)).await?;
+            let remapped = st.remapped_in(view);
+            let files: HashSet<RepoPath> = (removed.iter())
+                .flat_map(|&id| remapped.files(id))
+                .chain(pieces.iter().flat_map(|(_, p)| files_of(p)))
+                .cloned()
+                .collect();
+            let before = part_completion(st, view, &files);
+            let remapped = st.remapped_in_mut(view);
+            for &id in removed {
+                remapped.remove(id);
+            }
+            for (id, pieces) in pieces {
+                remapped.insert(id, pieces);
+            }
+            let after = part_completion(st, view, &files);
+            let remapped = st.remapped_in_mut(view);
+            remapped.completion = remapped.completion + after - before;
+        }
+        Ok(())
+    }
+
+    /// What `remapping` names of the review state, remapped onto the diff of `view` (the spans)
+    /// and resolved there (the threads, in the changeset only). The texts read that the diff does
+    /// not have are kept in the changes.
+    async fn remapped(
+        &self,
+        st: &mut State,
+        view: View,
+        remapping: Remapping<'_>,
+    ) -> Result<(Vec<(SpanId, Vec<ReviewedSpan>)>, HashMap<ThreadId, Resolution>)> {
+        let mut anchored = std::mem::take(&mut st.changes.as_mut().expect("computed").anchored);
+        #[cfg(test)]
+        let mut counted: Vec<RepoPath> = Vec::new();
+        let remapped = {
+            let spans: Vec<&RecordedSpan> = match remapping {
+                Remapping::All => st.recorded.iter().collect(),
+                Remapping::Threads => Vec::new(),
+                Remapping::Spans(ids) => st.recorded.iter().filter(|r| ids.contains(&r.id)).collect(),
+            };
+            let threads: Vec<&Thread> = match remapping {
+                Remapping::All | Remapping::Threads if view == View::Changeset => st.threads.iter().collect(),
+                _ => Vec::new(),
+            };
+            #[cfg(test)]
+            counted.extend(
+                (spans.iter())
+                    .flat_map(|r| r.span.base.iter().chain(&r.span.target))
+                    .map(|a| a.file.clone()),
+            );
+            self.remapped_with(st, view, &spans, &threads, &mut anchored).await
+        };
+        let changes = st.changes.as_mut().expect("computed");
+        changes.anchored = anchored;
+        #[cfg(test)]
+        for file in counted {
+            *changes.remaps.entry(file).or_default() += 1;
+        }
+        remapped
+    }
+
+    async fn remapped_with(
+        &self,
+        st: &State,
+        view: View,
+        spans: &[&RecordedSpan],
+        threads: &[&Thread],
+        anchored: &mut BTreeMap<BlobId, Vec<u8>>,
+    ) -> Result<(Vec<(SpanId, Vec<ReviewedSpan>)>, HashMap<ThreadId, Resolution>)> {
         let diffed = st.diffed_in(view);
         let frame = frame_of(st, view, diffed.diff.renames.clone());
-        let Prepared { inputs, spans, threads } = self.prepare(st, &frame, diffed, anchored).await?;
+        let Prepared {
+            inputs,
+            spans: span_slots,
+            threads: thread_slots,
+        } = self.prepare(st, &frame, diffed, anchored, spans, threads).await?;
         let texts = Texts {
             diffed: &diffed.blobs,
             other: anchored,
@@ -243,17 +375,16 @@ where
         let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &texts)).collect();
 
         // Moved content is searched for among the changed files of the anchor's side.
-        let (base_inputs, target_inputs) = if resolving && threads.iter().any(Option::is_some) {
+        let (base_inputs, target_inputs) = if resolving && thread_slots.iter().any(Option::is_some) {
             changed_inputs(&diffed.diff)
         } else {
             Default::default()
         };
         let base_changed: Vec<PreparedFile> = (base_inputs.iter()).map(|i| PreparedFile::new(i, &texts)).collect();
         let target_changed: Vec<PreparedFile> = (target_inputs.iter()).map(|i| PreparedFile::new(i, &texts)).collect();
-        let resolutions: HashMap<ThreadId, Resolution> = st
-            .threads
+        let resolutions: HashMap<ThreadId, Resolution> = threads
             .iter()
-            .zip(&threads)
+            .zip(&thread_slots)
             .filter_map(|(t, slot)| match (&t.target, slot) {
                 (CommentTarget::Range(a), Some(i)) if resolving => {
                     let changed = if a.side == Side::Base {
@@ -268,20 +399,15 @@ where
             .collect();
         drop((base_changed, target_changed));
 
-        let remapped: Vec<(SpanId, Vec<ReviewedSpan>)> = st
-            .recorded
+        let remapped = spans
             .iter()
-            .zip(&spans)
+            .zip(&span_slots)
             .map(|(rec, &(b, t))| {
                 let (b, t) = (b.map(|i| &prepared[i]), t.map(|i| &prepared[i]));
                 (rec.id, remap_span(&rec.span, to, b, t, frame.mode_of(rec)))
             })
             .collect();
-        Ok(Remapped {
-            flat: remapped.iter().flat_map(|(_, s)| s.iter().cloned()).collect(),
-            spans: remapped,
-            resolutions,
-        })
+        Ok((remapped, resolutions))
     }
 
     /// Loads the snapshots the recorded spans and the range threads are anchored in, and drops
@@ -299,14 +425,16 @@ where
         Ok(())
     }
 
-    /// The file pairs of the anchors' sides, and for each recorded span and
-    /// thread the indices of its pairs. Loads the texts `diffed` does not have into `anchored`.
+    /// The file pairs of the anchors' sides, and for each of `spans` and `threads` the indices of
+    /// its pairs. Loads the texts `diffed` does not have into `anchored`.
     pub(super) async fn prepare(
         &self,
         st: &State,
         frame: &Frame<'_>,
         diffed: &Diffed,
         anchored: &mut BTreeMap<BlobId, Vec<u8>>,
+        spans: &[&RecordedSpan],
+        threads: &[&Thread],
     ) -> Result<Prepared> {
         let anchors = |r: &RecordedSpan| {
             [(true, r.span.base.clone()), (false, r.span.target.clone())]
@@ -325,7 +453,6 @@ where
             _ => st.snapshot(id),
         };
 
-        let renames = &frame.renames;
         let file_entry = |snapshot: Option<&Snapshot>, path: &RepoPath| {
             snapshot
                 .and_then(|s| s.entries.get(path))
@@ -338,13 +465,7 @@ where
         let mut at = |is_base: bool, a: &Anchor| {
             let key = (is_base, a.file.clone(), a.snapshot);
             *index.entry(key).or_insert_with(|| {
-                // The base side stays at its path; the target side follows a
-                // rename from `HEAD` if its file is gone.
-                let new_path = if is_base || frame.target.entries.contains_key(&a.file) {
-                    Some(a.file.clone())
-                } else {
-                    renames.0.get(&a.file).cloned()
-                };
+                let new_path = landing(frame, is_base, a);
                 let current = if is_base { frame.base } else { frame.target };
                 inputs.push(FileRemapInput {
                     old_blob: file_entry(find(a.snapshot), &a.file),
@@ -355,16 +476,17 @@ where
                 inputs.len() - 1
             })
         };
-        let mut spans: Vec<Slot> = Vec::new();
-        for rec in &st.recorded {
-            let mut slot = [None, None];
-            for (is_base, a) in anchors(rec) {
-                slot[if is_base { 0 } else { 1 }] = Some(at(is_base, &a));
-            }
-            spans.push((slot[0], slot[1]));
-        }
-        let threads = st
-            .threads
+        let spans = spans
+            .iter()
+            .map(|rec| {
+                let mut slot = [None, None];
+                for (is_base, a) in anchors(rec) {
+                    slot[if is_base { 0 } else { 1 }] = Some(at(is_base, &a));
+                }
+                (slot[0], slot[1])
+            })
+            .collect();
+        let threads = threads
             .iter()
             .map(|t| thread_anchor(t).map(|(is_base, a)| at(is_base, &a)))
             .collect();

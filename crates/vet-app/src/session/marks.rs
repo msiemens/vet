@@ -1,17 +1,19 @@
 //! Marking hunks seen and acknowledging non-text items. Marking starts the
 //! review if none is open.
 
-use vet_core::completion::HunkState;
-use vet_core::content::{BlobId, NonTextKind};
+use std::collections::HashSet;
+
+use vet_core::completion::{Completion, HunkState};
+use vet_core::content::{BlobId, NonTextKind, RepoPath};
 use vet_core::marking::{Region, hunk_regions, hunk_span};
 use vet_core::prepared::PreparedFile;
 use vet_core::remap::cut_recorded;
-use vet_core::review::ReviewedSpan;
+use vet_core::review::{ReviewedSpan, Side};
 
 use super::blobs::Texts;
 use super::interdiff::{check_markable, squash_item, update_in};
 use super::lens::view_unit;
-use super::remap::{Prepared, frame_of};
+use super::remap::{Prepared, frame_of, landing, part_completion};
 use super::state::{Shown, State, View, ack_of, check_revision, find_diff, find_non_text, outcome, shown_items};
 use super::views::{Outcome, ReviewUpdateView};
 use super::{LiveSession, Result, SessionError};
@@ -187,10 +189,20 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.load_known(st).await?;
         let mut anchored = std::mem::take(&mut st.changes.as_mut().expect("computed").anchored);
         let diffed = st.diffed_in(view);
-        let prepared = {
-            let frame = frame_of(st, view, diffed.diff.renames.clone());
-            self.prepare(st, &frame, diffed, &mut anchored).await
-        };
+        let frame = frame_of(st, view, diffed.diff.renames.clone());
+        // Only a span with a side that lands in a region's file can lose lines to it.
+        let cut_files: HashSet<(RepoPath, Side)> = regions.iter().map(|r| (r.file.clone(), r.side)).collect();
+        let cuttable: Vec<&RecordedSpan> = (st.recorded.iter())
+            .filter(|rec| {
+                [(true, &rec.span.base), (false, &rec.span.target)]
+                    .into_iter()
+                    .filter_map(|(is_base, a)| a.as_ref().map(|a| (is_base, a)))
+                    .any(|(is_base, a)| {
+                        landing(&frame, is_base, a).is_some_and(|file| cut_files.contains(&(file, a.side)))
+                    })
+            })
+            .collect();
+        let prepared = self.prepare(st, &frame, diffed, &mut anchored, &cuttable, &[]).await;
         let cut = prepared.map(
             |Prepared {
                  inputs, spans: slots, ..
@@ -202,7 +214,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 let prepared: Vec<PreparedFile> = inputs.iter().map(|i| PreparedFile::new(i, &texts)).collect();
                 let mut remove = Vec::new();
                 let mut kept: Vec<(ReviewedSpan, SpanOrigin)> = Vec::new();
-                for (rec, &(b, t)) in st.recorded.iter().zip(&slots) {
+                for (rec, &(b, t)) in cuttable.iter().zip(&slots) {
                     let (b, t) = (b.map(|i| &prepared[i]), t.map(|i| &prepared[i]));
                     if let Some(rest) = cut_recorded(&rec.span, &regions, b, t) {
                         remove.push(rec.id);
@@ -227,14 +239,15 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         st.recorded.retain(|r| !remove.contains(&r.id));
         st.recorded.extend(
-            ids.into_iter()
+            ids.iter()
                 .zip(add)
-                .map(|(id, (span, origin))| RecordedSpan { id, span, origin }),
+                .map(|(&id, (span, origin))| RecordedSpan { id, span, origin }),
         );
         if seen {
             self.note_reviewed(st).await?;
         }
-        self.remap(st).await
+        self.remap_marks(st, &remove, &ids).await?;
+        self.note_progress(st).await
     }
 
     /// Records that something was marked in the changeset's latest version, for
@@ -271,6 +284,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             find_non_text(diff, kind, path).ok_or_else(|| SessionError::NotFound(format!("change of {path}")))?
         };
         let ack = ack_of(change);
+        let files: HashSet<RepoPath> = change.from.iter().chain([&change.path]).cloned().collect();
         let store = &self.acquisition.store;
         if let Some(review) = &st.review {
             if acknowledged {
@@ -279,10 +293,18 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 store.unacknowledge(review.id, ack.clone()).await?;
             }
         }
+        // Only the completion of the changes of the acknowledged change's paths moves.
+        let views = st.remapped_views();
+        let before: Vec<Completion> = views.iter().map(|&v| part_completion(st, v, &files)).collect();
         if !acknowledged {
             st.acks.retain(|a| *a != ack);
         } else if !st.acks.contains(&ack) {
             st.acks.push(ack);
+        }
+        for (view, before) in views.into_iter().zip(before) {
+            let after = part_completion(st, view, &files);
+            let remapped = st.remapped_in_mut(view);
+            remapped.completion = remapped.completion + after - before;
         }
         if acknowledged {
             self.note_reviewed(st).await?;

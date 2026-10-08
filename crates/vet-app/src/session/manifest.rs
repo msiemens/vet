@@ -9,7 +9,7 @@ use vet_core::content::{BlobId, FileDiff, LineDelta, NonTextChange, RepoPath, Sn
 use vet_core::filter::ReviewFilter;
 
 use super::derived::Diffed;
-use super::state::{Shown, State, View, acknowledged, find_diff, lifecycle_of, shown_items};
+use super::state::{Remapped, Shown, State, View, acknowledged, find_diff, lifecycle_of, shown_items};
 use super::views::{FileStatus, FileView, ManifestView, ReviewUpdateView, ReviewView, TargetView};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
@@ -29,8 +29,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let base = self.base_view(&st, &branches).await?;
         let facts = self.lens_facts(&st).await?;
         let changes = st.changes();
-        let cov = Coverage::new(&changes.remapped.flat);
-        let acked = acknowledged(&st, &changes.diffed.diff);
+        let cov = changes.remapped.coverage();
+        let acked = acknowledged(&st, &changes.diffed.diff.non_text);
         let files = file_views(&changes.diffed, &st.filter, |diff, items| {
             (
                 review_of(&cov, diff, items, &acked),
@@ -44,7 +44,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             base,
             target: target_view(&st.source, &st.head, &branches),
             filter: st.filter.clone(),
-            completion: changeset_completion(&cov, &st.filter, &changes.diffed.diff, &acked),
+            completion: changes.remapped.completion,
             delta: files.iter().map(|f| f.delta).sum(),
             files,
             degraded: self.degraded_for(&st.source),
@@ -65,10 +65,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let (Some(review), Some(changes)) = (&st.review, &st.changes) else {
             return Ok(());
         };
-        let diff = &changes.diffed.diff;
-        let acked = acknowledged(st, diff);
-        let completion = changeset_completion(&Coverage::new(&changes.remapped.flat), &st.filter, diff, &acked);
-        let summary = ReviewSummary::of(&completion);
+        let summary = ReviewSummary::of(&changes.remapped.completion);
         if review.summary == Some(summary) {
             return Ok(());
         }
@@ -198,21 +195,31 @@ pub(super) fn review_of(
 /// The review state of one file and the changeset's completion.
 pub(super) fn update_of(st: &State, path: &str) -> Result<ReviewUpdateView> {
     let changes = st.changes();
-    let cov = Coverage::new(&changes.remapped.flat);
-    let whole = &changes.diffed.diff;
-    let acked = acknowledged(st, whole);
+    update_from(st, &changes.diffed.diff, &changes.remapped, path)
+}
+
+/// The review state of the file at `path` of `whole`, read from `remapped`, and the completion of
+/// `whole`.
+pub(super) fn update_from(
+    st: &State,
+    whole: &SnapshotDiff,
+    remapped: &Remapped,
+    path: &str,
+) -> Result<ReviewUpdateView> {
     let diff = find_diff(whole, path);
     let items = shown_items(whole, &st.filter, path);
     let file = diff
         .map(|d| d.path().clone())
         .or_else(|| items.first().map(|n| n.path.clone()))
         .ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
+    let cov = remapped.coverage_of(diff.into_iter().flat_map(|d| d.old_path.iter().chain(&d.new_path)));
+    let acked = acknowledged(st, &items);
     Ok(ReviewUpdateView {
         revision: st.revision,
         path: file,
         review: review_of(&cov, diff, &items, &acked),
         completion: file_completion(&cov, &st.filter, diff, &items, &acked),
-        changeset: changeset_completion(&cov, &st.filter, whole, &acked),
+        changeset: remapped.completion,
     })
 }
 
@@ -235,20 +242,6 @@ pub(super) fn changeset_completion(
     acked: &[NonTextChange],
 ) -> Completion {
     cov.completion(filter, &diff.files, &diff.non_text, acked)
-}
-
-pub(super) fn empty_completion() -> Completion {
-    Completion {
-        lines: 0,
-        seen_lines: 0,
-        old_base_lines: 0,
-        items: 0,
-        acknowledged_items: 0,
-        hunks: 0,
-        seen_hunks: 0,
-        excluded_lines: 0,
-        excluded_items: 0,
-    }
 }
 
 #[cfg(test)]

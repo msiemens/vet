@@ -335,12 +335,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     async fn reload_threads(&self, st: &mut State, changeset: crate::changeset::ChangesetId) -> Result<()> {
         let open = st.review.as_ref().map(|r| r.id);
         st.threads = visible_threads(self.acquisition.store.threads(changeset).await?, open);
-        if let Some(changes) = st.changes.as_mut() {
-            changes
-                .remapped
-                .resolutions
-                .retain(|id, _| st.threads.iter().any(|t| t.id == *id));
-            self.remap(st).await
+        if st.changes.is_some() {
+            self.resolve_threads(st).await
         } else {
             self.ensure_changes(st).await
         }

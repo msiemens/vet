@@ -97,8 +97,8 @@ fn base_texts(st: &State, path: &str, hunk: usize) -> Result<(Excerpt, Excerpt, 
     let unavailable = || SessionError::Invalid("the base this was seen against is not available".into());
 
     let mut anchors: Vec<&Anchor> = Vec::new();
-    for (rec, (_, pieces)) in st.recorded.iter().zip(&changes.remapped.spans) {
-        let covers = pieces.iter().any(|p| {
+    for rec in &st.recorded {
+        let covers = changes.remapped.span(rec.id).iter().any(|p| {
             p.state == SpanState::SeenAgainstOldBase
                 && p.target.as_ref().is_some_and(|t| {
                     Some(&t.file) == diff.new_path.as_ref()
