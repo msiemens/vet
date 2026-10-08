@@ -46,11 +46,10 @@
   const conversationCount = $derived(
     info?.traits.conversationFeed ? info.conversation.length + drafts.length : onWhole.length,
   );
-  type Tab = "review" | "conversation";
-  let tab = $state<Tab>("review");
-  const pick = (id: Tab) => (tab = id);
+  type Tab = typeof platform.commentsTab;
+  const pick = (id: Tab) => (platform.commentsTab = id);
   // A changeset that is no pull request has no conversation to switch to.
-  const showing = $derived(info ? tab : "review");
+  const showing = $derived(info ? platform.commentsTab : "review");
 
   type GroupId = "conflicts" | "open" | "resolved";
   let folded = $state<GroupId[]>([]);
@@ -65,7 +64,7 @@
 
   function compose() {
     composing = !composing;
-    if (composing) tab = "conversation";
+    if (composing) platform.commentsTab = "conversation";
   }
 
   onMount(() => commands.register(...threadCommands({ attach: (thread, at) => void threads.attach(thread, at) })));

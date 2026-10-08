@@ -310,6 +310,14 @@
     void controller?.goToThread(thread);
   }
 
+  /** Shows an outgoing comment where it is: at its lines, or in the Comments tool window's Conversation tab. */
+  function openOutgoing(thread: Thread) {
+    if (thread.kind !== "changeset") return openThread(thread);
+    screen = "review";
+    Object.assign(left, { tool: "comments", open: true });
+    platform.commentsTab = "conversation";
+  }
+
   function setMode(next: Mode) {
     mode = next;
     controller?.setMode(next);
@@ -359,7 +367,7 @@
   {/snippet}
   {#snippet outgoingComments()}
     <!-- A changeset that is no pull request has nowhere to post to. -->
-    {#if headId !== undefined}<OutgoingButton />{/if}
+    {#if headId !== undefined}<OutgoingButton onopen={openOutgoing} />{/if}
   {/snippet}
   {#snippet projectSwitcher()}
     {#if session.repo}
