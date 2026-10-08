@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Monitor, PhysicalPosition, PhysicalSize, Window, WindowEvent};
 
 use crate::backend;
-use crate::bench::Bench;
 
 /// The welcome screen's size in logical pixels.
 const WELCOME_SIZE: (f64, f64) = (960.0, 620.0);
@@ -287,11 +286,11 @@ fn apply(window: &tauri::WebviewWindow, target: Target) -> tauri::Result<()> {
 
 /// Puts the hidden main window where its first mode wants it: a project when the shell is
 /// given one to open, else the welcome screen.
-pub fn init(app: &AppHandle, bench: &Bench) -> tauri::Result<()> {
+pub fn init(app: &AppHandle) -> tauri::Result<()> {
     let Some(window) = app.get_webview_window(MAIN) else {
         return Ok(());
     };
-    let mode = if backend::repo_path(bench).is_some() {
+    let mode = if backend::repo_path().is_some() {
         Mode::Project
     } else {
         Mode::Welcome

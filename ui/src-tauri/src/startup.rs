@@ -8,7 +8,6 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::backend::{self, Backend, wsl_distro};
-use crate::bench::Bench;
 
 const SPLASH: &str = "splash";
 /// Sent to the splash with the new [`Progress`] at every step.
@@ -127,8 +126,7 @@ pub fn launch(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let startup = app.state::<Startup>();
-        let bench = app.state::<Bench>();
-        let launched = Backend::launch(backend::repo_path(&bench), backend::spawner(&bench), |step| {
+        let launched = Backend::launch(backend::repo_path(), backend::spawner(), |step| {
             startup.report(&app, step)
         });
         match launched {

@@ -53,7 +53,7 @@ impl Events {
     }
 }
 
-/// What sits behind the transport: the real orchestrator or the spike's mock.
+/// What sits behind the transport: the backend's request handling.
 pub trait Handler: Send + Sync + 'static {
     fn handle(&self, request: Request, events: Events) -> impl Future<Output = Result<Response, String>> + Send;
 }

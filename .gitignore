@@ -1,7 +1,5 @@
 /target
-/.corpus
 /.claude/worktrees
-bench-results.*
 /ui/node_modules
 /ui/dist
 /ui/src-tauri/target

@@ -5,8 +5,8 @@ edition.workspace = true
 publish.workspace = true
 
 # The wire contract between shell and backend (I5). No workspace dependencies:
-# the mock server and the real backend both build against this alone, without
-# compiling gitoxide, SQLite or the LSP client. TS types are generated from it
+# the transport builds against this alone, without compiling gitoxide, SQLite or
+# the LSP client. TS types are generated from it
 # (`cargo test -p vet-protocol`, output in ui/src/generated; see .cargo/config.toml).
 [dependencies]
 serde = { version = "1", features = ["derive"] }

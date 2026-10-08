@@ -4,8 +4,7 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
-# The authenticated loopback WebSocket server, shared by the real backend and the
-# mock orchestrator for the shell spike. Depends only on vet-protocol.
+# The authenticated loopback WebSocket server of the backend. Depends only on vet-protocol.
 [dependencies]
 vet-protocol.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }

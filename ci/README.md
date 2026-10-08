@@ -57,7 +57,7 @@ Formatting-only commits are listed in `.git-blame-ignore-revs`; enable them with
 
 ## Browser
 
-Screenshots and benchmarks use one shared headless browser (Windows Edge in WSL,
+Screenshots use one shared headless browser (Windows Edge in WSL,
 else Chromium; `VET_BROWSER=linux` forces Chromium). `browser.sh` starts it if
 needed and prints its CDP port (`VET_BROWSER_PORT`, default 9222); a watchdog
 closes it after `VET_BROWSER_IDLE` seconds (default 600) without a page. Clients
@@ -67,8 +67,7 @@ use `cdp.mjs`, which gives each run an isolated browser context:
 node ci/cdp.mjs screenshot 'http://localhost:<port>/#port=…&token=…&repo=/path' out.png [--wait ms] [--theme light|dark]
 ```
 
-Scripts import `withTab(fn)` (screenshots, `evaluate`, `mouse`, console capture)
-and `withBenchLock(fn)` (exclusive, so parallel benchmarks do not skew each other).
+Scripts import `withTab(fn)` (screenshots, `evaluate`, `mouse`, console capture).
 
 `chromium.sh [args…]` is for one-off use only: it runs its own headless Chromium,
 killed after `VET_CHROMIUM_TIMEOUT` seconds (default 600) or when the script

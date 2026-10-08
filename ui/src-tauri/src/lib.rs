@@ -4,7 +4,6 @@
 //! shows the startup steps until the main window is shown.
 
 mod backend;
-mod bench;
 mod browser;
 mod credentials;
 mod dialog;
@@ -16,7 +15,6 @@ mod window;
 use tauri::{Emitter, Manager, RunEvent};
 
 use backend::Backend;
-use bench::Bench;
 use startup::Startup;
 
 pub fn run() {
@@ -40,10 +38,9 @@ pub fn run() {
         })
         .on_window_event(geometry::on_window_event)
         .setup(|app| {
-            app.manage(Bench::from_env());
             app.manage(menu::ContextMenuChoice::default());
             app.manage(Startup::new());
-            geometry::init(app.handle(), &app.state::<Bench>())?;
+            geometry::init(app.handle())?;
             startup::show_splash(app.handle());
             startup::launch(app.handle());
             Ok(())
@@ -55,7 +52,6 @@ pub fn run() {
             startup::restart_backend,
             startup::retry_startup,
             startup::startup_progress,
-            bench::bench_config,
             browser::open_url,
             browser::show_folder,
             credentials::stored_credentials,
@@ -65,8 +61,6 @@ pub fn run() {
             dialog::pick_file,
             dialog::pick_repository,
             window::quit,
-            bench::renderer_memory,
-            bench::save_results,
             menu::set_menu,
             menu::show_context_menu
         ])

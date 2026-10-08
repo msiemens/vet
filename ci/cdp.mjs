@@ -1,11 +1,11 @@
 // Raw CDP client for the shared browser (ci/browser.sh), library and CLI. No dependencies.
 //
-//   import { withTab, withBenchLock } from "./cdp.mjs";
+//   import { withTab } from "./cdp.mjs";
 //   await withTab(async (tab) => { await tab.navigate(url); await tab.screenshot("a.png"); });
 //
 //   node ci/cdp.mjs screenshot <url> <out.png> [--wait ms] [--theme light|dark]
 //   node ci/cdp.mjs watchdog        (started by browser.sh)
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -125,23 +125,6 @@ export async function withTab(fn, { width = 1440, height = 900 } = {}) {
         process.off("SIGTERM", sigterm);
         await dispose();
         conn.close();
-    }
-}
-
-/** Runs fn while holding the exclusive benchmark lock; parallel benchmarks skew each other. */
-export async function withBenchLock(fn) {
-    // flock runs `cat`, which holds the lock until stdin closes (also when this process dies).
-    const holder = spawn("flock", ["-x", "/tmp/vet-bench.lock", "sh", "-c", "echo locked; cat"], {
-        stdio: ["pipe", "pipe", "inherit"],
-    });
-    await new Promise((resolve, reject) => {
-        holder.stdout.once("data", resolve);
-        holder.once("error", reject);
-    });
-    try {
-        return await fn();
-    } finally {
-        holder.stdin.end();
     }
 }
 

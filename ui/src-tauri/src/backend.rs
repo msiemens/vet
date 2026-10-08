@@ -10,10 +10,9 @@ use std::time::{Duration, Instant};
 
 use vet_protocol::Ready;
 
-use crate::bench::Bench;
 use crate::startup::Step;
 
-/// A first run without `pnpm backend` fetches the corpus before printing Ready.
+/// How long the backend gets to print its Ready line.
 const READY_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// How often the backend may exit within [`RESPAWN_WINDOW`] and be started again; after that it
@@ -93,11 +92,6 @@ impl Backend {
             ready: running.ready.clone(),
             repo: self.0.repo.clone(),
         })
-    }
-
-    /// The process id of the backend running now.
-    pub fn pid(&self) -> Option<u32> {
-        self.lock().running.as_ref().map(|running| running.child.id())
     }
 
     /// Ends the backend for good: the app exits.
@@ -247,10 +241,9 @@ pub fn wsl_distro() -> Option<String> {
 }
 
 /// The repository to review: the first command-line argument that is not a flag, else
-/// `VET_REPO`. The benchmark opens `vet-mock`, which ignores it, without asking.
-pub fn repo_path(bench: &Bench) -> Option<String> {
+/// `VET_REPO`.
+pub fn repo_path() -> Option<String> {
     pick_repo(std::env::args().skip(1), std::env::var("VET_REPO").ok())
-        .or_else(|| bench.requested().then(|| ".".to_owned()))
 }
 
 fn pick_repo(mut args: impl Iterator<Item = String>, env: Option<String>) -> Option<String> {
@@ -261,22 +254,13 @@ fn pick_repo(mut args: impl Iterator<Item = String>, env: Option<String>) -> Opt
 /// Makes the backend exit when this process dies (it holds the child's stdin open).
 const EXIT_FLAG: &str = "--exit-on-stdin-close";
 
-/// Environment the corpus loader reads; forwarded into WSL through `WSLENV`.
-const CORPUS_ENV: [&str; 4] = [
-    "VET_CORPUS_URL",
-    "VET_CORPUS_REPO",
-    "VET_CORPUS_BASE",
-    "VET_CORPUS_HEAD",
-];
-
 /// The command that starts the backend, and the binary path it runs.
 ///
-/// - `VET_BACKEND`: backend binary; defaults to the workspace's `vet-backend` build, or
-///   `vet-mock` when the benchmark runs (`mock`; it needs the spike's corpus).
+/// - `VET_BACKEND`: backend binary; defaults to the workspace's `vet-backend` build.
 /// - `VET_WSL_DISTRO` (Windows only): run it in that WSL2 distro via `wsl.exe`
 ///   (the split topology). `VET_BACKEND` is then required and must be a Linux
 ///   path inside the distro.
-fn backend_command(mock: bool) -> Result<(Command, String), String> {
+fn backend_command() -> Result<(Command, String), String> {
     let configured = std::env::var("VET_BACKEND").ok();
     let (command, binary) = match wsl_distro() {
         Some(distro) => {
@@ -293,20 +277,10 @@ fn backend_command(mock: bool) -> Result<(Command, String), String> {
                 &binary,
                 EXIT_FLAG,
             ]);
-            // Env vars cross into WSL only when listed in WSLENV.
-            let mut wslenv = std::env::var("WSLENV").unwrap_or_default();
-            for name in CORPUS_ENV.iter().filter(|name| std::env::var_os(name).is_some()) {
-                wslenv = if wslenv.is_empty() {
-                    (*name).to_owned()
-                } else {
-                    format!("{wslenv}:{name}")
-                };
-            }
-            command.env("WSLENV", wslenv);
             (command, format!("{binary} (in WSL distro {distro})"))
         }
         _ => {
-            let binary = configured.unwrap_or_else(|| default_backend(mock));
+            let binary = configured.unwrap_or_else(default_backend);
             if !std::path::Path::new(&binary).exists() {
                 return Err(format!(
                     "backend binary not found at {binary}; run `pnpm backend` in ui/ or set VET_BACKEND"
@@ -320,13 +294,12 @@ fn backend_command(mock: bool) -> Result<(Command, String), String> {
     Ok((command, binary))
 }
 
-fn default_backend(mock: bool) -> String {
+fn default_backend() -> String {
     let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
-    let name = if mock { "vet-mock" } else { "vet-backend" };
     let exe = if cfg!(windows) {
-        format!("{name}.exe")
+        "vet-backend.exe"
     } else {
-        name.to_owned()
+        "vet-backend"
     };
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target")
@@ -335,12 +308,11 @@ fn default_backend(mock: bool) -> String {
     path.canonicalize().unwrap_or(path).to_string_lossy().into_owned()
 }
 
-/// How the app starts its backend: `vet-mock` when the benchmark runs, else `vet-backend`.
-pub fn spawner(bench: &Bench) -> Box<Spawn> {
-    let mock = bench.requested();
-    Box::new(move |report| {
+/// How the app starts its backend.
+pub fn spawner() -> Box<Spawn> {
+    Box::new(|report| {
         report(Step::StartingBackend);
-        let (command, binary) = backend_command(mock)?;
+        let (command, binary) = backend_command()?;
         spawn_command(command, &binary, report)
     })
 }

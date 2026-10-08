@@ -4,7 +4,6 @@ members = [
     "crates/vet-core",
     "crates/vet-protocol",
     "crates/vet-transport",
-    "crates/vet-mock",
     "crates/vet-semantic",
     "crates/vet-app",
     "crates/vet-infra",

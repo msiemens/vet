@@ -395,6 +395,8 @@ How the UI follows the traits:
 
 ### 12.0 Shell spike
 
+Historical: the spike's benchmark and mock backend were removed on 2026-10-09.
+
 **Decided:** a Svelte web UI with CodeMirror 6 (plus `@codemirror/merge`), hosted in Tauri. The spike confirms this choice rather than comparing candidates.
 
 **Run:** Tauri on WebView2 (Windows, WSL split) and on WKWebView (macOS), against a mock orchestrator over the real WebSocket transport.

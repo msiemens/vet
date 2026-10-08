@@ -5853,21 +5853,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "vet-mock"
-version = "0.0.0"
-dependencies = [
- "tokio",
- "tracing",
- "vet-app",
- "vet-core",
- "vet-highlight",
- "vet-log",
- "vet-mapping",
- "vet-protocol",
- "vet-transport",
-]
-
-[[package]]
 name = "vet-protocol"
 version = "0.0.0"
 dependencies = [

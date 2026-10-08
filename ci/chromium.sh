@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Headless Chromium for screenshots and the benchmark, never left running: the browser
+# Headless Chromium for screenshots, never left running: the browser
 # is closed after VET_CHROMIUM_TIMEOUT seconds (default 600) or when this script exits,
 # and its throwaway profile is deleted.
 #
@@ -7,7 +7,7 @@
 # of a Linux Chromium; this needs WSL's mirrored networking, so localhost is shared.
 # VET_BROWSER=linux forces the Linux Chromium.
 #
-# One-off use only. For anything repeated (screenshots, benchmarks) use the shared
+# One-off use only. For anything repeated (screenshots) use the shared
 # browser instead: ci/browser.sh and ci/cdp.mjs.
 #
 # Usage: ci/chromium.sh [chromium args...]
