@@ -62,6 +62,9 @@ use references::StoreReferences;
 pub struct Config {
     /// How long the tree must be quiet before a snapshot settles (§6.2).
     pub debounce: Duration,
+    /// How long a settled tree must stay untouched before its content is copied into the store
+    /// ahead of a review, so that the copy does not compete with an agent still at work.
+    pub quiet: Duration,
     /// Poll interval when the topology has no usable file events (§6.4).
     pub poll: Duration,
     /// How long a project without subscribers stays open, so a reloading
@@ -75,6 +78,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             debounce: Duration::from_millis(1500),
+            quiet: Duration::from_secs(3),
             poll: Duration::from_secs(2),
             orphan_grace: Duration::from_secs(15),
             fetch_interval: vet_app::fetch::DEFAULT_INTERVAL,

@@ -1114,9 +1114,13 @@ impl Live {
         let session = session.clone();
         tokio::spawn(async move {
             session
-                .follow(settling, |revision| {
-                    let _ = revisions.send(revision);
-                })
+                .follow(
+                    settling,
+                    |revision| {
+                        let _ = revisions.send(revision);
+                    },
+                    || {},
+                )
                 .await;
         })
     }

@@ -63,11 +63,14 @@ pub enum Settled {
     Tree(Scan),
     /// A branch ref was written; the branch on view may have a new tip.
     RefsMoved,
+    /// The settled tree has stayed as it is for the quiet period of [`Settling::quiet_after`].
+    Quiet,
 }
 
 enum Wake {
     Event(WatchEvent),
     Deadline,
+    Quiet,
 }
 
 /// Watcher events and the debounce deadline in, settled snapshots out. Every
@@ -80,6 +83,10 @@ pub struct Settling<W, C> {
     settled: Option<SnapshotId>,
     /// Latest reconciled snapshot that differs from `settled` and is awaiting a quiet window.
     candidate: Option<SnapshotId>,
+    /// How long the settled tree must stay untouched before it counts as quiet.
+    quiet_ms: Option<u64>,
+    /// While the settled tree is owed a [`Settled::Quiet`]: when it was last touched, or settled.
+    untouched_since: Option<Millis>,
 }
 
 impl<W: Watcher, C: Clock> Settling<W, C> {
@@ -90,7 +97,32 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
             settler: Settler::new(debounce_ms),
             settled,
             candidate: None,
+            quiet_ms: None,
+            untouched_since: None,
         }
+    }
+
+    /// Also resolves with [`Settled::Quiet`] once after each settled tree (and after the one it
+    /// starts with), when nothing in the tree was touched for `quiet_ms` since it settled.
+    pub fn quiet_after(mut self, quiet_ms: u64) -> Self {
+        self.quiet_ms = Some(quiet_ms);
+        self.untouched_since = self.settled.map(|_| self.clock.now());
+        self
+    }
+
+    /// Something in the tree was touched: a quiet period owed starts again.
+    fn touched(&mut self) {
+        if self.untouched_since.is_some() {
+            self.untouched_since = Some(self.clock.now());
+        }
+    }
+
+    /// When the settled tree counts as quiet, if it is owed that and nothing waits to settle.
+    fn quiet_deadline(&self) -> Option<Millis> {
+        if self.settler.deadline().is_some() {
+            return None;
+        }
+        Some(Millis(self.untouched_since?.0 + self.quiet_ms?))
     }
 
     pub fn degraded(&self) -> Option<Degraded> {
@@ -103,8 +135,12 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
         loop {
             match self.wake().await {
                 Wake::Event(WatchEvent::RefsMoved) => return Ok(Settled::RefsMoved),
-                Wake::Event(WatchEvent::Dirty(paths)) => self.settler.record(Dirty::Paths(paths), self.clock.now()),
+                Wake::Event(WatchEvent::Dirty(paths)) => {
+                    self.touched();
+                    self.settler.record(Dirty::Paths(paths), self.clock.now());
+                }
                 Wake::Event(WatchEvent::MustRescan | WatchEvent::Degraded(_)) => {
+                    self.touched();
                     let snapshot = acquisition.reconcile(Dirty::All).await?.snapshot;
                     if Some(snapshot.id) != self.candidate.or(self.settled) {
                         self.candidate = Some(snapshot.id);
@@ -131,8 +167,17 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
                         self.candidate = None;
                         if Some(snapshot.id) != self.settled {
                             self.settled = Some(snapshot.id);
+                            if self.quiet_ms.is_some() {
+                                self.untouched_since = Some(self.clock.now());
+                            }
                             return Ok(Settled::Tree(scan));
                         }
+                    }
+                }
+                Wake::Quiet => {
+                    if self.quiet_deadline().is_some_and(|at| self.clock.now() >= at) {
+                        self.untouched_since = None;
+                        return Ok(Settled::Quiet);
                     }
                 }
             }
@@ -140,17 +185,22 @@ impl<W: Watcher, C: Clock> Settling<W, C> {
     }
 
     async fn wake(&mut self) -> Wake {
+        let quiet_deadline = self.quiet_deadline();
         let mut event = pin!(self.watcher.next());
         let mut timer = self
             .settler
             .deadline()
             .map(|deadline| Box::pin(self.clock.sleep_until(deadline)));
+        let mut quiet = quiet_deadline.map(|deadline| Box::pin(self.clock.sleep_until(deadline)));
         std::future::poll_fn(|cx| {
             if let Poll::Ready(event) = event.as_mut().poll(cx) {
                 return Poll::Ready(Wake::Event(event));
             }
-            match &mut timer {
-                Some(timer) => timer.as_mut().poll(cx).map(|()| Wake::Deadline),
+            if let Some(Poll::Ready(())) = timer.as_mut().map(|t| t.as_mut().poll(cx)) {
+                return Poll::Ready(Wake::Deadline);
+            }
+            match &mut quiet {
+                Some(quiet) => quiet.as_mut().poll(cx).map(|()| Wake::Quiet),
                 None => Poll::Pending,
             }
         })
@@ -330,8 +380,51 @@ mod tests {
     fn tree(settled: Settled) -> Scan {
         match settled {
             Settled::Tree(scan) => scan,
-            Settled::RefsMoved => panic!("expected a settled tree"),
+            _ => panic!("expected a settled tree"),
         }
+    }
+
+    /// Like `harness`, owing a quiet period of 3000 ms.
+    fn quiet(script: Vec<(u64, WatchEvent)>, scans: Vec<SnapshotId>) -> Harness {
+        let h = harness(script, scans, Some(id(0)));
+        Harness {
+            settling: h.settling.quiet_after(3000),
+            ..h
+        }
+    }
+
+    /// The next result of `h` and when it came.
+    fn next(h: &mut Harness) -> (Settled, u64) {
+        let settled = run(h.settling.next_settled(&h.acquisition)).unwrap().unwrap();
+        (settled, h.sim.lock().unwrap().now)
+    }
+
+    #[test]
+    fn the_tree_it_starts_with_is_quiet_once_after_the_quiet_period() {
+        let mut h = quiet(vec![], vec![]);
+        assert!(matches!(next(&mut h), (Settled::Quiet, 3000)));
+        assert!(run(h.settling.next_settled(&h.acquisition)).is_none());
+    }
+
+    #[test]
+    fn a_settle_within_the_quiet_period_starts_it_again() {
+        let mut h = quiet(vec![(1000, dirty("a.rs"))], vec![id(1)]);
+        assert!(matches!(next(&mut h), (Settled::Tree(_), 2500)));
+        assert!(matches!(next(&mut h), (Settled::Quiet, 5500)));
+    }
+
+    #[test]
+    fn the_tree_is_not_quiet_while_edits_keep_coming() {
+        let edits = (1..=5).map(|n| (n * 1000, dirty("a.rs"))).collect();
+        let mut h = quiet(edits, vec![id(1)]);
+        assert!(matches!(next(&mut h), (Settled::Tree(_), 6500)));
+        assert!(matches!(next(&mut h), (Settled::Quiet, 9500)));
+    }
+
+    #[test]
+    fn an_edit_that_settles_to_the_same_tree_starts_the_quiet_period_again() {
+        let mut h = quiet(vec![(1000, dirty("a.rs"))], vec![id(0)]);
+        assert!(matches!(next(&mut h), (Settled::Quiet, 4000)));
     }
 
     #[test]

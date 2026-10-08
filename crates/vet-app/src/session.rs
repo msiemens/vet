@@ -821,16 +821,22 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// Settles snapshots of the worktree as `settling` reports them, and looks at the branch
     /// on view when a ref was written, calling `on_settled` with each new revision of the
     /// changeset on view, until dropped. A settled tree that is not on view is not announced:
-    /// it is not what is shown.
+    /// it is not what is shown. `on_quiet` is called when `settling` finds the settled tree
+    /// quiet.
     pub async fn follow<W: Watcher + Send, C: Clock + Send + Sync>(
         &self,
         mut settling: Settling<W, C>,
         mut on_settled: impl FnMut(u32) + Send,
+        mut on_quiet: impl FnMut() + Send,
     ) {
         self.set_degraded(settling.degraded());
         loop {
             let scan = match settling.next_settled(&self.acquisition).await {
                 Ok(Settled::Tree(scan)) => scan,
+                Ok(Settled::Quiet) => {
+                    on_quiet();
+                    continue;
+                }
                 Ok(Settled::RefsMoved) => {
                     match self.observe().await {
                         Ok(Some(revision)) => on_settled(revision),

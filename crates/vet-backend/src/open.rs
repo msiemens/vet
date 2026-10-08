@@ -63,6 +63,7 @@ struct Plan {
     store: SqliteStore,
     budgets: Budgets,
     debounce: Duration,
+    quiet: Duration,
     poll: Duration,
     servers: Arc<LanguageServers>,
     backends: Arc<[Backend]>,
@@ -135,7 +136,7 @@ impl Wired {
     }
 
     /// Copies the working tree's content into the store in the background, so the first mark
-    /// finds it there. The copy of an older tree stops, unless a mark is waiting for it.
+    /// finds it there.
     fn copy_ahead(&self, session: &Arc<Live>) {
         let session = session.clone();
         let task = tokio::spawn(async move {
@@ -149,6 +150,13 @@ impl Wired {
         }
     }
 
+    /// Stops the copy of an older tree, unless a mark is waiting for it.
+    fn stop_copying(&self) {
+        if let Some(older) = self.copying.lock().unwrap_or_else(PoisonError::into_inner).take() {
+            older.abort();
+        }
+    }
+
     async fn boot(&self) -> Result<Arc<Booted>, String> {
         let Plan {
             id,
@@ -157,6 +165,7 @@ impl Wired {
             store,
             budgets,
             debounce,
+            quiet,
             poll,
             servers,
             backends,
@@ -182,28 +191,40 @@ impl Wired {
             return Err("the session was closed".into());
         }
 
+        // The content of the tree on view is copied ahead of a review once the tree has been
+        // quiet for a while: the one found at open too, as the first manifest comes first.
         let settling = Settling::new(
             IgnoringWatcher::new(watcher, git.clone()),
             TokioClock::new(),
             debounce.as_millis() as u64,
             Some(session.settled_snapshot().await),
-        );
+        )
+        .quiet_after(quiet.as_millis() as u64);
         let task = {
             let (session, subscribers, entry) = (session.clone(), subscribers.clone(), entry.clone());
+            let quiet_entry = entry.clone();
+            let quiet_session = session.clone();
             tokio::spawn(async move {
                 session
-                    .follow(settling, |revision| {
-                        settled(&subscribers, id, revision);
-                        if let Some(open) = entry.get().and_then(Weak::upgrade) {
-                            open.copy_ahead(&session);
-                            start_servers_in_background(open);
-                        }
-                    })
+                    .follow(
+                        settling,
+                        |revision| {
+                            settled(&subscribers, id, revision);
+                            if let Some(open) = entry.get().and_then(Weak::upgrade) {
+                                open.stop_copying();
+                                start_servers_in_background(open);
+                            }
+                        },
+                        || {
+                            if let Some(open) = quiet_entry.get().and_then(Weak::upgrade) {
+                                open.copy_ahead(&quiet_session);
+                            }
+                        },
+                    )
                     .await;
             })
         };
         *self.settling.lock().unwrap_or_else(PoisonError::into_inner) = Some(task.abort_handle());
-        self.copy_ahead(&session);
 
         // The semantic lane reads the same repository and store through handles of its own, so
         // what it reads draws on its budget and never on the review's.
@@ -354,6 +375,7 @@ impl Orchestrator {
                 store: self.store.clone(),
                 budgets: self.budgets.clone(),
                 debounce: self.config.debounce,
+                quiet: self.config.quiet,
                 poll: self.config.poll,
                 servers: self.servers.clone(),
                 backends: self.backends.clone(),
@@ -430,36 +452,52 @@ mod tests {
         use vet_app::session::View;
         use vet_core::content::BlobId;
 
-        let (repo, texts) = edited_repo(8);
         let data = tempfile::tempdir().unwrap();
-        let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), Config::default());
-        let (events, _inbox) = Events::channel();
-        let (project, _) = orchestrator
-            .open(repo.path().to_str().unwrap(), Connection(events))
-            .await
-            .unwrap();
-        let session = orchestrator.ready(project).await.unwrap().session.clone();
+        // The tree is never quiet long enough for the session to copy it by itself.
+        let config = Config {
+            quiet: Duration::from_secs(3600),
+            ..Config::default()
+        };
+        let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), config);
         let budgets = orchestrator.budgets().clone();
         let within = Duration::from_secs(20);
+        let (events, _inbox) = Events::channel();
+        let session = async |repo: &std::path::Path| {
+            let (project, _) = orchestrator
+                .open(repo.to_str().unwrap(), Connection(events.clone()))
+                .await
+                .unwrap();
+            orchestrator.ready(project).await.unwrap().session.clone()
+        };
+        let missing = async |texts: &[String]| {
+            let ids = texts.iter().map(|t| BlobId::of(t.as_bytes())).collect();
+            orchestrator.store.missing_blobs(ids).await.unwrap()
+        };
 
-        // While the copy waits for the background budget, the manifest is answered.
-        let background = budgets.background_io.acquire_all().await;
-        let copy = tokio::spawn({
-            let session = session.clone();
-            async move { session.copy_ahead().await }
-        });
-        let manifest = tokio::time::timeout(within, session.manifest(View::Changeset)).await;
-        assert_eq!(manifest.expect("the manifest is answered").unwrap().files.len(), 8);
-        assert!(!copy.is_finished());
-
-        // With every unit of the review's budget taken, the copy finishes.
+        // With every unit of the review's budget taken, a copy is made.
+        let (repo, texts) = edited_repo(8);
+        let first = session(repo.path()).await;
+        first.manifest(View::Changeset).await.unwrap();
         let review = budgets.review_io.acquire_all().await;
-        drop(background);
-        let copied = tokio::time::timeout(within, copy).await;
-        copied.expect("the copy finishes").unwrap().unwrap();
+        let copied = tokio::time::timeout(within, first.copy_ahead()).await;
+        copied.expect("the copy finishes").unwrap();
         drop(review);
-        let ids = texts.iter().map(|t| BlobId::of(t.as_bytes())).collect();
-        assert_eq!(orchestrator.store.missing_blobs(ids).await.unwrap(), []);
+        assert_eq!(missing(&texts).await, []);
+
+        // While a copy waits for the background budget, a project opens and shows its changes.
+        let background = budgets.background_io.acquire_all().await;
+        let (repo, texts) = edited_repo(5);
+        let second = session(repo.path()).await;
+        let copy = tokio::spawn({
+            let second = second.clone();
+            async move { second.copy_ahead().await }
+        });
+        let manifest = tokio::time::timeout(within, second.manifest(View::Changeset)).await;
+        assert_eq!(manifest.expect("the manifest is answered").unwrap().files.len(), 5);
+        assert!(!copy.is_finished());
+        drop(background);
+        tokio::time::timeout(within, copy).await.unwrap().unwrap().unwrap();
+        assert_eq!(missing(&texts).await, []);
     }
 
     #[tokio::test]
