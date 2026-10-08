@@ -18,6 +18,7 @@ mod sync;
 mod threads;
 
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -199,8 +200,9 @@ impl Orchestrator {
 
 impl Handler for Orchestrator {
     async fn handle(&self, request: Request, events: Events) -> Result<Response, String> {
+        let from = Connection(events);
         if !vet_infra::timing::enabled() {
-            return self.answer(request, Connection(events)).await;
+            return self.answer(request, &from).await;
         }
         let name = format!("{request:?}")
             .split([' ', '{', '('])
@@ -208,78 +210,96 @@ impl Handler for Orchestrator {
             .unwrap_or_default()
             .to_owned();
         let started = std::time::Instant::now();
-        let response = self.answer(request, Connection(events)).await;
+        let response = self.answer(request, &from).await;
         vet_infra::timing::log(|| format!("request {name}"), started);
         response
     }
 }
 
+/// What a request is answered with, on the heap.
+type Reply<'a> = Pin<Box<dyn Future<Output = Result<Response, String>> + Send + 'a>>;
+
+fn reply<'a>(work: impl Future<Output = Result<Response, String>> + Send + 'a) -> Reply<'a> {
+    Box::pin(work)
+}
+
 impl Orchestrator {
-    async fn answer(&self, request: Request, from: Connection) -> Result<Response, String> {
-        let from = &from;
+    /// Hands a request to its handler. This is not an `async fn`, and every arm
+    /// is a [`Reply`]: the futures of the handlers live on the heap and none is
+    /// held by the stack of whoever awaits the answer, so a handler whose future is
+    /// large costs the handlers beside it nothing. An arm that is not boxed does not compile.
+    fn answer<'a>(&'a self, request: Request, from: &'a Connection) -> Reply<'a> {
         match request {
-            Request::Ping { payload } => Ok(Response::Pong { payload }),
-            Request::RecentProjects => recent_projects(self.recent.list().await),
-            Request::RecordRecentProject { path } => recent_projects(self.recent.record(path, unix_now()).await),
-            Request::ForgetRecentProject { path } => recent_projects(self.recent.forget(&path).await),
-            Request::Accounts => self.accounts(from).await,
-            Request::SetCredentials { host, token, validate } => self.set_credentials(&host, &token, validate).await,
-            Request::RemoveCredentials { host } => self.remove_credentials(&host).await,
-            Request::ClearSemanticCaches => {
-                Box::pin(self.clear_semantic_caches()).await;
-                Ok(Response::Done)
+            Request::Ping { payload } => reply(async move { Ok(Response::Pong { payload }) }),
+            Request::RecentProjects => reply(async move { recent_projects(self.recent.list().await) }),
+            Request::RecordRecentProject { path } => {
+                reply(async move { recent_projects(self.recent.record(path, unix_now()).await) })
             }
-            Request::OpenProject { repo } => {
+            Request::ForgetRecentProject { path } => {
+                reply(async move { recent_projects(self.recent.forget(&path).await) })
+            }
+            Request::Accounts => reply(self.accounts(from)),
+            Request::SetCredentials { host, token, validate } => {
+                reply(async move { self.set_credentials(&host, &token, validate).await })
+            }
+            Request::RemoveCredentials { host } => reply(async move { self.remove_credentials(&host).await }),
+            Request::ClearSemanticCaches => reply(async move {
+                self.clear_semantic_caches().await;
+                Ok(Response::Done)
+            }),
+            Request::OpenProject { repo } => reply(async move {
                 let (project, root) = self.open(&repo, from.clone()).await?;
                 Ok(Response::Project { project, root })
-            }
-            Request::CloseProject { project } => {
+            }),
+            Request::CloseProject { project } => reply(async move {
                 self.close(project, from).await?;
                 Ok(Response::Done)
+            }),
+            Request::ListChangesets { project } => reply(self.list_changesets(project)),
+            Request::ListPullRequests { project } => reply(self.list_pull_requests(project)),
+            Request::Checks { project, commits } => reply(self.checks(project, commits)),
+            Request::CheckLog { project, run } => reply(self.check_log(project, run)),
+            Request::OpenChangeset { project, changeset } => reply(self.open_changeset(project, changeset)),
+            Request::Tasks { project } => reply(self.tasks(project)),
+            Request::FinishReview { project } => reply(self.finish_review(project)),
+            Request::Versions { project } => reply(self.versions(project)),
+            Request::Commits { project } => reply(self.commits(project)),
+            Request::SetLens { project, lens } => reply(self.set_lens(project, lens)),
+            Request::Manifest { project, view } => reply(self.manifest(project, view)),
+            Request::FileContents { project, view, path } => {
+                reply(async move { self.file_contents(project, view, &path).await })
             }
-            Request::ListChangesets { project } => self.list_changesets(project).await,
-            Request::ListPullRequests { project } => self.list_pull_requests(project).await,
-            Request::Checks { project, commits } => self.checks(project, commits).await,
-            Request::CheckLog { project, run } => self.check_log(project, run).await,
-            Request::OpenChangeset { project, changeset } => self.open_changeset(project, changeset).await,
-            Request::Tasks { project } => self.tasks(project).await,
-            Request::FinishReview { project } => self.finish_review(project).await,
-            Request::Versions { project } => self.versions(project).await,
-            Request::Commits { project } => self.commits(project).await,
-            Request::SetLens { project, lens } => self.set_lens(project, lens).await,
-            Request::Manifest { project, view } => self.manifest(project, view).await,
-            Request::FileContents { project, view, path } => self.file_contents(project, view, &path).await,
             Request::ToggleHunk {
                 project,
                 view,
                 revision,
                 path,
                 hunk,
-            } => self.toggle_hunk(project, from, view, revision, &path, hunk).await,
+            } => reply(async move { self.toggle_hunk(project, from, view, revision, &path, hunk).await }),
             Request::ToggleItem {
                 project,
                 view,
                 revision,
                 path,
                 kind,
-            } => self.toggle_item(project, from, view, revision, &path, kind).await,
+            } => reply(async move { self.toggle_item(project, from, view, revision, &path, kind).await }),
             Request::ToggleFileSeen {
                 project,
                 view,
                 revision,
                 path,
-            } => self.toggle_file_seen(project, from, view, revision, &path).await,
+            } => reply(async move { self.toggle_file_seen(project, from, view, revision, &path).await }),
             Request::ReconfirmFile {
                 project,
                 revision,
                 path,
-            } => self.reconfirm_file(project, from, revision, &path).await,
+            } => reply(async move { self.reconfirm_file(project, from, revision, &path).await }),
             Request::BaseDiff {
                 project,
                 revision,
                 path,
                 hunk,
-            } => self.base_diff(project, revision, &path, hunk).await,
+            } => reply(async move { self.base_diff(project, revision, &path, hunk).await }),
             Request::ItemBlob {
                 project,
                 view,
@@ -287,18 +307,18 @@ impl Orchestrator {
                 path,
                 kind,
                 side,
-            } => self.item_blob(project, view, revision, &path, kind, side).await,
-            Request::SetBase { project, base } => self.set_base(project, base).await,
-            Request::SetProjectFilter { project, filter } => self.set_project_filter(project, filter).await,
+            } => reply(async move { self.item_blob(project, view, revision, &path, kind, side).await }),
+            Request::SetBase { project, base } => reply(self.set_base(project, base)),
+            Request::SetProjectFilter { project, filter } => reply(self.set_project_filter(project, filter)),
             Request::ExcludePath {
                 project,
                 path,
                 directory,
-            } => self.exclude_path(project, &path, directory).await,
-            Request::ListBaseCandidates { project } => self.list_base_candidates(project).await,
-            Request::Fetch { project } => self.fetch(project).await,
-            Request::ListDirectory { project, path } => self.list_directory(project, &path).await,
-            Request::FileText { project, path } => self.file_text(project, &path).await,
+            } => reply(async move { self.exclude_path(project, &path, directory).await }),
+            Request::ListBaseCandidates { project } => reply(self.list_base_candidates(project)),
+            Request::Fetch { project } => reply(self.fetch(project)),
+            Request::ListDirectory { project, path } => reply(async move { self.list_directory(project, &path).await }),
+            Request::FileText { project, path } => reply(async move { self.file_text(project, &path).await }),
             Request::TargetLine {
                 project,
                 view,
@@ -306,55 +326,48 @@ impl Orchestrator {
                 side,
                 path,
                 line,
-            } => self.target_line(project, view, revision, side, &path, line).await,
-            Request::Threads { project, view } => self.threads(project, view).await,
+            } => reply(async move { self.target_line(project, view, revision, side, &path, line).await }),
+            Request::Threads { project, view } => reply(self.threads(project, view)),
             Request::CommentTarget {
                 project,
                 view,
                 revision,
                 path,
                 at,
-            } => self.comment_target(project, view, revision, &path, at).await,
+            } => reply(async move { self.comment_target(project, view, revision, &path, at).await }),
             Request::CreateThread {
                 project,
                 view,
                 revision,
                 target,
                 body,
-            } => self.create_thread(project, from, view, revision, target, body).await,
-            Request::Reply { project, thread, body } => self.reply(project, from, thread, body).await,
+            } => reply(self.create_thread(project, from, view, revision, target, body)),
+            Request::Reply { project, thread, body } => reply(self.reply(project, from, thread, body)),
             Request::SetThreadStatus {
                 project,
                 thread,
                 status,
-            } => self.set_thread_status(project, from, thread, status).await,
-            Request::DeleteThread { project, thread } => self.delete_thread(project, from, thread).await,
-            // Boxed: these futures are large, and `answer` holds the largest of its arms.
-            Request::EditMessage { project, message, body } => {
-                Box::pin(self.edit_message(project, from, message, body)).await
-            }
-            Request::RemoveMessage { project, message } => Box::pin(self.remove_message(project, from, message)).await,
-            Request::KeepEdit { project, message, keep } => {
-                Box::pin(self.keep_edit(project, from, message, keep)).await
-            }
-            Request::SyncThreads { project } => Box::pin(self.sync_threads(project)).await,
-            Request::SubmitReview { project, verdict, body } => {
-                Box::pin(self.submit_review(project, verdict, body)).await
-            }
-            Request::PostDrafts { project } => Box::pin(self.post_drafts(project)).await,
-            Request::SetVote { project, verdict } => Box::pin(self.set_vote(project, verdict)).await,
-            Request::PullRequestInfo { project } => Box::pin(self.pull_request_info(project)).await,
+            } => reply(self.set_thread_status(project, from, thread, status)),
+            Request::DeleteThread { project, thread } => reply(self.delete_thread(project, from, thread)),
+            Request::EditMessage { project, message, body } => reply(self.edit_message(project, from, message, body)),
+            Request::RemoveMessage { project, message } => reply(self.remove_message(project, from, message)),
+            Request::KeepEdit { project, message, keep } => reply(self.keep_edit(project, from, message, keep)),
+            Request::SyncThreads { project } => reply(self.sync_threads(project)),
+            Request::SubmitReview { project, verdict, body } => reply(self.submit_review(project, verdict, body)),
+            Request::PostDrafts { project } => reply(self.post_drafts(project)),
+            Request::SetVote { project, verdict } => reply(self.set_vote(project, verdict)),
+            Request::PullRequestInfo { project } => reply(self.pull_request_info(project)),
             Request::ConfirmAnchor {
                 project,
                 revision,
                 thread,
-            } => self.confirm_anchor(project, from, revision, thread).await,
+            } => reply(self.confirm_anchor(project, from, revision, thread)),
             Request::AttachAnchor {
                 project,
                 revision,
                 thread,
                 candidate,
-            } => self.attach_anchor(project, from, revision, thread, candidate).await,
+            } => reply(self.attach_anchor(project, from, revision, thread, candidate)),
             Request::Hover {
                 project,
                 revision,
@@ -362,7 +375,7 @@ impl Orchestrator {
                 path,
                 line,
                 col,
-            } => self.ready(project).await?.hover(revision, side, &path, line, col).await,
+            } => reply(async move { self.ready(project).await?.hover(revision, side, &path, line, col).await }),
             Request::Definition {
                 project,
                 revision,
@@ -370,12 +383,12 @@ impl Orchestrator {
                 path,
                 line,
                 col,
-            } => {
+            } => reply(async move {
                 self.ready(project)
                     .await?
                     .definition(revision, side, &path, line, col)
                     .await
-            }
+            }),
             Request::References {
                 project,
                 revision,
@@ -383,45 +396,47 @@ impl Orchestrator {
                 path,
                 line,
                 col,
-            } => {
+            } => reply(async move {
                 self.ready(project)
                     .await?
                     .references(revision, side, &path, line, col)
                     .await
-            }
+            }),
             Request::Diagnostics {
                 project,
                 revision,
                 path,
-            } => self.ready(project).await?.diagnostics(revision, &path).await,
-            Request::ChangedSymbols { project, revision } => self.ready(project).await?.changed_symbols(revision).await,
+            } => reply(async move { self.ready(project).await?.diagnostics(revision, &path).await }),
+            Request::ChangedSymbols { project, revision } => {
+                reply(async move { self.ready(project).await?.changed_symbols(revision).await })
+            }
             Request::Signature {
                 project,
                 revision,
                 symbol,
-            } => self.ready(project).await?.signature(revision, &symbol).await,
+            } => reply(async move { self.ready(project).await?.signature(revision, &symbol).await }),
             Request::Impact {
                 project,
                 revision,
                 symbol,
-            } => self.ready(project).await?.impact(revision, &symbol).await,
+            } => reply(async move { self.ready(project).await?.impact(revision, &symbol).await }),
             Request::RemovalImpact {
                 project,
                 revision,
                 symbol,
-            } => self.ready(project).await?.removal_impact(revision, &symbol).await,
+            } => reply(async move { self.ready(project).await?.removal_impact(revision, &symbol).await }),
             Request::Reachability {
                 project,
                 revision,
                 symbol,
-            } => self.ready(project).await?.reachability(revision, &symbol).await,
-            Request::ListServers { project } => self.list_servers(project).await,
-            Request::InstallServer { project, language } => self.install_server(project, from, language).await,
+            } => reply(async move { self.ready(project).await?.reachability(revision, &symbol).await }),
+            Request::ListServers { project } => reply(self.list_servers(project)),
+            Request::InstallServer { project, language } => reply(self.install_server(project, from, language)),
             Request::SetServerPath {
                 project,
                 language,
                 path,
-            } => self.set_server_path(project, from, language, path).await,
+            } => reply(self.set_server_path(project, from, language, path)),
         }
     }
 }
