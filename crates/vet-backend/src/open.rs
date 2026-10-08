@@ -26,7 +26,7 @@ use vet_app::semantics::{Links, Semantics};
 use vet_app::settle::Settling;
 use vet_app::trust::Trust;
 use vet_infra::budget::Budgets;
-use vet_infra::clock::{TokioClock, unix_now};
+use vet_infra::clock::{TokioClock, TokioLinger, unix_now};
 use vet_infra::git::GixRepo;
 use vet_infra::lsp::LspLauncher;
 use vet_infra::materialize::Materialize;
@@ -216,6 +216,7 @@ impl Wired {
                 revisions: session.revisions(),
                 limits,
                 tasks: self.tasks.clone(),
+                linger: Arc::new(TokioLinger),
             },
         )
         .reading(reading);

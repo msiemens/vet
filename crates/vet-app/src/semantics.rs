@@ -10,11 +10,11 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use vet_core::content::{FileDiff, RepoPath, SnapshotId};
 use vet_core::review::Side;
-use vet_engine::{Computed, Engine, Kind, Limits, Progress, Retention};
+use vet_engine::{Computed, Engine, Kind, Limits, Linger, Progress, Retention};
 use vet_semantic::derived::{
     Bounds, Change, Changes, Derived, EntryPoints, Reach, RemovalImpact, SymbolImpact, Texts, changed_symbols, impact,
     reachability, removal_impact,
@@ -40,6 +40,15 @@ use crate::trust::{Trust, analysis_policy};
 
 /// Servers kept warm per session: base and target of each language.
 const POOL_CAPACITY: usize = 8;
+
+/// How long a search for changed symbols goes on after its last caller left. A
+/// request superseded by a revision with the same snapshots (a filter, a finished
+/// review) is followed by the newer revision's request, which joins the search if
+/// it comes within this. It comes once the viewer heard of the revision and the
+/// session worked out its changed files, a few seconds at worst on a large diff.
+/// A search left for good holds the servers that long, and what it finds per text
+/// is kept for the searches after it.
+const LINGER: Duration = Duration::from_secs(10);
 
 /// Reachability stops at the first entry point within this many calls and symbols.
 const REACH_BOUNDS: Bounds = Bounds {
@@ -91,6 +100,8 @@ pub struct Links {
     pub limits: RestoreLimits,
     /// Told how far the changed-symbols analysis is.
     pub tasks: Tasks,
+    /// Drives a search for changed symbols for a while after its last caller left.
+    pub linger: Arc<dyn Linger>,
 }
 
 pub struct Semantics<G, S, L, M>
@@ -302,7 +313,8 @@ where
             limits: links.limits,
             trust,
             changes: Engine::new(Limits::entries(0))
-                .observing(move |_| Some(Arc::new(tasks.start(TaskKind::Analyse, "Finding the changed symbols")))),
+                .observing(move |_| Some(Arc::new(tasks.start(TaskKind::Analyse, "Finding the changed symbols"))))
+                .lingering(LINGER, links.linger),
             epoch: AtomicU64::new(0),
         }
     }
@@ -464,8 +476,9 @@ where
     ///
     /// The search is a flight of the engine: all callers for the same snapshots share
     /// it, with its one progress task, whichever of them came first and however many
-    /// of them give up. When the last is dropped the search stops, keeping the answers
-    /// it got per text (I2). A revision that is superseded drops its caller.
+    /// of them give up. A revision that is superseded drops its caller. When the last
+    /// is dropped the search goes on for `LINGER`, for the newer revision's caller to
+    /// join, and then stops, keeping the answers it got per text (I2).
     pub async fn changed_symbols(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<Derived<Changes>> {
         let work = async {
             let sides = session.semantic_sides(revision).await?;
@@ -920,6 +933,15 @@ mod tests {
         })
     }
 
+    /// Drives what lingers on the test's runtime for its grace period.
+    struct Spawned;
+
+    impl Linger for Spawned {
+        fn hold(&self, grace: Duration, work: Pin<Box<dyn Future<Output = ()> + Send>>) {
+            tokio::spawn(tokio::time::timeout(grace, work));
+        }
+    }
+
     type Harness = (
         Fixture,
         Semantics<FakeGit, MemStore, FakeLauncher, FakeMaterializer>,
@@ -945,6 +967,7 @@ mod tests {
                 revisions: fx.session.revisions(),
                 limits: RestoreLimits::default(),
                 tasks: Tasks::default(),
+                linger: Arc::new(Spawned),
             },
         )
         .keeping(limit);
@@ -1054,6 +1077,7 @@ mod tests {
                     std::time::Duration::ZERO,
                     Box::new(move |t| sink.lock().unwrap().push(t)),
                 ),
+                linger: Arc::new(Spawned),
             },
         );
         semantics.changed_symbols(&fx.session, 0).await.unwrap();
@@ -1231,6 +1255,7 @@ mod tests {
                     std::time::Duration::ZERO,
                     Box::new(move |t| sink.lock().unwrap().push(t)),
                 ),
+                linger: Arc::new(Spawned),
             },
         );
         (fx, semantics, heard)
@@ -1284,6 +1309,40 @@ mod tests {
         assert_eq!(searches(&heard), 1);
     }
 
+    #[tokio::test]
+    async fn a_filter_change_halfway_through_the_search_asks_each_text_of_the_server_once() {
+        let names: Vec<_> = (0..8).map(|i| format!("r{i}.rs")).collect();
+        let texts = |side: &str| -> Vec<(String, String)> {
+            let files = names.iter().map(|path| (path.clone(), format!("{side} {path}\n")));
+            files.chain([("c.md".to_owned(), format!("{side}\n"))]).collect()
+        };
+        let (before, after) = (texts("one"), texts("two"));
+        fn borrowed(all: &[(String, String)]) -> Vec<(&str, &str)> {
+            all.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect()
+        }
+        let (fx, semantics, counters) = semantics_over(&borrowed(&before), &borrowed(&after)).await;
+        let asked = || counters.text_symbol_requests.load(Ordering::SeqCst);
+
+        let mut old = Box::pin(semantics.changed_symbols(&fx.session, 0));
+        std::future::poll_fn(|cx| {
+            if asked() > 0 {
+                return std::task::Poll::Ready(());
+            }
+            assert!(old.as_mut().poll(cx).is_pending());
+            // Back to the runtime, which delivers the wakes the search's yields deferred.
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        })
+        .await;
+        let revision = fx.session.exclude_path("c.md", false).await.unwrap();
+        assert!(matches!(old.await, Err(SessionError::Stale { .. })));
+        assert!(asked() < 16, "the search was under way, not done");
+
+        let new = semantics.changed_symbols(&fx.session, revision).await.unwrap();
+        assert_eq!(new.value.symbols.len(), 8);
+        assert_eq!(asked(), 16, "both texts of each file, once");
+    }
+
     // Every analysis of a symbol (signature, impact, reachability) needs the revision's
     // changed symbols; they are found once, under one "Finding the changed symbols" task.
     #[tokio::test]
@@ -1309,6 +1368,7 @@ mod tests {
                     std::time::Duration::ZERO,
                     Box::new(move |t| sink.lock().unwrap().push(t)),
                 ),
+                linger: Arc::new(Spawned),
             },
         );
         // Four selections of a symbol, three analyses each.
@@ -1430,6 +1490,7 @@ mod tests {
                     revisions: fx.session.revisions(),
                     limits: RestoreLimits::default(),
                     tasks: Tasks::default(),
+                    linger: Arc::new(Spawned),
                 },
             )
             .persisting(store.clone());
@@ -1508,6 +1569,7 @@ mod tests {
                         revisions: fx.session.revisions(),
                         limits: RestoreLimits::default(),
                         tasks: Tasks::default(),
+                        linger: Arc::new(Spawned),
                     },
                 )
                 .persisting(store.clone())

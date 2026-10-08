@@ -1,7 +1,9 @@
+use std::pin::Pin;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::time::Instant;
 use vet_app::ports::{Clock, Millis};
+use vet_engine::Linger;
 
 /// Whole unix seconds of `t`; negative before the epoch.
 pub fn unix_secs(t: SystemTime) -> i64 {
@@ -39,5 +41,14 @@ impl Clock for TokioClock {
 
     fn sleep_until(&self, deadline: Millis) -> impl Future<Output = ()> + Send {
         tokio::time::sleep_until(self.start + Duration::from_millis(deadline.0))
+    }
+}
+
+/// Drives a lingering flight of an engine as a task of its own, for its grace period.
+pub struct TokioLinger;
+
+impl Linger for TokioLinger {
+    fn hold(&self, grace: Duration, work: Pin<Box<dyn Future<Output = ()> + Send>>) {
+        tokio::spawn(tokio::time::timeout(grace, work));
     }
 }
