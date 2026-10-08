@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { errorText } from "../../lib/errorText";
   import { formatBytes } from "../../lib/formatBytes";
   import { match } from "../../lib/speedSearch";
   import Marked from "../../lib/ui/Marked.svelte";
@@ -8,13 +7,13 @@
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { backendSettings } from "../../state/backendSettings.svelte";
-  import { hasNativeDialogs, pickFile } from "../../state/host";
   import { servers } from "../../state/servers.svelte";
+  import ServerPathSheet from "./ServerPathSheet.svelte";
   import { serverRow, type ServerRow } from "./serverRows";
 
-  /** The language whose path editor is open, and what is typed in it. */
-  let editing = $state<string>();
-  let draft = $state("");
+  /** The server whose custom path sheet is open. */
+  let editing = $state<ServerRow>();
+  /** Why going back to the automatic server failed, with its language. */
   let pathError = $state<{ language: string; message: string }>();
 
   const search = new SpeedSearch();
@@ -36,23 +35,17 @@
     return servers.start();
   });
 
-  function edit(language: string, current: string | undefined) {
-    editing = language;
-    draft = current ?? "";
-    pathError = undefined;
-  }
-
-  async function setPath(language: string, path: string | null) {
-    const message = await servers.setPath(language, path);
+  async function automatic(language: string) {
+    const message = await servers.setPath(language, null);
     pathError = message === undefined ? undefined : { language, message };
-    if (message === undefined) editing = undefined;
   }
 
   /** What the Source select offers besides the source in use; picking one acts and the select shows the source in use again. */
   function chooseSource(row: ServerRow, choice: string) {
+    pathError = undefined;
     if (choice === "install") void servers.install(row.language);
-    else if (choice === "custom") edit(row.language, row.customPath ?? row.path);
-    else if (choice === "automatic") void setPath(row.language, null);
+    else if (choice === "custom") editing = row;
+    else if (choice === "automatic") void automatic(row.language);
   }
 
   let cacheError = $state<string>();
@@ -72,15 +65,6 @@
     }
     if (mb === kept) return;
     cacheError = await backendSettings.change({ semanticCacheMb: mb });
-  }
-
-  async function browse() {
-    try {
-      const picked = await pickFile();
-      if (picked) draft = picked;
-    } catch (e) {
-      if (editing) pathError = { language: editing, message: errorText(e) };
-    }
   }
 </script>
 
@@ -161,30 +145,9 @@
           {/if}
         </dd>
 
-        {#if editing === selected.language}
+        {#if pathError?.language === selected.language}
           <dt></dt>
-          <dd>
-            <form
-              class="path"
-              onsubmit={(e) => {
-                e.preventDefault();
-                void setPath(selected.language, draft.trim() || null);
-              }}
-            >
-              <input
-                type="text"
-                class="field mono"
-                placeholder="Path to the server executable"
-                aria-label="Server path for {selected.title}"
-                bind:value={draft}
-              />
-              {#if hasNativeDialogs}<button class="ctl" type="button" onclick={() => void browse()}>Browse…</button
-                >{/if}
-              <button class="ctl" type="submit">Set</button>
-              <button class="ctl" type="button" onclick={() => (editing = undefined)}>Cancel</button>
-            </form>
-            {#if pathError?.language === selected.language}<div class="problem">{pathError.message}</div>{/if}
-          </dd>
+          <dd class="problem">{pathError.message}</dd>
         {/if}
 
         <dt>Path</dt>
@@ -281,6 +244,16 @@
     >
   </footer>
 </div>
+
+{#if editing}
+  <ServerPathSheet
+    language={editing.language}
+    title={editing.title}
+    server={editing.server}
+    current={editing.customPath ?? editing.path}
+    onclose={() => (editing = undefined)}
+  />
+{/if}
 
 <style>
   .page {
@@ -386,18 +359,13 @@
     overflow-wrap: anywhere;
   }
   .source,
-  .tsserver,
-  .path {
+  .tsserver {
     display: flex;
     gap: 6px;
     align-items: center;
   }
   .source select {
     min-width: 180px;
-  }
-  .path input {
-    flex: 1;
-    min-width: 0;
   }
   .bad {
     color: var(--del-text);
