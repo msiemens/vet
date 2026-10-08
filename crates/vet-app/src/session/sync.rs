@@ -67,8 +67,10 @@ pub struct SubmitReport {
     /// Drafts that were not posted, because the code they were on is gone or because the thread
     /// waits for an edit conflict to be settled.
     pub skipped: u32,
-    /// A comment on the pull request as a whole that the platform did not take.
+    /// Why a comment on the pull request as a whole was not taken by the platform.
     pub problem: Option<PlatformError>,
+    /// The texts of those comments, which stay drafts.
+    pub not_posted: Vec<String>,
 }
 
 fn pull_request(st: &State) -> Result<(RemoteKey, u64)> {
@@ -602,10 +604,15 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             return Err(SessionError::Invalid("there is nothing to submit".into()));
         }
         let posted = platform.submit_review(&remote, number, &submission).await?;
+        let not_posted = (submission.comments.iter())
+            .filter(|c| !posted.comments.iter().any(|p| p.key == c.key))
+            .map(|c| c.body.clone())
+            .collect();
         let mut report = SubmitReport {
             posted: 0,
             skipped,
             problem: posted.comments_failed.clone(),
+            not_posted,
         };
         let mut st = self.state.lock().await;
         report.posted = self.record_posted(&mut st, &posted).await?;

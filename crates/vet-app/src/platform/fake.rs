@@ -321,6 +321,10 @@ impl Platform for FakeHosting {
             });
         }
         for new in &submission.comments {
+            if let Err(error) = hosted.check("flat comment".to_owned()) {
+                posted.comments_failed = Some(error);
+                break;
+            }
             let comment = hosted.comment("ada", true, &new.body, None);
             posted.comments.push(PostedComment { key: new.key, comment });
         }

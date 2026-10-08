@@ -915,6 +915,23 @@ pub fn notification(n: &SyncNotice) -> p::Notification {
     }
 }
 
+/// What the viewer should hear when comments on the pull request as a whole were not taken: why,
+/// and their texts to copy.
+pub fn submit_notification(r: &SubmitReport) -> Option<p::Notification> {
+    let problem = r.problem.as_ref()?;
+    let count = r.not_posted.len();
+    Some(p::Notification {
+        kind: p::NotificationKind::Info,
+        text: format!(
+            "{} on the pull request {} not posted: {problem}",
+            if count == 1 { "A comment" } else { "Comments" },
+            if count == 1 { "was" } else { "were" },
+        ),
+        copy_text: (count > 0).then(|| r.not_posted.join("\n\n")),
+        host: None,
+    })
+}
+
 pub fn review_submitted(r: &SubmitReport) -> p::Response {
     p::Response::ReviewSubmitted(p::ReviewSubmitted {
         posted: r.posted,

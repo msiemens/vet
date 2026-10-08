@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use vet_app::changeset::Source;
-use vet_app::platform::PlatformError;
+use vet_app::platform::{PlatformError, PlatformKind};
 use vet_app::session::{Keep, SessionError, SyncReport};
 use vet_core::review::MessageId;
 use vet_infra::clock::unix_now;
@@ -85,6 +85,10 @@ impl Orchestrator {
             .submit_review(&*open.open.github, &verdict, body)
             .await
             .map_err(message)?;
+        if let Some(notification) = mapping::submit_notification(&report) {
+            open.subscribers
+                .broadcast(Event::Notification { project, notification });
+        }
         sync_pull_request(&open.open, &open).await;
         Ok(mapping::review_submitted(&report))
     }
@@ -120,6 +124,10 @@ pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) {
     let Source::PullRequest { remote, .. } = booted.session.source().await else {
         return;
     };
+    // Only GitHub's discussion is implemented; another platform's pull request has no sync yet.
+    if remote.kind() != PlatformKind::GitHub {
+        return;
+    }
     let (problem, report) = match booted.session.sync_threads(&*open.github).await {
         Ok(report) => (report.problem.clone(), Some(report)),
         Err(SessionError::Platform(error)) => (Some(error), None),

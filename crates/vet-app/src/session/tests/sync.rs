@@ -557,6 +557,23 @@ async fn a_review_the_platform_refuses_posts_nothing_and_keeps_the_drafts() {
 }
 
 #[tokio::test]
+async fn a_comment_on_the_whole_pull_request_the_platform_refuses_is_reported_with_its_text_and_stays_a_draft() {
+    let (fx, hosting) = on_a_pull_request().await;
+    fx.thread(on("a.txt", 20, 21)).await;
+    let overall = fx.thread(NewThread::Changeset).await;
+    hosting.fail("flat comment", PlatformError::Forbidden("no access".to_owned()));
+
+    let report = fx.session.submit_review(&hosting, "COMMENT", None).await.unwrap();
+
+    assert!(matches!(report.problem, Some(PlatformError::Forbidden(_))));
+    assert_eq!(report.not_posted, ["why?"]);
+    assert_eq!(report.posted, 1, "the review itself went through");
+    let all = fx.all().await;
+    let kept = all.iter().find(|t| t.id == overall).expect("the thread");
+    assert!(kept.messages.iter().all(|m| m.remote.is_none()));
+}
+
+#[tokio::test]
 async fn own_comments_are_removed_locally_when_drafts_and_on_the_platform_when_posted() {
     let (fx, hosting) = on_a_pull_request().await;
     let mine = hosting.my_thread("a.txt", (4, 4), "pr1", "first");
