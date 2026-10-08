@@ -35,7 +35,12 @@ export function reviewerMark(state: ReviewerState): string {
   }
 }
 
-/** The messages that `SubmitReview` would post: those only Vet has, in threads of a platform. */
+/** What is said of the drafts that were not posted because their code is gone or their thread has an edit to settle. */
+export function waitingNote(count: number): string {
+  return `${count} ${count === 1 ? "draft waits" : "drafts wait"}: its code is gone or its thread has an edit to settle.`;
+}
+
+/** The messages that `SubmitReview` or `PostDrafts` would post: those only Vet has, in threads of a platform. */
 export function draftsToSubmit(threads: readonly Thread[]): number {
   return threads.reduce((n, t) => n + (t.platform ? t.messages.filter((m) => !m.posted).length : 0), 0);
 }

@@ -94,6 +94,27 @@ class PlatformStore {
     }
   }
 
+  /** Posts the drafts one after the other; resolves what became of them, or nothing if it failed. */
+  async post(): Promise<ReviewSubmitted | undefined> {
+    try {
+      return await this.backend?.postDrafts();
+    } catch (error) {
+      session.notice = `Could not post the comments: ${errorText(error)}`;
+      return undefined;
+    }
+  }
+
+  /** Sets the viewer's vote; resolves whether the platform took it. */
+  async vote(verdict: string): Promise<boolean> {
+    try {
+      await this.backend?.setVote(verdict);
+      return true;
+    } catch (error) {
+      session.notice = `Could not set the vote: ${errorText(error)}`;
+      return false;
+    }
+  }
+
   dismiss(id: number) {
     this.notified = this.notified.map((n) => (n.id === id ? { ...n, card: false } : n));
   }

@@ -75,9 +75,12 @@
             <span
               class="sync"
               class:local={!thread.platform.posted}
-              title={thread.platform.posted ? "On the platform" : "Only in Vet until the review is submitted"}
+              title={thread.platform.posted ? "On the platform" : "Only in Vet until it is posted"}
             >
-              {#if thread.platform.posted}<Icon name="github" size={11} />{/if}
+              {#if thread.platform.posted}<Icon
+                  name={info?.platform.kind === "azureDevOps" ? "azureDevOps" : "github"}
+                  size={11}
+                />{/if}
             </span>
           {/if}
         </span>

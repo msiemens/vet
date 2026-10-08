@@ -10,8 +10,10 @@ import type { Manifest } from "../../generated/Manifest";
 import type { Side } from "../../generated/Side";
 import type { TextSpan } from "../../generated/TextSpan";
 import { nextPaint } from "../../lib/nextPaint";
+import { platformName } from "../../lib/platformName";
 import type { Backend } from "../../state/backend";
 import type { Changeset } from "../../state/changeset.svelte";
+import { platform } from "../../state/platform.svelte";
 import { semantic } from "../../state/semantic.svelte";
 import { session } from "../../state/session.svelte";
 import { threads } from "../../state/threads.svelte";
@@ -363,6 +365,7 @@ export class ReviewController {
         editMessage: (message, body) => threads.editMessage(message, body),
         removeMessage: (message) => threads.removeMessage(message),
         keepEdit: (message, keep) => threads.keepEdit(message, keep),
+        platformName: () => (platform.status ? platformName(platform.status.kind) : "the platform"),
         confirm: (thread) => threads.confirm(thread),
       },
     };

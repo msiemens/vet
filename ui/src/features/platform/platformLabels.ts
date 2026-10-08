@@ -1,8 +1,7 @@
 // How the footer words the state of syncing with a platform.
 
 import type { PlatformStatus } from "../../generated/PlatformStatus";
-
-const NAMES = { github: "GitHub", azureDevOps: "Azure DevOps" } as const;
+import { platformName } from "../../lib/platformName.ts";
 
 export interface ConnectionLabel {
   text: string;
@@ -12,7 +11,7 @@ export interface ConnectionLabel {
 }
 
 export function connectionLabel(status: PlatformStatus): ConnectionLabel {
-  const name = NAMES[status.kind];
+  const name = platformName(status.kind);
   const { connection } = status;
   switch (connection.type) {
     case "ok":

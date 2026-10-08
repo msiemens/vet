@@ -3,7 +3,7 @@
   import { session } from "../../state/session.svelte";
   import { platform } from "../../state/platform.svelte";
   import { threads } from "../../state/threads.svelte";
-  import { draftsToSubmit, submitBlock } from "./pullRequest";
+  import { draftsToSubmit, submitBlock, waitingNote } from "./pullRequest";
 
   let { info }: { info: PullRequestInfo } = $props();
 
@@ -21,28 +21,60 @@
     sending = false;
     if (!done) return;
     [form.open, form.body] = [false, ""];
-    session.notice =
-      done.skipped > 0
-        ? `Review submitted. ${done.skipped} ${done.skipped === 1 ? "draft waits" : "drafts wait"}: its code is gone or its thread has an edit to settle.`
-        : "Review submitted";
+    session.notice = done.skipped > 0 ? `Review submitted. ${waitingNote(done.skipped)}` : "Review submitted";
+  }
+
+  async function post() {
+    sending = true;
+    const done = await platform.post();
+    sending = false;
+    if (!done) return;
+    const posted = `${done.posted} ${done.posted === 1 ? "comment" : "comments"} posted`;
+    session.notice = done.skipped > 0 ? `${posted}. ${waitingNote(done.skipped)}` : posted;
   }
 </script>
 
 <div class="submit">
-  <button
-    class="ctl primary"
-    type="button"
-    disabled={blocked !== undefined}
-    title={blocked}
-    aria-expanded={form.open}
-    onclick={() => (form.open = !form.open)}
-  >
-    Submit review{#if drafts > 0}<span class="n">{drafts}</span>{/if}
-  </button>
+  {#if info.traits.batchedReview}
+    <button
+      class="ctl primary"
+      type="button"
+      disabled={blocked !== undefined}
+      title={blocked}
+      aria-expanded={form.open}
+      onclick={() => (form.open = !form.open)}
+    >
+      Submit review{#if drafts > 0}<span class="n">{drafts}</span>{/if}
+    </button>
+  {:else}
+    <button
+      class="ctl primary"
+      type="button"
+      disabled={blocked !== undefined || drafts === 0 || sending}
+      title={blocked}
+      onclick={() => void post()}
+    >
+      Post{#if drafts > 0}<span class="n">{drafts}</span>{/if}
+    </button>
+  {/if}
+  {#if info.traits.verdictSeparate}
+    <label class="vote">
+      <span>Vote</span>
+      <select
+        class="field"
+        disabled={blocked !== undefined}
+        value={info.viewerVerdict ?? ""}
+        onchange={(e) => void platform.vote(e.currentTarget.value)}
+      >
+        {#if !info.viewerVerdict}<option value="" disabled>No vote</option>{/if}
+        {#each info.traits.verdicts as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
+      </select>
+    </label>
+  {/if}
   {#if blocked}
     <button class="flat link" type="button" onclick={() => platform.openAccounts()}>Sign in…</button>
   {/if}
-  {#if form.open && !blocked}
+  {#if info.traits.batchedReview && form.open && !blocked}
     <div class="form">
       <label>
         <span>Verdict</span>

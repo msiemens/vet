@@ -513,6 +513,18 @@ export class Backend {
     return { posted, skipped };
   }
 
+  /** Posts the drafts one after the other, on a platform that takes comments that way. */
+  async postDrafts(): Promise<ReviewSubmitted> {
+    const request = { type: "postDrafts", project: this.pid } as const;
+    const { posted, skipped } = expect(await this.conn.request(request), "reviewSubmitted");
+    return { posted, skipped };
+  }
+
+  /** Sets the viewer's vote (an id of `PullRequestInfo.traits.verdicts`), on a platform that keeps it apart from posting. */
+  async setVote(verdict: string): Promise<void> {
+    expect(await this.conn.request({ type: "setVote", project: this.pid, verdict }), "done");
+  }
+
   /** What the platform said of the pull request on view at the last sync; fails before the first. */
   async pullRequestInfo(): Promise<PullRequestInfo> {
     const request = { type: "pullRequestInfo", project: this.pid } as const;

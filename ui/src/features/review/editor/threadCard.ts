@@ -29,6 +29,8 @@ export interface ThreadActions {
   removeMessage(message: number): Promise<boolean>;
   /** Settles a comment that was edited here and on the platform. */
   keepEdit(message: number, keep: EditChoice): Promise<boolean>;
+  /** What the platform of the pull request on view is called. */
+  platformName(): string;
   confirm(thread: number): Promise<boolean>;
   /** The form was dismissed. */
   cancelDraft(): void;
@@ -167,7 +169,7 @@ function conflictCard(message: ThreadMessage, conflict: EditConflict, actions: T
   };
   columns.append(
     column("Vet", message.body, conflict.remoteBody, "vet"),
-    column("GitHub", conflict.remoteBody, message.body, "remote"),
+    column(actions.platformName(), conflict.remoteBody, message.body, "remote"),
   );
   box.append(columns);
   return box;
