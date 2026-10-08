@@ -27,24 +27,21 @@ function unit(kind: CommitKind, completion: Partial<CommitUnit["completion"]> = 
   };
 }
 
-void test("a fully seen commit is done and carries its own numbers", () => {
+void test("a commit carries its own numbers", () => {
   const row = commitRow(unit({ type: "commit" }));
-  assert.deepEqual(
-    [row.done, row.merge, row.clean, row.added, row.removed, row.seen],
-    [true, false, false, 62, 0, 100],
-  );
+  assert.deepEqual([row.merge, row.clean, row.added, row.removed, row.seen], [false, false, 62, 0, 100]);
 });
 
-void test("a commit with part of its diff unseen is not done", () => {
+void test("a commit with part of its diff unseen shows the shares seen and seen against an old base", () => {
   const row = commitRow(unit({ type: "commit" }, { complete: false, seenPercent: 40, oldBasePercent: 10 }));
-  assert.deepEqual([row.done, row.seen, row.oldBase], [false, 40, 10]);
+  assert.deepEqual([row.seen, row.oldBase], [40, 10]);
 });
 
-void test("a clean merge is muted and counts as nothing to do rather than as done", () => {
+void test("a clean merge is muted", () => {
   const row = commitRow(
     unit({ type: "merge", clean: true, remerged: true }, { lines: 0, seenLines: 0, seenPercent: 0 }),
   );
-  assert.deepEqual([row.merge, row.clean, row.done, row.notRemerged], [true, true, false, false]);
+  assert.deepEqual([row.merge, row.clean, row.notRemerged], [true, true, false]);
 });
 
 void test("a merge compared with its first parent says so", () => {

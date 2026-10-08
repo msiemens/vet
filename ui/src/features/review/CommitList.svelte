@@ -68,9 +68,6 @@
             <span class="mono add">+{row.added}</span><span class="mono del">−{row.removed}</span>
           {/if}
           <span class="grow"></span>
-          {#if row.done}<span class="done" title="Everything of it is seen"
-              ><Icon name="check" size={12} stroke={2.4} /></span
-            >{/if}
           <CiStatus state={checks.of(commits[index].commit.id)?.state} size={12} />
         </span>
       </span>
@@ -151,10 +148,6 @@
   }
   .del {
     color: var(--del-text);
-  }
-  .done {
-    display: inline-flex;
-    color: var(--ok);
   }
   .clean .subject,
   .clean .mark {

@@ -19,8 +19,6 @@ export interface CommitRow {
   /** The shares of the commit's own diff that are seen, and seen against another base, in percent. */
   seen: number;
   oldBase: number;
-  /** Everything of it is seen, and there was something. */
-  done: boolean;
 }
 
 export function commitRow(unit: CommitUnit, now = Date.now()): CommitRow {
@@ -38,6 +36,5 @@ export function commitRow(unit: CommitUnit, now = Date.now()): CommitRow {
     removed: unit.delta.removed,
     seen: unit.completion.seenPercent,
     oldBase: unit.completion.oldBasePercent,
-    done: !clean && unit.completion.complete && unit.completion.lines + unit.completion.items > 0,
   };
 }
