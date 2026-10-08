@@ -2,6 +2,7 @@
 // knows the wire protocol, so a protocol change lands here.
 
 import type { Account } from "../generated/Account";
+import type { BackendSettings } from "../generated/BackendSettings";
 import type { Base } from "../generated/Base";
 import type { BaseChoice } from "../generated/BaseChoice";
 import type { BaseDiff } from "../generated/BaseDiff";
@@ -191,9 +192,27 @@ export class Backend {
     return expect(await this.conn.request({ type: "removeCredentials", host }), "accounts").accounts;
   }
 
-  /** Removes the answers of the language servers that the backend keeps, and the kept copies of snapshots nothing uses. Only speed is lost. */
-  async clearSemanticCaches(): Promise<void> {
-    expect(await this.conn.request({ type: "clearSemanticCaches" }), "done");
+  /**
+   * Removes the answers of the language servers that the backend keeps, and the kept copies of snapshots
+   * nothing uses. Only speed is lost. Resolves with the bytes the semantic cache takes on disk afterwards.
+   */
+  async clearSemanticCaches(): Promise<number> {
+    return expect(await this.conn.request({ type: "clearSemanticCaches" }), "semanticCacheUsage").bytes;
+  }
+
+  /** The bytes the answers of the language servers kept between launches take on disk. */
+  async semanticCacheUsage(): Promise<number> {
+    return expect(await this.conn.request({ type: "semanticCacheUsage" }), "semanticCacheUsage").bytes;
+  }
+
+  /** The backend's own settings, app-wide. */
+  async settings(): Promise<BackendSettings> {
+    return expect(await this.conn.request({ type: "settings" }), "settings").settings;
+  }
+
+  /** Replaces the backend's own settings; resolves with them as kept, rejects with the backend's message. */
+  async setSettings(settings: BackendSettings): Promise<BackendSettings> {
+    return expect(await this.conn.request({ type: "setSettings", settings }), "settings").settings;
   }
 
   /** The folder of the backend's log files, as a path of the machine it runs on. */

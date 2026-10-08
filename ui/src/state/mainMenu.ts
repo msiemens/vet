@@ -41,6 +41,8 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     { command: "changeset.openPullRequest" },
     { command: "review.sinceLast" },
     { command: "review.finish" },
+    "-",
+    { command: "semantic.clearCaches" },
     ...(s.native ? [] : (["-", settings, "-", quit] as MenuSpec)),
   ];
   const view: MenuSpec = [

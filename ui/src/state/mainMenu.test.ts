@@ -138,7 +138,9 @@ void test("Fetch is offered in the VCS menu while a project is open", () => {
   assert.deepEqual(calls, ["fetch"]);
 });
 
-void test("Clear Semantic Caches runs without a repository: the caches belong to the backend", () => {
+void test("Clear Semantic Caches is in the File menu and runs without a repository: the caches belong to the backend", () => {
+  const file = menu({}, { repoOpen: false }).find((m) => m.id === "file");
+  assert.equal(file?.children?.find((i) => i.id === "semantic.clearCaches")?.enabled, undefined);
   calls.length = 0;
   assert.equal(registry.run("semantic.clearCaches", { ...open, repoOpen: false, reviewOpen: false }), true);
   assert.deepEqual(calls, ["clearCaches"]);

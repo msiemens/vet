@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    Account, Base, BaseDiff, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow, CheckLog,
-    CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, Highlights, Impact, Lens, LineDelta, Locations,
-    Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject,
+    Account, BackendSettings, Base, BaseDiff, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow,
+    CheckLog, CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, Highlights, Impact, Lens, LineDelta,
+    Locations, Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject,
     RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange, TextContent,
     Thread, ThreadTarget, Unavailable, VersionInfo,
 };
@@ -28,6 +28,15 @@ pub enum Response {
     /// The folder of the backend's log files.
     LogDirectory {
         path: String,
+    },
+    /// The bytes the semantic cache's file takes on disk.
+    SemanticCacheUsage {
+        #[ts(type = "number")]
+        bytes: u64,
+    },
+    /// The backend's own settings.
+    Settings {
+        settings: BackendSettings,
     },
     /// The recent list after the request, most recent first.
     RecentProjects {

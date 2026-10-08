@@ -46,5 +46,8 @@ pub mod servers;
 /// `vet_semantic::reuse::SemanticCache`.
 pub mod semantic_cache;
 
+/// The backend's own settings.
+pub mod settings;
+
 /// `RepoPath` to and from filesystem paths.
 pub(crate) mod paths;

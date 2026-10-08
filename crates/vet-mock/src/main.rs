@@ -331,7 +331,9 @@ impl Handler for Mock {
             | Request::ListServers { .. }
             | Request::InstallServer { .. }
             | Request::SetServerPath { .. }
-            | Request::ClearSemanticCaches => Err("the corpus has no language servers".into()),
+            | Request::ClearSemanticCaches
+            | Request::SemanticCacheUsage => Err("the corpus has no language servers".into()),
+            Request::Settings | Request::SetSettings { .. } => Err("the corpus has no settings".into()),
             Request::LogDirectory => Err("the corpus keeps no log".into()),
             Request::ListChangesets { .. }
             | Request::ListPullRequests { .. }

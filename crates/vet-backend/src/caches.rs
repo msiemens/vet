@@ -3,20 +3,24 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::OnceCell;
-use vet_infra::semantic_cache::SqliteSemanticCache;
+use vet_infra::semantic_cache::{SqliteSemanticCache, size_on_disk};
 use vet_semantic::reuse::SemanticCache;
 
 pub struct PersistentAnswers {
     dir: PathBuf,
+    /// The bytes the file may hold, for when it opens.
+    budget: AtomicU64,
     file: OnceCell<Option<Arc<SqliteSemanticCache>>>,
 }
 
 impl PersistentAnswers {
-    pub fn new(dir: PathBuf) -> Self {
+    pub fn new(dir: PathBuf, budget: u64) -> Self {
         Self {
             dir,
+            budget: AtomicU64::new(budget),
             file: OnceCell::new(),
         }
     }
@@ -24,7 +28,7 @@ impl PersistentAnswers {
     async fn file(&self) -> Option<&Arc<SqliteSemanticCache>> {
         self.file
             .get_or_init(|| async {
-                match SqliteSemanticCache::open(&self.dir).await {
+                match SqliteSemanticCache::open(&self.dir, self.budget.load(Ordering::Relaxed)).await {
                     Ok(cache) => Some(Arc::new(cache)),
                     // Only speed is lost without it.
                     Err(why) => {
@@ -47,5 +51,18 @@ impl PersistentAnswers {
         if let Some(file) = self.file().await {
             file.clear().await;
         }
+    }
+
+    /// Holds the file to `budget` bytes from now on, and at once.
+    pub async fn set_budget(&self, budget: u64) {
+        self.budget.store(budget, Ordering::Relaxed);
+        if let Some(file) = self.file().await {
+            file.set_budget(budget).await;
+        }
+    }
+
+    /// The bytes the file takes on disk.
+    pub fn usage(&self) -> u64 {
+        size_on_disk(&self.dir)
     }
 }

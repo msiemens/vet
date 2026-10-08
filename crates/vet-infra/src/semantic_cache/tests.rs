@@ -78,7 +78,7 @@ async fn ticking(dir: &TempDir, budget: u64) -> SqliteSemanticCache {
 }
 
 async fn open(dir: &TempDir) -> SqliteSemanticCache {
-    SqliteSemanticCache::open(dir.path()).await.unwrap()
+    SqliteSemanticCache::open(dir.path(), 256 << 20).await.unwrap()
 }
 
 async fn count(cache: &SqliteSemanticCache) -> i64 {
@@ -316,6 +316,34 @@ async fn over_its_budget_the_rows_used_least_recently_go_first() {
         }
     }
     assert_eq!(present, [0, 4, 5, 6, 7, 8, 9]);
+}
+
+#[tokio::test]
+async fn a_smaller_budget_removes_the_least_recently_used_at_once_and_the_file_shrinks() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = ticking(&dir, 1 << 30).await;
+    let text = "x".repeat(10_000);
+    for blob in 0..100 {
+        cache.put(&hover_key(blob), &hover(&text));
+        cache.flush().await;
+    }
+    let before = size_on_disk(dir.path());
+    assert!(before > 1_000_000, "{before}");
+
+    // About 10 kB a row: four fifths of 100 kB keep the 7 used last.
+    cache.set_budget(100_000).await;
+    assert_eq!(count(&cache).await, 7);
+    assert!(cache.get(&hover_key(99)).await.is_some());
+    assert!(cache.get(&hover_key(92)).await.is_none());
+    let after = size_on_disk(dir.path());
+    assert!(after < before / 4, "{before} → {after}");
+
+    // The new budget holds for what comes after, too.
+    for blob in 100..120 {
+        cache.put(&hover_key(blob), &hover(&text));
+    }
+    cache.flush().await;
+    assert!(count(&cache).await <= 10);
 }
 
 #[tokio::test]

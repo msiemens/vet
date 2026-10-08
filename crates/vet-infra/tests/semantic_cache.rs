@@ -10,6 +10,8 @@ use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{At, BackendId, Pos, ServerIdentity, Span, Sym, SymbolInfo};
 use vet_semantic::reuse::{Answers, Basis, Computed, KEPT, Key, ProjectQuery, Restore, SemanticCache};
 
+const BUDGET: u64 = 256 << 20;
+
 fn server(version: u8) -> ServerIdentity {
     ServerIdentity {
         backend: BackendId("rust".into()),
@@ -192,7 +194,7 @@ async fn a_session_gets_the_same_answers_with_every_cache_off_on_and_after_a_res
     let (off, asked_off) = run(&Answers::new(0)).await;
     assert_eq!(asked_off, session().len());
 
-    let cache = Arc::new(SqliteSemanticCache::open(dir.path()).await.unwrap());
+    let cache = Arc::new(SqliteSemanticCache::open(dir.path(), BUDGET).await.unwrap());
     let (on, asked_on) = run(&Answers::new(KEPT).persisting(Some(cache.clone() as Arc<dyn SemanticCache>))).await;
     assert_eq!(on, off);
     // The edit that was undone, and the hover asked twice of one tree.
@@ -201,7 +203,7 @@ async fn a_session_gets_the_same_answers_with_every_cache_off_on_and_after_a_res
     drop(cache);
 
     // Another launch: nothing in memory, the file the first one left.
-    let cache = Arc::new(SqliteSemanticCache::open(dir.path()).await.unwrap());
+    let cache = Arc::new(SqliteSemanticCache::open(dir.path(), BUDGET).await.unwrap());
     let (restarted, asked_restarted) = run(&Answers::new(KEPT).persisting(Some(cache as Arc<dyn SemanticCache>))).await;
     assert_eq!(restarted, off);
     assert_eq!(asked_restarted, 0);

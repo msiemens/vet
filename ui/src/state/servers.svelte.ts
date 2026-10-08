@@ -15,8 +15,6 @@ class ServersStore {
   logs = $state.raw<Record<string, string[]>>({});
   /** Whether each language's install output is shown. */
   logOpen = $state.raw<Record<string, boolean>>({});
-  /** The semantic caches are being cleared. */
-  clearing = $state(false);
 
   /** There is an open repository whose project can be asked. */
   get available(): boolean {
@@ -82,21 +80,6 @@ class ServersStore {
       return undefined;
     } catch (e) {
       return errorText(e);
-    }
-  }
-
-  /** Clears the backend's semantic caches; resolves with its message if that failed. */
-  async clearCaches(): Promise<string | undefined> {
-    const backend = session.backend;
-    if (!backend) return "Not connected to the backend.";
-    this.clearing = true;
-    try {
-      await backend.clearSemanticCaches();
-      return undefined;
-    } catch (e) {
-      return errorText(e);
-    } finally {
-      this.clearing = false;
     }
   }
 

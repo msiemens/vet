@@ -9,8 +9,8 @@
 //! may share the file: rows are replaced as a whole, under SQLite's own locking,
 //! so one launch never loses what another wrote.
 //!
-//! The file holds at most a budget of bytes. Beyond it the rows least recently used
-//! are removed, down to four fifths of it.
+//! The file holds at most a budget of bytes, which the viewer can change while it is
+//! open. Beyond it the rows least recently used are removed, down to four fifths of it.
 
 mod codec;
 
@@ -33,9 +33,6 @@ const FILE: &str = "semantic-cache.sqlite";
 const SCHEMA: i64 = 1;
 const SET_SCHEMA: &str = "PRAGMA user_version = 1";
 
-/// Default size of the file's content (SPEC §8).
-pub const BUDGET: u64 = 256 << 20;
-
 /// How long writes are gathered into one transaction, and how many at most.
 const BATCH_WINDOW: Duration = Duration::from_millis(200);
 const BATCH_ROWS: usize = 100;
@@ -56,6 +53,8 @@ enum Job {
     Flush(oneshot::Sender<()>),
     /// Removes every row and answers with the bytes it held.
     Clear(oneshot::Sender<u64>),
+    /// Keeps the file within a new budget from now on, and at once; answered when it is.
+    Budget(u64, oneshot::Sender<()>),
 }
 
 pub struct SqliteSemanticCache {
@@ -120,10 +119,19 @@ async fn connect(path: &Path) -> Result<SqlitePool, Unusable> {
     Ok(pool)
 }
 
+/// The bytes the cache's file takes in `dir`, the data directory, with its write-ahead log.
+pub fn size_on_disk(dir: &Path) -> u64 {
+    ["", "-wal"]
+        .iter()
+        .filter_map(|suffix| std::fs::metadata(dir.join(format!("{FILE}{suffix}"))).ok())
+        .map(|m| m.len())
+        .sum()
+}
+
 impl SqliteSemanticCache {
-    /// Opens the cache in `dir`, the data directory, with the default budget.
-    pub async fn open(dir: &Path) -> Result<Self, String> {
-        Self::start(dir, BUDGET, Arc::new(unix_now)).await
+    /// Opens the cache in `dir`, the data directory, holding at most `budget` bytes.
+    pub async fn open(dir: &Path, budget: u64) -> Result<Self, String> {
+        Self::start(dir, budget, Arc::new(unix_now)).await
     }
 
     async fn start(dir: &Path, budget: u64, clock: Clock) -> Result<Self, String> {
@@ -171,6 +179,15 @@ impl SqliteSemanticCache {
         wait.await.unwrap_or(0)
     }
 
+    /// Holds the file to `budget` bytes from now on; returns when it is within it, and
+    /// the space of what was removed is handed back to the file system.
+    pub async fn set_budget(&self, budget: u64) {
+        let (done, wait) = oneshot::channel();
+        if self.queue.send(Job::Budget(budget, done)).is_ok() {
+            let _ = wait.await;
+        }
+    }
+
     async fn read(&self, address: Address, kind: codec::Kind) -> Option<Value> {
         let row = sqlx::query("SELECT value FROM answer WHERE key = ?")
             .bind(&address[..])
@@ -216,7 +233,7 @@ impl SemanticCache for SqliteSemanticCache {
 }
 
 /// Applies the queued jobs in batches until every sender is gone.
-async fn write_all(pool: SqlitePool, mut jobs: mpsc::UnboundedReceiver<Job>, budget: u64, clock: Clock) {
+async fn write_all(pool: SqlitePool, mut jobs: mpsc::UnboundedReceiver<Job>, mut budget: u64, clock: Clock) {
     let mut unchecked = 0;
     loop {
         let Some(first) = jobs.recv().await else {
@@ -225,7 +242,8 @@ async fn write_all(pool: SqlitePool, mut jobs: mpsc::UnboundedReceiver<Job>, bud
         let mut batch = vec![first];
         let window = tokio::time::sleep(BATCH_WINDOW);
         tokio::pin!(window);
-        while !matches!(batch.last(), Some(Job::Flush(_) | Job::Clear(_))) && batch.len() < BATCH_ROWS {
+        while !matches!(batch.last(), Some(Job::Flush(_) | Job::Clear(_) | Job::Budget(..))) && batch.len() < BATCH_ROWS
+        {
             tokio::select! {
                 job = jobs.recv() => match job {
                     Some(job) => batch.push(job),
@@ -237,16 +255,28 @@ async fn write_all(pool: SqlitePool, mut jobs: mpsc::UnboundedReceiver<Job>, bud
         let puts = batch.iter().filter(|j| matches!(j, Job::Put { .. })).count();
         let flushed = batch.iter().any(|j| matches!(j, Job::Flush(_)));
         let acks = apply(&pool, batch, &clock).await;
+        let rebudgeted = acks.iter().rev().find_map(|a| match a {
+            Ack::Budget(new, _) => Some(*new),
+            _ => None,
+        });
+        if let Some(new) = rebudgeted {
+            budget = new;
+        }
         unchecked += puts;
-        if unchecked >= CHECK_EVERY || flushed {
+        if unchecked >= CHECK_EVERY || flushed || rebudgeted.is_some() {
             unchecked = 0;
             if let Err(e) = keep_within(&pool, budget).await {
                 tracing::warn!(error = %e, "the semantic cache could not be kept within its budget");
             }
+            // The viewer looks at the size on disk after choosing a budget, and the rows
+            // may have gone over it while the file was opened.
+            if rebudgeted.is_some() {
+                shrink(&pool).await;
+            }
         }
         for ack in acks {
             match ack {
-                Ack::Flushed(done) => {
+                Ack::Flushed(done) | Ack::Budget(_, done) => {
                     let _ = done.send(());
                 }
                 Ack::Cleared(done, freed) => {
@@ -260,6 +290,13 @@ async fn write_all(pool: SqlitePool, mut jobs: mpsc::UnboundedReceiver<Job>, bud
 enum Ack {
     Flushed(oneshot::Sender<()>),
     Cleared(oneshot::Sender<u64>, u64),
+    Budget(u64, oneshot::Sender<()>),
+}
+
+/// Hands the space of removed rows back to the file system.
+async fn shrink(pool: &SqlitePool) {
+    let _ = sqlx::query("VACUUM").execute(pool).await;
+    let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(pool).await;
 }
 
 /// Writes the jobs in one transaction; what could not be written is lost, as the cache may lose it.
@@ -292,6 +329,7 @@ async fn apply(pool: &SqlitePool, batch: Vec<Job>, clock: &Clock) -> Vec<Ack> {
                         .await?;
                 }
                 Job::Flush(done) => acks.push(Ack::Flushed(done)),
+                Job::Budget(budget, done) => acks.push(Ack::Budget(budget, done)),
                 Job::Clear(done) => {
                     let held: i64 = sqlx::query("SELECT COALESCE(SUM(bytes), 0) FROM answer")
                         .fetch_one(&mut *tx)
@@ -309,8 +347,7 @@ async fn apply(pool: &SqlitePool, batch: Vec<Job>, clock: &Clock) -> Vec<Ack> {
         tracing::warn!(error = %e, "the semantic cache could not apply its writes");
     }
     if acks.iter().any(|a| matches!(a, Ack::Cleared(..))) {
-        // Hands the space back to the file system.
-        let _ = sqlx::query("VACUUM").execute(pool).await;
+        shrink(pool).await;
     }
     acks
 }

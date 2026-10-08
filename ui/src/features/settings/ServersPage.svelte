@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { errorText } from "../../lib/errorText";
+  import { formatBytes } from "../../lib/formatBytes";
   import { match } from "../../lib/speedSearch";
   import Marked from "../../lib/ui/Marked.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
+  import { backendSettings } from "../../state/backendSettings.svelte";
   import { hasNativeDialogs, pickFile } from "../../state/host";
   import { servers } from "../../state/servers.svelte";
   import { serverRow, type ServerRow } from "./serverRows";
@@ -29,7 +31,10 @@
   const selected = $derived(rows.find((r) => r.language === selectedLanguage) ?? rows.at(0));
   const log = $derived(selected ? (servers.logs[selected.language] ?? []) : []);
 
-  onMount(() => servers.start());
+  onMount(() => {
+    void backendSettings.load();
+    return servers.start();
+  });
 
   function edit(language: string, current: string | undefined) {
     editing = language;
@@ -50,10 +55,23 @@
     else if (choice === "automatic") void setPath(row.language, null);
   }
 
-  let clearError = $state<string>();
+  let cacheError = $state<string>();
 
   async function clearCaches() {
-    clearError = await servers.clearCaches();
+    cacheError = await backendSettings.clearCaches();
+  }
+
+  /** A whole number of MiB, at least one; anything else puts the kept budget back in the field. */
+  async function setBudget(input: HTMLInputElement) {
+    const mb = Number(input.value);
+    const kept = backendSettings.settings?.semanticCacheMb;
+    if (!Number.isInteger(mb) || mb < 1) {
+      input.value = String(kept ?? "");
+      cacheError = "The budget is a whole number of MiB, at least 1.";
+      return;
+    }
+    if (mb === kept) return;
+    cacheError = await backendSettings.change({ semanticCacheMb: mb });
   }
 
   async function browse() {
@@ -240,9 +258,25 @@
         Answers kept from the language servers, in memory and between launches. Clearing them only makes the next
         answers slower.
       </span>
-      {#if clearError}<span class="problem">{clearError}</span>{/if}
+      <div class="budget">
+        {#if backendSettings.usage !== undefined}<span>{formatBytes(backendSettings.usage)} on disk ·</span>{/if}
+        <label for="cache-budget">Keep up to</label>
+        <input
+          id="cache-budget"
+          class="field"
+          type="number"
+          min="1"
+          step="1"
+          disabled={!backendSettings.settings}
+          value={backendSettings.settings?.semanticCacheMb ?? ""}
+          onchange={(e) => void setBudget(e.currentTarget)}
+        />
+        <span>MiB, least recently used go first</span>
+      </div>
+      {#if backendSettings.loadError}<span class="problem">{backendSettings.loadError}</span>{/if}
+      {#if cacheError}<span class="problem">{cacheError}</span>{/if}
     </div>
-    <button class="ctl" type="button" disabled={servers.clearing} onclick={() => void clearCaches()}
+    <button class="ctl" type="button" disabled={backendSettings.clearing} onclick={() => void clearCaches()}
       >Clear semantic caches</button
     >
   </footer>
@@ -416,5 +450,16 @@
   }
   .label {
     color: var(--text-2);
+  }
+  .budget {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+    color: var(--text-2);
+  }
+  .budget input {
+    width: 80px;
   }
 </style>

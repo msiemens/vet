@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    BaseChoice, ChangesetKey, CommentAt, EditChoice, Lens, NonTextKind, ProjectId, ReviewFilter, Secret, Side,
-    SymbolId, ThreadStatus, ThreadTarget, View,
+    BackendSettings, BaseChoice, ChangesetKey, CommentAt, EditChoice, Lens, NonTextKind, ProjectId, ReviewFilter,
+    Secret, Side, SymbolId, ThreadStatus, ThreadTarget, View,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -54,8 +54,20 @@ pub enum Request {
     /// "Clear semantic caches": removes the answers of the language servers that the
     /// backend keeps (in memory and between launches) and the kept copies of snapshots
     /// that no running Vet uses. Only speed is lost; review state and results stay as
-    /// they are. They belong to the backend, not to a project. Answers with `Response::Done`.
+    /// they are. They belong to the backend, not to a project. Answers with
+    /// `Response::SemanticCacheUsage` as after clearing.
     ClearSemanticCaches,
+    /// How much disk the answers of the language servers kept between launches take. They
+    /// belong to the backend, not to a project. Answers with `Response::SemanticCacheUsage`.
+    SemanticCacheUsage,
+    /// The backend's own settings. Answers with `Response::Settings`.
+    Settings,
+    /// Replaces the backend's own settings and keeps them across launches. A smaller
+    /// semantic cache budget removes the answers used least recently at once. Answers with
+    /// `Response::Settings`.
+    SetSettings {
+        settings: BackendSettings,
+    },
     /// Where the backend writes its log files, as a path of the machine it runs on. They belong to
     /// the backend, not to a project. Answers with `Response::LogDirectory`.
     LogDirectory,
