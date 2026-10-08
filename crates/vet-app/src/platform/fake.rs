@@ -4,6 +4,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use super::checks::{CheckLog, CommitChecks};
 use super::discussion::{
     CommentRef, DiffSide, Discussion, PlatformComment, PlatformThreadData, PostedComment, PostedThread,
     PullRequestState, Submission, Submitted,
@@ -265,6 +266,14 @@ impl Platform for FakeHosting {
         found.resolved = resolved;
         found.resolved_by = resolved.then(|| "ada".to_owned());
         Ok(())
+    }
+
+    async fn checks(&self, _: &RemoteKey, _: &str) -> Result<CommitChecks, PlatformError> {
+        unreachable!("the tests of threads ask for no checks")
+    }
+
+    async fn check_log(&self, _: &RemoteKey, _: &str) -> Result<CheckLog, PlatformError> {
+        unreachable!("the tests of threads ask for no checks")
     }
 
     async fn submit_review(&self, _: &RemoteKey, _: u64, submission: &Submission) -> Result<Submitted, PlatformError> {

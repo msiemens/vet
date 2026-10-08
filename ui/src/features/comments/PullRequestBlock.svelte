@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PullRequestInfo } from "../../generated/PullRequestInfo";
   import Avatar from "../../lib/ui/Avatar.svelte";
+  import CiStatus from "../../lib/ui/CiStatus.svelte";
   import { blockerText, reviewerMark, stateLabel } from "./pullRequest";
 
   let { info }: { info: PullRequestInfo } = $props();
@@ -34,7 +35,7 @@
   {/if}
   {#if info.ci}
     <dt>Checks</dt>
-    <dd class="ci-{info.ci}">{info.ci}</dd>
+    <dd><CiStatus state={info.ci} /></dd>
   {/if}
   {#if info.blocking.length}
     <dt>Blocking</dt>
@@ -92,12 +93,6 @@
   }
   .verdict-changesRequested span {
     color: var(--warn);
-  }
-  .ci-failure {
-    color: var(--warn);
-  }
-  .ci-success {
-    color: var(--ok);
   }
   .blocking {
     color: var(--warn);
