@@ -50,7 +50,7 @@
     changeset: Changeset;
     /** The dev tools' measurements of the editors, if they are on. */
     probe?: Probe;
-    /** Unified or side by side; the owner applies a change to the controller. */
+    /** Unified or split; the owner applies a change to the controller. */
     mode: Mode;
     onmode: (mode: Mode) => void;
     /** The left tool window and whether its sidebar is shown. */
@@ -104,7 +104,7 @@
     untrack(() => (picked = undefined));
   });
   // What the active tab of a changed file shows, which the control above the editors switches.
-  const shown = $derived.by(() => {
+  const fileView = $derived.by(() => {
     const path = pathOf(tabs.active);
     if (path === undefined || !changeset.file(path)) return undefined;
     return kindOf(tabs.active) === "file" ? "diff" : "file";
@@ -229,9 +229,9 @@
       {mode}
       {onmode}
       onstep={(delta) => controller.stepHunk(delta)}
-      diff={showsDiff(tabs.active)}
-      {shown}
-      onshow={(view) => view !== shown && void controller.toggleFileView()}
+      stepping={showsDiff(tabs.active) || fileView !== undefined}
+      file={fileView}
+      onfile={() => void controller.toggleFileView()}
     />
   </div>
   {#if range && readOnly}

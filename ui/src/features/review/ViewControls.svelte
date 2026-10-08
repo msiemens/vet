@@ -2,42 +2,47 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import { commands } from "../../state/commands";
-  import { MODES, type Mode } from "../../lib/viewMode";
+  import { FILE_VIEW, MODES, type Mode } from "../../lib/viewMode";
 
-  /** A changed file's tab shows its text or its diff. */
-  type FileView = "file" | "diff";
+  /** What a changed file's tab shows: its diff in the view mode, or its text. */
+  type FileView = "diff" | "file";
 
   let {
     mode,
     onmode,
     onstep,
-    diff,
-    shown,
-    onshow,
+    stepping,
+    file,
+    onfile,
   }: {
     mode: Mode;
     onmode: (mode: Mode) => void;
     /** Moves the current hunk by `delta` in the focused tab. */
     onstep: (delta: number) => void;
-    /** The focused tab shows a diff: it has a view mode and hunks. */
-    diff: boolean;
+    /** The focused tab has hunks to step through, and a view mode. */
+    stepping: boolean;
     /** What the focused tab of a changed file shows, which it can switch; absent in any other tab. */
-    shown?: FileView;
-    onshow: (view: FileView) => void;
+    file?: FileView;
+    /** Switches the focused tab between the file's diff and its text. */
+    onfile: () => void;
   } = $props();
 
-  const VIEWS: { id: FileView; label: string }[] = [
-    { id: "file", label: "File" },
-    { id: "diff", label: "Diff" },
-  ];
+  const options = $derived(file ? [...MODES, FILE_VIEW] : MODES);
+  const value = $derived(file === "file" ? FILE_VIEW.id : mode);
+
+  /** A view mode of the diff, from the text, takes the tab back to the diff. */
+  function choose(id: Mode | typeof FILE_VIEW.id) {
+    if (id === FILE_VIEW.id) {
+      if (file === "diff") onfile();
+      return;
+    }
+    if (id !== mode) onmode(id);
+    if (file === "file") onfile();
+  }
 </script>
 
 <div class="controls">
-  {#if shown}
-    <Segmented small label="Show" value={shown} onchange={onshow} options={VIEWS} />
-  {/if}
-  {#if diff}
-    <Segmented small label="View" value={mode} onchange={onmode} options={MODES} />
+  {#if stepping}
     <div class="ctl-group" role="group" aria-label="Hunk navigation">
       <IconButton
         icon="up"
@@ -54,6 +59,9 @@
         onclick={() => onstep(1)}
       />
     </div>
+  {/if}
+  {#if stepping || file}
+    <Segmented small label="View" {value} onchange={choose} {options} />
   {/if}
 </div>
 
