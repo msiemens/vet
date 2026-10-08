@@ -36,6 +36,7 @@ const actions: AppActions = {
   toggleTool: (id) => calls.push(`tool ${id}`),
   setTheme: (theme) => calls.push(`theme ${theme}`),
   toggleDevPanel: () => calls.push("dev"),
+  clearSemanticCaches: () => calls.push("clearCaches"),
 };
 
 const registry = new CommandRegistry<CommandContext>(open, "Ctrl");
@@ -114,6 +115,12 @@ void test("Fetch is offered in the VCS menu while a project is open", () => {
   assert.equal(registry.run("git.fetch", { ...open, repoOpen: false }), false);
   assert.equal(registry.run("git.fetch", open), true);
   assert.deepEqual(calls, ["fetch"]);
+});
+
+void test("Clear Semantic Caches runs without a repository: the caches belong to the backend", () => {
+  calls.length = 0;
+  assert.equal(registry.run("semantic.clearCaches", { ...open, repoOpen: false, reviewOpen: false }), true);
+  assert.deepEqual(calls, ["clearCaches"]);
 });
 
 void test("items carry their argument, including paths with colons", () => {

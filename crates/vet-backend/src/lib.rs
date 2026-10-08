@@ -3,6 +3,7 @@
 //! to protocol messages.
 
 mod accounts;
+mod caches;
 mod changesets;
 mod events;
 mod fetch;
@@ -45,6 +46,7 @@ use vet_protocol::{Event, ProjectId, Request, Response};
 use vet_semantic::ports::Backend;
 use vet_transport::{Events, Handler};
 
+use caches::PersistentAnswers;
 use events::Connection;
 use open::Wired;
 use references::StoreReferences;
@@ -100,6 +102,8 @@ pub struct Orchestrator {
     highlighter: highlight::Highlighter,
     /// The materialized snapshots kept between launches (§8).
     trees: Arc<KeptTrees>,
+    /// The answers of the language servers kept between launches (§8).
+    answers: Arc<PersistentAnswers>,
     /// Credentials for hosting platforms: per host and app-wide, not per project.
     accounts: Arc<PlatformAccounts>,
     /// The client for GitHub, with the lists it has kept, for every project.
@@ -154,6 +158,7 @@ impl Orchestrator {
             backends,
             highlighter: Default::default(),
             trees: Arc::new(trees),
+            answers: Arc::new(PersistentAnswers::new(store.dir().to_owned())),
             recent: RecentProjects::new(store.clone()),
             store,
             config,
@@ -179,8 +184,15 @@ impl Orchestrator {
         }
     }
 
-    /// "Clear semantic caches": removes every kept tree that no running Vet uses.
-    pub async fn clear_kept_trees(&self) -> Collected {
+    /// "Clear semantic caches": drops the answers of the language servers, in memory and
+    /// in the file, and removes every kept tree that no running Vet uses.
+    pub async fn clear_semantic_caches(&self) -> Collected {
+        self.answers.clear().await;
+        for open in self.projects.all().await {
+            if let Some(booted) = open.booted_now() {
+                booted.semantics.forget_answers();
+            }
+        }
         self.trees.clear().await
     }
 }
@@ -213,6 +225,10 @@ impl Orchestrator {
             Request::Accounts => self.accounts(from).await,
             Request::SetCredentials { host, token, validate } => self.set_credentials(&host, &token, validate).await,
             Request::RemoveCredentials { host } => self.remove_credentials(&host).await,
+            Request::ClearSemanticCaches => {
+                Box::pin(self.clear_semantic_caches()).await;
+                Ok(Response::Done)
+            }
             Request::OpenProject { repo } => {
                 let (project, root) = self.open(&repo, from.clone()).await?;
                 Ok(Response::Project { project, root })

@@ -330,7 +330,8 @@ impl Handler for Mock {
             | Request::Reachability { .. }
             | Request::ListServers { .. }
             | Request::InstallServer { .. }
-            | Request::SetServerPath { .. } => Err("the corpus has no language servers".into()),
+            | Request::SetServerPath { .. }
+            | Request::ClearSemanticCaches => Err("the corpus has no language servers".into()),
             Request::ListChangesets { .. }
             | Request::ListPullRequests { .. }
             | Request::OpenChangeset { .. }

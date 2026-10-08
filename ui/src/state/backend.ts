@@ -180,6 +180,11 @@ export class Backend {
     return expect(await this.conn.request({ type: "removeCredentials", host }), "accounts").accounts;
   }
 
+  /** Removes the answers of the language servers that the backend keeps, and the kept copies of snapshots nothing uses. Only speed is lost. */
+  async clearSemanticCaches(): Promise<void> {
+    expect(await this.conn.request({ type: "clearSemanticCaches" }), "done");
+  }
+
   /** The background tasks of the open project that are running now. */
   async tasks(): Promise<Task[]> {
     return expect(await this.conn.request({ type: "tasks", project: this.pid }), "tasks").tasks;

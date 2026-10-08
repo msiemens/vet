@@ -31,6 +31,8 @@ export interface AppActions {
   toggleTool(id: string): void;
   setTheme(theme: Theme): void;
   toggleDevPanel(): void;
+  /** Clears the backend's semantic caches. */
+  clearSemanticCaches(): void;
 }
 
 export function appCommands(a: AppActions): Command<CommandContext>[] {
@@ -114,6 +116,7 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
         a.setTheme(theme.id);
       },
     },
+    { id: "semantic.clearCaches", label: "Clear Semantic Caches", run: () => a.clearSemanticCaches() },
     { id: "dev.panel", label: "Developer Panel", run: () => a.toggleDevPanel() },
   ];
 }

@@ -51,6 +51,11 @@ pub enum Request {
     RemoveCredentials {
         host: String,
     },
+    /// "Clear semantic caches": removes the answers of the language servers that the
+    /// backend keeps (in memory and between launches) and the kept copies of snapshots
+    /// that no running Vet uses. Only speed is lost; review state and results stay as
+    /// they are. They belong to the backend, not to a project. Answers with `Response::Done`.
+    ClearSemanticCaches,
     /// Opens the working tree of the repository containing `repo`, which may be
     /// any folder inside it, against its current branch, and subscribes this
     /// connection to the project's events. The repository's open review is

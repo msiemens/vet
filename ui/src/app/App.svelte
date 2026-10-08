@@ -52,6 +52,7 @@
   import { recent } from "../state/recent.svelte";
   import { semantic } from "../state/semantic.svelte";
   import { serverList } from "../state/serverList.svelte";
+  import { servers } from "../state/servers.svelte";
   import { serverLine } from "../state/serverStatus";
   import { session } from "../state/session.svelte";
   import { defaultRange } from "../state/timelineRange";
@@ -142,6 +143,7 @@
       },
       setTheme: (t) => applyTheme((theme = t)),
       toggleDevPanel: () => (devOpen = !devOpen),
+      clearSemanticCaches: () => void servers.clearCaches(),
     }),
   );
   keymap.load();

@@ -39,6 +39,12 @@
     if (message === undefined) editing = undefined;
   }
 
+  let clearError = $state<string>();
+
+  async function clearCaches() {
+    clearError = await servers.clearCaches();
+  }
+
   async function browse() {
     try {
       const picked = await pickFile();
@@ -142,6 +148,20 @@
   </ul>
 {/if}
 
+<div class="row caches">
+  <div class="text">
+    <span>Semantic caches</span>
+    <span class="hint">
+      Answers kept from the language servers, in memory and between launches. Clearing them only makes the next answers
+      slower.
+    </span>
+    {#if clearError}<span class="problem">{clearError}</span>{/if}
+  </div>
+  <button class="ctl" type="button" disabled={servers.clearing} onclick={() => void clearCaches()}
+    >Clear semantic caches</button
+  >
+</div>
+
 <style>
   ul {
     list-style: none;
@@ -221,6 +241,20 @@
   .empty {
     margin: 0;
     color: var(--text-3);
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .caches {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line-soft);
+  }
+  .caches .text span:first-child {
+    font-size: var(--fs);
   }
   .path {
     display: flex;

@@ -37,6 +37,7 @@ use vet_mapping as mapping;
 use vet_protocol::{Event, PlatformConnection, ProjectId, Response};
 use vet_semantic::ports::Backend;
 
+use crate::caches::PersistentAnswers;
 use crate::events::{Connection, settled};
 use crate::fetch::fetch_periodically;
 use crate::hosting::Hosting;
@@ -90,6 +91,8 @@ pub struct Wired {
     fetching: Mutex<Option<AbortHandle>>,
     closed: AtomicBool,
     trees: Arc<KeptTrees>,
+    /// The answers of the language servers kept between launches.
+    answers: Arc<PersistentAnswers>,
 }
 
 impl Wired {
@@ -190,7 +193,7 @@ impl Wired {
                 })
             },
         );
-        let semantics = Semantics::new(
+        let mut semantics = Semantics::new(
             Materialize::new(session.acquisition(), self.trees.clone()),
             LspLauncher::new(servers.clone(), restorer).reporting(self.tasks.clone()),
             repo.clone(),
@@ -202,6 +205,9 @@ impl Wired {
                 tasks: self.tasks.clone(),
             },
         );
+        if let Some(store) = self.answers.store().await {
+            semantics = semantics.persisting(store);
+        }
         Ok(Arc::new(Booted { session, semantics }))
     }
 }
@@ -339,6 +345,7 @@ impl Orchestrator {
             fetching: Mutex::new(None),
             closed: AtomicBool::new(false),
             trees: self.trees.clone(),
+            answers: self.answers.clone(),
         })
     }
 }
