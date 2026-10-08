@@ -266,6 +266,9 @@
   }
   /* The scroll bar's gutter is the margin on the right. */
   .projects {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
     padding: 0 0 0 12px;
   }
   .row {

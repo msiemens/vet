@@ -161,6 +161,9 @@
     list-style: none;
     margin: 0;
     padding: 0 4px 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
     max-height: min(60vh, 420px);
     overflow: hidden auto;
   }
