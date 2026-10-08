@@ -328,6 +328,15 @@ class ChangesetStore {
     }
   }
 
+  /** The lines a row of the list changes; `undefined` where there are none to count or counting failed. */
+  async changesetLines(key: ChangesetKey) {
+    try {
+      return await session.connected().changesetLines(key);
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Puts a changeset on view. The backend pushes `changesetOpened`, which fetches its manifest. */
   async openChangeset(key: ChangesetKey) {
     try {

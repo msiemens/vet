@@ -61,6 +61,13 @@
   --note: light-dark(#7150c2, #a98beb);
   --ok: light-dark(#2b8546, #6fcf97);
 
+  /* The queue's status chips: the colour of the text, over a tint of itself. */
+  --status-draft: var(--text-3);
+  --status-waiting: var(--accent);
+  --status-changes: light-dark(#bd5f0c, #f0a35e);
+  --status-approved: var(--ok);
+  --status-blocked: var(--del-text);
+
   /* The app icon's V: its full colours, deepened on light grounds to keep their contrast */
   --logo-del: light-dark(#e5332d, #fd423c);
   --logo-add: light-dark(#17b85a, #38e471);

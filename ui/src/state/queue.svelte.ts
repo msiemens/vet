@@ -1,13 +1,20 @@
 // The changesets the repository offers, as the queue and the changeset switcher list them. The
 // backend's list is shown as it is; what each row says is worked out where it is drawn. The local
-// changesets come at once; the pull requests, which the platform has to be asked for, follow.
+// changesets come at once; the pull requests, which the platform has to be asked for, follow, and
+// the lines each row changes come last, row by row, as the backend counts them.
 
+import { SvelteMap } from "svelte/reactivity";
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { ChangesetRow } from "../generated/ChangesetRow";
+import type { LineDelta } from "../generated/LineDelta";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestSource } from "../generated/PullRequestSource";
 import { changeset } from "./changeset.svelte";
+import { keyId } from "./changesetKey";
 import { session } from "./session.svelte";
+
+/** How many rows have their lines counted at once. */
+const LINE_COUNTS_AT_ONCE = 3;
 
 class QueueStore {
   /** The working tree and the branches. */
@@ -19,8 +26,17 @@ class QueueStore {
   onView = $state.raw<ChangesetKey>();
   /** A refresh is fetching the remotes. */
   refreshing = $state(false);
+  /** The local changesets are being listed. */
+  listingLocal = $state(false);
+  /** The platform is being asked for the pull requests. */
+  listingPullRequests = $state(false);
+  /**
+   * The lines the rows of the list change, by `keyId`, as far as the backend has counted them: `null` where
+   * there are none to count. A row that is not in it is not counted yet.
+   */
+  lines = new SvelteMap<string, LineDelta | null>();
   /** Only the latest load of each kind counts. */
-  private seq = { local: 0, pullRequests: 0 };
+  private seq = { local: 0, pullRequests: 0, lines: 0 };
 
   constructor() {
     session.onConnect((backend) =>
@@ -28,35 +44,52 @@ class QueueStore {
         if (event.project !== backend.project) return;
         // Which changeset is on view, what has a review, and how many threads are open.
         if (event.type === "changesetOpened" || event.type === "reviewStarted") void this.loadAll();
-        else if (event.type === "threadsChanged") void this.load();
+        else if (event.type === "threadsChanged") void this.load(false);
       }),
     );
     session.onClose(() => {
       this.seq.local++;
       this.seq.pullRequests++;
+      this.seq.lines++;
       this.local = [];
       this.pullRequests = [];
       this.sources = [];
       this.onView = undefined;
+      this.listingLocal = false;
+      this.listingPullRequests = false;
+      this.lines.clear();
     });
   }
 
-  /** Lists the local changesets. */
-  async load() {
+  /** Something of the list is being fetched or listed. */
+  get loading() {
+    return this.refreshing || this.listingLocal || this.listingPullRequests;
+  }
+
+  /** Lists the local changesets. Rows already counted are counted again only with `recount`: a thread changing moves no branch. */
+  async load(recount = true) {
     const seq = ++this.seq.local;
+    this.listingLocal = true;
     const listed = await changeset.listChangesets();
-    if (!listed || seq !== this.seq.local) return;
+    if (seq !== this.seq.local) return;
+    this.listingLocal = false;
+    if (!listed) return;
     this.local = listed.rows;
     this.onView = listed.onView;
+    void this.countLines(recount);
   }
 
   /** Asks the platform for the pull requests, which takes a moment: the ones listed stay until it answers. */
   async loadPullRequests() {
     const seq = ++this.seq.pullRequests;
+    this.listingPullRequests = true;
     const listed = await changeset.listPullRequests();
-    if (!listed || seq !== this.seq.pullRequests) return;
+    if (seq !== this.seq.pullRequests) return;
+    this.listingPullRequests = false;
+    if (!listed) return;
     this.pullRequests = listed.rows;
     this.sources = listed.sources;
+    void this.countLines(true);
   }
 
   /** The local changesets show as soon as they are listed, the pull requests when the platform answers. */
@@ -74,6 +107,29 @@ class QueueStore {
     } finally {
       this.refreshing = false;
     }
+  }
+
+  /**
+   * Has the backend count the lines of every listed row that has none from the platform, a few at a time
+   * and top of the list first. The working tree is not counted: its manifest is live. A later listing
+   * starts over; the numbers shown stay until the new ones arrive.
+   */
+  private async countLines(recount: boolean) {
+    const seq = ++this.seq.lines;
+    const wanted = [
+      ...this.local.filter((row) => row.key.type !== "workingTree").map((row) => row.key),
+      ...this.pullRequests.filter((row) => row.lines === undefined).map((row) => row.key),
+    ].filter((key) => recount || !this.lines.has(keyId(key)));
+    let next = 0;
+    const count = async () => {
+      while (seq === this.seq.lines && next < wanted.length) {
+        const key = wanted[next++];
+        const lines = await changeset.changesetLines(key);
+        if (seq !== this.seq.lines) return;
+        this.lines.set(keyId(key), lines ?? null);
+      }
+    };
+    await Promise.all(Array.from({ length: LINE_COUNTS_AT_ONCE }, count));
   }
 }
 

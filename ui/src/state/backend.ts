@@ -21,6 +21,7 @@ import type { EditChoice } from "../generated/EditChoice";
 import type { Event as ServerEvent } from "../generated/Event";
 import type { Impact } from "../generated/Impact";
 import type { Lens } from "../generated/Lens";
+import type { LineDelta } from "../generated/LineDelta";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
@@ -307,6 +308,18 @@ export class Backend {
       "pullRequests",
     );
     return { rows, sources };
+  }
+
+  /**
+   * The lines a changeset changes against its base, for a row of the list; none for the working tree and for a
+   * pull request that was not fetched. Takes a moment for a large changeset, so ask per row.
+   */
+  async changesetLines(changeset: ChangesetKey): Promise<LineDelta | undefined> {
+    const { lines } = expect(
+      await this.conn.request({ type: "changesetLines", project: this.pid, changeset }),
+      "changesetLines",
+    );
+    return lines ?? undefined;
   }
 
   /**

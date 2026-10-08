@@ -5,6 +5,8 @@ import type { Completion } from "../../generated/Completion";
 import type { PullRequestRow } from "../../generated/PullRequestRow";
 import type { Target } from "../../generated/Target";
 import {
+  authorOf,
+  changesOf,
   commentCount,
   filterRows,
   labelOf,
@@ -12,8 +14,6 @@ import {
   pullRequestRow,
   queueRows,
   reviewedOf,
-  shownLines,
-  showsOwnLines,
   sourceText,
   tabCounts,
   targetLabel,
@@ -49,12 +49,6 @@ const skew: ChangesetRow = {
 };
 const rows = [tree, retry, skew];
 
-void test("a branch with no commits of its own shows no lines, whatever base the review picked", () => {
-  assert.equal(showsOwnLines({ ...retry, divergence: { ahead: 0, behind: 5 } }), false);
-  assert.equal(showsOwnLines(retry), true);
-  assert.equal(showsOwnLines(tree), true);
-});
-
 void test("the source says which branch the working tree is on and how many commits a branch has", () => {
   assert.equal(sourceText(tree), "main");
   assert.equal(sourceText(retry), "local · 3 commits");
@@ -83,11 +77,17 @@ void test("the counts follow the tabs", () => {
   assert.deepEqual(tabCounts([]), { all: 0, blocking: 0, local: 0, prs: 0 });
 });
 
-void test("the progress column follows the review, and shows progress only where it is known", () => {
+void test("the progress column follows the review, live for the changeset on view and as stored for the others", () => {
   const completion = { seenPercent: 61, oldBasePercent: 4 } as Completion;
   assert.deepEqual(reviewedOf(tree.review), { kind: "none" });
   assert.deepEqual(reviewedOf(retry.review, completion), { kind: "progress", seen: 61, oldBase: 4 });
-  assert.deepEqual(reviewedOf(retry.review), { kind: "started" });
+  assert.deepEqual(reviewedOf(retry.review), { kind: "started" }, "a review that was never measured");
+  const measured: ChangesetRow["review"] = {
+    ...retry.review,
+    progress: { seenPercent: 30, oldBasePercent: 10 },
+  } as ChangesetRow["review"];
+  assert.deepEqual(reviewedOf(measured), { kind: "progress", seen: 30, oldBase: 10 });
+  assert.deepEqual(reviewedOf(measured, completion), { kind: "progress", seen: 61, oldBase: 4 }, "live wins");
   assert.deepEqual(reviewedOf(skew.review), { kind: "finished", percent: 100 });
   assert.deepEqual(reviewedOf({ state: "finished", complete: false, startedAt: 0, finishedAt: 0 }, completion), {
     kind: "finished",
@@ -160,12 +160,35 @@ void test("a pull request counts the platform's comments, a local changeset its 
   assert.equal(commentCount(tree), 0);
 });
 
-void test("the changeset on view shows its own lines; any other pull request what the platform lists", () => {
+void test("the lines of a row come from the live manifest, else the platform, else the backend's count", () => {
   const own = { added: 230, removed: 40 };
-  assert.deepEqual(shownLines(pullRequestRow(pr), own), own);
-  assert.deepEqual(shownLines(pullRequestRow(pr), undefined), { added: 236, removed: 41 });
-  assert.equal(shownLines(forked, undefined), undefined);
-  assert.equal(shownLines(retry, undefined), undefined);
+  const counted = { added: 5, removed: 1 };
+  const lines = (lines: { added: number; removed: number }) => ({ kind: "lines", lines });
+  assert.deepEqual(changesOf(pullRequestRow(pr), own, counted), lines(own), "the changeset on view is live");
+  assert.deepEqual(changesOf(pullRequestRow(pr), undefined, counted), lines({ added: 236, removed: 41 }));
+  assert.deepEqual(changesOf(forked, undefined, counted), lines(counted));
+  assert.deepEqual(changesOf(retry, undefined, counted), lines(counted));
+});
+
+void test("a row waits for its count, and has no lines where there are none to count or nothing changed", () => {
+  assert.deepEqual(changesOf(retry, undefined, undefined), { kind: "pending" });
+  assert.deepEqual(changesOf(forked, undefined, undefined), { kind: "pending" });
+  assert.deepEqual(changesOf(retry, undefined, null), { kind: "none" });
+  assert.deepEqual(changesOf(retry, undefined, { added: 0, removed: 0 }), { kind: "none" }, "merged already");
+  assert.deepEqual(changesOf(tree, undefined, undefined), { kind: "none" }, "the working tree has its manifest only");
+  assert.deepEqual(changesOf(tree, { added: 3, removed: 0 }, undefined), {
+    kind: "lines",
+    lines: { added: 3, removed: 0 },
+  });
+});
+
+void test("a pull request has the author the platform names, a branch the author of its tip, the working tree none", () => {
+  const withPicture = pullRequestRow({ ...pr, authorAvatar: "https://avatars.example/lena.png" });
+  assert.deepEqual(authorOf(withPicture), { name: "lena", avatar: "https://avatars.example/lena.png", muted: false });
+  assert.deepEqual(authorOf(pullRequestRow(pr)), { name: "lena", avatar: undefined, muted: false });
+  assert.deepEqual(authorOf({ ...retry, author: "Ada" }), { name: "Ada", muted: true });
+  assert.equal(authorOf(retry), undefined);
+  assert.equal(authorOf(tree), undefined);
 });
 
 void test("the header names a pull request by number and title, and by number alone while the title is unknown", () => {

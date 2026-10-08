@@ -9,17 +9,18 @@
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
   import { queue } from "../../state/queue.svelte";
+  import ChangesCell from "./ChangesCell.svelte";
   import ChangesetName from "./ChangesetName.svelte";
   import {
     type Label,
     type QueueTab,
     SWITCHER_FILTERS,
+    changesOf,
     commentCount,
     filterRows,
     labelOf,
     queueRows,
     reviewedOf,
-    shownLines,
     sourceText,
     updatedText,
   } from "./queueRows";
@@ -127,7 +128,7 @@
       {#each shown as row, index (keyId(row.key))}
         {@const id = keyId(row.key)}
         {@const numbers = id === onViewId ? own : undefined}
-        {@const lines = shownLines(row, numbers?.delta)}
+        {@const changes = changesOf(row, numbers?.delta, queue.lines.get(id))}
         {@const comments = commentCount(row)}
         <li>
           <button
@@ -145,10 +146,7 @@
             <span class="line sub">
               <span class="detail">
                 {sourceText(row)}
-                {#if lines}<span class="mono"
-                    ><span class="add">+{lines.added}</span>
-                    <span class="del">−{lines.removed}</span></span
-                  >{/if}
+                <ChangesCell {changes} />
                 {#if comments > 0}<span class="threads"><Icon name="comments" size={11} />{comments}</span>{/if}
               </span>
               <span>{updatedText(row)}</span>
@@ -256,12 +254,6 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-  }
-  .add {
-    color: var(--add-text);
-  }
-  .del {
-    color: var(--del-text);
   }
   .threads {
     display: inline-flex;

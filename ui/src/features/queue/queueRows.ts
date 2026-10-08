@@ -5,6 +5,7 @@ import type { ChangesetRow } from "../../generated/ChangesetRow";
 import type { Completion } from "../../generated/Completion";
 import type { LineDelta } from "../../generated/LineDelta";
 import type { PullRequestRow } from "../../generated/PullRequestRow";
+import type { QueueStatus } from "../../generated/QueueStatus";
 import type { RowReview } from "../../generated/RowReview";
 import type { Target } from "../../generated/Target";
 import { shortTime } from "../../lib/shortTime.ts";
@@ -108,17 +109,54 @@ export function sourceText(row: QueueRow): string {
   return ahead === undefined ? "local" : `local · ${ahead} ${ahead === 1 ? "commit" : "commits"}`;
 }
 
+/** What the Changes column says of a row. */
+export type Changes =
+  /** The backend has not counted the lines yet. */
+  | { kind: "pending" }
+  /** There are none: nothing changed, or the row has no lines to count. */
+  | { kind: "none" }
+  | { kind: "lines"; lines: LineDelta };
+
 /**
- * Whether the changeset on view's lines are shown on `row`. They are counted against the base the
- * review uses, so a branch with no commits of its own on the default branch cannot show them.
+ * The lines of a row, from the most current source: `own`, the live manifest, when the row is the changeset
+ * on view; else what the platform lists of a pull request; else `counted`, what the backend counted between
+ * the commits of the row's base and tip (`null`: there are none to count). The working tree has its manifest
+ * only.
  */
-export function showsOwnLines(row: ChangesetRow): boolean {
-  return row.divergence?.ahead !== 0;
+export function changesOf(row: QueueRow, own: LineDelta | undefined, counted: LineDelta | null | undefined): Changes {
+  const known = own ?? row.pullRequest?.lines ?? counted;
+  if (known) return known.added + known.removed > 0 ? { kind: "lines", lines: known } : { kind: "none" };
+  return row.key.type === "workingTree" || counted === null ? { kind: "none" } : { kind: "pending" };
 }
 
-/** The lines a row shows: those of the changeset on view when `own` is that, else what the platform lists of a pull request. */
-export function shownLines(row: QueueRow, own: LineDelta | undefined): LineDelta | undefined {
-  return own && showsOwnLines(row) ? own : row.pullRequest?.lines;
+/** The label of a pull request's status chip. */
+export function statusText(status: QueueStatus): string {
+  switch (status) {
+    case "draft":
+      return "Draft";
+    case "blocked":
+      return "Blocked";
+    case "changesRequested":
+      return "Changes requested";
+    case "waitingForYou":
+      return "Waiting for you";
+    case "approved":
+      return "Approved";
+  }
+}
+
+export interface Author {
+  name: string;
+  /** The address of the platform's picture of the author, when it has one. */
+  avatar?: string;
+  /** The author of a branch's tip commit rather than a pull request's. */
+  muted: boolean;
+}
+
+/** The Author column: a pull request's author, a branch's tip commit's author, and nobody for the working tree. */
+export function authorOf(row: QueueRow): Author | undefined {
+  if (row.pullRequest) return { name: row.pullRequest.author, avatar: row.pullRequest.authorAvatar, muted: false };
+  return row.author === undefined ? undefined : { name: row.author, muted: true };
 }
 
 /** The Updated column: the working tree is live, a branch changed with its last commit, a pull request when the platform saw it change. */
@@ -158,15 +196,23 @@ export type Reviewed =
   /** Finished; `percent` is known when it was complete. */
   | { kind: "finished"; percent?: number };
 
-/** `completion` is the progress of the changeset on view, which is the only one whose lines are known. */
-export function reviewedOf(review: RowReview, completion?: Completion): Reviewed {
+/**
+ * `completion` is the live progress of the changeset on view; any other row has the progress stored with
+ * its review, if that was ever measured.
+ */
+export function reviewedOf(
+  review: RowReview,
+  completion?: Pick<Completion, "seenPercent" | "oldBasePercent">,
+): Reviewed {
   switch (review.state) {
     case "none":
       return { kind: "none" };
-    case "open":
-      return completion
-        ? { kind: "progress", seen: completion.seenPercent, oldBase: completion.oldBasePercent }
+    case "open": {
+      const progress = completion ?? review.progress;
+      return progress
+        ? { kind: "progress", seen: progress.seenPercent, oldBase: progress.oldBasePercent }
         : { kind: "started" };
+    }
     case "finished":
       return review.complete ? { kind: "finished", percent: 100 } : { kind: "finished" };
   }

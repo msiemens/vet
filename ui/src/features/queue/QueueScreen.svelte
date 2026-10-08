@@ -1,25 +1,29 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { Thread } from "../../generated/Thread";
+  import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
+  import ProgressBar from "../../lib/ui/ProgressBar.svelte";
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { queue } from "../../state/queue.svelte";
   import { threads } from "../../state/threads.svelte";
+  import ChangesCell from "./ChangesCell.svelte";
   import ChangesetName from "./ChangesetName.svelte";
   import { detailGroups } from "./details";
   import {
     type QueueRow,
     type QueueTab,
     TABS,
+    authorOf,
+    changesOf,
     commentCount,
     filterRows,
     labelOf,
     queueRows,
     reviewedOf,
-    shownLines,
     sourceText,
     tabCounts,
     updatedText,
@@ -28,6 +32,7 @@
   import QueueDetails from "./QueueDetails.svelte";
   import QueueFiles from "./QueueFiles.svelte";
   import ReviewedCell from "./ReviewedCell.svelte";
+  import StatusChip from "./StatusChip.svelte";
 
   let {
     onopen,
@@ -105,10 +110,15 @@
       <input class="field" type="text" bind:value={query} aria-label="Search changesets" spellcheck="false" />
     </label>
   </div>
+  <div class="loading">
+    {#if queue.loading}<ProgressBar label="Loading changesets" />{/if}
+  </div>
 
   <div class="table">
     <div class="row head">
       <span>Changeset</span>
+      <span>Status</span>
+      <span>Author</span>
       <span>Source</span>
       <span>Changes</span>
       <span>Reviewed</span>
@@ -119,7 +129,8 @@
       {#each shown as row, index (keyId(row.key))}
         {@const id = keyId(row.key)}
         {@const numbers = ownOf(row)}
-        {@const lines = shownLines(row, numbers?.delta)}
+        {@const changes = changesOf(row, numbers?.delta, queue.lines.get(id))}
+        {@const author = authorOf(row)}
         {@const comments = commentCount(row)}
         <button
           class="flat row"
@@ -134,11 +145,15 @@
           onkeydown={(e) => move(e, index)}
         >
           <span class="title"><ChangesetName label={labelOf(row)} /></span>
-          <span class="source">{sourceText(row)}</span>
-          <span class="mono delta">
-            {#if lines}<span class="add">+{lines.added}</span>
-              <span class="del">−{lines.removed}</span>{/if}
+          <span><StatusChip status={row.pullRequest?.status} /></span>
+          <span class="author" class:muted={author?.muted}>
+            {#if author}
+              {#if !author.muted}<Avatar name={author.name} url={author.avatar ?? null} />{/if}
+              <span class="name" title={author.name}>{author.name}</span>
+            {/if}
           </span>
+          <span class="source">{sourceText(row)}</span>
+          <span class="delta"><ChangesCell {changes} /></span>
           <span><ReviewedCell reviewed={reviewedOf(row.review, numbers?.completion)} /></span>
           <span class="icons">
             <CiStatus state={row.pullRequest?.ci} />
@@ -155,8 +170,15 @@
           <span class="right when">{updatedText(row)}</span>
         </button>
       {:else}
-        {#if !unlisted.length}<p class="empty">{rows.length ? "No matching changesets" : "No changesets"}</p>{/if}
+        {#if !unlisted.length}
+          <p class="empty">
+            {queue.loading ? "Loading…" : rows.length ? "No matching changesets" : "No changesets"}
+          </p>
+        {/if}
       {/each}
+      {#if shown.length && queue.listingPullRequests && (tab === "all" || tab === "prs")}
+        <p class="pending">Loading pull requests…</p>
+      {/if}
       {#each unlisted as source (source.remote)}
         <p class="unlisted">
           {source.remote}: {source.error}
@@ -241,7 +263,7 @@
   }
   .row {
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) 120px 190px 80px 90px;
+    grid-template-columns: minmax(0, 2fr) 130px minmax(0, 1fr) minmax(0, 1fr) 110px 190px 80px 90px;
     align-items: center;
     column-gap: 12px;
     width: 100%;
@@ -272,6 +294,21 @@
     color: var(--text-2);
     font-size: var(--fs-ctl);
   }
+  .author {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-size: var(--fs-ctl);
+  }
+  .author.muted {
+    color: var(--text-3);
+  }
+  .author .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .right {
     text-align: right;
   }
@@ -281,12 +318,6 @@
   }
   .delta {
     font-size: var(--fs-mono-s);
-  }
-  .add {
-    color: var(--add-text);
-  }
-  .del {
-    color: var(--del-text);
   }
   .threads {
     display: inline-flex;
@@ -300,6 +331,11 @@
     align-items: center;
     gap: 8px;
   }
+  .loading {
+    flex: none;
+    height: var(--h-progress);
+  }
+  .pending,
   .unlisted {
     margin: 8px 16px;
     color: var(--text-3);
