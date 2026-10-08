@@ -15,7 +15,7 @@ pub struct Materialized<G> {
     pub guard: G,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum NotMaterializable {
     /// Blobs git no longer has and the content store never retained (§6.1).
     MissingBlobs(Vec<BlobId>),
@@ -31,8 +31,9 @@ impl fmt::Display for NotMaterializable {
     }
 }
 
-/// Implemented by Acquisition in `vet-app`.
-pub trait Materializer {
+/// Implemented by Acquisition in `vet-app`. The pool's flights own it, so it is
+/// `'static`.
+pub trait Materializer: Send + Sync + 'static {
     type Guard: Send + Sync + 'static;
 
     /// The directory differs by policy: a restore may run code only where the policy allows.
@@ -94,7 +95,7 @@ pub fn backend_for<'a>(backends: &'a [Backend], file: &RepoPath) -> Option<&'a B
         .find(|b| b.config().filetypes.iter().any(|t| t.as_bytes() == ext))
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum LaunchError {
     /// A required operation is missing: the language is unsupported (I6).
     MissingCapability(&'static str),
@@ -395,8 +396,8 @@ pub struct Started<S> {
 /// instance, because the pool owns lifecycle: eviction, restart on settings
 /// change, and the capability assertion (which the launcher performs on start).
 /// On an `Immutable` tree the launcher restores the dependencies first.
-pub trait ServerLauncher {
-    type Server: LanguageServer;
+pub trait ServerLauncher: Send + Sync + 'static {
+    type Server: LanguageServer + 'static;
 
     fn start(
         &self,

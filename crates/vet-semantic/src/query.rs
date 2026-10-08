@@ -65,12 +65,7 @@ pub struct Semantic<M: Materializer, L: ServerLauncher> {
     backends: Vec<Backend>,
 }
 
-impl<M, L> Semantic<M, L>
-where
-    M: Materializer + Sync,
-    L: ServerLauncher + Sync,
-    L::Server: Send,
-{
+impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
     pub fn new(pool: Pool<M, L>, backends: Vec<Backend>) -> Self {
         Self { pool, backends }
     }
@@ -128,7 +123,7 @@ where
         results
     }
 
-    async fn lease(&self, served: &Served, backend: &Backend) -> Result<Lease<'_, M, L>, SemanticError> {
+    async fn lease(&self, served: &Served, backend: &Backend) -> Result<Lease<M, L>, SemanticError> {
         self.pool
             .lease(&self.pool_key(served, backend), backend)
             .await
@@ -162,7 +157,7 @@ where
             .await
     }
 
-    async fn lease_for(&self, served: &Served, file: &RepoPath) -> Result<Lease<'_, M, L>, SemanticError> {
+    async fn lease_for(&self, served: &Served, file: &RepoPath) -> Result<Lease<M, L>, SemanticError> {
         let backend = backend_for(&self.backends, file).ok_or_else(|| SemanticError::NoBackend(file.clone()))?;
         self.lease(served, backend).await
     }
@@ -205,12 +200,7 @@ macro_rules! ask {
     }};
 }
 
-impl<M, L> Primitives for Pair<'_, M, L>
-where
-    M: Materializer + Sync,
-    L: ServerLauncher + Sync,
-    L::Server: Send,
-{
+impl<M: Materializer, L: ServerLauncher> Primitives for Pair<'_, M, L> {
     async fn document_symbols(&self, side: Side, file: &RepoPath) -> Asked<Vec<SymbolInfo>> {
         ask!(
             self,

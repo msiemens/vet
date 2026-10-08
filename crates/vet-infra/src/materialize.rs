@@ -51,7 +51,9 @@ impl<G: History + Checkout + Send + Sync, S: Store + Send + Sync> Materialize<G,
     }
 }
 
-impl<G: History + Checkout + Send + Sync, S: Store + Send + Sync> Materializer for Materialize<G, S> {
+impl<G: History + Checkout + Send + Sync + 'static, S: Store + Send + Sync + 'static> Materializer
+    for Materialize<G, S>
+{
     type Guard = Lease;
 
     /// The kept tree of the snapshot, or a new one if there is none. The tree is

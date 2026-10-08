@@ -113,24 +113,18 @@ fn session() -> Vec<Question> {
 
 /// Runs the session against `answers`; what was answered and how often a server was asked.
 async fn run(answers: &Answers) -> (Vec<String>, usize) {
-    let asked = AtomicUsize::new(0);
+    let asked = Arc::new(AtomicUsize::new(0));
     let mut results = Vec::new();
     for question in session() {
         let key = key(&question);
-        let ask = async {
-            asked.fetch_add(1, Ordering::SeqCst);
-            Ok::<_, ()>(Computed {
-                keep: true,
-                value: question.answer(),
-            })
-        };
+        let (said, asked) = (question.answer(), asked.clone());
         match &question {
             Question::Symbols { .. } => {
                 let (symbols, _) = answers
-                    .get::<Vec<SymbolInfo>, ()>(Some(&key), async {
-                        let c = ask.await?;
+                    .get(Some(&key), move || async move {
+                        asked.fetch_add(1, Ordering::SeqCst);
                         Ok(Computed {
-                            value: c.value.symbols(),
+                            value: said.symbols(),
                             keep: true,
                         })
                     })
@@ -140,10 +134,10 @@ async fn run(answers: &Answers) -> (Vec<String>, usize) {
             }
             Question::Hover { .. } => {
                 let (hover, _) = answers
-                    .get::<Option<String>, ()>(Some(&key), async {
-                        let c = ask.await?;
+                    .get(Some(&key), move || async move {
+                        asked.fetch_add(1, Ordering::SeqCst);
                         Ok(Computed {
-                            value: c.value.hover(),
+                            value: said.hover(),
                             keep: true,
                         })
                     })

@@ -164,9 +164,8 @@ impl<G, S, L, M> Semantics<G, S, L, M>
 where
     G: GitRepo + Send + Sync,
     S: LiveStore + Send + Sync,
-    L: ServerLauncher + Sync,
-    L::Server: Send,
-    M: Materializer + Sync,
+    L: ServerLauncher,
+    M: Materializer,
 {
     /// `materializer` serves the session's snapshots as directories and
     /// `live_root` is the worktree the target side is served from. `trust`

@@ -267,7 +267,9 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
     }
 }
 
-impl<L: ServerLocator + Sync, R: Restorer + Sync> ServerLauncher for LspLauncher<L, R> {
+impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'static> ServerLauncher
+    for LspLauncher<L, R>
+{
     type Server = LspServer;
 
     /// Reports the start as one task and the indexing after it as another, which

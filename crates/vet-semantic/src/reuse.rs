@@ -18,14 +18,14 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vet_core::content::{BlobId, Hash as Fingerprint, RepoPath, SnapshotId};
+use vet_engine::{self as engine, Engine, Kind, Limits, Retention};
 
 use crate::once::{Producer, Shared};
 use crate::policy::AnalysisPolicy;
-use crate::ports::{At, Diagnostic, Location, ServerIdentity, SymbolInfo};
+use crate::ports::{At, Diagnostic, Location, QueryError, ServerIdentity, SymbolInfo};
 
 /// How the dependencies of an immutable tree were restored.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -325,9 +325,20 @@ pub trait SemanticCache: Send + Sync {
     fn put(&self, key: &Key, value: &Value);
 }
 
-/// The answers of the primitive queries, kept by [`Key`].
+impl Kind for Key {
+    type Value = Value;
+    type Error = QueryError;
+
+    fn retention(&self) -> Retention {
+        Retention::Kept
+    }
+}
+
+/// The answers of the primitive queries, kept by [`Key`]. A question is asked of
+/// a server once however many callers ask while it is, and however many of them
+/// give up: the others get its answer.
 pub struct Answers {
-    memo: Memo<Key, Value>,
+    engine: Engine<Key>,
     store: Option<Arc<dyn SemanticCache>>,
 }
 
@@ -335,10 +346,11 @@ pub struct Answers {
 pub const KEPT: usize = 10_000;
 
 impl Answers {
-    /// Keeps at most `limit` answers; 0 keeps none, so every question is asked.
+    /// Keeps at most `limit` answers; 0 keeps none, so every question is asked
+    /// unless it is being asked already.
     pub fn new(limit: usize) -> Self {
         Self {
-            memo: Memo::new(limit),
+            engine: Engine::new(Limits::entries(limit)),
             store: None,
         }
     }
@@ -352,56 +364,58 @@ impl Answers {
 
     /// Drops the answers kept in memory. Those being computed are left to finish.
     pub fn forget(&self) {
-        self.memo.clear();
+        self.engine.clear();
     }
 
     /// The answer under `key` if one is kept, in memory or in the store; no server is
     /// asked and nothing is computed. An answer from the store is kept in memory too.
     pub async fn recall<T: Reused>(&self, key: &Key) -> Option<T> {
-        if let Some(value) = self.memo.peek(key) {
+        if let Some(value) = self.engine.peek(key) {
             return T::from_kept(value);
         }
         let store = self.store.as_deref().filter(|_| key.persists())?;
         let value = store.get(key).await?;
         let recalled = T::from_kept(value.clone())?;
-        self.memo.keep(key, value);
+        self.engine.keep(key, value);
         Some(recalled)
     }
 
     /// The answer under `key` and whether it was reused. Without a key, or if the
-    /// answer cannot be kept, `ask` decides: its second value says whether the
-    /// answer may be kept.
-    pub async fn get<T: Reused, E>(
+    /// answer cannot be kept, `ask` decides: the second part of what it answers says
+    /// whether the answer may be kept. `ask` only builds the question, which is
+    /// asked by whichever caller is polled while the key is in flight.
+    pub async fn get<T, F>(
         &self,
         key: Option<&Key>,
-        ask: impl Future<Output = Result<Computed<T>, E>>,
-    ) -> Result<(T, bool), E> {
+        ask: impl FnOnce() -> F + Send + 'static,
+    ) -> Result<(T, bool), QueryError>
+    where
+        T: Reused + Send,
+        F: Future<Output = Result<Computed<T>, QueryError>> + Send + 'static,
+    {
         let Some(key) = key else {
-            return ask.await.map(|c| (c.value, false));
+            return ask().await.map(|c| (c.value, false));
         };
-        let store = self.store.as_deref().filter(|_| key.persists());
-        let restored = AtomicBool::new(false);
-        let asked = async {
-            if let Some(value) = match store {
-                Some(store) => store.get(key).await.and_then(T::from_kept),
-                None => None,
-            } {
-                restored.store(true, Ordering::SeqCst);
-                return Ok(Computed {
-                    value: value.kept(),
-                    keep: true,
-                });
-            }
-            let Computed { value, keep } = ask.await?;
-            let value = value.kept();
-            if let (true, Some(store)) = (keep, store) {
-                store.put(key, &value);
-            }
-            Ok(Computed { value, keep })
-        };
-        let (value, reused) = self.memo.get(key, asked).await?;
-        match T::from_kept(value) {
-            Some(value) => Ok((value, reused || restored.load(Ordering::SeqCst))),
+        let store = self.store.clone().filter(|_| key.persists());
+        let owned = key.clone();
+        let got = self
+            .engine
+            .get(key.clone(), move |_| async move {
+                if let Some(store) = &store
+                    && let Some(found) = store.get(&owned).await.and_then(T::from_kept)
+                {
+                    return Ok(engine::Computed::restored(found.kept()));
+                }
+                let Computed { value, keep } = ask().await?;
+                let value = value.kept();
+                if let (true, Some(store)) = (keep, &store) {
+                    store.put(&owned, &value);
+                }
+                Ok(engine::Computed::new(value, keep))
+            })
+            .await?;
+        match T::from_kept(got.value) {
+            Some(value) => Ok((value, got.reused)),
             None => unreachable!("a key names the type of its answer"),
         }
     }

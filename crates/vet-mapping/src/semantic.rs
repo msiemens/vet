@@ -106,7 +106,7 @@ pub fn unavailable(error: &SemanticError, language: Option<String>) -> p::Unavai
     let kind = match error {
         SemanticError::NoBackend(_) => Kind::Unsupported,
         SemanticError::Pool(PoolError::Launch(LaunchError::NotInstalled(_))) => Kind::ServerMissing,
-        SemanticError::Pool(PoolError::Launch(_) | PoolError::StartFailed(_)) => Kind::ServerFailed,
+        SemanticError::Pool(PoolError::Launch(_)) => Kind::ServerFailed,
         SemanticError::Pool(PoolError::AnalysisLimited(_)) => Kind::AnalysisLimited,
         SemanticError::Pool(PoolError::NotMaterializable(_)) => Kind::SnapshotUnavailable,
         SemanticError::Query(_) => Kind::QueryFailed,

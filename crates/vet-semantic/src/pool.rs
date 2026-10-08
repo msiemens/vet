@@ -4,9 +4,10 @@
 //! the PR is trusted (and the reverse can never happen).
 //!
 //! One server per key, however many callers: concurrent leases share it, and
-//! callers arriving while it starts wait for that start instead of launching
-//! another. Only servers with no lease are evicted. No lock is held across an
-//! await.
+//! callers arriving while it starts join that start instead of launching
+//! another. A start is a flight of the engine: it goes on while any of its callers
+//! waits, whichever of them began it, and all of them get the server it started.
+//! Only servers with no lease are evicted. No lock is held across an await.
 //!
 //! Answers outlive their server: they are kept by the pool under keys that name
 //! the server's identity (I2, `reuse`), so a server that starts later with an
@@ -17,14 +18,16 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vet_core::content::{BlobId, RepoPath, SnapshotId};
+use vet_engine::{self as engine, Engine, Kind, Limits, Retention};
 
-use crate::once::{Producer, Shared};
 use crate::policy::AnalysisPolicy;
 use crate::ports::{
     Answered, At, Backend, BackendId, Diagnostic, LanguageServer, LaunchError, Location, Materializer,
@@ -48,15 +51,13 @@ pub struct PoolKey {
     pub policy: AnalysisPolicy,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum PoolError {
     NotMaterializable(NotMaterializable),
     Launch(LaunchError),
     /// The backend would execute project code and the policy forbids it. The UI
     /// shows an "analysis limited" marker for the language (§7.5).
     AnalysisLimited(BackendId),
-    /// Another caller's start of the same server failed.
-    StartFailed(String),
 }
 
 impl fmt::Display for PoolError {
@@ -65,7 +66,6 @@ impl fmt::Display for PoolError {
             Self::NotMaterializable(e) => write!(f, "snapshot cannot be materialized: {e}"),
             Self::Launch(e) => e.fmt(f),
             Self::AnalysisLimited(b) => write!(f, "analysis limited: {} may execute project code", b.0),
-            Self::StartFailed(why) => write!(f, "server start failed: {why}"),
         }
     }
 }
@@ -128,7 +128,7 @@ pub struct Entry<S, G> {
     _guard: Option<G>,
 }
 
-impl<S: LanguageServer, G: Send + Sync + 'static> Entry<S, G> {
+impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
     pub fn identity(&self) -> &ServerIdentity {
         &self.identity
     }
@@ -141,16 +141,23 @@ impl<S: LanguageServer, G: Send + Sync + 'static> Entry<S, G> {
 
     /// The answer under `key`, or the server's. The server's answer is kept only if
     /// it was not at work on its own when it was asked, and did not begin work before
-    /// it answered: an answer given while it indexes may be a partial one.
-    async fn reuse<T: Reused>(
-        &self,
+    /// it answered: an answer given while it indexes may be a partial one. The
+    /// question is asked by a flight that outlives the caller that began it, so
+    /// `ask` gets the entry and owns what it asks with.
+    async fn reuse<T, F>(
+        self: &Arc<Self>,
         key: Option<Key>,
-        ask: impl Future<Output = Result<T, QueryError>>,
-    ) -> Result<Answered<T>, QueryError> {
-        let asked = async {
-            let before = self.server.readiness();
-            let value = ask.await?;
-            let keep = before.idle && before.epoch == self.server.readiness().epoch;
+        ask: impl FnOnce(Arc<Self>) -> F + Send + 'static,
+    ) -> Result<Answered<T>, QueryError>
+    where
+        T: Reused + Send,
+        F: Future<Output = Result<T, QueryError>> + Send + 'static,
+    {
+        let entry = self.clone();
+        let asked = move || async move {
+            let before = entry.server.readiness();
+            let value = ask(entry.clone()).await?;
+            let keep = before.idle && before.epoch == entry.server.readiness().epoch;
             Ok(Computed { value, keep })
         };
         let (value, from_cache) = self.answers.get(key.as_ref(), asked).await?;
@@ -158,53 +165,84 @@ impl<S: LanguageServer, G: Send + Sync + 'static> Entry<S, G> {
     }
 
     /// Without a text the symbols are those of the file as the tree has it: only a tree that never changes has them under a key.
-    pub async fn document_symbols(&self, file: &RepoPath) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
+    pub async fn document_symbols(self: &Arc<Self>, file: &RepoPath) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         let key = self.project(ProjectQuery::DocumentSymbols(file.clone()));
-        self.reuse(key, self.server.document_symbols(file)).await
+        let file = file.clone();
+        self.reuse(
+            key,
+            move |this| async move { this.server.document_symbols(&file).await },
+        )
+        .await
     }
 
     /// The symbols `text` declares as the content of `file`. They depend on the text
     /// and the language alone, so any tree has them under one key.
-    pub async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
+    pub async fn text_symbols(
+        self: &Arc<Self>,
+        file: &RepoPath,
+        text: &str,
+    ) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         let key = text_key(&self.identity, file, text);
-        let mut answered = self.reuse(Some(key), self.server.text_symbols(file, text)).await?;
+        let (asked_file, text) = (file.clone(), text.to_owned());
+        let mut answered = self
+            .reuse(Some(key), move |this| async move {
+                this.server.text_symbols(&asked_file, &text).await
+            })
+            .await?;
         named_after(file, &mut answered.value);
         Ok(answered)
     }
 
-    pub async fn definition(&self, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
+    pub async fn definition(self: &Arc<Self>, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
         let key = self.project(ProjectQuery::Definition(at.clone()));
-        self.reuse(key, self.server.definition(at)).await
+        let at = at.clone();
+        self.reuse(key, move |this| async move { this.server.definition(&at).await })
+            .await
     }
 
-    pub async fn references(&self, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
+    pub async fn references(self: &Arc<Self>, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
         let key = self.project(ProjectQuery::References(at.clone()));
-        self.reuse(key, self.server.references(at)).await
+        let at = at.clone();
+        self.reuse(key, move |this| async move { this.server.references(&at).await })
+            .await
     }
 
-    pub async fn hover(&self, at: &At) -> Result<Answered<Option<String>>, QueryError> {
+    pub async fn hover(self: &Arc<Self>, at: &At) -> Result<Answered<Option<String>>, QueryError> {
         let key = self.project(ProjectQuery::Hover(at.clone()));
-        self.reuse(key, self.server.hover(at)).await
+        let at = at.clone();
+        self.reuse(key, move |this| async move { this.server.hover(&at).await })
+            .await
     }
 
-    pub async fn incoming_calls(&self, at: &At) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
+    pub async fn incoming_calls(self: &Arc<Self>, at: &At) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         let key = self.project(ProjectQuery::Incoming(at.clone()));
-        self.reuse(key, self.server.incoming_calls(at)).await
+        let at = at.clone();
+        self.reuse(key, move |this| async move { this.server.incoming_calls(&at).await })
+            .await
     }
 
-    pub async fn outgoing_calls(&self, at: &At) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
+    pub async fn outgoing_calls(self: &Arc<Self>, at: &At) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         let key = self.project(ProjectQuery::Outgoing(at.clone()));
-        self.reuse(key, self.server.outgoing_calls(at)).await
+        let at = at.clone();
+        self.reuse(key, move |this| async move { this.server.outgoing_calls(&at).await })
+            .await
     }
 
-    pub async fn workspace_symbols(&self, query: &str) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
+    pub async fn workspace_symbols(self: &Arc<Self>, query: &str) -> Result<Answered<Vec<SymbolInfo>>, QueryError> {
         let key = self.project(ProjectQuery::Workspace(query.to_owned()));
-        self.reuse(key, self.server.workspace_symbols(query)).await
+        let query = query.to_owned();
+        self.reuse(
+            key,
+            move |this| async move { this.server.workspace_symbols(&query).await },
+        )
+        .await
     }
 
-    pub async fn diagnostics(&self, file: &RepoPath) -> Result<Answered<Vec<Diagnostic>>, QueryError> {
+    pub async fn diagnostics(self: &Arc<Self>, file: &RepoPath) -> Result<Answered<Vec<Diagnostic>>, QueryError> {
         let key = self.project(ProjectQuery::Diagnostics(file.clone()));
-        self.reuse(key, self.server.diagnostics(file)).await
+        let file = file.clone();
+        self.reuse(key, move |this| async move { this.server.diagnostics(&file).await })
+            .await
     }
 
     async fn shutdown(&self) {
@@ -212,23 +250,65 @@ impl<S: LanguageServer, G: Send + Sync + 'static> Entry<S, G> {
     }
 }
 
-/// How a start ended for the callers who waited for it: the server is in the
-/// pool (`Ok`), or the start failed for this reason.
-type StartEnd = Result<(), String>;
-
-enum Slot<S, G> {
-    Starting(Arc<Shared<StartEnd>>),
-    Running(Arc<Entry<S, G>>),
-}
-
 struct State<S, G> {
     tick: u64,
     /// Bumped by `restart`; an entry from an older generation is not pooled.
     generations: HashMap<BackendId, u64>,
-    slots: HashMap<PoolKey, Slot<S, G>>,
+    slots: HashMap<PoolKey, Arc<Entry<S, G>>>,
 }
 
-pub struct Pool<M: Materializer, L: ServerLauncher> {
+/// A server being started: the key of the flight that starts it. Callers of
+/// different generations of a backend do not share a start, because the server
+/// of the older one does not stay.
+struct Start<M, L> {
+    key: PoolKey,
+    generation: u64,
+    of: PhantomData<fn() -> (M, L)>,
+}
+
+impl<M, L> Start<M, L> {
+    fn new(key: PoolKey, generation: u64) -> Self {
+        Self {
+            key,
+            generation,
+            of: PhantomData,
+        }
+    }
+}
+
+impl<M, L> Clone for Start<M, L> {
+    fn clone(&self) -> Self {
+        Self::new(self.key.clone(), self.generation)
+    }
+}
+
+impl<M, L> PartialEq for Start<M, L> {
+    fn eq(&self, other: &Self) -> bool {
+        (&self.key, self.generation) == (&other.key, other.generation)
+    }
+}
+
+impl<M, L> Eq for Start<M, L> {}
+
+impl<M, L> Hash for Start<M, L> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+        self.generation.hash(state);
+    }
+}
+
+/// Every start is shared while it goes on and forgotten when it ended: the server
+/// it started is the pool's, and a caller that comes later finds it there.
+impl<M: Materializer, L: ServerLauncher> Kind for Start<M, L> {
+    type Value = Lease<M, L>;
+    type Error = PoolError;
+
+    fn retention(&self) -> Retention {
+        Retention::InFlight
+    }
+}
+
+struct Inner<M: Materializer, L: ServerLauncher> {
     materializer: M,
     launcher: L,
     live_root: PathBuf,
@@ -243,6 +323,11 @@ pub struct Pool<M: Materializer, L: ServerLauncher> {
     /// Numbers the servers started on trees whose restore left no record.
     instances: AtomicU64,
     state: Mutex<State<L::Server, M::Guard>>,
+    starts: Engine<Start<M, L>>,
+}
+
+pub struct Pool<M: Materializer, L: ServerLauncher> {
+    inner: Arc<Inner<M, L>>,
 }
 
 /// A server key, the directory it would run in and the generation of its backend:
@@ -254,62 +339,50 @@ const FORESEEN_KEPT: usize = 64;
 
 type EntryOf<M, L> = Entry<<L as ServerLauncher>::Server, <M as Materializer>::Guard>;
 
-/// A claim on a shared server. Ends on `release` or drop.
-pub struct Lease<'p, M: Materializer, L: ServerLauncher> {
-    pool: &'p Pool<M, L>,
+/// A claim on a shared server. Ends on `release` or drop. A claim is a lease of
+/// its own when cloned.
+pub struct Lease<M: Materializer, L: ServerLauncher> {
+    pool: Arc<Inner<M, L>>,
     entry: Option<Arc<EntryOf<M, L>>>,
 }
 
-impl<M: Materializer, L: ServerLauncher> Deref for Lease<'_, M, L> {
-    type Target = EntryOf<M, L>;
+impl<M: Materializer, L: ServerLauncher> Deref for Lease<M, L> {
+    type Target = Arc<EntryOf<M, L>>;
 
     fn deref(&self) -> &Self::Target {
         self.entry.as_ref().expect("lease is live until released")
     }
 }
 
-impl<M: Materializer, L: ServerLauncher> Drop for Lease<'_, M, L> {
-    fn drop(&mut self) {
-        if let Some(entry) = self.entry.take() {
-            // Not awaited: a retired server is just dropped, which kills it.
-            drop(self.pool.end_lease(entry));
+impl<M: Materializer, L: ServerLauncher> Clone for Lease<M, L> {
+    fn clone(&self) -> Self {
+        let entry = self.entry.clone().expect("lease is live until released");
+        entry.leases.fetch_add(1, Ordering::SeqCst);
+        Self {
+            pool: self.pool.clone(),
+            entry: Some(entry),
         }
     }
 }
 
-impl<M: Materializer, L: ServerLauncher> Lease<'_, M, L> {
+impl<M: Materializer, L: ServerLauncher> Drop for Lease<M, L> {
+    fn drop(&mut self) {
+        if let Some(entry) = self.entry.take() {
+            // Not awaited: a retired server is just dropped, which kills it. Evicting waits
+            // for a release, which stops the evicted servers cleanly: a lease is also dropped
+            // when a flight's copy of it goes, while the callers' own are yet to be released.
+            drop(self.pool.end_lease(entry, false));
+        }
+    }
+}
+
+impl<M: Materializer, L: ServerLauncher> Lease<M, L> {
     /// End the lease, shutting the server down cleanly if this was the last
     /// lease of a restarted or evicted server.
     pub async fn release(mut self) {
         if let Some(entry) = self.entry.take() {
-            let stop = self.pool.end_lease(entry);
-            Pool::<M, L>::stop(stop).await;
-        }
-    }
-}
-
-/// A start in progress. If its starter is dropped before the start ended, the
-/// slot is freed and the waiters are woken, so one of them starts the server.
-struct StartGuard<'p, M: Materializer, L: ServerLauncher> {
-    pool: &'p Pool<M, L>,
-    key: PoolKey,
-    /// Taken when the start ended.
-    producer: Option<Producer<StartEnd>>,
-}
-
-impl<M: Materializer, L: ServerLauncher> StartGuard<'_, M, L> {
-    fn end(&mut self, outcome: StartEnd) {
-        if let Some(producer) = self.producer.take() {
-            producer.finish(outcome);
-        }
-    }
-}
-
-impl<M: Materializer, L: ServerLauncher> Drop for StartGuard<'_, M, L> {
-    fn drop(&mut self) {
-        // The slot goes before the producer is dropped: a woken waiter must find it free.
-        if self.producer.is_some() {
-            self.pool.lock().slots.remove(&self.key);
+            let stop = self.pool.end_lease(entry, true);
+            Inner::<M, L>::stop(stop).await;
         }
     }
 }
@@ -318,44 +391,56 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
     /// `capacity` is the number of servers kept warm; leased ones never count against eviction.
     pub fn new(materializer: M, launcher: L, live_root: PathBuf, capacity: usize) -> Self {
         Self {
-            materializer,
-            launcher,
-            live_root,
-            capacity,
-            limit: KEPT,
-            store: None,
-            answers: Arc::new(Answers::new(KEPT)),
-            identities: Memo::new(FORESEEN_KEPT),
-            bases: Memo::new(FORESEEN_KEPT),
-            instances: AtomicU64::new(0),
-            state: Mutex::new(State {
-                tick: 0,
-                generations: HashMap::new(),
-                slots: HashMap::new(),
+            inner: Arc::new(Inner {
+                materializer,
+                launcher,
+                live_root,
+                capacity,
+                limit: KEPT,
+                store: None,
+                answers: Arc::new(Answers::new(KEPT)),
+                identities: Memo::new(FORESEEN_KEPT),
+                bases: Memo::new(FORESEEN_KEPT),
+                instances: AtomicU64::new(0),
+                state: Mutex::new(State {
+                    tick: 0,
+                    generations: HashMap::new(),
+                    slots: HashMap::new(),
+                }),
+                starts: Engine::new(Limits::entries(0)),
             }),
         }
+    }
+
+    /// The pool before it is shared: configured by the builders.
+    fn unshared(&mut self) -> &mut Inner<M, L> {
+        Arc::get_mut(&mut self.inner).expect("a pool is configured before it is used")
     }
 
     /// Keeps at most `limit` answers in memory; 0 keeps none, so every question
     /// reaches a server unless `store` has the answer.
     pub fn keeping(mut self, limit: usize) -> Self {
-        self.limit = limit;
-        self.answers = Arc::new(Answers::new(limit).persisting(self.store.clone()));
+        let inner = self.unshared();
+        inner.limit = limit;
+        inner.answers = Arc::new(Answers::new(limit).persisting(inner.store.clone()));
         self
     }
 
     /// Keeps the answers that persist in `store`, behind the ones in memory.
     pub fn persisting(mut self, store: Arc<dyn SemanticCache>) -> Self {
-        self.store = Some(store);
-        self.answers = Arc::new(Answers::new(self.limit).persisting(self.store.clone()));
+        let inner = self.unshared();
+        inner.store = Some(store);
+        inner.answers = Arc::new(Answers::new(inner.limit).persisting(inner.store.clone()));
         self
     }
 
     /// Drops the answers kept in memory; the stored ones are the store's.
     pub fn forget_answers(&self) {
-        self.answers.forget();
+        self.inner.answers.forget();
     }
+}
 
+impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
     /// What a server for `key` would be, as far as the keys of its answers go, worked
     /// out without starting one: its identity and, on an immutable tree, the basis, from
     /// the restore the tree's record stands for. Nothing is materialized: a snapshot
@@ -436,103 +521,32 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         self.lock().generations.get(backend).copied().unwrap_or(0)
     }
 
-    /// The answer to a question about the whole tree of `key` if it is kept, in memory or
-    /// in the store, found without a server (I2): the key is worked out as a start
-    /// would, from the identity of the server and the restore recorded for the tree.
-    /// `None` means only that a server is to be asked.
-    pub async fn recall<T: Reused>(
-        &self,
-        key: &PoolKey,
-        backend: &Backend,
-        query: ProjectQuery,
-    ) -> Option<Answered<T>> {
-        let (identity, basis) = self.foreseen(key, backend).await?;
-        let value = self.answers.recall(&project_key(&identity, basis?, query)).await?;
-        Some(answered(value, identity, true))
+    /// A lease on the server for `key` if one is running.
+    fn join(self: &Arc<Self>, key: &PoolKey) -> Option<Lease<M, L>> {
+        let mut state = self.lock();
+        state.tick += 1;
+        let tick = state.tick;
+        let entry = state.slots.get(key)?;
+        entry.leases.fetch_add(1, Ordering::SeqCst);
+        entry.used.store(tick, Ordering::SeqCst);
+        Some(Lease {
+            pool: self.clone(),
+            entry: Some(entry.clone()),
+        })
     }
 
-    /// Like [`Pool::recall`], for the symbols `text` declares as the content of `file`.
-    pub async fn recall_text_symbols(
-        &self,
-        key: &PoolKey,
-        backend: &Backend,
-        file: &RepoPath,
-        text: &str,
-    ) -> Option<Answered<Vec<SymbolInfo>>> {
-        let (root, _) = self.foreseen_root(key, backend).await?;
-        let identity = self.foreseen_identity(key, backend, &root).await?;
-        let value: Vec<SymbolInfo> = self.answers.recall(&text_key(&identity, file, text)).await?;
-        let mut recalled = answered(value, identity, true);
-        named_after(file, &mut recalled.value);
-        Some(recalled)
-    }
-
-    /// The server for `key`: the running one, the one being started, or a new one.
-    /// A caller that waited for a start which was abandoned or whose server did
-    /// not stay (it was restarted meanwhile) asks again, and may start the
-    /// server itself.
-    pub async fn lease(&self, key: &PoolKey, backend: &Backend) -> Result<Lease<'_, M, L>, PoolError> {
-        admit(backend, key.policy)?;
-        enum Plan<S, G> {
-            Join(Arc<Entry<S, G>>),
-            Wait(Arc<Shared<StartEnd>>),
-            Start(Producer<StartEnd>, u64),
-        }
-        loop {
-            let plan = {
-                let mut state = self.lock();
-                state.tick += 1;
-                let tick = state.tick;
-                let generation = state.generations.get(&key.backend).copied().unwrap_or(0);
-                match state.slots.get(key) {
-                    Some(Slot::Running(entry)) => {
-                        entry.leases.fetch_add(1, Ordering::SeqCst);
-                        entry.used.store(tick, Ordering::SeqCst);
-                        Plan::Join(entry.clone())
-                    }
-                    Some(Slot::Starting(start)) => Plan::Wait(start.clone()),
-                    None => {
-                        let (start, producer) = Shared::start();
-                        state.slots.insert(key.clone(), Slot::Starting(start));
-                        Plan::Start(producer, generation)
-                    }
-                }
-            };
-            let entry = match plan {
-                Plan::Join(entry) => entry,
-                Plan::Wait(start) => match start.wait().await {
-                    Some(Err(why)) => return Err(PoolError::StartFailed(why)),
-                    Some(Ok(())) | None => continue,
-                },
-                Plan::Start(producer, generation) => self.start(key, backend, producer, generation).await?,
-            };
-            return Ok(Lease {
-                pool: self,
-                entry: Some(entry),
-            });
-        }
-    }
-
+    /// Starts the server for `key`, unless one is running by the time this is
+    /// polled, and leases it. It runs as a flight, so its result is every waiter's.
     async fn start(
-        &self,
-        key: &PoolKey,
-        backend: &Backend,
-        producer: Producer<StartEnd>,
+        self: Arc<Self>,
+        key: PoolKey,
+        backend: Backend,
         generation: u64,
-    ) -> Result<Arc<EntryOf<M, L>>, PoolError> {
-        let mut guard = StartGuard {
-            pool: self,
-            key: key.clone(),
-            producer: Some(producer),
-        };
-        let (Started { server, identity, .. }, basis, dir_guard) = match self.launch(key, backend).await {
-            Ok(parts) => parts,
-            Err(e) => {
-                self.lock().slots.remove(key);
-                guard.end(Err(e.to_string()));
-                return Err(e);
-            }
-        };
+    ) -> Result<engine::Computed<Lease<M, L>>, PoolError> {
+        if let Some(lease) = self.join(&key) {
+            return Ok(engine::Computed::new(lease, false));
+        }
+        let (Started { server, identity, .. }, basis, dir_guard) = self.launch(&key, &backend).await?;
         let entry = {
             let mut state = self.lock();
             let stale = state.generations.get(&key.backend).copied().unwrap_or(0) != generation;
@@ -547,18 +561,123 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                 retired: AtomicBool::new(stale),
                 _guard: dir_guard,
             });
-            if stale {
-                state.slots.remove(key);
-            } else {
-                state.slots.insert(key.clone(), Slot::Running(entry.clone()));
+            if !stale {
+                state.slots.insert(key, entry.clone());
             }
             entry
         };
         self.bases.clear();
-        guard.end(Ok(()));
-        Ok(entry)
+        Ok(engine::Computed::new(
+            Lease {
+                pool: self,
+                entry: Some(entry),
+            },
+            false,
+        ))
+    }
+}
+
+impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
+    /// The answer to a question about the whole tree of `key` if it is kept, in memory or
+    /// in the store, found without a server (I2): the key is worked out as a start
+    /// would, from the identity of the server and the restore recorded for the tree.
+    /// `None` means only that a server is to be asked.
+    pub async fn recall<T: Reused>(
+        &self,
+        key: &PoolKey,
+        backend: &Backend,
+        query: ProjectQuery,
+    ) -> Option<Answered<T>> {
+        let (identity, basis) = self.inner.foreseen(key, backend).await?;
+        let value = self
+            .inner
+            .answers
+            .recall(&project_key(&identity, basis?, query))
+            .await?;
+        Some(answered(value, identity, true))
     }
 
+    /// Like [`Pool::recall`], for the symbols `text` declares as the content of `file`.
+    pub async fn recall_text_symbols(
+        &self,
+        key: &PoolKey,
+        backend: &Backend,
+        file: &RepoPath,
+        text: &str,
+    ) -> Option<Answered<Vec<SymbolInfo>>> {
+        let (root, _) = self.inner.foreseen_root(key, backend).await?;
+        let identity = self.inner.foreseen_identity(key, backend, &root).await?;
+        let value: Vec<SymbolInfo> = self.inner.answers.recall(&text_key(&identity, file, text)).await?;
+        let mut recalled = answered(value, identity, true);
+        named_after(file, &mut recalled.value);
+        Some(recalled)
+    }
+
+    /// The server for `key`: the running one, the one being started, or a new one.
+    /// Callers that arrive while it starts join that start, whichever of them
+    /// began it. A start is not shared across a restart of the backend, because
+    /// the server of the older generation does not stay.
+    pub async fn lease(&self, key: &PoolKey, backend: &Backend) -> Result<Lease<M, L>, PoolError> {
+        admit(backend, key.policy)?;
+        if let Some(lease) = self.inner.join(key) {
+            return Ok(lease);
+        }
+        let generation = self.inner.generation(&key.backend);
+        let (inner, started, backend) = (self.inner.clone(), key.clone(), backend.clone());
+        let lease = self
+            .inner
+            .starts
+            .get(Start::new(key.clone(), generation), move |_| {
+                inner.start(started, backend, generation)
+            })
+            .await?;
+        Ok(lease.value)
+    }
+
+    /// Drop every server of `backend`: its settings changed (§7.2). Servers
+    /// leased right now are stopped when their last lease ends.
+    pub async fn restart(&self, backend: &BackendId) {
+        let stop = {
+            let mut state = self.inner.lock();
+            *state.generations.entry(backend.clone()).or_default() += 1;
+            let keys: Vec<_> = state.slots.keys().filter(|k| &k.backend == backend).cloned().collect();
+            let mut stop = Vec::new();
+            for key in keys {
+                if let Some(e) = state.slots.remove(&key) {
+                    if e.leases.load(Ordering::SeqCst) == 0 {
+                        stop.push(e);
+                    } else {
+                        e.retired.store(true, Ordering::SeqCst);
+                    }
+                }
+            }
+            stop
+        };
+        Inner::<M, L>::stop(stop).await;
+    }
+
+    /// Stop every server that is not leased.
+    pub async fn shutdown(&self) {
+        let stop = {
+            let mut state = self.inner.lock();
+            let keys: Vec<_> = state
+                .slots
+                .iter()
+                .filter(|(_, e)| e.leases.load(Ordering::SeqCst) == 0)
+                .map(|(k, _)| k.clone())
+                .collect();
+            keys.iter().filter_map(|k| state.slots.remove(k)).collect()
+        };
+        Inner::<M, L>::stop(stop).await;
+    }
+
+    #[cfg(test)]
+    pub fn keys(&self) -> Vec<PoolKey> {
+        self.inner.lock().slots.keys().cloned().collect()
+    }
+}
+
+impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
     async fn launch(
         &self,
         key: &PoolKey,
@@ -595,84 +714,28 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
     }
 
     /// Drops one lease; returns the entries to stop (this one if it was
-    /// retired, plus whatever exceeds capacity).
-    fn end_lease(&self, entry: Arc<EntryOf<M, L>>) -> Vec<Arc<EntryOf<M, L>>> {
+    /// retired, plus, if `evict`, whatever exceeds capacity).
+    fn end_lease(&self, entry: Arc<EntryOf<M, L>>, evict: bool) -> Vec<Arc<EntryOf<M, L>>> {
         let mut state = self.lock();
         let left = entry.leases.fetch_sub(1, Ordering::SeqCst) - 1;
         let mut stop = Vec::new();
         if left == 0 && entry.retired.load(Ordering::SeqCst) {
             stop.push(entry);
         }
-        while state.slots.len() > self.capacity {
+        while evict && state.slots.len() > self.capacity {
             let oldest = state
                 .slots
                 .iter()
-                .filter_map(|(k, s)| match s {
-                    Slot::Running(e) if e.leases.load(Ordering::SeqCst) == 0 => {
-                        Some((k, e.used.load(Ordering::SeqCst)))
-                    }
-                    _ => None,
-                })
+                .filter(|(_, e)| e.leases.load(Ordering::SeqCst) == 0)
+                .map(|(k, e)| (k, e.used.load(Ordering::SeqCst)))
                 .min_by_key(|(_, used)| *used)
                 .map(|(k, _)| k.clone());
             match oldest.and_then(|k| state.slots.remove(&k)) {
-                Some(Slot::Running(e)) => stop.push(e),
-                _ => break,
+                Some(e) => stop.push(e),
+                None => break,
             }
         }
         stop
-    }
-
-    /// Drop every server of `backend`: its settings changed (§7.2). Servers
-    /// leased right now are stopped when their last lease ends.
-    pub async fn restart(&self, backend: &BackendId) {
-        let stop = {
-            let mut state = self.lock();
-            *state.generations.entry(backend.clone()).or_default() += 1;
-            let keys: Vec<_> = state
-                .slots
-                .iter()
-                .filter(|(k, s)| &k.backend == backend && matches!(s, Slot::Running(_)))
-                .map(|(k, _)| k.clone())
-                .collect();
-            let mut stop = Vec::new();
-            for key in keys {
-                if let Some(Slot::Running(e)) = state.slots.remove(&key) {
-                    if e.leases.load(Ordering::SeqCst) == 0 {
-                        stop.push(e);
-                    } else {
-                        e.retired.store(true, Ordering::SeqCst);
-                    }
-                }
-            }
-            stop
-        };
-        Self::stop(stop).await;
-    }
-
-    /// Stop every server that is not leased.
-    pub async fn shutdown(&self) {
-        let stop = {
-            let mut state = self.lock();
-            let keys: Vec<_> = state
-                .slots
-                .iter()
-                .filter(|(_, s)| matches!(s, Slot::Running(e) if e.leases.load(Ordering::SeqCst) == 0))
-                .map(|(k, _)| k.clone())
-                .collect();
-            keys.iter()
-                .filter_map(|k| match state.slots.remove(k) {
-                    Some(Slot::Running(e)) => Some(e),
-                    _ => None,
-                })
-                .collect()
-        };
-        Self::stop(stop).await;
-    }
-
-    #[cfg(test)]
-    pub fn keys(&self) -> Vec<PoolKey> {
-        self.lock().slots.keys().cloned().collect()
     }
 
     async fn stop(entries: Vec<Arc<EntryOf<M, L>>>) {
@@ -731,6 +794,8 @@ mod tests {
         shut_down: AtomicUsize,
         hover_calls: AtomicUsize,
         fail_start: AtomicBool,
+        /// A start goes on only when this is false.
+        hold_start: AtomicBool,
         /// The version of the server binary: part of its identity and of what it answers.
         version: AtomicU8,
         /// The fingerprint of the restore of an immutable tree; 0: none was recorded.
@@ -754,6 +819,7 @@ mod tests {
                 shut_down: AtomicUsize::new(0),
                 hover_calls: AtomicUsize::new(0),
                 fail_start: AtomicBool::new(false),
+                hold_start: AtomicBool::new(false),
                 version: AtomicU8::new(1),
                 restore: AtomicU8::new(5),
                 asked: Mutex::default(),
@@ -820,6 +886,9 @@ mod tests {
         ) -> Result<Started<FakeServer>, LaunchError> {
             self.0.started.fetch_add(1, Ordering::SeqCst);
             yield_once().await;
+            while self.0.hold_start.load(Ordering::SeqCst) {
+                yield_once().await;
+            }
             if self.0.fail_start.load(Ordering::SeqCst) {
                 return Err(LaunchError::Spawn("boom".into()));
             }
@@ -1039,7 +1108,7 @@ mod tests {
     ];
 
     /// Asks every cached kind of query: the answers, each with whether it was reused.
-    async fn ask_all(lease: &Lease<'_, FakeMaterializer, FakeLauncher>, ask: &Ask) -> Vec<(String, bool)> {
+    async fn ask_all(lease: &Lease<FakeMaterializer, FakeLauncher>, ask: &Ask) -> Vec<(String, bool)> {
         let mut out = Vec::new();
         macro_rules! record {
             ($answered:expr) => {{
@@ -1621,7 +1690,7 @@ mod tests {
             let key = snapshot_key(1);
             let (a, b) = join(pool.lease(&key, &backend(true)), pool.lease(&key, &backend(true))).await;
             assert!(matches!(a, Err(PoolError::Launch(_))));
-            assert!(matches!(b, Err(PoolError::StartFailed(_))));
+            assert!(matches!(b, Err(PoolError::Launch(_))));
             assert_eq!(counters.started.load(Ordering::SeqCst), 1);
             assert!(pool.keys().is_empty());
             assert_eq!(counters.guards_dropped.load(Ordering::SeqCst), 1);
@@ -1633,8 +1702,9 @@ mod tests {
     }
 
     #[test]
-    fn a_waiter_takes_over_a_start_whose_caller_gave_up() {
+    fn the_waiters_finish_a_start_whose_caller_gave_up_without_starting_another() {
         let (pool, counters) = pool(2);
+        counters.hold_start.store(true, Ordering::SeqCst);
         let key = snapshot_key(1);
         let be = backend(true);
         let mut cx = Context::from_waker(Waker::noop());
@@ -1648,10 +1718,12 @@ mod tests {
 
         drop(starter);
         assert!(pool.keys().is_empty());
+        counters.hold_start.store(false, Ordering::SeqCst);
         block_on(async {
             let (first, second) = join(first, second).await;
             let (first, second) = (first.unwrap(), second.unwrap());
-            assert_eq!(counters.started.load(Ordering::SeqCst), 2);
+            assert_eq!(counters.started.load(Ordering::SeqCst), 1);
+            assert_eq!(counters.materialized.load(Ordering::SeqCst), 1);
             assert!(Arc::ptr_eq(
                 first.entry.as_ref().unwrap(),
                 second.entry.as_ref().unwrap()
@@ -1661,13 +1733,66 @@ mod tests {
             first.release().await;
             second.release().await;
         });
-        // The abandoned start's directory is gone, the taken-over one's is kept.
+        assert_eq!(counters.guards_dropped.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_start_nobody_waits_for_any_more_is_dropped_with_its_directory() {
+        let (pool, counters) = pool(2);
+        counters.hold_start.store(true, Ordering::SeqCst);
+        let key = snapshot_key(1);
+        let be = backend(true);
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut first = Box::pin(pool.lease(&key, &be));
+        let mut second = Box::pin(pool.lease(&key, &be));
+        assert!(first.as_mut().poll(&mut cx).is_pending());
+        assert!(second.as_mut().poll(&mut cx).is_pending());
+        drop(first);
+        assert_eq!(
+            counters.guards_dropped.load(Ordering::SeqCst),
+            0,
+            "the other still waits"
+        );
+        drop(second);
         assert_eq!(counters.guards_dropped.load(Ordering::SeqCst), 1);
+        assert!(pool.keys().is_empty());
+
+        // The next caller starts the server afresh.
+        counters.hold_start.store(false, Ordering::SeqCst);
+        block_on(pool.lease(&key, &be)).unwrap();
+        assert_eq!(counters.started.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_start_is_not_shared_with_a_caller_that_came_after_a_restart() {
+        let (pool, counters) = pool(2);
+        counters.hold_start.store(true, Ordering::SeqCst);
+        let key = snapshot_key(1);
+        let be = backend(true);
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut before = Box::pin(pool.lease(&key, &be));
+        assert!(before.as_mut().poll(&mut cx).is_pending());
+        block_on(pool.restart(&BackendId("rust".into())));
+        let mut after = Box::pin(pool.lease(&key, &be));
+        assert!(after.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(counters.started.load(Ordering::SeqCst), 2);
+        counters.hold_start.store(false, Ordering::SeqCst);
+
+        block_on(async {
+            let (before, after) = join(before, after).await;
+            let (before, after) = (before.unwrap(), after.unwrap());
+            assert!(before.retired.load(Ordering::SeqCst), "it started before the restart");
+            assert!(!after.retired.load(Ordering::SeqCst));
+            assert_eq!(pool.keys(), [snapshot_key(1)]);
+            before.release().await;
+            after.release().await;
+        });
     }
 
     #[test]
     fn a_waiter_that_gave_up_holds_no_lease() {
-        let (pool, _) = pool(2);
+        let (pool, counters) = pool(2);
+        counters.hold_start.store(true, Ordering::SeqCst);
         let key = snapshot_key(1);
         let be = backend(true);
         let mut cx = Context::from_waker(Waker::noop());
@@ -1676,6 +1801,7 @@ mod tests {
         assert!(starter.as_mut().poll(&mut cx).is_pending());
         assert!(waiter.as_mut().poll(&mut cx).is_pending());
         drop(waiter);
+        counters.hold_start.store(false, Ordering::SeqCst);
         block_on(async {
             let lease = starter.await.unwrap();
             assert_eq!(lease.leases.load(Ordering::SeqCst), 1);
