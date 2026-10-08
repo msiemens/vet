@@ -166,7 +166,7 @@ pub struct ChangesRequest {
     pub how: ChangesAsked,
 }
 
-/// An open pull request that waits for the viewer or is the viewer's own.
+/// An open pull request, with where it stands for the viewer.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

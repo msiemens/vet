@@ -143,12 +143,12 @@ pub struct RepositoryStatus {
     /// Why the platform could not list the repository's pull requests.
     pub error: Option<PlatformError>,
     /// The platform stopped at the most it lists: a pull request that is not listed may still
-    /// wait for the viewer or be theirs.
+    /// be open.
     pub truncated: bool,
 }
 
 impl RepositoryStatus {
-    /// The repository's pull requests that wait for the viewer or are theirs are all listed.
+    /// The repository's open pull requests are all listed.
     pub fn listed_whole(&self) -> bool {
         self.error.is_none() && !self.truncated
     }
@@ -176,9 +176,9 @@ fn sort_newest_first(rows: &mut [ListedPullRequest]) {
     rows.sort_by_key(|listed| std::cmp::Reverse((listed.row.updated_at, listed.row.number)));
 }
 
-/// The open pull requests of `repositories` that wait for the viewer or are the viewer's own, and
-/// `on_view` (a repository and a number) when it is one of them, whoever's it is. A repository the
-/// platform cannot answer for is reported in `sources`; the others still list.
+/// The open pull requests of `repositories`, and `on_view` (a repository and a number) when it is
+/// one of them. A repository the platform cannot answer for is reported in `sources`; the others
+/// still list.
 pub async fn list_pull_requests<P: Platform>(
     platform: &P,
     repositories: &[RemoteKey],
@@ -187,25 +187,11 @@ pub async fn list_pull_requests<P: Platform>(
     let mut rows = Vec::new();
     let mut sources = Vec::new();
     for remote in repositories {
-        let mut error = None;
-        let mut truncated = false;
-        let mut listed: Vec<PullRequestRow> = Vec::new();
-        for tab in [QueueTab::WaitingForMe, QueueTab::Mine] {
-            match list_rows(platform, remote, &PullRequestQuery::new(tab)).await {
-                Ok(found) => {
-                    truncated |= found.truncated;
-                    for row in found.rows {
-                        if !listed.iter().any(|r| r.number == row.number) {
-                            listed.push(row);
-                        }
-                    }
-                }
-                Err(e) => {
-                    error = Some(e);
-                    break;
-                }
-            }
-        }
+        let (mut listed, truncated, error) =
+            match list_rows(platform, remote, &PullRequestQuery::new(QueueTab::AllOpen)).await {
+                Ok(found) => (found.rows, found.truncated, None),
+                Err(e) => (Vec::new(), false, Some(e)),
+            };
         if error.is_none() {
             if let Some((_, number)) =
                 on_view.filter(|(r, n)| *r == remote && !listed.iter().any(|row| row.number == *n))
@@ -287,7 +273,7 @@ pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
 }
 
 /// The pull requests that were fetched into the repository and that `list` no longer has, of the
-/// repositories it lists whole: those closed since, or no longer waiting for the viewer, each once.
+/// repositories it lists whole: those closed since, each once.
 /// A repository whose refs are named like another's of `list` is left out, as its refs cannot be
 /// told apart.
 pub async fn unlisted_fetched<G: Fetcher>(
@@ -514,6 +500,12 @@ mod tests {
         p
     }
 
+    fn other(number: u64, updated_at: i64) -> PullRequest {
+        let mut p = pr(number);
+        p.updated_at = updated_at;
+        p
+    }
+
     fn mine(number: u64, updated_at: i64) -> PullRequest {
         let mut p = pr(number);
         p.author = "ada".to_owned();
@@ -725,10 +717,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_list_has_what_waits_for_the_viewer_and_what_is_theirs_newest_first() {
+    async fn the_list_has_every_open_pull_request_of_the_repository_newest_first() {
         let app = github("acme/app");
         let platform = Hosting {
-            prs: vec![(app.clone(), vec![waiting(1, 100), mine(2, 300), pr(3), mine(4, 200)])],
+            prs: vec![(
+                app.clone(),
+                vec![waiting(1, 100), mine(2, 300), other(3, 250), mine(4, 200)],
+            )],
             failing: vec![],
             truncated: vec![],
         };
@@ -736,7 +731,11 @@ mod tests {
         let list = list_pull_requests(&platform, std::slice::from_ref(&app), None).await;
 
         let shown: Vec<_> = list.rows.iter().map(|r| (r.row.number, r.row.waiting_for_me)).collect();
-        assert_eq!(shown, [(2, false), (4, false), (1, true)], "pr 3 is neither");
+        assert_eq!(
+            shown,
+            [(2, false), (3, false), (4, false), (1, true)],
+            "pr 3 is neither the viewer's nor waiting for them, and is listed"
+        );
         assert_eq!(
             list.sources,
             [RepositoryStatus {

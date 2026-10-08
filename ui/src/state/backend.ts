@@ -382,8 +382,8 @@ export class Backend {
   }
 
   /**
-   * The open pull requests of the project's GitHub and Azure DevOps repositories that wait for the viewer or are theirs,
-   * the one on view too, and how asking each repository went. Asks the platform, so it takes a moment.
+   * The open pull requests of the project's GitHub and Azure DevOps repositories,
+   * and how asking each repository went. Asks the platform, so it takes a moment.
    */
   async listPullRequests(): Promise<PullRequestList> {
     const { rows, sources } = expect(

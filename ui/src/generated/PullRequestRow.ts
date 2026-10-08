@@ -7,7 +7,7 @@ import type { QueueStatus } from "./QueueStatus";
 import type { RowReview } from "./RowReview";
 
 /**
- * An open pull request that waits for the viewer or is the viewer's own.
+ * An open pull request, with where it stands for the viewer.
  */
 export type PullRequestRow = { 
 /**

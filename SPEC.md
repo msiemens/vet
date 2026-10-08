@@ -466,7 +466,7 @@ Grouped by area; areas and the items within each are in priority order.
 - One changeset on view per project; switching to another changeset and back restores its open tabs, scroll positions and current file
 - Interdiffs; snapshot timeline, as a bottom panel (not a sidebar tool window). A changeset has versions (a local session's snapshots, a pull request's pushes); an interdiff compares any two, chosen in the timeline, and shows as a mode of the review view with a way back. "Changes since my last review" is the default action on a changeset and carries the seen marks over. When the base moved (a rebase), the interdiff leaves out what the base move explains, as `git range-diff` does per commit
 - Git fetch (in-process, read-only): on demand and periodically, so remote branches and how far a base is behind are current; Vet never pulls, merges or rebases
-- Changeset queue home, reached through a Queue / Review toggle in the app header (not a sidebar tool window): pull requests waiting for the viewer and local branches, with more metadata and filtering than the title bar's changeset switcher, of which it is the full-page view
+- Changeset queue home, reached through a Queue / Review toggle in the app header (not a sidebar tool window): every open pull request of the project's repository and local branches, with more metadata and filtering than the title bar's changeset switcher, of which it is the full-page view
 
 #### Semantics and navigation
 
