@@ -11,6 +11,7 @@ use vet_core::review::{
 };
 
 use super::derived::Diffed;
+use super::hold::Held;
 use super::interdiff::check_commentable;
 use super::manifest::{old_path_of, status_of};
 use super::state::{Shown, State, View, check_revision, find_diff, outcome, shown_items};
@@ -19,7 +20,7 @@ use super::{LiveSession, Result, SessionError};
 use crate::changeset::Source;
 use crate::editor::last_text_line;
 use crate::platform::{ChangesetThreads, PlatformTraits};
-use crate::ports::{GitRepo, LiveStore};
+use crate::ports::{GitRepo, LiveStore, ReviewWrites};
 
 const NEW_SIDE_ONLY: &str = "a comment on an interdiff goes on its new side; the old side is the older version rebased \
      onto the newer base, which is not a place to comment";
@@ -254,9 +255,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             )),
             _ => None,
         };
-        let (id, message) = self
-            .acquisition
-            .store
+        let writes = st.writes();
+        let (id, message) = writes
             .add_thread(
                 changeset,
                 Some(review),
@@ -275,7 +275,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         });
         self.resolve_threads(&mut st).await?;
         // A review the thread started has its progress stored from the start.
-        self.note_progress(&mut st).await?;
+        self.note_progress(&writes, &mut st).await?;
         Ok(outcome(&st, thread_by_id(&st, id)?, started))
     }
 
@@ -287,7 +287,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             ));
         }
         let message = self.message(body, now)?;
-        let id = self.acquisition.store.add_message(thread, message.clone()).await?;
+        let id = st.writes().add_message(thread, message.clone()).await?;
         edit_thread(&mut st, thread, |t| t.messages.push(Message { id, ..message }));
         thread_by_id(&st, thread)
     }
@@ -305,14 +305,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             }
             if platform.remote_id.is_some() {
                 platform.status_pending = true;
-                self.acquisition
-                    .store
-                    .set_thread_platform(thread, platform.clone())
-                    .await?;
+                st.writes().set_thread_platform(thread, platform.clone()).await?;
                 edit_thread(&mut st, thread, |t| t.platform = Some(platform));
             }
         }
-        self.acquisition.store.set_thread_status(thread, status).await?;
+        st.writes().set_thread_status(thread, status).await?;
         edit_thread(&mut st, thread, |t| t.status = status);
         thread_by_id(&st, thread)
     }
@@ -355,13 +352,18 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// Records the thread's anchor anew, from the current text at `location`.
-    async fn reanchor(&self, st: &mut State, thread: ThreadId, location: &Location) -> Result<ThreadView> {
+    async fn reanchor(
+        &self,
+        st: &mut Held<'_, S::Writes>,
+        thread: ThreadId,
+        location: &Location,
+    ) -> Result<ThreadView> {
         let side = match &find_thread(st, thread)?.target {
             CommentTarget::Range(a) => a.side,
             _ => return Err(SessionError::Invalid("only a range thread has an anchor".into())),
         };
         let target = CommentTarget::Range(self.anchor_at(st, side, &location.file, location.range).await?);
-        self.acquisition.store.set_thread_target(thread, target.clone()).await?;
+        st.writes().set_thread_target(thread, target.clone()).await?;
         edit_thread(st, thread, |t| t.target = target);
         self.resolve_threads(st).await?;
         thread_by_id(st, thread)

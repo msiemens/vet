@@ -185,7 +185,7 @@ where
 
     /// Like [`LiveSession::viewing`], for a command: the token is held on return, so the state
     /// is the one the command changes. The derived values are awaited without it.
-    pub(super) async fn writing(&self, view: View) -> Result<(Held<'_>, Shown)> {
+    pub(super) async fn writing(&self, view: View) -> Result<(Held<'_, S::Writes>, Shown)> {
         let mut st = self.hold().await;
         loop {
             let missing = match self.missing(&st, view, matches!(view, View::Commit { .. })).await? {
@@ -207,9 +207,10 @@ where
     }
 
     /// Puts what was derived for the revision into the state, unless it has it.
-    async fn install(&self, st: &mut State, derived: Derivation) -> Result<()> {
+    async fn install(&self, st: &mut Held<'_, S::Writes>, derived: Derivation) -> Result<()> {
+        let writes = st.writes();
         match derived {
-            Derivation::Diff(diffed) if st.changes.is_none() => self.install_diff(st, diffed).await,
+            Derivation::Diff(diffed) if st.changes.is_none() => self.install_diff(&writes, st, diffed).await,
             Derivation::Commits(units) if st.changes.as_ref().is_some_and(|c| c.commits.is_none()) => {
                 self.install_commits(st, units).await
             }
@@ -253,15 +254,15 @@ where
     }
 
     /// Makes `diffed` the current revision's diff and remaps the review state onto it.
-    pub(super) async fn install_diff(&self, st: &mut State, diffed: Arc<Diffed>) -> Result<()> {
+    pub(super) async fn install_diff(&self, writes: &S::Writes, st: &mut State, diffed: Arc<Diffed>) -> Result<()> {
         st.changes = Some(Changes::new(diffed));
-        self.remap(st).await
+        self.remap(writes, st).await
     }
 
     /// Remaps every recorded span onto the changeset and, once computed, each commit's own diff
     /// (§5.2), and resolves every range thread's anchor (§5.1) in the changeset, each from what
     /// was recorded.
-    pub(super) async fn remap(&self, st: &mut State) -> Result<()> {
+    pub(super) async fn remap(&self, writes: &S::Writes, st: &mut State) -> Result<()> {
         self.load_known(st).await?;
         let mut result = Ok(());
         for view in st.remapped_views() {
@@ -270,7 +271,7 @@ where
             }
         }
         result?;
-        self.note_progress(st).await
+        self.note_progress(writes, st).await
     }
 
     /// Remaps onto one view of the changeset or of a commit, and counts its completion; only the

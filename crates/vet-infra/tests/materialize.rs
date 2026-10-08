@@ -83,12 +83,15 @@ impl Store for MemStore {
             .filter_map(|id| Some((id, held.get(&id)?.clone())))
             .collect())
     }
-    async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus, _: i64) -> Result<(), StoreError> {
-        self.snapshots.lock().unwrap().insert(snapshot.id, (snapshot, status));
-        Ok(())
-    }
     async fn snapshot(&self, id: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
         Ok(self.snapshots.lock().unwrap().get(&id).cloned())
+    }
+}
+
+impl MemStore {
+    /// What a review does to the store when it keeps a snapshot.
+    fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus) {
+        self.snapshots.lock().unwrap().insert(snapshot.id, (snapshot, status));
     }
 }
 
@@ -127,10 +130,7 @@ async fn base_and_dirty_snapshots_materialize_from_git_plus_store() {
     let acq = Arc::new(Acquisition::new(GixRepo::new(dir.path()), MemStore::default()));
     let opened = common::start_at_head(&acq).await;
     let materializer = Materialize::new(acq.clone(), trees(data.path()));
-    acq.store
-        .put_snapshot(opened.target.clone(), opened.status.clone(), 0)
-        .await
-        .unwrap();
+    acq.store.put_snapshot(opened.target.clone(), opened.status.clone());
 
     // The worktree moves on; the materialized dirty snapshot does not.
     write(dir.path(), "a.txt", b"later\n");
@@ -206,10 +206,7 @@ async fn snapshot_with_unavailable_blobs_is_refused_naming_them() {
     // Not pinned: the dirty blobs were never copied into the store.
     let acq = Arc::new(Acquisition::new(GixRepo::new(dir.path()), MemStore::default()));
     let scan = acq.git.scan(vet_app::ports::Dirty::All).await.unwrap();
-    acq.store
-        .put_snapshot(scan.snapshot.clone(), scan.status, 0)
-        .await
-        .unwrap();
+    acq.store.put_snapshot(scan.snapshot.clone(), scan.status);
     acq.record_commit(scan.snapshot.id, acq.git.head().await.unwrap());
     // Dirty content is gone from the worktree too, so nothing can reconstruct it.
     let gone = [BlobId::of(b"dirty\n"), BlobId::of(b"new\n")];

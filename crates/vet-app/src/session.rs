@@ -104,7 +104,8 @@ use crate::base;
 use crate::changeset::{BaseChoice, ChangesetId, Source, Version, VersionChange, VersionOrigin};
 use crate::platform::PlatformError;
 use crate::ports::{
-    BaseCandidates, BranchInfo, Clock, Degraded, Dirty, GitError, GitRepo, LiveStore, Scan, StoreError, Watcher,
+    BaseCandidates, BranchInfo, Clock, Degraded, Dirty, GitError, GitRepo, LiveStore, ReviewWrites, Scan, StoreError,
+    Watcher,
 };
 use crate::progress::Tasks;
 use crate::review::{ReviewId, visible_threads};
@@ -179,7 +180,7 @@ const MAX_BASE_COMMITS: usize = 200;
 /// Unix seconds now.
 pub type UnixClock = fn() -> i64;
 
-pub struct LiveSession<G, S> {
+pub struct LiveSession<G, S: LiveStore> {
     /// Author of the messages written here: git's `user.name`, else "You".
     author: String,
     /// Shared with the session's semantic pool, which materializes snapshots from it.
@@ -192,7 +193,7 @@ pub struct LiveSession<G, S> {
     published: Arc<Published>,
     /// Held by the one command that changes review state at a time, which asks for it in the order
     /// the viewer acted in. It guards the changesets that were on view and are not now.
-    token: Mutex<Writer>,
+    token: Mutex<Writer<S::Writes>>,
     /// Why the working tree is polled instead of watched, if it is.
     degraded: std::sync::Mutex<Option<Degraded>>,
     /// Told every time the revision on view moves, so that work for an older one stops.
@@ -267,7 +268,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let filter = acquisition.store.filter(repo.clone()).await?.normalized();
         let name = name_of_repo(&repo);
         let source = Source::WorkingTree;
-        let (changeset, threads) = match Self::stored(&acquisition, &repo, &source, &filter, clock).await? {
+        let writes = acquisition.store.writes();
+        let (changeset, threads) = match Self::stored(&acquisition, &writes, &repo, &source, &filter, clock).await? {
             Stored::Resumed(state) => {
                 let session = Self::assemble(acquisition, name, repo, clock, *state).await;
                 session.catch_up().await?;
@@ -323,6 +325,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         clock: UnixClock,
         state: State,
     ) -> Self {
+        let writes = acquisition.store.writes();
         Self {
             author: author_of(&acquisition.git).await,
             derived: Arc::new(Derived::new(&acquisition.tasks)),
@@ -333,7 +336,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             repo,
             clock,
             published: Arc::new(Published::new(state)),
-            token: Mutex::default(),
+            token: Mutex::new(Writer::new(writes)),
             degraded: std::sync::Mutex::new(None),
             revisions: Arc::default(),
             exchange: Mutex::new(()),
@@ -444,7 +447,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// The write token, with the state as the last command left it.
-    async fn hold(&self) -> Held<'_> {
+    async fn hold(&self) -> Held<'_, S::Writes> {
         Held::new(self.token.lock().await, &self.published)
     }
 
@@ -453,7 +456,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// way to end: that is done first, without the token, so the other commands go on meanwhile and
     /// the token's holder never waits for a copy. If the revision moved meanwhile, it starts over.
     /// What it returns has the content held: [`LiveSession::begin`] copies nothing.
-    async fn beginning(&self, view: View) -> Result<(Held<'_>, Shown)> {
+    async fn beginning(&self, view: View) -> Result<(Held<'_, S::Writes>, Shown)> {
         let mut copied = None;
         loop {
             let (st, shown) = self.writing(view).await?;
@@ -474,12 +477,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// changeset's refs. The target's dirty content is in the store already:
     /// [`LiveSession::beginning`] saw to it. Does nothing if a review is open.
     /// Returns whether it started one.
-    async fn begin(&self, st: &mut State) -> Result<bool> {
+    async fn begin(&self, st: &mut Held<'_, S::Writes>) -> Result<bool> {
         if st.review.is_some() {
             return Ok(false);
         }
         let acquisition = &self.acquisition;
-        let (git, store) = (&acquisition.git, &acquisition.store);
+        let git = &acquisition.git;
+        let store = st.writes();
         // A committed target stays in git, which the version's refs keep.
         let head = match st.source {
             Source::WorkingTree => git.head().await?,
@@ -551,10 +555,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         });
         self.retain_anchored(&st, anchors).await?;
         self.acquisition.git.delete_changeset_refs(changeset).await?;
-        self.acquisition
-            .store
-            .close_review(id, (self.clock)(), complete)
-            .await?;
+        st.writes().close_review(id, (self.clock)(), complete).await?;
         st.review = None;
         st.recorded.clear();
         st.acks.clear();
@@ -586,22 +587,19 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let snapshot = Arc::new(git.commit_snapshot(&commit).await?);
 
         if st.source == Source::WorkingTree {
-            self.acquisition
-                .store
-                .set_browsing_base(self.repo.clone(), choice.clone())
-                .await?;
+            st.writes().set_browsing_base(self.repo.clone(), choice.clone()).await?;
         }
         if st.base_choice != choice || st.base_commit != commit {
             if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
-                let store = &self.acquisition.store;
+                let (reads, writes) = (&self.acquisition.store, st.writes());
                 let (id, number) = (review.id, review.version + 1);
                 // The old base's content is kept apart from git, which may drop its objects.
                 self.retain_anchored(&st, st.anchors()).await?;
                 let now = (self.clock)();
-                store
+                writes
                     .put_snapshot(Snapshot::clone(&snapshot), SnapshotStatus::of(&snapshot), now)
                     .await?;
-                store.set_base(id, choice.clone()).await?;
+                writes.set_base(id, choice.clone()).await?;
                 if commit != st.base_commit {
                     let version = Version {
                         n: number,
@@ -613,8 +611,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                         origin: VersionOrigin::BaseMoved,
                         change: self.change_of((&st.base, &st.target), &snapshot, &st.target).await?,
                     };
-                    let previous = store.versions(changeset).await?.pop();
-                    store.append_version(changeset, version.clone()).await?;
+                    let previous = reads.versions(changeset).await?.pop();
+                    writes.append_version(changeset, version.clone()).await?;
                     Self::keep_commits(&self.acquisition, changeset, &version, previous.as_ref()).await?;
                     if let Some(review) = &mut st.review {
                         review.version = number;
@@ -678,16 +676,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         self.replace_filter(&mut st, filter).await
     }
 
-    async fn replace_filter(&self, st: &mut Held<'_>, filter: ReviewFilter) -> Result<u32> {
+    async fn replace_filter(&self, st: &mut Held<'_, S::Writes>, filter: ReviewFilter) -> Result<u32> {
         let filter = filter.normalized();
         filter.validate().map_err(SessionError::Invalid)?;
         if st.filter == filter {
             return Ok(st.revision);
         }
-        self.acquisition
-            .store
-            .set_filter(self.repo.clone(), filter.clone())
-            .await?;
+        let writes = st.writes();
+        writes.set_filter(self.repo.clone(), filter.clone()).await?;
         st.filter = filter;
         st.revision += 1;
         if st.changes.is_some() {
@@ -697,7 +693,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         st.publish();
         self.revisions.advance(st.revision);
-        self.note_progress(st).await?;
+        self.note_progress(&writes, st).await?;
         Ok(st.revision)
     }
 
@@ -760,11 +756,15 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 if !settlement.fits(&held) {
                     continue;
                 }
-                let settled = self.settle_tree(&mut held, snapshot, status, settlement).await?;
+                let writes = held.writes();
+                let settled = self
+                    .settle_tree(&writes, &mut held, snapshot, status, settlement)
+                    .await?;
                 held.publish();
                 self.revisions.advance(settled.0);
                 return Ok(settled);
             }
+            let writes = held.writes();
             let tree = held
                 .parked()
                 .get_mut(&Source::WorkingTree)
@@ -773,7 +773,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 continue;
             }
             return self
-                .settle_tree(Arc::make_mut(tree), snapshot, status, settlement)
+                .settle_tree(&writes, Arc::make_mut(tree), snapshot, status, settlement)
                 .await;
         }
     }
@@ -824,13 +824,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// the one on view is announced, by the caller.
     async fn settle_tree(
         &self,
+        store: &S::Writes,
         st: &mut State,
         snapshot: Arc<Snapshot>,
         status: SnapshotStatus,
         settlement: Settlement,
     ) -> Result<(u32, Option<BlobError>)> {
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
-            let store = &self.acquisition.store;
             let now = (self.clock)();
             store
                 .put_snapshot(Snapshot::clone(&snapshot), status.clone(), now)
@@ -859,7 +859,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         st.revision += 1;
         st.changes = None;
         if let Some(diffed) = settlement.diffed
-            && let Err(e) = self.install_diff(st, diffed).await
+            && let Err(e) = self.install_diff(store, st, diffed).await
         {
             tracing::warn!(error = %e, "could not remap the review onto the settled tree");
             st.changes = None;

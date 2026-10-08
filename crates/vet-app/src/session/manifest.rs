@@ -14,7 +14,7 @@ use super::views::{FileStatus, FileView, ManifestView, ReviewUpdateView, ReviewV
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
 use crate::editor::line_count;
-use crate::ports::{BranchInfo, GitRepo, LiveStore};
+use crate::ports::{BranchInfo, GitRepo, LiveStore, ReviewWrites};
 use crate::review::ReviewSummary;
 
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
@@ -61,7 +61,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// Stores how far the open review is when it differs from what is stored, so that the list of
     /// changesets shows it without remapping the marks of every review. Does nothing while the
     /// changes are not computed: the next remap measures.
-    pub(super) async fn note_progress(&self, st: &mut State) -> Result<()> {
+    pub(super) async fn note_progress(&self, writes: &S::Writes, st: &mut State) -> Result<()> {
         let (Some(review), Some(changes)) = (&st.review, &st.changes) else {
             return Ok(());
         };
@@ -70,7 +70,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             return Ok(());
         }
         let id = review.id;
-        self.acquisition.store.set_review_summary(id, summary).await?;
+        writes.set_review_summary(id, summary).await?;
         if let Some(review) = &mut st.review {
             review.summary = Some(summary);
         }

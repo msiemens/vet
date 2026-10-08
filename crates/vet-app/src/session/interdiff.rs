@@ -137,6 +137,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// newer version, or cuts them out of the recorded spans.
     pub(super) async fn mark_interdiff_hunks(
         &self,
+        writes: &S::Writes,
         st: &mut State,
         id: &Interdiffed,
         path: &str,
@@ -164,11 +165,15 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             }
         };
         self.apply_marks(
+            writes,
             st,
             View::Changeset,
             regions,
-            if seen { add } else { Vec::new() },
-            SpanOrigin::Squash,
+            if seen {
+                add.into_iter().map(|s| (s, SpanOrigin::Squash)).collect()
+            } else {
+                Vec::new()
+            },
             seen,
         )
         .await

@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use sea_orm::PaginatorTrait;
+use std::collections::HashSet;
 use tempfile::TempDir;
 use vet_app::changeset::{ChangedFile, CommitId, Lens, RemoteKey, VersionChange, VersionOrigin};
 use vet_app::gc::{Retention, collect, open_bases};
-use vet_app::ports::{GcReport, Store};
+use vet_app::ports::{GcReport, ReviewWrites, Store};
 use vet_app::review::{NonTextAck, SpanOrigin};
 use vet_core::content::{
     BlobId, EntryKind, FileEntry, Hash, LineDelta, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId,
@@ -84,6 +85,7 @@ async fn add_thread(
     opener: Message,
 ) -> ThreadId {
     store
+        .writes()
         .add_thread(changeset, review, target, opener, None, ThreadStatus::Open)
         .await
         .unwrap()
@@ -110,6 +112,7 @@ fn version(n: u32, base: SnapshotId, target: SnapshotId) -> Version {
 /// Opens a review of the working tree of `/repo`, whose version 1 is `base` and `target`.
 async fn review(store: &SqliteStore, base: SnapshotId, target: SnapshotId) -> (ChangesetId, ReviewId) {
     store
+        .writes()
         .start_review(
             "/repo".into(),
             Source::WorkingTree,
@@ -136,18 +139,18 @@ async fn the_filter_is_stored_per_repository_and_replaced_as_a_whole() {
     let store = open(&dir).await;
     assert_eq!(store.filter("/a".into()).await.unwrap(), ReviewFilter::default());
 
-    store.set_filter("/a".into(), sample_filter()).await.unwrap();
+    store.writes().set_filter("/a".into(), sample_filter()).await.unwrap();
     let other = ReviewFilter {
         exclude: vec!["b".into()],
         ..Default::default()
     };
-    store.set_filter("/b".into(), other.clone()).await.unwrap();
+    store.writes().set_filter("/b".into(), other.clone()).await.unwrap();
     let narrower = ReviewFilter {
         exclude: vec!["x".into()],
         ..Default::default()
     };
-    store.set_filter("/a".into(), narrower.clone()).await.unwrap();
-    store.set_filter("/b".into(), other.clone()).await.unwrap();
+    store.writes().set_filter("/a".into(), narrower.clone()).await.unwrap();
+    store.writes().set_filter("/b".into(), other.clone()).await.unwrap();
 
     drop(store);
     let store = open(&dir).await;
@@ -155,7 +158,7 @@ async fn the_filter_is_stored_per_repository_and_replaced_as_a_whole() {
     assert_eq!(store.filter("/b".into()).await.unwrap(), other);
     assert_eq!(store.filter("/c".into()).await.unwrap(), ReviewFilter::default());
 
-    store.set_filter("/a".into(), sample_filter()).await.unwrap();
+    store.writes().set_filter("/a".into(), sample_filter()).await.unwrap();
     assert_eq!(store.filter("/a".into()).await.unwrap(), sample_filter());
 }
 
@@ -212,6 +215,7 @@ async fn a_changeset_is_found_by_its_repository_and_source() {
     for (repo, source) in &sources {
         assert_eq!(store.changeset((*repo).into(), source.clone()).await.unwrap(), None);
         let (id, _) = store
+            .writes()
             .start_review(
                 (*repo).into(),
                 source.clone(),
@@ -246,10 +250,12 @@ async fn the_lens_is_remembered_per_changeset_before_and_after_a_review_of_it_st
     assert_eq!(store.lens("/repo".into(), feature()).await.unwrap(), None);
 
     store
+        .writes()
         .set_lens("/repo".into(), feature(), Lens::PerCommit)
         .await
         .unwrap();
     store
+        .writes()
         .start_review(
             "/repo".into(),
             feature(),
@@ -273,7 +279,11 @@ async fn the_lens_is_remembered_per_changeset_before_and_after_a_review_of_it_st
             .unwrap(),
         None
     );
-    store.set_lens("/repo".into(), feature(), Lens::Squash).await.unwrap();
+    store
+        .writes()
+        .set_lens("/repo".into(), feature(), Lens::Squash)
+        .await
+        .unwrap();
     assert_eq!(store.lens("/repo".into(), feature()).await.unwrap(), Some(Lens::Squash));
 }
 
@@ -298,14 +308,17 @@ async fn a_pull_requests_title_is_kept_with_its_changeset_across_a_review_starti
     );
 
     store
+        .writes()
         .set_pull_request_head("/repo".into(), pull_request(7), head("Add caching", true))
         .await
         .unwrap();
     store
+        .writes()
         .set_lens("/repo".into(), pull_request(8), Lens::PerCommit)
         .await
         .unwrap();
     store
+        .writes()
         .start_review(
             "/repo".into(),
             pull_request(7),
@@ -332,6 +345,7 @@ async fn a_pull_requests_title_is_kept_with_its_changeset_across_a_review_starti
         "stored for its lens, it was never named"
     );
     store
+        .writes()
         .set_pull_request_head("/repo".into(), pull_request(7), head("Add caching to the API", false))
         .await
         .unwrap();
@@ -355,11 +369,11 @@ async fn the_base_choice_is_stored_with_the_review_and_survives_reopen() {
     let merge_base = BaseChoice::MergeBase {
         reference: "main".into(),
     };
-    store.set_base(id, merge_base.clone()).await.unwrap();
+    store.writes().set_base(id, merge_base.clone()).await.unwrap();
     assert_eq!(loaded(&store).await, merge_base);
 
     let commit_choice = BaseChoice::Commit { id: commit("abc") };
-    store.set_base(id, commit_choice.clone()).await.unwrap();
+    store.writes().set_base(id, commit_choice.clone()).await.unwrap();
     drop(store);
     let store = open(&dir).await;
     assert_eq!(loaded(&store).await, commit_choice);
@@ -377,10 +391,15 @@ async fn the_browsing_base_is_stored_per_repository_and_replaced() {
     let merge_base = BaseChoice::MergeBase {
         reference: "main".into(),
     };
-    store.set_browsing_base("/a".into(), first).await.unwrap();
-    store.set_browsing_base("/b".into(), merge_base.clone()).await.unwrap();
+    store.writes().set_browsing_base("/a".into(), first).await.unwrap();
+    store
+        .writes()
+        .set_browsing_base("/b".into(), merge_base.clone())
+        .await
+        .unwrap();
     let commit_choice = BaseChoice::Commit { id: commit("abc") };
     store
+        .writes()
         .set_browsing_base("/a".into(), commit_choice.clone())
         .await
         .unwrap();
@@ -396,7 +415,11 @@ async fn the_browsing_base_is_stored_per_repository_and_replaced() {
 async fn database_is_in_wal_mode() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
-    store.put_snapshot(snapshot(&[]), Default::default(), T0).await.unwrap();
+    store
+        .writes()
+        .put_snapshot(snapshot(&[]), Default::default(), T0)
+        .await
+        .unwrap();
     assert!(dir.path().join("vet.sqlite-wal").exists());
 }
 
@@ -406,6 +429,7 @@ async fn spans_and_acks_belong_to_the_review_and_round_trip() {
     let store = open(&dir).await;
     let (_, id) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
     let (_, other) = store
+        .writes()
         .start_review(
             "/other".into(),
             Source::WorkingTree,
@@ -435,7 +459,7 @@ async fn spans_and_acks_belong_to_the_review_and_round_trip() {
     ];
     let origins = [SpanOrigin::Squash, SpanOrigin::Commit(commit("c1")), SpanOrigin::Squash];
     let added = spans.iter().cloned().zip(origins.iter().cloned()).collect();
-    let ids = store.edit_spans(id, vec![], added).await.unwrap();
+    let ids = store.writes().edit_spans(id, vec![], added).await.unwrap();
     assert_eq!(ids.len(), 3);
 
     let ack = NonTextAck {
@@ -443,14 +467,14 @@ async fn spans_and_acks_belong_to_the_review_and_round_trip() {
         before: Some((RepoPath(b"x".to_vec()), file_entry(5))),
         after: None,
     };
-    store.acknowledge(id, ack.clone()).await.unwrap();
-    store.acknowledge(id, ack.clone()).await.unwrap();
+    store.writes().acknowledge(id, ack.clone()).await.unwrap();
+    store.writes().acknowledge(id, ack.clone()).await.unwrap();
     // Same entries, another kind: a separate item.
     let mode = NonTextAck {
         kind: NonTextKind::Mode,
         ..ack.clone()
     };
-    store.acknowledge(id, mode.clone()).await.unwrap();
+    store.writes().acknowledge(id, mode.clone()).await.unwrap();
 
     let loaded = store.review(id).await.unwrap().unwrap();
     assert_eq!(loaded.spans.iter().map(|r| r.span.clone()).collect::<Vec<_>>(), spans);
@@ -462,10 +486,10 @@ async fn spans_and_acks_belong_to_the_review_and_round_trip() {
     let elsewhere = store.review(other).await.unwrap().unwrap();
     assert!(elsewhere.spans.is_empty() && elsewhere.acks.is_empty());
 
-    store.unacknowledge(id, ack).await.unwrap();
+    store.writes().unacknowledge(id, ack).await.unwrap();
     assert_eq!(store.review(id).await.unwrap().unwrap().acks, vec![mode.clone()]);
-    store.unacknowledge(id, mode).await.unwrap();
-    store.edit_spans(id, ids, vec![]).await.unwrap();
+    store.writes().unacknowledge(id, mode).await.unwrap();
+    store.writes().edit_spans(id, ids, vec![]).await.unwrap();
     let loaded = store.review(id).await.unwrap().unwrap();
     assert!(loaded.spans.is_empty() && loaded.acks.is_empty());
 }
@@ -496,10 +520,14 @@ async fn threads_belong_to_the_changeset_and_outlive_its_review() {
     )
     .await;
     let overall = add_thread(&store, changeset, None, CommentTarget::Changeset, message("overall")).await;
-    store.add_message(range, message("because")).await.unwrap();
-    store.set_thread_status(file, ThreadStatus::Resolved).await.unwrap();
+    store.writes().add_message(range, message("because")).await.unwrap();
+    store
+        .writes()
+        .set_thread_status(file, ThreadStatus::Resolved)
+        .await
+        .unwrap();
 
-    store.close_review(first, T0, true).await.unwrap();
+    store.writes().close_review(first, T0, true).await.unwrap();
     let (again, second) = review(&store, SnapshotId(h(1)), SnapshotId(h(3))).await;
     assert_eq!(again, changeset);
     assert_ne!(second, first);
@@ -531,8 +559,8 @@ async fn threads_belong_to_the_changeset_and_outlive_its_review() {
         range: LineRange { start: 20, end: 25 },
         ..anchor(Side::Target, 2)
     });
-    store.set_thread_target(range, moved.clone()).await.unwrap();
-    store.delete_thread(file).await.unwrap();
+    store.writes().set_thread_target(range, moved.clone()).await.unwrap();
+    store.writes().delete_thread(file).await.unwrap();
     let threads = store.threads(changeset).await.unwrap();
     assert_eq!(
         threads.iter().map(|t| &t.thread.target).collect::<Vec<_>>(),
@@ -564,9 +592,17 @@ async fn what_a_platform_has_of_a_thread_survives_a_restart_and_a_thread_needs_n
         },
         number: 7,
     };
-    let changeset = store.ensure_changeset("/repo".into(), source.clone()).await.unwrap();
+    let changeset = store
+        .writes()
+        .ensure_changeset("/repo".into(), source.clone())
+        .await
+        .unwrap();
     assert_eq!(
-        store.ensure_changeset("/repo".into(), source.clone()).await.unwrap(),
+        store
+            .writes()
+            .ensure_changeset("/repo".into(), source.clone())
+            .await
+            .unwrap(),
         changeset
     );
     assert_eq!(
@@ -582,6 +618,7 @@ async fn what_a_platform_has_of_a_thread_survives_a_restart_and_a_thread_needs_n
         status_pending: false,
     };
     let (thread, opener) = store
+        .writes()
         .add_thread(
             changeset,
             None,
@@ -593,14 +630,18 @@ async fn what_a_platform_has_of_a_thread_survives_a_restart_and_a_thread_needs_n
         .await
         .unwrap();
     // A draft of the viewer's is written after the platform's reply, which then comes second.
-    let draft = store.add_message(thread, message("agreed")).await.unwrap();
-    let reply = store.add_message(thread, posted("C2", "no", "no")).await.unwrap();
+    let draft = store.writes().add_message(thread, message("agreed")).await.unwrap();
+    let reply = store
+        .writes()
+        .add_message(thread, posted("C2", "no", "no"))
+        .await
+        .unwrap();
     let posting = Message {
         outgoing: Outgoing::Posting { since: T0 + 20 },
         ..message("on its way")
     };
-    let posting = store.add_message(thread, posting).await.unwrap();
-    let failed = store.add_message(thread, message("refused")).await.unwrap();
+    let posting = store.writes().add_message(thread, posting).await.unwrap();
+    let failed = store.writes().add_message(thread, message("refused")).await.unwrap();
     let refused = Message {
         id: failed,
         outgoing: Outgoing::Failed {
@@ -608,7 +649,7 @@ async fn what_a_platform_has_of_a_thread_survives_a_restart_and_a_thread_needs_n
         },
         ..message("refused")
     };
-    store.replace_message(refused).await.unwrap();
+    store.writes().replace_message(refused).await.unwrap();
 
     let edited = Message {
         id: opener,
@@ -624,9 +665,10 @@ async fn what_a_platform_has_of_a_thread_survives_a_restart_and_a_thread_needs_n
         }),
         ..posted("C1", "why?", "why?")
     };
-    store.replace_message(edited.clone()).await.unwrap();
-    store.delete_message(reply).await.unwrap();
+    store.writes().replace_message(edited.clone()).await.unwrap();
+    store.writes().delete_message(reply).await.unwrap();
     store
+        .writes()
         .set_thread_platform(
             thread,
             PlatformThread {
@@ -696,6 +738,7 @@ async fn a_thread_outside_a_platform_has_none_and_a_review_started_later_finds_t
     assert_eq!(found.thread.platform, None);
     assert!(!found.thread.is_posted());
     let again = store
+        .writes()
         .ensure_changeset("/repo".into(), Source::WorkingTree)
         .await
         .unwrap();
@@ -708,10 +751,12 @@ async fn the_open_bases_are_the_latest_versions_of_the_changesets_with_an_open_r
     let store = open(&dir).await;
     let (open_one, _) = review(&store, SnapshotId(h(1)), SnapshotId(h(2))).await;
     store
+        .writes()
         .append_version(open_one, version(2, SnapshotId(h(3)), SnapshotId(h(2))))
         .await
         .unwrap();
     let (_, closed) = store
+        .writes()
         .start_review(
             "/other".into(),
             Source::WorkingTree,
@@ -721,7 +766,7 @@ async fn the_open_bases_are_the_latest_versions_of_the_changesets_with_an_open_r
         )
         .await
         .unwrap();
-    store.close_review(closed, T0, true).await.unwrap();
+    store.writes().close_review(closed, T0, true).await.unwrap();
 
     let bases = open_bases(&store).await.unwrap();
 
@@ -742,12 +787,14 @@ async fn versions_are_numbered_per_changeset_and_a_new_review_starts_over() {
             ..version(3, SnapshotId(h(4)), SnapshotId(h(3)))
         };
         store
+            .writes()
             .append_version(changeset, version(2, SnapshotId(h(1)), SnapshotId(h(3))))
             .await
             .unwrap();
-        store.append_version(changeset, moved).await.unwrap();
+        store.writes().append_version(changeset, moved).await.unwrap();
         assert!(
             store
+                .writes()
                 .append_version(changeset, version(3, SnapshotId(h(1)), SnapshotId(h(5))))
                 .await
                 .is_err(),
@@ -772,7 +819,7 @@ async fn versions_are_numbered_per_changeset_and_a_new_review_starts_over() {
         (commit("def456"), commit("abc123"), 30)
     );
 
-    store.close_review(id, T0, false).await.unwrap();
+    store.writes().close_review(id, T0, false).await.unwrap();
     let (_, next) = review(&store, SnapshotId(h(6)), SnapshotId(h(7))).await;
     assert_ne!(next, id);
     let versions = store.versions(changeset).await.unwrap();
@@ -800,7 +847,7 @@ async fn what_a_version_changed_is_stored_with_it_in_order_and_goes_with_its_rev
             change: change.clone(),
             ..version(2, SnapshotId(h(1)), SnapshotId(h(3)))
         };
-        store.append_version(changeset, second).await.unwrap();
+        store.writes().append_version(changeset, second).await.unwrap();
     }
 
     let store = open(&dir).await;
@@ -827,8 +874,8 @@ async fn a_review_records_when_it_ended_and_what_was_last_reviewed() {
     assert_eq!(store.open_review(changeset).await.unwrap(), Some(id));
     assert_eq!(store.open_review(ChangesetId(changeset.0 + 1)).await.unwrap(), None);
 
-    store.set_last_reviewed(id, 2).await.unwrap();
-    store.close_review(id, 1, true).await.unwrap();
+    store.writes().set_last_reviewed(id, 2).await.unwrap();
+    store.writes().close_review(id, 1, true).await.unwrap();
     assert_eq!(store.open_review(changeset).await.unwrap(), None);
     let closed = store.review(id).await.unwrap().unwrap();
     assert_eq!(
@@ -847,8 +894,16 @@ async fn snapshots_survive_reopen() {
     };
     {
         let store = open(&dir).await;
-        store.put_snapshot(snap.clone(), status.clone(), T0).await.unwrap();
-        store.put_snapshot(snap.clone(), status.clone(), T0).await.unwrap();
+        store
+            .writes()
+            .put_snapshot(snap.clone(), status.clone(), T0)
+            .await
+            .unwrap();
+        store
+            .writes()
+            .put_snapshot(snap.clone(), status.clone(), T0)
+            .await
+            .unwrap();
     }
     let store = open(&dir).await;
     assert_eq!(store.snapshot(snap.id).await.unwrap(), Some((snap, status)));
@@ -925,7 +980,11 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
     let store = open(&dir).await;
     let snaps = [21u8, 22, 23].map(|n| snapshot(&[("a", n)]));
     for s in &snaps {
-        store.put_snapshot(s.clone(), Default::default(), T0).await.unwrap();
+        store
+            .writes()
+            .put_snapshot(s.clone(), Default::default(), T0)
+            .await
+            .unwrap();
     }
     store
         .put_blobs([21, 22, 23, 24].map(|n| vec![n]).to_vec())
@@ -951,19 +1010,23 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
     assert!(store.snapshot(snaps[2].id).await.unwrap().is_none());
 
     // A changeset is kept for the retention period after its review closed.
-    store.close_review(id, now, false).await.unwrap();
+    store.writes().close_review(id, now, false).await.unwrap();
     assert_eq!(gc(&store, now + 29 * DAY).await, Default::default());
     assert!(store.review(id).await.unwrap().is_some());
 
     // An open thread keeps an expired changeset.
     let thread = add_thread(&store, changeset, Some(id), CommentTarget::Changeset, message("todo")).await;
     assert_eq!(gc(&store, now + 31 * DAY).await, Default::default());
-    store.set_thread_status(thread, ThreadStatus::Resolved).await.unwrap();
+    store
+        .writes()
+        .set_thread_status(thread, ThreadStatus::Resolved)
+        .await
+        .unwrap();
 
     // So does an open review, and the retention counts from the last closed one.
     let (_, next) = review(&store, snaps[0].id, snaps[1].id).await;
     assert_eq!(gc(&store, now + 31 * DAY).await, Default::default());
-    store.close_review(next, now + 31 * DAY, true).await.unwrap();
+    store.writes().close_review(next, now + 31 * DAY, true).await.unwrap();
     assert_eq!(gc(&store, now + 32 * DAY).await, Default::default());
 
     let report = gc(&store, now + 62 * DAY).await;
@@ -992,7 +1055,11 @@ async fn gc_keeps_what_an_open_thread_of_a_closed_review_is_anchored_in() {
     let store = open(&dir).await;
     let snaps = [31u8, 32, 33].map(|n| snapshot(&[("a", n)]));
     for s in &snaps {
-        store.put_snapshot(s.clone(), Default::default(), T0).await.unwrap();
+        store
+            .writes()
+            .put_snapshot(s.clone(), Default::default(), T0)
+            .await
+            .unwrap();
     }
     let (changeset, id) = review(&store, snaps[0].id, snaps[1].id).await;
     let anchored = Anchor {
@@ -1007,7 +1074,7 @@ async fn gc_keeps_what_an_open_thread_of_a_closed_review_is_anchored_in() {
         message("open"),
     )
     .await;
-    store.close_review(id, T0, false).await.unwrap();
+    store.writes().close_review(id, T0, false).await.unwrap();
 
     let report = gc(&store, T0 + 100 * DAY).await;
     assert_eq!((report.changesets_deleted, report.snapshots_deleted), (0, 0));
@@ -1023,6 +1090,7 @@ async fn gc_grace_protects_fresh_content() {
     let retention = Retention::default();
     store.put_blobs(vec![vec![1]]).await.unwrap();
     store
+        .writes()
         .put_snapshot(snapshot(&[("a", 1)]), Default::default(), T0)
         .await
         .unwrap();
@@ -1045,11 +1113,16 @@ async fn snapshots_that_differ_in_one_file_share_all_other_nodes() {
     let before = snapshot(&[("a/x", 1), ("b/y", 2), ("c/d/z", 3)]);
     let after = snapshot(&[("a/x", 9), ("b/y", 2), ("c/d/z", 3)]);
     store
+        .writes()
         .put_snapshot(before.clone(), Default::default(), T0)
         .await
         .unwrap();
     assert_eq!(node_count(&store).await, 5); // root, a, b, c, c/d
-    store.put_snapshot(after.clone(), Default::default(), T0).await.unwrap();
+    store
+        .writes()
+        .put_snapshot(after.clone(), Default::default(), T0)
+        .await
+        .unwrap();
     assert_eq!(node_count(&store).await, 7); // plus a new root and a new `a`
     assert_eq!(store.snapshot(before.id).await.unwrap().unwrap().0, before);
     assert_eq!(store.snapshot(after.id).await.unwrap().unwrap().0, after);
@@ -1062,7 +1135,11 @@ async fn gc_drops_a_node_only_when_no_retained_root_reaches_it() {
     let kept = snapshot(&[("a/x", 1), ("b/y", 2)]);
     let other = snapshot(&[("a/x", 9), ("b/y", 2)]);
     for s in [&kept, &other] {
-        store.put_snapshot(s.clone(), Default::default(), T0).await.unwrap();
+        store
+            .writes()
+            .put_snapshot(s.clone(), Default::default(), T0)
+            .await
+            .unwrap();
     }
     assert_eq!(node_count(&store).await, 5);
     review(&store, kept.id, kept.id).await;
@@ -1094,8 +1171,13 @@ async fn a_long_run_of_versions_over_a_large_tree_stays_small() {
             id: merkle::snapshot_id(&entries),
             entries: entries.clone(),
         };
-        store.put_snapshot(snap.clone(), Default::default(), T0).await.unwrap();
         store
+            .writes()
+            .put_snapshot(snap.clone(), Default::default(), T0)
+            .await
+            .unwrap();
+        store
+            .writes()
             .append_version(changeset, version(i + 2, SnapshotId(h(1)), snap.id))
             .await
             .unwrap();
@@ -1158,6 +1240,7 @@ async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
         state: SpanState::Seen,
     };
     let ids = store
+        .writes()
         .edit_spans(id, vec![], vec![(span.clone(), SpanOrigin::Squash)])
         .await
         .unwrap();
@@ -1180,7 +1263,7 @@ async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
         "nothing was overwritten"
     );
 
-    store.edit_spans(id, ids, vec![]).await.unwrap();
+    store.writes().edit_spans(id, ids, vec![]).await.unwrap();
     assert_eq!(remapped(o).await, 0, "un-marked");
 }
 
@@ -1201,10 +1284,13 @@ async fn a_mark_is_written_while_a_long_read_is_open_and_the_read_does_not_see_i
         target: Some(anchor(Side::Target, 2)),
         state: SpanState::Seen,
     };
-    tokio::time::timeout(PROMPT, store.edit_spans(id, vec![], vec![(span, SpanOrigin::Squash)]))
-        .await
-        .expect("a write waits for a read")
-        .unwrap();
+    tokio::time::timeout(
+        PROMPT,
+        store.writes().edit_spans(id, vec![], vec![(span, SpanOrigin::Squash)]),
+    )
+    .await
+    .expect("a write waits for a read")
+    .unwrap();
 
     assert!(
         span::Entity::find().all(&reading).await.unwrap().is_empty(),

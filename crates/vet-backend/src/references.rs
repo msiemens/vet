@@ -30,7 +30,7 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use vet_app::changeset::{BaseChoice, CommitId, Source, Version, VersionChange, VersionOrigin};
-    use vet_app::ports::ReviewStore;
+    use vet_app::ports::{LiveStore, ReviewWrites};
     use vet_core::content::Hash;
     use vet_infra::materialize::kept::{KeptTrees, Limits};
     use vet_semantic::policy::AnalysisPolicy;
@@ -70,6 +70,7 @@ mod tests {
             change: VersionChange::default(),
         };
         store
+            .writes()
             .start_review(
                 "/repo".into(),
                 Source::WorkingTree,

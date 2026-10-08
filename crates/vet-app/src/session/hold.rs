@@ -37,30 +37,47 @@ impl Published {
     }
 }
 
-/// What the write token guards: the changesets that were on view and are not now, by source. Only
-/// a command reaches them, and only through [`Held`].
-#[derive(Default)]
-pub(super) struct Writer {
-    pub(super) parked: HashMap<Source, Arc<State>>,
+/// What the write token guards: the review database's write connection, and the changesets that
+/// were on view and are not now, by source. Only a command reaches them, and only through [`Held`].
+pub(super) struct Writer<W> {
+    writes: W,
+    parked: HashMap<Source, Arc<State>>,
+}
+
+impl<W> Writer<W> {
+    pub(super) fn new(writes: W) -> Self {
+        Self {
+            writes,
+            parked: HashMap::new(),
+        }
+    }
 }
 
 /// A command's hold of the session: the write token and a copy of the state to change. Reading it
 /// reads the state the command started from; changing it copies that state first, unless nobody
 /// else has it. It is published by [`Held::publish`] or when the hold ends, whatever the command
 /// made of it: a command that fails after it changed something leaves that behind, as it always did.
-pub(super) struct Held<'a> {
-    writer: MutexGuard<'a, Writer>,
+pub(super) struct Held<'a, W> {
+    writer: MutexGuard<'a, Writer<W>>,
     state: Arc<State>,
     published: &'a Published,
 }
 
-impl<'a> Held<'a> {
-    pub(super) fn new(writer: MutexGuard<'a, Writer>, published: &'a Published) -> Self {
+impl<'a, W> Held<'a, W> {
+    pub(super) fn new(writer: MutexGuard<'a, Writer<W>>, published: &'a Published) -> Self {
         Self {
             writer,
             state: published.read(),
             published,
         }
+    }
+
+    /// The review database's write connection, which only a command that holds the token has.
+    pub(super) fn writes(&self) -> W
+    where
+        W: Clone,
+    {
+        self.writer.writes.clone()
     }
 
     /// Makes the state readers see the one this command has now. A command that announces what it
@@ -79,7 +96,7 @@ impl<'a> Held<'a> {
     }
 }
 
-impl Deref for Held<'_> {
+impl<W> Deref for Held<'_, W> {
     type Target = State;
 
     fn deref(&self) -> &State {
@@ -87,13 +104,13 @@ impl Deref for Held<'_> {
     }
 }
 
-impl DerefMut for Held<'_> {
+impl<W> DerefMut for Held<'_, W> {
     fn deref_mut(&mut self) -> &mut State {
         Arc::make_mut(&mut self.state)
     }
 }
 
-impl Drop for Held<'_> {
+impl<W> Drop for Held<'_, W> {
     fn drop(&mut self) {
         self.publish();
     }

@@ -520,10 +520,6 @@ impl Store for MemStore {
             .filter_map(|id| Some((id, mem.blobs.get(&id)?.clone())))
             .collect())
     }
-    async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus, _: i64) -> StoreResult<()> {
-        self.0.lock().unwrap().snapshots.insert(snapshot.id, (snapshot, status));
-        Ok(())
-    }
     async fn snapshot(&self, id: SnapshotId) -> StoreResult<Option<(Snapshot, SnapshotStatus)>> {
         Ok(self.0.lock().unwrap().snapshots.get(&id).cloned())
     }
@@ -537,20 +533,8 @@ impl ChangesetStore for MemStore {
     async fn lens(&self, _: String, _: Source) -> StoreResult<Option<Lens>> {
         Ok(self.0.lock().unwrap().lens)
     }
-    async fn set_lens(&self, _: String, _: Source, lens: Lens) -> StoreResult<()> {
-        self.0.lock().unwrap().lens = Some(lens);
-        Ok(())
-    }
     async fn pull_request_head(&self, _: String, source: Source) -> StoreResult<Option<PullRequestHead>> {
         Ok(self.0.lock().unwrap().heads.get(&source).cloned())
-    }
-    async fn set_pull_request_head(&self, _: String, source: Source, head: PullRequestHead) -> StoreResult<()> {
-        self.0.lock().unwrap().heads.insert(source, head);
-        Ok(())
-    }
-    async fn ensure_changeset(&self, repo: String, source: Source) -> StoreResult<ChangesetId> {
-        self.0.lock().unwrap().changeset.get_or_insert((repo, source));
-        Ok(ChangesetId(1))
     }
     async fn open_changesets(&self) -> StoreResult<Vec<ChangesetId>> {
         let mem = self.0.lock().unwrap();
@@ -562,46 +546,9 @@ impl ChangesetStore for MemStore {
     async fn versions(&self, _: ChangesetId) -> StoreResult<Vec<Version>> {
         Ok(self.0.lock().unwrap().versions.clone())
     }
-    async fn append_version(&self, _: ChangesetId, version: Version) -> StoreResult<()> {
-        self.0.lock().unwrap().versions.push(version);
-        Ok(())
-    }
 }
 
 impl ReviewStore for MemStore {
-    async fn start_review(
-        &self,
-        repo: String,
-        source: Source,
-        choice: BaseChoice,
-        first: Version,
-        _: i64,
-    ) -> StoreResult<(ChangesetId, ReviewId)> {
-        let mut mem = self.0.lock().unwrap();
-        *mem = Mem {
-            blobs: std::mem::take(&mut mem.blobs),
-            put: std::mem::take(&mut mem.put),
-            snapshots: std::mem::take(&mut mem.snapshots),
-            threads: std::mem::take(&mut mem.threads),
-            next_message: mem.next_message,
-            filter: mem.filter.take(),
-            browsing_base: mem.browsing_base.take(),
-            lens: mem.lens.take(),
-            heads: std::mem::take(&mut mem.heads),
-            started: mem.started + 1,
-            base: Some(choice),
-            changeset: Some((repo, source)),
-            versions: vec![first],
-            ..Default::default()
-        };
-        Ok((ChangesetId(1), ReviewId(mem.started)))
-    }
-    async fn close_review(&self, _: ReviewId, _: i64, complete: bool) -> StoreResult<()> {
-        let mut mem = self.0.lock().unwrap();
-        mem.closed = true;
-        mem.complete = Some(complete);
-        Ok(())
-    }
     async fn open_review(&self, _: ChangesetId) -> StoreResult<Option<ReviewId>> {
         let mem = self.0.lock().unwrap();
         Ok((mem.started > 0 && !mem.closed).then_some(ReviewId(mem.started)))
@@ -639,12 +586,87 @@ impl ReviewStore for MemStore {
     async fn filter(&self, _: String) -> StoreResult<ReviewFilter> {
         Ok(self.0.lock().unwrap().filter.clone().unwrap_or_default())
     }
+    async fn browsing_base(&self, _: String) -> StoreResult<Option<BaseChoice>> {
+        Ok(self.0.lock().unwrap().browsing_base.clone())
+    }
+}
+
+impl ThreadStore for MemStore {
+    async fn threads(&self, _: ChangesetId) -> StoreResult<Vec<ChangesetThread>> {
+        let mut threads = self.0.lock().unwrap().threads.clone();
+        // As the store reads them: what the platform has first, then the drafts.
+        for t in threads.iter_mut().filter(|t| t.thread.platform.is_some()) {
+            t.thread.messages.sort_by_key(|m| (m.remote.is_none(), m.at, m.id));
+        }
+        Ok(threads)
+    }
+}
+
+impl LiveStore for MemStore {
+    type Writes = MemStore;
+
+    fn writes(&self) -> MemStore {
+        self.clone()
+    }
+}
+
+impl ReviewWrites for MemStore {
+    async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus, _: i64) -> StoreResult<()> {
+        self.0.lock().unwrap().snapshots.insert(snapshot.id, (snapshot, status));
+        Ok(())
+    }
+    async fn set_lens(&self, _: String, _: Source, lens: Lens) -> StoreResult<()> {
+        self.0.lock().unwrap().lens = Some(lens);
+        Ok(())
+    }
+    async fn set_pull_request_head(&self, _: String, source: Source, head: PullRequestHead) -> StoreResult<()> {
+        self.0.lock().unwrap().heads.insert(source, head);
+        Ok(())
+    }
+    async fn ensure_changeset(&self, repo: String, source: Source) -> StoreResult<ChangesetId> {
+        self.0.lock().unwrap().changeset.get_or_insert((repo, source));
+        Ok(ChangesetId(1))
+    }
+    async fn append_version(&self, _: ChangesetId, version: Version) -> StoreResult<()> {
+        self.0.lock().unwrap().versions.push(version);
+        Ok(())
+    }
+    async fn start_review(
+        &self,
+        repo: String,
+        source: Source,
+        choice: BaseChoice,
+        first: Version,
+        _: i64,
+    ) -> StoreResult<(ChangesetId, ReviewId)> {
+        let mut mem = self.0.lock().unwrap();
+        *mem = Mem {
+            blobs: std::mem::take(&mut mem.blobs),
+            put: std::mem::take(&mut mem.put),
+            snapshots: std::mem::take(&mut mem.snapshots),
+            threads: std::mem::take(&mut mem.threads),
+            next_message: mem.next_message,
+            filter: mem.filter.take(),
+            browsing_base: mem.browsing_base.take(),
+            lens: mem.lens.take(),
+            heads: std::mem::take(&mut mem.heads),
+            started: mem.started + 1,
+            base: Some(choice),
+            changeset: Some((repo, source)),
+            versions: vec![first],
+            ..Default::default()
+        };
+        Ok((ChangesetId(1), ReviewId(mem.started)))
+    }
+    async fn close_review(&self, _: ReviewId, _: i64, complete: bool) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        mem.closed = true;
+        mem.complete = Some(complete);
+        Ok(())
+    }
     async fn set_filter(&self, _: String, filter: ReviewFilter) -> StoreResult<()> {
         self.0.lock().unwrap().filter = Some(filter);
         Ok(())
-    }
-    async fn browsing_base(&self, _: String) -> StoreResult<Option<BaseChoice>> {
-        Ok(self.0.lock().unwrap().browsing_base.clone())
     }
     async fn set_browsing_base(&self, _: String, choice: BaseChoice) -> StoreResult<()> {
         self.0.lock().unwrap().browsing_base = Some(choice);
@@ -687,17 +709,6 @@ impl ReviewStore for MemStore {
     async fn unacknowledge(&self, _: ReviewId, ack: NonTextAck) -> StoreResult<()> {
         self.0.lock().unwrap().acks.retain(|a| *a != ack);
         Ok(())
-    }
-}
-
-impl ThreadStore for MemStore {
-    async fn threads(&self, _: ChangesetId) -> StoreResult<Vec<ChangesetThread>> {
-        let mut threads = self.0.lock().unwrap().threads.clone();
-        // As the store reads them: what the platform has first, then the drafts.
-        for t in threads.iter_mut().filter(|t| t.thread.platform.is_some()) {
-            t.thread.messages.sort_by_key(|m| (m.remote.is_none(), m.at, m.id));
-        }
-        Ok(threads)
     }
     async fn add_thread(
         &self,
@@ -778,7 +789,9 @@ impl LiveSession<FakeGit, MemStore> {
         let (mut st, _) = self.beginning(View::Changeset).await?;
         check_revision(&st, revision)?;
         let started = seen && self.begin(&mut st).await?;
-        self.mark_hunks(&mut st, View::Changeset, path, hunks, seen).await?;
+        let writes = st.writes();
+        self.mark_hunks(&writes, &mut st, View::Changeset, path, hunks, seen)
+            .await?;
         Ok(outcome(&st, update_of(&st, path)?, started))
     }
 
@@ -792,7 +805,8 @@ impl LiveSession<FakeGit, MemStore> {
         let (mut st, _) = self.beginning(View::Changeset).await?;
         check_revision(&st, revision)?;
         let started = acknowledged && self.begin(&mut st).await?;
-        self.mark_item(&mut st, View::Changeset, path, kind, acknowledged)
+        let writes = st.writes();
+        self.mark_item(&writes, &mut st, View::Changeset, path, kind, acknowledged)
             .await?;
         Ok(outcome(&st, update_of(&st, path)?, started))
     }

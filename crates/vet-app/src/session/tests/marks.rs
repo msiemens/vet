@@ -87,7 +87,8 @@ async fn assert_as_remapped_afresh(fx: &Fixture, step: &str) -> HashMap<View, Co
     assert_eq!(views.len(), 4, "the changeset and its three commits");
     let left: Vec<Remapped> = views.iter().map(|&v| std::mem::take(st.remapped_in_mut(v))).collect();
     let summary = st.review.as_ref().and_then(|r| r.summary);
-    fx.session.remap(&mut st).await.unwrap();
+    let writes = st.writes();
+    fx.session.remap(&writes, &mut st).await.unwrap();
     for (&view, left) in views.iter().zip(&left) {
         assert_eq!(left, st.remapped_in(view), "{view:?} after {step}");
     }

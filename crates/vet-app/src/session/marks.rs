@@ -18,7 +18,7 @@ use super::remap::{Prepared, frame_of, landing, part_completion};
 use super::state::{Shown, State, View, ack_of, check_revision, find_diff, find_non_text, outcome, shown_items};
 use super::views::{Outcome, ReviewUpdateView};
 use super::{LiveSession, Result, SessionError};
-use crate::ports::{GitRepo, LiveStore};
+use crate::ports::{GitRepo, LiveStore, ReviewWrites};
 use crate::review::{RecordedSpan, SpanOrigin};
 
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
@@ -44,7 +44,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         let seen = state != HunkState::Seen;
         let started = seen && self.begin(&mut st).await?;
-        self.mark_hunks_in(&mut st, &shown, path, &[hunk], seen).await?;
+        let writes = st.writes();
+        self.mark_hunks_in(&writes, &mut st, &shown, path, &[hunk], seen)
+            .await?;
         Ok(outcome(&st, update_in(&st, &shown, path)?, started))
     }
 
@@ -66,7 +68,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 "nothing in this file was seen against an old base".into(),
             ));
         }
-        self.mark_hunks(&mut st, View::Changeset, path, &hunks, true).await?;
+        let writes = st.writes();
+        self.mark_hunks(&writes, &mut st, View::Changeset, path, &hunks, true)
+            .await?;
         Ok(outcome(&st, update_in(&st, &shown, path)?, false))
     }
 
@@ -87,7 +91,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             return Err(SessionError::Invalid("nothing is left to review in this change".into()));
         }
         let started = acknowledged && self.begin(&mut st).await?;
-        self.mark_item(&mut st, view, path, kind, acknowledged).await?;
+        let writes = st.writes();
+        self.mark_item(&writes, &mut st, view, path, kind, acknowledged).await?;
         Ok(outcome(&st, update_in(&st, &shown, path)?, started))
     }
 
@@ -115,11 +120,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 .collect();
             (hunks, kinds)
         };
+        let writes = st.writes();
         if !hunks.is_empty() {
-            self.mark_hunks_in(&mut st, &shown, path, &hunks, seen).await?;
+            self.mark_hunks_in(&writes, &mut st, &shown, path, &hunks, seen).await?;
         }
         for kind in kinds {
-            self.mark_item(&mut st, view, path, kind, seen).await?;
+            self.mark_item(&writes, &mut st, view, path, kind, seen).await?;
         }
         Ok(outcome(&st, update_in(&st, &shown, path)?, started))
     }
@@ -131,10 +137,18 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         update_in(&st, &shown, path)
     }
 
-    async fn mark_hunks_in(&self, st: &mut State, shown: &Shown, path: &str, hunks: &[u32], seen: bool) -> Result<()> {
+    async fn mark_hunks_in(
+        &self,
+        writes: &S::Writes,
+        st: &mut State,
+        shown: &Shown,
+        path: &str,
+        hunks: &[u32],
+        seen: bool,
+    ) -> Result<()> {
         match shown {
-            Shown::Interdiff(id) => self.mark_interdiff_hunks(st, id, path, hunks, seen).await,
-            _ => self.mark_hunks(st, shown.view(), path, hunks, seen).await,
+            Shown::Interdiff(id) => self.mark_interdiff_hunks(writes, st, id, path, hunks, seen).await,
+            _ => self.mark_hunks(writes, st, shown.view(), path, hunks, seen).await,
         }
     }
 
@@ -142,6 +156,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// seen, or cuts them out of the recorded spans.
     pub(super) async fn mark_hunks(
         &self,
+        writes: &S::Writes,
         st: &mut State,
         view: View,
         path: &str,
@@ -152,7 +167,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if seen && st.review.is_some() && matches!(view, View::Commit { .. }) {
             // The snapshots a commit's marks are anchored in are not the changeset's own, so
             // they must be there to be loaded once the session is not.
-            self.keep_snapshots(st, view).await?;
+            self.keep_snapshots(writes, st, view).await?;
         }
         let (regions, add) = {
             let diffed = st.diffed_in(view);
@@ -165,6 +180,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let add = if seen {
                 let texts = (blob_text(diff.old_blob), blob_text(diff.new_blob));
                 (hunk_spans(diff, &chosen, (base, target), texts).into_iter())
+                    .map(|span| span.map(|s| (s, origin.clone())))
                     .collect::<Option<Vec<_>>>()
                     .ok_or_else(|| SessionError::NotText(path.into()))?
             } else {
@@ -172,18 +188,18 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             };
             (regions, add)
         };
-        self.apply_marks(st, view, regions, add, origin, seen).await
+        self.apply_marks(writes, st, view, regions, add, seen).await
     }
 
     /// Cuts the lines of `regions`, which are of `view`, out of the recorded spans, then records
-    /// `add` as seen, marked in `origin`.
+    /// `add` as seen, each marked in its origin.
     pub(super) async fn apply_marks(
         &self,
+        writes: &S::Writes,
         st: &mut State,
         view: View,
         regions: Vec<Region>,
-        add: Vec<ReviewedSpan>,
-        origin: SpanOrigin,
+        add: Vec<(ReviewedSpan, SpanOrigin)>,
         seen: bool,
     ) -> Result<()> {
         self.load_known(st).await?;
@@ -222,7 +238,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                         kept.extend(rest.into_iter().map(|s| (s, rec.origin.clone())));
                     }
                 }
-                kept.extend(add.into_iter().map(|s| (s, origin.clone())));
+                kept.extend(add);
                 (remove, kept)
             },
         );
@@ -230,12 +246,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let (remove, add) = cut?;
         // Without a review there is nothing to un-mark and nothing to store.
         let ids = match &st.review {
-            Some(review) => {
-                self.acquisition
-                    .store
-                    .edit_spans(review.id, remove.clone(), add.clone())
-                    .await?
-            }
+            Some(review) => writes.edit_spans(review.id, remove.clone(), add.clone()).await?,
             None => Vec::new(),
         };
         st.recorded.retain(|r| !remove.contains(&r.id));
@@ -245,22 +256,19 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 .map(|(&id, (span, origin))| Arc::new(RecordedSpan { id, span, origin })),
         );
         if seen {
-            self.note_reviewed(st).await?;
+            self.note_reviewed(writes, st).await?;
         }
         self.remap_marks(st, &remove, &ids).await?;
-        self.note_progress(st).await
+        self.note_progress(writes, st).await
     }
 
     /// Records that something was marked in the changeset's latest version, for
     /// the next review to start from.
-    async fn note_reviewed(&self, st: &mut State) -> Result<()> {
+    async fn note_reviewed(&self, writes: &S::Writes, st: &mut State) -> Result<()> {
         if let Some(review) = &mut st.review
             && review.last_reviewed != Some(review.version)
         {
-            self.acquisition
-                .store
-                .set_last_reviewed(review.id, review.version)
-                .await?;
+            writes.set_last_reviewed(review.id, review.version).await?;
             review.last_reviewed = Some(review.version);
         }
         Ok(())
@@ -268,6 +276,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     pub(super) async fn mark_item(
         &self,
+        writes: &S::Writes,
         st: &mut State,
         view: View,
         path: &str,
@@ -286,12 +295,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         let ack = ack_of(change);
         let files: HashSet<RepoPath> = change.from.iter().chain([&change.path]).cloned().collect();
-        let store = &self.acquisition.store;
         if let Some(review) = &st.review {
             if acknowledged {
-                store.acknowledge(review.id, ack.clone()).await?;
+                writes.acknowledge(review.id, ack.clone()).await?;
             } else {
-                store.unacknowledge(review.id, ack.clone()).await?;
+                writes.unacknowledge(review.id, ack.clone()).await?;
             }
         }
         // Only the completion of the changes of the acknowledged change's paths moves.
@@ -308,9 +316,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             remapped.completion = remapped.completion + after - before;
         }
         if acknowledged {
-            self.note_reviewed(st).await?;
+            self.note_reviewed(writes, st).await?;
         }
-        self.note_progress(st).await
+        self.note_progress(writes, st).await
     }
 }
 

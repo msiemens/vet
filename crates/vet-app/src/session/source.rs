@@ -15,7 +15,7 @@ use crate::acquisition::Acquisition;
 use crate::base;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version, VersionOrigin};
 use crate::platform::PullRequestHead;
-use crate::ports::{GitRepo, LiveStore};
+use crate::ports::{GitRepo, LiveStore, ReviewWrites};
 use crate::pull_request::PullRequestRefs;
 use crate::review::visible_threads;
 use vet_core::content::SnapshotStatus;
@@ -66,16 +66,19 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if self.pull_request_head(source).await?.as_ref() == Some(&head) {
             return Ok(false);
         }
-        let store = &self.acquisition.store;
-        store
+        self.hold()
+            .await
+            .writes()
             .set_pull_request_head(self.repo.clone(), source.clone(), head)
             .await?;
         Ok(true)
     }
 
-    /// Reads what the store holds of the changeset of `source` in the repository at `repo`.
+    /// Reads what the store holds of the changeset of `source` in the repository at `repo`; a
+    /// review that cannot be reconstructed is closed through `writes`.
     pub(super) async fn stored(
         acquisition: &Acquisition<G, S>,
+        writes: &S::Writes,
         repo: &str,
         source: &Source,
         filter: &ReviewFilter,
@@ -90,7 +93,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             }
             // Its start record or snapshots are gone: browse rather than fail to open.
             acquisition.git.delete_changeset_refs(changeset).await?;
-            acquisition.store.close_review(id, clock(), false).await?;
+            writes.close_review(id, clock(), false).await?;
         }
         let threads = match changeset {
             Some(changeset) => visible_threads(acquisition.store.threads(changeset).await?, None),
@@ -110,12 +113,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if st.source == source {
             return self.observe_on_view(&mut st).await;
         }
+        let writes = st.writes();
         let was_parked = st.parked().contains_key(&source);
         let mut incoming = match st.parked().remove(&source) {
             Some(state) => state,
-            None => Arc::new(self.enter(&source, &st.filter).await?),
+            None => Arc::new(self.enter(&writes, &source, &st.filter).await?),
         };
-        if let Err(e) = self.observe_in(Arc::make_mut(&mut incoming)).await {
+        if let Err(e) = self.observe_in(&writes, Arc::make_mut(&mut incoming)).await {
             if was_parked {
                 st.parked().insert(source, incoming);
             }
@@ -141,8 +145,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// [`LiveSession::observe_in`] on the state on view, whose new revision is announced.
-    async fn observe_on_view(&self, st: &mut Held<'_>) -> Result<Option<u32>> {
-        let moved = self.observe_in(st).await?;
+    async fn observe_on_view(&self, st: &mut Held<'_, S::Writes>) -> Result<Option<u32>> {
+        let writes = st.writes();
+        let moved = self.observe_in(&writes, st).await?;
         if let Some(revision) = moved {
             st.publish();
             self.revisions.advance(revision);
@@ -152,7 +157,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Looks at the branch of `st`, which need not be the one on view: only the
     /// revision of the one on view is announced, by the caller.
-    async fn observe_in(&self, st: &mut State) -> Result<Option<u32>> {
+    async fn observe_in(&self, store: &S::Writes, st: &mut State) -> Result<Option<u32>> {
         if st.source == Source::WorkingTree {
             return Ok(None);
         }
@@ -177,7 +182,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         let now = (self.clock)();
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
-            let store = &self.acquisition.store;
             // The old base's content is kept apart from git, which may drop its objects.
             self.retain_anchored(st, st.anchors()).await?;
             store
@@ -196,7 +200,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 origin: VersionOrigin::Observed,
                 change: self.change_of((&st.base, &st.target), &base, &target).await?,
             };
-            let previous = store.versions(changeset).await?.pop();
+            let previous = self.acquisition.store.versions(changeset).await?.pop();
             store.append_version(changeset, version.clone()).await?;
             Self::keep_commits(&self.acquisition, changeset, &version, previous.as_ref()).await?;
             if let Some(review) = &mut st.review {
@@ -221,11 +225,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// The state of a changeset that was never on view in this session. The working tree
     /// always was.
-    async fn enter(&self, source: &Source, filter: &ReviewFilter) -> Result<State> {
+    async fn enter(&self, writes: &S::Writes, source: &Source, filter: &ReviewFilter) -> Result<State> {
         let acquisition = &self.acquisition;
         let git = &acquisition.git;
         let tip = tip_of(git, source).await?;
-        let (changeset, threads) = match Self::stored(acquisition, &self.repo, source, filter, self.clock).await? {
+        let stored = Self::stored(acquisition, writes, &self.repo, source, filter, self.clock).await?;
+        let (changeset, threads) = match stored {
             Stored::Resumed(state) => return Ok(*state),
             Stored::Browsing { changeset, threads } => (changeset, threads),
         };

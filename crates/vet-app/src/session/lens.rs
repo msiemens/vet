@@ -16,7 +16,7 @@ use super::state::{Commits, Remapped, State, View, acknowledged, lifecycle_of};
 use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{BaseChoice, CommitId, Lens, Source};
-use crate::ports::{CommitInfo, GitRepo, LiveStore};
+use crate::ports::{CommitInfo, GitRepo, LiveStore, ReviewWrites};
 use crate::review::SpanOrigin;
 
 /// What a manifest says about the lenses, whatever view it is of.
@@ -101,16 +101,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Remembers the lens the changeset on view is reviewed in.
     pub async fn set_lens(&self, lens: Lens) -> Result<()> {
-        let st = self.published.read();
+        let st = self.hold().await;
         if st.source == Source::WorkingTree {
             return Err(SessionError::Invalid(
                 "the working tree has no commits of its own to review by".into(),
             ));
         }
-        self.acquisition
-            .store
-            .set_lens(self.repo.clone(), st.source.clone(), lens)
-            .await?;
+        st.writes().set_lens(self.repo.clone(), st.source.clone(), lens).await?;
         Ok(())
     }
 
@@ -166,15 +163,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Puts the snapshots a commit's marks are anchored in into the store, so that they can be
     /// loaded when the session no longer holds them.
-    pub(super) async fn keep_snapshots(&self, st: &State, view: View) -> Result<()> {
+    pub(super) async fn keep_snapshots(&self, writes: &S::Writes, st: &State, view: View) -> Result<()> {
         let View::Commit { index } = view else {
             return Ok(());
         };
         let unit = &st.units()[index as usize];
         let now = (self.clock)();
         for snapshot in [&unit.old, &unit.new] {
-            self.acquisition
-                .store
+            writes
                 .put_snapshot(snapshot.clone(), SnapshotStatus::of(snapshot), now)
                 .await?;
         }

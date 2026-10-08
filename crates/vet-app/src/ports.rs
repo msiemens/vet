@@ -388,9 +388,10 @@ pub struct GcPlan {
     pub content_grace: Duration,
 }
 
-/// Content and snapshots (§8). One implementation backs this, [`ChangesetStore`],
-/// [`ReviewStore`], [`ThreadStore`] and [`GcStore`]: GC checks references across
-/// changesets, spans and comments.
+/// Content and snapshots (§8), as a reader has them. One implementation backs this,
+/// [`ChangesetStore`], [`ReviewStore`], [`ThreadStore`] (which only read), [`ReviewWrites`] and
+/// [`GcStore`]: GC checks references across changesets, spans and comments. Content is
+/// addressed by its hash, so putting it changes no review state.
 pub trait Store {
     /// Content-addressed by `BlobId::of`, answered with the ids in the order of `blobs`;
     /// all durable (fsynced, renamed) on return. Blobs the store holds are not written again.
@@ -400,14 +401,6 @@ pub trait Store {
     fn blob(&self, id: BlobId) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
     /// The content of each of `ids` the store holds, read in one go; the others are left out.
     fn blobs(&self, ids: Vec<BlobId>) -> impl Future<Output = Result<BTreeMap<BlobId, Vec<u8>>, StoreError>> + Send;
-    /// Stored as shared Merkle nodes: only nodes not yet present are written.
-    /// `at` is unix seconds; GC spares snapshots younger than its grace period.
-    fn put_snapshot(
-        &self,
-        snapshot: Snapshot,
-        status: SnapshotStatus,
-        at: i64,
-    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn snapshot(
         &self,
         id: SnapshotId,
@@ -438,15 +431,58 @@ pub trait ChangesetStore {
     ) -> impl Future<Output = Result<Option<ChangesetId>, StoreError>> + Send;
     /// The lens the changeset of `source` was last put in; `None` if it never was.
     fn lens(&self, repo: String, source: Source) -> impl Future<Output = Result<Option<Lens>, StoreError>> + Send;
-    /// Remembers the lens of the changeset of `source`, storing the changeset if need be.
-    fn set_lens(&self, repo: String, source: Source, lens: Lens)
-    -> impl Future<Output = Result<(), StoreError>> + Send;
     /// How the platform last named the pull request of `source`; `None` if it was never stored.
     fn pull_request_head(
         &self,
         repo: String,
         source: Source,
     ) -> impl Future<Output = Result<Option<PullRequestHead>, StoreError>> + Send;
+    /// The changesets a review of which is open, in any repository.
+    fn open_changesets(&self) -> impl Future<Output = Result<Vec<ChangesetId>, StoreError>> + Send;
+    /// The versions in order of their numbers.
+    fn versions(&self, changeset: ChangesetId) -> impl Future<Output = Result<Vec<Version>, StoreError>> + Send;
+}
+
+/// Review state (§5.2), as a reader has it. Spans are replaced as a set because remapping is
+/// a partition.
+pub trait ReviewStore {
+    /// The review of `changeset` that is open, if any; the newest if several are.
+    fn open_review(&self, changeset: ChangesetId) -> impl Future<Output = Result<Option<ReviewId>, StoreError>> + Send;
+    /// The newest review of `changeset`, open or finished.
+    fn latest_review(
+        &self,
+        changeset: ChangesetId,
+    ) -> impl Future<Output = Result<Option<ReviewId>, StoreError>> + Send;
+    fn review(&self, id: ReviewId) -> impl Future<Output = Result<Option<Review>, StoreError>> + Send;
+    /// The review filter of the repository at `repo`, a project setting that
+    /// applies to every changeset of it; the default if none was stored.
+    fn filter(&self, repo: String) -> impl Future<Output = Result<ReviewFilter, StoreError>> + Send;
+    /// The base last chosen for the working tree of the repository at `repo`, which a session
+    /// that is browsing starts out with; none if it was never chosen.
+    fn browsing_base(&self, repo: String) -> impl Future<Output = Result<Option<BaseChoice>, StoreError>> + Send;
+}
+
+/// The threads of a changeset, which outlive any review of it, as a reader has them.
+pub trait ThreadStore {
+    /// Every thread of `changeset`, oldest first.
+    fn threads(&self, changeset: ChangesetId) -> impl Future<Output = Result<Vec<ChangesetThread>, StoreError>> + Send;
+}
+
+/// Every change to the review database: the one write connection of the store. Writes queue in the
+/// order they are asked for. Only a review command has it (the write token of a session), so that
+/// what reads the store cannot change it.
+pub trait ReviewWrites {
+    /// Stored as shared Merkle nodes: only nodes not yet present are written.
+    /// `at` is unix seconds; GC spares snapshots younger than its grace period.
+    fn put_snapshot(
+        &self,
+        snapshot: Snapshot,
+        status: SnapshotStatus,
+        at: i64,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Remembers the lens of the changeset of `source`, storing the changeset if need be.
+    fn set_lens(&self, repo: String, source: Source, lens: Lens)
+    -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Remembers how the platform names the pull request of `source`, storing the changeset if
     /// need be.
     fn set_pull_request_head(
@@ -462,21 +498,12 @@ pub trait ChangesetStore {
         repo: String,
         source: Source,
     ) -> impl Future<Output = Result<ChangesetId, StoreError>> + Send;
-    /// The changesets a review of which is open, in any repository.
-    fn open_changesets(&self) -> impl Future<Output = Result<Vec<ChangesetId>, StoreError>> + Send;
-    /// The versions in order of their numbers.
-    fn versions(&self, changeset: ChangesetId) -> impl Future<Output = Result<Vec<Version>, StoreError>> + Send;
     /// Adds the next version, numbered after the last.
     fn append_version(
         &self,
         changeset: ChangesetId,
         version: Version,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
-}
-
-/// Review state (§5.2). Spans are replaced as a set because remapping is
-/// a partition.
-pub trait ReviewStore {
     /// Opens a review of the changeset of `source` in the repository at `repo`,
     /// storing the changeset if need be, with `base` as the chosen base rule.
     /// `first` replaces the changeset's versions: a working tree is versioned
@@ -497,21 +524,7 @@ pub trait ReviewStore {
         now: i64,
         complete: bool,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
-    /// The review of `changeset` that is open, if any; the newest if several are.
-    fn open_review(&self, changeset: ChangesetId) -> impl Future<Output = Result<Option<ReviewId>, StoreError>> + Send;
-    /// The newest review of `changeset`, open or finished.
-    fn latest_review(
-        &self,
-        changeset: ChangesetId,
-    ) -> impl Future<Output = Result<Option<ReviewId>, StoreError>> + Send;
-    fn review(&self, id: ReviewId) -> impl Future<Output = Result<Option<Review>, StoreError>> + Send;
-    /// The review filter of the repository at `repo`, a project setting that
-    /// applies to every changeset of it; the default if none was stored.
-    fn filter(&self, repo: String) -> impl Future<Output = Result<ReviewFilter, StoreError>> + Send;
     fn set_filter(&self, repo: String, filter: ReviewFilter) -> impl Future<Output = Result<(), StoreError>> + Send;
-    /// The base last chosen for the working tree of the repository at `repo`, which a session
-    /// that is browsing starts out with; none if it was never chosen.
-    fn browsing_base(&self, repo: String) -> impl Future<Output = Result<Option<BaseChoice>, StoreError>> + Send;
     fn set_browsing_base(
         &self,
         repo: String,
@@ -541,12 +554,6 @@ pub trait ReviewStore {
     ) -> impl Future<Output = Result<Vec<SpanId>, StoreError>> + Send;
     fn acknowledge(&self, id: ReviewId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn unacknowledge(&self, id: ReviewId, ack: NonTextAck) -> impl Future<Output = Result<(), StoreError>> + Send;
-}
-
-/// The threads of a changeset, which outlive any review of it.
-pub trait ThreadStore {
-    /// Every thread of `changeset`, oldest first.
-    fn threads(&self, changeset: ChangesetId) -> impl Future<Output = Result<Vec<ChangesetThread>, StoreError>> + Send;
     /// Opens a thread with its first message (whose `id` is ignored); `review` is the review it
     /// is written in, if any. Answers with the ids of the thread and of the message.
     fn add_thread(
@@ -587,10 +594,14 @@ pub trait ThreadStore {
     fn delete_thread(&self, thread: ThreadId) -> impl Future<Output = Result<(), StoreError>> + Send;
 }
 
-/// Everything a live session needs of the store.
-pub trait LiveStore: Store + ChangesetStore + ReviewStore + ThreadStore {}
+/// Everything a live session reads of the store, and the means to write what it changes. The
+/// session keeps the writes to the commands that hold its write token.
+pub trait LiveStore: Store + ChangesetStore + ReviewStore + ThreadStore {
+    type Writes: ReviewWrites + Clone + Send + Sync + 'static;
 
-impl<T: Store + ChangesetStore + ReviewStore + ThreadStore> LiveStore for T {}
+    /// The store's write connection; its clones share the one connection.
+    fn writes(&self) -> Self::Writes;
+}
 
 pub struct Command {
     pub program: String,

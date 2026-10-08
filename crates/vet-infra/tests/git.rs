@@ -101,9 +101,6 @@ impl Store for MemStore {
             .filter_map(|id| Some((id, held.get(&id)?.clone())))
             .collect())
     }
-    async fn put_snapshot(&self, _: Snapshot, _: SnapshotStatus, _: i64) -> Result<(), StoreError> {
-        unimplemented!()
-    }
     async fn snapshot(&self, _: SnapshotId) -> Result<Option<(Snapshot, SnapshotStatus)>, StoreError> {
         unimplemented!()
     }
