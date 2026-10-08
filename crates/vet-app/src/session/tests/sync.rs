@@ -19,6 +19,24 @@ async fn on_a_pull_request() -> (Fixture, FakeHosting) {
     (fx, FakeHosting::default())
 }
 
+/// Like [`on_a_pull_request`], on Azure DevOps.
+async fn on_an_azure_devops_pull_request() -> (Fixture, FakeHosting) {
+    let remote = RemoteKey {
+        host: "dev.azure.com".into(),
+        path: "acme/shop/app".into(),
+    };
+    let base = numbered(30, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    let refs = PullRequestRefs::of(&remote, 7);
+    fx.git
+        .add_commit(&refs.head, "pr1", &[("a.txt", &numbered(30, &[3, 20]))]);
+    fx.git
+        .add_commit(&format!("merge-base {}", refs.target), "m1", &[("a.txt", &base)]);
+    let source = Source::PullRequest { remote, number: 7 };
+    fx.session.open_changeset(source).await.unwrap();
+    (fx, FakeHosting::per_comment())
+}
+
 impl Fixture {
     async fn all(&self) -> Vec<ThreadView> {
         self.session.threads(View::Changeset).await.unwrap().threads
@@ -602,6 +620,33 @@ async fn a_flat_comment_on_the_whole_pull_request_takes_no_reply_and_a_draft_in_
         submission.comments.iter().map(|c| c.body.as_str()).collect::<Vec<_>>(),
         ["One more thing."]
     );
+}
+
+#[tokio::test]
+async fn a_comment_on_the_whole_pull_request_is_a_thread_that_resolves_where_the_platform_has_it_so() {
+    let (fx, hosting) = on_an_azure_devops_pull_request().await;
+    let overall = fx.thread(NewThread::Changeset).await;
+    fx.session.post_drafts(&hosting).await.unwrap();
+
+    fx.session
+        .set_thread_status(overall, ThreadStatus::Resolved)
+        .await
+        .unwrap();
+    fx.session.reply(overall, "Done.".into(), 200).await.unwrap();
+    fx.session.post_drafts(&hosting).await.unwrap();
+    fx.sync(&hosting).await;
+
+    let id = remote_id(&fx.view(overall).await).unwrap().to_owned();
+    assert!(hosting.calls().contains(&format!("resolve {id} true")));
+    let thread = fx.view(overall).await;
+    assert_eq!(thread.status, ThreadStatus::Resolved);
+    assert_eq!(bodies(&thread), ["why?", "Done."]);
+
+    // On GitHub the same comment is a flat one, with no status to set.
+    let (fx, _) = on_a_pull_request().await;
+    let overall = fx.thread(NewThread::Changeset).await;
+    let refused = fx.session.set_thread_status(overall, ThreadStatus::Resolved).await;
+    assert!(matches!(refused, Err(SessionError::Invalid(_))), "{refused:?}");
 }
 
 #[tokio::test]

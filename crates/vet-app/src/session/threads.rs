@@ -18,6 +18,7 @@ use super::views::{FileStatus, Outcome};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::Source;
 use crate::editor::last_text_line;
+use crate::platform::{ChangesetThreads, PlatformTraits};
 use crate::ports::{GitRepo, LiveStore};
 
 const NEW_SIDE_ONLY: &str = "a comment on an interdiff goes on its new side; the old side is the older version rebased \
@@ -245,9 +246,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let review = st.review.as_ref().expect("begun").id;
         let changeset = st.changeset.expect("begun");
         // On a platform the thread is a draft until it is submitted; a comment on the whole pull
-        // request is a flat one, which has no status.
-        let platform = matches!(st.source, Source::PullRequest { .. })
-            .then(|| PlatformThread::draft(!matches!(target, CommentTarget::Changeset)));
+        // request is a flat one, which has no status, where the platform keeps it so.
+        let platform = match &st.source {
+            Source::PullRequest { remote, .. } => Some(PlatformThread::draft(
+                target != CommentTarget::Changeset
+                    || PlatformTraits::of(remote.kind()).changeset_threads != ChangesetThreads::Flat,
+            )),
+            _ => None,
+        };
         let (id, message) = self
             .acquisition
             .store
