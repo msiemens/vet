@@ -19,8 +19,8 @@ use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{Event, Request, Response, ServerMessage, Side, SymbolId, TaskKind, ThreadTarget, View};
 
 /// Speaks just enough LSP to start. A file's symbols take `DELAY` seconds to answer; every
-/// message it receives, and every `--version` it is asked for, is appended to a log (one
-/// JSON object per line).
+/// message it receives, and every `--version` it is asked for (with the unix time it was asked
+/// at), is appended to a log (one JSON object per line).
 const SLOW_SERVER: &str = r#"#!/usr/bin/env python3
 import json, sys, time
 
@@ -32,7 +32,7 @@ def log(entry):
         out.write(json.dumps(entry) + "\n")
 
 if "--version" in sys.argv:
-    log({"method": "--version"})
+    log({"method": "--version", "at": time.time()})
     print("slow-server 1.0")
     sys.exit(0)
 
@@ -101,6 +101,21 @@ fn count(log: &Path, method: &str) -> usize {
         .count()
 }
 
+/// How many `--version` probes were asked at or after unix time `since`.
+fn probes_since(log: &Path, since: f64) -> usize {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|entry| entry["method"] == "--version" && entry["at"].as_f64().is_some_and(|at| at >= since))
+        .count()
+}
+
+fn unix_now() -> f64 {
+    let now = std::time::SystemTime::now();
+    now.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64()
+}
+
 #[tokio::test]
 async fn many_analyses_of_one_revision_share_one_search_while_files_are_marked_seen() {
     if !python_available() {
@@ -143,6 +158,9 @@ async fn many_analyses_of_one_revision_share_one_search_while_files_are_marked_s
         })
         .await
         .unwrap();
+    // The servers the open started may have probed the server before the change restarted
+    // them; the analyses are what must not probe again and again.
+    let changed = unix_now();
 
     // Four selections of a symbol, three analyses each, and the changed symbols themselves.
     let symbol = SymbolId {
@@ -222,9 +240,9 @@ async fn many_analyses_of_one_revision_share_one_search_while_files_are_marked_s
     // probed once, not for every text.
     assert_eq!(count(&log, "textDocument/documentSymbol"), 2 * FILES);
     assert!(
-        count(&log, "--version") <= 2,
+        probes_since(&log, changed) <= 2,
         "{} version probes",
-        count(&log, "--version")
+        probes_since(&log, changed)
     );
 }
 

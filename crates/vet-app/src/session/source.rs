@@ -51,7 +51,7 @@ pub(super) async fn tip_of<G: GitRepo>(git: &G, source: &Source) -> Result<Commi
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// The source of the changeset on view.
     pub async fn source(&self) -> Source {
-        self.hold().await.source.clone()
+        self.published.read().source.clone()
     }
 
     /// How the platform last named the pull request of `source`, as stored.

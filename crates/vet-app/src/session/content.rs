@@ -94,7 +94,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// The text of any file of the target snapshot, changed or not.
     pub async fn target_text(&self, path: &str) -> Result<TargetText> {
-        let st = self.hold().await;
+        let st = self.published.read();
         let key = RepoPath::from(path);
         let entry = st
             .target

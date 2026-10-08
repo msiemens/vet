@@ -81,7 +81,7 @@ where
     /// working tree is on view and no review of it is open.
     pub async fn copy_ahead(&self) -> Result<()> {
         let (base, target, status) = {
-            let st = self.hold().await;
+            let st = self.published.read();
             if st.source != Source::WorkingTree || st.review.is_some() {
                 return Ok(());
             }

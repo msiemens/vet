@@ -280,7 +280,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     pub async fn reply(&self, thread: ThreadId, body: String, now: i64) -> Result<ThreadView> {
-        let (mut st, _) = self.viewing(View::Changeset).await?;
+        let (mut st, _) = self.writing(View::Changeset).await?;
         if find_thread(&st, thread)?.is_flat() {
             return Err(SessionError::Invalid(
                 "a comment on the whole pull request takes no replies on this platform: write a new comment".into(),
@@ -295,7 +295,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// Resolves or reopens a thread. On a platform the change is sent with the next sync, and
     /// wins there over what the platform says meanwhile.
     pub async fn set_thread_status(&self, thread: ThreadId, status: ThreadStatus) -> Result<ThreadView> {
-        let (mut st, _) = self.viewing(View::Changeset).await?;
+        let (mut st, _) = self.writing(View::Changeset).await?;
         let platform = find_thread(&st, thread)?.platform.clone();
         if let Some(mut platform) = platform {
             if !platform.resolvable {
@@ -320,7 +320,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// Re-anchors an `Inferred` thread at its current location, which makes it
     /// `Exact`. Fails if `revision` is no longer current.
     pub async fn confirm_anchor(&self, revision: u32, thread: ThreadId) -> Result<ThreadView> {
-        let (mut st, _) = self.viewing(View::Changeset).await?;
+        let (mut st, _) = self.writing(View::Changeset).await?;
         check_revision(&st, revision)?;
         let location = match resolution_of(&st, thread)? {
             Resolution {
@@ -335,7 +335,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// Re-anchors an `Ambiguous` thread at one of its candidates (an index into
     /// the candidates of its state). Fails if `revision` is no longer current.
     pub async fn attach_anchor(&self, revision: u32, thread: ThreadId, candidate: usize) -> Result<ThreadView> {
-        let (mut st, _) = self.viewing(View::Changeset).await?;
+        let (mut st, _) = self.writing(View::Changeset).await?;
         check_revision(&st, revision)?;
         let location = match &resolution_of(&st, thread)?.state {
             AnchorState::Ambiguous { candidates } => candidates

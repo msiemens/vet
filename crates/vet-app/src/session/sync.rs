@@ -12,7 +12,7 @@ use vet_core::review::{
     Side, Thread, ThreadId, ThreadStatus,
 };
 
-use super::state::State;
+use super::state::{State, View};
 use super::threads::{ThreadView, edit_thread, find_thread, side_snapshot, thread_by_id, thread_view};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
@@ -148,7 +148,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// What the platform last said of the pull request on view besides its threads; `None` for
     /// another changeset, and before the first sync.
     pub async fn discussion(&self) -> Option<DiscussionView> {
-        let st = self.hold().await;
+        let st = self.published.read();
         let Source::PullRequest { number, .. } = &st.source else {
             return None;
         };
@@ -175,7 +175,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// drafts in it. Fails, changing nothing, if the platform cannot be asked.
     pub async fn sync_threads<P: Platform + Sync>(&self, platform: &P) -> Result<SyncReport> {
         let _exchange = self.exchange.lock().await;
-        let source = self.hold().await.source.clone();
+        let source = self.published.read().source.clone();
         let Source::PullRequest { remote, number } = &source else {
             return Err(SessionError::Invalid(
                 "the changeset on view is not a pull request".into(),
@@ -342,11 +342,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     async fn reload_threads(&self, st: &mut State, changeset: crate::changeset::ChangesetId) -> Result<()> {
         let open = st.review.as_ref().map(|r| r.id);
         st.threads = visible_threads(self.acquisition.store.threads(changeset).await?, open);
+        // Without the diff the anchors are resolved with the remap that comes with it.
         if st.changes.is_some() {
-            self.resolve_threads(st).await
-        } else {
-            self.ensure_changes(st).await
+            self.resolve_threads(st).await?;
         }
+        Ok(())
     }
 
     /// Where a thread the platform has is anchored: in the commit its first comment was made on,
@@ -487,7 +487,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     ) -> Result<ThreadView> {
         let _exchange = self.exchange.lock().await;
         let (thread, mut kept, comment, remote) = {
-            let st = self.hold().await;
+            let st = self.published.read();
             let (thread, old) = find_message(&st, message)?;
             let conflict = old
                 .remote
@@ -526,7 +526,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     pub async fn remove_message<P: Platform + Sync>(&self, platform: &P, message: MessageId) -> Result<()> {
         let _exchange = self.exchange.lock().await;
         let (thread, ends_thread, posted) = {
-            let st = self.hold().await;
+            let st = self.published.read();
             let (thread, old) = find_message(&st, message)?;
             if !old.mine {
                 return Err(SessionError::Invalid("only your own comments can be removed".into()));
@@ -565,7 +565,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// platform that keeps a thread with its other comments, they stay.
     pub async fn delete_thread<P: Platform + Sync>(&self, platform: &P, thread: ThreadId) -> Result<()> {
         let first = {
-            let st = self.hold().await;
+            let st = self.published.read();
             let thread = find_thread(&st, thread)?;
             thread
                 .is_posted()
@@ -632,9 +632,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if !traits.verdicts.iter().any(|v| v.id == verdict) {
             return Err(SessionError::Invalid(format!("the platform has no verdict {verdict}")));
         }
-        let st = self.hold().await;
-        let (remote, number) = pull_request(&st)?;
-        drop(st);
+        let (remote, number) = pull_request(&self.published.read())?;
         platform.vote(&remote, number, verdict).await?;
         Ok(())
     }
@@ -647,10 +645,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         allow_empty: bool,
     ) -> Result<SubmitReport> {
         let _exchange = self.exchange.lock().await;
+        pull_request(&self.published.read())?;
         let (remote, number, submission, skipped) = {
-            let mut st = self.hold().await;
+            let (mut st, _) = self.writing(View::Changeset).await?;
             let (remote, number) = pull_request(&st)?;
-            self.ensure_changes(&mut st).await?;
             let (submission, skipped) = drafts_of(&st, verdict, body.clone());
             if submission.threads.is_empty()
                 && submission.replies.is_empty()
@@ -970,7 +968,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         let _exchange = self.exchange.lock().await;
         let remote = {
-            let st = self.hold().await;
+            let st = self.published.read();
             own_conversation_comment(&st, comment)?;
             pull_request(&st)?.0
         };
@@ -989,7 +987,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     pub async fn remove_conversation_comment<P: Platform + Sync>(&self, platform: &P, comment: &str) -> Result<()> {
         let _exchange = self.exchange.lock().await;
         let remote = {
-            let st = self.hold().await;
+            let st = self.published.read();
             own_conversation_comment(&st, comment)?;
             pull_request(&st)?.0
         };
@@ -1012,8 +1010,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     async fn view_of(&self, thread: ThreadId) -> Result<ThreadView> {
-        let mut st = self.hold().await;
-        self.ensure_changes(&mut st).await?;
+        let (st, _) = self.viewing(View::Changeset).await?;
         thread_by_id(&st, thread)
     }
 }

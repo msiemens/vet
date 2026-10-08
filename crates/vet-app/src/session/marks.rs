@@ -50,7 +50,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// Marks the hunks of a file that are seen against an old base seen again, against the base
     /// now, and leaves the others as they are. Fails if the file has none.
     pub async fn reconfirm_file(&self, revision: u32, path: &str) -> Result<Outcome<ReviewUpdateView>> {
-        let (mut st, shown) = self.viewing(View::Changeset).await?;
+        let (mut st, shown) = self.writing(View::Changeset).await?;
         check_revision(&st, revision)?;
         let hunks: Vec<u32> = update_in(&st, &shown, path)?
             .review

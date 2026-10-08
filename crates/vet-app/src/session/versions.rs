@@ -33,7 +33,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// recorded only while a review is open.
     pub async fn versions(&self) -> Result<Vec<VersionView>> {
         let (changeset, last_reviewed) = {
-            let st = self.hold().await;
+            let st = self.published.read();
             match (st.changeset, &st.review) {
                 (Some(changeset), Some(review)) => (changeset, review.last_reviewed),
                 _ => return Ok(Vec::new()),

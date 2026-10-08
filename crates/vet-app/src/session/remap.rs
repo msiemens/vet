@@ -14,7 +14,7 @@ use vet_core::resolve::{Resolution, resolve_anchor};
 use vet_core::review::{Anchor, CommentTarget, FileRemapInput, ReviewedSpan, Side, Thread, ThreadId};
 
 use super::blobs::Texts;
-use super::derived::{CommitUnit, CommitsBetween, DiffOf, Diffed};
+use super::derived::{CommitUnit, CommitsBetween, Diffed};
 use super::hold::Held;
 use super::interdiff::Interdiffing;
 use super::manifest::changeset_completion;
@@ -126,10 +126,14 @@ pub(super) fn part_completion(st: &State, view: View, files: &HashSet<RepoPath>)
     coverage.completion(&st.filter, diffs, &items, &acknowledged(st, &items))
 }
 
-/// What the state lacks to show a view, computed with the state released.
+/// What the state lacks to show a view, computed without the token.
 enum Missing {
-    Diff { base: Arc<Snapshot>, target: Arc<Snapshot> },
-    Commits(CommitsBetween),
+    Diff {
+        base: Arc<Snapshot>,
+        target: Arc<Snapshot>,
+    },
+    /// The commits between the keyed commits; none for a changeset that has no commits of its own.
+    Commits(Option<CommitsBetween>),
     Interdiff(Box<Interdiffing>),
 }
 
@@ -145,29 +149,46 @@ where
     G: GitRepo + Send + Sync + 'static,
     S: LiveStore + Send + Sync + 'static,
 {
-    /// The changes of the current revision, computing the diff if the state has none. A command
-    /// that holds the state calls this; requests that start out with it use [`LiveSession::viewing`].
-    pub(super) async fn ensure_changes(&self, st: &mut State) -> Result<()> {
-        if st.changes.is_some() {
-            return Ok(());
-        }
-        let diffed = self.diff_of(&st.base, &st.target).await?;
-        self.install_diff(st, diffed).await
-    }
-
-    /// The state on view with what `view` shows computed, and what of it is not kept in the state.
-    /// What is derived (a diff, an interdiff, the commits) is awaited with the state released, so
-    /// that other requests go on meanwhile and requests of the same value share its computation;
-    /// only the remap of the review state onto it runs under the state.
-    pub(super) async fn viewing(&self, view: View) -> Result<(Held<'_>, Shown)> {
+    /// The published state with what `view` shows computed, for a request that only reads. What is
+    /// derived (a diff, an interdiff, the commits) is awaited without any lock, so that requests of
+    /// the same value share its computation. The state keeps the diff and the review state remapped
+    /// onto it: when it has not, the request becomes a command for as long as it takes to install
+    /// them, which the commands that move the revision see to beforehand (`settled`).
+    pub(super) async fn viewing(&self, view: View) -> Result<(Arc<State>, Shown)> {
         self.prepared(view, matches!(view, View::Commit { .. })).await
     }
 
     /// Like [`LiveSession::viewing`]; with `commits`, the commits of the changeset are computed too.
-    pub(super) async fn prepared(&self, view: View, commits: bool) -> Result<(Held<'_>, Shown)> {
+    pub(super) async fn prepared(&self, view: View, commits: bool) -> Result<(Arc<State>, Shown)> {
+        loop {
+            let st = self.published.read();
+            let missing = match self.missing(&st, view, commits).await? {
+                Ok(shown) => return Ok((st, shown)),
+                Err(missing) => missing,
+            };
+            let derived = self.derive(missing).await;
+            let now = self.published.read();
+            if now.revision != st.revision {
+                continue;
+            }
+            match derived? {
+                Derivation::Interdiff(interdiffed) => return Ok((now, Shown::Interdiff(interdiffed))),
+                derived => {
+                    let mut held = self.hold().await;
+                    if held.revision == st.revision {
+                        self.install(&mut held, derived).await?;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Like [`LiveSession::viewing`], for a command: the token is held on return, so the state
+    /// is the one the command changes. The derived values are awaited without it.
+    pub(super) async fn writing(&self, view: View) -> Result<(Held<'_>, Shown)> {
         let mut st = self.hold().await;
         loop {
-            let missing = match self.missing(&mut st, view, commits).await? {
+            let missing = match self.missing(&st, view, matches!(view, View::Commit { .. })).await? {
                 Ok(shown) => return Ok((st, shown)),
                 Err(missing) => missing,
             };
@@ -179,43 +200,31 @@ where
                 continue;
             }
             match derived? {
-                Derivation::Diff(diffed) => {
-                    if st.changes.is_none() {
-                        self.install_diff(&mut st, diffed).await?;
-                    }
-                }
-                Derivation::Commits(units) => {
-                    if st.changes.as_ref().is_some_and(|c| c.commits.is_none()) {
-                        self.install_commits(&mut st, units).await?;
-                    }
-                }
                 Derivation::Interdiff(interdiffed) => return Ok((st, Shown::Interdiff(interdiffed))),
+                derived => self.install(&mut st, derived).await?,
             }
         }
     }
 
-    /// What `view` shows if the state and the kept values have it, else what is missing.
-    async fn missing(&self, st: &mut State, view: View, commits: bool) -> Result<std::result::Result<Shown, Missing>> {
+    /// Puts what was derived for the revision into the state, unless it has it.
+    async fn install(&self, st: &mut State, derived: Derivation) -> Result<()> {
+        match derived {
+            Derivation::Diff(diffed) if st.changes.is_none() => self.install_diff(st, diffed).await,
+            Derivation::Commits(units) if st.changes.as_ref().is_some_and(|c| c.commits.is_none()) => {
+                self.install_commits(st, units).await
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// What `view` shows if the state has it, else what is missing.
+    async fn missing(&self, st: &State, view: View, commits: bool) -> Result<std::result::Result<Shown, Missing>> {
         if st.changes.is_none() {
-            let key = DiffOf {
-                old: st.base.id,
-                new: st.target.id,
-            };
-            let Some(diffed) = self.derived.diffs.peek(&key) else {
-                let (base, target) = (st.base.clone(), st.target.clone());
-                return Ok(Err(Missing::Diff { base, target }));
-            };
-            self.install_diff(st, diffed).await?;
+            let (base, target) = (st.base.clone(), st.target.clone());
+            return Ok(Err(Missing::Diff { base, target }));
         }
         if commits && st.changes().commits.is_none() {
-            let units = match self.commits_key(st) {
-                None => Arc::default(),
-                Some(key) => match self.derived.commits.peek(&key) {
-                    Some(units) => units,
-                    None => return Ok(Err(Missing::Commits(key))),
-                },
-            };
-            self.install_commits(st, units).await?;
+            return Ok(Err(Missing::Commits(self.commits_key(st))));
         }
         match view {
             View::Changeset => Ok(Ok(Shown::Changeset)),
@@ -234,7 +243,8 @@ where
     async fn derive(&self, missing: Missing) -> Result<Derivation> {
         Ok(match missing {
             Missing::Diff { base, target } => Derivation::Diff(self.diff_of(&base, &target).await?),
-            Missing::Commits(key) => Derivation::Commits(self.commits_of(key).await?),
+            Missing::Commits(Some(key)) => Derivation::Commits(self.commits_of(key).await?),
+            Missing::Commits(None) => Derivation::Commits(Arc::default()),
             Missing::Interdiff(asked) => {
                 let compared = self.interdiff_of(asked.key.clone()).await?;
                 Derivation::Interdiff(Box::new(asked.with(compared)))
@@ -243,7 +253,7 @@ where
     }
 
     /// Makes `diffed` the current revision's diff and remaps the review state onto it.
-    async fn install_diff(&self, st: &mut State, diffed: Arc<Diffed>) -> Result<()> {
+    pub(super) async fn install_diff(&self, st: &mut State, diffed: Arc<Diffed>) -> Result<()> {
         st.changes = Some(Changes::new(diffed));
         self.remap(st).await
     }

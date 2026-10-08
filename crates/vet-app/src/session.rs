@@ -81,7 +81,7 @@ pub use self::base_diff::{BaseDiffKind, BaseDiffRow, BaseDiffView};
 pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};
-use self::derived::{Derived, DiffOf};
+use self::derived::{Derived, DiffOf, Diffed};
 use self::hold::{Held, Published, Writer};
 pub use self::lens::{CommitKind, CommitUnitView, CommitsView};
 use self::lines::LinesBetween;
@@ -99,7 +99,7 @@ pub use self::views::{
 };
 use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
-use crate::changeset::{BaseChoice, ChangesetId, Source, Version, VersionOrigin};
+use crate::changeset::{BaseChoice, ChangesetId, Source, Version, VersionChange, VersionOrigin};
 use crate::platform::PlatformError;
 use crate::ports::{
     BaseCandidates, BranchInfo, Clock, Degraded, Dirty, GitError, GitRepo, LiveStore, Scan, StoreError, Watcher,
@@ -211,6 +211,29 @@ pub struct LiveSession<G, S> {
 
 /// How many line deltas the list of changesets keeps.
 const KEPT_LINE_DELTAS: usize = 4096;
+
+/// What settling a snapshot into a tree needs that takes a while, worked out for the tree as it
+/// was found, without the token.
+struct Settlement {
+    base: SnapshotId,
+    target: SnapshotId,
+    /// A review of the tree was open, so the settled snapshot is its next version.
+    reviewing: bool,
+    /// Why the content of the version could not be kept, if it could not.
+    retained: Option<BlobError>,
+    /// What the version changed against the one before it.
+    change: Option<VersionChange>,
+    /// The diff of the base against the settled snapshot, if it could be had.
+    diffed: Option<Arc<Diffed>>,
+}
+
+impl Settlement {
+    /// Whether `tree` is still the one this was worked out for.
+    fn fits(&self, tree: &State) -> bool {
+        let reviewing = tree.review.is_some() && tree.changeset.is_some();
+        tree.base.id == self.base && tree.target.id == self.target && reviewing == self.reviewing
+    }
+}
 
 /// What a session is called: the repository's directory name, else its whole path.
 fn name_of_repo(repo: &str) -> String {
@@ -431,7 +454,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     async fn beginning(&self, view: View) -> Result<(Held<'_>, Shown)> {
         let mut copied = None;
         loop {
-            let (st, shown) = self.viewing(view).await?;
+            let (st, shown) = self.writing(view).await?;
             if st.review.is_some() || st.source != Source::WorkingTree || copied == Some(st.revision) {
                 return Ok((st, shown));
             }
@@ -504,8 +527,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// Whether a review is open, and its version.
     pub async fn lifecycle(&self) -> Lifecycle {
-        let st = self.hold().await;
-        lifecycle_of(&st)
+        lifecycle_of(&self.published.read())
     }
 
     /// Ends the review: releases its refs, records whether it was complete, and
@@ -514,7 +536,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// remain in the finished review. Returns whether it was complete. Fails if
     /// no review is open. Bumps the revision.
     pub async fn finish_review(&self) -> Result<bool> {
-        let (mut st, _) = self.viewing(View::Changeset).await?;
+        let (mut st, _) = self.writing(View::Changeset).await?;
         let (Some(id), Some(changeset)) = (st.review.as_ref().map(|r| r.id), st.changeset) else {
             return Err(SessionError::Invalid("no review is open".into()));
         };
@@ -613,7 +635,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// The base as it displays now. How far its branch has moved on is read again, so the answer
     /// changes after a fetch while the base itself stays where it is.
     pub async fn base(&self) -> Result<BaseView> {
-        let st = self.hold().await;
+        let st = self.published.read();
         self.base_view(&st, &self.acquisition.git.branches().await?).await
     }
 
@@ -683,7 +705,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     pub async fn revision(&self) -> u32 {
-        self.hold().await.revision
+        self.published.read().revision
     }
 
     /// The newest revision on view, as the session announces it. Semantic work for
@@ -704,7 +726,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     /// The latest settled target: what the review last showed.
     pub async fn target_snapshot(&self) -> Arc<Snapshot> {
-        self.hold().await.target.clone()
+        self.published.read().target.clone()
     }
 
     /// What knows the origin of the session's snapshots, for serving them to a
@@ -716,7 +738,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// The snapshots of `revision`: what the semantic layer asks about. Fails
     /// if `revision` is no longer current.
     pub async fn semantic_sides(&self, revision: u32) -> Result<SemanticSides> {
-        let st = self.hold().await;
+        let st = self.published.read();
         check_revision(&st, revision)?;
         Ok(SemanticSides {
             base: st.base.id,
@@ -735,7 +757,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         limit: usize,
         key_of: impl Fn(&RepoPath) -> Option<K>,
     ) -> Result<Vec<(K, RepoPath)>> {
-        let st = self.hold().await;
+        let st = self.published.read();
         check_revision(&st, revision)?;
         let mut found: Vec<(K, RepoPath)> = Vec::new();
         for path in st.target.entries.keys() {
@@ -755,7 +777,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// computed with the state released, and the state is left as it is.
     pub async fn changed_files(&self, revision: u32) -> Result<Vec<FileDiff>> {
         let (base, target) = {
-            let st = self.hold().await;
+            let st = self.published.read();
             check_revision(&st, revision)?;
             let key = DiffOf {
                 old: st.base.id,
@@ -775,56 +797,96 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// The initial scan identifies the settled snapshot, so settling does not
     /// report it again.
     pub async fn settled_snapshot(&self) -> SnapshotId {
-        self.hold().await.target.id
+        self.published.read().target.id
     }
 
     /// Makes a settled snapshot the target and returns the new revision. While a
     /// review is open it is also the next version: its content is stored and
-    /// the changeset gains a version. Review state is remapped when the next
-    /// manifest is computed. A failed copy of its content is not fatal: the diff
-    /// then reads the worktree, or shows the file as unavailable.
+    /// the changeset gains a version. The revision comes with its diff and the review state
+    /// remapped onto it, which are worked out before the token is taken. A failed copy of its
+    /// content is not fatal: the diff then reads the worktree, or shows the file as unavailable.
     /// It is the working tree's, wherever that is: on view, or parked while a branch is.
     pub async fn settled(&self, scan: Scan) -> Result<(u32, Option<BlobError>)> {
-        let mut held = self.hold().await;
-        if held.source == Source::WorkingTree {
-            let settled = self.settle_tree(&mut held, scan).await?;
-            held.publish();
-            self.revisions.advance(settled.0);
-            return Ok(settled);
-        }
-        let tree = held
-            .parked()
-            .get_mut(&Source::WorkingTree)
-            .expect("the working tree is parked while another changeset is on view");
-        let tree = Arc::make_mut(tree);
-        let settled = self.settle_tree(tree, scan).await?;
-        // Nothing asks for the manifest of a tree that is not on view, so the progress of its new version is measured here.
-        if tree.review.is_some()
-            && let Err(e) = self.ensure_changes(tree).await
-        {
-            tracing::warn!(error = %e, "could not measure the progress of the working tree's review");
-        }
-        Ok(settled)
-    }
-
-    /// Settles `scan` into `st`, which need not be the one on view: only the revision of
-    /// the one on view is announced, by the caller.
-    async fn settle_tree(&self, st: &mut State, scan: Scan) -> Result<(u32, Option<BlobError>)> {
         let Scan { snapshot, status } = scan;
         let snapshot = Arc::new(snapshot);
-        let mut retained = None;
-        if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
-            retained = self
+        loop {
+            let tree = self.working_tree().await;
+            let settlement = self.settlement(&tree, &snapshot, &status).await?;
+            let mut held = self.hold().await;
+            if held.source == Source::WorkingTree {
+                if !settlement.fits(&held) {
+                    continue;
+                }
+                let settled = self.settle_tree(&mut held, snapshot, status, settlement).await?;
+                held.publish();
+                self.revisions.advance(settled.0);
+                return Ok(settled);
+            }
+            let tree = held
+                .parked()
+                .get_mut(&Source::WorkingTree)
+                .expect("the working tree is parked while another changeset is on view");
+            if !settlement.fits(tree) {
+                continue;
+            }
+            return self
+                .settle_tree(Arc::make_mut(tree), snapshot, status, settlement)
+                .await;
+        }
+    }
+
+    /// The working tree's state: the one on view, or the one parked while another changeset is.
+    async fn working_tree(&self) -> Arc<State> {
+        let st = self.published.read();
+        if st.source == Source::WorkingTree {
+            return st;
+        }
+        let mut held = self.hold().await;
+        let tree = held.parked().get(&Source::WorkingTree);
+        Arc::clone(tree.expect("the working tree is parked while another changeset is on view"))
+    }
+
+    /// What settling `snapshot` into `tree` needs that takes a while: the content kept for its
+    /// version and what it changed, while a review is open, and the diff the revision is shown
+    /// with. A diff that cannot be had is left for the first request of the revision to try again.
+    async fn settlement(&self, tree: &State, snapshot: &Arc<Snapshot>, status: &SnapshotStatus) -> Result<Settlement> {
+        let mut settlement = Settlement {
+            base: tree.base.id,
+            target: tree.target.id,
+            reviewing: tree.review.is_some() && tree.changeset.is_some(),
+            retained: None,
+            change: None,
+            diffed: None,
+        };
+        if settlement.reviewing {
+            let retained = self
                 .acquisition
                 .retain(
-                    &[&*st.base, &*st.target],
-                    &snapshot,
-                    &status,
+                    &[&*tree.base, &*tree.target],
+                    snapshot,
+                    status,
                     &BTreeMap::new(),
                     |_, _| {},
                 )
-                .await
-                .err();
+                .await;
+            settlement.retained = retained.err();
+            let sides = (&tree.base, &tree.target);
+            settlement.change = Some(self.change_of(sides, &tree.base, snapshot).await?);
+        }
+        settlement.diffed = self.diff_of(&tree.base, snapshot).await.ok();
+        Ok(settlement)
+    }
+
+    /// Settles `snapshot` into `st`, which need not be the one on view: only the revision of
+    /// the one on view is announced, by the caller.
+    async fn settle_tree(
+        &self,
+        st: &mut State,
+        snapshot: Arc<Snapshot>,
+        status: SnapshotStatus,
+        settlement: Settlement,
+    ) -> Result<(u32, Option<BlobError>)> {
+        if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
             let store = &self.acquisition.store;
             let now = (self.clock)();
             store
@@ -838,7 +900,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 tip: st.head.clone(),
                 at: now,
                 origin: VersionOrigin::Settled,
-                change: self.change_of((&st.base, &st.target), &st.base, &snapshot).await?,
+                change: settlement.change.expect("worked out while the review was open"),
             };
             store.append_version(changeset, version).await?;
         }
@@ -853,7 +915,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         st.revision += 1;
         st.changes = None;
-        Ok((st.revision, retained))
+        if let Some(diffed) = settlement.diffed
+            && let Err(e) = self.install_diff(st, diffed).await
+        {
+            tracing::warn!(error = %e, "could not remap the review onto the settled tree");
+            st.changes = None;
+        }
+        Ok((st.revision, settlement.retained))
     }
 
     /// Settles snapshots of the worktree as `settling` reports them, and looks at the branch
@@ -894,7 +962,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                         tracing::warn!(revision, error = %e, "could not keep the content of the revision");
                     }
                     self.set_degraded(settling.degraded());
-                    if self.hold().await.source == Source::WorkingTree {
+                    if self.published.read().source == Source::WorkingTree {
                         on_settled(revision);
                     }
                 }
