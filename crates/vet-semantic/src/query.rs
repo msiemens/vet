@@ -17,7 +17,7 @@ use crate::ports::{
 use crate::reuse::{ProjectQuery, Reused, SemanticCache};
 
 /// What a side of a comparison is served from, and what analysis it may run.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Served {
     pub target: Target,
     pub policy: AnalysisPolicy,
@@ -91,9 +91,10 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
         backend_for(&self.backends, file).map(|b| &b.config().backend)
     }
 
-    pub fn pair(&self, base: Served, target: Served) -> Pair<'_, M, L> {
+    /// The two sides, owning what they query with, so that work for them can outlive its caller.
+    pub fn pair(self: &Arc<Self>, base: Served, target: Served) -> Pair<M, L> {
         Pair {
-            semantic: self,
+            semantic: self.clone(),
             base,
             target,
         }
@@ -172,18 +173,22 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
 }
 
 /// The two sides of a changeset.
-pub struct Pair<'a, M: Materializer, L: ServerLauncher> {
-    semantic: &'a Semantic<M, L>,
+pub struct Pair<M: Materializer, L: ServerLauncher> {
+    semantic: Arc<Semantic<M, L>>,
     pub base: Served,
     pub target: Served,
 }
 
-impl<M: Materializer, L: ServerLauncher> Pair<'_, M, L> {
+impl<M: Materializer, L: ServerLauncher> Pair<M, L> {
     fn served(&self, side: Side) -> &Served {
         match side {
             Side::Base => &self.base,
             Side::Target => &self.target,
         }
+    }
+
+    pub fn semantic(&self) -> &Semantic<M, L> {
+        &self.semantic
     }
 }
 
@@ -200,7 +205,7 @@ macro_rules! ask {
     }};
 }
 
-impl<M: Materializer, L: ServerLauncher> Primitives for Pair<'_, M, L> {
+impl<M: Materializer, L: ServerLauncher> Primitives for Pair<M, L> {
     async fn document_symbols(&self, side: Side, file: &RepoPath) -> Asked<Vec<SymbolInfo>> {
         ask!(
             self,

@@ -33,7 +33,7 @@ use crate::ports::{
     Answered, At, Backend, BackendId, Diagnostic, LanguageServer, LaunchError, Location, Materializer,
     NotMaterializable, Provenance, QueryError, ServerIdentity, ServerLauncher, Started, SymbolInfo, Tree,
 };
-use crate::reuse::{Answers, Basis, Computed, KEPT, Key, Memo, ProjectQuery, Restore, Reused, SemanticCache};
+use crate::reuse::{Answers, Basis, Computed, KEPT, Key, ProjectQuery, Restore, Reused, SemanticCache};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Target {
@@ -308,6 +308,82 @@ impl<M: Materializer, L: ServerLauncher> Kind for Start<M, L> {
     }
 }
 
+/// What a server for a key would be, observed without starting one, by the
+/// directory it would run in. Sampled once per generation of the key's backend:
+/// a restart makes a new generation, so nothing observed before it is reused.
+struct Foreseen<W> {
+    key: PoolKey,
+    root: PathBuf,
+    generation: u64,
+    of: PhantomData<fn() -> W>,
+}
+
+impl<W> Foreseen<W> {
+    fn new(key: PoolKey, root: PathBuf, generation: u64) -> Self {
+        Self {
+            key,
+            root,
+            generation,
+            of: PhantomData,
+        }
+    }
+}
+
+impl<W> Clone for Foreseen<W> {
+    fn clone(&self) -> Self {
+        Self::new(self.key.clone(), self.root.clone(), self.generation)
+    }
+}
+
+impl<W> PartialEq for Foreseen<W> {
+    fn eq(&self, other: &Self) -> bool {
+        (&self.key, &self.root, self.generation) == (&other.key, &other.root, other.generation)
+    }
+}
+
+impl<W> Eq for Foreseen<W> {}
+
+impl<W> Hash for Foreseen<W> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.key.hash(state);
+        self.root.hash(state);
+        self.generation.hash(state);
+    }
+}
+
+/// What is observed: the identity of the server, or the basis of its kept tree.
+trait Observed: 'static {
+    type Value: Clone + Send + 'static;
+}
+
+/// The identity a server for the key would have.
+struct Identity;
+
+/// The basis of the kept tree of a snapshot, from the restore recorded for it.
+struct Recorded;
+
+impl Observed for Identity {
+    type Value = ServerIdentity;
+}
+
+impl Observed for Recorded {
+    type Value = Basis;
+}
+
+/// An observation that fails (the tree has no usable record) is not kept and is made again.
+impl<W: Observed> Kind for Foreseen<W> {
+    type Value = W::Value;
+    type Error = ();
+
+    fn retention(&self) -> Retention {
+        Retention::Sampled
+    }
+
+    fn generation(&self) -> Option<(Self, u64)> {
+        Some((Self::new(self.key.clone(), self.root.clone(), 0), self.generation))
+    }
+}
+
 struct Inner<M: Materializer, L: ServerLauncher> {
     materializer: M,
     launcher: L,
@@ -317,9 +393,9 @@ struct Inner<M: Materializer, L: ServerLauncher> {
     limit: usize,
     store: Option<Arc<dyn SemanticCache>>,
     answers: Arc<Answers>,
-    /// What `foreseen` worked out, by server key, root and generation of the backend.
-    identities: Memo<ForeseenKey, ServerIdentity>,
-    bases: Memo<ForeseenKey, Basis>,
+    /// What `foreseen` observed.
+    identities: Engine<Foreseen<Identity>>,
+    bases: Engine<Foreseen<Recorded>>,
     /// Numbers the servers started on trees whose restore left no record.
     instances: AtomicU64,
     state: Mutex<State<L::Server, M::Guard>>,
@@ -330,11 +406,7 @@ pub struct Pool<M: Materializer, L: ServerLauncher> {
     inner: Arc<Inner<M, L>>,
 }
 
-/// A server key, the directory it would run in and the generation of its backend:
-/// a restart makes a new generation, so nothing worked out before it is reused.
-type ForeseenKey = (PoolKey, PathBuf, u64);
-
-/// Identities and bases worked out and kept.
+/// Identities and bases kept.
 const FORESEEN_KEPT: usize = 64;
 
 type EntryOf<M, L> = Entry<<L as ServerLauncher>::Server, <M as Materializer>::Guard>;
@@ -399,8 +471,8 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                 limit: KEPT,
                 store: None,
                 answers: Arc::new(Answers::new(KEPT)),
-                identities: Memo::new(FORESEEN_KEPT),
-                bases: Memo::new(FORESEEN_KEPT),
+                identities: Engine::new(Limits::entries(FORESEEN_KEPT)),
+                bases: Engine::new(Limits::entries(FORESEEN_KEPT)),
                 instances: AtomicU64::new(0),
                 state: Mutex::new(State {
                     tick: 0,
@@ -446,7 +518,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
     /// the restore the tree's record stands for. Nothing is materialized: a snapshot
     /// with no kept tree has no such server yet. The basis is none on the live tree and
     /// for a tree with no usable record; the answers about the whole tree have no key then.
-    async fn foreseen(&self, key: &PoolKey, backend: &Backend) -> Option<(ServerIdentity, Option<Basis>)> {
+    async fn foreseen(self: &Arc<Self>, key: &PoolKey, backend: &Backend) -> Option<(ServerIdentity, Option<Basis>)> {
         let (root, snapshot) = self.foreseen_root(key, backend).await?;
         let identity = self.foreseen_identity(key, backend, &root).await?;
         let basis = match snapshot {
@@ -458,7 +530,11 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
 
     /// Where a server for `key` would run, and the snapshot it would serve; none if
     /// the backend is not admitted or the snapshot has no kept tree.
-    async fn foreseen_root(&self, key: &PoolKey, backend: &Backend) -> Option<(PathBuf, Option<SnapshotId>)> {
+    async fn foreseen_root(
+        self: &Arc<Self>,
+        key: &PoolKey,
+        backend: &Backend,
+    ) -> Option<(PathBuf, Option<SnapshotId>)> {
         admit(backend, key.policy).ok()?;
         Some(match key.target {
             Target::Live => (self.live_root.clone(), None),
@@ -468,19 +544,22 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
 
     /// The identity a server for `key` would have, worked out once per backend generation
     /// and root: the launcher probes toolchains, reads settings and hashes binaries for it.
-    async fn foreseen_identity(&self, key: &PoolKey, backend: &Backend, root: &Path) -> Option<ServerIdentity> {
-        let known = (key.clone(), root.to_owned(), self.generation(&key.backend));
+    async fn foreseen_identity(
+        self: &Arc<Self>,
+        key: &PoolKey,
+        backend: &Backend,
+        root: &Path,
+    ) -> Option<ServerIdentity> {
+        let known = Foreseen::new(key.clone(), root.to_owned(), self.generation(&key.backend));
+        let (this, root, backend) = (self.clone(), root.to_owned(), backend.clone());
         let worked_out = self
             .identities
-            .get(&known, async {
-                let identity = self.launcher.identify(root, backend).await.map_err(drop)?;
-                Ok::<_, ()>(Computed {
-                    value: identity,
-                    keep: true,
-                })
+            .get(known, move |_| async move {
+                let identity = this.launcher.identify(&root, &backend).await.map_err(drop)?;
+                Ok(engine::Computed::new(identity, true))
             })
             .await;
-        worked_out.ok().map(|(identity, _)| identity)
+        worked_out.ok().map(|got| got.value)
     }
 
     /// The basis of the kept tree of `snapshot` from the restore recorded for it, worked
@@ -488,32 +567,33 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
     /// and is looked at again; every start drops what was found, because its restore
     /// may have recorded one.
     async fn foreseen_basis(
-        &self,
+        self: &Arc<Self>,
         key: &PoolKey,
         backend: &Backend,
         root: &Path,
         snapshot: SnapshotId,
     ) -> Option<Basis> {
-        let known = (key.clone(), root.to_owned(), self.generation(&key.backend));
+        let known = Foreseen::new(key.clone(), root.to_owned(), self.generation(&key.backend));
+        let (this, root, backend, policy) = (self.clone(), root.to_owned(), backend.clone(), key.policy);
         let recorded = self
             .bases
-            .get(&known, async {
-                let fingerprint = self
+            .get(known, move |_| async move {
+                let fingerprint = this
                     .launcher
-                    .recorded_restore(root, backend, key.policy)
+                    .recorded_restore(&root, &backend, policy)
                     .await
                     .ok_or(())?;
-                Ok::<_, ()>(Computed {
-                    value: Basis {
+                Ok(engine::Computed::new(
+                    Basis {
                         snapshot,
-                        policy: key.policy,
+                        policy,
                         restore: Restore::Recorded(fingerprint),
                     },
-                    keep: true,
-                })
+                    true,
+                ))
             })
             .await;
-        recorded.ok().map(|(basis, _)| basis)
+        recorded.ok().map(|got| got.value)
     }
 
     /// How often `backend` was restarted.
@@ -653,6 +733,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             }
             stop
         };
+        self.inner.launcher.restarted(backend);
         Inner::<M, L>::stop(stop).await;
     }
 
@@ -808,6 +889,11 @@ mod tests {
         begins_work: AtomicBool,
         epoch: AtomicU64,
         failing: AtomicBool,
+        /// Queries and observations of the launcher take a few turns of the executor.
+        slow: AtomicBool,
+        /// Identities and recorded restores observed, by starts too.
+        identified: AtomicUsize,
+        recorded: AtomicUsize,
     }
 
     impl Default for Counters {
@@ -827,6 +913,9 @@ mod tests {
                 begins_work: AtomicBool::new(false),
                 epoch: AtomicU64::new(0),
                 failing: AtomicBool::new(false),
+                slow: AtomicBool::new(false),
+                identified: AtomicUsize::new(0),
+                recorded: AtomicUsize::new(0),
             }
         }
     }
@@ -835,6 +924,14 @@ mod tests {
         /// The kinds of the queries that reached a server since the last call.
         fn asked(&self) -> Vec<&'static str> {
             std::mem::take(&mut *self.asked.lock().unwrap())
+        }
+
+        async fn take_turns(&self) {
+            if self.slow.load(Ordering::SeqCst) {
+                for _ in 0..3 {
+                    yield_once().await;
+                }
+            }
         }
     }
 
@@ -905,6 +1002,8 @@ mod tests {
 
         /// What the tree's record says; 0: it has none.
         async fn recorded_restore(&self, _: &std::path::Path, _: &Backend, _: AnalysisPolicy) -> Option<Hash> {
+            self.0.recorded.fetch_add(1, Ordering::SeqCst);
+            self.0.take_turns().await;
             match self.0.restore.load(Ordering::SeqCst) {
                 0 => None,
                 n => Some(Hash([n; 32])),
@@ -913,6 +1012,8 @@ mod tests {
 
         /// A binary that is replaced between two starts: the version it has when the server starts.
         async fn identify(&self, _: &std::path::Path, backend: &Backend) -> Result<ServerIdentity, LaunchError> {
+            self.0.identified.fetch_add(1, Ordering::SeqCst);
+            self.0.take_turns().await;
             let version = self.0.version.load(Ordering::SeqCst);
             Ok(ServerIdentity {
                 backend: backend.config().backend.clone(),
@@ -946,8 +1047,9 @@ mod tests {
 
     /// Answers are functions of what is asked and of the version of the server.
     impl FakeServer {
-        fn asked(&self, kind: &'static str) -> Result<u8, QueryError> {
+        async fn asked(&self, kind: &'static str) -> Result<u8, QueryError> {
             self.0.asked.lock().unwrap().push(kind);
+            self.0.take_turns().await;
             if self.0.begins_work.load(Ordering::SeqCst) {
                 self.0.epoch.fetch_add(1, Ordering::SeqCst);
             }
@@ -966,15 +1068,15 @@ mod tests {
             }
         }
         async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
-            let version = self.asked("document_symbols")?;
+            let version = self.asked("document_symbols").await?;
             Ok(vec![symbol(file, "on disk".into(), Pos { line: 0, col: 0 }, version)])
         }
         async fn text_symbols(&self, file: &RepoPath, text: &str) -> Result<Vec<SymbolInfo>, QueryError> {
-            let version = self.asked("text_symbols")?;
+            let version = self.asked("text_symbols").await?;
             Ok(vec![symbol(file, text.to_owned(), Pos { line: 0, col: 0 }, version)])
         }
         async fn definition(&self, at: &At) -> Result<Vec<Location>, QueryError> {
-            let version = self.asked("definition")?;
+            let version = self.asked("definition").await?;
             Ok(vec![Location {
                 file: at.file.clone(),
                 span: span(at.pos, version),
@@ -982,7 +1084,7 @@ mod tests {
             }])
         }
         async fn references(&self, at: &At) -> Result<Vec<Location>, QueryError> {
-            let version = self.asked("references")?;
+            let version = self.asked("references").await?;
             Ok(vec![Location {
                 file: at.file.clone(),
                 span: span(at.pos, version),
@@ -990,20 +1092,20 @@ mod tests {
             }])
         }
         async fn hover(&self, at: &At) -> Result<Option<String>, QueryError> {
-            let version = self.asked("hover")?;
+            let version = self.asked("hover").await?;
             self.0.hover_calls.fetch_add(1, Ordering::SeqCst);
             Ok(Some(format!("{version} {}:{}", at.pos.line, at.pos.col)))
         }
         async fn incoming_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
-            let version = self.asked("incoming_calls")?;
+            let version = self.asked("incoming_calls").await?;
             Ok(vec![symbol(&at.file, "caller".into(), at.pos, version)])
         }
         async fn outgoing_calls(&self, at: &At) -> Result<Vec<SymbolInfo>, QueryError> {
-            let version = self.asked("outgoing_calls")?;
+            let version = self.asked("outgoing_calls").await?;
             Ok(vec![symbol(&at.file, "callee".into(), at.pos, version)])
         }
         async fn workspace_symbols(&self, query: &str) -> Result<Vec<SymbolInfo>, QueryError> {
-            let version = self.asked("workspace_symbols")?;
+            let version = self.asked("workspace_symbols").await?;
             Ok(vec![symbol(
                 &RepoPath(b"w.rs".to_vec()),
                 query.to_owned(),
@@ -1012,7 +1114,7 @@ mod tests {
             )])
         }
         async fn diagnostics(&self, file: &RepoPath) -> Result<Vec<Diagnostic>, QueryError> {
-            let version = self.asked("diagnostics")?;
+            let version = self.asked("diagnostics").await?;
             Ok(vec![Diagnostic {
                 span: span(Pos { line: 0, col: 0 }, version),
                 severity: Severity::Error,
@@ -1887,5 +1989,183 @@ mod tests {
         let result = block_on(pool.lease(&key, &backend(true)));
         assert!(matches!(result, Err(PoolError::AnalysisLimited(_))));
         assert_eq!(counters.materialized.load(Ordering::SeqCst), 0);
+    }
+
+    type Call<'a> = std::pin::Pin<Box<dyn Future<Output = ()> + 'a>>;
+
+    /// Polls the calls in turn until all are done. `abandon` is dropped after the first turn.
+    fn run_together(mut calls: Vec<Option<Call<'_>>>, abandon: Option<usize>) {
+        let mut cx = Context::from_waker(Waker::noop());
+        for turn in 0..1000 {
+            for call in &mut calls {
+                if let Some(running) = call
+                    && running.as_mut().poll(&mut cx).is_ready()
+                {
+                    *call = None;
+                }
+            }
+            if let (0, Some(at)) = (turn, abandon) {
+                calls[at] = None;
+            }
+            if calls.iter().all(Option::is_none) {
+                return;
+            }
+        }
+        panic!("the calls do not finish");
+    }
+
+    /// A question of each kind a server answers, its inputs told apart by `n`.
+    enum Question {
+        Text { file: RepoPath, text: String },
+        Project(ProjectQuery),
+    }
+
+    fn questions(n: u32) -> Vec<Question> {
+        let at = At {
+            file: file("a.rs"),
+            pos: Pos { line: n, col: n },
+        };
+        let own_file = file(&format!("f{n}.rs"));
+        vec![
+            Question::Text {
+                file: file("a.rs"),
+                text: format!("fn a{n}() {{}}"),
+            },
+            Question::Project(ProjectQuery::DocumentSymbols(own_file.clone())),
+            Question::Project(ProjectQuery::Definition(at.clone())),
+            Question::Project(ProjectQuery::References(at.clone())),
+            Question::Project(ProjectQuery::Hover(at.clone())),
+            Question::Project(ProjectQuery::Incoming(at.clone())),
+            Question::Project(ProjectQuery::Outgoing(at)),
+            Question::Project(ProjectQuery::Workspace(format!("q{n}"))),
+            Question::Project(ProjectQuery::Diagnostics(own_file)),
+        ]
+    }
+
+    /// Asks `question` of the server. Every kind of question is listed here without a
+    /// wildcard, so a new one does not compile until it is asked.
+    fn put<'a>(lease: &'a Lease<FakeMaterializer, FakeLauncher>, question: &'a Question) -> Call<'a> {
+        match question {
+            Question::Text { file, text } => Box::pin(async move {
+                lease.text_symbols(file, text).await.unwrap();
+            }),
+            Question::Project(query) => match query {
+                ProjectQuery::DocumentSymbols(file) => Box::pin(async move {
+                    lease.document_symbols(file).await.unwrap();
+                }),
+                ProjectQuery::Definition(at) => Box::pin(async move {
+                    lease.definition(at).await.unwrap();
+                }),
+                ProjectQuery::References(at) => Box::pin(async move {
+                    lease.references(at).await.unwrap();
+                }),
+                ProjectQuery::Hover(at) => Box::pin(async move {
+                    lease.hover(at).await.unwrap();
+                }),
+                ProjectQuery::Incoming(at) => Box::pin(async move {
+                    lease.incoming_calls(at).await.unwrap();
+                }),
+                ProjectQuery::Outgoing(at) => Box::pin(async move {
+                    lease.outgoing_calls(at).await.unwrap();
+                }),
+                ProjectQuery::Workspace(query) => Box::pin(async move {
+                    lease.workspace_symbols(query).await.unwrap();
+                }),
+                ProjectQuery::Diagnostics(file) => Box::pin(async move {
+                    lease.diagnostics(file).await.unwrap();
+                }),
+            },
+        }
+    }
+
+    #[test]
+    fn every_kind_of_question_reaches_the_server_once_however_many_callers_ask_or_give_up() {
+        let (pool, counters) = pool(4);
+        counters.slow.store(true, Ordering::SeqCst);
+        block_on(async {
+            let lease = pool.lease(&snapshot_key(1), &backend(false)).await.unwrap();
+            counters.asked();
+            // The caller that began the flight stays in the first round and gives up in the second.
+            for (n, abandon) in [(1, None), (2, Some(0))] {
+                for question in &questions(n) {
+                    let callers = (0..8).map(|_| Some(put(&lease, question))).collect();
+                    run_together(callers, abandon);
+                }
+                let mut asked = counters.asked();
+                asked.sort_unstable();
+                let mut expected = ALL.to_vec();
+                expected.sort_unstable();
+                assert_eq!(asked, expected, "round {n}");
+            }
+            lease.release().await;
+        });
+    }
+
+    #[test]
+    fn the_identity_and_the_basis_of_a_key_are_observed_once_per_generation_however_many_ask() {
+        let (pool, counters) = pool(4);
+        let (key, be) = (snapshot_key(1), backend(false));
+        block_on(async {
+            pool.lease(&key, &be).await.unwrap().release().await;
+        });
+        let observed = || {
+            (
+                counters.identified.load(Ordering::SeqCst),
+                counters.recorded.load(Ordering::SeqCst),
+            )
+        };
+        let recall = |query: ProjectQuery| {
+            let (pool, key, be) = (&pool, &key, &be);
+            Some(Box::pin(async move {
+                pool.recall::<Option<String>>(key, be, query).await;
+            }) as Call<'_>)
+        };
+
+        counters.slow.store(true, Ordering::SeqCst);
+        let (identified, recorded) = observed();
+        run_together(
+            (0..8).map(|n| recall(ProjectQuery::Workspace(n.to_string()))).collect(),
+            None,
+        );
+        assert_eq!(
+            observed(),
+            (identified + 1, recorded + 1),
+            "eight callers, one observation"
+        );
+        run_together(
+            (8..40)
+                .map(|n| recall(ProjectQuery::Workspace(n.to_string())))
+                .collect(),
+            None,
+        );
+        assert_eq!(
+            observed(),
+            (identified + 1, recorded + 1),
+            "and the same for every later caller"
+        );
+
+        // A start may have recorded a restore: the basis is looked at again, the identity is not.
+        block_on(async {
+            pool.restart(&BackendId("rust".into())).await;
+        });
+        let (identified, recorded) = observed();
+        run_together(
+            (0..8).map(|n| recall(ProjectQuery::Workspace(n.to_string()))).collect(),
+            None,
+        );
+        assert_eq!(
+            observed(),
+            (identified + 1, recorded + 1),
+            "a new generation observes anew"
+        );
+        block_on(async {
+            pool.lease(&key, &be).await.unwrap().release().await;
+        });
+        let (identified, recorded) = observed();
+        run_together(
+            (0..8).map(|n| recall(ProjectQuery::Workspace(n.to_string()))).collect(),
+            None,
+        );
+        assert_eq!(observed(), (identified, recorded + 1), "a start drops the basis only");
     }
 }

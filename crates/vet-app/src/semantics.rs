@@ -5,14 +5,16 @@
 //! answers come from the live tree, which is the revision's target until the next
 //! snapshot settles, or, when the target is a commit's tree, from a snapshot.
 
+use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use vet_core::content::{FileDiff, RepoPath};
+use vet_core::content::{FileDiff, RepoPath, SnapshotId};
 use vet_core::review::Side;
+use vet_engine::{Computed, Engine, Kind, Limits, Progress, Retention};
 use vet_semantic::derived::{
     Bounds, Change, Changes, Derived, EntryPoints, Reach, RemovalImpact, SymbolImpact, Texts, changed_symbols, impact,
     reachability, removal_impact,
@@ -24,7 +26,7 @@ use vet_semantic::ports::{
     Sym, SymbolInfo, prefer_openable,
 };
 use vet_semantic::query::{Asked, Pair, Primitives, Semantic, SemanticError, Served};
-use vet_semantic::reuse::{Computed, Memo, SemanticCache};
+use vet_semantic::reuse::SemanticCache;
 use vet_semantic::signature::{Signature, signature};
 use vet_semantic::trace;
 
@@ -98,23 +100,42 @@ where
     L: ServerLauncher,
     M: Materializer,
 {
-    semantic: Semantic<M, L>,
+    semantic: Arc<Semantic<M, L>>,
     _session: PhantomData<fn(&LiveSession<G, S>)>,
     revisions: Arc<Revisions>,
     /// Kept current by the launcher's restorer (`Limiting`).
     limits: RestoreLimits,
     trust: Trust,
-    /// Where the changed-symbols analysis reports its files done.
-    tasks: Tasks,
-    /// The changed symbols of the revision being viewed, keyed by it and by the
-    /// `epoch` of the servers they were found with: every analysis of the revision
-    /// joins one search. The memo keeps the latest revision only, so a session that
-    /// moves on drops the older one's result; the search itself lives in the futures
-    /// of its callers, so it ends with the last of them (see `changed_symbols`).
-    changes: Memo<(u32, u64), Derived<Changes>>,
+    /// The searches for changed symbols under way, each reporting as the task
+    /// "Finding the changed symbols" (see `changed_symbols`).
+    changes: Engine<ChangesOf>,
     /// Bumped when the servers or their answers are replaced: what was found with the
     /// old ones is not reused.
     epoch: AtomicU64,
+}
+
+/// What the changed symbols of a changeset are a function of: the snapshots
+/// compared, how each side is served, and the `epoch` of the servers they were
+/// found with. A revision that moves without changing any of them (a filter, a
+/// finished review) asks for the same search. The servers' identities that the
+/// search ends up with are not named, so a finished search is never reused: its
+/// parts are, per text (I2).
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ChangesOf {
+    base_snapshot: SnapshotId,
+    target_snapshot: SnapshotId,
+    base: Served,
+    target: Served,
+    epoch: u64,
+}
+
+impl Kind for ChangesOf {
+    type Value = Derived<Changes>;
+    type Error = Infallible;
+
+    fn retention(&self) -> Retention {
+        Retention::InFlight
+    }
 }
 
 /// The file contents of both sides of a revision, as the acquisition keeps them.
@@ -160,10 +181,100 @@ fn served(trust: &Trust, sides: &SemanticSides) -> (Served, Served) {
     )
 }
 
-impl<G, S, L, M> Semantics<G, S, L, M>
+/// Starts what the changed `files` need on `sides`, and the target side's
+/// servers for the languages of `others`. Changed languages come first,
+/// because only that many fit in the pool.
+async fn start_servers_for<M: Materializer, L: ServerLauncher>(
+    pair: &Pair<M, L>,
+    files: &[FileDiff],
+    sides: &[Side],
+    others: &[RepoPath],
+) {
+    let semantic = pair.semantic();
+    let mut candidates: Vec<(Side, &Served, &RepoPath)> = Vec::new();
+    for file in files.iter().filter(|f| !f.hunks.is_empty()) {
+        for (side, served, path) in [
+            (Side::Base, &pair.base, &file.old_path),
+            (Side::Target, &pair.target, &file.new_path),
+        ] {
+            if let (true, Some(path)) = (sides.contains(&side), path) {
+                candidates.push((side, served, path));
+            }
+        }
+    }
+    candidates.extend(others.iter().map(|path| (Side::Target, &pair.target, path)));
+
+    let mut wanted: Vec<(Side, &Served, &RepoPath)> = Vec::new();
+    let mut languages: Vec<(Side, &BackendId)> = Vec::new();
+    for (side, served, path) in candidates {
+        let Some(language) = semantic.language_of(path) else {
+            continue;
+        };
+        if !languages.contains(&(side, language)) {
+            languages.push((side, language));
+            wanted.push((side, served, path));
+        }
+    }
+    // Servers beyond what the pool keeps warm would only evict each other.
+    wanted.truncate(POOL_CAPACITY);
+    // The base side's servers restore and index a snapshot, which slows the
+    // target side's startup down, and the target side is what the first
+    // views need. So they start once the target side's are running, and
+    // are warm by the time anyone hovers the base side.
+    for phase in [Side::Target, Side::Base] {
+        let phase: Vec<_> = wanted.iter().filter(|(side, ..)| *side == phase).collect();
+        let _ = bounded(POOL_CAPACITY, 0..phase.len(), |at| {
+            let (_, served, file) = phase[at];
+            semantic.start_for(served, file)
+        })
+        .await;
+    }
+}
+
+/// The search for the changed symbols of `revision`, as the flight that owns it.
+async fn find_changes<G, S, L, M>(
+    pair: Pair<M, L>,
+    texts: Content<G, S>,
+    files: Vec<FileDiff>,
+    progress: Progress,
+    revision: u32,
+) -> Result<Computed<Derived<Changes>>, Infallible>
 where
     G: GitRepo + Send + Sync,
-    S: LiveStore + Send + Sync,
+    S: Store + Send + Sync,
+    L: ServerLauncher,
+    M: Materializer,
+{
+    let started = Instant::now();
+    // Only the target side's servers are queried. They start together, while
+    // the files are queried, so a language late in the list does not wait for
+    // the servers of the languages before it.
+    let (_, changes) = join(
+        start_servers_for(&pair, &files, &[Side::Target], &[]),
+        changed_symbols(&pair, &texts, &files, &|done, total| {
+            progress.report(
+                Some((done as u32, total as u32)),
+                Some(format!("{done} of {total} files")),
+            );
+        }),
+    )
+    .await;
+    trace::log(
+        || {
+            format!(
+                "changed symbols of revision {revision} ({} files: the symbols of both sides' texts on the target server, in parallel per file; target servers start alongside)",
+                files.len()
+            )
+        },
+        started,
+    );
+    Ok(Computed::new(changes, false))
+}
+
+impl<G, S, L, M> Semantics<G, S, L, M>
+where
+    G: GitRepo + Send + Sync + 'static,
+    S: LiveStore + Send + Sync + 'static,
     L: ServerLauncher,
     M: Materializer,
 {
@@ -179,28 +290,34 @@ where
         links: Links,
     ) -> Self {
         let pool = Pool::new(materializer, launcher, live_root, POOL_CAPACITY);
+        let tasks = links.tasks;
         Self {
-            semantic: Semantic::new(pool, backends),
+            semantic: Arc::new(Semantic::new(pool, backends)),
             _session: PhantomData,
             revisions: links.revisions,
             limits: links.limits,
             trust,
-            tasks: links.tasks,
-            changes: Memo::new(1),
+            changes: Engine::new(Limits::entries(0))
+                .observing(move |_| Some(Arc::new(tasks.start(TaskKind::Analyse, "Finding the changed symbols")))),
             epoch: AtomicU64::new(0),
         }
     }
 
-    /// Keeps at most `limit` answers of the servers for reuse; 0 keeps none.
-    pub fn keeping(mut self, limit: usize) -> Self {
-        self.semantic = self.semantic.keeping(limit);
+    /// Configures the semantic layer, which is not shared yet.
+    fn configured(mut self, configure: impl FnOnce(Semantic<M, L>) -> Semantic<M, L>) -> Self {
+        let semantic = Arc::into_inner(self.semantic).expect("semantics are configured before they are used");
+        self.semantic = Arc::new(configure(semantic));
         self
     }
 
+    /// Keeps at most `limit` answers of the servers for reuse; 0 keeps none.
+    pub fn keeping(self, limit: usize) -> Self {
+        self.configured(|semantic| semantic.keeping(limit))
+    }
+
     /// Keeps the answers that persist in `store`, behind the ones in memory.
-    pub fn persisting(mut self, store: Arc<dyn SemanticCache>) -> Self {
-        self.semantic = self.semantic.persisting(store);
-        self
+    pub fn persisting(self, store: Arc<dyn SemanticCache>) -> Self {
+        self.configured(|semantic| semantic.persisting(store))
     }
 
     /// Drops the answers kept in memory; the next question is asked again (or read from the store).
@@ -212,7 +329,6 @@ where
     /// What was derived from the servers' answers so far is not reused.
     fn replaced(&self) {
         self.epoch.fetch_add(1, Ordering::SeqCst);
-        self.changes.clear();
     }
 
     /// The language that serves `file`; `None`: it is unsupported.
@@ -225,7 +341,7 @@ where
         self.limits.all()
     }
 
-    async fn pair(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<vet_semantic::query::Pair<'_, M, L>> {
+    async fn pair(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<Pair<M, L>> {
         let (base, target) = served(&self.trust, &session.semantic_sides(revision).await?);
         Ok(self.semantic.pair(base, target))
     }
@@ -326,53 +442,8 @@ where
             .target_file_per_key(revision, POOL_CAPACITY, |path| self.language_of(path))
             .await?;
         let others: Vec<_> = repo.into_iter().map(|(_, path)| path).collect();
-        self.start_servers_for(&pair, &files, &[Side::Base, Side::Target], &others)
-            .await;
+        start_servers_for(&pair, &files, &[Side::Base, Side::Target], &others).await;
         Ok(())
-    }
-
-    /// Starts what the changed `files` need on `sides`, and the target side's
-    /// servers for the languages of `others`. Changed languages come first,
-    /// because only that many fit in the pool.
-    async fn start_servers_for(&self, pair: &Pair<'_, M, L>, files: &[FileDiff], sides: &[Side], others: &[RepoPath]) {
-        let mut candidates: Vec<(Side, &Served, &RepoPath)> = Vec::new();
-        for file in files.iter().filter(|f| !f.hunks.is_empty()) {
-            for (side, served, path) in [
-                (Side::Base, &pair.base, &file.old_path),
-                (Side::Target, &pair.target, &file.new_path),
-            ] {
-                if let (true, Some(path)) = (sides.contains(&side), path) {
-                    candidates.push((side, served, path));
-                }
-            }
-        }
-        candidates.extend(others.iter().map(|path| (Side::Target, &pair.target, path)));
-
-        let mut wanted: Vec<(Side, &Served, &RepoPath)> = Vec::new();
-        let mut languages: Vec<(Side, &BackendId)> = Vec::new();
-        for (side, served, path) in candidates {
-            let Some(language) = self.language_of(path) else {
-                continue;
-            };
-            if !languages.contains(&(side, language)) {
-                languages.push((side, language));
-                wanted.push((side, served, path));
-            }
-        }
-        // Servers beyond what the pool keeps warm would only evict each other.
-        wanted.truncate(POOL_CAPACITY);
-        // The base side's servers restore and index a snapshot, which slows the
-        // target side's startup down, and the target side is what the first
-        // views need. So they start once the target side's are running, and
-        // are warm by the time anyone hovers the base side.
-        for phase in [Side::Target, Side::Base] {
-            let phase: Vec<_> = wanted.iter().filter(|(side, ..)| *side == phase).collect();
-            let _ = bounded(POOL_CAPACITY, 0..phase.len(), |at| {
-                let (_, served, file) = phase[at];
-                self.semantic.start_for(served, file)
-            })
-            .await;
-        }
     }
 
     /// The symbols the revision's diff touches, on both sides of each changed
@@ -381,57 +452,36 @@ where
     /// one file asks for that one, however many it has, and one that changed none
     /// (a filter, a finished review) asks for none.
     ///
-    /// All callers for a revision share one search with one progress task. The caller
-    /// that came first runs it and the others wait for it; if that caller is dropped
-    /// (its request was cancelled), a waiter runs it next, and when the last caller is
-    /// dropped the search stops, keeping the answers it got per text (I2). A revision
-    /// that is superseded drops every caller and with them the search.
+    /// The search is a flight of the engine: all callers for the same snapshots share
+    /// it, with its one progress task, whichever of them came first and however many
+    /// of them give up. When the last is dropped the search stops, keeping the answers
+    /// it got per text (I2). A revision that is superseded drops its caller.
     pub async fn changed_symbols(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<Derived<Changes>> {
-        let key = (revision, self.epoch.load(Ordering::SeqCst));
         let work = async {
+            let sides = session.semantic_sides(revision).await?;
+            let (base, target) = served(&self.trust, &sides);
+            let files = session.changed_files(revision).await?;
+            let key = ChangesOf {
+                base_snapshot: sides.base,
+                target_snapshot: sides.target,
+                base,
+                target,
+                epoch: self.epoch.load(Ordering::SeqCst),
+            };
+            let pair = self.semantic.pair(base, target);
+            let texts = Content(session.acquisition());
             let found = self
                 .changes
-                .get(&key, async {
-                    self.find_changes(session, revision)
-                        .await
-                        .map(|value| Computed { value, keep: true })
+                .get(key, move |progress| {
+                    find_changes(pair, texts, files, progress, revision)
                 })
                 .await;
-            found.map(|(changes, _)| changes)
+            match found {
+                Ok(found) => Ok(found.value),
+                Err(never) => match never {},
+            }
         };
         self.current(revision, Box::pin(work)).await
-    }
-
-    async fn find_changes(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<Derived<Changes>> {
-        let pair = self.pair(session, revision).await?;
-        let started = Instant::now();
-        let files = session.changed_files(revision).await?;
-        let texts = Content(session.acquisition());
-        let analysis = self.tasks.start(TaskKind::Analyse, "Finding the changed symbols");
-        // Only the target side's servers are queried. They start together, while
-        // the files are queried, so a language late in the list does not wait for
-        // the servers of the languages before it.
-        let (_, changes) = join(
-            self.start_servers_for(&pair, &files, &[Side::Target], &[]),
-            changed_symbols(&pair, &texts, &files, &|done, total| {
-                analysis.report(
-                    Some((done as u32, total as u32)),
-                    Some(format!("{done} of {total} files")),
-                );
-            }),
-        )
-        .await;
-        analysis.finish();
-        trace::log(
-            || {
-                format!(
-                    "changed symbols of revision {revision} ({} files: the symbols of both sides' texts on the target server, in parallel per file; target servers start alongside)",
-                    files.len()
-                )
-            },
-            started,
-        );
-        Ok(changes)
     }
 
     /// The changed symbol `sym` and whether it was added, modified or removed,
@@ -1145,6 +1195,83 @@ mod tests {
         let third = semantics.changed_symbols(&fx.session, 0).await.unwrap();
         assert_eq!(third.value, first.value);
         assert_eq!(counters.text_symbol_requests.load(Ordering::SeqCst), 4);
+    }
+
+    /// Semantics over a repository with a Rust and a Python file changed, and the ids of the
+    /// "Finding the changed symbols" tasks it announces.
+    async fn semantics_announcing() -> (Fixture, FakeSemantics, Arc<Mutex<Vec<crate::progress::Task>>>) {
+        let fx = Fixture::open(
+            &[("a.rs", "one\n"), ("b.py", "one\n")],
+            &[("a.rs", "two\n"), ("b.py", "two\n")],
+        )
+        .await;
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let sink = heard.clone();
+        let counters = Arc::<Counters>::default();
+        let semantics = Semantics::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters),
+            "/live".into(),
+            vec![backend("rust", "rs"), backend("python", "py")],
+            Trust::Local,
+            Links {
+                revisions: fx.session.revisions(),
+                limits: RestoreLimits::default(),
+                tasks: Tasks::new(
+                    std::time::Duration::ZERO,
+                    Box::new(move |t| sink.lock().unwrap().push(t)),
+                ),
+            },
+        );
+        (fx, semantics, heard)
+    }
+
+    fn searches(heard: &Mutex<Vec<crate::progress::Task>>) -> usize {
+        let heard = heard.lock().unwrap();
+        let ids: std::collections::BTreeSet<_> = heard
+            .iter()
+            .filter(|t| t.kind == TaskKind::Analyse)
+            .map(|t| t.id)
+            .collect();
+        ids.len()
+    }
+
+    #[tokio::test]
+    async fn the_callers_that_remain_finish_the_search_of_the_one_that_gave_up() {
+        let (fx, semantics, heard) = semantics_announcing().await;
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut calls: Vec<_> = (0..3)
+            .map(|_| Box::pin(semantics.changed_symbols(&fx.session, 0)))
+            .collect();
+        while searches(&heard) == 0 {
+            for call in &mut calls {
+                assert!(call.as_mut().poll(&mut cx).is_pending());
+            }
+        }
+        drop(calls.remove(0));
+        let rest = join(calls.remove(0), calls.remove(0)).await;
+        assert!(rest.0.is_ok() && rest.1.is_ok());
+        assert_eq!(
+            searches(&heard),
+            1,
+            "one search, which the first caller's leaving did not restart"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_revision_that_leaves_the_snapshots_as_they_were_joins_the_search_under_way() {
+        let (fx, semantics, heard) = semantics_announcing().await;
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut old = Box::pin(semantics.changed_symbols(&fx.session, 0));
+        while searches(&heard) == 0 {
+            assert!(old.as_mut().poll(&mut cx).is_pending());
+        }
+        let revision = fx.session.exclude_path("b.py", false).await.unwrap();
+        let mut new = Box::pin(semantics.changed_symbols(&fx.session, revision));
+        assert!(new.as_mut().poll(&mut cx).is_pending());
+        drop(old);
+        new.await.unwrap();
+        assert_eq!(searches(&heard), 1);
     }
 
     // Every analysis of a symbol (signature, impact, reachability) needs the revision's

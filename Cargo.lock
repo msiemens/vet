@@ -5733,6 +5733,7 @@ dependencies = [
  "tokio",
  "tracing",
  "vet-core",
+ "vet-engine",
  "vet-semantic",
 ]
 
@@ -5823,6 +5824,7 @@ dependencies = [
  "url",
  "vet-app",
  "vet-core",
+ "vet-engine",
  "vet-log",
  "vet-semantic",
  "windows-sys 0.61.2",

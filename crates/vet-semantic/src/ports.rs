@@ -425,6 +425,10 @@ pub trait ServerLauncher: Send + Sync + 'static {
         backend: &Backend,
         policy: AnalysisPolicy,
     ) -> impl Future<Output = Option<Hash>> + Send;
+
+    /// The servers of `backend` are replaced: what the launcher observed of its
+    /// environment (toolchains, settings) is observed anew by the next `identify`.
+    fn restarted(&self, _backend: &BackendId) {}
 }
 
 #[cfg(test)]

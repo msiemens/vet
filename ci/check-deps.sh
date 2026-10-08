@@ -16,7 +16,7 @@ declare -A ALLOWED=(
     [vet-mock]="vet-core vet-protocol vet-transport vet-highlight vet-app vet-mapping vet-log"
     [vet-semantic]="vet-core vet-highlight vet-engine"
     [vet-app]="vet-core vet-semantic vet-engine"
-    [vet-infra]="vet-core vet-semantic vet-app vet-log"
+    [vet-infra]="vet-core vet-semantic vet-app vet-log vet-engine"
     [vet-mapping]="vet-core vet-protocol vet-semantic vet-app"
     [vet-backend]="vet-core vet-protocol vet-transport vet-semantic vet-app vet-infra vet-highlight vet-mapping vet-log"
 )

@@ -24,7 +24,7 @@ use vet_app::progress::{TaskKind, Tasks};
 use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{
-    Backend, LaunchError, Restored, Restorer, ServerConfig, ServerIdentity, ServerLauncher, Started, Tree,
+    Backend, BackendId, LaunchError, Restored, Restorer, ServerConfig, ServerIdentity, ServerLauncher, Started, Tree,
 };
 
 use crate::git::list_files;
@@ -364,6 +364,10 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
     async fn recorded_restore(&self, root: &Path, backend: &Backend, policy: AnalysisPolicy) -> Option<Hash> {
         let root = tokio::fs::canonicalize(root).await.ok()?;
         self.restorer.recorded(&root, backend, policy).await
+    }
+
+    fn restarted(&self, backend: &BackendId) {
+        self.identities.renewed(backend);
     }
 }
 

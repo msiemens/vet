@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 vet-core.workspace = true
 vet-semantic.workspace = true
+vet-engine.workspace = true
 # The runtime-agnostic async mutex that serializes a session's review state, and the
 # timeout on a CLI tool's answer.
 tokio = { version = "1.53.2", features = ["sync", "time"] }

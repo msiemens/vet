@@ -12,6 +12,7 @@
 //! 50 MB executable again unless it was replaced.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -19,8 +20,8 @@ use std::time::SystemTime;
 
 use vet_app::ports::ServerCommand;
 use vet_core::content::Hash;
-use vet_semantic::ports::{Backend, LaunchError, ServerIdentity};
-use vet_semantic::reuse::{self, Computed};
+use vet_engine::{Computed, Engine, Kind, Limits, Retention};
+use vet_semantic::ports::{Backend, BackendId, LaunchError, ServerIdentity};
 
 use super::{client_capabilities, initialization_options};
 use crate::exec::{Host, is_file};
@@ -88,14 +89,45 @@ fn remember<T>(memo: &Memo<T>, path: &Path, size: u64, modified: Option<SystemTi
         .insert(path.to_owned(), Stamped { size, modified, value });
 }
 
+/// What a toolchain program printed in a root, observed once per generation of
+/// the backend that asks (see [`Identities::renewed`]).
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Toolchain {
+    backend: BackendId,
+    program: String,
+    args: Vec<String>,
+    root: PathBuf,
+    generation: u64,
+}
+
+impl Kind for Toolchain {
+    type Value = String;
+    type Error = Infallible;
+
+    fn retention(&self) -> Retention {
+        Retention::Sampled
+    }
+
+    fn generation(&self) -> Option<(Self, u64)> {
+        Some((
+            Self {
+                generation: 0,
+                ..self.clone()
+            },
+            self.generation,
+        ))
+    }
+}
+
 /// Computes server identities and remembers what it costs to: the hash of each
 /// binary and the version it printed.
 pub struct Identities {
     user: UserEnv,
     binaries: Memo<Hash>,
     versions: Memo<String>,
-    /// What each toolchain program printed in a root: program, arguments, root.
-    toolchains: reuse::Memo<(String, Vec<String>, PathBuf), String>,
+    toolchains: Engine<Toolchain>,
+    /// How often the servers of each backend were replaced.
+    generations: Mutex<HashMap<BackendId, u64>>,
 }
 
 /// Toolchain probes kept.
@@ -107,8 +139,19 @@ impl Identities {
             user,
             binaries: Mutex::default(),
             versions: Mutex::default(),
-            toolchains: reuse::Memo::new(TOOLCHAINS_KEPT),
+            toolchains: Engine::new(Limits::entries(TOOLCHAINS_KEPT)),
+            generations: Mutex::default(),
         }
+    }
+
+    /// The servers of `backend` are replaced: its toolchain is probed anew by the next identity.
+    pub fn renewed(&self, backend: &BackendId) {
+        *self
+            .generations
+            .lock()
+            .expect("not poisoned")
+            .entry(backend.clone())
+            .or_default() += 1;
     }
 
     /// The identity of the server `command` starts for `backend` on `root`.
@@ -157,7 +200,7 @@ impl Identities {
         digest.field("client capabilities").field(&capabilities.to_string());
         self.compiler(&mut digest, command).await?;
         if let Some(spec) = spec {
-            self.user_config(&mut digest, root, spec).await;
+            self.user_config(&mut digest, &config.backend, root, spec).await;
         }
 
         let name = spec.map_or(config.binary.as_str(), |s| s.display_name);
@@ -193,12 +236,12 @@ impl Identities {
 
     /// The toolchain in the root and the configuration outside the repository that the
     /// language's server reads. A file that is not there adds nothing.
-    async fn user_config(&self, digest: &mut Digest, root: &Path, spec: &Language) {
+    async fn user_config(&self, digest: &mut Digest, backend: &BackendId, root: &Path, spec: &Language) {
         let config = &spec.user_config;
         digest.field("toolchain");
         for (program, args) in config.toolchain {
             let args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
-            let seen = self.toolchain(program, args, root).await;
+            let seen = self.toolchain(backend, program, args, root).await;
             digest.field(program).field(&seen);
         }
         digest.field("above the root");
@@ -223,25 +266,36 @@ impl Identities {
         }
     }
 
-    /// What the toolchain program printed in `root`, probed once per program and root
-    /// for as long as these identities live, and shared by concurrent callers. A probe
-    /// that failed is not remembered: the next one may succeed.
-    async fn toolchain(&self, program: &str, args: Vec<String>, root: &Path) -> String {
-        let key = (program.to_owned(), args, root.to_owned());
-        let probe = async {
-            Ok::<_, std::convert::Infallible>(match capture(program, &key.1, Some(root)).await {
-                Ok(out) if out.ok => Computed {
-                    value: format!("{}{}", out.stdout.trim(), out.stderr.trim()),
-                    keep: true,
-                },
-                _ => Computed {
-                    value: "unavailable".to_owned(),
-                    keep: false,
-                },
-            })
+    /// What the toolchain program printed in `root`, probed once per program, root and
+    /// generation of the backend, and shared by concurrent callers. A probe that failed
+    /// is not remembered: the next one may succeed.
+    async fn toolchain(&self, backend: &BackendId, program: &str, args: Vec<String>, root: &Path) -> String {
+        let generation = self
+            .generations
+            .lock()
+            .expect("not poisoned")
+            .get(backend)
+            .copied()
+            .unwrap_or(0);
+        let key = Toolchain {
+            backend: backend.clone(),
+            program: program.to_owned(),
+            args,
+            root: root.to_owned(),
+            generation,
         };
-        match self.toolchains.get(&key, probe).await {
-            Ok((seen, _)) => seen,
+        let probe = key.clone();
+        let seen = self
+            .toolchains
+            .get(key, move |_| async move {
+                Ok(match capture(&probe.program, &probe.args, Some(&probe.root)).await {
+                    Ok(out) if out.ok => Computed::new(format!("{}{}", out.stdout.trim(), out.stderr.trim()), true),
+                    _ => Computed::new("unavailable".to_owned(), false),
+                })
+            })
+            .await;
+        match seen {
+            Ok(got) => got.value,
             Err(never) => match never {},
         }
     }
@@ -475,6 +529,40 @@ mod tests {
         // Its modification time moves: it is read again.
         program.set_modified(stamp + Duration::from_secs(5)).unwrap();
         assert_ne!(setup.identity(&identities).await.fingerprint, first.fingerprint);
+    }
+
+    #[tokio::test]
+    async fn a_toolchain_is_probed_once_per_generation_of_its_backend_however_many_ask() {
+        let setup = Setup::new();
+        let tool = setup.dir.path().join("tool");
+        std::fs::write(
+            &tool,
+            "#!/bin/sh\necho run >> \"$(dirname \"$0\")/runs\"\ncat \"$(dirname \"$0\")/printed\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let printed = setup.dir.path().join("printed");
+        std::fs::write(&printed, "one").unwrap();
+        let runs = || std::fs::read_to_string(setup.dir.path().join("runs")).map_or(0, |runs| runs.lines().count());
+
+        let identities = setup.identities();
+        let (rust, python) = (BackendId("rust".into()), BackendId("python".into()));
+        let program = tool.to_string_lossy().into_owned();
+        let root = setup.root();
+        let probe = || async { identities.toolchain(&rust, &program, vec![], &root).await };
+
+        let seen = futures::future::join_all((0..8).map(|_| probe())).await;
+        assert!(seen.iter().all(|printed| printed == "one"), "{seen:?}");
+        assert_eq!(runs(), 1);
+
+        std::fs::write(&printed, "two").unwrap();
+        assert_eq!(probe().await, "one", "the same generation");
+        identities.renewed(&python);
+        assert_eq!(probe().await, "one", "another backend's generation");
+        assert_eq!(runs(), 1);
+        identities.renewed(&rust);
+        assert_eq!(probe().await, "two", "a new generation");
+        assert_eq!(runs(), 2);
     }
 
     #[tokio::test]

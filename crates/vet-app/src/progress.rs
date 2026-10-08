@@ -207,6 +207,13 @@ impl Running {
     }
 }
 
+/// The task of a computation of the engine: it ends with the computation.
+impl vet_engine::Task for Running {
+    fn report(&self, done_of_total: Option<(u32, u32)>, detail: Option<String>) {
+        Running::report(self, done_of_total, detail);
+    }
+}
+
 impl Drop for Running {
     fn drop(&mut self) {
         if !self.ended.swap(true, Ordering::SeqCst) {
