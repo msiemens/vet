@@ -78,6 +78,9 @@ impl Fixture {
                 clone.to_str().unwrap(),
             ],
         );
+        // The fetch under test runs in-process and writes reflog entries, which need an identity from the repository's configuration.
+        git(&clone, &["config", "user.name", "Tess"]);
+        git(&clone, &["config", "user.email", "t@t"]);
         Self {
             _dir: dir,
             remote,

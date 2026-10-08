@@ -50,6 +50,9 @@ impl Remote {
         );
         git(&project, &["config", "core.autocrlf", "false"]);
         git(&project, &["config", "core.excludesFile", "/dev/null"]);
+        // Vet's fetch runs in-process and writes reflog entries, which need an identity from the repository's configuration.
+        git(&project, &["config", "user.name", "t"]);
+        git(&project, &["config", "user.email", "t@t"]);
         Self {
             _dir: dir,
             bare,

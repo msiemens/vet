@@ -511,11 +511,7 @@ mod tests {
     #[tokio::test]
     async fn the_running_tasks_are_listed_and_a_subscriber_hears_their_progress_a_few_times_not_every_time() {
         let repo = tempfile::tempdir().unwrap();
-        std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(repo.path())
-            .status()
-            .unwrap();
+        git(repo.path(), &["init", "-q"]);
         let data = tempfile::tempdir().unwrap();
         let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), Config::default());
         let (events, mut inbox) = Events::channel();
