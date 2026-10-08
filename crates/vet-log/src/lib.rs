@@ -7,6 +7,7 @@
 
 pub mod capture;
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use tracing_appender::non_blocking::WorkerGuard;
@@ -38,6 +39,38 @@ pub fn data_dir() -> Option<PathBuf> {
 /// as the rest may quote code.
 pub fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or_default()
+}
+
+/// `text` with the user name, password or token in front of the host of every URL in it replaced
+/// by `***`: `https://x-access-token:ghp_1@github.com/o/r` reads `https://***@github.com/o/r`.
+/// Apply it to a message that may quote a remote's URL before it is logged.
+pub fn redact_urls(text: &str) -> Cow<'_, str> {
+    const MASK: &str = "***";
+    let mut out = String::new();
+    let mut rest = text;
+    let mut redacted = false;
+    while let Some(at) = rest.find("://") {
+        let (head, after) = rest.split_at(at + 3);
+        out.push_str(head);
+        let end = after
+            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '?' | '#' | '"' | '\'' | '`' | '<' | '>'))
+            .unwrap_or(after.len());
+        let (authority, tail) = after.split_at(end);
+        match authority.rfind('@') {
+            Some(at) => {
+                out.push_str(MASK);
+                out.push_str(&authority[at..]);
+                redacted = true;
+            }
+            None => out.push_str(authority),
+        }
+        rest = tail;
+    }
+    if !redacted {
+        return Cow::Borrowed(text);
+    }
+    out.push_str(rest);
+    Cow::Owned(out)
 }
 
 /// The filter `spec` (the value of `VET_LOG`) asks for, and why it was not used if it is invalid.
@@ -130,6 +163,35 @@ mod tests {
             .map(|line| line.split_once(' ').map_or(line, |(_, rest)| rest))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn the_credentials_of_a_url_are_masked_wherever_the_message_quotes_one() {
+        let message = "fatal: unable to access 'https://x-access-token:ghp_secret@github.com/o/r.git/': \
+                       could not resolve host, then ssh://deploy@host:22/r and https://example.com/a@b";
+        assert_eq!(
+            redact_urls(message),
+            "fatal: unable to access 'https://***@github.com/o/r.git/': \
+             could not resolve host, then ssh://***@host:22/r and https://example.com/a@b"
+        );
+    }
+
+    #[test]
+    fn a_message_without_credentials_is_left_alone() {
+        for text in [
+            "",
+            "no url here",
+            "https://github.com/o/r",
+            "user@host:path.git",
+            "a :// b",
+        ] {
+            assert!(matches!(redact_urls(text), Cow::Borrowed(t) if t == text), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_password_with_an_at_sign_is_masked_to_the_last_one() {
+        assert_eq!(redact_urls("https://u:p@ss@host/x"), "https://***@host/x");
     }
 
     #[test]

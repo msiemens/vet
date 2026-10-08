@@ -419,8 +419,9 @@ fn changeset_ref_prefix(changeset: ChangesetId) -> String {
     format!("refs/vet/changesets/{}/", changeset.0)
 }
 
+/// A git error as a message that is fit to log: it may quote a remote's URL, whose credentials it hides.
 fn err(e: impl Display) -> GitError {
-    GitError(e.to_string())
+    GitError(vet_log::redact_urls(&e.to_string()).into_owned())
 }
 
 fn object_id(commit: &CommitId) -> Result<gix::ObjectId, GitError> {
