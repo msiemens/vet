@@ -121,13 +121,15 @@ impl<G: Fetcher> Fetch<G> {
     }
 
     /// Fetches every remote, one after the other, as one task; a remote that fails does not
-    /// stop the others. Answers whether there was anything to fetch, or the message the task
-    /// failed with.
-    pub async fn run(&self, credentials: &(impl Credentials + Sync)) -> Result<bool, String> {
+    /// stop the others, and what they brought counts. Fails only if the remotes cannot be read.
+    pub async fn run(&self, credentials: &(impl Credentials + Sync)) -> Result<Ran, String> {
         let _only_one = self.running.lock().await;
         let remotes = self.git.remotes().await.map_err(|e| e.0)?;
         if remotes.is_empty() {
-            return Ok(false);
+            return Ok(Ran {
+                fetched: 0,
+                failure: None,
+            });
         }
         let task = self.tasks.start(TaskKind::Fetch, title(&remotes));
         let total = remotes.len() as u32;
@@ -140,15 +142,27 @@ impl<G: Fetcher> Fetch<G> {
                 failures.push(format!("{}: {}", remote.name, e.0));
             }
         }
+        let fetched = remotes.len() - failures.len();
         if failures.is_empty() {
             task.finish();
-            Ok(true)
-        } else {
-            let message = failures.join("; ");
-            task.fail(message.clone());
-            Err(message)
+            return Ok(Ran { fetched, failure: None });
         }
+        let message = failures.join("; ");
+        task.fail(message.clone());
+        Ok(Ran {
+            fetched,
+            failure: Some(message),
+        })
     }
+}
+
+/// What [`Fetch::run`] did.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Ran {
+    /// How many remotes were fetched.
+    pub fetched: usize,
+    /// Why the others were not, as the task failed with it, naming each remote.
+    pub failure: Option<String>,
 }
 
 /// The platform credential to present to `remote`, if it is fetched over HTTPS from a host there is
@@ -284,7 +298,13 @@ mod tests {
 
         let result = fetch.run(&GitHubOnly).await;
 
-        assert_eq!(result, Err("origin: connection refused".into()));
+        assert_eq!(
+            result,
+            Ok(Ran {
+                fetched: 1,
+                failure: Some("origin: connection refused".into())
+            })
+        );
         let names: Vec<_> = fetched.lock().unwrap().iter().map(|(n, _)| n.clone()).collect();
         assert_eq!(names, ["origin", "backup"]);
         let last = heard.lock().unwrap().last().cloned().unwrap();
@@ -305,7 +325,13 @@ mod tests {
 
         let result = fetch.run(&GitHubOnly).await;
 
-        assert_eq!(result, Ok(true));
+        assert_eq!(
+            result,
+            Ok(Ran {
+                fetched: 3,
+                failure: None
+            })
+        );
         assert_eq!(
             *fetched.lock().unwrap(),
             [
@@ -366,7 +392,13 @@ mod tests {
     async fn a_repository_without_remotes_has_nothing_to_report() {
         let (fetch, heard, _) = fetching(vec![], vec![]);
 
-        assert_eq!(fetch.run(&GitHubOnly).await, Ok(false));
+        assert_eq!(
+            fetch.run(&GitHubOnly).await,
+            Ok(Ran {
+                fetched: 0,
+                failure: None
+            })
+        );
         assert!(heard.lock().unwrap().is_empty());
     }
 }

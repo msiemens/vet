@@ -58,14 +58,16 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// Stores how the platform names the pull request of `source` now, unless that is stored already.
-    pub async fn remember_pull_request_head(&self, source: &Source, head: PullRequestHead) -> Result<()> {
-        if self.pull_request_head(source).await?.as_ref() != Some(&head) {
-            let store = &self.acquisition.store;
-            store
-                .set_pull_request_head(self.repo.clone(), source.clone(), head)
-                .await?;
+    /// Answers whether it was not.
+    pub async fn remember_pull_request_head(&self, source: &Source, head: PullRequestHead) -> Result<bool> {
+        if self.pull_request_head(source).await?.as_ref() == Some(&head) {
+            return Ok(false);
         }
-        Ok(())
+        let store = &self.acquisition.store;
+        store
+            .set_pull_request_head(self.repo.clone(), source.clone(), head)
+            .await?;
+        Ok(true)
     }
 
     /// Reads what the store holds of the changeset of `source` in the repository at `repo`.

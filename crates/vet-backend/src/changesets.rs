@@ -118,12 +118,13 @@ impl Orchestrator {
     pub(crate) async fn open_changeset(&self, project: ProjectId, changeset: ChangesetKey) -> Result<Response, String> {
         let open = self.ready(project).await?;
         let source = mapping::core_changeset_key(changeset)?;
+        let mut renamed = false;
         if let Source::PullRequest { remote, number } = &source {
             let brought = bring_in(&open.open, &open.session, remote, *number).await;
             if let Err(FetchError::Platform(error)) = &brought {
                 self.refused(error, &remote.account());
             }
-            brought.map_err(|e| format!("cannot fetch pull request #{number}: {e}"))?;
+            renamed = brought.map_err(|e| format!("cannot fetch pull request #{number}: {e}"))?;
         }
         let moved = open.session.open_changeset(source.clone()).await.map_err(message)?;
         if let Some(revision) = moved {
@@ -133,6 +134,8 @@ impl Orchestrator {
                 changeset: mapping::changeset_key(&source),
             });
             start_servers_in_background(open.open.clone());
+        } else if renamed {
+            open.subscribers.broadcast(Event::TargetChanged { project });
         }
         if matches!(source, Source::PullRequest { .. }) {
             sync_in_background(open.open.clone());
@@ -184,8 +187,8 @@ async fn prune_pull_request_refs(open: &Ready, list: &PullRequestList, since: Fe
 }
 
 /// Fetches the head of pull request `number` of `remote` and its target branch, and stores how the
-/// platform names it.
-pub(crate) async fn bring_in(open: &Open, session: &Live, remote: &RemoteKey, number: u64) -> Result<(), FetchError> {
+/// platform names it. Answers whether that is not what was stored.
+pub(crate) async fn bring_in(open: &Open, session: &Live, remote: &RemoteKey, number: u64) -> Result<bool, FetchError> {
     let held = Held(&open.accounts);
     let head = match remote.kind() {
         PlatformKind::GitHub => {
@@ -200,8 +203,11 @@ pub(crate) async fn bring_in(open: &Open, session: &Live, remote: &RemoteKey, nu
         number,
     };
     // The fetch is done; a title that cannot be stored is shown again after the next one.
-    if let Err(error) = session.remember_pull_request_head(&source, head).await {
-        tracing::warn!(%error, "storing the title of a pull request failed");
-    }
-    Ok(())
+    Ok(session
+        .remember_pull_request_head(&source, head)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "storing the title of a pull request failed");
+            false
+        }))
 }

@@ -1531,11 +1531,11 @@ async fn review_branch(client: &mut Client, project: ProjectId, name: &str) {
         panic!("not told which changeset is on view")
     };
     client.toggle_hunk(project, revision, 0).await;
-    // The marker is told of its mark too; a fetch at opening may say how the base stands.
+    // The marker is told of its mark too; a fetch at opening may say what it found.
     loop {
         match client.event().await {
             Event::ReviewChanged { .. } => break,
-            Event::BaseChanged { .. } => {}
+            Event::BaseChanged { .. } | Event::ChangesetsChanged { .. } => {}
             other => panic!("{other:?}"),
         }
     }
@@ -1627,10 +1627,10 @@ async fn a_fetch_that_moves_the_remote_branch_on_view_is_its_next_version() {
     git(&clone, &["push", "-q", "origin", "feature"]);
     git(p, &["fetch", "-q", "origin"]);
 
-    // The app fetches by itself on opening, and says so with `BaseChanged`.
+    // The app fetches by itself on opening, and says so with `BaseChanged` and `ChangesetsChanged`.
     loop {
         match client.event().await {
-            Event::BaseChanged { .. } => {}
+            Event::BaseChanged { .. } | Event::ChangesetsChanged { .. } => {}
             Event::SnapshotSettled { .. } => break,
             other => panic!("{other:?}"),
         }

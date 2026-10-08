@@ -24,11 +24,14 @@ impl Orchestrator {
     }
 }
 
-/// Fetches the remotes, then tells every subscriber how far the base's branch has moved on, and
-/// looks at the pull request on view for a push.
+/// Fetches the remotes, then tells every subscriber how far the base's branch has moved on and that
+/// the branches may have moved, and looks at the pull request on view for a push. A remote that
+/// failed is named by the failed task, where the footer shows it; what the others brought counts.
 async fn fetch_and_report(open: &Arc<Open>) {
-    // A failure is on the task, where the footer shows it.
-    if open.fetch.run(&Held(&open.accounts)).await != Ok(true) {
+    let Ok(ran) = open.fetch.run(&Held(&open.accounts)).await else {
+        return;
+    };
+    if ran.fetched == 0 {
         return;
     }
     let Ok(booted) = open.booted().await else {
@@ -40,23 +43,27 @@ async fn fetch_and_report(open: &Arc<Open>) {
             base: mapping::base(&base),
         });
     }
+    open.subscribers
+        .broadcast(Event::ChangesetsChanged { project: open.id });
     follow_pull_request(open, booted).await;
     sync_pull_request(open, booted).await;
 }
 
 /// If a pull request is on view, fetches it again and, when its head or target moved, has the
-/// session take the next version of it.
+/// session take the next version of it; when only how the platform names it changed, says so.
 async fn follow_pull_request(open: &Arc<Open>, booted: &Booted) {
     let Source::PullRequest { remote, number } = booted.session.source().await else {
         return;
     };
     // The task and the platform's answer say what went wrong; the review on view stays as it is.
-    if bring_in(open, &booted.session, &remote, number).await.is_err() {
+    let Ok(renamed) = bring_in(open, &booted.session, &remote, number).await else {
         return;
-    }
+    };
     if let Ok(Some(revision)) = booted.session.observe().await {
         settled(&open.subscribers, open.id, revision);
         start_servers_in_background(open.clone());
+    } else if renamed {
+        open.subscribers.broadcast(Event::TargetChanged { project: open.id });
     }
 }
 

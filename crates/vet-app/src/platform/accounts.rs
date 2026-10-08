@@ -178,6 +178,20 @@ where
         self.cli_token(host, now).await.is_some() || self.state().hosts.get(host).is_some_and(|s| s.pat.is_some())
     }
 
+    /// Whether `token` is the personal access token held for `host` already, as when the shell
+    /// hands back what its keychain holds after the platform refused it.
+    pub fn holds(&self, host: &str, token: &str) -> bool {
+        let (Ok(host), Some(token)) = (normalize_host(host), Token::new(token)) else {
+            return false;
+        };
+        let state = self.state();
+        state
+            .hosts
+            .get(&host)
+            .and_then(|slot| slot.pat.as_ref())
+            .is_some_and(|held| held.token == token)
+    }
+
     /// Keeps `token` as the personal access token of `host` (as typed or pasted). With
     /// `validate` the platform is asked first and nothing is kept unless it accepts the
     /// token. Answers with the account, whose host is the normalized one.
@@ -661,6 +675,19 @@ mod tests {
             3,
             "asked again after the credential went"
         );
+    }
+
+    #[tokio::test]
+    async fn a_token_handed_back_is_known_as_held_and_another_one_is_not() {
+        let f = fixture();
+        assert!(!f.accounts.holds("github.com", "ghp_pat"));
+        f.accounts
+            .set_credentials("github.com", "ghp_pat", false, 0)
+            .await
+            .unwrap();
+        assert!(f.accounts.holds("GitHub.com", " ghp_pat "));
+        assert!(!f.accounts.holds("github.com", "ghp_other"));
+        assert!(!f.accounts.holds("ghe.corp.example", "ghp_pat"));
     }
 
     #[tokio::test]

@@ -77,8 +77,14 @@ const hostDialer: Dialer = {
 
 export type FileContents = Extract<Response, { type: "fileContents" }>;
 
-/** The events of a session; the backend's own are `credentialsNeeded`. */
-export type SessionEvent = Exclude<ServerEvent, { type: "credentialsNeeded" }>;
+/** The events that belong to the backend, not to a session. */
+type ProcessEvent = Extract<ServerEvent, { type: "credentialsNeeded" | "accountsChanged" | "recentProjectsChanged" }>;
+
+/** The events of a session. */
+export type SessionEvent = Exclude<ServerEvent, ProcessEvent>;
+
+const isProcessEvent = (event: ServerEvent): event is ProcessEvent =>
+  event.type === "credentialsNeeded" || event.type === "accountsChanged" || event.type === "recentProjectsChanged";
 
 /** A language server's Markdown, with the highlights of each of its fenced code blocks, in order. */
 export interface HoverText {
@@ -162,7 +168,10 @@ export class Backend {
     this.conn.retryNow();
   }
 
-  /** The recently opened repositories, most recent first. They belong to the backend, not to a project. */
+  /**
+   * The recently opened repositories, most recent first. They belong to the backend, not to a project. Asking also
+   * subscribes this connection to the backend's events.
+   */
   async recentProjects(): Promise<RecentProject[]> {
     return expect(await this.conn.request({ type: "recentProjects" }), "recentProjects").projects;
   }
@@ -199,18 +208,35 @@ export class Backend {
   /** The events of the open repository's session. */
   onEvent(listener: (event: SessionEvent) => void): () => void {
     return this.conn.onEvent((event) => {
-      if (event.type !== "credentialsNeeded") listener(event);
+      if (!isProcessEvent(event)) listener(event);
     });
   }
 
-  /** Calls `listener` with a host the backend needs a credential for and has none; only heard after `accounts()`. */
+  /**
+   * Calls `listener` with a host the backend needs a credential for and has none; heard, like the other events of
+   * the backend, after `accounts()` or `recentProjects()`.
+   */
   onCredentialsNeeded(listener: (host: string) => void): () => void {
     return this.conn.onEvent((event) => {
       if (event.type === "credentialsNeeded") listener(event.host);
     });
   }
 
-  /** The credentials the backend holds or can get, per host; asking also subscribes this connection to `onCredentialsNeeded`. */
+  /** Calls `listener` when a credential was given or removed, by this window or another. */
+  onAccountsChanged(listener: () => void): () => void {
+    return this.conn.onEvent((event) => {
+      if (event.type === "accountsChanged") listener();
+    });
+  }
+
+  /** Calls `listener` when the recent list changed, by this window or another. */
+  onRecentProjectsChanged(listener: () => void): () => void {
+    return this.conn.onEvent((event) => {
+      if (event.type === "recentProjectsChanged") listener();
+    });
+  }
+
+  /** The credentials the backend holds or can get, per host; asking also subscribes this connection to the backend's events. */
   async accounts(): Promise<Account[]> {
     return expect(await this.conn.request({ type: "accounts" }), "accounts").accounts;
   }
@@ -273,7 +299,7 @@ export class Backend {
     return expect(await this.conn.request({ type: "commits", project: this.pid }), "commits").commits;
   }
 
-  /** Remembers the lens the changeset on view is reviewed in. The next manifest says it. */
+  /** Remembers the lens the changeset on view is reviewed in; every subscriber, this one included, then gets `lensChanged`. */
   async setLens(lens: Lens): Promise<void> {
     expect(await this.conn.request({ type: "setLens", project: this.pid, lens }), "done");
   }
@@ -416,12 +442,15 @@ export class Backend {
     expect(await this.conn.request({ type: "excludePath", project: this.pid, path, directory }), "done");
   }
 
-  /** Ends the open review; every subscriber, this one included, then gets `snapshotSettled`. Resolves with whether it was complete. */
+  /** Ends the open review; every subscriber, this one included, then gets `snapshotSettled` and `changesetsChanged`. Resolves with whether it was complete. */
   async finishReview(): Promise<boolean> {
     return expect(await this.conn.request({ type: "finishReview", project: this.pid }), "reviewFinished").complete;
   }
 
-  /** Fetches the repository's remotes and resolves when that ended; a fetch that failed shows as a failed task, not here. Every subscriber then gets `baseChanged`. */
+  /**
+   * Fetches the repository's remotes and resolves when that ended; a remote that failed shows as a failed task, not
+   * here. If any remote was fetched, every subscriber then gets `baseChanged` and `changesetsChanged`.
+   */
   async fetch(): Promise<void> {
     expect(await this.conn.request({ type: "fetch", project: this.pid }), "done");
   }

@@ -17,20 +17,24 @@ pub enum Request {
         payload: String,
     },
     /// The recently opened repositories, as the paths they were recorded with and
-    /// when, most recent first. They belong to the backend, not to a project.
-    /// Answers with `Response::RecentProjects`.
+    /// when, most recent first. They belong to the backend, not to a project. Subscribes
+    /// this connection to the events of the backend (`RecentProjectsChanged`,
+    /// `AccountsChanged`, `CredentialsNeeded`). Answers with `Response::RecentProjects`.
     RecentProjects,
     /// Puts `path` at the top of the recent list, opened now, dropping its earlier
-    /// entry and the oldest ones beyond ten. Answers with `Response::RecentProjects`.
+    /// entry and the oldest ones beyond ten. Every connection subscribed to the events of
+    /// the backend gets `RecentProjectsChanged`. Answers with `Response::RecentProjects`.
     RecordRecentProject {
         path: String,
     },
-    /// Removes `path` from the recent list. Answers with `Response::RecentProjects`.
+    /// Removes `path` from the recent list, like `RecordRecentProject`. Answers with
+    /// `Response::RecentProjects`.
     ForgetRecentProject {
         path: String,
     },
     /// The credentials the backend holds or can get for hosting platforms, per host
-    /// and not tied to a project, and subscribes this connection to `CredentialsNeeded`.
+    /// and not tied to a project, and subscribes this connection to the events of the
+    /// backend, as `RecentProjects` does.
     /// Asking also looks up what the platform says about each credential, so it may
     /// take a moment. Answers with `Response::Accounts`.
     Accounts,
@@ -39,15 +43,19 @@ pub enum Request {
     /// is asked first, and a token it refuses, or a platform that cannot be reached,
     /// fails the request with a message fit to show and nothing is kept. Without it the
     /// token is taken as is: this is how the shell hands back what its keychain holds.
-    /// Answers with `Response::Account`, whose `host` is the normalized one (lower case,
-    /// without a scheme or a path) and what the shell stores the token under.
+    /// Unless the token is the one held already and was not to be checked, every connection
+    /// subscribed to the events of the backend gets `AccountsChanged`, and the open pull
+    /// requests of the host are synced again. Answers with `Response::Account`, whose `host`
+    /// is the normalized one (lower case, without a scheme or a path) and what the shell
+    /// stores the token under.
     SetCredentials {
         host: String,
         token: Secret,
         validate: bool,
     },
     /// Forgets the personal access token of `host`. A credential of a CLI tool is not
-    /// the backend's to remove. Answers with `Response::Accounts`.
+    /// the backend's to remove. Announced and synced like `SetCredentials`. Answers with
+    /// `Response::Accounts`.
     RemoveCredentials {
         host: String,
     },
@@ -131,8 +139,10 @@ pub enum Request {
     /// branch does not exist. A pull request is fetched first (head and target branch, as a
     /// task), so the request waits for the network; it fails with a message fit to show if the
     /// platform or the fetch does, and a missing credential is also announced as
-    /// `CredentialsNeeded`. A push to a pull request on view that a later fetch brings is a new
-    /// version, announced as `SnapshotSettled`. Answers with `Response::Done`.
+    /// `CredentialsNeeded`. Opening the pull request on view again announces `TargetChanged` if
+    /// the platform names it differently now. A push to a pull request on view that a later
+    /// fetch brings is a new version, announced as `SnapshotSettled`. Answers with
+    /// `Response::Done`.
     OpenChangeset {
         project: ProjectId,
         changeset: ChangesetKey,
@@ -140,7 +150,8 @@ pub enum Request {
     /// Ends the open review: its marks, acknowledgements and threads are kept
     /// in the store but leave the project, which goes back to browsing. The
     /// revision increases and every subscriber, including the requester, gets
-    /// `SnapshotSettled`; fetch the manifest again. Fails if no review is open.
+    /// `SnapshotSettled`; fetch the manifest again. `ChangesetsChanged` follows, as the
+    /// changeset's row no longer has a review open. Fails if no review is open.
     /// Answers with `Response::ReviewFinished`.
     FinishReview {
         project: ProjectId,
@@ -162,8 +173,8 @@ pub enum Request {
     Commits {
         project: ProjectId,
     },
-    /// Remembers the lens a branch changeset is reviewed in. Fails for the working tree.
-    /// Answers with `Response::Done`.
+    /// Remembers the lens a branch changeset is reviewed in; every subscriber, including the
+    /// requester, gets `LensChanged`. Fails for the working tree. Answers with `Response::Done`.
     SetLens {
         project: ProjectId,
         lens: Lens,
@@ -343,8 +354,11 @@ pub enum Request {
         project: ProjectId,
     },
     /// Fetches the repository's remotes now, as a `Fetch` task, and answers with
-    /// `Response::Done` when it ended. A fetch that fails (offline, refused) fails its
-    /// task, not this request. Every subscriber then gets `BaseChanged`.
+    /// `Response::Done` when it ended. A remote that fails (offline, refused) fails the
+    /// task with its name, not this request, and the others are still fetched. If any
+    /// remote was fetched, every subscriber then gets `BaseChanged` and `ChangesetsChanged`,
+    /// a pull request on view whose head moved is its next version (`SnapshotSettled`), and
+    /// its threads are synced.
     Fetch {
         project: ProjectId,
     },

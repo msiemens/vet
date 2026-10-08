@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    Base, ChangesetKey, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate, Task,
+    Base, ChangesetKey, Lens, Notification, PlatformStatus, ProjectId, RestoreFailure, ReviewInfo, ReviewUpdate, Task,
 };
 
 /// Events are invalidations or small state updates; the client re-requests
@@ -16,9 +16,19 @@ use crate::{
 #[ts(export)]
 pub enum Event {
     /// The backend needs a credential for `host` and has none. Sent to every
-    /// connection that asked for `Accounts`. The shell answers with `SetCredentials`
+    /// connection that asked for `Accounts` or `RecentProjects`. The shell answers with `SetCredentials`
     /// if its keychain holds a token for the host, and otherwise does nothing.
     CredentialsNeeded { host: String },
+    /// A credential was given (`SetCredentials`, unless the token is the one held already
+    /// and was not to be checked) or removed (`RemoveCredentials`): what `Accounts` says, and
+    /// which pull requests `ListPullRequests` finds, may have changed. Sent to every
+    /// connection that asked for `Accounts` or `RecentProjects`. The open pull requests of the
+    /// host are synced again, which they announce as usual.
+    AccountsChanged,
+    /// The recent list changed (`RecordRecentProject`, `ForgetRecentProject`): ask for
+    /// `RecentProjects` again. Sent to every connection that asked for `Accounts` or
+    /// `RecentProjects`.
+    RecentProjectsChanged,
     /// A snapshot settled and the changeset moved to a new `revision`. The
     /// manifest, with review state remapped onto it, is stale: fetch it again.
     SnapshotSettled { project: ProjectId, revision: u32 },
@@ -36,6 +46,16 @@ pub enum Event {
         revision: u32,
         update: ReviewUpdate,
     },
+    /// The changeset on view is reviewed in `lens` now (`SetLens`). The manifest, which
+    /// says the lens, is stale: fetch it again.
+    LensChanged { project: ProjectId, lens: Lens },
+    /// What the manifest says of the target changed without a new revision: how the
+    /// platform names the pull request on view (its title, whether it is a draft), as a
+    /// fetch of it found. Fetch the manifest again.
+    TargetChanged { project: ProjectId },
+    /// What `ListChangesets` and `ListPullRequests` list may have changed: a fetch moved
+    /// branches or pull request heads, or a review finished. List again.
+    ChangesetsChanged { project: ProjectId },
     /// The first review action started a review. Sent to every subscriber,
     /// the requester included; a finished review is `SnapshotSettled`.
     ReviewStarted { project: ProjectId, review: ReviewInfo },
@@ -61,8 +81,9 @@ pub enum Event {
         project: ProjectId,
         failures: Vec<RestoreFailure>,
     },
-    /// A fetch ended: the base is where it was, and `base` says how far its branch has
-    /// moved on now. Sent to every subscriber, whether the fetch was asked for or periodic.
+    /// A fetch ended that fetched at least one remote: the base is where it was, and `base`
+    /// says how far its branch has moved on now. Sent to every subscriber, whether the fetch
+    /// was asked for or periodic.
     BaseChanged { project: ProjectId, base: Base },
     /// Background work of the project started, progressed or ended. Sent to every
     /// subscriber; a task that ended (`Finished` or `Failed`) is not announced again.

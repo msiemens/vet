@@ -126,8 +126,8 @@ pub struct Orchestrator {
     github: Arc<GitHub>,
     /// The client for Azure DevOps, likewise.
     azure_devops: Arc<AzureDevOps>,
-    /// The connections that asked for `Accounts`, which is where the events that belong
-    /// to the process go.
+    /// The connections that asked for `Accounts` or `RecentProjects`, which is where the events
+    /// that belong to the process go.
     process_subscribers: Subscribers<Connection>,
 }
 
@@ -230,6 +230,13 @@ impl Orchestrator {
         self.trees.clear().await
     }
 
+    /// The recent list after a change, which every connection subscribed to the process hears of.
+    fn recent_changed(&self, list: Result<Vec<RecentProject>, StoreError>) -> Result<Response, String> {
+        let answer = recent_projects(list)?;
+        self.process_subscribers.broadcast(Event::RecentProjectsChanged);
+        Ok(answer)
+    }
+
     fn semantic_cache_usage(&self) -> Response {
         Response::SemanticCacheUsage {
             bytes: self.answers.usage(),
@@ -293,12 +300,15 @@ impl Orchestrator {
     fn answer<'a>(&'a self, request: Request, from: &'a Connection) -> Reply<'a> {
         match request {
             Request::Ping { payload } => reply(async move { Ok(Response::Pong { payload }) }),
-            Request::RecentProjects => reply(async move { recent_projects(self.recent.list().await) }),
+            Request::RecentProjects => reply(async move {
+                self.process_subscribers.subscribe(from.clone());
+                recent_projects(self.recent.list().await)
+            }),
             Request::RecordRecentProject { path } => {
-                reply(async move { recent_projects(self.recent.record(path, unix_now()).await) })
+                reply(async move { self.recent_changed(self.recent.record(path, unix_now()).await) })
             }
             Request::ForgetRecentProject { path } => {
-                reply(async move { recent_projects(self.recent.forget(&path).await) })
+                reply(async move { self.recent_changed(self.recent.forget(&path).await) })
             }
             Request::Accounts => reply(self.accounts(from)),
             Request::SetCredentials { host, token, validate } => {

@@ -4,7 +4,7 @@
 
 use vet_app::changeset::Source;
 use vet_mapping as mapping;
-use vet_protocol::{ProjectId, Response};
+use vet_protocol::{Event, ProjectId, Response};
 
 use crate::announce::{announce_start, review_changed};
 use crate::events::settled;
@@ -17,6 +17,7 @@ impl Orchestrator {
         let complete = open.session.finish_review().await.map_err(message)?;
         let revision = open.session.revision().await;
         settled(&open.subscribers, project, revision);
+        open.subscribers.broadcast(Event::ChangesetsChanged { project });
         Ok(Response::ReviewFinished { complete })
     }
 
@@ -33,6 +34,7 @@ impl Orchestrator {
     pub(crate) async fn set_lens(&self, project: ProjectId, lens: vet_protocol::Lens) -> Result<Response, String> {
         let open = self.ready(project).await?;
         open.session.set_lens(mapping::core_lens(lens)).await.map_err(message)?;
+        open.subscribers.broadcast(Event::LensChanged { project, lens });
         Ok(Response::Done)
     }
 
