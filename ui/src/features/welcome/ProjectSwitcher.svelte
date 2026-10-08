@@ -36,7 +36,10 @@
   let list = $state<HTMLElement>();
 
   const found = $derived(searchRecent(recent, query));
-  const current = $derived(Math.min(cursor, found.length - 1));
+  // The Open… row, when there is one, comes after the projects and is reached the same way.
+  const stops = $derived(found.length + (canPick ? 1 : 0));
+  const current = $derived(Math.min(cursor, stops - 1));
+  const onOpenRow = $derived(canPick && current === found.length);
 
   // Each opening starts with the whole list.
   $effect(() => {
@@ -46,7 +49,7 @@
   const focus = (node: HTMLElement) => node.focus();
 
   async function move(by: number) {
-    cursor = Math.max(0, Math.min(current + by, found.length - 1));
+    cursor = Math.max(0, Math.min(current + by, stops - 1));
     await tick();
     list?.querySelector(".cursor")?.scrollIntoView({ block: "nearest" });
   }
@@ -56,13 +59,19 @@
     if (project !== path) onopen(project);
   }
 
+  function pick() {
+    open = false;
+    onpick();
+  }
+
   function onkeydown(e: KeyboardEvent) {
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       void move(e.key === "ArrowDown" ? 1 : -1);
-    } else if (e.key === "Enter" && found.length) {
+    } else if (e.key === "Enter" && stops) {
       e.preventDefault();
-      choose(found[current].project.path);
+      if (onOpenRow) pick();
+      else choose(found[current].project.path);
     }
   }
 </script>
@@ -116,13 +125,8 @@
     </ul>
     {#if canPick}
       <div class="foot">
-        <button
-          class="flat"
-          type="button"
-          onclick={() => {
-            open = false;
-            onpick();
-          }}>Open… <span class="key">{commands.binding("file.open")?.label}</span></button
+        <button class="flat" class:cursor={onOpenRow} type="button" tabindex="-1" onclick={pick}
+          >Open… <span class="key">{commands.binding("file.open")?.label}</span></button
         >
       </div>
     {/if}
@@ -226,11 +230,17 @@
   }
   .foot button {
     width: 100%;
+    box-sizing: border-box;
     display: flex;
+    align-items: center;
     justify-content: space-between;
     height: var(--h-row);
     padding: 0 8px;
+    border-radius: var(--radius-sheet);
     font-size: var(--fs-ctl);
+  }
+  .foot button.cursor {
+    background: var(--hover);
   }
   .key {
     color: var(--text-3);
