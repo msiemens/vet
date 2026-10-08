@@ -95,10 +95,17 @@ export class StickyHunk {
       oldBaseLines: s.review.oldBaseLines[hunk],
       baseDiffOpen: s.baseDiffs.has(hunk),
     };
-    const bar = (actions: Section["hooks"] | null) =>
-      new HunkBar(hunk, text, state, current, actions, this.m.hunk).toDOM();
+    const bar = (actions: Section["hooks"] | null) => new HunkBar(hunk, text, state, current, actions, this.m.hunk);
     // A side by side view has a bar on each side; the base side only shows the header.
-    this.bars.replaceChildren(...(this.host.mode() === "split" ? [bar(null), bar(s.hooks)] : [bar(s.hooks)]));
+    const widgets = this.host.mode() === "split" ? [bar(null), bar(s.hooks)] : [bar(s.hooks)];
+    // Bars that only changed their outline stay: a button pressed a moment ago is clicked on.
+    const drawn = [...this.bars.children] as HTMLElement[];
+    const kept =
+      this.shown?.file === file &&
+      this.shown.hunk === hunk &&
+      drawn.length === widgets.length &&
+      widgets.every((w, i) => w.updateDOM(drawn[i]));
+    if (!kept) this.bars.replaceChildren(...widgets.map((w) => w.toDOM()));
     // The bars in the editor start right of its gutters.
     const gutters = s.handle?.view.dom.style.getPropertyValue("--vet-gutters");
     if (gutters) this.box.style.setProperty("--vet-gutters", gutters);

@@ -5,6 +5,7 @@ import { iconSvg } from "../../../lib/ui/icons";
 import { commands } from "../../../state/commands";
 import type { Hunk } from "../../../generated/Hunk";
 import type { HunkState } from "../../../generated/HunkState";
+import { type BarFacts, barChange } from "./barChange";
 import { el, iconButton, reconfirmButton } from "./dom";
 
 export interface BarActions {
@@ -46,6 +47,9 @@ const NOTE: Partial<Record<HunkState, string>> = {
   unapplied: "did not apply to the new base",
 };
 
+/** The bar each drawn element shows. */
+const DRAWN = new WeakMap<HTMLElement, HunkBar>();
+
 export class HunkBar extends WidgetType {
   /** `actions` is null on the base side of a side-by-side view, which only shows the header. */
   constructor(
@@ -70,20 +74,28 @@ export class HunkBar extends WidgetType {
     return this.height;
   }
 
+  private get facts(): BarFacts {
+    const { index, text, state, current, actions } = this;
+    const { oldBaseLines, baseDiffOpen } = this.hunk;
+    return { index, text, state, oldBaseLines, baseDiffOpen, current, actions };
+  }
+
   eq(other: HunkBar): boolean {
-    return (
-      other.index === this.index &&
-      other.text === this.text &&
-      other.state === this.state &&
-      other.hunk.oldBaseLines === this.hunk.oldBaseLines &&
-      other.hunk.baseDiffOpen === this.hunk.baseDiffOpen &&
-      other.current === this.current &&
-      other.actions === this.actions
-    );
+    return barChange(other.facts, this.facts) === "none";
+  }
+
+  /** Becoming or ceasing to be the current stop restyles the drawn bar instead of replacing it (`barChange`). */
+  updateDOM(dom: HTMLElement): boolean {
+    const drawn = DRAWN.get(dom);
+    if (!drawn || barChange(drawn.facts, this.facts) === "redraw") return false;
+    dom.classList.toggle("vet-hunk-current", this.current);
+    DRAWN.set(dom, this);
+    return true;
   }
 
   toDOM(): HTMLElement {
     const bar = document.createElement("div");
+    DRAWN.set(bar, this);
     bar.className = `vet-hunk vet-hunk-${this.state}`;
     if (this.current) bar.classList.add("vet-hunk-current");
     const text = document.createElement("span");
