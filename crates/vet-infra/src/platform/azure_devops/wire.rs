@@ -7,7 +7,7 @@ use azure_devops_rust_api::git::models::{
     comment::CommentType, comment_thread::Status as ThreadStatus, git_pull_request_iteration::Reason,
     git_status::State as StatusState,
 };
-use vet_app::platform::{CiState, Push, ReviewRequest, ReviewVerdict, ViewerReview};
+use vet_app::platform::{CiState, Push, ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview};
 
 /// The signed-in user, as the reviewers of a pull request name them.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -55,8 +55,25 @@ fn verdict(vote: i64) -> Option<ReviewVerdict> {
     }
 }
 
-/// A pull request as the list shows it, without what takes a request of its own: checks
-/// and threads. `None` for one without a source commit. `web` is the address the
+/// What the reviewers' votes add up to: a rejection or a wait for the author asks for changes,
+/// whoever else approved; without one, any approval (with suggestions or not) approves.
+pub(super) fn decision(votes: impl IntoIterator<Item = i64>) -> ReviewDecision {
+    let (mut approved, mut asked_for_changes) = (false, false);
+    for vote in votes {
+        approved |= vote > 0;
+        asked_for_changes |= vote < 0;
+    }
+    if asked_for_changes {
+        ReviewDecision::ChangesRequested
+    } else if approved {
+        ReviewDecision::Approved
+    } else {
+        ReviewDecision::Undecided
+    }
+}
+
+/// A pull request as the list shows it, without what takes a request of its own: checks,
+/// threads and policies. `None` for one without a source commit. `web` is the address the
 /// number is appended to.
 pub(super) fn pull_request(pr: &GitPullRequest, me: &Me, web: &str) -> Option<vet_app::platform::PullRequest> {
     let head = pr.last_merge_source_commit.as_ref()?.commit_id.clone()?;
@@ -89,6 +106,8 @@ pub(super) fn pull_request(pr: &GitPullRequest, me: &Me, web: &str) -> Option<ve
         title: pr.title.clone().unwrap_or_default(),
         url: format!("{web}{}", pr.pull_request_id),
         author: me.name(&pr.created_by),
+        // The picture is behind the organization's login: a browser cannot load it.
+        author_avatar: None,
         source_branch: branch(&pr.source_ref_name),
         target_branch: branch(&pr.target_ref_name),
         fork: pr.fork_source.as_ref().map(|source| {
@@ -110,6 +129,14 @@ pub(super) fn pull_request(pr: &GitPullRequest, me: &Me, web: &str) -> Option<ve
         unresolved_threads: 0,
         review_requests,
         viewer_review,
+        decision: decision(
+            pr.reviewers
+                .iter()
+                .filter(|r| r.has_declined != Some(true))
+                .map(|r| r.vote.unwrap_or(0)),
+        ),
+        // Takes the policies, asked for with the checks and threads.
+        blocked: false,
         // The list says when a pull request was created, not when it last changed.
         updated_at: pr.creation_date.unix_timestamp(),
     })
@@ -224,4 +251,32 @@ pub(super) fn pushes(iterations: &[GitPullRequestIteration], head: &str) -> (Opt
         .rev()
         .find_map(|i| i.common_ref_commit.as_ref()?.commit_id.clone());
     (base, pushes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approvals_approve_unless_someone_waits_for_the_author_or_rejects() {
+        assert_eq!(decision([]), ReviewDecision::Undecided);
+        assert_eq!(decision([0, 0]), ReviewDecision::Undecided, "no vote is no decision");
+        assert_eq!(decision([10]), ReviewDecision::Approved);
+        assert_eq!(
+            decision([5, 0]),
+            ReviewDecision::Approved,
+            "approved with suggestions approves"
+        );
+        assert_eq!(
+            decision([10, -5]),
+            ReviewDecision::ChangesRequested,
+            "waiting for the author"
+        );
+        assert_eq!(
+            decision([-10, 10, 10]),
+            ReviewDecision::ChangesRequested,
+            "a rejection outweighs approvals"
+        );
+        assert_eq!(decision([-5]), ReviewDecision::ChangesRequested);
+    }
 }

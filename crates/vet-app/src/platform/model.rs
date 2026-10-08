@@ -158,6 +158,27 @@ pub struct ViewerReview {
     pub commit: Option<String>,
 }
 
+/// What the reviewers of a pull request decided together, as the platform rolls their reviews up.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ReviewDecision {
+    #[default]
+    Undecided,
+    Approved,
+    ChangesRequested,
+}
+
+/// Where a pull request stands, as the queue's Status column says it. The first that applies of
+/// these, in this order, is the pull request's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum QueueStatus {
+    Draft,
+    /// The platform says it cannot be merged as it is: a blocking policy or check did not pass.
+    Blocked,
+    ChangesRequested,
+    WaitingForYou,
+    Approved,
+}
+
 /// The lines a pull request adds and removes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ChangedLines {
@@ -171,6 +192,8 @@ pub struct PullRequest {
     pub title: String,
     pub url: String,
     pub author: String,
+    /// The address of the author's picture, when the platform gives one that a browser can load.
+    pub author_avatar: Option<String>,
     pub source_branch: String,
     pub target_branch: String,
     /// The repository the source branch is in, as the platform names it, when that is not the
@@ -192,6 +215,10 @@ pub struct PullRequest {
     /// Those whose review is asked for and not given yet.
     pub review_requests: Vec<ReviewRequest>,
     pub viewer_review: Option<ViewerReview>,
+    /// What the reviewers decided together.
+    pub decision: ReviewDecision,
+    /// The platform holds the merge back: a blocking policy or branch protection is not met.
+    pub blocked: bool,
     /// Unix seconds.
     pub updated_at: i64,
 }

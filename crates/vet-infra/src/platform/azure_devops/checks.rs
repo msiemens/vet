@@ -97,6 +97,18 @@ fn policy_check(evaluation: &PolicyEvaluationRecord, build_url: impl Fn(i64) -> 
     })
 }
 
+/// Whether a policy that holds the merge back has failed. One still queued or running has not
+/// failed yet, and a policy that is not blocking only advises.
+pub(super) fn blocked_by(evaluations: &[PolicyEvaluationRecord]) -> bool {
+    evaluations.iter().any(|evaluation| {
+        let blocking = evaluation
+            .configuration
+            .as_ref()
+            .is_some_and(|c| c.is_blocking != Some(false));
+        blocking && matches!(evaluation.status, Some(PolicyStatus::Rejected | PolicyStatus::Broken))
+    })
+}
+
 /// The id of the build a check names, if it is one.
 fn build_number(check: &str) -> Option<i32> {
     check.strip_prefix("build:")?.parse().ok()

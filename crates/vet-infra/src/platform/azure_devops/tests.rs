@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 use vet_app::platform::{
-    Credential, CredentialSource, ReviewRequest, ReviewState, ReviewVerdict, Token, ViewerReview, list_rows,
+    Credential, CredentialSource, ReviewDecision, ReviewRequest, ReviewState, ReviewVerdict, Token, ViewerReview,
+    list_rows,
 };
 
 use super::*;
@@ -287,6 +288,11 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
         "a reviewer who has voted is no request"
     );
     assert!(found.iter().find(|p| p.number == 2).unwrap().draft);
+    assert_eq!(
+        (first.decision, found.iter().find(|p| p.number == 3).unwrap().decision),
+        (ReviewDecision::Approved, ReviewDecision::Undecided),
+        "the reviewers' votes add up"
+    );
 }
 
 #[tokio::test]

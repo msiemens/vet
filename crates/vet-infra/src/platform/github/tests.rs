@@ -3,7 +3,9 @@
 use std::cell::Cell;
 use std::sync::{Arc, Mutex};
 
-use vet_app::platform::{ChangedLines, CiState, ReviewRequest, ReviewVerdict, ViewerReview, is_waiting_for_me};
+use vet_app::platform::{
+    ChangedLines, CiState, ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview, is_waiting_for_me,
+};
 
 use super::*;
 use crate::http::client_builder;
@@ -233,6 +235,20 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
     assert_eq!(draft.fork.as_deref(), Some("a deleted repository"));
     assert_eq!(draft.comments, 0);
     assert_eq!(found[2].fork, None, "a branch of the repository itself");
+
+    assert_eq!(
+        (first.decision, first.blocked, first.author_avatar.as_deref()),
+        (
+            ReviewDecision::ChangesRequested,
+            true,
+            Some("https://avatars.githubusercontent.com/u/2?v=4")
+        )
+    );
+    assert_eq!(
+        (draft.decision, draft.blocked, draft.author_avatar.as_deref()),
+        (ReviewDecision::Undecided, false, None),
+        "nothing said, and no account to have a picture"
+    );
 }
 
 #[tokio::test]

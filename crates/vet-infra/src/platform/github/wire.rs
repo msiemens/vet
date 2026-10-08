@@ -2,8 +2,8 @@
 
 use serde::Deserialize;
 use vet_app::platform::{
-    ChangedLines, CiState, ForcePush, PlatformError, PullRequest, PullRequestDetail, ReviewRequest, ReviewVerdict,
-    ViewerReview,
+    ChangedLines, CiState, ForcePush, PlatformError, PullRequest, PullRequestDetail, ReviewDecision, ReviewRequest,
+    ReviewVerdict, ViewerReview,
 };
 
 /// The fields of a pull request that the queue shows. One request per page asks for these
@@ -25,7 +25,9 @@ fragment PullRequestFields on PullRequest {
   totalCommentsCount
   isCrossRepository
   headRepository { nameWithOwner }
-  author { login }
+  reviewDecision
+  mergeStateStatus
+  author { login avatarUrl }
   labels(first: 20) { nodes { name } }
   assignees(first: 10) { nodes { login } }
   reviewRequests(first: 20) {
@@ -156,6 +158,13 @@ pub(super) struct Login {
 }
 
 #[derive(Deserialize)]
+pub(super) struct Author {
+    pub login: String,
+    #[serde(rename = "avatarUrl")]
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub(super) struct Name {
     pub name: String,
 }
@@ -235,8 +244,11 @@ pub(super) struct PullRequestNode {
     is_cross_repository: bool,
     /// Null when the fork was deleted.
     head_repository: Option<HeadRepository>,
+    /// Null when no review is required or none was given.
+    review_decision: Option<String>,
+    merge_state_status: Option<String>,
     /// Null for an account that was deleted.
-    author: Option<Login>,
+    author: Option<Author>,
     labels: Nodes<Name>,
     assignees: Nodes<Login>,
     review_requests: Nodes<RequestNode>,
@@ -270,6 +282,21 @@ pub(super) fn review_verdict(state: &str) -> Option<ReviewVerdict> {
     }
 }
 
+/// What GitHub rolled the reviews up to; a pull request nobody has to review or that has no
+/// decisive review yet is undecided.
+pub(super) fn decision(review_decision: Option<&str>) -> ReviewDecision {
+    match review_decision {
+        Some("APPROVED") => ReviewDecision::Approved,
+        Some("CHANGES_REQUESTED") => ReviewDecision::ChangesRequested,
+        _ => ReviewDecision::Undecided,
+    }
+}
+
+/// Whether GitHub holds the merge back: a required review, check or protection is not met.
+pub(super) fn is_blocked(merge_state_status: Option<&str>) -> bool {
+    merge_state_status == Some("BLOCKED")
+}
+
 pub(super) fn review_request(node: RequestNode) -> Option<ReviewRequest> {
     let reviewer = node.requested_reviewer?;
     match reviewer.type_name.as_str() {
@@ -291,7 +318,11 @@ impl PullRequestNode {
             number: self.number,
             title: self.title,
             url: self.url,
-            author: self.author.map_or_else(|| "ghost".to_owned(), |a| a.login),
+            author: self
+                .author
+                .as_ref()
+                .map_or_else(|| "ghost".to_owned(), |a| a.login.clone()),
+            author_avatar: self.author.and_then(|a| a.avatar_url),
             source_branch: self.head_ref_name,
             target_branch: self.base_ref_name,
             fork: self.is_cross_repository.then(|| {
@@ -316,6 +347,8 @@ impl PullRequestNode {
                     commit: r.commit.map(|c| c.oid),
                 })
             }),
+            decision: decision(self.review_decision.as_deref()),
+            blocked: is_blocked(self.merge_state_status.as_deref()),
             updated_at,
         })
     }
@@ -376,6 +409,30 @@ pub(super) fn parse_timestamp(text: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn github_rolls_the_reviews_up_to_approved_or_changes_requested_and_nothing_else_decides() {
+        assert_eq!(decision(Some("APPROVED")), ReviewDecision::Approved);
+        assert_eq!(decision(Some("CHANGES_REQUESTED")), ReviewDecision::ChangesRequested);
+        for undecided in [Some("REVIEW_REQUIRED"), Some("SOMETHING_NEW"), None] {
+            assert_eq!(decision(undecided), ReviewDecision::Undecided, "{undecided:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_blocked_merge_state_is_blocked() {
+        assert!(is_blocked(Some("BLOCKED")));
+        for state in [
+            Some("CLEAN"),
+            Some("BEHIND"),
+            Some("DIRTY"),
+            Some("UNSTABLE"),
+            Some("DRAFT"),
+            None,
+        ] {
+            assert!(!is_blocked(state), "{state:?}");
+        }
+    }
 
     #[test]
     fn github_timestamps_are_unix_seconds() {

@@ -16,7 +16,9 @@
           "totalCommentsCount": 5,
           "isCrossRepository": true,
           "headRepository": { "nameWithOwner": "grace/app" },
-          "author": { "login": "grace" },
+          "reviewDecision": "CHANGES_REQUESTED",
+          "mergeStateStatus": "BLOCKED",
+          "author": { "login": "grace", "avatarUrl": "https://avatars.githubusercontent.com/u/2?v=4" },
           "labels": { "nodes": [{ "name": "performance" }, { "name": "needs-review" }] },
           "assignees": { "nodes": [{ "login": "ada" }] },
           "reviewRequests": {

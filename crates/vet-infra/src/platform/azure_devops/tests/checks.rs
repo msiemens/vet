@@ -148,6 +148,86 @@ async fn the_head_has_the_statuses_of_its_iteration_and_of_the_pull_request_and_
     assert_eq!(lint.url.as_deref(), Some("https://ci.contoso.com/4"));
 }
 
+/// A server that lists pull requests 1 to 3 of a project with an id, and the policy evaluations
+/// of each of them as `evaluations` has them, by number.
+fn listing_with_policies(evaluations: Vec<(i32, Vec<Value>)>) -> Fake {
+    Fake::start(move |request, _| {
+        let path = request.path.split('?').next().unwrap().to_ascii_lowercase();
+        let list = |items: &[Value]| Canned::json(&json!({ "count": items.len(), "value": items }).to_string());
+        if path.ends_with("/_apis/connectiondata") {
+            Canned::json(&profile())
+        } else if path == "/contoso/_apis/identities" {
+            Canned::json(&no_value())
+        } else if path == PULLS.to_ascii_lowercase() {
+            let docs: Vec<Value> = (1..=3)
+                .map(|n| {
+                    let mut doc = Doc::new(n).json();
+                    doc["repository"]["project"]["id"] = json!("proj-1");
+                    doc
+                })
+                .collect();
+            list(&docs)
+        } else if path.ends_with("/statuses") || path.ends_with("/threads") {
+            list(&[])
+        } else if path == "/contoso/shop/_apis/policy/evaluations" {
+            let number: i32 = request.path.rsplit("%2F").next().unwrap().parse().unwrap();
+            let found = evaluations.iter().find(|(n, _)| *n == number);
+            list(found.map_or(&[][..], |(_, e)| &e[..]))
+        } else {
+            panic!("unexpected request {} {}", request.method, request.path)
+        }
+    })
+}
+
+#[tokio::test]
+async fn a_pull_request_is_blocked_by_a_blocking_policy_that_failed_and_by_nothing_else() {
+    set_now(NOW);
+    let fake = listing_with_policies(vec![
+        (
+            1,
+            vec![
+                evaluation("a", "approved", "Minimum number of reviewers", true, None),
+                evaluation("b", "rejected", "Build validation", true, Some(55)),
+            ],
+        ),
+        (
+            2,
+            vec![
+                evaluation("c", "rejected", "Docs", false, Some(56)),
+                evaluation("d", "running", "Minimum number of reviewers", true, None),
+                evaluation("e", "queued", "Build validation", true, Some(57)),
+                evaluation("f", "notApplicable", "Work item linking", true, None),
+            ],
+        ),
+        (3, vec![evaluation("g", "broken", "Required reviewers", true, None)]),
+    ]);
+
+    let found = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
+
+    let blocked = |n: u64| found.iter().find(|p| p.number == n).unwrap().blocked;
+    assert_eq!(
+        (blocked(1), blocked(2), blocked(3)),
+        (true, false, true),
+        "a failed advisory policy, and ones still running, hold nothing back"
+    );
+}
+
+#[tokio::test]
+async fn the_policies_of_a_pull_request_are_asked_for_with_its_checks_and_threads() {
+    set_now(NOW);
+    let fake = listing_with_policies(vec![]);
+    let client = client(&fake);
+
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+
+    assert_eq!(
+        requests_to(&fake, "/policy/evaluations"),
+        3,
+        "once per pull request, then kept"
+    );
+}
+
 #[tokio::test]
 async fn an_earlier_commit_has_only_the_statuses_of_the_iteration_it_was_the_source_of() {
     set_now(NOW);

@@ -2,7 +2,8 @@
 //! row shows. Pure: the platforms only supply the pull requests.
 
 use super::model::{
-    ChangedLines, CiState, PullRequest, PullRequestQuery, QueueTab, ReviewRequest, ReviewVerdict, Viewer,
+    ChangedLines, CiState, PullRequest, PullRequestQuery, QueueStatus, QueueTab, ReviewDecision, ReviewRequest,
+    ReviewVerdict, Viewer,
 };
 
 /// What the viewer's earlier review says about the pull request as it is now.
@@ -23,6 +24,7 @@ pub struct PullRequestRow {
     pub title: String,
     pub url: String,
     pub author: String,
+    pub author_avatar: Option<String>,
     pub source_branch: String,
     pub target_branch: String,
     pub fork: Option<String>,
@@ -33,6 +35,8 @@ pub struct PullRequestRow {
     pub review: ReviewState,
     pub waiting_for_me: bool,
     pub draft: bool,
+    /// Where the pull request stands for the viewer; none when no status applies.
+    pub status: Option<QueueStatus>,
     pub labels: Vec<String>,
     /// Unix seconds.
     pub updated_at: i64,
@@ -88,14 +92,35 @@ pub fn matches(pr: &PullRequest, viewer: &Viewer, query: &PullRequestQuery) -> b
         && query.ci.is_none_or(|ci| pr.ci == Some(ci))
 }
 
+/// Where a pull request stands. A draft is a draft whatever else holds; then what holds the merge
+/// back, then what the reviewers asked for, then what is asked of the viewer, then approval.
+pub fn queue_status(draft: bool, blocked: bool, decision: ReviewDecision, waiting_for_me: bool) -> Option<QueueStatus> {
+    if draft {
+        Some(QueueStatus::Draft)
+    } else if blocked {
+        Some(QueueStatus::Blocked)
+    } else if decision == ReviewDecision::ChangesRequested {
+        Some(QueueStatus::ChangesRequested)
+    } else if waiting_for_me {
+        Some(QueueStatus::WaitingForYou)
+    } else if decision == ReviewDecision::Approved {
+        Some(QueueStatus::Approved)
+    } else {
+        None
+    }
+}
+
 fn row(pr: PullRequest, viewer: &Viewer) -> PullRequestRow {
+    let waiting_for_me = is_waiting_for_me(&pr, viewer);
     PullRequestRow {
         review: review_state(&pr),
-        waiting_for_me: is_waiting_for_me(&pr, viewer),
+        waiting_for_me,
+        status: queue_status(pr.draft, pr.blocked, pr.decision, waiting_for_me),
         number: pr.number,
         title: pr.title,
         url: pr.url,
         author: pr.author,
+        author_avatar: pr.author_avatar,
         source_branch: pr.source_branch,
         target_branch: pr.target_branch,
         fork: pr.fork,
@@ -139,6 +164,7 @@ pub(crate) mod tests {
             title: format!("PR {number}"),
             url: format!("https://github.com/acme/app/pull/{number}"),
             author: "grace".to_owned(),
+            author_avatar: None,
             source_branch: "feature".to_owned(),
             target_branch: "main".to_owned(),
             fork: None,
@@ -152,6 +178,8 @@ pub(crate) mod tests {
             unresolved_threads: 0,
             review_requests: Vec::new(),
             viewer_review: None,
+            decision: ReviewDecision::Undecided,
+            blocked: false,
             updated_at: 1_000 + number as i64,
         }
     }
@@ -299,6 +327,33 @@ pub(crate) mod tests {
         assert_eq!(numbers(&query), [2, 4, 3, 1]);
         query.limit = Some(2);
         assert_eq!(numbers(&query), [2, 4]);
+    }
+
+    #[test]
+    fn a_row_has_the_first_status_that_applies_in_the_order_draft_blocked_changes_requested_waiting_approved() {
+        let mut p = requested_user(pr(1));
+        p.draft = true;
+        p.blocked = true;
+        p.decision = ReviewDecision::ChangesRequested;
+        let status = |p: &PullRequest| {
+            let query = PullRequestQuery::new(QueueTab::AllOpen);
+            rows(vec![p.clone()], &viewer(), &query)[0].status
+        };
+        assert_eq!(status(&p), Some(QueueStatus::Draft));
+        p.draft = false;
+        assert_eq!(status(&p), Some(QueueStatus::Blocked));
+        p.blocked = false;
+        assert_eq!(status(&p), Some(QueueStatus::ChangesRequested));
+        p.decision = ReviewDecision::Approved;
+        assert_eq!(
+            status(&p),
+            Some(QueueStatus::WaitingForYou),
+            "what is asked of the viewer comes first"
+        );
+        p.review_requests.clear();
+        assert_eq!(status(&p), Some(QueueStatus::Approved));
+        p.decision = ReviewDecision::Undecided;
+        assert_eq!(status(&p), None);
     }
 
     #[test]

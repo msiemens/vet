@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
-use azure_devops_rust_api::git::models::PullRequestStatus;
+use azure_devops_rust_api::git::models::{GitPullRequest, PullRequestStatus};
 use azure_devops_rust_api::ims::models::QueryMembership;
 use futures::future::try_join_all;
 use url::Url;
@@ -88,10 +88,15 @@ struct Extras {
     ci: Option<CiState>,
     unresolved_threads: u32,
     comments: u32,
+    /// A policy that holds the merge back has failed.
+    blocked: bool,
 }
 
 #[derive(Default)]
 struct State {
+    /// The id of the project of each repository, as its pull requests say it; the policies of
+    /// a pull request are asked for by it.
+    project_ids: HashMap<RemoteKey, String>,
     /// The profile by host, with when it was read.
     profiles: HashMap<String, (i64, access::Me)>,
     /// The user's groups by host and organization.
@@ -302,6 +307,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
     /// is where it was.
     async fn extras(
         &self,
+        access: &Access,
         git: &azure_devops_rust_api::git::Client,
         remote: &RemoteKey,
         repository: &Repository<'_>,
@@ -336,31 +342,53 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
                 .await;
             self.settle(&remote.account(), list).map(|list| list.value)
         };
-        let (statuses, threads) = futures::future::join(statuses, threads).await;
+        let evaluations = async {
+            let Some(project_id) = self.state().project_ids.get(remote).cloned() else {
+                return Ok(Vec::new());
+            };
+            let artifact = format!("vstfs:///CodeReview/CodeReviewId/{project_id}/{id}");
+            let list = access
+                .policies(&self.endpoints().api)?
+                .evaluations_client()
+                .list(organization, project, artifact)
+                .await;
+            Self::or_nothing(self.settle(&remote.account(), list).map(|list| list.value))
+        };
+        let (statuses, threads, evaluations) = futures::future::join3(statuses, threads, evaluations).await;
         let threads = Self::or_nothing(threads)?;
         let extras = Extras {
             ci: wire::ci_state(&Self::or_nothing(statuses)?),
             unresolved_threads: wire::unresolved_threads(&threads),
             comments: wire::comment_count(&threads),
+            blocked: checks::blocked_by(&evaluations?),
         };
         self.state().extras.insert(key, (now, pr.head.clone(), extras));
         Ok(extras)
     }
 
-    /// `prs` with their checks and threads, a few at a time.
+    /// Remembers the id of the project `remote` is in, which a pull request of it names.
+    fn learn_project(&self, remote: &RemoteKey, pr: Option<&GitPullRequest>) {
+        if let Some(id) = pr.and_then(|pr| pr.repository.project.id.clone()) {
+            self.state().project_ids.insert(remote.clone(), id);
+        }
+    }
+
+    /// `prs` with their checks, threads and policies, a few at a time.
     async fn enrich(
         &self,
+        access: &Access,
         git: &azure_devops_rust_api::git::Client,
         remote: &RemoteKey,
         repository: &Repository<'_>,
         prs: &mut [PullRequest],
     ) -> Result<(), PlatformError> {
         for chunk in prs.chunks_mut(CONCURRENCY) {
-            let extras = try_join_all(chunk.iter().map(|pr| self.extras(git, remote, repository, pr))).await?;
+            let extras = try_join_all(chunk.iter().map(|pr| self.extras(access, git, remote, repository, pr))).await?;
             for (pr, extras) in chunk.iter_mut().zip(extras) {
                 pr.ci = extras.ci;
                 pr.unresolved_threads = extras.unresolved_threads;
                 pr.comments = extras.comments;
+                pr.blocked = extras.blocked;
             }
         }
         Ok(())
@@ -407,6 +435,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
                 request = request.search_criteria_creator_id(id.clone());
             }
             let page = self.settle(&remote.account(), request.await)?.value;
+            self.learn_project(remote, page.first());
             found.extend(page.iter().filter_map(|pr| wire::pull_request(pr, &me, &web)));
             skip += self.page_size;
             if page.len() < usize::try_from(self.page_size).unwrap_or(usize::MAX) || found.len() >= MAX_LISTED {
@@ -427,7 +456,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         found.retain(|pr| matches(pr, &viewer, &without_ci));
         found.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(b.number.cmp(&a.number)));
         found.truncate(MAX_LISTED);
-        self.enrich(&git, remote, &repository, &mut found).await?;
+        self.enrich(&access, &git, remote, &repository, &mut found).await?;
         Ok(found)
     }
 
@@ -457,6 +486,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             PlatformError::NotFound(_) => not_found(),
             other => other,
         })?;
+        self.learn_project(remote, Some(&found));
         let mut pull_request = wire::pull_request(&found, &me, &web_address(remote, &repository))
             .ok_or_else(|| PlatformError::Unexpected(format!("{} has no source commit", remote)))?;
         let iterations = git
@@ -464,8 +494,14 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             .list(organization, name, id, project)
             .await;
         let iterations = self.settle(&remote.account(), iterations)?.value;
-        self.enrich(&git, remote, &repository, std::slice::from_mut(&mut pull_request))
-            .await?;
+        self.enrich(
+            &access,
+            &git,
+            remote,
+            &repository,
+            std::slice::from_mut(&mut pull_request),
+        )
+        .await?;
 
         let (base, pushes) = wire::pushes(&iterations, &pull_request.head);
         {

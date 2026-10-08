@@ -29,13 +29,13 @@ pub(crate) use fake::FakeHosting;
 pub use host::{PlatformKind, normalize_host};
 pub use model::{
     BlockingSource, ChangedLines, ChangesetThreads, CiState, ForcePush, PlatformError, PlatformTraits, Posting,
-    PullRequest, PullRequestDetail, PullRequestQuery, Push, QueueTab, ReviewRequest, ReviewVerdict, Verdict, Viewer,
-    ViewerReview,
+    PullRequest, PullRequestDetail, PullRequestQuery, Push, QueueStatus, QueueTab, ReviewDecision, ReviewRequest,
+    ReviewVerdict, Verdict, Viewer, ViewerReview,
 };
 pub use port::{Platform, commits_checks, list_rows};
 pub use pushes::pushes_from_force_pushes;
 #[cfg(test)]
 pub(crate) use queue::tests::{pr, viewer};
-pub use queue::{PullRequestRow, ReviewState, is_waiting_for_me, matches, review_state, rows};
+pub use queue::{PullRequestRow, ReviewState, is_waiting_for_me, matches, queue_status, review_state, rows};
 pub use remote::{RemoteKey, parse_remote};
 pub use sync::{MessageSync, RemovedThread, StatusSync, SyncPlan, ThreadSync, reconcile};
