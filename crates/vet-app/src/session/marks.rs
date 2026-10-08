@@ -293,6 +293,6 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         if acknowledged {
             self.note_reviewed(st).await?;
         }
-        Ok(())
+        self.note_progress(st).await
     }
 }

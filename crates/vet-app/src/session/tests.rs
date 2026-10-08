@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vet_core::classify::{changes, classify};
 use vet_core::content::{
-    BlobId, EntryKind, FileDiff, FileEntry, Hunk, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId,
-    SnapshotStatus,
+    BlobId, EntryKind, FileDiff, FileEntry, Hunk, LineDelta, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotDiff,
+    SnapshotId, SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle;
@@ -28,7 +28,7 @@ use crate::ports::{
     GitError, History, Remerged, ReviewStore, Scan, Scanner, Store, StoreError, ThreadStore,
 };
 use crate::pull_request::PullRequestRefs;
-use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, SpanId, SpanOrigin};
+use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
 
 const REPO: &str = "/repo";
 
@@ -127,6 +127,8 @@ pub(crate) struct FakeGit {
     parents: Arc<Mutex<HashMap<CommitId, Vec<CommitId>>>>,
     /// The automatic merge of the merges among the commits.
     remerges: Arc<Mutex<HashMap<CommitId, Remerged>>>,
+    /// How many diffs were asked for.
+    diffs: Arc<AtomicUsize>,
 }
 
 fn clock() -> i64 {
@@ -409,6 +411,7 @@ impl Differ for FakeGit {
         old: &Snapshot,
         new: &Snapshot,
     ) -> std::result::Result<SnapshotDiff, GitError> {
+        self.diffs.fetch_add(1, Ordering::Relaxed);
         let blobs: BTreeMap<_, _> = self.blobs.lock().unwrap().clone().into_iter().collect();
         let mut out = SnapshotDiff::default();
         out.renames.0.extend(self.renames.lock().unwrap().iter().cloned());
@@ -451,6 +454,7 @@ struct Mem {
     closed: bool,
     /// Whether the review was complete when it was closed.
     complete: Option<bool>,
+    summary: Option<ReviewSummary>,
     threads: Vec<ChangesetThread>,
     next_message: u64,
     filter: Option<ReviewFilter>,
@@ -582,6 +586,7 @@ impl ReviewStore for MemStore {
             opened_at: 0,
             closed_at: mem.closed.then_some(0),
             complete: mem.complete,
+            summary: mem.summary,
         }))
     }
     async fn filter(&self, _: String) -> StoreResult<ReviewFilter> {
@@ -604,6 +609,10 @@ impl ReviewStore for MemStore {
     }
     async fn set_last_reviewed(&self, _: ReviewId, version: u32) -> StoreResult<()> {
         self.0.lock().unwrap().last_reviewed = Some(version);
+        Ok(())
+    }
+    async fn set_review_summary(&self, _: ReviewId, summary: ReviewSummary) -> StoreResult<()> {
+        self.0.lock().unwrap().summary = Some(summary);
         Ok(())
     }
     async fn edit_spans(
@@ -3267,6 +3276,11 @@ async fn the_list_has_the_working_tree_first_then_every_branch_the_most_recent_f
     assert_eq!(feature.divergence, Some(Divergence { ahead: 1, behind: 1 }));
     assert_eq!(feature.last_commit, Some(-DAY));
     assert!(list.rows[1].checked_out);
+    assert_eq!(
+        (list.rows[0].author.as_deref(), feature.author.as_deref()),
+        (None, Some("Ann")),
+        "a branch has its tip's author, the working tree none"
+    );
 }
 
 #[tokio::test]
@@ -3287,6 +3301,7 @@ async fn the_list_says_which_changesets_have_a_review_and_keeps_the_one_on_view(
         version,
         started_at,
         last_reviewed,
+        ..
     } = review_of(&open, "feature")
     else {
         panic!("the review is open")
@@ -3481,6 +3496,185 @@ async fn the_review_state_of_pull_requests_is_listed_for_the_sources_asked() {
 
     assert_eq!(reviews[0], RowReview::None);
     assert!(matches!(reviews[1], RowReview::Open { version: 1, .. }), "{reviews:?}");
+}
+
+/// How far the working tree's review is, as the list says it.
+async fn tree_progress(session: &LiveSession<FakeGit, MemStore>) -> Option<ReviewSummary> {
+    match session.changesets().await.unwrap().rows[0].review {
+        RowReview::Open { progress, .. } => progress,
+        other => panic!("the review is open: {other:?}"),
+    }
+}
+
+fn summary(total: u32, seen: u32, old_base: u32) -> ReviewSummary {
+    ReviewSummary { total, seen, old_base }
+}
+
+#[tokio::test]
+async fn the_list_says_how_far_an_open_review_is_and_follows_its_marks_and_its_filter() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3, 5]))]).await;
+    assert_eq!(fx.session.changesets().await.unwrap().rows[0].review, RowReview::None);
+
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    assert_eq!(
+        tree_progress(&fx.session).await,
+        Some(summary(4, 2, 0)),
+        "a hunk of two"
+    );
+
+    fx.session.set_seen(0, "a.txt", &[1], true).await.unwrap();
+    assert_eq!(tree_progress(&fx.session).await, Some(summary(4, 4, 0)));
+
+    fx.session.set_seen(0, "a.txt", &[0], false).await.unwrap();
+    assert_eq!(
+        tree_progress(&fx.session).await,
+        Some(summary(4, 2, 0)),
+        "a mark taken back"
+    );
+
+    fx.session.exclude_path("a.txt", false).await.unwrap();
+    assert_eq!(
+        tree_progress(&fx.session).await,
+        Some(summary(0, 0, 0)),
+        "progress is measured against the filter"
+    );
+}
+
+#[tokio::test]
+async fn the_progress_of_a_review_counts_the_non_text_items_it_acknowledged() {
+    let git = FakeGit::default();
+    let base = git.snapshot(&[("run.sh", "echo\n")]);
+    let mut dirty = base.clone();
+    dirty.entries.get_mut(&path("run.sh")).unwrap().mode = 0o100755;
+    dirty.id = merkle::snapshot_id(&dirty.entries);
+    *git.base.lock().unwrap() = Some(base);
+    git.scans.lock().unwrap().push(dirty);
+    let session = LiveSession::open(git, MemStore::default(), REPO.into(), clock)
+        .await
+        .unwrap();
+
+    session.acknowledge(0, "run.sh", NonTextKind::Mode, true).await.unwrap();
+    assert_eq!(tree_progress(&session).await, Some(summary(1, 1, 0)));
+
+    session
+        .acknowledge(0, "run.sh", NonTextKind::Mode, false)
+        .await
+        .unwrap();
+    assert_eq!(tree_progress(&session).await, Some(summary(1, 0, 0)));
+}
+
+#[tokio::test]
+async fn a_review_whose_base_moved_has_its_base_changed_lines_in_the_progress() {
+    let fx = seen_then_base_changed().await;
+    let m = fx.session.manifest(View::Changeset).await.unwrap();
+
+    let progress = tree_progress(&fx.session).await.expect("measured");
+
+    assert_eq!(
+        (progress.total, progress.seen, progress.old_base),
+        (
+            m.completion.lines + m.completion.items,
+            m.completion.seen_lines + m.completion.acknowledged_items,
+            m.completion.old_base_lines
+        )
+    );
+    assert!(progress.old_base > 0, "the marked hunk was seen against the old base");
+    assert!(progress.seen_percent() < 100.0 && progress.old_base_percent() > 0.0);
+}
+
+#[tokio::test]
+async fn the_progress_of_a_working_tree_off_view_follows_the_tree_as_it_settles() {
+    let base = numbered(10, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[3]))]).await;
+    fx.git.feature(&[("a.txt", &base)], &[("a.txt", &numbered(10, &[1]))]);
+    fx.session.set_seen(0, "a.txt", &[0], true).await.unwrap();
+    assert_eq!(tree_progress(&fx.session).await, Some(summary(2, 2, 0)));
+    view_feature(&fx).await;
+
+    // Nobody looks at the tree while the branch is on view.
+    fx.settle(&[("a.txt", &numbered(10, &[3, 7]))]).await;
+
+    assert_eq!(
+        tree_progress(&fx.session).await,
+        Some(summary(4, 2, 0)),
+        "the new hunk is not seen"
+    );
+}
+
+#[tokio::test]
+async fn the_lines_of_a_branch_are_counted_between_its_base_and_its_tip_once_per_pair_of_commits() {
+    let base = numbered(30, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fx.git.feature(
+        &[("a.txt", &base)],
+        &[("a.txt", &numbered(30, &[3, 20])), ("new.txt", "n\n")],
+    );
+
+    let lines = fx.session.lines_of(&feature()).await.unwrap();
+
+    assert_eq!(lines, Some(LineDelta { added: 3, removed: 2 }));
+    assert_eq!(fx.session.lines_of(&feature()).await.unwrap(), lines);
+    assert_eq!(fx.git.diffs.load(Ordering::Relaxed), 1, "the pair was diffed once");
+
+    // The branch moved: another tip is another pair.
+    fx.git
+        .branch("feature", "tip2", &[("a.txt", &numbered(30, &[3]))], &["tip1", "m1"]);
+    assert_eq!(
+        fx.session.lines_of(&feature()).await.unwrap(),
+        Some(LineDelta { added: 1, removed: 1 })
+    );
+    assert_eq!(fx.git.diffs.load(Ordering::Relaxed), 2);
+}
+
+#[tokio::test]
+async fn a_reviewed_changeset_is_counted_against_the_base_its_review_chose() {
+    let base = numbered(30, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fx.git
+        .feature(&[("a.txt", &base)], &[("a.txt", &numbered(30, &[3, 20]))]);
+    let revision = view_feature(&fx).await;
+    fx.session.set_seen(revision, "a.txt", &[0], true).await.unwrap();
+    assert_eq!(
+        fx.session.lines_of(&feature()).await.unwrap(),
+        Some(LineDelta { added: 2, removed: 2 })
+    );
+
+    fx.git.add_commit("m0", "m0", &[("a.txt", &numbered(30, &[3]))]);
+    fx.session
+        .set_base(BaseChoice::Commit {
+            id: CommitId("m0".into()),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fx.session.lines_of(&feature()).await.unwrap(),
+        Some(LineDelta { added: 1, removed: 1 })
+    );
+}
+
+#[tokio::test]
+async fn a_pull_request_has_lines_once_it_was_fetched_and_the_working_tree_has_none() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "dirty\n")]).await;
+    assert_eq!(
+        fx.session.lines_of(&pull_request_7()).await.unwrap(),
+        None,
+        "not fetched"
+    );
+    assert_eq!(fx.session.lines_of(&Source::WorkingTree).await.unwrap(), None);
+
+    fetch_pull_request_7(
+        &fx.git,
+        &[("a.txt", "one\n")],
+        "pr1",
+        &[("a.txt", "two\n"), ("new.txt", "n\n")],
+    );
+
+    assert_eq!(
+        fx.session.lines_of(&pull_request_7()).await.unwrap(),
+        Some(LineDelta { added: 2, removed: 1 })
+    );
 }
 
 mod sync;

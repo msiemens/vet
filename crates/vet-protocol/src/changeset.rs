@@ -46,8 +46,19 @@ pub struct Divergence {
     pub behind: u32,
 }
 
+/// How far an open review is, as of its last change of marks, version or filter.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReviewProgress {
+    /// Share of the changeset's lines and non-text items that are seen, in percent.
+    pub seen_percent: f32,
+    /// Share that is seen against an old base only, in percent.
+    pub old_base_percent: f32,
+}
+
 /// What Vet has of a changeset's latest review.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "state", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
 pub enum RowReview {
@@ -61,6 +72,10 @@ pub enum RowReview {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         last_reviewed: Option<u32>,
+        /// Absent for a review that was never measured.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        progress: Option<ReviewProgress>,
     },
     Finished {
         complete: bool,
@@ -73,7 +88,7 @@ pub enum RowReview {
     },
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ChangesetRow {
@@ -96,6 +111,10 @@ pub struct ChangesetRow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub last_commit: Option<u32>,
+    /// Who made the branch's tip commit; absent for the working tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub author: Option<String>,
     pub review: RowReview,
 }
 
@@ -111,8 +130,21 @@ pub enum CiState {
     Skipped,
 }
 
+/// Where a pull request stands for the viewer; the first that applies in this order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum QueueStatus {
+    Draft,
+    /// The platform says it cannot be merged as it is.
+    Blocked,
+    ChangesRequested,
+    WaitingForYou,
+    Approved,
+}
+
 /// An open pull request that waits for the viewer or is the viewer's own.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct PullRequestRow {
@@ -120,6 +152,10 @@ pub struct PullRequestRow {
     pub key: ChangesetKey,
     pub title: String,
     pub author: String,
+    /// The address of the author's picture, when the platform gives one a browser can load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub author_avatar: Option<String>,
     pub source_branch: String,
     pub target_branch: String,
     /// The repository the source branch is in, as the platform names it, when that is not the
@@ -138,6 +174,10 @@ pub struct PullRequestRow {
     #[ts(optional)]
     pub ci: Option<CiState>,
     pub draft: bool,
+    /// Absent when none applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub status: Option<QueueStatus>,
     /// Review is asked of the viewer or their team, and they have not reviewed it as it is now.
     pub waiting_for_me: bool,
     pub unresolved_threads: u32,

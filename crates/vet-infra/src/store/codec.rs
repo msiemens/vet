@@ -8,7 +8,7 @@ use sea_orm::{ColumnTrait, DbErr, Set};
 use vet_app::changeset::{
     BaseChoice, ChangedFile, ChangesetId, CommitId, Lens, Source, Version, VersionChange, VersionOrigin,
 };
-use vet_app::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, SpanId, SpanOrigin};
+use vet_app::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
 use vet_core::content::{
     BlobId, EntryKind, FileEntry, Hash, LineDelta, LineRange, NonTextKind, RepoPath, SnapshotId, SnapshotStatus,
 };
@@ -474,6 +474,17 @@ pub fn review_from(rows: ReviewRows) -> Result<Review, DbErr> {
         opened_at: review.opened_at,
         closed_at: review.closed_at,
         complete: review.closed_at.map(|_| review.complete),
+        summary: match (review.summary_total, review.summary_seen, review.summary_old_base) {
+            (Some(total), Some(seen), Some(old_base)) => {
+                let count = |n: i64| u32::try_from(n).map_err(|_| corrupt("review summary"));
+                Some(ReviewSummary {
+                    total: count(total)?,
+                    seen: count(seen)?,
+                    old_base: count(old_base)?,
+                })
+            }
+            _ => None,
+        },
     })
 }
 

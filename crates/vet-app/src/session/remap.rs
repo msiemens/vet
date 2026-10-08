@@ -162,7 +162,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 result = self.remap_view(st, View::Commit { index }).await;
             }
         }
-        result
+        result?;
+        self.note_progress(st).await
     }
 
     /// Remaps onto one view of the changeset or of a commit; only the changeset resolves threads.

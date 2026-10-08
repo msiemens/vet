@@ -2,6 +2,7 @@
 import type { ChangesetKey } from "./ChangesetKey";
 import type { CiState } from "./CiState";
 import type { LineDelta } from "./LineDelta";
+import type { QueueStatus } from "./QueueStatus";
 import type { RowReview } from "./RowReview";
 
 /**
@@ -11,7 +12,11 @@ export type PullRequestRow = {
 /**
  * Opens it with `OpenChangeset`.
  */
-key: ChangesetKey, title: string, author: string, sourceBranch: string, targetBranch: string, 
+key: ChangesetKey, title: string, author: string, 
+/**
+ * The address of the author's picture, when the platform gives one a browser can load.
+ */
+authorAvatar?: string, sourceBranch: string, targetBranch: string, 
 /**
  * The repository the source branch is in, as the platform names it, when that is not the
  * pull request's own: a fork.
@@ -29,6 +34,10 @@ comments: number,
  * The checks of the head commit; absent when it has none.
  */
 ci?: CiState, draft: boolean, 
+/**
+ * Absent when none applies.
+ */
+status?: QueueStatus, 
 /**
  * Review is asked of the viewer or their team, and they have not reviewed it as it is now.
  */

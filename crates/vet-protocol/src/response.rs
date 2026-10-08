@@ -5,10 +5,10 @@ use ts_rs::TS;
 
 use crate::{
     Account, Base, BaseDiff, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow, CheckLog,
-    CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, Highlights, Impact, Lens, Locations, Manifest,
-    ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject, RemovalImpact,
-    ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange, TextContent, Thread,
-    ThreadTarget, Unavailable, VersionInfo,
+    CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, Highlights, Impact, Lens, LineDelta, Locations,
+    Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject,
+    RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange, TextContent,
+    Thread, ThreadTarget, Unavailable, VersionInfo,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -55,6 +55,10 @@ pub enum Response {
     PullRequests {
         rows: Vec<PullRequestRow>,
         sources: Vec<PullRequestSource>,
+    },
+    /// The answer to `ChangesetLines`.
+    ChangesetLines {
+        lines: Option<LineDelta>,
     },
     /// The answer to `Checks`, in the order of the commits asked for.
     Checks {

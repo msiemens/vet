@@ -59,6 +59,22 @@ impl Orchestrator {
         Ok(mapping::pull_requests(&list, &reviews))
     }
 
+    pub(crate) async fn changeset_lines(
+        &self,
+        project: ProjectId,
+        changeset: ChangesetKey,
+    ) -> Result<Response, String> {
+        let source = mapping::core_changeset_key(changeset)?;
+        let lines = self
+            .ready(project)
+            .await?
+            .session
+            .lines_of(&source)
+            .await
+            .map_err(message)?;
+        Ok(mapping::changeset_lines(lines))
+    }
+
     /// The repository of the pull request on view, if one is.
     async fn hosted_pull_request(&self, project: ProjectId) -> Result<Option<RemoteKey>, String> {
         let open = self.ready(project).await?;

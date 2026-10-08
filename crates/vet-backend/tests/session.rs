@@ -1492,6 +1492,46 @@ async fn review_branch(client: &mut Client, project: ProjectId, name: &str) {
 }
 
 #[tokio::test]
+async fn a_row_of_the_list_has_its_lines_asked_for_and_the_progress_of_its_review_and_the_author_of_its_tip() {
+    let fx = fixture_with_feature().await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    let feature = ChangesetKey::Branch { name: "feature".into() };
+    async fn lines(client: &Client, project: ProjectId, changeset: ChangesetKey) -> Option<LineDelta> {
+        match client
+            .call(Request::ChangesetLines { project, changeset })
+            .await
+            .unwrap()
+        {
+            Response::ChangesetLines { lines } => lines,
+            other => panic!("{other:?}"),
+        }
+    }
+    async fn row(client: &Client, project: ProjectId, key: &ChangesetKey) -> vet_protocol::ChangesetRow {
+        let Response::Changesets { rows, .. } = client.call(Request::ListChangesets { project }).await.unwrap() else {
+            panic!("not a list")
+        };
+        rows.into_iter().find(|r| r.key == *key).expect("listed")
+    }
+
+    assert_eq!(
+        lines(&client, project, feature.clone()).await,
+        Some(LineDelta { added: 1, removed: 1 })
+    );
+    assert_eq!(lines(&client, project, ChangesetKey::WorkingTree).await, None);
+    let before = row(&client, project, &feature).await;
+    assert_eq!((before.review, before.author.as_deref()), (RowReview::None, Some("t")));
+
+    review_branch(&mut client, project, "feature").await;
+
+    let RowReview::Open { progress, .. } = row(&client, project, &feature).await.review else {
+        panic!("the review is open")
+    };
+    let progress = progress.expect("measured with the first mark");
+    assert_eq!((progress.seen_percent, progress.old_base_percent), (100.0, 0.0));
+}
+
+#[tokio::test]
 async fn a_commit_to_the_branch_on_view_is_its_next_version_without_opening_it_again() {
     let fx = fixture_with_feature().await;
     let p = fx.repo.path();

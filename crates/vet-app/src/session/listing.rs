@@ -4,6 +4,7 @@
 use super::{LiveSession, Result};
 use crate::changeset::{CommitId, Source};
 use crate::ports::{BranchInfo, GitRepo, LiveStore};
+use crate::review::ReviewSummary;
 use vet_core::review::ThreadStatus;
 
 /// A remote branch whose latest commit is older than this many days is not offered.
@@ -31,6 +32,8 @@ pub enum RowReview {
         started_at: i64,
         /// The number of the version the viewer last marked something in.
         last_reviewed: Option<u32>,
+        /// How far the review was when its marks last changed; `None` if it never was measured.
+        progress: Option<ReviewSummary>,
     },
     Finished {
         complete: bool,
@@ -56,6 +59,8 @@ pub struct ChangesetRow {
     pub divergence: Option<Divergence>,
     /// Unix seconds of the branch's tip commit.
     pub last_commit: Option<i64>,
+    /// Who made the branch's tip commit; `None` for the working tree.
+    pub author: Option<String>,
     pub review: RowReview,
 }
 
@@ -94,6 +99,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             branch: all.iter().find(|b| b.current).map(|b| b.name.clone()),
             divergence: None,
             last_commit: None,
+            author: None,
         }];
         let now = (self.clock)();
         let (mut local, mut remote) = (Vec::new(), Vec::new());
@@ -106,7 +112,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 Some(default) => Some(self.divergence(&branch, default).await?),
                 None => None,
             };
-            let last_commit = git.commit_info(&branch.commit).await?.time;
+            let tip = git.commit_info(&branch.commit).await?;
+            let last_commit = tip.time;
             let age_days = now.saturating_sub(last_commit) / (24 * 60 * 60);
             let keep = source == on_view || matches!(review, RowReview::Open { .. });
             if branch.remote && !offered_remote(divergence, age_days, keep) {
@@ -121,6 +128,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 source,
                 divergence,
                 last_commit: Some(last_commit),
+                author: Some(tip.author),
                 review,
             });
         }
@@ -174,6 +182,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 version: store.versions(changeset).await?.last().map_or(1, |v| v.n),
                 started_at: review.opened_at,
                 last_reviewed: review.last_reviewed,
+                progress: review.summary,
             },
             Some(finished_at) => RowReview::Finished {
                 complete: review.complete.unwrap_or(false),

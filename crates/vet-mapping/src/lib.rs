@@ -7,7 +7,7 @@ pub mod semantic;
 use vet_app::changeset::{BaseChoice, CommitId, Lens, RemoteKey, Source, VersionOrigin};
 use vet_app::platform::{
     CheckLog, CiState, CommitChecks, PlatformError, PlatformKind, PlatformTraits, Posting, PullRequestState,
-    ReviewVerdict, ReviewerState,
+    QueueStatus, ReviewVerdict, ReviewerState,
 };
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
@@ -370,10 +370,15 @@ fn row_review(review: RowReview) -> p::RowReview {
             version,
             started_at,
             last_reviewed,
+            progress,
         } => p::RowReview::Open {
             version,
             started_at: unix_secs(started_at),
             last_reviewed,
+            progress: progress.map(|s| p::ReviewProgress {
+                seen_percent: s.seen_percent(),
+                old_base_percent: s.old_base_percent(),
+            }),
         },
         RowReview::Finished {
             complete,
@@ -406,9 +411,27 @@ pub fn changesets(list: &ChangesetList) -> p::Response {
                     behind: d.behind,
                 }),
                 last_commit: r.last_commit.map(unix_secs),
+                author: r.author.clone(),
                 review: row_review(r.review),
             })
             .collect(),
+    }
+}
+
+/// The answer to `ChangesetLines`.
+pub fn changeset_lines(lines: Option<LineDelta>) -> p::Response {
+    p::Response::ChangesetLines {
+        lines: lines.map(line_delta),
+    }
+}
+
+fn queue_status(status: QueueStatus) -> p::QueueStatus {
+    match status {
+        QueueStatus::Draft => p::QueueStatus::Draft,
+        QueueStatus::Blocked => p::QueueStatus::Blocked,
+        QueueStatus::ChangesRequested => p::QueueStatus::ChangesRequested,
+        QueueStatus::WaitingForYou => p::QueueStatus::WaitingForYou,
+        QueueStatus::Approved => p::QueueStatus::Approved,
     }
 }
 
@@ -444,6 +467,7 @@ pub fn pull_requests(list: &PullRequestList, reviews: &[RowReview]) -> p::Respon
                     key: changeset_key(&pull_request_source(&listed.remote, row.number)),
                     title: row.title.clone(),
                     author: row.author.clone(),
+                    author_avatar: row.author_avatar.clone(),
                     source_branch: row.source_branch.clone(),
                     target_branch: row.target_branch.clone(),
                     fork: row.fork.clone(),
@@ -454,6 +478,7 @@ pub fn pull_requests(list: &PullRequestList, reviews: &[RowReview]) -> p::Respon
                     comments: row.comments,
                     ci: row.ci.map(ci_state),
                     draft: row.draft,
+                    status: row.status.map(queue_status),
                     waiting_for_me: row.waiting_for_me,
                     unresolved_threads: row.unresolved_threads,
                     updated_at: unix_secs(row.updated_at),

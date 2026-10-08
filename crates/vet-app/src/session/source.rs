@@ -30,7 +30,7 @@ pub(super) enum Stored {
 
 /// The commit the target of the changeset of `source` is built on: a branch's tip, or a pull
 /// request's head as it was fetched. The working tree has none to look up.
-async fn tip_of<G: GitRepo>(git: &G, source: &Source) -> Result<CommitId> {
+pub(super) async fn tip_of<G: GitRepo>(git: &G, source: &Source) -> Result<CommitId> {
     match source {
         Source::WorkingTree => Err(SessionError::Invalid("the working tree is not a commit".into())),
         Source::Branch { name } => git

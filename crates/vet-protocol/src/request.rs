@@ -85,6 +85,15 @@ pub enum Request {
     ListPullRequests {
         project: ProjectId,
     },
+    /// The lines the changeset changes against its base, for a row of the list: the delta between
+    /// the commits of its base and its tip, kept per pair of commits. Absent for the working tree,
+    /// whose manifest is live, and for a changeset whose tip is not here (a pull request that was
+    /// not fetched). May take a moment for a large changeset, so ask per row. Answers with
+    /// `Response::ChangesetLines`.
+    ChangesetLines {
+        project: ProjectId,
+        changeset: ChangesetKey,
+    },
     /// The checks (CI runs and statuses) the platform has of each commit, in the repository of the
     /// pull request on view; none for any other changeset. Asks the platform, which keeps what
     /// it has learnt of a commit whose checks are all done and asks again for one that has some

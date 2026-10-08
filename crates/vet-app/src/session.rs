@@ -49,6 +49,7 @@ mod browse;
 mod content;
 mod interdiff;
 mod lens;
+mod lines;
 mod listing;
 mod manifest;
 mod marks;
@@ -69,12 +70,14 @@ use vet_core::completion::Coverage;
 use vet_core::content::{EntryKind, FileDiff, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
+use vet_engine::{Engine, Limits};
 
 pub use self::base_diff::{BaseDiffKind, BaseDiffRow, BaseDiffView};
 pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};
 pub use self::lens::{CommitKind, CommitUnitView, CommitsView};
+use self::lines::LinesBetween;
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
 use self::manifest::changeset_completion;
 use self::source::Stored;
@@ -187,7 +190,12 @@ pub struct LiveSession<G, S> {
     /// Held while threads are exchanged with a platform, so two exchanges never overlap. Locked
     /// before `state`, which is not held across the platform's answers.
     exchange: Mutex<()>,
+    /// The line deltas between commits that the list of changesets shows.
+    lines: Engine<LinesBetween>,
 }
+
+/// How many line deltas the list of changesets keeps.
+const KEPT_LINE_DELTAS: usize = 4096;
 
 /// What a session is called: the repository's directory name, else its whole path.
 fn name_of_repo(repo: &str) -> String {
@@ -285,6 +293,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             degraded: std::sync::Mutex::new(None),
             revisions: Arc::default(),
             exchange: Mutex::new(()),
+            lines: Engine::new(Limits::entries(KEPT_LINE_DELTAS)),
         }
     }
 
@@ -332,6 +341,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
                 version: latest.n,
                 updated_at: latest.at,
                 last_reviewed: review.last_reviewed,
+                summary: review.summary,
             }),
             filter,
             base,
@@ -434,6 +444,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             version: 1,
             updated_at: now,
             last_reviewed: None,
+            summary: None,
         });
         Ok(true)
     }
@@ -607,6 +618,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         st.filter = filter;
         st.revision += 1;
         self.revisions.advance(st.revision);
+        self.note_progress(st).await?;
         Ok(st.revision)
     }
 
@@ -715,7 +727,14 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let tree = parked
             .get_mut(&Source::WorkingTree)
             .expect("the working tree is parked while another changeset is on view");
-        self.settle_tree(tree, scan).await
+        let settled = self.settle_tree(tree, scan).await?;
+        // Nothing asks for the manifest of a tree that is not on view, so the progress of its new version is measured here.
+        if tree.review.is_some()
+            && let Err(e) = self.ensure_changes(tree).await
+        {
+            tracing::warn!(error = %e, "could not measure the progress of the working tree's review");
+        }
+        Ok(settled)
     }
 
     /// Settles `scan` into `st`, which need not be the one on view: only the revision of

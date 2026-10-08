@@ -33,7 +33,7 @@ use sea_orm::{
 use sea_orm_migration::MigratorTrait;
 use vet_app::changeset::{BaseChoice, ChangesetId, Lens, Source, Version};
 use vet_app::ports::{ChangesetStore, ReviewStore, Store, StoreError, ThreadStore};
-use vet_app::review::{ChangesetThread, NonTextAck, Review, ReviewId, SpanId, SpanOrigin};
+use vet_app::review::{ChangesetThread, NonTextAck, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
 use vet_core::content::{BlobId, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::{self, TreeNode};
@@ -627,6 +627,19 @@ impl ReviewStore for SqliteStore {
         review::ActiveModel {
             id: Set(id.0 as i64),
             last_reviewed: Set(Some(version.into())),
+            ..Default::default()
+        }
+        .update(&self.writer.db)
+        .await?;
+        Ok(())
+    }
+
+    async fn set_review_summary(&self, id: ReviewId, summary: ReviewSummary) -> Result<(), StoreError> {
+        review::ActiveModel {
+            id: Set(id.0 as i64),
+            summary_total: Set(Some(summary.total.into())),
+            summary_seen: Set(Some(summary.seen.into())),
+            summary_old_base: Set(Some(summary.old_base.into())),
             ..Default::default()
         }
         .update(&self.writer.db)

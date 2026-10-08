@@ -16,7 +16,7 @@ use super::{Result, SessionError};
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version};
 use crate::platform::Discussion;
 use crate::ports::CommitDetail;
-use crate::review::{NonTextAck, RecordedSpan, ReviewId, SpanId};
+use crate::review::{NonTextAck, RecordedSpan, ReviewId, ReviewSummary, SpanId};
 
 /// What a request about the changeset's files reads: the changeset itself, the interdiff of
 /// two of the review's versions, or one commit's own diff.
@@ -104,6 +104,8 @@ pub(super) struct OpenReview {
     pub(super) updated_at: i64,
     /// The number of the version something was last marked in.
     pub(super) last_reviewed: Option<u32>,
+    /// How far the review is, as last stored.
+    pub(super) summary: Option<ReviewSummary>,
 }
 
 pub(super) struct State {

@@ -27,4 +27,8 @@ divergence?: Divergence,
 /**
  * Unix seconds of the branch's tip commit; absent for the working tree.
  */
-lastCommit?: number, review: RowReview, };
+lastCommit?: number, 
+/**
+ * Who made the branch's tip commit; absent for the working tree.
+ */
+author?: string, review: RowReview, };

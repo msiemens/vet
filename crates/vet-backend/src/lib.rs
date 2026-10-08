@@ -256,6 +256,7 @@ impl Orchestrator {
             }),
             Request::ListChangesets { project } => reply(self.list_changesets(project)),
             Request::ListPullRequests { project } => reply(self.list_pull_requests(project)),
+            Request::ChangesetLines { project, changeset } => reply(self.changeset_lines(project, changeset)),
             Request::Checks { project, commits } => reply(self.checks(project, commits)),
             Request::CheckLog { project, run } => reply(self.check_log(project, run)),
             Request::OpenChangeset { project, changeset } => reply(self.open_changeset(project, changeset)),

@@ -15,6 +15,7 @@ import type { Diagnostic } from "./Diagnostic";
 import type { DirEntry } from "./DirEntry";
 import type { Impact } from "./Impact";
 import type { Lens } from "./Lens";
+import type { LineDelta } from "./LineDelta";
 import type { Locations } from "./Locations";
 import type { Manifest } from "./Manifest";
 import type { PullRequestInfo } from "./PullRequestInfo";
@@ -40,7 +41,7 @@ export type Response = { "type": "pong", payload: string, } | { "type": "project
 /**
  * The root of the repository the opened path belongs to.
  */
-root: string, } | { "type": "done" } | { "type": "logDirectory", path: string, } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "changesets", rows: Array<ChangesetRow>, onView: ChangesetKey, } | { "type": "pullRequests", rows: Array<PullRequestRow>, sources: Array<PullRequestSource>, } | { "type": "checks", checks: Array<CommitChecks>, 
+root: string, } | { "type": "done" } | { "type": "logDirectory", path: string, } | { "type": "recentProjects", projects: Array<RecentProject>, } | { "type": "accounts", accounts: Array<Account>, } | { "type": "account" } & Account | { "type": "tasks", tasks: Array<Task>, } | { "type": "changesets", rows: Array<ChangesetRow>, onView: ChangesetKey, } | { "type": "pullRequests", rows: Array<PullRequestRow>, sources: Array<PullRequestSource>, } | { "type": "changesetLines", lines: LineDelta | null, } | { "type": "checks", checks: Array<CommitChecks>, 
 /**
  * Why the commits that are left out could not be answered for, fit to show.
  */

@@ -12,7 +12,7 @@ use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
 use crate::platform::{Credential, PlatformKind};
-use crate::review::{ChangesetThread, NonTextAck, Review, ReviewId, SpanId, SpanOrigin};
+use crate::review::{ChangesetThread, NonTextAck, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
 
 /// Monotonic milliseconds.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -486,6 +486,12 @@ pub trait ReviewStore {
     fn set_base(&self, id: ReviewId, choice: BaseChoice) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Records the number of the version the viewer last marked something in.
     fn set_last_reviewed(&self, id: ReviewId, version: u32) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Records how far the review is, for a list of changesets to show without remapping its marks.
+    fn set_review_summary(
+        &self,
+        id: ReviewId,
+        summary: ReviewSummary,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Recorded spans are the user's marks in the coordinates they were made
     /// in. They are never remapped in place: callers remap them per changeset
     /// from these (so a reverted edit regains coverage) and keep the result

@@ -268,6 +268,10 @@ pub mod review {
         pub closed_at: Option<i64>,
         /// Whether the review was complete when it was finished; false while open.
         pub complete: bool,
+        /// How far the review was when it was last measured: all three, or none.
+        pub summary_total: Option<i64>,
+        pub summary_seen: Option<i64>,
+        pub summary_old_base: Option<i64>,
     }
 
     child_of_changeset!();

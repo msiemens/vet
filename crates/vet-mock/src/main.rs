@@ -336,6 +336,7 @@ impl Handler for Mock {
             Request::ListChangesets { .. }
             | Request::ListPullRequests { .. }
             | Request::OpenChangeset { .. }
+            | Request::ChangesetLines { .. }
             | Request::Checks { .. }
             | Request::CheckLog { .. } => Err("the corpus is one changeset".into()),
         }

@@ -3,6 +3,7 @@
 //! triggered when either the base or the target blob id changes (the base case
 //! is `SeenAgainstOldBase`).
 
+use vet_core::completion::Completion;
 use vet_core::content::{FileEntry, NonTextKind, RepoPath};
 use vet_core::review::{ReviewedSpan, Thread, ThreadStatus};
 
@@ -39,6 +40,47 @@ pub struct RecordedSpan {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct SpanId(pub u64);
 
+/// How far a review is: the share of the changeset's lines and non-text items that are seen,
+/// counted against the review's filter, kept with the review so that a list of changesets shows
+/// it without remapping every review's marks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ReviewSummary {
+    /// Changed lines passing the filter plus non-text items.
+    pub total: u32,
+    /// Of those, the lines covered by a `Seen` span plus the acknowledged items.
+    pub seen: u32,
+    /// Of the lines, those covered only by spans seen against an old base.
+    pub old_base: u32,
+}
+
+impl ReviewSummary {
+    pub fn of(completion: &Completion) -> Self {
+        Self {
+            total: completion.lines + completion.items,
+            seen: completion.seen_lines + completion.acknowledged_items,
+            old_base: completion.old_base_lines,
+        }
+    }
+
+    /// Share of the changeset that is seen, in percent; 0 with nothing to review.
+    pub fn seen_percent(&self) -> f32 {
+        self.percent(self.seen)
+    }
+
+    /// Share of the changeset that is seen against an old base only, in percent.
+    pub fn old_base_percent(&self) -> f32 {
+        self.percent(self.old_base)
+    }
+
+    fn percent(&self, part: u32) -> f32 {
+        if self.total == 0 {
+            0.0
+        } else {
+            part as f32 / self.total as f32 * 100.0
+        }
+    }
+}
+
 /// The marks of one pass over a changeset, from its first review action to
 /// finishing it. A changeset has at most one open review.
 pub struct Review {
@@ -56,6 +98,8 @@ pub struct Review {
     pub closed_at: Option<i64>,
     /// Whether the review was complete when it was finished; `None` while open.
     pub complete: Option<bool>,
+    /// How far the review was when it was last measured; `None` if it never was.
+    pub summary: Option<ReviewSummary>,
 }
 
 /// A thread of a changeset. A thread outlives the review it was written in; the
