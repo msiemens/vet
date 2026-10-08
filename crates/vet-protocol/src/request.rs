@@ -69,7 +69,7 @@ pub enum Request {
     ListChangesets {
         project: ProjectId,
     },
-    /// The open pull requests of the project's GitHub remotes that wait for the viewer or are the
+    /// The open pull requests of the project's GitHub and Azure DevOps remotes that wait for the viewer or are the
     /// viewer's own, most recently updated first. Asks the platform, so it takes a moment and is
     /// separate from `ListChangesets`; a repository the platform cannot answer for is named in
     /// `sources` with the reason, a missing credential also as `CredentialsNeeded`, and the other

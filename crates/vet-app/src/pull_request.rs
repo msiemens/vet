@@ -7,8 +7,8 @@ use std::sync::{Mutex, PoisonError};
 
 use crate::fetch::{Credentials, Fetch};
 use crate::platform::{
-    Platform, PlatformError, PlatformKind, PullRequestQuery, PullRequestRow, QueueTab, RemoteKey, list_rows,
-    parse_remote, rows,
+    Platform, PlatformError, PlatformKind, PullRequest, PullRequestQuery, PullRequestRow, QueueTab, RemoteKey,
+    list_rows, parse_remote, rows,
 };
 use crate::ports::{Fetcher, RefUpdate, RemoteInfo};
 
@@ -43,16 +43,25 @@ impl PullRequestRefs {
         }
     }
 
-    /// What to fetch from the platform's repository to have both refs: the pull request's head
-    /// (the platform keeps it there for forks too) and its target branch.
-    pub fn updates(&self, number: u64, target_branch: &str) -> Vec<RefUpdate> {
+    /// What to fetch from the platform's repository to have both refs: the pull request's head and
+    /// its target branch.
+    ///
+    /// GitHub keeps the head at `refs/pull/<n>/head`, for forks too. Azure DevOps has no such ref
+    /// (its `refs/pull/<n>/merge` is a merge commit): the source branch is fetched, and the head
+    /// commit itself when the branch is in a fork's repository.
+    pub fn updates(&self, kind: PlatformKind, pull_request: &PullRequest) -> Vec<RefUpdate> {
+        let head = match kind {
+            PlatformKind::GitHub => format!("refs/pull/{}/head", pull_request.number),
+            PlatformKind::AzureDevOps if pull_request.fork.is_some() => pull_request.head.clone(),
+            PlatformKind::AzureDevOps => format!("refs/heads/{}", pull_request.source_branch),
+        };
         vec![
             RefUpdate {
-                source: format!("refs/pull/{number}/head"),
+                source: head,
                 destination: self.head.clone(),
             },
             RefUpdate {
-                source: format!("refs/heads/{target_branch}"),
+                source: format!("refs/heads/{}", pull_request.target_branch),
                 destination: self.target.clone(),
             },
         ]
@@ -85,6 +94,30 @@ pub fn hosted_repositories(remotes: &[RemoteInfo], kind: PlatformKind) -> Vec<Ho
     found
 }
 
+/// The hosts `repositories` are on that are not github.com: the ones whose account decides whether
+/// a repository there is GitHub's (a host that is neither GitHub nor Azure DevOps has none).
+pub fn hosts_to_ask_about(repositories: &[HostedRepository]) -> Vec<String> {
+    let mut hosts: Vec<String> = Vec::new();
+    for host in repositories.iter().map(|h| &h.key.host).filter(|h| *h != GITHUB_COM) {
+        if !hosts.contains(host) {
+            hosts.push(host.clone());
+        }
+    }
+    hosts
+}
+
+/// The repositories of `candidates` (those [`hosted_repositories`] answers for GitHub) that are
+/// on GitHub: on github.com, or on a host with an account, which is how a GitHub Enterprise host
+/// is told from any other git host.
+pub fn on_github(candidates: Vec<HostedRepository>, hosts_with_account: &[String]) -> Vec<HostedRepository> {
+    candidates
+        .into_iter()
+        .filter(|h| h.key.host == GITHUB_COM || hosts_with_account.contains(&h.key.host))
+        .collect()
+}
+
+const GITHUB_COM: &str = "github.com";
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ListedPullRequest {
     pub remote: RemoteKey,
@@ -105,6 +138,20 @@ pub struct PullRequestList {
     pub rows: Vec<ListedPullRequest>,
     /// One per repository asked, in the order given.
     pub sources: Vec<RepositoryStatus>,
+}
+
+impl PullRequestList {
+    /// This list and `other`, as one list: the rows newest first, the sources of this one first.
+    pub fn and(mut self, other: Self) -> Self {
+        self.rows.extend(other.rows);
+        self.sources.extend(other.sources);
+        sort_newest_first(&mut self.rows);
+        self
+    }
+}
+
+fn sort_newest_first(rows: &mut [ListedPullRequest]) {
+    rows.sort_by_key(|listed| std::cmp::Reverse((listed.row.updated_at, listed.row.number)));
 }
 
 /// How the platform last named a pull request: what a view of it is headed with.
@@ -189,7 +236,7 @@ pub async fn list_pull_requests<P: Platform>(
             error,
         });
     }
-    rows.sort_by_key(|listed| std::cmp::Reverse((listed.row.updated_at, listed.row.number)));
+    sort_newest_first(&mut rows);
     PullRequestList { rows, sources }
 }
 
@@ -245,7 +292,7 @@ pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
         .find(|h| h.key == *remote)
         .and_then(|h| remotes.iter().find(|r| r.name == h.remote))
         .ok_or_else(|| FetchError::Git(format!("none of the remotes of this repository is {remote}")))?;
-    let updates = PullRequestRefs::of(remote, number).updates(number, &detail.pull_request.target_branch);
+    let updates = PullRequestRefs::of(remote, number).updates(remote.kind(), &detail.pull_request);
     fetch
         .refs(credentials, git_remote, updates, format!("Fetching #{number}"))
         .await
@@ -296,20 +343,56 @@ mod tests {
         }
     }
 
+    fn sources(refs: &PullRequestRefs, kind: PlatformKind, pull_request: &PullRequest) -> Vec<(String, String)> {
+        refs.updates(kind, pull_request)
+            .into_iter()
+            .map(|u| (u.source, u.destination))
+            .collect()
+    }
+
     #[test]
-    fn a_pull_request_is_fetched_from_the_platforms_pull_ref_and_the_target_branch() {
+    fn a_pull_request_is_fetched_from_where_its_platform_keeps_the_head_and_from_the_target_branch() {
         let refs = PullRequestRefs::of(&github("acme/app"), 7);
-        let updates = refs.updates(7, "release/1.x");
+        let mut pull_request = pr(7);
+        pull_request.target_branch = "release/1.x".to_owned();
         assert_eq!(
-            updates
-                .iter()
-                .map(|u| (u.source.as_str(), u.destination.as_str()))
-                .collect::<Vec<_>>(),
+            sources(&refs, PlatformKind::GitHub, &pull_request),
             [
-                ("refs/pull/7/head", refs.head.as_str()),
-                ("refs/heads/release/1.x", refs.target.as_str())
+                ("refs/pull/7/head".to_owned(), refs.head.clone()),
+                ("refs/heads/release/1.x".to_owned(), refs.target.clone())
             ]
         );
+        assert_eq!(
+            sources(&refs, PlatformKind::AzureDevOps, &pull_request),
+            [
+                ("refs/heads/feature".to_owned(), refs.head.clone()),
+                ("refs/heads/release/1.x".to_owned(), refs.target.clone())
+            ]
+        );
+        // The source branch of a fork is not in this repository; its commit is reachable from the pull request.
+        pull_request.fork = Some("api-fork".to_owned());
+        assert_eq!(
+            sources(&refs, PlatformKind::AzureDevOps, &pull_request)[0],
+            ("c2".to_owned(), refs.head.clone())
+        );
+    }
+
+    #[test]
+    fn only_github_com_and_hosts_with_an_account_are_github() {
+        let remotes = [
+            info("origin", "https://github.com/acme/app"),
+            info("ghe", "git@ghe.corp.example:team/svc.git"),
+            info("lab", "https://gitlab.com/acme/app.git"),
+            info("lab2", "git@gitlab.com:acme/other.git"),
+            info("work", "https://dev.azure.com/contoso/Shop/_git/api"),
+        ];
+        let candidates = hosted_repositories(&remotes, PlatformKind::GitHub);
+        let to_ask = hosts_to_ask_about(&candidates);
+        assert_eq!(to_ask, ["ghe.corp.example", "gitlab.com"]);
+
+        let github = on_github(candidates, &["ghe.corp.example".to_owned()]);
+        let found: Vec<_> = github.iter().map(|h| h.key.to_string()).collect();
+        assert_eq!(found, ["github.com/acme/app", "ghe.corp.example/team/svc"]);
     }
 
     #[test]
@@ -449,9 +532,48 @@ mod tests {
             .unwrap();
 
         let refs = PullRequestRefs::of(&app, 7);
+        let mut pull_request = pr(7);
+        pull_request.target_branch = "release".to_owned();
         assert_eq!(
             *fetched.lock().unwrap(),
-            [("upstream".to_owned(), refs.updates(7, "release"))]
+            [("upstream".to_owned(), refs.updates(PlatformKind::GitHub, &pull_request))]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_azure_devops_pull_request_is_fetched_from_the_remote_of_its_repository_by_its_source_branch() {
+        let api = RemoteKey {
+            host: "dev.azure.com".to_owned(),
+            path: "contoso/Shop/api".to_owned(),
+        };
+        let platform = Hosting {
+            prs: vec![],
+            failing: vec![],
+        };
+        let (fetch, fetched) = fetching(vec![
+            info("origin", "https://github.com/acme/app"),
+            info("work", "git@ssh.dev.azure.com:v3/contoso/Shop/api"),
+        ]);
+
+        fetch_pull_request(&platform, &fetch, &Anonymous, &KnownPullRequests::default(), &api, 7)
+            .await
+            .unwrap();
+
+        let refs = PullRequestRefs::of(&api, 7);
+        let fetched = fetched.lock().unwrap();
+        let [(remote, updates)] = &fetched[..] else {
+            panic!("{fetched:?}")
+        };
+        assert_eq!(remote, "work");
+        assert_eq!(
+            updates
+                .iter()
+                .map(|u| (u.source.as_str(), u.destination.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("refs/heads/feature", refs.head.as_str()),
+                ("refs/heads/release", refs.target.as_str())
+            ]
         );
     }
 

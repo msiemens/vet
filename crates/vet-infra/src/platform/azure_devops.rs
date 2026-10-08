@@ -1,7 +1,8 @@
 //! `vet_app::platform::Platform` for Azure DevOps Services, on `azure_devops_rust_api`.
 //!
 //! One page of the repository's active pull requests carries what a queue row shows
-//! except the checks and the unresolved threads, which take a request each per pull
+//! except the checks and the threads (and with them the comment count and the unresolved
+//! threads), which take a request each per pull
 //! request (the API has no batch for either). Those are asked for the pull requests
 //! that are on the requested list only, concurrently, and reused for a while while the
 //! source branch stays where it was. Votes carry no commit and the list no time of the
@@ -79,6 +80,7 @@ impl Endpoints {
 struct Extras {
     ci: Option<CiState>,
     unresolved_threads: u32,
+    comments: u32,
 }
 
 #[derive(Default)]
@@ -298,9 +300,11 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             self.settle(&remote.host, list).map(|list| list.value)
         };
         let (statuses, threads) = futures::future::join(statuses, threads).await;
+        let threads = Self::or_nothing(threads)?;
         let extras = Extras {
             ci: wire::ci_state(&Self::or_nothing(statuses)?),
-            unresolved_threads: wire::unresolved_threads(&Self::or_nothing(threads)?),
+            unresolved_threads: wire::unresolved_threads(&threads),
+            comments: wire::comment_count(&threads),
         };
         self.state().extras.insert(key, (now, pr.head.clone(), extras));
         Ok(extras)
@@ -319,6 +323,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             for (pr, extras) in chunk.iter_mut().zip(extras) {
                 pr.ci = extras.ci;
                 pr.unresolved_threads = extras.unresolved_threads;
+                pr.comments = extras.comments;
             }
         }
         Ok(())

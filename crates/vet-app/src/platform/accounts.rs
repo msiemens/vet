@@ -168,6 +168,12 @@ where
         None
     }
 
+    /// Whether a credential is held or available from a CLI for `host`. Unlike
+    /// [`Self::credential`] it never asks anyone to provide one.
+    pub async fn has_account(&self, host: &str, now: i64) -> bool {
+        self.cli_token(host, now).await.is_some() || self.state().hosts.get(host).is_some_and(|s| s.pat.is_some())
+    }
+
     /// Keeps `token` as the personal access token of `host` (as typed or pasted). With
     /// `validate` the platform is asked first and nothing is kept unless it accepts the
     /// token. Answers with the account, whose host is the normalized one.
@@ -522,6 +528,20 @@ mod tests {
             token_for(&f.accounts, "github.com", 0).await,
             Some(("gho_cli".into(), CredentialSource::Cli))
         );
+    }
+
+    #[tokio::test]
+    async fn asking_whether_a_host_has_an_account_never_asks_the_shell_for_one() {
+        let f = fixture();
+        assert!(!f.accounts.has_account("gitlab.com", 0).await);
+        f.machine.install("gh", 0, "gho_cli\n");
+        assert!(f.accounts.has_account("github.com", 0).await);
+        f.accounts
+            .set_credentials("ghe.corp.example", "ghp_pat", false, 0)
+            .await
+            .unwrap();
+        assert!(f.accounts.has_account("ghe.corp.example", 0).await);
+        assert!(f.needed.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

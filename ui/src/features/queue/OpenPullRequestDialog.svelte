@@ -7,7 +7,7 @@
     onopen,
     onclose,
   }: {
-    /** The GitHub repositories of the project, as `github.com/acme/app`. */
+    /** The hosted repositories of the project, as `github.com/acme/app` or `dev.azure.com/org/project/repo`. */
     remotes: string[];
     onopen: (remote: string, number: number) => void;
     onclose: () => void;

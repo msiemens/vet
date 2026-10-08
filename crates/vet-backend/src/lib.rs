@@ -34,6 +34,7 @@ use vet_infra::git::GixRepo;
 use vet_infra::lsp::{LspLauncher, config as lsp_config};
 use vet_infra::materialize::Materialize;
 use vet_infra::materialize::kept::{Collected, KeptTrees, Limits};
+use vet_infra::platform::azure_devops::AzureDevOpsClient;
 use vet_infra::platform::github::GitHubClient;
 use vet_infra::restore::ToolRestorer;
 use vet_infra::servers::ToolResolver;
@@ -85,6 +86,7 @@ type Open = Entry<Connection, Wired>;
 type Projects = Registry<Connection, Wired>;
 type PlatformAccounts = Accounts<TokioRunner, HttpValidator>;
 type GitHub = GitHubClient<Arc<PlatformAccounts>>;
+type AzureDevOps = AzureDevOpsClient<Arc<PlatformAccounts>>;
 
 pub struct Orchestrator {
     store: SqliteStore,
@@ -100,6 +102,8 @@ pub struct Orchestrator {
     accounts: Arc<PlatformAccounts>,
     /// The client for GitHub, with the lists it has kept, for every project.
     github: Arc<GitHub>,
+    /// The client for Azure DevOps, likewise.
+    azure_devops: Arc<AzureDevOps>,
     /// The connections that asked for `Accounts`, which is where the events that belong
     /// to the process go.
     process_subscribers: Subscribers<Connection>,
@@ -141,6 +145,7 @@ impl Orchestrator {
         ));
         Self {
             github: Arc::new(GitHubClient::new(accounts.clone())),
+            azure_devops: Arc::new(AzureDevOpsClient::new(accounts.clone())),
             accounts,
             process_subscribers,
             servers: Arc::new(Servers::new(resolver, store.clone(), languages)),

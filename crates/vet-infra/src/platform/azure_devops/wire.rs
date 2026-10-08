@@ -100,6 +100,7 @@ pub(super) fn pull_request(pr: &GitPullRequest, me: &Me, web: &str) -> Option<ve
         head,
         // Neither the list nor the pull request says how many lines it changes.
         lines: None,
+        // Counted from the threads, which take a request of their own.
         comments: 0,
         draft: pr.is_draft,
         labels: pr.labels.iter().filter_map(|l| l.name.clone()).collect(),
@@ -161,6 +162,18 @@ pub(super) fn unresolved_threads(threads: &[GitPullRequestCommentThread]) -> u32
         })
         .count();
     u32::try_from(open).unwrap_or(u32::MAX)
+}
+
+/// The comments people wrote on the pull request, in threads not deleted.
+pub(super) fn comment_count(threads: &[GitPullRequestCommentThread]) -> u32 {
+    let count = threads
+        .iter()
+        .map(|t| &t.comment_thread)
+        .filter(|t| t.is_deleted != Some(true))
+        .flat_map(|t| &t.comments)
+        .filter(|c| c.is_deleted != Some(true) && !matches!(c.comment_type, Some(CommentType::System)))
+        .count();
+    u32::try_from(count).unwrap_or(u32::MAX)
 }
 
 /// The states of the source branch the iterations record, oldest first, ending in

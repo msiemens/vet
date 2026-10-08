@@ -37,7 +37,8 @@ use vet_semantic::ports::Backend;
 use crate::events::{Connection, settled};
 use crate::fetch::fetch_periodically;
 use crate::{
-    GitHub, LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, message, start_servers_in_background,
+    AzureDevOps, GitHub, LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, message,
+    start_servers_in_background,
 };
 
 /// The least time between two progress announcements of one task, so a step that
@@ -74,6 +75,7 @@ pub struct Wired {
     pub accounts: Arc<PlatformAccounts>,
     /// Where pull requests are asked for.
     pub github: Arc<GitHub>,
+    pub azure_devops: Arc<AzureDevOps>,
     /// What the platform called the pull requests it has told of.
     pub pull_requests: KnownPullRequests,
     plan: Plan,
@@ -281,6 +283,7 @@ impl Orchestrator {
             fetch: Fetch::new(GixRepo::new(&repo), tasks.clone()),
             accounts: self.accounts.clone(),
             github: self.github.clone(),
+            azure_devops: self.azure_devops.clone(),
             pull_requests: KnownPullRequests::default(),
             tasks,
             plan: Plan {

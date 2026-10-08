@@ -2,7 +2,8 @@
 
 use vet_app::changeset::Source;
 use vet_app::platform::{PlatformError, PlatformKind};
-use vet_app::pull_request::{self, FetchError, hosted_repositories};
+use vet_app::pull_request::{self, FetchError, hosted_repositories, hosts_to_ask_about, on_github};
+use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
@@ -18,7 +19,18 @@ impl Orchestrator {
     pub(crate) async fn list_pull_requests(&self, project: ProjectId) -> Result<Response, String> {
         let open = self.ready(project).await?;
         let remotes = open.open.fetch.remotes().await?;
-        let repositories: Vec<_> = hosted_repositories(&remotes, PlatformKind::GitHub)
+        let candidates = hosted_repositories(&remotes, PlatformKind::GitHub);
+        let mut hosts_with_account = Vec::new();
+        for host in hosts_to_ask_about(&candidates) {
+            if self.accounts.has_account(&host, unix_now()).await {
+                hosts_with_account.push(host);
+            }
+        }
+        let github: Vec<_> = on_github(candidates, &hosts_with_account)
+            .into_iter()
+            .map(|h| h.key)
+            .collect();
+        let azure_devops: Vec<_> = hosted_repositories(&remotes, PlatformKind::AzureDevOps)
             .into_iter()
             .map(|h| h.key)
             .collect();
@@ -26,13 +38,11 @@ impl Orchestrator {
             Source::PullRequest { remote, number } => Some((remote, number)),
             _ => None,
         };
-        let list = pull_request::list_pull_requests(
-            &*self.github,
-            &repositories,
-            on_view.as_ref().map(|(remote, number)| (remote, *number)),
-            &open.open.pull_requests,
-        )
-        .await;
+        let on_view = on_view.as_ref().map(|(remote, number)| (remote, *number));
+        let known = &open.open.pull_requests;
+        let list = pull_request::list_pull_requests(&*self.github, &github, on_view, known)
+            .await
+            .and(pull_request::list_pull_requests(&*self.azure_devops, &azure_devops, on_view, known).await);
         for source in &list.sources {
             if let Some(error) = &source.error {
                 self.refused(error, &source.remote.host);
@@ -86,5 +96,21 @@ pub(crate) async fn bring_in(
     number: u64,
 ) -> Result<(), FetchError> {
     let held = Held(&open.accounts);
-    pull_request::fetch_pull_request(&*open.github, &open.fetch, &held, &open.pull_requests, remote, number).await
+    match remote.kind() {
+        PlatformKind::GitHub => {
+            pull_request::fetch_pull_request(&*open.github, &open.fetch, &held, &open.pull_requests, remote, number)
+                .await
+        }
+        PlatformKind::AzureDevOps => {
+            pull_request::fetch_pull_request(
+                &*open.azure_devops,
+                &open.fetch,
+                &held,
+                &open.pull_requests,
+                remote,
+                number,
+            )
+            .await
+        }
+    }
 }

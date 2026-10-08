@@ -267,6 +267,7 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
         )
     );
     assert_eq!(first.labels, ["performance"]);
+    assert_eq!(first.comments, 4, "resolved threads count, the system's own do not");
     assert_eq!(
         first.review_requests,
         [
