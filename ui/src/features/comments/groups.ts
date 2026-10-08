@@ -9,7 +9,7 @@ import { lineRange } from "../../lib/lineRange.ts";
 export const hasConflict = (t: Thread) => t.messages.some((m) => m.conflict !== null);
 
 /** How many of the thread's messages wait for Submit review. */
-export const draftCount = (t: Thread) => (t.platform ? t.messages.filter((m) => !m.posted).length : 0);
+export const draftCount = (t: Thread) => (t.platform ? t.messages.filter((m) => m.state.type !== "posted").length : 0);
 
 /** Who opened a thread the platform has, if it was not the viewer. */
 export const openedBy = (t: Thread) => (t.platform?.posted && !t.messages[0]?.mine ? t.messages[0]?.author : undefined);

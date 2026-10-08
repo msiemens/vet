@@ -134,7 +134,7 @@ function draftCard(target: ThreadTarget, actions: ThreadActions): HTMLElement {
 }
 
 /** A message that only Vet has, in a thread the platform has or will have: posted with the review. */
-const isDraft = (thread: Thread, message: ThreadMessage) => !!thread.platform && !message.posted;
+const isDraft = (thread: Thread, message: ThreadMessage) => !!thread.platform && message.state.type !== "posted";
 
 /** The author's picture, or a disc with their initials. */
 export function avatar(author: string, url: string | null): HTMLElement {

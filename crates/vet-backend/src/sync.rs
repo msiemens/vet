@@ -110,8 +110,8 @@ impl Orchestrator {
     }
 
     /// Tells what went wrong while posting, if anything, and syncs to bring back what is on the
-    /// platform now. Posted drafts are no drafts anymore, which every subscriber is told, the
-    /// requester included, also when the sync finds nothing else to change.
+    /// platform now. Posted drafts are no drafts anymore, and refused ones failed, which every
+    /// subscriber is told, the requester included, also when the sync finds nothing else to change.
     async fn after_posting(
         &self,
         open: &crate::open::Ready,
@@ -123,7 +123,8 @@ impl Orchestrator {
                 .broadcast(Event::Notification { project, notification });
         }
         let announced = sync_pull_request(&open.open, open).await;
-        if report.posted > 0 && !announced {
+        let changed = report.posted > 0 || report.failed > 0 || report.problem.is_some();
+        if changed && !announced {
             open.subscribers.broadcast(Event::ThreadsChanged {
                 project,
                 revision: open.session.revision().await,
@@ -282,6 +283,7 @@ mod tests {
     fn posted(posted: u32) -> SubmitReport {
         SubmitReport {
             posted,
+            failed: 0,
             skipped: 0,
             problem: None,
             not_posted: Vec::new(),

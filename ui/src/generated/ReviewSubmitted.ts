@@ -11,4 +11,9 @@ posted: number,
 /**
  * Drafts that wait: their code is gone, or their thread has an edit conflict to settle.
  */
-skipped: number, };
+skipped: number, 
+/**
+ * Why posting stopped short, fit to show: the drafts it was about failed, or are on their way
+ * when the platform could not be reached.
+ */
+problem: string | null, };

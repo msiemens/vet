@@ -12,7 +12,7 @@ const message = (id: number, over: Partial<ThreadMessage> = {}): ThreadMessage =
   at: id,
   mine: true,
   avatar: null,
-  posted: false,
+  state: { type: "draft" },
   editedAt: null,
   conflict: null,
   ...over,
@@ -62,7 +62,7 @@ void test("on a pull request the Review tab lists the threads on files and lines
 void test("the comments on the pull request that wait for Submit review are the unposted ones of flat threads, oldest first", () => {
   const drafts = draftComments([
     whole(1, false, [message(30)]),
-    whole(2, false, [message(10, { posted: true }), message(20)]),
+    whole(2, false, [message(10, { state: { type: "posted" } }), message(20)]),
     // A thread on the pull request as a whole where the platform keeps those as threads.
     whole(3, true),
     line(4),

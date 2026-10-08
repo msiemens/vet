@@ -494,6 +494,10 @@ pub mod message {
         pub synced: Option<String>,
         pub conflict_body: Option<String>,
         pub conflict_at: Option<i64>,
+        /// Unix seconds a draft was handed to the platform at, while Vet has not heard back.
+        pub posting_since: Option<i64>,
+        /// Why the platform refused a draft.
+        pub post_error: Option<String>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

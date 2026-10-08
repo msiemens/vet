@@ -28,6 +28,8 @@ pub(crate) struct Hosted {
     pub traits: PlatformTraits,
     /// Edit times, so a platform edit is later than any before it.
     clock: i64,
+    /// A submission is taken, and its answer never reaches Vet.
+    answers_lost: bool,
 }
 
 #[derive(Clone)]
@@ -60,6 +62,7 @@ impl Default for FakeHosting {
             votes: Vec::new(),
             traits: PlatformTraits::github(),
             clock: 1_000,
+            answers_lost: false,
         })))
     }
 }
@@ -282,7 +285,14 @@ impl FakeHosting {
     }
 
     pub fn recover(&self) {
-        self.0.lock().unwrap().failing.clear();
+        let mut hosted = self.0.lock().unwrap();
+        hosted.failing.clear();
+        hosted.answers_lost = false;
+    }
+
+    /// From now on a submission is posted, and the connection drops before Vet hears so.
+    pub fn lose_answers(&self) {
+        self.0.lock().unwrap().answers_lost = true;
     }
 
     pub fn calls(&self) -> Vec<String> {
@@ -416,6 +426,17 @@ impl Platform for FakeHosting {
 
     async fn submit_review(&self, _: &RemoteKey, _: u64, submission: &Submission) -> Result<Submitted, PlatformError> {
         let mut hosted = self.0.lock().unwrap();
+        let posted = hosted.take(submission)?;
+        if hosted.answers_lost {
+            return Err(PlatformError::Unreachable("the connection dropped".to_owned()));
+        }
+        Ok(posted)
+    }
+}
+
+impl Hosted {
+    fn take(&mut self, submission: &Submission) -> Result<Submitted, PlatformError> {
+        let hosted = self;
         hosted.check(format!("submit {}", submission.verdict))?;
         hosted.submissions.push(submission.clone());
         if hosted.traits.posting == Posting::PerComment {

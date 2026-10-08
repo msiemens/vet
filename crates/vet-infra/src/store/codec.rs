@@ -15,8 +15,8 @@ use vet_core::content::{
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::TreeNode;
 use vet_core::review::{
-    Anchor, CommentTarget, EditConflict, Message, MessageId, PlatformThread, RemoteComment, ReviewedSpan, Side,
-    SpanState, Thread, ThreadId, ThreadStatus,
+    Anchor, CommentTarget, EditConflict, Message, MessageId, Outgoing, PlatformThread, RemoteComment, ReviewedSpan,
+    Side, SpanState, Thread, ThreadId, ThreadStatus,
 };
 
 use super::entity::{
@@ -540,6 +540,12 @@ pub fn message_from(m: message::Model) -> Result<Message, DbErr> {
         (None, None) => None,
         _ => return Err(corrupt("a comment's remote id and synced text go together")),
     };
+    let outgoing = match (m.posting_since, m.post_error) {
+        (None, None) => Outgoing::Draft,
+        (Some(since), None) => Outgoing::Posting { since },
+        (None, Some(error)) => Outgoing::Failed { error },
+        (Some(_), Some(_)) => return Err(corrupt("a comment is either being posted or failed to be")),
+    };
     Ok(Message {
         id: MessageId(m.id as u64),
         author: m.author,
@@ -549,6 +555,7 @@ pub fn message_from(m: message::Model) -> Result<Message, DbErr> {
         avatar: m.avatar,
         edited_at: m.edited_at,
         remote,
+        outgoing,
     })
 }
 
@@ -566,6 +573,14 @@ pub fn message_row(thread: i64, m: &Message) -> message::ActiveModel {
         synced: Set(m.remote.as_ref().map(|r| r.synced.clone())),
         conflict_body: Set(conflict(m).map(|c| c.remote_body.clone())),
         conflict_at: Set(conflict(m).map(|c| c.remote_at)),
+        posting_since: Set(match m.outgoing {
+            Outgoing::Posting { since } => Some(since),
+            _ => None,
+        }),
+        post_error: Set(match &m.outgoing {
+            Outgoing::Failed { error } => Some(error.clone()),
+            _ => None,
+        }),
         ..Default::default()
     }
 }

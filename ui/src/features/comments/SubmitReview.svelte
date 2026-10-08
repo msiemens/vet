@@ -19,7 +19,8 @@
     sending = true;
     const done = await platform.submit(verdict, form.body);
     sending = false;
-    if (!done) return;
+    // What stopped it is told by the backend's notification.
+    if (done?.problem !== null) return;
     [form.open, form.body] = [false, ""];
     session.notice = done.skipped > 0 ? `Review submitted. ${waitingNote(done.skipped)}` : "Review submitted";
   }
@@ -28,7 +29,7 @@
     sending = true;
     const done = await platform.post();
     sending = false;
-    if (!done) return;
+    if (done?.problem !== null) return;
     const posted = `${done.posted} ${done.posted === 1 ? "comment" : "comments"} posted`;
     session.notice = done.skipped > 0 ? `${posted}. ${waitingNote(done.skipped)}` : posted;
   }

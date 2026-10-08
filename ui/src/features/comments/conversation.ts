@@ -26,7 +26,9 @@ export interface DraftComment {
 export function draftComments(threads: readonly Thread[]): DraftComment[] {
   return threads
     .filter(isFlat)
-    .flatMap((thread) => thread.messages.filter((m) => !m.posted).map((message) => ({ thread, message })))
+    .flatMap((thread) =>
+      thread.messages.filter((m) => m.state.type !== "posted").map((message) => ({ thread, message })),
+    )
     .sort((a, b) => a.message.at - b.message.at || a.message.id - b.message.id);
 }
 

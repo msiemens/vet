@@ -22,7 +22,7 @@ const message = (over: Partial<ThreadMessage> = {}): ThreadMessage => ({
   at: 0,
   mine: true,
   avatar: null,
-  posted: false,
+  state: { type: "draft" },
   editedAt: null,
   conflict: null,
   ...over,
@@ -46,7 +46,7 @@ void test("every thread is in one group: an edit to settle, open or resolved, wh
   const conflict = { remoteBody: "theirs", remoteAt: 1 };
   const groups = groupThreads([
     thread(1),
-    thread(2, { messages: [message({ posted: true, conflict })], status: "resolved" }),
+    thread(2, { messages: [message({ state: { type: "posted" }, conflict })], status: "resolved" }),
     thread(3, { anchor: { type: "stale", reason: "contextChanged" }, location: null }),
     thread(4, { anchor: { type: "inferred", strategy: "contextWindow", confidence: "low" } }),
     thread(5, { status: "resolved" }),
@@ -73,7 +73,7 @@ void test("on a platform a thread counts the messages that wait for the review a
   const platform = { posted: true, resolvable: true, resolvedBy: null };
   const theirs = thread(1, {
     platform,
-    messages: [message({ author: "lena", mine: false, posted: true }), message({ id: 2 })],
+    messages: [message({ author: "lena", mine: false, state: { type: "posted" } }), message({ id: 2 })],
   });
   assert.equal(draftCount(theirs), 1);
   assert.equal(openedBy(theirs), "lena");

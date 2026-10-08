@@ -1,6 +1,6 @@
 //! Threads of a pull request exchanged with its platform, against a platform kept in memory.
 
-use vet_core::review::EditConflict;
+use vet_core::review::{EditConflict, Outgoing};
 
 use super::*;
 use crate::platform::{DiffSide, PlatformError};
@@ -570,17 +570,169 @@ async fn an_empty_comment_review_is_refused_and_a_verdict_the_platform_lacks_too
     );
 }
 
+/// The bodies of the viewer's comments that the platform does not have, with how far each is.
+async fn outgoing(fx: &Fixture) -> Vec<(String, Outgoing)> {
+    fx.all()
+        .await
+        .iter()
+        .flat_map(|t| t.messages.iter().filter(|m| m.remote.is_none()))
+        .map(|m| (m.body.clone(), m.outgoing.clone()))
+        .collect()
+}
+
+/// The same, as the store has them.
+fn stored_outgoing(fx: &Fixture) -> Vec<(String, Outgoing)> {
+    let mem = fx.store.0.lock().unwrap();
+    mem.threads
+        .iter()
+        .flat_map(|t| t.thread.messages.iter().filter(|m| m.remote.is_none()))
+        .map(|m| (m.body.clone(), m.outgoing.clone()))
+        .collect()
+}
+
+fn failed(error: &str) -> Outgoing {
+    Outgoing::Failed {
+        error: error.to_owned(),
+    }
+}
+
 #[tokio::test]
-async fn a_review_the_platform_refuses_posts_nothing_and_keeps_the_drafts() {
+async fn a_review_the_platform_refuses_posts_nothing_and_fails_each_draft_with_the_reason_until_posted_again() {
     let (fx, hosting) = on_a_pull_request().await;
     fx.thread(on("a.txt", 20, 21)).await;
+    let reply = fx.thread(on("a.txt", 3, 4)).await;
+    fx.session.reply(reply, "and this".into(), 6).await.unwrap();
     hosting.fail("submit", PlatformError::Rejected("token expired".to_owned()));
 
-    let error = fx.session.submit_review(&hosting, "APPROVE", None).await.unwrap_err();
+    let report = fx.session.submit_review(&hosting, "APPROVE", None).await.unwrap();
 
-    assert!(matches!(error, SessionError::Platform(PlatformError::Rejected(_))));
-    assert!(fx.all().await[0].messages.iter().all(|m| m.remote.is_none()));
+    assert_eq!(
+        (report.posted, report.failed, report.problem),
+        (0, 3, Some(PlatformError::Rejected("token expired".to_owned())))
+    );
+    let expected = [
+        ("why?".to_owned(), failed("token expired")),
+        ("why?".to_owned(), failed("token expired")),
+        ("and this".to_owned(), failed("token expired")),
+    ];
+    assert_eq!(outgoing(&fx).await, expected);
+    assert_eq!(stored_outgoing(&fx), expected, "kept across a restart");
     assert!(hosting.thread_ids().is_empty());
+
+    // A failed draft is posted with the next review.
+    hosting.recover();
+    let report = fx.session.submit_review(&hosting, "APPROVE", None).await.unwrap();
+    assert_eq!((report.posted, report.failed, report.problem), (3, 0, None));
+    assert!(outgoing(&fx).await.is_empty());
+    assert_eq!(hosting.thread_ids().len(), 2);
+}
+
+#[tokio::test]
+async fn drafts_are_marked_posting_before_the_platform_is_asked_and_one_it_took_is_found_there_after_a_restart() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let theirs = hosting.thread("a.txt", (4, 4), "pr1", "marco", "Why 3?");
+    fx.sync(&hosting).await;
+    let on_theirs = fx.all().await[0].id;
+    fx.session.reply(on_theirs, "Agreed.".into(), 7).await.unwrap();
+    let new_thread = fx.thread(on("a.txt", 20, 21)).await;
+    // Written after the thread was opened, whenever the clock says that was.
+    fx.session.reply(new_thread, "and 21".into(), 10_000).await.unwrap();
+    fx.thread(NewThread::Changeset).await;
+    // The platform posts the review, and Vet stops before it hears so.
+    hosting.lose_answers();
+
+    let report = fx.session.submit_review(&hosting, "COMMENT", None).await.unwrap();
+
+    assert!(matches!(report.problem, Some(PlatformError::Unreachable(_))));
+    assert_eq!((report.posted, report.failed), (0, 0));
+    assert!(
+        stored_outgoing(&fx)
+            .iter()
+            .all(|(_, o)| matches!(o, Outgoing::Posting { .. })),
+        "{:?}",
+        stored_outgoing(&fx)
+    );
+    let refused = fx.session.submit_review(&hosting, "COMMENT", None).await;
+    assert!(
+        matches!(refused, Err(SessionError::Invalid(_))),
+        "what may be posted is not posted again: {refused:?}"
+    );
+
+    hosting.recover();
+    let session = fx.reopen(&[("a.txt", &numbered(30, &[]))]).await;
+    session.open_changeset(pull_request_7()).await.unwrap();
+    let report = session.sync_threads(&hosting).await.unwrap();
+
+    assert!(report.changed);
+    let threads = session.threads(View::Changeset).await.unwrap().threads;
+    assert!(
+        threads
+            .iter()
+            .all(|t| t.messages.iter().all(|m| m.remote.is_some()) && remote_id(t).is_some()),
+        "{threads:?}"
+    );
+    assert_eq!(
+        threads.len(),
+        2,
+        "the comment on the pull request is in its conversation"
+    );
+    let new = threads.iter().find(|t| t.id == new_thread).expect("the new thread");
+    assert_eq!(bodies(new), ["why?", "and 21"]);
+    let mut on_platform = hosting.thread_ids();
+    on_platform.sort();
+    assert_eq!(on_platform.len(), 2);
+    assert!(on_platform.contains(&theirs));
+    assert_eq!(hosting.conversation(), ["why?"]);
+    assert!(
+        !session.sync_threads(&hosting).await.unwrap().changed,
+        "nothing is added twice"
+    );
+    let again = session.submit_review(&hosting, "COMMENT", None).await;
+    assert!(
+        matches!(again, Err(SessionError::Invalid(_))),
+        "nothing is left to post"
+    );
+}
+
+#[tokio::test]
+async fn a_draft_left_posting_that_the_platform_never_got_is_a_draft_again_after_a_restart() {
+    let (fx, hosting) = on_an_azure_devops_pull_request().await;
+    fx.thread(on("a.txt", 20, 21)).await;
+    fx.thread(NewThread::Changeset).await;
+    hosting.fail("submit", PlatformError::Unreachable("offline".to_owned()));
+
+    fx.session.post_drafts(&hosting).await.unwrap();
+    assert!(
+        stored_outgoing(&fx)
+            .iter()
+            .all(|(_, o)| matches!(o, Outgoing::Posting { .. }))
+    );
+
+    hosting.recover();
+    let session = fx.reopen(&[("a.txt", &numbered(30, &[]))]).await;
+    session
+        .open_changeset(Source::PullRequest {
+            remote: RemoteKey {
+                host: "dev.azure.com".into(),
+                path: "acme/shop/app".into(),
+            },
+            number: 7,
+        })
+        .await
+        .unwrap();
+    assert!(session.sync_threads(&hosting).await.unwrap().changed);
+    assert_eq!(
+        stored_outgoing(&fx),
+        [
+            ("why?".to_owned(), Outgoing::Draft),
+            ("why?".to_owned(), Outgoing::Draft)
+        ]
+    );
+    assert!(hosting.thread_ids().is_empty());
+
+    let report = session.post_drafts(&hosting).await.unwrap();
+    assert_eq!((report.posted, report.problem), (2, None));
+    assert_eq!(hosting.thread_ids().len(), 2);
 }
 
 #[tokio::test]
@@ -907,18 +1059,45 @@ async fn posting_stops_at_the_first_draft_the_platform_refuses_and_keeps_the_res
         hosting.calls().iter().all(|c| c != "post Overall."),
         "nothing after the refusal was tried"
     );
-    let drafts: Vec<String> = fx
-        .all()
-        .await
-        .iter()
-        .flat_map(|t| t.messages.iter().filter(|m| m.remote.is_none()).map(|m| m.body.clone()))
-        .collect();
-    assert_eq!(drafts, ["Agreed.", "Overall."]);
+    assert_eq!(report.failed, 1);
+    assert_eq!(
+        outgoing(&fx).await,
+        [
+            ("Agreed.".to_owned(), failed("no access")),
+            ("Overall.".to_owned(), Outgoing::Draft)
+        ],
+        "the refused one failed, the one after it was not tried"
+    );
 
     // Once the platform takes them, the next post sends what is left.
     hosting.recover();
     let report = fx.session.post_drafts(&hosting).await.unwrap();
     assert_eq!((report.posted, report.problem), (2, None));
+    assert!(outgoing(&fx).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_post_that_loses_the_connection_midway_leaves_only_the_one_on_its_way_to_be_looked_for() {
+    let (fx, hosting) = with_three_drafts().await;
+    hosting.fail("post Agreed.", PlatformError::Unreachable("offline".to_owned()));
+
+    fx.session.post_drafts(&hosting).await.unwrap();
+
+    let left = outgoing(&fx).await;
+    assert!(
+        matches!(&left[..], [(a, Outgoing::Posting { .. }), (b, Outgoing::Draft)] if a == "Agreed." && b == "Overall."),
+        "{left:?}"
+    );
+    hosting.recover();
+    fx.sync(&hosting).await;
+    assert_eq!(
+        outgoing(&fx).await,
+        [
+            ("Agreed.".to_owned(), Outgoing::Draft),
+            ("Overall.".to_owned(), Outgoing::Draft)
+        ],
+        "the platform never got it"
+    );
 }
 
 #[tokio::test]

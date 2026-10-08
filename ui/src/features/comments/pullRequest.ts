@@ -5,6 +5,7 @@ import type { PlatformConnection } from "../../generated/PlatformConnection";
 import type { PullRequestInfo } from "../../generated/PullRequestInfo";
 import type { ReviewerState } from "../../generated/ReviewerState";
 import type { Thread } from "../../generated/Thread";
+import type { ThreadMessage } from "../../generated/ThreadMessage";
 
 export function stateLabel(info: Pick<PullRequestInfo, "state" | "draft">): string {
   if (info.state === "open") return info.draft ? "Draft" : "Open";
@@ -40,9 +41,10 @@ export function waitingNote(count: number): string {
   return `${count} ${count === 1 ? "draft waits" : "drafts wait"}: its code is gone or its thread has an edit to settle.`;
 }
 
-/** The messages that `SubmitReview` or `PostDrafts` would post: those only Vet has, in threads of a platform. */
+/** The messages that `SubmitReview` or `PostDrafts` would post: the drafts and failed ones of threads of a platform. */
 export function draftsToSubmit(threads: readonly Thread[]): number {
-  return threads.reduce((n, t) => n + (t.platform ? t.messages.filter((m) => !m.posted).length : 0), 0);
+  const waits = (m: ThreadMessage) => m.state.type === "draft" || m.state.type === "failed";
+  return threads.reduce((n, t) => n + (t.platform ? t.messages.filter(waits).length : 0), 0);
 }
 
 /** Why the review cannot be submitted now, if it cannot. */

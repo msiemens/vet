@@ -21,7 +21,9 @@ use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
 use vet_core::filter::ReviewFilter;
 use vet_core::inline::TextChange;
-use vet_core::review::{AnchorState, CommentTarget, Confidence, Location, Side, StaleReason, Strategy, ThreadStatus};
+use vet_core::review::{
+    AnchorState, CommentTarget, Confidence, Location, Message, Outgoing, Side, StaleReason, Strategy, ThreadStatus,
+};
 use vet_protocol as p;
 use vet_semantic::ports::RestoreFailure;
 
@@ -796,7 +798,7 @@ pub fn thread(t: &ThreadView) -> p::Thread {
                 at: unix_secs(m.at),
                 mine: m.mine,
                 avatar: m.avatar.clone(),
-                posted: m.remote.is_some(),
+                state: comment_state(m),
                 edited_at: m.edited_at.map(unix_secs),
                 conflict: m
                     .remote
@@ -814,6 +816,15 @@ pub fn thread(t: &ThreadView) -> p::Thread {
             resolvable: pt.resolvable,
             resolved_by: pt.resolved_by.clone(),
         }),
+    }
+}
+
+fn comment_state(m: &Message) -> p::CommentState {
+    match &m.outgoing {
+        _ if m.remote.is_some() => p::CommentState::Posted,
+        Outgoing::Draft => p::CommentState::Draft,
+        Outgoing::Posting { .. } => p::CommentState::Posting,
+        Outgoing::Failed { error } => p::CommentState::Failed { error: error.clone() },
     }
 }
 
@@ -986,6 +997,7 @@ pub fn review_submitted(r: &SubmitReport) -> p::Response {
     p::Response::ReviewSubmitted(p::ReviewSubmitted {
         posted: r.posted,
         skipped: r.skipped,
+        problem: r.problem.as_ref().map(ToString::to_string),
     })
 }
 

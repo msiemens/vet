@@ -209,4 +209,7 @@ pub struct ReviewSubmitted {
     pub posted: u32,
     /// Drafts that wait: their code is gone, or their thread has an edit conflict to settle.
     pub skipped: u32,
+    /// Why posting stopped short, fit to show: the drafts it was about failed, or are on their way
+    /// when the platform could not be reached.
+    pub problem: Option<String>,
 }

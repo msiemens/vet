@@ -13,8 +13,8 @@ use vet_core::content::{
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{
-    Anchor, CommentTarget, EditConflict, Message, PlatformThread, RemoteComment, ReviewedSpan, Side, SpanState,
-    ThreadStatus,
+    Anchor, CommentTarget, EditConflict, Message, Outgoing, PlatformThread, RemoteComment, ReviewedSpan, Side,
+    SpanState, ThreadStatus,
 };
 
 use super::*;
@@ -595,6 +595,20 @@ async fn what_a_platform_has_of_a_thread_survives_a_restart_and_a_thread_needs_n
     // A draft of the viewer's is written after the platform's reply, which then comes second.
     let draft = store.add_message(thread, message("agreed")).await.unwrap();
     let reply = store.add_message(thread, posted("C2", "no", "no")).await.unwrap();
+    let posting = Message {
+        outgoing: Outgoing::Posting { since: T0 + 20 },
+        ..message("on its way")
+    };
+    let posting = store.add_message(thread, posting).await.unwrap();
+    let failed = store.add_message(thread, message("refused")).await.unwrap();
+    let refused = Message {
+        id: failed,
+        outgoing: Outgoing::Failed {
+            error: "the thread is locked".into(),
+        },
+        ..message("refused")
+    };
+    store.replace_message(refused).await.unwrap();
 
     let edited = Message {
         id: opener,
@@ -637,7 +651,7 @@ async fn what_a_platform_has_of_a_thread_survives_a_restart_and_a_thread_needs_n
         })
     );
     assert!(found.is_posted());
-    assert_eq!(found.messages.len(), 2, "the reply was removed");
+    assert_eq!(found.messages.len(), 4, "the reply was removed");
     assert_eq!(found.messages[0], edited);
     assert_eq!(
         (found.messages[1].id, found.messages[1].remote.clone()),
@@ -645,6 +659,22 @@ async fn what_a_platform_has_of_a_thread_survives_a_restart_and_a_thread_needs_n
         "a draft has no remote"
     );
     assert!(found.messages[1].mine);
+    assert_eq!(
+        found.messages[1..]
+            .iter()
+            .map(|m| (m.id, m.outgoing.clone()))
+            .collect::<Vec<_>>(),
+        [
+            (draft, Outgoing::Draft),
+            (posting, Outgoing::Posting { since: T0 + 20 }),
+            (
+                failed,
+                Outgoing::Failed {
+                    error: "the thread is locked".into()
+                }
+            ),
+        ]
+    );
 }
 
 #[tokio::test]

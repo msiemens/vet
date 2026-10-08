@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use vet_core::content::{EntryKind, LineRange, RepoPath, Snapshot, SnapshotStatus, is_binary};
 use vet_core::review::{
-    Anchor, AnchorState, CommentTarget, EditConflict, Message, MessageId, PlatformThread, RemoteComment, Side, Thread,
-    ThreadId, ThreadStatus,
+    Anchor, AnchorState, CommentTarget, EditConflict, Message, MessageId, Outgoing, PlatformThread, RemoteComment,
+    Side, Thread, ThreadId, ThreadStatus,
 };
 
 use super::state::State;
@@ -64,11 +64,14 @@ pub struct DiscussionView {
 pub struct SubmitReport {
     /// How many drafts were posted.
     pub posted: u32,
+    /// How many drafts the platform refused, which are marked failed with its reason.
+    pub failed: u32,
     /// Drafts that were not posted, because the code they were on is gone or because the thread
     /// waits for an edit conflict to be settled.
     pub skipped: u32,
-    /// Why posting stopped short: the platform refused a comment on the pull request as a whole,
-    /// or on a platform that takes comments one at a time, the next draft.
+    /// Why posting stopped short: the platform refused the review, a comment on the pull request as
+    /// a whole, or on a platform that takes comments one at a time, the next draft; or it could not
+    /// be reached.
     pub problem: Option<PlatformError>,
     /// The texts of the drafts that were not posted, which stay drafts.
     pub not_posted: Vec<String>,
@@ -109,6 +112,7 @@ fn message_of(c: &PlatformComment) -> Message {
             synced: c.body.clone(),
             conflict: None,
         }),
+        outgoing: Outgoing::Draft,
     }
 }
 
@@ -178,14 +182,15 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         let discussion = platform.discussion(remote, *number).await?;
 
-        let (plan, pushes) = {
-            let st = self.state.lock().await;
+        let (plan, pushes, settled) = {
+            let mut st = self.state.lock().await;
             if st.source != source {
                 return Ok(SyncReport::default());
             }
+            let settled = self.settle_posting(&mut st, &discussion).await?;
             let plan = reconcile(&st.threads, &discussion, platform.traits().changeset_threads);
             let pushes = pushes_of(&st.threads, &plan);
-            (plan, pushes)
+            (plan, pushes, settled)
         };
         let (pushed, problem) = push(platform, remote, pushes).await;
 
@@ -194,6 +199,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             return Ok(SyncReport::default());
         }
         let mut report = self.apply(&mut st, &plan, &pushed, &discussion).await?;
+        report.changed |= settled;
         report.problem = problem;
         Ok(report)
     }
@@ -639,26 +645,199 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let (remote, number) = pull_request(&st)?;
             self.ensure_changes(&mut st).await?;
             let (submission, skipped) = drafts_of(&st, verdict, body.clone());
+            if submission.threads.is_empty()
+                && submission.replies.is_empty()
+                && submission.comments.is_empty()
+                && body.is_none()
+                && !allow_empty
+            {
+                return Err(SessionError::Invalid("there is nothing to submit".into()));
+            }
+            let since = (self.clock)();
+            for key in keys_in_turn(&submission) {
+                self.set_outgoing(&mut st, MessageId(key), Outgoing::Posting { since })
+                    .await?;
+            }
             (remote, number, submission, skipped)
         };
-        if submission.threads.is_empty()
-            && submission.replies.is_empty()
-            && submission.comments.is_empty()
-            && body.is_none()
-            && !allow_empty
-        {
-            return Err(SessionError::Invalid("there is nothing to submit".into()));
-        }
-        let posted = platform.submit_review(&remote, number, &submission).await?;
+        let (posted, whole) = match platform.submit_review(&remote, number, &submission).await {
+            Ok(posted) => (posted, false),
+            Err(e) => (
+                Submitted {
+                    failed: Some(e),
+                    ..Submitted::default()
+                },
+                true,
+            ),
+        };
         let mut report = SubmitReport {
             posted: 0,
+            failed: 0,
             skipped,
             problem: posted.failed.clone(),
             not_posted: not_posted(&submission, &posted),
         };
         let mut st = self.state.lock().await;
         report.posted = self.record_posted(&mut st, &posted).await?;
+        report.failed = self.settle_unposted(&mut st, &submission, &posted, whole).await?;
         Ok(report)
+    }
+
+    /// Settles the drafts of `submission` that `posted` does not hold. Without a refusal they were
+    /// not tried and are drafts again. A refusal fails the draft it was about: every draft when the
+    /// platform refused all of them at once (`whole`), else the first that is not posted, the
+    /// rest not having been tried. A platform that could not be reached may have taken what was
+    /// asked of it, which stays posting until the next sync looks for it there. Answers how many
+    /// failed.
+    async fn settle_unposted(
+        &self,
+        st: &mut State,
+        submission: &Submission,
+        posted: &Submitted,
+        whole: bool,
+    ) -> Result<u32> {
+        let done: HashSet<u64> = posted
+            .threads
+            .iter()
+            .flat_map(|t| std::iter::once(t.key).chain(t.replies.iter().map(|r| r.key)))
+            .chain(posted.replies.iter().chain(&posted.comments).map(|p| p.key))
+            .collect();
+        let left: Vec<u64> = keys_in_turn(submission)
+            .into_iter()
+            .filter(|k| !done.contains(k))
+            .collect();
+        let asked = match (&posted.failed, whole) {
+            (None, _) => 0,
+            (Some(_), true) => left.len(),
+            (Some(_), false) => left.len().min(1),
+        };
+        let mut failed = 0;
+        for (i, key) in left.into_iter().enumerate() {
+            let outgoing = match &posted.failed {
+                Some(PlatformError::Unreachable(_)) if i < asked => continue,
+                Some(error) if i < asked => {
+                    failed += 1;
+                    Outgoing::Failed {
+                        error: error.to_string(),
+                    }
+                }
+                _ => Outgoing::Draft,
+            };
+            self.set_outgoing(st, MessageId(key), outgoing).await?;
+        }
+        Ok(failed)
+    }
+
+    /// Records how far the viewer's draft `message` is on its way to the platform.
+    async fn set_outgoing(&self, st: &mut State, message: MessageId, outgoing: Outgoing) -> Result<()> {
+        let Ok((thread, old)) = find_message(st, message) else {
+            return Ok(());
+        };
+        if old.remote.is_some() || old.outgoing == outgoing {
+            return Ok(());
+        }
+        let thread = thread.id;
+        let changed = Message {
+            outgoing,
+            ..old.clone()
+        };
+        self.acquisition.store.replace_message(changed.clone()).await?;
+        edit_thread(st, thread, |t| replace(t, &changed));
+        Ok(())
+    }
+
+    /// Settles the drafts a post left posting, because Vet stopped or lost the platform's answer
+    /// between asking it and hearing back, by what the platform has: a comment of the viewer's with
+    /// the same text in the same place, made since posting started and not already Vet's, is the
+    /// draft posted; without one the draft is a draft again. Answers whether anything changed.
+    async fn settle_posting(&self, st: &mut State, discussion: &Discussion) -> Result<bool> {
+        let posting: Vec<(ThreadId, MessageId)> = st
+            .threads
+            .iter()
+            .flat_map(|t| {
+                t.messages
+                    .iter()
+                    .filter(|m| m.remote.is_none() && matches!(m.outgoing, Outgoing::Posting { .. }))
+                    .map(|m| (t.id, m.id))
+            })
+            .collect();
+        if posting.is_empty() {
+            return Ok(false);
+        }
+        let mut threads_known: HashSet<String> = st
+            .threads
+            .iter()
+            .filter_map(|t| t.platform.as_ref()?.remote_id.clone())
+            .collect();
+        let mut comments_known: HashSet<String> = st
+            .threads
+            .iter()
+            .flat_map(|t| t.messages.iter().filter_map(|m| Some(m.remote.as_ref()?.id.clone())))
+            .collect();
+        for (thread, message) in posting {
+            let t = find_thread(st, thread)?.clone();
+            let Some(m) = t.messages.iter().find(|m| m.id == message).cloned() else {
+                continue;
+            };
+            let Outgoing::Posting { since } = m.outgoing else {
+                continue;
+            };
+            let after = since - POSTING_SLACK;
+            let fits = |c: &PlatformComment| {
+                c.mine && c.body == m.body && c.created_at >= after && !comments_known.contains(&c.id)
+            };
+            if t.is_flat() {
+                let said = discussion.conversation.iter().find(|i| {
+                    i.kind == ConversationKind::Comment { mine: true }
+                        && i.body == m.body
+                        && i.at >= after
+                        && !comments_known.contains(&i.id)
+                });
+                match said {
+                    Some(item) => {
+                        comments_known.insert(item.id.clone());
+                        self.drop_message(st, thread, message).await?;
+                    }
+                    None => self.set_outgoing(st, message, Outgoing::Draft).await?,
+                }
+                continue;
+            }
+            let found = match t.platform.as_ref().and_then(|p| p.remote_id.clone()) {
+                Some(id) => discussion
+                    .threads
+                    .iter()
+                    .find(|d| d.id == id)
+                    .and_then(|d| d.comments.iter().find(|c| fits(c)))
+                    .map(|c| (None, c)),
+                None if t.messages.first().map(|f| f.id) == Some(message) => {
+                    let path = posted_path(&t);
+                    discussion
+                        .threads
+                        .iter()
+                        .filter(|d| d.path == path && !threads_known.contains(&d.id))
+                        .find_map(|d| d.comments.first().filter(|c| fits(c)).map(|c| (Some(d.id.clone()), c)))
+                }
+                // A reply in a new thread that the platform does not have.
+                None => None,
+            };
+            let Some((new_thread, comment)) = found else {
+                self.set_outgoing(st, message, Outgoing::Draft).await?;
+                continue;
+            };
+            comments_known.insert(comment.id.clone());
+            if let Some(id) = new_thread {
+                threads_known.insert(id.clone());
+                let mut platform = t.platform.clone().expect("a draft thread");
+                platform.remote_id = Some(id);
+                self.acquisition
+                    .store
+                    .set_thread_platform(thread, platform.clone())
+                    .await?;
+                edit_thread(st, thread, |t| t.platform = Some(platform));
+            }
+            self.record_comment(st, thread, message, comment).await?;
+        }
+        Ok(true)
     }
 
     async fn record_posted(&self, st: &mut State, posted: &Submitted) -> Result<u32> {
@@ -744,6 +923,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         let mut posted = old;
         posted.avatar = comment.avatar.clone();
+        posted.outgoing = Outgoing::Draft;
         posted.remote = Some(RemoteComment {
             id: comment.id.clone(),
             synced: comment.body.clone(),
@@ -825,6 +1005,32 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let mut st = self.state.lock().await;
         self.ensure_changes(&mut st).await?;
         thread_by_id(&st, thread)
+    }
+}
+
+/// How far before the start of a post, by Vet's clock, the platform's clock may date a comment
+/// that post made.
+const POSTING_SLACK: i64 = 600;
+
+/// The keys of the drafts of `submission` in the order the platforms post them.
+fn keys_in_turn(submission: &Submission) -> Vec<u64> {
+    let mut keys = Vec::new();
+    for new in &submission.threads {
+        keys.push(new.key);
+        keys.extend(new.replies.iter().map(|r| r.key));
+    }
+    keys.extend(submission.replies.iter().map(|r| r.key));
+    keys.extend(submission.comments.iter().map(|c| c.key));
+    keys
+}
+
+/// The path the platform lists a thread posted from `thread` under: none for one on the pull
+/// request as a whole.
+fn posted_path(thread: &Thread) -> String {
+    match &thread.target {
+        CommentTarget::Range(a) => a.file.to_string_lossy(),
+        CommentTarget::File { path, .. } => path.to_string_lossy(),
+        CommentTarget::Changeset => String::new(),
     }
 }
 
@@ -969,12 +1175,11 @@ fn drafts_of(st: &State, verdict: &str, body: Option<String>) -> (Submission, u3
         if drafts.is_empty() {
             continue;
         }
-        // Posting from a thread waits until its edit conflict is settled.
-        if thread
-            .messages
-            .iter()
-            .any(|m| m.remote.as_ref().is_some_and(|r| r.conflict.is_some()))
-        {
+        // Posting from a thread waits until its edit conflict is settled, and until the next sync
+        // found out whether the platform has what an earlier post sent of it.
+        if thread.messages.iter().any(|m| {
+            m.remote.as_ref().is_some_and(|r| r.conflict.is_some()) || matches!(m.outgoing, Outgoing::Posting { .. })
+        }) {
             skipped += u32::try_from(drafts.len()).unwrap_or(u32::MAX);
             continue;
         }

@@ -661,15 +661,15 @@ export class Backend {
   /** Posts the drafts as one review with the verdict (an id of `PullRequestInfo.traits.verdicts`). */
   async submitReview(verdict: string, body: string | null): Promise<ReviewSubmitted> {
     const request = { type: "submitReview", project: this.pid, verdict, body } as const;
-    const { posted, skipped } = expect(await this.conn.request(request), "reviewSubmitted");
-    return { posted, skipped };
+    const { posted, skipped, problem } = expect(await this.conn.request(request), "reviewSubmitted");
+    return { posted, skipped, problem };
   }
 
   /** Posts the drafts one after the other, on a platform that takes comments that way. */
   async postDrafts(): Promise<ReviewSubmitted> {
     const request = { type: "postDrafts", project: this.pid } as const;
-    const { posted, skipped } = expect(await this.conn.request(request), "reviewSubmitted");
-    return { posted, skipped };
+    const { posted, skipped, problem } = expect(await this.conn.request(request), "reviewSubmitted");
+    return { posted, skipped, problem };
   }
 
   /** Sets the viewer's vote (an id of `PullRequestInfo.traits.verdicts`), on a platform that keeps it apart from posting. */

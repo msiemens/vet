@@ -79,14 +79,28 @@ pub struct ThreadMessage {
     pub mine: bool,
     /// The platform's picture of the author; without one the UI shows the author's initials.
     pub avatar: Option<String>,
-    /// The platform has the comment. On a thread with a `platform`, a message that is not posted
-    /// is a draft, which `SubmitReview` posts.
-    pub posted: bool,
+    /// Whether the platform has the comment; on a thread without a `platform` always `draft`.
+    pub state: CommentState,
     /// Unix seconds of the viewer's last edit of the text.
     pub edited_at: Option<u32>,
     /// Set when the text was edited here and on the platform since the last sync: both are kept
     /// until `KeepEdit` chooses one, and nothing is posted from the thread meanwhile.
     pub conflict: Option<EditConflict>,
+}
+
+/// Where one of the viewer's comments is on its way to the platform.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[ts(export)]
+pub enum CommentState {
+    /// Only in Vet; `SubmitReview` or `PostDrafts` posts it.
+    Draft,
+    /// Handed to the platform without an answer yet; the next sync finds out whether it took it.
+    Posting,
+    /// The platform has it.
+    Posted,
+    /// The platform refused it, for `error`; it is posted with the next post.
+    Failed { error: String },
 }
 
 /// The platform's text of a comment that was also edited here.

@@ -102,6 +102,24 @@ pub struct Message {
     /// Present once the platform has the comment. A message without it is only in Vet: a draft
     /// on a changeset of a platform.
     pub remote: Option<RemoteComment>,
+    /// How far a draft is on its way to the platform; says nothing once `remote` is set, nor on a
+    /// changeset outside a platform.
+    pub outgoing: Outgoing,
+}
+
+/// Where a draft of the viewer's is on its way to the platform.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub enum Outgoing {
+    /// Waits for the viewer to post it.
+    #[default]
+    Draft,
+    /// Handed to the platform at `since` (unix seconds) without Vet having heard back. Written
+    /// before the platform is asked, so that a post Vet did not see through is looked for on the
+    /// platform (posted after `since`, by the viewer, with the same text in the same place) before
+    /// it is posted again.
+    Posting { since: i64 },
+    /// The platform refused it; it waits to be posted again.
+    Failed { error: String },
 }
 
 impl Message {
@@ -116,6 +134,7 @@ impl Message {
             avatar: None,
             edited_at: None,
             remote: None,
+            outgoing: Outgoing::Draft,
         }
     }
 
