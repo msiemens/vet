@@ -20,6 +20,7 @@ let toggleFinds = true;
 let reconfirmFinds = true;
 let commentFinds = true;
 let caretFinds = true;
+let treeShown = true;
 const view: ViewActions = {
   step: (delta) => calls.push(`step ${delta}`),
   toggleSeen: () => (calls.push("toggle"), toggleFinds),
@@ -34,6 +35,7 @@ const files: FileActions = {
   reviewOnly: (path) => calls.push(`only ${path}`),
   closeTab: (kind, path) => calls.push(`close ${kind} ${path}`),
   closeOtherTabs: (kind, path) => calls.push(`closeOthers ${kind} ${path}`),
+  revealFile: () => (calls.push("reveal"), treeShown),
 };
 
 function setup(context: Partial<CommandContext> = {}, mod: "Ctrl" | "Meta" = "Ctrl") {
@@ -207,6 +209,15 @@ void test("a tab's menu cannot close the Changes tab, and closes the others arou
   r.run("path.copy", file.context);
   assert.deepEqual(calls, ["close file a.rs", "closeOthers file a.rs", "copy a.rs"]);
   assert.equal(r.run("tab.close", changes.context), false);
+});
+
+void test("Reveal the current file runs when a tree is there to show it and says so when there is none", () => {
+  const r = setup();
+  assert.equal(r.run("view.revealFile"), true);
+  treeShown = false;
+  assert.equal(r.run("view.revealFile"), false);
+  treeShown = true;
+  assert.deepEqual(calls, ["reveal", "reveal"]);
 });
 
 void test("the editor's menu offers copy only with a selection, and shows the keys of its commands", () => {

@@ -1,6 +1,7 @@
 export { default as AboutDialog } from "./AboutDialog.svelte";
 export { default as Banners } from "./Banners.svelte";
 export { default as FinishDialog } from "./FinishDialog.svelte";
+export { COMMITS, lensOnSelect, toolFor } from "./commitsTool";
 export { toggleTool } from "./toggleTool";
 export { default as Header, type Screen } from "./Header.svelte";
 export { default as TitleBar } from "./TitleBar.svelte";

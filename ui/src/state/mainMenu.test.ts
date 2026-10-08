@@ -13,7 +13,10 @@ const state: MenuState = {
   recent: [{ path: "/a/vet", name: "vet" }],
   mode: "split",
   theme: "dark",
-  tools: [{ id: "files", label: "Files", shown: true }],
+  tools: [
+    { id: "changes", shown: true },
+    { id: "commits", shown: false },
+  ],
   devPanel: false,
 };
 
@@ -54,7 +57,7 @@ void test("every leaf item runs a command", () => {
     for (const item of flatten(menu({ native }))) {
       if (item.children || item.separator) continue;
       calls.length = 0;
-      assert.ok(registry.run(item.id, open), item.id);
+      assert.ok(registry.run(item.id, { ...open, manyCommits: true }), item.id);
       assert.equal(calls.length, 1, item.id);
     }
   }
@@ -89,6 +92,23 @@ void test("state shows as checks and enabled flags", () => {
   assert.equal(find(items, "tools")?.enabled, false);
   assert.equal(find(items, "view.mode:split")?.enabled, false);
   assert.equal(find(items, "theme")?.enabled, undefined);
+});
+
+void test("every tool window has its own key, and Commits is offered only for a changeset of several commits", () => {
+  const tools = find(menu({}, { manyCommits: true }), "tools")?.children ?? [];
+  assert.deepEqual(
+    tools.map((t) => [t.label, t.shortcut, t.checked]),
+    [
+      ["Changes", "Ctrl+Alt+1", true],
+      ["Commits", "Ctrl+Alt+3", false],
+    ],
+  );
+  assert.equal(find(menu(), "view.tool.commits")?.enabled, false);
+  assert.equal(find(menu({}, { manyCommits: true }), "view.tool.commits")?.enabled, undefined);
+  calls.length = 0;
+  assert.equal(registry.run("view.tool.commits", open), false);
+  assert.equal(registry.run("view.tool.commits", { ...open, manyCommits: true }), true);
+  assert.deepEqual(calls, ["tool commits"]);
 });
 
 void test("Finish Review is offered only while a review is open", () => {

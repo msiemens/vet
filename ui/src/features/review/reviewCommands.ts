@@ -83,6 +83,8 @@ export interface FileActions {
   closeTab(kind: Exclude<TabKind, "changes">, path: string): void;
   /** Closes every tab but the Changes tab and this one, which gets the focus. */
   closeOtherTabs(kind: TabKind, path?: string): void;
+  /** Shows the file the review is at in the file tree; answers whether a tree is there to show it. */
+  revealFile(): boolean;
 }
 
 export function fileCommands(a: FileActions): Command<CommandContext>[] {
@@ -135,6 +137,7 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
         a.closeOtherTabs(c.tab.kind, c.tab.path);
       },
     },
+    { id: "view.revealFile", label: "Reveal the current file", run: () => a.revealFile() },
     {
       id: "edit.copy",
       label: "Copy",

@@ -37,6 +37,18 @@ export interface AppActions {
   showLog(): void;
 }
 
+/** The tool windows of the two rails, with the key that shows or hides each. */
+export const TOOL_WINDOWS: readonly { side: "left" | "right"; id: string; label: string; binding: string }[] = [
+  { side: "left", id: "changes", label: "Changes", binding: "Ctrl-Alt-1" },
+  { side: "left", id: "all", label: "All files", binding: "Ctrl-Alt-2" },
+  { side: "left", id: "commits", label: "Commits", binding: "Ctrl-Alt-3" },
+  { side: "left", id: "comments", label: "Comments", binding: "Ctrl-Alt-4" },
+  { side: "right", id: "symbol", label: "Symbol", binding: "Ctrl-Alt-5" },
+];
+
+/** The id of the command that shows or hides the tool window `id`. */
+export const toolCommand = (id: string) => `view.tool.${id}`;
+
 export function appCommands(a: AppActions): Command<CommandContext>[] {
   const repoOpen = (c: CommandContext) => c.repoOpen;
   return [
@@ -98,16 +110,13 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
         a.setMode(mode.id);
       },
     },
-    {
-      id: "view.tool",
-      label: "Tool window",
-      argument: true,
-      enabled: repoOpen,
-      run: (_, id) => {
-        if (id === undefined) return false;
-        a.toggleTool(id);
-      },
-    },
+    ...TOOL_WINDOWS.map(({ id, label, binding }): Command<CommandContext> => ({
+      id: toolCommand(id),
+      label,
+      binding,
+      enabled: id === "commits" ? (c) => c.repoOpen && !!c.manyCommits : repoOpen,
+      run: () => a.toggleTool(id),
+    })),
     {
       id: "view.theme",
       label: "Theme",

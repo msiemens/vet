@@ -3,53 +3,49 @@
   import { SvelteSet } from "svelte/reactivity";
   import type { DirEntry } from "../../generated/DirEntry";
   import type { FileChange } from "../../generated/FileChange";
+  import { dirname } from "../../lib/paths";
   import { bestMatch, type Range } from "../../lib/speedSearch";
+  import { ClickGate } from "../../lib/ui/doubleClick";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import IconButton from "../../lib/ui/IconButton.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
   import type { CommitUnit } from "../../generated/CommitUnit";
-  import type { Lens } from "../../generated/Lens";
-  import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
+  import { commands } from "../../state/commands";
   import { AllFiles } from "./AllFiles.svelte";
   import CommitList from "./CommitList.svelte";
   import { buildRows, buildTree, filterRows, summarize } from "./tree";
 
   let {
+    tool,
     paths,
     fileOf,
     revision,
     list,
     selected,
     excluded,
-    lens = "squash",
     changes,
-    commitCount = 0,
     commits = [],
     commit,
-    onlens,
     oncommit,
     onselect,
     onopen,
     onmenu,
   }: {
+    /** Which tool window this is: the changed files, every file, or the commits with the files of the one on view. */
+    tool: "changes" | "all" | "commits";
     /** Changes only with the changeset's revision, so the tree is built once per revision. */
     paths: string[];
-    /** The lens the changeset is reviewed in: by commit, the tree lists the files of the commit selected. */
-    lens?: Lens;
     /** The number after "Changes": how many files the changeset changes. */
     changes: number;
-    /** How many commits the changeset has; the Commits tab is there for more than one. */
-    commitCount?: number;
     /** The commits with their progress, while the changeset is reviewed by commit. */
     commits?: CommitUnit[];
     /** The index of the commit on view, by commit. */
     commit?: number;
-    /** Reviews the changeset in this lens, which the Changes and Commits tabs stand for. */
-    onlens: (lens: Lens) => void;
     /** Shows the commit at this index of `commits`. */
     oncommit: (index: number) => void;
     /** A file's current state; reading it subscribes to that file alone. */
@@ -61,7 +57,7 @@
     selected?: string;
     /** Changes hidden by the review filter, collapsed into one group. */
     excluded?: { lines: number; items: number };
-    /** Single click. */
+    /** A single click, once no second click follows. */
     onselect: (path: string) => void;
     /** Double click or Enter. */
     onopen: (path: string) => void;
@@ -69,29 +65,56 @@
     onmenu: (path: string, dir: boolean, x: number, y: number) => void;
   } = $props();
 
+  const TITLES = { changes: "Changes", all: "All files", commits: "Commits" } as const;
+
   /** What a row shows of the speed search: whether it is the one Enter opens, and what matched. */
   interface Hit {
     cursor: boolean;
     ranges?: Range[];
   }
 
-  /** All files is shown instead of the changes; the lens stays as it is. */
-  let showAll = $state(false);
-  const byCommit = $derived(lens === "perCommit" && commitCount > 1);
-  const tab = $derived<"changes" | "commits" | "all">(showAll ? "all" : byCommit ? "commits" : "changes");
-  const scope = $derived(tab === "all" ? "all" : "changes");
-  const tabs = $derived([
-    { id: "changes" as const, label: "Changes", count: changes },
-    ...(commitCount > 1 ? [{ id: "commits" as const, label: "Commits", count: commitCount }] : []),
-    { id: "all" as const, label: "All files" },
-  ]);
+  const scope = $derived(tool === "all" ? "all" : "changes");
 
-  function showTab(to: "changes" | "commits" | "all") {
+  // A search belongs to the window it was typed in.
+  $effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the tool a dependency
+    tool;
+    untrack(() => {
+      search.clear();
+      cursor = -1;
+    });
+  });
+
+  // A click on a file marks it at once; what it shows waits for a second click that would open the file instead.
+  let pressed = $state<string>();
+  $effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the selection a dependency
+    selected;
+    untrack(() => (pressed = undefined));
+  });
+  const clicks = new ClickGate<string>(
+    (path) => onselect(path),
+    (path) => onopen(path),
+  );
+  $effect(() => () => clicks.cancel());
+
+  function clickFile(e: MouseEvent, path: string) {
+    if (e.detail !== 0) pressed = path;
+    clicks.click(e, path);
+  }
+
+  /** Where `path` is in the tree: its folders open, the row scrolled into view. */
+  export async function reveal() {
+    const path = selected;
+    if (!path) return;
     search.clear();
     cursor = -1;
-    showAll = to === "all";
-    if (to === "commits" && lens !== "perCommit") onlens("perCommit");
-    else if (to === "changes" && lens !== "squash") onlens("squash");
+    const folders: string[] = [];
+    for (let dir = dirname(path); dir; dir = dirname(dir)) folders.unshift(dir);
+    if (scope === "changes") for (const dir of folders) collapsed.delete(dir);
+    else await all.expandTo(folders);
+    await tick();
+    revealPath(path);
   }
 
   /** The height of the commit list above the files of the commit, which the divider moves. */
@@ -275,14 +298,13 @@
   {@const s = file && summarize(file)}
   <button
     class="flat tw"
-    class:on={path === selected}
+    class:on={path === (pressed ?? selected)}
     class:dim={entry?.excluded}
     class:cur={hit.cursor}
     type="button"
     title={path}
     style:padding-left="calc(8px + {depth} * var(--w-indent))"
-    onclick={() => onselect(path)}
-    ondblclick={() => onopen(path)}
+    onclick={(e) => clickFile(e, path)}
     onkeydown={(e) => {
       if (e.key !== "Enter") return;
       e.preventDefault();
@@ -309,11 +331,25 @@
   </button>
 {/snippet}
 
-<nav aria-label="Files" bind:this={nav}>
-  <div class="sh">
-    <PanelTabs label="Files shown" value={tab} onchange={showTab} {tabs} />
+<nav aria-label={TITLES[tool]} bind:this={nav}>
+  <div class="sh sh-bar">
+    <span>{TITLES[tool]}</span>
+    {#if tool === "changes"}<span class="mono n">{changes}</span>{:else if tool === "commits"}<span class="mono n"
+        >{commits.length}</span
+      >{/if}
+    <span class="grow"></span>
+    {#if tool !== "commits"}
+      <IconButton
+        icon="locate"
+        label="Reveal the current file"
+        title={commands.tooltip("view.revealFile")}
+        size={22}
+        iconSize={13}
+        onclick={() => commands.run("view.revealFile")}
+      />
+    {/if}
   </div>
-  {#if tab === "commits"}
+  {#if tool === "commits"}
     <div class="commits" style:height="{listHeight}px">
       {#if commits.length}
         <CommitList {commits} selected={commit} onselect={oncommit} />
@@ -403,13 +439,6 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-  }
-  .sh {
-    display: flex;
-    align-items: stretch;
-    font-size: 12px;
-    border-bottom: 1px solid var(--line);
-    flex: none;
   }
   /* The commit list above the files of the commit selected, its height set by the divider. */
   .commits {

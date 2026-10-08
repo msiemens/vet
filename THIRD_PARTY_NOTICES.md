@@ -19,7 +19,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ## Lucide (interface icons)
 
-Source: https://github.com/lucide-icons/lucide. Some of the interface icons (for example `file-diff` and `settings`) are Lucide's; icons derived from Feather are covered by the MIT licence below the ISC one.
+Source: https://github.com/lucide-icons/lucide. Some of the interface icons (for example `file-diff`, `folder-tree`, `git-commit-vertical`, `locate-fixed` and `settings`) are Lucide's; icons derived from Feather are covered by the MIT licence below the ISC one.
 
 ```
 ISC License

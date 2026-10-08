@@ -13,7 +13,9 @@
     TitleBar,
     ToolRail,
     type Screen,
+    lensOnSelect,
     toggleTool,
+    toolFor,
   } from "../features/chrome";
   import { ChecksButton } from "../features/checks";
   import { NotificationCards, PlatformFooter } from "../features/platform";
@@ -66,7 +68,7 @@
 
   let controller = $state.raw<ReviewController>();
   // The selected tool of each rail, and whether its sidebar is shown.
-  const left = $state({ tool: "files", open: true });
+  const left = $state({ tool: "changes", open: true });
   const right = $state({ tool: "symbol", open: true });
   let tools: DevTools;
   let devOpen = $state(false);
@@ -82,6 +84,29 @@
   let version = $state<string>();
   let host = $state<string>();
   const reviewOpen = $derived(changeset.manifest?.review.state === "open");
+  const lens = $derived(changeset.manifest?.lens);
+  const commitCount = $derived(changeset.manifest?.commits ?? 0);
+
+  // Selecting the Commits tool reviews the changeset by commit and leaving it returns to all changes.
+  let selectedTool = untrack(() => left.tool);
+  $effect(() => {
+    const tool = left.tool;
+    const want = lensOnSelect(selectedTool, tool);
+    selectedTool = tool;
+    if (!want) return;
+    untrack(() => {
+      if (changeset.manifest && lens !== want) void changeset.showLens(want);
+    });
+  });
+  // A lens set elsewhere (a changeset reopened by commit) selects the tool that goes with it.
+  $effect(() => {
+    const next = toolFor(
+      untrack(() => left.tool),
+      lens,
+      commitCount,
+    );
+    untrack(() => (left.tool = next));
+  });
   const baseChangedLeft = $derived(changeset.baseChanged ? changeset.baseChangedFiles().length : 0);
 
   /** The head commit of a pull request: the last of its commits, else its latest version's tip, else the target's short id. */
@@ -152,7 +177,12 @@
   );
   keymap.load();
   session.onOpen(() => (screen = "queue"));
-  const stopContext = commands.provide(() => ({ repoOpen: !!session.repo, reviewOpen, canQuit }));
+  const stopContext = commands.provide(() => ({
+    repoOpen: !!session.repo,
+    reviewOpen,
+    canQuit,
+    manyCommits: commitCount > 1,
+  }));
 
   // The main menu follows the state it shows.
   $effect(() => {
@@ -163,8 +193,8 @@
       mode,
       theme,
       tools: [
-        ...TOOLS.left.map((t) => ({ id: t.id, label: t.label, shown: shown(left, t.id) })),
-        ...TOOLS.right.map((t) => ({ id: t.id, label: t.label, shown: shown(right, t.id) })),
+        ...TOOLS.left.map((t) => ({ id: t.id, shown: shown(left, t.id) })),
+        ...TOOLS.right.map((t) => ({ id: t.id, shown: shown(right, t.id) })),
       ],
       devPanel: devOpen,
     });
@@ -372,7 +402,15 @@
       />
     {/if}
     <div class="review" class:away={screen !== "review"} inert={screen !== "review"}>
-      <ToolRail bind:active={left.tool} bind:open={left.open} timeline={timelineOpen} ontimeline={toggleTimeline} />
+      <ToolRail
+        bind:active={left.tool}
+        bind:open={left.open}
+        unavailable={commitCount > 1
+          ? {}
+          : { commits: "Only a changeset of several commits can be reviewed by commit" }}
+        timeline={timelineOpen}
+        ontimeline={toggleTimeline}
+      />
       <ReviewScreen
         backend={session.backend}
         {changeset}

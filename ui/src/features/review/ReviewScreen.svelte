@@ -83,6 +83,7 @@
   // svelte-ignore state_referenced_locally
   controller.mode = mode;
   const tabs = controller.tabs;
+  let tree = $state<FileTree>();
   let selected = $state<string>();
   /** The file picked in the tree, until the Changes tab moves on. */
   let picked = $state<string>();
@@ -126,6 +127,11 @@
         reviewOnly: (path) => void changeset.reviewOnly(path),
         closeTab: (kind, path) => tabs.close(tabOf(kind, path)),
         closeOtherTabs: (kind, path) => tabs.closeOthers(tabOf(kind, path)),
+        revealFile: () => {
+          if (!tree) return false;
+          void tree.reveal();
+          return true;
+        },
       }),
     );
     controller.open(true).then(
@@ -188,20 +194,19 @@
       <CommentsPanel onselect={(thread) => void controller.goToThread(thread)} />
     {:else}
       <FileTree
+        bind:this={tree}
+        tool={leftTool === "all" || leftTool === "commits" ? leftTool : "changes"}
         paths={changeset.paths}
         {fileOf}
         {revision}
         list={(path) => changeset.listDirectory(path)}
         selected={marked}
         excluded={{ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 }}
-        lens={changeset.manifest?.lens}
         changes={changeset.shownCommit === undefined
           ? changeset.files.length
           : (changeset.manifest?.changesetFiles ?? 0)}
-        commitCount={changeset.manifest?.commits}
         commits={changeset.commits}
         commit={changeset.commitIndex}
-        onlens={(lens) => void changeset.showLens(lens)}
         oncommit={(index) => void changeset.showCommit(index)}
         onselect={select}
         onopen={(path) => void controller.openSource(path)}

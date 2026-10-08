@@ -30,6 +30,8 @@ export interface CommandContext {
   /** A review has started and can be finished. */
   reviewOpen: boolean;
   canQuit: boolean;
+  /** The changeset on view has more than one commit, so there is something to review by commit. */
+  manyCommits?: boolean;
   /**
    * The tab commands apply to: the active one, or the one a tab's context menu was opened on. `path`
    * is what the tab shows: a file's path, or for a log tab the check run it is the log of.

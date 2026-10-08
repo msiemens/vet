@@ -7,12 +7,17 @@
     label,
     size = 26,
     iconSize = 16,
+    title = label,
+    disabled,
     active,
     button = $bindable(),
     onclick,
   }: {
     icon: IconName;
     label: string;
+    /** The tooltip; the label by default. */
+    title?: string;
+    disabled?: boolean;
     size?: number;
     iconSize?: number;
     /** Makes it a toggle button; `undefined` is a plain action. */
@@ -28,7 +33,8 @@
   class="flat ib"
   type="button"
   aria-label={label}
-  title={label}
+  {title}
+  {disabled}
   aria-pressed={active}
   style:width="{size}px"
   style:height="{size}px"

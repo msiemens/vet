@@ -32,6 +32,14 @@ export class AllFiles {
     void this.load(key);
   }
 
+  /** Expands each of the directories, outermost first, and waits for its listing. */
+  async expandTo(directories: readonly string[]) {
+    for (const key of directories) {
+      this.expanded.add(key);
+      await this.load(key);
+    }
+  }
+
   /** Lists `path`; a directory whose only child is a directory also lists that, so the chain can show as one row. */
   private async load(path: string): Promise<void> {
     const revision = this.revision;

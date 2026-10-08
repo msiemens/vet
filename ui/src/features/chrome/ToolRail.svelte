@@ -1,12 +1,19 @@
 <script module lang="ts">
   import type { IconName } from "../../lib/ui/icons";
+  import { TOOL_WINDOWS, toolCommand } from "../../state/appCommands";
+  import { commands } from "../../state/commands";
 
-  export const TOOLS: Record<"left" | "right", { id: string; icon: IconName; label: string }[]> = {
-    left: [
-      { id: "files", icon: "files", label: "Files" },
-      { id: "comments", icon: "comments", label: "Comments" },
-    ],
-    right: [{ id: "symbol", icon: "module", label: "Symbol" }],
+  const ICONS: Record<string, IconName> = {
+    changes: "review",
+    all: "tree",
+    commits: "gitCommit",
+    comments: "comments",
+    symbol: "module",
+  };
+
+  export const TOOLS = {
+    left: TOOL_WINDOWS.filter((t) => t.side === "left"),
+    right: TOOL_WINDOWS.filter((t) => t.side === "right"),
   };
 </script>
 
@@ -18,10 +25,13 @@
     side = "left",
     active = $bindable(),
     open = $bindable(true),
+    unavailable = {},
     timeline = false,
     ontimeline,
   }: {
     side?: "left" | "right";
+    /** Tools that are shown but cannot be picked now, with the reason for the tooltip. */
+    unavailable?: Record<string, string>;
     /** The selected tool; it stays selected while its sidebar is hidden. */
     active?: string;
     /** Whether the selected tool's sidebar is shown. */
@@ -42,8 +52,10 @@
 <nav class={side} aria-label={side === "left" ? "Tool windows" : "Right tool windows"}>
   {#each TOOLS[side] as tool (tool.id)}
     <IconButton
-      icon={tool.icon}
+      icon={ICONS[tool.id]}
       label={tool.label}
+      title={unavailable[tool.id] ?? commands.tooltip(toolCommand(tool.id))}
+      disabled={tool.id in unavailable}
       active={open && tool.id === active}
       onclick={() => select(tool.id)}
     />

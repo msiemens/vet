@@ -6,6 +6,7 @@
 import type { MenuSpec } from "../lib/commandMenu.ts";
 import { THEMES, type Theme } from "../lib/theme/theme.ts";
 import { MODES, type Mode } from "../lib/viewMode.ts";
+import { toolCommand } from "./appCommands.ts";
 
 /** What the menu shows that is not a command's own: the lists it offers and what is checked in them. */
 export interface MenuState {
@@ -15,7 +16,8 @@ export interface MenuState {
   recent: { path: string; name: string }[];
   mode: Mode;
   theme: Theme;
-  tools: { id: string; label: string; shown: boolean }[];
+  /** The tool windows by id, and which are shown. */
+  tools: { id: string; shown: boolean }[];
   devPanel: boolean;
 }
 
@@ -49,7 +51,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     {
       id: "tools",
       label: "Tool Windows",
-      items: s.tools.map((t) => ({ command: "view.tool", arg: t.id, label: t.label, checked: t.shown })),
+      items: s.tools.map((t) => ({ command: toolCommand(t.id), checked: t.shown })),
     },
     {
       id: "theme",
