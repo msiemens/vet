@@ -10,6 +10,8 @@ import type { Task } from "./Task";
 
 /**
  * Events are invalidations or small state updates; the client re-requests
- * whatever it displays.
+ * whatever it displays. An event that a request causes goes to every subscriber,
+ * the requester included: of the requester's stores only the one that asked reads
+ * the answer.
  */
 export type Event = { "type": "credentialsNeeded", host: string, } | { "type": "snapshotSettled", project: number, revision: number, } | { "type": "changesetOpened", project: number, revision: number, changeset: ChangesetKey, } | { "type": "reviewChanged", project: number, revision: number, update: ReviewUpdate, } | { "type": "reviewStarted", project: number, review: ReviewInfo, } | { "type": "threadsChanged", project: number, revision: number, } | { "type": "serverInstallOutput", project: number, language: string, line: string, } | { "type": "serversChanged", project: number, } | { "type": "restoreFailed", project: number, failures: Array<RestoreFailure>, } | { "type": "baseChanged", project: number, base: Base, } | { "type": "task" } & Task | { "type": "platformStatus", project: number, status: PlatformStatus, } | { "type": "notification", project: number, notification: Notification, };

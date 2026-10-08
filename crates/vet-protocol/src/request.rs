@@ -185,9 +185,8 @@ pub enum Request {
     /// unseen one or one seen against an old base becomes seen. Fails if `revision` is no
     /// longer current. In an interdiff the hunk is marked in the changeset of the newer
     /// version (which must be the latest), and a hunk with nothing left to review cannot be
-    /// marked. Answers with `Response::Review`, in the terms of `view`; a mark in an
-    /// interdiff also reaches the other subscribers and the requester's own changeset as
-    /// `ReviewChanged` of the changeset file.
+    /// marked. Answers with `Response::Review`, in the terms of `view`; every subscriber,
+    /// the requester included, gets `ReviewChanged` of the changeset's file.
     ToggleHunk {
         project: ProjectId,
         view: View,

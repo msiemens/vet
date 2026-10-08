@@ -141,10 +141,15 @@ impl Client {
         self.started.clone()
     }
 
+    /// The revision of the next `SnapshotSettled`, past the `ReviewChanged` and `ThreadsChanged`
+    /// that the client's own marks and comments announced to it.
     async fn settled(&mut self) -> u32 {
-        match self.event().await {
-            Event::SnapshotSettled { revision, .. } => revision,
-            other => panic!("{other:?}"),
+        loop {
+            match self.event().await {
+                Event::SnapshotSettled { revision, .. } => return revision,
+                Event::ReviewChanged { .. } | Event::ThreadsChanged { .. } => {}
+                other => panic!("{other:?}"),
+            }
         }
     }
 
@@ -266,7 +271,7 @@ async fn a_base_line_is_placed_in_the_target_text_where_a_unified_diff_shows_it(
 }
 
 #[tokio::test]
-async fn threads_follow_edits_and_notify_other_connections() {
+async fn threads_follow_edits_and_notify_every_connection() {
     let dirty = text(30, &[3]);
     let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;
     let mut one = Client::new(&fx.handler);
@@ -299,7 +304,9 @@ async fn threads_follow_edits_and_notify_other_connections() {
     let Event::ThreadsChanged { revision: 0, .. } = two.event().await else {
         panic!("no threads event")
     };
-    assert!(one.no_event(), "the requester is not told about its own change");
+    let Event::ThreadsChanged { revision: 0, .. } = one.event().await else {
+        panic!("the requester is told too")
+    };
 
     // An edit above shifts the lines; the next fetch resolves them at the new revision.
     write(fx.repo.path(), "a.txt", &format!("new 1\nnew 2\n{dirty}"));
@@ -529,7 +536,7 @@ async fn a_seen_region_with_an_edit_in_the_middle_is_split() {
 }
 
 #[tokio::test]
-async fn non_text_changes_are_acknowledged_and_the_other_connection_is_told() {
+async fn non_text_changes_are_acknowledged_and_every_connection_is_told() {
     let fx = fixture(
         &[("run.sh", "echo\n"), ("a.txt", &text(10, &[]))],
         &[("a.txt", &text(10, &[2]))],
@@ -564,13 +571,14 @@ async fn non_text_changes_are_acknowledged_and_the_other_connection_is_told() {
     };
     assert_eq!(update.review.acknowledged, [NonTextKind::Mode]);
 
-    match second.event().await {
-        Event::ReviewChanged {
-            revision, update: u, ..
-        } => assert_eq!((revision, u), (0, update)),
-        other => panic!("{other:?}"),
+    for client in [&mut second, &mut first] {
+        match client.event().await {
+            Event::ReviewChanged {
+                revision, update: u, ..
+            } => assert_eq!((revision, u), (0, update.clone())),
+            other => panic!("{other:?}"),
+        }
     }
-    assert!(first.no_event(), "the requester gets the response, not an event");
 
     // Marking a hunk is reported the same way.
     first.toggle_hunk(project, 0, 0).await;
@@ -1523,6 +1531,14 @@ async fn review_branch(client: &mut Client, project: ProjectId, name: &str) {
         panic!("not told which changeset is on view")
     };
     client.toggle_hunk(project, revision, 0).await;
+    // The marker is told of its mark too; a fetch at opening may say how the base stands.
+    loop {
+        match client.event().await {
+            Event::ReviewChanged { .. } => break,
+            Event::BaseChanged { .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
     assert_eq!(version_count(client, project).await, 1);
 }
 
@@ -1726,6 +1742,7 @@ async fn the_filter_moves_completion_and_the_excluded_counts() {
     // Marking the one remaining file completes the review.
     let update = client.toggle_hunk(project, 1, 0).await;
     assert_eq!(lines(&update.changeset), (2, 2));
+    assert!(matches!(client.event().await, Event::ReviewChanged { .. }));
 
     let bad = ReviewFilter {
         include: vec!["src/[".into()],

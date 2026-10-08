@@ -1,13 +1,13 @@
 //! Requests about a project's review: its changeset, files, marks, base and
 //! filter. The rules are in `vet_app::session`; this maps requests to them and
-//! tells the other subscribers what changed.
+//! tells every subscriber what changed.
 
 use vet_app::changeset::Source;
 use vet_mapping as mapping;
 use vet_protocol::{ProjectId, Response};
 
 use crate::announce::{announce_start, review_changed};
-use crate::events::{Connection, settled};
+use crate::events::settled;
 use crate::open::Ready;
 use crate::{Orchestrator, message, start_servers_in_background};
 
@@ -84,7 +84,6 @@ impl Orchestrator {
     pub(crate) async fn toggle_hunk(
         &self,
         project: ProjectId,
-        from: &Connection,
         view: vet_protocol::View,
         revision: u32,
         path: &str,
@@ -98,13 +97,12 @@ impl Orchestrator {
             .await
             .map_err(message)?;
         announce_start(&open, update.started);
-        Ok(Response::Review(review_changed(&open, from, view, &update).await))
+        Ok(Response::Review(review_changed(&open, view, &update).await))
     }
 
     pub(crate) async fn toggle_item(
         &self,
         project: ProjectId,
-        from: &Connection,
         view: vet_protocol::View,
         revision: u32,
         path: &str,
@@ -118,13 +116,12 @@ impl Orchestrator {
             .await
             .map_err(message)?;
         announce_start(&open, update.started);
-        Ok(Response::Review(review_changed(&open, from, view, &update).await))
+        Ok(Response::Review(review_changed(&open, view, &update).await))
     }
 
     pub(crate) async fn toggle_file_seen(
         &self,
         project: ProjectId,
-        from: &Connection,
         view: vet_protocol::View,
         revision: u32,
         path: &str,
@@ -137,20 +134,19 @@ impl Orchestrator {
             .await
             .map_err(message)?;
         announce_start(&open, update.started);
-        Ok(Response::Review(review_changed(&open, from, view, &update).await))
+        Ok(Response::Review(review_changed(&open, view, &update).await))
     }
 
     pub(crate) async fn reconfirm_file(
         &self,
         project: ProjectId,
-        from: &Connection,
         revision: u32,
         path: &str,
     ) -> Result<Response, String> {
         let open = self.ready(project).await?;
         let update = open.session.reconfirm_file(revision, path).await.map_err(message)?;
         Ok(Response::Review(
-            review_changed(&open, from, vet_app::session::View::Changeset, &update).await,
+            review_changed(&open, vet_app::session::View::Changeset, &update).await,
         ))
     }
 

@@ -346,25 +346,25 @@ impl Orchestrator {
                 revision,
                 path,
                 hunk,
-            } => reply(async move { self.toggle_hunk(project, from, view, revision, &path, hunk).await }),
+            } => reply(async move { self.toggle_hunk(project, view, revision, &path, hunk).await }),
             Request::ToggleItem {
                 project,
                 view,
                 revision,
                 path,
                 kind,
-            } => reply(async move { self.toggle_item(project, from, view, revision, &path, kind).await }),
+            } => reply(async move { self.toggle_item(project, view, revision, &path, kind).await }),
             Request::ToggleFileSeen {
                 project,
                 view,
                 revision,
                 path,
-            } => reply(async move { self.toggle_file_seen(project, from, view, revision, &path).await }),
+            } => reply(async move { self.toggle_file_seen(project, view, revision, &path).await }),
             Request::ReconfirmFile {
                 project,
                 revision,
                 path,
-            } => reply(async move { self.reconfirm_file(project, from, revision, &path).await }),
+            } => reply(async move { self.reconfirm_file(project, revision, &path).await }),
             Request::BaseDiff {
                 project,
                 revision,
@@ -412,22 +412,22 @@ impl Orchestrator {
                 revision,
                 target,
                 body,
-            } => reply(self.create_thread(project, from, view, revision, target, body)),
-            Request::Reply { project, thread, body } => reply(self.reply(project, from, thread, body)),
+            } => reply(self.create_thread(project, view, revision, target, body)),
+            Request::Reply { project, thread, body } => reply(self.reply(project, thread, body)),
             Request::SetThreadStatus {
                 project,
                 thread,
                 status,
-            } => reply(self.set_thread_status(project, from, thread, status)),
-            Request::DeleteThread { project, thread } => reply(self.delete_thread(project, from, thread)),
-            Request::EditMessage { project, message, body } => reply(self.edit_message(project, from, message, body)),
-            Request::RemoveMessage { project, message } => reply(self.remove_message(project, from, message)),
-            Request::KeepEdit { project, message, keep } => reply(self.keep_edit(project, from, message, keep)),
+            } => reply(self.set_thread_status(project, thread, status)),
+            Request::DeleteThread { project, thread } => reply(self.delete_thread(project, thread)),
+            Request::EditMessage { project, message, body } => reply(self.edit_message(project, message, body)),
+            Request::RemoveMessage { project, message } => reply(self.remove_message(project, message)),
+            Request::KeepEdit { project, message, keep } => reply(self.keep_edit(project, message, keep)),
             Request::EditConversationComment { project, comment, body } => {
-                reply(async move { self.edit_conversation_comment(project, from, &comment, body).await })
+                reply(async move { self.edit_conversation_comment(project, &comment, body).await })
             }
             Request::DeleteConversationComment { project, comment } => {
-                reply(async move { self.delete_conversation_comment(project, from, &comment).await })
+                reply(async move { self.delete_conversation_comment(project, &comment).await })
             }
             Request::SyncThreads { project } => reply(self.sync_threads(project)),
             Request::SubmitReview { project, verdict, body } => reply(self.submit_review(project, verdict, body)),
@@ -438,13 +438,13 @@ impl Orchestrator {
                 project,
                 revision,
                 thread,
-            } => reply(self.confirm_anchor(project, from, revision, thread)),
+            } => reply(self.confirm_anchor(project, revision, thread)),
             Request::AttachAnchor {
                 project,
                 revision,
                 thread,
                 candidate,
-            } => reply(self.attach_anchor(project, from, revision, thread, candidate)),
+            } => reply(self.attach_anchor(project, revision, thread, candidate)),
             Request::Hover {
                 project,
                 revision,
@@ -508,12 +508,12 @@ impl Orchestrator {
                 symbol,
             } => reply(async move { self.ready(project).await?.reachability(revision, &symbol).await }),
             Request::ListServers { project } => reply(self.list_servers(project)),
-            Request::InstallServer { project, language } => reply(self.install_server(project, from, language)),
+            Request::InstallServer { project, language } => reply(self.install_server(project, language)),
             Request::SetServerPath {
                 project,
                 language,
                 path,
-            } => reply(self.set_server_path(project, from, language, path)),
+            } => reply(self.set_server_path(project, language, path)),
         }
     }
 }

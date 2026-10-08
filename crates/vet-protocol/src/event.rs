@@ -8,7 +8,9 @@ use crate::{
 };
 
 /// Events are invalidations or small state updates; the client re-requests
-/// whatever it displays.
+/// whatever it displays. An event that a request causes goes to every subscriber,
+/// the requester included: of the requester's stores only the one that asked reads
+/// the answer.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 #[ts(export)]
@@ -27,7 +29,8 @@ pub enum Event {
         revision: u32,
         changeset: ChangesetKey,
     },
-    /// Review state of one file changed at the current `revision`.
+    /// Review state of one file of the changeset changed at the current `revision`; a mark
+    /// made in an interdiff or a commit is announced as that of the changeset's file.
     ReviewChanged {
         project: ProjectId,
         revision: u32,
@@ -36,9 +39,10 @@ pub enum Event {
     /// The first review action started a review. Sent to every subscriber,
     /// the requester included; a finished review is `SnapshotSettled`.
     ReviewStarted { project: ProjectId, review: ReviewInfo },
-    /// A thread was created, replied to, resolved, re-anchored or deleted by
-    /// another connection; fetch the threads again. Not sent for a settled
-    /// snapshot, which is `SnapshotSettled`: that also invalidates the threads.
+    /// A thread was created, replied to, resolved, re-anchored, edited or deleted,
+    /// or a sync with the platform changed threads; fetch the threads again. Not
+    /// sent for a settled snapshot, which is `SnapshotSettled`: that also
+    /// invalidates the threads.
     ThreadsChanged { project: ProjectId, revision: u32 },
     /// A line of output of an `InstallServer` in progress, to the connections of
     /// the project it was asked on.
@@ -47,8 +51,9 @@ pub enum Event {
         language: String,
         line: String,
     },
-    /// Another connection installed a server or changed a server path: what
-    /// `ListServers` says may have changed.
+    /// A server was installed or a server path changed, which restarted the
+    /// language's servers in every project: what `ListServers` says, and what the
+    /// servers answer, may have changed. Sent to the connections of every project.
     ServersChanged { project: ProjectId },
     /// A dependency restore failed, so analysis is limited. `failures` is every
     /// failure of the project so far, as in `Manifest::restore_failures`.

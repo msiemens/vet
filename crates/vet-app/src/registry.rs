@@ -70,15 +70,10 @@ impl<S: Subscriber> Subscribers<S> {
         self.live().is_empty()
     }
 
+    /// Tells every connection, the one whose request made the change included: a window's stores
+    /// that did not ask learn of it only this way.
     pub fn broadcast(&self, event: S::Event) {
         for subscriber in self.live().iter() {
-            subscriber.send(event.clone());
-        }
-    }
-
-    /// Tells every connection but the one that made the change.
-    pub fn broadcast_except(&self, from: &S, event: S::Event) {
-        for subscriber in self.live().iter().filter(|s| !s.same_connection(from)) {
             subscriber.send(event.clone());
         }
     }
@@ -339,19 +334,6 @@ mod tests {
             (a.received(), b.received()),
             (vec!["settled".into()], vec!["settled".into()])
         );
-    }
-
-    #[tokio::test]
-    async fn broadcast_except_skips_the_connection_that_made_the_change() {
-        let registry = TestRegistry::default();
-        let (a, b) = (Connection::new("a"), Connection::new("b"));
-        let adapters = Arc::new(Adapters::default());
-        let (entry, _) = open(&registry, "/repo", &a, &adapters).await;
-        open(&registry, "/repo", &b, &adapters).await;
-
-        entry.subscribers.broadcast_except(&a, "changed".into());
-
-        assert_eq!((a.received(), b.received()), (vec![], vec!["changed".into()]));
     }
 
     #[tokio::test]

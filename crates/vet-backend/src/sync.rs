@@ -12,48 +12,30 @@ use vet_mapping as mapping;
 use vet_protocol::{EditChoice, Event, Notification, NotificationKind, PlatformConnection, ProjectId, Response};
 
 use crate::announce::{thread_changed, threads_changed};
-use crate::events::Connection;
 use crate::open::Booted;
 use crate::{Open, Orchestrator, message};
 
 impl Orchestrator {
-    pub(crate) async fn edit_message(
-        &self,
-        project: ProjectId,
-        from: &Connection,
-        id: u32,
-        body: String,
-    ) -> Result<Response, String> {
+    pub(crate) async fn edit_message(&self, project: ProjectId, id: u32, body: String) -> Result<Response, String> {
         let open = self.ready(project).await?;
         let thread = (open.session)
             .edit_message(&open.hosting().await, MessageId(id.into()), body, unix_now())
             .await
             .map_err(message)?;
-        Ok(thread_changed(&open, from, &thread).await)
+        Ok(thread_changed(&open, &thread).await)
     }
 
-    pub(crate) async fn remove_message(
-        &self,
-        project: ProjectId,
-        from: &Connection,
-        id: u32,
-    ) -> Result<Response, String> {
+    pub(crate) async fn remove_message(&self, project: ProjectId, id: u32) -> Result<Response, String> {
         let open = self.ready(project).await?;
         (open.session)
             .remove_message(&open.hosting().await, MessageId(id.into()))
             .await
             .map_err(message)?;
-        threads_changed(&open, from).await;
+        threads_changed(&open).await;
         Ok(Response::Done)
     }
 
-    pub(crate) async fn keep_edit(
-        &self,
-        project: ProjectId,
-        from: &Connection,
-        id: u32,
-        keep: EditChoice,
-    ) -> Result<Response, String> {
+    pub(crate) async fn keep_edit(&self, project: ProjectId, id: u32, keep: EditChoice) -> Result<Response, String> {
         let open = self.ready(project).await?;
         let keep = match keep {
             EditChoice::Vet => Keep::Vet,
@@ -63,13 +45,12 @@ impl Orchestrator {
             .keep_edit(&open.hosting().await, MessageId(id.into()), keep)
             .await
             .map_err(message)?;
-        Ok(thread_changed(&open, from, &thread).await)
+        Ok(thread_changed(&open, &thread).await)
     }
 
     pub(crate) async fn edit_conversation_comment(
         &self,
         project: ProjectId,
-        from: &Connection,
         comment: &str,
         body: String,
     ) -> Result<Response, String> {
@@ -78,14 +59,13 @@ impl Orchestrator {
             .edit_conversation_comment(&open.hosting().await, comment, body)
             .await
             .map_err(message)?;
-        threads_changed(&open, from).await;
+        threads_changed(&open).await;
         Ok(Response::Done)
     }
 
     pub(crate) async fn delete_conversation_comment(
         &self,
         project: ProjectId,
-        from: &Connection,
         comment: &str,
     ) -> Result<Response, String> {
         let open = self.ready(project).await?;
@@ -93,7 +73,7 @@ impl Orchestrator {
             .remove_conversation_comment(&open.hosting().await, comment)
             .await
             .map_err(message)?;
-        threads_changed(&open, from).await;
+        threads_changed(&open).await;
         Ok(Response::Done)
     }
 
@@ -271,6 +251,7 @@ mod tests {
     use vet_transport::Events;
 
     use super::*;
+    use crate::events::Connection;
     use crate::{Config, open_store};
 
     fn git(dir: &std::path::Path, args: &[&str]) {

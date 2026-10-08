@@ -6,7 +6,6 @@ use vet_mapping as mapping;
 use vet_protocol::{ProjectId, Response};
 
 use crate::announce::{announce_start, thread_changed, threads_changed};
-use crate::events::Connection;
 use crate::{Orchestrator, message};
 
 impl Orchestrator {
@@ -36,7 +35,6 @@ impl Orchestrator {
     pub(crate) async fn create_thread(
         &self,
         project: ProjectId,
-        from: &Connection,
         view: vet_protocol::View,
         revision: u32,
         target: vet_protocol::ThreadTarget,
@@ -55,29 +53,22 @@ impl Orchestrator {
             .await
             .map_err(message)?;
         announce_start(&open, thread.started);
-        Ok(thread_changed(&open, from, &thread).await)
+        Ok(thread_changed(&open, &thread).await)
     }
 
-    pub(crate) async fn reply(
-        &self,
-        project: ProjectId,
-        from: &Connection,
-        thread: u32,
-        body: String,
-    ) -> Result<Response, String> {
+    pub(crate) async fn reply(&self, project: ProjectId, thread: u32, body: String) -> Result<Response, String> {
         let open = self.ready(project).await?;
         let thread = open
             .session
             .reply(ThreadId(thread.into()), body, unix_now())
             .await
             .map_err(message)?;
-        Ok(thread_changed(&open, from, &thread).await)
+        Ok(thread_changed(&open, &thread).await)
     }
 
     pub(crate) async fn set_thread_status(
         &self,
         project: ProjectId,
-        from: &Connection,
         thread: u32,
         status: vet_protocol::ThreadStatus,
     ) -> Result<Response, String> {
@@ -87,28 +78,22 @@ impl Orchestrator {
             .set_thread_status(ThreadId(thread.into()), mapping::core_thread_status(status))
             .await
             .map_err(message)?;
-        Ok(thread_changed(&open, from, &thread).await)
+        Ok(thread_changed(&open, &thread).await)
     }
 
-    pub(crate) async fn delete_thread(
-        &self,
-        project: ProjectId,
-        from: &Connection,
-        thread: u32,
-    ) -> Result<Response, String> {
+    pub(crate) async fn delete_thread(&self, project: ProjectId, thread: u32) -> Result<Response, String> {
         let open = self.ready(project).await?;
         open.session
             .delete_thread(&open.hosting().await, ThreadId(thread.into()))
             .await
             .map_err(message)?;
-        threads_changed(&open, from).await;
+        threads_changed(&open).await;
         Ok(Response::Done)
     }
 
     pub(crate) async fn confirm_anchor(
         &self,
         project: ProjectId,
-        from: &Connection,
         revision: u32,
         thread: u32,
     ) -> Result<Response, String> {
@@ -118,13 +103,12 @@ impl Orchestrator {
             .confirm_anchor(revision, ThreadId(thread.into()))
             .await
             .map_err(message)?;
-        Ok(thread_changed(&open, from, &thread).await)
+        Ok(thread_changed(&open, &thread).await)
     }
 
     pub(crate) async fn attach_anchor(
         &self,
         project: ProjectId,
-        from: &Connection,
         revision: u32,
         thread: u32,
         candidate: u32,
@@ -135,6 +119,6 @@ impl Orchestrator {
             .attach_anchor(revision, ThreadId(thread.into()), candidate as usize)
             .await
             .map_err(message)?;
-        Ok(thread_changed(&open, from, &thread).await)
+        Ok(thread_changed(&open, &thread).await)
     }
 }
