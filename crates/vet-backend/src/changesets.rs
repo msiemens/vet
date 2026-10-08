@@ -31,14 +31,26 @@ impl Orchestrator {
                 hosts_with_account.push(host);
             }
         }
-        let github: Vec<_> = on_github(candidates, &hosts_with_account)
-            .into_iter()
-            .map(|h| h.key)
-            .collect();
+        let on_github = on_github(candidates.clone(), &hosts_with_account);
+        for skipped in candidates.iter().filter(|c| !on_github.contains(c)) {
+            tracing::warn!(
+                remote = %skipped.remote,
+                host = %skipped.key.host,
+                "not listing pull requests: the host is not github.com and has no account, so it is not known to be GitHub"
+            );
+        }
+        let github: Vec<_> = on_github.into_iter().map(|h| h.key).collect();
         let azure_devops: Vec<_> = hosted_repositories(&remotes, PlatformKind::AzureDevOps)
             .into_iter()
             .map(|h| h.key)
             .collect();
+        if github.is_empty() && azure_devops.is_empty() {
+            let names: Vec<_> = remotes.iter().map(|r| r.name.as_str()).collect();
+            tracing::warn!(
+                ?names,
+                "not listing pull requests: no remote of the repository is a hosted repository"
+            );
+        }
         let on_view = match open.session.source().await {
             Source::PullRequest { remote, number } => Some((remote, number)),
             _ => None,
