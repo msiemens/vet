@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use vet_core::content::{BlobId, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
-use vet_core::review::{CommentTarget, Message, ReviewedSpan, ThreadId, ThreadStatus};
+use vet_core::review::{CommentTarget, Message, MessageId, PlatformThread, ReviewedSpan, ThreadId, ThreadStatus};
 use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
@@ -392,6 +392,13 @@ pub trait ChangesetStore {
     /// Remembers the lens of the changeset of `source`, storing the changeset if need be.
     fn set_lens(&self, repo: String, source: Source, lens: Lens)
     -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// The changeset of `source` in the repository at `repo`, stored if it was not: threads
+    /// that arrive from a platform belong to it before any review of it started.
+    fn ensure_changeset(
+        &self,
+        repo: String,
+        source: Source,
+    ) -> impl Future<Output = Result<ChangesetId, StoreError>> + Send;
     /// The changesets a review of which is open, in any repository.
     fn open_changesets(&self) -> impl Future<Output = Result<Vec<ChangesetId>, StoreError>> + Send;
     /// The versions in order of their numbers.
@@ -471,19 +478,36 @@ pub trait ReviewStore {
 pub trait ThreadStore {
     /// Every thread of `changeset`, oldest first.
     fn threads(&self, changeset: ChangesetId) -> impl Future<Output = Result<Vec<ChangesetThread>, StoreError>> + Send;
-    /// Opens a thread; `review` is the review it is written in, if any.
+    /// Opens a thread with its first message (whose `id` is ignored); `review` is the review it
+    /// is written in, if any. Answers with the ids of the thread and of the message.
     fn add_thread(
         &self,
         changeset: ChangesetId,
         review: Option<ReviewId>,
         target: CommentTarget,
         opener: Message,
-    ) -> impl Future<Output = Result<ThreadId, StoreError>> + Send;
-    fn add_message(&self, thread: ThreadId, message: Message) -> impl Future<Output = Result<(), StoreError>> + Send;
+        platform: Option<PlatformThread>,
+        status: ThreadStatus,
+    ) -> impl Future<Output = Result<(ThreadId, MessageId), StoreError>> + Send;
+    /// Adds a message after the thread's others; its `id` is ignored.
+    fn add_message(
+        &self,
+        thread: ThreadId,
+        message: Message,
+    ) -> impl Future<Output = Result<MessageId, StoreError>> + Send;
+    /// Replaces everything of the stored message `message.id` but its place in the thread.
+    fn replace_message(&self, message: Message) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn delete_message(&self, message: MessageId) -> impl Future<Output = Result<(), StoreError>> + Send;
     fn set_thread_status(
         &self,
         thread: ThreadId,
         status: ThreadStatus,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Replaces what the thread is on its platform.
+    fn set_thread_platform(
+        &self,
+        thread: ThreadId,
+        platform: PlatformThread,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Re-anchor a thread (attach, confirm a moved anchor).
     fn set_thread_target(

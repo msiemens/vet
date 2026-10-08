@@ -55,6 +55,7 @@ mod marks;
 mod remap;
 mod source;
 mod state;
+mod sync;
 mod threads;
 mod versions;
 mod views;
@@ -79,6 +80,7 @@ pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
 use self::manifest::changeset_completion;
 use self::source::Stored;
 use self::state::{OpenReview, State, acknowledged, check_revision, lifecycle_of};
+pub use self::sync::{DiscussionView, Keep, SubmitReport, SyncNotice, SyncReport};
 pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsView};
 pub use self::versions::VersionView;
 pub use self::views::{
@@ -88,6 +90,7 @@ pub use self::views::{
 use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
 use crate::changeset::{BaseChoice, ChangesetId, Source, Version, VersionOrigin};
+use crate::platform::PlatformError;
 use crate::ports::{
     BaseCandidates, BranchInfo, Clock, Degraded, Dirty, GitError, GitRepo, LiveStore, Scan, StoreError, Watcher,
 };
@@ -111,11 +114,14 @@ pub enum SessionError {
     Base(String),
     /// The request does not apply to the thread or the text; the message is fit to show.
     Invalid(String),
+    /// The platform could not do what the request needed of it.
+    Platform(PlatformError),
 }
 
 impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Platform(e) => e.fmt(f),
             Self::Git(e) => write!(f, "git: {}", e.0),
             Self::Store(e) => write!(f, "store: {}", e.0),
             Self::Stale { current } => write!(f, "stale revision; the changeset is at revision {current}"),
@@ -135,6 +141,12 @@ impl From<GitError> for SessionError {
 impl From<StoreError> for SessionError {
     fn from(e: StoreError) -> Self {
         Self::Store(e)
+    }
+}
+
+impl From<PlatformError> for SessionError {
+    fn from(e: PlatformError) -> Self {
+        Self::Platform(e)
     }
 }
 
@@ -172,6 +184,9 @@ pub struct LiveSession<G, S> {
     degraded: std::sync::Mutex<Option<Degraded>>,
     /// Told every time the revision on view moves, so that work for an older one stops.
     revisions: Arc<Revisions>,
+    /// Held while threads are exchanged with a platform, so two exchanges never overlap. Locked
+    /// before `state`, which is not held across the platform's answers.
+    exchange: Mutex<()>,
 }
 
 /// What a session is called: the repository's directory name, else its whole path.
@@ -246,6 +261,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             recorded: Vec::new(),
             acks: Vec::new(),
             threads,
+            discussion: None,
             changes: None,
         };
         Ok(Self::assemble(acquisition, name, repo, clock, state).await)
@@ -268,6 +284,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             parked: Mutex::default(),
             degraded: std::sync::Mutex::new(None),
             revisions: Arc::default(),
+            exchange: Mutex::new(()),
         }
     }
 
@@ -327,6 +344,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             recorded: review.spans,
             acks: review.acks,
             threads,
+            discussion: None,
             changes: None,
         }))
     }
@@ -456,7 +474,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         st.review = None;
         st.recorded.clear();
         st.acks.clear();
-        st.threads.retain(|t| t.status == ThreadStatus::Open);
+        st.threads.retain(|t| t.status == ThreadStatus::Open || t.is_posted());
         st.known.clear();
         st.revision += 1;
         st.changes = None;

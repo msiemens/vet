@@ -15,6 +15,7 @@ use super::lens::CommitUnit;
 use super::views::{ItemView, Lifecycle, Outcome};
 use super::{Result, SessionError};
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source};
+use crate::platform::Discussion;
 use crate::review::{NonTextAck, RecordedSpan, ReviewId, SpanId};
 
 /// What the current revision's diff needs, computed on first use.
@@ -72,6 +73,8 @@ pub(super) struct State {
     pub(super) recorded: Vec<RecordedSpan>,
     pub(super) acks: Vec<NonTextAck>,
     pub(super) threads: Vec<Thread>,
+    /// What the platform last said of a pull request, beside its threads, and when (unix seconds).
+    pub(super) discussion: Option<(i64, Discussion)>,
     pub(super) changes: Option<Changes>,
 }
 

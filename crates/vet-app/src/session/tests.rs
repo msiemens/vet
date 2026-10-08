@@ -11,8 +11,8 @@ use vet_core::content::{
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle;
 use vet_core::review::{
-    AnchorState, CommentTarget, Location, Message, ReviewedSpan, Side, StaleReason, Strategy, Thread, ThreadId,
-    ThreadStatus,
+    AnchorState, CommentTarget, Location, Message, MessageId, PlatformThread, ReviewedSpan, Side, StaleReason,
+    Strategy, Thread, ThreadId, ThreadStatus,
 };
 
 use vet_core::completion::HunkState;
@@ -22,6 +22,7 @@ use super::manifest::{old_path_of, update_of};
 use super::state::{check_revision, outcome};
 use super::*;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, RemoteKey, Source, Version, VersionOrigin};
+use crate::platform::FakeHosting;
 use crate::ports::{
     BlobRead, BlobReader, BranchInfo, ChangesetRefs, ChangesetStore, Checkout, CommitDetail, CommitInfo, Differ, Dirty,
     GitError, History, Remerged, ReviewStore, Scan, Scanner, Store, StoreError, ThreadStore,
@@ -451,6 +452,7 @@ struct Mem {
     /// Whether the review was complete when it was closed.
     complete: Option<bool>,
     threads: Vec<ChangesetThread>,
+    next_message: u64,
     filter: Option<ReviewFilter>,
     browsing_base: Option<BaseChoice>,
 }
@@ -497,9 +499,13 @@ impl ChangesetStore for MemStore {
         self.0.lock().unwrap().lens = Some(lens);
         Ok(())
     }
+    async fn ensure_changeset(&self, repo: String, source: Source) -> StoreResult<ChangesetId> {
+        self.0.lock().unwrap().changeset.get_or_insert((repo, source));
+        Ok(ChangesetId(1))
+    }
     async fn open_changesets(&self) -> StoreResult<Vec<ChangesetId>> {
         let mem = self.0.lock().unwrap();
-        Ok((mem.changeset.is_some() && !mem.closed)
+        Ok((mem.started > 0 && !mem.closed)
             .then_some(ChangesetId(1))
             .into_iter()
             .collect())
@@ -527,6 +533,7 @@ impl ReviewStore for MemStore {
             blobs: std::mem::take(&mut mem.blobs),
             snapshots: std::mem::take(&mut mem.snapshots),
             threads: std::mem::take(&mut mem.threads),
+            next_message: mem.next_message,
             filter: mem.filter.take(),
             browsing_base: mem.browsing_base.take(),
             lens: mem.lens.take(),
@@ -546,15 +553,15 @@ impl ReviewStore for MemStore {
     }
     async fn open_review(&self, _: ChangesetId) -> StoreResult<Option<ReviewId>> {
         let mem = self.0.lock().unwrap();
-        Ok((mem.changeset.is_some() && !mem.closed).then_some(ReviewId(mem.started)))
+        Ok((mem.started > 0 && !mem.closed).then_some(ReviewId(mem.started)))
     }
     async fn latest_review(&self, _: ChangesetId) -> StoreResult<Option<ReviewId>> {
         let mem = self.0.lock().unwrap();
-        Ok(mem.changeset.is_some().then_some(ReviewId(mem.started)))
+        Ok((mem.started > 0).then_some(ReviewId(mem.started)))
     }
     async fn review(&self, id: ReviewId) -> StoreResult<Option<Review>> {
         let mem = self.0.lock().unwrap();
-        if mem.changeset.is_none() {
+        if mem.started == 0 {
             return Ok(None);
         }
         Ok(Some(Review {
@@ -629,7 +636,12 @@ impl ReviewStore for MemStore {
 
 impl ThreadStore for MemStore {
     async fn threads(&self, _: ChangesetId) -> StoreResult<Vec<ChangesetThread>> {
-        Ok(self.0.lock().unwrap().threads.clone())
+        let mut threads = self.0.lock().unwrap().threads.clone();
+        // As the store reads them: what the platform has first, then the drafts.
+        for t in threads.iter_mut().filter(|t| t.thread.platform.is_some()) {
+            t.thread.messages.sort_by_key(|m| (m.remote.is_none(), m.at, m.id));
+        }
+        Ok(threads)
     }
     async fn add_thread(
         &self,
@@ -637,26 +649,54 @@ impl ThreadStore for MemStore {
         review: Option<ReviewId>,
         target: CommentTarget,
         opener: Message,
-    ) -> StoreResult<ThreadId> {
+        platform: Option<PlatformThread>,
+        status: ThreadStatus,
+    ) -> StoreResult<(ThreadId, MessageId)> {
         let mut mem = self.0.lock().unwrap();
-        let id = ThreadId(mem.threads.len() as u64 + 1);
+        let id = ThreadId(mem.threads.iter().map(|t| t.thread.id.0).max().unwrap_or(0) + 1);
+        mem.next_message += 1;
+        let message = MessageId(mem.next_message);
         mem.threads.push(ChangesetThread {
             thread: Thread {
                 id,
                 target,
-                messages: vec![opener],
-                status: ThreadStatus::Open,
+                messages: vec![Message { id: message, ..opener }],
+                status,
+                platform,
             },
             review,
         });
+        Ok((id, message))
+    }
+    async fn add_message(&self, thread: ThreadId, message: Message) -> StoreResult<MessageId> {
+        let mut mem = self.0.lock().unwrap();
+        mem.next_message += 1;
+        let id = MessageId(mem.next_message);
+        mem.thread(thread).messages.push(Message { id, ..message });
         Ok(id)
     }
-    async fn add_message(&self, thread: ThreadId, message: Message) -> StoreResult<()> {
-        self.0.lock().unwrap().thread(thread).messages.push(message);
+    async fn replace_message(&self, message: Message) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        let found = mem
+            .threads
+            .iter_mut()
+            .flat_map(|t| t.thread.messages.iter_mut())
+            .find(|m| m.id == message.id);
+        *found.expect("a stored message") = message;
+        Ok(())
+    }
+    async fn delete_message(&self, message: MessageId) -> StoreResult<()> {
+        for t in &mut self.0.lock().unwrap().threads {
+            t.thread.messages.retain(|m| m.id != message);
+        }
         Ok(())
     }
     async fn set_thread_status(&self, thread: ThreadId, status: ThreadStatus) -> StoreResult<()> {
         self.0.lock().unwrap().thread(thread).status = status;
+        Ok(())
+    }
+    async fn set_thread_platform(&self, thread: ThreadId, platform: PlatformThread) -> StoreResult<()> {
+        self.0.lock().unwrap().thread(thread).platform = Some(platform);
         Ok(())
     }
     async fn set_thread_target(&self, thread: ThreadId, target: CommentTarget) -> StoreResult<()> {
@@ -2842,7 +2882,7 @@ async fn replies_status_and_deletion_are_persisted() {
     assert_eq!(view.messages[1].at, 200);
     let view = fx.session.set_thread_status(id, ThreadStatus::Resolved).await.unwrap();
     assert_eq!(view.status, ThreadStatus::Resolved);
-    fx.session.delete_thread(other).await.unwrap();
+    fx.session.delete_thread(&FakeHosting::default(), other).await.unwrap();
 
     let stored = fx.store.0.lock().unwrap().threads.clone();
     assert_eq!(stored.len(), 1);
@@ -3442,3 +3482,5 @@ async fn the_review_state_of_pull_requests_is_listed_for_the_sources_asked() {
     assert_eq!(reviews[0], RowReview::None);
     assert!(matches!(reviews[1], RowReview::Open { version: 1, .. }), "{reviews:?}");
 }
+
+mod sync;

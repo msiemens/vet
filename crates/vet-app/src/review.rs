@@ -67,18 +67,20 @@ pub struct ChangesetThread {
     pub review: Option<ReviewId>,
 }
 
-/// The threads to show: every open one, and every one opened in the review that
-/// is open. A resolved thread of a finished review is part of that review.
+/// The threads to show: every open one, every one the platform has, and every one opened in the
+/// review that is open. A resolved thread of a finished review is part of that review.
 pub fn visible_threads(all: Vec<ChangesetThread>, open: Option<ReviewId>) -> Vec<Thread> {
     all.into_iter()
-        .filter(|t| t.thread.status == ThreadStatus::Open || (open.is_some() && t.review == open))
+        .filter(|t| {
+            t.thread.status == ThreadStatus::Open || t.thread.is_posted() || (open.is_some() && t.review == open)
+        })
         .map(|t| t.thread)
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use vet_core::review::{CommentTarget, ThreadId};
+    use vet_core::review::{CommentTarget, PlatformThread, ThreadId};
 
     use super::*;
 
@@ -89,6 +91,7 @@ mod tests {
                 target: CommentTarget::Changeset,
                 messages: Vec::new(),
                 status,
+                platform: None,
             },
             review: review.map(ReviewId),
         }
@@ -96,12 +99,18 @@ mod tests {
 
     #[test]
     fn a_resolved_thread_collapses_into_its_finished_review_and_an_open_one_stays() {
+        let mut on_platform = thread(6, ThreadStatus::Resolved, None);
+        on_platform.thread.platform = Some(PlatformThread {
+            remote_id: Some("T1".to_owned()),
+            ..PlatformThread::draft(true)
+        });
         let all = vec![
             thread(1, ThreadStatus::Open, Some(1)),
             thread(2, ThreadStatus::Resolved, Some(1)),
             thread(3, ThreadStatus::Open, None),
             thread(4, ThreadStatus::Resolved, Some(2)),
             thread(5, ThreadStatus::Resolved, None),
+            on_platform,
         ];
         let ids = |open| {
             visible_threads(all.clone(), open)
@@ -109,7 +118,11 @@ mod tests {
                 .map(|t| t.id.0)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(ids(None), [1, 3]);
-        assert_eq!(ids(Some(ReviewId(2))), [1, 3, 4]);
+        assert_eq!(
+            ids(None),
+            [1, 3, 6],
+            "a resolved thread the platform has is shown without a review"
+        );
+        assert_eq!(ids(Some(ReviewId(2))), [1, 3, 4, 6]);
     }
 }

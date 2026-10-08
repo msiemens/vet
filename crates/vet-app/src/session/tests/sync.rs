@@ -1,0 +1,665 @@
+//! Threads of a pull request exchanged with its platform, against a platform kept in memory.
+
+use vet_core::review::EditConflict;
+
+use super::*;
+use crate::platform::{DiffSide, PlatformError};
+
+/// Pull request 7, opened: its head `pr1` has `a.txt` edited at lines 3 and 20 (0-based).
+async fn on_a_pull_request() -> (Fixture, FakeHosting) {
+    let base = numbered(30, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fetch_pull_request_7(
+        &fx.git,
+        &[("a.txt", &base)],
+        "pr1",
+        &[("a.txt", &numbered(30, &[3, 20]))],
+    );
+    fx.session.open_changeset(pull_request_7()).await.unwrap();
+    (fx, FakeHosting::default())
+}
+
+impl Fixture {
+    async fn all(&self) -> Vec<ThreadView> {
+        self.session.threads(View::Changeset).await.unwrap().threads
+    }
+
+    async fn sync(&self, hosting: &FakeHosting) -> SyncReport {
+        self.session.sync_threads(hosting).await.unwrap()
+    }
+}
+
+fn bodies(thread: &ThreadView) -> Vec<&str> {
+    thread.messages.iter().map(|m| m.body.as_str()).collect()
+}
+
+fn remote_id(thread: &ThreadView) -> Option<&str> {
+    thread.platform.as_ref()?.remote_id.as_deref()
+}
+
+#[tokio::test]
+async fn the_platforms_threads_are_pulled_in_where_they_were_made_with_their_ids_and_authors() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let id = hosting.thread("a.txt", (21, 21), "pr1", "marco", "Why 20?");
+    hosting.say(&id, "lena", "Because.");
+
+    let report = fx.sync(&hosting).await;
+
+    assert!(report.changed && report.problem.is_none());
+    let [thread] = <[ThreadView; 1]>::try_from(fx.all().await).expect("one thread");
+    assert_eq!(
+        (thread.state.clone(), thread.location.clone()),
+        (Some(EXACT), at("a.txt", 20, 21))
+    );
+    assert_eq!(bodies(&thread), ["Why 20?", "Because."]);
+    assert_eq!(
+        thread
+            .messages
+            .iter()
+            .map(|m| (m.author.as_str(), m.mine))
+            .collect::<Vec<_>>(),
+        [("marco", false), ("lena", false)]
+    );
+    assert_eq!(remote_id(&thread), Some(id.as_str()));
+    assert!(
+        thread.messages.iter().all(|m| m.remote.is_some()),
+        "nothing of it is a draft"
+    );
+
+    assert!(!fx.sync(&hosting).await.changed, "a second sync has nothing to change");
+    assert_eq!(fx.all().await.len(), 1);
+    assert!(
+        matches!(fx.session.lifecycle().await, Lifecycle::Browsing),
+        "reading what others said is no review action"
+    );
+}
+
+#[tokio::test]
+async fn a_comment_on_older_code_is_anchored_there_and_follows_the_code_to_where_it_went() {
+    let base = numbered(30, &[]);
+    let first = numbered(30, &[20]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr1", &[("a.txt", &first)]);
+    fx.git.add_commit("an earlier push", "pr1", &[("a.txt", &first)]);
+    fx.session.open_changeset(pull_request_7()).await.unwrap();
+    // The author pushed again, adding two lines at the top.
+    fetch_pull_request_7(
+        &fx.git,
+        &[("a.txt", &base)],
+        "pr2",
+        &[("a.txt", &format!("new 1\nnew 2\n{first}"))],
+    );
+    fx.session.observe().await.unwrap().expect("pushed to");
+    let hosting = FakeHosting::default();
+    hosting.thread("a.txt", (21, 21), "pr1", "marco", "Why 20?");
+
+    fx.sync(&hosting).await;
+
+    let [thread] = <[ThreadView; 1]>::try_from(fx.all().await).expect("one thread");
+    assert_eq!((thread.state, thread.location), (Some(EXACT), at("a.txt", 22, 23)));
+    let CommentTarget::Range(recorded) = thread.target else {
+        panic!("not a range")
+    };
+    assert_eq!(
+        recorded.range,
+        LineRange { start: 20, end: 21 },
+        "recorded where it was made"
+    );
+}
+
+#[tokio::test]
+async fn a_comment_whose_code_cannot_be_found_is_attached_to_its_file() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.thread("a.txt", (500, 500), "pr1", "marco", "Past the end.");
+    hosting.thread("gone.txt", (1, 1), "pr1", "marco", "No such file.");
+
+    fx.sync(&hosting).await;
+
+    let kinds: Vec<_> = fx
+        .all()
+        .await
+        .into_iter()
+        .map(|t| match t.target {
+            CommentTarget::File { path: p, .. } => p.to_string_lossy(),
+            CommentTarget::Changeset => "pull request".to_owned(),
+            CommentTarget::Range(_) => "range".to_owned(),
+        })
+        .collect();
+    assert_eq!(kinds, ["a.txt", "pull request"]);
+}
+
+#[tokio::test]
+async fn a_status_the_viewer_changed_since_the_last_sync_wins_and_otherwise_the_platforms_is_taken() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let id = hosting.thread("a.txt", (4, 4), "pr1", "marco", "Why 3?");
+    fx.sync(&hosting).await;
+
+    hosting.resolve(&id, Some("lena"));
+    fx.sync(&hosting).await;
+    let thread = fx.all().await.remove(0);
+    assert_eq!(thread.status, ThreadStatus::Resolved);
+    assert_eq!(thread.platform.as_ref().unwrap().resolved_by.as_deref(), Some("lena"));
+
+    // Reopened here while the platform still has it resolved: the viewer's choice is sent.
+    fx.session
+        .set_thread_status(thread.id, ThreadStatus::Open)
+        .await
+        .unwrap();
+    assert_eq!(fx.sync(&hosting).await.problem, None);
+    assert!(hosting.calls().contains(&format!("resolve {id} false")));
+    let thread = fx.all().await.remove(0);
+    assert_eq!(thread.status, ThreadStatus::Open);
+    assert!(!thread.platform.as_ref().unwrap().status_pending);
+
+    // Nothing was changed here since: what the platform says goes.
+    hosting.resolve(&id, Some("lena"));
+    fx.sync(&hosting).await;
+    assert_eq!(fx.all().await[0].status, ThreadStatus::Resolved);
+    hosting.resolve(&id, None);
+    fx.sync(&hosting).await;
+    assert_eq!(fx.all().await[0].status, ThreadStatus::Open);
+}
+
+#[tokio::test]
+async fn a_status_that_cannot_be_sent_stays_the_viewers_and_is_reported() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let id = hosting.thread("a.txt", (4, 4), "pr1", "marco", "Why 3?");
+    fx.sync(&hosting).await;
+    let thread = fx.all().await.remove(0);
+    fx.session
+        .set_thread_status(thread.id, ThreadStatus::Resolved)
+        .await
+        .unwrap();
+    hosting.fail("resolve", PlatformError::Forbidden("no".to_owned()));
+
+    let report = fx.sync(&hosting).await;
+
+    assert_eq!(report.problem, Some(PlatformError::Forbidden("no".to_owned())));
+    let thread = fx.all().await.remove(0);
+    assert_eq!(thread.status, ThreadStatus::Resolved);
+    assert!(thread.platform.as_ref().unwrap().status_pending, "still to be sent");
+
+    hosting.recover();
+    fx.sync(&hosting).await;
+    assert!(hosting.calls().contains(&format!("resolve {id} true")));
+    assert!(!fx.all().await[0].platform.as_ref().unwrap().status_pending);
+}
+
+#[tokio::test]
+async fn an_edit_of_a_posted_comment_is_sent_at_once() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.my_thread("a.txt", (21, 21), "pr1", "Keys expire after 24 h.");
+    fx.sync(&hosting).await;
+    let message = fx.all().await[0].messages[0].clone();
+    let comment = message.remote.as_ref().unwrap().id.clone();
+
+    let view = fx
+        .session
+        .edit_message(&hosting, message.id, "Keys expire after 48 h.".into(), 500)
+        .await
+        .unwrap();
+
+    assert_eq!(hosting.body_of(&comment).as_deref(), Some("Keys expire after 48 h."));
+    let edited = &view.messages[0];
+    assert_eq!(edited.body, "Keys expire after 48 h.");
+    assert_eq!(edited.edited_at, Some(500));
+    let remote = edited.remote.as_ref().unwrap();
+    assert_eq!(
+        (remote.synced.as_str(), remote.conflict.clone()),
+        ("Keys expire after 48 h.", None)
+    );
+    assert!(!fx.sync(&hosting).await.changed, "nothing left to send");
+}
+
+#[tokio::test]
+async fn an_edit_that_could_not_be_sent_is_sent_by_the_next_sync() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.my_thread("a.txt", (21, 21), "pr1", "old");
+    fx.sync(&hosting).await;
+    let message = fx.all().await[0].messages[0].clone();
+    let comment = message.remote.as_ref().unwrap().id.clone();
+    hosting.fail("edit", PlatformError::Unreachable("offline".to_owned()));
+
+    let error = fx
+        .session
+        .edit_message(&hosting, message.id, "new".into(), 500)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(error, SessionError::Platform(PlatformError::Unreachable(_))),
+        "{error}"
+    );
+    let kept = fx.all().await[0].messages[0].clone();
+    assert_eq!(
+        (kept.body.as_str(), kept.remote.unwrap().synced.as_str()),
+        ("new", "old")
+    );
+    assert_eq!(hosting.body_of(&comment).as_deref(), Some("old"));
+
+    hosting.recover();
+    fx.sync(&hosting).await;
+    assert_eq!(hosting.body_of(&comment).as_deref(), Some("new"));
+    let sent = fx.all().await[0].messages[0].clone();
+    assert_eq!(sent.remote.unwrap().synced, "new");
+}
+
+#[tokio::test]
+async fn a_comment_edited_in_both_places_keeps_both_texts_until_one_is_chosen() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.my_thread("a.txt", (21, 21), "pr1", "24 h");
+    fx.sync(&hosting).await;
+    let message = fx.all().await[0].messages[0].clone();
+    let comment = message.remote.as_ref().unwrap().id.clone();
+
+    hosting.edit(&comment, "24 h and the weekend backfill");
+    let view = fx
+        .session
+        .edit_message(&hosting, message.id, "48 h".into(), 500)
+        .await
+        .unwrap();
+
+    let held = &view.messages[0];
+    assert_eq!(held.body, "48 h");
+    assert!(
+        matches!(&held.remote.as_ref().unwrap().conflict, Some(EditConflict { remote_body, .. }) if remote_body == "24 h and the weekend backfill")
+    );
+    assert_eq!(
+        hosting.body_of(&comment).as_deref(),
+        Some("24 h and the weekend backfill"),
+        "nothing was sent"
+    );
+    let again = fx.session.edit_message(&hosting, message.id, "72 h".into(), 501).await;
+    assert!(
+        matches!(again, Err(SessionError::Invalid(_))),
+        "one text must be kept first"
+    );
+
+    // Keeping the platform's text drops the viewer's.
+    let view = fx.session.keep_edit(&hosting, message.id, Keep::Remote).await.unwrap();
+    assert_eq!(view.messages[0].body, "24 h and the weekend backfill");
+    assert_eq!(view.messages[0].remote.as_ref().unwrap().conflict, None);
+    assert!(!fx.sync(&hosting).await.changed);
+}
+
+#[tokio::test]
+async fn keeping_the_viewers_text_sends_it() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.my_thread("a.txt", (21, 21), "pr1", "24 h");
+    fx.sync(&hosting).await;
+    let message = fx.all().await[0].messages[0].clone();
+    let comment = message.remote.as_ref().unwrap().id.clone();
+    hosting.edit(&comment, "theirs");
+    fx.session
+        .edit_message(&hosting, message.id, "mine".into(), 500)
+        .await
+        .unwrap();
+
+    let view = fx.session.keep_edit(&hosting, message.id, Keep::Vet).await.unwrap();
+
+    assert_eq!(hosting.body_of(&comment).as_deref(), Some("mine"));
+    assert_eq!(view.messages[0].remote.as_ref().unwrap().conflict, None);
+    assert_eq!(view.messages[0].body, "mine");
+}
+
+#[tokio::test]
+async fn a_sync_finds_an_edit_made_in_both_places_while_apart() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.my_thread("a.txt", (21, 21), "pr1", "24 h");
+    fx.sync(&hosting).await;
+    let message = fx.all().await[0].messages[0].clone();
+    let comment = message.remote.as_ref().unwrap().id.clone();
+    hosting.fail("edit", PlatformError::Unreachable("offline".to_owned()));
+    fx.session
+        .edit_message(&hosting, message.id, "48 h".into(), 500)
+        .await
+        .unwrap_err();
+    hosting.recover();
+    hosting.edit(&comment, "36 h");
+
+    fx.sync(&hosting).await;
+
+    let held = fx.all().await[0].messages[0].clone();
+    assert_eq!(held.body, "48 h");
+    assert_eq!(
+        held.remote.unwrap().conflict.map(|c| c.remote_body),
+        Some("36 h".to_owned())
+    );
+    assert_eq!(hosting.body_of(&comment).as_deref(), Some("36 h"));
+}
+
+#[tokio::test]
+async fn an_edit_made_only_on_the_platform_is_taken_over() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.thread("a.txt", (21, 21), "pr1", "marco", "typo");
+    fx.sync(&hosting).await;
+    let comment = fx.all().await[0].messages[0].remote.as_ref().unwrap().id.clone();
+    hosting.edit(&comment, "fixed");
+
+    fx.sync(&hosting).await;
+
+    assert_eq!(bodies(&fx.all().await[0]), ["fixed"]);
+}
+
+#[tokio::test]
+async fn a_thread_deleted_on_the_platform_is_removed_and_a_draft_in_it_is_reported_with_its_text() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let kept = hosting.thread("a.txt", (4, 4), "pr1", "marco", "stays");
+    let doomed = hosting.thread("a.txt", (21, 21), "pr1", "marco", "goes");
+    let quiet = hosting.thread("a.txt", (10, 10), "pr1", "marco", "goes too");
+    fx.sync(&hosting).await;
+    let on_doomed = fx
+        .all()
+        .await
+        .into_iter()
+        .find(|t| remote_id(t) == Some(doomed.as_str()))
+        .unwrap();
+    fx.session
+        .reply(on_doomed.id, "Then use 48 h.".into(), 5)
+        .await
+        .unwrap();
+    hosting.delete_thread(&doomed);
+    hosting.delete_thread(&quiet);
+
+    let report = fx.sync(&hosting).await;
+
+    assert_eq!(
+        report.notices,
+        [SyncNotice::ThreadDeleted {
+            place: "a.txt:21".to_owned(),
+            dropped: vec!["Then use 48 h.".to_owned()]
+        }],
+        "only the thread with a draft in it is announced"
+    );
+    let left = fx.all().await;
+    assert_eq!(
+        left.iter().map(|t| remote_id(t)).collect::<Vec<_>>(),
+        [Some(kept.as_str())]
+    );
+}
+
+#[tokio::test]
+async fn a_partial_listing_removes_no_thread() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.thread("a.txt", (4, 4), "pr1", "marco", "here");
+    fx.sync(&hosting).await;
+    {
+        let mut hosted = hosting.0.lock().unwrap();
+        hosted.discussion.threads.clear();
+        hosted.discussion.complete = false;
+    }
+
+    fx.sync(&hosting).await;
+
+    assert_eq!(fx.all().await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_sync_that_cannot_ask_the_platform_changes_nothing_and_says_why() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.thread("a.txt", (4, 4), "pr1", "marco", "here");
+    fx.sync(&hosting).await;
+    hosting.fail("", PlatformError::SignedOut("github.com".to_owned()));
+    let local = fx.thread(on("a.txt", 20, 21)).await;
+    fx.session.reply(local, "a draft".into(), 5).await.unwrap();
+
+    let error = fx.session.sync_threads(&hosting).await.unwrap_err();
+
+    assert!(
+        matches!(error, SessionError::Platform(PlatformError::SignedOut(_))),
+        "{error}"
+    );
+    assert_eq!(fx.all().await.len(), 2, "drafts and what was pulled stay");
+}
+
+#[tokio::test]
+async fn drafts_stay_local_until_the_review_is_submitted_as_one_with_its_verdict() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let theirs = hosting.thread("a.txt", (4, 4), "pr1", "marco", "Why 3?");
+    fx.sync(&hosting).await;
+    let on_theirs = fx.all().await[0].id;
+    let new_thread = fx.thread(on("a.txt", 20, 21)).await;
+    fx.session.reply(new_thread, "and why not 21?".into(), 6).await.unwrap();
+    fx.session.reply(on_theirs, "Agreed.".into(), 7).await.unwrap();
+    let overall = fx.thread(NewThread::Changeset).await;
+    assert!(
+        hosting.calls().iter().all(|c| !c.starts_with("submit")),
+        "nothing is posted by writing"
+    );
+    assert!(
+        fx.all()
+            .await
+            .iter()
+            .any(|t| t.messages.iter().any(|m| m.remote.is_none()))
+    );
+
+    let report = fx
+        .session
+        .submit_review(&hosting, "REQUEST_CHANGES", Some("Needs a TTL.".into()))
+        .await
+        .unwrap();
+
+    assert_eq!((report.posted, report.skipped, report.problem), (4, 0, None));
+    let submissions = hosting.0.lock().unwrap().submissions.clone();
+    let [submission] = <[_; 1]>::try_from(submissions).expect("one review");
+    assert_eq!(
+        (
+            submission.verdict.as_str(),
+            submission.body.as_deref(),
+            submission.commit.as_str()
+        ),
+        ("REQUEST_CHANGES", Some("Needs a TTL."), "pr1")
+    );
+    let [posted_thread] = <[_; 1]>::try_from(submission.threads.clone()).expect("one new thread");
+    assert_eq!(
+        (
+            posted_thread.path.as_str(),
+            posted_thread.side,
+            posted_thread.lines,
+            posted_thread.body.as_str()
+        ),
+        ("a.txt", DiffSide::Right, Some((21, 21)), "why?")
+    );
+    assert_eq!(
+        posted_thread
+            .replies
+            .iter()
+            .map(|r| r.body.as_str())
+            .collect::<Vec<_>>(),
+        ["and why not 21?"]
+    );
+    assert_eq!(
+        submission
+            .replies
+            .iter()
+            .map(|r| (r.thread.as_str(), r.body.as_str()))
+            .collect::<Vec<_>>(),
+        [(theirs.as_str(), "Agreed.")]
+    );
+    assert_eq!(submission.comments.len(), 1);
+
+    // Everything is the platform's now, and a sync finds nothing to add or change.
+    let all = fx.all().await;
+    assert!(all.iter().all(|t| t.messages.iter().all(|m| m.remote.is_some())));
+    assert!(all.iter().all(|t| t.id != overall || remote_id(t).is_some()));
+    assert!(
+        all.iter()
+            .filter(|t| t.id == new_thread)
+            .all(|t| remote_id(t).is_some())
+    );
+    let again = fx.sync(&hosting).await;
+    assert!(!again.changed, "no thread is added twice: {again:?}");
+    assert_eq!(fx.all().await.len(), 3);
+}
+
+#[tokio::test]
+async fn a_draft_on_code_that_is_gone_and_one_in_a_thread_with_an_edit_conflict_wait() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.my_thread("a.txt", (4, 4), "pr1", "24 h");
+    fx.sync(&hosting).await;
+    let mine = fx.all().await[0].clone();
+    let comment = mine.messages[0].remote.as_ref().unwrap().id.clone();
+    hosting.edit(&comment, "theirs");
+    fx.session
+        .edit_message(&hosting, mine.messages[0].id, "mine".into(), 5)
+        .await
+        .unwrap();
+    fx.session.reply(mine.id, "a reply that waits".into(), 6).await.unwrap();
+    // A thread on a line that the next push removes.
+    fx.thread(on("a.txt", 20, 21)).await;
+    let base = numbered(30, &[]);
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr2", &[("a.txt", &numbered(10, &[3]))]);
+    fx.session.observe().await.unwrap().expect("pushed to");
+
+    let report = fx
+        .session
+        .submit_review(&hosting, "COMMENT", Some("Only this.".into()))
+        .await
+        .unwrap();
+
+    assert_eq!((report.posted, report.skipped), (0, 2));
+    let hosted = hosting.0.lock().unwrap();
+    assert!(hosted.submissions[0].threads.is_empty() && hosted.submissions[0].replies.is_empty());
+}
+
+#[tokio::test]
+async fn an_empty_comment_review_is_refused_and_a_verdict_the_platform_lacks_too() {
+    let (fx, hosting) = on_a_pull_request().await;
+
+    let empty = fx.session.submit_review(&hosting, "COMMENT", None).await;
+    let unknown = fx.session.submit_review(&hosting, "REJECT", None).await;
+
+    assert!(matches!(empty, Err(SessionError::Invalid(_))));
+    assert!(matches!(unknown, Err(SessionError::Invalid(_))));
+    assert!(hosting.calls().is_empty());
+    // A verdict needs no comments.
+    assert_eq!(
+        fx.session
+            .submit_review(&hosting, "APPROVE", None)
+            .await
+            .unwrap()
+            .posted,
+        0
+    );
+}
+
+#[tokio::test]
+async fn a_review_the_platform_refuses_posts_nothing_and_keeps_the_drafts() {
+    let (fx, hosting) = on_a_pull_request().await;
+    fx.thread(on("a.txt", 20, 21)).await;
+    hosting.fail("submit", PlatformError::Rejected("token expired".to_owned()));
+
+    let error = fx.session.submit_review(&hosting, "APPROVE", None).await.unwrap_err();
+
+    assert!(matches!(error, SessionError::Platform(PlatformError::Rejected(_))));
+    assert!(fx.all().await[0].messages.iter().all(|m| m.remote.is_none()));
+    assert!(hosting.thread_ids().is_empty());
+}
+
+#[tokio::test]
+async fn own_comments_are_removed_locally_when_drafts_and_on_the_platform_when_posted() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let mine = hosting.my_thread("a.txt", (4, 4), "pr1", "first");
+    hosting.say(&mine, "marco", "an answer");
+    let theirs = hosting.thread("a.txt", (21, 21), "pr1", "marco", "not mine");
+    fx.sync(&hosting).await;
+    let all = fx.all().await;
+    let my_thread = all
+        .iter()
+        .find(|t| remote_id(t) == Some(mine.as_str()))
+        .unwrap()
+        .clone();
+    let their_thread = all
+        .iter()
+        .find(|t| remote_id(t) == Some(theirs.as_str()))
+        .unwrap()
+        .clone();
+
+    // A draft goes without the platform hearing of it.
+    let draft = fx
+        .session
+        .reply(my_thread.id, "draft".into(), 9)
+        .await
+        .unwrap()
+        .messages[2]
+        .clone();
+    fx.session.remove_message(&hosting, draft.id).await.unwrap();
+    assert_eq!(bodies(&fx.view(my_thread.id).await), ["first", "an answer"]);
+    assert!(hosting.calls().iter().all(|c| !c.starts_with("delete")));
+
+    // What someone else wrote cannot be removed.
+    let refused = fx.session.remove_message(&hosting, their_thread.messages[0].id).await;
+    assert!(matches!(refused, Err(SessionError::Invalid(_))));
+
+    // The first comment of a posted thread removes the thread, there and here.
+    fx.session
+        .remove_message(&hosting, my_thread.messages[0].id)
+        .await
+        .unwrap();
+    assert!(hosting.calls().iter().any(|c| c.starts_with("delete")));
+    assert_eq!(hosting.thread_ids(), std::slice::from_ref(&theirs));
+    assert_eq!(
+        fx.all().await.iter().map(|t| remote_id(t)).collect::<Vec<_>>(),
+        [Some(theirs.as_str())]
+    );
+}
+
+#[tokio::test]
+async fn a_posted_reply_is_removed_alone_and_deleting_a_thread_the_viewer_started_removes_it_there() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.my_thread("a.txt", (4, 4), "pr1", "first");
+    fx.sync(&hosting).await;
+    let thread = fx.all().await[0].id;
+    fx.session.reply(thread, "second".into(), 9).await.unwrap();
+    fx.session.submit_review(&hosting, "COMMENT", None).await.unwrap();
+    let second = fx.all().await[0].messages[1].clone();
+
+    fx.session.remove_message(&hosting, second.id).await.unwrap();
+    assert_eq!(bodies(&fx.all().await[0]), ["first"]);
+
+    fx.session.delete_thread(&hosting, thread).await.unwrap();
+    assert!(hosting.thread_ids().is_empty() && fx.all().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_thread_the_viewer_did_not_start_cannot_be_deleted_from_the_platform() {
+    let (fx, hosting) = on_a_pull_request().await;
+    hosting.thread("a.txt", (4, 4), "pr1", "marco", "his");
+    fx.sync(&hosting).await;
+    let thread = fx.all().await[0].id;
+
+    let refused = fx.session.delete_thread(&hosting, thread).await;
+
+    assert!(matches!(refused, Err(SessionError::Invalid(_))));
+    assert_eq!(fx.all().await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_comment_edited_before_posting_is_just_changed_and_the_platform_hears_of_it_with_the_review() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let thread = fx.thread(on("a.txt", 20, 21)).await;
+    let draft = fx.view(thread).await.messages[0].clone();
+
+    let view = fx
+        .session
+        .edit_message(&hosting, draft.id, "better".into(), 7)
+        .await
+        .unwrap();
+
+    assert_eq!(bodies(&view), ["better"]);
+    assert!(hosting.calls().is_empty());
+    fx.session.submit_review(&hosting, "COMMENT", None).await.unwrap();
+    assert_eq!(hosting.0.lock().unwrap().submissions[0].threads[0].body, "better");
+}
+
+#[tokio::test]
+async fn comments_on_a_changeset_that_is_no_pull_request_are_never_drafts() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    let id = fx.thread(on("a.txt", 0, 1)).await;
+
+    let view = fx.view(id).await;
+
+    assert_eq!(view.platform, None);
+    let error = fx.session.sync_threads(&FakeHosting::default()).await.unwrap_err();
+    assert!(matches!(error, SessionError::Invalid(_)));
+}

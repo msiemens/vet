@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use vet_core::content::{EntryKind, LineRange, RepoPath, Snapshot, is_binary};
 use vet_core::resolve::Resolution;
 use vet_core::review::{
-    Anchor, AnchorState, CommentTarget, Location, Message, Side, StaleReason, Thread, ThreadId, ThreadStatus,
-    target_line,
+    Anchor, AnchorState, CommentTarget, Location, Message, PlatformThread, Side, StaleReason, Thread, ThreadId,
+    ThreadStatus, target_line,
 };
 
 use super::interdiff::{View, check_commentable, markable};
@@ -15,6 +15,7 @@ use super::manifest::{old_path_of, status_of};
 use super::state::{Changes, State, check_revision, find_diff, outcome, shown_items};
 use super::views::{FileStatus, Outcome};
 use super::{LiveSession, Result, SessionError};
+use crate::changeset::Source;
 use crate::editor::last_text_line;
 use crate::ports::{GitRepo, LiveStore};
 
@@ -79,6 +80,8 @@ pub struct ThreadView {
     pub target_line: Option<u32>,
     pub messages: Vec<Message>,
     pub status: ThreadStatus,
+    /// `None` for a thread of a changeset that is not on a platform.
+    pub platform: Option<PlatformThread>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -244,16 +247,28 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let started = self.begin(&mut st).await?;
         let review = st.review.as_ref().expect("begun").id;
         let changeset = st.changeset.expect("begun");
-        let id = self
+        // On a platform the thread is a draft until it is submitted; a comment on the whole pull
+        // request is a flat one, which has no status.
+        let platform = matches!(st.source, Source::PullRequest { .. })
+            .then(|| PlatformThread::draft(!matches!(target, CommentTarget::Changeset)));
+        let (id, message) = self
             .acquisition
             .store
-            .add_thread(changeset, Some(review), target.clone(), opener.clone())
+            .add_thread(
+                changeset,
+                Some(review),
+                target.clone(),
+                opener.clone(),
+                platform.clone(),
+                ThreadStatus::Open,
+            )
             .await?;
         st.threads.push(Thread {
             id,
             target,
-            messages: vec![opener],
+            messages: vec![Message { id: message, ..opener }],
             status: ThreadStatus::Open,
+            platform,
         });
         self.remap(&mut st).await?;
         Ok(outcome(&st, thread_by_id(&st, id)?, started))
@@ -264,31 +279,35 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         self.ensure_changes(&mut st).await?;
         find_thread(&st, thread)?;
         let message = self.message(body, now)?;
-        self.acquisition.store.add_message(thread, message.clone()).await?;
-        edit_thread(&mut st, thread, |t| t.messages.push(message));
+        let id = self.acquisition.store.add_message(thread, message.clone()).await?;
+        edit_thread(&mut st, thread, |t| t.messages.push(Message { id, ..message }));
         thread_by_id(&st, thread)
     }
 
-    /// Resolves or reopens a thread.
+    /// Resolves or reopens a thread. On a platform the change is sent with the next sync, and
+    /// wins there over what the platform says meanwhile.
     pub async fn set_thread_status(&self, thread: ThreadId, status: ThreadStatus) -> Result<ThreadView> {
         let mut st = self.state.lock().await;
         self.ensure_changes(&mut st).await?;
-        find_thread(&st, thread)?;
+        let platform = find_thread(&st, thread)?.platform.clone();
+        if let Some(mut platform) = platform {
+            if !platform.resolvable {
+                return Err(SessionError::Invalid(
+                    "a comment on the whole pull request cannot be resolved".into(),
+                ));
+            }
+            if platform.remote_id.is_some() {
+                platform.status_pending = true;
+                self.acquisition
+                    .store
+                    .set_thread_platform(thread, platform.clone())
+                    .await?;
+                edit_thread(&mut st, thread, |t| t.platform = Some(platform));
+            }
+        }
         self.acquisition.store.set_thread_status(thread, status).await?;
         edit_thread(&mut st, thread, |t| t.status = status);
         thread_by_id(&st, thread)
-    }
-
-    /// Deletes a thread; this is also how a detached one is discarded.
-    pub async fn delete_thread(&self, thread: ThreadId) -> Result<()> {
-        let mut st = self.state.lock().await;
-        find_thread(&st, thread)?;
-        self.acquisition.store.delete_thread(thread).await?;
-        st.threads.retain(|t| t.id != thread);
-        if let Some(changes) = st.changes.as_mut() {
-            changes.resolutions.remove(&thread);
-        }
-        Ok(())
     }
 
     /// Re-anchors an `Inferred` thread at its current location, which makes it
@@ -327,11 +346,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         if body.trim().is_empty() {
             return Err(SessionError::Invalid("a message cannot be empty".into()));
         }
-        Ok(Message {
-            author: self.author.clone(),
-            body,
-            at,
-        })
+        Ok(Message::written(self.author.clone(), body, at))
     }
 
     /// Records the thread's anchor anew, from the current text at `location`.
@@ -364,21 +379,21 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 }
 
-fn side_snapshot(st: &State, side: Side) -> &Snapshot {
+pub(super) fn side_snapshot(st: &State, side: Side) -> &Snapshot {
     match side {
         Side::Base => &st.base,
         Side::Target => &st.target,
     }
 }
 
-fn find_thread(st: &State, id: ThreadId) -> Result<&Thread> {
+pub(super) fn find_thread(st: &State, id: ThreadId) -> Result<&Thread> {
     st.threads
         .iter()
         .find(|t| t.id == id)
         .ok_or_else(|| SessionError::NotFound(format!("thread {}", id.0)))
 }
 
-fn edit_thread(st: &mut State, id: ThreadId, edit: impl FnOnce(&mut Thread)) {
+pub(super) fn edit_thread(st: &mut State, id: ThreadId, edit: impl FnOnce(&mut Thread)) {
     if let Some(t) = st.threads.iter_mut().find(|t| t.id == id) {
         edit(t);
     }
@@ -394,13 +409,13 @@ fn resolution_of(st: &State, id: ThreadId) -> Result<&Resolution> {
         .ok_or_else(|| SessionError::Invalid("only a range thread has an anchor".into()))
 }
 
-fn thread_by_id(st: &State, id: ThreadId) -> Result<ThreadView> {
+pub(super) fn thread_by_id(st: &State, id: ThreadId) -> Result<ThreadView> {
     Ok(thread_view(st, find_thread(st, id)?))
 }
 
 /// File threads follow a git-detected rename and detach only when the file is
 /// gone; changeset threads never detach.
-fn thread_view(st: &State, t: &Thread) -> ThreadView {
+pub(super) fn thread_view(st: &State, t: &Thread) -> ThreadView {
     let changes = st.changes.as_ref().expect("computed");
     let (path, state, location) = match &t.target {
         CommentTarget::Range(a) => {
@@ -439,6 +454,7 @@ fn thread_view(st: &State, t: &Thread) -> ThreadView {
         target_line,
         messages: t.messages.clone(),
         status: t.status,
+        platform: t.platform.clone(),
     }
 }
 

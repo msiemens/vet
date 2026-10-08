@@ -84,12 +84,73 @@ pub enum CommentTarget {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct ThreadId(pub u64);
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct MessageId(pub u64);
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Message {
+    /// Assigned by the store; `MessageId(0)` for a message that is not stored yet.
+    pub id: MessageId,
     pub author: String,
     pub body: String,
     /// Unix seconds.
     pub at: i64,
+    /// The viewer wrote it, here or on the platform: it can be edited and removed.
+    pub mine: bool,
+    /// The platform's picture of the author, if it has one.
+    pub avatar: Option<String>,
+    /// Unix seconds of the viewer's last edit of the text; `None` if it was never edited.
+    pub edited_at: Option<i64>,
+    /// Present once the platform has the comment. A message without it is only in Vet: a draft
+    /// on a changeset of a platform.
+    pub remote: Option<RemoteComment>,
+}
+
+impl Message {
+    /// A message the viewer wrote, not stored or posted yet.
+    pub fn written(author: String, body: String, at: i64) -> Self {
+        Self {
+            id: MessageId(0),
+            author,
+            body,
+            at,
+            mine: true,
+            avatar: None,
+            edited_at: None,
+            remote: None,
+        }
+    }
+
+    /// The text the platform is known to have, or `None` while it has no such comment.
+    pub fn synced(&self) -> Option<&str> {
+        self.remote.as_ref().map(|r| r.synced.as_str())
+    }
+
+    /// The viewer changed the text of a posted comment after the last sync.
+    pub fn edit_pending(&self) -> bool {
+        self.synced().is_some_and(|synced| synced != self.body)
+    }
+}
+
+/// A comment as the platform has it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RemoteComment {
+    /// The platform's own id.
+    pub id: String,
+    /// The text the platform had at the last sync. What the viewer's edit is measured against:
+    /// an edit is pending while the text differs from it.
+    pub synced: String,
+    /// Set when the viewer and the platform both changed the text since the last sync.
+    pub conflict: Option<EditConflict>,
+}
+
+/// The platform's text of a comment that was edited in both places, kept beside the viewer's
+/// until one of them is chosen.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct EditConflict {
+    pub remote_body: String,
+    /// Unix seconds the platform's edit was made.
+    pub remote_at: i64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -98,12 +159,47 @@ pub enum ThreadStatus {
     Resolved,
 }
 
+/// What a thread is on a platform.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PlatformThread {
+    /// The platform's id of the thread; `None` while it is a draft.
+    pub remote_id: Option<String>,
+    /// A flat conversation comment cannot be resolved.
+    pub resolvable: bool,
+    /// Who resolved it on the platform.
+    pub resolved_by: Option<String>,
+    /// The viewer resolved or reopened it after the last sync, which then wins over the platform's
+    /// state.
+    pub status_pending: bool,
+}
+
+impl PlatformThread {
+    /// A thread the viewer is about to post.
+    pub fn draft(resolvable: bool) -> Self {
+        Self {
+            remote_id: None,
+            resolvable,
+            resolved_by: None,
+            status_pending: false,
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Thread {
     pub id: ThreadId,
     pub target: CommentTarget,
     pub messages: Vec<Message>,
     pub status: ThreadStatus,
+    /// `None` for a thread on a changeset that is not on a platform.
+    pub platform: Option<PlatformThread>,
+}
+
+impl Thread {
+    /// The platform has the thread.
+    pub fn is_posted(&self) -> bool {
+        self.platform.as_ref().is_some_and(|p| p.remote_id.is_some())
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

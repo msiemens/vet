@@ -229,6 +229,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             recorded: Vec::new(),
             acks: Vec::new(),
             threads,
+            discussion: None,
             changes: None,
         })
     }

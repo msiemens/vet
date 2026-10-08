@@ -2,6 +2,7 @@
 //! platform.
 
 use super::checks::{CheckLog, CommitChecks};
+use super::discussion::{CommentRef, Discussion, PlatformComment, Submission, Submitted};
 use super::model::{PlatformError, PlatformTraits, PullRequest, PullRequestDetail, PullRequestQuery, Viewer};
 use super::queue::{PullRequestRow, rows};
 use super::remote::RemoteKey;
@@ -43,6 +44,76 @@ pub trait Platform {
         remote: &RemoteKey,
         check: &str,
     ) -> impl Future<Output = Result<CheckLog, PlatformError>> + Send;
+
+    /// The review threads of a pull request with their comments, who reviews it, and its
+    /// conversation. Comments of a review that is not submitted yet are left out.
+    fn discussion(
+        &self,
+        remote: &RemoteKey,
+        number: u64,
+    ) -> impl Future<Output = Result<Discussion, PlatformError>> + Send {
+        let _ = (remote, number);
+        async { Err(unsupported("reading the review threads")) }
+    }
+
+    /// The comment as it is now.
+    fn comment(
+        &self,
+        remote: &RemoteKey,
+        comment: &CommentRef,
+    ) -> impl Future<Output = Result<PlatformComment, PlatformError>> + Send {
+        let _ = (remote, comment);
+        async { Err(unsupported("reading a comment")) }
+    }
+
+    /// Replaces the text of the viewer's comment; answers with it as it is then.
+    fn edit_comment(
+        &self,
+        remote: &RemoteKey,
+        comment: &CommentRef,
+        body: &str,
+    ) -> impl Future<Output = Result<PlatformComment, PlatformError>> + Send {
+        let _ = (remote, comment, body);
+        async { Err(unsupported("editing a comment")) }
+    }
+
+    /// Removes the viewer's comment; removing the first of a thread removes the thread.
+    fn delete_comment(
+        &self,
+        remote: &RemoteKey,
+        comment: &CommentRef,
+    ) -> impl Future<Output = Result<(), PlatformError>> + Send {
+        let _ = (remote, comment);
+        async { Err(unsupported("removing a comment")) }
+    }
+
+    /// Resolves a review thread, or opens it again.
+    fn set_thread_resolved(
+        &self,
+        remote: &RemoteKey,
+        thread: &str,
+        resolved: bool,
+    ) -> impl Future<Output = Result<(), PlatformError>> + Send {
+        let _ = (remote, thread, resolved);
+        async { Err(unsupported("resolving a thread")) }
+    }
+
+    /// Posts the viewer's drafts as one review with a verdict, on platforms that batch them
+    /// ([`super::PlatformTraits::posting`]). Nothing stays pending on the platform: if the
+    /// review cannot be posted whole, none of it is.
+    fn submit_review(
+        &self,
+        remote: &RemoteKey,
+        number: u64,
+        submission: &Submission,
+    ) -> impl Future<Output = Result<Submitted, PlatformError>> + Send {
+        let _ = (remote, number, submission);
+        async { Err(unsupported("submitting a review")) }
+    }
+}
+
+fn unsupported(what: &str) -> PlatformError {
+    PlatformError::Unexpected(format!("{what} is not supported on this platform yet"))
 }
 
 /// The queue's rows for `query`.
