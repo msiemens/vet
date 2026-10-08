@@ -352,7 +352,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         };
         Ok(Discussion {
             title: pr.title.clone().unwrap_or_default(),
-            url: format!("{}{id}", super::web_address(remote, &call.repository)),
+            url: format!("{}{id}", super::web_address(remote)),
             draft: pr.is_draft,
             source_branch: wire::branch(&pr.source_ref_name),
             target_branch: wire::branch(&pr.target_ref_name),

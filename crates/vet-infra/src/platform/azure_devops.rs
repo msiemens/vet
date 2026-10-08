@@ -425,7 +425,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         let access = self.access(&remote.account()).await?;
         let me = self.me(&access, remote, &repository).await?;
         let git = access.git(&self.endpoints().api)?;
-        let web = web_address(remote, &repository);
+        let web = web_address(remote);
 
         let mut found = Vec::new();
         let mut skip = 0;
@@ -504,7 +504,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             other => other,
         })?;
         self.learn_project(remote, Some(&found));
-        let mut pull_request = wire::pull_request(&found, &me, &web_address(remote, &repository))
+        let mut pull_request = wire::pull_request(&found, &me, &web_address(remote))
             .ok_or_else(|| PlatformError::Unexpected(format!("{} has no source commit", remote)))?;
         let iterations = git
             .pull_request_iterations_client()
@@ -606,20 +606,23 @@ fn repository(remote: &RemoteKey) -> Result<Repository<'_>, PlatformError> {
 }
 
 /// The address of a repository's pull requests in the browser, up to the number.
-fn web_address(remote: &RemoteKey, repository: &Repository<'_>) -> String {
-    address(remote, repository, &["_git", repository.name, "pullrequest", ""])
+fn web_address(remote: &RemoteKey) -> String {
+    let name = remote.names().nth(2).unwrap_or_default();
+    address(remote, &["_git", &name, "pullrequest", ""])
 }
 
 /// The address in the browser of `rest` in the repository's project.
-fn address(remote: &RemoteKey, repository: &Repository<'_>, rest: &[&str]) -> String {
+fn address(remote: &RemoteKey, rest: &[&str]) -> String {
     let mut url = Url::parse(&format!("https://{}", remote.host)).expect("a host name is an address");
     {
         let mut path = url.path_segments_mut().expect("a web address has a path");
+        let mut names = remote.names();
+        let organization = names.next().unwrap_or_default();
         // An organization at `<organization>.visualstudio.com` is the host.
         if remote.host == "dev.azure.com" {
-            path.push(repository.organization);
+            path.push(&organization);
         }
-        path.push(repository.project);
+        path.push(&names.next().unwrap_or_default());
         path.extend(rest);
     }
     url.to_string()

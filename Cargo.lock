@@ -5729,6 +5729,7 @@ name = "vet-app"
 version = "0.0.0"
 dependencies = [
  "futures",
+ "percent-encoding",
  "serde_json",
  "tokio",
  "tracing",

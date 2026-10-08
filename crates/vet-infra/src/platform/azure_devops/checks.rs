@@ -246,7 +246,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .and_then(source)
             .or_else(|| pr.last_merge_source_commit.as_ref()?.commit_id.clone());
         let is_head = head.as_deref() == Some(commit);
-        let url = format!("{}{number}", web_address(call.remote, &call.repository));
+        let url = format!("{}{number}", web_address(call.remote));
         let mut checks = CommitChecks {
             commit: commit.to_owned(),
             checks: Vec::new(),
@@ -287,12 +287,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
                 .into_iter()
                 .filter_map(|s| status_check(s, &url)),
         );
-        let build_url = |build: i64| {
-            format!(
-                "{}?buildId={build}",
-                address(call.remote, &call.repository, &["_build", "results"])
-            )
-        };
+        let build_url = |build: i64| format!("{}?buildId={build}", address(call.remote, &["_build", "results"]));
         checks
             .checks
             .extend(evaluations.iter().filter_map(|e| policy_check(e, build_url, &url)));

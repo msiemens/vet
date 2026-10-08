@@ -1,10 +1,31 @@
 //! Which repository on which host a remote URL names.
 
+use std::borrow::Cow;
+
+use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
+
 use super::host::{PlatformKind, azure_devops_account};
+
+/// What is escaped in a name of an Azure DevOps path: whatever a URL path cannot carry as it
+/// is, the escape itself, and the separators.
+const ESCAPED: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'`')
+    .add(b'{')
+    .add(b'}')
+    .add(b'/')
+    .add(b'\\');
 
 /// A repository on a hosting platform: `github.com` and `owner/repo`, or
 /// `dev.azure.com` and `organization/project/repo`. The same for every URL form that
-/// reaches the repository.
+/// reaches the repository. An Azure DevOps name is kept as a URL path carries it: `My%20Shop`
+/// for the project `My Shop`, however the remote spells it.
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct RemoteKey {
     pub host: String,
@@ -30,6 +51,11 @@ impl RemoteKey {
     /// and repository for Azure DevOps.
     pub fn segments(&self) -> impl Iterator<Item = &str> {
         self.path.split('/')
+    }
+
+    /// The segments as the names they are: `My Shop` for `My%20Shop`.
+    pub fn names(&self) -> impl Iterator<Item = Cow<'_, str>> {
+        self.segments().map(|s| percent_decode_str(s).decode_utf8_lossy())
     }
 }
 
@@ -115,25 +141,36 @@ fn github(host: &str, segments: &[&str]) -> Option<RemoteKey> {
 }
 
 /// `https://dev.azure.com/org/project/_git/repo` and
-/// `https://org.visualstudio.com/[DefaultCollection/]project/_git/repo`.
+/// `https://org.visualstudio.com/[DefaultCollection/]project/_git/repo`, either also with
+/// `_optimized/` or `_full/` before the repository.
 fn azure_devops(host: &str, segments: &[&str]) -> Option<RemoteKey> {
     let (org, rest) = match segments {
-        [org, rest @ ..] if host == "dev.azure.com" => (org.to_string(), rest),
+        [org, rest @ ..] if host == "dev.azure.com" => (*org, rest),
         rest => {
             let rest = rest.strip_prefix(&["DefaultCollection"]).unwrap_or(rest);
-            (host.strip_suffix(".visualstudio.com")?.to_owned(), rest)
+            (host.strip_suffix(".visualstudio.com")?, rest)
         }
     };
     let (project, repo) = match rest {
-        [project, "_git", repo] => (project, repo),
+        [project, "_git", repo] | [project, "_git", "_optimized" | "_full", repo] => (*project, *repo),
         // A repository named like its project may leave the project out.
-        ["_git", repo] => (repo, repo),
+        ["_git", repo] | ["_git", "_optimized" | "_full", repo] => (*repo, *repo),
         _ => return None,
     };
     Some(RemoteKey {
         host: host.to_owned(),
-        path: format!("{org}/{project}/{repo}"),
+        path: azure_devops_path(org, project, repo)?,
     })
+}
+
+/// The path of an Azure DevOps repository, its names escaped as `ESCAPED` says whether or
+/// not the remote escaped them.
+fn azure_devops_path(org: &str, project: &str, repo: &str) -> Option<String> {
+    let escaped = |name: &str| {
+        let name = percent_decode_str(name).decode_utf8().ok()?;
+        Some(utf8_percent_encode(&name, ESCAPED).to_string())
+    };
+    Some(format!("{}/{}/{}", escaped(org)?, escaped(project)?, escaped(repo)?))
 }
 
 /// `git@ssh.dev.azure.com:v3/org/project/repo` and
@@ -151,7 +188,7 @@ fn azure_devops_ssh(host: &str, segments: &[&str]) -> Option<RemoteKey> {
     };
     Some(RemoteKey {
         host,
-        path: format!("{org}/{project}/{repo}"),
+        path: azure_devops_path(org, project, repo)?,
     })
 }
 
@@ -236,6 +273,52 @@ mod tests {
         assert_eq!(
             parse_remote("contoso@vs-ssh.visualstudio.com:v3/contoso/Shop/api"),
             key("contoso.visualstudio.com", "contoso/Shop/api")
+        );
+    }
+
+    #[test]
+    fn azure_devops_names_with_spaces_and_other_letters_are_the_same_key_however_the_remote_escapes_them() {
+        for url in [
+            "https://dev.azure.com/vivavis/My%20Shop/_git/Back%20End",
+            "https://vivavis@dev.azure.com/vivavis/My%20Shop/_git/Back%20End",
+            "https://dev.azure.com/vivavis/My Shop/_git/Back End",
+            "git@ssh.dev.azure.com:v3/vivavis/My%20Shop/Back%20End",
+            "ssh://git@ssh.dev.azure.com/v3/vivavis/My%20Shop/Back%20End",
+            "https://dev.azure.com/vivavis/My%20Shop/_git/_optimized/Back%20End",
+            "https://dev.azure.com/vivavis/My%20Shop/_git/_full/Back%20End",
+        ] {
+            assert_eq!(
+                parse_remote(url),
+                key("dev.azure.com", "vivavis/My%20Shop/Back%20End"),
+                "{url}"
+            );
+        }
+        for url in [
+            "https://vivavis.visualstudio.com/DefaultCollection/My%20Shop/_git/Back%20End",
+            "https://vivavis.visualstudio.com/My Shop/_git/Back End",
+            "vivavis@vs-ssh.visualstudio.com:v3/vivavis/My%20Shop/Back%20End",
+        ] {
+            assert_eq!(
+                parse_remote(url),
+                key("vivavis.visualstudio.com", "vivavis/My%20Shop/Back%20End"),
+                "{url}"
+            );
+        }
+        let umlaut = parse_remote("https://dev.azure.com/vivavis/Gesch%C3%A4ft/_git/Z%C3%A4hler").unwrap();
+        assert_eq!(
+            parse_remote("https://dev.azure.com/vivavis/Geschäft/_git/Zähler"),
+            Some(umlaut.clone())
+        );
+        assert_eq!(umlaut.names().collect::<Vec<_>>(), ["vivavis", "Geschäft", "Zähler"]);
+        assert_eq!(umlaut.account(), "dev.azure.com/vivavis");
+        // An escaped escape is a percent sign in the name, not an escape.
+        assert_eq!(
+            parse_remote("https://dev.azure.com/vivavis/Shop/_git/100%25"),
+            key("dev.azure.com", "vivavis/Shop/100%25")
+        );
+        assert_eq!(
+            parse_remote("https://dev.azure.com/vivavis/_git/My%20Shop"),
+            key("dev.azure.com", "vivavis/My%20Shop/My%20Shop")
         );
     }
 

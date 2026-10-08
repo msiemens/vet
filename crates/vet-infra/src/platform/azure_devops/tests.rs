@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 use vet_app::platform::{
     ChangesAsked, ChangesRequest, Credential, CredentialSource, ReviewDecision, ReviewRequest, ReviewState,
-    ReviewVerdict, Token, ViewerReview, list_rows,
+    ReviewVerdict, Token, ViewerReview, list_rows, parse_remote,
 };
 
 use super::*;
@@ -805,20 +805,58 @@ async fn a_remote_is_reached_by_the_account_of_its_organization_and_by_no_other(
     assert_eq!(error, PlatformError::SignedOut("dev.azure.com/fabrikam".to_owned()));
 }
 
+#[tokio::test]
+async fn a_repository_whose_names_have_spaces_and_umlauts_is_asked_for_at_its_names_escaped_once() {
+    set_now(NOW);
+    let project = "/contoso/My%20Gesch%C3%A4ft/_apis";
+    let pulls = format!("{project}/git/repositories/Back%20End/pullrequests");
+    let fake = Fake::start(move |request, _| {
+        let path = request.path.split('?').next().unwrap();
+        if path == "/contoso/_apis/connectionData" {
+            Canned::json(&profile())
+        } else if path == "/contoso/_apis/identities" {
+            Canned::json(&no_value())
+        } else if path == pulls {
+            Canned::json(&list_of(&[Doc::new(1)]))
+        } else if path == format!("{pulls}/1/statuses") || path == format!("{pulls}/1/threads") {
+            Canned::json(&no_value())
+        } else {
+            Canned::status(404, "")
+        }
+    });
+    for url in [
+        "https://dev.azure.com/contoso/My%20Gesch%C3%A4ft/_git/Back%20End",
+        "https://contoso.visualstudio.com/My Geschäft/_git/Back End",
+        "git@ssh.dev.azure.com:v3/contoso/My%20Gesch%C3%A4ft/Back%20End",
+    ] {
+        let remote = parse_remote(url).unwrap();
+        let found = client(&fake).list_pull_requests(&remote, &all_open()).await.unwrap();
+        assert_eq!(found.pull_requests.len(), 1, "{url}: {:?}", fake.requests());
+        assert!(
+            found.pull_requests[0]
+                .url
+                .ends_with("/My%20Gesch%C3%A4ft/_git/Back%20End/pullrequest/1"),
+            "{}",
+            found.pull_requests[0].url
+        );
+    }
+}
+
 #[test]
 fn a_pull_request_is_shown_at_its_organizations_address() {
-    let repository = |remote: &RemoteKey| web_address(remote, &super::repository(remote).unwrap());
     assert_eq!(
-        repository(&remote()),
+        web_address(&remote()),
         "https://dev.azure.com/contoso/Shop/_git/api/pullrequest/"
     );
-    let old = RemoteKey {
-        host: "contoso.visualstudio.com".to_owned(),
-        path: "contoso/My Shop/api".to_owned(),
-    };
+    let old = parse_remote("https://contoso.visualstudio.com/My%20Shop/_git/Back%20End").unwrap();
     assert_eq!(
-        repository(&old),
-        "https://contoso.visualstudio.com/My%20Shop/_git/api/pullrequest/"
+        web_address(&old),
+        "https://contoso.visualstudio.com/My%20Shop/_git/Back%20End/pullrequest/"
+    );
+    let umlaut = parse_remote("git@ssh.dev.azure.com:v3/contoso/Gesch%C3%A4ft/Z%C3%A4hler").unwrap();
+    assert_eq!(
+        web_address(&umlaut),
+        "https://dev.azure.com/contoso/Gesch%C3%A4ft/_git/Z%C3%A4hler/pullrequest/"
     );
 }
 
