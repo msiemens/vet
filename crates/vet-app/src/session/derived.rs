@@ -290,7 +290,10 @@ async fn compared<G: GitRepo + Sync, S: LiveStore + Sync>(
     };
     let paths = sides.paths();
     let wanted = sides.blobs(&paths);
-    let mut blobs = BTreeMap::new();
+    // What the store holds is read in one go; the rest comes from git or the worktree.
+    let mut blobs = (acquisition.store)
+        .blobs(wanted.iter().map(|(_, blob)| *blob).collect())
+        .await?;
     for (done, (path, blob)) in wanted.iter().enumerate() {
         progress.report(Some((done as u32, wanted.len() as u32)), Some(path.to_string_lossy()));
         acquisition.load(&mut blobs, path, *blob).await?;

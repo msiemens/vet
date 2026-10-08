@@ -10,6 +10,7 @@ use std::sync::Arc;
 use vet_core::content::{Snapshot, SnapshotId, SnapshotStatus};
 use vet_engine::{Computed, Kind, Retention};
 
+use super::derived::Diffed;
 use super::{LiveSession, Result, SessionError};
 use crate::acquisition::Acquisition;
 use crate::changeset::Source;
@@ -40,13 +41,13 @@ where
 {
     /// Copies the content of `target` that `base` does not have into the store through
     /// `acquisition`; joins the copy of the pair under way, if there is one, whatever it copies
-    /// through.
+    /// through. The texts come from `diffed`, the diff of the pair, which read them already;
+    /// the rest (binaries, files over the cap) from git or the worktree.
     pub(super) async fn retained(
         &self,
         acquisition: &Arc<Acquisition<G, S>>,
-        base: &Snapshot,
-        target: &Snapshot,
-        status: &SnapshotStatus,
+        (base, target, status): (&Snapshot, &Snapshot, &SnapshotStatus),
+        diffed: Arc<Diffed>,
     ) -> Result<()> {
         let key = Retained {
             base: base.id,
@@ -56,7 +57,7 @@ where
             let acquisition = Arc::clone(acquisition);
             let (base, target, status) = (base.clone(), target.clone(), status.clone());
             async move {
-                acquisition.retain(&[&base], &target, &status).await?;
+                acquisition.retain(&[&base], &target, &status, &diffed.blobs).await?;
                 Ok(Computed::new((), false))
             }
         };
@@ -75,6 +76,7 @@ where
             }
             (st.base.clone(), st.target.clone(), st.target_status.clone())
         };
-        self.retained(&self.copying, &base, &target, &status).await
+        let diffed = self.diff_of(&base, &target).await?;
+        self.retained(&self.copying, (&base, &target, &status), diffed).await
     }
 }

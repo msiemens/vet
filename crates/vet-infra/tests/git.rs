@@ -5,7 +5,7 @@
 
 mod common;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Mutex;
@@ -93,6 +93,13 @@ impl Store for MemStore {
     }
     async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self.0.lock().unwrap().get(&id).cloned())
+    }
+    async fn blobs(&self, ids: Vec<BlobId>) -> Result<BTreeMap<BlobId, Vec<u8>>, StoreError> {
+        let held = self.0.lock().unwrap();
+        Ok(ids
+            .into_iter()
+            .filter_map(|id| Some((id, held.get(&id)?.clone())))
+            .collect())
     }
     async fn put_snapshot(&self, _: Snapshot, _: SnapshotStatus, _: i64) -> Result<(), StoreError> {
         unimplemented!()

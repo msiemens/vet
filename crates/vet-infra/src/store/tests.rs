@@ -849,6 +849,30 @@ async fn a_batch_of_blobs_is_answered_in_order_and_held_after_a_reopen() {
     assert_eq!(std::fs::read_dir(dir.path().join("content/tmp")).unwrap().count(), 0);
 }
 
+#[tokio::test]
+async fn blobs_read_together_are_those_read_one_by_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let held: Vec<Vec<u8>> = (0..20u8).map(|n| vec![n; 100 + n as usize]).collect();
+    let mut ids = store.put_blobs(held).await.unwrap();
+    // One the store never had, one torn on disk, and one asked for twice.
+    let torn = ids[3];
+    let hex = torn.0.to_hex();
+    std::fs::write(dir.path().join("content").join(&hex[..2]).join(&hex[2..]), b"torn").unwrap();
+    ids.extend([BlobId::of(b"never"), ids[5]]);
+
+    let together = store.blobs(ids.clone()).await.unwrap();
+    let mut alone = BTreeMap::new();
+    for id in ids {
+        if let Some(bytes) = store.blob(id).await.unwrap() {
+            alone.insert(id, bytes);
+        }
+    }
+    assert_eq!(together, alone);
+    assert_eq!(together.len(), 19);
+    assert!(!together.contains_key(&torn));
+}
+
 #[cfg(target_vendor = "apple")]
 #[tokio::test]
 async fn a_batch_flushes_the_drive_once_and_a_batch_with_nothing_to_write_not_at_all() {

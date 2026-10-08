@@ -5,7 +5,7 @@
 
 mod common;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
@@ -75,6 +75,13 @@ impl Store for MemStore {
     }
     async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self.blobs.lock().unwrap().get(&id).cloned())
+    }
+    async fn blobs(&self, ids: Vec<BlobId>) -> Result<BTreeMap<BlobId, Vec<u8>>, StoreError> {
+        let held = self.blobs.lock().unwrap();
+        Ok(ids
+            .into_iter()
+            .filter_map(|id| Some((id, held.get(&id)?.clone())))
+            .collect())
     }
     async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus, _: i64) -> Result<(), StoreError> {
         self.snapshots.lock().unwrap().insert(snapshot.id, (snapshot, status));

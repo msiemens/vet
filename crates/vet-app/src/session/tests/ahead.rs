@@ -50,9 +50,48 @@ async fn the_first_mark_copies_only_what_changed_since_the_copy() {
 }
 
 #[tokio::test]
+async fn the_copy_takes_the_texts_the_diff_read_and_reads_only_what_the_diff_does_not_hold() {
+    let base = numbered(10, &[]);
+    let binary = "\0bin\n";
+    let dirty = [numbered(10, &[3]), numbered(10, &[5])];
+    let fx = Fixture::open(
+        &[("a.txt", &base), ("b.txt", &base)],
+        &[("a.txt", &dirty[0]), ("b.txt", &dirty[1]), ("c.bin", binary)],
+    )
+    .await;
+    fx.session.manifest(View::Changeset).await.unwrap();
+    fx.git.reads.lock().unwrap().clear();
+
+    fx.session.copy_ahead().await.unwrap();
+
+    assert_eq!(*fx.git.reads.lock().unwrap(), [BlobId::of(binary.as_bytes())]);
+    let mut want: Vec<BlobId> = [&dirty[0], &dirty[1], binary].map(|d| BlobId::of(d.as_bytes())).into();
+    want.sort();
+    let mut put = put(&fx);
+    put.sort();
+    assert_eq!(put, want);
+}
+
+#[tokio::test]
+async fn a_copy_whose_content_is_not_what_the_tree_says_fails_and_the_first_mark_with_it() {
+    let base = numbered(10, &[]);
+    let dirty = numbered(10, &[3]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &dirty)]).await;
+    // The file changed after it was hashed: what is read under its id is other content.
+    let id = BlobId::of(dirty.as_bytes());
+    fx.git.blobs.lock().unwrap().insert(id, numbered(10, &[4]).into_bytes());
+
+    let copied = fx.session.copy_ahead().await;
+    assert!(matches!(copied, Err(SessionError::Git(e)) if e.0.contains("changed while being copied")));
+    assert!(fx.session.set_seen(0, "a.txt", &[0], true).await.is_err());
+    assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
+}
+
+#[tokio::test]
 async fn a_mark_while_the_tree_is_copied_waits_for_that_copy_and_no_file_is_copied_twice() {
     let base = numbered(10, &[]);
-    let dirty = [numbered(10, &[3]), numbered(10, &[5]), "n\n".to_owned()];
+    // The binary file is not among the diff's texts, so the copy reads it.
+    let dirty = [numbered(10, &[3]), numbered(10, &[5]), "\0n\n".to_owned()];
     let fx = Fixture::open(
         &[("a.txt", &base), ("b.txt", &base)],
         &[("a.txt", &dirty[0]), ("b.txt", &dirty[1]), ("new.txt", &dirty[2])],

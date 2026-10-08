@@ -425,12 +425,11 @@ impl ChangesetRefs for GixRepo {
 
 impl Differ for GixRepo {
     async fn diff<S: Store + Sync>(&self, store: &S, old: &Snapshot, new: &Snapshot) -> Result<TextDiff, GitError> {
-        let mut stored = BTreeMap::new();
-        for (_, blob) in text_blobs(&changes(old, new)) {
-            if let Some(bytes) = store.blob(blob).await.map_err(|e| GitError(e.0))? {
-                stored.insert(blob, bytes);
-            }
-        }
+        let wanted = text_blobs(&changes(old, new))
+            .into_iter()
+            .map(|(_, blob)| blob)
+            .collect();
+        let stored = store.blobs(wanted).await.map_err(|e| GitError(e.0))?;
         let (old, new) = (old.clone(), new.clone());
         self.blocking(move |i| i.diff(stored, &old, &new)).await
     }

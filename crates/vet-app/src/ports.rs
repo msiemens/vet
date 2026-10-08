@@ -398,6 +398,8 @@ pub trait Store {
     /// Of `ids`, those the store does not hold durably, without reading any.
     fn missing_blobs(&self, ids: Vec<BlobId>) -> impl Future<Output = Result<Vec<BlobId>, StoreError>> + Send;
     fn blob(&self, id: BlobId) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
+    /// The content of each of `ids` the store holds, read in one go; the others are left out.
+    fn blobs(&self, ids: Vec<BlobId>) -> impl Future<Output = Result<BTreeMap<BlobId, Vec<u8>>, StoreError>> + Send;
     /// Stored as shared Merkle nodes: only nodes not yet present are written.
     /// `at` is unix seconds; GC spares snapshots younger than its grace period.
     fn put_snapshot(

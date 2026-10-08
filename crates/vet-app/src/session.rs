@@ -65,7 +65,7 @@ mod threads;
 mod versions;
 mod views;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
@@ -426,8 +426,12 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         // A committed target stays in git, which the version's refs keep.
         let head = match st.source {
             Source::WorkingTree => {
-                self.retained(&self.acquisition, &st.base, &st.target, &st.target_status)
-                    .await?;
+                let diffed = match &st.changes {
+                    Some(changes) => changes.diffed.clone(),
+                    None => self.diff_of(&st.base, &st.target).await?,
+                };
+                let sides = (&st.base, &st.target, &st.target_status);
+                self.retained(&self.acquisition, sides, diffed).await?;
                 git.head().await?
             }
             _ => st.head.clone(),
@@ -782,7 +786,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if let (Some(review), Some(changeset)) = (&st.review, st.changeset) {
             retained = self
                 .acquisition
-                .retain(&[&st.base, &st.target], &scan.snapshot, &scan.status)
+                .retain(&[&st.base, &st.target], &scan.snapshot, &scan.status, &BTreeMap::new())
                 .await
                 .err();
             let store = &self.acquisition.store;

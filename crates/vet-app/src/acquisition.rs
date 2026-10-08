@@ -124,12 +124,15 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
     /// Copies the blobs of `target` that `known` snapshots do not already have
     /// (they are in git or were retained before) and the store does not hold
     /// into the store, so the snapshot stays reconstructible (§6.1). They are
-    /// put in batches of about [`RETAIN_BATCH`] bytes.
+    /// taken from `read` if it has them, else read from git or the worktree, and
+    /// put in batches of about [`RETAIN_BATCH`] bytes. Fails if a blob's content
+    /// is not what `target` says it is: the file changed while it was copied.
     pub async fn retain(
         &self,
         known: &[&Snapshot],
         target: &Snapshot,
         status: &SnapshotStatus,
+        read: &BTreeMap<BlobId, Vec<u8>>,
     ) -> Result<(), BlobError> {
         let mut wanted: BTreeMap<BlobId, &RepoPath> = BTreeMap::new();
         for (path, entry) in &target.entries {
@@ -141,22 +144,31 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
             }
             wanted.entry(entry.blob).or_insert(path);
         }
+        let changed = |path: &RepoPath| GitError(format!("{} changed while being copied", path.to_string_lossy()));
+        let put = async |batch: Vec<(BlobId, Vec<u8>)>| -> Result<(), BlobError> {
+            let (ids, contents): (Vec<BlobId>, Vec<Vec<u8>>) = batch.into_iter().unzip();
+            let put = self.store.put_blobs(contents).await?;
+            match ids.iter().zip(&put).find(|(id, put)| id != put) {
+                Some((id, _)) => Err(changed(wanted[id]).into()),
+                None => Ok(()),
+            }
+        };
         let missing = self.store.missing_blobs(wanted.keys().copied().collect()).await?;
         let (mut batch, mut bytes) = (Vec::new(), 0);
         for blob in missing {
             let path = wanted[&blob];
-            let Some(content) = self.git.read_blob(path, blob).await? else {
-                return Err(GitError(format!("{} changed while being copied", path.to_string_lossy())).into());
+            let content = match read.get(&blob) {
+                Some(content) => content.clone(),
+                None => self.git.read_blob(path, blob).await?.ok_or_else(|| changed(path))?,
             };
             bytes += content.len();
-            batch.push(content);
+            batch.push((blob, content));
             if bytes >= RETAIN_BATCH {
-                self.store.put_blobs(std::mem::take(&mut batch)).await?;
+                put(std::mem::take(&mut batch)).await?;
                 bytes = 0;
             }
         }
-        self.store.put_blobs(batch).await?;
-        Ok(())
+        put(batch).await
     }
 }
 

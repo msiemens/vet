@@ -18,7 +18,7 @@ mod servers;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -366,6 +366,21 @@ impl Store for SqliteStore {
 
     async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
         self.blocking(move |c| c.get(id)).await
+    }
+
+    async fn blobs(&self, ids: Vec<BlobId>) -> Result<BTreeMap<BlobId, Vec<u8>>, StoreError> {
+        self.blocking(move |c| {
+            let mut found = BTreeMap::new();
+            for id in ids {
+                if !found.contains_key(&id)
+                    && let Some(bytes) = c.get(id)?
+                {
+                    found.insert(id, bytes);
+                }
+            }
+            Ok(found)
+        })
+        .await
     }
 
     async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus, at: i64) -> Result<(), StoreError> {

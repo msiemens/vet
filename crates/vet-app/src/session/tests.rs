@@ -129,6 +129,8 @@ pub(crate) struct FakeGit {
     remerges: Arc<Mutex<HashMap<CommitId, Remerged>>>,
     /// How many diffs were asked for.
     diffs: Arc<AtomicUsize>,
+    /// The blobs `read_blob` was asked for.
+    reads: Arc<Mutex<Vec<BlobId>>>,
     /// Held by a test, diffs and blob reads wait until it lets go.
     pub(crate) paused: Arc<tokio::sync::Mutex<()>>,
 }
@@ -260,6 +262,7 @@ impl Checkout for FakeGit {
 
 impl BlobReader for FakeGit {
     async fn read_blob(&self, _: &RepoPath, blob: BlobId) -> std::result::Result<Option<Vec<u8>>, GitError> {
+        self.reads.lock().unwrap().push(blob);
         drop(self.paused.lock().await);
         Ok(self.blobs.lock().unwrap().get(&blob).cloned())
     }
@@ -417,11 +420,11 @@ impl Differ for FakeGit {
         self.diffs.fetch_add(1, Ordering::Relaxed);
         drop(self.paused.lock().await);
         let mut blobs: BTreeMap<_, _> = self.blobs.lock().unwrap().clone().into_iter().collect();
-        for (_, blob) in text_blobs(&changes(old, new)) {
-            if let Some(bytes) = store.blob(blob).await.map_err(|e| GitError(e.0))? {
-                blobs.insert(blob, bytes);
-            }
-        }
+        let wanted = text_blobs(&changes(old, new))
+            .into_iter()
+            .map(|(_, blob)| blob)
+            .collect();
+        blobs.extend(store.blobs(wanted).await.map_err(|e| GitError(e.0))?);
         let mut out = SnapshotDiff::default();
         out.renames.0.extend(self.renames.lock().unwrap().iter().cloned());
         for change in changes(old, new) {
@@ -509,6 +512,13 @@ impl Store for MemStore {
     }
     async fn blob(&self, id: BlobId) -> StoreResult<Option<Vec<u8>>> {
         Ok(self.0.lock().unwrap().blobs.get(&id).cloned())
+    }
+    async fn blobs(&self, ids: Vec<BlobId>) -> StoreResult<BTreeMap<BlobId, Vec<u8>>> {
+        let mem = self.0.lock().unwrap();
+        Ok(ids
+            .into_iter()
+            .filter_map(|id| Some((id, mem.blobs.get(&id)?.clone())))
+            .collect())
     }
     async fn put_snapshot(&self, snapshot: Snapshot, status: SnapshotStatus, _: i64) -> StoreResult<()> {
         self.0.lock().unwrap().snapshots.insert(snapshot.id, (snapshot, status));
