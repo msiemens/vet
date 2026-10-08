@@ -28,12 +28,17 @@ use std::sync::{Arc, Mutex};
 use vet_core::content::{BlobId, RepoPath, SnapshotId};
 use vet_engine::{self as engine, Engine, Kind, Limits, Retention};
 
+use crate::gate::Gate;
 use crate::policy::AnalysisPolicy;
 use crate::ports::{
     Answered, At, Backend, BackendId, Diagnostic, LanguageServer, LaunchError, Location, Materializer,
     NotMaterializable, Provenance, QueryError, ServerIdentity, ServerLauncher, Started, SymbolInfo, Tree,
 };
 use crate::reuse::{Answers, Basis, Computed, KEPT, Key, ProjectQuery, Restore, Reused, SemanticCache};
+
+/// Requests in flight on one server at once. A server answers one at a time or a few, so
+/// more only wait in its queue, where they cannot be told from a hung server.
+pub const REQUESTS_PER_SERVER: usize = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Target {
@@ -125,6 +130,8 @@ pub struct Entry<S, G> {
     used: AtomicU64,
     /// Restarted while leased: stopped when the last lease ends.
     retired: AtomicBool,
+    /// Bounds the requests in flight on the server, however many questions are asked of it.
+    requests: Arc<Gate>,
     _guard: Option<G>,
 }
 
@@ -155,6 +162,7 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
     {
         let entry = self.clone();
         let asked = move || async move {
+            let _turn = entry.requests.acquire().await;
             let before = entry.server.readiness();
             let value = ask(entry.clone()).await?;
             let keep = before.idle && before.epoch == entry.server.readiness().epoch;
@@ -639,6 +647,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
                 leases: AtomicUsize::new(1),
                 used: AtomicU64::new(state.tick),
                 retired: AtomicBool::new(stale),
+                requests: Gate::new(REQUESTS_PER_SERVER),
                 _guard: dir_guard,
             });
             if !stale {
@@ -838,7 +847,7 @@ mod tests {
     use vet_core::content::Hash;
 
     use super::*;
-    use crate::join::join;
+    use crate::join::{bounded, join};
     use crate::policy::AnalysisPolicy;
     use crate::ports::{Materialized, Pos, Readiness, ServerConfig, Severity, Span, Sym};
     use crate::reuse::Value;
@@ -894,6 +903,9 @@ mod tests {
         /// Identities and recorded restores observed, by starts too.
         identified: AtomicUsize,
         recorded: AtomicUsize,
+        /// Requests being answered by the server now, and the most there were at once.
+        in_flight: AtomicUsize,
+        peak: AtomicUsize,
     }
 
     impl Default for Counters {
@@ -916,6 +928,8 @@ mod tests {
                 slow: AtomicBool::new(false),
                 identified: AtomicUsize::new(0),
                 recorded: AtomicUsize::new(0),
+                in_flight: AtomicUsize::new(0),
+                peak: AtomicUsize::new(0),
             }
         }
     }
@@ -1049,7 +1063,10 @@ mod tests {
     impl FakeServer {
         async fn asked(&self, kind: &'static str) -> Result<u8, QueryError> {
             self.0.asked.lock().unwrap().push(kind);
+            let in_flight = self.0.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.0.peak.fetch_max(in_flight, Ordering::SeqCst);
             self.0.take_turns().await;
+            self.0.in_flight.fetch_sub(1, Ordering::SeqCst);
             if self.0.begins_work.load(Ordering::SeqCst) {
                 self.0.epoch.fetch_add(1, Ordering::SeqCst);
             }
@@ -1759,6 +1776,34 @@ mod tests {
             lease.document_symbols(&file("a.rs")).await.unwrap();
             assert_eq!(counters.asked().iter().filter(|k| **k == "document_symbols").count(), 2);
             assert_eq!(counters.materialized.load(Ordering::SeqCst), 0);
+            lease.release().await;
+        });
+    }
+
+    #[test]
+    fn however_many_ask_a_server_only_its_request_budget_is_in_flight_on_it() {
+        let (pool, counters) = pool(2);
+        counters.slow.store(true, Ordering::SeqCst);
+        block_on(async {
+            let lease = pool.lease(&live_key(), &backend(true)).await.unwrap();
+            let asks = bounded(48, 0..48, |line| {
+                let lease = &lease;
+                async move {
+                    let at = At {
+                        file: RepoPath(b"a.rs".to_vec()),
+                        pos: Pos { line, col: 0 },
+                    };
+                    lease.hover(&at).await.unwrap()
+                }
+            })
+            .await;
+            assert_eq!(asks.len(), 48);
+            assert_eq!(
+                counters.hover_calls.load(Ordering::SeqCst),
+                48,
+                "every question was asked"
+            );
+            assert_eq!(counters.peak.load(Ordering::SeqCst), REQUESTS_PER_SERVER);
             lease.release().await;
         });
     }

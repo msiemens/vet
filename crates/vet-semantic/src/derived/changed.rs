@@ -41,8 +41,10 @@ pub struct Changes {
     pub gaps: Vec<Gap>,
 }
 
-/// Files whose symbols are asked for at once, both sides each.
-const FILES_IN_FLIGHT: usize = 4;
+/// Files whose texts are read at once, both sides each. It only bounds the texts held
+/// while their questions wait their turn: how many requests run on a server is the
+/// pool's to decide (`pool::REQUESTS_PER_SERVER`), over all that ask it.
+const FILES_READ_AHEAD: usize = 16;
 
 /// The file contents of both sides, so their symbols can be had from the texts alone:
 /// without a server on the base snapshot, and without the target file as the live
@@ -70,7 +72,7 @@ pub async fn changed_symbols(
     }
     let total = files.len();
     let done = AtomicUsize::new(0);
-    let answers = bounded(FILES_IN_FLIGHT, 0..total, |at| {
+    let answers = bounded(FILES_READ_AHEAD, 0..total, |at| {
         let file = files[at];
         let done = &done;
         async move {

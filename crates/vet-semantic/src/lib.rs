@@ -7,6 +7,7 @@
 //! happens behind the ports.
 
 pub mod derived;
+pub mod gate;
 pub mod join;
 pub mod policy;
 pub mod pool;
