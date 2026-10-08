@@ -18,6 +18,7 @@
   import "./editor/section.css";
   import "./editor/hunkBar.css";
   import "./editor/fileChanges.css";
+  import "./editor/scrollMarks.css";
   import "./editor/changeCard.css";
   import "./editor/highlights.css";
   import "./editor/hover.css";

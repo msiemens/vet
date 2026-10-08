@@ -59,6 +59,8 @@ export class SectionHeights {
   mode: Mode;
   /** Collapse unchanged regions (the Changes tab); otherwise the full file is shown. */
   private collapse: boolean;
+  /** Called after the sections were laid out or one of them changed its height. */
+  changed?: () => void;
 
   constructor(
     root: { scrollTop: number },
@@ -92,6 +94,7 @@ export class SectionHeights {
       }
       top += s.height;
     }
+    this.changed?.();
   }
 
   /** Lays the section out from the manifest; its own bottom border is one more pixel. `known`: see `ThreadLayer.count`. */
@@ -124,6 +127,7 @@ export class SectionHeights {
       top += next.height;
     }
     if (above) this.root.scrollTop = scrollTop + delta;
+    this.changed?.();
     return above ? delta : 0;
   }
 

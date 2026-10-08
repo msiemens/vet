@@ -23,6 +23,7 @@ import { lineOf, lineStart } from "./positions";
 import { type ReviewRequests, ReviewActions, renderReview } from "./reviewActions";
 import { setBaseDiffs, setCurrent } from "./reviewState";
 import { StickyHunk } from "./stickyHunk";
+import { ScrollMarks, sectionMarks } from "./scrollMarks";
 import { Stops, hunkAt } from "./stops";
 import type { Section } from "./section";
 import { SectionHeights, charWidth, readFont, readMetrics } from "./sectionHeights";
@@ -83,6 +84,7 @@ export class ChangesetView {
   /** Wrapping sections whose editor measured another height than the section has. */
   private measured = new Set<Section>();
   private measuring?: number;
+  private marks?: ScrollMarks;
 
   constructor(
     private root: HTMLElement,
@@ -121,6 +123,13 @@ export class ChangesetView {
     );
     this.actions = new ReviewActions(revision, listeners);
     this.heights = new SectionHeights(root, this.sections, metrics, this.threads, mode, collapse);
+    // The marks sit beside the scroll bar, in the pane that holds the scrolling root.
+    if (root.parentElement) {
+      this.marks = new ScrollMarks(root.parentElement, root, () =>
+        sectionMarks(this.sections, this.heights.total, this.heights.mode, this.heights.m),
+      );
+      this.heights.changed = this.marks.refresh;
+    }
     this.publishPane();
     this.windowing = new Windowing(root, this.sections, this.heights, {
       mount: (fi) => void this.mount(fi),
@@ -210,6 +219,7 @@ export class ChangesetView {
   destroy() {
     this.destroyed = true;
     this.windowing.destroy();
+    this.marks?.destroy();
     this.pin.destroy();
     this.widths.disconnect();
     if (this.measuring !== undefined) cancelAnimationFrame(this.measuring);
@@ -612,6 +622,7 @@ export class ChangesetView {
     renderReview(s, update);
     for (const hi of s.baseDiffs.keys()) if (s.review.hunks[hi] !== "seenAgainstOldBase") this.setBaseDiff(s, hi);
     this.pin.refresh();
+    this.marks?.refresh();
   }
 
   /** Opens the base diff of a hunk of `s` seen against an old base, or closes it if it is open. */
