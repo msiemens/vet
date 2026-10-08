@@ -41,8 +41,9 @@ futures = { version = "0.3", default-features = false, features = ["alloc"] }
 
 [target.'cfg(not(windows))'.dependencies]
 notify = "8.2.0"
-# Signalling a run's process group, without `unsafe`.
-rustix = { version = "1.1", features = ["process"] }
+# Signalling a run's process group, and syncing content (`fsync`, Apple's `F_FULLFSYNC`),
+# without `unsafe`.
+rustix = { version = "1.1", features = ["process", "fs"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Threading"] }

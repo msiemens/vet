@@ -849,6 +849,22 @@ async fn a_batch_of_blobs_is_answered_in_order_and_held_after_a_reopen() {
     assert_eq!(std::fs::read_dir(dir.path().join("content/tmp")).unwrap().count(), 0);
 }
 
+#[cfg(target_vendor = "apple")]
+#[tokio::test]
+async fn a_batch_flushes_the_drive_once_and_a_batch_with_nothing_to_write_not_at_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let flushes = || store.content.full_flushes.load(std::sync::atomic::Ordering::Relaxed);
+    let blobs: Vec<Vec<u8>> = (0..40u8).map(|n| vec![n; 1 + n as usize]).collect();
+
+    store.put_blobs(blobs.clone()).await.unwrap();
+    assert_eq!(flushes(), 1);
+    store.put_blobs(blobs).await.unwrap();
+    assert_eq!(flushes(), 1);
+    store.put_blobs(vec![vec![99]]).await.unwrap();
+    assert_eq!(flushes(), 2);
+}
+
 #[tokio::test]
 async fn gc_keeps_referenced_content_and_drops_the_rest() {
     let dir = tempfile::tempdir().unwrap();

@@ -1,11 +1,22 @@
 //! Content-addressed files: written to a temp file, fsynced, renamed into place, and the
 //! directory fsynced. Many blobs are put as a batch: the directories are synced once each,
 //! after every blob of the batch was renamed into them.
+//!
+//! On Apple systems `fsync` hands the data to the drive without flushing the drive's cache,
+//! and `F_FULLFSYNC` flushes that whole cache. So each file and directory gets a plain
+//! `fsync`, and a batch ends with one `F_FULLFSYNC` ([`ContentStore::durable`]) before its
+//! blobs count as held. Elsewhere `fsync` (`sync_all`) is durable by itself.
+//!
+//! A blob read back is checked against its hash: one that does not match (a write torn by a
+//! crash the scheme above did not cover, a disk error) is removed and reported missing, so
+//! the reader falls back to git or the worktree and the next batch writes it again.
 
 use std::collections::{BTreeSet, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
@@ -16,9 +27,12 @@ static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub struct ContentStore {
     root: PathBuf,
-    /// Blobs renamed into place whose directory is not synced yet. A crash could still lose
-    /// them, so they do not count as held.
+    /// Blobs renamed into place that are not durable yet. A crash could still lose them, so
+    /// they do not count as held.
     unsynced: Mutex<HashSet<BlobId>>,
+    /// How many times the drive's cache was flushed.
+    #[cfg(test)]
+    pub full_flushes: AtomicUsize,
 }
 
 /// Blobs renamed into place by [`ContentStore::place`]. They are durable once `dirs` are
@@ -49,6 +63,8 @@ impl ContentStore {
         Ok(Self {
             root,
             unsynced: Mutex::default(),
+            #[cfg(test)]
+            full_flushes: AtomicUsize::new(0),
         })
     }
 
@@ -94,7 +110,7 @@ impl ContentStore {
             ));
             let mut file = File::create(&tmp)?;
             file.write_all(bytes)?;
-            file.sync_all()?;
+            sync_file(&file)?;
             drop(file);
             durable_tmp(&tmp);
             let dest = self.path(id);
@@ -108,17 +124,47 @@ impl ContentStore {
         Ok(placed)
     }
 
-    /// Records that the directories of `placed` are synced: its blobs are held.
-    pub fn durable(&self, placed: &Placed) {
+    /// Called once the directories of `placed` are synced: makes what the batch wrote reach
+    /// the drive's storage, then counts its blobs as held.
+    pub fn durable(&self, placed: &Placed) -> io::Result<()> {
+        if placed.written.is_empty() {
+            return Ok(());
+        }
+        self.flush()?;
         let mut unsynced = self.unsynced();
         for id in &placed.written {
             unsynced.remove(id);
         }
+        Ok(())
     }
 
+    /// Flushes the drive's cache, with everything synced before it.
+    #[cfg(target_vendor = "apple")]
+    fn flush(&self) -> io::Result<()> {
+        rustix::fs::fcntl_fullfsync(File::open(&self.root)?)?;
+        #[cfg(test)]
+        self.full_flushes.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    #[cfg(not(target_vendor = "apple"))]
+    fn flush(&self) -> io::Result<()> {
+        Ok(())
+    }
+
+    /// The blob `id`; `None` if it is not in place or its content does not hash to `id`,
+    /// which is removed so that the next batch writes it again.
     pub fn get(&self, id: BlobId) -> io::Result<Option<Vec<u8>>> {
-        match fs::read(self.path(id)) {
-            Ok(bytes) => Ok(Some(bytes)),
+        let path = self.path(id);
+        match fs::read(&path) {
+            Ok(bytes) if BlobId::of(&bytes) == id => Ok(Some(bytes)),
+            Ok(_) => {
+                tracing::warn!(blob = %id.0.to_hex(), "a stored blob does not match its hash; removing it");
+                match fs::remove_file(&path) {
+                    Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+                    _ => Ok(None),
+                }
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
@@ -163,10 +209,23 @@ impl ContentStore {
     }
 }
 
-/// Makes the entries of `dir` survive a crash.
+/// Makes `file`'s content survive a crash; on Apple systems once the drive's cache is
+/// flushed too.
+#[cfg(target_vendor = "apple")]
+fn sync_file(file: &File) -> io::Result<()> {
+    Ok(rustix::fs::fsync(file)?)
+}
+
+#[cfg(not(target_vendor = "apple"))]
+fn sync_file(file: &File) -> io::Result<()> {
+    file.sync_all()
+}
+
+/// Makes the entries of `dir` survive a crash; on Apple systems once the drive's cache is
+/// flushed too.
 #[cfg(unix)]
 pub fn sync_dir(dir: &Path) -> io::Result<()> {
-    File::open(dir)?.sync_all()
+    sync_file(&File::open(dir)?)
 }
 
 // Directories cannot be opened for fsync on Windows; NTFS journals the rename.
@@ -187,8 +246,21 @@ mod tests {
         for dir in &placed.dirs {
             sync_dir(dir).unwrap();
         }
-        store.durable(&placed);
+        store.durable(&placed).unwrap();
         placed.ids
+    }
+
+    #[test]
+    fn a_blob_that_does_not_match_its_hash_is_missing_and_written_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(dir.path().to_path_buf()).unwrap();
+        let id = put(&store, &[b"whole"])[0];
+        fs::write(store.path(id), b"who").unwrap();
+
+        assert_eq!(store.get(id).unwrap(), None);
+        assert_eq!(store.missing(&[id]), [id]);
+        put(&store, &[b"whole"]);
+        assert_eq!(store.get(id).unwrap().as_deref(), Some(&b"whole"[..]));
     }
 
     #[test]
@@ -205,7 +277,7 @@ mod tests {
             [b"one".as_slice(), b"two", b"three", b"two"].map(BlobId::of).to_vec()
         );
         assert_eq!(placed.written, [b"two".as_slice(), b"three"].map(BlobId::of).to_vec());
-        store.durable(&placed);
+        store.durable(&placed).unwrap();
         for blob in [b"one".as_slice(), b"two", b"three"] {
             assert_eq!(store.get(BlobId::of(blob)).unwrap().as_deref(), Some(blob));
         }
@@ -228,7 +300,7 @@ mod tests {
         // A batch that comes meanwhile writes it again rather than rely on it.
         assert_eq!(store.place(&[b"hello".to_vec()]).unwrap().written, [id]);
 
-        store.durable(&placed);
+        store.durable(&placed).unwrap();
         assert_eq!(store.missing(&[id]), []);
         assert!(store.place(&[b"hello".to_vec()]).unwrap().written.is_empty());
     }

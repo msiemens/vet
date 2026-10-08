@@ -325,7 +325,8 @@ impl SqliteStore {
 
 impl Store for SqliteStore {
     /// Each blob is fsynced before it is renamed into place, and each directory once all of
-    /// the batch's were renamed into it; files and directories are synced in parallel.
+    /// the batch's were renamed into it; files and directories are synced in parallel. The
+    /// batch's blobs count as held once the content store made them durable.
     async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobId>, StoreError> {
         if blobs.is_empty() {
             return Ok(Vec::new());
@@ -351,7 +352,7 @@ impl Store for SqliteStore {
         let dirs: Vec<PathBuf> = placed.dirs.iter().cloned().collect();
         self.spread(dirs, |_, share| share.iter().try_for_each(|dir| content::sync_dir(dir)))
             .await?;
-        self.content.durable(&placed);
+        self.blocking(move |c| c.durable(&placed)).await?;
         Ok(ids.into_iter().map(|id| id.expect("every blob was placed")).collect())
     }
 
