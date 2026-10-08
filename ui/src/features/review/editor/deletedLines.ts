@@ -71,7 +71,7 @@ function deletedWordAt(view: EditorView, event: MouseEvent): (HoverAnchor & { at
   return { key: `base:${base.line}:${word.from}-${word.to}`, rect, at: { line: base.line, col: word.from } };
 }
 
-export function deletedLines(path: string, hooks: SemanticHooks, hoverShown: (ms: number) => void): Extension {
+export function deletedLines(path: string, hooks: SemanticHooks): Extension {
   const goto = ViewPlugin.fromClass(
     class {
       constructor(readonly view: EditorView) {
@@ -87,8 +87,5 @@ export function deletedLines(path: string, hooks: SemanticHooks, hoverShown: (ms
       }
     },
   );
-  return [
-    goto,
-    hoverPopups(deletedWordAt, (anchor, signal) => queryHover(hooks, "base", path, anchor.at, [], hoverShown, signal)),
-  ];
+  return [goto, hoverPopups(deletedWordAt, (anchor, signal) => queryHover(hooks, "base", path, anchor.at, [], signal))];
 }

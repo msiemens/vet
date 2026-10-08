@@ -1,7 +1,7 @@
 // One file's CodeMirror editor(s): unified (`unifiedMergeView`) or side by side
 // (`MergeView`), with the review decorations of `reviewState.ts` (SPEC §10).
 
-import { MergeView, getChunks, unifiedMergeView } from "@codemirror/merge";
+import { MergeView, unifiedMergeView } from "@codemirror/merge";
 import { Compartment, EditorState, type Extension, type StateEffect } from "@codemirror/state";
 import { standardKeymap } from "@codemirror/commands";
 import { EditorView, drawSelection, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
@@ -38,8 +38,6 @@ export interface Loaded {
 }
 
 export interface Hooks extends BarActions, SemanticHooks {
-  /** A hover tooltip is on screen; `ms` runs from the start of the hover query to its paint. */
-  hoverShown?(ms: number): void;
   /** A key went down in the target editor. */
   keydown?(event: KeyboardEvent): void;
   /** A line was double-clicked: the file's text at this 0-based target line. */
@@ -55,7 +53,6 @@ export interface Handle {
   showDiagnostics(diagnostics: readonly Diagnostic[]): void;
   /** Scrolls to and marks a span of `side`'s text; a base span has no editor of its own in a unified view and is left to the caller. */
   revealSpan(side: Side, span: TextSpan): void;
-  chunkCount(): number;
   destroy(): void;
 }
 
@@ -124,7 +121,6 @@ export function mountFile(
 ): Handle {
   const targetField = reviewField(sideConfig(loaded.hunks, "target", hooks, barMetrics), review, baseDiffs);
   const diffConfig = { override: backendDiff(loaded.base, loaded.target, loaded.changes) };
-  const shown = (ms: number) => hooks.hoverShown?.(ms);
   const wrap: Extension = wrapping ? [softWrap(true), reportHeight(() => wrapping.heightChanged())] : [];
   const target: Extension[] = [
     readOnlySetup,
@@ -140,7 +136,7 @@ export function mountFile(
     ...extra,
     EditorView.domEventHandlers({ keydown: (event) => (hooks.keydown?.(event), false) }),
     openOnDoubleClick("target", loaded.hunks, (line) => hooks.openLine(line)),
-    ...semanticExtensions(path, "target", hooks, shown),
+    ...semanticExtensions(path, "target", hooks),
   ];
   if (mode === "unified") {
     const view = new EditorView({
@@ -159,7 +155,7 @@ export function mountFile(
         }),
         deletedHighlights(loaded.baseHighlights),
         deletedChunkStyle(targetField),
-        deletedLines(path, hooks, shown),
+        deletedLines(path, hooks),
       ],
     });
     return handle(view, [view]);
@@ -175,7 +171,7 @@ export function mountFile(
     barText,
     EditorState.readOnly.of(true),
     openOnDoubleClick("base", loaded.hunks, (line) => hooks.openLine(line)),
-    ...semanticExtensions(path, "base", hooks, shown),
+    ...semanticExtensions(path, "base", hooks),
   ];
   const merge = new MergeView({
     parent: host,
@@ -199,7 +195,6 @@ function handle(view: EditorView, views: EditorView[], destroy = () => view.dest
       if (side === "target") revealSpan(view, span, true);
       else if (views.length > 1) revealSpan(views[0], span, false);
     },
-    chunkCount: () => getChunks(view.state)?.chunks.length ?? 0,
     destroy,
   };
 }

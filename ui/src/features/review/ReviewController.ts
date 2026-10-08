@@ -25,7 +25,6 @@ import { errorText } from "../../lib/errorText";
 import { ChangesetView, type Listeners, type ScrollPosition, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
 import { LogView } from "./editor/LogView";
-import type { ViewProbe } from "./editor/viewProbe";
 import { type ThreadActions, buildCard } from "./editor/threadCard";
 import type { ThreadListeners } from "./editor/threadLayer";
 import { bindRevision, focusedEditor } from "./editor/semantic";
@@ -54,10 +53,6 @@ import {
 export interface Probe {
   /** The hooks to give the editors, in place of the controller's own (to time the ones it wraps). */
   hooks(hooks: ViewHooks): ViewHooks;
-  /** The listeners to give the views, in place of the controller's own (to see the requests they make). */
-  listeners(listeners: Listeners): Listeners;
-  /** A view was built for the tab `tab`. */
-  view(tab: TabId, view: ViewProbe): void;
   /** A key reached the window and no command took it; true if the probe did. */
   key(event: KeyboardEvent): boolean;
 }
@@ -346,7 +341,7 @@ export class ReviewController {
   }
 
   private listenersFor(id: TabId): Listeners {
-    const listeners: Listeners = {
+    return {
       pinned: id === CHANGES ? (path) => (this.tabs.changesFile = path) : undefined,
       toggleHunk: (revision, path, hunk) =>
         this.editing(
@@ -377,7 +372,6 @@ export class ReviewController {
       openSource: (path, line) => void this.openSource(path, line),
       threads: this.threadListeners(),
     };
-    return this.probe ? this.probe.listeners(listeners) : listeners;
   }
 
   private threadListeners(): ThreadListeners {
@@ -485,7 +479,6 @@ export class ReviewController {
       this.hooks,
       this.listenersFor(id),
       id === CHANGES, // only the Changes tab collapses unchanged regions
-      this.probe && ((probe) => this.probe?.view(id, probe)),
     );
     this.views.set(id, view);
     if (this.threadsFit(manifest)) view.setThreads(this.shownThreads(), manifest.revision);

@@ -464,7 +464,7 @@
         {softWrap}
         onready={(c, firstPaintMs) => {
           controller = c;
-          void tools.ready(firstPaintMs);
+          tools.ready(firstPaintMs);
         }}
         onclose={() => (controller = undefined)}
       >

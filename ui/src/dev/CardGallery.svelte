@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Change cards on fixtures: the backend's corpus has no non-text items.
+  // Change cards on fixtures: a repository rarely has every kind of non-text item at hand.
   import type { EntryDesc } from "../generated/EntryDesc";
   import type { NonTextItem } from "../generated/NonTextItem";
   import { ChangeCard } from "../features/review";

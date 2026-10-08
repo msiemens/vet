@@ -10,7 +10,6 @@ import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Position } from "../../../generated/Position";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
-import { nextPaint } from "../../../lib/nextPaint";
 import type { HoverAnswer } from "../../../state/backend";
 import { isMac } from "../../../state/host";
 import { type Span, collapsedRegions, outsideHidden } from "./hiddenRanges";
@@ -54,8 +53,7 @@ export interface TextPosition {
 /**
  * Asks for the hover text at a position of `side` and returns what builds its tooltip body, or
  * nothing when there is nothing to show. `diagnostics` are those at the symbol, which the popup
- * shows with the text. `hoverShown` gets the time from the query to the body's paint once the
- * body has been built and put on screen.
+ * shows with the text.
  */
 export async function queryHover(
   hooks: SemanticHooks,
@@ -63,20 +61,12 @@ export async function queryHover(
   path: string,
   at: TextPosition,
   diagnostics: readonly Diagnostic[],
-  hoverShown?: (ms: number) => void,
   signal?: AbortSignal,
 ): Promise<(() => HTMLElement) | undefined> {
-  const started = performance.now();
   const hover = await hooks.hover(side, path, at.line, at.col, signal);
   // An aborted hover is an empty answer, which says nothing and is not an error.
   if (signal?.aborted) return undefined;
-  const build = hoverContent(hover, path, diagnostics);
-  if (!build) return undefined;
-  return () => {
-    const dom = build();
-    if (hoverShown) void nextPaint().then(() => hoverShown(performance.now() - started));
-    return dom;
-  };
+  return hoverContent(hover, path, diagnostics);
 }
 
 /** Mod is Cmd on macOS (Ctrl+click is the context menu there) and Ctrl elsewhere. */
@@ -283,22 +273,14 @@ export function focusedEditor(active: Element | null) {
   };
 }
 
-/**
- * Hover and Mod+click on `side` of `path`, plus the diagnostics gutter on the target side.
- * `hoverShown` reports the time from the start of a hover query to its tooltip's paint.
- */
-export function semanticExtensions(
-  path: string,
-  side: Side,
-  hooks: SemanticHooks,
-  hoverShown?: (ms: number) => void,
-): Extension[] {
+/** Hover and Mod+click on `side` of `path`, plus the diagnostics gutter on the target side. */
+export function semanticExtensions(path: string, side: Side, hooks: SemanticHooks): Extension[] {
   return [
     targetField,
     // A side by side pane clips what it contains; the tooltips of diagnostics live in the body.
     tooltips({ parent: document.body }),
     hoverPopups(wordUnderPointer, (anchor, signal, view) =>
-      queryHover(hooks, side, path, anchor.at, diagnosticsAt(view, anchor.at, anchor.endCol), hoverShown, signal),
+      queryHover(hooks, side, path, anchor.at, diagnosticsAt(view, anchor.at, anchor.endCol), signal),
     ),
     EditorView.domEventHandlers({
       mousedown: (event, view) =>

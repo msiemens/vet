@@ -35,7 +35,6 @@ import { COLLAPSE, type WrappedSides, baseDiffHeight } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
 import { wraps } from "./softWrap";
 import { type ThreadListeners, ThreadLayer, threadState } from "./threadLayer";
-import { type ViewProbe, viewProbe } from "./viewProbe";
 import { Windowing } from "./windowing";
 import { WrapRows, rowColumns } from "./wrapRows";
 
@@ -109,8 +108,6 @@ export class ChangesetView {
     private listeners: Listeners,
     /** Collapse unchanged regions and frame the current file (the Changes tab); otherwise the full file is shown. */
     private collapse: boolean,
-    /** Hands the dev tools what they measure; production owners leave it out. */
-    inspect?: (probe: ViewProbe) => void,
   ) {
     // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
     root.style.containerType = "inline-size";
@@ -226,9 +223,6 @@ export class ChangesetView {
     this.root.addEventListener("click", this.heights.onExpand, true);
     this.root.addEventListener("focusin", this.onFocusIn);
     this.widths.observe(root);
-    inspect?.(
-      viewProbe({ sections: this.sections, mounted: this.windowing.mounted, heights: this.heights, stops: this.stops }),
-    );
   }
 
   destroy() {
