@@ -334,11 +334,11 @@
 <nav aria-label={TITLES[tool]} bind:this={nav}>
   <div class="sh sh-bar">
     <span>{TITLES[tool]}</span>
-    {#if tool === "changes"}<span class="mono n">{changes}</span>{:else if tool === "commits"}<span class="mono n"
-        >{commits.length}</span
-      >{/if}
+    {#if tool === "commits"}<span class="mono n">{commits.length}</span>{/if}
     <span class="grow"></span>
-    {#if tool !== "commits"}
+    {#if tool === "changes"}
+      <span class="mono n end">{changes}</span>
+    {:else if tool === "all"}
       <IconButton
         icon="locate"
         label="Reveal the current file"
@@ -446,6 +446,10 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+  }
+  /* Text at the end of the bar keeps the inset of the title, which the bar's padding sets for a button. */
+  .end {
+    margin-right: 4px;
   }
   .note {
     margin: 0;
