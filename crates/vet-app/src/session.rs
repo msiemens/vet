@@ -200,6 +200,9 @@ pub struct LiveSession<G, S> {
     derived: Derived,
     /// The copies of the working tree's content into the store under way.
     ahead: Engine<Retained>,
+    /// What a copy ahead of a review reads and writes through: the session's acquisition over
+    /// handles of their own, so that it draws on what nobody waits for.
+    copying: Arc<Acquisition<G, S>>,
 }
 
 /// How many line deltas the list of changesets keeps.
@@ -293,6 +296,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Self {
             author: author_of(&acquisition.git).await,
             derived: Derived::new(&acquisition.tasks),
+            copying: acquisition.clone(),
             acquisition,
             name,
             repo,
@@ -304,6 +308,15 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             exchange: Mutex::new(()),
             lines: Engine::new(Limits::entries(KEPT_LINE_DELTAS)),
             ahead: Engine::new(Limits::entries(0)),
+        }
+    }
+
+    /// The same session, its copies ahead of a review reading through `git` and writing through
+    /// `store`, other handles on the session's repository and store.
+    pub fn copying_through(self, git: G, store: S) -> Self {
+        Self {
+            copying: Arc::new(self.acquisition.through(git, store)),
+            ..self
         }
     }
 
@@ -413,7 +426,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         // A committed target stays in git, which the version's refs keep.
         let head = match st.source {
             Source::WorkingTree => {
-                self.retained(&st.base, &st.target, &st.target_status).await?;
+                self.retained(&self.acquisition, &st.base, &st.target, &st.target_status)
+                    .await?;
                 git.head().await?
             }
             _ => st.head.clone(),

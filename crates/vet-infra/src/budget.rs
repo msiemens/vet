@@ -5,7 +5,9 @@
 //!
 //! The review lane and the semantic lane have pools of their own. Neither can
 //! take the other's permits, so semantic work that saturates its pool leaves the
-//! review's I/O untouched.
+//! review's I/O untouched. Work nobody waits for (the copy of the working tree's
+//! content ahead of a review) has a smaller pool of its own, so it never holds up
+//! what a request needs.
 //!
 //! [`Budget::blocking`] is the only `spawn_blocking` of the workspace and `exec` the only
 //! place that spawns processes; `crates/clippy.toml` forbids both elsewhere.
@@ -19,6 +21,8 @@ use tokio::task::JoinError;
 pub const REVIEW_IO: usize = 4;
 /// Blocking tasks at once on the semantic lane.
 pub const SEMANTIC_IO: usize = 4;
+/// Blocking tasks at once for work done ahead of a request.
+pub const BACKGROUND_IO: usize = 2;
 /// Probe processes (`--version`, toolchain captures) at once.
 pub const PROBES: usize = 2;
 /// Restore steps at once, over all trees.
@@ -84,6 +88,8 @@ pub struct Budgets {
     pub review_io: Budget,
     /// Reads of texts, materialization, restore plans and hashing for the semantic lane.
     pub semantic_io: Budget,
+    /// Git and the content store for work done ahead of a request.
+    pub background_io: Budget,
     /// Processes that only answer a question.
     pub probes: Budget,
     /// Steps that restore a tree's dependencies.
@@ -95,6 +101,7 @@ impl Default for Budgets {
         Self {
             review_io: Budget::new(REVIEW_IO),
             semantic_io: Budget::new(SEMANTIC_IO),
+            background_io: Budget::new(BACKGROUND_IO),
             probes: Budget::new(PROBES),
             restores: Budget::new(RESTORES),
         }

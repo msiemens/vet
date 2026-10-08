@@ -167,10 +167,16 @@ impl Wired {
         // Watching starts before the initial scan, so no edit falls between them.
         let watcher = FsWatcher::open(repo, *poll).map_err(message)?;
         let git = GixRepo::new(repo).budgeted(budgets.review_io.clone());
+        // The copy ahead of a review is work nobody waits for: it draws on a budget of its own,
+        // never on the review's.
         let session = Arc::new(
             Live::open_reporting(git.clone(), store.clone(), root.clone(), unix_now, self.tasks.clone())
                 .await
-                .map_err(message)?,
+                .map_err(message)?
+                .copying_through(
+                    git.budgeted(budgets.background_io.clone()),
+                    store.budgeted(budgets.background_io.clone()),
+                ),
         );
         if self.closed.load(Ordering::SeqCst) {
             return Err("the session was closed".into());
@@ -387,6 +393,73 @@ mod tests {
             }
         }
         found
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    /// A repository with one commit and `files` edited in the working tree; the edited texts.
+    fn edited_repo(files: usize) -> (tempfile::TempDir, Vec<String>) {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-q", "-b", "main"]);
+        for n in 0..files {
+            std::fs::write(repo.path().join(format!("f{n}.txt")), format!("file {n}\n")).unwrap();
+        }
+        git(repo.path(), &["add", "-A"]);
+        git(repo.path(), &["commit", "-q", "-m", "base"]);
+        let texts: Vec<String> = (0..files).map(|n| format!("file {n}\nedited\n")).collect();
+        for (n, text) in texts.iter().enumerate() {
+            std::fs::write(repo.path().join(format!("f{n}.txt")), text).unwrap();
+        }
+        (repo, texts)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_copy_ahead_draws_on_the_background_budget_and_never_on_the_reviews() {
+        use vet_app::ports::Store;
+        use vet_app::session::View;
+        use vet_core::content::BlobId;
+
+        let (repo, texts) = edited_repo(8);
+        let data = tempfile::tempdir().unwrap();
+        let orchestrator = Orchestrator::new(open_store(data.path()).await.unwrap(), Config::default());
+        let (events, _inbox) = Events::channel();
+        let (project, _) = orchestrator
+            .open(repo.path().to_str().unwrap(), Connection(events))
+            .await
+            .unwrap();
+        let session = orchestrator.ready(project).await.unwrap().session.clone();
+        let budgets = orchestrator.budgets().clone();
+        let within = Duration::from_secs(20);
+
+        // While the copy waits for the background budget, the manifest is answered.
+        let background = budgets.background_io.acquire_all().await;
+        let copy = tokio::spawn({
+            let session = session.clone();
+            async move { session.copy_ahead().await }
+        });
+        let manifest = tokio::time::timeout(within, session.manifest(View::Changeset)).await;
+        assert_eq!(manifest.expect("the manifest is answered").unwrap().files.len(), 8);
+        assert!(!copy.is_finished());
+
+        // With every unit of the review's budget taken, the copy finishes.
+        let review = budgets.review_io.acquire_all().await;
+        drop(background);
+        let copied = tokio::time::timeout(within, copy).await;
+        copied.expect("the copy finishes").unwrap().unwrap();
+        drop(review);
+        let ids = texts.iter().map(|t| BlobId::of(t.as_bytes())).collect();
+        assert_eq!(orchestrator.store.missing_blobs(ids).await.unwrap(), []);
     }
 
     #[tokio::test]

@@ -11,6 +11,7 @@ use vet_core::content::{Snapshot, SnapshotId, SnapshotStatus};
 use vet_engine::{Computed, Kind, Retention};
 
 use super::{LiveSession, Result, SessionError};
+use crate::acquisition::Acquisition;
 use crate::changeset::Source;
 use crate::ports::{GitRepo, LiveStore};
 
@@ -37,15 +38,22 @@ where
     G: GitRepo + Send + Sync + 'static,
     S: LiveStore + Send + Sync + 'static,
 {
-    /// Copies the content of `target` that `base` does not have into the store; joins the copy
-    /// of the pair under way, if there is one.
-    pub(super) async fn retained(&self, base: &Snapshot, target: &Snapshot, status: &SnapshotStatus) -> Result<()> {
+    /// Copies the content of `target` that `base` does not have into the store through
+    /// `acquisition`; joins the copy of the pair under way, if there is one, whatever it copies
+    /// through.
+    pub(super) async fn retained(
+        &self,
+        acquisition: &Arc<Acquisition<G, S>>,
+        base: &Snapshot,
+        target: &Snapshot,
+        status: &SnapshotStatus,
+    ) -> Result<()> {
         let key = Retained {
             base: base.id,
             target: target.id,
         };
         let compute = |_| {
-            let acquisition = Arc::clone(&self.acquisition);
+            let acquisition = Arc::clone(acquisition);
             let (base, target, status) = (base.clone(), target.clone(), status.clone());
             async move {
                 acquisition.retain(&[&base], &target, &status).await?;
@@ -57,7 +65,8 @@ where
     }
 
     /// Copies the working tree's dirty content into the store, as starting a review of it
-    /// would. Does nothing unless the working tree is on view and no review of it is open.
+    /// would, through the handles of [`LiveSession::copying_through`]. Does nothing unless the
+    /// working tree is on view and no review of it is open.
     pub async fn copy_ahead(&self) -> Result<()> {
         let (base, target, status) = {
             let st = self.state.lock().await;
@@ -66,6 +75,6 @@ where
             }
             (st.base.clone(), st.target.clone(), st.target_status.clone())
         };
-        self.retained(&base, &target, &status).await
+        self.retained(&self.copying, &base, &target, &status).await
     }
 }
