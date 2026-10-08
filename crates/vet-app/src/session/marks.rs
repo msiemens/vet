@@ -2,6 +2,7 @@
 //! review if none is open.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{BlobId, NonTextKind, RepoPath};
@@ -192,6 +193,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         // Only a span with a side that lands in a region's file can lose lines to it.
         let cut_files: HashSet<(RepoPath, Side)> = regions.iter().map(|r| (r.file.clone(), r.side)).collect();
         let cuttable: Vec<&RecordedSpan> = (st.recorded.iter())
+            .map(|rec| &**rec)
             .filter(|rec| {
                 [(true, &rec.span.base), (false, &rec.span.target)]
                     .into_iter()
@@ -240,7 +242,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         st.recorded.extend(
             ids.iter()
                 .zip(add)
-                .map(|(&id, (span, origin))| RecordedSpan { id, span, origin }),
+                .map(|(&id, (span, origin))| Arc::new(RecordedSpan { id, span, origin })),
         );
         if seen {
             self.note_reviewed(st).await?;

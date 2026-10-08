@@ -332,10 +332,11 @@ where
         #[cfg(test)]
         let mut counted: Vec<RepoPath> = Vec::new();
         let remapped = {
+            let recorded = st.recorded.iter().map(|r| &**r);
             let spans: Vec<&RecordedSpan> = match remapping {
-                Remapping::All => st.recorded.iter().collect(),
+                Remapping::All => recorded.collect(),
                 Remapping::Threads => Vec::new(),
-                Remapping::Spans(ids) => st.recorded.iter().filter(|r| ids.contains(&r.id)).collect(),
+                Remapping::Spans(ids) => recorded.filter(|r| ids.contains(&r.id)).collect(),
             };
             let threads: Vec<&Thread> = match remapping {
                 Remapping::All | Remapping::Threads if view == View::Changeset => st.threads.iter().collect(),
@@ -364,7 +365,7 @@ where
         view: View,
         spans: &[&RecordedSpan],
         threads: &[&Thread],
-        anchored: &mut BTreeMap<BlobId, Vec<u8>>,
+        anchored: &mut Arc<BTreeMap<BlobId, Vec<u8>>>,
     ) -> Result<(Vec<(SpanId, Vec<ReviewedSpan>)>, HashMap<ThreadId, Resolution>)> {
         let diffed = st.diffed_in(view);
         let frame = frame_of(st, view, diffed.diff.renames.clone());
@@ -442,7 +443,7 @@ where
         st: &State,
         frame: &Frame<'_>,
         diffed: &Diffed,
-        anchored: &mut BTreeMap<BlobId, Vec<u8>>,
+        anchored: &mut Arc<BTreeMap<BlobId, Vec<u8>>>,
         spans: &[&RecordedSpan],
         threads: &[&Thread],
     ) -> Result<Prepared> {
@@ -505,7 +506,8 @@ where
             for (path, blob) in [(&input.old_path, input.old_blob), (&input.new_path, input.new_blob)] {
                 if let (Some(path), Some(blob)) = (path, blob)
                     && !diffed.blobs.contains_key(&blob)
-                    && let Err(e) = self.acquisition.load(anchored, path, blob).await
+                    && !anchored.contains_key(&blob)
+                    && let Err(e) = self.acquisition.load(Arc::make_mut(anchored), path, blob).await
                 {
                     loaded = Err(e);
                 }

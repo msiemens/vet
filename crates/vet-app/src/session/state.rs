@@ -84,7 +84,7 @@ pub(super) struct Interdiffed {
 pub(super) struct Remapped {
     /// Each recorded span as it is now. A span's remap depends on the span and the diff only, so
     /// a mark remaps the spans it records and leaves the others as they are.
-    spans: HashMap<SpanId, Vec<ReviewedSpan>>,
+    spans: HashMap<SpanId, Arc<Vec<ReviewedSpan>>>,
     /// The spans with a piece in each file.
     files: HashMap<RepoPath, HashSet<SpanId>>,
     /// Range threads resolved from their recorded anchors; only in the changeset.
@@ -108,14 +108,14 @@ impl Remapped {
 
     /// The recorded span `id` as it is now; empty if nothing of it is left.
     pub(super) fn span(&self, id: SpanId) -> &[ReviewedSpan] {
-        self.spans.get(&id).map_or(&[], Vec::as_slice)
+        self.spans.get(&id).map_or(&[], |pieces| pieces.as_slice())
     }
 
     pub(super) fn insert(&mut self, id: SpanId, pieces: Vec<ReviewedSpan>) {
         for file in files_of(&pieces) {
             self.files.entry(file.clone()).or_default().insert(id);
         }
-        self.spans.insert(id, pieces);
+        self.spans.insert(id, Arc::new(pieces));
     }
 
     pub(super) fn remove(&mut self, id: SpanId) {
@@ -137,7 +137,7 @@ impl Remapped {
 
     /// The coverage of every span.
     pub(super) fn coverage(&self) -> Coverage<'_> {
-        Coverage::new(self.spans.values().flatten())
+        Coverage::new(self.spans.values().flat_map(|pieces| pieces.iter()))
     }
 
     /// A coverage that answers for `files` as [`Remapped::coverage`] does, made of the spans with a
@@ -167,7 +167,7 @@ pub(super) struct Changes {
     pub(super) diffed: Arc<Diffed>,
     pub(super) remapped: Remapped,
     /// Texts of what recorded spans and threads are anchored in that the diffs do not have.
-    pub(super) anchored: BTreeMap<BlobId, Vec<u8>>,
+    pub(super) anchored: Arc<BTreeMap<BlobId, Vec<u8>>>,
     /// The commits of the changeset, once the by-commit lens asked.
     pub(super) commits: Option<Commits>,
     /// How often a recorded span anchored in each file was remapped, onto any view.
@@ -180,7 +180,7 @@ impl Changes {
         Self {
             diffed,
             remapped: Remapped::default(),
-            anchored: BTreeMap::new(),
+            anchored: Arc::default(),
             commits: None,
             #[cfg(test)]
             remaps: HashMap::new(),
@@ -233,7 +233,7 @@ pub(super) struct State {
     pub(super) target_status: SnapshotStatus,
     /// Other snapshots that recorded spans refer to.
     pub(super) known: HashMap<SnapshotId, Arc<Snapshot>>,
-    pub(super) recorded: Vec<RecordedSpan>,
+    pub(super) recorded: Vec<Arc<RecordedSpan>>,
     pub(super) acks: Vec<NonTextAck>,
     pub(super) threads: Vec<Thread>,
     /// What the platform last said of a pull request, beside its threads, and when (unix seconds).

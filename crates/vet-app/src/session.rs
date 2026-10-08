@@ -403,7 +403,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             target,
             target_status,
             known: HashMap::new(),
-            recorded: review.spans,
+            recorded: review.spans.into_iter().map(Arc::new).collect(),
             acks: review.acks,
             threads,
             discussion: None,
