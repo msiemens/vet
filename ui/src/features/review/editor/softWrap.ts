@@ -3,6 +3,7 @@
 import type { Extension } from "@codemirror/state";
 import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { basename } from "../../../lib/paths.ts";
+import type { SoftWrap } from "../../../lib/softWrap.ts";
 
 /** Prose is read, not scanned: Markdown, reStructuredText and plain text. */
 const PROSE_EXTENSIONS = new Set(["md", "markdown", "mdown", "mkd", "mkdn", "rst", "rest", "txt", "text"]);
@@ -21,11 +22,15 @@ const PROSE_NAMES = new Set([
   "todo",
 ]);
 
-/** Whether the file at `path` wraps its lines unless the viewer says otherwise. */
-export function wrapsByDefault(path: string): boolean {
+function isProse(path: string): boolean {
   const name = basename(path).toLowerCase();
   const dot = name.lastIndexOf(".");
   return dot > 0 ? PROSE_EXTENSIONS.has(name.slice(dot + 1)) : PROSE_NAMES.has(name);
+}
+
+/** Whether the file at `path` wraps its lines under the viewer's setting. */
+export function wraps(path: string, setting: SoftWrap): boolean {
+  return setting === "all" || (setting === "prose" && isProse(path));
 }
 
 /** The extension of an editor that wraps long lines, or none for one that scrolls them sideways. */

@@ -28,6 +28,7 @@
   import type { Thread } from "../generated/Thread";
   import { errorText } from "../lib/errorText";
   import { repoName } from "../lib/paths";
+  import { type SoftWrap, storeSoftWrap, storedSoftWrap } from "../lib/softWrap";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import ContextMenu from "../lib/ui/ContextMenu.svelte";
   import Toast from "../lib/ui/Toast.svelte";
@@ -75,6 +76,7 @@
   let timelineOpen = $state(false);
   let theme = $state<Theme>(storedTheme());
   let mode = $state<Mode>("unified");
+  let softWrap = $state<SoftWrap>(storedSoftWrap());
   let dialog = $state<"settings" | "about" | "finish" | "pullRequest">();
   let settingsPage = $state<ComponentProps<typeof SettingsDialog>["page"]>("appearance");
   let switcherOpen = $state(false);
@@ -309,6 +311,12 @@
     mode = next;
     controller?.setMode(next);
   }
+
+  function setSoftWrap(next: SoftWrap) {
+    softWrap = next;
+    storeSoftWrap(next);
+    controller?.setSoftWrap(next);
+  }
 </script>
 
 {#if session.backend && session.repo}
@@ -424,6 +432,7 @@
         rightOpen={right.open}
         {mode}
         onmode={setMode}
+        {softWrap}
         onready={(c, firstPaintMs) => {
           controller = c;
           void tools.ready(firstPaintMs);
@@ -482,6 +491,8 @@
     bind:page={settingsPage}
     {theme}
     ontheme={(t) => applyTheme((theme = t))}
+    {softWrap}
+    onsoftwrap={setSoftWrap}
     onclose={() => (dialog = undefined)}
     project={session.repo ? changeset.manifest : undefined}
     onfilter={(f) => changeset.setFilter(f)}

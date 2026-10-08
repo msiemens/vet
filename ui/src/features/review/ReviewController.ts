@@ -26,6 +26,7 @@ import { fileSource } from "./editor/fileSource";
 import { LogView } from "./editor/LogView";
 import type { ViewProbe } from "./editor/viewProbe";
 import { bindRevision, focusedEditor } from "./editor/semantic";
+import type { SoftWrap } from "../../lib/softWrap";
 import type { Mode } from "../../lib/viewMode";
 import { type CommandContext, commands } from "../../state/commands";
 import { type HunkActions, TextView } from "./editor/TextView";
@@ -100,6 +101,8 @@ export class ReviewController {
   private logViews = new Map<TabId, LogView>();
   private roots = new Map<TabId, HTMLElement>();
   mode: Mode = "unified";
+  /** Which files the views wrap the long lines of. */
+  softWrap: SoftWrap = "prose";
   private hooks: ViewHooks;
   /** The changeset on view, by `keyId`; unknown before the first manifest. */
   private key?: string;
@@ -429,6 +432,7 @@ export class ReviewController {
         path,
         fileSource(this.backend, manifest.revision, this.changeset.view),
         bindRevision(this.hooks, manifest.revision),
+        this.softWrap,
         file && { file, actions: this.hunkActions(file, manifest.revision) },
       );
       this.texts.set(id, text);
@@ -455,6 +459,7 @@ export class ReviewController {
       files,
       fileSource(this.backend, manifest.revision, this.changeset.view),
       this.mode,
+      this.softWrap,
       this.hooks,
       this.listenersFor(id),
       id === CHANGES, // only the Changes tab collapses unchanged regions
@@ -692,6 +697,14 @@ export class ReviewController {
   setMode(mode: Mode) {
     this.mode = mode;
     for (const view of this.views.values()) view.setMode(mode);
+  }
+
+  /** Builds the views anew with the setting, keeping their scroll positions and current hunks. */
+  setSoftWrap(wrap: SoftWrap) {
+    if (wrap === this.softWrap) return;
+    this.softWrap = wrap;
+    const manifest = this.changeset.currentManifest();
+    if (manifest) this.show(manifest);
   }
 
   /** Goes to the hunk `delta` away from the current one in the focused tab. */

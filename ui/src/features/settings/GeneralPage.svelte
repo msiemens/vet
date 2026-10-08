@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { SOFT_WRAPS, type SoftWrap } from "../../lib/softWrap";
+  import Segmented from "../../lib/ui/Segmented.svelte";
   import { backendSettings } from "../../state/backendSettings.svelte";
+
+  let { softWrap, onsoftwrap }: { softWrap: SoftWrap; onsoftwrap: (wrap: SoftWrap) => void } = $props();
 
   let problem = $state<string>();
 
@@ -21,6 +25,16 @@
 </script>
 
 <div class="page">
+  <div class="row">
+    <div class="text">
+      <span>Soft wrap</span>
+      <span class="hint">
+        Which files the review views wrap the long lines of; the others scroll sideways. Prose is Markdown,
+        reStructuredText and plain text.
+      </span>
+    </div>
+    <Segmented label="Soft wrap" value={softWrap} onchange={onsoftwrap} options={SOFT_WRAPS} />
+  </div>
   <div class="row">
     <div class="text">
       <label for="finished-review-days">Keep finished reviews</label>

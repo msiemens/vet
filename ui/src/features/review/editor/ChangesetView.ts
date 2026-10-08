@@ -12,6 +12,7 @@ import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { Scrollbar } from "../../../lib/ui/scrollbar";
+import type { SoftWrap } from "../../../lib/softWrap";
 import type { Mode } from "../../../lib/viewMode";
 import { changeCard } from "./changeCard";
 import { takesKeys } from "./dom";
@@ -30,7 +31,7 @@ import type { Section } from "./section";
 import { SectionHeights, charWidth, readFont, readMetrics } from "./sectionHeights";
 import { COLLAPSE, type WrappedSides, baseDiffHeight } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
-import { wrapsByDefault } from "./softWrap";
+import { wraps } from "./softWrap";
 import { type ThreadListeners, ThreadLayer, threadState } from "./threadLayer";
 import { type ViewProbe, viewProbe } from "./viewProbe";
 import { Windowing } from "./windowing";
@@ -98,6 +99,8 @@ export class ChangesetView {
     files: FileChange[],
     private source: FileSource,
     mode: Mode,
+    /** Which files wrap their long lines; a change builds the view anew. */
+    softWrap: SoftWrap,
     private hooks: ViewHooks,
     private listeners: Listeners,
     /** Collapse unchanged regions and frame the current file (the Changes tab); otherwise the full file is shown. */
@@ -197,7 +200,7 @@ export class ChangesetView {
           ...actions,
           openLine: (line) => listeners.openSource(file.path, line),
         },
-        wrap: wrapsByDefault(file.path),
+        wrap: wraps(file.path, softWrap),
         wrapped: {},
       });
     }

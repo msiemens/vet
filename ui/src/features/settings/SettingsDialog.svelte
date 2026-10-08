@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Manifest } from "../../generated/Manifest";
   import type { ReviewFilter } from "../../generated/ReviewFilter";
+  import type { SoftWrap } from "../../lib/softWrap";
   import { THEMES, type Theme } from "../../lib/theme/theme";
   import Dialog from "../../lib/ui/Dialog.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
@@ -15,6 +16,8 @@
   let {
     theme,
     ontheme,
+    softWrap,
+    onsoftwrap,
     onclose,
     project,
     onfilter,
@@ -24,6 +27,8 @@
     page?: Page;
     theme: Theme;
     ontheme: (theme: Theme) => void;
+    softWrap: SoftWrap;
+    onsoftwrap: (wrap: SoftWrap) => void;
     onclose: () => void;
     /** The open repository's current manifest, which carries its review filter. */
     project?: Manifest;
@@ -60,7 +65,7 @@
     <ScrollArea>
       <div class="page">
         {#if page === "general"}
-          <GeneralPage />
+          <GeneralPage {softWrap} {onsoftwrap} />
         {:else if page === "keymap"}
           <KeymapPage />
         {:else if page === "review"}

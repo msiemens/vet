@@ -3,6 +3,7 @@
   import { onMount, untrack } from "svelte";
   import type { MenuSpec } from "../../lib/commandMenu";
   import SideBar from "../../lib/ui/SideBar.svelte";
+  import type { SoftWrap } from "../../lib/softWrap";
   import type { Mode } from "../../lib/viewMode";
   import type { Backend } from "../../state/backend";
   import type { Changeset } from "../../state/changeset.svelte";
@@ -43,6 +44,7 @@
     bottom,
     mode,
     onmode,
+    softWrap,
     onready,
     onclose,
   }: {
@@ -54,6 +56,8 @@
     /** Unified or split; the owner applies a change to the controller. */
     mode: Mode;
     onmode: (mode: Mode) => void;
+    /** Which files wrap their long lines; the owner applies a change to the controller. */
+    softWrap: SoftWrap;
     /** The left tool window and whether its sidebar is shown. */
     leftTool: string;
     leftOpen: boolean;
@@ -83,6 +87,8 @@
   );
   // svelte-ignore state_referenced_locally
   controller.mode = mode;
+  // svelte-ignore state_referenced_locally
+  controller.softWrap = softWrap;
   const tabs = controller.tabs;
   let tree = $state<FileTree>();
   let selected = $state<string>();

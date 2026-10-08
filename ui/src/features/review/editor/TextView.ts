@@ -11,6 +11,7 @@ import type { NoTextReason } from "../../../generated/NoTextReason";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { errorText } from "../../../lib/errorText";
 import { type Highlights, decodeHighlights } from "../../../lib/highlights";
+import type { SoftWrap } from "../../../lib/softWrap";
 import { iconSvg } from "../../../lib/ui/icons";
 import { type MarkLayout, type ScrollMark, Scrollbar } from "../../../lib/ui/scrollbar";
 import { currentLine } from "./currentLine";
@@ -33,7 +34,7 @@ import type { Loaded } from "./mount";
 import { lineOf, lineStart } from "./positions";
 import { markKind } from "./scrollMarks";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
-import { softWrap, wrapsByDefault } from "./softWrap";
+import { softWrap, wraps } from "./softWrap";
 
 export type { HunkActions } from "./fileChanges";
 
@@ -70,6 +71,8 @@ export class TextView {
     private path: string,
     private source: FileSource,
     private hooks: SemanticHooks,
+    /** Which files wrap their long lines; a change builds the view anew. */
+    private wrap: SoftWrap,
     /** The changeset's change to the file, if it changes it: its hunks are drawn, and the owner acts on them. */
     private changes?: { file: FileChange; actions: HunkActions },
   ) {
@@ -100,7 +103,7 @@ export class TextView {
       parent: this.root,
       doc: text,
       extensions: [
-        softWrap(wrapsByDefault(this.path)),
+        softWrap(wraps(this.path, this.wrap)),
         ...(drawn
           ? [
               ...fileChanges(drawn.source, drawn.field),
