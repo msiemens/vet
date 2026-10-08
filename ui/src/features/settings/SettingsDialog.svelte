@@ -6,7 +6,6 @@
   import Dialog from "../../lib/ui/Dialog.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
-  import { platform } from "../../state/platform.svelte";
   import AccountsPage from "./AccountsPage.svelte";
   import GeneralPage from "./GeneralPage.svelte";
   import KeymapPage from "./KeymapPage.svelte";
@@ -46,14 +45,9 @@
     { id: "accounts", label: "Accounts" },
   ] as const;
   type Page = (typeof PAGES)[number]["id"];
-  // Closing after a visit for signing in syncs the comments again.
-  const close = () => {
-    onclose();
-    platform.afterSettings();
-  };
 </script>
 
-<Dialog title="Settings" onclose={close} width="780px" height="min(520px, 76vh)" resizable="settings" padded={false}>
+<Dialog title="Settings" {onclose} width="780px" height="min(520px, 76vh)" resizable="settings" padded={false}>
   <div class="layout">
     <nav aria-label="Settings pages">
       {#each PAGES as p (p.id)}

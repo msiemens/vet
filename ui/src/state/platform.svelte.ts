@@ -7,6 +7,7 @@ import type { PlatformStatus } from "../generated/PlatformStatus";
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
 import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
 import { errorText } from "../lib/errorText";
+import { AccountResync } from "./accountResync";
 import type { Backend } from "./backend";
 import { session } from "./session.svelte";
 import { threads } from "./threads.svelte";
@@ -37,7 +38,6 @@ class PlatformStore {
   sending = $state(false);
   /** The tab the Comments tool window shows. */
   commentsTab = $state<"review" | "conversation">("review");
-  private signingIn = false;
   private backend?: Backend;
   private seq = 0;
   private lastId = 0;
@@ -60,9 +60,13 @@ class PlatformStore {
       }
     });
     const offResync = session.onResync(() => void this.reload());
+    // A credential given or removed, here or in another window, changes what the platform answers.
+    const resync = new AccountResync({ sync: () => this.sync(), reload: () => this.reload() });
+    const offAccounts = backend.onAccountsChanged(() => void resync.changed());
     return () => {
       off();
       offResync();
+      offAccounts();
       this.backend = undefined;
       this.info = undefined;
       this.status = undefined;
@@ -82,7 +86,7 @@ class PlatformStore {
     }
   }
 
-  /** Syncs now, for after signing in again. */
+  /** Syncs now; a failure is told to the viewer. */
   async sync() {
     try {
       await this.backend?.syncThreads();
@@ -157,14 +161,6 @@ class PlatformStore {
   /** Asks for Settings to open on the Accounts page, where the viewer signs in. */
   openAccounts() {
     this.accountsRequests++;
-    this.signingIn = true;
-  }
-
-  /** Settings closed: if it was opened to sign in, the comments are synced again. */
-  afterSettings() {
-    if (!this.signingIn) return;
-    this.signingIn = false;
-    void this.sync();
   }
 
   private notify(notification: Notification) {
