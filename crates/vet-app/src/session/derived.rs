@@ -209,26 +209,43 @@ fn task<K>(tasks: &Tasks, title: &'static str) -> impl Fn(&K) -> Option<Arc<dyn 
     move |_| Some(Arc::new(tasks.start(TaskKind::Diff, title)))
 }
 
-impl<G, S> LiveSession<G, S>
-where
-    G: GitRepo + Send + Sync + 'static,
-    S: LiveStore + Send + Sync + 'static,
-{
-    /// The diff of `old` and `new`: kept, joined while it is computed, or computed.
-    pub(super) async fn diff_of(&self, old: &Arc<Snapshot>, new: &Arc<Snapshot>) -> Result<Arc<Diffed>> {
+impl Derived {
+    /// The diff of `old` and `new`, read through `acquisition`: kept, joined while it is
+    /// computed, or computed.
+    pub(super) async fn diff<G, S>(
+        &self,
+        acquisition: &Arc<Acquisition<G, S>>,
+        old: &Arc<Snapshot>,
+        new: &Arc<Snapshot>,
+    ) -> Result<Arc<Diffed>>
+    where
+        G: GitRepo + Send + Sync + 'static,
+        S: LiveStore + Send + Sync + 'static,
+    {
         let key = DiffOf {
             old: old.id,
             new: new.id,
         };
         let compute = |_| {
-            let acquisition = Arc::clone(&self.acquisition);
+            let acquisition = Arc::clone(acquisition);
             let (old, new) = (Arc::clone(old), Arc::clone(new));
             async move {
                 let diffed = diffed(&acquisition, &old, &new).await?;
                 Ok(Computed::new(Arc::new(diffed), true))
             }
         };
-        Ok(self.derived.diffs.get(key, compute).await?.value)
+        Ok(self.diffs.get(key, compute).await?.value)
+    }
+}
+
+impl<G, S> LiveSession<G, S>
+where
+    G: GitRepo + Send + Sync + 'static,
+    S: LiveStore + Send + Sync + 'static,
+{
+    /// The diff of `old` and `new` as the session reads it.
+    pub(super) async fn diff_of(&self, old: &Arc<Snapshot>, new: &Arc<Snapshot>) -> Result<Arc<Diffed>> {
+        self.derived.diff(&self.acquisition, old, new).await
     }
 
     /// The interdiff of `key`, as [`LiveSession::diff_of`].

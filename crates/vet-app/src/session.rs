@@ -59,6 +59,7 @@ mod listing;
 mod manifest;
 mod marks;
 mod remap;
+mod revision;
 mod source;
 mod state;
 mod sync;
@@ -71,7 +72,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use vet_core::content::{EntryKind, FileDiff, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
+use vet_core::content::{EntryKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{Anchor, CommentTarget, Thread, ThreadStatus};
 use vet_engine::{Engine, Limits};
@@ -81,14 +82,15 @@ pub use self::base_diff::{BaseDiffKind, BaseDiffRow, BaseDiffView};
 pub use self::blobs::NoText;
 pub use self::browse::{DirEntryKind, DirItem, DirListing};
 pub use self::content::{FileText, ItemBlob, MAX_ITEM_BLOB, TargetText};
-use self::derived::{Derived, DiffOf, Diffed};
+use self::derived::{Derived, Diffed};
 use self::hold::{Held, Published, Writer};
 pub use self::lens::{CommitKind, CommitUnitView, CommitsView};
 use self::lines::LinesBetween;
 pub use self::listing::{ChangesetList, ChangesetRow, Divergence, RowReview};
+pub use self::revision::{ChangedFiles, RevisionView};
 use self::source::Stored;
 pub use self::state::View;
-use self::state::{OpenReview, Shown, State, check_revision, lifecycle_of};
+use self::state::{OpenReview, Shown, State, lifecycle_of};
 pub use self::sync::{DiscussionView, Keep, SubmitReport, SyncNotice, SyncReport};
 pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsView};
 pub use self::versions::VersionView;
@@ -187,7 +189,7 @@ pub struct LiveSession<G, S> {
     repo: String,
     clock: UnixClock,
     /// The review state of the changeset on view, as the last command left it.
-    published: Published,
+    published: Arc<Published>,
     /// Held by the one command that changes review state at a time, which asks for it in the order
     /// the viewer acted in. It guards the changesets that were on view and are not now.
     token: Mutex<Writer>,
@@ -201,7 +203,7 @@ pub struct LiveSession<G, S> {
     /// The line deltas between commits that the list of changesets shows.
     lines: Engine<LinesBetween>,
     /// The diffs, interdiffs and commits the review state is remapped onto.
-    derived: Derived,
+    derived: Arc<Derived>,
     /// The copies of the working tree's content into the store under way.
     ahead: Engine<Retained>,
     /// What a copy ahead of a review reads and writes through: the session's acquisition over
@@ -323,14 +325,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     ) -> Self {
         Self {
             author: author_of(&acquisition.git).await,
-            derived: Derived::new(&acquisition.tasks),
+            derived: Arc::new(Derived::new(&acquisition.tasks)),
             ahead: ahead::copies(&acquisition.tasks),
             copying: acquisition.clone(),
             acquisition,
             name,
             repo,
             clock,
-            published: Published::new(state),
+            published: Arc::new(Published::new(state)),
             token: Mutex::default(),
             degraded: std::sync::Mutex::new(None),
             revisions: Arc::default(),
@@ -733,65 +735,6 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// language-server pool.
     pub fn acquisition(&self) -> Arc<Acquisition<G, S>> {
         self.acquisition.clone()
-    }
-
-    /// The snapshots of `revision`: what the semantic layer asks about. Fails
-    /// if `revision` is no longer current.
-    pub async fn semantic_sides(&self, revision: u32) -> Result<SemanticSides> {
-        let st = self.published.read();
-        check_revision(&st, revision)?;
-        Ok(SemanticSides {
-            base: st.base.id,
-            base_commit: st.base_commit.clone(),
-            target: st.target.id,
-            head: st.head.clone(),
-            live_target: st.source == Source::WorkingTree,
-        })
-    }
-
-    /// For each key `key_of` yields over the files of `revision`'s target
-    /// snapshot, the first file with it; stops once `limit` keys are found.
-    pub async fn target_file_per_key<K: PartialEq>(
-        &self,
-        revision: u32,
-        limit: usize,
-        key_of: impl Fn(&RepoPath) -> Option<K>,
-    ) -> Result<Vec<(K, RepoPath)>> {
-        let st = self.published.read();
-        check_revision(&st, revision)?;
-        let mut found: Vec<(K, RepoPath)> = Vec::new();
-        for path in st.target.entries.keys() {
-            if found.len() >= limit {
-                break;
-            }
-            if let Some(key) = key_of(path)
-                && !found.iter().any(|(k, _)| *k == key)
-            {
-                found.push((key, path.clone()));
-            }
-        }
-        Ok(found)
-    }
-
-    /// The text diff of `revision`, for the analyses that map symbols to hunks. It is read, or
-    /// computed with the state released, and the state is left as it is.
-    pub async fn changed_files(&self, revision: u32) -> Result<Vec<FileDiff>> {
-        let (base, target) = {
-            let st = self.published.read();
-            check_revision(&st, revision)?;
-            let key = DiffOf {
-                old: st.base.id,
-                new: st.target.id,
-            };
-            match st.changes.as_ref().map(|c| c.diffed.clone()) {
-                Some(diffed) => return Ok(diffed.diff.files.clone()),
-                None => match self.derived.diffs.peek(&key) {
-                    Some(diffed) => return Ok(diffed.diff.files.clone()),
-                    None => (st.base.clone(), st.target.clone()),
-                },
-            }
-        };
-        Ok(self.diff_of(&base, &target).await?.diff.files.clone())
     }
 
     /// The initial scan identifies the settled snapshot, so settling does not

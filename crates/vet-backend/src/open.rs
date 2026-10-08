@@ -22,6 +22,7 @@ use vet_app::platform::PlatformKind;
 use vet_app::progress::Tasks;
 use vet_app::registry::{Resident, Subscribers};
 use vet_app::semantics::{Links, Semantics};
+use vet_app::session::RevisionView;
 use vet_app::settle::Settling;
 use vet_app::trust::Trust;
 use vet_infra::budget::Budgets;
@@ -52,6 +53,9 @@ const TASK_UPDATES: Duration = Duration::from_millis(250);
 /// What a project runs on once its first scan is done.
 pub struct Booted {
     pub session: Arc<Live>,
+    /// What `semantics` reads of `session`: the review state as published, and nothing that
+    /// changes it.
+    pub view: RevisionView<GixRepo, SqliteStore>,
     pub semantics: Semantic,
 }
 
@@ -266,7 +270,11 @@ impl Wired {
         if let Some(store) = self.answers.store().await {
             semantics = semantics.persisting(store);
         }
-        Ok(Arc::new(Booted { session, semantics }))
+        Ok(Arc::new(Booted {
+            view: session.view(),
+            session,
+            semantics,
+        }))
     }
 }
 

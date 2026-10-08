@@ -28,7 +28,16 @@ pub(super) async fn announcing(base: &[(&str, &str)], dirty: &[(&str, &str)]) ->
     let session = LiveSession::open_reporting(git.clone(), store.clone(), REPO.into(), clock, tasks)
         .await
         .unwrap();
-    (Fixture { git, store, session }, heard)
+    let view = session.view();
+    (
+        Fixture {
+            git,
+            store,
+            session,
+            view,
+        },
+        heard,
+    )
 }
 
 /// How many tasks titled `title` were started.
@@ -65,14 +74,14 @@ async fn first_gives_up<T>(fx: &Fixture, heard: &Heard, title: &str, mut calls: 
 async fn the_requests_for_one_diff_share_it_and_one_giving_up_does_not_start_it_again() {
     let base = numbered(30, &[]);
     let (fx, heard) = announcing(&[("a.txt", &base)], &[("a.txt", &numbered(30, &[3, 20]))]).await;
-    let session = &fx.session;
+    let (session, view) = (&fx.session, &fx.view);
     let mut calls: Vec<Call<'_, usize>> = Vec::new();
     for _ in 0..4 {
         calls.push(Box::pin(async {
             Ok(session.manifest(View::Changeset).await?.files.len())
         }));
         // What the semantic lane asks for the same revision.
-        calls.push(Box::pin(async { Ok(session.changed_files(0).await?.len()) }));
+        calls.push(Box::pin(async { Ok(view.changed_files(0).await?.len()) }));
     }
 
     let answers = first_gives_up(&fx, &heard, "Diffing the changes", calls).await;
@@ -146,7 +155,7 @@ async fn a_filter_change_a_started_and_a_finished_review_do_not_diff_again() {
     fx.session.toggle_hunk(0, View::Changeset, "a.txt", 0).await.unwrap();
     let revision = fx.session.exclude_path("b.txt", false).await.unwrap();
     let filtered = fx.session.manifest(View::Changeset).await.unwrap();
-    fx.session.changed_files(revision).await.unwrap();
+    fx.view.changed_files(revision).await.unwrap();
     assert!(!fx.session.finish_review().await.unwrap(), "b.txt's hunk is not seen");
     let browsed = fx.session.manifest(View::Changeset).await.unwrap();
 

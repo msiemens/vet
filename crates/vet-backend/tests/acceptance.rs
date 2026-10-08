@@ -735,7 +735,7 @@ async fn criterion1_windows_filesystem_case_only_paths_in_the_worktree_are_flagg
     write(p, "Foo.txt", "1\n");
     write(p, "foo.txt", "2\n");
     let (session, store, data) = collision_session(p).await;
-    let sides = session.semantic_sides(0).await.unwrap();
+    let sides = session.view().semantic_sides(0).await.unwrap();
 
     let (_, status) = store.snapshot(sides.target).await.unwrap().unwrap();
     let flagged: Vec<_> = status.path_collisions.iter().map(|p| p.0.clone()).collect();
@@ -752,7 +752,7 @@ async fn criterion1_windows_filesystem_case_only_paths_in_a_commit_are_flagged_a
     use vet_app::ports::Store;
     let repo = colliding_repo();
     let (session, store, data) = collision_session(repo.path()).await;
-    let sides = session.semantic_sides(0).await.unwrap();
+    let sides = session.view().semantic_sides(0).await.unwrap();
 
     let (_, status) = store.snapshot(sides.base).await.unwrap().unwrap();
     let flagged: Vec<_> = status.path_collisions.iter().map(|p| p.0.clone()).collect();

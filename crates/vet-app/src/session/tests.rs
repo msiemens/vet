@@ -814,6 +814,8 @@ pub(crate) struct Fixture {
     pub(crate) git: FakeGit,
     pub(crate) store: MemStore,
     pub(crate) session: LiveSession<FakeGit, MemStore>,
+    /// What the semantic layer reads of `session`.
+    pub(crate) view: RevisionView<FakeGit, MemStore>,
 }
 
 impl Fixture {
@@ -826,7 +828,13 @@ impl Fixture {
         let session = LiveSession::open(git.clone(), store.clone(), REPO.into(), clock)
             .await
             .unwrap();
-        Self { git, store, session }
+        let view = session.view();
+        Self {
+            git,
+            store,
+            session,
+            view,
+        }
     }
 
     /// Like `open`, with the review started.
@@ -3224,7 +3232,7 @@ async fn a_moved_branch_that_is_only_browsed_follows_the_tip_and_stores_nothing(
     assert!(moved > revision);
     assert_eq!(fx.session.lifecycle().await, Lifecycle::Browsing);
     assert_eq!(
-        fx.session.semantic_sides(moved).await.unwrap().head,
+        fx.view.semantic_sides(moved).await.unwrap().head,
         CommitId("tip2".into())
     );
     assert!(fx.store.0.lock().unwrap().versions.is_empty());

@@ -6,7 +6,6 @@
 //! snapshot settles, or, when the target is a commit's tree, from a snapshot.
 
 use std::convert::Infallible;
-use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -35,7 +34,7 @@ use crate::limits::RestoreLimits;
 use crate::ports::{BlobRead, BlobReader, GitRepo, LiveStore, Store};
 use crate::progress::{TaskKind, Tasks};
 use crate::revisions::Revisions;
-use crate::session::{LiveSession, SemanticSides, SessionError};
+use crate::session::{ChangedFiles, RevisionView, SemanticSides, SessionError};
 use crate::trust::{Trust, analysis_policy};
 
 /// Servers kept warm per session: base and target of each language.
@@ -115,7 +114,6 @@ where
     /// Where the texts of the files come from when they are not the session's own: the
     /// semantic lane reads them on its own budget.
     texts: Option<Arc<Acquisition<G, S>>>,
-    _session: PhantomData<fn(&LiveSession<G, S>)>,
     revisions: Arc<Revisions>,
     /// Kept current by the launcher's restorer (`Limiting`).
     limits: RestoreLimits,
@@ -249,7 +247,7 @@ async fn start_servers_for<M: Materializer, L: ServerLauncher>(
 async fn find_changes<G, S, L, M>(
     pair: Pair<M, L>,
     texts: Content<G, S>,
-    files: Vec<FileDiff>,
+    files: ChangedFiles,
     progress: Progress,
     revision: u32,
 ) -> Result<Computed<Derived<Changes>>, Infallible>
@@ -308,7 +306,6 @@ where
         Self {
             semantic: Arc::new(Semantic::new(pool, backends)),
             texts: None,
-            _session: PhantomData,
             revisions: links.revisions,
             limits: links.limits,
             trust,
@@ -363,8 +360,8 @@ where
         self.limits.all()
     }
 
-    async fn pair(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<Pair<M, L>> {
-        let (base, target) = served(&self.trust, &session.semantic_sides(revision).await?);
+    async fn pair(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<Pair<M, L>> {
+        let (base, target) = served(&self.trust, &view.semantic_sides(revision).await?);
         Ok(self.semantic.pair(base, target))
     }
 
@@ -380,7 +377,7 @@ where
 
     pub async fn hover(
         &self,
-        session: &LiveSession<G, S>,
+        view: &RevisionView<G, S>,
         revision: u32,
         side: Side,
         at: &At,
@@ -388,7 +385,7 @@ where
         self.current(
             revision,
             Box::pin(async move {
-                let pair = self.pair(session, revision).await?;
+                let pair = self.pair(view, revision).await?;
                 Ok(Answer::of(revision, pair.hover(side, at).await))
             }),
         )
@@ -397,7 +394,7 @@ where
 
     pub async fn definition(
         &self,
-        session: &LiveSession<G, S>,
+        view: &RevisionView<G, S>,
         revision: u32,
         side: Side,
         at: &At,
@@ -405,7 +402,7 @@ where
         self.current(
             revision,
             Box::pin(async move {
-                let pair = self.pair(session, revision).await?;
+                let pair = self.pair(view, revision).await?;
                 let asked = pair.definition(side, at).await.map(|answered| {
                     answered.map(|mut found| {
                         prefer_openable(&mut found);
@@ -420,7 +417,7 @@ where
 
     pub async fn references(
         &self,
-        session: &LiveSession<G, S>,
+        view: &RevisionView<G, S>,
         revision: u32,
         side: Side,
         at: &At,
@@ -428,7 +425,7 @@ where
         self.current(
             revision,
             Box::pin(async move {
-                let pair = self.pair(session, revision).await?;
+                let pair = self.pair(view, revision).await?;
                 Ok(Answer::of(revision, pair.references(side, at).await))
             }),
         )
@@ -438,14 +435,14 @@ where
     /// Diagnostics of a file of the target side.
     pub async fn diagnostics(
         &self,
-        session: &LiveSession<G, S>,
+        view: &RevisionView<G, S>,
         revision: u32,
         file: &RepoPath,
     ) -> Fallible<Answer<Vec<Diagnostic>>> {
         self.current(
             revision,
             Box::pin(async move {
-                let pair = self.pair(session, revision).await?;
+                let pair = self.pair(view, revision).await?;
                 Ok(Answer::of(revision, pair.diagnostics(Side::Target, file).await))
             }),
         )
@@ -457,10 +454,10 @@ where
     /// all at once, then those of the base side, and returns when they are running.
     /// A server already running or starting is left alone. A server that
     /// fails to start is not reported here: the query that needs it reports it.
-    pub async fn start_servers(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<()> {
-        let pair = self.pair(session, revision).await?;
-        let files = session.changed_files(revision).await?;
-        let repo = session
+    pub async fn start_servers(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<()> {
+        let pair = self.pair(view, revision).await?;
+        let files = view.changed_files(revision).await?;
+        let repo = view
             .target_file_per_key(revision, POOL_CAPACITY, |path| self.language_of(path))
             .await?;
         let others: Vec<_> = repo.into_iter().map(|(_, path)| path).collect();
@@ -479,11 +476,11 @@ where
     /// of them give up. A revision that is superseded drops its caller. When the last
     /// is dropped the search goes on for `LINGER`, for the newer revision's caller to
     /// join, and then stops, keeping the answers it got per text (I2).
-    pub async fn changed_symbols(&self, session: &LiveSession<G, S>, revision: u32) -> Fallible<Derived<Changes>> {
+    pub async fn changed_symbols(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<Derived<Changes>> {
         let work = async {
-            let sides = session.semantic_sides(revision).await?;
+            let sides = view.semantic_sides(revision).await?;
             let (base, target) = served(&self.trust, &sides);
-            let files = session.changed_files(revision).await?;
+            let files = view.changed_files(revision).await?;
             let key = ChangesOf {
                 base_snapshot: sides.base,
                 target_snapshot: sides.target,
@@ -492,7 +489,7 @@ where
                 epoch: self.epoch.load(Ordering::SeqCst),
             };
             let pair = self.semantic.pair(base, target);
-            let texts = Content(self.texts.clone().unwrap_or_else(|| session.acquisition()));
+            let texts = Content(self.texts.clone().unwrap_or_else(|| view.acquisition()));
             let found = self
                 .changes
                 .get(key, move |progress| {
@@ -512,13 +509,13 @@ where
     /// revision's changed symbols, which every analysis shares.
     async fn changed(
         &self,
-        session: &LiveSession<G, S>,
+        view: &RevisionView<G, S>,
         revision: u32,
         analysis: &str,
         sym: &Sym,
     ) -> Fallible<vet_semantic::derived::ChangedSymbol> {
         let started = Instant::now();
-        let changes = self.changed_symbols(session, revision).await?;
+        let changes = self.changed_symbols(view, revision).await?;
         trace::log(|| format!("{analysis} {sym}: wait for the changed symbols"), started);
         changes
             .value
@@ -532,7 +529,7 @@ where
     /// The signature of a changed symbol, from the side it exists on: the base for a removed one.
     pub async fn signature(
         &self,
-        session: &LiveSession<G, S>,
+        view: &RevisionView<G, S>,
         revision: u32,
         sym: &Sym,
     ) -> Fallible<Answer<Option<Signature>>> {
@@ -540,13 +537,13 @@ where
             revision,
             Box::pin(async move {
                 let started = Instant::now();
-                let changed = self.changed(session, revision, "signature", sym).await?;
+                let changed = self.changed(view, revision, "signature", sym).await?;
                 let side = if changed.change == Change::Removed {
                     Side::Base
                 } else {
                     Side::Target
                 };
-                let pair = self.pair(session, revision).await?;
+                let pair = self.pair(view, revision).await?;
                 let signed = signature(&pair, side, &changed.symbol).await;
                 trace::log(
                     || {
@@ -570,23 +567,18 @@ where
     }
 
     /// References and callers of an added or modified symbol, on the target side.
-    pub async fn impact(
-        &self,
-        session: &LiveSession<G, S>,
-        revision: u32,
-        sym: &Sym,
-    ) -> Fallible<Derived<SymbolImpact>> {
+    pub async fn impact(&self, view: &RevisionView<G, S>, revision: u32, sym: &Sym) -> Fallible<Derived<SymbolImpact>> {
         self.current(
             revision,
             Box::pin(async move {
                 let started = Instant::now();
-                let changed = self.changed(session, revision, "impact", sym).await?;
+                let changed = self.changed(view, revision, "impact", sym).await?;
                 if changed.change == Change::Removed {
                     return Err(SessionError::Invalid(
                         "the symbol was removed; ask for its removal impact".into(),
                     ));
                 }
-                let pair = self.pair(session, revision).await?;
+                let pair = self.pair(view, revision).await?;
                 let Derived { mut value, inputs } = impact(&pair, &[changed]).await;
                 let value = value.pop().expect("one symbol in, one impact out");
                 trace::log(
@@ -602,7 +594,7 @@ where
     /// What became of the remaining references of a removed symbol.
     pub async fn removal_impact(
         &self,
-        session: &LiveSession<G, S>,
+        view: &RevisionView<G, S>,
         revision: u32,
         sym: &Sym,
     ) -> Fallible<Derived<RemovalImpact>> {
@@ -610,12 +602,12 @@ where
             revision,
             Box::pin(async move {
                 let started = Instant::now();
-                let changed = self.changed(session, revision, "removal impact", sym).await?;
+                let changed = self.changed(view, revision, "removal impact", sym).await?;
                 if changed.change != Change::Removed {
                     return Err(SessionError::Invalid("the symbol was not removed".into()));
                 }
-                let files = session.changed_files(revision).await?;
-                let pair = self.pair(session, revision).await?;
+                let files = view.changed_files(revision).await?;
+                let pair = self.pair(view, revision).await?;
                 let Derived { mut value, inputs } = removal_impact(&pair, &[changed], &files).await;
                 let value = value.pop().expect("one symbol in, one impact out");
                 trace::log(|| format!("removal impact {sym}"), started);
@@ -629,17 +621,17 @@ where
     /// symbol is returned with its position.
     pub async fn reachability(
         &self,
-        session: &LiveSession<G, S>,
+        view: &RevisionView<G, S>,
         revision: u32,
         sym: &Sym,
     ) -> Fallible<(SymbolInfo, Derived<Reach>)> {
         self.current(revision, Box::pin(async move {
             let started = Instant::now();
-            let changed = self.changed(session, revision, "reachability", sym).await?;
+            let changed = self.changed(view, revision, "reachability", sym).await?;
             if changed.change == Change::Removed {
                 return Err(SessionError::Invalid("a removed symbol has nothing to reach".into()));
             }
-            let pair = self.pair(session, revision).await?;
+            let pair = self.pair(view, revision).await?;
             let derived = reachability(&pair, &changed.symbol, &EntryPoints::default(), REACH_BOUNDS).await;
             trace::log(
                 || {
@@ -986,7 +978,7 @@ mod tests {
     #[tokio::test]
     async fn the_target_servers_of_every_language_start_at_once_and_the_base_side_after_them() {
         let (fx, semantics, counters) = semantics().await;
-        semantics.start_servers(&fx.session, 0).await.unwrap();
+        semantics.start_servers(&fx.view, 0).await.unwrap();
         assert_eq!(counters.started.load(Ordering::SeqCst), 4);
         assert_eq!(counters.peak_starting.load(Ordering::SeqCst), 2);
         assert_eq!(counters.snapshot_started_early.load(Ordering::SeqCst), 0);
@@ -1005,7 +997,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        semantics.start_servers(&fx.session, revision).await.unwrap();
+        semantics.start_servers(&fx.view, revision).await.unwrap();
 
         assert_eq!(counters.live_started.load(Ordering::SeqCst), 0);
         assert_eq!(
@@ -1022,7 +1014,7 @@ mod tests {
             &[("a.rs", "two\n"), ("main.go", "same\n")],
         )
         .await;
-        semantics.start_servers(&fx.session, 0).await.unwrap();
+        semantics.start_servers(&fx.view, 0).await.unwrap();
         // Rust on both sides, Go on the target side only.
         assert_eq!(counters.started.load(Ordering::SeqCst), 3);
     }
@@ -1030,8 +1022,8 @@ mod tests {
     #[tokio::test]
     async fn starting_servers_again_leaves_the_running_ones_alone() {
         let (fx, semantics, counters) = semantics().await;
-        semantics.start_servers(&fx.session, 0).await.unwrap();
-        semantics.start_servers(&fx.session, 0).await.unwrap();
+        semantics.start_servers(&fx.view, 0).await.unwrap();
+        semantics.start_servers(&fx.view, 0).await.unwrap();
         assert_eq!(counters.started.load(Ordering::SeqCst), 4);
     }
 
@@ -1050,7 +1042,7 @@ mod tests {
             .chain([("z.py", "two\n")])
             .collect();
         let (fx, semantics, counters) = semantics_over(&before, &after).await;
-        semantics.changed_symbols(&fx.session, 0).await.unwrap();
+        semantics.changed_symbols(&fx.view, 0).await.unwrap();
         assert_eq!(counters.started_at_first_answer.load(Ordering::SeqCst), 2);
     }
 
@@ -1080,7 +1072,7 @@ mod tests {
                 linger: Arc::new(Spawned),
             },
         );
-        semantics.changed_symbols(&fx.session, 0).await.unwrap();
+        semantics.changed_symbols(&fx.view, 0).await.unwrap();
 
         let heard = heard.lock().unwrap();
         let analysis: Vec<_> = heard.iter().filter(|t| t.kind == TaskKind::Analyse).collect();
@@ -1102,12 +1094,12 @@ mod tests {
             file: RepoPath(b"a.rs".to_vec()),
             pos: Pos { line: 0, col: 0 },
         };
-        let hover = semantics.hover(&fx.session, 0, Side::Target, &at).await.unwrap();
+        let hover = semantics.hover(&fx.view, 0, Side::Target, &at).await.unwrap();
         let by = hover.provenance.unwrap();
         assert_eq!(by.server.label, "fake rust");
         assert!(!by.from_cache);
 
-        let changes = semantics.changed_symbols(&fx.session, 0).await.unwrap();
+        let changes = semantics.changed_symbols(&fx.view, 0).await.unwrap();
         assert_eq!(
             changes.inputs.primitives,
             [
@@ -1182,7 +1174,7 @@ mod tests {
                 file: RepoPath(b"a.rs".to_vec()),
                 pos: Pos { line: 0, col: 0 },
             };
-            let hover = semantics.hover(&fx.session, 0, Side::Target, &at);
+            let hover = semantics.hover(&fx.view, 0, Side::Target, &at);
             let moved = async {
                 while counters.hovers_asked.load(Ordering::SeqCst) == 0 {
                     tokio::task::yield_now().await;
@@ -1203,7 +1195,7 @@ mod tests {
     async fn derived_work_for_an_older_revision_is_refused_without_asking_a_server() {
         let (fx, semantics, counters) = semantics().await;
         fx.session.revisions().advance(3);
-        let stale = semantics.changed_symbols(&fx.session, 0).await;
+        let stale = semantics.changed_symbols(&fx.view, 0).await;
         assert!(matches!(stale, Err(SessionError::Stale { current: 3 })));
         assert_eq!(counters.started.load(Ordering::SeqCst), 0);
     }
@@ -1212,8 +1204,8 @@ mod tests {
     async fn concurrent_callers_of_the_changed_symbols_ask_each_server_once() {
         let (fx, semantics, counters) = semantics().await;
         let (first, second) = join(
-            semantics.changed_symbols(&fx.session, 0),
-            semantics.changed_symbols(&fx.session, 0),
+            semantics.changed_symbols(&fx.view, 0),
+            semantics.changed_symbols(&fx.view, 0),
         )
         .await;
         let (first, second) = (first.unwrap(), second.unwrap());
@@ -1226,7 +1218,7 @@ mod tests {
         assert_eq!(counters.live_symbol_requests.load(Ordering::SeqCst), 0);
         assert_eq!(counters.started.load(Ordering::SeqCst), 2);
 
-        let third = semantics.changed_symbols(&fx.session, 0).await.unwrap();
+        let third = semantics.changed_symbols(&fx.view, 0).await.unwrap();
         assert_eq!(third.value, first.value);
         assert_eq!(counters.text_symbol_requests.load(Ordering::SeqCst), 4);
     }
@@ -1276,7 +1268,7 @@ mod tests {
         let (fx, semantics, heard) = semantics_announcing().await;
         let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
         let mut calls: Vec<_> = (0..3)
-            .map(|_| Box::pin(semantics.changed_symbols(&fx.session, 0)))
+            .map(|_| Box::pin(semantics.changed_symbols(&fx.view, 0)))
             .collect();
         while searches(&heard) == 0 {
             for call in &mut calls {
@@ -1297,12 +1289,12 @@ mod tests {
     async fn a_revision_that_leaves_the_snapshots_as_they_were_joins_the_search_under_way() {
         let (fx, semantics, heard) = semantics_announcing().await;
         let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-        let mut old = Box::pin(semantics.changed_symbols(&fx.session, 0));
+        let mut old = Box::pin(semantics.changed_symbols(&fx.view, 0));
         while searches(&heard) == 0 {
             assert!(old.as_mut().poll(&mut cx).is_pending());
         }
         let revision = fx.session.exclude_path("b.py", false).await.unwrap();
-        let mut new = Box::pin(semantics.changed_symbols(&fx.session, revision));
+        let mut new = Box::pin(semantics.changed_symbols(&fx.view, revision));
         assert!(new.as_mut().poll(&mut cx).is_pending());
         drop(old);
         new.await.unwrap();
@@ -1323,7 +1315,7 @@ mod tests {
         let (fx, semantics, counters) = semantics_over(&borrowed(&before), &borrowed(&after)).await;
         let asked = || counters.text_symbol_requests.load(Ordering::SeqCst);
 
-        let mut old = Box::pin(semantics.changed_symbols(&fx.session, 0));
+        let mut old = Box::pin(semantics.changed_symbols(&fx.view, 0));
         std::future::poll_fn(|cx| {
             if asked() > 0 {
                 return std::task::Poll::Ready(());
@@ -1338,7 +1330,7 @@ mod tests {
         assert!(matches!(old.await, Err(SessionError::Stale { .. })));
         assert!(asked() < 16, "the search was under way, not done");
 
-        let new = semantics.changed_symbols(&fx.session, revision).await.unwrap();
+        let new = semantics.changed_symbols(&fx.view, revision).await.unwrap();
         assert_eq!(new.value.symbols.len(), 8);
         assert_eq!(asked(), 16, "both texts of each file, once");
     }
@@ -1372,7 +1364,7 @@ mod tests {
             },
         );
         // Four selections of a symbol, three analyses each.
-        let all = bounded(12, 0..12, |_| semantics.changed_symbols(&fx.session, 0)).await;
+        let all = bounded(12, 0..12, |_| semantics.changed_symbols(&fx.view, 0)).await;
         assert!(all.iter().all(Result::is_ok));
 
         let heard = heard.lock().unwrap();
@@ -1394,7 +1386,7 @@ mod tests {
             let before: Vec<_> = names.iter().map(|p| (p.as_str(), "one\n")).collect();
             let after: Vec<_> = names.iter().map(|p| (p.as_str(), "two\n")).collect();
             let (fx, semantics, counters) = semantics_over(&before, &after).await;
-            semantics.changed_symbols(&fx.session, 0).await.unwrap();
+            semantics.changed_symbols(&fx.view, 0).await.unwrap();
             counters.identified.load(Ordering::SeqCst)
         }
         assert_eq!(identities(2).await, identities(16).await);
@@ -1403,7 +1395,7 @@ mod tests {
     #[tokio::test]
     async fn a_revision_asks_for_the_symbols_of_the_texts_that_are_new_and_of_no_other() {
         let (fx, semantics, counters) = semantics().await;
-        semantics.changed_symbols(&fx.session, 0).await.unwrap();
+        semantics.changed_symbols(&fx.view, 0).await.unwrap();
         let asked = || counters.text_symbol_requests.load(Ordering::SeqCst);
         assert_eq!(asked(), 4);
 
@@ -1411,19 +1403,19 @@ mod tests {
         let revision = fx
             .settle(&[("a.rs", "three\n"), ("b.py", "two\n"), ("c.md", "two\n")])
             .await;
-        semantics.changed_symbols(&fx.session, revision).await.unwrap();
+        semantics.changed_symbols(&fx.view, revision).await.unwrap();
         assert_eq!(asked(), 5);
 
         // Nothing about the content changes.
         let revision = fx.session.exclude_path("c.md", false).await.unwrap();
-        semantics.changed_symbols(&fx.session, revision).await.unwrap();
+        semantics.changed_symbols(&fx.view, revision).await.unwrap();
         assert_eq!(asked(), 5);
 
         // The edit is undone: the text was seen before.
         let revision = fx
             .settle(&[("a.rs", "two\n"), ("b.py", "two\n"), ("c.md", "two\n")])
             .await;
-        semantics.changed_symbols(&fx.session, revision).await.unwrap();
+        semantics.changed_symbols(&fx.view, revision).await.unwrap();
         assert_eq!(asked(), 5);
     }
 
@@ -1436,13 +1428,13 @@ mod tests {
                 &[("a.rs", "two\n"), ("b.py", "two\n"), ("c.md", "two\n")],
             )
             .await;
-            let mut results = vec![semantics.changed_symbols(&fx.session, 0).await.unwrap()];
+            let mut results = vec![semantics.changed_symbols(&fx.view, 0).await.unwrap()];
             for edit in ["three\n", "two\n"] {
                 let revision = fx.settle(&[("a.rs", edit), ("b.py", "two\n"), ("c.md", "two\n")]).await;
-                results.push(semantics.changed_symbols(&fx.session, revision).await.unwrap());
+                results.push(semantics.changed_symbols(&fx.view, revision).await.unwrap());
             }
             let revision = fx.session.exclude_path("c.md", false).await.unwrap();
-            results.push(semantics.changed_symbols(&fx.session, revision).await.unwrap());
+            results.push(semantics.changed_symbols(&fx.view, revision).await.unwrap());
             (results, counters.text_symbol_requests.load(Ordering::SeqCst))
         }
         let (kept, asked_kept) = run(vet_semantic::reuse::KEPT).await;
@@ -1474,7 +1466,7 @@ mod tests {
         let before = [("a.rs", "one\n"), ("b.py", "one\n"), ("c.md", "one\n")];
         let after = [("a.rs", "two\n"), ("b.py", "two\n"), ("c.md", "two\n")];
         let (fx, plain, _) = semantics_over(&before, &after).await;
-        let expected = plain.changed_symbols(&fx.session, 0).await.unwrap();
+        let expected = plain.changed_symbols(&fx.view, 0).await.unwrap();
 
         let store = Arc::new(MemoryCache::default());
         let mut launched = Vec::new();
@@ -1494,7 +1486,7 @@ mod tests {
                 },
             )
             .persisting(store.clone());
-            let changes = semantics.changed_symbols(&fx.session, 0).await.unwrap();
+            let changes = semantics.changed_symbols(&fx.view, 0).await.unwrap();
             assert_eq!(changes.value, expected.value);
             launched.push(counters.text_symbol_requests.load(Ordering::SeqCst));
         }
@@ -1512,19 +1504,19 @@ mod tests {
             pos: Pos { line: 0, col: 0 },
         };
         let mut answers = Vec::new();
-        let hover = semantics.hover(&fx.session, 0, Side::Base, &at).await.unwrap();
+        let hover = semantics.hover(&fx.view, 0, Side::Base, &at).await.unwrap();
         answers.push((format!("{:?}", hover.result), hover.provenance.unwrap().from_cache));
-        let definition = semantics.definition(&fx.session, 0, Side::Base, &at).await.unwrap();
+        let definition = semantics.definition(&fx.view, 0, Side::Base, &at).await.unwrap();
         answers.push((
             format!("{:?}", definition.result),
             definition.provenance.unwrap().from_cache,
         ));
-        let references = semantics.references(&fx.session, 0, Side::Base, &at).await.unwrap();
+        let references = semantics.references(&fx.view, 0, Side::Base, &at).await.unwrap();
         answers.push((
             format!("{:?}", references.result),
             references.provenance.unwrap().from_cache,
         ));
-        let pair = semantics.pair(&fx.session, 0).await.unwrap();
+        let pair = semantics.pair(&fx.view, 0).await.unwrap();
         let diagnostics = pair.diagnostics(Side::Base, &file).await.unwrap();
         answers.push((format!("{:?}", diagnostics.value), diagnostics.provenance.from_cache));
         let symbols = pair.document_symbols(Side::Base, &file).await.unwrap();

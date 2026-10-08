@@ -23,13 +23,13 @@ impl Booted {
     /// by the query that needs it.
     pub async fn start_servers(&self) {
         let revision = self.session.revision().await;
-        let _ = self.semantics.start_servers(&self.session, revision).await;
+        let _ = self.semantics.start_servers(&self.view, revision).await;
     }
 
     pub async fn hover(&self, revision: u32, side: Side, path: &str, line: u32, col: u32) -> Result<Response, String> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
-            .hover(&self.session, revision, core_side(side), &at)
+            .hover(&self.view, revision, core_side(side), &at)
             .await
             .map_err(message)?;
         let (text, unavailable) = map::answer(answer.result, self.language_of(&at.file));
@@ -61,7 +61,7 @@ impl Booted {
     ) -> Result<Response, String> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
-            .definition(&self.session, revision, core_side(side), &at)
+            .definition(&self.view, revision, core_side(side), &at)
             .await
             .map_err(message)?;
         Ok(Response::Definition(self.locations(answer, side, &at)))
@@ -77,7 +77,7 @@ impl Booted {
     ) -> Result<Response, String> {
         let at = map::at(path, line, col);
         let answer = (self.semantics)
-            .references(&self.session, revision, core_side(side), &at)
+            .references(&self.view, revision, core_side(side), &at)
             .await
             .map_err(message)?;
         Ok(Response::References(self.locations(answer, side, &at)))
@@ -86,7 +86,7 @@ impl Booted {
     pub async fn diagnostics(&self, revision: u32, path: &str) -> Result<Response, String> {
         let file = RepoPath::from(path);
         let answer = (self.semantics)
-            .diagnostics(&self.session, revision, &file)
+            .diagnostics(&self.view, revision, &file)
             .await
             .map_err(message)?;
         let (found, unavailable) = map::answer(answer.result, self.language_of(&file));
@@ -102,7 +102,7 @@ impl Booted {
     pub async fn changed_symbols(&self, revision: u32) -> Result<Response, String> {
         let changes = self
             .semantics
-            .changed_symbols(&self.session, revision)
+            .changed_symbols(&self.view, revision)
             .await
             .map_err(message)?;
         Ok(Response::ChangedSymbols(map::changed_symbols(revision, &changes)))
@@ -110,7 +110,7 @@ impl Booted {
 
     pub async fn signature(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
         let answer = (self.semantics)
-            .signature(&self.session, revision, &map::core_sym(symbol))
+            .signature(&self.view, revision, &map::core_sym(symbol))
             .await
             .map_err(message)?;
         let (found, unavailable) = map::answer(answer.result, self.language_of(&RepoPath::from(symbol.path.as_str())));
@@ -119,7 +119,7 @@ impl Booted {
 
     pub async fn impact(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
         let impact = (self.semantics)
-            .impact(&self.session, revision, &map::core_sym(symbol))
+            .impact(&self.view, revision, &map::core_sym(symbol))
             .await
             .map_err(message)?;
         Ok(Response::Impact(map::impact(revision, &impact)))
@@ -127,7 +127,7 @@ impl Booted {
 
     pub async fn removal_impact(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
         let impact = (self.semantics)
-            .removal_impact(&self.session, revision, &map::core_sym(symbol))
+            .removal_impact(&self.view, revision, &map::core_sym(symbol))
             .await
             .map_err(message)?;
         Ok(Response::RemovalImpact(map::removal_impact(revision, &impact)))
@@ -135,7 +135,7 @@ impl Booted {
 
     pub async fn reachability(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
         let (info, reach) = (self.semantics)
-            .reachability(&self.session, revision, &map::core_sym(symbol))
+            .reachability(&self.view, revision, &map::core_sym(symbol))
             .await
             .map_err(message)?;
         Ok(Response::Reachability(map::reachability(revision, &info, &reach)))
