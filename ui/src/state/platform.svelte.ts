@@ -2,6 +2,7 @@
 // what the backend asked the viewer to hear. Syncing the threads is the backend's (SPEC I5); this
 // holds the answers and the notifications.
 
+import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { Notification } from "../generated/Notification";
 import type { PlatformStatus } from "../generated/PlatformStatus";
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
@@ -9,6 +10,7 @@ import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
 import { errorText } from "../lib/errorText";
 import { AccountResync } from "./accountResync";
 import type { Backend } from "./backend";
+import { queue } from "./queue.svelte";
 import { session } from "./session.svelte";
 import { threads } from "./threads.svelte";
 
@@ -38,6 +40,8 @@ class PlatformStore {
   sending = $state(false);
   /** The tab the Comments tool window shows. */
   commentsTab = $state<"review" | "conversation">("review");
+  /** The changeset the last `changesetOpened` put on view. */
+  private opened?: ChangesetKey;
   private backend?: Backend;
   private seq = 0;
   private lastId = 0;
@@ -53,6 +57,7 @@ class PlatformStore {
       } else if (event.type === "notification") {
         this.notify(event.notification);
       } else if (event.type === "changesetOpened") {
+        this.opened = event.changeset;
         this.info = undefined;
         void this.reload();
       } else if (event.type === "threadsChanged") {
@@ -68,16 +73,22 @@ class PlatformStore {
       offResync();
       offAccounts();
       this.backend = undefined;
+      this.opened = undefined;
       this.info = undefined;
       this.status = undefined;
     };
   }
 
-  /** Asks again what the platform said; a changeset that is no pull request has nothing. */
+  /** Asks again what the platform said; a changeset that is no pull request has nothing, and is not asked. */
   async reload() {
     const backend = this.backend;
     if (!backend) return;
     const seq = ++this.seq;
+    const onView = this.opened ?? queue.onView;
+    if (onView !== undefined && onView.type !== "pullRequest") {
+      this.info = undefined;
+      return;
+    }
     try {
       const info = await backend.pullRequestInfo();
       if (seq === this.seq) [this.info, this.status] = [info, info.platform];
