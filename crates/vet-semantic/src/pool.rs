@@ -10,7 +10,8 @@
 //!
 //! Answers outlive their server: they are kept by the pool under keys that name
 //! the server's identity (I2, `reuse`), so a server that starts later with an
-//! equal identity on an equal tree answers from them.
+//! equal identity on an equal tree answers from them. Those that persist also
+//! outlive the process, in the store the pool is given.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -27,7 +28,7 @@ use crate::ports::{
     Answered, At, Backend, BackendId, Diagnostic, LanguageServer, LaunchError, Location, Materializer,
     NotMaterializable, Provenance, QueryError, ServerIdentity, ServerLauncher, Started, SymbolInfo, Tree,
 };
-use crate::reuse::{Answers, Basis, Computed, KEPT, Key, ProjectQuery, Restore, Reused};
+use crate::reuse::{Answers, Basis, Computed, KEPT, Key, ProjectQuery, Restore, Reused, SemanticCache};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Target {
@@ -219,6 +220,9 @@ pub struct Pool<M: Materializer, L: ServerLauncher> {
     launcher: L,
     live_root: PathBuf,
     capacity: usize,
+    /// How many answers `answers` keeps in memory.
+    limit: usize,
+    store: Option<Arc<dyn SemanticCache>>,
     answers: Arc<Answers>,
     /// Numbers the servers started on trees whose restore left no record.
     instances: AtomicU64,
@@ -295,6 +299,8 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             launcher,
             live_root,
             capacity,
+            limit: KEPT,
+            store: None,
             answers: Arc::new(Answers::new(KEPT)),
             instances: AtomicU64::new(0),
             state: Mutex::new(State {
@@ -305,10 +311,24 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         }
     }
 
-    /// Keeps at most `limit` answers; 0 keeps none, so every question reaches a server.
+    /// Keeps at most `limit` answers in memory; 0 keeps none, so every question
+    /// reaches a server unless `store` has the answer.
     pub fn keeping(mut self, limit: usize) -> Self {
-        self.answers = Arc::new(Answers::new(limit));
+        self.limit = limit;
+        self.answers = Arc::new(Answers::new(limit).persisting(self.store.clone()));
         self
+    }
+
+    /// Keeps the answers that persist in `store`, behind the ones in memory.
+    pub fn persisting(mut self, store: Arc<dyn SemanticCache>) -> Self {
+        self.store = Some(store);
+        self.answers = Arc::new(Answers::new(self.limit).persisting(self.store.clone()));
+        self
+    }
+
+    /// Drops the answers kept in memory; the stored ones are the store's.
+    pub fn forget_answers(&self) {
+        self.answers.forget();
     }
 
     /// The server for `key`: the running one, the one being started, or a new one.
@@ -540,6 +560,7 @@ mod tests {
     use crate::join::join;
     use crate::policy::AnalysisPolicy;
     use crate::ports::{Materialized, Pos, Readiness, ServerConfig, Severity, Span, Sym};
+    use crate::reuse::Value;
     use crate::testutil::{block_on, yield_once};
 
     fn backend(executes: bool) -> Backend {
@@ -923,10 +944,12 @@ mod tests {
         assert_eq!(counters.started.load(Ordering::SeqCst), 2);
     }
 
-    #[test]
-    fn changing_any_one_key_input_asks_a_server_and_only_for_the_answers_that_depend_on_it() {
-        type Change = fn(&Counters, &mut PoolKey, &mut Ask);
-        let cases: [(&str, Change, &[&str]); 12] = [
+    type Change = fn(&Counters, &mut PoolKey, &mut Ask);
+
+    /// Each input of a key, what changing it does to the test's world, and the
+    /// queries that reach a server afterwards.
+    fn key_input_cases() -> [(&'static str, Change, &'static [&'static str]); 12] {
+        [
             ("nothing", |_, _, _| {}, &[]),
             (
                 "the server binary",
@@ -979,8 +1002,12 @@ mod tests {
                 |_, _, ask| ask.query = "b",
                 &["workspace_symbols"],
             ),
-        ];
-        for (name, change, asks_again) in cases {
+        ]
+    }
+
+    #[test]
+    fn changing_any_one_key_input_asks_a_server_and_only_for_the_answers_that_depend_on_it() {
+        for (name, change, asks_again) in key_input_cases() {
             let (pool, counters) = pool(8);
             let (mut key, mut asked_about) = (snapshot_key(1), ask());
             ask_in(&pool, &counters, &key, &asked_about);
@@ -991,6 +1018,139 @@ mod tests {
             let (_, asked) = ask_in(&pool, &counters, &key, &asked_about);
             assert_eq!(asked, asks_again, "after changing {name}");
         }
+    }
+
+    /// Answers kept by the key, in memory, as a stand-in for a file.
+    #[derive(Default)]
+    struct MemoryCache(Mutex<HashMap<Key, Value>>);
+
+    impl SemanticCache for MemoryCache {
+        fn get<'a>(&'a self, key: &'a Key) -> std::pin::Pin<Box<dyn Future<Output = Option<Value>> + Send + 'a>> {
+            Box::pin(async move { self.0.lock().unwrap().get(key).cloned() })
+        }
+
+        fn put(&self, key: &Key, value: &Value) {
+            self.0.lock().unwrap().insert(key.clone(), value.clone());
+        }
+    }
+
+    /// A pool of a later launch: nothing in memory, the same store and the same world.
+    fn launch_over(counters: &Arc<Counters>, store: &Arc<MemoryCache>) -> TestPool {
+        Pool::new(
+            FakeMaterializer(counters.clone()),
+            FakeLauncher(counters.clone()),
+            PathBuf::from("/live"),
+            8,
+        )
+        .persisting(store.clone())
+    }
+
+    #[test]
+    fn a_later_launch_reads_what_persists_from_the_store_and_asks_a_server_for_the_rest() {
+        let counters = Arc::new(Counters::default());
+        let store = Arc::new(MemoryCache::default());
+        let (first, asked) = ask_in(&launch_over(&counters, &store), &counters, &snapshot_key(1), &ask());
+        assert_eq!(asked, ALL);
+
+        let (later, asked) = ask_in(&launch_over(&counters, &store), &counters, &snapshot_key(1), &ask());
+        assert_eq!(asked, ["workspace_symbols"]);
+        let values = |answers: &[(String, bool)]| answers.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>();
+        assert_eq!(values(&later), values(&first));
+        let reused: Vec<_> = later.iter().map(|(_, reused)| *reused).collect();
+        assert_eq!(reused, [true, true, true, true, true, true, true, false, true]);
+    }
+
+    #[test]
+    fn changing_any_one_key_input_asks_a_server_in_a_later_launch_too() {
+        for (name, change, asks_again) in key_input_cases() {
+            let counters = Arc::new(Counters::default());
+            let store = Arc::new(MemoryCache::default());
+            let (mut key, mut asked_about) = (snapshot_key(1), ask());
+            ask_in(&launch_over(&counters, &store), &counters, &key, &asked_about);
+
+            change(&counters, &mut key, &mut asked_about);
+            let (_, asked) = ask_in(&launch_over(&counters, &store), &counters, &key, &asked_about);
+            // The workspace queries are not kept between launches.
+            let expected: Vec<_> = ALL
+                .into_iter()
+                .filter(|kind| asks_again.contains(kind) || *kind == "workspace_symbols")
+                .collect();
+            assert_eq!(asked, expected, "after changing {name}");
+        }
+    }
+
+    #[test]
+    fn what_a_launch_may_not_keep_is_not_stored_for_the_next() {
+        let hover_in_later_launch = |prepare: fn(&Counters, &mut PoolKey)| {
+            let counters = Arc::new(Counters::default());
+            let store = Arc::new(MemoryCache::default());
+            let mut key = snapshot_key(1);
+            prepare(&counters, &mut key);
+            ask_in(&launch_over(&counters, &store), &counters, &key, &ask());
+            counters.busy.store(false, Ordering::SeqCst);
+            counters.begins_work.store(false, Ordering::SeqCst);
+            ask_in(&launch_over(&counters, &store), &counters, &key, &ask())
+                .1
+                .contains(&"hover")
+        };
+        assert!(
+            hover_in_later_launch(|c, _| c.busy.store(true, Ordering::SeqCst)),
+            "given while the server indexed"
+        );
+        assert!(
+            hover_in_later_launch(|c, _| c.begins_work.store(true, Ordering::SeqCst)),
+            "given while work began"
+        );
+        assert!(
+            hover_in_later_launch(|c, _| c.restore.store(0, Ordering::SeqCst)),
+            "about a tree whose restore left no record"
+        );
+        assert!(
+            hover_in_later_launch(|_, key| key.target = Target::Live),
+            "about the live tree"
+        );
+        assert!(!hover_in_later_launch(|_, _| {}), "the same, when none of it applies");
+    }
+
+    #[test]
+    fn an_answer_in_the_store_that_is_not_of_the_kind_asked_for_is_asked_of_the_server() {
+        let counters = Arc::new(Counters::default());
+        let store = Arc::new(MemoryCache::default());
+        ask_in(&launch_over(&counters, &store), &counters, &snapshot_key(1), &ask());
+        for value in store.0.lock().unwrap().values_mut() {
+            *value = Value::Hover(None);
+        }
+        let (answers, asked) = ask_in(&launch_over(&counters, &store), &counters, &snapshot_key(1), &ask());
+        assert_eq!(
+            asked,
+            [
+                "document_symbols",
+                "text_symbols",
+                "definition",
+                "references",
+                "incoming_calls",
+                "outgoing_calls",
+                "workspace_symbols",
+                "diagnostics"
+            ]
+        );
+        assert_eq!(answers.len(), ALL.len());
+    }
+
+    #[test]
+    fn forgetting_the_answers_in_memory_leaves_those_in_the_store() {
+        let counters = Arc::new(Counters::default());
+        let store = Arc::new(MemoryCache::default());
+        let pool = launch_over(&counters, &store);
+        ask_in(&pool, &counters, &snapshot_key(1), &ask());
+        pool.forget_answers();
+        let (_, asked) = ask_in(&pool, &counters, &snapshot_key(1), &ask());
+        assert_eq!(asked, ["workspace_symbols"]);
+
+        store.0.lock().unwrap().clear();
+        pool.forget_answers();
+        let (_, asked) = ask_in(&pool, &counters, &snapshot_key(1), &ask());
+        assert_eq!(asked, ALL);
     }
 
     #[test]
@@ -1021,9 +1181,13 @@ mod tests {
 
     #[test]
     fn caching_on_and_off_gives_identical_answers() {
-        fn script(kept: usize) -> (Vec<Vec<String>>, usize) {
+        fn script(kept: usize, store: Option<&Arc<MemoryCache>>) -> (Vec<Vec<String>>, usize) {
             let (pool, counters) = pool(8);
             let pool = pool.keeping(kept);
+            let pool = match store {
+                Some(store) => pool.persisting(store.clone()),
+                None => pool,
+            };
             let mut answered = Vec::new();
             let mut total = 0;
             let mut run = |counters: &Counters, key: &PoolKey, ask: &Ask| {
@@ -1053,10 +1217,19 @@ mod tests {
             run(&counters, &snapshot_key(2), &ask());
             (answered, total)
         }
-        let (without, asked_without) = script(0);
-        let (with, asked_with) = script(crate::reuse::KEPT);
+        let (without, asked_without) = script(0, None);
+        let (with, asked_with) = script(crate::reuse::KEPT, None);
         assert_eq!(with, without);
         assert!(asked_with < asked_without, "{asked_with} < {asked_without}");
+
+        // Run again by a later launch over what the first one stored.
+        let store = Arc::new(MemoryCache::default());
+        let (first_launch, asked_first) = script(crate::reuse::KEPT, Some(&store));
+        let (restarted, asked_restarted) = script(crate::reuse::KEPT, Some(&store));
+        assert_eq!(first_launch, without);
+        assert_eq!(restarted, without);
+        assert_eq!(asked_first, asked_with);
+        assert!(asked_restarted < asked_with, "{asked_restarted} < {asked_with}");
     }
 
     #[test]

@@ -3,6 +3,7 @@
 //! Derived analyses consume the [`Primitives`] trait, not the pool.
 
 use std::fmt;
+use std::sync::Arc;
 
 use vet_core::content::RepoPath;
 use vet_core::review::Side;
@@ -13,6 +14,7 @@ use crate::ports::{
     Answered, At, Backend, BackendId, Diagnostic, Location, Materializer, QueryError, ServerLauncher, SymbolInfo,
     backend_for,
 };
+use crate::reuse::SemanticCache;
 
 /// What a side of a comparison is served from, and what analysis it may run.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -76,6 +78,12 @@ where
     /// Keeps at most `limit` answers of the servers for reuse; 0 keeps none.
     pub fn keeping(mut self, limit: usize) -> Self {
         self.pool = self.pool.keeping(limit);
+        self
+    }
+
+    /// Keeps the answers that persist in `store`, behind the ones in memory.
+    pub fn persisting(mut self, store: Arc<dyn SemanticCache>) -> Self {
+        self.pool = self.pool.persisting(store);
         self
     }
 

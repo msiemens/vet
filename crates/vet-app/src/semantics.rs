@@ -23,6 +23,7 @@ use vet_semantic::ports::{
     Sym, SymbolInfo, prefer_openable,
 };
 use vet_semantic::query::{Asked, Pair, Primitives, Semantic, SemanticError, Served};
+use vet_semantic::reuse::SemanticCache;
 use vet_semantic::signature::{Signature, signature};
 use vet_semantic::trace;
 
@@ -183,6 +184,17 @@ where
     pub fn keeping(mut self, limit: usize) -> Self {
         self.semantic = self.semantic.keeping(limit);
         self
+    }
+
+    /// Keeps the answers that persist in `store`, behind the ones in memory.
+    pub fn persisting(mut self, store: Arc<dyn SemanticCache>) -> Self {
+        self.semantic = self.semantic.persisting(store);
+        self
+    }
+
+    /// Drops the answers kept in memory; the next question is asked again (or read from the store).
+    pub fn forget_answers(&self) {
+        self.semantic.pool().forget_answers();
     }
 
     /// The language that serves `file`; `None`: it is unsupported.
@@ -1121,5 +1133,53 @@ mod tests {
         let symbols = |all: &[Derived<Changes>]| all.iter().map(|d| d.value.clone()).collect::<Vec<_>>();
         assert_eq!(symbols(&kept), symbols(&not_kept));
         assert!(asked_kept < asked_not_kept, "{asked_kept} < {asked_not_kept}");
+    }
+
+    /// Answers kept by the key, as a stand-in for the file.
+    #[derive(Default)]
+    struct MemoryCache(Mutex<std::collections::HashMap<vet_semantic::reuse::Key, vet_semantic::reuse::Value>>);
+
+    impl SemanticCache for MemoryCache {
+        fn get<'a>(
+            &'a self,
+            key: &'a vet_semantic::reuse::Key,
+        ) -> Pin<Box<dyn Future<Output = Option<vet_semantic::reuse::Value>> + Send + 'a>> {
+            Box::pin(async move { self.0.lock().unwrap().get(key).cloned() })
+        }
+
+        fn put(&self, key: &vet_semantic::reuse::Key, value: &vet_semantic::reuse::Value) {
+            self.0.lock().unwrap().insert(key.clone(), value.clone());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_session_in_a_later_launch_gets_the_same_changes_without_asking_for_symbols_stored_before() {
+        let before = [("a.rs", "one\n"), ("b.py", "one\n"), ("c.md", "one\n")];
+        let after = [("a.rs", "two\n"), ("b.py", "two\n"), ("c.md", "two\n")];
+        let (fx, plain, _) = semantics_over(&before, &after).await;
+        let expected = plain.changed_symbols(&fx.session, 0).await.unwrap();
+
+        let store = Arc::new(MemoryCache::default());
+        let mut launched = Vec::new();
+        for _ in 0..2 {
+            let counters = Arc::new(Counters::default());
+            let semantics = Semantics::new(
+                FakeMaterializer,
+                FakeLauncher(counters.clone()),
+                "/live".into(),
+                vec![backend("rust", "rs"), backend("python", "py"), backend("go", "go")],
+                Trust::Local,
+                Links {
+                    revisions: fx.session.revisions(),
+                    limits: RestoreLimits::default(),
+                    tasks: Tasks::default(),
+                },
+            )
+            .persisting(store.clone());
+            let changes = semantics.changed_symbols(&fx.session, 0).await.unwrap();
+            assert_eq!(changes.value, expected.value);
+            launched.push(counters.text_symbol_requests.load(Ordering::SeqCst));
+        }
+        assert_eq!(launched, [4, 0]);
     }
 }

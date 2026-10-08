@@ -12,10 +12,13 @@
 //! - Answers of the live tree, which changes under the server, have no key.
 //!
 //! An answer the server gave while it was at work on its own is not kept, and
-//! neither is an error.
+//! neither is an error. The answers that persist ([`Key::persists`]) are also
+//! stored behind a [`SemanticCache`], and read from it before a server is asked.
 
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use vet_core::content::{BlobId, Hash as Fingerprint, RepoPath, SnapshotId};
@@ -242,6 +245,11 @@ impl<K: Eq + Hash + Clone, V: Clone> Memo<K, V> {
         }
     }
 
+    /// Drops the values; those being computed stay, with their waiters.
+    pub fn clear(&self) {
+        self.lock().slots.retain(|_, slot| matches!(slot, Slot::Pending(_)));
+    }
+
     fn evict(&self, state: &mut State<K, V>) {
         let kept = state.slots.values().filter(|s| matches!(s, Slot::Done { .. })).count();
         if kept <= self.limit {
@@ -262,8 +270,37 @@ impl<K: Eq + Hash + Clone, V: Clone> Memo<K, V> {
     }
 }
 
+impl Key {
+    /// Whether an answer under this key is kept between launches: the symbols of a
+    /// text, and the answers about a tree whose restore was recorded, so that
+    /// another launch can name the same dependencies. Workspace queries are
+    /// unbounded in number and cheap to ask again.
+    pub fn persists(&self) -> bool {
+        match self {
+            Key::Text { .. } => true,
+            Key::Project { basis, query, .. } => {
+                matches!(basis.restore, Restore::Recorded(_)) && !matches!(query, ProjectQuery::Workspace(_))
+            }
+        }
+    }
+}
+
+/// Answers kept between launches, behind the in-memory ones (I2, §7.6). A stored
+/// value is exactly what was admitted to memory under the same key. It is
+/// disposable: whatever it cannot give is asked of a server.
+pub trait SemanticCache: Send + Sync {
+    /// The answer stored under `key`; none if there is none, or it cannot be read.
+    fn get<'a>(&'a self, key: &'a Key) -> Pin<Box<dyn Future<Output = Option<Value>> + Send + 'a>>;
+
+    /// Stores `value` under `key`, later: a query never waits for the disk.
+    fn put(&self, key: &Key, value: &Value);
+}
+
 /// The answers of the primitive queries, kept by [`Key`].
-pub struct Answers(Memo<Key, Value>);
+pub struct Answers {
+    memo: Memo<Key, Value>,
+    store: Option<Arc<dyn SemanticCache>>,
+}
 
 /// Answers kept at most.
 pub const KEPT: usize = 10_000;
@@ -271,7 +308,22 @@ pub const KEPT: usize = 10_000;
 impl Answers {
     /// Keeps at most `limit` answers; 0 keeps none, so every question is asked.
     pub fn new(limit: usize) -> Self {
-        Self(Memo::new(limit))
+        Self {
+            memo: Memo::new(limit),
+            store: None,
+        }
+    }
+
+    /// Looks the answers that persist up in `store` before asking a server, and
+    /// stores those a server gave.
+    pub fn persisting(mut self, store: Option<Arc<dyn SemanticCache>>) -> Self {
+        self.store = store;
+        self
+    }
+
+    /// Drops the answers kept in memory. Those being computed are left to finish.
+    pub fn forget(&self) {
+        self.memo.clear();
     }
 
     /// The answer under `key` and whether it was reused. Without a key, or if the
@@ -285,16 +337,29 @@ impl Answers {
         let Some(key) = key else {
             return ask.await.map(|c| (c.value, false));
         };
+        let store = self.store.as_deref().filter(|_| key.persists());
+        let restored = AtomicBool::new(false);
         let asked = async {
+            if let Some(value) = match store {
+                Some(store) => store.get(key).await.and_then(T::from_kept),
+                None => None,
+            } {
+                restored.store(true, Ordering::SeqCst);
+                return Ok(Computed {
+                    value: value.kept(),
+                    keep: true,
+                });
+            }
             let Computed { value, keep } = ask.await?;
-            Ok(Computed {
-                value: value.kept(),
-                keep,
-            })
+            let value = value.kept();
+            if let (true, Some(store)) = (keep, store) {
+                store.put(key, &value);
+            }
+            Ok(Computed { value, keep })
         };
-        let (value, reused) = self.0.get(key, asked).await?;
+        let (value, reused) = self.memo.get(key, asked).await?;
         match T::from_kept(value) {
-            Some(value) => Ok((value, reused)),
+            Some(value) => Ok((value, reused || restored.load(Ordering::SeqCst))),
             None => unreachable!("a key names the type of its answer"),
         }
     }
