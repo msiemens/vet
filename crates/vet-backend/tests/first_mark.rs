@@ -171,7 +171,7 @@ async fn session(
         return;
     }
     // A mark remaps the spans of its file only, so it should not grow with what is seen.
-    let mut slowest = Duration::ZERO;
+    let (mut slowest, mut slowest_at) = (Duration::ZERO, 0);
     for (n, path) in names.iter().enumerate() {
         let (answer, took) = timed(client.call(Request::ToggleFileSeen {
             project,
@@ -181,7 +181,9 @@ async fn session(
         }))
         .await;
         assert!(matches!(answer, Ok(Response::Review(_))), "{answer:?}");
-        slowest = slowest.max(took);
+        if took > slowest {
+            (slowest, slowest_at) = (took, n + 1);
+        }
         if (n + 1) % 50 == 0 {
             println!("{label}: file {} seen in {took:?}", n + 1);
         }
@@ -196,7 +198,7 @@ async fn session(
         panic!("no manifest");
     };
     println!(
-        "{label}: every file seen ({} hunks), the slowest took {slowest:?}",
+        "{label}: every file seen ({} hunks), the slowest (file {slowest_at}) took {slowest:?}",
         manifest.completion.seen_hunks
     );
     let undo = toggle(&client, project, revision, &names[0], 0).await;
