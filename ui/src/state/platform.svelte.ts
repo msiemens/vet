@@ -9,6 +9,7 @@ import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
 import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { session } from "./session.svelte";
+import { threads } from "./threads.svelte";
 
 /** How long a card of a notification that needs no answer stays in the corner. */
 const CARD_MS = 12_000;
@@ -86,22 +87,28 @@ class PlatformStore {
 
   /** Posts the drafts as one review; resolves what became of them, or nothing if it failed. */
   async submit(verdict: string, body: string): Promise<ReviewSubmitted | undefined> {
+    let submitted: ReviewSubmitted | undefined;
     try {
-      return await this.backend?.submitReview(verdict, body.trim() || null);
+      submitted = await this.backend?.submitReview(verdict, body.trim() || null);
     } catch (error) {
       session.notice = `Could not submit the review: ${errorText(error)}`;
       return undefined;
     }
+    await threads.reload();
+    return submitted;
   }
 
   /** Posts the drafts one after the other; resolves what became of them, or nothing if it failed. */
   async post(): Promise<ReviewSubmitted | undefined> {
+    let posted: ReviewSubmitted | undefined;
     try {
-      return await this.backend?.postDrafts();
+      posted = await this.backend?.postDrafts();
     } catch (error) {
       session.notice = `Could not post the comments: ${errorText(error)}`;
       return undefined;
     }
+    await threads.reload();
+    return posted;
   }
 
   /** Sets the viewer's vote; resolves whether the platform took it. */
