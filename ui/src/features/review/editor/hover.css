@@ -51,13 +51,13 @@
   flex: none;
 }
 .vet-hover-icon.error {
-  color: var(--del-text);
+  color: var(--severity-error);
 }
 .vet-hover-icon.warning {
-  color: var(--warn);
+  color: var(--severity-warning);
 }
 .vet-hover-icon.info {
-  color: var(--text-3);
+  color: var(--severity-info);
 }
 
 /* The signature: code blocks without a box, the first of them an item's path when another follows. */

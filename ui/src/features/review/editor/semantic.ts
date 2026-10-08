@@ -70,7 +70,7 @@ export async function queryHover(
   const hover = await hooks.hover(side, path, at.line, at.col, signal);
   // An aborted hover is an empty answer, which says nothing and is not an error.
   if (signal?.aborted) return undefined;
-  const build = hoverContent(hover, diagnostics);
+  const build = hoverContent(hover, path, diagnostics);
   if (!build) return undefined;
   return () => {
     const dom = build();

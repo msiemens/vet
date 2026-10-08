@@ -67,6 +67,10 @@
   --warn: light-dark(#bc4b27, #e07a5f);
   --note: light-dark(#7150c2, #a98beb);
   --ok: light-dark(#2b8546, #6fcf97);
+  /* A diagnostic's icon, by its severity (a hint is drawn as info). */
+  --severity-error: var(--del-text);
+  --severity-warning: light-dark(#bd5f0c, #f0a35e);
+  --severity-info: var(--accent);
 
   /* The queue's status chips: the colour of the text, over a tint of itself. */
   --status-draft: var(--text-3);
