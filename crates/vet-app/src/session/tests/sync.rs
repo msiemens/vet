@@ -574,6 +574,37 @@ async fn a_comment_on_the_whole_pull_request_the_platform_refuses_is_reported_wi
 }
 
 #[tokio::test]
+async fn a_flat_comment_on_the_whole_pull_request_takes_no_reply_and_a_draft_in_one_is_never_a_reply_of_the_review() {
+    let (fx, hosting) = on_a_pull_request().await;
+    let overall = fx.thread(NewThread::Changeset).await;
+    fx.session.submit_review(&hosting, "COMMENT", None).await.unwrap();
+
+    let refused = fx.session.reply(overall, "One more thing.".into(), 8).await;
+    assert!(matches!(refused, Err(SessionError::Invalid(_))), "{refused:?}");
+    assert_eq!(bodies(&fx.view(overall).await), ["why?"]);
+
+    // A draft such a comment holds from before replies were refused there.
+    fx.store
+        .add_message(overall, Message::written("ada".into(), "One more thing.".into(), 8))
+        .await
+        .unwrap();
+    hosting.thread("a.txt", (4, 4), "pr1", "marco", "Why 3?");
+    fx.sync(&hosting).await;
+    fx.thread(on("a.txt", 20, 21)).await;
+
+    let report = fx.session.submit_review(&hosting, "COMMENT", None).await.unwrap();
+
+    assert_eq!((report.posted, report.problem), (2, None), "the review went through");
+    let submission = hosting.0.lock().unwrap().submissions[1].clone();
+    assert!(submission.replies.is_empty(), "{submission:?}");
+    assert_eq!(submission.threads.len(), 1);
+    assert_eq!(
+        submission.comments.iter().map(|c| c.body.as_str()).collect::<Vec<_>>(),
+        ["One more thing."]
+    );
+}
+
+#[tokio::test]
 async fn own_comments_are_removed_locally_when_drafts_and_on_the_platform_when_posted() {
     let (fx, hosting) = on_a_pull_request().await;
     let mine = hosting.my_thread("a.txt", (4, 4), "pr1", "first");

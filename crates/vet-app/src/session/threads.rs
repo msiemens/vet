@@ -275,7 +275,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
 
     pub async fn reply(&self, thread: ThreadId, body: String, now: i64) -> Result<ThreadView> {
         let (mut st, _) = self.viewing(View::Changeset).await?;
-        find_thread(&st, thread)?;
+        if find_thread(&st, thread)?.is_flat() {
+            return Err(SessionError::Invalid(
+                "a comment on the whole pull request takes no replies on this platform: write a new comment".into(),
+            ));
+        }
         let message = self.message(body, now)?;
         let id = self.acquisition.store.add_message(thread, message.clone()).await?;
         edit_thread(&mut st, thread, |t| t.messages.push(Message { id, ..message }));

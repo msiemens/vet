@@ -198,6 +198,12 @@ impl Thread {
     pub fn is_posted(&self) -> bool {
         self.platform.as_ref().is_some_and(|p| p.remote_id.is_some())
     }
+
+    /// A comment on the whole pull request in the platform's flat conversation: it has no status
+    /// and takes no replies.
+    pub fn is_flat(&self) -> bool {
+        self.target == CommentTarget::Changeset && self.platform.as_ref().is_some_and(|p| !p.resolvable)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

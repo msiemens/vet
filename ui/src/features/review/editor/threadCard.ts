@@ -132,6 +132,9 @@ function draftCard(target: ThreadTarget, actions: ThreadActions): HTMLElement {
   return card;
 }
 
+/** A comment on the pull request in the platform's flat conversation: it has no status and takes no replies. */
+export const isFlat = (thread: Thread) => thread.kind === "changeset" && thread.platform?.resolvable === false;
+
 /** A message that only Vet has, in a thread the platform has or will have: posted with the review. */
 const isDraft = (thread: Thread, message: ThreadMessage) => !!thread.platform && !message.posted;
 
@@ -304,6 +307,7 @@ function threadCard(thread: Thread, open: boolean, actions: ThreadActions): HTML
   if (folded) return card;
 
   for (const message of thread.messages) card.append(...messageParts(thread, message, actions));
+  if (isFlat(thread)) return card;
   const reply = el("div", "vet-thread-reply");
   const { field, send } = composer(
     1,

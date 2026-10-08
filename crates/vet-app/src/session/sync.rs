@@ -876,6 +876,17 @@ fn drafts_of(st: &State, verdict: &str, body: Option<String>) -> (Submission, u3
             skipped += u32::try_from(drafts.len()).unwrap_or(u32::MAX);
             continue;
         }
+        // A flat comment is no thread on the platform, so nothing in it is a reply in the review:
+        // each of its drafts is a comment on the pull request of its own.
+        if thread.is_flat() {
+            submission
+                .comments
+                .extend(drafts.iter().map(|m| NewConversationComment {
+                    key: m.id.0,
+                    body: m.body.clone(),
+                }));
+            continue;
+        }
         if thread.is_posted() {
             let id = thread
                 .platform
