@@ -10,7 +10,7 @@ use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 use crate::accounts::Held;
 use crate::hosting::Hosting;
 use crate::sync::sync_in_background;
-use crate::{Open, Orchestrator, message, start_servers_in_background};
+use crate::{Live, Open, Orchestrator, message, start_servers_in_background};
 
 impl Orchestrator {
     pub(crate) async fn list_changesets(&self, project: ProjectId) -> Result<Response, String> {
@@ -41,10 +41,9 @@ impl Orchestrator {
             _ => None,
         };
         let on_view = on_view.as_ref().map(|(remote, number)| (remote, *number));
-        let known = &open.open.pull_requests;
-        let list = pull_request::list_pull_requests(&*self.github, &github, on_view, known)
+        let list = pull_request::list_pull_requests(&*self.github, &github, on_view)
             .await
-            .and(pull_request::list_pull_requests(&*self.azure_devops, &azure_devops, on_view, known).await);
+            .and(pull_request::list_pull_requests(&*self.azure_devops, &azure_devops, on_view).await);
         for source in &list.sources {
             if let Some(error) = &source.error {
                 self.refused(error, &source.remote.account());
@@ -113,7 +112,7 @@ impl Orchestrator {
         let open = self.ready(project).await?;
         let source = mapping::core_changeset_key(changeset)?;
         if let Source::PullRequest { remote, number } = &source {
-            let brought = bring_in(&open.open, remote, *number).await;
+            let brought = bring_in(&open.open, &open.session, remote, *number).await;
             if let Err(FetchError::Platform(error)) = &brought {
                 self.refused(error, &remote.account());
             }
@@ -144,28 +143,25 @@ impl Orchestrator {
     }
 }
 
-/// Fetches the head of pull request `number` of `remote` and its target branch.
-pub(crate) async fn bring_in(
-    open: &Open,
-    remote: &vet_app::changeset::RemoteKey,
-    number: u64,
-) -> Result<(), FetchError> {
+/// Fetches the head of pull request `number` of `remote` and its target branch, and stores how the
+/// platform names it.
+pub(crate) async fn bring_in(open: &Open, session: &Live, remote: &RemoteKey, number: u64) -> Result<(), FetchError> {
     let held = Held(&open.accounts);
-    match remote.kind() {
+    let head = match remote.kind() {
         PlatformKind::GitHub => {
-            pull_request::fetch_pull_request(&*open.github, &open.fetch, &held, &open.pull_requests, remote, number)
-                .await
+            pull_request::fetch_pull_request(&*open.github, &open.fetch, &held, remote, number).await?
         }
         PlatformKind::AzureDevOps => {
-            pull_request::fetch_pull_request(
-                &*open.azure_devops,
-                &open.fetch,
-                &held,
-                &open.pull_requests,
-                remote,
-                number,
-            )
-            .await
+            pull_request::fetch_pull_request(&*open.azure_devops, &open.fetch, &held, remote, number).await?
         }
+    };
+    let source = Source::PullRequest {
+        remote: remote.clone(),
+        number,
+    };
+    // The fetch is done; a title that cannot be stored is shown again after the next one.
+    if let Err(error) = session.remember_pull_request_head(&source, head).await {
+        tracing::warn!(%error, "storing the title of a pull request failed");
     }
+    Ok(())
 }

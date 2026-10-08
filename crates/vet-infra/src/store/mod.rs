@@ -32,6 +32,7 @@ use sea_orm::{
 };
 use sea_orm_migration::MigratorTrait;
 use vet_app::changeset::{BaseChoice, ChangesetId, Lens, Source, Version};
+use vet_app::platform::PullRequestHead;
 use vet_app::ports::{ChangesetStore, ReviewStore, Store, StoreError, ThreadStore};
 use vet_app::review::{ChangesetThread, NonTextAck, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
 use vet_core::content::{BlobId, Hash, Snapshot, SnapshotId, SnapshotStatus};
@@ -447,6 +448,44 @@ impl ChangesetStore for SqliteStore {
                 .await?;
             }
         }
+        Ok(txn.commit().await?)
+    }
+
+    async fn pull_request_head(&self, repo: String, source: Source) -> Result<Option<PullRequestHead>, StoreError> {
+        let (kind, key) = source_columns(&source);
+        let row = changeset::Entity::find()
+            .filter(changeset::Column::Repo.eq(repo))
+            .filter(changeset::Column::Kind.eq(kind))
+            .filter(changeset::Column::Key.eq(key))
+            .one(&self.reader.db)
+            .await?;
+        Ok(row.and_then(|r| {
+            Some(PullRequestHead {
+                title: r.title?,
+                draft: r.draft,
+            })
+        }))
+    }
+
+    async fn set_pull_request_head(
+        &self,
+        repo: String,
+        source: Source,
+        head: PullRequestHead,
+    ) -> Result<(), StoreError> {
+        let txn = self.writer.db.begin().await?;
+        let id = match find_changeset(&txn, repo.clone(), &source).await? {
+            Some(id) => id,
+            None => insert_changeset(&txn, repo, &source).await?,
+        };
+        changeset::ActiveModel {
+            id: Set(id),
+            title: Set(Some(head.title)),
+            draft: Set(head.draft),
+            ..Default::default()
+        }
+        .update(&txn)
+        .await?;
         Ok(txn.commit().await?)
     }
 

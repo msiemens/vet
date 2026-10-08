@@ -41,8 +41,12 @@ impl Orchestrator {
         let view = open.session.manifest(mapping::core_view(view)).await.map_err(message)?;
         let failures = open.semantics.restore_failures();
         let mut manifest = mapping::manifest(project, &view, &failures);
-        if let Source::PullRequest { remote, number } = &view.target.source
-            && let Some(head) = open.open.pull_requests.get(remote, *number)
+        if matches!(view.target.source, Source::PullRequest { .. })
+            && let Some(head) = open
+                .session
+                .pull_request_head(&view.target.source)
+                .await
+                .map_err(message)?
         {
             manifest.target.title = Some(head.title);
             manifest.target.draft = head.draft;

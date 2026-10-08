@@ -278,6 +278,70 @@ async fn the_lens_is_remembered_per_changeset_before_and_after_a_review_of_it_st
 }
 
 #[tokio::test]
+async fn a_pull_requests_title_is_kept_with_its_changeset_across_a_review_starting_and_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let pull_request = |number| Source::PullRequest {
+        remote: RemoteKey {
+            host: "github.com".into(),
+            path: "acme/app".into(),
+        },
+        number,
+    };
+    let head = |title: &str, draft| PullRequestHead {
+        title: title.into(),
+        draft,
+    };
+    assert_eq!(
+        store.pull_request_head("/repo".into(), pull_request(7)).await.unwrap(),
+        None
+    );
+
+    store
+        .set_pull_request_head("/repo".into(), pull_request(7), head("Add caching", true))
+        .await
+        .unwrap();
+    store
+        .set_lens("/repo".into(), pull_request(8), Lens::PerCommit)
+        .await
+        .unwrap();
+    store
+        .start_review(
+            "/repo".into(),
+            pull_request(7),
+            BaseChoice::Commit { id: commit("a") },
+            version(1, SnapshotId(h(1)), SnapshotId(h(2))),
+            T0,
+        )
+        .await
+        .unwrap();
+    drop(store);
+
+    let store = open(&dir).await;
+    assert_eq!(
+        store.pull_request_head("/repo".into(), pull_request(7)).await.unwrap(),
+        Some(head("Add caching", true))
+    );
+    assert_eq!(
+        store.pull_request_head("/other".into(), pull_request(7)).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        store.pull_request_head("/repo".into(), pull_request(8)).await.unwrap(),
+        None,
+        "stored for its lens, it was never named"
+    );
+    store
+        .set_pull_request_head("/repo".into(), pull_request(7), head("Add caching to the API", false))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.pull_request_head("/repo".into(), pull_request(7)).await.unwrap(),
+        Some(head("Add caching to the API", false))
+    );
+}
+
+#[tokio::test]
 async fn the_base_choice_is_stored_with_the_review_and_survives_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;

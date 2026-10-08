@@ -23,8 +23,8 @@ branch?: string,
  */
 head?: string, 
 /**
- * A pull request's title as the platform last said it; absent for any other changeset, and
- * for a pull request the platform has not been asked about since the backend started.
+ * A pull request's title as the platform last said it, kept across restarts; absent for any
+ * other changeset, and for a pull request the platform was never asked about.
  */
 title?: string, 
 /**

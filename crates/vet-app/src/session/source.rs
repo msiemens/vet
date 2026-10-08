@@ -11,6 +11,7 @@ use super::{LiveSession, Result, SessionError, UnixClock};
 use crate::acquisition::Acquisition;
 use crate::base;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Source, Version, VersionOrigin};
+use crate::platform::PullRequestHead;
 use crate::ports::{GitRepo, LiveStore};
 use crate::pull_request::PullRequestRefs;
 use crate::review::visible_threads;
@@ -48,6 +49,23 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     /// The source of the changeset on view.
     pub async fn source(&self) -> Source {
         self.state.lock().await.source.clone()
+    }
+
+    /// How the platform last named the pull request of `source`, as stored.
+    pub async fn pull_request_head(&self, source: &Source) -> Result<Option<PullRequestHead>> {
+        let store = &self.acquisition.store;
+        Ok(store.pull_request_head(self.repo.clone(), source.clone()).await?)
+    }
+
+    /// Stores how the platform names the pull request of `source` now, unless that is stored already.
+    pub async fn remember_pull_request_head(&self, source: &Source, head: PullRequestHead) -> Result<()> {
+        if self.pull_request_head(source).await?.as_ref() != Some(&head) {
+            let store = &self.acquisition.store;
+            store
+                .set_pull_request_head(self.repo.clone(), source.clone(), head)
+                .await?;
+        }
+        Ok(())
     }
 
     /// Reads what the store holds of the changeset of `source` in the repository at `repo`.

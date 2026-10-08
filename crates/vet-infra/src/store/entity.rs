@@ -184,6 +184,11 @@ pub mod changeset {
         pub key: String,
         /// The lens the viewer last chose; none until they did.
         pub lens: Option<Lens>,
+        /// A pull request's title as the platform last said it; none for any other changeset.
+        pub title: Option<String>,
+        /// A pull request the platform last said is a draft.
+        #[sea_orm(default_value = false)]
+        pub draft: bool,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

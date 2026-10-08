@@ -223,6 +223,23 @@ pub struct PullRequest {
     pub updated_at: i64,
 }
 
+/// How the platform last named a pull request: what a view of it is headed with. It is stored with
+/// the changeset, so a review of it is headed before the platform is asked again.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PullRequestHead {
+    pub title: String,
+    pub draft: bool,
+}
+
+impl PullRequestHead {
+    pub fn of(pull_request: &PullRequest) -> Self {
+        Self {
+            title: pull_request.title.clone(),
+            draft: pull_request.draft,
+        }
+    }
+}
+
 /// One state of the source branch.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Push {

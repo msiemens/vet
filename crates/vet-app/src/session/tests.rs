@@ -22,7 +22,7 @@ use super::manifest::{old_path_of, update_of};
 use super::state::{check_revision, outcome};
 use super::*;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, RemoteKey, Source, Version, VersionOrigin};
-use crate::platform::FakeHosting;
+use crate::platform::{FakeHosting, PullRequestHead};
 use crate::ports::{
     BlobRead, BlobReader, BranchInfo, ChangesetRefs, ChangesetStore, Checkout, CommitDetail, CommitInfo, Differ, Dirty,
     GitError, History, Remerged, ReviewStore, Scan, Scanner, Store, StoreError, ThreadStore,
@@ -447,6 +447,7 @@ struct Mem {
     spans: Vec<(SpanId, ReviewedSpan)>,
     origins: HashMap<SpanId, SpanOrigin>,
     lens: Option<Lens>,
+    heads: HashMap<Source, PullRequestHead>,
     next_span: u64,
     acks: Vec<NonTextAck>,
     base: Option<BaseChoice>,
@@ -503,6 +504,13 @@ impl ChangesetStore for MemStore {
         self.0.lock().unwrap().lens = Some(lens);
         Ok(())
     }
+    async fn pull_request_head(&self, _: String, source: Source) -> StoreResult<Option<PullRequestHead>> {
+        Ok(self.0.lock().unwrap().heads.get(&source).cloned())
+    }
+    async fn set_pull_request_head(&self, _: String, source: Source, head: PullRequestHead) -> StoreResult<()> {
+        self.0.lock().unwrap().heads.insert(source, head);
+        Ok(())
+    }
     async fn ensure_changeset(&self, repo: String, source: Source) -> StoreResult<ChangesetId> {
         self.0.lock().unwrap().changeset.get_or_insert((repo, source));
         Ok(ChangesetId(1))
@@ -541,6 +549,7 @@ impl ReviewStore for MemStore {
             filter: mem.filter.take(),
             browsing_base: mem.browsing_base.take(),
             lens: mem.lens.take(),
+            heads: std::mem::take(&mut mem.heads),
             started: mem.started + 1,
             base: Some(choice),
             changeset: Some((repo, source)),

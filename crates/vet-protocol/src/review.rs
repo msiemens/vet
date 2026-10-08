@@ -80,8 +80,8 @@ pub struct Target {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub head: Option<String>,
-    /// A pull request's title as the platform last said it; absent for any other changeset, and
-    /// for a pull request the platform has not been asked about since the backend started.
+    /// A pull request's title as the platform last said it, kept across restarts; absent for any
+    /// other changeset, and for a pull request the platform was never asked about.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub title: Option<String>,

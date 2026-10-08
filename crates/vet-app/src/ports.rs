@@ -11,7 +11,7 @@ use vet_core::review::{CommentTarget, Message, MessageId, PlatformThread, Review
 use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
-use crate::platform::{Credential, PlatformKind};
+use crate::platform::{Credential, PlatformKind, PullRequestHead};
 use crate::review::{ChangesetThread, NonTextAck, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
 
 /// Monotonic milliseconds.
@@ -420,6 +420,20 @@ pub trait ChangesetStore {
     /// Remembers the lens of the changeset of `source`, storing the changeset if need be.
     fn set_lens(&self, repo: String, source: Source, lens: Lens)
     -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// How the platform last named the pull request of `source`; `None` if it was never stored.
+    fn pull_request_head(
+        &self,
+        repo: String,
+        source: Source,
+    ) -> impl Future<Output = Result<Option<PullRequestHead>, StoreError>> + Send;
+    /// Remembers how the platform names the pull request of `source`, storing the changeset if
+    /// need be.
+    fn set_pull_request_head(
+        &self,
+        repo: String,
+        source: Source,
+        head: PullRequestHead,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// The changeset of `source` in the repository at `repo`, stored if it was not: threads
     /// that arrive from a platform belong to it before any review of it started.
     fn ensure_changeset(
