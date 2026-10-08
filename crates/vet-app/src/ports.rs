@@ -392,8 +392,11 @@ pub struct GcPlan {
 /// [`ReviewStore`], [`ThreadStore`] and [`GcStore`]: GC checks references across
 /// changesets, spans and comments.
 pub trait Store {
-    /// Content-addressed by `BlobId::of`; durable (fsynced, renamed) on return.
-    fn put_blob(&self, bytes: Vec<u8>) -> impl Future<Output = Result<BlobId, StoreError>> + Send;
+    /// Content-addressed by `BlobId::of`, answered with the ids in the order of `blobs`;
+    /// all durable (fsynced, renamed) on return. Blobs the store holds are not written again.
+    fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> impl Future<Output = Result<Vec<BlobId>, StoreError>> + Send;
+    /// Of `ids`, those the store does not hold durably, without reading any.
+    fn missing_blobs(&self, ids: Vec<BlobId>) -> impl Future<Output = Result<Vec<BlobId>, StoreError>> + Send;
     fn blob(&self, id: BlobId) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
     /// Stored as shared Merkle nodes: only nodes not yet present are written.
     /// `at` is unix seconds; GC spares snapshots younger than its grace period.

@@ -489,10 +489,20 @@ pub(crate) struct MemStore(Arc<Mutex<Mem>>);
 type StoreResult<T> = std::result::Result<T, StoreError>;
 
 impl Store for MemStore {
-    async fn put_blob(&self, bytes: Vec<u8>) -> StoreResult<BlobId> {
-        let id = BlobId::of(&bytes);
-        self.0.lock().unwrap().blobs.insert(id, bytes);
-        Ok(id)
+    async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> StoreResult<Vec<BlobId>> {
+        let mut mem = self.0.lock().unwrap();
+        Ok(blobs
+            .into_iter()
+            .map(|bytes| {
+                let id = BlobId::of(&bytes);
+                mem.blobs.insert(id, bytes);
+                id
+            })
+            .collect())
+    }
+    async fn missing_blobs(&self, ids: Vec<BlobId>) -> StoreResult<Vec<BlobId>> {
+        let mem = self.0.lock().unwrap();
+        Ok(ids.into_iter().filter(|id| !mem.blobs.contains_key(id)).collect())
     }
     async fn blob(&self, id: BlobId) -> StoreResult<Option<Vec<u8>>> {
         Ok(self.0.lock().unwrap().blobs.get(&id).cloned())

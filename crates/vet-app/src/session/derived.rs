@@ -329,9 +329,7 @@ async fn units<G: GitRepo + Sync, S: LiveStore + Sync>(
             [first, _] => match git.remerge(commit).await {
                 Ok(Some(merged)) => {
                     // The merged files are in no git object: the store holds them.
-                    for content in merged.contents {
-                        store.put_blob(content).await?;
-                    }
+                    store.put_blobs(merged.contents).await?;
                     (merged.snapshot, UnitKind::Merge { remerged: true })
                 }
                 Ok(None) | Err(_) => (parent(first).await?, UnitKind::Merge { remerged: false }),

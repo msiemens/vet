@@ -76,10 +76,20 @@ async fn head_and_scan(dir: &Path, repo: &GixRepo) -> (Snapshot, vet_app::ports:
 struct MemStore(Mutex<HashMap<BlobId, Vec<u8>>>);
 
 impl Store for MemStore {
-    async fn put_blob(&self, bytes: Vec<u8>) -> Result<BlobId, StoreError> {
-        let id = blob(&bytes);
-        self.0.lock().unwrap().insert(id, bytes);
-        Ok(id)
+    async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobId>, StoreError> {
+        let mut held = self.0.lock().unwrap();
+        Ok(blobs
+            .into_iter()
+            .map(|bytes| {
+                let id = blob(&bytes);
+                held.insert(id, bytes);
+                id
+            })
+            .collect())
+    }
+    async fn missing_blobs(&self, ids: Vec<BlobId>) -> Result<Vec<BlobId>, StoreError> {
+        let held = self.0.lock().unwrap();
+        Ok(ids.into_iter().filter(|id| !held.contains_key(id)).collect())
     }
     async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self.0.lock().unwrap().get(&id).cloned())

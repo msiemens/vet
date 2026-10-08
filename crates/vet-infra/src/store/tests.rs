@@ -826,6 +826,30 @@ async fn snapshots_survive_reopen() {
 }
 
 #[tokio::test]
+async fn a_batch_of_blobs_is_answered_in_order_and_held_after_a_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    store.put_blobs(vec![vec![3]]).await.unwrap();
+    // More blobs than the budget has units, a duplicate and one held already.
+    let blobs: Vec<Vec<u8>> = (0..40u8)
+        .map(|n| vec![n; 1 + n as usize])
+        .chain([vec![3], vec![7; 8]])
+        .collect();
+    let ids: Vec<BlobId> = blobs.iter().map(|b| BlobId::of(b)).collect();
+    let missing = store.missing_blobs(ids.clone()).await.unwrap();
+    assert_eq!(missing, [&ids[..40], &ids[41..]].concat());
+
+    assert_eq!(store.put_blobs(blobs.clone()).await.unwrap(), ids);
+    assert_eq!(store.missing_blobs(ids.clone()).await.unwrap(), []);
+    drop(store);
+    let store = open(&dir).await;
+    for (id, bytes) in ids.iter().zip(&blobs) {
+        assert_eq!(store.blob(*id).await.unwrap().as_ref(), Some(bytes));
+    }
+    assert_eq!(std::fs::read_dir(dir.path().join("content/tmp")).unwrap().count(), 0);
+}
+
+#[tokio::test]
 async fn gc_keeps_referenced_content_and_drops_the_rest() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
@@ -833,9 +857,10 @@ async fn gc_keeps_referenced_content_and_drops_the_rest() {
     for s in &snaps {
         store.put_snapshot(s.clone(), Default::default(), T0).await.unwrap();
     }
-    for n in [21, 22, 23, 24] {
-        store.put_blob(vec![n]).await.unwrap();
-    }
+    store
+        .put_blobs([21, 22, 23, 24].map(|n| vec![n]).to_vec())
+        .await
+        .unwrap();
     let (changeset, id) = review(&store, snaps[0].id, snaps[1].id).await;
     let now = T0;
 
@@ -926,7 +951,7 @@ async fn gc_grace_protects_fresh_content() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
     let retention = Retention::default();
-    store.put_blob(vec![1]).await.unwrap();
+    store.put_blobs(vec![vec![1]]).await.unwrap();
     store
         .put_snapshot(snapshot(&[("a", 1)]), Default::default(), T0)
         .await

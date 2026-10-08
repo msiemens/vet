@@ -58,10 +58,20 @@ struct MemStore {
 }
 
 impl Store for MemStore {
-    async fn put_blob(&self, bytes: Vec<u8>) -> Result<BlobId, StoreError> {
-        let id = BlobId::of(&bytes);
-        self.blobs.lock().unwrap().insert(id, bytes);
-        Ok(id)
+    async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobId>, StoreError> {
+        let mut held = self.blobs.lock().unwrap();
+        Ok(blobs
+            .into_iter()
+            .map(|bytes| {
+                let id = BlobId::of(&bytes);
+                held.insert(id, bytes);
+                id
+            })
+            .collect())
+    }
+    async fn missing_blobs(&self, ids: Vec<BlobId>) -> Result<Vec<BlobId>, StoreError> {
+        let held = self.blobs.lock().unwrap();
+        Ok(ids.into_iter().filter(|id| !held.contains_key(id)).collect())
     }
     async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {
         Ok(self.blobs.lock().unwrap().get(&id).cloned())
@@ -219,7 +229,7 @@ async fn checkout_refuses_paths_that_escape_the_root() {
     for bad in ["../escape", "a/../../escape", ".git/hooks/pre-commit", "x//y"] {
         let blob = BlobId::of(b"x");
         let store = MemStore::default();
-        store.put_blob(b"x".to_vec()).await.unwrap();
+        store.put_blobs(vec![b"x".to_vec()]).await.unwrap();
         let entries = [(
             path(bad),
             FileEntry {

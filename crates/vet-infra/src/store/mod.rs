@@ -244,6 +244,20 @@ impl SqliteStore {
         Ok(self.io.blocking(move || f(&content)).await.map_err(db_err)??)
     }
 
+    /// Runs `f` on each of `items`, the items dealt out over the units of the content budget.
+    async fn spread<I: Send + 'static, T: Send + 'static>(
+        &self,
+        items: Vec<I>,
+        f: fn(&ContentStore, Vec<I>) -> io::Result<T>,
+    ) -> Result<Vec<T>, StoreError> {
+        let shares = self.io.limit().min(items.len());
+        let mut dealt: Vec<Vec<I>> = (0..shares).map(|_| Vec::new()).collect();
+        for (n, item) in items.into_iter().enumerate() {
+            dealt[n % shares].push(item);
+        }
+        futures::future::try_join_all(dealt.into_iter().map(|share| self.blocking(move |c| f(c, share)))).await
+    }
+
     /// Reads in one transaction, so that what takes several statements is one state of the file.
     async fn read(&self) -> Res<DatabaseTransaction> {
         self.reader.db.begin().await
@@ -310,8 +324,39 @@ impl SqliteStore {
 }
 
 impl Store for SqliteStore {
-    async fn put_blob(&self, bytes: Vec<u8>) -> Result<BlobId, StoreError> {
-        self.blocking(move |c| c.put(&bytes)).await
+    /// Each blob is fsynced before it is renamed into place, and each directory once all of
+    /// the batch's were renamed into it; files and directories are synced in parallel.
+    async fn put_blobs(&self, blobs: Vec<Vec<u8>>) -> Result<Vec<BlobId>, StoreError> {
+        if blobs.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Each share remembers where its blobs were in the batch.
+        let shares = self
+            .spread(
+                blobs.into_iter().enumerate().collect(),
+                |c, share: Vec<(usize, Vec<u8>)>| {
+                    let (at, bytes): (Vec<usize>, Vec<Vec<u8>>) = share.into_iter().unzip();
+                    Ok((at, c.place(&bytes)?))
+                },
+            )
+            .await?;
+        let mut ids = vec![None; shares.iter().map(|(at, _)| at.len()).sum()];
+        let mut placed = content::Placed::default();
+        for (at, share) in shares {
+            for (n, id) in at.into_iter().zip(&share.ids) {
+                ids[n] = Some(*id);
+            }
+            placed = placed.merge(share);
+        }
+        let dirs: Vec<PathBuf> = placed.dirs.iter().cloned().collect();
+        self.spread(dirs, |_, share| share.iter().try_for_each(|dir| content::sync_dir(dir)))
+            .await?;
+        self.content.durable(&placed);
+        Ok(ids.into_iter().map(|id| id.expect("every blob was placed")).collect())
+    }
+
+    async fn missing_blobs(&self, ids: Vec<BlobId>) -> Result<Vec<BlobId>, StoreError> {
+        self.blocking(move |c| Ok(c.missing(&ids))).await
     }
 
     async fn blob(&self, id: BlobId) -> Result<Option<Vec<u8>>, StoreError> {

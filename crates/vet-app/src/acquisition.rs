@@ -1,7 +1,7 @@
 //! Acquisition (§6): maps git and filesystem state into immutable snapshots.
 //! Provenance lives here, keyed by `SnapshotId`, and nowhere else (I1).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -56,6 +56,10 @@ impl<G, S> Acquisition<G, S> {
     }
 }
 
+/// How many bytes of content [`Acquisition::retain`] holds before it puts them: a batch syncs
+/// each of its directories once, and a large changeset is not read into memory at once.
+pub const RETAIN_BATCH: usize = 32 << 20;
+
 /// Why content could not be read or kept.
 #[derive(Debug)]
 pub enum BlobError {
@@ -105,12 +109,12 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
     /// Makes sure the store holds `blob`, copying it from git or the worktree.
     /// `false` if there is nothing to copy.
     pub async fn keep(&self, path: &RepoPath, blob: BlobId) -> Result<bool, BlobError> {
-        if self.store.blob(blob).await?.is_some() {
+        if self.store.missing_blobs(vec![blob]).await?.is_empty() {
             return Ok(true);
         }
         match self.git.read_blob(path, blob).await? {
             Some(bytes) => {
-                self.store.put_blob(bytes).await?;
+                self.store.put_blobs(vec![bytes]).await?;
                 Ok(true)
             }
             None => Ok(false),
@@ -118,14 +122,16 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
     }
 
     /// Copies the blobs of `target` that `known` snapshots do not already have
-    /// (they are in git or were retained before) into the store, so the
-    /// snapshot stays reconstructible (§6.1).
+    /// (they are in git or were retained before) and the store does not hold
+    /// into the store, so the snapshot stays reconstructible (§6.1). They are
+    /// put in batches of about [`RETAIN_BATCH`] bytes.
     pub async fn retain(
         &self,
         known: &[&Snapshot],
         target: &Snapshot,
         status: &SnapshotStatus,
     ) -> Result<(), BlobError> {
+        let mut wanted: BTreeMap<BlobId, &RepoPath> = BTreeMap::new();
         for (path, entry) in &target.entries {
             let is_known = known
                 .iter()
@@ -133,10 +139,23 @@ impl<G: BlobReader, S: Store> Acquisition<G, S> {
             if is_known || entry.kind == EntryKind::Submodule || status.content_unavailable.contains(path) {
                 continue;
             }
-            if !self.keep(path, entry.blob).await? {
+            wanted.entry(entry.blob).or_insert(path);
+        }
+        let missing = self.store.missing_blobs(wanted.keys().copied().collect()).await?;
+        let (mut batch, mut bytes) = (Vec::new(), 0);
+        for blob in missing {
+            let path = wanted[&blob];
+            let Some(content) = self.git.read_blob(path, blob).await? else {
                 return Err(GitError(format!("{} changed while being copied", path.to_string_lossy())).into());
+            };
+            bytes += content.len();
+            batch.push(content);
+            if bytes >= RETAIN_BATCH {
+                self.store.put_blobs(std::mem::take(&mut batch)).await?;
+                bytes = 0;
             }
         }
+        self.store.put_blobs(batch).await?;
         Ok(())
     }
 }
