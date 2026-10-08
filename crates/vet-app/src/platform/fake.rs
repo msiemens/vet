@@ -1,6 +1,6 @@
 //! A platform that holds one pull request in memory and answers like GitHub does, for the tests
-//! of what is built on [`Platform`]. The test plays the other people: `say`, `edit`, `delete_thread`
-//! and `resolve` change what the platform has, as a colleague in the browser would.
+//! of what is built on [`Platform`]. The test plays the other people: `say`, `edit`, `delete_thread`,
+//! `delete_comment` and `resolve` change what the platform has, as a colleague in the browser would.
 
 use std::sync::{Arc, Mutex};
 
@@ -235,6 +235,14 @@ impl FakeHosting {
         self.0.lock().unwrap().discussion.threads.retain(|t| t.id != thread);
     }
 
+    /// Someone removes a comment in the browser, which leaves the thread with the others.
+    pub fn delete_comment(&self, comment: &str) {
+        let mut hosted = self.0.lock().unwrap();
+        for t in &mut hosted.discussion.threads {
+            t.comments.retain(|c| c.id != comment);
+        }
+    }
+
     pub fn resolve(&self, thread: &str, by: Option<&str>) {
         let mut hosted = self.0.lock().unwrap();
         let found = hosted.discussion.threads.iter_mut().find(|t| t.id == thread);
@@ -331,11 +339,13 @@ impl Platform for FakeHosting {
     async fn delete_comment(&self, _: &RemoteKey, comment: &CommentRef) -> Result<(), PlatformError> {
         let mut hosted = self.0.lock().unwrap();
         hosted.check(format!("delete {}", comment.id))?;
-        // The first comment of a thread is the thread.
-        hosted.discussion.threads.retain(|t| t.comments[0].id != comment.id);
+        if hosted.traits.first_comment_ends_thread {
+            hosted.discussion.threads.retain(|t| t.comments[0].id != comment.id);
+        }
         for t in &mut hosted.discussion.threads {
             t.comments.retain(|c| c.id != comment.id);
         }
+        hosted.discussion.threads.retain(|t| !t.comments.is_empty());
         Ok(())
     }
 

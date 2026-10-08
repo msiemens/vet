@@ -720,6 +720,66 @@ async fn on_a_platform_that_takes_one_comment_at_a_time_the_drafts_are_posted_in
 }
 
 #[tokio::test]
+async fn a_comment_on_the_whole_pull_request_deleted_where_it_is_a_thread_goes_here_too() {
+    let (fx, hosting) = with_three_drafts().await;
+    fx.session.post_drafts(&hosting).await.unwrap();
+    let whole = fx
+        .all()
+        .await
+        .into_iter()
+        .find(|t| t.target == CommentTarget::Changeset)
+        .expect("the comment on the pull request");
+    hosting.delete_thread(remote_id(&whole).unwrap());
+
+    let report = fx.sync(&hosting).await;
+
+    assert!(report.changed);
+    let left = fx.all().await;
+    assert_eq!(left.len(), 2);
+    assert!(left.iter().all(|t| t.target != CommentTarget::Changeset));
+}
+
+#[tokio::test]
+async fn a_thread_whose_first_comment_was_removed_on_a_platform_that_keeps_it_keeps_the_others() {
+    let (fx, _) = on_a_pull_request().await;
+    let hosting = FakeHosting::per_comment();
+    let theirs = hosting.thread("a.txt", (4, 4), "pr1", "marco", "Why 3?");
+    let answer = hosting.say(&theirs, "lena", "Because.");
+    let mine = hosting.my_thread("a.txt", (21, 21), "pr1", "Why 20?");
+    hosting.say(&mine, "marco", "Because 20.");
+    fx.sync(&hosting).await;
+    let first_of_theirs = fx.all().await[0].messages[0].remote.clone().unwrap().id;
+
+    // Someone removes the first comment in the browser.
+    hosting.delete_comment(&first_of_theirs);
+    fx.sync(&hosting).await;
+    let on_theirs = fx
+        .all()
+        .await
+        .into_iter()
+        .find(|t| remote_id(t) == Some(theirs.as_str()))
+        .expect("the thread stays");
+    assert_eq!(bodies(&on_theirs), ["Because."]);
+    assert_eq!(on_theirs.messages[0].remote.as_ref().unwrap().id, answer);
+    assert_eq!((on_theirs.state, on_theirs.location), (Some(EXACT), at("a.txt", 3, 4)));
+
+    // The viewer removes the first comment of their own thread here.
+    let my_thread = fx
+        .all()
+        .await
+        .into_iter()
+        .find(|t| remote_id(t) == Some(mine.as_str()))
+        .unwrap();
+    fx.session
+        .remove_message(&hosting, my_thread.messages[0].id)
+        .await
+        .unwrap();
+    assert_eq!(bodies(&fx.view(my_thread.id).await), ["Because 20."]);
+    assert!(hosting.thread_ids().contains(&mine));
+    assert!(!fx.sync(&hosting).await.changed, "here and there agree");
+}
+
+#[tokio::test]
 async fn posting_stops_at_the_first_draft_the_platform_refuses_and_keeps_the_rest_as_drafts() {
     let (fx, hosting) = with_three_drafts().await;
     hosting.fail("post Agreed.", PlatformError::Forbidden("no access".to_owned()));

@@ -18,6 +18,9 @@ pub struct PlatformTraits {
     pub blocking: Vec<BlockingSource>,
     /// Comments are recorded on a patch set.
     pub revision_scoped: bool,
+    /// Removing the first comment of a thread removes the thread. Otherwise the thread stays with
+    /// its other comments, and goes once none is left.
+    pub first_comment_ends_thread: bool,
 }
 
 /// What a comment on the whole pull request is.
@@ -81,6 +84,7 @@ impl PlatformTraits {
             verdict_separate: false,
             blocking: vec![BlockingSource::UnresolvedThreads],
             revision_scoped: false,
+            first_comment_ends_thread: true,
         }
     }
 
@@ -110,6 +114,8 @@ impl PlatformTraits {
             verdict_separate: true,
             blocking: vec![BlockingSource::UnresolvedThreads],
             revision_scoped: false,
+            // A removed comment is marked deleted; the thread is deleted with its last one.
+            first_comment_ends_thread: false,
         }
     }
 }

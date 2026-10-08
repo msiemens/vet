@@ -183,7 +183,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             if st.source != source {
                 return Ok(SyncReport::default());
             }
-            let plan = reconcile(&st.threads, &discussion);
+            let plan = reconcile(&st.threads, &discussion, platform.traits().changeset_threads);
             let pushes = pushes_of(&st.threads, &plan);
             (plan, pushes)
         };
@@ -511,11 +511,13 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         self.view_of(thread).await
     }
 
-    /// Removes one of the viewer's comments; a thread's first removes the thread. A posted one is
-    /// removed on the platform first.
+    /// Removes one of the viewer's comments. A thread's first removes the thread, unless the thread
+    /// is posted to a platform that keeps it with its other posted comments
+    /// ([`crate::platform::PlatformTraits::first_comment_ends_thread`]). A posted one is removed on
+    /// the platform first.
     pub async fn remove_message<P: Platform + Sync>(&self, platform: &P, message: MessageId) -> Result<()> {
         let _exchange = self.exchange.lock().await;
-        let (thread, first, posted) = {
+        let (thread, ends_thread, posted) = {
             let st = self.state.lock().await;
             let (thread, old) = find_message(&st, message)?;
             if !old.mine {
@@ -524,11 +526,11 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             let posted = comment_ref(thread, old)
                 .map(|c| pull_request(&st).map(|(remote, _)| (remote, c)))
                 .transpose()?;
-            (
-                thread.id,
-                thread.messages.first().map(|m| m.id) == Some(message),
-                posted,
-            )
+            let first = thread.messages.first().map(|m| m.id) == Some(message);
+            let others_posted = thread.messages.iter().any(|m| m.id != message && m.remote.is_some());
+            let ends_thread =
+                first && (posted.is_none() || platform.traits().first_comment_ends_thread || !others_posted);
+            (thread.id, ends_thread, posted)
         };
         if let Some((remote, comment)) = posted {
             match platform.delete_comment(&remote, &comment).await {
@@ -537,7 +539,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             }
         }
         let mut st = self.state.lock().await;
-        if first {
+        if ends_thread {
             self.acquisition.store.delete_thread(thread).await?;
             st.threads.retain(|t| t.id != thread);
             if let Some(changes) = st.changes.as_mut() {
@@ -551,7 +553,8 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
     }
 
     /// Deletes a thread; this is also how a detached one is discarded. A thread the platform has
-    /// is removed there too, which only its author can.
+    /// is removed there too, which only its author can, by removing its first comment: on a
+    /// platform that keeps a thread with its other comments, they stay.
     pub async fn delete_thread<P: Platform + Sync>(&self, platform: &P, thread: ThreadId) -> Result<()> {
         let first = {
             let st = self.state.lock().await;

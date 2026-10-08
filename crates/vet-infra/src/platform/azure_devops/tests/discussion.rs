@@ -160,8 +160,15 @@ fn hosting(threads: Vec<Value>) -> (Fake, Arc<Mutex<Hosted>>) {
         } else if request.method == "DELETE" && path.contains("/comments/") {
             let ids = ids("/threads/");
             let at = find(&mut hosted, ids[0]);
-            let comments = hosted.threads[at]["comments"].as_array_mut().unwrap();
-            comments.retain(|c| c["id"].as_i64() != Some(ids[1]));
+            // A comment is marked deleted, and the thread with its last one.
+            let thread = &mut hosted.threads[at];
+            let comments = thread["comments"].as_array_mut().unwrap();
+            let found = comments.iter_mut().find(|c| c["id"].as_i64() == Some(ids[1])).unwrap();
+            found["isDeleted"] = json!(true);
+            found.as_object_mut().unwrap().remove("content");
+            if comments.iter().all(|c| c["isDeleted"] == json!(true)) {
+                thread["isDeleted"] = json!(true);
+            }
             Canned::status(204, "")
         } else if request.method == "GET" && path.contains("/comments/") {
             let ids = ids("/threads/");
@@ -369,14 +376,45 @@ async fn editing_removing_resolving_and_reading_a_comment_go_by_its_ids() {
     assert!(edited.edited_at > edited.created_at, "the edit time is the content's");
     assert_eq!(status_after_resolve, json!("fixed"));
     assert_eq!(status_after_reopen, json!("active"));
-    let left = hosted.lock().unwrap().threads[0]["comments"].clone();
-    assert_eq!(left.as_array().unwrap().len(), 1);
     let sent = fake.requests();
     assert!(
         sent.iter()
             .any(|r| r.method == "PATCH" && r.path.to_ascii_lowercase().contains("/threads/3/comments/1")),
         "{sent:?}"
     );
+
+    // The thread stays with the comment that is left, where it was.
+    let discussion = client.discussion(&remote(), 7).await.unwrap();
+    let [thread] = <[_; 1]>::try_from(discussion.threads).expect("the thread stays");
+    assert_eq!(
+        (thread.id.as_str(), thread.path.as_str(), thread.lines),
+        ("7/3", "src/job.rs", Some((5, 5)))
+    );
+    assert_eq!(
+        thread.comments.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+        ["7/3/2"]
+    );
+}
+
+#[tokio::test]
+async fn a_thread_whose_comments_are_all_removed_is_gone() {
+    set_now(NOW);
+    let (fake, _) = hosting(vec![thread(
+        7,
+        "active",
+        Value::Null,
+        vec![comment(1, ada(), "Overall.")],
+    )]);
+    let client = client(&fake);
+    let only = CommentRef {
+        id: "7/7/1".to_owned(),
+        kind: CommentKind::Review,
+    };
+
+    client.delete_comment(&remote(), &only).await.unwrap();
+
+    let discussion = client.discussion(&remote(), 7).await.unwrap();
+    assert!(discussion.threads.is_empty() && discussion.complete);
 }
 
 #[tokio::test]

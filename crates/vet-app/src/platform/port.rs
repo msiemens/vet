@@ -77,7 +77,8 @@ pub trait Platform {
         async { Err(unsupported("editing a comment")) }
     }
 
-    /// Removes the viewer's comment; removing the first of a thread removes the thread.
+    /// Removes the viewer's comment. Removing the first of a thread removes the thread where
+    /// [`PlatformTraits::first_comment_ends_thread`] says so; the last always does.
     fn delete_comment(
         &self,
         remote: &RemoteKey,

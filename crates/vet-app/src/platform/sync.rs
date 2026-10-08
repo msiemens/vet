@@ -4,6 +4,7 @@
 use vet_core::review::{CommentTarget, Message, MessageId, Thread, ThreadId, ThreadStatus};
 
 use super::discussion::{Discussion, PlatformComment, PlatformThreadData};
+use super::model::ChangesetThreads;
 
 /// What becomes of a thread's state.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -76,8 +77,9 @@ pub struct SyncPlan {
 }
 
 /// What to do so that `local` and `remote` agree. A posted thread (or comment) that the platform
-/// does not list is gone from it, but only when the listing is complete.
-pub fn reconcile(local: &[Thread], remote: &Discussion) -> SyncPlan {
+/// does not list is gone from it, but only when the listing is complete. `changeset_threads` says
+/// whether a comment on the whole pull request is among the threads the platform lists.
+pub fn reconcile(local: &[Thread], remote: &Discussion, changeset_threads: ChangesetThreads) -> SyncPlan {
     let mut plan = SyncPlan::default();
     for data in &remote.threads {
         let known = local.iter().find(|t| remote_id(t) == Some(data.id.as_str()));
@@ -87,12 +89,11 @@ pub fn reconcile(local: &[Thread], remote: &Discussion) -> SyncPlan {
         }
     }
     if remote.complete {
-        // A comment on the whole pull request is a flat one, which the platform keeps in its
+        // Where a comment on the whole pull request may be a flat one, the platform keeps it in its
         // conversation and not among the review threads.
-        for thread in local
-            .iter()
-            .filter(|t| t.is_posted() && t.target != CommentTarget::Changeset)
-        {
+        let listed =
+            |t: &Thread| t.target != CommentTarget::Changeset || changeset_threads == ChangesetThreads::Resolvable;
+        for thread in local.iter().filter(|t| t.is_posted() && listed(t)) {
             let id = remote_id(thread).expect("posted");
             if remote.threads.iter().any(|d| d.id == id) {
                 continue;
@@ -286,6 +287,11 @@ mod tests {
         }
     }
 
+    /// Reconciles as for GitHub, where a comment on the whole pull request is a flat one.
+    fn reconcile(local: &[Thread], remote: &Discussion) -> SyncPlan {
+        super::reconcile(local, remote, ChangesetThreads::Flat)
+    }
+
     fn only(plan: SyncPlan) -> ThreadSync {
         assert!(plan.added.is_empty() && plan.removed.is_empty(), "{plan:?}");
         let [sync] = <[ThreadSync; 1]>::try_from(plan.threads).expect("one thread");
@@ -461,6 +467,46 @@ mod tests {
             ..posted(1, "IC1", vec![message(1, "IC1", "a", "a")])
         };
         assert_eq!(reconcile(&[flat], &discussion(vec![], true)), SyncPlan::default());
+    }
+
+    #[test]
+    fn a_thread_on_the_whole_pull_request_gone_from_a_platform_that_lists_it_among_the_threads_goes() {
+        let whole = Thread {
+            target: CommentTarget::Changeset,
+            ..posted(1, "7/12", vec![message(1, "7/12/1", "a", "a")])
+        };
+        let kept = Thread {
+            target: CommentTarget::Changeset,
+            ..posted(2, "7/13", vec![message(2, "7/13/1", "b", "b")])
+        };
+        let remote = discussion(vec![remote_thread("7/13", false, vec![comment("7/13/1", "b")])], true);
+
+        let plan = super::reconcile(&[whole, kept], &remote, ChangesetThreads::Resolvable);
+
+        assert_eq!(
+            plan.removed,
+            [RemovedThread {
+                thread: ThreadId(1),
+                drafts: vec![]
+            }]
+        );
+        assert_eq!(plan.threads.len(), 1);
+    }
+
+    #[test]
+    fn a_thread_whose_first_comment_is_gone_keeps_the_others() {
+        let thread = posted(
+            1,
+            "7/12",
+            vec![message(1, "7/12/1", "a", "a"), message(2, "7/12/2", "b", "b")],
+        );
+        let remote = discussion(vec![remote_thread("7/12", false, vec![comment("7/12/2", "b")])], true);
+
+        let plan = super::reconcile(&[thread], &remote, ChangesetThreads::Resolvable);
+
+        assert!(plan.removed.is_empty() && plan.added.is_empty(), "{plan:?}");
+        assert_eq!(plan.threads[0].removed, [MessageId(1)]);
+        assert!(plan.threads[0].added.is_empty());
     }
 
     #[test]
