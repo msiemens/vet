@@ -140,6 +140,9 @@ pub struct PullRequestInfo {
     pub source_branch: String,
     pub target_branch: String,
     pub reviewers: Vec<Reviewer>,
+    /// The id of the verdict the viewer voted, on a platform that keeps the vote apart from posting
+    /// (`traits.verdict_separate`); absent without a vote.
+    pub viewer_verdict: Option<String>,
     pub labels: Vec<String>,
     /// The checks of the head commit; absent when it has none.
     pub ci: Option<CiState>,

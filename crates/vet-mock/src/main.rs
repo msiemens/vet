@@ -293,6 +293,8 @@ impl Handler for Mock {
             | Request::KeepEdit { .. }
             | Request::SyncThreads { .. }
             | Request::SubmitReview { .. }
+            | Request::PostDrafts { .. }
+            | Request::SetVote { .. }
             | Request::PullRequestInfo { .. }
             | Request::ConfirmAnchor { .. }
             | Request::AttachAnchor { .. } => Err("the corpus has no threads".into()),

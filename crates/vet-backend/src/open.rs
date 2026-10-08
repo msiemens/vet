@@ -14,9 +14,11 @@ use std::time::{Duration, SystemTime};
 
 use tokio::sync::OnceCell;
 use tokio::task::AbortHandle;
+use vet_app::changeset::Source;
 use vet_app::fetch::Fetch;
 use vet_app::ignore::IgnoringWatcher;
 use vet_app::limits::{Limiting, RestoreLimits};
+use vet_app::platform::PlatformKind;
 use vet_app::progress::Tasks;
 use vet_app::pull_request::KnownPullRequests;
 use vet_app::registry::{Resident, Subscribers};
@@ -37,6 +39,7 @@ use vet_semantic::ports::Backend;
 
 use crate::events::{Connection, settled};
 use crate::fetch::fetch_periodically;
+use crate::hosting::Hosting;
 use crate::{
     AzureDevOps, GitHub, LanguageServers, Live, Open, Orchestrator, PlatformAccounts, Semantic, message,
     start_servers_in_background,
@@ -104,6 +107,11 @@ impl Wired {
     /// The session if it has scanned successfully already.
     pub fn booted_now(&self) -> Option<&Arc<Booted>> {
         self.booted.get()?.as_ref().ok()
+    }
+
+    /// The client of the platform `kind`.
+    pub fn hosting(&self, kind: PlatformKind) -> Hosting {
+        Hosting::of(kind, &self.github, &self.azure_devops)
     }
 
     /// Records how syncing with `host` went and answers how it went before.
@@ -229,6 +237,18 @@ impl Deref for Ready {
 
     fn deref(&self) -> &Booted {
         &self.booted
+    }
+}
+
+impl Ready {
+    /// The client of the platform that hosts the pull request on view. For a changeset that is no
+    /// pull request, which nothing is asked of a platform about, GitHub's.
+    pub(crate) async fn hosting(&self) -> Hosting {
+        let kind = match self.session.source().await {
+            Source::PullRequest { remote, .. } => remote.kind(),
+            _ => PlatformKind::GitHub,
+        };
+        self.open.hosting(kind)
     }
 }
 

@@ -10,7 +10,12 @@ import type { Reviewer } from "./Reviewer";
 /**
  * What the Comments tool window shows of the pull request on view, above its threads.
  */
-export type PullRequestInfo = { number: number, title: string, url: string, draft: boolean, state: PullRequestState, author: string, authorAvatar: string | null, sourceBranch: string, targetBranch: string, reviewers: Array<Reviewer>, labels: Array<string>, 
+export type PullRequestInfo = { number: number, title: string, url: string, draft: boolean, state: PullRequestState, author: string, authorAvatar: string | null, sourceBranch: string, targetBranch: string, reviewers: Array<Reviewer>, 
+/**
+ * The id of the verdict the viewer voted, on a platform that keeps the vote apart from posting
+ * (`traits.verdict_separate`); absent without a vote.
+ */
+viewerVerdict: string | null, labels: Array<string>, 
 /**
  * The checks of the head commit; absent when it has none.
  */

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use vet_app::changeset::Source;
-use vet_app::platform::{PlatformError, PlatformKind};
+use vet_app::platform::PlatformError;
 use vet_app::session::{Keep, SessionError, SyncReport};
 use vet_core::review::MessageId;
 use vet_infra::clock::unix_now;
@@ -25,7 +25,7 @@ impl Orchestrator {
     ) -> Result<Response, String> {
         let open = self.ready(project).await?;
         let thread = (open.session)
-            .edit_message(&*open.open.github, MessageId(id.into()), body, unix_now())
+            .edit_message(&open.hosting().await, MessageId(id.into()), body, unix_now())
             .await
             .map_err(message)?;
         Ok(thread_changed(&open, from, &thread).await)
@@ -39,7 +39,7 @@ impl Orchestrator {
     ) -> Result<Response, String> {
         let open = self.ready(project).await?;
         (open.session)
-            .remove_message(&*open.open.github, MessageId(id.into()))
+            .remove_message(&open.hosting().await, MessageId(id.into()))
             .await
             .map_err(message)?;
         threads_changed(&open, from).await;
@@ -59,7 +59,7 @@ impl Orchestrator {
             EditChoice::Remote => Keep::Remote,
         };
         let thread = (open.session)
-            .keep_edit(&*open.open.github, MessageId(id.into()), keep)
+            .keep_edit(&open.hosting().await, MessageId(id.into()), keep)
             .await
             .map_err(message)?;
         Ok(thread_changed(&open, from, &thread).await)
@@ -82,15 +82,45 @@ impl Orchestrator {
     ) -> Result<Response, String> {
         let open = self.ready(project).await?;
         let report = (open.session)
-            .submit_review(&*open.open.github, &verdict, body)
+            .submit_review(&open.hosting().await, &verdict, body)
             .await
             .map_err(message)?;
-        if let Some(notification) = mapping::submit_notification(&report) {
+        self.after_posting(&open, project, &report).await
+    }
+
+    pub(crate) async fn post_drafts(&self, project: ProjectId) -> Result<Response, String> {
+        let open = self.ready(project).await?;
+        let report = (open.session)
+            .post_drafts(&open.hosting().await)
+            .await
+            .map_err(message)?;
+        self.after_posting(&open, project, &report).await
+    }
+
+    /// Tells what went wrong while posting, if anything, and syncs to bring back what is on the
+    /// platform now.
+    async fn after_posting(
+        &self,
+        open: &crate::open::Ready,
+        project: ProjectId,
+        report: &vet_app::session::SubmitReport,
+    ) -> Result<Response, String> {
+        if let Some(notification) = mapping::submit_notification(report) {
             open.subscribers
                 .broadcast(Event::Notification { project, notification });
         }
+        sync_pull_request(&open.open, open).await;
+        Ok(mapping::review_submitted(report))
+    }
+
+    pub(crate) async fn set_vote(&self, project: ProjectId, verdict: String) -> Result<Response, String> {
+        let open = self.ready(project).await?;
+        (open.session)
+            .set_vote(&open.hosting().await, &verdict)
+            .await
+            .map_err(message)?;
         sync_pull_request(&open.open, &open).await;
-        Ok(mapping::review_submitted(&report))
+        Ok(Response::Done)
     }
 
     pub(crate) async fn pull_request_info(&self, project: ProjectId) -> Result<Response, String> {
@@ -124,11 +154,8 @@ pub(crate) async fn sync_pull_request(open: &Arc<Open>, booted: &Booted) {
     let Source::PullRequest { remote, .. } = booted.session.source().await else {
         return;
     };
-    // Only GitHub's discussion is implemented; another platform's pull request has no sync yet.
-    if remote.kind() != PlatformKind::GitHub {
-        return;
-    }
-    let (problem, report) = match booted.session.sync_threads(&*open.github).await {
+    let hosting = open.hosting(remote.kind());
+    let (problem, report) = match booted.session.sync_threads(&hosting).await {
         Ok(report) => (report.problem.clone(), Some(report)),
         Err(SessionError::Platform(error)) => (Some(error), None),
         // The changeset on view changed meanwhile.
@@ -189,7 +216,7 @@ async fn announce(
     for notice in &report.notices {
         open.subscribers.broadcast(Event::Notification {
             project: open.id,
-            notification: mapping::notification(notice),
+            notification: mapping::notification(notice, kind),
         });
     }
 }

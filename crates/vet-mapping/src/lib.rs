@@ -6,7 +6,8 @@ pub mod semantic;
 
 use vet_app::changeset::{BaseChoice, CommitId, Lens, RemoteKey, Source, VersionOrigin};
 use vet_app::platform::{
-    CheckLog, CiState, CommitChecks, PlatformError, PlatformKind, PullRequestState, ReviewVerdict, ReviewerState,
+    CheckLog, CiState, CommitChecks, PlatformError, PlatformKind, PlatformTraits, Posting, PullRequestState,
+    ReviewVerdict, ReviewerState,
 };
 use vet_app::ports::{BaseCandidates, CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
@@ -786,29 +787,27 @@ fn reviewer_state(s: ReviewerState) -> p::ReviewerState {
 
 /// The properties of a platform the UI branches on.
 pub fn platform_traits(kind: PlatformKind) -> p::PlatformTraits {
-    match kind {
-        PlatformKind::GitHub => p::PlatformTraits {
-            conversation_feed: true,
-            batched_review: true,
-            verdicts: [
-                ("COMMENT", "Comment"),
-                ("APPROVE", "Approve"),
-                ("REQUEST_CHANGES", "Request changes"),
-            ]
-            .into_iter()
-            .map(|(id, label)| p::Verdict {
-                id: id.into(),
-                label: label.into(),
+    let traits = PlatformTraits::of(kind);
+    p::PlatformTraits {
+        conversation_feed: traits.conversation_feed,
+        batched_review: traits.posting == Posting::BatchedReview,
+        verdicts: traits
+            .verdicts
+            .iter()
+            .map(|v| p::Verdict {
+                id: v.id.into(),
+                label: v.label.into(),
             })
             .collect(),
-            verdict_separate: false,
-        },
-        PlatformKind::AzureDevOps => p::PlatformTraits {
-            conversation_feed: false,
-            batched_review: false,
-            verdicts: Vec::new(),
-            verdict_separate: true,
-        },
+        verdict_separate: traits.verdict_separate,
+    }
+}
+
+/// What the platform is called to the viewer.
+fn platform_name(kind: PlatformKind) -> &'static str {
+    match kind {
+        PlatformKind::GitHub => "GitHub",
+        PlatformKind::AzureDevOps => "Azure DevOps",
     }
 }
 
@@ -873,6 +872,7 @@ pub fn pull_request_info(v: &DiscussionView, kind: PlatformKind, platform: p::Pl
                 state: reviewer_state(r.state),
             })
             .collect(),
+        viewer_verdict: d.viewer_verdict.clone(),
         labels: d.labels.clone(),
         ci: d.ci.map(ci_state),
         blocking,
@@ -900,14 +900,15 @@ pub fn pull_request_info(v: &DiscussionView, kind: PlatformKind, platform: p::Pl
     }
 }
 
-pub fn notification(n: &SyncNotice) -> p::Notification {
+pub fn notification(n: &SyncNotice, kind: PlatformKind) -> p::Notification {
+    let platform = platform_name(kind);
     match n {
         SyncNotice::ThreadDeleted { place, dropped } => p::Notification {
             kind: p::NotificationKind::Info,
             text: if dropped.is_empty() {
-                format!("Thread on {place} was deleted on GitHub.")
+                format!("Thread on {place} was deleted on {platform}.")
             } else {
-                format!("Thread on {place} was deleted on GitHub. Your draft reply was removed.")
+                format!("Thread on {place} was deleted on {platform}. Your draft reply was removed.")
             },
             copy_text: (!dropped.is_empty()).then(|| dropped.join("\n\n")),
             host: None,
@@ -915,17 +916,19 @@ pub fn notification(n: &SyncNotice) -> p::Notification {
     }
 }
 
-/// What the viewer should hear when comments on the pull request as a whole were not taken: why,
-/// and their texts to copy.
+/// What the viewer should hear when posting stopped short: why, and the texts that were not posted
+/// to copy.
 pub fn submit_notification(r: &SubmitReport) -> Option<p::Notification> {
     let problem = r.problem.as_ref()?;
     let count = r.not_posted.len();
     Some(p::Notification {
         kind: p::NotificationKind::Info,
         text: format!(
-            "{} on the pull request {} not posted: {problem}",
-            if count == 1 { "A comment" } else { "Comments" },
-            if count == 1 { "was" } else { "were" },
+            "{} not posted: {problem}",
+            match count {
+                0 | 1 => "A comment was".to_owned(),
+                n => format!("{n} comments were"),
+            },
         ),
         copy_text: (count > 0).then(|| r.not_posted.join("\n\n")),
         host: None,

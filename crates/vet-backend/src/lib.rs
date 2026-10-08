@@ -7,6 +7,7 @@ mod changesets;
 mod events;
 mod fetch;
 mod highlight;
+mod hosting;
 mod open;
 mod references;
 mod review;
@@ -324,6 +325,8 @@ impl Orchestrator {
             Request::SubmitReview { project, verdict, body } => {
                 Box::pin(self.submit_review(project, verdict, body)).await
             }
+            Request::PostDrafts { project } => Box::pin(self.post_drafts(project)).await,
+            Request::SetVote { project, verdict } => Box::pin(self.set_vote(project, verdict)).await,
             Request::PullRequestInfo { project } => Box::pin(self.pull_request_info(project)).await,
             Request::ConfirmAnchor {
                 project,

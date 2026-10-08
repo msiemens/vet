@@ -8,6 +8,7 @@ use vet_mapping as mapping;
 use vet_protocol::{ChangesetKey, Event, ProjectId, Response};
 
 use crate::fetch::Held;
+use crate::hosting::Hosting;
 use crate::sync::sync_in_background;
 use crate::{Open, Orchestrator, message, start_servers_in_background};
 
@@ -58,11 +59,11 @@ impl Orchestrator {
         Ok(mapping::pull_requests(&list, &reviews))
     }
 
-    /// The repository of the pull request on view, if one is and GitHub hosts it.
+    /// The repository of the pull request on view, if one is.
     async fn hosted_pull_request(&self, project: ProjectId) -> Result<Option<RemoteKey>, String> {
         let open = self.ready(project).await?;
         Ok(match open.session.source().await {
-            Source::PullRequest { remote, .. } if remote.kind() == PlatformKind::GitHub => Some(remote),
+            Source::PullRequest { remote, .. } => Some(remote),
             _ => None,
         })
     }
@@ -71,7 +72,8 @@ impl Orchestrator {
         let Some(remote) = self.hosted_pull_request(project).await? else {
             return Ok(mapping::checks(&[], None));
         };
-        let (found, error) = commits_checks(&*self.github, &remote, &commits).await;
+        let hosting = Hosting::of(remote.kind(), &self.github, &self.azure_devops);
+        let (found, error) = commits_checks(&hosting, &remote, &commits).await;
         if let Some(error) = &error {
             self.refused(error, &remote.host);
         }
@@ -82,8 +84,9 @@ impl Orchestrator {
         let remote = self
             .hosted_pull_request(project)
             .await?
-            .ok_or("the changeset on view is not a pull request on GitHub")?;
-        let log = self.github.check_log(&remote, &run).await.map_err(|error| {
+            .ok_or("the changeset on view is not a pull request")?;
+        let hosting = Hosting::of(remote.kind(), &self.github, &self.azure_devops);
+        let log = hosting.check_log(&remote, &run).await.map_err(|error| {
             self.refused(&error, &remote.host);
             message(error)
         })?;

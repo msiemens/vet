@@ -97,7 +97,7 @@ impl Orchestrator {
     ) -> Result<Response, String> {
         let open = self.ready(project).await?;
         open.session
-            .delete_thread(&*open.open.github, ThreadId(thread.into()))
+            .delete_thread(&open.hosting().await, ThreadId(thread.into()))
             .await
             .map_err(message)?;
         threads_changed(&open, from).await;

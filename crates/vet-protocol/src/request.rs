@@ -471,6 +471,21 @@ pub enum Request {
         verdict: String,
         body: Option<String>,
     },
+    /// Posts the viewer's drafts of the pull request on view one after the other, on a platform
+    /// that takes comments one at a time (`PlatformTraits::batched_review` is false), then syncs.
+    /// Posting stops at the first draft the platform refuses: those before it stay posted, the
+    /// rest stay drafts, and the answer says why. Answers with `Response::ReviewSubmitted`.
+    PostDrafts {
+        project: ProjectId,
+    },
+    /// Sets the viewer's vote on the pull request on view, on a platform that keeps the vote
+    /// apart from posting (`PlatformTraits::verdict_separate`); `verdict` is an id from
+    /// `PlatformTraits::verdicts`. Syncs, so that `PullRequestInfo` has the vote. Answers with
+    /// `Response::Done`.
+    SetVote {
+        project: ProjectId,
+        verdict: String,
+    },
     /// What the Comments tool window shows of the pull request on view above its threads, as
     /// the last sync found it. Fails if the changeset on view is no pull request or was not
     /// synced yet. Answers with `Response::PullRequestInfo`.

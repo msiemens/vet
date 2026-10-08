@@ -665,6 +665,26 @@ async fn azure_devops_smoke() {
     }
     let found = client.list_pull_requests(&remote, &all_open()).await.unwrap();
     if let Some(first) = found.first() {
-        println!("{:?}", client.pull_request(&remote, first.number).await.unwrap());
+        let detail = client.pull_request(&remote, first.number).await.unwrap();
+        println!("{detail:?}");
+        let discussion = client.discussion(&remote, first.number).await.unwrap();
+        println!(
+            "{} threads, reviewers {:?}, vote {:?}, checks {:?}",
+            discussion.threads.len(),
+            discussion.reviewers,
+            discussion.viewer_verdict,
+            discussion.ci
+        );
+        for thread in discussion.threads.iter().take(5) {
+            println!("  {thread:?}");
+        }
+        for push in &detail.pushes {
+            let checks = client.checks(&remote, &push.head).await.unwrap();
+            println!("{}: {:?}", push.head, checks.checks);
+            if let Some(build) = checks.checks.iter().find(|c| c.log && c.state == CiState::Failure) {
+                let log = client.check_log(&remote, &build.id).await.unwrap();
+                println!("  log of {}: {} bytes, {:?}", build.name, log.text.len(), log.failure);
+            }
+        }
     }
 }
