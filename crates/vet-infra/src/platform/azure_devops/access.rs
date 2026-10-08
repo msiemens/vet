@@ -6,8 +6,8 @@ use std::sync::Arc;
 use azure_core::credentials::{AccessToken, Secret, TokenCredential, TokenRequestOptions};
 use azure_core::error::ErrorKind;
 use azure_core::http::headers::HeaderName;
-use azure_core::http::policies::{RetryHeaders, RetryPolicy};
-use azure_core::http::{RetryOptions, StatusCode, Transport, Url};
+use azure_core::http::policies::{Policy, PolicyResult, RetryHeaders, RetryPolicy};
+use azure_core::http::{Context, Method, Request, RetryOptions, StatusCode, Transport, Url, check_success};
 use azure_core::time::{Duration, OffsetDateTime};
 use azure_devops_rust_api::{Credential as ApiCredential, build, git, ims, policy};
 use serde::Deserialize;
@@ -69,6 +69,7 @@ impl Access {
             .endpoint(url(endpoint)?)
             .transport(self.transport.clone())
             .retry(retries())
+            .per_call_policies(requests())
             .build())
     }
 
@@ -78,6 +79,7 @@ impl Access {
             .endpoint(url(endpoint)?)
             .transport(self.transport.clone())
             .retry(retries())
+            .per_call_policies(requests())
             .build())
     }
 
@@ -87,6 +89,7 @@ impl Access {
             .endpoint(url(endpoint)?)
             .transport(self.transport.clone())
             .retry(retries())
+            .per_call_policies(requests())
             .build())
     }
 
@@ -96,6 +99,7 @@ impl Access {
             .endpoint(url(endpoint)?)
             .transport(self.transport.clone())
             .retry(retries())
+            .per_call_policies(requests())
             .build())
     }
 
@@ -104,15 +108,19 @@ impl Access {
     /// that is scoped to the organization. A host that answers with anything but a user,
     /// its sign-in page for a token it does not know, has refused the token.
     pub(crate) async fn me(&self, api: &str, organization: &str, account: &str, now: i64) -> Result<Me, PlatformError> {
-        let path = format!("/{organization}/_apis/connectionData");
-        let request = self.http.get(format!("{}{path}", api.trim_end_matches('/')));
+        let address = url(&format!(
+            "{}/{organization}/_apis/connectionData",
+            api.trim_end_matches('/')
+        ))?;
+        let endpoint = endpoint(Method::Get, &address);
+        let request = self.http.get(address);
         let request = match self.source {
             CredentialSource::Pat => request.basic_auth("", Some(&self.token)),
             CredentialSource::Cli => request.bearer_auth(&self.token),
         };
         let response = request.send().await.map_err(|_| {
             let error = PlatformError::Unreachable(format!("cannot reach {account}"));
-            log_failure(account, Some(&path), None, &error);
+            log_failure(account, Some(&endpoint), None, &error);
             error
         })?;
         let status = response.status().as_u16();
@@ -123,7 +131,7 @@ impl Access {
             .and_then(|s| s.parse::<i64>().ok());
         let body = response.text().await.unwrap_or_default();
         let fail = |error: PlatformError| {
-            log_failure(account, Some(&path), Some(status), &error);
+            log_failure(account, Some(&endpoint), Some(status), &error);
             error
         };
         if !(200..300).contains(&status) {
@@ -216,6 +224,57 @@ fn retries() -> RetryOptions {
     RetryOptions::custom(Arc::new(Retries))
 }
 
+/// The method, host and path of a request, which name what it asked for without its query.
+fn endpoint(method: Method, url: &Url) -> String {
+    let host = url.host_str().unwrap_or_default();
+    match url.port() {
+        Some(port) => format!("{method} {host}:{port}{}", url.path()),
+        None => format!("{method} {host}{}", url.path()),
+    }
+}
+
+/// The request an error came from, carried by the error to whoever makes sense of it.
+#[derive(Debug)]
+struct FailedRequest(String);
+
+impl std::fmt::Display for FailedRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for FailedRequest {}
+
+/// Sends a request to the path the API names, turns an answer that is not a success into an
+/// error once the retries are done, and has every error say which request it was.
+#[derive(Debug)]
+struct Requests;
+
+#[async_trait::async_trait]
+impl Policy for Requests {
+    async fn send(&self, ctx: &Context, request: &mut Request, next: &[Arc<dyn Policy>]) -> PolicyResult {
+        // The API crates join the endpoint, whose address ends in a slash, and the path with
+        // another one.
+        if let Some(path) = request.url().path().strip_prefix('/').filter(|p| p.starts_with('/')) {
+            let path = path.to_owned();
+            request.url_mut().set_path(&path);
+        }
+        let endpoint = endpoint(request.method(), request.url());
+        let answer = match next[0].send(ctx, request, &next[1..]).await {
+            Ok(response) => check_success(response, None).await,
+            failed => failed,
+        };
+        answer.map_err(|error| {
+            let message = error.to_string();
+            azure_core::Error::with_error(error.kind().clone(), FailedRequest(endpoint), message)
+        })
+    }
+}
+
+fn requests() -> Vec<Arc<dyn Policy>> {
+    vec![Arc::new(Requests)]
+}
+
 /// Why Azure DevOps refused a request. Every message is fit to show. `host` is the account's.
 pub(crate) fn failure(host: &str, error: &azure_core::Error, now: i64) -> PlatformError {
     let (status, failed) = match error.kind() {
@@ -241,7 +300,8 @@ pub(crate) fn failure(host: &str, error: &azure_core::Error, now: i64) -> Platfo
         ),
         _ => (None, PlatformError::Unexpected(format!("{host} could not be asked"))),
     };
-    log_failure(host, None, status, &failed);
+    let request = error.downcast_ref::<FailedRequest>().map(|r| r.0.as_str());
+    log_failure(host, request, status, &failed);
     failed
 }
 
@@ -275,7 +335,8 @@ fn from_status(host: &str, status: u16, message: &str, retry_after: Option<i64>,
     }
 }
 
-/// Records a failed request: never the token or anything of the request but its path.
+/// Records a failed request: never the token or anything of the request but its method, host
+/// and path.
 pub(crate) fn log_failure(account: &str, endpoint: Option<&str>, status: Option<u16>, error: &PlatformError) {
     tracing::warn!(
         account,

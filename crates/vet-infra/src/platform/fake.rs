@@ -118,13 +118,7 @@ fn read_request(stream: &mut TcpStream) -> Option<Seen> {
     reader.read_line(&mut line).ok()?;
     let mut parts = line.split_whitespace();
     let method = parts.next()?.to_owned();
-    // The Azure DevOps crate puts a slash after an address that ends in one.
-    let path = parts.next()?;
-    let path = path
-        .strip_prefix('/')
-        .filter(|p| p.starts_with('/'))
-        .unwrap_or(path)
-        .to_owned();
+    let path = parts.next()?.to_owned();
     let mut headers = HashMap::new();
     loop {
         line.clear();
