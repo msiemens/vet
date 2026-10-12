@@ -7,6 +7,8 @@
   import PathText from "../../lib/ui/PathText.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import { commands } from "../../state/commands";
+  import { contextMenus } from "../../state/contextMenu.svelte";
+  import { recentMenu } from "./recentCommands";
   import { avatarColour, initials, searchRecent } from "./recentList";
 
   let {
@@ -56,6 +58,13 @@
     if (project !== path) commands.run(`file.openRecent:${project}`);
   }
 
+  /** A right click puts the cursor on the row, and opens its menu. */
+  function openMenu(e: MouseEvent, project: string, index: number) {
+    e.preventDefault();
+    cursor = index;
+    void contextMenus.open(recentMenu, e.clientX, e.clientY, { recentProject: { path: project } });
+  }
+
   function pick() {
     open = false;
     commands.run("file.open");
@@ -102,6 +111,7 @@
             tabindex="-1"
             title={project.path}
             onclick={() => choose(project.path)}
+            oncontextmenu={(e) => openMenu(e, project.path, i)}
           >
             <span class="avatar" style:background="var(--avatar-{avatarColour(project.path)})"
               >{initials(projectName)}</span
@@ -205,6 +215,9 @@
     flex-direction: column;
   }
   .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: var(--fs-ctl);
   }
   .path {

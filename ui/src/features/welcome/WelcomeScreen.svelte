@@ -8,6 +8,8 @@
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { shortTime } from "../../lib/shortTime";
   import { commands } from "../../state/commands";
+  import { contextMenus } from "../../state/contextMenu.svelte";
+  import { recentMenu } from "./recentCommands";
   import { avatarColour, initials, searchRecent } from "./recentList";
 
   // It draws its own window-controls area, and its buttons run the window's commands.
@@ -46,6 +48,13 @@
     selected = Math.max(0, Math.min(current + by, found.length - 1));
     await tick();
     list?.querySelector(".on")?.scrollIntoView({ block: "nearest" });
+  }
+
+  /** A right click selects the row, and opens its menu. */
+  function openMenu(e: MouseEvent, path: string, index: number) {
+    e.preventDefault();
+    selected = index;
+    void contextMenus.open(recentMenu, e.clientX, e.clientY, { recentProject: { path } });
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -149,6 +158,7 @@
               tabindex="-1"
               title={project.path}
               onclick={() => open(project.path)}
+              oncontextmenu={(e) => openMenu(e, project.path, i)}
             >
               <span class="avatar" style:background="var(--avatar-{avatarColour(project.path)})">{initials(name)}</span>
               <span class="text">
@@ -170,6 +180,7 @@
 <style>
   .welcome {
     flex: 1;
+    min-width: 0;
     min-height: 0;
     display: flex;
     background: var(--bg-editor);
@@ -226,6 +237,9 @@
     list-style: none;
   }
   .side ul {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
     padding: 0 12px;
   }
   .item {
@@ -318,6 +332,9 @@
     flex-direction: column;
   }
   .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: var(--fs);
   }
   .path {

@@ -42,7 +42,7 @@
   import { SettingsDialog } from "../features/settings";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
   import { type RangeFile, RangeChips, TimelinePanel } from "../features/timeline";
-  import { ProjectSwitcher, WelcomeScreen } from "../features/welcome";
+  import { ProjectSwitcher, recentCommands, WelcomeScreen } from "../features/welcome";
   import type { Thread } from "../generated/Thread";
   import { errorText } from "../lib/errorText";
   import { repoName } from "../lib/paths";
@@ -252,6 +252,12 @@
         screen = "review";
       },
       copyText: (text) => void copyText(text),
+    }),
+    ...recentCommands({
+      open: (path) => {
+        if (path !== session.repo) commands.run(`file.openRecent:${path}`);
+      },
+      forget: (path) => void session.forget(path),
     }),
     ...viewCommands(reviewActions),
     ...fileCommands(reviewActions),
