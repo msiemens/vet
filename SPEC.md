@@ -173,11 +173,13 @@ Only `Range` targets are resolved by the algorithm below and can become `Stale` 
 struct ReviewedSpan {
     base:   Option<Anchor>,   // reviewed base-side lines; None for pure additions
     target: Option<Anchor>,   // reviewed target-side lines; None for pure deletions
-    state:  Seen | SeenAgainstOldBase,
+    state:  Seen | SeenAgainstOldBase | Flagged,
 }
 ```
 
-Marking a hunk (or a selection) seen records one `ReviewedSpan` covering its lines on both sides. Spans record coverage only; flagging a concern is a comment (§5.1). A hunk shows as seen when every changed line in it is covered by a `Seen` span.
+Marking a hunk (or a selection) seen records one `ReviewedSpan` covering its lines on both sides. `Seen` and `SeenAgainstOldBase` spans record coverage; flagging a concern is a comment (§5.1). A hunk shows as seen when every changed line in it is covered by a `Seen` span.
+
+**Flags.** A hunk can be flagged for later review: a `Flagged` span over its lines on both sides, which covers nothing. A flag is independent of seen (a hunk can be both), is only removed by flagging again, and is never cleared by marking seen or unseen. Flags are stored with the review and remapped exactly as seen spans are, except that a flag never degrades: a hunk is flagged while any of its changed lines is covered by a `Flagged` span, so a flagged hunk that is split or edited by a push stays flagged. Finishing the review drops them with the other marks.
 
 **Remapping is a partition (constitutional, per I3).** When the changeset changes, each span is remapped side by side using the line-level diff between its recorded file and the current file (following git-detected renames). Only Exact strategies apply. Inferred moves never carry review state. Each reviewed line whose content is identical and maps into the current changeset stays covered. Every other line is uncovered, so one span can become several spans, or none. If a reviewed line's mapping is not unique (for example, repeated identical lines whose surrounding context changed), it is uncovered rather than left to the diff algorithm's tie-breaking. A seen 20-line region that gets a 3-line edit becomes up to two seen spans around 3 unseen lines.
 
@@ -456,6 +458,7 @@ Grouped by area; areas and the items within each are in priority order.
 - Double-clicking a line in the Changes tab opens the file's tab at that line, highlighted
 - The file icon of a file in the Changes tab opens the file's tab, like the hunk bar's; a changed file's tab switches between file and diff view
 - A changed file's file view marks its added, changed and removed lines (removed ones where they were), coloured by review state; a mark opens the hunk's old lines with the hunk bar's actions (toggle seen, comment, open in the diff), so a change can be marked seen in context. Next/previous hunk and Space work there as in the diff (design to be iterated)
+- Hunks can be flagged for later review (§5.2): a flag button beside the seen toggle in the hunk bars and in the File view's hunk toolbar (active while flagged), Toggle Flag in the Review menu, Next and Previous Flagged Hunk in the Navigate menu (across files, in All Changes and in file tabs), and Finish Review… warns with the number of flagged hunks left and offers to go to the first one; finishing anyway is allowed
 - Edit and remove your own comments; removing the first comment removes its thread
 - Analysis results (diagnostics and other hints) are not shown in collapsed unchanged regions
 - Line highlight in the editor: the clicked line stays highlighted
