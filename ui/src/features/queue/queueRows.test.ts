@@ -66,7 +66,7 @@ void test("the source says which branch the working tree is on and how many comm
 
 void test("the working tree is updated now and a branch with its last commit", () => {
   assert.equal(updatedText(tree, NOW), "now");
-  assert.equal(updatedText(retry, NOW), "12:30 PM");
+  assert.equal(updatedText(retry, NOW), "12:30");
   assert.equal(updatedText({ ...retry, lastCommit: undefined }, NOW), "");
 });
 
@@ -161,7 +161,7 @@ void test("a pull request row has its number apart from its title, the repositor
   assert.deepEqual(labelOf(retry), { text: "feat/retry-policy" });
   assert.equal(sourceText(row), "origin");
   assert.equal(sourceText(forked), "jdoe/ledger-sync");
-  assert.equal(updatedText(row, NOW), "12:30 PM");
+  assert.equal(updatedText(row, NOW), "12:30");
 });
 
 void test("a pull request counts the platform's comments, a local changeset its open threads", () => {

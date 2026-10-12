@@ -149,7 +149,7 @@
     text-overflow: ellipsis;
   }
   .when {
-    width: 88px;
+    width: 72px;
     text-align: right;
   }
   .empty {

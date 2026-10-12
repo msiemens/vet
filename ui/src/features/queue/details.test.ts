@@ -39,7 +39,7 @@ void test("the changeset on view has all three groups", () => {
     [
       "Review",
       [
-        ["Started", "9:52 AM"],
+        ["Started", "09:52"],
         ["Last reviewed", "v14"],
         ["Versions", "17"],
       ],
@@ -109,7 +109,7 @@ void test("a finished review says when, and shows no progress", () => {
     groups.map((g) => g.title),
     ["Changeset", "Review"],
   );
-  assert.deepEqual(groups[1].facts[1], { label: "Finished", value: "11:40 AM · v14" });
+  assert.deepEqual(groups[1].facts[1], { label: "Finished", value: "11:40 · v14" });
 });
 
 void test("the filter reads as what it lets through", () => {

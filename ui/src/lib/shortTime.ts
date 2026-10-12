@@ -1,15 +1,17 @@
+// The time of day is always 24-hour, as the design writes it ("Mon 14:02", "09:40").
+const time = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
+
 const weekday = new Intl.DateTimeFormat("en", { weekday: "short" });
-const weekdayClock = new Intl.DateTimeFormat("en", { weekday: "short", hour: "numeric", minute: "2-digit" });
+const weekdayClock = new Intl.DateTimeFormat("en", { weekday: "short", ...time });
 const monthDay = new Intl.DateTimeFormat("en", { month: "short", day: "numeric" });
 const monthDayYear = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" });
-const clock = new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" });
+const clock = new Intl.DateTimeFormat("en", time);
 const fullFormat = new Intl.DateTimeFormat(undefined, {
   weekday: "short",
   day: "numeric",
   month: "short",
   year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
+  ...time,
 });
 
 const startOfDay = (ms: number) => new Date(ms).setHours(0, 0, 0, 0);
