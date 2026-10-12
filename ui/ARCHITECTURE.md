@@ -71,6 +71,7 @@ Every event a request causes reaches every subscriber, the window that asked inc
 - The editor and virtualized views get explicit calls (`applyReview(path, review)`, `goToHunk`, `setMode`); they never subscribe to stores, and editor state is never mirrored into Svelte state.
 - Nothing reactive per frame: no `$effect` or reactive state on what changes with a scroll position, a pointer move or a keystroke. Mounting editors while scrolling is imperative, and spends at most a few milliseconds per frame (the rest follows on the next frames).
 - Small UI state is plain `$state`: tool windows, widths, theme, tabs, menus, toasts.
+- `ui/test/harness/` keeps these copies honest: its loader runs the real `state/` stores under node against a real backend, scripted sessions act, and after each step the stores are compared with fresh reads through a second connection. Known differences are listed by bug in `known.ts`; any other, or a listed one that no longer happens, fails.
 
 ## Controls and selection
 
