@@ -66,6 +66,9 @@ const EXTRAS_MAX_AGE: i64 = 180;
 /// How long who the viewer is, and their groups, are reused.
 const VIEWER_MAX_AGE: i64 = 600;
 
+/// How long the groups of a user are not asked for again after the organization refused them.
+const TEAMS_RETRY_AFTER: i64 = 3600;
+
 /// Where the services are: the organizations (pull requests, who the user is) and the identities.
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Endpoints {
@@ -104,6 +107,8 @@ struct State {
     profiles: HashMap<String, (i64, access::Me)>,
     /// The user's groups by host and organization.
     teams: HashMap<(String, String), (i64, Vec<String>)>,
+    /// By host and organization: when the groups were last refused.
+    teams_unreadable: HashMap<(String, String), i64>,
     /// By repository and pull request: the head they were read for, and when.
     extras: HashMap<(RemoteKey, u64), (i64, String, Extras)>,
     /// The pull request each commit that an iteration has as its source was seen in.
@@ -187,8 +192,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         }
     }
 
-    /// The names of the groups the user is a member of. Without the scope to read
-    /// identities there are none to name.
+    /// The names of the groups the user is a member of.
     async fn teams(
         &self,
         access: &Access,
@@ -197,8 +201,8 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
         id: &str,
     ) -> Result<Vec<String>, PlatformError> {
         let identities = access.identities(&self.endpoints().identities)?;
-        let member_of = Self::or_nothing(
-            self.settle(
+        let member_of = self
+            .settle(
                 host,
                 identities
                     .identities_client()
@@ -206,27 +210,23 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
                     .identity_ids(id)
                     .query_membership(QueryMembership::ExpandedUp)
                     .await,
-            )
-            .map(|list| {
-                list.value
-                    .into_iter()
-                    .flat_map(|i| i.identity_base.member_of)
-                    .collect::<Vec<_>>()
-            }),
-        )?;
+            )?
+            .value
+            .into_iter()
+            .flat_map(|i| i.identity_base.member_of)
+            .collect::<Vec<_>>();
         let mut names = Vec::new();
         for chunk in member_of.chunks(GROUPS_PER_REQUEST) {
-            let groups = Self::or_nothing(
-                self.settle(
+            let groups = self
+                .settle(
                     host,
                     identities
                         .identities_client()
                         .read_identities(organization)
                         .descriptors(chunk.join(","))
                         .await,
-                )
-                .map(|list| list.value),
-            )?;
+                )?
+                .value;
             names.extend(
                 groups
                     .into_iter()
@@ -275,13 +275,33 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .get(&key)
             .filter(|(at, _)| now - at < VIEWER_MAX_AGE)
             .map(|(_, teams)| teams.clone());
+        let unreadable = self
+            .state()
+            .teams_unreadable
+            .get(&key)
+            .is_some_and(|at| now - at < TEAMS_RETRY_AFTER);
         let teams = match (cached, profile.id.as_deref()) {
             (Some(teams), _) => teams,
-            (None, Some(id)) => {
-                let teams = self.teams(access, host, repository.organization, id).await?;
-                self.state().teams.insert(key, (now, teams.clone()));
-                teams
-            }
+            (None, _) if unreadable => Vec::new(),
+            (None, Some(id)) => match self.teams(access, host, repository.organization, id).await {
+                Ok(teams) => {
+                    self.state().teams.insert(key, (now, teams.clone()));
+                    teams
+                }
+                // The token cannot read identities, or the organization has none to give:
+                // the queue works without, and is not asked again for a while.
+                Err(PlatformError::Forbidden(_) | PlatformError::NotFound(_)) => {
+                    if self.state().teams_unreadable.insert(key, now).is_none() {
+                        tracing::warn!(
+                            account = host,
+                            "the groups of the user cannot be read (the token may lack the identity scope); \
+                             requests to a team are not shown as waiting for the user"
+                        );
+                    }
+                    Vec::new()
+                }
+                Err(other) => return Err(other),
+            },
             (None, None) => Vec::new(),
         };
         Ok(Me {

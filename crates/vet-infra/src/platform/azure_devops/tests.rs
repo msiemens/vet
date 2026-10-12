@@ -753,6 +753,43 @@ async fn a_failed_request_is_logged_with_its_method_host_and_path_and_without_it
 }
 
 #[tokio::test]
+async fn groups_the_organization_refuses_are_explained_once_and_not_asked_for_again_for_an_hour() {
+    set_now(NOW);
+    let capture = vet_log::capture::Capture::default();
+    let _logging = capture.install(vet_log::filter(None).0);
+    let fake = Fake::start(|request, _| {
+        let path = request.path.split('?').next().unwrap();
+        if path.ends_with("/_apis/connectionData") {
+            Canned::json(&profile())
+        } else if path == "/contoso/_apis/identities" {
+            Canned::status(404, "")
+        } else if path == PULLS {
+            let mut asked = Doc::new(1);
+            asked.reviewers = vec![reviewer(ada(), 0)];
+            Canned::json(&list_of(&[asked]))
+        } else {
+            Canned::json(&no_value())
+        }
+    });
+    let client = client(&fake);
+
+    let rows = list_rows(&client, &remote(), &PullRequestQuery::new(QueueTab::WaitingForMe))
+        .await
+        .unwrap()
+        .rows;
+    assert_eq!(rows.len(), 1, "a request to the user itself needs no groups");
+
+    set_now(NOW + VIEWER_MAX_AGE + 1);
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    assert_eq!(requests_to(&fake, "/identities"), 1);
+
+    set_now(NOW + TEAMS_RETRY_AFTER + 1);
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    assert_eq!(requests_to(&fake, "/identities"), 2, "asked again after an hour");
+    assert_eq!(capture.text().matches("groups of the user cannot be read").count(), 1);
+}
+
+#[tokio::test]
 async fn nothing_is_sent_without_a_credential_or_for_another_platforms_repository() {
     let fake = repository(vec![], vec![], vec![]);
     let error = client_with(&fake, Signed(None, CredentialSource::Pat))
