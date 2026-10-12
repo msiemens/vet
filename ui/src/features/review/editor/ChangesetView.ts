@@ -15,6 +15,7 @@ import type { TextSpan } from "../../../generated/TextSpan";
 import { Scrollbar } from "../../../lib/ui/scrollbar";
 import type { SoftWrap } from "../../../lib/softWrap";
 import type { Mode } from "../../../lib/viewMode";
+import { CaretStop } from "./caretStop";
 import { changeCard } from "./changeCard";
 import { type EditorSelection, hunkComment, linesAt } from "./commentAnchor";
 import { takesKeys } from "./dom";
@@ -76,6 +77,7 @@ export class ChangesetView {
   private windowing: Windowing;
   private actions: ReviewActions;
   current = -1;
+  private caretStop = new CaretStop<EditorView>();
   /** The section framed as the current stop's file. */
   private framed?: number;
   private destroyed = false;
@@ -450,12 +452,22 @@ export class ChangesetView {
 
   /** Makes `stop` the current one without scrolling. */
   private select(stop: number) {
-    if (this.current === stop) return;
-    if (this.current >= 0) this.markCurrent(this.current, false);
-    this.current = stop;
-    this.frameCurrent();
-    this.markCurrent(stop, true);
-    this.pin.refresh();
+    if (this.current !== stop) {
+      if (this.current >= 0) this.markCurrent(this.current, false);
+      this.current = stop;
+      this.frameCurrent();
+      this.markCurrent(stop, true);
+      this.pin.refresh();
+    }
+    this.chosen();
+  }
+
+  /** A stop was chosen: the carets as they are now no longer decide it (`CaretStop`). */
+  private chosen() {
+    const heads: [EditorView, number][] = [];
+    for (const fi of this.windowing.mounted)
+      for (const view of this.sections[fi].handle?.views ?? []) heads.push([view, view.state.selection.main.head]);
+    this.caretStop.chosen(heads);
   }
 
   /** Frames the section of the current stop's file, in the Changes tab only (`section.css`). */
@@ -535,6 +547,7 @@ export class ChangesetView {
       this.sync();
       this.markCurrent(stop, true);
       this.pin.refresh();
+      this.chosen();
       return;
     }
     const hi = si - cards;
@@ -548,6 +561,7 @@ export class ChangesetView {
     const handle = this.reveal(fi, hunk.targetStart, hi);
     handle.dispatchAll(setCurrent.of(hi));
     this.pin.refresh();
+    this.chosen();
   }
 
   /**
@@ -683,6 +697,7 @@ export class ChangesetView {
     const hunks = file.hunks.map((h) => h.targetStart);
     this.current = this.stops.nearest(fi, cards.length, card, hunks, anchor.line) ?? this.current;
     this.frameCurrent();
+    this.chosen();
   }
 
   /** Renders a file's review state and progress as the backend sent them; a base diff of a hunk that is no longer seen against an old base closes. */
@@ -729,8 +744,9 @@ export class ChangesetView {
   }
 
   /**
-   * Makes the hunk at the focused editor's caret (else the nearest one above it) the current stop.
-   * Undefined when no editor of a file with hunks has the focus.
+   * Makes the hunk at the focused editor's caret (else the nearest one above it) the current stop,
+   * unless the caret has not moved since the current stop was chosen: then the stop stays. Undefined
+   * when no editor of a file with hunks has the focus.
    */
   private selectAtCaret(): number | undefined {
     for (const fi of this.windowing.mounted) {
@@ -738,7 +754,9 @@ export class ChangesetView {
       if (!s.file.hunks.length) continue;
       const view = s.handle?.views.find(takesKeys);
       if (!view) continue;
-      const stop = this.hunkStopAt(fi, view, lineOf(view.state.doc, view.state.selection.main.head));
+      const head = view.state.selection.main.head;
+      if (this.current >= 0 && !this.caretStop.moved(view, head)) return this.current;
+      const stop = this.hunkStopAt(fi, view, lineOf(view.state.doc, head));
       this.select(stop);
       return stop;
     }
