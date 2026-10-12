@@ -55,7 +55,7 @@
 <nav class={side} aria-label={side === "left" ? "Tool windows" : "Right tool windows"}>
   {#each TOOLS[side] as tool (tool.id)}
     {@const count = counts[tool.id] ?? 0}
-    <span class="tool">
+    <span class="slot">
       <IconButton
         icon={ICONS[tool.id]}
         label={count > 0 ? `${tool.label}, ${count} new` : tool.label}
@@ -87,7 +87,8 @@
   .bottom {
     margin-top: auto;
   }
-  .tool {
+  /* Not `.tool`: that global class pads the span wider than the rail. */
+  .slot {
     position: relative;
     display: inline-flex;
   }
