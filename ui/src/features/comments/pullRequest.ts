@@ -47,6 +47,11 @@ export function draftsToSubmit(threads: readonly Thread[]): number {
   return threads.reduce((n, t) => n + (t.platform ? t.messages.filter(waits).length : 0), 0);
 }
 
+/** The vote the Cast vote button casts: the chosen one if it differs from the viewer's current vote, else none. */
+export function voteToCast(chosen: string | undefined, current: string | null | undefined): string | undefined {
+  return chosen && chosen !== current ? chosen : undefined;
+}
+
 /** Why the review cannot be submitted now, if it cannot. */
 export function submitBlock(connection: PlatformConnection | undefined): string | undefined {
   switch (connection?.type) {

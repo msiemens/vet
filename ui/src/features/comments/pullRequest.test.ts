@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Thread } from "../../generated/Thread.ts";
 import type { ThreadMessage } from "../../generated/ThreadMessage.ts";
-import { blockerText, draftsToSubmit, stateLabel, submitBlock } from "./pullRequest.ts";
+import { blockerText, draftsToSubmit, stateLabel, submitBlock, voteToCast } from "./pullRequest.ts";
 
 const message = (state: ThreadMessage["state"]): ThreadMessage => ({
   id: 1,
@@ -44,6 +44,13 @@ void test("a signed out or expired platform blocks submitting and says what to d
   assert.equal(submitBlock({ type: "failed", message: "offline" }), undefined);
   assert.match(submitBlock({ type: "signedOut" }) ?? "", /Sign in/);
   assert.match(submitBlock({ type: "tokenExpired", message: "" }) ?? "", /sign in again/);
+});
+
+void test("the Cast vote button casts a chosen vote that is not the viewer's current one, and nothing else", () => {
+  assert.equal(voteToCast("approve", null), "approve");
+  assert.equal(voteToCast("approve", "reject"), "approve");
+  assert.equal(voteToCast(undefined, null), undefined);
+  assert.equal(voteToCast("approve", "approve"), undefined);
 });
 
 void test("the pull request's state and what blocks it read as words", () => {

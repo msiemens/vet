@@ -35,7 +35,13 @@ class PlatformStore {
   /** Counts the asks for Settings on the Accounts page; the app window opens the dialog on each. */
   accountsRequests = $state(0);
   /** The Submit review form, kept here so that switching tool windows does not empty it. */
-  review = $state({ open: false, verdict: undefined as string | undefined, body: "" });
+  review = $state({
+    open: false,
+    verdict: undefined as string | undefined,
+    body: "",
+    /** The vote picked and not cast yet, on a platform that keeps the vote apart from posting. */
+    vote: undefined as string | undefined,
+  });
   /** The viewer's comments are being posted. */
   sending = $state(false);
   /** The tab the Comments tool window shows. */
@@ -158,6 +164,8 @@ class PlatformStore {
   async vote(verdict: string): Promise<boolean> {
     try {
       await this.backend?.setVote(verdict);
+      this.review.vote = undefined;
+      await this.reload();
       return true;
     } catch (error) {
       session.notice = `Could not set the vote: ${errorText(error)}`;
