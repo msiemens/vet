@@ -9,7 +9,7 @@ use std::sync::Arc;
 use vet_core::content::{EntryKind, LineRange, RepoPath, Snapshot, SnapshotStatus, is_binary};
 use vet_core::review::{
     Anchor, AnchorState, CommentTarget, EditConflict, Message, MessageId, Outgoing, PendingVote, PlatformThread,
-    RemoteComment, Side, Thread, ThreadId, ThreadStatus,
+    RemoteComment, Side, Strategy, Thread, ThreadId, ThreadStatus,
 };
 
 use super::hold::Held;
@@ -633,10 +633,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// Posts the viewer's drafts one after the other, on a platform that takes comments one at a
-    /// time, and records where they are on the platform. Drafts whose code is gone, and those in a
-    /// thread with an edit conflict, wait. Stops at the first the platform refuses; what was
-    /// posted before it stays posted. Then sends the pending vote, unless the comments stopped
-    /// short.
+    /// time, and records where they are on the platform. Drafts whose code is gone (deleted lines
+    /// included), and those in a thread with an edit conflict, wait. Stops at the first the
+    /// platform refuses; what was posted before it stays posted. Then sends the pending vote,
+    /// unless the comments stopped short.
     pub async fn post_drafts<P: Platform + Sync>(&self, platform: &P) -> Result<SubmitReport> {
         let traits = platform.traits();
         if traits.posting != Posting::PerComment {
@@ -1397,9 +1397,19 @@ fn drafts_of(st: &State, verdict: &str, body: Option<String>) -> (Submission, u3
 type Place = (String, DiffSide, Option<(u32, u32)>);
 
 /// Where a draft thread is posted: the file, the side and the 1-based lines, as the code is now;
-/// `None` for a thread with no place left.
+/// `None` for a thread with no place left, which includes one whose lines a push deleted: it shows
+/// at the deletion point, but there is no code there to comment on.
 fn place_for_posting(st: &State, thread: &Thread) -> Option<Place> {
     let view = thread_view(st, thread);
+    if matches!(
+        view.state,
+        Some(AnchorState::Inferred {
+            strategy: Strategy::Deleted,
+            ..
+        })
+    ) {
+        return None;
+    }
     let side = |s: Side| match s {
         Side::Base => DiffSide::Left,
         Side::Target => DiffSide::Right,

@@ -611,6 +611,81 @@ async fn a_draft_on_code_that_is_gone_and_one_in_a_thread_with_an_edit_conflict_
     assert!(hosted.submissions[0].threads.is_empty() && hosted.submissions[0].replies.is_empty());
 }
 
+/// `a.txt` of `pr1` without its line 20 (0-based).
+fn without_line_20() -> String {
+    numbered(30, &[3, 20])
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| *i != 20)
+        .map(|(_, l)| format!("{l}\n"))
+        .collect()
+}
+
+/// A draft on a line and a draft on the whole pull request, then a push that deletes the line.
+async fn with_a_draft_on_deleted_lines(fx: &Fixture, push: impl FnOnce(&Fixture)) {
+    let on_deleted = fx.thread(on("a.txt", 20, 21)).await;
+    let revision = fx.session.revision().await;
+    let overall = fx
+        .session
+        .create_thread(revision, View::Changeset, NewThread::Changeset, "Overall.".into(), 100);
+    overall.await.unwrap();
+    push(fx);
+    fx.session.observe().await.unwrap().expect("pushed to");
+    let thread = fx.all().await.into_iter().find(|t| t.id == on_deleted).unwrap();
+    assert!(
+        matches!(
+            thread.state,
+            Some(AnchorState::Inferred {
+                strategy: Strategy::Deleted,
+                ..
+            })
+        ),
+        "{:?}",
+        thread.state
+    );
+}
+
+#[tokio::test]
+async fn a_draft_on_lines_a_push_deleted_waits_in_a_review_while_the_others_are_posted() {
+    let (fx, hosting) = on_a_pull_request().await;
+    with_a_draft_on_deleted_lines(&fx, |fx| {
+        let base = numbered(30, &[]);
+        fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr2", &[("a.txt", &without_line_20())]);
+    })
+    .await;
+
+    let report = fx
+        .session
+        .submit_review(&hosting, "COMMENT", Some("Only this.".into()))
+        .await
+        .unwrap();
+
+    assert_eq!((report.posted, report.skipped, report.problem), (1, 1, None));
+    let hosted = hosting.0.lock().unwrap();
+    assert!(hosted.submissions[0].threads.is_empty());
+    assert_eq!(hosted.submissions[0].comments.len(), 1);
+}
+
+#[tokio::test]
+async fn a_draft_on_lines_a_push_deleted_waits_when_posting_one_by_one_while_the_others_are_posted() {
+    let (fx, hosting) = on_an_azure_devops_pull_request().await;
+    with_a_draft_on_deleted_lines(&fx, |fx| {
+        let remote = RemoteKey {
+            host: "dev.azure.com".into(),
+            path: "acme/shop/app".into(),
+        };
+        let refs = PullRequestRefs::of(&remote, 7);
+        fx.git.add_commit(&refs.head, "pr2", &[("a.txt", &without_line_20())]);
+    })
+    .await;
+
+    let report = fx.session.post_drafts(&hosting).await.unwrap();
+
+    assert_eq!((report.posted, report.skipped, report.problem), (1, 1, None));
+    let posts: Vec<_> = hosting.calls().into_iter().filter(|c| c.starts_with("post")).collect();
+    assert_eq!(posts, ["post Overall."]);
+}
+
 #[tokio::test]
 async fn an_empty_comment_review_is_refused_and_a_verdict_the_platform_lacks_too() {
     let (fx, hosting) = on_a_pull_request().await;
