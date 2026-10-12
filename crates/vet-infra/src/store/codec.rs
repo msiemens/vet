@@ -15,13 +15,13 @@ use vet_core::content::{
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::TreeNode;
 use vet_core::review::{
-    Anchor, CommentTarget, EditConflict, Message, MessageId, Outgoing, PlatformThread, RemoteComment, ReviewedSpan,
-    Side, SpanState, Thread, ThreadId, ThreadStatus,
+    Anchor, CommentTarget, EditConflict, Message, MessageId, Outgoing, PendingVote, PlatformThread, RemoteComment,
+    ReviewedSpan, Side, SpanState, Thread, ThreadId, ThreadStatus,
 };
 
 use super::entity::{
-    ack, anchor, kinds, message, project_filter_item, review, snapshot_path, span, thread, tree_child, version,
-    version_file,
+    ack, anchor, changeset, kinds, message, project_filter_item, review, snapshot_path, span, thread, tree_child,
+    version, version_file,
 };
 
 pub fn corrupt(what: &str) -> DbErr {
@@ -540,12 +540,7 @@ pub fn message_from(m: message::Model) -> Result<Message, DbErr> {
         (None, None) => None,
         _ => return Err(corrupt("a comment's remote id and synced text go together")),
     };
-    let outgoing = match (m.posting_since, m.post_error) {
-        (None, None) => Outgoing::Draft,
-        (Some(since), None) => Outgoing::Posting { since },
-        (None, Some(error)) => Outgoing::Failed { error },
-        (Some(_), Some(_)) => return Err(corrupt("a comment is either being posted or failed to be")),
-    };
+    let outgoing = outgoing_from(m.posting_since, m.post_error)?;
     Ok(Message {
         id: MessageId(m.id as u64),
         author: m.author,
@@ -573,16 +568,55 @@ pub fn message_row(thread: i64, m: &Message) -> message::ActiveModel {
         synced: Set(m.remote.as_ref().map(|r| r.synced.clone())),
         conflict_body: Set(conflict(m).map(|c| c.remote_body.clone())),
         conflict_at: Set(conflict(m).map(|c| c.remote_at)),
-        posting_since: Set(match m.outgoing {
-            Outgoing::Posting { since } => Some(since),
-            _ => None,
-        }),
-        post_error: Set(match &m.outgoing {
-            Outgoing::Failed { error } => Some(error.clone()),
-            _ => None,
-        }),
+        posting_since: Set(outgoing_since(&m.outgoing)),
+        post_error: Set(outgoing_error(&m.outgoing)),
         ..Default::default()
     }
+}
+
+/// How far something of the viewer's is on its way to the platform, from its columns.
+fn outgoing_from(posting_since: Option<i64>, error: Option<String>) -> Result<Outgoing, DbErr> {
+    match (posting_since, error) {
+        (None, None) => Ok(Outgoing::Draft),
+        (Some(since), None) => Ok(Outgoing::Posting { since }),
+        (None, Some(error)) => Ok(Outgoing::Failed { error }),
+        (Some(_), Some(_)) => Err(corrupt("something is either being posted or failed to be")),
+    }
+}
+
+fn outgoing_since(outgoing: &Outgoing) -> Option<i64> {
+    match outgoing {
+        Outgoing::Posting { since } => Some(*since),
+        _ => None,
+    }
+}
+
+fn outgoing_error(outgoing: &Outgoing) -> Option<String> {
+    match outgoing {
+        Outgoing::Failed { error } => Some(error.clone()),
+        _ => None,
+    }
+}
+
+/// The vote that waits to be sent, from the columns of its changeset.
+pub fn vote_from(c: changeset::Model) -> Result<Option<PendingVote>, DbErr> {
+    let Some(verdict) = c.vote else {
+        return match (c.vote_posting_since, c.vote_error) {
+            (None, None) => Ok(None),
+            _ => Err(corrupt("a vote's state belongs to a vote")),
+        };
+    };
+    Ok(Some(PendingVote {
+        verdict,
+        outgoing: outgoing_from(c.vote_posting_since, c.vote_error)?,
+    }))
+}
+
+/// The vote columns of a changeset row.
+pub fn vote_columns(row: &mut changeset::ActiveModel, vote: Option<&PendingVote>) {
+    row.vote = Set(vote.map(|v| v.verdict.clone()));
+    row.vote_posting_since = Set(vote.and_then(|v| outgoing_since(&v.outgoing)));
+    row.vote_error = Set(vote.and_then(|v| outgoing_error(&v.outgoing)));
 }
 
 fn conflict(m: &Message) -> Option<&EditConflict> {

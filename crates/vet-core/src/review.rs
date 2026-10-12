@@ -122,6 +122,16 @@ pub enum Outgoing {
     Failed { error: String },
 }
 
+/// The vote of the viewer's on a pull request that waits to be sent, on a platform that keeps the
+/// vote apart from posting. There is at most one per pull request, and it is on its way to the
+/// platform like a draft: `outgoing` is never a comment's posted state.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PendingVote {
+    /// An id of the platform's verdicts.
+    pub verdict: String,
+    pub outgoing: Outgoing,
+}
+
 impl Message {
     /// A message the viewer wrote, not stored or posted yet.
     pub fn written(author: String, body: String, at: i64) -> Self {

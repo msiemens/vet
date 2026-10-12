@@ -91,7 +91,7 @@ pub use self::revision::{ChangedFiles, RevisionView};
 use self::source::Stored;
 pub use self::state::View;
 use self::state::{OpenReview, Shown, State, lifecycle_of};
-pub use self::sync::{DiscussionView, Keep, SubmitReport, SyncNotice, SyncReport};
+pub use self::sync::{DiscussionView, Keep, SubmitReport, SyncNotice, SyncReport, VoteSent};
 pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsView};
 pub use self::versions::VersionView;
 use self::versions::first_change;

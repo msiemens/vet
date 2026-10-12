@@ -2,6 +2,7 @@
 import type { Blocker } from "./Blocker";
 import type { CiState } from "./CiState";
 import type { ConversationEntry } from "./ConversationEntry";
+import type { PendingVote } from "./PendingVote";
 import type { PlatformStatus } from "./PlatformStatus";
 import type { PlatformTraits } from "./PlatformTraits";
 import type { PullRequestState } from "./PullRequestState";
@@ -15,7 +16,11 @@ export type PullRequestInfo = { number: number, title: string, url: string, draf
  * The id of the verdict the viewer voted, on a platform that keeps the vote apart from posting
  * (`traits.verdict_separate`); absent without a vote.
  */
-viewerVerdict: string | null, labels: Array<string>, 
+viewerVerdict: string | null, 
+/**
+ * The vote staged and not sent yet (`StageVote`), on such a platform; sent by `PostDrafts`.
+ */
+pendingVote: PendingVote | null, labels: Array<string>, 
 /**
  * The checks of the head commit; absent when it has none.
  */

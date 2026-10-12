@@ -177,6 +177,13 @@ pub struct Submission {
     pub comments: Vec<NewConversationComment>,
 }
 
+impl Submission {
+    /// Whether there is no draft to post, whatever the review's own text.
+    pub fn is_empty(&self) -> bool {
+        self.threads.is_empty() && self.replies.is_empty() && self.comments.is_empty()
+    }
+}
+
 /// Where a posted draft is on the platform.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PostedThread {

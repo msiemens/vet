@@ -4,6 +4,7 @@ use vet_core::review::{EditConflict, Outgoing};
 
 use super::*;
 use crate::platform::{DiffSide, PlatformError};
+use crate::session::VoteSent;
 
 /// Pull request 7, opened: its head `pr1` has `a.txt` edited at lines 3 and 20 (0-based).
 async fn on_a_pull_request() -> (Fixture, FakeHosting) {
@@ -1150,18 +1151,153 @@ async fn a_platform_is_posted_to_the_way_it_takes_comments_and_an_empty_post_is_
     assert!(github.calls().is_empty() && azure.calls().is_empty());
 }
 
+async fn pending(fx: &Fixture) -> Option<(String, Outgoing)> {
+    let vote = fx.session.pending_vote().await.unwrap()?;
+    Some((vote.verdict, vote.outgoing))
+}
+
+fn draft_vote(verdict: &str) -> Option<(String, Outgoing)> {
+    Some((verdict.to_owned(), Outgoing::Draft))
+}
+
 #[tokio::test]
-async fn the_vote_is_sent_alone_and_only_where_the_platform_keeps_it_apart_and_knows_the_verdict() {
+async fn a_vote_is_staged_only_where_the_platform_keeps_it_apart_and_knows_the_verdict_and_sends_nothing() {
     let (fx, github) = on_a_pull_request().await;
     let azure = FakeHosting::per_comment();
 
-    fx.session.set_vote(&azure, "wait-for-author").await.unwrap();
-    let unknown = fx.session.set_vote(&azure, "APPROVE").await;
-    let joined = fx.session.set_vote(&github, "APPROVE").await;
+    fx.session.stage_vote(&azure, "wait-for-author").await.unwrap();
+    let unknown = fx.session.stage_vote(&azure, "APPROVE").await;
+    let joined = fx.session.stage_vote(&github, "APPROVE").await;
 
-    assert_eq!(azure.votes(), ["wait-for-author"]);
     assert!(matches!(unknown, Err(SessionError::Invalid(_))));
     assert!(matches!(joined, Err(SessionError::Invalid(_))));
-    assert!(github.votes().is_empty());
-    assert!(azure.0.lock().unwrap().submissions.is_empty(), "a vote posts no drafts");
+    assert_eq!(pending(&fx).await, draft_vote("wait-for-author"));
+    assert!(
+        azure.calls().is_empty() && github.calls().is_empty(),
+        "staging asks no platform"
+    );
+}
+
+#[tokio::test]
+async fn staging_again_replaces_the_vote_and_the_viewers_current_vote_clears_it() {
+    let (fx, hosting) = on_an_azure_devops_pull_request().await;
+    hosting.0.lock().unwrap().discussion.viewer_verdict = Some("approved".to_owned());
+    fx.sync(&hosting).await;
+
+    fx.session.stage_vote(&hosting, "rejected").await.unwrap();
+    fx.session.stage_vote(&hosting, "wait-for-author").await.unwrap();
+    assert_eq!(pending(&fx).await, draft_vote("wait-for-author"));
+
+    fx.session.stage_vote(&hosting, "approved").await.unwrap();
+    assert_eq!(pending(&fx).await, None, "the platform has this vote already");
+
+    fx.session.stage_vote(&hosting, "rejected").await.unwrap();
+    fx.session.discard_vote().await.unwrap();
+    assert_eq!(pending(&fx).await, None);
+}
+
+#[tokio::test]
+async fn a_post_sends_the_comments_and_then_the_vote() {
+    let (fx, hosting) = with_three_drafts().await;
+    fx.session.stage_vote(&hosting, "approved").await.unwrap();
+
+    let report = fx.session.post_drafts(&hosting).await.unwrap();
+
+    assert_eq!((report.posted, report.vote, report.problem), (3, VoteSent::Cast, None));
+    let calls = hosting.calls();
+    let last_post = calls.iter().rposition(|c| c.starts_with("post")).unwrap();
+    assert_eq!(calls.iter().position(|c| c == "vote approved"), Some(last_post + 1));
+    assert_eq!(pending(&fx).await, None);
+    assert_eq!(hosting.votes(), ["approved"]);
+    fx.sync(&hosting).await;
+    assert_eq!(pending(&fx).await, None);
+}
+
+#[tokio::test]
+async fn a_vote_alone_is_posted_without_asking_the_platform_for_comments() {
+    let (fx, hosting) = on_an_azure_devops_pull_request().await;
+    fx.session.stage_vote(&hosting, "rejected").await.unwrap();
+
+    let report = fx.session.post_drafts(&hosting).await.unwrap();
+
+    assert_eq!((report.posted, report.vote), (0, VoteSent::Cast));
+    assert_eq!(hosting.calls(), ["vote rejected"]);
+}
+
+#[tokio::test]
+async fn a_vote_the_platform_refuses_fails_with_its_reason_and_is_sent_again_with_the_next_post() {
+    let (fx, hosting) = on_an_azure_devops_pull_request().await;
+    fx.session.stage_vote(&hosting, "rejected").await.unwrap();
+    hosting.fail("vote", PlatformError::Forbidden("no access".to_owned()));
+
+    let report = fx.session.post_drafts(&hosting).await.unwrap();
+
+    assert_eq!(report.vote, VoteSent::Failed);
+    assert!(matches!(report.problem, Some(PlatformError::Forbidden(_))));
+    assert_eq!(pending(&fx).await, Some(("rejected".to_owned(), failed("no access"))));
+    assert!(hosting.votes().is_empty());
+
+    hosting.recover();
+    let report = fx.session.post_drafts(&hosting).await.unwrap();
+    assert_eq!((report.vote, report.problem), (VoteSent::Cast, None));
+    assert_eq!(pending(&fx).await, None);
+    assert_eq!(hosting.votes(), ["rejected"]);
+}
+
+#[tokio::test]
+async fn a_vote_waits_while_a_comment_stopped_the_post() {
+    let (fx, hosting) = with_three_drafts().await;
+    fx.session.stage_vote(&hosting, "approved").await.unwrap();
+    hosting.fail("post Agreed.", PlatformError::Forbidden("no access".to_owned()));
+
+    let report = fx.session.post_drafts(&hosting).await.unwrap();
+
+    assert_eq!(report.vote, VoteSent::NotSent);
+    assert!(hosting.calls().iter().all(|c| !c.starts_with("vote")));
+    assert_eq!(pending(&fx).await, draft_vote("approved"));
+}
+
+#[tokio::test]
+async fn a_vote_that_lost_the_connection_is_looked_for_at_the_next_sync() {
+    let (fx, hosting) = on_an_azure_devops_pull_request().await;
+    fx.session.stage_vote(&hosting, "rejected").await.unwrap();
+    hosting.fail("vote", PlatformError::Unreachable("offline".to_owned()));
+
+    let report = fx.session.post_drafts(&hosting).await.unwrap();
+
+    assert_eq!(report.vote, VoteSent::Failed);
+    assert!(matches!(pending(&fx).await, Some((_, Outgoing::Posting { .. }))));
+    assert!(
+        matches!(fx.session.discard_vote().await, Err(SessionError::Invalid(_))),
+        "it may be on the platform"
+    );
+
+    hosting.recover();
+    fx.sync(&hosting).await;
+    assert_eq!(pending(&fx).await, draft_vote("rejected"), "the platform never got it");
+
+    // Taken, but the answer was lost.
+    fx.session.post_drafts(&hosting).await.unwrap();
+    fx.session.stage_vote(&hosting, "wait-for-author").await.unwrap();
+    hosting.fail("vote", PlatformError::Unreachable("offline".to_owned()));
+    fx.session.post_drafts(&hosting).await.unwrap();
+    hosting.recover();
+    hosting.0.lock().unwrap().discussion.viewer_verdict = Some("wait-for-author".to_owned());
+    fx.sync(&hosting).await;
+    assert_eq!(pending(&fx).await, None, "the platform has it");
+}
+
+#[tokio::test]
+async fn a_vote_survives_a_sync_that_fails_and_is_dropped_once_the_platform_has_it() {
+    let (fx, hosting) = on_an_azure_devops_pull_request().await;
+    fx.session.stage_vote(&hosting, "rejected").await.unwrap();
+    hosting.fail("", PlatformError::Unreachable("offline".to_owned()));
+
+    assert!(fx.session.sync_threads(&hosting).await.is_err());
+    assert_eq!(pending(&fx).await, draft_vote("rejected"));
+
+    hosting.recover();
+    hosting.0.lock().unwrap().discussion.viewer_verdict = Some("rejected".to_owned());
+    fx.sync(&hosting).await;
+    assert_eq!(pending(&fx).await, None, "voted elsewhere, so there is nothing to send");
 }

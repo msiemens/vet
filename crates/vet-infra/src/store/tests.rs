@@ -14,8 +14,8 @@ use vet_core::content::{
 };
 use vet_core::filter::ReviewFilter;
 use vet_core::review::{
-    Anchor, CommentTarget, EditConflict, Message, Outgoing, PlatformThread, RemoteComment, ReviewedSpan, Side,
-    SpanState, ThreadStatus,
+    Anchor, CommentTarget, EditConflict, Message, Outgoing, PendingVote, PlatformThread, RemoteComment, ReviewedSpan,
+    Side, SpanState, ThreadStatus,
 };
 
 use super::*;
@@ -353,6 +353,87 @@ async fn a_pull_requests_title_is_kept_with_its_changeset_across_a_review_starti
         store.pull_request_head("/repo".into(), pull_request(7)).await.unwrap(),
         Some(head("Add caching to the API", false))
     );
+}
+
+#[tokio::test]
+async fn a_pending_vote_is_kept_per_pull_request_in_its_state_across_a_restart_and_a_closed_review_expiring() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(&dir).await;
+    let pull_request = |number| Source::PullRequest {
+        remote: RemoteKey {
+            host: "dev.azure.com".into(),
+            path: "acme/shop/app".into(),
+        },
+        number,
+    };
+    let vote = |verdict: &str, outgoing| PendingVote {
+        verdict: verdict.into(),
+        outgoing,
+    };
+    let failed = Outgoing::Failed {
+        error: "no access".into(),
+    };
+    assert_eq!(store.pending_vote("/repo".into(), pull_request(7)).await.unwrap(), None);
+
+    let writes = store.writes();
+    writes
+        .set_pending_vote("/repo".into(), pull_request(7), Some(vote("approved", Outgoing::Draft)))
+        .await
+        .unwrap();
+    writes
+        .set_pending_vote("/repo".into(), pull_request(7), Some(vote("rejected", failed.clone())))
+        .await
+        .unwrap();
+    drop(writes);
+    drop(store);
+
+    let store = open(&dir).await;
+    assert_eq!(
+        store.pending_vote("/repo".into(), pull_request(7)).await.unwrap(),
+        Some(vote("rejected", failed)),
+        "the vote chosen last, with why it failed"
+    );
+    assert_eq!(store.pending_vote("/repo".into(), pull_request(8)).await.unwrap(), None);
+    assert_eq!(
+        store.pending_vote("/other".into(), pull_request(7)).await.unwrap(),
+        None
+    );
+
+    let posting = Outgoing::Posting { since: T0 };
+    let writes = store.writes();
+    writes
+        .set_pending_vote("/repo".into(), pull_request(7), Some(vote("rejected", posting.clone())))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.pending_vote("/repo".into(), pull_request(7)).await.unwrap(),
+        Some(vote("rejected", posting))
+    );
+
+    // The closed review is old enough to expire; the vote keeps its changeset.
+    let (changeset, review) = writes
+        .start_review(
+            "/repo".into(),
+            pull_request(7),
+            BaseChoice::Commit { id: commit("a") },
+            version(1, SnapshotId(h(1)), SnapshotId(h(2))),
+            T0,
+        )
+        .await
+        .unwrap();
+    writes.close_review(review, T0, false).await.unwrap();
+    gc(&store, T0 + 100 * DAY).await;
+    assert_eq!(
+        store.changeset("/repo".into(), pull_request(7)).await.unwrap(),
+        Some(changeset)
+    );
+    writes
+        .set_pending_vote("/repo".into(), pull_request(7), None)
+        .await
+        .unwrap();
+    assert_eq!(store.pending_vote("/repo".into(), pull_request(7)).await.unwrap(), None);
+    gc(&store, T0 + 100 * DAY).await;
+    assert_eq!(store.changeset("/repo".into(), pull_request(7)).await.unwrap(), None);
 }
 
 #[tokio::test]

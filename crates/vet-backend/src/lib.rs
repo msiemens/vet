@@ -444,7 +444,8 @@ impl Orchestrator {
             Request::SyncThreads { project } => reply(self.sync_threads(project)),
             Request::SubmitReview { project, verdict, body } => reply(self.submit_review(project, verdict, body)),
             Request::PostDrafts { project } => reply(self.post_drafts(project)),
-            Request::SetVote { project, verdict } => reply(self.set_vote(project, verdict)),
+            Request::StageVote { project, verdict } => reply(self.stage_vote(project, verdict)),
+            Request::DiscardVote { project } => reply(self.discard_vote(project)),
             Request::PullRequestInfo { project } => reply(self.pull_request_info(project)),
             Request::ConfirmAnchor {
                 project,

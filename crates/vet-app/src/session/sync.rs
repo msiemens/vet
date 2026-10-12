@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use vet_core::content::{EntryKind, LineRange, RepoPath, Snapshot, SnapshotStatus, is_binary};
 use vet_core::review::{
-    Anchor, AnchorState, CommentTarget, EditConflict, Message, MessageId, Outgoing, PlatformThread, RemoteComment,
-    Side, Thread, ThreadId, ThreadStatus,
+    Anchor, AnchorState, CommentTarget, EditConflict, Message, MessageId, Outgoing, PendingVote, PlatformThread,
+    RemoteComment, Side, Thread, ThreadId, ThreadStatus,
 };
 
 use super::hold::Held;
@@ -77,6 +77,19 @@ pub struct SubmitReport {
     pub problem: Option<PlatformError>,
     /// The texts of the drafts that were not posted, which stay drafts.
     pub not_posted: Vec<String>,
+    /// What came of the pending vote.
+    pub vote: VoteSent,
+}
+
+/// What a post did with the viewer's pending vote.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum VoteSent {
+    /// There was none to send, or the comments before it were not all posted.
+    #[default]
+    NotSent,
+    Cast,
+    /// The platform refused it or could not be reached; `SubmitReport::problem` says why.
+    Failed,
 }
 
 fn pull_request(st: &State) -> Result<(RemoteKey, u64)> {
@@ -190,6 +203,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 return Ok(SyncReport::default());
             }
             let settled = self.settle_posting(&mut st, &discussion).await?;
+            let settled = self.settle_vote(&mut st, &discussion).await? || settled;
             let plan = reconcile(&st.threads, &discussion, platform.traits().changeset_threads);
             let pushes = pushes_of(&st.threads, &plan);
             (plan, pushes, settled)
@@ -621,19 +635,48 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// Posts the viewer's drafts one after the other, on a platform that takes comments one at a
     /// time, and records where they are on the platform. Drafts whose code is gone, and those in a
     /// thread with an edit conflict, wait. Stops at the first the platform refuses; what was
-    /// posted before it stays posted.
+    /// posted before it stays posted. Then sends the pending vote, unless the comments stopped
+    /// short.
     pub async fn post_drafts<P: Platform + Sync>(&self, platform: &P) -> Result<SubmitReport> {
-        if platform.traits().posting != Posting::PerComment {
+        let traits = platform.traits();
+        if traits.posting != Posting::PerComment {
             return Err(SessionError::Invalid(
                 "this platform takes the drafts as a review: submit it instead".into(),
             ));
         }
-        self.send_drafts(platform, "", None, false).await
+        let vote_waits = traits.verdict_separate && self.vote_to_send().await?.is_some();
+        let mut report = self.send_drafts(platform, "", None, vote_waits).await?;
+        if vote_waits && report.problem.is_none() {
+            let (sent, problem) = self.send_vote(platform).await?;
+            report.vote = sent;
+            report.problem = problem;
+        }
+        Ok(report)
     }
 
-    /// Sets the viewer's vote on a platform that keeps it apart from posting; `verdict` is an id of
-    /// the platform's.
-    pub async fn set_vote<P: Platform + Sync>(&self, platform: &P, verdict: &str) -> Result<()> {
+    /// The vote of the viewer's on the pull request on view that waits to be sent; `None` without
+    /// one, and for another changeset.
+    pub async fn pending_vote(&self) -> Result<Option<PendingVote>> {
+        let source = self.published.read().source.clone();
+        if !matches!(source, Source::PullRequest { .. }) {
+            return Ok(None);
+        }
+        Ok(self.acquisition.store.pending_vote(self.repo.clone(), source).await?)
+    }
+
+    /// The pending vote if sending it is up to a post: not one that is being posted, which the next
+    /// sync settles.
+    async fn vote_to_send(&self) -> Result<Option<PendingVote>> {
+        Ok(self
+            .pending_vote()
+            .await?
+            .filter(|v| !matches!(v.outgoing, Outgoing::Posting { .. })))
+    }
+
+    /// Stages `verdict` (an id of the platform's) as the viewer's vote on a platform that keeps it
+    /// apart from posting, to be sent with the next post. It replaces a vote staged before; the
+    /// viewer's current vote on the platform stages nothing and clears the one staged.
+    pub async fn stage_vote<P: Platform + Sync>(&self, platform: &P, verdict: &str) -> Result<()> {
         let traits = platform.traits();
         if !traits.verdict_separate {
             return Err(SessionError::Invalid(
@@ -643,9 +686,101 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if !traits.verdicts.iter().any(|v| v.id == verdict) {
             return Err(SessionError::Invalid(format!("the platform has no verdict {verdict}")));
         }
-        let (remote, number) = pull_request(&self.published.read())?;
-        platform.vote(&remote, number, verdict).await?;
+        let _exchange = self.exchange.lock().await;
+        let current = {
+            let st = self.published.read();
+            pull_request(&st)?;
+            st.discussion.as_ref().and_then(|(_, d)| d.viewer_verdict.clone())
+        };
+        let vote = (current.as_deref() != Some(verdict)).then(|| PendingVote {
+            verdict: verdict.to_owned(),
+            outgoing: Outgoing::Draft,
+        });
+        self.store_vote(vote).await
+    }
+
+    /// Drops the vote that waits to be sent. One that is being posted stays until that is settled.
+    pub async fn discard_vote(&self) -> Result<()> {
+        let _exchange = self.exchange.lock().await;
+        if matches!(
+            self.pending_vote().await?,
+            Some(PendingVote {
+                outgoing: Outgoing::Posting { .. },
+                ..
+            })
+        ) {
+            return Err(SessionError::Invalid(
+                "the vote is being posted: discard it once that is done".into(),
+            ));
+        }
+        self.store_vote(None).await
+    }
+
+    async fn store_vote(&self, vote: Option<PendingVote>) -> Result<()> {
+        let st = self.hold().await;
+        let source = pull_request(&st).map(|_| st.source.clone())?;
+        st.writes().set_pending_vote(self.repo.clone(), source, vote).await?;
         Ok(())
+    }
+
+    /// Sends the pending vote to the platform. Written as posting before the platform is asked, so
+    /// that a vote Vet did not see through is looked for at the next sync. Answers what became of
+    /// it, and why if it failed.
+    async fn send_vote<P: Platform + Sync>(&self, platform: &P) -> Result<(VoteSent, Option<PlatformError>)> {
+        let _exchange = self.exchange.lock().await;
+        let Some(vote) = self.vote_to_send().await? else {
+            return Ok((VoteSent::NotSent, None));
+        };
+        let (remote, number) = pull_request(&self.published.read())?;
+        self.store_vote(Some(PendingVote {
+            outgoing: Outgoing::Posting { since: (self.clock)() },
+            ..vote.clone()
+        }))
+        .await?;
+        match platform.vote(&remote, number, &vote.verdict).await {
+            Ok(()) => {
+                self.store_vote(None).await?;
+                Ok((VoteSent::Cast, None))
+            }
+            // The platform may have taken it: the next sync looks.
+            Err(error @ PlatformError::Unreachable(_)) => Ok((VoteSent::Failed, Some(error))),
+            Err(error) => {
+                self.store_vote(Some(PendingVote {
+                    outgoing: Outgoing::Failed {
+                        error: error.to_string(),
+                    },
+                    ..vote
+                }))
+                .await?;
+                Ok((VoteSent::Failed, Some(error)))
+            }
+        }
+    }
+
+    /// Settles a vote a post left posting, by what the platform has: the viewer's vote there is the
+    /// pending one, or it was not taken. A vote the platform already has needs no sending.
+    async fn settle_vote(&self, st: &mut Held<'_, S::Writes>, discussion: &Discussion) -> Result<bool> {
+        let source = st.source.clone();
+        let Some(vote) = self
+            .acquisition
+            .store
+            .pending_vote(self.repo.clone(), source.clone())
+            .await?
+        else {
+            return Ok(false);
+        };
+        let settled = if discussion.viewer_verdict.as_deref() == Some(vote.verdict.as_str()) {
+            None
+        } else if matches!(vote.outgoing, Outgoing::Posting { .. }) {
+            Some(PendingVote {
+                outgoing: Outgoing::Draft,
+                ..vote
+            })
+        } else {
+            return Ok(false);
+        };
+        st.writes().set_pending_vote(self.repo.clone(), source, settled).await?;
+        Ok(true)
     }
 
     async fn send_drafts<P: Platform + Sync>(
@@ -661,12 +796,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             let (mut st, _) = self.writing(View::Changeset).await?;
             let (remote, number) = pull_request(&st)?;
             let (submission, skipped) = drafts_of(&st, verdict, body.clone());
-            if submission.threads.is_empty()
-                && submission.replies.is_empty()
-                && submission.comments.is_empty()
-                && body.is_none()
-                && !allow_empty
-            {
+            if submission.is_empty() && body.is_none() && !allow_empty {
                 return Err(SessionError::Invalid("there is nothing to submit".into()));
             }
             let since = (self.clock)();
@@ -676,7 +806,13 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             }
             (remote, number, submission, skipped)
         };
-        let (posted, whole) = match platform.submit_review(&remote, number, &submission).await {
+        // A platform that takes comments one at a time has nothing to be asked when there are none.
+        let asked = if submission.is_empty() && platform.traits().posting == Posting::PerComment {
+            Ok(Submitted::default())
+        } else {
+            platform.submit_review(&remote, number, &submission).await
+        };
+        let (posted, whole) = match asked {
             Ok(posted) => (posted, false),
             Err(e) => (
                 Submitted {
@@ -692,6 +828,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             skipped,
             problem: posted.failed.clone(),
             not_posted: not_posted(&submission, &posted),
+            vote: VoteSent::NotSent,
         };
         let mut st = self.hold().await;
         report.posted = self.record_posted(&mut st, &posted).await?;

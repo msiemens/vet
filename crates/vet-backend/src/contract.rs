@@ -180,7 +180,9 @@ pub fn effect(request: &Request) -> Effect {
             untested(&[ThreadsChanged], NEEDS_A_PLATFORM)
         }
         // `ThreadsChanged` when the sync changed threads, and any `Notification`.
-        Request::SyncThreads { .. } | Request::SetVote { .. } => untested(&[PlatformStatus], NEEDS_A_PLATFORM),
+        Request::SyncThreads { .. } => untested(&[PlatformStatus], NEEDS_A_PLATFORM),
+        // The vote is shown with `PullRequestInfo`, which reloads with the threads.
+        Request::StageVote { .. } | Request::DiscardVote { .. } => untested(&[ThreadsChanged], NEEDS_A_PLATFORM),
         // `ThreadsChanged` when a draft was posted, whatever the sync finds.
         Request::SubmitReview { .. } | Request::PostDrafts { .. } => {
             untested(&[PlatformStatus, ThreadsChanged], NEEDS_A_PLATFORM)
@@ -515,10 +517,11 @@ mod tests {
                 body: None,
             },
             Request::PostDrafts { project },
-            Request::SetVote {
+            Request::StageVote {
                 project,
                 verdict: String::new(),
             },
+            Request::DiscardVote { project },
             Request::PullRequestInfo { project },
             Request::ConfirmAnchor {
                 project,

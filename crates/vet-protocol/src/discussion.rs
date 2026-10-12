@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{CiState, PlatformKind};
+use crate::{CiState, CommentState, PlatformKind};
 
 /// Which of the two texts of a comment that was edited in two places the viewer keeps.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -147,6 +147,17 @@ pub struct PlatformStatus {
     pub connection: PlatformConnection,
 }
 
+/// The viewer's vote that waits to be sent, on its way to the platform like a comment of theirs.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PendingVote {
+    /// An id from `PlatformTraits::verdicts`.
+    pub verdict: String,
+    /// Never `posted`: a vote the platform has is no longer pending.
+    pub state: CommentState,
+}
+
 /// What the Comments tool window shows of the pull request on view, above its threads.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -165,6 +176,8 @@ pub struct PullRequestInfo {
     /// The id of the verdict the viewer voted, on a platform that keeps the vote apart from posting
     /// (`traits.verdict_separate`); absent without a vote.
     pub viewer_verdict: Option<String>,
+    /// The vote staged and not sent yet (`StageVote`), on such a platform; sent by `PostDrafts`.
+    pub pending_vote: Option<PendingVote>,
     pub labels: Vec<String>,
     /// The checks of the head commit; absent when it has none.
     pub ci: Option<CiState>,
@@ -210,6 +223,8 @@ pub struct ReviewSubmitted {
     pub posted: u32,
     /// Drafts that wait: their code is gone, or their thread has an edit conflict to settle.
     pub skipped: u32,
+    /// The pending vote was sent and the platform took it.
+    pub vote_cast: bool,
     /// Why posting stopped short, fit to show: the drafts it was about failed, or are on their way
     /// when the platform could not be reached.
     pub problem: Option<String>,

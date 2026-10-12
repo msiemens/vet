@@ -421,6 +421,7 @@ impl Platform for FakeHosting {
         let mut hosted = self.0.lock().unwrap();
         hosted.check(format!("vote {verdict}"))?;
         hosted.votes.push(verdict.to_owned());
+        hosted.discussion.viewer_verdict = Some(verdict.to_owned());
         Ok(())
     }
 

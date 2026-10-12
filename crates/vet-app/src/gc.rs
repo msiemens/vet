@@ -34,7 +34,10 @@ impl Default for Retention {
 pub fn plan(facts: &GcFacts, now: i64, retention: &Retention) -> GcPlan {
     let expired_before = now - retention.closed_changesets.as_secs() as i64;
     let (dead, kept): (Vec<_>, Vec<_>) = facts.changesets.iter().partition(|c| {
-        !c.has_open_review && !c.has_open_thread && c.last_closed_at.is_some_and(|at| at <= expired_before)
+        !c.has_open_review
+            && !c.has_open_thread
+            && !c.has_pending_vote
+            && c.last_closed_at.is_some_and(|at| at <= expired_before)
     });
 
     let live: HashSet<SnapshotId> = kept.iter().flat_map(|c| c.snapshots.iter().copied()).collect();
@@ -90,6 +93,7 @@ mod tests {
             has_open_review: last_closed_at.is_none(),
             last_closed_at,
             has_open_thread: false,
+            has_pending_vote: false,
             snapshots: snapshots.iter().map(|&n| snap(n)).collect(),
         }
     }
@@ -119,6 +123,10 @@ mod tests {
         let mut with_thread = closed(31 * DAY);
         with_thread.has_open_thread = true;
         assert!(plan(&facts(vec![with_thread]), NOW, &retention).changesets.is_empty());
+
+        let mut with_vote = closed(31 * DAY);
+        with_vote.has_pending_vote = true;
+        assert!(plan(&facts(vec![with_vote]), NOW, &retention).changesets.is_empty());
     }
 
     #[test]

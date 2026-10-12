@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use vet_app::changeset::Source;
 use vet_app::platform::PlatformError;
-use vet_app::session::{Keep, SessionError, SyncReport};
+use vet_app::session::{Keep, SessionError, SyncReport, VoteSent};
 use vet_core::review::MessageId;
 use vet_infra::clock::unix_now;
 use vet_mapping as mapping;
@@ -123,7 +123,8 @@ impl Orchestrator {
                 .broadcast(Event::Notification { project, notification });
         }
         let announced = sync_pull_request(&open.open, open).await;
-        let changed = report.posted > 0 || report.failed > 0 || report.problem.is_some();
+        let changed =
+            report.posted > 0 || report.failed > 0 || report.problem.is_some() || report.vote != VoteSent::NotSent;
         if changed && !announced {
             open.subscribers.broadcast(Event::ThreadsChanged {
                 project,
@@ -133,13 +134,20 @@ impl Orchestrator {
         Ok(mapping::review_submitted(report))
     }
 
-    pub(crate) async fn set_vote(&self, project: ProjectId, verdict: String) -> Result<Response, String> {
+    pub(crate) async fn stage_vote(&self, project: ProjectId, verdict: String) -> Result<Response, String> {
         let open = self.ready(project).await?;
         (open.session)
-            .set_vote(&open.hosting().await, &verdict)
+            .stage_vote(&open.hosting().await, &verdict)
             .await
             .map_err(message)?;
-        sync_pull_request(&open.open, &open).await;
+        threads_changed(&open).await;
+        Ok(Response::Done)
+    }
+
+    pub(crate) async fn discard_vote(&self, project: ProjectId) -> Result<Response, String> {
+        let open = self.ready(project).await?;
+        open.session.discard_vote().await.map_err(message)?;
+        threads_changed(&open).await;
         Ok(Response::Done)
     }
 
@@ -149,11 +157,13 @@ impl Orchestrator {
             return Err("the changeset on view is not a pull request".into());
         };
         let view = (open.session.discussion().await).ok_or("the pull request was not synced yet")?;
+        let pending_vote = open.session.pending_vote().await.map_err(message)?;
         let account = remote.account();
         let connection = open.open.connection(&account).unwrap_or(PlatformConnection::Ok);
         let status = mapping::platform_status(&account, remote.kind(), connection);
         Ok(Response::PullRequestInfo(Box::new(mapping::pull_request_info(
             &view,
+            pending_vote.as_ref(),
             remote.kind(),
             status,
         ))))
@@ -287,6 +297,7 @@ mod tests {
             skipped: 0,
             problem: None,
             not_posted: Vec::new(),
+            vote: Default::default(),
         }
     }
 

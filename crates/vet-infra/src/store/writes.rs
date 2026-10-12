@@ -8,7 +8,9 @@ use vet_app::review::{NonTextAck, ReviewId, ReviewSummary, SpanId, SpanOrigin};
 use vet_core::content::{Snapshot, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle;
-use vet_core::review::{CommentTarget, Message, MessageId, PlatformThread, ReviewedSpan, ThreadId, ThreadStatus};
+use vet_core::review::{
+    CommentTarget, Message, MessageId, PendingVote, PlatformThread, ReviewedSpan, ThreadId, ThreadStatus,
+};
 
 use super::codec::*;
 use super::entity::*;
@@ -111,6 +113,26 @@ impl ReviewWrites for ReviewWriter {
         }
         .update(&txn)
         .await?;
+        Ok(txn.commit().await?)
+    }
+
+    async fn set_pending_vote(
+        &self,
+        repo: String,
+        source: Source,
+        vote: Option<PendingVote>,
+    ) -> Result<(), StoreError> {
+        let txn = self.db.begin().await?;
+        let id = match find_changeset(&txn, repo.clone(), &source).await? {
+            Some(id) => id,
+            None => insert_changeset(&txn, repo, &source).await?,
+        };
+        let mut row = changeset::ActiveModel {
+            id: Set(id),
+            ..Default::default()
+        };
+        vote_columns(&mut row, vote.as_ref());
+        row.update(&txn).await?;
         Ok(txn.commit().await?)
     }
 

@@ -15,14 +15,15 @@ use vet_app::session::{
     BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView, DirEntryKind,
     DirListing, DiscussionView, EntryInfo, FileStatus, FileView, ItemBlob, ItemView, Lifecycle, ManifestView,
     ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, RowReview, SubmitReport, SyncNotice, TargetText,
-    ThreadView, ThreadsView, VersionView, View,
+    ThreadView, ThreadsView, VersionView, View, VoteSent,
 };
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
 use vet_core::filter::ReviewFilter;
 use vet_core::inline::TextChange;
 use vet_core::review::{
-    AnchorState, CommentTarget, Confidence, Location, Message, Outgoing, Side, StaleReason, Strategy, ThreadStatus,
+    AnchorState, CommentTarget, Confidence, Location, Message, Outgoing, PendingVote, Side, StaleReason, Strategy,
+    ThreadStatus,
 };
 use vet_protocol as p;
 use vet_semantic::ports::RestoreFailure;
@@ -820,8 +821,14 @@ pub fn thread(t: &ThreadView) -> p::Thread {
 }
 
 fn comment_state(m: &Message) -> p::CommentState {
-    match &m.outgoing {
-        _ if m.remote.is_some() => p::CommentState::Posted,
+    if m.remote.is_some() {
+        return p::CommentState::Posted;
+    }
+    outgoing_state(&m.outgoing)
+}
+
+fn outgoing_state(outgoing: &Outgoing) -> p::CommentState {
+    match outgoing {
         Outgoing::Draft => p::CommentState::Draft,
         Outgoing::Posting { .. } => p::CommentState::Posting,
         Outgoing::Failed { error } => p::CommentState::Failed { error: error.clone() },
@@ -889,7 +896,12 @@ pub fn platform_status(host: &str, kind: PlatformKind, connection: p::PlatformCo
 }
 
 /// What the Comments tool window shows above the threads of the pull request `v` is.
-pub fn pull_request_info(v: &DiscussionView, kind: PlatformKind, platform: p::PlatformStatus) -> p::PullRequestInfo {
+pub fn pull_request_info(
+    v: &DiscussionView,
+    pending_vote: Option<&PendingVote>,
+    kind: PlatformKind,
+    platform: p::PlatformStatus,
+) -> p::PullRequestInfo {
     let d = &v.discussion;
     let traits = platform_traits(kind);
     let mut blocking = Vec::new();
@@ -925,6 +937,10 @@ pub fn pull_request_info(v: &DiscussionView, kind: PlatformKind, platform: p::Pl
             })
             .collect(),
         viewer_verdict: d.viewer_verdict.clone(),
+        pending_vote: pending_vote.map(|v| p::PendingVote {
+            verdict: v.verdict.clone(),
+            state: outgoing_state(&v.outgoing),
+        }),
         labels: d.labels.clone(),
         ci: d.ci.map(ci_state),
         blocking,
@@ -980,6 +996,14 @@ pub fn notification(n: &SyncNotice, kind: PlatformKind) -> p::Notification {
 pub fn submit_notification(r: &SubmitReport) -> Option<p::Notification> {
     let problem = r.problem.as_ref()?;
     let count = r.not_posted.len();
+    if r.vote == VoteSent::Failed {
+        return Some(p::Notification {
+            kind: p::NotificationKind::Info,
+            text: format!("The vote was not cast: {problem}"),
+            copy_text: None,
+            host: None,
+        });
+    }
     Some(p::Notification {
         kind: p::NotificationKind::Info,
         text: format!(
@@ -998,6 +1022,7 @@ pub fn review_submitted(r: &SubmitReport) -> p::Response {
     p::Response::ReviewSubmitted(p::ReviewSubmitted {
         posted: r.posted,
         skipped: r.skipped,
+        vote_cast: r.vote == VoteSent::Cast,
         problem: r.problem.as_ref().map(ToString::to_string),
     })
 }

@@ -39,7 +39,7 @@ use vet_app::review::{ChangesetThread, Review, ReviewId};
 use vet_core::content::{BlobId, Hash, Snapshot, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle::{self, TreeNode};
-use vet_core::review::{Anchor, ThreadId};
+use vet_core::review::{Anchor, PendingVote, ThreadId};
 
 use crate::budget::{Budget, REVIEW_IO};
 use codec::*;
@@ -456,6 +456,17 @@ impl ChangesetStore for SqliteStore {
                 draft: r.draft,
             })
         }))
+    }
+
+    async fn pending_vote(&self, repo: String, source: Source) -> Result<Option<PendingVote>, StoreError> {
+        let (kind, key) = source_columns(&source);
+        let row = changeset::Entity::find()
+            .filter(changeset::Column::Repo.eq(repo))
+            .filter(changeset::Column::Kind.eq(kind))
+            .filter(changeset::Column::Key.eq(key))
+            .one(&self.reader.db)
+            .await?;
+        Ok(row.map(vote_from).transpose()?.flatten())
     }
 
     async fn open_changesets(&self) -> Result<Vec<ChangesetId>, StoreError> {

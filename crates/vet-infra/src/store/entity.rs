@@ -189,6 +189,12 @@ pub mod changeset {
         /// A pull request the platform last said is a draft.
         #[sea_orm(default_value = false)]
         pub draft: bool,
+        /// The verdict of the viewer's vote that waits to be sent; none without one.
+        pub vote: Option<String>,
+        /// Unix seconds the vote was handed to the platform at, while Vet has not heard back.
+        pub vote_posting_since: Option<i64>,
+        /// Why the platform refused the vote.
+        pub vote_error: Option<String>,
     }
 
     #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

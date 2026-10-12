@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use vet_core::content::{BlobId, RepoPath, Snapshot, SnapshotDiff, SnapshotId, SnapshotStatus};
 use vet_core::filter::ReviewFilter;
-use vet_core::review::{CommentTarget, Message, MessageId, PlatformThread, ReviewedSpan, ThreadId, ThreadStatus};
+use vet_core::review::{
+    CommentTarget, Message, MessageId, PendingVote, PlatformThread, ReviewedSpan, ThreadId, ThreadStatus,
+};
 use vet_semantic::ports::{BackendId, ServerConfig};
 
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, Source, Version};
@@ -377,6 +379,8 @@ pub struct ChangesetFacts {
     /// Unix seconds the latest closed review ended; `None` if none has.
     pub last_closed_at: Option<i64>,
     pub has_open_thread: bool,
+    /// A vote of the viewer's waits to be sent.
+    pub has_pending_vote: bool,
     /// The bases and targets of its versions, and the snapshots its anchors name.
     pub snapshots: Vec<SnapshotId>,
 }
@@ -446,6 +450,13 @@ pub trait ChangesetStore {
         repo: String,
         source: Source,
     ) -> impl Future<Output = Result<Option<PullRequestHead>, StoreError>> + Send;
+    /// The vote of the viewer's on the pull request of `source` that waits to be sent; `None` if
+    /// there is none.
+    fn pending_vote(
+        &self,
+        repo: String,
+        source: Source,
+    ) -> impl Future<Output = Result<Option<PendingVote>, StoreError>> + Send;
     /// The changesets a review of which is open, in any repository.
     fn open_changesets(&self) -> impl Future<Output = Result<Vec<ChangesetId>, StoreError>> + Send;
     /// The versions in order of their numbers.
@@ -499,6 +510,14 @@ pub trait ReviewWrites {
         repo: String,
         source: Source,
         head: PullRequestHead,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Replaces the vote of the viewer's that waits to be sent on the pull request of `source`;
+    /// `None` clears it. The changeset is stored if need be.
+    fn set_pending_vote(
+        &self,
+        repo: String,
+        source: Source,
+        vote: Option<PendingVote>,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// The changeset of `source` in the repository at `repo`, stored if it was not: threads
     /// that arrive from a platform belong to it before any review of it started.

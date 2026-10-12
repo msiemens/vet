@@ -11,8 +11,8 @@ use vet_core::content::{
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle;
 use vet_core::review::{
-    AnchorState, CommentTarget, Location, Message, MessageId, PlatformThread, ReviewedSpan, Side, StaleReason,
-    Strategy, Thread, ThreadId, ThreadStatus,
+    AnchorState, CommentTarget, Location, Message, MessageId, PendingVote, PlatformThread, ReviewedSpan, Side,
+    StaleReason, Strategy, Thread, ThreadId, ThreadStatus,
 };
 
 use vet_core::completion::HunkState;
@@ -467,6 +467,7 @@ struct Mem {
     origins: HashMap<SpanId, SpanOrigin>,
     lens: Option<Lens>,
     heads: HashMap<Source, PullRequestHead>,
+    votes: HashMap<Source, PendingVote>,
     next_span: u64,
     acks: Vec<NonTextAck>,
     base: Option<BaseChoice>,
@@ -535,6 +536,9 @@ impl ChangesetStore for MemStore {
     }
     async fn pull_request_head(&self, _: String, source: Source) -> StoreResult<Option<PullRequestHead>> {
         Ok(self.0.lock().unwrap().heads.get(&source).cloned())
+    }
+    async fn pending_vote(&self, _: String, source: Source) -> StoreResult<Option<PendingVote>> {
+        Ok(self.0.lock().unwrap().votes.get(&source).cloned())
     }
     async fn open_changesets(&self) -> StoreResult<Vec<ChangesetId>> {
         let mem = self.0.lock().unwrap();
@@ -623,6 +627,14 @@ impl ReviewWrites for MemStore {
         self.0.lock().unwrap().heads.insert(source, head);
         Ok(())
     }
+    async fn set_pending_vote(&self, _: String, source: Source, vote: Option<PendingVote>) -> StoreResult<()> {
+        let mut mem = self.0.lock().unwrap();
+        match vote {
+            Some(vote) => mem.votes.insert(source, vote),
+            None => mem.votes.remove(&source),
+        };
+        Ok(())
+    }
     async fn ensure_changeset(&self, repo: String, source: Source) -> StoreResult<ChangesetId> {
         self.0.lock().unwrap().changeset.get_or_insert((repo, source));
         Ok(ChangesetId(1))
@@ -650,6 +662,7 @@ impl ReviewWrites for MemStore {
             browsing_base: mem.browsing_base.take(),
             lens: mem.lens.take(),
             heads: std::mem::take(&mut mem.heads),
+            votes: std::mem::take(&mut mem.votes),
             started: mem.started + 1,
             base: Some(choice),
             changeset: Some((repo, source)),

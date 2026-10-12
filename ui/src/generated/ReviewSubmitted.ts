@@ -13,6 +13,10 @@ posted: number,
  */
 skipped: number, 
 /**
+ * The pending vote was sent and the platform took it.
+ */
+voteCast: boolean, 
+/**
  * Why posting stopped short, fit to show: the drafts it was about failed, or are on their way
  * when the platform could not be reached.
  */

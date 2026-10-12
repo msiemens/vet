@@ -57,6 +57,15 @@ async fn facts(db: &impl ConnectionTrait) -> Res<GcFacts> {
         .await?
         .into_iter()
         .collect();
+    let with_pending_vote: HashSet<i64> = changeset::Entity::find()
+        .filter(changeset::Column::Vote.is_not_null())
+        .select_only()
+        .column(changeset::Column::Id)
+        .into_tuple()
+        .all(db)
+        .await?
+        .into_iter()
+        .collect();
     let mut with_open_review: HashSet<i64> = HashSet::new();
     let mut last_closed: HashMap<i64, i64> = HashMap::new();
     let reviews: Vec<(i64, Option<i64>)> = review::Entity::find()
@@ -90,6 +99,7 @@ async fn facts(db: &impl ConnectionTrait) -> Res<GcFacts> {
             has_open_review: with_open_review.contains(&id),
             last_closed_at: last_closed.get(&id).copied(),
             has_open_thread: with_open_thread.contains(&id),
+            has_pending_vote: with_pending_vote.contains(&id),
             snapshots: snapshots_of.remove(&id).unwrap_or_default(),
         });
     }
