@@ -150,9 +150,14 @@ export interface Harness {
   /**
    * Runs `run`, waits until the window has settled, then compares the stores with the backend. The step
    * also fails unless the window sent `marks` review requests (default none), the backend answered every
-   * request, and the window's notice is `notice` (default none).
+   * request, and the window's notice is `notice` (default none). With `listings` it also fails unless the
+   * window asked for the pull requests that many times.
    */
-  step(name: string, run: () => unknown, expected?: { marks?: number; notice?: string }): Promise<void>;
+  step(
+    name: string,
+    run: () => unknown,
+    expected?: { marks?: number; notice?: string; listings?: number },
+  ): Promise<void>;
   /** Resolves when `condition` holds; fails after a while. */
   until(condition: () => boolean, what: string): Promise<void>;
   /** The view the elements on screen were built for: what the manifest on view is of. */
@@ -257,6 +262,7 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
       sent,
       async step(name, run, expected = {}) {
         const marksBefore = sent.filter((r) => MARKS.has(r.type)).length;
+        const listingsBefore = sent.filter((r) => r.type === "listPullRequests").length;
         failed.length = 0;
         session.notice = undefined;
         await run();
@@ -269,6 +275,9 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
         const marks = sent.filter((r) => MARKS.has(r.type)).length - marksBefore;
         const wantMarks = expected.marks ?? 0;
         if (marks !== wantMarks) step("the number of review requests the step sent", marks, wantMarks);
+        const listings = sent.filter((r) => r.type === "listPullRequests").length - listingsBefore;
+        if (expected.listings !== undefined && listings !== expected.listings)
+          step("the number of times the step asked for the pull requests", listings, expected.listings);
         if (failed.length) step("requests the backend rejected", failed.slice(), []);
         if (session.notice !== expected.notice) step("the notice after the step", session.notice, expected.notice);
         results.push({ name, violations });

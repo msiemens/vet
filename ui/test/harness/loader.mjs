@@ -3,6 +3,7 @@
 // stores work, and the extensionless relative imports Vite resolves get their `.ts`.
 
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
@@ -10,8 +11,12 @@ const compiler = await import(pathToFileURL(require.resolve("svelte/compiler")).
 const compileModule = compiler.compileModule ?? compiler.default.compileModule;
 const ts = (await import(pathToFileURL(require.resolve("typescript")).href)).default;
 
+/** `svelte` for a browser: under node it resolves to the server build, whose `untrack` and `tick` do nothing. */
+const svelteClient = pathToFileURL(join(dirname(require.resolve("svelte/package.json")), "src/index-client.js")).href;
+
 /** @param {string} specifier @param {object} context @param {Function} next */
 export function resolve(specifier, context, next) {
+  if (specifier === "svelte") return { url: svelteClient, format: "module", shortCircuit: true };
   try {
     return next(specifier, context);
   } catch (error) {

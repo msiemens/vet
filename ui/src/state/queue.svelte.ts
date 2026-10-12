@@ -41,8 +41,11 @@ class QueueStore {
   lines = new SvelteMap<string, LineDelta | null>();
   /** Only the latest load of each kind counts. */
   private seq = { local: 0, pullRequests: 0, lines: 0, whole: 0 };
-  /** How many times an account changed: a listing of the pull requests that began before the last change lists again. */
-  private accountChanges = 0;
+  /**
+   * The platform is being asked for the pull requests. A request for another listing while it is on its
+   * way marks it `again`, and one more follows when it is done: a burst of events costs at most two.
+   */
+  private listing?: { again: boolean; done: Promise<void> };
   /**
    * The changeset on view as a whole while the review view shows a range or a commit, whose layout is
    * not the changeset's; read while the list is shown.
@@ -74,8 +77,7 @@ class QueueStore {
       });
       // Another credential may list other pull requests, or list them where it could not before.
       backend.onAccountsChanged(() => {
-        this.accountChanges++;
-        if (backend.project !== undefined && !this.listingPullRequests) void this.loadPullRequests();
+        if (backend.project !== undefined) void this.loadPullRequests();
       });
     });
     session.onResync(() => {
@@ -91,6 +93,7 @@ class QueueStore {
       this.onView = undefined;
       this.listingLocal = false;
       this.listingPullRequests = false;
+      this.listing = undefined;
       this.lines.clear();
       this.seq.whole++;
       this.whole = undefined;
@@ -103,8 +106,9 @@ class QueueStore {
    * about the changeset on view. Returns the function that ends that.
    */
   watch(): () => void {
-    this.watchers++;
-    return () => this.watchers--;
+    // Called from an effect, which must not depend on the count it changes.
+    untrack(() => this.watchers++);
+    return () => untrack(() => this.watchers--);
   }
 
   /** Lists the local changesets again once a burst of marks pauses, if the list is shown. */
@@ -186,20 +190,38 @@ class QueueStore {
     void this.countLines(recount);
   }
 
-  /** Asks the platform for the pull requests, which takes a moment: the ones listed stay until it answers. */
-  async loadPullRequests() {
-    const seq = ++this.seq.pullRequests;
-    const changes = this.accountChanges;
-    this.listingPullRequests = true;
-    const listed = await changeset.listPullRequests();
-    if (seq !== this.seq.pullRequests) return;
-    this.listingPullRequests = false;
-    if (listed) {
-      this.pullRequests = listed.rows;
-      this.sources = listed.sources;
-      void this.countLines(true);
+  /**
+   * Asks the platform for the pull requests, which takes a moment: the ones listed stay until it answers.
+   * Never more than one request is on its way; asking meanwhile has one more follow it, which a failure
+   * does not.
+   */
+  loadPullRequests(): Promise<void> {
+    if (this.listing) {
+      this.listing.again = true;
+      return this.listing.done;
     }
-    if (this.accountChanges !== changes) void this.loadPullRequests();
+    const listing = { again: false, done: Promise.resolve() };
+    this.listing = listing;
+    listing.done = this.listPullRequests(listing).finally(() => {
+      if (this.listing === listing) this.listing = undefined;
+    });
+    return listing.done;
+  }
+
+  private async listPullRequests(listing: { again: boolean }) {
+    do {
+      listing.again = false;
+      const seq = ++this.seq.pullRequests;
+      this.listingPullRequests = true;
+      const listed = await changeset.listPullRequests();
+      if (seq !== this.seq.pullRequests) return;
+      this.listingPullRequests = false;
+      if (listed) {
+        this.pullRequests = listed.rows;
+        this.sources = listed.sources;
+        void this.countLines(true);
+      }
+    } while (this.listing?.again);
   }
 
   /** The local changesets show as soon as they are listed, the pull requests when the platform answers. */

@@ -3,10 +3,12 @@
 
 import type { View } from "../../src/generated/View.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
+import { queue } from "../../src/state/queue.svelte.ts";
 import { threads } from "../../src/state/threads.svelte.ts";
 import { defaultRange } from "../../src/state/timelineRange.ts";
 import { versions } from "../../src/state/versions.svelte.ts";
 import type { Harness } from "./harness.ts";
+import { watchFromEffect } from "./watching.svelte.ts";
 
 const CHANGESET: View = { type: "changeset" };
 
@@ -151,6 +153,26 @@ export const sessions: Record<string, (h: Harness) => Promise<void>> = {
       await back;
     });
     await h.step("seen after reconnecting", () => hunk(h, "b.txt", 1), ONE);
+  },
+
+  /** The pull requests are asked of the platform once for a view of the list, and once more for a burst of events. */
+  async listings(h) {
+    let stop: (() => void) | undefined;
+    await h.step(
+      "the list is watched from an effect",
+      () => {
+        stop = watchFromEffect();
+      },
+      { listings: 1 },
+    );
+    await h.step(
+      "a burst of events",
+      () => {
+        for (let i = 0; i < 10; i++) void queue.loadAll();
+      },
+      { listings: 2 },
+    );
+    await h.step("the list is not watched any more", () => stop?.());
   },
 
   /** Toggles sent without waiting for each other. */
