@@ -14,8 +14,11 @@ cd "$(dirname "$0")/.."
 if [[ -z ${RUSTC_WRAPPER:-} ]] && command -v sccache >/dev/null; then export RUSTC_WRAPPER=sccache; fi
 
 manifest=tools/module-cycles/Cargo.toml
-cargo build --release --quiet --manifest-path "$manifest"
-tool=tools/module-cycles/target/release/module-cycles
+# One build of the tool for all checkouts: the worktrees share the main checkout's target directory.
+main_checkout=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+target=$main_checkout/tools/module-cycles/target
+cargo build --release --quiet --manifest-path "$manifest" --target-dir "$target"
+tool=$target/release/module-cycles
 
 if [[ ${1:-} == --self-test ]]; then
     fixture=ci/fixtures/module-cycle
