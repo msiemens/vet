@@ -5,28 +5,32 @@
   import { platform } from "../../state/platform.svelte";
   import { threads } from "../../state/threads.svelte";
   import { firstLine } from "./groups";
-  import { destination, outgoingComments, outgoingPlace, postLabel, summarizeOutgoing } from "./outgoing";
+  import {
+    destination,
+    outgoingComments,
+    outgoingPlace,
+    outgoingTitle,
+    postLabel,
+    summarizeOutgoing,
+    voteText,
+  } from "./outgoing";
   import PostingControls from "./PostingControls.svelte";
   import { sendComments } from "./posting";
-  import { draftsToSubmit, submitBlock } from "./pullRequest";
+  import { draftsToSubmit, submitBlock, voteWaits } from "./pullRequest";
 
-  /** The toolbar's count of the viewer's comments that the platform does not have yet; a click lists them, and posts them. */
+  /** The toolbar's count of the viewer's comments and staged vote that the platform does not have yet; a click lists them, and posts them. */
   let { onopen }: { onopen: (thread: Thread) => void } = $props();
 
   let open = $state(false);
-  const list = $derived(outgoingComments(threads.items));
-  const summary = $derived(summarizeOutgoing(list));
-  const busy = $derived(platform.sending || summary.posting);
   const info = $derived(platform.info);
-  const ready = $derived(draftsToSubmit(threads.items));
+  const list = $derived(outgoingComments(threads.items));
+  const vote = $derived(info?.pendingVote ?? null);
+  const summary = $derived(summarizeOutgoing(list, vote));
+  const busy = $derived(platform.sending || summary.posting);
+  const comments = $derived(draftsToSubmit(threads.items));
+  const ready = $derived(comments + (voteWaits(vote) ? 1 : 0));
   const blocked = $derived(info && submitBlock(info.platform.connection));
-  const title = $derived(
-    summary.failed > 0
-      ? `${summary.failed} of ${summary.count} outgoing ${summary.count === 1 ? "comment" : "comments"} failed to post`
-      : summary.count > 0
-        ? `${summary.count} outgoing ${summary.count === 1 ? "comment" : "comments"}`
-        : "No outgoing comments",
-  );
+  const title = $derived(outgoingTitle(summary, vote !== null));
 
   function show(thread: Thread) {
     open = false;
@@ -82,6 +86,28 @@
           {/if}
         </li>
       {/each}
+      {#if info && vote}
+        <li>
+          <div class="row">
+            <span class="text">{voteText(info, vote)}</span>
+            {#if vote.state.type === "posting"}<span class="note">posting…</span>{/if}
+          </div>
+          {#if vote.state.type === "failed"}
+            <div class="failure">
+              <span class="error">{vote.state.error}</span>
+              <button class="ctl small" type="button" disabled={busy} onclick={() => void platform.discardVote()}
+                >Discard</button
+              >
+              <button
+                class="ctl small"
+                type="button"
+                disabled={busy || blocked !== undefined}
+                onclick={() => void send()}>Retry</button
+              >
+            </div>
+          {/if}
+        </li>
+      {/if}
     </ul>
     {#if info}
       <div class="post">
@@ -97,7 +123,7 @@
             type="button"
             disabled={ready === 0 || busy || blocked !== undefined}
             title={blocked}
-            onclick={() => void send()}>{postLabel(ready)}</button
+            onclick={() => void send()}>{postLabel(comments, voteWaits(vote))}</button
           >
         </div>
       </div>

@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Thread } from "../../generated/Thread.ts";
 import type { ThreadMessage } from "../../generated/ThreadMessage.ts";
-import { destination, outgoingComments, outgoingPlace, postLabel, summarizeOutgoing } from "./outgoing.ts";
+import {
+  destination,
+  outgoingComments,
+  outgoingPlace,
+  outgoingTitle,
+  postLabel,
+  summarizeOutgoing,
+  voteText,
+} from "./outgoing.ts";
 
 const message = (id: number, state: ThreadMessage["state"] = { type: "draft" }): ThreadMessage => ({
   id,
@@ -55,10 +63,39 @@ void test("the outgoing comments are the unposted ones of a platform's threads, 
 
 void test("the button counts what is outgoing, how much the platform refused, and whether some is on its way", () => {
   const list = outgoingComments([thread(1, "a.rs", 1, [message(1), message(2, failed), message(3, failed)])]);
-  assert.deepEqual(summarizeOutgoing(list), { count: 3, failed: 2, posting: false });
+  assert.deepEqual(summarizeOutgoing(list, null), { count: 3, failed: 2, posting: false });
   const sending = outgoingComments([thread(1, "a.rs", 1, [message(1, posting)])]);
-  assert.deepEqual(summarizeOutgoing(sending), { count: 1, failed: 0, posting: true });
-  assert.deepEqual(summarizeOutgoing([]), { count: 0, failed: 0, posting: false });
+  assert.deepEqual(summarizeOutgoing(sending, null), { count: 1, failed: 0, posting: true });
+  assert.deepEqual(summarizeOutgoing([], null), { count: 0, failed: 0, posting: false });
+});
+
+void test("a staged vote is outgoing like a comment, in its own state", () => {
+  const list = outgoingComments([thread(1, "a.rs", 1, [message(1)])]);
+  assert.deepEqual(summarizeOutgoing(list, { verdict: "approved", state: { type: "draft" } }), {
+    count: 2,
+    failed: 0,
+    posting: false,
+  });
+  assert.deepEqual(summarizeOutgoing(list, { verdict: "approved", state: failed }), {
+    count: 2,
+    failed: 1,
+    posting: false,
+  });
+  assert.deepEqual(summarizeOutgoing([], { verdict: "approved", state: posting }), {
+    count: 1,
+    failed: 0,
+    posting: true,
+  });
+});
+
+void test("the popover names the staged vote by the platform's label and the button says what is outgoing", () => {
+  const traits = { verdicts: [{ id: "approved", label: "Approve" }] };
+  assert.equal(voteText({ traits }, { verdict: "approved", state: { type: "draft" } }), "Vote: Approve");
+  assert.equal(voteText({ traits }, { verdict: "other", state: { type: "draft" } }), "Vote: other");
+  const summary = { count: 3, failed: 1, posting: false };
+  assert.equal(outgoingTitle(summary, false), "1 of 3 outgoing comments failed to post");
+  assert.equal(outgoingTitle({ ...summary, failed: 0 }, true), "3 outgoing items");
+  assert.equal(outgoingTitle({ count: 0, failed: 0, posting: false }, false), "No outgoing comments");
 });
 
 void test("a comment says where it goes, and posting where the comments go", () => {
@@ -68,6 +105,8 @@ void test("a comment says where it goes, and posting where the comments go", () 
     destination({ number: 123, platform: { host: "github.com", kind: "github", connection: { type: "ok" } } }),
     "to #123 on GitHub",
   );
-  assert.equal(postLabel(1), "Post 1 comment");
-  assert.equal(postLabel(4), "Post 4 comments");
+  assert.equal(postLabel(1, false), "Post 1 comment");
+  assert.equal(postLabel(4, false), "Post 4 comments");
+  assert.equal(postLabel(4, true), "Post 4 comments and vote");
+  assert.equal(postLabel(0, true), "Post vote");
 });

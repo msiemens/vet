@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { PendingVote } from "../../generated/PendingVote.ts";
 import type { Thread } from "../../generated/Thread.ts";
 import type { ThreadMessage } from "../../generated/ThreadMessage.ts";
-import { blockerText, draftsToSubmit, stateLabel, submitBlock, voteToCast } from "./pullRequest.ts";
+import { blockerText, draftsToSubmit, postedNote, stateLabel, submitBlock, waitingToPost } from "./pullRequest.ts";
 
 const message = (state: ThreadMessage["state"]): ThreadMessage => ({
   id: 1,
@@ -46,11 +47,21 @@ void test("a signed out or expired platform blocks submitting and says what to d
   assert.match(submitBlock({ type: "tokenExpired", message: "" }) ?? "", /sign in again/);
 });
 
-void test("the Cast vote button casts a chosen vote that is not the viewer's current one, and nothing else", () => {
-  assert.equal(voteToCast("approve", null), "approve");
-  assert.equal(voteToCast("approve", "reject"), "approve");
-  assert.equal(voteToCast(undefined, null), undefined);
-  assert.equal(voteToCast("approve", "approve"), undefined);
+void test("a post sends the waiting comments and the staged vote unless that is on its way already", () => {
+  const threads = [thread([message(draft), message(failed)], true)];
+  const vote = (state: PendingVote["state"]): PendingVote => ({ verdict: "approved", state });
+  assert.equal(waitingToPost(threads, null), 2);
+  assert.equal(waitingToPost(threads, vote(draft)), 3);
+  assert.equal(waitingToPost(threads, vote(failed)), 3);
+  assert.equal(waitingToPost(threads, vote(posting)), 2);
+  assert.equal(waitingToPost([], vote(draft)), 1, "a vote alone can be posted");
+});
+
+void test("a post tells how many comments went through and that the vote was cast", () => {
+  assert.equal(postedNote({ posted: 2, skipped: 0, voteCast: false }), "2 comments posted");
+  assert.equal(postedNote({ posted: 1, skipped: 0, voteCast: true }), "1 comment posted, vote cast");
+  assert.equal(postedNote({ posted: 0, skipped: 0, voteCast: true }), "Vote cast");
+  assert.match(postedNote({ posted: 1, skipped: 2, voteCast: true }), /^1 comment posted, vote cast\. 2 drafts wait/);
 });
 
 void test("the pull request's state and what blocks it read as words", () => {

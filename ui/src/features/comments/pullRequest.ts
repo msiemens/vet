@@ -1,9 +1,11 @@
 // How the Comments tool window words what the platform said of a pull request.
 
 import type { Blocker } from "../../generated/Blocker";
+import type { PendingVote } from "../../generated/PendingVote";
 import type { PlatformConnection } from "../../generated/PlatformConnection";
 import type { PullRequestInfo } from "../../generated/PullRequestInfo";
 import type { ReviewerState } from "../../generated/ReviewerState";
+import type { ReviewSubmitted } from "../../generated/ReviewSubmitted";
 import type { Thread } from "../../generated/Thread";
 import type { ThreadMessage } from "../../generated/ThreadMessage";
 
@@ -47,9 +49,19 @@ export function draftsToSubmit(threads: readonly Thread[]): number {
   return threads.reduce((n, t) => n + (t.platform ? t.messages.filter(waits).length : 0), 0);
 }
 
-/** The vote the Cast vote button casts: the chosen one if it differs from the viewer's current vote, else none. */
-export function voteToCast(chosen: string | undefined, current: string | null | undefined): string | undefined {
-  return chosen && chosen !== current ? chosen : undefined;
+/** Whether a post would send the staged vote: not when there is none, nor while it is on its way. */
+export const voteWaits = (vote: PendingVote | null | undefined): boolean =>
+  vote != null && vote.state.type !== "posting";
+
+/** What a post would send: the comments that wait and the staged vote. */
+export const waitingToPost = (threads: readonly Thread[], vote: PendingVote | null | undefined): number =>
+  draftsToSubmit(threads) + (voteWaits(vote) ? 1 : 0);
+
+/** What is told after a post went through: how many comments were posted, and the vote if one was cast. */
+export function postedNote(done: Pick<ReviewSubmitted, "posted" | "skipped" | "voteCast">): string {
+  const comments = `${done.posted} ${done.posted === 1 ? "comment" : "comments"} posted`;
+  const told = done.posted === 0 && done.voteCast ? "Vote cast" : done.voteCast ? `${comments}, vote cast` : comments;
+  return done.skipped > 0 ? `${told}. ${waitingNote(done.skipped)}` : told;
 }
 
 /** Why the review cannot be submitted now, if it cannot. */

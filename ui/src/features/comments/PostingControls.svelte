@@ -2,9 +2,8 @@
   import type { PullRequestInfo } from "../../generated/PullRequestInfo";
   import { platform } from "../../state/platform.svelte";
   import { chosenVerdict } from "./posting";
-  import { voteToCast } from "./pullRequest";
 
-  /** What goes with the viewer's comments: the review's verdict and summary, or the vote where it is set apart. */
+  /** What goes with the viewer's comments: the review's verdict and summary, or the vote where it is set apart (staged, and sent with the comments). */
   let {
     info,
     part,
@@ -13,7 +12,7 @@
 
   // The form's state is the store's, so the Comments tool window and the toolbar's popover share it.
   const form = platform.review;
-  const cast = $derived(voteToCast(form.vote, info.viewerVerdict));
+  const shown = $derived(info.pendingVote?.verdict ?? info.viewerVerdict);
 </script>
 
 {#if part === "review" && info.traits.batchedReview}
@@ -30,20 +29,14 @@
       <span>Vote</span>
       <select
         class="field"
-        {disabled}
-        value={form.vote ?? info.viewerVerdict ?? ""}
-        onchange={(e) => (form.vote = e.currentTarget.value)}
+        disabled={disabled || info.pendingVote?.state.type === "posting"}
+        value={shown ?? ""}
+        onchange={(e) => void platform.stageVote(e.currentTarget.value)}
       >
-        {#if !info.viewerVerdict}<option value="" disabled>No vote</option>{/if}
+        {#if !shown}<option value="" disabled>No vote</option>{/if}
         {#each info.traits.verdicts as v (v.id)}<option value={v.id}>{v.label}</option>{/each}
       </select>
     </label>
-    <button
-      class="ctl primary"
-      type="button"
-      disabled={disabled || cast === undefined}
-      onclick={() => cast !== undefined && void platform.vote(cast)}>Cast vote</button
-    >
   </div>
 {/if}
 

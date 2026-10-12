@@ -661,20 +661,28 @@ export class Backend {
   /** Posts the drafts as one review with the verdict (an id of `PullRequestInfo.traits.verdicts`). */
   async submitReview(verdict: string, body: string | null): Promise<ReviewSubmitted> {
     const request = { type: "submitReview", project: this.pid, verdict, body } as const;
-    const { posted, skipped, problem } = expect(await this.conn.request(request), "reviewSubmitted");
-    return { posted, skipped, problem };
+    const { posted, skipped, voteCast, problem } = expect(await this.conn.request(request), "reviewSubmitted");
+    return { posted, skipped, voteCast, problem };
   }
 
-  /** Posts the drafts one after the other, on a platform that takes comments that way. */
+  /** Posts the drafts one after the other, then the staged vote, on a platform that takes comments that way. */
   async postDrafts(): Promise<ReviewSubmitted> {
     const request = { type: "postDrafts", project: this.pid } as const;
-    const { posted, skipped, problem } = expect(await this.conn.request(request), "reviewSubmitted");
-    return { posted, skipped, problem };
+    const { posted, skipped, voteCast, problem } = expect(await this.conn.request(request), "reviewSubmitted");
+    return { posted, skipped, voteCast, problem };
   }
 
-  /** Sets the viewer's vote (an id of `PullRequestInfo.traits.verdicts`), on a platform that keeps it apart from posting. */
-  async setVote(verdict: string): Promise<void> {
-    expect(await this.conn.request({ type: "setVote", project: this.pid, verdict }), "done");
+  /**
+   * Stages the viewer's vote (an id of `PullRequestInfo.traits.verdicts`) for the next post, on a platform that keeps
+   * it apart from posting. The viewer's current vote clears the staged one instead.
+   */
+  async stageVote(verdict: string): Promise<void> {
+    expect(await this.conn.request({ type: "stageVote", project: this.pid, verdict }), "done");
+  }
+
+  /** Drops the staged vote. */
+  async discardVote(): Promise<void> {
+    expect(await this.conn.request({ type: "discardVote", project: this.pid }), "done");
   }
 
   /** What the platform said of the pull request on view at the last sync; fails before the first. */

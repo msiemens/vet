@@ -39,8 +39,6 @@ class PlatformStore {
     open: false,
     verdict: undefined as string | undefined,
     body: "",
-    /** The vote picked and not cast yet, on a platform that keeps the vote apart from posting. */
-    vote: undefined as string | undefined,
   });
   /** The viewer's comments are being posted. */
   sending = $state(false);
@@ -160,17 +158,26 @@ class PlatformStore {
     return true;
   }
 
-  /** Sets the viewer's vote; resolves whether the platform took it. */
-  async vote(verdict: string): Promise<boolean> {
+  /** Stages the viewer's vote for the next post; the current vote clears the staged one. Resolves whether the backend took it. */
+  async stageVote(verdict: string): Promise<boolean> {
+    return this.changeVote(this.backend?.stageVote(verdict), "set the vote");
+  }
+
+  /** Drops the staged vote; resolves whether the backend did. */
+  async discardVote(): Promise<boolean> {
+    return this.changeVote(this.backend?.discardVote(), "discard the vote");
+  }
+
+  private async changeVote(request: Promise<void> | undefined, what: string): Promise<boolean> {
+    if (!request) return false;
     try {
-      await this.backend?.setVote(verdict);
-      this.review.vote = undefined;
-      await this.reload();
-      return true;
+      await request;
     } catch (error) {
-      session.notice = `Could not set the vote: ${errorText(error)}`;
+      session.notice = `Could not ${what}: ${errorText(error)}`;
       return false;
     }
+    await this.reload();
+    return true;
   }
 
   dismiss(id: number) {

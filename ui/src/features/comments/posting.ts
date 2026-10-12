@@ -1,10 +1,11 @@
 // Posting the viewer's comments, the same from the Comments tool window and the toolbar's popover:
-// as one review with the verdict and summary of the Submit review form, or one after the other.
+// as one review with the verdict and summary of the Submit review form, or one after the other and
+// then the staged vote.
 
 import type { PullRequestInfo } from "../../generated/PullRequestInfo";
 import { platform } from "../../state/platform.svelte";
 import { session } from "../../state/session.svelte";
-import { waitingNote } from "./pullRequest";
+import { postedNote, waitingNote } from "./pullRequest";
 
 /** The verdict the form has chosen, else the platform's first. */
 export const chosenVerdict = (info: PullRequestInfo): string =>
@@ -23,8 +24,7 @@ export async function sendComments(info: PullRequestInfo): Promise<boolean> {
     } else {
       const done = await platform.post();
       if (done?.problem !== null) return false;
-      const posted = `${done.posted} ${done.posted === 1 ? "comment" : "comments"} posted`;
-      session.notice = done.skipped > 0 ? `${posted}. ${waitingNote(done.skipped)}` : posted;
+      session.notice = postedNote(done);
     }
     return true;
   } finally {
