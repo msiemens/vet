@@ -28,6 +28,8 @@ export interface AppActions {
   showChangesets(): void;
   /** Asks for a pull request by its number. */
   openPullRequest(): void;
+  /** Shows the pull request on view on its platform's web page. */
+  openInBrowser(): void;
   showDialog(dialog: "settings" | "about"): void;
   /** Opens Settings on the Keymap page. */
   showKeymap(): void;
@@ -134,6 +136,13 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
       enabled: repoOpen,
       disabledReason: needsProject,
       run: () => a.openPullRequest(),
+    },
+    {
+      id: "changeset.openInBrowser",
+      label: "Open in Browser",
+      enabled: (c) => !!c.pullRequest,
+      disabledReason: () => NO_PULL_REQUEST,
+      run: () => a.openInBrowser(),
     },
     {
       id: "changeset.open",

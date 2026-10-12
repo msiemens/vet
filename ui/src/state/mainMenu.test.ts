@@ -50,6 +50,7 @@ const actions: AppActions = {
   showScreen: (screen) => calls.push(`screen ${screen}`),
   showChangesets: () => calls.push("changesets"),
   openPullRequest: () => calls.push("pullRequest"),
+  openInBrowser: () => calls.push("browser"),
   showDialog: (d) => calls.push(`dialog ${d}`),
   showKeymap: () => calls.push("keymap"),
   quit: () => calls.push("quit"),
@@ -174,12 +175,22 @@ void test("Open Project, Open Recent and the changeset items hold their places, 
   assert.deepEqual(ids(submenu(items, "changeset")), [
     "changeset.switch",
     "changeset.openPullRequest",
+    "changeset.openInBrowser",
     "-",
     "changeset.whole",
     "review.sinceLast",
     "-",
     "changeset.refresh",
   ]);
+});
+
+void test("Open in Browser needs a pull request on view and says so when there is none", () => {
+  const on = find(menu(), "changeset.openInBrowser");
+  assert.equal(on?.enabled, undefined);
+  assert.equal(on?.shortcut, undefined);
+  const off = find(menu({}, { pullRequest: false }), "changeset.openInBrowser");
+  assert.equal(off?.enabled, false);
+  assert.equal(off.reason, "No pull request is on view");
 });
 
 void test("without a project everything that needs one is disabled, not hidden, and says why", () => {

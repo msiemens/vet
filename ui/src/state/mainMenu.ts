@@ -103,6 +103,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
   const changeset: MenuSpec = [
     { command: "changeset.switch" },
     { command: "changeset.openPullRequest" },
+    { command: "changeset.openInBrowser" },
     "-",
     { command: "changeset.whole", checked: !s.range, radio: true },
     { command: "review.sinceLast", checked: s.range, radio: true },

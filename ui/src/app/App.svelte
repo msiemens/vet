@@ -62,6 +62,7 @@
     hasNativeMenu,
     hostLabel,
     inTauri,
+    openUrl,
     quit,
     showFolder,
     showWindow,
@@ -200,6 +201,13 @@
         switcherOpen = true;
       },
       openPullRequest: () => void openPullRequest(),
+      openInBrowser: () => {
+        const url = platform.info?.url;
+        if (url === undefined) return;
+        void openUrl(url).catch((e: unknown) => {
+          session.notice = `Could not open the browser: ${errorText(e)}`;
+        });
+      },
       showDialog: (d) => showDialog(d),
       showKeymap: () => showDialog("settings", "keymap"),
       showAccounts: () => showDialog("settings", "accounts"),
