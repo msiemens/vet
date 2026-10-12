@@ -53,14 +53,7 @@ function judge(name: string, steps: StepResult[]): string[] {
 
 for (const name of names) {
   process.stderr.write(`session ${name}\n`);
-  let found = judge(name, await runInProcess(name));
-  if (found.length) {
-    // Requests sent without waiting for each other can be answered out of order (the audit's H1), which
-    // a rerun usually does not repeat; a difference that stays is a bug.
-    process.stderr.write(`session ${name} again, to see whether the differences stay\n`);
-    found = judge(name, await runInProcess(name));
-  }
-  unexpected.push(...found);
+  unexpected.push(...judge(name, await runInProcess(name)));
 }
 
 const seconds = ((Date.now() - started) / 1000).toFixed(1);

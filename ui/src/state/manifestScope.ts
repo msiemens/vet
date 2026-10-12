@@ -9,6 +9,21 @@ export function isChangesetView(manifest: Pick<Manifest, "interdiff">, shownComm
   return !manifest.interdiff && shownCommit === undefined;
 }
 
+/** Whether two manifests are of the same revision and the same view, so one holds the other's files at a later time. */
+export function sameManifestView(
+  held: Pick<Manifest, "revision" | "interdiff"> | undefined,
+  heldCommit: number | undefined,
+  next: Pick<Manifest, "revision" | "interdiff">,
+  nextCommit: number | undefined,
+): boolean {
+  return (
+    held?.revision === next.revision &&
+    heldCommit === nextCommit &&
+    held.interdiff?.from === next.interdiff?.from &&
+    held.interdiff?.to === next.interdiff?.to
+  );
+}
+
 /**
  * The manifest of the changeset on view as a whole: the one on screen when it is that, else `whole`, if it was
  * read for the revision on screen. None while it is not known.

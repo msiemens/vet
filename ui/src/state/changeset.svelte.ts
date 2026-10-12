@@ -23,8 +23,9 @@ import type { BaseCandidates } from "./backend";
 import { commitToShow, neighbour } from "./commitLens";
 import { keyId } from "./changesetKey";
 import { currentFiles } from "./currentFiles";
-import { isChangesetView, withChangesetBase } from "./manifestScope";
+import { isChangesetView, sameManifestView, withChangesetBase } from "./manifestScope";
 import { PendingOpen } from "./pendingOpen";
+import { ReviewOrder } from "./reviewOrder";
 import { session } from "./session.svelte";
 import { type Shown, isCurrent } from "./shown";
 import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
@@ -48,6 +49,8 @@ class ChangesetStore {
   /** The current state of each file, one reactive cell per path: a review update invalidates only its file. */
   private cells = new SvelteMap<string, FileChange>();
   private listeners = new Set<ReviewListener>();
+  /** Which change of the backend the review state held is as of; updates and manifests older than it do not replace it. */
+  private order = new ReviewOrder();
 
   /**
    * The versions the review view compares instead of showing the changeset; none for the changeset.
@@ -71,9 +74,24 @@ class ChangesetStore {
   private manifestLoads = new LatestLoad<{ manifest: Manifest; commit: number | undefined }>({
     busy: (on) => (this.fetching = on),
     apply: ({ manifest, commit }) => {
+      const held = this.manifest;
+      // A mark answered after the manifest was read is newer than the manifest, whenever the manifest arrives.
+      const newer = this.order.load(
+        manifest.seq,
+        manifest.files.map((file) => file.path),
+        sameManifestView(held, this.shownCommit, manifest, commit),
+      );
+      const kept = new Map(newer.files.size ? this.cells : []);
       this.cells.clear();
-      for (const file of manifest.files) this.cells.set(file.path, file);
-      this.manifest = manifest;
+      for (const file of manifest.files) this.cells.set(file.path, kept.get(file.path) ?? file);
+      this.manifest =
+        held && (newer.completion || newer.changeset)
+          ? {
+              ...manifest,
+              completion: newer.completion ? held.completion : manifest.completion,
+              changesetCompletion: newer.changeset ? held.changesetCompletion : manifest.changesetCompletion,
+            }
+          : manifest;
       this.shownCommit = commit;
       this.restoreFailures = manifest.restoreFailures;
       if (manifest.lens === "perCommit" && manifest.commits > 1) void this.loadCommits();
@@ -166,6 +184,7 @@ class ChangesetStore {
     this.commitsSeq++;
     this.restoreFailures = [];
     this.cells.clear();
+    this.order = new ReviewOrder();
   }
 
   /**
@@ -589,12 +608,14 @@ class ChangesetStore {
   }
 
   /**
-   * Applies the review state a request returned. A rejected request is normally a
-   * stale revision: refetch the manifest and tell the viewer to repeat the action.
+   * Applies the review state a request returned, unless the view it was sent for has been replaced
+   * (the manifest of the new one has the state). A rejected request is normally a stale revision:
+   * refetch the manifest and tell the viewer to repeat the action.
    */
   private async review(sent: Shown, request: Promise<ReviewUpdate | ReviewUpdate[]>) {
     try {
-      for (const update of [await request].flat()) this.applyReview(update);
+      const updates = [await request].flat();
+      if (isCurrent(sent, this.currentShown())) for (const update of updates) this.applyReview(update);
     } catch (error) {
       await this.refresh().catch(() => undefined);
       this.reportFailure(error, sent.revision);
@@ -613,26 +634,33 @@ class ChangesetStore {
         : `Request failed: ${errorText(error)}`;
   }
 
+  /**
+   * Applies an update of the view on screen. What the window holds of the file and of the totals is
+   * kept if it is as new or newer, so an update that arrives twice (as the answer and as the event)
+   * or after a later one changes nothing.
+   */
   applyReview(update: ReviewUpdate) {
     const manifest = this.manifest;
     if (!manifest) return;
     const file = this.cells.get(update.path);
-    if (file) this.cells.set(update.path, { ...file, review: update.review, completion: update.completion });
+    const fresh = this.order.file(update.path, update.seq);
+    if (fresh && file) this.cells.set(update.path, { ...file, review: update.review, completion: update.completion });
+    const completion = this.order.completion(update.seq);
+    // Only the changeset's own view says how far the changeset as a whole is.
+    const whole = isChangesetView(manifest, this.shownCommit) && this.order.changeset(update.seq);
+    if (!fresh && !completion && !whole) return;
     this.manifest = {
       ...manifest,
-      completion: update.changeset,
-      // Only the changeset's own view says how far the changeset as a whole is.
-      changesetCompletion: isChangesetView(manifest, this.shownCommit)
-        ? update.changeset
-        : manifest.changesetCompletion,
+      completion: completion ? update.changeset : manifest.completion,
+      changesetCompletion: whole ? update.changeset : manifest.changesetCompletion,
     };
-    for (const listener of this.listeners) listener(update);
+    if (fresh) for (const listener of this.listeners) listener(update);
     if (manifest.lens === "perCommit" && manifest.commits > 1) void this.loadCommits();
   }
 
   /** A mark in the changeset's file, which a range or commit on screen does not show: the changeset's progress and the commits' follow. */
   private applyTotals(update: ReviewUpdate) {
-    if (!this.manifest) return;
+    if (!this.manifest || !this.order.changeset(update.seq)) return;
     this.manifest = { ...this.manifest, changesetCompletion: update.changeset };
     void this.loadCommits();
   }
