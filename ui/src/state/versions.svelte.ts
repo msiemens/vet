@@ -3,6 +3,7 @@
 import type { VersionInfo } from "../generated/VersionInfo";
 import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
+import { changeset } from "./changeset.svelte";
 import { session } from "./session.svelte";
 
 class VersionStore {
@@ -26,9 +27,15 @@ class VersionStore {
         void this.reload(backend);
     });
     const offResync = session.onResync(() => void this.reload(backend));
+    const offOpening = changeset.onOpening((phase) => {
+      this.seq++;
+      this.items = [];
+      if (phase === "unannounced") void this.reload(backend);
+    });
     return () => {
       off();
       offResync();
+      offOpening();
       this.seq++;
       this.items = [];
     };

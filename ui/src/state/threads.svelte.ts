@@ -39,9 +39,15 @@ class ThreadStore {
       } else if (event.type === "threadsChanged" || event.type === "snapshotSettled") void this.reload();
     });
     const offResync = session.onResync(() => void this.reload());
+    const offOpening = changeset.onOpening((phase) => {
+      this.seq++;
+      if (phase === "requested") this.set([], undefined, "");
+      else void this.reload();
+    });
     return () => {
       off();
       offResync();
+      offOpening();
       this.backend = undefined;
       this.set([], undefined);
     };

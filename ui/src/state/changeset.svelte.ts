@@ -21,11 +21,13 @@ import { LatestLoad } from "./latestLoad";
 import type { BaseCandidates } from "./backend";
 import { commitToShow, neighbour } from "./commitLens";
 import { currentFiles } from "./currentFiles";
+import { PendingOpen } from "./pendingOpen";
 import { session } from "./session.svelte";
 import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
 import { commitView } from "./view";
 
 type ReviewListener = (update: ReviewUpdate) => void;
+export type OpeningPhase = "requested" | "unannounced";
 
 class ChangesetStore {
   /**
@@ -71,6 +73,10 @@ class ChangesetStore {
       else this.commits = [];
     },
   });
+  /** Another changeset was asked for and is not announced yet. */
+  private opening = $state(false);
+  private pendingOpen = new PendingOpen((on) => (this.opening = on));
+  private openingListeners = new Set<(phase: OpeningPhase) => void>();
   /** What requests about the files read: the interdiff of `range`, a commit, or the changeset. */
   get view(): View {
     return this.range || this.commitIndex === undefined ? rangeView(this.range) : commitView(this.commitIndex);
@@ -115,7 +121,7 @@ class ChangesetStore {
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
         if (event.type === "changesetOpened") {
-          // Everything of the changeset on view is the changeset's own: the views show it loading.
+          this.pendingOpen.announced();
           this.clear();
           void this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
         } else if (event.type === "snapshotSettled" || event.type === "targetChanged") void this.refresh();
@@ -133,14 +139,15 @@ class ChangesetStore {
     session.onResync(() => {
       if (this.manifest) this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
     });
-    session.onClose(() => {
-      this.manifestLoads.cancel();
-      this.clear();
-    });
+    session.onClose(() => this.clear());
   }
 
-  /** Drops everything of the changeset on view, for the views to show that the next one is loading. */
+  /**
+   * Drops everything of the changeset on view, for the views to show that the next one is loading.
+   * A manifest fetch underway is of the changeset dropped and counts for nothing.
+   */
   private clear() {
+    this.manifestLoads.cancel();
     this.manifest = undefined;
     this.range = undefined;
     this.baseChanged = undefined;
@@ -157,7 +164,17 @@ class ChangesetStore {
    * changeset is known, and the views show that instead of what was on view before.
    */
   get loading(): boolean {
-    return this.fetching && !this.manifest;
+    return this.opening || (this.fetching && !this.manifest);
+  }
+
+  /**
+   * Called when a changeset is asked for ("requested": whatever belongs to the changeset on view is to
+   * be dropped now) and when the backend answered without announcing one ("unannounced": the changeset
+   * on view stays, to be read again). Returns the unsubscribe function.
+   */
+  onOpening(listener: (phase: OpeningPhase) => void): () => void {
+    this.openingListeners.add(listener);
+    return () => this.openingListeners.delete(listener);
   }
 
   /**
@@ -389,13 +406,24 @@ class ChangesetStore {
     }
   }
 
-  /** Puts a changeset on view. The backend pushes `changesetOpened`, which fetches its manifest. */
+  /**
+   * Puts a changeset on view. What is on view belongs to another changeset from now on and is dropped; the
+   * backend pushes `changesetOpened`, which fetches the manifest. If it answers without (the changeset
+   * is on view already, or it refused), the changeset on view is read again.
+   */
   async openChangeset(key: ChangesetKey) {
+    const backend = session.connected();
+    const token = this.pendingOpen.begin();
+    this.clear();
+    for (const listener of this.openingListeners) listener("requested");
     try {
-      await session.connected().openChangeset(key);
+      await backend.openChangeset(key);
     } catch (error) {
       session.notice = errorText(error);
     }
+    if (!this.pendingOpen.settle(token)) return;
+    for (const listener of this.openingListeners) listener("unannounced");
+    await this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
   }
 
   /**

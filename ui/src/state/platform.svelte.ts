@@ -11,6 +11,7 @@ import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
 import { errorText } from "../lib/errorText";
 import { AccountResync } from "./accountResync";
 import type { Backend } from "./backend";
+import { changeset } from "./changeset.svelte";
 import { queue } from "./queue.svelte";
 import { session } from "./session.svelte";
 import { threads } from "./threads.svelte";
@@ -77,12 +78,18 @@ class PlatformStore {
       }
     });
     const offResync = session.onResync(() => void this.reload());
+    const offOpening = changeset.onOpening((phase) => {
+      this.seq++;
+      if (phase === "requested") this.info = undefined;
+      else void this.reload();
+    });
     // A credential given or removed, here or in another window, changes what the platform answers.
     const resync = new AccountResync({ sync: () => this.sync(), reload: () => this.reload() });
     const offAccounts = backend.onAccountsChanged(() => void resync.changed());
     return () => {
       off();
       offResync();
+      offOpening();
       offAccounts();
       this.backend = undefined;
       this.opened = undefined;
