@@ -473,12 +473,37 @@ mod tests {
     }
 
     #[test]
-    fn geometry_survives_a_restart_and_a_damaged_file_is_ignored() {
-        let mut saved = Saved::default();
-        saved.observe(Mode::Welcome, snapshot(rect(300, 200, 960, 620), false));
-        let text = serde_json::to_string(&saved).unwrap();
-        assert_eq!(Saved::parse(&text).welcome, saved.welcome);
-        let damaged = Saved::parse("{\"welcome\": 3");
+    fn geometry_persisted_to_the_file_is_read_back_after_a_restart_and_a_damaged_file_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config").join(FILE);
+        let windows = Windows {
+            state: Mutex::new(State {
+                mode: Mode::Welcome,
+                saved: Saved::default(),
+            }),
+            file: Some(file.clone()),
+            project_size: (1200.0, 800.0),
+        };
+        windows
+            .lock()
+            .saved
+            .observe(Mode::Welcome, snapshot(rect(300, 200, 960, 620), false));
+        windows.persist();
+        windows
+            .lock()
+            .saved
+            .observe(Mode::Welcome, snapshot(rect(310, 210, 900, 600), false));
+        windows.persist();
+
+        let restarted = Saved::parse(&std::fs::read_to_string(&file).unwrap());
+        assert_eq!(
+            restarted.welcome,
+            Some(placement(rect(310, 210, 900, 600), 1.0, false)),
+            "the later write replaced the earlier"
+        );
+
+        std::fs::write(&file, "{\"welcome\": 3").unwrap();
+        let damaged = Saved::parse(&std::fs::read_to_string(&file).unwrap());
         assert!(damaged.welcome.is_none() && damaged.project.is_none());
     }
 }

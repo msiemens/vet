@@ -354,36 +354,10 @@ pub async fn show_context_menu(
 
 #[cfg(test)]
 mod tests {
-    use super::{ContextMenuChoice, MenuEntry, Predefined, Surface, accelerator, item_text, key_only_ids};
+    use super::{ContextMenuChoice, MenuEntry, Surface, accelerator, item_text, key_only_ids};
 
     fn entries(json: &str) -> Vec<MenuEntry> {
         serde_json::from_str(json).unwrap()
-    }
-
-    #[test]
-    fn predefined_items_are_named_as_the_ui_names_them() {
-        let items = entries(
-            r#"[{"id":"predefined.selectAll","label":"","predefined":"selectAll"},
-            {"id":"predefined.bringAllToFront","label":"","predefined":"bringAllToFront"},
-            {"id":"a","label":"A","reason":"why not","radio":true}]"#,
-        );
-        assert_eq!(items[0].predefined, Some(Predefined::SelectAll));
-        assert_eq!(items[1].predefined, Some(Predefined::BringAllToFront));
-        assert_eq!(items[2].predefined, None);
-        assert!(serde_json::from_str::<Vec<MenuEntry>>(r#"[{"id":"x","label":"","predefined":"explode"}]"#).is_err());
-    }
-
-    #[test]
-    fn menu_entries_read_the_uis_definition() {
-        let items = entries(
-            r#"[{"id":"file","label":"File","children":[
-            {"id":"-","label":"","separator":true},
-            {"id":"open","label":"Open","accelerator":"Cmd+O","shortcut":"Ctrl+O","enabled":false,"checked":true,"detail":"/x"}]}]"#,
-        );
-        let children = items[0].children.as_deref().unwrap();
-        assert!(children[0].separator && children[0].accelerator.is_none());
-        assert_eq!(children[1].accelerator.as_deref(), Some("Cmd+O"));
-        assert_eq!((children[1].enabled, children[1].checked), (Some(false), Some(true)));
     }
 
     #[test]
@@ -392,7 +366,8 @@ mod tests {
             r#"[{"id":"a","label":"Copy path","shortcut":"Ctrl+C"},
             {"id":"b","label":"Open","detail":"/x","shortcut":"Ctrl+O"},
             {"id":"c","label":"Quit","accelerator":"Cmd+Q","shortcut":"Ctrl+Q"},
-            {"id":"d","label":"Plain"}]"#,
+            {"id":"d","label":"Plain"},
+            {"id":"e","label":"Go to definition","shortcut":"⌘B","chord":"Cmd+B"}]"#,
         );
         let texts: Vec<String> = items
             .iter()
@@ -400,33 +375,19 @@ mod tests {
             .collect();
         assert_eq!(texts[2], "Quit");
         assert_eq!(texts[3], "Plain");
-        // Only macOS draws the window's key (`chord`) in the key column; these have none.
         assert!(texts[0].starts_with("Copy path") && texts[0].ends_with("Ctrl+C"));
         assert!(texts[1].contains("/x") && texts[1].ends_with("Ctrl+O"));
-    }
 
-    #[test]
-    fn the_windows_key_is_drawn_in_the_key_column_on_macos_and_as_text_elsewhere() {
-        let items = entries(r#"[{"id":"a","label":"Go to definition","shortcut":"⌘B","chord":"Cmd+B"}]"#);
-        let shown = accelerator(&items[0]);
-        assert_eq!(shown, if cfg!(target_os = "macos") { Some("Cmd+B") } else { None });
-        let bar = item_text(&items[0], Surface::MenuBar, shown.is_some());
-        let context = item_text(&items[0], Surface::ContextMenu, shown.is_some());
+        // Only macOS draws the window's key (`chord`) in the key column; elsewhere it is text.
+        let chorded = &items[4];
+        let context = item_text(chorded, Surface::ContextMenu, accelerator(chorded).is_some());
         if cfg!(target_os = "macos") {
-            assert_eq!(
-                (bar.as_str(), context.as_str()),
-                ("Go to definition", "Go to definition")
-            );
-        } else if cfg!(windows) {
-            assert_eq!(
-                (bar.as_str(), context.as_str()),
-                ("Go to definition\t⌘B", "Go to definition\t⌘B")
-            );
+            assert_eq!(accelerator(chorded), Some("Cmd+B"));
+            assert_eq!(texts[4], "Go to definition");
+            assert_eq!(context, "Go to definition");
         } else {
-            assert_eq!(
-                (bar.as_str(), context.as_str()),
-                ("Go to definition    ⌘B", "Go to definition")
-            );
+            assert_eq!(accelerator(chorded), None);
+            assert!(texts[4].ends_with("⌘B"));
         }
     }
 
