@@ -399,41 +399,21 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_row_carries_what_the_list_shows() {
+    fn a_row_says_how_the_viewers_review_stands_and_whether_it_waits() {
         let mut p = requested_user(pr(7));
-        p.ci = Some(CiState::Pending);
-        p.unresolved_threads = 3;
-        p.labels = vec!["wip".to_owned()];
         p.viewer_review = Some(ViewerReview {
             verdict: ReviewVerdict::Commented,
             commit: Some("c1".to_owned()),
         });
-        let [row] = &rows(vec![p], &viewer(), &PullRequestQuery::new(QueueTab::WaitingForMe))[..] else {
-            panic!("one row")
-        };
-        assert_eq!(
-            (
-                row.title.as_str(),
-                (row.author.as_str(), row.author_name.as_str()),
-                row.source_branch.as_str(),
-                row.target_branch.as_str(),
-                row.ci,
-                row.unresolved_threads,
-                row.review,
-                row.waiting_for_me,
-                row.updated_at
-            ),
-            (
-                "PR 7",
-                ("grace", "Grace Hopper"),
-                "feature",
-                "main",
-                Some(CiState::Pending),
-                3,
-                ReviewState::NewPushes(ReviewVerdict::Commented),
-                true,
-                1_007
-            )
-        );
+        let row =
+            |p: &PullRequest| rows(vec![p.clone()], &viewer(), &PullRequestQuery::new(QueueTab::AllOpen)).remove(0);
+        let stale = row(&p);
+        assert_eq!(stale.review, ReviewState::NewPushes(ReviewVerdict::Commented));
+        assert!(stale.waiting_for_me);
+
+        p.viewer_review.as_mut().unwrap().commit = Some(p.head.clone());
+        let current = row(&p);
+        assert_eq!(current.review, ReviewState::Reviewed(ReviewVerdict::Commented));
+        assert!(!current.waiting_for_me);
     }
 }

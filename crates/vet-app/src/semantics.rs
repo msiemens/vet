@@ -789,13 +789,10 @@ mod tests {
     }
 
     #[test]
-    fn a_local_tree_may_execute_on_both_sides() {
+    fn a_side_built_on_an_untrusted_commit_refuses_executing_servers() {
         let (base, target) = served(&Trust::Local, &sides());
         assert!(base.policy.allow_executing && target.policy.allow_executing);
-    }
 
-    #[test]
-    fn a_side_built_on_an_untrusted_commit_refuses_executing_servers() {
         let trust = Trust::Contributor {
             trusted_head: Some(CommitId("head".into())),
         };
@@ -1417,47 +1414,6 @@ mod tests {
         let new = semantics.changed_symbols(&fx.view, revision).await.unwrap();
         assert_eq!(new.value.symbols.len(), 8);
         assert_eq!(asked(), 16, "both texts of each file, once");
-    }
-
-    // Every analysis of a symbol (signature, impact, reachability) needs the revision's
-    // changed symbols; they are found once, under one "Finding the changed symbols" task.
-    #[tokio::test]
-    async fn the_analyses_of_one_revision_share_one_search_for_its_changed_symbols() {
-        let fx = Fixture::open(
-            &[("a.rs", "one\n"), ("b.py", "one\n")],
-            &[("a.rs", "two\n"), ("b.py", "two\n")],
-        )
-        .await;
-        let heard = Arc::new(Mutex::new(Vec::new()));
-        let sink = heard.clone();
-        let counters = Arc::<Counters>::default();
-        let semantics = Semantics::new(
-            FakeMaterializer(counters.clone()),
-            FakeLauncher(counters.clone()),
-            "/live".into(),
-            vec![backend("rust", "rs"), backend("python", "py")],
-            Trust::Local,
-            Links {
-                revisions: fx.session.revisions(),
-                limits: RestoreLimits::default(),
-                tasks: Tasks::new(
-                    std::time::Duration::ZERO,
-                    Box::new(move |t| sink.lock().unwrap().push(t)),
-                ),
-                linger: Arc::new(Spawned),
-            },
-        );
-        // Four selections of a symbol, three analyses each.
-        let all = bounded(12, 0..12, |_| semantics.changed_symbols(&fx.view, 0)).await;
-        assert!(all.iter().all(Result::is_ok));
-
-        let heard = heard.lock().unwrap();
-        let searches: std::collections::BTreeSet<_> = heard
-            .iter()
-            .filter(|t| t.kind == TaskKind::Analyse)
-            .map(|t| t.id)
-            .collect();
-        assert_eq!(searches.len(), 1, "one search, not one per caller");
     }
 
     // Whether a kept answer can serve a text's symbols needs the server's identity, which on

@@ -532,6 +532,9 @@ mod tests {
         assert_eq!(names, [("origin", "acme/app"), ("fork", "ada/app")]);
     }
 
+    /// The one pull request `Hosting` describes as a draft.
+    const DRAFT: u64 = 9;
+
     /// Lists a fixed set of pull requests per repository, or fails for some, or says it stopped
     /// at its bound for some.
     struct Hosting {
@@ -574,6 +577,7 @@ mod tests {
             }
             let mut pull_request = pr(number);
             pull_request.target_branch = "release".to_owned();
+            pull_request.draft = number == DRAFT;
             Ok(PullRequestDetail {
                 pull_request,
                 base: "b0".to_owned(),
@@ -833,15 +837,25 @@ mod tests {
         };
         let (fetch, _) = fetching(vec![info("origin", "https://github.com/acme/app")]);
 
-        let head = fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
+        let ready = fetch_pull_request(&platform, &fetch, &Anonymous, &app, 7)
+            .await
+            .unwrap();
+        let draft = fetch_pull_request(&platform, &fetch, &Anonymous, &app, DRAFT)
             .await
             .unwrap();
 
         assert_eq!(
-            head,
+            ready,
             PullRequestHead {
                 title: "PR 7".to_owned(),
                 draft: false
+            }
+        );
+        assert_eq!(
+            draft,
+            PullRequestHead {
+                title: format!("PR {DRAFT}"),
+                draft: true
             }
         );
     }

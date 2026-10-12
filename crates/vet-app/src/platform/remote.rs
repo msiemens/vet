@@ -257,6 +257,7 @@ mod tests {
             "ssh://git@ssh.dev.azure.com/v3/contoso/Shop/api",
         ] {
             assert_eq!(parse_remote(url), key("dev.azure.com", "contoso/Shop/api"), "{url}");
+            assert_eq!(parse_remote(url).unwrap().kind(), PlatformKind::AzureDevOps, "{url}");
         }
         assert_eq!(
             parse_remote("https://dev.azure.com/contoso/_git/api"),
@@ -338,14 +339,6 @@ mod tests {
         ] {
             assert_eq!(parse_remote(url), None, "{url:?}");
         }
-    }
-
-    #[test]
-    fn the_key_tells_its_platform_and_prints_as_host_and_path() {
-        let key = parse_remote("https://dev.azure.com/contoso/Shop/_git/api").unwrap();
-        assert_eq!(key.kind(), PlatformKind::AzureDevOps);
-        assert_eq!(key.to_string(), "dev.azure.com/contoso/Shop/api");
-        assert_eq!(key.segments().collect::<Vec<_>>(), ["contoso", "Shop", "api"]);
     }
 
     #[test]

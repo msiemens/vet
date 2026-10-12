@@ -309,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn unrelated_lines_stay_split_per_line() {
+    fn lines_that_share_nothing_are_one_change_across_the_hunk() {
         let changes = text_changes("aa\nbb\n", "xx\nyy\n", &[hunk((0, 2), (0, 2))]);
         assert_eq!(changes, [change((0, 5), (0, 5))]);
     }

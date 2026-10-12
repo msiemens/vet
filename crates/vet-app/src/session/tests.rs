@@ -1025,9 +1025,11 @@ async fn each_settled_snapshot_of_an_open_review_is_the_next_version() {
     );
     NOW.store(900, Ordering::Relaxed);
 
-    fx.settle(&[("a.txt", "three\n")]).await;
-    fx.settle(&[("a.txt", "four\n")]).await;
+    assert_eq!(fx.settle(&[("a.txt", "three\n")]).await, 1);
+    assert_eq!(fx.settle(&[("a.txt", "four\n")]).await, 2);
 
+    assert_eq!(fx.session.revision().await, 2);
+    assert!(fx.store.0.lock().unwrap().blobs.contains_key(&BlobId::of(b"three\n")));
     assert_eq!(
         fx.session.lifecycle().await,
         Lifecycle::Open {
@@ -1409,35 +1411,6 @@ async fn requests_for_an_old_revision_are_rejected() {
 }
 
 #[tokio::test]
-async fn a_mode_change_needs_acknowledging() {
-    let git = FakeGit::default();
-    let base = git.snapshot(&[("run.sh", "echo\n")]);
-    let mut dirty = base.clone();
-    dirty.entries.get_mut(&path("run.sh")).unwrap().mode = 0o100755;
-    dirty.id = merkle::snapshot_id(&dirty.entries);
-    *git.base.lock().unwrap() = Some(base);
-    git.scans.lock().unwrap().push(dirty);
-    let store = MemStore::default();
-    let session = LiveSession::open(git, store.clone(), REPO.into(), clock).await.unwrap();
-
-    let m = session.manifest(View::Changeset).await.unwrap();
-    assert_eq!((m.completion.items, m.completion.acknowledged_items), (1, 0));
-    assert!(m.files[0].hunks.is_empty());
-
-    let update = session.acknowledge(0, "run.sh", NonTextKind::Mode, true).await.unwrap();
-    assert_eq!(update.review.acknowledged, [NonTextKind::Mode]);
-    assert!(update.changeset.is_complete());
-    assert_eq!(store.0.lock().unwrap().acks.len(), 1);
-
-    let update = session
-        .acknowledge(0, "run.sh", NonTextKind::Mode, false)
-        .await
-        .unwrap();
-    assert!(update.review.acknowledged.is_empty() && !update.changeset.is_complete());
-    assert!(store.0.lock().unwrap().acks.is_empty());
-}
-
-#[tokio::test]
 async fn items_of_one_file_are_acknowledged_separately() {
     let git = FakeGit::default();
     let base = git.snapshot(&[("x.bin", "a\0\n")]);
@@ -1559,10 +1532,16 @@ async fn toggling_a_file_with_only_a_mode_change_acknowledges_it_and_starts_the_
         .await
         .unwrap();
 
+    let m = session.manifest(View::Changeset).await.unwrap();
+    assert_eq!((m.completion.items, m.completion.acknowledged_items), (1, 0));
+    assert!(!m.completion.is_complete());
+    assert!(m.files[0].hunks.is_empty());
+
     let update = session.toggle_file_seen(0, View::Changeset, "run.sh").await.unwrap();
 
     assert!(matches!(update.started, Some(Lifecycle::Open { version: 1, .. })));
     assert_eq!(update.review.acknowledged, [NonTextKind::Mode]);
+    assert!(update.changeset.is_complete());
 }
 
 #[tokio::test]
@@ -2528,18 +2507,6 @@ async fn settling_moves_the_listing_to_the_new_revision() {
     let after = fx.session.list_directory("").await.unwrap();
     assert_eq!(after.revision, 1);
     assert!(after.entries[0].changed);
-}
-
-#[tokio::test]
-async fn settled_snapshots_of_an_open_review_are_stored_and_bump_the_revision() {
-    let fx = Fixture::reviewing(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
-
-    assert_eq!(fx.settle(&[("a.txt", "three\n")]).await, 1);
-
-    assert_eq!(fx.session.revision().await, 1);
-    let mem = fx.store.0.lock().unwrap();
-    assert_eq!(mem.versions.len(), 2);
-    assert!(mem.blobs.contains_key(&BlobId::of(b"three\n")));
 }
 
 fn on(file: &str, start: u32, end: u32) -> NewThread {

@@ -415,7 +415,7 @@ async fn a_sync_finds_an_edit_made_in_both_places_while_apart() {
 }
 
 #[tokio::test]
-async fn an_edit_made_only_on_the_platform_is_taken_over() {
+async fn a_sync_takes_over_an_edit_made_only_on_the_platform_and_removes_no_thread_from_a_partial_listing() {
     let (fx, hosting) = on_a_pull_request().await;
     hosting.thread("a.txt", (21, 21), "pr1", "marco", "typo");
     fx.sync(&hosting).await;
@@ -425,6 +425,16 @@ async fn an_edit_made_only_on_the_platform_is_taken_over() {
     fx.sync(&hosting).await;
 
     assert_eq!(bodies(&fx.all().await[0]), ["fixed"]);
+
+    {
+        let mut hosted = hosting.0.lock().unwrap();
+        hosted.discussion.threads.clear();
+        hosted.discussion.complete = false;
+    }
+
+    fx.sync(&hosting).await;
+
+    assert_eq!(fx.all().await.len(), 1);
 }
 
 #[tokio::test]
@@ -462,22 +472,6 @@ async fn a_thread_deleted_on_the_platform_is_removed_and_a_draft_in_it_is_report
         left.iter().map(|t| remote_id(t)).collect::<Vec<_>>(),
         [Some(kept.as_str())]
     );
-}
-
-#[tokio::test]
-async fn a_partial_listing_removes_no_thread() {
-    let (fx, hosting) = on_a_pull_request().await;
-    hosting.thread("a.txt", (4, 4), "pr1", "marco", "here");
-    fx.sync(&hosting).await;
-    {
-        let mut hosted = hosting.0.lock().unwrap();
-        hosted.discussion.threads.clear();
-        hosted.discussion.complete = false;
-    }
-
-    fx.sync(&hosting).await;
-
-    assert_eq!(fx.all().await.len(), 1);
 }
 
 #[tokio::test]
