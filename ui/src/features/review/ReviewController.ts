@@ -323,14 +323,12 @@ export class ReviewController {
     void (async () => {
       if (id === CHANGES) {
         await this.views.get(CHANGES)?.goToFileHunk(to.path, to.hunk);
-      } else if (kindOf(id) === "text") {
-        this.tabs.showText(to.path);
-        await tick(); // a new tab's pane attaches and builds its view
-        this.texts.get(textTab(to.path))?.goToHunk(to.hunk);
       } else {
-        this.tabs.show(to.path);
-        await tick();
-        await this.views.get(fileTab(to.path))?.goToFileHunk(to.path, to.hunk);
+        // The file's tab, in the mode of the tab the step started from.
+        const mode = await this.showFile(to.path, this.tabs.modes.get(id));
+        const tab = fileTab(to.path);
+        if (mode === "file") this.texts.get(tab)?.goToHunk(to.hunk);
+        else await this.views.get(tab)?.goToFileHunk(to.path, to.hunk);
       }
     })();
     return true;
