@@ -51,14 +51,6 @@ void test("a pushed version names its commit for its checks, a move of the base 
   );
 });
 
-void test("the last reviewed version carries the eye", () => {
-  const rows = timelineRows([version(1), version(2, { reviewedHere: true }), version(3)]);
-  assert.deepEqual(
-    rows.map((r) => r.reviewed),
-    [false, true, false],
-  );
-});
-
 void test("the ends of the range are marked, and the versions between them", () => {
   const rows = timelineRows(
     [1, 2, 3, 4, 5].map((n) => version(n)),

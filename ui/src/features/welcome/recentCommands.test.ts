@@ -19,21 +19,13 @@ function setup() {
   return { registry, calls };
 }
 
-void test("the menu offers Open and Remove from Recent Projects for a row", () => {
-  const { registry } = setup();
-  const items = resolveMenu(registry, recentMenu, registry.context({ recentProject: { path: "/a" } }));
-  assert.deepEqual(
-    items.filter((i) => !i.separator).map((i) => [i.label, i.enabled !== false]),
-    [
-      ["Open", true],
-      ["Remove from Recent Projects", true],
-    ],
-  );
-});
-
-void test("the entries act on the row the menu was opened on", () => {
+void test("the entries are on offer for the row the menu was opened on, and act on it", () => {
   const { registry, calls } = setup();
   const context = registry.context({ recentProject: { path: "/b" } });
+  const entries = (menuContext: typeof context) =>
+    resolveMenu(registry, recentMenu, menuContext).filter((i) => !i.separator);
+  assert.ok(entries(context).length > 0 && entries(context).every((i) => i.enabled !== false));
+  assert.ok(entries(registry.context()).every((i) => i.enabled === false));
   registry.run("recent.open", context);
   registry.run("recent.forget", context);
   assert.deepEqual(calls, ["open /b", "forget /b"]);

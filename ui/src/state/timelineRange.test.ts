@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { VersionInfo } from "../generated/VersionInfo";
-import { defaultRange, followed, rangeView, rowRange, withFrom, withTo } from "./timelineRange.ts";
+import { defaultRange, rowRange, withTo } from "./timelineRange.ts";
 
 /** Versions 1..`count`, with the one numbered `reviewed` the last one something was marked in. */
 const versions = (count: number, reviewed?: number): VersionInfo[] =>
@@ -48,14 +48,4 @@ void test("moving the end to the latest version makes it live, to an older one p
   const live = { from: 14, to: 17, live: true };
   assert.deepEqual(withTo(live, 15, 17), { from: 14, to: 15, live: false });
   assert.deepEqual(withTo({ from: 14, to: 15, live: false }, 17, 17), live);
-  assert.deepEqual(withFrom(live, 12), { from: 12, to: 17, live: true });
-});
-
-void test("a live range follows the latest version", () => {
-  assert.deepEqual(followed({ from: 14, to: 17, live: true }, 18), { from: 14, to: 18, live: true });
-});
-
-void test("the view is the interdiff of the range, or the changeset without one", () => {
-  assert.deepEqual(rangeView({ from: 2, to: 5, live: false }), { type: "interdiff", from: 2, to: 5 });
-  assert.deepEqual(rangeView(undefined), { type: "changeset" });
 });

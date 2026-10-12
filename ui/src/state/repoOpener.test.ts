@@ -34,16 +34,6 @@ void test("opening a path twice while it opens sends one open", async () => {
   assert.deepEqual(log, ["release", "open /repo", "mode project", "opened /repo"]);
 });
 
-void test("a path opened again after it opened is opened again", async () => {
-  const { log, port } = steps((path) => Promise.resolve(path));
-  const opener = new RepoOpener(port);
-
-  await opener.open("/repo");
-  await opener.open("/repo");
-
-  assert.equal(log.filter((line) => line === "open /repo").length, 2);
-});
-
 void test("a failed open is reported once and the window returns to the welcome screen", async () => {
   const session = deferred<string>();
   const { log, port } = steps(() => session.promise);

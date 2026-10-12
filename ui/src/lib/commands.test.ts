@@ -202,11 +202,6 @@ void test("a control that does a command's job is titled by why the command cann
   assert.equal(r.hint("plain", "Do it", { open: false }), "Do it");
 });
 
-void test("a key spec reads as the platform writes keys", () => {
-  assert.equal(registry("Ctrl").keyLabel("Mod-Enter"), "Ctrl+Enter");
-  assert.equal(registry("Meta").keyLabel("Mod-Enter"), "⌘↩");
-});
-
 void test("menu items take label, shortcut and enabled state from the registry", () => {
   const r = registry();
   r.register(

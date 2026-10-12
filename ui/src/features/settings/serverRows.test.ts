@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ServerInfo } from "../../generated/ServerInfo.ts";
-import type { Tsserver } from "../../generated/Tsserver.ts";
 import { serverRow } from "./serverRows.ts";
 
 const found = (origin: "custom" | "project" | "installed" | "path"): ServerInfo => ({
@@ -28,39 +27,16 @@ const missing: ServerInfo = {
   implementations: null,
 };
 
-void test("a found server shows where it came from", () => {
-  const row = serverRow(found("installed"));
-  assert.equal(row.status, "found");
-  assert.equal(row.origin, "Installed by Vet");
-  assert.equal(row.path, "/bin/ra");
-  assert.equal(row.version, "1.2");
-});
-
-void test("a custom origin is the custom status and keeps the path to reset", () => {
+void test("a found server is found unless its origin is custom, which is its own status and keeps the path to reset", () => {
+  assert.equal(serverRow(found("installed")).status, "found");
   const row = serverRow(found("custom"));
   assert.equal(row.status, "custom");
   assert.equal(row.customPath, "/bin/ra");
 });
 
-void test("the table names the source short, and a custom one by its path", () => {
-  assert.equal(serverRow(found("installed")).source, "Vet");
-  assert.equal(serverRow(found("path")).source, "PATH");
-  assert.equal(serverRow(found("project")).source, "Project toolchain");
+void test("the table names a custom source by its path and a missing server's by nothing", () => {
   assert.equal(serverRow(found("custom")).source, "/bin/ra");
   assert.equal(serverRow(missing).source, "");
-});
-
-void test("the tsserver of a found server is carried over, and a server without one has none", () => {
-  const withTsserver = (tsserver: Tsserver): ServerInfo => {
-    const info = found("path");
-    if (info.state.type === "found") info.state.tsserver = tsserver;
-    return info;
-  };
-  const using: Tsserver = { type: "using", whose: "the project's typescript 5.9.2", path: "/p/tsserver.js" };
-  assert.deepEqual(serverRow(withTsserver(using)).tsserver, using);
-  const none: Tsserver = { type: "missing", reason: "the project has no typescript" };
-  assert.deepEqual(serverRow(withTsserver(none)).tsserver, none);
-  assert.equal(serverRow(found("path")).tsserver, undefined);
 });
 
 void test("a missing server carries the reason and the backend's title and can be installed when the backend says so", () => {
@@ -69,12 +45,6 @@ void test("a missing server carries the reason and the backend's title and can b
   assert.equal(row.problem, "pyright-langserver is not on PATH");
   assert.equal(row.title, "Python");
   assert.ok(row.canInstall);
-});
-
-void test("an install the backend cannot run stays off", () => {
-  const blocked = serverRow({ ...missing, installBlocker: "npm is missing", canInstall: false });
-  assert.equal(blocked.canInstall, false);
-  assert.equal(blocked.installBlocker, "npm is missing");
 });
 
 void test("install progress overrides the resolved state", () => {

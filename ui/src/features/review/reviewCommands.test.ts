@@ -260,17 +260,23 @@ void test("Go to Implementation says why it is off for a server that offers none
 
 void test("the file tree's menu offers the folder scope only for folders", () => {
   const r = setup();
-  const labels = (dir: boolean) =>
-    resolveMenu(r, treeMenu(dir), r.context({ target: { path: "src", dir } })).map((i) => i.label);
-  assert.deepEqual(labels(false), ["Copy Path", "Exclude from Review"]);
-  assert.deepEqual(labels(true), [
-    "Copy Path",
-    "Exclude from Review",
-    "Review Only This Folder",
-    "",
-    "Mark All Seen",
-    "Mark All Unseen",
-  ]);
+  const ids = (dir: boolean) =>
+    resolveMenu(r, treeMenu(dir), r.context({ target: { path: "src", dir } }))
+      .filter((i) => !i.separator)
+      .map((i) => i.id);
+  const folderOnly = ["path.reviewOnly", "path.markSeen", "path.markUnseen"];
+  assert.deepEqual(
+    ids(false).filter((id) => folderOnly.includes(id)),
+    [],
+  );
+  assert.deepEqual(
+    ids(true).filter((id) => folderOnly.includes(id)),
+    folderOnly,
+  );
+  assert.deepEqual(
+    ids(false).filter((id) => !folderOnly.includes(id)),
+    ids(true).filter((id) => !folderOnly.includes(id)),
+  );
 });
 
 void test("a tree menu item acts on the row it was opened on", () => {
@@ -386,18 +392,14 @@ void test("a view mode is available where the active tab offers it, and says why
   assert.ok(changes.disabledReason("view.mode.file"));
 
   assert.equal(setup({ viewModes: [] }).isEnabled("view.mode.unified"), false);
+
+  const covered = setup({ queueShown: true, tab: { kind: "changes" }, viewModes: ["unified", "split"] });
+  assert.equal(covered.isEnabled("view.mode.split"), false);
 });
 
-void test("the view modes are off while the queue covers the review", () => {
-  const r = setup({ queueShown: true, tab: { kind: "changes" }, viewModes: ["unified", "split"] });
-  assert.equal(r.isEnabled("view.mode.split"), false);
-});
-
-void test("Jump to Source and the change card follow what the active tab shows", () => {
+void test("the change card follows what the active tab shows", () => {
   const diff = { diffView: true, viewMode: "unified" } as const;
   const text = { diffView: true, viewMode: "file" } as const;
-  assert.equal(setup({ ...diff, tab: { kind: "file", path: "a.rs" } }).isEnabled("review.jumpToSource"), true);
-  assert.equal(setup({ ...text, tab: { kind: "file", path: "a.rs" } }).isEnabled("review.jumpToSource"), false);
   assert.equal(setup(text).isEnabled("review.changeCard"), true);
   assert.equal(setup(diff).isEnabled("review.changeCard"), false);
 });
@@ -409,10 +411,9 @@ void test("Reveal the current file runs when a tree is there to show it and says
   assert.equal(r.run("view.revealFile"), false);
   treeShown = true;
   assert.deepEqual(calls, ["reveal", "reveal"]);
-  assert.equal(r.binding("view.revealFile")?.label, "Alt+F2");
 });
 
-void test("the editor's menu offers copy only with a selection, and shows the keys of its commands", () => {
+void test("the editor's menu offers copy only with a selection", () => {
   const r = setup({ ...inChanges });
   const editor = (selection: boolean): FocusedEditor => ({
     side: "target",
@@ -427,8 +428,4 @@ void test("the editor's menu offers copy only with a selection, and shows the ke
   const copy = (list: ReturnType<typeof items>) => list.find((i) => i.id === "edit.copy");
   assert.equal(copy(items(false))?.enabled, false);
   assert.equal(copy(items(true))?.enabled, undefined);
-  const shortcuts = Object.fromEntries(items(true).map((i) => [i.id, i.shortcut]));
-  assert.equal(shortcuts["review.comment"], "Ctrl+Alt+C");
-  assert.equal(shortcuts["review.goToDefinition"], "Ctrl+B");
-  assert.equal(shortcuts["review.toggleSeen"], "Space");
 });

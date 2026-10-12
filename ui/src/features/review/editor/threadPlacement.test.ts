@@ -80,10 +80,11 @@ void test("a resolved thread is one row until expanded; heights grow with the te
   const m = { line: 20 };
   const open = thread(1, { messages: [msg("a"), msg("b\nc")] });
   const resolved = { ...open, status: "resolved" as const };
-  assert.ok(cardHeight({ thread: resolved }, m) < cardHeight({ thread: thread(1) }, m));
-  assert.ok(cardHeight({ thread: resolved, open: true }, m) > cardHeight({ thread: resolved }, m));
-  assert.ok(cardHeight({ thread: open }, m) > cardHeight({ thread: thread(1) }, m));
-  assert.ok(cardHeight({ draft: { type: "changeset" } }, m) > 0);
+  assert.equal(cardHeight({ thread: resolved }, m), 44);
+  assert.equal(cardHeight({ thread: resolved, open: true }, m), 224);
+  assert.equal(cardHeight({ thread: thread(1) }, m), 116);
+  assert.equal(cardHeight({ thread: open }, m), 193);
+  assert.equal(cardHeight({ draft: { type: "changeset" } }, m), 152);
   assert.equal(bodyRows("a\n\nb"), 3);
   assert.equal(bodyRows("x".repeat(250)), 3);
 });

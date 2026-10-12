@@ -33,22 +33,18 @@ function setup() {
   const menu = (row: CommandContext["row"]) =>
     resolveMenu(registry, rowMenu, registry.context({ row }))
       .filter((i) => !i.separator)
-      .map((i) => [i.label, i.enabled !== false]);
+      .map((i) => [i.id, i.enabled !== false] as const);
   return { registry, calls, menu };
 }
 
-void test("a pull request row offers all three entries, a branch row only Open enabled", () => {
+void test("a pull request row enables every entry, a branch row only Open", () => {
   const { menu } = setup();
-  assert.deepEqual(menu(pr), [
-    ["Open", true],
-    ["Open in Browser", true],
-    ["Copy Link", true],
-  ]);
-  assert.deepEqual(menu(branch), [
-    ["Open", true],
-    ["Open in Browser", false],
-    ["Copy Link", false],
-  ]);
+  assert.equal(menu(pr).length, 3);
+  assert.ok(menu(pr).every(([, enabled]) => enabled));
+  assert.deepEqual(
+    menu(branch).filter(([, enabled]) => enabled),
+    [["queue.open", true]],
+  );
 });
 
 void test("the entries act on the row the menu was opened on, not the pull request on view", () => {

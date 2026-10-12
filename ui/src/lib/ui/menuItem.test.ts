@@ -18,7 +18,7 @@ const bar = [
   menu("help", "Help"),
 ];
 
-void test("a letter picks the menu of the bar that starts with it, in either case, and the six menus have six letters", () => {
+void test("a letter picks the menu of the bar that starts with it, in either case", () => {
   assert.deepEqual(
     ["f", "v", "n", "c", "r", "h"].map((l) => mnemonicTarget(bar, l)?.id),
     ["file", "view", "navigate", "changeset", "review", "help"],

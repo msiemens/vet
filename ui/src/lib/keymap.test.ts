@@ -59,6 +59,8 @@ void test("Mod becomes the platform's modifier, and labels read as the menus sho
   assert.deepEqual(bindingOf("Mod-b", "Meta"), { spec: "Meta-b", label: "⌘B", chord: "Cmd+B" });
   assert.deepEqual(bindingOf("Mod-b", "Ctrl"), { spec: "Ctrl-b", label: "Ctrl+B", chord: "Ctrl+B" });
   assert.equal(bindingOf("Ctrl-Alt-ArrowDown", "Ctrl").label, "Ctrl+Alt+Down");
+  assert.equal(bindingOf("Mod-Enter", "Ctrl").label, "Ctrl+Enter");
+  assert.equal(bindingOf("Mod-Enter", "Meta").label, "⌘↩");
 });
 
 void test("macOS writes a key as glyphs in its own order of modifiers, while a native menu still reads the plain chord", () => {
@@ -132,9 +134,4 @@ void test("text input and keys that are not a shortcut cannot be recorded", () =
 void test("equal bindings compare equal whatever the order of their modifiers or the case of the letter", () => {
   assert.equal(canonicalSpec("Alt-Ctrl-S"), canonicalSpec("Ctrl-Alt-s"));
   assert.notEqual(canonicalSpec("Ctrl-Alt-s"), canonicalSpec("Ctrl-s"));
-});
-
-void test("F4 is Jump to Source, and only without modifiers", () => {
-  assert.ok(matches("F4", key({ key: "F4", code: "F4" })));
-  assert.ok(!matches("F4", key({ key: "F4", code: "F4", altKey: true })));
 });

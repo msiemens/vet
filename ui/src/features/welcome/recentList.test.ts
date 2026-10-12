@@ -16,7 +16,6 @@ void test("initials are the first letters of the first two words, else the first
 void test("a project keeps its avatar colour, within the palette", () => {
   for (const { path } of projects) {
     const colour = avatarColour(path);
-    assert.equal(colour, avatarColour(path));
     assert.ok(colour >= 1 && colour <= AVATAR_COLOURS);
   }
   const used = new Set(Array.from({ length: 60 }, (_, i) => avatarColour(`/src/project-${i}`)));

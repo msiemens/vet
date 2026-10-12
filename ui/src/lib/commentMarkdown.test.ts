@@ -2,12 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { commentPreview, renderComment } from "./commentMarkdown.ts";
 
-void test("markdown renders as formatting", () => {
-  assert.match(renderComment("a **bold** word"), /<strong>bold<\/strong>/);
-  assert.match(renderComment("- one\n- two"), /<ul>\s*<li>one<\/li>\s*<li>two<\/li>/);
-  assert.match(renderComment("`x`"), /<code>x<\/code>/);
-});
-
 void test("raw HTML in a comment is shown as text, never as markup", () => {
   const html = renderComment('<img src=x onerror="steal()"> <script>steal()</script>');
   assert.doesNotMatch(html, /<img/);

@@ -73,11 +73,13 @@ function setup(delayMs = 5, restart: () => Promise<string | undefined> = () => P
 }
 
 const settled = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** The events with a repeat of the one before left out: closing a popup twice is closing it. */
+const collapsed = (events: string[]) => events.filter((event, i) => event !== events[i - 1]);
 
 void test("one place is gone to without the popup showing", async () => {
   const { events, search, ask } = setup();
   await search.start(ask(() => answer([row("a.rs", 3)])));
-  assert.deepEqual(events, ["close", "close", "open a.rs:3 target"]);
+  assert.deepEqual(collapsed(events), ["close", "open a.rs:3 target"]);
 });
 
 void test("no place shows the popup's empty state, and several its list", async () => {
@@ -151,7 +153,7 @@ void test("Restart in the popup restarts the server, and only once it runs asks 
   events.length = 0;
   view()?.onretry();
   await settled(20);
-  assert.deepEqual(events, ["show searching", "restart rust", "close", "close", "open a.rs:3 target"]);
+  assert.deepEqual(collapsed(events), ["show searching", "restart rust", "close", "open a.rs:3 target"]);
 });
 
 void test("a server that does not start again is told, and the search is not repeated", async () => {

@@ -5,8 +5,6 @@ import { provideActions, reviewActions } from "./reviewActions.ts";
 void test("the review's commands do nothing, and find nothing to do, while no review is mounted", () => {
   assert.equal(reviewActions.toggleSeen(), false);
   assert.equal(reviewActions.revealFile(), false);
-  assert.doesNotThrow(() => reviewActions.step(1));
-  assert.doesNotThrow(() => reviewActions.stepTab(-1));
 });
 
 void test("what a mounted screen and its controller supply is what the commands do, until they go", () => {

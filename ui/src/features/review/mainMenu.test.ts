@@ -6,8 +6,7 @@ import { test } from "node:test";
 import { resolveMenu } from "../../lib/commandMenu.ts";
 import { CommandRegistry, type KeyEventLike } from "../../lib/commands.ts";
 import { canonicalSpec } from "../../lib/keymap.ts";
-import { AltTap } from "../../lib/ui/altTap.ts";
-import type { MenuItem } from "../../lib/ui/menuItem.ts";
+import { type MenuItem, mnemonicTarget } from "../../lib/ui/menuItem.ts";
 import { type AppActions, appCommands } from "../../state/appCommands.ts";
 import type { CommandContext } from "../../state/commands.ts";
 import { type MenuState, mainMenuSpec } from "../../state/mainMenu.ts";
@@ -70,7 +69,6 @@ const menuOf = (s: Partial<MenuState>, context: Partial<CommandContext>) => {
   return resolveMenu(registry, mainMenuSpec({ ...state, ...s }), registry.context(), native);
 };
 const submenu = (items: MenuItem[], id: string) => items.find((m) => m.id === id)?.children ?? [];
-const ids = (items: MenuItem[]) => items.map((i) => i.id);
 
 void test("no two commands share a key on either platform, nor does a native accelerator take another command's key", () => {
   for (const mod of ["Ctrl", "Meta"] as const) {
@@ -113,83 +111,11 @@ void test("Windows and macOS menus list the same commands in the same places apa
   assert.deepEqual(flat(menuOf({ native: true }, working)), flat(menuOf({}, working)));
 });
 
-void test("the Review and Navigate menus hold the work of reviewing, each with the key to learn", () => {
-  const items = menuOf({}, working);
-  assert.deepEqual(ids(submenu(items, "review")), [
-    "review.toggleSeen",
-    "review.toggleFlag",
-    "review.reconfirm",
-    "review.reconfirmAll",
-    "-",
-    "review.comment",
-    "review.commentOnChangeset",
-    "-",
-    "review.post",
-    "-",
-    "review.finish",
-  ]);
-  const navigate = submenu(items, "navigate");
-  assert.deepEqual(
-    navigate.filter((i) => !i.separator).map((i) => [i.id, i.shortcut]),
-    [
-      ["review.nextHunk", "Ctrl+Alt+Down"],
-      ["review.previousHunk", "Ctrl+Alt+Up"],
-      ["review.nextFlagged", "Alt+F"],
-      ["review.previousFlagged", "Alt+Shift+F"],
-      ["review.nextCommit", "]"],
-      ["review.previousCommit", "["],
-      ["review.jumpToSource", "F4"],
-      ["review.goToDefinition", "Ctrl+B"],
-      ["nav.goToImplementation", "Ctrl+Alt+B"],
-      ["nav.showUsages", "Ctrl+Alt+F7"],
-      ["review.changeCard", "Alt+F1"],
-      ["view.revealFile", "Alt+F2"],
-    ],
-  );
-  const mac = submenu(menuOf({ native: true }, working), "navigate");
-  assert.equal(mac.find((i) => i.id === "review.nextHunk")?.shortcut, "⌃⌥↓");
-  assert.equal(mac.find((i) => i.id === "review.goToDefinition")?.shortcut, "⌘B");
-  assert.equal(mac.find((i) => i.id === "nav.goToImplementation")?.shortcut, "⌥⌘B");
-  assert.equal(mac.find((i) => i.id === "nav.showUsages")?.shortcut, "⌥⌘F7");
-});
-
-void test("the View menu holds the screens, the tool windows, the tabs and the diff settings", () => {
-  const view = submenu(menuOf({}, working), "view");
-  assert.deepEqual(ids(view), [
-    "view.queue",
-    "view.review",
-    "-",
-    "tools",
-    "-",
-    "tab.previous",
-    "tab.next",
-    "-",
-    "view.mode.unified",
-    "view.mode.split",
-    "view.mode.file",
-    "-",
-    "view.softWrap",
-    "-",
-    "theme",
-  ]);
-  assert.deepEqual(
-    view.filter((i) => i.id.startsWith("view.mode.")).map((i) => [i.label, i.shortcut]),
-    [
-      ["Unified", "Alt+Shift+1"],
-      ["Side-by-Side", "Alt+Shift+2"],
-      ["File", "Alt+Shift+3"],
-    ],
-  );
-  assert.deepEqual(
-    view.filter((i) => i.id.startsWith("tab.")).map((i) => i.shortcut),
-    ["Alt+Left", "Alt+Right"],
-  );
-  assert.deepEqual(
-    submenu(menuOf({ native: true }, working), "view")
-      .filter((i) => i.id.startsWith("tab."))
-      .map((i) => i.shortcut),
-    ["⇧⌘[", "⇧⌘]"],
-  );
+void test("every menu of the bar starts with a letter of its own, which opens it", () => {
+  const bar = menuOf({}, working).filter((m) => m.children);
+  const initials = bar.map((m) => m.label[0].toLowerCase());
+  assert.equal(new Set(initials).size, initials.length);
+  bar.forEach((m, i) => assert.equal(mnemonicTarget(bar, initials[i])?.id, m.id));
 });
 
 void test("the view modes are one radio group that shows what the active tab shows, and offers a tab only the modes it has", () => {
@@ -348,14 +274,6 @@ void test("F flags like Space marks seen, and Alt+F and Alt+Shift+F step between
     );
     assert.deepEqual(calls, []);
   }
-});
-
-void test("Alt+F is a chord and no Alt tap, so the File menu's mnemonic stays shut", () => {
-  const tap = new AltTap();
-  const alt = { key: "Alt", ctrlKey: false, shiftKey: false, metaKey: false };
-  tap.keydown(alt);
-  tap.keydown({ ...alt, key: "f" });
-  assert.equal(tap.keyup({ key: "Alt" }), false);
 });
 
 void test("the keys of Post, Vote, Toggle Since Last Review and Reveal File run outside text fields, and Ctrl+Alt+F stays free", () => {

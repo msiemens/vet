@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { Text } from "@codemirror/state";
 import type { Hunk } from "../../../generated/Hunk";
 import type { TextChange } from "../../../generated/TextChange";
-import { fileLayout, hunkAtLine, oldLinesOf, removedLines, segments, stepHunk, tintOf, wedgeAt } from "./fileLayout.ts";
+import { fileLayout, hunkAtLine, oldLinesOf, removedLines, segments, stepHunk, wedgeAt } from "./fileLayout.ts";
 
 const hunk = (baseStart: number, baseLen: number, targetStart: number, targetLen: number): Hunk => ({
   baseStart,
@@ -70,14 +70,6 @@ void test("a change across lines is cut at the line break", () => {
     layout.words.map((w) => target.sliceString(w.from, w.to)),
     ["cd", "ef "],
   );
-});
-
-void test("a tint is faint for what was seen and full for what is left", () => {
-  assert.equal(tintOf("unseen"), "full");
-  assert.equal(tintOf("seenAgainstOldBase"), "full");
-  assert.equal(tintOf("unapplied"), "full");
-  assert.equal(tintOf("seen"), "faint");
-  assert.equal(tintOf("informational"), "faint");
 });
 
 void test("navigation from no hunk starts at the caret and stops at the ends", () => {

@@ -30,5 +30,7 @@ void test("a rename shows the old and the new path", () => {
 });
 
 void test("content that is not available is one note", () => {
-  assert.equal(cardContent(item("contentUnavailable", null, null), "a.bin", null).rows.length, 1);
+  const { title, rows } = cardContent(item("contentUnavailable", null, null), "a.bin", null);
+  assert.equal(title, "Content unavailable");
+  assert.deepEqual(rows, [{ type: "note", text: "The content of this file is not available." }]);
 });
