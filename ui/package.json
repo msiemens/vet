@@ -12,6 +12,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "node --test \"src/**/*.test.ts\"",
+    "harness": "node --import ./test/harness/register.mjs test/harness/run.ts",
     "backend": "node scripts/build-backend.mjs",
     "tauri": "tauri"
   },

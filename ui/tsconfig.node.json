@@ -22,6 +22,7 @@
     "src/features/review/tree.ts",
     "src/features/review/editor/sectionLayout.ts",
     "scripts/*.mjs",
+    "test/harness/*.mjs",
     "*.js",
     "vite.config.ts"
   ]
