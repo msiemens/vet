@@ -267,7 +267,7 @@
     position: relative;
     display: flex;
     align-items: center;
-    width: 220px;
+    width: 260px;
     color: var(--text-3);
   }
   .search :global(svg) {
@@ -278,7 +278,6 @@
   .search input {
     flex: 1;
     min-width: 0;
-    height: 22px;
     padding-left: 26px;
   }
   .row.on {

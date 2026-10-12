@@ -81,7 +81,6 @@
 
 <TitleBar>
   <Segmented
-    small
     label="Screen"
     options={[
       { id: "queue", label: "Queue", icon: "queue" },
