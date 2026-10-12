@@ -1,5 +1,5 @@
-// The open repository's language servers, for the footer to name the one of the focused file.
-// Settings loads its own copy, with the installs it drives.
+// The open repository's language servers, for the footer to name the one of the focused file and
+// for commands to know what it offers. Settings loads its own copy, with the installs it drives.
 
 import type { ServerInfo } from "../generated/ServerInfo";
 import { session } from "./session.svelte";
@@ -10,7 +10,10 @@ class ServerList {
   constructor() {
     session.onConnect((backend) =>
       backend.onEvent((event) => {
-        if (event.type === "serversChanged" && event.project === backend.project) void this.load();
+        if (event.project !== backend.project) return;
+        // A server that has started has told what it offers; indexing is the last step of a start.
+        const started = event.type === "task" && event.kind === "serverIndex" && event.state.type === "finished";
+        if (event.type === "serversChanged" || started) void this.load();
       }),
     );
     session.onOpen(() => void this.load());

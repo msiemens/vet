@@ -23,6 +23,7 @@ import type { Event as ServerEvent } from "../generated/Event";
 import type { Impact } from "../generated/Impact";
 import type { Lens } from "../generated/Lens";
 import type { LineDelta } from "../generated/LineDelta";
+import type { LocationRows } from "../generated/LocationRows";
 import type { Manifest } from "../generated/Manifest";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
@@ -518,6 +519,32 @@ export class Backend {
     const request = { type: "definition", project: this.pid, revision, side, path, line, col } as const;
     const r = expect(await this.semantic(revision, request, signal), "definition");
     return { locations: r.locations, unavailable: r.unavailable ?? undefined };
+  }
+
+  /** The places that refer to the symbol at the position, without its declaration, as rows to list; otherwise like `definition`. */
+  async usages(
+    revision: number,
+    side: Side,
+    path: string,
+    line: number,
+    col: number,
+    signal?: AbortSignal,
+  ): Promise<LocationRows> {
+    const request = { type: "references", project: this.pid, revision, side, path, line, col } as const;
+    return expect(await this.semantic(revision, request, signal), "references");
+  }
+
+  /** The implementations of the interface, trait or abstract member at the position, as rows to list; otherwise like `definition`. */
+  async implementations(
+    revision: number,
+    side: Side,
+    path: string,
+    line: number,
+    col: number,
+    signal?: AbortSignal,
+  ): Promise<LocationRows> {
+    const request = { type: "implementations", project: this.pid, revision, side, path, line, col } as const;
+    return expect(await this.semantic(revision, request, signal), "implementations");
   }
 
   /**

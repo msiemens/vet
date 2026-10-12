@@ -10,6 +10,8 @@ import type { FileChange } from "../../generated/FileChange";
 import type { Manifest } from "../../generated/Manifest";
 import type { Side } from "../../generated/Side";
 import type { TextSpan } from "../../generated/TextSpan";
+import { isAbort } from "../../lib/abort";
+import type { LocationRow } from "../../generated/LocationRow";
 import { nextPaint } from "../../lib/nextPaint";
 import { platformName } from "../../lib/platformName";
 import type { Backend } from "../../state/backend";
@@ -17,7 +19,11 @@ import type { Changeset } from "../../state/changeset.svelte";
 import { contextMenus } from "../../state/contextMenu.svelte";
 import { openUrl } from "../../state/host";
 import { platform } from "../../state/platform.svelte";
+import { locationPicker } from "../../state/locationPicker.svelte";
+import { LocationSearch } from "../../state/locationSearch";
 import { semantic } from "../../state/semantic.svelte";
+import { serverList } from "../../state/serverList.svelte";
+import { withoutImplementations } from "../../state/serverStatus";
 import { session } from "../../state/session.svelte";
 import { threads } from "../../state/threads.svelte";
 import { rangeKey } from "../../state/timelineRange";
@@ -76,6 +82,7 @@ export type ChangesetSource = Pick<
   | "currentManifest"
   | "currentFiles"
   | "refresh"
+  | "reportFailure"
 >;
 
 const NO_HOVER = { text: "", code: [] };
@@ -105,6 +112,14 @@ export class ReviewController {
   /** Which files the views wrap the long lines of. */
   softWrap: SoftWrap = "prose";
   private hooks: ViewHooks;
+  /** Show Usages and Go to Implementation: goes to the one place found, or lists the places in the popup. */
+  private search = new LocationSearch({
+    picker: locationPicker,
+    notice: (text) => (session.notice = text),
+    open: (row, side) => void this.openRow(row, side),
+    isAbort,
+    fail: (error, revision) => this.changeset.reportFailure(error, revision),
+  });
   /** The changeset on view, by `keyId`; unknown before the first manifest. */
   private key?: string;
   /** The range the views show, if they show one. */
@@ -133,6 +148,21 @@ export class ReviewController {
         this.analysable(side) ? semantic.hover(revision, side, path, line, col, signal) : Promise.resolve(NO_HOVER),
       definition: (revision, side, path, line, col) => {
         if (this.analysable(side)) void this.goToDefinition(revision, side, path, line, col);
+      },
+      locations: (revision, kind, side, path, at, subject) => {
+        if (!this.analysable(side)) return;
+        const backend = this.backend;
+        void this.search.start({
+          kind,
+          symbol: subject.name,
+          anchor: subject.anchor,
+          side,
+          revision,
+          ask: (signal) =>
+            kind === "usages"
+              ? backend.usages(revision, side, path, at.line, at.col, signal)
+              : backend.implementations(revision, side, path, at.line, at.col, signal),
+        });
       },
       diagnostics: (revision, path) =>
         this.analysable("target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
@@ -165,6 +195,7 @@ export class ReviewController {
 
   /** Detaches the controller from the window and the store, and tears down the views. */
   destroy() {
+    this.search.cancel();
     clearTimeout(this.saving);
     this.saveView();
     this.unsubscribe();
@@ -245,6 +276,7 @@ export class ReviewController {
     const path = pathOf(id);
     const view = this.active;
     const text = this.activeText;
+    const editor = focusedEditor(document.activeElement);
     return {
       tab: { kind: kindOf(id), path: subjectOf(id) },
       tabCount: this.tabs.open.length,
@@ -253,7 +285,8 @@ export class ReviewController {
       diffView: view !== undefined || text !== undefined,
       byCommit: this.changeset.shownCommit !== undefined,
       hunk: view?.current ?? text?.current ?? -1,
-      editor: focusedEditor(document.activeElement),
+      editor,
+      noImplementations: editor && withoutImplementations(editor.path, serverList.servers),
     };
   }
 
@@ -339,6 +372,18 @@ export class ReviewController {
   /** The file of the focused file or text tab; none for the Changes tab. */
   get activePath(): string | undefined {
     return pathOf(this.tabs.active);
+  }
+
+  /** Shows a place the popup listed: in its file's tab, or says where it is when it is outside the repository. */
+  private async openRow(row: LocationRow, side: Side) {
+    if (row.external) {
+      session.notice = `Outside the repository: ${row.path}`;
+      return;
+    }
+    const line = row.line - 1;
+    const col = row.col - 1;
+    const width = row.matchEnd - row.matchStart;
+    await this.openLocation(row.path, line, side, { start: { line, col }, end: { line, col: col + width } });
   }
 
   /** The definition of the symbol at a position of `side`'s text, shown by `openLocation`. */

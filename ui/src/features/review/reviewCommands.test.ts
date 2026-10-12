@@ -186,6 +186,8 @@ void test("Mod+B goes to the definition from the focused editor: Cmd on macOS, C
     selection: false,
     selectedText: () => "",
     goToDefinition: () => found.push("definition"),
+    goToImplementation: () => undefined,
+    showUsages: () => undefined,
   };
   const cmd = () => key({ key: "b", code: "KeyB", metaKey: true });
   const ctrl = () => key({ key: "b", code: "KeyB", ctrlKey: true });
@@ -195,6 +197,65 @@ void test("Mod+B goes to the definition from the focused editor: Cmd on macOS, C
   assert.equal(setup({ editor }).dispatch(ctrl()), true);
   assert.equal(setup().dispatch(ctrl()), false);
   assert.deepEqual(found, ["definition", "definition"]);
+});
+
+/** An editor that notes which of its navigations ran. */
+const navigating = (found: string[]): FocusedEditor => ({
+  side: "target",
+  path: "a.cs",
+  selection: false,
+  selectedText: () => "",
+  goToDefinition: () => found.push("definition"),
+  goToImplementation: () => found.push("implementation"),
+  showUsages: () => found.push("usages"),
+});
+
+void test("Mod+Alt+B goes to the implementation and Mod+Alt+F7 shows the usages: Cmd+Option on macOS, Ctrl+Alt elsewhere", () => {
+  const found: string[] = [];
+  const editor = navigating(found);
+  const chord = (init: Partial<KeyEventLike>) => key({ altKey: true, ...init });
+  const implementation = { key: "b", code: "KeyB" };
+  const usages = { key: "F7", code: "F7" };
+
+  const win = setup({ editor });
+  assert.equal(win.dispatch(chord({ ...implementation, ctrlKey: true })), true);
+  assert.equal(win.dispatch(chord({ ...usages, ctrlKey: true })), true);
+  assert.equal(win.dispatch(chord({ ...implementation, metaKey: true })), false);
+  assert.deepEqual(found, ["implementation", "usages"]);
+
+  const mac = setup({ editor }, "Meta");
+  assert.equal(mac.dispatch(chord({ ...implementation, metaKey: true })), true);
+  assert.equal(mac.dispatch(chord({ ...usages, metaKey: true })), true);
+  assert.equal(mac.dispatch(chord({ ...usages, ctrlKey: true })), false);
+  assert.deepEqual(found, ["implementation", "usages", "implementation", "usages"]);
+
+  assert.equal(setup().dispatch(chord({ ...implementation, ctrlKey: true })), false);
+});
+
+void test("AltGr+B on a German layout stays a character and runs nothing", () => {
+  const found: string[] = [];
+  const r = setup({ editor: navigating(found) });
+  // AltGr is Ctrl+Alt and reports the AltGraph modifier; a layout that types something there reports another character.
+  const altGr = (k: string) =>
+    key({ key: k, code: "KeyB", ctrlKey: true, altKey: true, getModifierState: (m: string) => m === "AltGraph" });
+  assert.equal(r.dispatch(altGr("b")), false);
+  assert.equal(r.dispatch(altGr("¦")), false);
+  assert.deepEqual(found, []);
+});
+
+void test("Go to Implementation says why it is off for a server that offers none, and its key runs nothing then", () => {
+  const found: string[] = [];
+  const editor = navigating(found);
+  const none = setup({ editor, noImplementations: "Pyright" });
+  assert.equal(none.isEnabled("nav.goToImplementation"), false);
+  assert.equal(none.disabledReason("nav.goToImplementation"), "Pyright doesn't support Go to Implementation");
+  assert.equal(none.dispatch(key({ key: "b", code: "KeyB", ctrlKey: true, altKey: true })), false);
+  assert.equal(none.isEnabled("nav.showUsages"), true);
+  assert.deepEqual(found, []);
+
+  const offered = setup({ editor });
+  assert.equal(offered.isEnabled("nav.goToImplementation"), true);
+  assert.equal(setup().isEnabled("nav.goToImplementation"), false);
 });
 
 void test("the file tree's menu offers the folder scope only for folders", () => {
@@ -359,6 +420,8 @@ void test("the editor's menu offers copy only with a selection, and shows the ke
     selection,
     selectedText: () => "text",
     goToDefinition: () => undefined,
+    goToImplementation: () => undefined,
+    showUsages: () => undefined,
   });
   const items = (selection: boolean) => resolveMenu(r, editorMenu, r.context({ editor: editor(selection) }));
   const copy = (list: ReturnType<typeof items>) => list.find((i) => i.id === "edit.copy");

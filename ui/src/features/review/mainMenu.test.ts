@@ -140,6 +140,8 @@ void test("the Review and Navigate menus hold the work of reviewing, each with t
       ["review.previousCommit", "["],
       ["review.jumpToSource", "F4"],
       ["review.goToDefinition", "Ctrl+B"],
+      ["nav.goToImplementation", "Ctrl+Alt+B"],
+      ["nav.showUsages", "Ctrl+Alt+F7"],
       ["review.changeCard", "Alt+F1"],
       ["view.revealFile", "Alt+F2"],
     ],
@@ -147,6 +149,8 @@ void test("the Review and Navigate menus hold the work of reviewing, each with t
   const mac = submenu(menuOf({ native: true }, working), "navigate");
   assert.equal(mac.find((i) => i.id === "review.nextHunk")?.shortcut, "⌃⌥↓");
   assert.equal(mac.find((i) => i.id === "review.goToDefinition")?.shortcut, "⌘B");
+  assert.equal(mac.find((i) => i.id === "nav.goToImplementation")?.shortcut, "⌥⌘B");
+  assert.equal(mac.find((i) => i.id === "nav.showUsages")?.shortcut, "⌥⌘F7");
 });
 
 void test("the View menu holds the screens, the tool windows, the tabs and the diff settings", () => {

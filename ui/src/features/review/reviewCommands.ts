@@ -174,6 +174,25 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       disabledReason: () => "Put the caret in an editor",
       run: (c) => c.editor?.goToDefinition(),
     },
+    {
+      id: "nav.goToImplementation",
+      label: "Go to Implementation",
+      binding: "Mod-Alt-b",
+      enabled: (c) => c.editor !== undefined && c.noImplementations === undefined,
+      disabledReason: (c) =>
+        c.noImplementations === undefined
+          ? "Put the caret in an editor"
+          : `${c.noImplementations} doesn't support Go to Implementation`,
+      run: (c) => c.editor?.goToImplementation(),
+    },
+    {
+      id: "nav.showUsages",
+      label: "Show Usages",
+      binding: "Mod-Alt-F7",
+      enabled: (c) => c.editor !== undefined,
+      disabledReason: () => "Put the caret in an editor",
+      run: (c) => c.editor?.showUsages(),
+    },
     ...VIEW_MODES.map(({ id, label, binding, unavailable }): Command<CommandContext> => ({
       id: modeCommand(id),
       label,
@@ -330,6 +349,8 @@ export const fileHeaderMenu: MenuSpec = treeMenu(false);
 /** The context menu of a diff or text editor. */
 export const editorMenu: MenuSpec = [
   { command: "review.goToDefinition" },
+  { command: "nav.goToImplementation" },
+  { command: "nav.showUsages" },
   { command: "review.changeCard" },
   { command: "review.jumpToSource" },
   "-",

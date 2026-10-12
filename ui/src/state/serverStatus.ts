@@ -22,6 +22,16 @@ export function hasServer(path: string, servers: readonly ServerInfo[]): boolean
   return servers.some((s) => s.state.type === "found" && extension !== undefined && s.extensions.includes(extension));
 }
 
+/**
+ * The name of the server for the type of file `path` is when that server has said it does not offer
+ * implementations; none while it has not said (it has not started yet) or offers them.
+ */
+export function withoutImplementations(path: string, servers: readonly ServerInfo[]): string | undefined {
+  const extension = extensionOf(path);
+  const server = servers.find((s) => extension !== undefined && s.extensions.includes(extension));
+  return server?.implementations === false ? server.server : undefined;
+}
+
 export interface ServerLine {
   /** The server's name, or a few words about why there is none. */
   name: string;

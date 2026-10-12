@@ -12,6 +12,7 @@ import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
 import type { HoverAnswer } from "../../../state/backend";
 import { isMac } from "../../../state/host";
+import type { CaretRect, PickerKind } from "../../../state/pickerTypes";
 import { type Span, collapsedRegions, outsideHidden } from "./hiddenRanges";
 import { hoverContent } from "./hoverContent";
 import { type HoverAnchor, hoverPopups } from "./hoverDom";
@@ -24,6 +25,8 @@ export interface SemanticHooks {
   hover(side: Side, path: string, line: number, col: number, signal?: AbortSignal): Promise<HoverAnswer>;
   /** Goes to the definition; the owner opens the target. */
   definition(side: Side, path: string, line: number, col: number): void;
+  /** Finds the implementations or the usages of the symbol at the position; the owner goes to the place or lists them. */
+  locations(kind: PickerKind, side: Side, path: string, at: TextPosition, subject: Subject): void;
   /** The target-side diagnostics of the file, empty if there are none or the server is unavailable. */
   diagnostics(path: string): Promise<Diagnostic[]>;
 }
@@ -40,6 +43,7 @@ export function bindRevision(source: SemanticSource, revision: number): Semantic
   return {
     hover: (side, path, line, col, signal) => source.hover(revision, side, path, line, col, signal),
     definition: (side, path, line, col) => source.definition(revision, side, path, line, col),
+    locations: (kind, side, path, at, subject) => source.locations(revision, kind, side, path, at, subject),
     diagnostics: (path) => source.diagnostics(revision, path),
   };
 }
@@ -48,6 +52,12 @@ export function bindRevision(source: SemanticSource, revision: number): Semantic
 export interface TextPosition {
   line: number;
   col: number;
+}
+
+/** What a list of places is about: the name at the caret, and where the caret is in the window. */
+export interface Subject {
+  name: string;
+  anchor: CaretRect;
 }
 
 /**
@@ -251,6 +261,21 @@ function diagnosticsAt(view: EditorView, at: TextPosition, endCol: number): read
   );
 }
 
+/** Finds the places of the kind for the word at the caret, which the popup names and opens below. */
+function locationsAtCaret(view: EditorView, target: SemanticTarget, kind: PickerKind) {
+  const head = view.state.selection.main.head;
+  const line = view.state.doc.lineAt(head);
+  // A caret just after a name is still on it.
+  const col = head - line.from;
+  const word = wordRange(line.text, col) ?? wordRange(line.text, col - 1);
+  const name = word ? line.text.slice(word.from, word.to) : "";
+  const position = at(view, head);
+  if (word) position.col = word.from;
+  const edge = view.coordsAtPos(head);
+  const anchor = edge ? { left: edge.left, top: edge.top, bottom: edge.bottom } : { left: 0, top: 0, bottom: 0 };
+  target.hooks.locations(kind, target.side, target.path, position, { name, anchor });
+}
+
 /** The editor with the focus, if `active` (the document's active element) is one with the semantic layer. */
 export function focusedEditor(active: Element | null) {
   if (!(active instanceof HTMLElement) || !active.classList.contains("cm-content")) return undefined;
@@ -269,6 +294,12 @@ export function focusedEditor(active: Element | null) {
     goToDefinition() {
       const { line, col } = at(view, view.state.selection.main.head);
       target.hooks.definition(target.side, target.path, line, col);
+    },
+    goToImplementation() {
+      locationsAtCaret(view, target, "implementations");
+    },
+    showUsages() {
+      locationsAtCaret(view, target, "usages");
     },
   };
 }

@@ -4,7 +4,7 @@ import type { ServerInfo } from "../generated/ServerInfo.ts";
 import type { Task } from "../generated/Task.ts";
 import type { Unavailable } from "../generated/Unavailable.ts";
 import { summarize } from "./semanticSummary.ts";
-import { hasServer, serverLine } from "./serverStatus.ts";
+import { hasServer, serverLine, withoutImplementations } from "./serverStatus.ts";
 
 const server = (language: string, name: string, extensions: string[]): ServerInfo => ({
   language,
@@ -16,6 +16,7 @@ const server = (language: string, name: string, extensions: string[]): ServerInf
   pinnedVersion: null,
   installBlocker: null,
   canInstall: false,
+  implementations: null,
 });
 const SERVERS = [server("rust", "rust-analyzer", ["rs"]), server("python", "Pyright", ["py", "pyi"])];
 
@@ -93,6 +94,19 @@ void test("a server that is missing or failed is named with the backend's messag
   });
   const absent = summarize(new Map(), new Map([["a.py", unavailable("serverMissing", "python")]]), "a.py");
   assert.equal(serverLine("a.py", SERVERS, [], absent)?.state, "not installed");
+});
+
+void test("a server is without implementations only once it has said so, whatever the language", () => {
+  const says = (implementations: boolean | null) => [
+    { ...server("rust", "rust-analyzer", ["rs"]), implementations },
+    { ...server("python", "Pyright", ["py"]), implementations: implementations === null ? null : !implementations },
+  ];
+  assert.equal(withoutImplementations("a.py", says(true)), "Pyright");
+  assert.equal(withoutImplementations("a.rs", says(true)), undefined);
+  assert.equal(withoutImplementations("a.rs", says(false)), "rust-analyzer");
+  assert.equal(withoutImplementations("a.py", says(null)), undefined);
+  assert.equal(withoutImplementations("a.txt", says(true)), undefined);
+  assert.equal(withoutImplementations("a.py", []), undefined);
 });
 
 void test("a file without a server shows the backend's label alone", () => {

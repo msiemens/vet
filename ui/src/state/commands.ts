@@ -23,6 +23,10 @@ export interface FocusedEditor {
   selectedText(): string;
   /** Goes to the definition of the symbol at the caret. */
   goToDefinition(): void;
+  /** Goes to the implementation of the symbol at the caret, or lists them. */
+  goToImplementation(): void;
+  /** Lists the usages of the symbol at the caret, or goes to the one there is. */
+  showUsages(): void;
 }
 
 /** What a command can ask about the window when it is offered or run. */
@@ -69,6 +73,8 @@ export interface CommandContext {
   byCommit?: boolean;
   /** The editor with the focus, if one has it. */
   editor?: FocusedEditor;
+  /** The name of the focused editor's language server when it has said it offers no implementations. */
+  noImplementations?: string;
   /** The file or folder a context menu was opened on. */
   target?: { path: string; dir: boolean };
   /** The queue row a context menu was opened on; `url` is its pull request's page. */

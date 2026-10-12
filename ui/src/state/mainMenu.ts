@@ -148,6 +148,8 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     "-",
     { command: "review.jumpToSource" },
     { command: "review.goToDefinition" },
+    { command: "nav.goToImplementation" },
+    { command: "nav.showUsages" },
     { command: "review.changeCard" },
     "-",
     { command: "view.revealFile" },
