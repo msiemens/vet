@@ -1,3 +1,6 @@
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+
 use vet_core::content::RepoPath;
 
 use super::checked;
@@ -51,6 +54,5 @@ fn a_name_that_is_not_utf8_is_a_path_like_any_other() {
 
     let checked = checked(&path).unwrap();
 
-    use std::os::unix::ffi::OsStrExt;
     assert_eq!(checked.as_os_str().as_bytes(), b"d\xffir/f\xfe.txt");
 }

@@ -115,6 +115,6 @@ fn a_config_files_stamp_follows_its_content_and_a_missing_file_has_none() {
     std::fs::write(&file, "[core]\n\tbare = false\n").unwrap();
     let longer = file_stamp(&file).unwrap();
 
-    assert_eq!((short.0, longer.0), (7, 20), "the sizes");
+    assert_eq!((short.0, longer.0), (7, 21), "the sizes");
     assert_eq!(longer, file_stamp(&file).unwrap());
 }

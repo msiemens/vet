@@ -1,7 +1,7 @@
 //! What the codec makes of rows: the ones it wrote come back as they were, and the ones no code of
 //! Vet wrote are refused as corrupt rather than read as something else.
 
-use sea_orm::{ActiveEnum, TryIntoModel};
+use sea_orm::{ActiveEnum, Iterable, TryIntoModel};
 use vet_app::changeset::{
     BaseChoice, ChangedFile, ChangesetId, CommitId, Source, Version, VersionChange, VersionOrigin,
 };
@@ -885,20 +885,18 @@ fn the_numbers_the_database_holds_for_each_kind_are_the_ones_rows_already_writte
     fn numbers<E: ActiveEnum<Value = i32>>(kinds: impl IntoIterator<Item = E>) -> Vec<i32> {
         kinds.into_iter().map(|k| k.to_value()).collect()
     }
-    use kinds::*;
-    use sea_orm::Iterable;
 
-    assert_eq!(numbers(Side::iter()), [0, 1]);
-    assert_eq!(numbers(EntryKind::iter()), [0, 1, 2]);
-    assert_eq!(numbers(SpanState::iter()), [0, 1, 2]);
-    assert_eq!(numbers(ThreadKind::iter()), [0, 1, 2]);
-    assert_eq!(numbers(ThreadStatus::iter()), [0, 1]);
-    assert_eq!(numbers(FilterKind::iter()), [0, 1, 2, 3]);
-    assert_eq!(numbers(BaseKind::iter()), [0, 1]);
-    assert_eq!(numbers(ChildKind::iter()), [0, 1]);
-    assert_eq!(numbers(PathFlag::iter()), [0, 1]);
-    assert_eq!(numbers(ChangeKind::iter()), [0, 1, 2, 3, 4, 5, 6]);
-    assert_eq!(numbers(SourceKind::iter()), [0, 1, 2]);
+    assert_eq!(numbers(kinds::Side::iter()), [0, 1]);
+    assert_eq!(numbers(kinds::EntryKind::iter()), [0, 1, 2]);
+    assert_eq!(numbers(kinds::SpanState::iter()), [0, 1, 2]);
+    assert_eq!(numbers(kinds::ThreadKind::iter()), [0, 1, 2]);
+    assert_eq!(numbers(kinds::ThreadStatus::iter()), [0, 1]);
+    assert_eq!(numbers(kinds::FilterKind::iter()), [0, 1, 2, 3]);
+    assert_eq!(numbers(kinds::BaseKind::iter()), [0, 1]);
+    assert_eq!(numbers(kinds::ChildKind::iter()), [0, 1]);
+    assert_eq!(numbers(kinds::PathFlag::iter()), [0, 1]);
+    assert_eq!(numbers(kinds::ChangeKind::iter()), [0, 1, 2, 3, 4, 5, 6]);
+    assert_eq!(numbers(kinds::SourceKind::iter()), [0, 1, 2]);
     assert_eq!(numbers(kinds::VersionOrigin::iter()), [0, 1, 2]);
-    assert_eq!(numbers(Lens::iter()), [0, 1]);
+    assert_eq!(numbers(kinds::Lens::iter()), [0, 1]);
 }
