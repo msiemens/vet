@@ -59,6 +59,10 @@ class SymbolsState {
         });
       });
     });
+    // What was asked while the connection was down may have failed.
+    session.onResync((backend) => {
+      if (this.backend === backend && this.revision !== undefined) void this.load(backend, this.revision, true);
+    });
     // A server installed or reconfigured may answer for files it had no answer for.
     session.onConnect((backend) =>
       backend.onEvent((event) => {

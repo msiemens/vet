@@ -16,6 +16,15 @@ class ServersStore {
   /** Whether each language's install output is shown. */
   logOpen = $state.raw<Record<string, boolean>>({});
 
+  /** The Servers page is shown: the list is read again after a reconnect. */
+  private running = false;
+
+  constructor() {
+    session.onResync(() => {
+      if (this.running && this.available) void this.load();
+    });
+  }
+
   /** There is an open repository whose project can be asked. */
   get available(): boolean {
     return session.repo !== undefined && session.backend?.project !== undefined;
@@ -30,8 +39,9 @@ class ServersStore {
     this.logOpen = {};
     const backend = this.available ? session.backend : undefined;
     if (!backend) return () => undefined;
+    this.running = true;
     void this.load();
-    return backend.onEvent((event) => {
+    const off = backend.onEvent((event) => {
       if (event.project !== backend.project) return;
       if (event.type === "serverInstallOutput") {
         this.logs = { ...this.logs, [event.language]: appendLog(this.logs[event.language] ?? [], event.line) };
@@ -39,6 +49,10 @@ class ServersStore {
         void this.load();
       }
     });
+    return () => {
+      this.running = false;
+      off();
+    };
   }
 
   private async load() {
