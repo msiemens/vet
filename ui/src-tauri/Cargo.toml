@@ -30,8 +30,16 @@ tauri-plugin-decoration = "3"
 # The OS keychain (macOS Keychain, Windows Credential Manager) for personal access tokens.
 keyring = "4.2"
 
+# The system's double-click time (the mouse settings).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSEvent"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_UI_Input_KeyboardAndMouse"] }
+
+# `input.rs` calls one system function that Windows' bindings mark unsafe.
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 # Debug info dominates link time: file:line backtraces for our crates, none for dependencies.
 # Dependencies are optimized: they are built once.

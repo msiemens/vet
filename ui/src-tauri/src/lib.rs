@@ -8,6 +8,7 @@ mod browser;
 mod credentials;
 mod dialog;
 mod geometry;
+mod input;
 mod menu;
 mod startup;
 mod window;
@@ -64,6 +65,7 @@ pub fn run() {
             credentials::remove_credential,
             dialog::pick_file,
             dialog::pick_repository,
+            input::double_click_ms,
             window::quit,
             menu::set_menu,
             menu::show_context_menu
