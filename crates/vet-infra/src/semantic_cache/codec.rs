@@ -360,3 +360,6 @@ pub(super) fn decode(kind: Kind, bytes: &[u8]) -> Option<Value> {
     };
     input.0.is_empty().then_some(value)
 }
+
+#[cfg(test)]
+mod tests;
