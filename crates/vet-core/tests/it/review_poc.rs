@@ -416,7 +416,7 @@ fn length_change_with_rewritten_context_attaches_to_what_replaced_it() {
 }
 
 #[test]
-fn a_rewrite_far_wider_than_the_context_leaves_the_anchor_stale() {
+fn a_rewrite_far_wider_than_the_context_still_attaches_to_what_replaced_it() {
     let mut fx = Fix::default();
     let old = numbered(40);
     let mut new = old.clone();
@@ -429,10 +429,12 @@ fn a_rewrite_far_wider_than_the_context_leaves_the_anchor_stale() {
 
     assert_eq!(
         r.state,
-        AnchorState::Stale {
-            reason: StaleReason::ContextChanged
+        AnchorState::Inferred {
+            strategy: Strategy::ContextWindow,
+            confidence: Confidence::Low
         }
     );
+    assert_eq!(r.location.unwrap().range, range(2, 22));
 }
 
 #[test]

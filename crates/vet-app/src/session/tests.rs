@@ -11,8 +11,8 @@ use vet_core::content::{
 use vet_core::filter::ReviewFilter;
 use vet_core::merkle;
 use vet_core::review::{
-    AnchorState, CommentTarget, Location, Message, MessageId, PendingVote, PlatformThread, ReviewedSpan, Side,
-    StaleReason, Strategy, Thread, ThreadId, ThreadStatus,
+    AnchorState, CommentTarget, Confidence, Location, Message, MessageId, PendingVote, PlatformThread, ReviewedSpan,
+    Side, StaleReason, Strategy, Thread, ThreadId, ThreadStatus,
 };
 
 use vet_core::completion::HunkState;
@@ -3299,6 +3299,52 @@ async fn a_thread_on_a_branch_follows_its_hunk_when_a_push_rewrites_the_lines_ar
         view.state
     );
     assert_eq!(view.location, at("a.txt", 10, 13));
+    assert!(view.target_line.is_some(), "it is shown, not only listed");
+}
+
+#[tokio::test]
+async fn a_thread_on_a_branch_follows_its_hunk_however_large_the_push_rewrote_it() {
+    let rewritten: String = ["line 0", "line 1", "line 2", "edited 3", "line 4"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain((0..40).map(|i| format!("rewritten {i}")))
+        .chain((25..30).map(|i| format!("line {i}")))
+        .map(|l| l + "\n")
+        .collect();
+    let (fx, id) = thread_after_a_push(&[("a.txt", &rewritten)]).await;
+
+    let view = fx.view(id).await;
+
+    assert_eq!(
+        view.state,
+        Some(AnchorState::Inferred {
+            strategy: Strategy::ContextWindow,
+            confidence: Confidence::Low
+        })
+    );
+    assert_eq!(view.location, at("a.txt", 5, 45));
+}
+
+#[tokio::test]
+async fn a_thread_on_lines_a_push_deleted_stays_where_they_were_marked_deleted() {
+    let without: String = numbered(30, &[3])
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| !(10..13).contains(i))
+        .map(|(_, l)| format!("{l}\n"))
+        .collect();
+    let (fx, id) = thread_after_a_push(&[("a.txt", &without)]).await;
+
+    let view = fx.view(id).await;
+
+    assert_eq!(
+        view.state,
+        Some(AnchorState::Inferred {
+            strategy: Strategy::Deleted,
+            confidence: Confidence::Low
+        })
+    );
+    assert_eq!(view.location, at("a.txt", 10, 11));
     assert!(view.target_line.is_some(), "it is shown, not only listed");
 }
 

@@ -132,6 +132,8 @@ pub struct ThreadPlatform {
 pub enum AnchorStrategy {
     ContextWindow,
     CrossFileMove,
+    /// The commented lines were deleted; the thread is where they were.
+    Deleted,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]

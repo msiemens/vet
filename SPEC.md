@@ -130,7 +130,7 @@ enum AnchorState {
     Ambiguous { candidates: Vec<Location> }, // duplicate matches — distinct from Stale
 }
 
-enum Strategy { ContextWindow, CrossFileMove }
+enum Strategy { ContextWindow, CrossFileMove, Deleted }
 
 enum CommentTarget {
     Range(Anchor),          // lines on one side; goes through anchor resolution
@@ -162,7 +162,9 @@ Only `Range` targets are resolved by the algorithm below and can become `Stale` 
   1. Identical blob at the same path, raw hash verified over the range.
   2. Diff-mapped range (old → new file at the same or a git-detected renamed path) with raw-hash verification.
   3. Diff-mapped range matching only on the normalized hash → `Exact { whitespace_changed: true }`.
-- **Inferred strategies, evidence-based:** collect candidates from both a context-window search within the file and a cross-file content match across the changeset's changed files (catches moves). One dominant candidate → `Inferred` with strategy and confidence. Competing plausible candidates → `Ambiguous`. None → `Stale`.
+- **Inferred strategies, evidence-based:** collect candidates from both a context-window search within the file and a cross-file content match across the changeset's changed files (catches moves). One dominant candidate → `Inferred` with strategy and confidence. Competing plausible candidates → `Ambiguous`.
+- **Following the hunk.** When the anchored lines changed and no better candidate exists, using the old → new line alignment, the anchor attaches to the lines of the new text between the nearest unchanged line before it and the one after it (the hunk that replaced them), however large: `Inferred { ContextWindow, Low }`. When nothing replaced the lines, they were deleted: the anchor sits on the line where they were, `Inferred { Deleted, Low }`, and the UI says "line deleted". Both show the "moved" badge and can be confirmed; they are never silent.
+- **None → `Stale`** only when the file was deleted or no text around the anchor survived.
 - Inferred candidates are scored together, never first-success-wins.
 
 ### 5.2 Review state

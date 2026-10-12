@@ -39,6 +39,8 @@ pub struct Location {
 pub enum Strategy {
     ContextWindow,
     CrossFileMove,
+    /// The anchored lines were deleted; the anchor is where they were.
+    Deleted,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

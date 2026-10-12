@@ -162,6 +162,38 @@ async fn a_comment_on_older_code_that_a_later_push_rewrote_stays_on_the_rewritte
 }
 
 #[tokio::test]
+async fn a_comment_on_code_that_a_later_push_deleted_stays_where_it_was_marked_deleted() {
+    let base = numbered(30, &[]);
+    let first = numbered(30, &[20]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr1", &[("a.txt", &first)]);
+    fx.session.open_changeset(pull_request_7()).await.unwrap();
+    // The author pushed again, deleting the line commented on.
+    let without: String = first
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| *i != 20)
+        .map(|(_, l)| format!("{l}\n"))
+        .collect();
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr2", &[("a.txt", &without)]);
+    fx.session.observe().await.unwrap().expect("pushed to");
+    let hosting = FakeHosting::default();
+    hosting.thread("a.txt", (21, 21), "pr1", "marco", "Why 20?");
+
+    fx.sync(&hosting).await;
+
+    let [thread] = <[ThreadView; 1]>::try_from(fx.all().await).expect("one thread");
+    assert_eq!(
+        thread.state,
+        Some(AnchorState::Inferred {
+            strategy: Strategy::Deleted,
+            confidence: Confidence::Low
+        })
+    );
+    assert_eq!(thread.location, at("a.txt", 20, 21));
+}
+
+#[tokio::test]
 async fn a_comment_whose_code_cannot_be_found_is_attached_to_its_file() {
     let (fx, hosting) = on_a_pull_request().await;
     hosting.thread("a.txt", (500, 500), "pr1", "marco", "Past the end.");
@@ -562,10 +594,10 @@ async fn a_draft_on_code_that_is_gone_and_one_in_a_thread_with_an_edit_conflict_
         .await
         .unwrap();
     fx.session.reply(mine.id, "a reply that waits".into(), 6).await.unwrap();
-    // A thread on a line that the next push removes.
+    // A thread on a file that the next push removes.
     fx.thread(on("a.txt", 20, 21)).await;
     let base = numbered(30, &[]);
-    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr2", &[("a.txt", &numbered(10, &[3]))]);
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr2", &[]);
     fx.session.observe().await.unwrap().expect("pushed to");
 
     let report = fx

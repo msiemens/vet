@@ -115,18 +115,65 @@ fn a_comment_on_a_line_that_moved_into_a_helper_follows_it() {
     assert_eq!(lines_of(&r), (23, 24));
 }
 
+const DELETED: AnchorState = AnchorState::Inferred {
+    strategy: Strategy::Deleted,
+    confidence: Confidence::Low,
+};
+
 #[test]
-fn a_comment_on_a_deleted_line_is_detached() {
+fn a_comment_stays_with_a_hunk_however_much_a_push_rewrote() {
+    let body: String = (0..40).map(|i| format!("        step_{i}(line);\n")).collect();
+    let rewritten = replace(
+        "        let line = line.trim();\n        if line.is_empty() {\n            continue;\n        }\n        let job = Job::parse(line)?;\n        jobs.push(job);\n",
+        &body,
+    );
+
+    let r = follow(COMMENTED, COMMENTED, &rewritten);
+
+    assert_eq!((&r.state, lines_of(&r)), (&MOVED_LOW, (6, 47)));
+}
+
+#[test]
+fn a_comment_on_a_deleted_line_is_where_the_line_was_marked_deleted() {
     let r = follow(
         COMMENTED,
         COMMENTED,
         &replace("        let job = Job::parse(line)?;\n", ""),
     );
 
+    // On the line that followed it.
+    assert_eq!((&r.state, lines_of(&r)), (&DELETED, (10, 11)));
+}
+
+#[test]
+fn a_comment_on_the_last_line_of_a_block_that_was_deleted_is_where_the_block_ends() {
+    let r = follow("job.run();", "job.run();", &replace("        job.run();\n", ""));
+
+    assert_eq!((&r.state, lines_of(&r)), (&DELETED, (19, 20)));
+}
+
+#[test]
+fn a_comment_on_a_file_the_push_deleted_is_detached() {
+    let lines: Vec<&str> = OLD.lines().collect();
+    let range = LineRange { start: 10, end: 11 };
+    let anchor = Anchor::from_text(Side::Target, RECORDED, RepoPath::from("a.rs"), OLD.as_bytes(), range).unwrap();
+    assert_eq!(lines[10].trim(), COMMENTED);
+    let o = BlobId::of(OLD.as_bytes());
+    let blobs = BTreeMap::from([(o, OLD.as_bytes().to_vec())]);
+    let input = FileRemapInput {
+        old_path: Some(RepoPath::from("a.rs")),
+        new_path: None,
+        old_blob: Some(o),
+        new_blob: None,
+    };
+    let file = PreparedFile::new(&input, &blobs);
+
+    let r = resolve_anchor(&anchor, &file, &[]);
+
     assert_eq!(
         r.state,
         AnchorState::Stale {
-            reason: StaleReason::ContextChanged
+            reason: StaleReason::FileDeleted
         }
     );
 }

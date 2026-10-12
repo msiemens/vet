@@ -55,13 +55,22 @@ pub fn resolve_anchor(anchor: &Anchor, file: &PreparedFile, changed: &[PreparedF
             scan(anchor, lines, new, path, true, &mut candidates);
         }
     }
-    if candidates.is_empty()
+    let none = candidates.is_empty();
+    let found = infer(candidates, file.input.new_blob.is_none());
+    let weak = match found.state {
+        AnchorState::Stale { .. } => true,
+        AnchorState::Inferred { confidence, .. } => confidence == Confidence::Low,
+        _ => false,
+    };
+    // Deleted lines are not found by a weak context match either: that one lands on neighbours.
+    if weak
         && let Some(path) = path
-        && let Some(range) = between_survivors(anchor.range, file)
+        && let Some((range, strategy)) = between_survivors(anchor.range, file)
+        && (none || strategy == Strategy::Deleted)
     {
         return Resolution {
             state: AnchorState::Inferred {
-                strategy: Strategy::ContextWindow,
+                strategy,
                 confidence: Confidence::Low,
             },
             location: Some(Location {
@@ -70,63 +79,60 @@ pub fn resolve_anchor(anchor: &Anchor, file: &PreparedFile, changed: &[PreparedF
             }),
         };
     }
-    infer(candidates, file.input.new_blob.is_none())
+    found
 }
 
-/// Lines on either side of the anchor that may have changed along with it before the unchanged
-/// lines around it no longer vouch for where it went.
-const MAX_EDGE: usize = 2 * CONTEXT;
-
-/// Where an anchor whose lines were rewritten went, when the code around it survived: the lines
-/// between the nearest unchanged line before it and the one after it, in the new text. Of the same
-/// length as before, the anchor keeps its offset in them; otherwise it covers all of them.
-fn between_survivors(r: LineRange, file: &PreparedFile) -> Option<LineRange> {
+/// Where an anchor whose lines were rewritten went, when text around it survived: the lines
+/// between the nearest unchanged line before it and the one after it, in the new text, however
+/// far apart those are. Of the same length as before, the anchor keeps its offset in them;
+/// otherwise it covers all of them. When nothing took the place of its lines it is on the line
+/// where they were, as `Strategy::Deleted`.
+fn between_survivors(r: LineRange, file: &PreparedFile) -> Option<(LineRange, Strategy)> {
     let map = file.norm_map()?;
     let old = file.old.as_ref()?;
     let new_lines = file.new.as_ref()?.raw.len();
     // A line of only brackets or punctuation says little about where code went.
     let survivor = |i: usize| {
         let j = map[i]?;
-        old.raw[i]
-            .iter()
-            .any(|b| b.is_ascii_alphanumeric() || *b >= 0x80)
-            .then_some((i, j))
+        has_text(old.raw[i]).then_some((i, j))
     };
-    let before = (0..r.start as usize).rev().take(MAX_EDGE + 1).find_map(survivor);
-    let after = (r.end as usize..map.len()).take(MAX_EDGE + 1).find_map(survivor);
-    let at_start = r.start as usize <= MAX_EDGE;
-    let at_end = map.len() - (r.end as usize) <= MAX_EDGE;
+    let before = (0..r.start as usize).rev().find_map(survivor);
+    let after = (r.end as usize..map.len()).find_map(survivor);
+    if before.is_none() && after.is_none() {
+        return None;
+    }
     // The gap of old lines between the survivors, and where it starts and ends in the new text.
-    let (old_first, new_first) = match before {
-        Some((i, j)) => (i + 1, j + 1),
-        None if at_start && after.is_some() => (0, 0),
-        None => return None,
-    };
-    let (old_end, new_end) = match after {
-        Some((i, j)) => (i, j),
-        None if at_end => (map.len(), new_lines),
-        None => return None,
-    };
-    let new_len = new_end.checked_sub(new_first).filter(|&l| l > 0)?;
-    // Lines that took the place of the old ones, not old lines that stayed: with none, the
-    // anchor's lines were deleted.
+    let (old_first, new_first) = before.map_or((0, 0), |(i, j)| (i + 1, j + 1));
+    let (old_end, new_end) = after.unwrap_or((map.len(), new_lines));
+    // Lines that took the place of the old ones, not old lines that stayed or brackets.
     let kept: std::collections::HashSet<usize> = map.iter().flatten().copied().collect();
-    if (new_first..new_end).all(|j| kept.contains(&j)) {
-        return None;
+    let new = file.new.as_ref()?;
+    if (new_first..new_end).all(|j| kept.contains(&j) || !has_text(new.raw[j])) {
+        let line = (new_first + (r.start as usize - old_first)).min(new_end);
+        let line = line.min(new_lines.checked_sub(1)?) as u32;
+        return Some((
+            LineRange {
+                start: line,
+                end: line + 1,
+            },
+            Strategy::Deleted,
+        ));
     }
-    let old_len = old_end - old_first;
-    if new_len > 2 * old_len + GROWTH {
-        return None;
-    }
-    let (start, len) = if new_len == old_len {
+    let new_len = new_end - new_first;
+    let (start, len) = if new_len == old_end - old_first {
         (new_first + (r.start as usize - old_first), r.len() as usize)
     } else {
         (new_first, new_len)
     };
-    Some(LineRange {
+    let range = LineRange {
         start: start as u32,
         end: (start + len) as u32,
-    })
+    };
+    Some((range, Strategy::ContextWindow))
+}
+
+fn has_text(line: &[u8]) -> bool {
+    line.iter().any(|b| b.is_ascii_alphanumeric() || *b >= 0x80)
 }
 
 fn exact(anchor: &Anchor, file: &PreparedFile, new: &Text) -> Option<(LineRange, bool)> {

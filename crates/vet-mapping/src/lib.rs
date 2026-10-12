@@ -753,6 +753,7 @@ fn anchor_state(s: &AnchorState) -> p::AnchorState {
             strategy: match strategy {
                 Strategy::ContextWindow => p::AnchorStrategy::ContextWindow,
                 Strategy::CrossFileMove => p::AnchorStrategy::CrossFileMove,
+                Strategy::Deleted => p::AnchorStrategy::Deleted,
             },
             confidence: match confidence {
                 Confidence::Low => p::AnchorConfidence::Low,
