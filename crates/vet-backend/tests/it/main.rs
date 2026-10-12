@@ -13,6 +13,7 @@ mod load;
 mod progress;
 mod python;
 mod recent;
+mod restart;
 mod restore;
 mod semantic;
 mod session;
