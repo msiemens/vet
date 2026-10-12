@@ -90,27 +90,16 @@ function indexingText(name: string, fraction: number | undefined): string {
   return `${name} is indexing${fraction === undefined ? "" : ` (${Math.round(fraction * 100)} %)`}`;
 }
 
-/** "No language server for .svelte files.", or for the file by its name when it has no extension. */
-export function noServerText(path: string): string {
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  const dot = name.lastIndexOf(".");
-  return dot > 0 ? `No language server for ${name.slice(dot)} files.` : `No language server for ${name}.`;
-}
-
 /**
- * What builds the popup for a hover answer on `path` and the `diagnostics` at the symbol, or
- * nothing if there is nothing to say: a server with no text for a symbol and no reason is silent.
+ * What builds the popup for a hover answer and the `diagnostics` at the symbol, or nothing if
+ * there is nothing to say: a server with no text for a symbol and no reason is silent, and so is
+ * a file type no server is there for.
  */
-export function hoverContent(
-  answer: HoverAnswer,
-  path: string,
-  diagnostics: readonly Diagnostic[],
-): (() => HTMLElement) | undefined {
+export function hoverContent(answer: HoverAnswer, diagnostics: readonly Diagnostic[]): (() => HTMLElement) | undefined {
   if (!answer.text && !diagnostics.length) {
     const { server, unavailable } = answer;
     if (server?.indexing) return () => notice("clock", indexingText(server.name, server.indexing?.fraction));
-    if (unavailable)
-      return () => notice("cross", unavailable.kind === "unsupported" ? noServerText(path) : unavailable.message);
+    if (unavailable && unavailable.kind !== "unsupported") return () => notice("cross", unavailable.message);
     return undefined;
   }
   return () => {

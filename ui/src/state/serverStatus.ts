@@ -12,6 +12,16 @@ function extensionOf(path: string): string | undefined {
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : undefined;
 }
 
+/**
+ * Whether a language server is there for the type of file `path` is: one serving its extension
+ * that was found, whether it runs yet or not. An empty list is one not loaded yet, which says nothing.
+ */
+export function hasServer(path: string, servers: readonly ServerInfo[]): boolean {
+  if (!servers.length) return true;
+  const extension = extensionOf(path);
+  return servers.some((s) => s.state.type === "found" && extension !== undefined && s.extensions.includes(extension));
+}
+
 export interface ServerLine {
   /** The server's name, or a few words about why there is none. */
   name: string;

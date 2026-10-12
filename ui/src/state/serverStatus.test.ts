@@ -4,7 +4,7 @@ import type { ServerInfo } from "../generated/ServerInfo.ts";
 import type { Task } from "../generated/Task.ts";
 import type { Unavailable } from "../generated/Unavailable.ts";
 import { summarize } from "./semanticSummary.ts";
-import { serverLine } from "./serverStatus.ts";
+import { hasServer, serverLine } from "./serverStatus.ts";
 
 const server = (language: string, name: string, extensions: string[]): ServerInfo => ({
   language,
@@ -38,6 +38,19 @@ const unavailable = (kind: Unavailable["kind"], language: string | null): Unavai
 });
 
 const quiet = summarize(new Map(), new Map());
+
+void test("a file type has a server when one that serves its extension was found, running yet or not", () => {
+  const found = (s: ServerInfo): ServerInfo => ({
+    ...s,
+    state: { type: "found", path: "/bin/x", origin: "path", version: null, tsserver: null },
+  });
+  const servers = [found(SERVERS[0]), SERVERS[1]];
+  assert.equal(hasServer("src/a.rs", servers), true);
+  assert.equal(hasServer("src/a.py", servers), false, "its server is not installed");
+  assert.equal(hasServer("src/App.svelte", servers), false, "no server serves it");
+  assert.equal(hasServer("Makefile", servers), false);
+  assert.equal(hasServer("src/App.svelte", []), true, "the list is not loaded yet");
+});
 
 void test("the Changes tab names no server", () => {
   assert.equal(serverLine(undefined, SERVERS, [task("serverIndex", "Indexing rust-analyzer")], quiet), undefined);

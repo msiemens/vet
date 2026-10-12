@@ -16,7 +16,7 @@ import { InFlight } from "./inFlight";
 import { progress } from "./progress.svelte";
 import { type SemanticSummary, summarize } from "./semanticSummary";
 import { serverList } from "./serverList.svelte";
-import { serverLine } from "./serverStatus";
+import { hasServer, serverLine } from "./serverStatus";
 import { session } from "./session.svelte";
 
 const NOTHING: HoverAnswer = { text: "", code: [] };
@@ -67,7 +67,7 @@ class SemanticStore {
 
   /**
    * Markdown; the text is empty if the server has nothing to say, the request is stale or `signal`
-   * aborted it. The same position asked again while its answer is underway (an editor re-fires its
+   * aborted it, and with no server for the file's type nothing is asked. The same position asked again while its answer is underway (an editor re-fires its
    * hover when it updates) joins that request, which is cancelled once no caller wants it.
    */
   async hover(
@@ -79,7 +79,7 @@ class SemanticStore {
     signal?: AbortSignal,
   ): Promise<HoverAnswer> {
     const backend = session.backend;
-    if (!backend) return NOTHING;
+    if (!backend || !hasServer(path, serverList.servers)) return NOTHING;
     try {
       return await this.hovering.share(
         JSON.stringify([revision, side, path, line, col]),
