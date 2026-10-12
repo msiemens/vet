@@ -582,15 +582,21 @@ export class ReviewController {
   }
 
   /**
-   * Shows the active file tab as the file's diff or its text, at the line the caret is on.
+   * Shows the active file tab as the file's diff or its text, at the line the caret is on. The
+   * other view takes the tab's place; it never opens a second tab of the file.
    * Does nothing in any other tab, or for a file the changeset does not change.
    */
   async showFileView(view: "diff" | "text") {
     const id = this.tabs.active;
     const path = pathOf(id);
     if (path === undefined || this.fileView === undefined || this.fileView === view) return;
-    if (kindOf(id) === "file") await this.openSource(path, this.views.get(id)?.caretLine());
-    else await this.openFile(path, this.texts.get(id)?.caretLine());
+    const toText = kindOf(id) === "file";
+    const line = toText ? this.views.get(id)?.caretLine() : this.texts.get(id)?.caretLine();
+    this.tabs.swap(id, toText ? textTab(path) : fileTab(path));
+    await tick(); // a new tab's pane attaches and builds its view
+    if (line === undefined) return;
+    if (toText) this.texts.get(textTab(path))?.goToLine(line);
+    else await this.views.get(fileTab(path))?.goToLine(0, line);
   }
 
   /** Jump to Source: the file's text tab, at a 0-based target `line` if given. */

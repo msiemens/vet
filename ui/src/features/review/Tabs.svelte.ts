@@ -4,7 +4,7 @@
 
 import { SvelteMap } from "svelte/reactivity";
 import type { TabKind } from "../../state/commands";
-import { tabAfter } from "./tabOrder";
+import { swapTab, tabAfter } from "./tabOrder";
 
 export type TabId = "changes" | `file:${string}` | `text:${string}` | `log:${string}`;
 
@@ -62,6 +62,12 @@ export class Tabs {
   /** Opens the file's text tab if needed and focuses it. */
   showText(path: string) {
     this.focus(textTab(path));
+  }
+
+  /** The tab `to` takes the place of the open tab `from` and is focused. */
+  swap(from: TabId, to: TabId) {
+    this.open = swapTab(this.open, from, to);
+    this.active = to;
   }
 
   /** Opens the log's tab if needed and focuses it. */
