@@ -4,7 +4,6 @@
 
 import type { Extension, StateField } from "@codemirror/state";
 import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
-import { iconSvg } from "../../../lib/ui/icons";
 import { commands } from "../../../state/commands";
 import { el, iconButton, reconfirmButton } from "./dom";
 import type { ChangesSource, ChangesState } from "./fileChanges";
@@ -152,15 +151,17 @@ export function hunkToolbar(source: ChangesSource, field: StateField<ChangesStat
           buttons.push(
             reconfirmButton(commands.tooltip("review.reconfirm", "Re-confirm"), () => actions.toggleSeen(hunk)),
           );
-        else if (state !== "informational") {
-          const toggle = el("button", "flat vet-fltools-seen vet-review-action");
-          toggle.type = "button";
-          toggle.title = commands.tooltip("review.toggleSeen", LABEL[state]);
-          toggle.innerHTML = iconSvg("check", 13, 2);
-          toggle.append(LABEL[state]);
-          toggle.addEventListener("click", () => actions.toggleSeen(hunk));
-          buttons.push(toggle);
-        }
+        else if (state !== "informational")
+          buttons.push(
+            iconButton(
+              commands.tooltip("review.toggleSeen", LABEL[state]),
+              "check",
+              () => actions.toggleSeen(hunk),
+              "vet-icon-btn vet-review-action",
+              13,
+              2,
+            ),
+          );
         buttons.push(iconButton("Comment", "comments", () => actions.comment(hunk), "vet-icon-btn vet-review-action"));
         this.dom.replaceChildren(...buttons);
       }
