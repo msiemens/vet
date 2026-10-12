@@ -1,5 +1,6 @@
 //! The native menu bar and context menus, which the UI defines.
 
+use std::collections::HashSet;
 use std::sync::Mutex;
 use std::sync::mpsc;
 
@@ -60,7 +61,7 @@ pub struct MenuEntry {
     detail: Option<String>,
     /// The key that runs the item in the window, as the viewer reads it (`⌃⌥C`); the menu only shows it and the window handles the key.
     shortcut: Option<String>,
-    /// The same key as an accelerator reads it (`Ctrl+Alt+C`), for a context menu that draws it natively.
+    /// The same key as an accelerator reads it (`Ctrl+Alt+C`), for a menu that draws it in the OS's key column (macOS).
     chord: Option<String>,
     /// A key the menu registers and handles itself, such as `Cmd+,`.
     accelerator: Option<String>,
@@ -79,29 +80,44 @@ enum Surface {
     ContextMenu,
 }
 
-/// The key a menu item shows and, in the menu bar, handles: its own accelerator or, in a context
-/// menu on macOS, the window's key. A context menu is not attached to the window, so its
-/// accelerators only draw (right-aligned, in the OS's glyphs) and fire only while it is open.
-/// Muda reads the chord text (`Cmd+B`, `Ctrl+Alt+Down`, `F4`, `Space`) as an accelerator.
-fn accelerator(entry: &MenuEntry, surface: Surface) -> Option<&str> {
+/// The key a menu item draws in the OS's key column: its own accelerator or, on macOS, the
+/// window's key (muda reads the chord text `Cmd+B`, `Ctrl+Alt+Down`, `F4`, `Space` as an
+/// accelerator). Only an item's own accelerator is the menu's to handle: the window's key is
+/// handled by the window, so a menu bar item that draws it ignores the menu event the key raises
+/// (`KeyOnlyItems`), and a context menu is not attached to the window, so its accelerators fire
+/// only while it is open. A punctuation key (`[`) is left out: macOS rewrites the key equivalent
+/// of such a key to another layout's character (`[` became `ö` with the German layout installed),
+/// so the item would draw and answer the wrong key.
+fn accelerator(entry: &MenuEntry) -> Option<&str> {
     if let Some(accelerator) = &entry.accelerator {
         return Some(accelerator);
     }
-    if surface == Surface::ContextMenu && cfg!(target_os = "macos") {
-        return entry.chord.as_deref();
+    if cfg!(target_os = "macos") {
+        return entry.chord.as_deref().filter(|chord| !ends_in_punctuation(chord));
     }
     None
 }
 
+/// Whether the key of a chord (`Cmd+Shift+[`) is a punctuation character.
+fn ends_in_punctuation(chord: &str) -> bool {
+    let key = if chord.ends_with('+') {
+        "+"
+    } else {
+        chord.rsplit('+').next().unwrap_or(chord)
+    };
+    let mut chars = key.chars();
+    matches!((chars.next(), chars.next()), (Some(c), None) if !c.is_alphanumeric())
+}
+
 /// The text of an item: its label, the detail after it, and the display shortcut where the menu
-/// has no column for an accelerator. Windows right-aligns text after a tab as the shortcut column;
-/// other context menus show no shortcut.
-fn item_text(entry: &MenuEntry, surface: Surface) -> String {
+/// has no column for it (`keyed` is false: no accelerator drew it). Windows right-aligns text after
+/// a tab as the shortcut column; other menu bars put it after the label, other context menus show none.
+fn item_text(entry: &MenuEntry, surface: Surface, keyed: bool) -> String {
     let mut text = entry.label.clone();
     if let Some(detail) = &entry.detail {
         text = format!("{text}  —  {detail}");
     }
-    if let (Some(shortcut), None) = (&entry.shortcut, &entry.accelerator) {
+    if let (Some(shortcut), false) = (&entry.shortcut, keyed) {
         if cfg!(windows) {
             text = format!("{text}\t{shortcut}");
         } else if surface == Surface::MenuBar {
@@ -122,10 +138,10 @@ fn item(app: &AppHandle, entry: &MenuEntry, surface: Surface) -> tauri::Result<B
     if let Some(children) = &entry.children {
         return Ok(Box::new(submenu(app, &entry.label, enabled, children, surface)?));
     }
-    let text = item_text(entry, surface);
-    let accelerator = accelerator(entry, surface);
-    // A shortcut that is no accelerator shows nothing rather than failing the menu.
+    let accelerator = accelerator(entry);
+    // A shortcut that is no accelerator is shown as text rather than failing the menu.
     let build = |accelerator: Option<&str>| -> tauri::Result<Box<dyn IsMenuItem<Wry>>> {
+        let text = item_text(entry, surface, accelerator.is_some());
         Ok(if let Some(checked) = entry.checked {
             let mut item = CheckMenuItemBuilder::with_id(&entry.id, &text)
                 .checked(checked)
@@ -168,10 +184,54 @@ fn submenu(
 #[cfg(target_os = "macos")]
 const WINDOW_MENU: &str = "window";
 
+/// The ids of the menu bar items that draw the window's key and have no accelerator of their own.
+/// The webview sees a key before the menu does and the window runs its command there, so the
+/// menu event such a key raises afterwards (a key the window left alone, such as one typed in a
+/// text field) must not run the command a second time.
+#[derive(Default)]
+pub struct KeyOnlyItems(Mutex<HashSet<String>>);
+
+fn key_only_ids(entries: &[MenuEntry], ids: &mut HashSet<String>) {
+    for entry in entries {
+        if entry.accelerator.is_none() && accelerator(entry).is_some() {
+            ids.insert(entry.id.clone());
+        }
+        key_only_ids(entry.children.as_deref().unwrap_or_default(), ids);
+    }
+}
+
+/// Whether the menu event of item `id` was raised by its key: the item draws the window's key and
+/// the event being handled is a key press, not a click.
+pub fn raised_by_window_key(app: &AppHandle, id: &str) -> bool {
+    app.state::<KeyOnlyItems>()
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(id)
+        && key_press_in_progress()
+}
+
+#[cfg(target_os = "macos")]
+fn key_press_in_progress() -> bool {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSEventType};
+    MainThreadMarker::new()
+        .and_then(|main| NSApplication::sharedApplication(main).currentEvent())
+        .is_some_and(|event| event.r#type() == NSEventType::KeyDown)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn key_press_in_progress() -> bool {
+    false
+}
+
 /// Replaces the menu bar (macOS) with the UI's definition. The UI includes the Edit menu as
 /// predefined items: without it the webview does not get ⌘C, ⌘V and ⌘Z.
 #[tauri::command]
-pub fn set_menu(app: AppHandle, items: Vec<MenuEntry>) -> Result<(), String> {
+pub fn set_menu(app: AppHandle, state: State<'_, KeyOnlyItems>, items: Vec<MenuEntry>) -> Result<(), String> {
+    let mut key_only = HashSet::new();
+    key_only_ids(&items, &mut key_only);
+    *state.0.lock().unwrap_or_else(|e| e.into_inner()) = key_only;
     let build = || -> tauri::Result<()> {
         let mut bar = MenuBuilder::new(&app);
         for menu in &items {
@@ -305,7 +365,7 @@ pub async fn show_context_menu(
 
 #[cfg(test)]
 mod tests {
-    use super::{ContextMenuChoice, MenuEntry, Predefined, Surface, accelerator, item_text};
+    use super::{ContextMenuChoice, MenuEntry, Predefined, Surface, accelerator, item_text, key_only_ids};
 
     fn entries(json: &str) -> Vec<MenuEntry> {
         serde_json::from_str(json).unwrap()
@@ -338,32 +398,90 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_bar_shows_a_shortcut_as_text_unless_the_item_registers_an_accelerator() {
+    fn a_shortcut_no_accelerator_draws_is_text_after_the_label() {
         let items = entries(
             r#"[{"id":"a","label":"Copy path","shortcut":"Ctrl+C"},
             {"id":"b","label":"Open","detail":"/x","shortcut":"Ctrl+O"},
             {"id":"c","label":"Quit","accelerator":"Cmd+Q","shortcut":"Ctrl+Q"},
             {"id":"d","label":"Plain"}]"#,
         );
-        let texts: Vec<String> = items.iter().map(|i| item_text(i, Surface::MenuBar)).collect();
-        assert!(texts[0].starts_with("Copy path") && texts[0].ends_with("Ctrl+C"));
-        assert!(texts[1].contains("/x") && texts[1].ends_with("Ctrl+O"));
+        let texts: Vec<String> = items
+            .iter()
+            .map(|i| item_text(i, Surface::MenuBar, accelerator(i).is_some()))
+            .collect();
         assert_eq!(texts[2], "Quit");
         assert_eq!(texts[3], "Plain");
+        // Only macOS draws the window's key (`chord`) in the key column; these have none.
+        assert!(texts[0].starts_with("Copy path") && texts[0].ends_with("Ctrl+C"));
+        assert!(texts[1].contains("/x") && texts[1].ends_with("Ctrl+O"));
     }
 
     #[test]
-    fn a_context_menu_item_keeps_its_shortcut_out_of_the_label_except_after_a_tab_on_windows() {
+    fn the_windows_key_is_drawn_in_the_key_column_on_macos_and_as_text_elsewhere() {
         let items = entries(r#"[{"id":"a","label":"Go to definition","shortcut":"⌘B","chord":"Cmd+B"}]"#);
-        let text = item_text(&items[0], Surface::ContextMenu);
-        if cfg!(windows) {
-            assert_eq!(text, "Go to definition\t⌘B");
-        } else {
-            assert_eq!(text, "Go to definition");
-        }
-        let shown = accelerator(&items[0], Surface::ContextMenu);
+        let shown = accelerator(&items[0]);
         assert_eq!(shown, if cfg!(target_os = "macos") { Some("Cmd+B") } else { None });
-        assert_eq!(accelerator(&items[0], Surface::MenuBar), None);
+        let bar = item_text(&items[0], Surface::MenuBar, shown.is_some());
+        let context = item_text(&items[0], Surface::ContextMenu, shown.is_some());
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                (bar.as_str(), context.as_str()),
+                ("Go to definition", "Go to definition")
+            );
+        } else if cfg!(windows) {
+            assert_eq!(
+                (bar.as_str(), context.as_str()),
+                ("Go to definition\t⌘B", "Go to definition\t⌘B")
+            );
+        } else {
+            assert_eq!(
+                (bar.as_str(), context.as_str()),
+                ("Go to definition    ⌘B", "Go to definition")
+            );
+        }
+    }
+
+    #[test]
+    fn a_punctuation_key_stays_text_because_macos_rewrites_its_key_equivalent() {
+        let items = entries(
+            r#"[{"id":"a","label":"Next Tab","shortcut":"⇧⌘]","chord":"Cmd+Shift+]"},
+            {"id":"b","label":"Zoom In","shortcut":"⌘+","chord":"Cmd++"},
+            {"id":"c","label":"Down","shortcut":"⌥↓","chord":"Alt+Down"}]"#,
+        );
+        assert_eq!(accelerator(&items[0]), None);
+        assert_eq!(accelerator(&items[1]), None);
+        assert_eq!(
+            accelerator(&items[2]),
+            if cfg!(target_os = "macos") {
+                Some("Alt+Down")
+            } else {
+                None
+            }
+        );
+        assert!(item_text(&items[0], Surface::MenuBar, false).ends_with("⇧⌘]"));
+    }
+
+    #[test]
+    fn only_items_that_draw_the_windows_key_ignore_the_event_it_raises() {
+        let items = entries(
+            r#"[{"id":"nav","label":"Navigate","children":[
+            {"id":"next","label":"Next","shortcut":"⌥F","chord":"Alt+F"},
+            {"id":"commit","label":"Next Commit","shortcut":"]","chord":"]"},
+            {"id":"tab","label":"Next Tab","shortcut":"⇧⌘]","chord":"Cmd+Shift+]"},
+            {"id":"sub","label":"More","children":[{"id":"deep","label":"Deep","chord":"F4"}]},
+            {"id":"open","label":"Open","accelerator":"Cmd+O","chord":"Ctrl+O"},
+            {"id":"plain","label":"Plain"}]}]"#,
+        );
+        let mut ids = std::collections::HashSet::new();
+        key_only_ids(&items, &mut ids);
+        let expected: &[&str] = if cfg!(target_os = "macos") {
+            &["deep", "next"]
+        } else {
+            &[]
+        };
+        let mut ids: Vec<_> = ids.into_iter().collect();
+        ids.sort();
+        assert_eq!(ids, expected);
     }
 
     #[test]

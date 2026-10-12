@@ -4509,6 +4509,7 @@ name = "vet-shell"
 version = "0.0.0"
 dependencies = [
  "keyring",
+ "objc2",
  "objc2-app-kit",
  "serde",
  "serde_json",

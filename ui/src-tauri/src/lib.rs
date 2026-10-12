@@ -37,6 +37,9 @@ pub fn run() {
             if menu::answer_context_menu(app, &event.id().0) {
                 return;
             }
+            if menu::raised_by_window_key(app, &event.id().0) {
+                return;
+            }
             if let Err(e) = app.emit("vet-menu", event.id().0.clone()) {
                 tracing::warn!(error = %e, "cannot forward menu event");
             }
@@ -44,6 +47,7 @@ pub fn run() {
         .on_window_event(geometry::on_window_event)
         .setup(|app| {
             app.manage(menu::ContextMenuChoice::default());
+            app.manage(menu::KeyOnlyItems::default());
             app.manage(Startup::new());
             geometry::init(app.handle())?;
             startup::show_splash(app.handle());
