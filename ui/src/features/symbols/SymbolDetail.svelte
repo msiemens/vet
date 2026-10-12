@@ -3,7 +3,6 @@
   // and hover are the language server's own answers, the rest is derived (SPEC §7.3, §7.4).
   import type { ChangedSymbol } from "../../generated/ChangedSymbol";
   import type { Impact } from "../../generated/Impact";
-  import type { Reachability } from "../../generated/Reachability";
   import type { Reference } from "../../generated/Reference";
   import type { RemovalImpact } from "../../generated/RemovalImpact";
   import type { Side } from "../../generated/Side";
@@ -65,7 +64,7 @@
     title="Remaining references"
     load={symbols.removal}
     count={(r: RemovalImpact) => r.callSites.length}
-    inputs={(r: RemovalImpact) => r.inputs}
+    derived
   >
     {#snippet children(removal)}
       {#if removal.gap}<p class="note">References could not be listed: {removal.gap}</p>{/if}
@@ -82,12 +81,7 @@
     {/snippet}
   </DerivedSection>
 {:else}
-  <DerivedSection
-    title="Callers"
-    load={symbols.impact}
-    count={(i: Impact) => i.callers.length}
-    inputs={(i: Impact) => i.inputs}
-  >
+  <DerivedSection title="Callers" load={symbols.impact} count={(i: Impact) => i.callers.length} derived>
     {#snippet children(impact)}
       {#if impact.gaps.length}<p class="note">Incomplete: {impact.gaps.join("; ")}</p>{/if}
       <ul>
@@ -107,12 +101,7 @@
       </ul>
     {/snippet}
   </DerivedSection>
-  <DerivedSection
-    title="References"
-    load={symbols.impact}
-    count={(i: Impact) => i.references.length}
-    inputs={(i: Impact) => i.inputs}
-  >
+  <DerivedSection title="References" load={symbols.impact} count={(i: Impact) => i.references.length} derived>
     {#snippet children(impact)}
       <ul>
         {#each impact.references as r, i (i)}
@@ -121,7 +110,7 @@
       </ul>
     {/snippet}
   </DerivedSection>
-  <DerivedSection title="Reached from" load={symbols.reach} inputs={(r: Reachability) => r.inputs}>
+  <DerivedSection title="Reached from" load={symbols.reach} derived>
     {#snippet children(reachability)}
       {@const reach = reachability.reach}
       {#if reach.type === "reached"}
@@ -145,7 +134,7 @@
           {/each}
         </ol>
       {:else if reach.type === "unreachedWithinBound"}
-        <p class="note">No entry point reaches it within the bounds (see the inputs).</p>
+        <p class="note">No entry point reaches it within the bounds.</p>
       {:else}
         <p class="note">Unknown: {reach.gaps.length ? reach.gaps.join("; ") : "the analysis has gaps"}</p>
       {/if}
