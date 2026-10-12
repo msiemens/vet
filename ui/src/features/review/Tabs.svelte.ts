@@ -4,6 +4,7 @@
 
 import { SvelteMap } from "svelte/reactivity";
 import type { TabKind } from "../../state/commands";
+import { tabAfter } from "./tabOrder";
 
 export type TabId = "changes" | `file:${string}` | `text:${string}` | `log:${string}`;
 
@@ -73,6 +74,11 @@ export class Tabs {
   private focus(id: TabId) {
     if (!this.open.includes(id)) this.open.push(id);
     this.active = id;
+  }
+
+  /** Focuses the tab `delta` places from the active one, wrapping around the ends. */
+  step(delta: number) {
+    this.active = tabAfter(this.open, this.active, delta);
   }
 
   /** The Changes tab cannot be closed. Focus moves to the neighbour on the right, else on the left. */

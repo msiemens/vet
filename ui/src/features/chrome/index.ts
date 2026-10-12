@@ -4,6 +4,7 @@ export { default as FinishDialog } from "./FinishDialog.svelte";
 export { COMMITS, lensOnSelect, toolFor } from "./commitsTool";
 export { toggleTool } from "./toggleTool";
 export { default as Header, type Screen } from "./Header.svelte";
+export { default as MainMenuButton } from "./MainMenuButton.svelte";
 export { default as TitleBar } from "./TitleBar.svelte";
 export { TOOLS } from "./ToolRail.svelte";
 export { default as ToolRail } from "./ToolRail.svelte";

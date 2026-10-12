@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import type { Thread } from "../../generated/Thread";
   import Icon from "../../lib/ui/Icon.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
@@ -21,7 +22,8 @@
   /** The toolbar's count of the viewer's comments and staged vote that the platform does not have yet; a click lists them, and posts them. */
   let { onopen }: { onopen: (thread: Thread) => void } = $props();
 
-  let open = $state(false);
+  // The list is open in the store, so the Post Comments command can open it.
+  onDestroy(() => (platform.outgoingOpen = false));
   const info = $derived(platform.info);
   const list = $derived(outgoingComments(threads.items));
   const vote = $derived(info?.pendingVote ?? null);
@@ -33,23 +35,23 @@
   const title = $derived(outgoingTitle(summary, vote !== null));
 
   function show(thread: Thread) {
-    open = false;
+    platform.outgoingOpen = false;
     onopen(thread);
   }
 
   async function send() {
-    if (info && (await sendComments(info))) open = false;
+    if (info && (await sendComments(info))) platform.outgoingOpen = false;
   }
 </script>
 
-<Popover bind:open align="right">
+<Popover bind:open={platform.outgoingOpen} align="right">
   {#snippet trigger(toggle)}
     <button
       class="ctl status"
       class:failed={summary.failed > 0}
       type="button"
       disabled={summary.count === 0}
-      aria-expanded={open}
+      aria-expanded={platform.outgoingOpen}
       {title}
       aria-label={title}
       onclick={toggle}

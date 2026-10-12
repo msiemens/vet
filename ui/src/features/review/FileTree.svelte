@@ -65,7 +65,7 @@
     onmenu: (path: string, dir: boolean, x: number, y: number) => void;
   } = $props();
 
-  const TITLES = { changes: "Changes", all: "All files", commits: "Commits" } as const;
+  const TITLES = { changes: "Changes", all: "All Files", commits: "Commits" } as const;
 
   /** What a row shows of the speed search: whether it is the one Enter opens, and what matched. */
   interface Hit {
@@ -341,7 +341,7 @@
     {:else if tool === "all"}
       <IconButton
         icon="locate"
-        label="Reveal the current file"
+        label="Reveal File in Tree"
         title={commands.tooltip("view.revealFile")}
         size={22}
         iconSize={13}

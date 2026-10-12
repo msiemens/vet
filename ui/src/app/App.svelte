@@ -5,6 +5,7 @@
     Banners,
     FinishDialog,
     Header,
+    MainMenuButton,
     StatusFooter,
     TOOLS,
     TaskProgress,
@@ -16,10 +17,26 @@
     toolFor,
   } from "../features/chrome";
   import { ChecksButton } from "../features/checks";
-  import { OutgoingButton, commentsSeen, seenKey, seenNow, unreadCount } from "../features/comments";
+  import {
+    OutgoingButton,
+    commentsSeen,
+    outgoingComments,
+    seenKey,
+    seenNow,
+    submitBlock,
+    summarizeOutgoing,
+    unreadCount,
+  } from "../features/comments";
   import { NotificationCards, PlatformFooter } from "../features/platform";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, targetLabel } from "../features/queue";
-  import { ReviewScreen, type ReviewController, summarize } from "../features/review";
+  import {
+    ReviewScreen,
+    type ReviewController,
+    fileCommands,
+    reviewActions,
+    summarize,
+    viewCommands,
+  } from "../features/review";
   import { SettingsDialog } from "../features/settings";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
   import { type RangeFile, RangeChips, TimelinePanel } from "../features/timeline";
@@ -170,47 +187,95 @@
       openProject,
       finishReview: () => (dialog = "finish"),
       changesSinceReview: () => void showChangesSinceReview(),
-      fetch: () => void changeset.fetch(),
+      wholeChangeset: () => void changeset.setRange(undefined),
+      refresh: () => void queue.refresh(),
+      reconfirmAll: () => void changeset.reconfirmAll(),
       openChangeset: (key) => void changeset.openChangeset(key),
-      showQueue: () => (screen = "queue"),
+      showScreen: (s) => (screen = s),
       showChangesets: () => {
         screen = "review";
         switcherOpen = true;
       },
       openPullRequest: () => void openPullRequest(),
       showDialog: (d) => showDialog(d),
+      showKeymap: () => showDialog("settings", "keymap"),
       quit: () => void quit(),
-      setMode,
+      toggleSplit: () => setMode(mode === "split" ? "unified" : "split"),
+      toggleSoftWrap: () => setSoftWrap(softWrap === "never" ? "prose" : "never"),
       toggleTool: (id) => {
+        if (id === "timeline") {
+          toggleTimeline();
+          return;
+        }
         const side = TOOLS.left.some((t) => t.id === id) ? left : right;
         Object.assign(side, toggleTool(side, id));
       },
       setTheme: (t) => applyTheme((theme = t)),
+      commentOnChangeset,
+      postComments: () => {
+        screen = "review";
+        platform.outgoingOpen = true;
+      },
+      stageVote: (verdict) => void platform.stageVote(verdict),
       clearSemanticCaches: () => void clearSemanticCaches(),
       showLog: () => void showLog(),
+      restartBackend: () => void session.restartBackend(),
     }),
+    ...viewCommands(reviewActions),
+    ...fileCommands(reviewActions),
   );
   keymap.load();
   session.onOpen(() => (screen = "queue"));
+  /** Comments and a staged vote that wait to be sent to the platform of the pull request on view. */
+  const outgoing = $derived(
+    platform.info === undefined
+      ? 0
+      : summarizeOutgoing(outgoingComments(threads.items), platform.info.pendingVote).count,
+  );
+  const voteBlock = $derived.by(() => {
+    const info = platform.info;
+    if (info?.pendingVote?.state.type === "posting") return "The vote is being sent";
+    return info && submitBlock(info.platform.connection);
+  });
   const stopContext = commands.provide(() => ({
     repoOpen: !!session.repo,
     reviewOpen,
     canQuit,
+    changesetOpen: !!session.repo && !!changeset.manifest,
+    rangeShown: !!range,
+    reconfirmable: baseChangedLeft > 0,
+    pullRequest: platform.info !== undefined,
+    outgoing,
+    voteBlock,
     manyCommits: commitCount > 1,
   }));
 
   // The main menu follows the state it shows.
   $effect(() => {
     const shown = (side: typeof left, id: string) => side.open && side.tool === id;
+    const traits = platform.traits;
     mainMenu.update({
       native: hasNativeMenu,
       recent: recent.list.map(({ path }) => ({ path, name: repoName(path) })),
-      mode,
+      screen,
+      splitDiff: mode === "split",
+      fileText: controller?.fileView === "text",
+      softWrap: softWrap !== "never",
       theme,
       tools: [
         ...TOOLS.left.map((t) => ({ id: t.id, shown: shown(left, t.id) })),
         ...TOOLS.right.map((t) => ({ id: t.id, shown: shown(right, t.id) })),
+        { id: "timeline", shown: timelineOpen },
       ],
+      range: !!range,
+      canRestart: canRestartBackend,
+      batchedReview: !!traits?.batchedReview,
+      votes: traits?.verdictSeparate
+        ? {
+            verdicts: traits.verdicts,
+            chosen: platform.info?.pendingVote?.verdict ?? platform.info?.viewerVerdict ?? undefined,
+          }
+        : undefined,
     });
   });
 
@@ -319,6 +384,14 @@
     if (thread.kind !== "changeset") return void controller?.goToThread(thread);
     Object.assign(left, { tool: "comments", open: true });
     platform.commentsTab = "conversation";
+  }
+
+  /** Opens the Comments tool window at the form for a comment on the changeset as a whole. */
+  function commentOnChangeset() {
+    screen = "review";
+    Object.assign(left, { tool: "comments", open: true });
+    platform.commentsTab = "conversation";
+    platform.changesetComment.composing = true;
   }
 
   function setMode(next: Mode) {
@@ -477,8 +550,10 @@
     </div>
   </div>
 {:else if session.backend}
+  {#snippet mainMenuButton()}<MainMenuButton />{/snippet}
   <div class="body">
     <WelcomeScreen
+      menu={mainMenu.native ? undefined : mainMenuButton}
       recent={recent.list}
       failed={session.openError}
       canPick={hasNativeDialogs}

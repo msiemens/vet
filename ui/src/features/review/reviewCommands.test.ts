@@ -13,7 +13,14 @@ import {
   viewCommands,
 } from "./reviewCommands.ts";
 
-const idle: CommandContext = { repoOpen: true, reviewOpen: true, canQuit: true, diffView: false, hunk: -1 };
+const idle: CommandContext = {
+  repoOpen: true,
+  reviewOpen: true,
+  canQuit: true,
+  changesetOpen: true,
+  diffView: false,
+  hunk: -1,
+};
 
 const calls: string[] = [];
 let toggleFinds = true;
@@ -26,8 +33,10 @@ const view: ViewActions = {
   toggleSeen: () => (calls.push("toggle"), toggleFinds),
   reconfirm: () => (calls.push("reconfirm"), reconfirmFinds),
   comment: () => (calls.push("comment"), commentFinds),
+  showCard: () => (calls.push("card"), true),
   jumpToSource: () => (calls.push("jump"), caretFinds),
   stepCommit: (delta) => (calls.push(`commit ${delta}`), true),
+  toggleFileText: () => calls.push("fileText"),
 };
 const files: FileActions = {
   copyText: (text) => calls.push(`copy ${text}`),
@@ -36,6 +45,7 @@ const files: FileActions = {
   setFolderSeen: (path, seen) => calls.push(`seen ${path} ${seen}`),
   closeTab: (kind, path) => calls.push(`close ${kind} ${path}`),
   closeOtherTabs: (kind, path) => calls.push(`closeOthers ${kind} ${path}`),
+  stepTab: (delta) => calls.push(`tab ${delta}`),
   revealFile: () => (calls.push("reveal"), treeShown),
 };
 
@@ -176,14 +186,14 @@ void test("the file tree's menu offers the folder scope only for folders", () =>
   const r = setup();
   const labels = (dir: boolean) =>
     resolveMenu(r, treeMenu(dir), r.context({ target: { path: "src", dir } })).map((i) => i.label);
-  assert.deepEqual(labels(false), ["Copy path", "Exclude from review"]);
+  assert.deepEqual(labels(false), ["Copy Path", "Exclude from Review"]);
   assert.deepEqual(labels(true), [
-    "Copy path",
-    "Exclude from review",
-    "Review only this folder",
+    "Copy Path",
+    "Exclude from Review",
+    "Review Only This Folder",
     "",
-    "Mark all seen",
-    "Mark all unseen",
+    "Mark All Seen",
+    "Mark All Unseen",
   ]);
 });
 
@@ -202,7 +212,7 @@ void test("a tree menu item acts on the row it was opened on", () => {
 });
 
 void test("a tab's menu cannot close the Changes tab, and closes the others around the tab it was opened on", () => {
-  const r = setup();
+  const r = setup({ tabCount: 3 });
   const menuOf = (tab: CommandContext["tab"]) => {
     const context = r.context({ tab });
     return { context, items: resolveMenu(r, tabMenu, context) };
@@ -217,12 +227,83 @@ void test("a tab's menu cannot close the Changes tab, and closes the others arou
       ["path.copy", false],
     ],
   );
+  assert.ok(changes.items[0].reason);
   const file = menuOf({ kind: "file", path: "a.rs" });
   r.run("tab.close", file.context);
   r.run("tab.closeOthers", file.context);
   r.run("path.copy", file.context);
   assert.deepEqual(calls, ["close file a.rs", "closeOthers file a.rs", "copy a.rs"]);
   assert.equal(r.run("tab.close", changes.context), false);
+});
+
+void test("Mod+W closes the active tab on both platforms, never the Changes tab, and leaves a text field its key", () => {
+  const inFile = { tab: { kind: "file", path: "a.rs" }, tabCount: 2 } as const;
+  const ctrlW = (init: Parameters<typeof key>[0] = {}) => key({ key: "w", code: "KeyW", ctrlKey: true, ...init });
+  const cmdW = (init: Parameters<typeof key>[0] = {}) => key({ key: "w", code: "KeyW", metaKey: true, ...init });
+  assert.equal(setup(inFile).dispatch(ctrlW()), true);
+  assert.deepEqual(calls, ["close file a.rs"]);
+  assert.equal(setup(inFile, "Meta").dispatch(cmdW()), true);
+  assert.deepEqual(calls, ["close file a.rs"]);
+  assert.equal(setup({ tab: { kind: "text", path: "b.rs" }, tabCount: 2 }, "Meta").dispatch(cmdW()), true);
+  assert.deepEqual(calls, ["close text b.rs"]);
+
+  assert.equal(setup(inFile, "Meta").dispatch(ctrlW()), false);
+  assert.equal(setup(inFile).dispatch(ctrlW({ inField: true })), false);
+  assert.deepEqual(calls, []);
+
+  const changes = ctrlW();
+  assert.equal(setup({ tab: { kind: "changes" }, tabCount: 2 }).dispatch(changes), false);
+  assert.equal(changes.prevented, false);
+  assert.deepEqual(calls, []);
+});
+
+void test("Close Other Tabs is offered only when another tab could be closed", () => {
+  const offered = (context: Partial<CommandContext>) => setup(context).isEnabled("tab.closeOthers");
+  assert.equal(offered({ tab: { kind: "file", path: "a.rs" }, tabCount: 2 }), false);
+  assert.equal(offered({ tab: { kind: "file", path: "a.rs" }, tabCount: 3 }), true);
+  assert.equal(offered({ tab: { kind: "changes" }, tabCount: 1 }), false);
+  assert.equal(offered({ tab: { kind: "changes" }, tabCount: 2 }), true);
+});
+
+void test("Previous and Next Tab are Alt+Left and Alt+Right on Windows and ⇧⌘[ and ⇧⌘] on macOS, with more than one tab", () => {
+  const altLeft = () => key({ key: "ArrowLeft", code: "ArrowLeft", altKey: true });
+  const altRight = () => key({ key: "ArrowRight", code: "ArrowRight", altKey: true });
+  // The shifted bracket types another character, and a layout puts it elsewhere: the key is told by its place.
+  const cmdOpen = () => key({ key: "{", code: "BracketLeft", metaKey: true, shiftKey: true });
+  const cmdClose = () => key({ key: "}", code: "BracketRight", metaKey: true, shiftKey: true });
+
+  const win = setup({ tabCount: 3 });
+  assert.equal(win.dispatch(altLeft()), true);
+  assert.equal(win.dispatch(altRight()), true);
+  assert.deepEqual(calls, ["tab -1", "tab 1"]);
+  assert.equal(win.dispatch(cmdOpen()), false);
+  assert.equal(win.dispatch(key({ key: "ArrowLeft", code: "ArrowLeft", altKey: true, inField: true })), false);
+  assert.equal(win.dispatch(key({ key: "ArrowLeft", code: "ArrowLeft", ctrlKey: true, altKey: true })), false);
+  assert.deepEqual(calls, ["tab -1", "tab 1"]);
+  assert.equal(win.binding("tab.next")?.label, "Alt+Right");
+
+  const mac = setup({ tabCount: 3 }, "Meta");
+  assert.equal(mac.dispatch(cmdOpen()), true);
+  assert.equal(mac.dispatch(cmdClose()), true);
+  assert.equal(mac.dispatch(altLeft()), false);
+  assert.deepEqual(calls, ["tab -1", "tab 1"]);
+  assert.equal(mac.binding("tab.next")?.label, "⇧⌘]");
+
+  const alone = altRight();
+  assert.equal(setup({ tabCount: 1 }).dispatch(alone), false);
+  assert.equal(alone.prevented, false);
+  assert.deepEqual(calls, []);
+});
+
+void test("Show File Text switches a changed file's tab between its diff and its text", () => {
+  for (const fileView of ["diff", "text"] as const) {
+    assert.equal(setup({ fileView }).run("view.fileText"), true);
+    assert.deepEqual(calls, ["fileText"]);
+  }
+  const r = setup({ fileView: undefined });
+  assert.equal(r.run("view.fileText"), false);
+  assert.deepEqual(calls, []);
+  assert.ok(r.disabledReason("view.fileText"));
 });
 
 void test("Reveal the current file runs when a tree is there to show it and says so when there is none", () => {

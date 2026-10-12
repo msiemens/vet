@@ -36,7 +36,8 @@ import { type CommandContext, commands } from "../../state/commands";
 import { type TextActions, TextView } from "./editor/TextView";
 import { type SavedView, restoredTabs } from "./changesetViews";
 import { keyId } from "../../state/changesetKey";
-import { type ViewActions, viewCommands } from "./reviewCommands";
+import { provideActions } from "./reviewActions";
+import type { ViewActions } from "./reviewCommands";
 import { readPosition, writePosition } from "./savedPosition";
 import {
   CHANGES,
@@ -132,7 +133,7 @@ export class ReviewController {
       for (const [id, text] of this.texts) if (pathOf(id) === u.path) text.applyReview(u.review.hunks);
     });
     const offThreads = threads.onChange(() => this.showThreads());
-    const offCommands = commands.register(...viewCommands(this.viewActions()));
+    const offCommands = provideActions(this.viewActions());
     const offContext = commands.provide(() => this.facts());
     this.unsubscribe = () => {
       offReview();
@@ -219,6 +220,14 @@ export class ReviewController {
     return text?.hasHunks ? text : undefined;
   }
 
+  /** What the active tab shows of a changed file; none when it is no changed file's tab. */
+  get fileView(): "diff" | "text" | undefined {
+    const id = this.tabs.active;
+    const path = pathOf(id);
+    if (path === undefined || !this.files.some((f) => f.path === path)) return undefined;
+    return kindOf(id) === "file" ? "diff" : "text";
+  }
+
   /** The facts about the review screen that commands read. */
   private facts(): Partial<CommandContext> {
     const id = this.tabs.active;
@@ -226,6 +235,8 @@ export class ReviewController {
     const text = this.activeText;
     return {
       tab: { kind: kindOf(id), path: subjectOf(id) },
+      tabCount: this.tabs.open.length,
+      fileView: this.fileView,
       diffView: view !== undefined || text !== undefined,
       byCommit: this.changeset.shownCommit !== undefined,
       hunk: view?.current ?? text?.current ?? -1,
@@ -257,6 +268,7 @@ export class ReviewController {
         return true;
       },
       stepCommit: (delta) => this.changeset.stepCommit(delta),
+      toggleFileText: () => void this.toggleFileView(),
     };
   }
 
@@ -570,7 +582,7 @@ export class ReviewController {
   async toggleFileView() {
     const id = this.tabs.active;
     const path = pathOf(id);
-    if (path === undefined || !this.files.some((f) => f.path === path)) return;
+    if (path === undefined || this.fileView === undefined) return;
     if (kindOf(id) === "file") await this.openSource(path, this.views.get(id)?.caretLine());
     else await this.openFile(path, this.texts.get(id)?.caretLine());
   }

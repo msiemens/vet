@@ -2,24 +2,23 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
+  import { AltTap } from "../../lib/ui/altTap";
   import { commands } from "../../state/commands";
   import { mainMenu } from "../../state/mainMenu.svelte";
 
   let open = $state(false);
   let button = $state<HTMLButtonElement>();
-  // Alt pressed and released on its own focuses the menu, as it does in a Windows or Linux app.
-  let altAlone = false;
+  // Alt pressed and released on its own opens the menu, or closes it, as it does in a Windows app.
+  const alt = new AltTap();
 
   function onkeydown(e: KeyboardEvent) {
-    if (e.key === "Alt") altAlone = !e.repeat ? !(e.ctrlKey || e.shiftKey || e.metaKey) : altAlone;
-    else altAlone = false;
+    alt.keydown(e);
   }
 
   function onkeyup(e: KeyboardEvent) {
-    if (e.key !== "Alt" || !altAlone) return;
-    altAlone = false;
+    if (!alt.keyup(e)) return;
     e.preventDefault();
-    button?.focus();
+    open = !open;
   }
 
   /** Down arrow opens the focused button's menu; Escape gives the focus back to the page. */
@@ -33,7 +32,7 @@
   }
 </script>
 
-<svelte:window {onkeydown} {onkeyup} onpointerdown={() => (altAlone = false)} onblur={() => (altAlone = false)} />
+<svelte:window {onkeydown} {onkeyup} onpointerdown={() => alt.cancel()} onblur={() => alt.cancel()} />
 
 <!-- The key handler only adds the menu bar's keys to the button inside. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -44,6 +43,7 @@
     {/snippet}
     <Menu
       items={mainMenu.items}
+      mnemonics
       onselect={(id) => {
         open = false;
         commands.run(id);

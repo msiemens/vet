@@ -68,7 +68,15 @@
     </span>
   {/each}
   {#if ontimeline}
-    <span class="bottom"><IconButton icon="timeline" label="Timeline" active={timeline} onclick={ontimeline} /></span>
+    <span class="bottom"
+      ><IconButton
+        icon="timeline"
+        label="Timeline"
+        title={commands.tooltip(toolCommand("timeline"))}
+        active={timeline}
+        onclick={ontimeline}
+      /></span
+    >
   {/if}
 </nav>
 

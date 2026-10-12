@@ -56,25 +56,25 @@
   let showAllResolved = $state(false);
   const fold = (id: GroupId) => (folded = folded.includes(id) ? folded.filter((f) => f !== id) : [...folded, id]);
 
-  let composing = $state(false);
-  let body = $state("");
+  // The draft is the store's, so the Comment on Changeset command can open it and switching tool windows keeps it.
+  const draft = platform.changesetComment;
   let sending = $state(false);
   /** A comment on the changeset is written below its conversation, where it will be; without a pull request, below the threads. */
-  const composeHere = $derived(composing && showing === (info ? "conversation" : "review"));
+  const composeHere = $derived(draft.composing && showing === (info ? "conversation" : "review"));
 
   function compose() {
-    composing = !composing;
-    if (composing) platform.commentsTab = "conversation";
+    draft.composing = !draft.composing;
+    if (draft.composing) platform.commentsTab = "conversation";
   }
 
   onMount(() => commands.register(...threadCommands({ attach: (thread, at) => void threads.attach(thread, at) })));
 
   async function post() {
-    if (threads.revision === undefined || !canSubmit(body, sending)) return;
+    if (threads.revision === undefined || !canSubmit(draft.body, sending)) return;
     sending = true;
-    const sent = await threads.create(threads.revision, { type: "changeset" }, body.trim());
+    const sent = await threads.create(threads.revision, { type: "changeset" }, draft.body.trim());
     sending = false;
-    if (sent) [body, composing] = ["", false];
+    if (sent) [draft.body, draft.composing] = ["", false];
   }
 </script>
 
@@ -214,16 +214,21 @@
             rows="3"
             placeholder="Comment on the changeset…"
             autofocus
-            bind:value={body}
+            bind:value={draft.body}
             onkeydown={(e) => {
               if (isSubmitKey(e)) {
                 e.preventDefault();
                 void post();
-              } else if (e.key === "Escape") composing = false;
+              } else if (e.key === "Escape") draft.composing = false;
             }}></textarea>
           <div class="buttons">
-            <button class="ctl" type="button" onclick={() => (composing = false)}>Cancel</button>
-            <button class="ctl primary" type="button" disabled={!canSubmit(body, sending)} onclick={() => void post()}>
+            <button class="ctl" type="button" onclick={() => (draft.composing = false)}>Cancel</button>
+            <button
+              class="ctl primary"
+              type="button"
+              disabled={!canSubmit(draft.body, sending)}
+              onclick={() => void post()}
+            >
               Comment
             </button>
           </div>

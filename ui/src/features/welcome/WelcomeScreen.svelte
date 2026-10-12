@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { type Snippet, tick } from "svelte";
   import type { RecentProject } from "../../generated/RecentProject";
   import AppLogo from "../../lib/ui/AppLogo.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -11,6 +11,7 @@
   // Self-contained: it renders from its props and draws its own window-controls area, so it can
   // live in any window.
   let {
+    menu,
     recent,
     failed,
     canPick,
@@ -20,6 +21,8 @@
     onforget,
     onsettings,
   }: {
+    /** The application menu, where the window draws it itself; at the top of the sidebar. */
+    menu?: Snippet;
     /** Backend-side paths with when they were opened, most recent first. */
     recent: RecentProject[];
     /** The last open attempt that failed; `path` is empty when the folder dialog itself refused. */
@@ -68,7 +71,7 @@
 
 <div class="welcome">
   <nav class="side" aria-label="Welcome">
-    <div class="controls" data-tauri-drag-region></div>
+    <div class="controls" data-tauri-drag-region>{@render menu?.()}</div>
     <div class="brand">
       <span class="tile"><AppLogo size={26} /></span>
       <span class="title">
@@ -171,7 +174,10 @@
   .controls {
     flex: none;
     height: var(--h-header);
-    padding-left: var(--tauri-plugin-decoration-left-clearance, 0px);
+    display: flex;
+    align-items: center;
+    padding: 0 10px 0 calc(var(--tauri-plugin-decoration-left-clearance, 0px) + 10px);
+    box-sizing: border-box;
   }
   .brand {
     display: flex;

@@ -7,7 +7,7 @@
   import type { Mode } from "../../lib/viewMode";
   import type { Backend } from "../../state/backend";
   import type { Changeset } from "../../state/changeset.svelte";
-  import { type CommandContext, commands } from "../../state/commands";
+  import type { CommandContext } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { platform } from "../../state/platform.svelte";
   import { session } from "../../state/session.svelte";
@@ -26,7 +26,8 @@
   import "./editor/threadCard.css";
   import { focusedEditor } from "./editor/semantic";
   import { ReviewController } from "./ReviewController";
-  import { editorMenu, fileCommands, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
+  import { provideActions } from "./reviewActions";
+  import { editorMenu, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
   import CommitHeader from "./CommitHeader.svelte";
   import { CHANGES, kindOf, pathOf, showsDiff, subjectOf, tabOf } from "./Tabs.svelte";
   import TabStrip from "./TabStrip.svelte";
@@ -120,25 +121,24 @@
     const stopThreads = threads.start(backend);
     const stopPlatform = platform.start(backend);
     const stopVersions = versions.start(backend);
-    const stopCommands = commands.register(
-      ...fileCommands({
-        copyText: (text) =>
-          void navigator.clipboard.writeText(text).catch(() => (session.notice = "Could not copy to the clipboard")),
-        excludePath: (path, dir) => void changeset.excludePath(path, dir),
-        reviewOnly: (path) => void changeset.reviewOnly(path),
-        setFolderSeen: (path, seen) => {
-          const revision = changeset.manifest?.revision;
-          if (revision !== undefined) void changeset.setDirectorySeen(revision, path, seen);
-        },
-        closeTab: (kind, path) => tabs.close(tabOf(kind, path)),
-        closeOtherTabs: (kind, path) => tabs.closeOthers(tabOf(kind, path)),
-        revealFile: () => {
-          if (!tree) return false;
-          void tree.reveal();
-          return true;
-        },
-      }),
-    );
+    const stopCommands = provideActions({
+      copyText: (text) =>
+        void navigator.clipboard.writeText(text).catch(() => (session.notice = "Could not copy to the clipboard")),
+      excludePath: (path, dir) => void changeset.excludePath(path, dir),
+      reviewOnly: (path) => void changeset.reviewOnly(path),
+      setFolderSeen: (path, seen) => {
+        const revision = changeset.manifest?.revision;
+        if (revision !== undefined) void changeset.setDirectorySeen(revision, path, seen);
+      },
+      closeTab: (kind, path) => tabs.close(tabOf(kind, path)),
+      closeOtherTabs: (kind, path) => tabs.closeOthers(tabOf(kind, path)),
+      stepTab: (delta) => tabs.step(delta),
+      revealFile: () => {
+        if (!tree) return false;
+        void tree.reveal();
+        return true;
+      },
+    });
     controller.open(true).then(
       () => onready(controller),
       (e: unknown) => void session.abandon(e),

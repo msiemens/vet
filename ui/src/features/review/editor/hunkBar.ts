@@ -128,7 +128,7 @@ export class HunkBar extends WidgetType {
       const tools = document.createElement("span");
       tools.className = "vet-hunk-tools";
       tools.append(
-        iconButton(commands.tooltip("review.jumpToSource", "Jump to source"), "file", () =>
+        iconButton(commands.tooltip("review.jumpToSource", "Jump to Source"), "file", () =>
           actions.openSource(this.index),
         ),
         iconButton("Comment", "comments", () => actions.comment(this.index), "vet-icon-btn vet-review-action"),

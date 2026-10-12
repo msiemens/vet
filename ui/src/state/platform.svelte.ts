@@ -5,6 +5,7 @@
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { Notification } from "../generated/Notification";
 import type { PlatformStatus } from "../generated/PlatformStatus";
+import type { PlatformTraits } from "../generated/PlatformTraits";
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
 import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
 import { errorText } from "../lib/errorText";
@@ -40,6 +41,12 @@ class PlatformStore {
     verdict: undefined as string | undefined,
     body: "",
   });
+  /** The toolbar's list of the outgoing comments and the vote, with the button that posts them, is open. */
+  outgoingOpen = $state(false);
+  /** The comment on the changeset as a whole that is being written in the Comments tool window. */
+  changesetComment = $state({ composing: false, body: "" });
+  /** What the platform of the last pull request on view lets the viewer do; kept while another changeset is on view. */
+  traits = $state.raw<PlatformTraits>();
   /** The viewer's comments are being posted. */
   sending = $state(false);
   /** The tab the Comments tool window shows. */
@@ -63,6 +70,7 @@ class PlatformStore {
       } else if (event.type === "changesetOpened") {
         this.opened = event.changeset;
         this.info = undefined;
+        Object.assign(this.changesetComment, { composing: false, body: "" });
         void this.reload();
       } else if (event.type === "threadsChanged") {
         void this.reload();
@@ -80,6 +88,8 @@ class PlatformStore {
       this.opened = undefined;
       this.info = undefined;
       this.status = undefined;
+      this.traits = undefined;
+      this.outgoingOpen = false;
     };
   }
 
@@ -95,7 +105,7 @@ class PlatformStore {
     }
     try {
       const info = await backend.pullRequestInfo();
-      if (seq === this.seq) [this.info, this.status] = [info, info.platform];
+      if (seq === this.seq) [this.info, this.status, this.traits] = [info, info.platform, info.traits];
     } catch {
       if (seq === this.seq) this.info = undefined;
     }

@@ -4,7 +4,6 @@
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { Command } from "../lib/commands.ts";
 import { THEMES, type Theme } from "../lib/theme/theme.ts";
-import { MODES, type Mode } from "../lib/viewMode.ts";
 import { parseKeyId } from "./changesetKey.ts";
 import type { CommandContext } from "./commands.ts";
 
@@ -14,65 +13,120 @@ export interface AppActions {
   finishReview(): void;
   /** Shows what changed since the version last reviewed. */
   changesSinceReview(): void;
-  /** Fetches the open project's remotes. */
-  fetch(): void;
+  /** Shows the whole changeset again, after a range of versions. */
+  wholeChangeset(): void;
+  /** Fetches the open project's remotes and lists its changesets again. */
+  refresh(): void;
+  /** Marks every hunk seen against an old base seen again. */
+  reconfirmAll(): void;
   /** Puts a changeset on view. */
   openChangeset(key: ChangesetKey): void;
-  /** Shows the queue of changesets. */
-  showQueue(): void;
+  /** Shows the queue of changesets, or the review of the one on view. */
+  showScreen(screen: "queue" | "review"): void;
   /** Opens the changeset switcher. */
   showChangesets(): void;
   /** Asks for a pull request by its number. */
   openPullRequest(): void;
   showDialog(dialog: "settings" | "about"): void;
+  /** Opens Settings on the Keymap page. */
+  showKeymap(): void;
   quit(): void;
-  setMode(mode: Mode): void;
+  /** Switches between the diff drawn side by side and inline. */
+  toggleSplit(): void;
+  /** Wraps long lines, or stops wrapping them. */
+  toggleSoftWrap(): void;
   /** Shows or hides the tool window `id`. */
   toggleTool(id: string): void;
   setTheme(theme: Theme): void;
+  /** Opens the comment form on the changeset as a whole. */
+  commentOnChangeset(): void;
+  /** Opens the list of the comments and the vote that wait to be sent, with the button that sends them. */
+  postComments(): void;
+  /** Stages the viewer's vote on the pull request. */
+  stageVote(verdict: string): void;
   /** Clears the backend's semantic caches. */
   clearSemanticCaches(): void;
   /** Opens the folder of the log files, or says where it is. */
   showLog(): void;
+  /** Ends the backend and starts another. */
+  restartBackend(): void;
 }
 
-/** The tool windows of the two rails, with the key that shows or hides each. */
-export const TOOL_WINDOWS: readonly { side: "left" | "right"; id: string; label: string; binding: string }[] = [
-  { side: "left", id: "changes", label: "Changes", binding: "Ctrl-Alt-1" },
-  { side: "left", id: "all", label: "All files", binding: "Ctrl-Alt-2" },
-  { side: "left", id: "commits", label: "Commits", binding: "Ctrl-Alt-3" },
-  { side: "left", id: "comments", label: "Comments", binding: "Ctrl-Alt-4" },
-  { side: "right", id: "symbol", label: "Symbol", binding: "Ctrl-Alt-5" },
+/** The tool windows of the rails, with the key that shows or hides each. */
+export const TOOL_WINDOWS: readonly {
+  side: "left" | "right" | "bottom";
+  id: string;
+  label: string;
+  binding: string;
+}[] = [
+  { side: "left", id: "changes", label: "Changes", binding: "Alt-1" },
+  { side: "left", id: "all", label: "All Files", binding: "Alt-2" },
+  { side: "left", id: "commits", label: "Commits", binding: "Alt-3" },
+  { side: "left", id: "comments", label: "Comments", binding: "Alt-4" },
+  { side: "right", id: "symbol", label: "Symbol", binding: "Alt-5" },
+  { side: "bottom", id: "timeline", label: "Timeline", binding: "Alt-6" },
 ];
 
 /** The id of the command that shows or hides the tool window `id`. */
 export const toolCommand = (id: string) => `view.tool.${id}`;
 
+const NO_PROJECT = "Open a project first";
+const NO_CHANGESET = "No changeset is on view";
+const NO_REVIEW = "No review is open";
+const NO_PULL_REQUEST = "No pull request is on view";
+
 export function appCommands(a: AppActions): Command<CommandContext>[] {
   const repoOpen = (c: CommandContext) => c.repoOpen;
+  const needsProject = () => NO_PROJECT;
+  const changesetOpen = (c: CommandContext) => !!c.changesetOpen;
   return [
-    { id: "file.open", label: "Open repository…", binding: "Mod-o", run: () => a.pickProject() },
+    { id: "file.open", label: "Open Project…", binding: "Mod-o", accelerator: "Cmd+O", run: () => a.pickProject() },
     {
       id: "file.openRecent",
-      label: "Open recent",
+      label: "Open Recent",
       argument: true,
       run: (_, path) => {
         if (path === undefined) return false;
         a.openProject(path);
       },
     },
-    { id: "view.queue", label: "Open Queue", binding: "Mod-1", enabled: repoOpen, run: () => a.showQueue() },
-    { id: "changeset.switch", label: "Switch Changeset…", enabled: repoOpen, run: () => a.showChangesets() },
+    {
+      id: "view.queue",
+      label: "Queue",
+      binding: "Mod-1",
+      accelerator: "Cmd+1",
+      enabled: repoOpen,
+      disabledReason: needsProject,
+      run: () => a.showScreen("queue"),
+    },
+    {
+      id: "view.review",
+      label: "Review",
+      binding: "Mod-2",
+      accelerator: "Cmd+2",
+      enabled: repoOpen,
+      disabledReason: needsProject,
+      run: () => a.showScreen("review"),
+    },
+    {
+      id: "changeset.switch",
+      label: "Switch Changeset…",
+      binding: "Mod-Shift-o",
+      accelerator: "Cmd+Shift+O",
+      enabled: repoOpen,
+      disabledReason: needsProject,
+      run: () => a.showChangesets(),
+    },
     {
       id: "changeset.openPullRequest",
-      label: "Open Pull Request…",
-      binding: "Mod-Shift-o",
+      label: "Open Pull Request by Number…",
       enabled: repoOpen,
+      disabledReason: needsProject,
       run: () => a.openPullRequest(),
     },
     {
       id: "changeset.open",
-      label: "Open changeset",
+      label: "Open Changeset",
       enabled: repoOpen,
       run: (_, id) => {
         const key = parseKeyId(id);
@@ -81,13 +135,72 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
       },
     },
     {
+      id: "changeset.whole",
+      label: "Whole Changeset",
+      enabled: changesetOpen,
+      disabledReason: () => NO_CHANGESET,
+      run: () => a.wholeChangeset(),
+    },
+    {
       id: "review.sinceLast",
       label: "Changes Since My Last Review",
       enabled: (c) => c.reviewOpen,
+      disabledReason: () => NO_REVIEW,
       run: () => a.changesSinceReview(),
     },
-    { id: "review.finish", label: "Finish Review…", enabled: (c) => c.reviewOpen, run: () => a.finishReview() },
-    { id: "git.fetch", label: "Fetch", enabled: repoOpen, run: () => a.fetch() },
+    {
+      id: "changeset.refresh",
+      label: "Fetch and Refresh",
+      binding: "Mod-t",
+      accelerator: "Cmd+T",
+      enabled: repoOpen,
+      disabledReason: needsProject,
+      run: () => a.refresh(),
+    },
+    {
+      id: "review.reconfirmAll",
+      label: "Re-confirm All",
+      enabled: (c) => !!c.reconfirmable,
+      disabledReason: () => "No hunk was seen against an old base",
+      run: () => a.reconfirmAll(),
+    },
+    {
+      id: "review.commentOnChangeset",
+      label: "Comment on Changeset",
+      enabled: changesetOpen,
+      disabledReason: () => NO_CHANGESET,
+      run: () => a.commentOnChangeset(),
+    },
+    {
+      id: "review.post",
+      label: "Post Comments…",
+      enabled: (c) => !!c.pullRequest && !!c.outgoing && !c.rangeShown,
+      disabledReason: (c) =>
+        !c.pullRequest
+          ? NO_PULL_REQUEST
+          : c.rangeShown
+            ? "Show the whole changeset to post comments"
+            : "No comment or vote waits to be sent",
+      run: () => a.postComments(),
+    },
+    {
+      id: "review.vote",
+      label: "Vote",
+      argument: true,
+      enabled: (c) => !!c.pullRequest && c.voteBlock === undefined,
+      disabledReason: (c) => (c.pullRequest ? c.voteBlock : NO_PULL_REQUEST),
+      run: (_, verdict) => {
+        if (!verdict) return false;
+        a.stageVote(verdict);
+      },
+    },
+    {
+      id: "review.finish",
+      label: "Finish Review…",
+      enabled: (c) => c.reviewOpen,
+      disabledReason: () => NO_REVIEW,
+      run: () => a.finishReview(),
+    },
     {
       id: "app.settings",
       label: "Settings…",
@@ -99,21 +212,20 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     { id: "app.about", label: "About Vet", run: () => a.showDialog("about") },
     { id: "app.quit", label: "Exit", accelerator: "Cmd+Q", enabled: (c) => c.canQuit, run: () => a.quit() },
     {
-      id: "view.mode",
-      label: "View mode",
-      argument: true,
+      id: "view.splitDiff",
+      label: "Side-by-Side Diff",
       enabled: repoOpen,
-      run: (_, id) => {
-        const mode = MODES.find((m) => m.id === id);
-        if (!mode) return false;
-        a.setMode(mode.id);
-      },
+      disabledReason: needsProject,
+      run: () => a.toggleSplit(),
     },
+    { id: "view.softWrap", label: "Soft Wrap", run: () => a.toggleSoftWrap() },
     ...TOOL_WINDOWS.map(({ id, label, binding }): Command<CommandContext> => ({
       id: toolCommand(id),
       label,
       binding,
       enabled: id === "commits" ? (c) => c.repoOpen && !!c.manyCommits : repoOpen,
+      disabledReason: (c) =>
+        c.repoOpen ? "Only a changeset of several commits can be reviewed by commit" : NO_PROJECT,
       run: () => a.toggleTool(id),
     })),
     {
@@ -127,6 +239,8 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
       },
     },
     { id: "semantic.clearCaches", label: "Clear Semantic Caches", run: () => a.clearSemanticCaches() },
-    { id: "help.showLog", label: "Show Log", run: () => a.showLog() },
+    { id: "help.keymap", label: "Keyboard Shortcuts", run: () => a.showKeymap() },
+    { id: "help.showLog", label: "Show Log Folder", run: () => a.showLog() },
+    { id: "app.restartBackend", label: "Restart Backend", run: () => a.restartBackend() },
   ];
 }

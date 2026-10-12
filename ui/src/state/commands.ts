@@ -30,6 +30,18 @@ export interface CommandContext {
   /** A review has started and can be finished. */
   reviewOpen: boolean;
   canQuit: boolean;
+  /** A changeset is on view. */
+  changesetOpen?: boolean;
+  /** The review view shows a range of versions rather than the changeset. */
+  rangeShown?: boolean;
+  /** Hunks seen against an old base wait to be re-confirmed. */
+  reconfirmable?: boolean;
+  /** A pull request is on view. */
+  pullRequest?: boolean;
+  /** How many comments and staged votes wait to be sent to the platform. */
+  outgoing?: number;
+  /** Why a vote cannot be staged now, if it cannot. */
+  voteBlock?: string;
   /** The changeset on view has more than one commit, so there is something to review by commit. */
   manyCommits?: boolean;
   /**
@@ -37,6 +49,10 @@ export interface CommandContext {
    * is what the tab shows: a file's path, or for a log tab the check run it is the log of.
    */
   tab?: { kind: TabKind; path?: string };
+  /** How many tabs are open. */
+  tabCount?: number;
+  /** What the active tab shows of a changed file: its diff or its text; none when it is no changed file's. */
+  fileView?: "diff" | "text";
   /** The active tab shows hunks to step through: a diff view, or a changed file's text. */
   diffView: boolean;
   /** Index of the current hunk in the active view, -1 for none. */
