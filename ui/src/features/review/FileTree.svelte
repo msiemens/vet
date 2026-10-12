@@ -330,14 +330,16 @@
 {#snippet fileRow(index: number, path: string, name: string, depth: number, hit: Hit, entry?: DirEntry)}
   {@const file = fileOf(path)}
   {@const s = file && summarize(file)}
+  {@const flagged = file?.completion.flaggedHunks ?? 0}
   <button
     class="flat tw"
     class:on={path === (pressed ?? selected)}
     class:dim={entry?.excluded}
     class:cur={hit.cursor}
+    class:flagged
     type="button"
     tabindex="-1"
-    title={path}
+    title={flagged ? `${path}\n${flagged} flagged ${flagged === 1 ? "hunk" : "hunks"}` : path}
     style:padding-left="calc(8px + {depth} * var(--w-indent))"
     onclick={(e) => clickFile(e, path, index)}
     oncontextmenu={(e) => menu(e, path, false)}
@@ -527,6 +529,9 @@
   }
   .dim {
     color: var(--text-3);
+  }
+  .flagged .name {
+    color: var(--warn);
   }
   /* The highlighted row, which Space and Enter act on, while the list has the focus. */
   .body:focus-within .cur {
