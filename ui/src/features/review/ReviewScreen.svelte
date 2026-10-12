@@ -29,6 +29,7 @@
   import { provideActions } from "./reviewActions";
   import { editorMenu, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
   import CommitHeader from "./CommitHeader.svelte";
+  import { exposeRendered } from "./devHook";
   import { CHANGES, kindOf, pathOf, subjectOf, tabOf } from "./tabModel";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
@@ -115,6 +116,7 @@
     const stopThreads = threads.start(backend);
     const stopPlatform = platform.start(backend);
     const stopVersions = versions.start(backend);
+    const stopHook = exposeRendered(() => controller.rendered());
     const stopCommands = provideActions({
       copyText: (text) =>
         void navigator.clipboard.writeText(text).catch(() => (session.notice = "Could not copy to the clipboard")),
@@ -142,6 +144,7 @@
       stopPlatform();
       stopVersions();
       stopCommands();
+      stopHook();
       controller.destroy();
       onclose?.();
     };

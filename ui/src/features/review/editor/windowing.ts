@@ -32,6 +32,8 @@ export interface WindowHost {
   scrolled(): void;
   /** Drops a section's editor; returns how far the scroll position moved. */
   unmount(s: Section, scrollTop: number): number;
+  /** A section near the viewport is looked at: whatever it drew may be out of date. */
+  check(fi: number): void;
 }
 
 export class Windowing {
@@ -116,7 +118,10 @@ export class Windowing {
         this.mounted.delete(fi);
       }
     }
-    for (let fi = near[0]; fi <= near[1]; fi++) this.setPreviews(fi, true);
+    for (let fi = near[0]; fi <= near[1]; fi++) {
+      this.host.check(fi);
+      this.setPreviews(fi, true);
+    }
     for (const fi of [...this.previewing]) if (fi < far[0] || fi > far[1]) this.setPreviews(fi, false);
     const middle = top + h / 2;
     const distance = (fi: number) => {

@@ -20,7 +20,7 @@ import { CaretStop } from "./caretStop";
 import { changeCard } from "./changeCard";
 import { type EditorSelection, hunkComment, linesAt } from "./commentAnchor";
 import { takesKeys } from "./dom";
-import { fileHeader, renderProgress } from "./fileHeader";
+import { fileHeader } from "./fileHeader";
 import type { FileSource } from "./fileSource";
 import type { BarActions } from "./hunkBar";
 import { setColumns } from "./longLines";
@@ -28,6 +28,7 @@ import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
 import { lineOf, lineStart } from "./positions";
 import { type ReviewRequests, ReviewActions, renderReview } from "./reviewActions";
 import { setBaseDiffs, setCurrent } from "./reviewState";
+import type { RenderedFile, RenderedView } from "./rendered";
 import { StickyHunk } from "./stickyHunk";
 import { sectionMarks } from "./scrollMarks";
 import { Stops, firstStopFrom, hunkAt, hunkOverlapping } from "./stops";
@@ -114,8 +115,8 @@ export class ChangesetView {
     /** What the files are of: the manifest revision and the view; every request the view makes carries it. */
     readonly shown: Shown,
     files: readonly FileLayout[],
-    /** The review state of the files, which the view draws and asks for again when told it changed. */
-    review: ReviewSource,
+    /** The review state of the files: the view keeps none, and asks for it whenever it draws. */
+    private review: ReviewSource,
     private source: FileSource,
     mode: Mode,
     /** Which files wrap their long lines; a change builds the view anew. */
@@ -148,7 +149,16 @@ export class ChangesetView {
     this.heights = new SectionHeights(root, this.sections, metrics, this.threads, mode, collapse);
     // The scroll bar follows the height model, not thousands of sections; its gutter goes beside the root.
     this.scrollbar = new Scrollbar(root, {
-      marks: () => sectionMarks(this.sections, this.heights.total, this.heights.mode, this.heights.m),
+      marks: () => {
+        for (const s of this.sections) this.heal(s);
+        return sectionMarks(
+          this.sections,
+          (path) => this.review.state(path)?.review,
+          this.heights.total,
+          this.heights.mode,
+          this.heights.m,
+        );
+      },
       watchContent: false,
     });
     root.after(this.scrollbar.dom);
@@ -158,6 +168,7 @@ export class ChangesetView {
       mount: (fi) => void this.mount(fi),
       scrolled: () => this.pin.update(this.root.scrollTop),
       unmount: (s, scrollTop) => this.unmount(s, scrollTop),
+      check: (fi) => this.heal(this.sections[fi]),
     });
     let hunks = 0;
     for (const file of files) {
@@ -196,8 +207,7 @@ export class ChangesetView {
       };
       this.sections.push({
         file,
-        review: state.review,
-        completion: state.completion,
+        drawn: review.version(file.path),
         el,
         header: header.el,
         body,
@@ -224,18 +234,23 @@ export class ChangesetView {
     }
     this.totalHunks = hunks;
     this.stops = new Stops(this.sections.map((s) => ({ cards: s.cards.length, hunks: s.file.hunks.length })));
-    this.pin = new StickyHunk(this.sections, metrics, {
-      mode: () => this.heights.mode,
-      current: (fi, hi) => this.current === this.stopOf(fi, hi),
-      press: (fi, hi) => this.select(this.stopOf(fi, hi)),
-      pinned: (fi) => {
-        if (this.reached && Math.abs(this.root.scrollTop - this.reached.top) >= 1) this.reached = undefined;
-        const at = this.reached?.file ?? fi;
-        listeners.pinned?.(at === undefined ? undefined : this.sections[at].file.path);
+    this.pin = new StickyHunk(
+      this.sections,
+      metrics,
+      {
+        mode: () => this.heights.mode,
+        current: (fi, hi) => this.current === this.stopOf(fi, hi),
+        press: (fi, hi) => this.select(this.stopOf(fi, hi)),
+        pinned: (fi) => {
+          if (this.reached && Math.abs(this.root.scrollTop - this.reached.top) >= 1) this.reached = undefined;
+          const at = this.reached?.file ?? fi;
+          listeners.pinned?.(at === undefined ? undefined : this.sections[at].file.path);
+        },
       },
-    });
+      review,
+    );
     this.root.replaceChildren(...this.sections.map((s) => s.el));
-    for (const s of this.sections) renderProgress(s, s.review, s.completion);
+    for (const s of this.sections) this.redraw(s);
     this.heights.layout();
     this.pin.update(root.scrollTop);
     this.windowing.start();
@@ -370,11 +385,6 @@ export class ChangesetView {
     });
   }
 
-  /** The paths of the files in the view. */
-  paths(): string[] {
-    return this.sections.map((s) => s.file.path);
-  }
-
   /** Index of the file with this path, if it is in the view. */
   indexOf(path: string): number {
     return this.sections.findIndex((s) => s.file.path === path);
@@ -413,13 +423,14 @@ export class ChangesetView {
   /** Mounts the editor of a loaded section. */
   private mount(fi: number): Handle {
     const s = this.sections[fi];
+    this.heal(s);
     if (s.handle) return s.handle;
     if (!s.loaded) throw new Error(`file ${fi} is not loaded`);
     s.handle = mountFile(
       s.body,
       s.file.path,
       s.loaded,
-      s.review,
+      this.stateOf(s).review,
       s.baseDiffs,
       this.heights.mode,
       this.heights.m,
@@ -767,14 +778,61 @@ export class ChangesetView {
     this.chosen();
   }
 
-  /** Renders a file's review state and progress as the backend sent them; a base diff of a hunk that is no longer seen against an old base closes. */
-  showReview(path: string, state: FileState) {
-    const s = this.sections.find((s) => s.file.path === path);
-    if (!s) return;
-    renderReview(s, state);
-    for (const hi of s.baseDiffs.keys()) if (s.review.hunks[hi] !== "seenAgainstOldBase") this.setBaseDiff(s, hi);
+  /** What the view shows of its files' review state, read from what is drawn. */
+  rendered(): RenderedView {
+    const files = this.sections.map((s): RenderedFile => {
+      const drawn = s.handle?.drawn();
+      return {
+        path: s.file.path,
+        count: s.count.textContent,
+        seenPercent: parseFloat(s.meter.seen.style.width),
+        allSeen: s.el.classList.contains("all-seen"),
+        reconfirm: !s.reconfirm.hidden,
+        cards: s.cards.map((c) => c.el.querySelector(".vet-hunk")?.classList.contains("vet-hunk-seen") ?? false),
+        hunks: drawn?.hunks,
+        flagged: drawn?.flagged,
+      };
+    });
+    const marks = [...this.scrollbar.dom.querySelectorAll<HTMLElement>(".vet-scrollmark")]
+      .filter((mark) => !mark.hidden)
+      .map((mark) => mark.className.replace("vet-scrollmark vet-scrollmark-", ""));
+    return { files, marks };
+  }
+
+  /** The review state of the file in `s`, as the source holds it now. */
+  private stateOf(s: Section): FileState {
+    const state = this.review.state(s.file.path);
+    if (!state) throw new Error(`no review state for ${s.file.path}`);
+    return state;
+  }
+
+  /**
+   * The source wrote review state for `paths` (or for every file): draws the files of this view among
+   * them from what the source holds now. A base diff of a hunk that is no longer seen against an old
+   * base closes.
+   */
+  refreshReview(paths: ReadonlySet<string> | "all") {
+    let changed = false;
+    for (const s of this.sections) {
+      if (paths === "all" || paths.has(s.file.path)) changed = this.redraw(s) || changed;
+    }
+    if (!changed) return;
     this.pin.refresh();
     this.scrollbar.refresh();
+  }
+
+  /** Draws the file again from the source; answers whether the source has its state. */
+  private redraw(s: Section): boolean {
+    const state = this.review.state(s.file.path);
+    if (!state) return false;
+    renderReview(s, state, this.review.version(s.file.path));
+    for (const hi of s.baseDiffs.keys()) if (state.review.hunks[hi] !== "seenAgainstOldBase") this.setBaseDiff(s, hi);
+    return true;
+  }
+
+  /** Draws the file again if the source wrote its state since the section drew it; a missed notification costs a delay, not a wrong picture. */
+  private heal(s: Section) {
+    if (s.drawn !== this.review.version(s.file.path) && this.redraw(s)) this.pin.refresh();
   }
 
   /** Opens the base diff of a hunk of `s` seen against an old base, or closes it if it is open. */
@@ -783,7 +841,7 @@ export class ChangesetView {
       this.setBaseDiff(s, hi);
     } else {
       const diff = await this.actions.baseDiff(s, hi);
-      if (!diff || this.destroyed || s.review.hunks[hi] !== "seenAgainstOldBase") return;
+      if (!diff || this.destroyed || this.review.state(s.file.path)?.review.hunks[hi] !== "seenAgainstOldBase") return;
       this.setBaseDiff(s, hi, diff);
     }
     this.pin.refresh();
@@ -870,7 +928,8 @@ export class ChangesetView {
     const [fi, si] = this.stops.locate(stop);
     const s = this.sections[fi];
     const hi = si - s.cards.length;
-    return hi >= 0 && s.review.hunks[hi] === "seenAgainstOldBase" ? this.actions.hunk(s, hi) : undefined;
+    const old = this.review.state(s.file.path)?.review.hunks[hi] === "seenAgainstOldBase";
+    return hi >= 0 && old ? this.actions.hunk(s, hi) : undefined;
   }
 
   /**

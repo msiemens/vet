@@ -9,6 +9,8 @@ export type WriteListener = (paths: ReadonlySet<string> | "all") => void;
 export interface ReviewSource {
   /** The review state of a file of the view on screen, as it is now; none for a path the view has no file at. Reads nothing reactively. */
   state(path: string): FileState | undefined;
+  /** Grows with every write of the file's state, so a view can tell that what it drew is not what is held now. Reads nothing reactively. */
+  version(path: string): number;
   /** Calls `listener` after review state was written; returns the unsubscribe function. */
   subscribe(listener: WriteListener): () => void;
 }

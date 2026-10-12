@@ -2,8 +2,6 @@
 // all read and write about it.
 
 import type { BaseDiff } from "../../../generated/BaseDiff";
-import type { Completion } from "../../../generated/Completion";
-import type { FileReview } from "../../../generated/FileReview";
 import type { FileLayout } from "../../../state/reviewModel";
 import type { Card } from "./changeCard";
 import type { FileProgress } from "./fileHeader";
@@ -29,8 +27,8 @@ export interface ThreadState {
 
 export interface Section extends ThreadState, FileProgress {
   file: FileLayout;
-  review: FileReview;
-  completion: Completion;
+  /** The version of the file's review state that the section last drew; the state itself is the source's. */
+  drawn: number;
   el: HTMLElement;
   header: HTMLElement;
   body: HTMLElement;

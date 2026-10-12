@@ -32,6 +32,7 @@ import { SUBMIT_KEY } from "../../lib/composer";
 import { errorText } from "../../lib/errorText";
 import { ChangesetView, type Listeners, type PanePosition, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
+import type { Rendered } from "./editor/rendered";
 import { LogView } from "./editor/LogView";
 import { type ThreadActions, buildCard } from "./editor/threadCard";
 import type { ThreadListeners } from "./editor/threadLayer";
@@ -74,6 +75,7 @@ export type ChangesetSource = Pick<
   | "stepCommit"
   | "subscribe"
   | "state"
+  | "version"
   | "toggleHunk"
   | "toggleFlag"
   | "toggleItem"
@@ -171,7 +173,7 @@ export class ReviewController {
         this.analysable("target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
     };
     semantic.reset(); // the controller belongs to one repository's screen
-    const offReview = changeset.subscribe((paths) => this.showReview(paths));
+    const offReview = changeset.subscribe((paths) => this.refreshReview(paths));
     const offThreads = threads.onChange(() => this.showThreads());
     const offCommands = provideActions(this.viewActions());
     const offContext = commands.provide(() => this.facts());
@@ -587,25 +589,22 @@ export class ReviewController {
   }
 
   /**
-   * Review state was written for `paths`: the views of what is on screen show it as the changeset holds
-   * it now. The views of another revision or view are about to be replaced and are left alone.
+   * Review state was written for `paths`: the views of what is on screen look it up again. The views of
+   * another revision or view are about to be replaced and are left alone.
    */
-  private showReview(paths: ReadonlySet<string> | "all") {
+  private refreshReview(paths: ReadonlySet<string> | "all") {
     const shown = this.changeset.currentShown();
     if (!shown) return;
-    const wanted = (path: string) => paths === "all" || paths.has(path);
-    for (const view of this.views.values()) {
-      if (!isCurrent(view.shown, shown)) continue;
-      for (const path of view.paths()) {
-        const state = wanted(path) ? this.changeset.state(path) : undefined;
-        if (state) view.showReview(path, state);
-      }
-    }
-    for (const [id, text] of this.texts) {
-      const path = pathOf(id);
-      const state = path !== undefined && wanted(path) ? this.changeset.state(path) : undefined;
-      if (state && text.isFor(shown)) text.applyReview(state.review);
-    }
+    for (const view of this.views.values()) if (isCurrent(view.shown, shown)) view.refreshReview(paths);
+    for (const text of this.texts.values()) if (text.isFor(shown)) text.refreshReview(paths);
+  }
+
+  /** What every view shows of the files' review state, read from what is drawn. */
+  rendered(): Rendered {
+    return {
+      views: Object.fromEntries([...this.views].map(([id, view]) => [id, view.rendered()])),
+      texts: Object.fromEntries([...this.texts].map(([id, text]) => [id, text.rendered()])),
+    };
   }
 
   /** Gives every view the threads, if they are of the view's revision and range. */

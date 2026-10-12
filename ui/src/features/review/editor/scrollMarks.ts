@@ -31,8 +31,13 @@ export interface MarkedSection {
   top: number;
   /** Estimated offset of each hunk bar from the top of the section. */
   hunkTops: readonly number[];
-  file: { hunks: readonly Hunk[] };
-  review: { hunks: readonly HunkState[]; flagged: readonly boolean[] };
+  file: { path: string; hunks: readonly Hunk[] };
+}
+
+/** What a mark needs of a hunk's review state. */
+export interface MarkedReview {
+  hunks: readonly HunkState[];
+  flagged: readonly boolean[];
 }
 
 /** The px a hunk of a diff takes below its bar: its lines on both sides, or the taller side. */
@@ -40,21 +45,27 @@ function hunkRows(h: Hunk, mode: Mode, line: number): number {
   return (mode === "split" ? Math.max(h.baseLen, h.targetLen) : h.baseLen + h.targetLen) * line;
 }
 
-/** The marks of a column of file sections (the Changes tab, or one file's tab), from the height model. */
+/**
+ * The marks of a column of file sections (the Changes tab, or one file's tab), from the height model.
+ * `review` gives a file's state as it is when the marks are drawn.
+ */
 export function sectionMarks(
   sections: readonly MarkedSection[],
+  review: (path: string) => MarkedReview | undefined,
   total: number,
   mode: Mode,
   m: Pick<Metrics, "hunk" | "line">,
 ): MarkLayout {
   const marks: ScrollMark[] = [];
-  for (const s of sections)
+  for (const s of sections) {
+    const state = review(s.file.path);
     s.file.hunks.forEach((h, i) =>
       marks.push({
         top: s.top + s.hunkTops[i],
         height: m.hunk + hunkRows(h, mode, m.line),
-        kind: markKind(s.review.hunks[i], h.targetLen === 0, s.review.flagged[i]),
+        kind: markKind(state?.hunks[i] ?? "unseen", h.targetLen === 0, state?.flagged[i] ?? false),
       }),
     );
+  }
   return { total, marks };
 }

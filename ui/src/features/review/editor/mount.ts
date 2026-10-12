@@ -2,12 +2,13 @@
 // (`MergeView`), with the review decorations of `reviewState.ts` (SPEC §10).
 
 import { MergeView, uncollapseUnchanged, unifiedMergeView } from "@codemirror/merge";
-import { Compartment, EditorState, type Extension, type StateEffect } from "@codemirror/state";
+import { Compartment, EditorState, type Extension, type StateEffect, type StateField } from "@codemirror/state";
 import { standardKeymap } from "@codemirror/commands";
 import { EditorView, drawSelection, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
 import type { BaseDiff } from "../../../generated/BaseDiff";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { FileReview } from "../../../generated/FileReview";
+import type { HunkState } from "../../../generated/HunkState";
 import type { Hunk } from "../../../generated/Hunk";
 import type { TextChange } from "../../../generated/TextChange";
 import type { Side } from "../../../generated/Side";
@@ -24,7 +25,7 @@ import { deletedHighlights } from "./deletedHighlights";
 import { highlightExtension } from "./highlightExtension";
 import { longLines } from "./longLines";
 import { openOnDoubleClick } from "./openAtLine";
-import { type BarMetrics, deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
+import { type BarMetrics, type ReviewState, deletedChunkStyle, reviewField, sideConfig } from "./reviewState";
 import { reportHeight, softWrap } from "./softWrap";
 
 export interface Loaded {
@@ -48,6 +49,8 @@ export interface Handle {
   view: EditorView;
   views: EditorView[];
   dispatchAll(effect: StateEffect<unknown>): void;
+  /** The review state of each hunk that the target view draws from. */
+  drawn(): { hunks: HunkState[]; flagged: boolean[] };
   /** Replaces the target view's diagnostics. */
   showDiagnostics(diagnostics: readonly Diagnostic[]): void;
   /** Scrolls to and marks a span of `side`'s text; a base span has no editor of its own in a unified view and is left to the caller. */
@@ -158,7 +161,7 @@ export function mountFile(
         deletedLines(path, hooks),
       ],
     });
-    return handle(view, [view], loaded.hunks);
+    return handle(view, [view], loaded.hunks, targetField);
   }
   const baseField = reviewField(sideConfig(loaded.hunks, "base", null, barMetrics), review, baseDiffs);
   const base: Extension[] = [
@@ -182,7 +185,7 @@ export function mountFile(
     collapseUnchanged,
     diffConfig,
   });
-  return handle(merge.b, [merge.a, merge.b], loaded.hunks, () => merge.destroy());
+  return handle(merge.b, [merge.a, merge.b], loaded.hunks, targetField, () => merge.destroy());
 }
 
 /** Expands the collapsed region of `view` that hides the 0-based `line`; answers whether there was one. */
@@ -194,11 +197,21 @@ function expandAt(view: EditorView, line: number): boolean {
   return true;
 }
 
-function handle(view: EditorView, views: EditorView[], hunks: Hunk[], destroy = () => view.destroy()): Handle {
+function handle(
+  view: EditorView,
+  views: EditorView[],
+  hunks: Hunk[],
+  field: StateField<ReviewState>,
+  destroy = () => view.destroy(),
+): Handle {
   return {
     view,
     views,
     dispatchAll: (effect) => views.forEach((v) => v.dispatch({ effects: effect })),
+    drawn: () => {
+      const { states, flagged } = view.state.field(field);
+      return { hunks: states, flagged };
+    },
     showDiagnostics: (diagnostics) => showDiagnostics(view, diagnostics),
     revealSpan: (side, span) => {
       if (side === "target") revealSpan(view, span, true);

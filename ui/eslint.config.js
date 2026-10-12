@@ -109,6 +109,25 @@ export default defineConfig(
     rules: { "no-restricted-imports": ["error", { patterns: [connection, svelteImports] }] },
   },
   {
+    // A view draws review state it pulls from the `ReviewSource` when it draws, and keeps none: the
+    // CodeMirror fields hold what they drew, and are only ever fed from the source.
+    files: ["src/features/review/editor/**"],
+    ignores: ["src/**/*.test.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "PropertyDefinition TSTypeReference[typeName.name=/^(FileReview|FileState|Completion|HunkState)$/]",
+          message: "Views pull review state from the ReviewSource; they do not keep it.",
+        },
+        {
+          selector: "TSPropertySignature TSTypeReference[typeName.name=/^(FileReview|FileState|Completion)$/]",
+          message: "Views pull review state from the ReviewSource; they do not keep it.",
+        },
+      ],
+    },
+  },
+  {
     // The module hooks and the browser stubs are untyped glue around node's and the compilers' APIs.
     files: ["test/harness/*.mjs"],
     rules: {

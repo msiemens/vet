@@ -13,7 +13,7 @@ import type { Section } from "./section";
 export interface ReviewRequests {
   /**
    * Asks the owner of the review state to flip a hunk's seen state in `shown`, what the view was built
-   * for; the backend decides the direction. Its new state comes back through `renderReview`.
+   * for; the backend decides the direction. Its new state reaches the view through the review source.
    */
   toggleHunk(shown: Shown, path: string, hunk: number): Promise<void>;
   /** The same for a hunk's flag for later review. */
@@ -68,10 +68,9 @@ export class ReviewActions {
   }
 }
 
-/** Renders a file's review state and progress as the backend sent them. */
-export function renderReview(s: Section, { review, completion }: FileState) {
-  s.review = review;
-  s.completion = completion;
+/** Draws a file's review state and progress, as the source holds them at `version`. */
+export function renderReview(s: Section, { review, completion }: FileState, version: number) {
+  s.drawn = version;
   s.handle?.dispatchAll(setReview.of(review));
   s.cards.forEach((card, i) => card.setAcknowledged(review.acknowledged.includes(s.file.nonText[i].kind)));
   renderProgress(s, review, completion);

@@ -37,6 +37,7 @@ function column(msPerMount: number, viewport = 200, count = 10) {
     file: { hunks: [1], baseLines: 1, targetLines: 1 },
   }));
   const frames: (() => void)[] = [];
+  const checked = new Set<number>();
   let clock = 0;
   const global = globalThis as unknown as {
     requestAnimationFrame: (run: () => void) => number;
@@ -66,9 +67,11 @@ function column(msPerMount: number, viewport = 200, count = 10) {
     },
     scrolled: () => undefined,
     unmount: () => 0,
+    check: (fi) => checked.add(fi),
   });
   windowing.start();
   return {
+    checked,
     /**
      * A frame as the browser runs it: the scroll event if there is one, then the frame requests made
      * so far. Answers how many editors the frame mounted.
@@ -93,6 +96,19 @@ void test("a frame mounts editors until its time budget is spent, the rest follo
   try {
     // Sections 5 to 7 are in view, 4 ms each: the third is over the 6 ms budget.
     assert.deepEqual([view.frame(true), view.frame(false), view.frame(false)], [2, 1, 0]);
+  } finally {
+    view.restore();
+  }
+});
+
+void test("every section near the viewport is looked at when the window is synced, so a stale one can be redrawn", () => {
+  const view = column(0);
+  try {
+    view.frame(true);
+    assert.deepEqual(
+      [...view.checked].sort((a, b) => a - b),
+      [5, 6, 7],
+    );
   } finally {
     view.restore();
   }

@@ -64,6 +64,9 @@ class ChangesetStore implements ReviewSource {
   /** The current review state of each file of the view, one reactive cell per path: a review update invalidates only its file. */
   private cells = new SvelteMap<string, FileState>();
   private listeners = new Set<WriteListener>();
+  /** When each path was last written, in writes counted from the start; never reset, so a path that comes back is newer. */
+  private versions = new Map<string, number>();
+  private clock = 0;
   /** Which change of the backend the review state held is as of; updates and manifests older than it do not replace it. */
   private order = new ReviewOrder();
 
@@ -151,6 +154,10 @@ class ChangesetStore implements ReviewSource {
   /** The review state of a file at the moment of use; reads nothing reactively. */
   state(path: string): FileState | undefined {
     return untrack(() => this.cells.get(path));
+  }
+
+  version(path: string): number {
+    return this.versions.get(path) ?? 0;
   }
 
   /** The layout of the view on screen, for reading at the moment of use; reads nothing reactively. */
@@ -685,7 +692,11 @@ class ChangesetStore implements ReviewSource {
    */
   private write(entries: ReadonlyMap<string, FileState>, cause: "update" | "manifest") {
     if (cause === "manifest") this.cells.clear();
-    for (const [path, file] of entries) this.cells.set(path, file);
+    const stamp = ++this.clock;
+    for (const [path, file] of entries) {
+      this.cells.set(path, file);
+      this.versions.set(path, stamp);
+    }
     const paths = cause === "manifest" ? "all" : new Set(entries.keys());
     for (const listener of this.listeners) listener(paths);
   }

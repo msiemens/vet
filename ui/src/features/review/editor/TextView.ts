@@ -6,7 +6,6 @@
 import { EditorState, type StateField, Text } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import type { FileReview } from "../../../generated/FileReview";
-import type { HunkState } from "../../../generated/HunkState";
 import type { NoTextReason } from "../../../generated/NoTextReason";
 import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
@@ -37,6 +36,7 @@ import { highlightExtension } from "./highlightExtension";
 import { hunkToolbar } from "./hunkToolbar";
 import type { Loaded } from "./mount";
 import { lineOf, lineStart } from "./positions";
+import type { RenderedText } from "./rendered";
 import { markKind } from "./scrollMarks";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { readMetrics } from "./sectionHeights";
@@ -81,11 +81,9 @@ export class TextView {
   private span?: TextSpan;
   /** The hunk to go to once the text has arrived. */
   private hunk?: number;
-  /** The review state of each of the file's hunks, as the backend last sent it. */
-  private states: HunkState[];
-  /** Which of the file's hunks are flagged for later review. */
-  private flags: boolean[];
   private drawn?: Drawn;
+  /** The version of the file's review state that the editor last drew; the state itself is the source's. */
+  private drawnVersion = 0;
   private scrollbar?: Scrollbar;
   /** The reviewer was in the editor, or navigation put its caret on a line: comments go on its selection. */
   private entered = false;
@@ -107,9 +105,6 @@ export class TextView {
     private changes?: { file: FileLayout; review: ReviewSource; actions: TextActions },
   ) {
     this.shown = threads.shown;
-    const review = changes?.review.state(changes.file.path)?.review;
-    this.states = review?.hunks ?? [];
-    this.flags = review?.flagged ?? [];
     root.replaceChildren();
     root.classList.add("vet-text");
     // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
@@ -182,6 +177,7 @@ export class TextView {
 
   /** Where the hunks lie in the editor's content, for the marks in its scroll bar. */
   private markLayout(view: EditorView, { source, field }: Drawn): MarkLayout {
+    this.heal();
     const { states, flags } = view.state.field(field);
     const { doc } = view.state;
     const marks = source.hunks.map((h, i): ScrollMark => {
@@ -208,19 +204,49 @@ export class TextView {
       },
       card: (view, line) => this.showCard(view, line),
     };
-    return { source, field: changesField(source, this.states, this.flags) };
+    const review = this.review();
+    this.drawnVersion = this.version();
+    return { source, field: changesField(source, review?.hunks ?? [], review?.flagged ?? []) };
+  }
+
+  /** The review state of the file's hunks as the source holds it now. */
+  private review(): FileReview | undefined {
+    return this.changes?.review.state(this.path)?.review;
+  }
+
+  private version(): number {
+    return this.changes?.review.version(this.path) ?? 0;
+  }
+
+  /** The source wrote review state for `paths` (or for every file): the editor takes its file's state, if it is among them. */
+  refreshReview(paths: ReadonlySet<string> | "all") {
+    if (paths === "all" || paths.has(this.path)) this.redraw();
+  }
+
+  /** The editor draws the hunks' states and flags the source holds now. */
+  private redraw() {
+    const review = this.review();
+    this.drawnVersion = this.version();
+    if (review && this.drawn)
+      this.view?.dispatch({ effects: setStates.of({ states: review.hunks, flags: review.flagged }) });
+  }
+
+  /** Draws again if the source wrote the file's state since the editor drew it; a missed notification costs a delay, not a wrong picture. */
+  private heal() {
+    if (this.drawn && this.drawnVersion !== this.version()) this.redraw();
+  }
+
+  /** What the editor shows of the file's hunks, read from what it draws from. */
+  rendered(): RenderedText {
+    const { view, drawn } = this;
+    if (!view || !drawn) return {};
+    const { states, flags } = view.state.field(drawn.field);
+    return { hunks: states, flagged: flags };
   }
 
   /** Whether the text is of `shown`. */
   isFor(shown: Shown): boolean {
     return isCurrent(this.shown, shown);
-  }
-
-  /** The hunks' review states and flags changed. */
-  applyReview({ hunks, flagged }: FileReview) {
-    this.states = hunks;
-    this.flags = flagged;
-    if (this.drawn) this.view?.dispatch({ effects: setStates.of({ states: hunks, flags: flagged }) });
   }
 
   /** The file has hunks to step through. */
@@ -280,7 +306,7 @@ export class TextView {
   /** Marks the current hunk seen again if it is seen against an old base; answers whether there was such a hunk. */
   reconfirmCurrent(): boolean {
     const hunk = this.current;
-    if (hunk < 0 || this.states[hunk] !== "seenAgainstOldBase" || !this.drawn) return false;
+    if (hunk < 0 || this.review()?.hunks[hunk] !== "seenAgainstOldBase" || !this.drawn) return false;
     this.drawn.source.actions.toggleSeen(hunk);
     return true;
   }
@@ -335,7 +361,7 @@ export class TextView {
       { left: view.contentDOM.getBoundingClientRect().left, top, bottom: top + block.height },
       {
         old: oldLinesOf(drawn.source.hunks[hunk], line, drawn.source.changes, drawn.source.base),
-        state: this.states[hunk],
+        state: this.review()?.hunks[hunk] ?? "unseen",
       },
     );
     return true;

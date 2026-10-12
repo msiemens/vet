@@ -9,6 +9,7 @@
 // positions the height model already has.
 
 import type { Mode } from "../../../lib/viewMode.ts";
+import type { ReviewSource } from "../../../state/reviewSource.ts";
 import { el } from "./dom.ts";
 import { HunkBar, hunkHeader } from "./hunkBar.ts";
 import { pinnedAt } from "./pinned.ts";
@@ -38,6 +39,8 @@ export class StickyHunk {
     private sections: readonly Section[],
     private m: { header: number; hunk: number },
     private host: PinHost,
+    /** A file's review state as it is when a bar is drawn. */
+    private review: ReviewSource,
   ) {
     this.box.append(this.bars);
     this.box.addEventListener("pointerdown", (e) => {
@@ -90,10 +93,11 @@ export class StickyHunk {
     const s = this.sections[file];
     const text = hunkHeader(s.file.hunks[hunk]);
     const current = this.host.current(file, hunk);
+    const review = this.review.state(s.file.path)?.review;
     const state = {
-      state: s.review.hunks[hunk],
-      oldBaseLines: s.review.oldBaseLines[hunk],
-      flagged: s.review.flagged[hunk],
+      state: review?.hunks[hunk] ?? "unseen",
+      oldBaseLines: review?.oldBaseLines[hunk] ?? 0,
+      flagged: review?.flagged[hunk] ?? false,
       baseDiffOpen: s.baseDiffs.has(hunk),
     };
     const bar = (actions: Section["hooks"] | null) => new HunkBar(hunk, text, state, current, actions, this.m.hunk);
