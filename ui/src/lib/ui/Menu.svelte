@@ -4,7 +4,7 @@
   import { match } from "../speedSearch";
   import Marked from "./Marked.svelte";
   import Menu from "./Menu.svelte";
-  import type { MenuItem } from "./menuItem";
+  import { type MenuItem, mnemonicTarget } from "./menuItem";
   import { SpeedSearch } from "./speedSearch.svelte";
   import SpeedSearchField from "./SpeedSearchField.svelte";
 
@@ -14,12 +14,15 @@
     nested = false,
     onback,
     speedSearch = false,
+    mnemonics = false,
   }: {
     items: MenuItem[];
     /** Called with the id of a chosen leaf item. */
     onselect: (id: string) => void;
     /** Typing filters the top-level items by label. */
     speedSearch?: boolean;
+    /** The items are the menus of a menu bar: the first letter of one opens it. */
+    mnemonics?: boolean;
     /** A submenu: placed beside its parent item and not focused on mount. */
     nested?: boolean;
     /** Left arrow in a submenu. */
@@ -60,6 +63,15 @@
     if (speedSearch && !nested && (e.target as Element).closest("ul") === list && search.type(e)) {
       void tick().then(() => buttons()[0]?.focus());
       return;
+    }
+    if (mnemonics && !nested && !e.ctrlKey && !e.altKey && !e.metaKey && (e.target as Element).closest("ul") === list) {
+      const menu = mnemonicTarget(items, e.key);
+      if (menu) {
+        e.preventDefault();
+        e.stopPropagation();
+        void open(menu, true);
+        return;
+      }
     }
     const all = buttons();
     const at = all.indexOf(document.activeElement as HTMLButtonElement);
@@ -112,12 +124,13 @@
       <li
         role="none"
         data-id={item.id}
+        title={item.reason}
         onpointerenter={() => (openId = item.children && item.enabled !== false ? item.id : undefined)}
       >
         <button
           class="flat"
           class:open={openId === item.id}
-          role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+          role={item.checked === undefined ? "menuitem" : item.radio ? "menuitemradio" : "menuitemcheckbox"}
           aria-checked={item.checked}
           aria-haspopup={item.children ? "menu" : undefined}
           aria-expanded={item.children ? openId === item.id : undefined}

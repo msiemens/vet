@@ -131,7 +131,7 @@ void test("Mod is Cmd on macOS and Ctrl elsewhere", () => {
   assert.equal(mac.dispatch(key(ctrl)), false);
   assert.equal(other.dispatch(key(ctrl)), true);
   assert.equal(other.dispatch(key(cmd)), false);
-  assert.equal(mac.binding("def")?.label, "Cmd+B");
+  assert.equal(mac.binding("def")?.label, "⌘B");
   assert.equal(other.binding("def")?.label, "Ctrl+B");
 });
 
@@ -206,7 +206,7 @@ void test("menu items take label, shortcut and enabled state from the registry",
   ];
   const items = resolveMenu(r, spec, r.context());
   assert.deepEqual(items, [
-    { id: "next", label: "Next", shortcut: "Ctrl+Alt+Down", enabled: false },
+    { id: "next", label: "Next", shortcut: "Ctrl+Alt+Down", chord: "Ctrl+Alt+Down", enabled: false },
     { id: "-", label: "", separator: true },
     { id: "pick:x", label: "Pick x", checked: true },
   ]);
@@ -228,4 +228,70 @@ void test("a submenu is disabled when none of its items is enabled, and commands
     ["pick"],
   );
   assert.equal(resolveMenu(r, spec, { open: true })[0].enabled, undefined);
+});
+
+void test("a command may have another default key on macOS, and a binding set as data still replaces it", () => {
+  const tabs = (mod: "Ctrl" | "Meta") => {
+    const r = registry(mod);
+    r.register({
+      id: "tab",
+      label: "Tab",
+      binding: "Alt-ArrowRight",
+      macBinding: "Meta-Shift-BracketRight",
+      run: () => 1,
+    });
+    return r;
+  };
+  assert.equal(tabs("Ctrl").binding("tab")?.spec, "Alt-ArrowRight");
+  assert.equal(tabs("Meta").binding("tab")?.spec, "Meta-Shift-BracketRight");
+  assert.equal(tabs("Meta").list()[0].defaultBinding?.spec, "Meta-Shift-BracketRight");
+  const r = tabs("Meta");
+  r.setBindings({ tab: "Alt-t" });
+  assert.equal(r.binding("tab")?.spec, "Alt-t");
+});
+
+void test("Option+digit runs a command on macOS outside a text field, and types in one", () => {
+  const r = registry("Meta");
+  const ran: string[] = [];
+  r.register({ id: "tool", label: "Tool", binding: "Alt-1", run: () => ran.push("tool") });
+  assert.equal(r.dispatch(key({ key: "¡", code: "Digit1", altKey: true })), true);
+  assert.equal(r.dispatch(key({ key: "¡", code: "Digit1", altKey: true, inField: true })), false);
+  assert.deepEqual(ran, ["tool"]);
+});
+
+void test("a disabled command can say why, and a menu item carries the reason, from the command or from the menu", () => {
+  const r = registry();
+  r.register(
+    { id: "a", label: "A", enabled: (c) => c.open, disabledReason: () => "Open it first", run: () => undefined },
+    { id: "b", label: "B", enabled: () => false, run: () => undefined },
+    { id: "c", label: "C", run: () => undefined },
+  );
+  assert.equal(r.disabledReason("a", { open: false }), "Open it first");
+  assert.equal(r.disabledReason("a", { open: true }), undefined);
+  assert.equal(r.disabledReason("b", { open: false }), undefined);
+  const items = resolveMenu(r, [{ command: "a" }, { command: "b" }, { command: "c", disabled: "Not here" }], {
+    open: false,
+  });
+  assert.deepEqual(
+    items.map((i) => [i.id, i.enabled, i.reason]),
+    [
+      ["a", false, "Open it first"],
+      ["b", false, undefined],
+      ["c", false, "Not here"],
+    ],
+  );
+  const [enabled] = resolveMenu(r, [{ command: "a" }], { open: true });
+  assert.equal(enabled.reason, undefined);
+});
+
+void test("radio and predefined entries reach the menu as such", () => {
+  const r = registry();
+  r.register({ id: "pick", label: "Pick", run: () => undefined });
+  const items = resolveMenu(r, [{ command: "pick", arg: "x", checked: true, radio: true }, { predefined: "undo" }], {
+    open: false,
+  });
+  assert.deepEqual(items, [
+    { id: "pick:x", label: "Pick", checked: true, radio: true },
+    { id: "predefined.undo", label: "", predefined: "undo" },
+  ]);
 });

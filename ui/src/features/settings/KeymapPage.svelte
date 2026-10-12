@@ -2,6 +2,7 @@
   import { bindingOf, specOf } from "../../lib/keymap";
   import { conflictsOf } from "../../lib/keymapEdit";
   import { commands } from "../../state/commands";
+  import { isMac } from "../../state/host";
   import { keymap } from "../../state/keymap.svelte";
   import { keymapGroups } from "./keymapRows";
 
@@ -35,7 +36,8 @@
       recording = undefined;
       const others = conflictsOf(listing, id, spec);
       if (others.length === 0) keymap.bind(id, spec);
-      else clash = { id, spec, key: bindingOf(spec, "Ctrl").label, others: others.map((c) => c.label) };
+      else
+        clash = { id, spec, key: bindingOf(spec, isMac ? "Meta" : "Ctrl").label, others: others.map((c) => c.label) };
     });
   });
 

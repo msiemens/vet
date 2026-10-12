@@ -14,6 +14,8 @@ export interface Command<C> {
   label: string;
   /** The default key, as `matches` reads it (`Ctrl-Alt-s`); `Mod` is Cmd on macOS and Ctrl elsewhere. */
   binding?: string;
+  /** The default key on macOS, where the platform's habit differs from `binding`. */
+  macBinding?: string;
   /** Key the native menu bar shows and handles itself, where the window's own binding is not used. */
   accelerator?: string;
   /** Also runs while a text field has the focus; otherwise its key belongs to the field. */
@@ -22,6 +24,8 @@ export interface Command<C> {
   argument?: boolean;
   /** Default: always. `arg` is the argument a menu item carries (`id:arg`). */
   enabled?(context: C, arg?: string): boolean;
+  /** Why the command is not enabled in `context`, where a menu can say so. */
+  disabledReason?(context: C, arg?: string): string | undefined;
   /** Answers `false` when it found nothing to do: its key then goes on to the page. */
   run(context: C, arg?: string): unknown;
 }
@@ -116,10 +120,14 @@ export class CommandRegistry<C extends object> {
   private rebind() {
     this.bound = [];
     for (const command of this.commands.values()) {
-      const spec = command.id in this.overrides ? this.overrides[command.id] : command.binding;
+      const spec = command.id in this.overrides ? this.overrides[command.id] : this.defaultSpec(command);
       if (spec) this.bound.push({ binding: bindingOf(spec, this.mod), command });
     }
     this.signal?.write();
+  }
+
+  private defaultSpec(command: Command<C>): string | undefined {
+    return this.mod === "Meta" && command.macBinding !== undefined ? command.macBinding : command.binding;
   }
 
   find(id: string): Command<C> | undefined {
@@ -137,12 +145,15 @@ export class CommandRegistry<C extends object> {
     this.signal?.read();
     return [...this.commands.values()]
       .filter((command) => !command.argument)
-      .map((command) => ({
-        id: command.id,
-        label: command.label,
-        binding: this.binding(command.id),
-        ...(command.binding ? { defaultBinding: bindingOf(command.binding, this.mod) } : {}),
-      }));
+      .map((command) => {
+        const spec = this.defaultSpec(command);
+        return {
+          id: command.id,
+          label: command.label,
+          binding: this.binding(command.id),
+          ...(spec ? { defaultBinding: bindingOf(spec, this.mod) } : {}),
+        };
+      });
   }
 
   /**
@@ -167,6 +178,13 @@ export class CommandRegistry<C extends object> {
     const [, arg] = splitId(id);
     const command = this.find(id);
     return !!command && (command.enabled?.(context, arg) ?? true);
+  }
+
+  /** Why the command is not enabled in `context`; none when it is, or when the command does not say. */
+  disabledReason(id: string, context: C = this.context()): string | undefined {
+    const [, arg] = splitId(id);
+    const command = this.find(id);
+    return command && !this.isEnabled(id, context) ? command.disabledReason?.(context, arg) : undefined;
   }
 
   /** Runs the command named by a menu item's id (`id` or `id:arg`); answers whether it ran. */
@@ -195,11 +213,15 @@ export class CommandRegistry<C extends object> {
       event.stopPropagation?.();
       return true;
     }
-    if (isTextInput(event)) return false;
+    let field: boolean | undefined;
+    const typing = () => (field ??= inField(event.target));
+    // Option types characters on macOS, but nowhere but in a text field.
+    const optionChord = () => event.altKey && !typing();
+    if (isTextInput(event, optionChord())) return false;
     let context: C | undefined;
     for (const { binding, command } of this.bound) {
-      if (!matches(binding.spec, event)) continue;
-      if (!command.inFields && inField(event.target)) continue;
+      if (!matches(binding.spec, event, optionChord())) continue;
+      if (!command.inFields && typing()) continue;
       context ??= this.context();
       if (command.enabled && !command.enabled(context)) continue;
       if (!this.execute(command, context)) continue;

@@ -3,7 +3,7 @@
 // `MenuItem`s that the in-window `Menu` draws and the host draws natively.
 
 import type { CommandRegistry } from "./commands.ts";
-import { type MenuItem, separator } from "./ui/menuItem.ts";
+import { type MenuItem, type PredefinedItem, separator } from "./ui/menuItem.ts";
 
 export type MenuSpec = MenuSpecEntry[];
 
@@ -17,14 +17,19 @@ export type MenuSpecEntry =
       label?: string;
       detail?: string;
       checked?: boolean;
-      /** `false` disables the item whatever the command says. */
-      enabled?: boolean;
+      /** The check marks one choice out of several. */
+      radio?: boolean;
+      /** Disables the item whatever the command says, for this reason. */
+      disabled?: string;
+    }
+  | {
+      /** An item the host builds from the OS's definition. */
+      predefined: PredefinedItem;
     }
   | {
       /** A submenu; it is disabled when nothing in it is enabled (including when it is empty). */
       id: string;
       label: string;
-      enabled?: boolean;
       items: MenuSpec;
     };
 
@@ -43,25 +48,30 @@ export function resolveMenu<C extends object>(
   for (const entry of spec) {
     if (entry === "-") {
       if (items.length && !items[items.length - 1].separator) items.push(separator);
+    } else if ("predefined" in entry) {
+      items.push({ id: `predefined.${entry.predefined}`, label: "", predefined: entry.predefined });
     } else if ("items" in entry) {
       const children = resolveMenu(registry, entry.items, context, native);
-      const enabled = entry.enabled !== false && children.some((c) => !c.separator && c.enabled !== false);
+      const enabled = children.some((c) => !c.separator && c.enabled !== false);
       items.push({ id: entry.id, label: entry.label, ...(enabled ? {} : { enabled: false }), children });
     } else {
       const command = registry.find(entry.command);
       if (!command) continue;
       const id = entry.arg === undefined ? command.id : `${command.id}:${entry.arg}`;
-      const enabled = entry.enabled !== false && registry.isEnabled(id, context);
+      const enabled = entry.disabled === undefined && registry.isEnabled(id, context);
+      const reason = enabled ? undefined : (entry.disabled ?? registry.disabledReason(id, context));
       const accelerator = native ? command.accelerator : undefined;
-      const shortcut = accelerator === undefined ? registry.binding(command.id)?.label : undefined;
+      const binding = accelerator === undefined ? registry.binding(command.id) : undefined;
       items.push({
         id,
         label: entry.label ?? command.label,
         ...(entry.detail === undefined ? {} : { detail: entry.detail }),
-        ...(shortcut === undefined ? {} : { shortcut }),
+        ...(binding === undefined ? {} : { shortcut: binding.label, chord: binding.chord }),
         ...(accelerator === undefined ? {} : { accelerator }),
         ...(enabled ? {} : { enabled: false }),
+        ...(reason === undefined ? {} : { reason }),
         ...(entry.checked === undefined ? {} : { checked: entry.checked }),
+        ...(entry.radio ? { radio: true } : {}),
       });
     }
   }

@@ -56,9 +56,42 @@ void test("real Ctrl+Alt bindings still fire", () => {
 });
 
 void test("Mod becomes the platform's modifier, and labels read as the menus show them", () => {
-  assert.deepEqual(bindingOf("Mod-b", "Meta"), { spec: "Meta-b", label: "Cmd+B" });
-  assert.deepEqual(bindingOf("Mod-b", "Ctrl"), { spec: "Ctrl-b", label: "Ctrl+B" });
+  assert.deepEqual(bindingOf("Mod-b", "Meta"), { spec: "Meta-b", label: "⌘B", chord: "Cmd+B" });
+  assert.deepEqual(bindingOf("Mod-b", "Ctrl"), { spec: "Ctrl-b", label: "Ctrl+B", chord: "Ctrl+B" });
   assert.equal(bindingOf("Ctrl-Alt-ArrowDown", "Ctrl").label, "Ctrl+Alt+Down");
+});
+
+void test("macOS writes a key as glyphs in its own order of modifiers, while a native menu still reads the plain chord", () => {
+  const mac = (spec: string) => bindingOf(spec, "Meta");
+  assert.equal(mac("Ctrl-Alt-ArrowDown").label, "⌃⌥↓");
+  assert.equal(mac("Ctrl-Alt-ArrowDown").chord, "Ctrl+Alt+Down");
+  assert.equal(mac("Meta-Shift-o").label, "⇧⌘O");
+  assert.equal(mac("Mod-Shift-o").chord, "Cmd+Shift+O");
+  assert.equal(mac("Alt-1").label, "⌥1");
+  assert.equal(mac("Meta-Shift-BracketLeft").label, "⇧⌘[");
+  assert.equal(mac("Meta-Shift-BracketLeft").chord, "Cmd+Shift+[");
+  for (const plain of ["Space", "F4", "[", "r"])
+    assert.equal(mac(plain).label, plain.length === 1 ? plain.toUpperCase() : plain);
+  assert.equal(bindingOf("Alt-ArrowLeft", "Ctrl").label, "Alt+Left");
+});
+
+void test("a bracket with Shift is told by its place on the keyboard, not by the character the layout types", () => {
+  const shifted = (init: Partial<KeyLike>) => key({ metaKey: true, shiftKey: true, ...init });
+  assert.ok(matches("Meta-Shift-BracketLeft", shifted({ key: "{", code: "BracketLeft" })));
+  assert.ok(matches("Meta-Shift-BracketRight", shifted({ key: "}", code: "BracketRight" })));
+  assert.ok(!matches("Meta-Shift-BracketLeft", shifted({ key: "}", code: "BracketRight" })));
+  assert.ok(!matches("Meta-Shift-BracketLeft", key({ metaKey: true, key: "[", code: "BracketLeft" })));
+});
+
+void test("Option types nothing outside a text field, so a plain Alt chord can be a shortcut there; AltGr and composition never can", () => {
+  const option1 = key({ key: "¡", code: "Digit1", altKey: true });
+  assert.ok(isTextInput(option1));
+  assert.ok(!isTextInput(option1, true));
+  assert.ok(matches("Alt-1", option1, true));
+  assert.ok(!matches("Alt-1", option1));
+  assert.ok(isTextInput(altGr("@", "KeyQ"), true));
+  assert.ok(isTextInput(key({ key: "Dead", code: "Quote", altKey: true }), true));
+  assert.ok(isTextInput(key({ key: "a", code: "KeyA", altKey: true, isComposing: true }), true));
 });
 
 void test("Space toggles the current item, and only on its own", () => {
