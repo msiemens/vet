@@ -112,7 +112,14 @@ struct Inner {
     stats: StatCache,
     /// Opened on the first read of a blob.
     opened: OnceLock<gix::ThreadSafeRepository>,
+    /// Whether the user's and the system's git configuration and the environment are ignored.
+    isolated: bool,
 }
+
+/// Who a reflog entry is written as when no git identity is configured. Git itself guesses
+/// `user@host` there; a fixed one keeps the entries alike on every machine.
+const FALLBACK_NAME: &str = "Vet";
+const FALLBACK_EMAIL: &str = "vet@localhost";
 
 impl GixRepo {
     /// A repository with a budget of its own.
@@ -124,6 +131,7 @@ impl GixRepo {
                 blobs: BlobCache::default(),
                 stats: StatCache::default(),
                 opened: OnceLock::new(),
+                isolated: false,
             }),
             Budget::new(REVIEW_IO),
         )
@@ -137,6 +145,23 @@ impl GixRepo {
                 blobs: BlobCache::default(),
                 stats: StatCache::default(),
                 opened: OnceLock::new(),
+                isolated: self.0.isolated,
+            }),
+            self.1,
+        )
+    }
+
+    /// The same repository read without the user's and the system's git configuration and
+    /// without git's environment variables: only the repository's own configuration counts.
+    pub fn isolated(self) -> Self {
+        Self(
+            Arc::new(Inner {
+                root: self.0.root.clone(),
+                cap: self.0.cap,
+                blobs: BlobCache::default(),
+                stats: StatCache::default(),
+                opened: OnceLock::new(),
+                isolated: true,
             }),
             self.1,
         )
@@ -169,7 +194,16 @@ impl GixRepo {
 
 impl Inner {
     fn open(&self) -> Result<gix::Repository, GitError> {
-        gix::open(&self.root).map_err(err)
+        let mut repo = if self.isolated {
+            gix::open_opts(&self.root, gix::open::Options::isolated())
+        } else {
+            gix::open(&self.root)
+        }
+        .map_err(err)?;
+        // Ref updates write reflog entries, which need a committer; this only fills in a missing one.
+        repo.committer_or_set_fallback(FALLBACK_NAME, FALLBACK_EMAIL)
+            .map_err(err)?;
+        Ok(repo)
     }
 
     /// A handle on the repository opened once and kept for the reads of blobs, which

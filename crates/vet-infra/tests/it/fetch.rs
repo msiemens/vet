@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use tempfile::TempDir;
-use vet_app::ports::{Fetcher, History, RefUpdate};
+use vet_app::changeset::{ChangesetId, CommitId};
+use vet_app::ports::{ChangesetRefs, Fetcher, History, RefUpdate};
 use vet_infra::git::GixRepo;
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -431,4 +432,47 @@ async fn a_branch_knows_where_the_remote_had_it_at_the_last_fetch() {
     let fetched = main(repo.branches().await.unwrap());
     assert_eq!(fetched.upstream.map(|c| c.0), Some(new_main));
     assert_eq!(fetched.commit, at_clone.commit, "the local branch does not move");
+}
+
+impl Fixture {
+    /// Who the newest reflog entry of `name` was written as, `name <email>`.
+    fn reflog_writer(&self, name: &str) -> String {
+        git(&self.clone, &["log", "-g", "-1", "--format=%gn <%ge>", name])
+    }
+}
+
+#[tokio::test]
+async fn ref_updates_succeed_without_a_git_identity_and_the_reflog_names_the_fallback() {
+    let fx = Fixture::new();
+    git(&fx.clone, &["config", "--unset", "user.name"]);
+    git(&fx.clone, &["config", "--unset", "user.email"]);
+    let new_main = fx.advance_remote("m2");
+    let pr = fx.open_pull_request(7, "pr.txt", "p1");
+    let repo = GixRepo::new(&fx.clone).isolated();
+
+    repo.fetch("origin", None).await.unwrap();
+    repo.fetch_refs("origin", vec![update("refs/pull/7/head", "refs/vet/pr/7/head")], None)
+        .await
+        .unwrap();
+    repo.set_changeset_ref(ChangesetId(1), 1, "target", &CommitId(new_main.clone()))
+        .await
+        .unwrap();
+
+    assert_eq!(fx.remote_ref("main"), new_main);
+    assert_eq!(fx.rev("refs/vet/pr/7/head"), Some(pr));
+    assert_eq!(fx.rev("refs/vet/changesets/1/1/target"), Some(new_main));
+    assert_eq!(fx.reflog_writer("refs/remotes/origin/main"), "Vet <vet@localhost>");
+}
+
+#[tokio::test]
+async fn a_configured_identity_writes_the_reflog_and_the_fallback_does_not_replace_it() {
+    let fx = Fixture::new();
+    git(&fx.clone, &["config", "user.name", "Rae"]);
+    git(&fx.clone, &["config", "user.email", "rae@example.org"]);
+    fx.advance_remote("m2");
+    let repo = GixRepo::new(&fx.clone).isolated();
+
+    repo.fetch("origin", None).await.unwrap();
+
+    assert_eq!(fx.reflog_writer("refs/remotes/origin/main"), "Rae <rae@example.org>");
 }
