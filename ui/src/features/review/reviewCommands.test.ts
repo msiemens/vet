@@ -36,7 +36,7 @@ const view: ViewActions = {
   showCard: () => (calls.push("card"), true),
   jumpToSource: () => (calls.push("jump"), caretFinds),
   stepCommit: (delta) => (calls.push(`commit ${delta}`), true),
-  toggleFileText: () => calls.push("fileText"),
+  showFileText: () => calls.push("fileText"),
 };
 const files: FileActions = {
   copyText: (text) => calls.push(`copy ${text}`),
@@ -308,15 +308,15 @@ void test("Previous and Next Tab are Alt+Left and Alt+Right on Windows and â‡§âŒ
   assert.deepEqual(calls, []);
 });
 
-void test("Show File Text switches a changed file's tab between its diff and its text", () => {
+void test("File Text is available in the tab of a changed file only, and says what to open otherwise", () => {
   for (const fileView of ["diff", "text"] as const) {
-    assert.equal(setup({ fileView }).run("view.fileText"), true);
+    assert.equal(setup({ fileView }).run("view.mode.file"), true);
     assert.deepEqual(calls, ["fileText"]);
   }
   const r = setup({ fileView: undefined });
-  assert.equal(r.run("view.fileText"), false);
+  assert.equal(r.run("view.mode.file"), false);
   assert.deepEqual(calls, []);
-  assert.ok(r.disabledReason("view.fileText"));
+  assert.ok(r.disabledReason("view.mode.file"));
 });
 
 void test("Reveal the current file runs when a tree is there to show it and says so when there is none", () => {
@@ -326,6 +326,7 @@ void test("Reveal the current file runs when a tree is there to show it and says
   assert.equal(r.run("view.revealFile"), false);
   treeShown = true;
   assert.deepEqual(calls, ["reveal", "reveal"]);
+  assert.equal(r.binding("view.revealFile")?.label, "Alt+F2");
 });
 
 void test("the editor's menu offers copy only with a selection, and shows the keys of its commands", () => {

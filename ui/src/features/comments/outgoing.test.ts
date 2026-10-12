@@ -9,6 +9,7 @@ import {
   outgoingTitle,
   postLabel,
   summarizeOutgoing,
+  voteChoices,
   voteText,
 } from "./outgoing.ts";
 
@@ -96,6 +97,29 @@ void test("the popover names the staged vote by the platform's label and the but
   assert.equal(outgoingTitle(summary, false), "1 of 3 outgoing comments failed to post");
   assert.equal(outgoingTitle({ ...summary, failed: 0 }, true), "3 outgoing items");
   assert.equal(outgoingTitle({ count: 0, failed: 0, posting: false }, false), "No outgoing comments");
+});
+
+void test("the vote picker lists the platform's verdicts and marks the staged vote, else the one the viewer cast, else none", () => {
+  const traits = {
+    verdicts: [
+      { id: "approved", label: "Approve" },
+      { id: "waiting", label: "Wait for Author" },
+      { id: "rejected", label: "Reject" },
+    ],
+  };
+  const marked = (info: Parameters<typeof voteChoices>[0]) => voteChoices(info).map((c) => c.checked);
+  const staged = { verdict: "rejected", state: { type: "draft" } } as const;
+  assert.deepEqual(marked({ traits, pendingVote: staged, viewerVerdict: "approved" }), [false, false, true]);
+  assert.deepEqual(marked({ traits, pendingVote: null, viewerVerdict: "waiting" }), [false, true, false]);
+  assert.deepEqual(marked({ traits, pendingVote: null, viewerVerdict: null }), [false, false, false]);
+  assert.deepEqual(
+    voteChoices({ traits, pendingVote: null, viewerVerdict: null }).map((c) => [c.id, c.label]),
+    [
+      ["approved", "Approve"],
+      ["waiting", "Wait for Author"],
+      ["rejected", "Reject"],
+    ],
+  );
 });
 
 void test("a comment says where it goes, and posting where the comments go", () => {

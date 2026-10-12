@@ -41,8 +41,7 @@ const state: MenuState = {
   native: false,
   recent: [],
   screen: "review",
-  splitDiff: false,
-  fileText: false,
+  viewMode: "unified",
   softWrap: true,
   theme: "system",
   tools: [],
@@ -138,7 +137,7 @@ void test("the Review and Navigate menus hold the work of reviewing, each with t
       ["review.jumpToSource", "F4"],
       ["review.goToDefinition", "Ctrl+B"],
       ["review.changeCard", "Alt+F1"],
-      ["view.revealFile", undefined],
+      ["view.revealFile", "Alt+F2"],
     ],
   );
   const mac = submenu(menuOf({ native: true }, working), "navigate");
@@ -157,12 +156,22 @@ void test("the View menu holds the screens, the tool windows, the tabs and the d
     "tab.previous",
     "tab.next",
     "-",
-    "view.splitDiff",
-    "view.fileText",
+    "view.mode.unified",
+    "view.mode.split",
+    "view.mode.file",
+    "-",
     "view.softWrap",
     "-",
     "theme",
   ]);
+  assert.deepEqual(
+    view.filter((i) => i.id.startsWith("view.mode.")).map((i) => [i.label, i.shortcut]),
+    [
+      ["Unified", "Alt+Shift+1"],
+      ["Side-by-Side", "Alt+Shift+2"],
+      ["File", "Alt+Shift+3"],
+    ],
+  );
   assert.deepEqual(
     view.filter((i) => i.id.startsWith("tab.")).map((i) => i.shortcut),
     ["Alt+Left", "Alt+Right"],
@@ -197,7 +206,7 @@ void test("on the queue screen the items that act on the review's views are disa
   for (const id of [
     "tab.close",
     "tab.previous",
-    "view.fileText",
+    "view.mode.file",
     "review.toggleSeen",
     "review.comment",
     "review.nextHunk",
@@ -217,20 +226,89 @@ void test("on the queue screen the items that act on the review's views are disa
   assert.equal(submenu(onReview, "navigate").find((i) => i.id === "review.nextHunk")?.enabled, undefined);
 });
 
-void test("the tool windows open with Alt and a digit, outside a text field only, and Option on macOS types nothing there", () => {
-  const press = (init: Partial<KeyEventLike>, inField = false) =>
-    ({
-      key: "",
-      code: "",
-      ctrlKey: false,
-      altKey: false,
-      shiftKey: false,
-      metaKey: false,
-      target: { closest: (selector: string) => (inField && selector.includes("input") ? {} : null) },
-      preventDefault: () => undefined,
-      ...init,
-    }) as KeyEventLike;
+const press = (init: Partial<KeyEventLike>, inField = false) =>
+  ({
+    key: "",
+    code: "",
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+    metaKey: false,
+    target: { closest: (selector: string) => (inField && selector.includes("input") ? {} : null) },
+    preventDefault: () => undefined,
+    ...init,
+  }) as KeyEventLike;
 
+void test("Alt+Shift and a digit show a view mode by the physical key, whatever the layout types with Shift", () => {
+  // `key` is what the layout types with Shift held: US "!", "@", "#"; German "!", "\"", "§".
+  const layouts = {
+    US: ["!", "@", "#"],
+    German: ["!", '"', "§"],
+  };
+  const win = registryFor("Ctrl", working);
+  for (const [layout, keys] of Object.entries(layouts)) {
+    calls.length = 0;
+    keys.forEach((key, i) => {
+      const event = press({ key, code: `Digit${i + 1}`, altKey: true, shiftKey: true });
+      assert.equal(win.dispatch(event), true, `${layout} ${key}`);
+    });
+    assert.deepEqual(calls, ["showDiff unified", "showDiff split", "showFileText"], layout);
+  }
+
+  // The same keys in a text field belong to the field; Alt+digit alone is still the tool window.
+  calls.length = 0;
+  assert.equal(win.dispatch(press({ key: "!", code: "Digit1", altKey: true, shiftKey: true }, true)), false);
+  assert.equal(win.dispatch(press({ key: "1", code: "Digit1", altKey: true })), true);
+  assert.deepEqual(calls, ["toggleTool changes"]);
+
+  // Option+Shift+digit types a symbol on macOS, but nowhere but in a text field.
+  const mac = registryFor("Meta", working);
+  calls.length = 0;
+  assert.equal(mac.dispatch(press({ key: "⁄", code: "Digit1", altKey: true, shiftKey: true })), true);
+  assert.equal(mac.dispatch(press({ key: "⁄", code: "Digit1", altKey: true, shiftKey: true }, true)), false);
+  assert.deepEqual(calls, ["showDiff unified"]);
+});
+
+void test("the keys of Post, Vote, Toggle Since Last Review and Reveal File run outside text fields, and Ctrl+Alt+F stays free", () => {
+  const win = registryFor("Ctrl", { ...working, pullRequest: true, outgoing: 1, voteSeparate: true });
+  const keys: [string, Partial<KeyEventLike>, string][] = [
+    ["Mod+Shift+K", { key: "K", code: "KeyK", ctrlKey: true, shiftKey: true }, "postComments"],
+    ["Ctrl+Alt+V", { key: "v", code: "KeyV", ctrlKey: true, altKey: true }, "pickVote"],
+    ["Ctrl+Alt+L", { key: "l", code: "KeyL", ctrlKey: true, altKey: true }, "changesSinceReview"],
+    ["Alt+F2", { key: "F2", code: "F2", altKey: true }, "revealFile"],
+  ];
+  for (const [name, init, call] of keys) {
+    calls.length = 0;
+    assert.equal(win.dispatch(press(init)), true, name);
+    assert.deepEqual(calls, [call], name);
+    assert.equal(win.dispatch(press(init, true)), false, `${name} in a field`);
+  }
+  const mac = registryFor("Meta", { ...working, pullRequest: true, outgoing: 1 });
+  calls.length = 0;
+  assert.equal(mac.dispatch(press({ key: "K", code: "KeyK", metaKey: true, shiftKey: true })), true);
+  assert.deepEqual(calls, ["postComments"]);
+
+  // AltGr is Ctrl+Alt on Windows: with it down the key types, so no command takes it.
+  for (const code of ["KeyV", "KeyL"]) {
+    const altGr = press({
+      key: "",
+      code,
+      ctrlKey: true,
+      altKey: true,
+      getModifierState: (m: string) => m === "AltGraph",
+    });
+    assert.equal(win.dispatch(altGr), false, code);
+  }
+
+  for (const mod of ["Ctrl", "Meta"] as const) {
+    const owner = registryFor(mod)
+      .list()
+      .find(({ binding }) => binding && canonicalSpec(binding.spec) === "Ctrl-Alt-f");
+    assert.equal(owner, undefined, mod);
+  }
+});
+
+void test("the tool windows open with Alt and a digit, outside a text field only, and Option on macOS types nothing there", () => {
   const win = registryFor("Ctrl", working);
   calls.length = 0;
   assert.equal(win.dispatch(press({ key: "1", code: "Digit1", altKey: true })), true);

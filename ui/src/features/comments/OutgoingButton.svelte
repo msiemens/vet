@@ -2,6 +2,7 @@
   import { onDestroy } from "svelte";
   import type { Thread } from "../../generated/Thread";
   import Icon from "../../lib/ui/Icon.svelte";
+  import Menu from "../../lib/ui/Menu.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
@@ -14,6 +15,7 @@
     outgoingTitle,
     postLabel,
     summarizeOutgoing,
+    voteChoices,
     voteText,
   } from "./outgoing";
   import PostingControls from "./PostingControls.svelte";
@@ -25,6 +27,9 @@
 
   // The list is open in the store, so the Post Comments command can open it.
   onDestroy(() => (platform.outgoingOpen = false));
+  $effect(() => {
+    if (!platform.outgoingOpen) platform.votePicking = false;
+  });
   const info = $derived(platform.info);
   const list = $derived(outgoingComments(threads.items));
   const vote = $derived(info?.pendingVote ?? null);
@@ -38,6 +43,11 @@
   function show(thread: Thread) {
     platform.outgoingOpen = false;
     onopen(thread);
+  }
+
+  async function pick(verdict: string) {
+    platform.outgoingOpen = false;
+    await platform.stageVote(verdict);
   }
 
   async function send() {
@@ -61,77 +71,81 @@
       <span class="mono">{summary.failed > 0 ? summary.failed : summary.count}</span>
     </button>
   {/snippet}
-  <div class="outgoing">
-    <ul>
-      {#each list as { thread, message } (message.id)}
-        <li>
-          <button class="flat row" type="button" onclick={() => show(thread)}>
-            <span class="mono where">{outgoingPlace(thread)}</span>
-            <span class="text">{firstLine(message.body)}</span>
-            {#if message.state.type === "posting"}<span class="note">posting…</span>{/if}
-          </button>
-          {#if message.state.type === "failed"}
-            <div class="failure">
-              <span class="error">{message.state.error}</span>
-              <button
-                class="ctl small"
-                type="button"
-                disabled={busy}
-                onclick={() => void threads.removeMessage(message.id)}>Discard draft</button
-              >
-              <button
-                class="ctl small"
-                type="button"
-                disabled={busy || blocked !== undefined}
-                onclick={() => void send()}>Retry</button
-              >
+  {#if platform.votePicking}
+    {#if info}<Menu items={voteChoices(info)} onselect={(verdict) => void pick(verdict)} />{/if}
+  {:else}
+    <div class="outgoing">
+      <ul>
+        {#each list as { thread, message } (message.id)}
+          <li>
+            <button class="flat row" type="button" onclick={() => show(thread)}>
+              <span class="mono where">{outgoingPlace(thread)}</span>
+              <span class="text">{firstLine(message.body)}</span>
+              {#if message.state.type === "posting"}<span class="note">posting…</span>{/if}
+            </button>
+            {#if message.state.type === "failed"}
+              <div class="failure">
+                <span class="error">{message.state.error}</span>
+                <button
+                  class="ctl small"
+                  type="button"
+                  disabled={busy}
+                  onclick={() => void threads.removeMessage(message.id)}>Discard draft</button
+                >
+                <button
+                  class="ctl small"
+                  type="button"
+                  disabled={busy || blocked !== undefined}
+                  onclick={() => void send()}>Retry</button
+                >
+              </div>
+            {/if}
+          </li>
+        {/each}
+        {#if info && vote}
+          <li>
+            <div class="row">
+              <span class="text">{voteText(info, vote)}</span>
+              {#if vote.state.type === "posting"}<span class="note">posting…</span>{/if}
             </div>
-          {/if}
-        </li>
-      {/each}
-      {#if info && vote}
-        <li>
-          <div class="row">
-            <span class="text">{voteText(info, vote)}</span>
-            {#if vote.state.type === "posting"}<span class="note">posting…</span>{/if}
+            {#if vote.state.type === "failed"}
+              <div class="failure">
+                <span class="error">{vote.state.error}</span>
+                <button class="ctl small" type="button" disabled={busy} onclick={() => void platform.discardVote()}
+                  >Discard vote</button
+                >
+                <button
+                  class="ctl small"
+                  type="button"
+                  disabled={busy || blocked !== undefined}
+                  onclick={() => void send()}>Retry</button
+                >
+              </div>
+            {/if}
+          </li>
+        {/if}
+      </ul>
+      {#if info}
+        <div class="post">
+          <PostingControls {info} part="review" />
+          <PostingControls {info} part="vote" disabled={blocked !== undefined} />
+          <div class="send">
+            <span class="where-to">{destination(info)}</span>
+            {#if blocked}
+              <button class="flat link" type="button" onclick={() => commands.run("app.accounts")}>Sign in…</button>
+            {/if}
+            <button
+              class="ctl primary"
+              type="button"
+              disabled={ready === 0 || busy || blocked !== undefined}
+              title={blocked}
+              onclick={() => void send()}>{postLabel(comments, voteWaits(vote))}</button
+            >
           </div>
-          {#if vote.state.type === "failed"}
-            <div class="failure">
-              <span class="error">{vote.state.error}</span>
-              <button class="ctl small" type="button" disabled={busy} onclick={() => void platform.discardVote()}
-                >Discard vote</button
-              >
-              <button
-                class="ctl small"
-                type="button"
-                disabled={busy || blocked !== undefined}
-                onclick={() => void send()}>Retry</button
-              >
-            </div>
-          {/if}
-        </li>
-      {/if}
-    </ul>
-    {#if info}
-      <div class="post">
-        <PostingControls {info} part="review" />
-        <PostingControls {info} part="vote" disabled={blocked !== undefined} />
-        <div class="send">
-          <span class="where-to">{destination(info)}</span>
-          {#if blocked}
-            <button class="flat link" type="button" onclick={() => commands.run("app.accounts")}>Sign in…</button>
-          {/if}
-          <button
-            class="ctl primary"
-            type="button"
-            disabled={ready === 0 || busy || blocked !== undefined}
-            title={blocked}
-            onclick={() => void send()}>{postLabel(comments, voteWaits(vote))}</button
-          >
         </div>
-      </div>
-    {/if}
-  </div>
+      {/if}
+    </div>
+  {/if}
 </Popover>
 
 <style>

@@ -12,8 +12,7 @@ const state: MenuState = {
   native: false,
   recent: [{ path: "/a/vet", name: "vet" }],
   screen: "review",
-  splitDiff: true,
-  fileText: false,
+  viewMode: "split",
   softWrap: true,
   theme: "dark",
   tools: [
@@ -54,12 +53,13 @@ const actions: AppActions = {
   showDialog: (d) => calls.push(`dialog ${d}`),
   showKeymap: () => calls.push("keymap"),
   quit: () => calls.push("quit"),
-  toggleSplit: () => calls.push("split"),
+  showDiff: (mode) => calls.push(`diff ${mode}`),
   toggleSoftWrap: () => calls.push("wrap"),
   toggleTool: (id) => calls.push(`tool ${id}`),
   setTheme: (theme) => calls.push(`theme ${theme}`),
   commentOnChangeset: () => calls.push("commentOnChangeset"),
   postComments: () => calls.push("post"),
+  pickVote: () => calls.push("pickVote"),
   stageVote: (verdict) => calls.push(`vote ${verdict}`),
   clearSemanticCaches: () => calls.push("clearCaches"),
   showLog: () => calls.push("showLog"),
@@ -186,7 +186,7 @@ void test("without a project everything that needs one is disabled, not hidden, 
   const items = menu({ recent: [] }, { repoOpen: false, changesetOpen: false, reviewOpen: false, pullRequest: false });
   assert.equal(find(items, "recent")?.enabled, false);
   assert.equal(find(items, "file.open")?.enabled, undefined);
-  for (const id of ["view.queue", "view.review", "changeset.switch", "changeset.refresh", "view.splitDiff"]) {
+  for (const id of ["view.queue", "view.review", "changeset.switch", "changeset.refresh", "view.mode.split"]) {
     const item = find(items, id);
     assert.equal(item?.enabled, false, id);
     assert.ok(item.reason, id);
@@ -242,17 +242,54 @@ void test("every tool window has its own Alt key, and Commits is offered only fo
   assert.deepEqual(calls, ["tool commits", "tool timeline"]);
 });
 
-void test("the diff, wrap and theme settings show what is on", () => {
-  const items = menu({ splitDiff: false, softWrap: false, theme: "light" });
-  assert.equal(find(items, "view.splitDiff")?.checked, false);
+void test("the diff mode is one radio group that sets its mode directly, and the wrap and theme settings show what is on", () => {
+  const modes = (viewMode: MenuState["viewMode"]) =>
+    ["unified", "split"].map((m) => find(menu({ viewMode }), `view.mode.${m}`)?.checked);
+  assert.deepEqual(modes("unified"), [true, false]);
+  assert.deepEqual(modes("split"), [false, true]);
+  assert.deepEqual(modes("file"), [false, false]);
+  assert.ok(["unified", "split"].every((m) => find(menu(), `view.mode.${m}`)?.radio));
+  calls.length = 0;
+  registry.run("view.mode.split", open);
+  registry.run("view.mode.split", open);
+  registry.run("view.mode.unified", open);
+  assert.deepEqual(calls, ["diff split", "diff split", "diff unified"]);
+
+  const items = menu({ softWrap: false, theme: "light" });
   assert.equal(find(items, "view.softWrap")?.checked, false);
   assert.equal(find(items, "view.theme:light")?.checked, true);
   assert.equal(find(items, "view.theme:dark")?.checked, false);
-  assert.equal(find(menu(), "view.splitDiff")?.checked, true);
   calls.length = 0;
-  registry.run("view.splitDiff", open);
   registry.run("view.softWrap", open);
-  assert.deepEqual(calls, ["split", "wrap"]);
+  assert.deepEqual(calls, ["wrap"]);
+});
+
+void test("one key toggles between Changes Since My Last Review and the whole changeset, as the shown range says", () => {
+  calls.length = 0;
+  assert.equal(registry.run("changeset.toggleSinceLast", open), true);
+  assert.equal(registry.run("changeset.toggleSinceLast", { ...open, rangeShown: true }), true);
+  assert.deepEqual(calls, ["since", "whole"]);
+  assert.equal(registry.run("changeset.toggleSinceLast", { ...open, reviewOpen: false }), false);
+  assert.ok(registry.disabledReason("changeset.toggleSinceLast", { ...open, reviewOpen: false }));
+  // Back from a range needs only the changeset.
+  assert.equal(registry.run("changeset.toggleSinceLast", { ...open, rangeShown: true, reviewOpen: false }), true);
+});
+
+void test("the vote picker opens only for a pull request on a platform that keeps the vote apart, and says why not", () => {
+  const separate = { ...open, voteSeparate: true };
+  calls.length = 0;
+  assert.equal(registry.run("review.pickVote", separate), true);
+  assert.deepEqual(calls, ["pickVote"]);
+  for (const [context, why] of [
+    [{ pullRequest: false }, "no pull request"],
+    [{ voteSeparate: false }, "the platform votes with the review"],
+    [{ voteBlock: "Sign in to submit the review" }, "the vote is blocked"],
+  ] as const) {
+    assert.equal(registry.run("review.pickVote", { ...separate, ...context }), false, why);
+    assert.ok(registry.disabledReason("review.pickVote", { ...separate, ...context }), why);
+  }
+  assert.equal(registry.disabledReason("review.pickVote", { ...separate, voteBlock: "Sign in" }), "Sign in");
+  assert.deepEqual(calls, ["pickVote"]);
 });
 
 void test("Whole Changeset and Changes Since My Last Review are a radio pair that follows the shown range", () => {
@@ -309,6 +346,8 @@ void test("posting is Post Comments, or Submit Review where the platform submits
   assert.equal(find(menu(), "review.post")?.label, "Post Comments…");
   assert.equal(find(menu({ batchedReview: true }), "review.post")?.label, "Submit Review…");
   assert.equal(find(menu(), "review.post")?.enabled, undefined);
+  assert.equal(find(menu(), "review.post")?.shortcut, "Ctrl+Shift+K");
+  assert.equal(find(menu({ batchedReview: true }), "review.post")?.shortcut, "Ctrl+Shift+K");
 
   for (const [context, why] of [
     [{ pullRequest: false, outgoing: 0 }, "no pull request"],

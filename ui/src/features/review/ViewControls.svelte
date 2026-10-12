@@ -2,7 +2,7 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import { commands } from "../../state/commands";
-  import { FILE_VIEW, MODES, type Mode } from "../../lib/viewMode";
+  import { FILE_VIEW, MODES, type Mode, type ViewMode, modeCommand } from "../../lib/viewMode";
 
   /** What a changed file's tab shows: its diff in the view mode, or its text. */
   type FileView = "diff" | "file";
@@ -19,27 +19,16 @@
     file?: FileView;
   } = $props();
 
-  const options = $derived([
-    ...MODES.map((m) => ({
+  const options = $derived(
+    [...MODES, ...(file ? [FILE_VIEW] : [])].map((m) => ({
       ...m,
-      title: commands.disabledReason("view.splitDiff"),
-      disabled: !commands.isEnabled("view.splitDiff"),
+      title: commands.hint(modeCommand(m.id)),
+      disabled: !commands.isEnabled(modeCommand(m.id)),
     })),
-    ...(file
-      ? [{ ...FILE_VIEW, title: commands.hint("view.fileText"), disabled: !commands.isEnabled("view.fileText") }]
-      : []),
-  ]);
+  );
   const value = $derived(file === "file" ? FILE_VIEW.id : mode);
 
-  /** A view mode of the diff, from the text, takes the tab back to the diff. */
-  function choose(id: Mode | typeof FILE_VIEW.id) {
-    if (id === FILE_VIEW.id) {
-      if (file === "diff") commands.run("view.fileText");
-      return;
-    }
-    if (id !== mode) commands.run("view.splitDiff");
-    if (file === "file") commands.run("view.fileText");
-  }
+  const choose = (id: ViewMode) => commands.run(modeCommand(id));
 </script>
 
 <div class="controls">

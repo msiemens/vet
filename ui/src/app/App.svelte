@@ -204,7 +204,10 @@
       showKeymap: () => showDialog("settings", "keymap"),
       showAccounts: () => showDialog("settings", "accounts"),
       quit: () => void quit(),
-      toggleSplit: () => setMode(mode === "split" ? "unified" : "split"),
+      showDiff: (next) => {
+        setMode(next);
+        void controller?.showFileView("diff");
+      },
       toggleSoftWrap: () => setSoftWrap(softWrap === "never" ? "prose" : "never"),
       toggleTool: (id) => {
         if (id === "timeline") {
@@ -218,6 +221,12 @@
       commentOnChangeset,
       postComments: () => {
         screen = "review";
+        platform.votePicking = false;
+        platform.outgoingOpen = true;
+      },
+      pickVote: () => {
+        screen = "review";
+        platform.votePicking = true;
         platform.outgoingOpen = true;
       },
       stageVote: (verdict) => void platform.stageVote(verdict),
@@ -254,6 +263,7 @@
     reconfirmable: baseChangedLeft > 0,
     pullRequest: platform.info !== undefined,
     outgoing,
+    voteSeparate: !!platform.traits?.verdictSeparate,
     voteBlock,
     manyCommits: commitCount > 1,
   }));
@@ -266,8 +276,7 @@
       native: hasNativeMenu,
       recent: recent.list.map(({ path }) => ({ path, name: repoName(path) })),
       screen,
-      splitDiff: mode === "split",
-      fileText: controller?.fileView === "text",
+      viewMode: controller?.fileView === "text" ? "file" : mode,
       softWrap: softWrap !== "never",
       theme,
       tools: [

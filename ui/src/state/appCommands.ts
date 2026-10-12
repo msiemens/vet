@@ -4,6 +4,7 @@
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { Command } from "../lib/commands.ts";
 import { THEMES, type Theme } from "../lib/theme/theme.ts";
+import { type Mode, modeCommand } from "../lib/viewMode.ts";
 import { parseKeyId } from "./changesetKey.ts";
 import type { CommandContext } from "./commands.ts";
 
@@ -33,8 +34,8 @@ export interface AppActions {
   /** Opens Settings on the Accounts page. */
   showAccounts(): void;
   quit(): void;
-  /** Switches between the diff drawn side by side and inline. */
-  toggleSplit(): void;
+  /** Shows changed files as diffs drawn in `mode`; a changed file's text tab goes back to its diff. */
+  showDiff(mode: Mode): void;
   /** Wraps long lines, or stops wrapping them. */
   toggleSoftWrap(): void;
   /** Shows or hides the tool window `id`. */
@@ -44,6 +45,8 @@ export interface AppActions {
   commentOnChangeset(): void;
   /** Opens the list of the comments and the vote that wait to be sent, with the button that sends them. */
   postComments(): void;
+  /** Opens the picker of the viewer's vote at the toolbar's outgoing button. */
+  pickVote(): void;
   /** Stages the viewer's vote on the pull request. */
   stageVote(verdict: string): void;
   /** Clears the backend's semantic caches. */
@@ -71,6 +74,12 @@ export const TOOL_WINDOWS: readonly {
 
 /** The id of the command that shows or hides the tool window `id`. */
 export const toolCommand = (id: string) => `view.tool.${id}`;
+
+/** The ways to draw a diff, with the key that shows each. The third way, a file's text, is the review's. */
+const VIEW_MODES: readonly { id: Mode; label: string; binding: string }[] = [
+  { id: "unified", label: "Unified Diff", binding: "Alt-Shift-1" },
+  { id: "split", label: "Side-by-Side Diff", binding: "Alt-Shift-2" },
+];
 
 const NO_PROJECT = "Open a project first";
 const NO_CHANGESET = "No changeset is on view";
@@ -151,6 +160,14 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
       run: () => a.changesSinceReview(),
     },
     {
+      id: "changeset.toggleSinceLast",
+      label: "Toggle Changes Since My Last Review",
+      binding: "Ctrl-Alt-l",
+      enabled: (c) => (c.rangeShown ? !!c.changesetOpen : c.reviewOpen),
+      disabledReason: () => NO_REVIEW,
+      run: (c) => (c.rangeShown ? a.wholeChangeset() : a.changesSinceReview()),
+    },
+    {
       id: "changeset.refresh",
       label: "Fetch and Refresh",
       binding: "Mod-t",
@@ -176,6 +193,7 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     {
       id: "review.post",
       label: "Post Comments…",
+      binding: "Mod-Shift-k",
       enabled: (c) => !!c.pullRequest && !!c.outgoing && !c.rangeShown,
       disabledReason: (c) =>
         !c.pullRequest
@@ -184,6 +202,19 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
             ? "Show the whole changeset to post comments"
             : "No comment or vote waits to be sent",
       run: () => a.postComments(),
+    },
+    {
+      id: "review.pickVote",
+      label: "Choose Vote",
+      binding: "Ctrl-Alt-v",
+      enabled: (c) => !!c.pullRequest && !!c.voteSeparate && c.voteBlock === undefined,
+      disabledReason: (c) =>
+        !c.pullRequest
+          ? NO_PULL_REQUEST
+          : !c.voteSeparate
+            ? "This platform sets the vote with the review"
+            : c.voteBlock,
+      run: () => a.pickVote(),
     },
     {
       id: "review.vote",
@@ -214,13 +245,14 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     { id: "app.accounts", label: "Accounts…", run: () => a.showAccounts() },
     { id: "app.about", label: "About Vet", run: () => a.showDialog("about") },
     { id: "app.quit", label: "Exit", accelerator: "Cmd+Q", enabled: (c) => c.canQuit, run: () => a.quit() },
-    {
-      id: "view.splitDiff",
-      label: "Side-by-Side Diff",
+    ...VIEW_MODES.map(({ id, label, binding }): Command<CommandContext> => ({
+      id: modeCommand(id),
+      label,
+      binding,
       enabled: repoOpen,
       disabledReason: needsProject,
-      run: () => a.toggleSplit(),
-    },
+      run: () => a.showDiff(id),
+    })),
     { id: "view.softWrap", label: "Soft Wrap", run: () => a.toggleSoftWrap() },
     ...TOOL_WINDOWS.map(({ id, label, binding }): Command<CommandContext> => ({
       id: toolCommand(id),

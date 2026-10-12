@@ -59,6 +59,27 @@ void test("Alt pressed with Ctrl, Shift or Meta already down is no tap, nor is o
   assert.equal(clicked.keyup({ key: "Alt" }), false);
 });
 
+void test("Alt+Shift, the Windows layout switch, and Alt+Shift+digit are no tap whichever modifier goes down first", () => {
+  const altFirst = new AltTap();
+  altFirst.keydown(down("Alt"));
+  altFirst.keydown(down("Shift", { shiftKey: true }));
+  assert.equal(altFirst.keyup({ key: "Shift" }), false);
+  assert.equal(altFirst.keyup({ key: "Alt" }), false);
+
+  const shiftFirst = new AltTap();
+  shiftFirst.keydown(down("Shift", { shiftKey: true }));
+  shiftFirst.keydown(down("Alt", { shiftKey: true }));
+  assert.equal(shiftFirst.keyup({ key: "Alt" }), false);
+
+  for (const key of ["!", '"', "§", "1"]) {
+    const alt = new AltTap();
+    alt.keydown(down("Alt"));
+    alt.keydown(down("Shift", { shiftKey: true }));
+    alt.keydown(down(key, { shiftKey: true }));
+    assert.equal(alt.keyup({ key: "Alt" }), false, key);
+  }
+});
+
 void test("AltGr is no Alt tap", () => {
   const alt = new AltTap();
   alt.keydown(down("Control", { ctrlKey: true }));

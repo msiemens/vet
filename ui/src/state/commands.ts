@@ -40,6 +40,8 @@ export interface CommandContext {
   pullRequest?: boolean;
   /** How many comments and staged votes wait to be sent to the platform. */
   outgoing?: number;
+  /** The pull request's platform keeps the vote apart from the comments, so the viewer can stage it alone. */
+  voteSeparate?: boolean;
   /** Why a vote cannot be staged now, if it cannot. */
   voteBlock?: string;
   /** The changeset on view has more than one commit, so there is something to review by commit. */

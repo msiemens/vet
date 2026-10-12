@@ -3,6 +3,7 @@
 
 import type { Command } from "../../lib/commands.ts";
 import type { MenuSpec } from "../../lib/commandMenu.ts";
+import { modeCommand } from "../../lib/viewMode.ts";
 import type { CommandContext, TabKind } from "../../state/commands.ts";
 
 /** What the keyboard commands do in the active tab's view. */
@@ -21,8 +22,8 @@ export interface ViewActions {
   jumpToSource(): boolean;
   /** Shows the commit `delta` away from the one on view; answers whether there was one. */
   stepCommit(delta: number): boolean;
-  /** Switches the active changed file between its diff and its text. */
-  toggleFileText(): void;
+  /** Shows the active changed file's text rather than its diff. */
+  showFileText(): void;
 }
 
 const NO_DIFF = "Open the Changes tab or a changed file";
@@ -118,11 +119,12 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       run: (c) => c.editor?.goToDefinition(),
     },
     {
-      id: "view.fileText",
-      label: "Show File Text",
+      id: modeCommand("file"),
+      label: "File Text",
+      binding: "Alt-Shift-3",
       enabled: (c) => c.fileView !== undefined,
       disabledReason: () => "Open the tab of a changed file",
-      run: () => a.toggleFileText(),
+      run: () => a.showFileText(),
     },
   ];
 }
@@ -237,6 +239,7 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
     {
       id: "view.revealFile",
       label: "Reveal File in Tree",
+      binding: "Alt-F2",
       enabled: (c) => !!c.changesetOpen,
       disabledReason: () => "No changeset is on view",
       run: () => a.revealFile(),

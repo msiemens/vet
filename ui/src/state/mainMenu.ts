@@ -6,7 +6,14 @@
 import type { Verdict } from "../generated/Verdict.ts";
 import type { MenuSpec } from "../lib/commandMenu.ts";
 import { THEMES, type Theme } from "../lib/theme/theme.ts";
+import { type ViewMode, modeCommand } from "../lib/viewMode.ts";
 import { toolCommand } from "./appCommands.ts";
+
+const MODE_ITEMS: { mode: ViewMode; label: string }[] = [
+  { mode: "unified", label: "Unified" },
+  { mode: "split", label: "Side-by-Side" },
+  { mode: "file", label: "File" },
+];
 
 /** What the menu shows that is not a command's own: the lists it offers and what is checked in them. */
 export interface MenuState {
@@ -16,10 +23,8 @@ export interface MenuState {
   recent: { path: string; name: string }[];
   /** Which screen shows. */
   screen: "queue" | "review";
-  /** The diff is drawn side by side. */
-  splitDiff: boolean;
-  /** The active tab shows a changed file's text rather than its diff. */
-  fileText: boolean;
+  /** What the review's views show: the active tab's file text, else the diff in its mode. */
+  viewMode: ViewMode;
   /** Long lines wrap. */
   softWrap: boolean;
   theme: Theme;
@@ -76,8 +81,14 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     { command: "tab.previous", disabled: inReview },
     { command: "tab.next", disabled: inReview },
     "-",
-    { command: "view.splitDiff", checked: s.splitDiff },
-    { command: "view.fileText", checked: s.fileText, disabled: inReview },
+    ...MODE_ITEMS.map(({ mode, label }) => ({
+      command: modeCommand(mode),
+      label,
+      checked: s.viewMode === mode,
+      radio: true as const,
+      disabled: mode === "file" ? inReview : undefined,
+    })),
+    "-",
     { command: "view.softWrap", checked: s.softWrap },
     "-",
     {

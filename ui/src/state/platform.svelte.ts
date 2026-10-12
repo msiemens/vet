@@ -41,6 +41,8 @@ class PlatformStore {
   });
   /** The toolbar's list of the outgoing comments and the vote, with the button that posts them, is open. */
   outgoingOpen = $state(false);
+  /** While that popover is open it lists the votes to pick from instead. */
+  votePicking = $state(false);
   /** The comment on the changeset as a whole that is being written in the Comments tool window. */
   changesetComment = $state({ composing: false, body: "" });
   /** What the platform of the last pull request on view lets the viewer do; kept while another changeset is on view. */

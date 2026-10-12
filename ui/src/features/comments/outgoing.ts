@@ -6,6 +6,7 @@ import type { PullRequestInfo } from "../../generated/PullRequestInfo";
 import type { Thread } from "../../generated/Thread";
 import type { ThreadMessage } from "../../generated/ThreadMessage";
 import { platformName } from "../../lib/platformName.ts";
+import type { MenuItem } from "../../lib/ui/menuItem.ts";
 import { inOrder, rowTitle } from "./groups.ts";
 
 export interface OutgoingComment {
@@ -55,6 +56,12 @@ export function outgoingTitle(summary: OutgoingSummary, withVote: boolean): stri
 /** The staged vote as the popover lists it: `Vote: Approve`. */
 export function voteText(info: Pick<PullRequestInfo, "traits">, vote: PendingVote): string {
   return `Vote: ${info.traits.verdicts.find((v) => v.id === vote.verdict)?.label ?? vote.verdict}`;
+}
+
+/** The platform's verdicts as the vote picker lists them, the staged vote marked, else the one the viewer has cast. */
+export function voteChoices(info: Pick<PullRequestInfo, "traits" | "pendingVote" | "viewerVerdict">): MenuItem[] {
+  const chosen = info.pendingVote?.verdict ?? info.viewerVerdict;
+  return info.traits.verdicts.map(({ id, label }) => ({ id, label, checked: id === chosen, radio: true }));
 }
 
 /** Where a comment is: `job.rs:12`, `job.rs` for one on the file, or the pull request. */
