@@ -340,7 +340,11 @@ function foldedCard(thread: Thread, actions: ThreadActions): HTMLElement {
 function notes(thread: Thread, actions: ThreadActions): HTMLElement | undefined {
   const row = el("div", "vet-thread-notes");
   if (thread.status === "resolved") {
-    row.append(el("span", "badge badge-ok", "Resolved"));
+    // Where the folded card has its chevron, so folding and opening are the same spot.
+    row.append(
+      iconButton("Hide the thread", "open", () => actions.toggle(thread.id), "vet-thread-btn", 10, 2),
+      el("span", "badge badge-ok", "Resolved"),
+    );
     const by = thread.platform?.resolvedBy;
     if (by) row.append(el("span", "vet-thread-by", `by ${by}`));
   }
@@ -360,13 +364,10 @@ function notes(thread: Thread, actions: ThreadActions): HTMLElement | undefined 
   return row.childElementCount ? row : undefined;
 }
 
-/** The icon buttons in the card's top right corner: fold, Resolve or Reopen, and the menu. */
+/** The icon buttons in the card's top right corner: Resolve or Reopen, and the menu. */
 function threadTools(thread: Thread, actions: ThreadActions): HTMLElement | undefined {
   const resolved = thread.status === "resolved";
   const tools = el("div", "vet-thread-actions");
-  if (resolved) {
-    tools.append(iconButton("Hide the thread", "open", () => actions.toggle(thread.id), "vet-icon-btn", 10, 2));
-  }
   // A comment on the pull request as a whole cannot be resolved.
   if (thread.platform?.resolvable !== false) {
     tools.append(

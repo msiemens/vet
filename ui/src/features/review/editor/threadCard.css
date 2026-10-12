@@ -71,6 +71,10 @@
   min-height: 30px;
   box-sizing: border-box;
 }
+/* The chevron that folds a resolved card sits at the left edge, as the folded card's does. */
+.vet-thread-notes:has(> .vet-thread-btn) {
+  padding-left: 8px;
+}
 .vet-thread-reply {
   display: flex;
   align-items: flex-end;
