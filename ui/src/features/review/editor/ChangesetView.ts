@@ -59,6 +59,12 @@ export interface ScrollPosition {
   offset: number;
 }
 
+/** Where a pane showing one file is left: the 0-based lines of its first line in view and of its caret. */
+export interface PanePosition {
+  top: number;
+  caret: number;
+}
+
 /** A view's current stop, as a position that survives a new revision. */
 export interface HunkAnchor {
   path: string;
@@ -687,6 +693,40 @@ export class ChangesetView {
   caretLine(): number | undefined {
     const view = this.sections[0]?.handle?.view;
     return view && lineOf(view.state.doc, view.state.selection.main.head);
+  }
+
+  /** The height at the top of the view that the pinned header and bar cover. */
+  private get covered(): number {
+    return this.heights.m.header + this.heights.m.hunk;
+  }
+
+  /** The first target line in view and the caret's of the first file, as lines; none while its editor is not mounted. */
+  lines(): PanePosition | undefined {
+    const view = this.sections[0]?.handle?.view;
+    if (!view) return undefined;
+    const { doc } = view.state;
+    // A line scrolled to the edge starts there, to the pixel: probe just below.
+    const edge = this.root.getBoundingClientRect().top + this.covered + 1 - view.documentTop;
+    return {
+      top: lineOf(doc, view.lineBlockAtHeight(edge).from),
+      caret: lineOf(doc, view.state.selection.main.head),
+    };
+  }
+
+  /** Shows the first file with `at.top` as its first line in view and the caret on `at.caret`; lines past the end are the last. */
+  async showLines(at: PanePosition): Promise<void> {
+    if (!this.sections.length) return;
+    await this.load(0);
+    if (this.destroyed) return;
+    // Near the line by the estimate first, as `reveal` does, so the editor is mounted and laid out.
+    const { m } = this.heights;
+    this.root.scrollTop = Math.max(0, this.sections[0].top + m.header + at.top * m.line);
+    const { view } = this.mount(0);
+    this.sync();
+    view.dispatch({
+      selection: { anchor: lineStart(view.state.doc, at.caret) },
+      effects: EditorView.scrollIntoView(lineStart(view.state.doc, at.top), { y: "start", yMargin: 0 }),
+    });
   }
 
   /** Where the current stop is, so a view of a newer revision can keep it. */

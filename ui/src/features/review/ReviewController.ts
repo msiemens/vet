@@ -24,7 +24,7 @@ import { rangeKey } from "../../state/timelineRange";
 import type { Thread } from "../../generated/Thread";
 import { SUBMIT_KEY } from "../../lib/composer";
 import { errorText } from "../../lib/errorText";
-import { ChangesetView, type Listeners, type ScrollPosition, type ViewHooks } from "./editor/ChangesetView";
+import { ChangesetView, type Listeners, type PanePosition, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
 import { LogView } from "./editor/LogView";
 import { type ThreadActions, buildCard } from "./editor/threadCard";
@@ -34,13 +34,12 @@ import type { SoftWrap } from "../../lib/softWrap";
 import type { Mode, ViewMode } from "../../lib/viewMode";
 import { type CommandContext, commands } from "../../state/commands";
 import { type TextActions, TextView } from "./editor/TextView";
-import { type SavedView, restoredTabs } from "./changesetViews";
+import { type FilePositions, type SavedView, ViewMemory, restoredTabs } from "./changesetViews";
 import { keyId } from "../../state/changesetKey";
 import { threadMenu } from "../comments";
 import { type HunkPlace, stepFlagged } from "./flaggedHunks";
 import { provideActions } from "./reviewActions";
 import type { ViewActions } from "./reviewCommands";
-import { readPosition, writePosition } from "./savedPosition";
 import {
   CHANGES,
   type TabId,
@@ -80,7 +79,7 @@ export type ChangesetSource = Pick<
 
 const NO_HOVER = { text: "", code: [] };
 
-/** The Changes tab's position is saved this long after it stopped scrolling. */
+/** The tabs and positions are saved this long after the last change. */
 const SAVE_AFTER_MS = 400;
 
 /** Said when a mark or a comment is asked for in a range that does not end at the latest version. */
@@ -113,10 +112,12 @@ export class ReviewController {
   private filtered?: ReadonlySet<string>;
   /** The commit the views show, if they show one. */
   private shownCommit?: number;
-  /** What each changeset that is not on view had open, for when it comes back. */
-  private parked = new Map<string, SavedView>();
-  /** Scroll positions and the current hunk the next builds restore, instead of carrying the old views' over. */
-  private restore?: { scroll: Map<TabId, number>; anchor?: SavedView["anchor"] };
+  /** What each changeset of the repository had open when it was last on view, for when it comes back. */
+  private memory?: ViewMemory;
+  /** Scroll positions the next builds start at, instead of carrying the old views' over. */
+  private restore?: { scroll: Map<TabId, number> };
+  /** Where file tabs' panes are put when they are built: the positions of the changeset just brought back. */
+  private pending = new Map<TabId, FilePositions>();
   private saving?: ReturnType<typeof setTimeout>;
 
   constructor(
@@ -164,7 +165,7 @@ export class ReviewController {
   /** Detaches the controller from the window and the store, and tears down the views. */
   destroy() {
     clearTimeout(this.saving);
-    this.savePosition();
+    this.saveView();
     this.unsubscribe();
     this.unsubscribeEvents();
     for (const view of this.views.values()) view.destroy();
@@ -578,6 +579,8 @@ export class ReviewController {
       file && { file, actions: this.textActions(file, manifest.revision) },
     );
     this.texts.set(id, text);
+    const at = this.takePending(id, "text");
+    if (at) text.showLines(at);
     if (this.threadsFit(manifest)) text.setThreads(this.shownThreads(), manifest.revision);
   }
 
@@ -595,7 +598,7 @@ export class ReviewController {
         ? manifest.files.filter((f) => !only || only.has(f.path))
         : manifest.files.filter((f) => f.path === path);
     const restoring = this.restore?.scroll.has(id) ? this.restore : undefined;
-    const anchor = restoring ? (id === CHANGES ? restoring.anchor : undefined) : previous?.currentAnchor();
+    const anchor = restoring ? undefined : previous?.currentAnchor();
     const top = restoring ? (restoring.scroll.get(id) ?? 0) : root.scrollTop;
     if (restoring) {
       restoring.scroll.delete(id);
@@ -622,33 +625,71 @@ export class ReviewController {
     view.sync();
     // A file tab shows its one file at once; the Changes tab loads sections as they come near.
     // A stale revision is replaced by the next build.
-    if (path !== undefined) view.load(0).catch(() => undefined);
+    if (path === undefined) return;
+    const at = this.takePending(id, "diff");
+    (at ? view.showLines(at) : view.load(0)).catch(() => undefined);
   }
 
-  /** Where the Changes tab was left when the changeset was last open. */
-  private savedPosition(): ScrollPosition | undefined {
+  /** The position a pane is put at when it is built, once. */
+  private takePending(id: TabId, pane: keyof FilePositions): PanePosition | undefined {
+    const positions = this.pending.get(id);
+    const at = positions?.[pane];
+    if (positions) {
+      positions[pane] = undefined;
+      if (!positions.diff && !positions.text) this.pending.delete(id);
+    }
+    return at;
+  }
+
+  /** The views of the tabs now, as `memory` keeps them. Where a pane has no view to ask (its tab's diff pane while the next changeset loads), the position stored for it stays. */
+  private capture(key: string): SavedView {
+    const before = this.memory?.get(key);
+    // A range or a commit shows other files than the changeset's own: its positions are not kept.
+    const plain = !this.shown && this.shownCommit === undefined;
+    const panes = new Map<TabId, FilePositions>();
+    for (const id of this.tabs.open) {
+      if (pathOf(id) === undefined) continue;
+      const old = before?.panes.get(id);
+      const live = plain && {
+        diff: this.views.get(id)?.lines() ?? this.pending.get(id)?.diff,
+        text: this.texts.get(id)?.lines() ?? this.pending.get(id)?.text,
+      };
+      const kept = live ? { diff: live.diff ?? old?.diff, text: live.text ?? old?.text } : old;
+      if (kept && (kept.diff || kept.text)) panes.set(id, kept);
+    }
+    const changes = this.views.get(CHANGES);
+    return {
+      open: [...this.tabs.open],
+      active: this.tabs.active,
+      modes: new Map(this.tabs.modes),
+      panes,
+      changes: plain ? (changes?.position() ?? before?.changes) : before?.changes,
+      anchor: plain ? (changes?.currentAnchor() ?? before?.anchor) : before?.anchor,
+    };
+  }
+
+  /** Remembers the tabs and where the panes are for the changeset on view. */
+  private saveView() {
     const repo = session.repo;
-    return repo === undefined || this.key === undefined ? undefined : readPosition(repo, this.key);
+    if (repo === undefined || this.key === undefined) return;
+    this.memory ??= new ViewMemory(repo);
+    this.memory.set(this.key, this.capture(this.key));
   }
 
-  /** Remembers where the Changes tab is scrolled to; a range is not the changeset's own view and is not kept. */
-  private savePosition() {
-    const repo = session.repo;
-    const at = this.changeset.currentManifest()?.interdiff ? undefined : this.views.get(CHANGES)?.position();
-    if (repo !== undefined && this.key !== undefined && at) writePosition(repo, this.key, at);
-  }
-
-  /** The Changes tab scrolled: the position is saved once the scrolling pauses. */
-  private onChangesScroll = () => {
+  /** The tabs or a pane changed: the views are saved once the changes pause. */
+  scheduleSave = () => {
     clearTimeout(this.saving);
-    this.saving = setTimeout(() => this.savePosition(), SAVE_AFTER_MS);
+    this.saving = setTimeout(() => this.saveView(), SAVE_AFTER_MS);
   };
 
   /** A file tab's text pane has its scroll root; returns the function that detaches it. The text is built once the tab shows it. */
   attachText(id: TabId, root: HTMLElement): () => void {
     this.textRoots.set(id, root);
+    // The text view's own scroller does not bubble its scrolls.
+    root.addEventListener("scroll", this.scheduleSave, { passive: true, capture: true });
     if (this.tabs.modes.get(id) === "file") this.ensureText(id);
     return () => {
+      root.removeEventListener("scroll", this.scheduleSave, { capture: true });
       this.texts.get(id)?.destroy();
       this.texts.delete(id);
       this.textRoots.delete(id);
@@ -658,14 +699,14 @@ export class ReviewController {
   /** A tab's pane has its scroll root (for a file tab, that of its diff); returns the function that detaches it. */
   attach(id: TabId, root: HTMLElement): () => void {
     this.roots.set(id, root);
+    // Registered before the view is, so it hears the scroll that the view's own listener stops.
+    root.addEventListener("scroll", this.scheduleSave, { passive: true });
     // The Changes tab is built by `open`, which fetches the manifest first.
     const manifest = this.changeset.currentManifest();
     if (kindOf(id) === "log") this.buildLog(id, root);
     else if (id !== CHANGES && manifest) this.build(id, manifest);
-    // Registered before the view is, so it hears the scroll that the view's own listener stops.
-    if (id === CHANGES) root.addEventListener("scroll", this.onChangesScroll, { passive: true });
     return () => {
-      if (id === CHANGES) root.removeEventListener("scroll", this.onChangesScroll);
+      root.removeEventListener("scroll", this.scheduleSave);
       this.views.get(id)?.destroy();
       this.views.delete(id);
       this.logViews.get(id)?.destroy();
@@ -769,23 +810,22 @@ export class ReviewController {
 
   /**
    * A refetched manifest may be of a newer revision than the views; rebuild them then. A manifest of
-   * another changeset first parks the tabs, scroll positions and current hunk of the one that was on
-   * view, and brings back those of the new one, if it was on view before.
+   * another changeset first remembers the tabs and positions of the one that was on view, and
+   * brings back those of the new one, if it was on view before.
    */
   update(manifest: Manifest) {
     const key = keyId(manifest.target.changeset);
     const switching = this.key !== undefined && key !== this.key;
     const paths = new Set(manifest.files.map((f) => f.path));
-    const firstVisit = switching && !this.parked.has(key);
-    if (switching) this.switchTo(key, paths);
-    else this.tabs.dropStale((path) => paths.has(path));
+    const brought = switching ? this.switchTo(key, paths) : undefined;
+    if (!switching) this.tabs.dropStale((path) => paths.has(path));
     this.key = key;
     const commitChanged = this.commitChanged();
     const rangeChanged = this.rangeChanged(manifest) || commitChanged;
     const filterChanged = this.filtered !== this.changeset.baseChanged;
     this.filtered = this.changeset.baseChanged;
     const view = this.views.get(CHANGES);
-    if (!view || (view.revision === manifest.revision && !rangeChanged && !filterChanged)) return;
+    if (!view || (!switching && view.revision === manifest.revision && !rangeChanged && !filterChanged)) return;
     // Another range is another set of files: its views start at the top. So does the Changes tab when
     // it shows other files.
     if ((rangeChanged || filterChanged) && !switching) {
@@ -793,7 +833,8 @@ export class ReviewController {
       this.restore = { scroll: new Map(tabs.map((tab) => [tab, 0])) };
     }
     this.show(manifest);
-    if (firstVisit || rangeChanged || filterChanged) void this.changes.goToHunk(0);
+    const restored = switching && this.restoreChanges(brought, manifest);
+    if (!restored && (switching || rangeChanged || filterChanged)) void this.changes.goToHunk(0);
     // The new views have loaded nothing; a newer revision replaces this load.
     this.changes.loadAll().catch(() => undefined);
   }
@@ -819,30 +860,45 @@ export class ReviewController {
     return now !== was;
   }
 
-  /** Parks the changeset on view and sets the tabs of `next` and what the builds restore. */
-  private switchTo(next: string, paths: ReadonlySet<string>) {
-    if (this.key !== undefined) {
-      clearTimeout(this.saving);
-      this.savePosition();
-      const scroll = new Map<TabId, number>();
-      for (const [id, root] of this.roots) scroll.set(id, root.scrollTop);
-      this.parked.set(this.key, {
-        open: [...this.tabs.open],
-        active: this.tabs.active,
-        modes: new Map(this.tabs.modes),
-        scroll,
-        anchor: this.views.get(CHANGES)?.currentAnchor(),
-      });
-    }
-    const saved = this.parked.get(next);
-    const { open, active, modes } = restoredTabs(saved, (path) => paths.has(path), this.diffMode);
+  /** Remembers the changeset on view and brings back the tabs of `next`; answers what was remembered of it. */
+  private switchTo(next: string, paths: ReadonlySet<string>): SavedView | undefined {
+    clearTimeout(this.saving);
+    this.saveView();
+    return this.bringBack(next, paths);
+  }
+
+  /** Sets the tabs the changeset `key` had, and what its panes are put at when they are built. */
+  private bringBack(key: string, paths: ReadonlySet<string>): SavedView | undefined {
+    const repo = session.repo;
+    if (repo !== undefined) this.memory ??= new ViewMemory(repo);
+    const saved = this.memory?.get(key);
+    const { open, active, modes } = restoredTabs(
+      saved,
+      (path) => paths.has(path),
+      this.diffMode,
+      (tab) => this.tabs.logs.has(tab),
+    );
     this.tabs.modes.clear();
     for (const [id, mode] of modes) this.tabs.modes.set(id, mode);
     this.tabs.open = open;
     this.tabs.active = active;
-    // Every diff tab builds with its saved position, those not mounted yet when they attach.
-    const scroll = new Map(open.filter(hasDiff).map((tab) => [tab, saved?.scroll.get(tab) ?? 0]));
-    this.restore = { scroll, anchor: saved?.anchor };
+    this.pending.clear();
+    for (const id of open) {
+      const at = saved?.panes.get(id);
+      if (at) this.pending.set(id, { ...at });
+    }
+    // Every diff view starts at the top; a remembered position is put on it once it is built.
+    this.restore = { scroll: new Map(open.filter(hasDiff).map((tab) => [tab, 0])) };
+    return saved;
+  }
+
+  /** Puts the Changes tab where `saved` left it and makes its hunk the current one; answers whether the position was found. */
+  private restoreChanges(saved: SavedView | undefined, manifest: Manifest): boolean {
+    const view = this.views.get(CHANGES);
+    if (!view || !saved?.changes || manifest.interdiff || this.changeset.shownCommit !== undefined) return false;
+    if (!view.restore(saved.changes)) return false;
+    view.keepCurrent(saved.anchor);
+    return true;
   }
 
   /** Fetches the manifest and renders it, answering whether it did (not when the project was closed); with `prefetch`, then loads the rest of the Changes tab once its first hunk is painted. */
@@ -852,13 +908,13 @@ export class ReviewController {
     const manifest = await this.changeset.refresh();
     if (!manifest) return false; // the project was closed meanwhile
     this.key = keyId(manifest.target.changeset);
+    const saved = this.bringBack(this.key, new Set(manifest.files.map((f) => f.path)));
     this.rangeChanged(manifest);
     this.filtered = this.changeset.baseChanged;
     this.commitChanged();
     this.show(manifest);
     const view = this.changes;
-    const saved = manifest.interdiff ? undefined : this.savedPosition();
-    if (!(saved && view.restore(saved))) await view.goToHunk(0);
+    if (!this.restoreChanges(saved, manifest)) await view.goToHunk(0);
     await nextPaint();
     if (prefetch) await view.loadAll();
     return true;

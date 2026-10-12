@@ -16,6 +16,7 @@ import { type Highlights, decodeHighlights } from "../../../lib/highlights";
 import type { SoftWrap } from "../../../lib/softWrap";
 import { iconSvg } from "../../../lib/ui/icons";
 import { type MarkLayout, type ScrollMark, Scrollbar } from "../../../lib/ui/scrollbar";
+import type { PanePosition } from "./ChangesetView";
 import { currentLine } from "./currentLine";
 import { closeChangeCard, showChangeCard } from "./fileCard";
 import { type EditorSelection, fileViewComment, hunkComment } from "./commentAnchor";
@@ -70,6 +71,8 @@ export class TextView {
   private destroyed = false;
   /** The 0-based line to show once the text has arrived. */
   private line?: number;
+  /** The position to show once the text has arrived. */
+  private position?: PanePosition;
   /** The span to show once the text has arrived. */
   private span?: TextSpan;
   /** The hunk to go to once the text has arrived. */
@@ -167,6 +170,7 @@ export class TextView {
     if (this.span) this.goToSpan(this.span);
     else if (this.hunk !== undefined) this.goToHunk(this.hunk);
     else if (this.line !== undefined) this.goToLine(this.line);
+    else if (this.position) this.showLines(this.position);
     this.refreshDiagnostics();
   }
 
@@ -349,6 +353,30 @@ export class TextView {
   caretLine(): number | undefined {
     const view = this.view;
     return view && lineOf(view.state.doc, view.state.selection.main.head);
+  }
+
+  /** The first line in view and the caret's, as 0-based lines; none until the text has arrived. */
+  lines(): PanePosition | undefined {
+    const { view } = this;
+    if (!view) return undefined;
+    const { doc } = view.state;
+    // A line scrolled to the edge starts there, to the pixel: probe just below.
+    const edge = view.scrollDOM.getBoundingClientRect().top + 1 - view.documentTop;
+    return {
+      top: lineOf(doc, view.lineBlockAtHeight(edge).from),
+      caret: lineOf(doc, view.state.selection.main.head),
+    };
+  }
+
+  /** Shows `at.top` as the first line in view with the caret on `at.caret` (once the text has arrived); lines past the end are the last. */
+  showLines(at: PanePosition) {
+    this.position = at;
+    const { view } = this;
+    if (!view) return;
+    view.dispatch({
+      selection: { anchor: lineStart(view.state.doc, at.caret) },
+      effects: EditorView.scrollIntoView(lineStart(view.state.doc, at.top), { y: "start", yMargin: 0 }),
+    });
   }
 
   /** Selects and marks a span, and centres it. */

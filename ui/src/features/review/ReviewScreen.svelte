@@ -156,6 +156,13 @@
     untrack(() => void threads.reload());
   });
 
+  // The open tabs, the active one or a view mode changed: the tabs are remembered.
+  $effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the reads make the tabs a dependency
+    [tabs.open.length, tabs.active, ...tabs.open.map((id) => tabs.modes.get(id))];
+    untrack(() => controller.scheduleSave());
+  });
+
   // A settled snapshot moved the changeset to a new revision, another changeset is on view, or
   // the review view shows another range.
   $effect(() => {
