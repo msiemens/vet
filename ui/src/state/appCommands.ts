@@ -10,6 +10,8 @@ import type { CommandContext } from "./commands.ts";
 export interface AppActions {
   pickProject(): void;
   openProject(path: string): void;
+  /** Closes the open project and shows the welcome screen. */
+  closeProject(): void;
   finishReview(): void;
   /** Shows what changed since the version last reviewed. */
   changesSinceReview(): void;
@@ -95,6 +97,13 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
         if (path === undefined) return false;
         a.openProject(path);
       },
+    },
+    {
+      id: "file.close",
+      label: "Close Project",
+      enabled: repoOpen,
+      disabledReason: needsProject,
+      run: () => a.closeProject(),
     },
     {
       id: "view.queue",

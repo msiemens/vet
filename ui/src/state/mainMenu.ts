@@ -55,6 +55,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
       label: "Open Recent",
       items: s.recent.map(({ path, name }) => ({ command: "file.openRecent", arg: path, label: name, detail: path })),
     },
+    { command: "file.close" },
     "-",
     { command: "tab.close" },
     { command: "tab.closeOthers" },

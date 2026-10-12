@@ -39,6 +39,7 @@ const open: CommandContext = {
 const calls: string[] = [];
 const actions: AppActions = {
   pickProject: () => calls.push("pick"),
+  closeProject: () => calls.push("close"),
   openProject: (path) => calls.push(`open ${path}`),
   finishReview: () => calls.push("finish"),
   changesSinceReview: () => calls.push("since"),
@@ -168,7 +169,7 @@ void test("only the chords whose command loses nothing to the menu become native
 
 void test("Open Project, Open Recent and the changeset items hold their places, and Switch Changeset has the key Open Pull Request lost", () => {
   const items = menu();
-  assert.deepEqual(ids(submenu(items, "file")).slice(0, 3), ["file.open", "recent", "-"]);
+  assert.deepEqual(ids(submenu(items, "file")).slice(0, 4), ["file.open", "recent", "file.close", "-"]);
   assert.equal(find(items, "changeset.switch")?.shortcut, "Ctrl+Shift+O");
   assert.equal(find(items, "changeset.openPullRequest")?.shortcut, undefined);
   assert.deepEqual(ids(submenu(items, "changeset")), [
@@ -196,7 +197,7 @@ void test("without a project everything that needs one is disabled, not hidden, 
   const items = menu({ recent: [] }, { repoOpen: false, changesetOpen: false, reviewOpen: false, pullRequest: false });
   assert.equal(find(items, "recent")?.enabled, false);
   assert.equal(find(items, "file.open")?.enabled, undefined);
-  for (const id of ["view.queue", "view.review", "changeset.switch", "changeset.refresh"]) {
+  for (const id of ["file.close", "view.queue", "view.review", "changeset.switch", "changeset.refresh"]) {
     const item = find(items, id);
     assert.equal(item?.enabled, false, id);
     assert.ok(item.reason, id);

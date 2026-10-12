@@ -196,6 +196,7 @@
     ...appCommands({
       pickProject: () => void pickProject(),
       openProject,
+      closeProject: () => void session.closeRepo(),
       finishReview: () => (dialog = "finish"),
       changesSinceReview: () => void showChangesSinceReview(),
       wholeChangeset: () => void changeset.setRange(undefined),
