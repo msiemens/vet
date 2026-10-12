@@ -58,11 +58,11 @@ impl PullRequestRefs {
     /// GitHub keeps the head at `refs/pull/<n>/head`, for forks too. Azure DevOps has no such ref
     /// (its `refs/pull/<n>/merge` is a merge commit): the source branch is fetched, and the head
     /// commit itself when the branch is in a fork's repository.
-    pub fn updates(&self, kind: PlatformKind, pull_request: &PullRequest) -> Vec<RefUpdate> {
+    pub fn updates(&self, kind: PlatformKind, number: u64, branches: Branches<'_>) -> Vec<RefUpdate> {
         let head = match kind {
-            PlatformKind::GitHub => format!("refs/pull/{}/head", pull_request.number),
-            PlatformKind::AzureDevOps if pull_request.fork.is_some() => pull_request.head.clone(),
-            PlatformKind::AzureDevOps => format!("refs/heads/{}", pull_request.source_branch),
+            PlatformKind::GitHub => format!("refs/pull/{number}/head"),
+            PlatformKind::AzureDevOps if branches.fork => branches.head.to_owned(),
+            PlatformKind::AzureDevOps => format!("refs/heads/{}", branches.source),
         };
         vec![
             RefUpdate {
@@ -70,10 +70,43 @@ impl PullRequestRefs {
                 destination: self.head.clone(),
             },
             RefUpdate {
-                source: format!("refs/heads/{}", pull_request.target_branch),
+                source: format!("refs/heads/{}", branches.target),
                 destination: self.target.clone(),
             },
         ]
+    }
+}
+
+/// What of a pull request says where to fetch it from.
+#[derive(Clone, Copy)]
+pub struct Branches<'a> {
+    pub source: &'a str,
+    pub target: &'a str,
+    /// The source branch is in a fork's repository.
+    pub fork: bool,
+    /// The commit the head is at.
+    pub head: &'a str,
+}
+
+impl<'a> From<&'a PullRequest> for Branches<'a> {
+    fn from(pr: &'a PullRequest) -> Self {
+        Self {
+            source: &pr.source_branch,
+            target: &pr.target_branch,
+            fork: pr.fork.is_some(),
+            head: &pr.head,
+        }
+    }
+}
+
+impl<'a> From<&'a PullRequestRow> for Branches<'a> {
+    fn from(row: &'a PullRequestRow) -> Self {
+        Self {
+            source: &row.source_branch,
+            target: &row.target_branch,
+            fork: row.fork.is_some(),
+            head: &row.head,
+        }
     }
 }
 
@@ -264,7 +297,7 @@ pub async fn fetch_pull_request<P: Platform, G: Fetcher>(
         .find(|h| h.key == *remote)
         .and_then(|h| remotes.iter().find(|r| r.name == h.remote))
         .ok_or_else(|| FetchError::Git(format!("none of the remotes of this repository is {remote}")))?;
-    let updates = PullRequestRefs::of(remote, number).updates(remote.kind(), &detail.pull_request);
+    let updates = PullRequestRefs::of(remote, number).updates(remote.kind(), number, (&detail.pull_request).into());
     fetch
         .refs(credentials, git_remote, updates, format!("Fetching #{number}"))
         .await
@@ -322,6 +355,62 @@ pub async fn delete_pull_request_refs<G: Fetcher>(
     fetch.delete_refs(names, since).await
 }
 
+/// How many pull requests one fetch brings in.
+const HEADS_PER_FETCH: usize = 8;
+
+/// Fetches the pull requests of `list` whose refs are not in the repository yet, newest first, so
+/// every row of the queue has commits to count lines from. Does not touch a pull request that is
+/// there already. A batch the remote refuses (a branch deleted since the listing) is fetched one
+/// pull request at a time, so one cannot hold back the rest. Answers whether anything was brought in.
+pub async fn fetch_listed_heads<G: Fetcher>(
+    fetch: &Fetch<G>,
+    credentials: &(impl Credentials + Sync),
+    list: &PullRequestList,
+) -> Result<bool, String> {
+    let remotes = fetch.remotes().await?;
+    let mut brought = false;
+    for source in list.sources.iter().filter(|s| s.error.is_none()) {
+        let repository = &source.remote;
+        let Some(git_remote) = hosted_repositories(&remotes, repository.kind())
+            .into_iter()
+            .find(|h| h.key == *repository)
+            .and_then(|h| remotes.iter().find(|r| r.name == h.remote))
+        else {
+            continue;
+        };
+        let have = fetch.refs_below(&PullRequestRefs::of_repository(repository)).await?;
+        let missing: Vec<Vec<RefUpdate>> = list
+            .rows
+            .iter()
+            .filter(|listed| listed.remote == *repository)
+            .filter(|listed| {
+                let refs = PullRequestRefs::of(repository, listed.row.number);
+                !have.contains(&refs.head) || !have.contains(&refs.target)
+            })
+            .map(|listed| {
+                let number = listed.row.number;
+                PullRequestRefs::of(repository, number).updates(repository.kind(), number, (&listed.row).into())
+            })
+            .collect();
+        for batch in missing.chunks(HEADS_PER_FETCH) {
+            let title = format!("Fetching {} pull requests", batch.len());
+            let together = batch.concat();
+            if fetch.refs(credentials, git_remote, together, title).await.is_ok() {
+                brought = true;
+                continue;
+            }
+            for updates in batch {
+                let title = "Fetching a pull request".to_owned();
+                brought |= fetch
+                    .refs(credentials, git_remote, updates.clone(), title)
+                    .await
+                    .is_ok();
+            }
+        }
+    }
+    Ok(brought)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
@@ -370,7 +459,7 @@ mod tests {
     }
 
     fn sources(refs: &PullRequestRefs, kind: PlatformKind, pull_request: &PullRequest) -> Vec<(String, String)> {
-        refs.updates(kind, pull_request)
+        refs.updates(kind, 7, pull_request.into())
             .into_iter()
             .map(|u| (u.source, u.destination))
             .collect()
@@ -524,6 +613,8 @@ mod tests {
         remotes: Vec<RemoteInfo>,
         fetched: Fetched,
         refs: Refs,
+        /// Sources the remote does not have: a fetch asking for one fails.
+        gone: Vec<String>,
     }
 
     impl Fetcher for Remotes {
@@ -541,13 +632,16 @@ mod tests {
             updates: Vec<RefUpdate>,
             _: Option<FetchAuth>,
         ) -> Result<(), GitError> {
+            self.fetched.lock().unwrap().push((remote.to_owned(), updates.clone()));
+            if let Some(lacking) = updates.iter().find(|u| self.gone.contains(&u.source)) {
+                return Err(GitError(format!("{} is not on the remote", lacking.source)));
+            }
             let mut refs = self.refs.lock().unwrap();
             for update in &updates {
                 if !refs.contains(&update.destination) {
                     refs.push(update.destination.clone());
                 }
             }
-            self.fetched.lock().unwrap().push((remote.to_owned(), updates));
             Ok(())
         }
 
@@ -584,8 +678,30 @@ mod tests {
             remotes,
             fetched: Arc::clone(&fetched),
             refs: Arc::clone(&refs),
+            gone: Vec::new(),
         };
         (Fetch::new(git, Tasks::default()), fetched, refs)
+    }
+
+    fn listed_ado(numbers: &[u64]) -> PullRequestList {
+        let remote = RemoteKey {
+            host: "dev.azure.com".to_owned(),
+            path: "contoso/Shop/api".to_owned(),
+        };
+        PullRequestList {
+            rows: numbers
+                .iter()
+                .map(|n| ListedPullRequest {
+                    remote: remote.clone(),
+                    row: rows(vec![pr(*n)], &viewer(), &PullRequestQuery::new(QueueTab::AllOpen)).remove(0),
+                })
+                .collect(),
+            sources: vec![RepositoryStatus {
+                remote,
+                error: None,
+                truncated: false,
+            }],
+        }
     }
 
     #[tokio::test]
@@ -610,7 +726,10 @@ mod tests {
         pull_request.target_branch = "release".to_owned();
         assert_eq!(
             *fetched.lock().unwrap(),
-            [("upstream".to_owned(), refs.updates(PlatformKind::GitHub, &pull_request))]
+            [(
+                "upstream".to_owned(),
+                refs.updates(PlatformKind::GitHub, 7, (&pull_request).into())
+            )]
         );
     }
 
@@ -883,5 +1002,56 @@ mod tests {
 
         assert_eq!(deleted, [of(4).head, of(4).target, of(6).head, of(6).target]);
         assert_eq!(*refs.lock().unwrap(), [of(5).head, of(5).target]);
+    }
+
+    fn ado_remote() -> RemoteInfo {
+        info("origin", "https://dev.azure.com/contoso/Shop/_git/api")
+    }
+
+    #[tokio::test]
+    async fn the_listed_pull_requests_that_are_not_in_the_repository_are_fetched_once_in_one_go() {
+        let list = listed_ado(&[1, 2, 3]);
+        let remote = list.sources[0].remote.clone();
+        let of = |number| PullRequestRefs::of(&remote, number);
+        let kept = [of(2).head, of(2).target];
+        let kept: Vec<&str> = kept.iter().map(String::as_str).collect();
+        let (fetch, fetched, refs) = fetching_into(vec![ado_remote()], &kept);
+
+        assert!(fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+
+        let destinations: Vec<String> = fetched
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|(_, u)| u.iter().map(|u| u.destination.clone()))
+            .collect();
+        assert_eq!(destinations, [of(1).head, of(1).target, of(3).head, of(3).target]);
+        assert_eq!(fetched.lock().unwrap().len(), 1, "one fetch for the lot");
+        assert!(refs.lock().unwrap().contains(&of(3).head));
+
+        assert!(!fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+        assert_eq!(fetched.lock().unwrap().len(), 1, "nothing is fetched twice");
+    }
+
+    #[tokio::test]
+    async fn a_pull_request_whose_branch_is_gone_does_not_hold_back_the_others() {
+        let mut list = listed_ado(&[1, 2, 3]);
+        list.rows[1].row.source_branch = "deleted".to_owned();
+        let remote = list.sources[0].remote.clone();
+        let fetched = Arc::default();
+        let refs: Refs = Arc::default();
+        let git = Remotes {
+            remotes: vec![ado_remote()],
+            fetched: Arc::clone(&fetched),
+            refs: Arc::clone(&refs),
+            gone: vec!["refs/heads/deleted".to_owned()],
+        };
+        let fetch = Fetch::new(git, Tasks::default());
+
+        assert!(fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+
+        let refs = refs.lock().unwrap();
+        let has = |number| refs.contains(&PullRequestRefs::of(&remote, number).head);
+        assert_eq!((has(1), has(2), has(3)), (true, false, true));
     }
 }

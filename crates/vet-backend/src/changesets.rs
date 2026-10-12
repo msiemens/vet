@@ -1,5 +1,7 @@
 //! Requests about which changeset is on view and which there are.
 
+use std::sync::Arc;
+
 use vet_app::changeset::{RemoteKey, Source};
 use vet_app::fetch::FetchMark;
 use vet_app::platform::{Platform, PlatformError, PlatformKind, commits_checks};
@@ -63,6 +65,7 @@ impl Orchestrator {
         if let Err(error) = prune_pull_request_refs(&open, &list, since).await {
             tracing::warn!(%error, "deleting the refs of pull requests no longer listed failed");
         }
+        fetch_heads_in_background(open.open.clone(), list.clone());
         for source in &list.sources {
             if let Some(error) = &source.error {
                 tracing::warn!(repository = %source.remote, %error, "listing the pull requests failed");
@@ -167,6 +170,20 @@ impl Orchestrator {
                 .broadcast(Event::CredentialsNeeded { host: host.to_owned() });
         }
     }
+}
+
+/// Brings in the pull requests of `list` that are not in the repository, so the queue can count
+/// the lines of every row, and tells the subscribers when something came.
+fn fetch_heads_in_background(open: Arc<Open>, list: PullRequestList) {
+    tokio::spawn(async move {
+        match pull_request::fetch_listed_heads(&open.fetch, &Held(&open.accounts), &list).await {
+            Ok(true) => open
+                .subscribers
+                .broadcast(Event::ChangesetsChanged { project: open.id }),
+            Ok(false) => {}
+            Err(error) => tracing::warn!(%error, "fetching the listed pull requests failed"),
+        }
+    });
 }
 
 /// Deletes the refs of the pull requests fetched before `since` that `list` no longer has, unless

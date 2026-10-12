@@ -28,6 +28,8 @@ pub struct PullRequestRow {
     pub source_branch: String,
     pub target_branch: String,
     pub fork: Option<String>,
+    /// The commit the pull request's head is at.
+    pub head: String,
     pub lines: Option<ChangedLines>,
     pub comments: u32,
     pub ci: Option<CiState>,
@@ -132,6 +134,7 @@ fn row(pr: PullRequest, viewer: &Viewer) -> PullRequestRow {
         source_branch: pr.source_branch,
         target_branch: pr.target_branch,
         fork: pr.fork,
+        head: pr.head,
         lines: pr.lines,
         comments: pr.comments,
         ci: pr.ci,
