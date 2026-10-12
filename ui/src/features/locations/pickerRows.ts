@@ -1,14 +1,12 @@
 // What the location picker lists: the rows of a search as the popup draws them, either grouped by
-// file under the changeset, the other files and the libraries, or as a short flat list.
+// file under the changeset, the other files and the libraries (usages), or as a flat list
+// (implementations).
 
 import type { LocationRow } from "../../generated/LocationRow.ts";
 import { decodeHighlights, eachRange } from "../../lib/highlights.ts";
 import { splitQualified } from "../../lib/qualified.ts";
 import { match } from "../../lib/speedSearch.ts";
 import { rowLabel } from "../../lib/symbolLabel.ts";
-
-/** Up to this many places the popup lists them flat, two lines each; above, grouped by file. */
-export const FLAT_UP_TO = 20;
 
 export type Section = "CHANGESET" | "OTHER FILES" | "LIBRARIES";
 
@@ -79,11 +77,13 @@ export function groupRows(rows: readonly LocationRow[], statusOf: (path: string)
   blocks["OTHER FILES"].sort((a, b) => a.path.localeCompare(b.path));
   blocks.LIBRARIES.sort((a, b) => a.path.localeCompare(b.path));
 
+  // The changeset's label tells it from the other sections; with nothing to tell it from, it is left out.
+  const lone = blocks.CHANGESET.length > 0 && !blocks["OTHER FILES"].length && !blocks.LIBRARIES.length;
   const items: Item[] = [];
   let at = 0;
   for (const label of ["CHANGESET", "OTHER FILES", "LIBRARIES"] as const) {
     if (!blocks[label].length) continue;
-    items.push({ kind: "section", label });
+    if (!lone) items.push({ kind: "section", label });
     for (const file of blocks[label]) {
       items.push({
         kind: "file",

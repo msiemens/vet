@@ -47,6 +47,18 @@ void test("places are grouped under the changeset, the other files and the libra
   ]);
 });
 
+void test("the changeset's label is left out when it is the only section, and no other is", () => {
+  const only = groupRows([row("a.rs", 1, { change: "hunk" }), row("b.rs", 2, { change: "file" })], () => undefined);
+  assert.deepEqual(shape(only), ["a.rs ×1", "1", "b.rs ×1", "2"]);
+  const lone = groupRows([row("b.rs", 2)], () => undefined);
+  assert.deepEqual(shape(lone), ["OTHER FILES", "b.rs ×1", "2"]);
+  const both = groupRows([row("a.rs", 1, { change: "hunk" }), row("b.rs", 2)], () => undefined);
+  assert.deepEqual(
+    shape(both).filter((s) => s === "CHANGESET" || s === "OTHER FILES"),
+    ["CHANGESET", "OTHER FILES"],
+  );
+});
+
 void test("a changed file with a place in a hunk comes before one without, whatever their names", () => {
   const items = groupRows([row("a.rs", 1, { change: "file" }), row("z.rs", 1, { change: "hunk" })], () => undefined);
   assert.deepEqual(

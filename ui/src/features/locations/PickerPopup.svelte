@@ -1,6 +1,6 @@
 <script lang="ts">
-  // The places Show Usages or Go to Implementation found, under the caret: grouped by file when
-  // there are many, two lines each when there are few. Arrow keys, Page keys, Home and End move,
+  // The places Show Usages or Go to Implementation found, under the caret: usages grouped by file,
+  // implementations flat, two lines each. Arrow keys, Page keys, Home and End move,
   // Enter opens, Escape closes, and typing filters.
   import { onDestroy, onMount, tick } from "svelte";
   import type { LocationRow } from "../../generated/LocationRow";
@@ -12,16 +12,7 @@
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import type { PickerView } from "../../state/pickerTypes";
-  import {
-    FLAT_UP_TO,
-    codeRuns,
-    countText,
-    groupRows,
-    libraryLabel,
-    matchedRow,
-    symbolLabel,
-    visibleRows,
-  } from "./pickerRows";
+  import { codeRuns, countText, groupRows, libraryLabel, matchedRow, symbolLabel, visibleRows } from "./pickerRows";
 
   let {
     view,
@@ -57,7 +48,7 @@
 
   const nouns = $derived(view.kind === "usages" ? "usages" : "implementations");
   const results = $derived(view.body.phase === "results" ? view.body : undefined);
-  const flat = $derived(!!results && results.rows.length <= FLAT_UP_TO);
+  const flat = $derived(view.kind === "implementations");
   const shown = $derived(results ? visibleRows(results.rows, search.query, onlyChangeset) : []);
   const items = $derived(flat ? [] : groupRows(shown, statusOf));
   const hits = $derived(flat ? shown : items.flatMap((i) => (i.kind === "hit" ? [i.row] : [])));
@@ -70,13 +61,18 @@
     cursor = 0;
   });
 
+  // The height the popup wants with every place listed. The side it opens on is chosen from this
+  // alone, so typing or the changeset toggle shrink the popup on its side and never move it across.
+  const fullRows = $derived(
+    !results?.rows.length ? 0 : flat ? results.rows.length * 43 : groupRows(results.rows, statusOf).length * 24,
+  );
+
   const geometry = $derived.by(() => {
     const { anchor } = view;
     const below = window.innerHeight - anchor.bottom - 12;
     const above = anchor.top - 12;
-    const rows = flat ? shown.length * 43 : items.length * 24;
-    const want = Math.min(MAX_HEIGHT, 33 + rows + (search.active ? 32 : 0) + (results ? 0 : 64));
-    const down = below >= want || below >= above;
+    const full = Math.min(MAX_HEIGHT, 33 + fullRows + (results?.rows.length ? 0 : 64));
+    const down = below >= full || below >= above;
     const width = Math.min(WIDTH[!results?.rows.length ? "none" : flat ? "flat" : "grouped"], window.innerWidth - 16);
     return {
       down,
@@ -105,6 +101,12 @@
   async function reveal() {
     await tick();
     list?.querySelector(`[data-at="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  // A list that scrolls under a pointer at rest makes the browser repeat the pointer's last move
+  // with no movement; only a pointer that moved takes the highlight.
+  function hover(e: MouseEvent, at: number) {
+    if (e.movementX !== 0 || e.movementY !== 0) cursor = at;
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -238,7 +240,7 @@
             type="button"
             tabindex="-1"
             onclick={() => pick(row)}
-            onmousemove={() => (cursor = at)}
+            onmousemove={(e) => hover(e, at)}
           >
             <span class="dot" class:on={row.change === "hunk"}></span>
             <span class="rows">
@@ -281,9 +283,7 @@
               type="button"
               tabindex="-1"
               onclick={() => pick(item.row)}
-              onmousemove={() => {
-                cursor = item.at;
-              }}
+              onmousemove={(e) => hover(e, item.at)}
             >
               <span class="dot" class:on={item.row.change === "hunk"}></span>
               <span class="mono line">{item.row.line}</span>
