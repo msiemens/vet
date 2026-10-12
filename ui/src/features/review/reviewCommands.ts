@@ -90,6 +90,8 @@ export interface FileActions {
   copyText(text: string): void;
   excludePath(path: string, dir: boolean): void;
   reviewOnly(path: string): void;
+  /** Marks every changed file below the folder seen, or takes every mark back. */
+  setFolderSeen(path: string, seen: boolean): void;
   closeTab(kind: Exclude<TabKind, "changes">, path: string): void;
   /** Closes every tab but the Changes tab and this one, which gets the focus. */
   closeOtherTabs(kind: TabKind, path?: string): void;
@@ -130,6 +132,24 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
       },
     },
     {
+      id: "path.markSeen",
+      label: "Mark all seen",
+      enabled: (c) => !!c.target?.dir,
+      run: (c) => {
+        if (!c.target) return false;
+        a.setFolderSeen(c.target.path, true);
+      },
+    },
+    {
+      id: "path.markUnseen",
+      label: "Mark all unseen",
+      enabled: (c) => !!c.target?.dir,
+      run: (c) => {
+        if (!c.target) return false;
+        a.setFolderSeen(c.target.path, false);
+      },
+    },
+    {
       id: "tab.close",
       label: "Close tab",
       enabled: (c) => c.tab?.kind !== undefined && c.tab.kind !== "changes",
@@ -161,7 +181,9 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
 export const treeMenu = (dir: boolean): MenuSpec => [
   { command: "path.copy" },
   { command: "path.exclude" },
-  ...(dir ? [{ command: "path.reviewOnly" }] : []),
+  ...(dir
+    ? [{ command: "path.reviewOnly" }, "-" as const, { command: "path.markSeen" }, { command: "path.markUnseen" }]
+    : []),
 ];
 
 /** The context menu of a file's header in a view. */

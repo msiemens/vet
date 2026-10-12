@@ -33,6 +33,7 @@ const files: FileActions = {
   copyText: (text) => calls.push(`copy ${text}`),
   excludePath: (path, dir) => calls.push(`exclude ${path} ${dir}`),
   reviewOnly: (path) => calls.push(`only ${path}`),
+  setFolderSeen: (path, seen) => calls.push(`seen ${path} ${seen}`),
   closeTab: (kind, path) => calls.push(`close ${kind} ${path}`),
   closeOtherTabs: (kind, path) => calls.push(`closeOthers ${kind} ${path}`),
   revealFile: () => (calls.push("reveal"), treeShown),
@@ -176,7 +177,14 @@ void test("the file tree's menu offers the folder scope only for folders", () =>
   const labels = (dir: boolean) =>
     resolveMenu(r, treeMenu(dir), r.context({ target: { path: "src", dir } })).map((i) => i.label);
   assert.deepEqual(labels(false), ["Copy path", "Exclude from review"]);
-  assert.deepEqual(labels(true), ["Copy path", "Exclude from review", "Review only this folder"]);
+  assert.deepEqual(labels(true), [
+    "Copy path",
+    "Exclude from review",
+    "Review only this folder",
+    "",
+    "Mark all seen",
+    "Mark all unseen",
+  ]);
 });
 
 void test("a tree menu item acts on the row it was opened on", () => {
@@ -184,7 +192,13 @@ void test("a tree menu item acts on the row it was opened on", () => {
   const context = r.context({ target: { path: "src/lib", dir: true } });
   const items = resolveMenu(r, treeMenu(true), context);
   for (const item of items) r.run(item.id, context);
-  assert.deepEqual(calls, ["copy src/lib", "exclude src/lib true", "only src/lib"]);
+  assert.deepEqual(calls, [
+    "copy src/lib",
+    "exclude src/lib true",
+    "only src/lib",
+    "seen src/lib true",
+    "seen src/lib false",
+  ]);
 });
 
 void test("a tab's menu cannot close the Changes tab, and closes the others around the tab it was opened on", () => {

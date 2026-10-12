@@ -12,7 +12,7 @@ use vet_core::remap::cut_recorded;
 use vet_core::review::{ReviewedSpan, Side};
 
 use super::blobs::Texts;
-use super::interdiff::{check_markable, squash_item, update_in};
+use super::interdiff::{HunkMarks, check_markable, interdiff_hunk_marks, squash_item, update_in};
 use super::lens::view_unit;
 use super::remap::{Prepared, frame_of, landing, part_completion};
 use super::state::{Shown, State, View, ack_of, check_revision, find_diff, find_non_text, outcome, shown_items};
@@ -104,22 +104,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let (mut st, shown) = self.beginning(view).await?;
         check_revision(&st, revision)?;
         check_markable(&shown)?;
-        let update = update_in(&st, &shown, path)?;
-        let seen = !update.completion.is_complete();
+        let seen = !update_in(&st, &shown, path)?.completion.is_complete();
         let started = seen && self.begin(&mut st).await?;
-        let (hunks, kinds): (Vec<u32>, Vec<NonTextKind>) = {
-            let diff = &shown.diffed(&st).diff;
-            let hunks = (0..find_diff(diff, path).map_or(0, |d| d.hunks.len() as u32))
-                .filter(|&i| update.review.hunks[i as usize] != HunkState::Informational)
-                .collect();
-            let kinds = shown_items(diff, &st.filter, path)
-                .iter()
-                .filter(|n| !matches!(view, View::Interdiff { .. }) || has_counterpart(&st, &shown, path, n.kind))
-                .filter(|n| update.review.acknowledged.contains(&n.kind) != seen)
-                .map(|n| n.kind)
-                .collect();
-            (hunks, kinds)
-        };
+        let (hunks, kinds) = file_targets(&st, &shown, path, seen)?;
         let writes = st.writes();
         if !hunks.is_empty() {
             self.mark_hunks_in(&writes, &mut st, &shown, path, &hunks, seen).await?;
@@ -128,6 +115,52 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             self.mark_item(&writes, &mut st, view, path, kind, seen).await?;
         }
         Ok(outcome(&st, update_in(&st, &shown, path)?, started))
+    }
+
+    /// Marks everything of each of `paths` seen, or takes every mark back, whatever the files'
+    /// states are. The marks of all the files are recorded together, which remaps the review
+    /// once instead of once per file. Answers with every file's state after the marks. Marking
+    /// starts the review if none is open.
+    pub async fn set_files_seen(
+        &self,
+        revision: u32,
+        view: View,
+        paths: &[String],
+        seen: bool,
+    ) -> Result<Outcome<Vec<ReviewUpdateView>>> {
+        let (mut st, shown) = self.beginning(view).await?;
+        check_revision(&st, revision)?;
+        check_markable(&shown)?;
+        let started = seen && self.begin(&mut st).await?;
+        let mut regions = Vec::new();
+        let mut add = Vec::new();
+        let mut items = Vec::new();
+        for path in paths {
+            let (hunks, kinds) = file_targets(&st, &shown, path, seen)?;
+            if !hunks.is_empty() {
+                let (r, a) = hunk_marks(&st, &shown, path, &hunks, seen)?;
+                regions.extend(r);
+                add.extend(a);
+            }
+            items.extend(kinds.into_iter().map(|kind| (path, kind)));
+        }
+        let writes = st.writes();
+        if !regions.is_empty() || !add.is_empty() {
+            let marked = match &shown {
+                Shown::Interdiff(_) => View::Changeset,
+                shown => shown.view(),
+            };
+            self.keep_commit_snapshots(&writes, &st, marked, seen).await?;
+            self.apply_marks(&writes, &mut st, marked, regions, add, seen).await?;
+        }
+        for (path, kind) in items {
+            self.mark_item(&writes, &mut st, view, path, kind, seen).await?;
+        }
+        let updates = paths
+            .iter()
+            .map(|path| update_in(&st, &shown, path))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(outcome(&st, updates, started))
     }
 
     /// The review state of `path` in the changeset itself, for telling those who show it that a
@@ -147,7 +180,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         seen: bool,
     ) -> Result<()> {
         match shown {
-            Shown::Interdiff(id) => self.mark_interdiff_hunks(writes, st, id, path, hunks, seen).await,
+            Shown::Interdiff(_) => {
+                let (regions, add) = hunk_marks(st, shown, path, hunks, seen)?;
+                self.apply_marks(writes, st, View::Changeset, regions, add, seen).await
+            }
             _ => self.mark_hunks(writes, st, shown.view(), path, hunks, seen).await,
         }
     }
@@ -163,32 +199,18 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         hunks: &[u32],
         seen: bool,
     ) -> Result<()> {
-        let (base, target, origin) = view_unit(st, view);
+        self.keep_commit_snapshots(writes, st, view, seen).await?;
+        let (regions, add) = view_hunk_marks(st, view, path, hunks, seen)?;
+        self.apply_marks(writes, st, view, regions, add, seen).await
+    }
+
+    async fn keep_commit_snapshots(&self, writes: &S::Writes, st: &State, view: View, seen: bool) -> Result<()> {
         if seen && st.review.is_some() && matches!(view, View::Commit { .. }) {
             // The snapshots a commit's marks are anchored in are not the changeset's own, so
             // they must be there to be loaded once the session is not.
             self.keep_snapshots(writes, st, view).await?;
         }
-        let (regions, add) = {
-            let diffed = st.diffed_in(view);
-            let diff = find_diff(&diffed.diff, path).ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
-            let blob_text = |blob: Option<BlobId>| blob.and_then(|b| diffed.blobs.get(&b)).map(Vec::as_slice);
-            let chosen = (hunks.iter())
-                .map(|&i| (diff.hunks.get(i as usize)).ok_or_else(|| SessionError::NotFound(format!("hunk {i}"))))
-                .collect::<Result<Vec<_>>>()?;
-            let regions = chosen.iter().flat_map(|hunk| hunk_regions(diff, hunk)).collect();
-            let add = if seen {
-                let texts = (blob_text(diff.old_blob), blob_text(diff.new_blob));
-                (hunk_spans(diff, &chosen, (base, target), texts).into_iter())
-                    .map(|span| span.map(|s| (s, origin.clone())))
-                    .collect::<Option<Vec<_>>>()
-                    .ok_or_else(|| SessionError::NotText(path.into()))?
-            } else {
-                Vec::new()
-            };
-            (regions, add)
-        };
-        self.apply_marks(writes, st, view, regions, add, seen).await
+        Ok(())
     }
 
     /// Cuts the lines of `regions`, which are of `view`, out of the recorded spans, then records
@@ -320,6 +342,59 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         self.note_progress(writes, st).await
     }
+}
+
+/// What marking the hunks of `view` (the changeset or one commit) seen, or cutting them out of the
+/// recorded spans, does.
+fn view_hunk_marks(st: &State, view: View, path: &str, hunks: &[u32], seen: bool) -> Result<HunkMarks> {
+    let (base, target, origin) = view_unit(st, view);
+    let diffed = st.diffed_in(view);
+    let diff = find_diff(&diffed.diff, path).ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
+    let blob_text = |blob: Option<BlobId>| blob.and_then(|b| diffed.blobs.get(&b)).map(Vec::as_slice);
+    let chosen = (hunks.iter())
+        .map(|&i| (diff.hunks.get(i as usize)).ok_or_else(|| SessionError::NotFound(format!("hunk {i}"))))
+        .collect::<Result<Vec<_>>>()?;
+    let regions = chosen.iter().flat_map(|hunk| hunk_regions(diff, hunk)).collect();
+    let add = if seen {
+        let texts = (blob_text(diff.old_blob), blob_text(diff.new_blob));
+        (hunk_spans(diff, &chosen, (base, target), texts).into_iter())
+            .map(|span| span.map(|s| (s, origin.clone())))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| SessionError::NotText(path.into()))?
+    } else {
+        Vec::new()
+    };
+    Ok((regions, add))
+}
+
+/// [`view_hunk_marks`] for whatever `shown` is; an interdiff's marks are of the changeset.
+fn hunk_marks(st: &State, shown: &Shown, path: &str, hunks: &[u32], seen: bool) -> Result<HunkMarks> {
+    match shown {
+        Shown::Interdiff(id) => interdiff_hunk_marks(st, id, path, hunks, seen),
+        _ => view_hunk_marks(st, shown.view(), path, hunks, seen),
+    }
+}
+
+/// The hunks (indices into the file's) and the non-text items of `path` that marking it all seen,
+/// or all unseen, changes. In an interdiff only what the newer version's changeset has to review.
+fn file_targets(st: &State, shown: &Shown, path: &str, seen: bool) -> Result<(Vec<u32>, Vec<NonTextKind>)> {
+    let update = update_in(st, shown, path)?;
+    let diff = &shown.diffed(st).diff;
+    let unchanged = if seen { HunkState::Seen } else { HunkState::Unseen };
+    let hunks = (0..find_diff(diff, path).map_or(0, |d| d.hunks.len() as u32))
+        .filter(|&i| {
+            let state = update.review.hunks[i as usize];
+            state != HunkState::Informational && state != unchanged
+        })
+        .collect();
+    let interdiff = matches!(shown, Shown::Interdiff(_));
+    let kinds = shown_items(diff, &st.filter, path)
+        .iter()
+        .filter(|n| !interdiff || has_counterpart(st, shown, path, n.kind))
+        .filter(|n| update.review.acknowledged.contains(&n.kind) != seen)
+        .map(|n| n.kind)
+        .collect();
+    Ok((hunks, kinds))
 }
 
 /// Whether the newer version's changeset has the change of kind `kind` at `path` to review.

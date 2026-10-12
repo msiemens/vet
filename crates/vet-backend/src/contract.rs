@@ -154,6 +154,7 @@ pub fn effect(request: &Request) -> Effect {
         Request::ToggleHunk { .. }
         | Request::ToggleItem { .. }
         | Request::ToggleFileSeen { .. }
+        | Request::SetFilesSeen { .. }
         | Request::ReconfirmFile { .. } => tested(&[ReviewChanged]),
         Request::SetBase { .. } | Request::SetProjectFilter { .. } | Request::ExcludePath { .. } => {
             tested(&[SnapshotSettled])
@@ -351,6 +352,13 @@ mod tests {
                 view,
                 revision: 0,
                 path: path(),
+            },
+            Request::SetFilesSeen {
+                project,
+                view,
+                revision: 0,
+                paths: vec![path()],
+                seen: true,
             },
             Request::ReconfirmFile {
                 project,
@@ -741,6 +749,13 @@ mod tests {
                 view,
                 revision,
                 path: "a.txt".into(),
+            },
+            Request::SetFilesSeen {
+                project,
+                view,
+                revision,
+                paths: vec!["a.txt".into(), "c.txt".into()],
+                seen: true,
             },
         ] {
             world.drive(request).await;

@@ -60,7 +60,7 @@ baseHighlights: Array<number>,
 /**
  * The same for `target`.
  */
-targetHighlights: Array<number>, } | { "type": "review" } & ReviewUpdate | { "type": "baseDiff" } & BaseDiff | { "type": "hover", revision: number, side: Side, text: string | null, codeHighlights: Array<Array<number>>, unavailable: Unavailable | null, } | { "type": "definition" } & Locations | { "type": "references" } & Locations | { "type": "diagnostics", revision: number, path: string, diagnostics: Array<Diagnostic>, 
+targetHighlights: Array<number>, } | { "type": "review" } & ReviewUpdate | { "type": "reviews", updates: Array<ReviewUpdate>, } | { "type": "baseDiff" } & BaseDiff | { "type": "hover", revision: number, side: Side, text: string | null, codeHighlights: Array<Array<number>>, unavailable: Unavailable | null, } | { "type": "definition" } & Locations | { "type": "references" } & Locations | { "type": "diagnostics", revision: number, path: string, diagnostics: Array<Diagnostic>, 
 /**
  * How many of `diagnostics` to tell the viewer about: hints are not counted.
  */

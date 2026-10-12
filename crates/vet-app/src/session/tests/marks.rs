@@ -219,6 +219,50 @@ async fn a_mark_remaps_only_the_spans_of_its_file() {
 }
 
 #[tokio::test]
+async fn marking_files_seen_together_marks_those_files_and_nothing_else() {
+    let base = numbered(&[]);
+    let (a, b, c) = (
+        numbered(&[(2, "a"), (20, "a")]),
+        numbered(&[(4, "b")]),
+        numbered(&[(6, "c"), (12, "c")]),
+    );
+    let fx = Fixture::reviewing(
+        &[("dir/a.txt", &base), ("dir/b.txt", &base), ("other/c.txt", &base)],
+        &[("dir/a.txt", &a), ("dir/b.txt", &b), ("other/c.txt", &c)],
+    )
+    .await;
+    fx.session.set_seen(0, "dir/a.txt", &[1], true).await.unwrap();
+    let dir = ["dir/a.txt".to_string(), "dir/b.txt".to_string()];
+
+    let answer = fx
+        .session
+        .set_files_seen(0, View::Changeset, &dir, true)
+        .await
+        .unwrap()
+        .value;
+
+    assert_eq!(fx.hunks("dir/a.txt").await, [HunkState::Seen, HunkState::Seen]);
+    assert_eq!(fx.hunks("dir/b.txt").await, [HunkState::Seen]);
+    assert_eq!(fx.hunks("other/c.txt").await, [HunkState::Unseen, HunkState::Unseen]);
+    let manifest = fx.session.manifest(View::Changeset).await.unwrap();
+    assert_eq!(
+        answer.iter().map(|u| u.path.clone()).collect::<Vec<_>>(),
+        [path("dir/a.txt"), path("dir/b.txt")]
+    );
+    assert_eq!(answer[1].changeset, manifest.completion);
+    assert_eq!(manifest.completion.seen_hunks, 3);
+
+    fx.session
+        .set_files_seen(0, View::Changeset, &dir, false)
+        .await
+        .unwrap();
+
+    assert_eq!(fx.hunks("dir/a.txt").await, [HunkState::Unseen, HunkState::Unseen]);
+    assert_eq!(fx.hunks("dir/b.txt").await, [HunkState::Unseen]);
+    assert!(fx.session.hold().await.recorded.is_empty());
+}
+
+#[tokio::test]
 async fn unmarking_cuts_spans_with_only_one_side() {
     let base = numbered(&[]);
     let fx = Fixture::reviewing(&[("gone.txt", &base)], &[("new.txt", &base)]).await;

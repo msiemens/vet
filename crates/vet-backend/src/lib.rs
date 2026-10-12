@@ -372,6 +372,13 @@ impl Orchestrator {
                 revision,
                 path,
             } => reply(async move { self.toggle_file_seen(project, view, revision, &path).await }),
+            Request::SetFilesSeen {
+                project,
+                view,
+                revision,
+                paths,
+                seen,
+            } => reply(async move { self.set_files_seen(project, view, revision, &paths, seen).await }),
             Request::ReconfirmFile {
                 project,
                 revision,

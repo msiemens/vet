@@ -223,6 +223,18 @@ pub enum Request {
         revision: u32,
         path: String,
     },
+    /// Marks everything of each of the files seen (`seen`), or takes every mark back, whatever
+    /// their states are: all their hunks and non-text items, recorded together. Fails if
+    /// `revision` is no longer current or a path is not a file of `view`. Answers with
+    /// `Response::Reviews`, one update for each path in order; every subscriber gets
+    /// `ReviewChanged` of each changeset file.
+    SetFilesSeen {
+        project: ProjectId,
+        view: View,
+        revision: u32,
+        paths: Vec<String>,
+        seen: bool,
+    },
     /// Marks the hunks of a file that are seen against an old base seen again, against the
     /// base now; its other hunks stay as they are. Fails if `revision` is no longer current
     /// or the file has no such hunk. Answers with `Response::Review`.

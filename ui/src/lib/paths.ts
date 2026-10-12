@@ -6,6 +6,10 @@ export const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
 export const dirname = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/")));
 
+/** The `paths` inside the directory `dir`, at any depth; a directory is not its own sibling's prefix (`src` does not hold `src2/a`). */
+export const pathsBelow = (paths: readonly string[], dir: string): string[] =>
+  paths.filter((path) => path.startsWith(`${dir}/`));
+
 /**
  * Follows a chain of directories that each hold nothing but one directory, the way trees show
  * it as one row (`crates/vet-core/src`). `onlyChild` answers the path of a directory's single

@@ -107,6 +107,10 @@ pub enum Response {
     /// The file's review state after `ToggleHunk`, `ToggleItem`, `ToggleFileSeen` or
     /// `ReconfirmFile`.
     Review(ReviewUpdate),
+    /// The files' review states after `SetFilesSeen`, in the order of its paths.
+    Reviews {
+        updates: Vec<ReviewUpdate>,
+    },
     /// The answer to `BaseDiff`.
     BaseDiff(BaseDiff),
     /// `text` is Markdown; `None` with `unavailable` unset means the server has

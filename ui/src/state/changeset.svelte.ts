@@ -16,6 +16,7 @@ import type { View } from "../generated/View";
 import type { CommitUnit } from "../generated/CommitUnit";
 import type { Lens } from "../generated/Lens";
 import { errorText } from "../lib/errorText";
+import { pathsBelow } from "../lib/paths";
 import type { BaseCandidates } from "./backend";
 import { commitToShow, neighbour } from "./commitLens";
 import { session } from "./session.svelte";
@@ -266,6 +267,12 @@ class ChangesetStore {
     await this.review(revision, session.connected().toggleFileSeen(revision, path, this.view));
   }
 
+  /** Marks everything of every file of the view below the directory `dir` seen, or takes every mark back. */
+  async setDirectorySeen(revision: number, dir: string, seen: boolean) {
+    const paths = pathsBelow(this.paths, dir);
+    if (paths.length) await this.review(revision, session.connected().setFilesSeen(revision, paths, seen, this.view));
+  }
+
   /**
    * Marks the hunks of a file seen against an old base seen again. A range of versions has no such
    * request: its hunks are marked one by one, as the backend flips them.
@@ -446,9 +453,9 @@ class ChangesetStore {
    * Applies the review state a request returned. A rejected request is normally a
    * stale revision: refetch the manifest and tell the viewer to repeat the action.
    */
-  private async review(sent: number, request: Promise<ReviewUpdate>) {
+  private async review(sent: number, request: Promise<ReviewUpdate | ReviewUpdate[]>) {
     try {
-      this.applyReview(await request);
+      for (const update of [await request].flat()) this.applyReview(update);
     } catch (error) {
       await this.refresh().catch(() => undefined);
       this.reportFailure(error, sent);

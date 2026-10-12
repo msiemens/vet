@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { basename, compactChain, dirname, joinPath, repoName } from "./paths.ts";
+import { basename, compactChain, dirname, joinPath, pathsBelow, repoName } from "./paths.ts";
 
 void test("a path splits at its last slash", () => {
   assert.equal(basename("a/b/c.rs"), "c.rs");
@@ -21,6 +21,13 @@ void test("a chain stops at the first directory with anything but one directory"
     compactChain("x", "x", (p) => only[p]),
     { path: "x", name: "x" },
   );
+});
+
+void test("the paths below a directory are those inside it at any depth, not those of a sibling that shares its prefix", () => {
+  const paths = ["src/a.rs", "src/deep/b.rs", "src2/c.rs", "src", "top.rs"];
+  assert.deepEqual(pathsBelow(paths, "src"), ["src/a.rs", "src/deep/b.rs"]);
+  assert.deepEqual(pathsBelow(paths, "src/deep"), ["src/deep/b.rs"]);
+  assert.deepEqual(pathsBelow(paths, "nope"), []);
 });
 
 void test("the repository name is the last non-empty segment, on either separator", () => {

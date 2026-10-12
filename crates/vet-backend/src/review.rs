@@ -139,6 +139,29 @@ impl Orchestrator {
         Ok(Response::Review(review_changed(&open, view, &update).await))
     }
 
+    pub(crate) async fn set_files_seen(
+        &self,
+        project: ProjectId,
+        view: vet_protocol::View,
+        revision: u32,
+        paths: &[String],
+        seen: bool,
+    ) -> Result<Response, String> {
+        let open = self.ready(project).await?;
+        let view = mapping::core_view(view);
+        let update = open
+            .session
+            .set_files_seen(revision, view, paths, seen)
+            .await
+            .map_err(message)?;
+        announce_start(&open, update.started);
+        let mut answers = Vec::with_capacity(update.len());
+        for file in &update.value {
+            answers.push(review_changed(&open, view, file).await);
+        }
+        Ok(Response::Reviews { updates: answers })
+    }
+
     pub(crate) async fn reconfirm_file(
         &self,
         project: ProjectId,

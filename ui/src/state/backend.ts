@@ -360,6 +360,12 @@ export class Backend {
     return expect(await this.conn.request(request), "review");
   }
 
+  /** Marks everything of each of the files seen, or takes every mark back; the answers are in the order of `paths`. */
+  async setFilesSeen(revision: number, paths: string[], seen: boolean, view: View): Promise<ReviewUpdate[]> {
+    const request = { type: "setFilesSeen", project: this.pid, view, revision, paths, seen } as const;
+    return expect(await this.conn.request(request), "reviews").updates;
+  }
+
   /** Marks the hunks of a file seen against an old base seen again, against the base now. The changeset's file only. */
   async reconfirmFile(revision: number, path: string): Promise<ReviewUpdate> {
     const request = { type: "reconfirmFile", project: this.pid, revision, path } as const;

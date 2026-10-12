@@ -6,13 +6,14 @@
 use std::sync::Arc;
 
 use vet_core::completion::{Completion, Coverage, HunkState};
-use vet_core::content::{FileDiff, NonTextChange, RepoPath};
+use vet_core::content::{BlobId, FileDiff, NonTextChange, RepoPath};
 use vet_core::interdiff::squash_marks;
-use vet_core::review::Side;
+use vet_core::marking::Region;
+use vet_core::review::{ReviewedSpan, Side};
 
 use super::derived::{Compared, Interdiff};
 use super::manifest::{file_views, target_view};
-use super::state::{Interdiffed, Shown, State, View, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
+use super::state::{Interdiffed, Shown, State, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
 use super::views::{InterdiffView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
 use crate::base;
@@ -132,52 +133,44 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             }),
         })
     }
+}
 
-    /// Records the interdiff hunks (indices into the file's hunks) as seen in the changeset of the
-    /// newer version, or cuts them out of the recorded spans.
-    pub(super) async fn mark_interdiff_hunks(
-        &self,
-        writes: &S::Writes,
-        st: &mut State,
-        id: &Interdiffed,
-        path: &str,
-        hunks: &[u32],
-        seen: bool,
-    ) -> Result<()> {
-        let (regions, add) = {
-            let changeset = &st.changes().diffed;
-            let squash = find_diff(&changeset.diff, path);
-            let diff = find_diff(&id.compared.diffed.diff, path)
-                .ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
-            let inter = &id.compared.hunks[diff.path()];
-            let blob_text =
-                |blob: Option<vet_core::content::BlobId>| blob.and_then(|b| changeset.blobs.get(&b)).map(Vec::as_slice);
-            let chosen = (hunks.iter())
-                .map(|&i| (inter.get(i as usize)).ok_or_else(|| SessionError::NotFound(format!("hunk {i}"))))
-                .collect::<Result<Vec<_>>>()?;
-            match squash {
-                Some(squash) => {
-                    let texts = (blob_text(squash.old_blob), blob_text(squash.new_blob));
-                    squash_marks(squash, &chosen, (st.base.id, st.target.id), texts)
-                        .ok_or_else(|| SessionError::NotText(path.into()))?
-                }
-                None => (Vec::new(), Vec::new()),
-            }
-        };
-        self.apply_marks(
-            writes,
-            st,
-            View::Changeset,
-            regions,
-            if seen {
-                add.into_iter().map(|s| (s, SpanOrigin::Squash)).collect()
-            } else {
-                Vec::new()
-            },
-            seen,
-        )
-        .await
-    }
+/// The regions to cut out of the recorded spans and the spans to record, each with where it was
+/// marked, for marking hunks seen or unseen.
+pub(super) type HunkMarks = (Vec<Region>, Vec<(ReviewedSpan, SpanOrigin)>);
+
+/// What marking the interdiff hunks (indices into the file's hunks) seen, or cutting them out
+/// of the recorded spans, does to the changeset of the newer version.
+pub(super) fn interdiff_hunk_marks(
+    st: &State,
+    id: &Interdiffed,
+    path: &str,
+    hunks: &[u32],
+    seen: bool,
+) -> Result<HunkMarks> {
+    let changeset = &st.changes().diffed;
+    let squash = find_diff(&changeset.diff, path);
+    let diff =
+        find_diff(&id.compared.diffed.diff, path).ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
+    let inter = &id.compared.hunks[diff.path()];
+    let blob_text = |blob: Option<BlobId>| blob.and_then(|b| changeset.blobs.get(&b)).map(Vec::as_slice);
+    let chosen = (hunks.iter())
+        .map(|&i| (inter.get(i as usize)).ok_or_else(|| SessionError::NotFound(format!("hunk {i}"))))
+        .collect::<Result<Vec<_>>>()?;
+    let (regions, add) = match squash {
+        Some(squash) => {
+            let texts = (blob_text(squash.old_blob), blob_text(squash.new_blob));
+            squash_marks(squash, &chosen, (st.base.id, st.target.id), texts)
+                .ok_or_else(|| SessionError::NotText(path.into()))?
+        }
+        None => (Vec::new(), Vec::new()),
+    };
+    let add = if seen {
+        add.into_iter().map(|s| (s, SpanOrigin::Squash)).collect()
+    } else {
+        Vec::new()
+    };
+    Ok((regions, add))
 }
 
 /// What a request in an interdiff view may do: marks and comments land in the changeset of the
@@ -341,6 +334,7 @@ mod tests {
     use vet_core::completion::HunkState;
     use vet_core::review::Side;
 
+    use super::super::state::View;
     use super::super::{CommentAt, NewThread};
     use super::*;
     use crate::changeset::{CommitId, VersionOrigin};

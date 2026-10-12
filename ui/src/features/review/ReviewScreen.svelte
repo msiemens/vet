@@ -132,6 +132,10 @@
           void navigator.clipboard.writeText(text).catch(() => (session.notice = "Could not copy to the clipboard")),
         excludePath: (path, dir) => void changeset.excludePath(path, dir),
         reviewOnly: (path) => void changeset.reviewOnly(path),
+        setFolderSeen: (path, seen) => {
+          const revision = changeset.manifest?.revision;
+          if (revision !== undefined) void changeset.setDirectorySeen(revision, path, seen);
+        },
         closeTab: (kind, path) => tabs.close(tabOf(kind, path)),
         closeOtherTabs: (kind, path) => tabs.closeOthers(tabOf(kind, path)),
         revealFile: () => {
