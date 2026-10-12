@@ -32,9 +32,9 @@
     D: "var(--del-text)",
     R: "var(--text-2)",
   };
-  /** The most the popup grows to, and how wide it is. */
+  /** The most the popup grows to, and how wide it is with the places grouped, listed flat, or without any. */
   const MAX_HEIGHT = 520;
-  const WIDTH = 720;
+  const WIDTH = { grouped: 720, flat: 560, none: 520 };
   /** How far the Page keys move. */
   const PAGE = 8;
 
@@ -68,7 +68,7 @@
     const rows = flat ? shown.length * 43 : items.length * 24;
     const want = Math.min(MAX_HEIGHT, 33 + rows + (search.active ? 32 : 0) + (results ? 0 : 64));
     const down = below >= want || below >= above;
-    const width = Math.min(WIDTH, window.innerWidth - 16);
+    const width = Math.min(WIDTH[!results?.rows.length ? "none" : flat ? "flat" : "grouped"], window.innerWidth - 16);
     return {
       down,
       maxHeight: Math.min(MAX_HEIGHT, down ? below : above),
@@ -343,7 +343,7 @@
     width: 12px;
     height: 12px;
     border: 2px solid var(--track);
-    border-top-color: var(--accent);
+    border-top-color: var(--text-3);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -356,7 +356,6 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding-bottom: 4px;
   }
   .section {
     padding: 10px 12px 2px;
@@ -468,6 +467,7 @@
     align-items: baseline;
     justify-content: space-between;
     gap: 12px;
+    height: 17px;
     line-height: 17px;
   }
   .sym {

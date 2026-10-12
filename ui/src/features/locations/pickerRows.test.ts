@@ -111,6 +111,11 @@ void test("a place is named by its symbol and the last part of its container, in
     "TaskDispatcher.Trigger<TTask, TState>",
   );
   assert.equal(label("src/A.cs", ["HES.LCD500.TaskEngine", "TaskDispatcher"]), "TaskEngine.TaskDispatcher");
+  // A Rust impl block is named by its type.
+  assert.equal(label("src/http/client.rs", ["impl Client", "send"]), "Client::send");
+  assert.equal(label("src/sync/retry.rs", ["impl Backoff for RetryPolicy", "delay_for"]), "RetryPolicy::delay_for");
+  assert.equal(label("src/sync/retry.rs", ["impl<T: Copy> Wrapper<T>", "get"]), "Wrapper<T>::get");
+  assert.equal(label("src/sync/retry.rs", ["impl Backoff for RetryPolicy"]), "RetryPolicy");
   assert.equal(label("src/lib.rs", ["free_fn"]), "free_fn");
   assert.equal(symbolLabel({ path: "src/billing/util.py", within: null }), "util.py");
 });
