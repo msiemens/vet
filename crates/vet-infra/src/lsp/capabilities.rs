@@ -1,7 +1,9 @@
 //! The required operations (§7.1), asserted on the server's `initialize`
 //! result. A missing one means the language is unsupported (I6).
 
-use lsp_types::{CallHierarchyServerCapability, HoverProviderCapability, OneOf, ServerCapabilities};
+use lsp_types::{
+    CallHierarchyServerCapability, HoverProviderCapability, ImplementationProviderCapability, OneOf, ServerCapabilities,
+};
 use vet_semantic::ports::LaunchError;
 
 /// How diagnostics are obtained.
@@ -13,11 +15,19 @@ pub(super) enum Diagnostics {
     Push,
 }
 
+/// What a server offers beyond the required operations.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct Offered {
+    pub diagnostics: Diagnostics,
+    /// `textDocument/implementation`.
+    pub implementations: bool,
+}
+
 fn one_of<T>(cap: &Option<OneOf<bool, T>>) -> bool {
     !matches!(cap, None | Some(OneOf::Left(false)))
 }
 
-pub(super) fn assert_capabilities(caps: &ServerCapabilities) -> Result<Diagnostics, LaunchError> {
+pub(super) fn assert_capabilities(caps: &ServerCapabilities) -> Result<Offered, LaunchError> {
     let missing = |name| Err(LaunchError::MissingCapability(name));
     if !one_of(&caps.document_symbol_provider) {
         return missing("textDocument/documentSymbol");
@@ -40,16 +50,22 @@ pub(super) fn assert_capabilities(caps: &ServerCapabilities) -> Result<Diagnosti
     if !one_of(&caps.workspace_symbol_provider) {
         return missing("workspace/symbol");
     }
-    Ok(if caps.diagnostic_provider.is_some() {
-        Diagnostics::Pull
-    } else {
-        Diagnostics::Push
+    Ok(Offered {
+        diagnostics: if caps.diagnostic_provider.is_some() {
+            Diagnostics::Pull
+        } else {
+            Diagnostics::Push
+        },
+        implementations: !matches!(
+            caps.implementation_provider,
+            None | Some(ImplementationProviderCapability::Simple(false))
+        ),
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use lsp_types::DiagnosticServerCapabilities;
+    use lsp_types::{DiagnosticServerCapabilities, StaticTextDocumentRegistrationOptions};
 
     use super::*;
 
@@ -74,10 +90,27 @@ mod tests {
 
     #[test]
     fn complete_server_is_accepted_with_push_diagnostics_by_default() {
-        assert_eq!(assert_capabilities(&full()).unwrap(), Diagnostics::Push);
+        assert_eq!(assert_capabilities(&full()).unwrap().diagnostics, Diagnostics::Push);
         let mut caps = full();
         caps.diagnostic_provider = Some(DiagnosticServerCapabilities::Options(Default::default()));
-        assert_eq!(assert_capabilities(&caps).unwrap(), Diagnostics::Pull);
+        assert_eq!(assert_capabilities(&caps).unwrap().diagnostics, Diagnostics::Pull);
+    }
+
+    #[test]
+    fn implementations_are_offered_only_when_the_server_advertises_them() {
+        let mut caps = full();
+        assert!(!assert_capabilities(&caps).unwrap().implementations);
+        caps.implementation_provider = Some(ImplementationProviderCapability::Simple(false));
+        assert!(!assert_capabilities(&caps).unwrap().implementations);
+        caps.implementation_provider = Some(ImplementationProviderCapability::Simple(true));
+        assert!(assert_capabilities(&caps).unwrap().implementations);
+        caps.implementation_provider = Some(ImplementationProviderCapability::Options(
+            StaticTextDocumentRegistrationOptions {
+                document_selector: None,
+                id: None,
+            },
+        ));
+        assert!(assert_capabilities(&caps).unwrap().implementations);
     }
 
     #[test]

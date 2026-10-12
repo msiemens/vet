@@ -256,6 +256,8 @@ pub struct Readiness {
 /// Methods take `&self`: the pool lets several callers use one server at once.
 pub trait LanguageServer: Send + Sync {
     fn readiness(&self) -> Readiness;
+    /// Whether the server advertised `textDocument/implementation`; `implementations` fails if not.
+    fn offers_implementations(&self) -> bool;
     fn document_symbols(&self, file: &RepoPath) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     /// The symbols `text` declares if it were the content of `file`, which need
     /// not exist in the tree. They depend on the text alone, so any server of

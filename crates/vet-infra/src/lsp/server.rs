@@ -31,7 +31,7 @@ use vet_semantic::ports::{
 use vet_semantic::symbols::{self, Outline};
 
 use super::QUIET;
-use super::capabilities::Diagnostics;
+use super::capabilities::{Diagnostics, Offered};
 use super::rpc::{Connection, State};
 use super::uri::{file_uri, key, path_of};
 use crate::budget::Budget;
@@ -157,7 +157,7 @@ pub struct LspServer {
     /// Canonical, so server URIs can be mapped back to repository paths.
     root: PathBuf,
     tree: Tree,
-    diagnostics: Diagnostics,
+    offered: Offered,
     docs: tokio::sync::Mutex<Docs>,
     /// Whether answers across files wait for the server to go quiet after a document was opened.
     loads_project_on_open: bool,
@@ -198,7 +198,7 @@ impl LspServer {
         conn: Connection,
         root: PathBuf,
         tree: Tree,
-        diagnostics: Diagnostics,
+        offered: Offered,
         loads_project_on_open: bool,
         io: Budget,
     ) -> Self {
@@ -206,7 +206,7 @@ impl LspServer {
             conn,
             root,
             tree,
-            diagnostics,
+            offered,
             docs: tokio::sync::Mutex::new(Docs::default()),
             loads_project_on_open,
             virtual_docs: AtomicU64::new(0),
@@ -671,6 +671,10 @@ impl LanguageServer for LspServer {
         self.conn.with_state(|state| state.readiness())
     }
 
+    fn offers_implementations(&self) -> bool {
+        self.offered.implementations
+    }
+
     async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
         let params = lsp::DocumentSymbolParams {
             text_document: self.id(file)?,
@@ -850,7 +854,7 @@ impl LanguageServer for LspServer {
         let key = key(&self.uri_of(file)?);
         let generation = |conn: &Connection| conn.with_state(|s| s.diagnostics.get(&key).map_or(0, |d| d.generation));
         let before = generation(&self.conn);
-        let items = match self.diagnostics {
+        let items = match self.offered.diagnostics {
             Diagnostics::Pull => {
                 let params = lsp::DocumentDiagnosticParams {
                     text_document: self.id(file)?,
@@ -912,6 +916,10 @@ mod tests {
     use super::*;
     use crate::lsp::fake::{self, Fake, Reply};
 
+    const OFFERED: Offered = Offered {
+        diagnostics: Diagnostics::Pull,
+        implementations: false,
+    };
     const CONTENT_MODIFIED: i64 = -32801;
     const SERVER_CANCELLED: i64 = -32802;
 
@@ -931,7 +939,7 @@ mod tests {
         let (conn, fake) = fake::start(behave);
         let root = std::fs::canonicalize(dir.path()).unwrap();
         (
-            LspServer::new(conn, root, Tree::Live, Diagnostics::Pull, false, Budget::new(1)),
+            LspServer::new(conn, root, Tree::Live, OFFERED, false, Budget::new(1)),
             fake,
             dir,
         )
@@ -1042,7 +1050,7 @@ mod tests {
                 }
             });
             let root = std::fs::canonicalize(dir.path()).unwrap();
-            let server = LspServer::new(conn, root, Tree::Live, Diagnostics::Pull, false, Budget::new(1));
+            let server = LspServer::new(conn, root, Tree::Live, OFFERED, false, Budget::new(1));
             server.document_symbols(&path("a.rs")).await.unwrap();
 
             let steps: Vec<_> = fake

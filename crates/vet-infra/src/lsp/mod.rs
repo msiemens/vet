@@ -33,7 +33,7 @@ use crate::git::list_files;
 use crate::language::{self, Compiler};
 use crate::paths;
 use crate::restore::discover;
-use capabilities::Diagnostics;
+use capabilities::Offered;
 use rpc::Connection;
 use uri::{directory_uri, file_uri};
 
@@ -213,7 +213,7 @@ struct Launched {
     identity: ServerIdentity,
     /// The fingerprint of the restore its tree was started on.
     restore: Option<Hash>,
-    diagnostics: Diagnostics,
+    offered: Offered,
     phases: Phases,
 }
 
@@ -265,7 +265,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
             .map_err(LaunchError::Spawn)?;
 
         let options = initialization_options(config, &command);
-        let diagnostics = handshake(&conn, &root, folders, options).await?;
+        let offered = handshake(&conn, &root, folders, options).await?;
         phases.mark("spawn and handshake", phase);
 
         if matches!(backend, Backend::Roslyn(_)) {
@@ -285,7 +285,7 @@ impl<L: ServerLocator + Sync, R: Restorer + Sync> LspLauncher<L, R> {
             root,
             identity,
             restore: restored.fingerprint,
-            diagnostics,
+            offered,
             phases,
         })
     }
@@ -325,7 +325,7 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
             root,
             identity,
             restore,
-            diagnostics,
+            offered,
             mut phases,
         } = launched?;
 
@@ -377,7 +377,7 @@ impl<L: ServerLocator + Send + Sync + 'static, R: Restorer + Send + Sync + 'stat
                 conn,
                 root,
                 tree,
-                diagnostics,
+                offered,
                 config.loads_project_on_open,
                 self.semantic_io.clone(),
             ),
@@ -416,7 +416,7 @@ async fn handshake(
     root: &Path,
     folders: Vec<lsp::WorkspaceFolder>,
     initialization_options: Option<Value>,
-) -> Result<Diagnostics, LaunchError> {
+) -> Result<Offered, LaunchError> {
     #[allow(deprecated)]
     let params = lsp::InitializeParams {
         process_id: Some(std::process::id()),
@@ -434,10 +434,10 @@ async fn handshake(
         .request::<Initialize>(params)
         .await
         .map_err(|e| LaunchError::Protocol(conn.describe(e.message)))?;
-    let diagnostics = capabilities::assert_capabilities(&init.capabilities)?;
+    let offered = capabilities::assert_capabilities(&init.capabilities)?;
     conn.notify::<lsp::notification::Initialized>(lsp::InitializedParams {})
         .map_err(LaunchError::Protocol)?;
-    Ok(diagnostics)
+    Ok(offered)
 }
 
 /// Tells roslyn what to load: it does not discover projects itself.

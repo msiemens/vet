@@ -355,6 +355,11 @@ where
         self.semantic.language_of(file)
     }
 
+    /// Whether the server of `language` offers implementations; `None` before one has started.
+    pub fn offers_implementations(&self, language: &BackendId) -> Option<bool> {
+        self.semantic.pool().offers_implementations(language)
+    }
+
     /// Restores that failed and have not succeeded since.
     pub fn restore_failures(&self) -> Vec<RestoreFailure> {
         self.limits.all()
@@ -883,6 +888,9 @@ mod tests {
     impl LanguageServer for FakeServer {
         fn readiness(&self) -> Readiness {
             Readiness { idle: true, epoch: 0 }
+        }
+        fn offers_implementations(&self) -> bool {
+            true
         }
         async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
             if self.1 == Tree::Live {

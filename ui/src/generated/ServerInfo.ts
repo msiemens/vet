@@ -33,4 +33,9 @@ installBlocker: string | null,
 /**
  * `InstallServer` can run now: there is a version to install and no blocker.
  */
-canInstall: boolean, };
+canInstall: boolean, 
+/**
+ * Whether the server advertised implementations (`textDocument/implementation`), as of the
+ * last one started; `None` before one has.
+ */
+implementations: boolean | null, };

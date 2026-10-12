@@ -270,6 +270,9 @@ struct State<S, G> {
     /// Bumped by `restart`; an entry from an older generation is not pooled.
     generations: HashMap<BackendId, u64>,
     slots: HashMap<PoolKey, Arc<Entry<S, G>>>,
+    /// Whether a backend's server offers implementations, as of the server started last; not
+    /// known before one has started.
+    implementations: HashMap<BackendId, bool>,
 }
 
 /// A server being started: the key of the flight that starts it. Callers of
@@ -493,6 +496,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                     tick: 0,
                     generations: HashMap::new(),
                     slots: HashMap::new(),
+                    implementations: HashMap::new(),
                 }),
                 starts: Engine::new(Limits::entries(0)),
             }),
@@ -646,6 +650,11 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             let mut state = self.lock();
             let stale = state.generations.get(&key.backend).copied().unwrap_or(0) != generation;
             state.tick += 1;
+            if !stale {
+                state
+                    .implementations
+                    .insert(key.backend.clone(), server.offers_implementations());
+            }
             let entry = Arc::new(Entry {
                 server,
                 identity,
@@ -736,6 +745,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         let stop = {
             let mut state = self.inner.lock();
             *state.generations.entry(backend.clone()).or_default() += 1;
+            state.implementations.remove(backend);
             let keys: Vec<_> = state.slots.keys().filter(|k| &k.backend == backend).cloned().collect();
             let mut stop = Vec::new();
             for key in keys {
@@ -751,6 +761,11 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         };
         self.inner.launcher.restarted(backend);
         Inner::<M, L>::stop(stop).await;
+    }
+
+    /// Whether the server of `backend` offers implementations; `None` before one has started.
+    pub fn offers_implementations(&self, backend: &BackendId) -> Option<bool> {
+        self.inner.lock().implementations.get(backend).copied()
     }
 
     /// Stop every server that is not leased.
@@ -1091,6 +1106,9 @@ mod tests {
                 idle: !self.0.busy.load(Ordering::SeqCst),
                 epoch: self.0.epoch.load(Ordering::SeqCst),
             }
+        }
+        fn offers_implementations(&self) -> bool {
+            true
         }
         async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
             let version = self.asked("document_symbols").await?;
@@ -2046,6 +2064,23 @@ mod tests {
             pool.restart(&BackendId("rust".into())).await;
             assert!(pool.keys().is_empty());
             assert_eq!(counters.guards_dropped.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn whether_a_backends_server_offers_implementations_is_known_once_one_started_and_forgotten_by_a_restart() {
+        let (pool, _) = pool(4);
+        let rust = BackendId("rust".into());
+        block_on(async {
+            assert_eq!(pool.offers_implementations(&rust), None);
+            pool.lease(&snapshot_key(1), &backend(true))
+                .await
+                .unwrap()
+                .release()
+                .await;
+            assert_eq!(pool.offers_implementations(&rust), Some(true));
+            pool.restart(&rust).await;
+            assert_eq!(pool.offers_implementations(&rust), None);
         });
     }
 

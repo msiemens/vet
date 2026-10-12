@@ -73,6 +73,9 @@ pub struct ServerInfo {
     pub install_blocker: Option<String>,
     /// `InstallServer` can run now: there is a version to install and no blocker.
     pub can_install: bool,
+    /// Whether the server advertised implementations (`textDocument/implementation`), as of the
+    /// last one started; `None` before one has.
+    pub implementations: Option<bool>,
 }
 
 /// A dependency restore step that failed (§7.2): what that project's analysis

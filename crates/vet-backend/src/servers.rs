@@ -40,7 +40,16 @@ impl Orchestrator {
 
     async fn servers_of(&self, open: &Open) -> Result<Response, String> {
         let all = self.servers.status(&open.repo).await.map_err(message)?;
-        Ok(mapping::semantic::servers(&all))
+        // What a server offers is known from the project's own server; where none ran, from another's.
+        let booted = self.projects.all().await;
+        let offered = |language: &BackendId| {
+            let mut projects = open
+                .booted_now()
+                .into_iter()
+                .chain(booted.iter().filter_map(|o| o.booted_now()));
+            projects.find_map(|b| b.semantics.offers_implementations(language))
+        };
+        Ok(mapping::semantic::servers(&all, offered))
     }
 
     /// The language's executable changed: its running servers restart in every project, and

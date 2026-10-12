@@ -11,7 +11,7 @@ use vet_semantic::derived::{
 };
 use vet_semantic::pool::PoolError;
 use vet_semantic::ports::{
-    At, Diagnostic, LaunchError, Location, Pos, RestoreFailure, Severity, Span, Sym, SymbolInfo,
+    At, BackendId, Diagnostic, LaunchError, Location, Pos, RestoreFailure, Severity, Span, Sym, SymbolInfo,
 };
 use vet_semantic::query::SemanticError;
 
@@ -378,7 +378,8 @@ pub fn restore_failures(all: &[RestoreFailure]) -> Vec<p::RestoreFailure> {
         .collect()
 }
 
-pub fn servers(all: &[ServerStatus]) -> p::Response {
+/// `implementations` tells for a language whether its server advertised them.
+pub fn servers(all: &[ServerStatus], implementations: impl Fn(&BackendId) -> Option<bool>) -> p::Response {
     p::Response::Servers {
         servers: all
             .iter()
@@ -392,6 +393,7 @@ pub fn servers(all: &[ServerStatus]) -> p::Response {
                 pinned_version: s.pinned.clone(),
                 install_blocker: s.install_blocker.clone(),
                 can_install: s.can_install(),
+                implementations: implementations(&s.language),
             })
             .collect(),
     }
