@@ -18,7 +18,6 @@ export interface MenuState {
   theme: Theme;
   /** The tool windows by id, and which are shown. */
   tools: { id: string; shown: boolean }[];
-  devPanel: boolean;
 }
 
 /** Also offered by the project chip's menu. */
@@ -62,11 +61,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     },
   ];
   const vcs: MenuSpec = [{ command: "git.fetch" }];
-  const help: MenuSpec = [
-    ...(s.native ? [] : [about]),
-    { command: "help.showLog" },
-    { command: "dev.panel", checked: s.devPanel },
-  ];
+  const help: MenuSpec = [...(s.native ? [] : [about]), { command: "help.showLog" }];
 
   return [
     ...(s.native ? [{ id: "app", label: "Vet", items: [about, "-", settings, "-", quit] as MenuSpec }] : []),

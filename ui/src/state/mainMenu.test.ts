@@ -17,7 +17,6 @@ const state: MenuState = {
     { id: "changes", shown: true },
     { id: "commits", shown: false },
   ],
-  devPanel: false,
 };
 
 const open: CommandContext = { repoOpen: true, reviewOpen: true, canQuit: true, diffView: false, hunk: -1 };
@@ -38,7 +37,6 @@ const actions: AppActions = {
   setMode: (mode) => calls.push(`mode ${mode}`),
   toggleTool: (id) => calls.push(`tool ${id}`),
   setTheme: (theme) => calls.push(`theme ${theme}`),
-  toggleDevPanel: () => calls.push("dev"),
   clearSemanticCaches: () => calls.push("clearCaches"),
   showLog: () => calls.push("showLog"),
 };

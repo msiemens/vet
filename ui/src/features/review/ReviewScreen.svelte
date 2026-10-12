@@ -25,7 +25,7 @@
   import "./editor/hover.css";
   import "./editor/threadCard.css";
   import { focusedEditor } from "./editor/semantic";
-  import { type Probe, ReviewController } from "./ReviewController";
+  import { ReviewController } from "./ReviewController";
   import { editorMenu, fileCommands, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
   import CommitHeader from "./CommitHeader.svelte";
   import { CHANGES, kindOf, pathOf, showsDiff, subjectOf, tabOf } from "./Tabs.svelte";
@@ -35,7 +35,6 @@
   let {
     backend,
     changeset,
-    probe,
     leftTool,
     leftOpen,
     rightTool,
@@ -51,8 +50,6 @@
     backend: Backend;
     /** What the backend sent about the open changeset. */
     changeset: Changeset;
-    /** The dev tools' measurements of the editors, if they are on. */
-    probe?: Probe;
     /** Unified or split; the owner applies a change to the controller. */
     mode: Mode;
     onmode: (mode: Mode) => void;
@@ -67,8 +64,8 @@
     side: Snippet<[tool: string]>;
     /** A panel under the editors; `selected` is the file the review is at, and `select` goes to one. */
     bottom?: Snippet<[view: { selected?: string; select: (path: string) => void }]>;
-    /** The changeset is open; `firstPaintMs` runs from the open request to the first hunk's paint. */
-    onready: (controller: ReviewController, firstPaintMs: number) => void;
+    /** The changeset is open in the controller. */
+    onready: (controller: ReviewController) => void;
     /** The screen is torn down; its controller is gone. */
     onclose?: () => void;
   } = $props();
@@ -79,11 +76,8 @@
 
   // The backend and the changeset are fixed for a mounted screen.
   // svelte-ignore state_referenced_locally
-  const controller = new ReviewController(
-    backend,
-    changeset,
-    (path, x, y) => openMenu(fileHeaderMenu, x, y, { target: { path, dir: false } }),
-    probe,
+  const controller = new ReviewController(backend, changeset, (path, x, y) =>
+    openMenu(fileHeaderMenu, x, y, { target: { path, dir: false } }),
   );
   // svelte-ignore state_referenced_locally
   controller.mode = mode;
@@ -146,7 +140,7 @@
       }),
     );
     controller.open(true).then(
-      (ms) => onready(controller, ms),
+      () => onready(controller),
       (e: unknown) => void session.abandon(e),
     );
     return () => {

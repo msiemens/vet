@@ -51,14 +51,6 @@ import {
   textTab,
 } from "./Tabs.svelte";
 
-/** How the dev tools measure and test the controller's editors; the controller itself records nothing. */
-export interface Probe {
-  /** The hooks to give the editors, in place of the controller's own (to time the ones it wraps). */
-  hooks(hooks: ViewHooks): ViewHooks;
-  /** A key reached the window and no command took it; true if the probe did. */
-  key(event: KeyboardEvent): boolean;
-}
-
 /** Space types in a field and presses a focused control; it marks the current item only when none of those has the focus. */
 const takesSpace = (el: Element | null) =>
   !!el?.closest("button, a, input, textarea, select, [contenteditable], [tabindex], [role=menuitem], [role=tab]");
@@ -123,10 +115,9 @@ export class ReviewController {
     private changeset: ChangesetSource,
     /** Context menu on a file's header in a view. */
     private fileMenu: (path: string, x: number, y: number) => void,
-    private probe?: Probe,
   ) {
     // The semantic layer reads the changeset's snapshots: in a range only the new side of the latest version is one.
-    const hooks: ViewHooks = {
+    this.hooks = {
       hover: (revision, side, path, line, col, signal) =>
         this.analysable(side) ? semantic.hover(revision, side, path, line, col, signal) : Promise.resolve(NO_HOVER),
       definition: (revision, side, path, line, col) => {
@@ -135,7 +126,6 @@ export class ReviewController {
       diagnostics: (revision, path) =>
         this.analysable("target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
     };
-    this.hooks = probe ? probe.hooks(hooks) : hooks;
     semantic.reset(); // the controller belongs to one repository's screen
     const offReview = changeset.onReview((u) => {
       for (const view of this.views.values()) view.applyReview(u);
@@ -703,9 +693,8 @@ export class ReviewController {
     this.restore = { scroll, anchor: saved?.anchor };
   }
 
-  /** Fetches the manifest and renders it; resolves with the time to the Changes tab's first hunk paint. */
-  async open(prefetch: boolean): Promise<number> {
-    const t0 = performance.now();
+  /** Fetches the manifest and renders it; with `prefetch`, then loads the rest of the Changes tab once its first hunk is painted. */
+  async open(prefetch: boolean): Promise<void> {
     this.views.get(CHANGES)?.destroy();
     this.views.delete(CHANGES);
     const manifest = await this.changeset.refresh();
@@ -718,9 +707,7 @@ export class ReviewController {
     const saved = manifest.interdiff ? undefined : this.savedPosition();
     if (!(saved && view.restore(saved))) await view.goToHunk(0);
     await nextPaint();
-    const elapsed = performance.now() - t0;
     if (prefetch) await view.loadAll();
-    return elapsed;
   }
 
   setMode(mode: Mode) {

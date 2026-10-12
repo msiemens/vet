@@ -23,13 +23,11 @@
     info,
     onserver,
     progress,
-    end,
   }: {
     info: FooterInfo;
     /** Shows the details of the language servers. */
     onserver?: () => void;
     progress?: Snippet;
-    end?: Snippet;
   } = $props();
 </script>
 
@@ -52,7 +50,6 @@
   {#if info.cursor}<span class="footer-item mono small">{info.cursor}</span>{/if}
   {#if info.eol}<span class="footer-item">{info.eol}</span>{/if}
   {#if info.encoding}<span class="footer-item">{info.encoding}</span>{/if}
-  {#if end}{@render end()}{/if}
 </footer>
 
 <style>

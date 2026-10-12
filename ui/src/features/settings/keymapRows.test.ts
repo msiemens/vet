@@ -10,7 +10,6 @@ function listing(overrides: Record<string, string | null> = {}) {
   r.register(
     { id: "review.nextHunk", label: "Next hunk", binding: "Ctrl-Alt-ArrowDown", run },
     { id: "review.comment", label: "Add comment", binding: "Ctrl-Alt-c", run },
-    { id: "dev.panel", label: "Developer Panel", run },
     { id: "zeta.thing", label: "A thing", run },
     { id: "app.settings", label: "Settings…", binding: "Ctrl-Alt-s", run },
     { id: "view.mode", label: "View mode", argument: true, run },
@@ -26,7 +25,6 @@ void test("commands are grouped by the area of their id, in the page's order, an
     [
       ["Review", ["Add comment", "Next hunk"]],
       ["Application", ["Settings…"]],
-      ["Developer", ["Developer Panel"]],
       ["Zeta", ["A thing"]],
     ],
   );

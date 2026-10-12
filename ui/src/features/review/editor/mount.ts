@@ -38,8 +38,6 @@ export interface Loaded {
 }
 
 export interface Hooks extends BarActions, SemanticHooks {
-  /** A key went down in the target editor. */
-  keydown?(event: KeyboardEvent): void;
   /** A line was double-clicked: the file's text at this 0-based target line. */
   openLine(line: number): void;
 }
@@ -134,7 +132,6 @@ export function mountFile(
     // Vet never writes the tree: both sides keep a caret and selection but take no edits.
     EditorState.readOnly.of(true),
     ...extra,
-    EditorView.domEventHandlers({ keydown: (event) => (hooks.keydown?.(event), false) }),
     openOnDoubleClick("target", loaded.hunks, (line) => hooks.openLine(line)),
     ...semanticExtensions(path, "target", hooks),
   ];

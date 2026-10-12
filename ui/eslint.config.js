@@ -15,7 +15,7 @@ const features = readdirSync("src/features", { withFileTypes: true })
 
 /** A feature is reached from outside only through its index. */
 const featureZones = features.map((f) => ({
-  target: ["./src/app", "./src/dev", ...features.filter((g) => g !== f).map((g) => `./src/features/${g}`)],
+  target: ["./src/app", ...features.filter((g) => g !== f).map((g) => `./src/features/${g}`)],
   from: `./src/features/${f}`,
   except: ["./index.ts"],
   message: `Import features/${f} through its index.ts.`,
@@ -69,7 +69,7 @@ export default defineConfig(
           zones: [
             { target: "./src/lib", from: ["./src/features", "./src/state", "./src/app"] },
             { target: "./src/state", from: ["./src/features", "./src/app"] },
-            { target: "./src/features", from: ["./src/app", "./src/dev"] },
+            { target: "./src/features", from: "./src/app" },
             ...featureZones,
           ],
         },

@@ -1,7 +1,5 @@
 <script lang="ts">
   import { type ComponentProps, onMount, untrack } from "svelte";
-  import DevTools from "../dev/DevTools.svelte";
-  import { probe } from "../dev/probe.svelte";
   import {
     AboutDialog,
     Banners,
@@ -75,8 +73,6 @@
   // The selected tool of each rail, and whether its sidebar is shown.
   const left = $state({ tool: "changes", open: true });
   const right = $state({ tool: "symbol", open: true });
-  let tools: DevTools;
-  let devOpen = $state(false);
   let timelineOpen = $state(false);
   let theme = $state<Theme>(storedTheme());
   let mode = $state<Mode>("unified");
@@ -190,7 +186,6 @@
         Object.assign(side, toggleTool(side, id));
       },
       setTheme: (t) => applyTheme((theme = t)),
-      toggleDevPanel: () => (devOpen = !devOpen),
       clearSemanticCaches: () => void clearSemanticCaches(),
       showLog: () => void showLog(),
     }),
@@ -216,16 +211,12 @@
         ...TOOLS.left.map((t) => ({ id: t.id, shown: shown(left, t.id) })),
         ...TOOLS.right.map((t) => ({ id: t.id, shown: shown(right, t.id) })),
       ],
-      devPanel: devOpen,
     });
   });
 
   onMount(() => {
     // Capturing, so a command's key reaches it before any control or editor handles the key.
-    const onkeydown = (e: KeyboardEvent) => {
-      if (commands.dispatch(e) || !probe.key(e)) return;
-      e.preventDefault();
-    };
+    const onkeydown = (e: KeyboardEvent) => void commands.dispatch(e);
     window.addEventListener("keydown", onkeydown, true);
     // The webview's own menu stays on text fields; elsewhere a handler opened the app's menu, or there is none.
     const onContextMenu = (e: MouseEvent) => {
@@ -454,7 +445,6 @@
       <ReviewScreen
         backend={session.backend}
         {changeset}
-        {probe}
         leftTool={left.tool}
         leftOpen={left.open}
         rightTool={right.tool}
@@ -462,10 +452,7 @@
         {mode}
         onmode={setMode}
         {softWrap}
-        onready={(c, firstPaintMs) => {
-          controller = c;
-          tools.ready(firstPaintMs);
-        }}
+        onready={(c) => void (controller = c)}
         onclose={() => (controller = undefined)}
       >
         {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel
@@ -560,16 +547,8 @@
   />
 {/if}
 
-<DevTools bind:this={tools} {controller} bind:open={devOpen} />
-
 <StatusFooter info={footer} onserver={() => showDialog("settings", "servers")}>
   {#snippet progress()}<TaskProgress tasks={backgroundTasks.tasks} /><PlatformFooter />{/snippet}
-  {#snippet end()}<button
-      class="flat footer-item dev"
-      type="button"
-      aria-pressed={devOpen}
-      onclick={() => (devOpen = !devOpen)}>Dev</button
-    >{/snippet}
 </StatusFooter>
 
 <style>
@@ -594,9 +573,5 @@
     flex: 1;
     margin: 16px;
     color: var(--text-2);
-  }
-  .dev {
-    color: var(--text-3);
-    font-size: 11px;
   }
 </style>

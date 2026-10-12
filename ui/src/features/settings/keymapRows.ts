@@ -27,7 +27,6 @@ const AREAS: [area: string, label: string][] = [
   ["tab", "Tabs"],
   ["thread", "Comments"],
   ["app", "Application"],
-  ["dev", "Developer"],
 ];
 
 /** The area of a command: its id up to the first dot. */
