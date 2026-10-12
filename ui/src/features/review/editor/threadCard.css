@@ -1,55 +1,88 @@
 /* Comment threads: a card below the line it is anchored to (an editor widget), the file's own
-   between its header and first hunk, the changeset's above the first file. A card's height is
-   whatever its text needs; the view measures it. Paddings and borders add up to `CARD_PAD` of
-   `threadPlacement.ts`, its estimate. */
+   between its header and first hunk, the changeset's above the first file. The slot (`.vet-thread`)
+   insets the card to the edge every element in the code column shares (`--inset-hunk`); the view
+   measures the slot, whose height is whatever the text needs. The slot's padding and the card's
+   border add up to `FRAME` of `threadPlacement.ts`, its estimate. */
 .vet-thread-block {
   background: var(--bg-editor);
 }
-/* An editor is as wide as its longest line, so a card keeps to the width of what is visible and
+/* An editor is as wide as its longest line, so a slot keeps to the width of what is visible and
    stays there while the editor scrolls sideways. `cqw` is the width of the nearest container: the
-   view (`ChangesetView`), or one pane of a side by side editor (`section.css`). The card starts
-   in the code column, right of the gutters, and does not grow past a reading width. */
+   view (`ChangesetView`), or one pane of a side by side editor (`section.css`). The slot starts in
+   the code column, right of the gutters. */
 .vet-thread {
   position: sticky;
   left: var(--vet-gutters, 0px);
-  width: min(calc(100cqw - var(--vet-gutters, 0px)), var(--w-thread));
+  width: calc(100cqw - var(--vet-gutters, 0px));
   box-sizing: border-box;
-  padding: 6px 10px 6px 6px;
-  background: var(--bg-sheet);
-  border-top: 1px solid var(--line-soft);
-  border-bottom: 1px solid var(--line-soft);
-  box-shadow: inset 3px 0 var(--note);
+  padding: 6px var(--inset-hunk);
   color: var(--text);
   font-family: var(--font-ui);
   font-size: var(--fs-ctl);
   line-height: var(--h-line);
+  /* An editor's content keeps white space; markdown's own line breaks are the card's. */
+  white-space: normal;
 }
-.vet-thread-resolved {
-  box-shadow: inset 3px 0 var(--ok);
-  color: var(--text-2);
+/* Rows are full width, parted by hairlines; the card does not grow past a reading width. */
+.vet-thread-card {
+  position: relative;
+  box-sizing: border-box;
+  max-width: 85ch;
+  overflow: hidden;
+  background: var(--bg-editor);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sheet);
 }
-.vet-thread-head,
-.vet-thread-foot,
-.vet-thread-reply {
+.vet-thread-card > * + :not(.vet-thread-actions) {
+  border-top: 1px solid var(--line-soft);
+}
+.vet-thread-actions {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+}
+.vet-thread-card {
+  --inset-card: 14px;
+}
+.vet-thread-notes,
+.vet-thread-form,
+.vet-thread-reply,
+.vet-msg {
+  padding: 8px var(--inset-card);
+}
+/* The first row keeps clear of the actions in the corner. */
+.vet-thread-card > .vet-thread-top {
+  padding-right: calc(var(--vet-actions, 0px) + var(--inset-card));
+}
+.vet-thread-notes {
   display: flex;
   align-items: center;
+  gap: 8px;
+  padding-block: 6px;
+}
+.vet-thread-reply {
+  display: flex;
+  align-items: flex-end;
   gap: 6px;
+  padding-block: 8px 10px;
+  padding-left: calc(var(--inset-card) + 28px);
 }
-.vet-thread-head {
-  height: var(--h-line);
+.vet-thread-send[hidden] {
+  display: none;
 }
-.vet-thread-grow {
-  flex: 1;
+.vet-thread-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-block: 8px 10px;
 }
 .vet-thread-title {
   font-weight: 600;
 }
-.vet-thread-preview {
+.vet-thread-grow {
   flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .vet-thread-btn {
   width: 20px;
@@ -65,51 +98,89 @@
   padding: 0 8px;
   font-size: var(--fs-mono-s);
 }
+
+/* A message: the author's picture beside its meta line and its text. */
+.vet-msg {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: center;
+}
+.vet-msg > :not(.vet-avatar, .vet-msg-meta) {
+  grid-column: 2;
+}
 .vet-msg-meta {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: var(--h-line);
+  min-width: 0;
+  height: 20px;
   color: var(--text-3);
   font-size: 11.5px;
 }
-/* A faint line between the messages of a thread. */
-.vet-msg-next {
-  margin-top: 4px;
-  padding-top: 4px;
-  border-top: 1px solid var(--line-faint);
-}
 .vet-msg-author {
-  color: var(--text-2);
+  color: var(--text);
   font-weight: 600;
 }
-.vet-msg-body {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.vet-msg-edited {
+  font-style: italic;
 }
-.vet-thread-reply {
-  margin-top: 6px;
+/* Your own message's edit and delete show while the pointer is on it. */
+.vet-msg-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+  visibility: hidden;
+}
+.vet-msg:is(:hover, :focus-within) .vet-msg-actions {
+  visibility: visible;
+}
+/* A message that waits for Submit review is shaded and says so. */
+.vet-msg-draft {
+  background: var(--bg-panel);
+}
+.vet-msg-draft-label {
+  color: var(--note);
+}
+.vet-msg-body {
+  overflow-wrap: anywhere;
 }
 .vet-thread-field {
   flex: 1;
   line-height: 18px;
 }
-.vet-thread-draft .vet-thread-field {
+.vet-thread-form .vet-thread-field {
   display: block;
   width: 100%;
-  margin-top: 2px;
+}
+.vet-msg-edit .vet-thread-field {
+  display: block;
+  width: 100%;
+}
+.vet-msg-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .vet-thread-foot {
-  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   justify-content: flex-end;
+}
+.vet-thread-hint {
+  flex: 1;
+  color: var(--text-3);
+  font-size: 11px;
 }
 .vet-thread-by {
   color: var(--text-3);
   font-size: 11.5px;
+  white-space: nowrap;
 }
 .vet-avatar {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   flex: none;
   border-radius: 50%;
   object-fit: cover;
@@ -119,26 +190,110 @@
   align-items: center;
   justify-content: center;
   color: var(--on-avatar);
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 600;
 }
-.vet-msg-edited {
-  font-style: italic;
+
+/* A resolved thread folded to one row. */
+.vet-thread-folded {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px 5px 8px;
+  color: var(--text-2);
+  cursor: default;
 }
-/* A message that waits for Submit review is shaded. */
-.vet-draft {
-  padding: 0 6px;
-  background: color-mix(in srgb, var(--note) 10%, transparent);
+.vet-thread-ok {
+  display: inline-flex;
+  flex: none;
+  color: var(--ok);
+}
+.vet-thread-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vet-thread-preview .vet-msg-author {
+  color: var(--text-2);
+}
+.vet-thread-count {
+  flex: none;
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+.vet-avatar-stack {
+  display: flex;
+  flex: none;
+}
+.vet-avatar-stack > .vet-avatar {
+  box-sizing: content-box;
+  border: 2px solid var(--bg-editor);
+  margin: -2px 0 -2px -5px;
+}
+.vet-avatar-stack > .vet-avatar:first-child {
+  margin-left: -2px;
+}
+
+/* A comment's markdown. */
+.vet-md > :first-child {
+  margin-top: 0;
+}
+.vet-md > :last-child {
+  margin-bottom: 0;
+}
+.vet-md :is(p, ul, ol, pre, blockquote, table) {
+  margin: 0 0 6px;
+}
+.vet-md :is(ul, ol) {
+  padding-left: 20px;
+}
+.vet-md :is(h1, h2, h3, h4, h5, h6) {
+  margin: 6px 0 4px;
+  font-size: inherit;
+  font-weight: 600;
+}
+.vet-md a {
+  color: var(--accent);
+}
+.vet-md code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--bg-hunk);
+  font-family: var(--font-mono);
+  font-size: var(--fs-mono-s);
+}
+.vet-md pre {
+  padding: 6px 8px;
+  overflow-x: auto;
   border-radius: var(--radius);
+  background: var(--bg-hunk);
 }
-.vet-msg-edit .vet-thread-field {
-  display: block;
-  width: 100%;
+.vet-md pre code {
+  padding: 0;
+  background: none;
 }
+.vet-md blockquote {
+  padding-left: 10px;
+  border-left: 3px solid var(--line);
+  color: var(--text-2);
+}
+.vet-md hr {
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+}
+.vet-md :is(th, td) {
+  padding: 1px 8px;
+  border: 1px solid var(--line-soft);
+}
+
+/* A comment that was edited in two places: the two texts side by side. */
 .vet-conflict {
-  padding: 4px 6px 6px;
-  border: 1px solid var(--warn);
-  border-radius: var(--radius);
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .vet-conflict-title {
   color: var(--warn);
@@ -155,17 +310,19 @@
   align-items: flex-start;
   gap: 4px;
   min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
 .vet-conflict-label {
   color: var(--text-3);
   font-size: 11.5px;
 }
+.vet-conflict-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .vet-diff {
   background: color-mix(in srgb, var(--warn) 30%, transparent);
   color: inherit;
-}
-.vet-thread-hint {
-  flex: 1;
-  color: var(--text-3);
-  font-size: 11px;
 }

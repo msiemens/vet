@@ -29,12 +29,12 @@
 {/each}
 
 <style>
-  /* The card keeps to the panel's width and scrolls with it, unlike in an editor. */
+  /* The card keeps to the panel's width and scrolls with it, unlike in an editor, and fills it. */
   .card :global(.vet-thread) {
     position: static;
     width: auto;
   }
-  .card + .card :global(.vet-thread) {
-    border-top: none;
+  .card :global(.vet-thread-card) {
+    max-width: none;
   }
 </style>

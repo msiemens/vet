@@ -6,7 +6,7 @@
   gap: 8px;
   height: var(--h-hunk);
   box-sizing: border-box;
-  padding: 0 8px 0 10px;
+  padding: 0 8px 0 var(--inset-hunk);
   background: var(--bg-hunk);
   color: var(--text-2);
   font-family: var(--font-mono);
@@ -111,7 +111,7 @@
    a header row and a row per line, inside `--h-base-diff-gap`. */
 .vet-basediff {
   box-sizing: border-box;
-  padding: calc(var(--h-base-diff-gap) / 2) 10px;
+  padding: calc(var(--h-base-diff-gap) / 2) var(--inset-hunk);
   background: var(--bg-editor);
   font-family: var(--font-mono);
   font-size: var(--fs-mono);

@@ -20,7 +20,7 @@
   gap: 8px;
   height: var(--h-line);
   box-sizing: border-box;
-  padding: 0 10px;
+  padding: 0 var(--inset-hunk);
   font-size: var(--fs-mono);
   white-space: nowrap;
 }
@@ -55,7 +55,7 @@
   gap: 16px;
   height: var(--h-preview);
   box-sizing: border-box;
-  padding: 8px 10px;
+  padding: 8px var(--inset-hunk);
 }
 .vet-card-figure {
   margin: 0;

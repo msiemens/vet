@@ -15,6 +15,8 @@ import { nextPaint } from "../../lib/nextPaint";
 import { platformName } from "../../lib/platformName";
 import type { Backend } from "../../state/backend";
 import type { Changeset } from "../../state/changeset.svelte";
+import { contextMenus } from "../../state/contextMenu.svelte";
+import { openUrl } from "../../state/host";
 import { platform } from "../../state/platform.svelte";
 import { semantic } from "../../state/semantic.svelte";
 import { session } from "../../state/session.svelte";
@@ -396,6 +398,17 @@ export class ReviewController {
       keepEdit: (message, keep) => threads.keepEdit(message, keep),
       platformName: () => (platform.status ? platformName(platform.status.kind) : "the platform"),
       confirm: (thread) => threads.confirm(thread),
+      menu: (thread, x, y) =>
+        void contextMenus.show({
+          x,
+          y,
+          items: [{ id: "delete", label: "Delete thread" }],
+          onselect: () => void threads.remove(thread),
+        }),
+      openLink: (url) =>
+        void openUrl(url).catch((e: unknown) => {
+          session.notice = `Could not open the browser: ${errorText(e)}`;
+        }),
     };
   }
 

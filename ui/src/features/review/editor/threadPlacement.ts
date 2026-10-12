@@ -56,13 +56,20 @@ export interface CardMetrics {
   line: number;
 }
 
-const CARD_PAD = 14;
-/** The reply row: a one-row field and its buttons. */
-const REPLY = 34;
-/** A new comment's form: a field of three rows and the buttons below. */
-const FORM = 92;
-/** The line above every message but the first, with its space (`.vet-msg-next`). */
-const BETWEEN = 9;
+/** The slot's padding above and below the card, and the card's border. */
+const FRAME = 14;
+/** The padding above and below a message's meta line and text (`.vet-msg`). */
+const MESSAGE_PAD = 16;
+/** The hairline above every row but the first. */
+const BETWEEN = 1;
+/** The row above the messages of a resolved or moved thread (`.vet-thread-notes`). */
+const NOTES = 33;
+/** The reply row while it is one line: the field's row with its padding. */
+const REPLY = 45;
+/** A new comment's form: its title, a field of three rows and the buttons below, with their padding. */
+const FORM = 138;
+/** A resolved thread's one row, besides the line (`.vet-thread-folded`). */
+const FOLDED_PAD = 11;
 /** Characters a message line holds before it wraps, in a card of ordinary width. */
 const WRAP = 100;
 
@@ -74,9 +81,12 @@ export function bodyRows(body: string): number {
 /** A resolved thread shows as one row until it is opened. */
 export function cardHeight(card: CardData, m: CardMetrics): number {
   const { thread } = card;
-  if (!thread) return CARD_PAD + m.line + FORM;
-  if (thread.status === "resolved" && !card.open) return CARD_PAD + m.line;
-  const messages = thread.messages.reduce((h, msg) => h + m.line + bodyRows(msg.body) * m.line, 0);
-  const between = Math.max(0, thread.messages.length - 1) * BETWEEN;
-  return CARD_PAD + m.line + messages + between + REPLY;
+  if (!thread) return FRAME + FORM;
+  const resolved = thread.status === "resolved";
+  if (resolved && !card.open) return FRAME + FOLDED_PAD + m.line;
+  const messages = thread.messages.reduce((h, msg) => h + MESSAGE_PAD + m.line + bodyRows(msg.body) * m.line, 0);
+  const anchor = thread.anchor;
+  const noted = resolved || anchor?.type === "inferred" || (anchor?.type === "exact" && anchor.whitespaceChanged);
+  const rows = thread.messages.length + 1 + (noted ? 1 : 0);
+  return FRAME + messages + (noted ? NOTES : 0) + REPLY + (rows - 1) * BETWEEN;
 }

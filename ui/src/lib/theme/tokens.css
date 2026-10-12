@@ -172,8 +172,9 @@
   --w-scrollbar: 12px;
   --w-chev: 14px;
   --w-indent: 12px;
-  /* A comment thread card, as wide as a comfortable line of text. */
-  --w-thread: 720px;
+  /* The edge every element inserted into a code column shares: where a hunk bar's text starts, the base
+     diff's box, change cards and comment thread cards. */
+  --inset-hunk: 10px;
   /* The hover popup, and the one-line notice that stands in for it; the fade over the end of its scrolling docs. */
   --w-hover: 520px;
   --w-hover-notice: 460px;
