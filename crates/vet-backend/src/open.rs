@@ -26,8 +26,9 @@ use vet_app::session::RevisionView;
 use vet_app::settle::Settling;
 use vet_app::trust::Trust;
 use vet_infra::budget::Budgets;
-use vet_infra::clock::{TokioClock, TokioLinger, unix_now};
+use vet_infra::clock::{TokioClock, TokioDetach, TokioLinger, unix_now};
 use vet_infra::git::GixRepo;
+use vet_infra::language;
 use vet_infra::lsp::LspLauncher;
 use vet_infra::materialize::Materialize;
 use vet_infra::materialize::kept::KeptTrees;
@@ -36,6 +37,7 @@ use vet_infra::store::SqliteStore;
 use vet_infra::watch::FsWatcher;
 use vet_mapping as mapping;
 use vet_protocol::{Event, PlatformConnection, ProjectId, Response};
+use vet_semantic::pool::Supervision;
 use vet_semantic::ports::Backend;
 
 use crate::caches::PersistentAnswers;
@@ -266,7 +268,21 @@ impl Wired {
                 linger: Arc::new(TokioLinger),
             },
         )
-        .reading(reading);
+        .reading(reading)
+        .supervised(Supervision {
+            detach: Arc::new(TokioDetach),
+            told: {
+                let subscribers = subscribers.clone();
+                Arc::new(move |language, outcome| {
+                    let name = language::by_id(&language.0).map_or(language.0.as_str(), |l| l.display_name);
+                    subscribers.broadcast(Event::Notification {
+                        project: id,
+                        notification: mapping::semantic::server_died(name, outcome),
+                    });
+                    subscribers.broadcast(Event::ServersChanged { project: id });
+                })
+            },
+        });
         if let Some(store) = self.answers.store().await {
             semantics = semantics.persisting(store);
         }

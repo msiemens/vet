@@ -1,6 +1,6 @@
 //! Restarting a language's server: the backend with a language server that names its process in
-//! every hover, leaves a hover on line 1 unanswered, and can be made to fail its start. Needs
-//! `python3` for that server and is skipped without it.
+//! every hover, leaves a hover on line 1 unanswered, dies at a hover on line 2, and can be made
+//! to fail its start. Needs `python3` for that server and is skipped without it.
 
 #![allow(clippy::disallowed_methods)]
 
@@ -10,8 +10,11 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::Mutex;
+use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Orchestrator, open_store};
-use vet_protocol::{Request, Side, UnavailableKind};
+use vet_protocol::{Event, Notification, Request, ServerMessage, Side, UnavailableKind};
+use vet_transport::Events;
 
 use crate::common::{Client, config, repo_with};
 
@@ -63,6 +66,8 @@ while True:
     elif method == "exit":
         break
     elif method == "textDocument/hover":
+        if message["params"]["position"]["line"] == 2:
+            os._exit(1)
         if message["params"]["position"]["line"] == 0:
             text = "pid %d" % os.getpid()
             send({"jsonrpc": "2.0", "id": message["id"], "result": {"contents": {"kind": "plaintext", "value": text}}})
@@ -72,6 +77,8 @@ while True:
 
 struct Rig {
     client: Arc<Client>,
+    /// What the backend told the client.
+    inbox: Mutex<UnboundedReceiver<ServerMessage>>,
     project: u32,
     /// While this file exists the server exits at once.
     broken: PathBuf,
@@ -111,10 +118,13 @@ impl Rig {
 
         let data = tempfile::tempdir().unwrap();
         let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
-        let client = Arc::new(Client::new(&handler));
+        let mut client = Client::new(&handler);
+        let inbox = std::mem::replace(&mut client.inbox, Events::channel().1);
+        let client = Arc::new(client);
         let project = client.open(repo.path()).await;
         let rig = Self {
             client,
+            inbox: Mutex::new(inbox),
             project,
             broken,
             _keep: (data, tools, repo),
@@ -147,6 +157,30 @@ impl Rig {
         self.client
             .hover(self.project, revision, Side::Target, "src/lib.rs", (line, 7))
             .await
+    }
+
+    /// The next notification the backend sends.
+    async fn notification(&self) -> Notification {
+        let mut inbox = self.inbox.lock().await;
+        loop {
+            let message = tokio::time::timeout(Duration::from_secs(30), inbox.recv())
+                .await
+                .expect("no notification")
+                .expect("the backend is gone");
+            if let ServerMessage::Event {
+                event: Event::Notification { notification, .. },
+            } = message
+            {
+                return notification;
+            }
+        }
+    }
+
+    /// Kills the server's process with a hover it dies at.
+    async fn kill(&self) {
+        let (text, unavailable) = self.hover(2).await;
+        assert_eq!(text, None);
+        assert!(unavailable.is_some());
     }
 
     /// The process that answers a hover now.
@@ -248,4 +282,55 @@ async fn requests_in_flight_on_the_old_server_fail_as_restarted() {
     assert!(unavailable.message.contains("restarted"), "{}", unavailable.message);
 
     assert_ne!(rig.pid().await, before);
+}
+
+#[tokio::test]
+async fn a_server_that_dies_while_running_is_restarted_once_with_a_notice() {
+    if !python_available() {
+        eprintln!("skipped: python3 is not installed");
+        return;
+    }
+    let rig = Rig::start().await;
+    let before = rig.pid().await;
+
+    rig.kill().await;
+
+    let notice = rig.notification().await;
+    assert!(
+        notice.text.contains("stopped unexpectedly and was restarted"),
+        "{}",
+        notice.text
+    );
+    assert_ne!(rig.pid().await, before);
+    assert!(gone(before).await);
+}
+
+#[tokio::test]
+async fn a_server_that_dies_again_right_away_stays_stopped_until_restarted_by_hand() {
+    if !python_available() {
+        eprintln!("skipped: python3 is not installed");
+        return;
+    }
+    let rig = Rig::start().await;
+    rig.pid().await;
+    rig.kill().await;
+    assert!(rig.notification().await.text.contains("was restarted"));
+    rig.pid().await;
+
+    rig.kill().await;
+    let notice = rig.notification().await;
+    assert!(notice.text.contains("stays stopped"), "{}", notice.text);
+
+    let (text, unavailable) = rig.hover(0).await;
+    assert_eq!(text, None);
+    let unavailable = unavailable.expect("the server is stopped");
+    assert_eq!(unavailable.kind, UnavailableKind::ServerFailed);
+    assert!(unavailable.message.contains("stays stopped"), "{}", unavailable.message);
+
+    // A restart by hand starts it again and forgets the deaths: the next one is restarted anew.
+    rig.restart().await.unwrap();
+    rig.pid().await;
+    rig.kill().await;
+    assert!(rig.notification().await.text.contains("was restarted"));
+    rig.pid().await;
 }

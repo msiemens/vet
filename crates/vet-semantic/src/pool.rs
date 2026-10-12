@@ -24,6 +24,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use vet_core::content::{BlobId, RepoPath, SnapshotId};
 use vet_engine::{self as engine, Engine, Kind, Limits, Retention};
@@ -31,7 +32,7 @@ use vet_engine::{self as engine, Engine, Kind, Limits, Retention};
 use crate::gate::Gate;
 use crate::policy::AnalysisPolicy;
 use crate::ports::{
-    Answered, At, Backend, BackendId, Diagnostic, LanguageServer, LaunchError, Location, Materializer,
+    Answered, At, Backend, BackendId, Detach, Diagnostic, LanguageServer, LaunchError, Location, Materializer,
     NotMaterializable, Provenance, QueryError, ServerIdentity, ServerLauncher, Started, SymbolInfo, Tree,
 };
 use crate::reuse::{Answers, Basis, Computed, KEPT, Key, ProjectQuery, Restore, Reused, SemanticCache};
@@ -63,6 +64,9 @@ pub enum PoolError {
     /// The backend would execute project code and the policy forbids it. The UI
     /// shows an "analysis limited" marker for the language (§7.5).
     AnalysisLimited(BackendId),
+    /// The server died while running, and again soon after it was restarted for that; it stays
+    /// stopped until it is restarted by hand. Carries why it died.
+    Stopped(String),
 }
 
 impl fmt::Display for PoolError {
@@ -70,6 +74,7 @@ impl fmt::Display for PoolError {
         match self {
             Self::NotMaterializable(e) => write!(f, "snapshot cannot be materialized: {e}"),
             Self::Launch(e) => e.fmt(f),
+            Self::Stopped(why) => write!(f, "the language server stopped unexpectedly and stays stopped: {why}"),
             Self::AnalysisLimited(b) => write!(f, "analysis limited: {} may execute project code", b.0),
         }
     }
@@ -82,6 +87,37 @@ pub fn admit(backend: &Backend, policy: AnalysisPolicy) -> Result<(), PoolError>
         return Err(PoolError::AnalysisLimited(config.backend.clone()));
     }
     Ok(())
+}
+
+/// A server that died while running is started anew once. If it dies again within this long
+/// of that start having finished, it stays stopped.
+const RESTART_WINDOW: Duration = Duration::from_secs(60);
+
+/// What became of a server that stopped on its own.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Outcome {
+    /// A new server runs in its place.
+    Restarted,
+    /// It stays stopped until it is restarted by hand.
+    Stopped,
+}
+
+/// Watches the running servers: how the pool runs the watching, and whom it tells what became
+/// of a server that died.
+pub struct Supervision {
+    pub detach: Arc<dyn Detach>,
+    pub told: Arc<Told>,
+}
+
+/// Told which backend's server stopped on its own and what became of it.
+pub type Told = dyn Fn(&BackendId, Outcome) + Send + Sync;
+
+/// What the pool knows of a server's key after a server of it died.
+enum Health {
+    /// Started anew after it died, at this time.
+    Restarted(Instant),
+    /// Died soon after that, or could not be started anew; the reason.
+    Stopped(String),
 }
 
 /// The key of a question about a whole immutable tree.
@@ -121,6 +157,9 @@ fn answered<T>(value: T, server: ServerIdentity, from_cache: bool) -> Answered<T
 /// server first, then the materialized directory.
 pub struct Entry<S, G> {
     server: S,
+    /// What it was started for, to start it anew if it dies.
+    key: PoolKey,
+    backend: Backend,
     /// The identity the server started with.
     identity: ServerIdentity,
     answers: Arc<Answers>,
@@ -280,6 +319,8 @@ struct State<S, G> {
     /// Bumped by `restart`; an entry from an older generation is not pooled.
     generations: HashMap<BackendId, u64>,
     slots: HashMap<PoolKey, Arc<Entry<S, G>>>,
+    /// Of the keys whose server died; a manual restart of the backend forgets them.
+    health: HashMap<PoolKey, Health>,
     /// Whether a backend's server offers implementations, as of the server started last; not
     /// known before one has started.
     implementations: HashMap<BackendId, bool>,
@@ -428,6 +469,7 @@ struct Inner<M: Materializer, L: ServerLauncher> {
     instances: AtomicU64,
     state: Mutex<State<L::Server, M::Guard>>,
     starts: Engine<Start<M, L>>,
+    supervision: Option<Supervision>,
 }
 
 pub struct Pool<M: Materializer, L: ServerLauncher> {
@@ -508,11 +550,20 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                     tick: 0,
                     generations: HashMap::new(),
                     slots: HashMap::new(),
+                    health: HashMap::new(),
                     implementations: HashMap::new(),
                 }),
                 starts: Engine::new(Limits::entries(0)),
+                supervision: None,
             }),
         }
+    }
+
+    /// Watches the servers it starts: one that dies while running is started anew once,
+    /// and `supervision` is told what became of it.
+    pub fn supervised(mut self, supervision: Supervision) -> Self {
+        self.unshared().supervision = Some(supervision);
+        self
     }
 
     /// The pool before it is shared: configured by the builders.
@@ -669,6 +720,8 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             }
             let entry = Arc::new(Entry {
                 server,
+                key: key.clone(),
+                backend,
                 identity,
                 answers: self.answers.clone(),
                 basis,
@@ -685,6 +738,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             entry
         };
         self.bases.clear();
+        self.watch(&entry);
         Ok(engine::Computed::new(
             Lease {
                 pool: self,
@@ -692,6 +746,90 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             },
             false,
         ))
+    }
+
+    /// Has `entry` handled when its server dies. The watching holds neither the pool nor the
+    /// entry, so it does not keep a server alive that nobody wants.
+    fn watch(self: &Arc<Self>, entry: &Arc<EntryOf<M, L>>) {
+        let Some(supervision) = &self.supervision else { return };
+        let (exited, pool, entry) = (entry.server.exited(), Arc::downgrade(self), Arc::downgrade(entry));
+        supervision.detach.detach(Box::pin(async move {
+            let why = exited.await;
+            if let (Some(pool), Some(entry)) = (pool.upgrade(), entry.upgrade()) {
+                pool.died(entry, why).await;
+            }
+        }));
+    }
+
+    /// The server of `entry` is gone. Unless that was asked for, it is started anew, and the
+    /// callers that come meanwhile wait for that start as for any. A server that dies again
+    /// within [`RESTART_WINDOW`] of the start having finished, or cannot be started anew, stays
+    /// stopped: the leases of its key fail until the backend is restarted by hand.
+    async fn died(self: &Arc<Self>, entry: Arc<EntryOf<M, L>>, why: String) {
+        if entry.stopped.load(Ordering::SeqCst) || entry.retired.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(supervision) = &self.supervision else { return };
+        let key = &entry.key;
+        let (generation, again) = {
+            let mut state = self.lock();
+            match state.slots.get(key) {
+                Some(pooled) if Arc::ptr_eq(pooled, &entry) => {
+                    state.slots.remove(key);
+                }
+                _ => return,
+            }
+            let generation = state.generations.get(&key.backend).copied().unwrap_or(0);
+            let again = matches!(state.health.get(key), Some(Health::Restarted(at)) if at.elapsed() < RESTART_WINDOW);
+            if again {
+                state.health.insert(key.clone(), Health::Stopped(why.clone()));
+            }
+            (generation, again)
+        };
+        let outcome = if again {
+            Outcome::Stopped
+        } else {
+            match self.lease(key, &entry.backend).await {
+                Ok(lease) => {
+                    self.remember(key, generation, Health::Restarted(Instant::now()));
+                    lease.release().await;
+                    Outcome::Restarted
+                }
+                Err(e) => {
+                    self.remember(key, generation, Health::Stopped(format!("{why}\n{e}")));
+                    Outcome::Stopped
+                }
+            }
+        };
+        (supervision.told)(&key.backend, outcome);
+    }
+
+    /// Notes `health` of `key`, unless the backend was restarted by hand since `generation`.
+    fn remember(&self, key: &PoolKey, generation: u64, health: Health) {
+        let mut state = self.lock();
+        if state.generations.get(&key.backend).copied().unwrap_or(0) == generation {
+            state.health.insert(key.clone(), health);
+        }
+    }
+
+    /// The server for `key`: the running one, the one being started, or a new one.
+    async fn lease(self: &Arc<Self>, key: &PoolKey, backend: &Backend) -> Result<Lease<M, L>, PoolError> {
+        admit(backend, key.policy)?;
+        if let Some(Health::Stopped(why)) = self.lock().health.get(key) {
+            return Err(PoolError::Stopped(why.clone()));
+        }
+        if let Some(lease) = self.join(key) {
+            return Ok(lease);
+        }
+        let generation = self.generation(&key.backend);
+        let (inner, started, backend) = (self.clone(), key.clone(), backend.clone());
+        let lease = self
+            .starts
+            .get(Start::new(key.clone(), generation), move |_| {
+                inner.start(started, backend, generation)
+            })
+            .await?;
+        Ok(lease.value)
     }
 }
 
@@ -736,20 +874,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
     /// began it. A start is not shared across a restart of the backend, because
     /// the server of the older generation does not stay.
     pub async fn lease(&self, key: &PoolKey, backend: &Backend) -> Result<Lease<M, L>, PoolError> {
-        admit(backend, key.policy)?;
-        if let Some(lease) = self.inner.join(key) {
-            return Ok(lease);
-        }
-        let generation = self.inner.generation(&key.backend);
-        let (inner, started, backend) = (self.inner.clone(), key.clone(), backend.clone());
-        let lease = self
-            .inner
-            .starts
-            .get(Start::new(key.clone(), generation), move |_| {
-                inner.start(started, backend, generation)
-            })
-            .await?;
-        Ok(lease.value)
+        self.inner.lease(key, backend).await
     }
 
     /// Drop every server of `backend`: its settings changed (§7.2). Servers
@@ -775,6 +900,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
             let mut state = self.inner.lock();
             *state.generations.entry(backend.clone()).or_default() += 1;
             state.implementations.remove(backend);
+            state.health.retain(|key, _| &key.backend != backend);
             let keys: Vec<_> = state.slots.keys().filter(|k| &k.backend == backend).cloned().collect();
             let (mut idle, mut leased) = (Vec::new(), Vec::new());
             for key in keys {

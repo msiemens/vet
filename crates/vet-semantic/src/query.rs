@@ -9,7 +9,7 @@ use vet_core::content::RepoPath;
 use vet_core::review::Side;
 
 use crate::policy::AnalysisPolicy;
-use crate::pool::{Lease, Pool, PoolError, PoolKey, Target};
+use crate::pool::{Lease, Pool, PoolError, PoolKey, Supervision, Target};
 use crate::ports::{
     Answered, At, Backend, BackendId, Diagnostic, Location, Materializer, QueryError, ServerLauncher, SymbolInfo,
     backend_for,
@@ -80,6 +80,12 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
     /// Keeps the answers that persist in `store`, behind the ones in memory.
     pub fn persisting(mut self, store: Arc<dyn SemanticCache>) -> Self {
         self.pool = self.pool.persisting(store);
+        self
+    }
+
+    /// Starts a server that dies while running anew once, and tells `supervision` what became of it.
+    pub fn supervised(mut self, supervision: Supervision) -> Self {
+        self.pool = self.pool.supervised(supervision);
         self
     }
 

@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::path::PathBuf;
+use std::pin::Pin;
 
 use vet_core::content::{BlobId, Hash, LineRange, RepoPath, SnapshotId};
 
@@ -280,8 +281,22 @@ pub trait LanguageServer: Send + Sync {
     /// Matches inside the root.
     fn workspace_symbols(&self, query: &str) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     fn diagnostics(&self, file: &RepoPath) -> impl Future<Output = Result<Vec<Diagnostic>, QueryError>> + Send;
+    /// Completes with what is known of why when the server's process is gone or its channel
+    /// closed, whoever ended it; never for a server that cannot tell. Owns what it waits on,
+    /// so it does not keep the server alive.
+    fn exited(&self) -> Exited {
+        Box::pin(std::future::pending())
+    }
     /// Ask the server to exit. It is killed if it does not.
     fn shutdown(&self) -> impl Future<Output = ()> + Send;
+}
+
+/// See [`LanguageServer::exited`].
+pub type Exited = Pin<Box<dyn Future<Output = String> + Send>>;
+
+/// Runs work on its own, since the semantic layer has no runtime of its own.
+pub trait Detach: Send + Sync {
+    fn detach(&self, work: Pin<Box<dyn Future<Output = ()> + Send>>);
 }
 
 /// Whether the files a server sees can change under it.

@@ -9,7 +9,7 @@ use vet_semantic::derived::{
     Bounds, CallSite, Change, ChangedSymbol, Changes, Derived, Fate, Inputs, Reach, Reference, RemovalImpact,
     SymbolImpact,
 };
-use vet_semantic::pool::PoolError;
+use vet_semantic::pool::{Outcome, PoolError};
 use vet_semantic::ports::{
     At, BackendId, Diagnostic, LaunchError, Location, Pos, RestoreFailure, Severity, Span, Sym, SymbolInfo,
 };
@@ -216,7 +216,7 @@ pub fn unavailable(error: &SemanticError, language: Option<String>) -> p::Unavai
     let kind = match error {
         SemanticError::NoBackend(_) => Kind::Unsupported,
         SemanticError::Pool(PoolError::Launch(LaunchError::NotInstalled(_))) => Kind::ServerMissing,
-        SemanticError::Pool(PoolError::Launch(_)) => Kind::ServerFailed,
+        SemanticError::Pool(PoolError::Launch(_) | PoolError::Stopped(_)) => Kind::ServerFailed,
         SemanticError::Pool(PoolError::AnalysisLimited(_)) => Kind::AnalysisLimited,
         SemanticError::Pool(PoolError::NotMaterializable(_)) => Kind::SnapshotUnavailable,
         SemanticError::Query(_) => Kind::QueryFailed,
@@ -226,6 +226,22 @@ pub fn unavailable(error: &SemanticError, language: Option<String>) -> p::Unavai
         kind,
         label: label(kind).to_owned(),
         message: error.to_string(),
+    }
+}
+
+/// What the viewer hears when the server `name` died while running.
+pub fn server_died(name: &str, outcome: Outcome) -> p::Notification {
+    let text = match outcome {
+        Outcome::Restarted => format!("{name} stopped unexpectedly and was restarted."),
+        Outcome::Stopped => {
+            format!("{name} stopped unexpectedly again and stays stopped. Restart it from the Help menu.")
+        }
+    };
+    p::Notification {
+        kind: p::NotificationKind::Info,
+        text,
+        copy_text: None,
+        host: None,
     }
 }
 

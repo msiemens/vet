@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 use vet_app::ports::{Clock, Millis};
 use vet_engine::Linger;
+use vet_semantic::ports::Detach;
 
 /// Whole unix seconds of `t`; negative before the epoch.
 pub fn unix_secs(t: SystemTime) -> i64 {
@@ -41,6 +42,15 @@ impl Clock for TokioClock {
 
     fn sleep_until(&self, deadline: Millis) -> impl Future<Output = ()> + Send {
         tokio::time::sleep_until(self.start + Duration::from_millis(deadline.0))
+    }
+}
+
+/// Runs the semantic layer's detached work as tasks.
+pub struct TokioDetach;
+
+impl Detach for TokioDetach {
+    fn detach(&self, work: Pin<Box<dyn Future<Output = ()> + Send>>) {
+        tokio::spawn(work);
     }
 }
 

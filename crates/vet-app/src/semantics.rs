@@ -19,7 +19,7 @@ use vet_semantic::derived::{
     changed_symbols, impact, located, reachability, removal_impact,
 };
 use vet_semantic::join::{bounded, join};
-use vet_semantic::pool::{Pool, Target};
+use vet_semantic::pool::{Pool, Supervision, Target};
 use vet_semantic::ports::{
     At, Backend, BackendId, Diagnostic, Location, Materializer, Provenance, RestoreFailure, ServerLauncher, Severity,
     Sym, SymbolInfo, prefer_openable,
@@ -345,6 +345,11 @@ where
     /// Keeps the answers that persist in `store`, behind the ones in memory.
     pub fn persisting(self, store: Arc<dyn SemanticCache>) -> Self {
         self.configured(|semantic| semantic.persisting(store))
+    }
+
+    /// Starts a server that dies while running anew once, and tells `supervision` what became of it.
+    pub fn supervised(self, supervision: Supervision) -> Self {
+        self.configured(|semantic| semantic.supervised(supervision))
     }
 
     /// Drops the answers kept in memory; the next question is asked again (or read from the store).

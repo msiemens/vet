@@ -8,6 +8,7 @@
 //! (`$/cancelRequest`) and forgotten.
 
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -26,6 +27,7 @@ use crate::exec::{Tail, command};
 
 pub(super) const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const STDERR_LINES: usize = 20;
+const STDERR_SETTLE: Duration = Duration::from_millis(100);
 const CONTENT_MODIFIED: i64 = -32801;
 const SERVER_CANCELLED: i64 = -32802;
 
@@ -120,6 +122,17 @@ struct Shared {
     changed: Notify,
     stderr: Mutex<Tail>,
     workspace_folders: Value,
+}
+
+impl Shared {
+    fn describe(&self, error: String) -> String {
+        let tail = self.stderr.lock().expect("not poisoned");
+        if tail.is_empty() {
+            error
+        } else {
+            format!("{error}\nserver stderr:\n{}", tail.text())
+        }
+    }
 }
 
 /// Where messages to the server are queued; a task writes them in order.
@@ -266,12 +279,26 @@ impl Connection {
 
     /// Adds the server's last stderr lines to an error.
     pub fn describe(&self, error: String) -> String {
-        let tail = self.shared.stderr.lock().expect("not poisoned");
-        if tail.is_empty() {
-            error
-        } else {
-            format!("{error}\nserver stderr:\n{}", tail.text())
-        }
+        self.shared.describe(error)
+    }
+
+    /// Completes when the server's output has ended, with why. Owns what it waits on.
+    pub fn exited(&self) -> Pin<Box<dyn Future<Output = String> + Send>> {
+        let shared = self.shared.clone();
+        Box::pin(async move {
+            loop {
+                let notified = shared.changed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if shared.state.lock().expect("not poisoned").exited {
+                    break;
+                }
+                notified.await;
+            }
+            // Stderr is collected by a task of its own, which may not have read the last lines yet.
+            tokio::time::sleep(STDERR_SETTLE).await;
+            shared.describe("the language server exited".into())
+        })
     }
 
     pub fn with_state<T>(&self, f: impl FnOnce(&mut State) -> T) -> T {

@@ -26,7 +26,7 @@ use lsp_types::request::{
 };
 use vet_core::content::RepoPath;
 use vet_semantic::ports::{
-    At, Diagnostic, LanguageServer, Location, Pos, QueryError, Readiness, Severity, Span, Sym, SymbolInfo, Tree,
+    At, Diagnostic, Exited, LanguageServer, Location, Pos, QueryError, Readiness, Severity, Span, Sym, SymbolInfo, Tree,
 };
 use vet_semantic::symbols::{self, Outline};
 
@@ -899,6 +899,10 @@ impl LanguageServer for LspServer {
             }
         };
         Ok(items.into_iter().map(convert_diagnostic).collect())
+    }
+
+    fn exited(&self) -> Exited {
+        self.conn.exited()
     }
 
     async fn shutdown(&self) {
