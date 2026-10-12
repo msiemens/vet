@@ -141,11 +141,16 @@ class QueueStore {
     return this.whole?.layout.shown.revision === layout.shown.revision ? this.whole.layout : undefined;
   }
 
-  /** The changeset on view as a whole: its files and base, and what is true of it; none while that is not known. */
+  /**
+   * The changeset on view as a whole: its files and base, and what is true of it; none while that is not
+   * known. The base is the review's, which a fetch moves between manifests, while it shows the changeset.
+   */
   get onViewFrame(): Frame | undefined {
     const layout = this.wholeLayout;
     const facts = changeset.facts;
-    return layout && facts && { layout, facts };
+    if (!layout || !facts) return undefined;
+    const base = layout === changeset.layout ? changeset.base : undefined;
+    return { layout: base && base !== layout.base ? { ...layout, base } : layout, facts };
   }
 
   /** The paths of the files of the changeset on view as a whole. */

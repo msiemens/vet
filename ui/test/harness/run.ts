@@ -39,7 +39,9 @@ function judge(name: string, steps: StepResult[]): string[] {
   const found: string[] = [];
   for (const step of steps) {
     for (const v of step.violations) {
-      const index = known.findIndex((k) => k.invariant === v.invariant && k.view === v.view);
+      const index = known.findIndex(
+        (k) => k.session === name && k.step === step.name && k.invariant === v.invariant && k.view === v.view,
+      );
       if (index >= 0) matched.add(index);
       else {
         found.push(
@@ -61,7 +63,9 @@ const seconds = ((Date.now() - started) / 1000).toFixed(1);
 const stale = requested.length ? [] : known.filter((_, i) => !matched.has(i));
 for (const message of unexpected) console.error(`UNEXPECTED ${message}`);
 for (const k of stale) {
-  console.error(`STALE ${k.bug}: ${k.invariant} (${k.view} view) did not happen; delete it from known.ts`);
+  console.error(
+    `STALE ${k.bug}: ${k.invariant} (${k.view} view) in ${k.session} / ${k.step} did not happen; delete it from known.ts`,
+  );
 }
 console.log(
   `${names.length} sessions in ${seconds}s: ${unexpected.length} unexpected, ${stale.length} stale, ${matched.size} known bugs seen`,
