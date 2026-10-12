@@ -38,6 +38,8 @@ pub enum AccountState {
     Rejected(String),
     /// The platform could not be asked. Fit to show.
     Unverified(String),
+    /// The CLI lists the host but cannot deliver its token; the CLI's own reason.
+    Unusable(String),
 }
 
 /// A credential held for a host, without the credential.
@@ -99,6 +101,8 @@ struct Held {
 #[derive(Default)]
 struct HostSlot {
     cli: Option<Held>,
+    /// Why the CLI lists the host but gave no token, in the CLI's words.
+    cli_unusable: Option<String>,
     pat: Option<Held>,
 }
 
@@ -251,8 +255,8 @@ where
     /// credential before its personal access token. Credentials the platform was not
     /// asked about yet are asked about now.
     pub async fn accounts(&self, now: i64) -> Vec<Account> {
-        let signed_in = match self.run(&cli::hosts_command(&self.cwd)).await {
-            Some(stdout) => cli::parse_hosts(&stdout),
+        let signed_in: Vec<String> = match self.run(&cli::hosts_command(&self.cwd)).await {
+            Some(status) => cli::parse_hosts(&status.stdout).into_iter().map(|h| h.host).collect(),
             None => Vec::new(),
         };
         let hosts: BTreeSet<String> = {
@@ -276,6 +280,17 @@ where
             } else {
                 CredentialSource::Pat
             };
+            if let Some(why) = &slot.cli_unusable {
+                accounts.push(Account {
+                    host: host.clone(),
+                    kind: PlatformKind::of_host(host),
+                    source: CredentialSource::Cli,
+                    user: None,
+                    state: AccountState::Unusable(why.clone()),
+                    in_use: false,
+                    expires_at: None,
+                });
+            }
             for (source, held) in [(CredentialSource::Cli, &slot.cli), (CredentialSource::Pat, &slot.pat)] {
                 let Some(held) = held else { continue };
                 let (owner, state) = match &held.identity {
@@ -348,46 +363,126 @@ where
         let read = self.read_cli(host).await;
         let mut state = self.state();
         let slot = state.hosts.entry(host.to_owned()).or_default();
-        slot.cli = read.map(|cli| {
-            let same_token = slot.cli.as_ref().filter(|old| old.token == cli.token);
-            Held {
-                refresh_at: cli.expires_at.map_or(now + CLI_TOKEN_LIFETIME, |at| at - EXPIRY_MARGIN),
-                identity: same_token.map_or(Identity::Unchecked, |old| old.identity.clone()),
-                token: cli.token,
+        slot.cli_unusable = None;
+        slot.cli = match read {
+            CliRead::Token(cli) => {
+                let same_token = slot.cli.as_ref().filter(|old| old.token == cli.token);
+                Some(Held {
+                    refresh_at: cli.expires_at.map_or(now + CLI_TOKEN_LIFETIME, |at| at - EXPIRY_MARGIN),
+                    identity: same_token.map_or(Identity::Unchecked, |old| old.identity.clone()),
+                    token: cli.token,
+                })
             }
-        });
+            CliRead::Absent => None,
+            CliRead::Unusable(why) => {
+                slot.cli_unusable = Some(why);
+                None
+            }
+        };
         slot.cli.as_ref().map(|held| held.token.clone())
     }
 
-    /// What the CLI prints; `None` if it is not installed, not signed in, or does not answer.
-    async fn read_cli(&self, host: &str) -> Option<cli::CliToken> {
+    /// What the CLI prints. A `gh` that lists the host but cannot deliver its token is
+    /// [`CliRead::Unusable`], with `gh`'s own words for why.
+    async fn read_cli(&self, host: &str) -> CliRead {
         let kind = PlatformKind::of_host(host);
-        let stdout = self.run(&cli::command(kind, host, &self.cwd)).await?;
-        cli::parse(kind, &stdout)
+        let Some(output) = self.run(&cli::command(kind, host, &self.cwd)).await else {
+            return CliRead::Absent;
+        };
+        if output.succeeded() {
+            return cli::parse(kind, &output.stdout).map_or(CliRead::Absent, CliRead::Token);
+        }
+        if kind != PlatformKind::GitHub {
+            return CliRead::Absent;
+        }
+        let listed = match self.run(&cli::hosts_command(&self.cwd)).await {
+            Some(status) => cli::parse_hosts(&status.stdout).into_iter().find(|h| h.host == host),
+            None => None,
+        };
+        match listed {
+            Some(listed) => CliRead::Unusable(listed.problem.unwrap_or_else(|| output.failure())),
+            None => CliRead::Absent,
+        }
     }
 
-    /// The stdout of a command that exited successfully in time. Its stderr is dropped:
-    /// nothing a CLI prints about a failure is worth keeping near a token.
-    async fn run(&self, command: &Command) -> Option<String> {
+    /// Runs a command; `None` if it could not be started. Only what is needed to say why a
+    /// failure happened is kept of stderr; stdout may hold a token and is never logged.
+    async fn run(&self, command: &Command) -> Option<Output> {
         let mut process = self.runner.spawn(command).ok()?;
         let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
         let finished = async {
             loop {
                 match process.next().await {
                     ProcessEvent::Stdout(bytes) => stdout.extend(bytes),
-                    ProcessEvent::Stderr(_) => {}
-                    ProcessEvent::Exit(code) => return code == Some(0),
+                    ProcessEvent::Stderr(bytes) => stderr.extend(bytes),
+                    ProcessEvent::Exit(code) => return code,
                 }
             }
         };
-        let succeeded = match tokio::time::timeout(CLI_TIMEOUT, finished).await {
-            Ok(succeeded) => succeeded,
+        let (code, timed_out) = match tokio::time::timeout(CLI_TIMEOUT, finished).await {
+            Ok(code) => (code, false),
             Err(_) => {
                 process.kill();
-                false
+                (None, true)
             }
         };
-        succeeded.then(|| String::from_utf8(stdout).ok()).flatten()
+        let output = Output {
+            code,
+            timed_out,
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr_line: String::from_utf8_lossy(&stderr)
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .map(str::to_owned),
+        };
+        if !output.succeeded() {
+            tracing::debug!(
+                argv = %format!("{} {}", command.program, command.args.join(" ")),
+                exit_code = ?output.code,
+                timed_out = output.timed_out,                stderr = output.stderr_line.as_deref().unwrap_or(""),
+                "CLI call failed"
+            );
+        }
+        Some(output)
+    }
+}
+
+/// What a CLI said for a host.
+enum CliRead {
+    Token(cli::CliToken),
+    /// Not installed, not signed in, or it does not answer.
+    Absent,
+    /// It lists the host and still cannot deliver the token: `gh`'s reason.
+    Unusable(String),
+}
+
+/// A command that ran.
+struct Output {
+    /// `None` if a signal ended it or it was killed for taking too long.
+    code: Option<i32>,
+    timed_out: bool,
+    stdout: String,
+    /// The first line it printed to stderr.
+    stderr_line: Option<String>,
+}
+
+impl Output {
+    fn succeeded(&self) -> bool {
+        self.code == Some(0)
+    }
+
+    /// Why it failed, in the command's own words if it had any.
+    fn failure(&self) -> String {
+        if let Some(line) = &self.stderr_line {
+            return line.clone();
+        }
+        match self.code {
+            Some(code) => format!("exited with code {code}"),
+            None if self.timed_out => "did not answer in time".to_owned(),
+            None => "was ended by a signal".to_owned(),
+        }
     }
 }
 
@@ -399,6 +494,10 @@ where
 {
     fn credential(&self, host: &str, now: i64) -> impl Future<Output = Option<Credential>> + Send {
         Accounts::credential(self, host, now)
+    }
+
+    fn cli_unusable(&self, host: &str) -> Option<String> {
+        self.state().hosts.get(host).and_then(|s| s.cli_unusable.clone())
     }
 }
 

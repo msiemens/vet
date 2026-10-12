@@ -181,11 +181,15 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
 
     /// The clients for `host`, built with the credential it has now.
     async fn clients(&self, host: &str) -> Result<Clients, PlatformError> {
-        let credential = self
-            .credentials
-            .credential(host, (self.now)())
-            .await
-            .ok_or_else(|| PlatformError::SignedOut(host.to_owned()))?;
+        let Some(credential) = self.credentials.credential(host, (self.now)()).await else {
+            return Err(match self.credentials.cli_unusable(host) {
+                Some(reason) => PlatformError::CliUnusable {
+                    host: host.to_owned(),
+                    reason,
+                },
+                None => PlatformError::SignedOut(host.to_owned()),
+            });
+        };
         if let Some((built_for, clients)) = self.state().clients.get(host)
             && *built_for == credential
         {

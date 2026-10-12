@@ -52,15 +52,43 @@ pub fn hosts_command(cwd: &Path) -> Command {
     }
 }
 
-/// The hosts in what `hosts_command` printed, in lower case; none if it is not that.
-pub fn parse_hosts(stdout: &str) -> Vec<String> {
+/// A host `gh` knows, and what it says is wrong with its sign-in, if anything.
+#[derive(Debug, PartialEq, Eq)]
+pub struct GhHost {
+    /// In lower case.
+    pub host: String,
+    /// `gh`'s `error` for the host's account, else its `state` when that is not `success`.
+    pub problem: Option<String>,
+}
+
+/// The hosts in what `hosts_command` printed; none if it is not that.
+pub fn parse_hosts(stdout: &str) -> Vec<GhHost> {
     let Ok(answer) = serde_json::from_str::<serde_json::Value>(stdout) else {
         return Vec::new();
     };
     let Some(hosts) = answer.get("hosts").and_then(serde_json::Value::as_object) else {
         return Vec::new();
     };
-    hosts.keys().map(|host| host.to_lowercase()).collect()
+    hosts
+        .iter()
+        .map(|(host, accounts)| GhHost {
+            host: host.to_lowercase(),
+            problem: accounts.as_array().into_iter().flatten().find_map(account_problem),
+        })
+        .collect()
+}
+
+fn account_problem(account: &serde_json::Value) -> Option<String> {
+    let state = account.get("state").and_then(serde_json::Value::as_str)?;
+    if state == "success" {
+        return None;
+    }
+    let error = account
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|error| !error.is_empty());
+    Some(error.map_or_else(|| format!("state {state}"), str::to_owned))
 }
 
 /// The token in what the command printed, `None` if there is none.
@@ -97,10 +125,26 @@ mod tests {
     fn gh_lists_the_hosts_it_is_signed_in_to() {
         let out = r#"{"hosts":{"github.com":[{"active":true,"host":"github.com","login":"octocat","state":"success"}],
 "GHE.corp.example":[{"active":true,"host":"GHE.corp.example","login":"ada","state":"success"}]}}"#;
-        let mut hosts = parse_hosts(out);
+        let mut hosts: Vec<_> = parse_hosts(out).into_iter().map(|h| h.host).collect();
         hosts.sort();
         assert_eq!(hosts, ["ghe.corp.example", "github.com"]);
         assert!(parse_hosts("You are not logged into any GitHub hosts.").is_empty());
+    }
+
+    #[test]
+    fn a_host_gh_does_not_report_as_success_has_a_problem_in_gh_s_words() {
+        let out = r#"{"hosts":{"github.com":[{"active":true,"state":"error","error":"HTTP 401: Bad credentials"}],
+"ghe.corp.example":[{"active":true,"state":"timeout"}],
+"ghe.fine.example":[{"active":true,"state":"success"}]}}"#;
+        let problems: Vec<_> = parse_hosts(out).into_iter().map(|h| (h.host, h.problem)).collect();
+        assert_eq!(
+            problems,
+            [
+                ("ghe.corp.example".to_owned(), Some("state timeout".to_owned())),
+                ("ghe.fine.example".to_owned(), None),
+                ("github.com".to_owned(), Some("HTTP 401: Bad credentials".to_owned())),
+            ]
+        );
     }
 
     #[test]

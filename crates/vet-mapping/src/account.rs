@@ -23,6 +23,9 @@ pub fn account(account: &Account) -> p::Account {
             AccountState::Unverified(message) => p::AccountState::Unverified {
                 message: message.clone(),
             },
+            AccountState::Unusable(message) => p::AccountState::Unusable {
+                message: message.clone(),
+            },
         },
         in_use: account.in_use,
         expires_at: account.expires_at.and_then(|at| u32::try_from(at).ok()),

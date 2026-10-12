@@ -4,7 +4,7 @@ import type { Account } from "../../generated/Account";
 import type { PlatformKind } from "../../generated/PlatformKind";
 import type { IconName } from "../../lib/ui/icons";
 
-export type AccountStatus = "signedIn" | "rejected" | "unverified";
+export type AccountStatus = "signedIn" | "rejected" | "unverified" | "unusable";
 
 export interface AccountRow {
   /** One row per host and source. */
@@ -19,7 +19,7 @@ export interface AccountRow {
   storage: string;
   status: AccountStatus;
   statusLabel: string;
-  /** What the platform said when it did not accept the credential or could not be asked. */
+  /** What the platform said when it did not accept the credential or could not be asked, or the CLI when it could not deliver its token. */
   problem?: string;
   /** Why this credential is not used: a token behind a signed-in CLI. */
   note?: string;
@@ -52,6 +52,7 @@ const STATUS_LABELS: Record<AccountStatus, string> = {
   signedIn: "Signed in",
   rejected: "Rejected",
   unverified: "Not verified",
+  unusable: "Unusable",
 };
 
 export const GITHUB_HOST = "github.com";
@@ -67,7 +68,8 @@ const PLATFORM_MARKS: Record<PlatformKind, { icon: IconName; name: string }> = {
 export function accountRow(account: Account, keychain: boolean, now = Date.now()): AccountRow {
   const { state } = account;
   const cli = account.source === "cli";
-  const note = account.inUse ? undefined : "Not used: the signed-in CLI for this host comes first.";
+  const note =
+    account.inUse || state.type === "unusable" ? undefined : "Not used: the signed-in CLI for this host comes first.";
   return {
     key: `${account.host}/${account.source}`,
     host: account.host,
@@ -77,7 +79,12 @@ export function accountRow(account: Account, keychain: boolean, now = Date.now()
     storage: cli ? CLI_NAMES[account.kind] : keychain ? "Token in Keychain" : "Token, kept until Vet quits",
     status: state.type,
     statusLabel: STATUS_LABELS[state.type],
-    problem: state.type === "signedIn" ? undefined : state.message,
+    problem:
+      state.type === "signedIn"
+        ? undefined
+        : state.type === "unusable"
+          ? `As reported by ${CLI_NAMES[account.kind]}: ${state.message}`
+          : state.message,
     note,
     removable: !cli,
     expiry: expiry(account.expiresAt, now),

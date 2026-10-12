@@ -202,7 +202,8 @@
   .dot.signedIn {
     background: var(--ok);
   }
-  .dot.rejected {
+  .dot.rejected,
+  .dot.unusable {
     background: var(--warn);
   }
   .empty {
@@ -248,6 +249,7 @@
     color: var(--add-text);
   }
   .status.rejected,
+  .status.unusable,
   .soon {
     color: var(--del-text);
   }

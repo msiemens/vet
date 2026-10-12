@@ -42,9 +42,10 @@
 
   const kind = $derived(PLATFORMS[platform].kind);
   /** The CLI's credential for the typed host, if the backend found a signed-in CLI for it. */
-  const cli = $derived<Account | undefined>(
+  const cliAccount = $derived<Account | undefined>(
     accounts.accounts.find((a) => a.source === "cli" && a.host === host.trim().toLowerCase()),
   );
+  const cli = $derived(cliAccount?.state.type === "unusable" ? undefined : cliAccount);
   const tokenOnly = $derived(replace !== undefined || !cli);
   const useCli = $derived(!tokenOnly && (chosen ?? "cli") === "cli");
 
@@ -91,7 +92,7 @@
         <label class="choice" class:off={!cli}>
           <input type="radio" name="method" disabled={!cli} checked={useCli} onchange={() => (chosen = "cli")} />
           <span>{cliName(kind)}</span>
-          <span class="hint">{cli ? (cli.user ?? "") : "not signed in"}</span>
+          <span class="hint">{cli ? (cli.user ?? "") : cliAccount ? "unusable" : "not signed in"}</span>
         </label>
         <label class="choice">
           <input type="radio" name="method" checked={!useCli} onchange={() => (chosen = "token")} />

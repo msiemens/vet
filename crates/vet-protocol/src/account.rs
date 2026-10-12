@@ -65,6 +65,11 @@ pub enum AccountState {
         /// Fit to show.
         message: String,
     },
+    /// The CLI lists the host but cannot deliver its token.
+    Unusable {
+        /// The CLI's own words for why.
+        message: String,
+    },
 }
 
 /// A credential the backend holds for a host.

@@ -465,6 +465,31 @@ async fn nothing_is_sent_without_a_credential() {
     assert!(fake.requests().is_empty());
 }
 
+/// No credential, because the `gh` that lists the host could not deliver its token.
+struct UnusableGh;
+
+impl CredentialProvider for UnusableGh {
+    fn credential(&self, _: &str, _: i64) -> impl Future<Output = Option<Credential>> + Send {
+        std::future::ready(None)
+    }
+
+    fn cli_unusable(&self, _: &str) -> Option<String> {
+        Some("HTTP 401: Bad credentials".to_owned())
+    }
+}
+
+#[tokio::test]
+async fn a_gh_that_cannot_deliver_its_token_is_not_called_signed_out() {
+    let fake = Fake::start(|_, _| Canned::json("{}"));
+    let client = client_with(&fake, UnusableGh);
+    let error = client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "the gh sign-in for github.com is unusable, as reported by gh: HTTP 401: Bad credentials"
+    );
+    assert!(fake.requests().is_empty());
+}
+
 #[tokio::test]
 async fn a_server_that_cannot_be_reached_is_reported_with_its_host() {
     let fake = Fake::start(|_, _| Canned::json("{}"));

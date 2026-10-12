@@ -347,6 +347,12 @@ impl PullRequestQuery {
 pub enum PlatformError {
     /// There is no credential for the host.
     SignedOut(String),
+    /// There is no credential for the host because the `gh` that lists it cannot deliver its
+    /// token; `reason` is `gh`'s own.
+    CliUnusable {
+        host: String,
+        reason: String,
+    },
     /// The platform does not accept the credential.
     Rejected(String),
     /// The credential is accepted but may not do this.
@@ -366,6 +372,9 @@ impl std::fmt::Display for PlatformError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SignedOut(host) => write!(f, "not signed in to {host}"),
+            Self::CliUnusable { host, reason } => {
+                write!(f, "the gh sign-in for {host} is unusable, as reported by gh: {reason}")
+            }
             Self::Rejected(why)
             | Self::Forbidden(why)
             | Self::NotFound(why)

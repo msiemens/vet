@@ -55,11 +55,21 @@ pub enum ValidationError {
 pub trait CredentialProvider {
     /// The credential to use against `host` at `now` (unix seconds), if there is one.
     fn credential(&self, host: &str, now: i64) -> impl Future<Output = Option<Credential>> + Send;
+
+    /// Why the CLI lists `host` and still gave no token, in the CLI's own words, as of the
+    /// last time it was asked.
+    fn cli_unusable(&self, _host: &str) -> Option<String> {
+        None
+    }
 }
 
 impl<T: CredentialProvider + ?Sized> CredentialProvider for std::sync::Arc<T> {
     fn credential(&self, host: &str, now: i64) -> impl Future<Output = Option<Credential>> + Send {
         (**self).credential(host, now)
+    }
+
+    fn cli_unusable(&self, host: &str) -> Option<String> {
+        (**self).cli_unusable(host)
     }
 }
 

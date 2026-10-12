@@ -41,6 +41,22 @@ void test("a token is in the keychain only where the host has one, and a CLI in 
   assert.match(accountRow(account({}), false).storage, /until Vet quits/);
 });
 
+void test("a CLI that lists the host but cannot deliver its token is unusable, in the CLI's own words", () => {
+  const row = accountRow(
+    account({
+      source: "cli",
+      user: null,
+      inUse: false,
+      state: { type: "unusable", message: "HTTP 401: Bad credentials (https://api.github.com/)" },
+    }),
+    true,
+  );
+  assert.deepEqual(
+    [row.status, row.statusLabel, row.problem, row.note],
+    ["unusable", "Unusable", "As reported by gh CLI: HTTP 401: Bad credentials (https://api.github.com/)", undefined],
+  );
+});
+
 void test("a refused or unchecked credential carries the platform's reason", () => {
   const rejected = accountRow(account({ user: null, state: { type: "rejected", message: "Bad credentials" } }), true);
   assert.deepEqual([rejected.status, rejected.problem, rejected.user], ["rejected", "Bad credentials", undefined]);

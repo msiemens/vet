@@ -8,4 +8,8 @@ message: string, } | { "type": "unverified",
 /**
  * Fit to show.
  */
+message: string, } | { "type": "unusable", 
+/**
+ * The CLI's own words for why.
+ */
 message: string, };
