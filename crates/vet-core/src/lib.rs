@@ -6,6 +6,7 @@ pub mod classify;
 pub mod completion;
 pub mod content;
 pub mod filter;
+pub mod generated;
 pub mod hunks;
 pub mod inline;
 pub mod interdiff;

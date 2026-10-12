@@ -187,6 +187,19 @@ pub trait Differ {
     ) -> impl Future<Output = Result<TextDiff, GitError>> + Send;
 }
 
+/// What a snapshot's `.gitattributes` files say.
+pub trait Attributes {
+    /// Of `paths`, those that the `.gitattributes` files of `snapshot` give `linguist-generated`:
+    /// `true` if it is set, `false` if it is unset. A path the attribute does not reach is absent.
+    /// The files are read from `store` first, then as in [`BlobReader::read_blob`].
+    fn linguist_generated<S: Store + Sync>(
+        &self,
+        store: &S,
+        snapshot: &Snapshot,
+        paths: Vec<RepoPath>,
+    ) -> impl Future<Output = Result<BTreeMap<RepoPath, bool>, GitError>> + Send;
+}
+
 /// A diff of two snapshots and the content it compared.
 #[derive(Clone, Debug, Default)]
 pub struct TextDiff {
@@ -348,9 +361,9 @@ pub trait ChangesetRefs {
 }
 
 /// Everything a live session needs of git.
-pub trait GitRepo: Scanner + Checkout + Differ + BlobReader + History + ChangesetRefs {}
+pub trait GitRepo: Scanner + Checkout + Differ + Attributes + BlobReader + History + ChangesetRefs {}
 
-impl<T: Scanner + Checkout + Differ + BlobReader + History + ChangesetRefs> GitRepo for T {}
+impl<T: Scanner + Checkout + Differ + Attributes + BlobReader + History + ChangesetRefs> GitRepo for T {}
 
 #[derive(Clone, Debug)]
 pub struct StoreError(pub String);

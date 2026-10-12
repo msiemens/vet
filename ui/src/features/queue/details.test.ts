@@ -17,7 +17,7 @@ const open: ChangesetRow = {
 const manifest = {
   target: { changeset: { type: "workingTree" }, name: "Working tree" },
   base: { commit: { shortId: "a41c9e2" } },
-  filter: { roots: [], include: [], exclude: [], hideBinary: false },
+  filter: { roots: [], include: [], exclude: [], hideBinary: false, reviewGenerated: false },
   completion: { lines: 77, seenLines: 47, items: 3, acknowledgedItems: 1, oldBaseLines: 5 },
 } as Manifest;
 
@@ -114,6 +114,12 @@ void test("while the review view shows a range the manifest is not the changeset
 });
 
 void test("the filter reads as what it lets through", () => {
-  const filter: ReviewFilter = { roots: ["src/sync"], include: [], exclude: ["*.lock"], hideBinary: true };
+  const filter: ReviewFilter = {
+    roots: ["src/sync"],
+    include: [],
+    exclude: ["*.lock"],
+    hideBinary: true,
+    reviewGenerated: false,
+  };
   assert.equal(filterText(filter), "src/sync/, !*.lock, no binaries");
 });

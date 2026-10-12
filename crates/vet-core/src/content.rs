@@ -1,6 +1,6 @@
 //! Snapshots and changesets (SPEC §3). Pure content, no provenance (I1).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use unicode_normalization::UnicodeNormalization;
 
@@ -296,6 +296,9 @@ pub struct SnapshotDiff {
     pub files: Vec<FileDiff>,
     pub non_text: Vec<NonTextChange>,
     pub renames: RenameMap,
+    /// The paths of `files` and `non_text` that the repository's attributes or the files' headers
+    /// mark as generated; the review filter leaves them out.
+    pub generated: BTreeSet<RepoPath>,
 }
 
 impl SnapshotDiff {

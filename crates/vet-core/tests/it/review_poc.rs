@@ -1,7 +1,7 @@
 //! SPEC §12 POC criterion 1, at the level vet-core can express. Amend and rebase
 //! are modeled as base or target content changes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use vet_core::completion::{Completion, Coverage, HunkState};
 use vet_core::content::{
@@ -46,7 +46,7 @@ fn completion(
     spans: &[ReviewedSpan],
     acknowledged: &[NonTextChange],
 ) -> Completion {
-    Coverage::new(spans).completion(filter, diffs, non_text, acknowledged)
+    Coverage::new(spans).completion(&filter.compile(&BTreeSet::new()), diffs, non_text, acknowledged)
 }
 
 fn range(start: u32, end: u32) -> LineRange {
@@ -670,7 +670,7 @@ fn glob_semantics() {
             include: include.iter().map(|s| s.to_string()).collect(),
             ..ReviewFilter::default()
         };
-        f.compile().passes(&RepoPath(p.to_vec()))
+        f.compile(&BTreeSet::new()).passes(&RepoPath(p.to_vec()))
     };
     assert!(pass(&["*.rs"], b"a/b/c.rs") && pass(&["*.rs"], b"c.rs"));
     let paths = ["src/*.rs", "lib/**/x?.rs"];
@@ -687,8 +687,10 @@ fn filter_roots_globs_and_binary() {
         include: vec!["*.rs".into()],
         exclude: vec!["src/gen/**".into()],
         hide_binary: true,
+        review_generated: false,
     };
-    let compiled = f.compile();
+    let none = BTreeSet::new();
+    let compiled = f.compile(&none);
     assert!(compiled.passes(&path("src/a/b.rs")));
     assert!(!compiled.passes(&path("srcx/b.rs")));
     assert!(!compiled.passes(&path("src/a/b.md")));
@@ -743,6 +745,6 @@ fn hunk_states_follow_coverage() {
             HunkState::Unseen
         ]
     );
-    let c = cov.completion(&ReviewFilter::default(), &[d], &[], &[]);
+    let c = cov.completion(&ReviewFilter::default().compile(&BTreeSet::new()), &[d], &[], &[]);
     assert_eq!((c.lines, c.seen_lines, c.old_base_lines), (11, 4 + 3 + 1, 2));
 }

@@ -6,7 +6,7 @@ use std::slice;
 
 use vet_core::completion::{Completion, Coverage};
 use vet_core::content::{BlobId, FileDiff, LineDelta, NonTextChange, RepoPath, SnapshotDiff};
-use vet_core::filter::ReviewFilter;
+use vet_core::filter::{CompiledFilter, ReviewFilter};
 
 use super::derived::Diffed;
 use super::state::{Remapped, Shown, State, View, acknowledged, find_diff, lifecycle_of, shown_items};
@@ -31,10 +31,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let changes = st.changes();
         let cov = changes.remapped.coverage();
         let acked = acknowledged(&st, &changes.diffed.diff.non_text);
+        let compiled = st.filter.compile(&changes.diffed.diff.generated);
         let files = file_views(&changes.diffed, &st.filter, |diff, items| {
             (
                 review_of(&cov, diff, items, &acked),
-                file_completion(&cov, &st.filter, diff, items, &acked),
+                file_completion(&cov, &compiled, diff, items, &acked),
             )
         });
         Ok(ManifestView {
@@ -110,7 +111,7 @@ pub(super) fn file_views(
     filter: &ReviewFilter,
     state: impl Fn(Option<&FileDiff>, &[NonTextChange]) -> (ReviewView, Completion),
 ) -> Vec<FileView> {
-    let compiled = filter.compile();
+    let compiled = filter.compile(&changes.diff.generated);
     // Files by path, with their text diff and non-text items.
     type Parts<'a> = (Option<&'a FileDiff>, Vec<usize>);
     let mut by_path: BTreeMap<&RepoPath, Parts> = BTreeMap::new();
@@ -218,7 +219,7 @@ pub(super) fn update_from(
         revision: st.revision,
         path: file,
         review: review_of(&cov, diff, &items, &acked),
-        completion: file_completion(&cov, &st.filter, diff, &items, &acked),
+        completion: file_completion(&cov, &st.filter.compile(&whole.generated), diff, &items, &acked),
         changeset: remapped.completion,
     })
 }
@@ -226,7 +227,7 @@ pub(super) fn update_from(
 /// The completion of one file: its text diff, if it has one, and its shown non-text items.
 pub(super) fn file_completion(
     cov: &Coverage,
-    filter: &ReviewFilter,
+    filter: &CompiledFilter,
     diff: Option<&FileDiff>,
     items: &[NonTextChange],
     acked: &[NonTextChange],
@@ -241,7 +242,7 @@ pub(super) fn changeset_completion(
     diff: &SnapshotDiff,
     acked: &[NonTextChange],
 ) -> Completion {
-    cov.completion(filter, &diff.files, &diff.non_text, acked)
+    cov.completion(&filter.compile(&diff.generated), &diff.files, &diff.non_text, acked)
 }
 
 #[cfg(test)]

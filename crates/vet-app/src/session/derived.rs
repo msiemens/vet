@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use vet_core::content::{BlobId, NonTextKind, RepoPath, Snapshot, SnapshotDiff, SnapshotId};
+use vet_core::generated::has_generated_header;
 use vet_core::interdiff::InterdiffHunk;
 use vet_core::merkle::empty_snapshot;
 use vet_core::version_diff::{VersionSides, version_diff};
@@ -34,12 +35,15 @@ pub(super) struct Diffed {
 }
 
 impl Diffed {
-    /// `blobs` has the text of the files of `diff`.
+    /// `blobs` has the text of the files of `diff`, which compares `old` with `new`.
     async fn of<G: GitRepo + Sync, S: LiveStore + Sync>(
         acquisition: &Acquisition<G, S>,
-        diff: SnapshotDiff,
+        mut diff: SnapshotDiff,
         blobs: BTreeMap<BlobId, Vec<u8>>,
-    ) -> Self {
+        old: &Snapshot,
+        new: &Snapshot,
+    ) -> Result<Self> {
+        diff.generated = generated_paths(acquisition, &diff, &blobs, old, new).await?;
         let mut items = Vec::new();
         for n in &diff.non_text {
             let before_path = n.from.as_ref().unwrap_or(&n.path);
@@ -59,18 +63,57 @@ impl Diffed {
             .flat_map(|d| [d.old_path.as_ref(), d.new_path.as_ref()]);
         let non_text = diff.non_text.iter().flat_map(|n| [Some(&n.path), n.from.as_ref()]);
         let changed = files.chain(non_text).flatten().cloned().collect();
-        Self {
+        Ok(Self {
             diff,
             changed,
             blobs,
             items,
-        }
+        })
     }
 
     /// What it counts against the bytes an engine keeps.
     fn weight(&self) -> usize {
         self.blobs.values().map(Vec::len).sum::<usize>() + 1
     }
+}
+
+/// The paths of `diff` that a tool wrote: those whose first lines say so, and those the `.gitattributes`
+/// of the snapshot they are in set `linguist-generated` for. The attribute wins over the header in
+/// both directions, and a path is looked up in `new` if it is there, else in `old`.
+async fn generated_paths<G: GitRepo + Sync, S: LiveStore + Sync>(
+    acquisition: &Acquisition<G, S>,
+    diff: &SnapshotDiff,
+    blobs: &BTreeMap<BlobId, Vec<u8>>,
+    old: &Snapshot,
+    new: &Snapshot,
+) -> Result<BTreeSet<RepoPath>> {
+    let mut generated: BTreeSet<RepoPath> = (diff.files.iter())
+        .filter(|d| {
+            (d.new_blob.or(d.old_blob))
+                .and_then(|blob| blobs.get(&blob))
+                .is_some_and(|text| has_generated_header(text))
+        })
+        .map(|d| d.path().clone())
+        .collect();
+    let changed = (diff.files.iter().map(|d| d.path())).chain(diff.non_text.iter().map(|n| &n.path));
+    let (in_new, in_old): (Vec<_>, Vec<_>) = changed.cloned().partition(|p| new.entries.contains_key(p));
+    for (snapshot, paths) in [(new, in_new), (old, in_old)] {
+        if paths.is_empty() {
+            continue;
+        }
+        for (path, set) in acquisition
+            .git
+            .linguist_generated(&acquisition.store, snapshot, paths)
+            .await?
+        {
+            if set {
+                generated.insert(path);
+            } else {
+                generated.remove(&path);
+            }
+        }
+    }
+    Ok(generated)
 }
 
 /// The diff of two snapshots, a function of their ids (content addresses).
@@ -282,7 +325,7 @@ async fn diffed<G: GitRepo + Sync, S: LiveStore + Sync>(
     new: &Snapshot,
 ) -> Result<Diffed> {
     let TextDiff { diff, texts } = acquisition.git.diff(&acquisition.store, old, new).await?;
-    Ok(Diffed::of(acquisition, diff, texts).await)
+    Diffed::of(acquisition, diff, texts, old, new).await
 }
 
 /// The interdiff of `key`, whose snapshots the store holds, as every version's does.
@@ -317,7 +360,7 @@ async fn compared<G: GitRepo + Sync, S: LiveStore + Sync>(
     }
     let compared = version_diff(sides, &paths, &mut blobs);
     Ok(Compared {
-        diffed: Diffed::of(acquisition, compared.diff, blobs).await,
+        diffed: Diffed::of(acquisition, compared.diff, blobs, &target_a, &target_b).await?,
         hunks: compared.hunks,
     })
 }

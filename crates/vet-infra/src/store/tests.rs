@@ -130,6 +130,7 @@ fn sample_filter() -> ReviewFilter {
         include: vec!["*.rs".into()],
         exclude: vec!["*.lock".into(), "gen/**".into()],
         hide_binary: true,
+        review_generated: true,
     }
 }
 

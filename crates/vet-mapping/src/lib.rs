@@ -244,6 +244,7 @@ pub fn core_filter(f: p::ReviewFilter) -> ReviewFilter {
         include: f.include,
         exclude: f.exclude,
         hide_binary: f.hide_binary,
+        review_generated: f.review_generated,
     }
 }
 
@@ -253,6 +254,7 @@ fn filter(f: &ReviewFilter) -> p::ReviewFilter {
         include: f.include.clone(),
         exclude: f.exclude.clone(),
         hide_binary: f.hide_binary,
+        review_generated: f.review_generated,
     }
 }
 

@@ -4,7 +4,8 @@
  * What the review shows and counts (§5.2). A path passes if it is under one of
  * `roots` (or there are none), matches `include` (or there is none) and does not
  * match `exclude`. A glob without a `/` matches the file name at any depth, a
- * leading `/` anchors it at the root; `*` and `?` stop at `/`, `**` does not.
+ * leading `/` anchors it at the root; `*` and `?` stop at `/`, `**` does not. Unless
+ * `review_generated` is set, lockfiles and generated files are excluded as well.
  */
 export type ReviewFilter = { 
 /**
@@ -14,4 +15,10 @@ roots: Array<string>, include: Array<string>, exclude: Array<string>,
 /**
  * Binary changes are neither shown nor counted.
  */
-hideBinary: boolean, };
+hideBinary: boolean, 
+/**
+ * Lockfiles and generated files are reviewed like any other file. Otherwise the ones named
+ * like a lockfile or a tool's output, with `linguist-generated` set in `.gitattributes`, or
+ * with a header that says a tool wrote them are excluded.
+ */
+reviewGenerated: boolean, };

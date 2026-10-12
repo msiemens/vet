@@ -183,10 +183,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let remapped = st.remapped_in(View::Commit { index });
         let cov = remapped.coverage();
         let acked = acknowledged(st, &unit.diffed.diff.non_text);
+        let compiled = st.filter.compile(&unit.diffed.diff.generated);
         let files = file_views(&unit.diffed, &st.filter, |diff, items| {
             (
                 review_of(&cov, diff, items, &acked),
-                file_completion(&cov, &st.filter, diff, items, &acked),
+                file_completion(&cov, &compiled, diff, items, &acked),
             )
         });
         let git = &self.acquisition.git;

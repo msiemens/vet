@@ -21,7 +21,7 @@ pub mod kinds {
     int_enum!(SpanState { Seen = 0, SeenAgainstOldBase = 1 });
     int_enum!(ThreadKind { Range = 0, File = 1, Changeset = 2 });
     int_enum!(ThreadStatus { Open = 0, Resolved = 1 });
-    int_enum!(FilterKind { Root = 0, Include = 1, Exclude = 2 });
+    int_enum!(FilterKind { Root = 0, Include = 1, Exclude = 2, ReviewGenerated = 3 });
     int_enum!(BaseKind { MergeBase = 0, Commit = 1 });
     int_enum!(ChildKind { File = 0, Dir = 1 });
     int_enum!(PathFlag { Collision = 0, ContentUnavailable = 1 });
@@ -328,7 +328,8 @@ pub mod project_base {
     impl ActiveModelBehavior for ActiveModel {}
 }
 
-/// `kind`: 0 root, 1 include, 2 exclude. Order is the row id.
+/// `kind`: 0 root, 1 include, 2 exclude, 3 review generated files (a flag: the row's presence is
+/// the value). Order is the row id.
 pub mod project_filter_item {
     use super::kinds::*;
     use sea_orm::entity::prelude::*;

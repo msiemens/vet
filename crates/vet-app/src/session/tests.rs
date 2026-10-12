@@ -24,8 +24,8 @@ use super::*;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, RemoteKey, Source, Version, VersionOrigin};
 use crate::platform::{FakeHosting, PullRequestHead};
 use crate::ports::{
-    BlobRead, BlobReader, BranchInfo, ChangesetRefs, ChangesetStore, Checkout, CommitDetail, CommitInfo, Differ, Dirty,
-    GitError, History, Remerged, ReviewStore, Scan, Scanner, Store, StoreError, TextDiff, ThreadStore,
+    Attributes, BlobRead, BlobReader, BranchInfo, ChangesetRefs, ChangesetStore, Checkout, CommitDetail, CommitInfo,
+    Differ, Dirty, GitError, History, Remerged, ReviewStore, Scan, Scanner, Store, StoreError, TextDiff, ThreadStore,
 };
 use crate::pull_request::PullRequestRefs;
 use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
@@ -407,6 +407,17 @@ impl ChangesetRefs for FakeGit {
     async fn delete_changeset_refs(&self, _: ChangesetId) -> std::result::Result<(), GitError> {
         self.refs.lock().unwrap().clear();
         Ok(())
+    }
+}
+
+impl Attributes for FakeGit {
+    async fn linguist_generated<St: Store + Sync>(
+        &self,
+        _: &St,
+        _: &Snapshot,
+        _: Vec<RepoPath>,
+    ) -> std::result::Result<BTreeMap<RepoPath, bool>, GitError> {
+        Ok(BTreeMap::new())
     }
 }
 

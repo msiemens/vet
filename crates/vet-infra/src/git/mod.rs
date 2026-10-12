@@ -3,6 +3,7 @@
 //! helpers the user configured and, over SSH, the system `ssh`. All filesystem,
 //! hashing and gix work runs on the blocking pool.
 
+mod attributes;
 mod base;
 mod blob_cache;
 mod checkout;
@@ -22,9 +23,9 @@ use std::sync::{Arc, OnceLock};
 use gix::bstr::ByteSlice;
 use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
-    BaseCandidates, BlobRead, BlobReader, BranchInfo, ChangesetRefs, Checkout, CheckoutError, CommitDetail, CommitInfo,
-    Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefTip, RefUpdate, Remerged, RemoteInfo, Scan,
-    Scanner, Store, TextDiff,
+    Attributes, BaseCandidates, BlobRead, BlobReader, BranchInfo, ChangesetRefs, Checkout, CheckoutError, CommitDetail,
+    CommitInfo, Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefTip, RefUpdate, Remerged,
+    RemoteInfo, Scan, Scanner, Store, TextDiff,
 };
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot};
@@ -421,6 +422,33 @@ impl ChangesetRefs for GixRepo {
             Ok(())
         })
         .await
+    }
+}
+
+impl Attributes for GixRepo {
+    async fn linguist_generated<S: Store + Sync>(
+        &self,
+        store: &S,
+        snapshot: &Snapshot,
+        paths: Vec<RepoPath>,
+    ) -> Result<BTreeMap<RepoPath, bool>, GitError> {
+        let files = attributes::files(snapshot);
+        if files.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let mut stored = store
+            .blobs(files.iter().map(|(_, blob)| *blob).collect())
+            .await
+            .map_err(|e| GitError(e.0))?;
+        let mut contents = Vec::new();
+        for (path, blob) in files {
+            let bytes = match stored.remove(&blob) {
+                Some(bytes) => Some(bytes),
+                None => self.read_blob(&path, blob).await?,
+            };
+            contents.extend(bytes.map(|bytes| (path, bytes)));
+        }
+        Ok(attributes::linguist_generated(&contents, paths))
     }
 }
 

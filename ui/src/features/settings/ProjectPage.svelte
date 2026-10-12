@@ -48,6 +48,13 @@
         onchange={(e) => save({ hideBinary: e.currentTarget.checked })}
       />Hide binary files</label
     >
+    <label class="check"
+      ><input
+        type="checkbox"
+        checked={filter.reviewGenerated}
+        onchange={(e) => save({ reviewGenerated: e.currentTarget.checked })}
+      />Review lockfiles and generated files</label
+    >
     <label>
       <span>Include globs</span>
       <textarea

@@ -1,11 +1,11 @@
-//! Completion and per-hunk review state relative to a `ReviewFilter` (SPEC §5.2).
+//! Completion and per-hunk review state relative to a compiled `ReviewFilter` (SPEC §5.2).
 
 use std::collections::BTreeMap;
 use std::iter::Sum;
 use std::ops::{Add, Sub};
 
 use crate::content::{FileDiff, LineRange, NonTextChange, RepoPath};
-use crate::filter::ReviewFilter;
+use crate::filter::CompiledFilter;
 use crate::review::{ReviewedSpan, Side, SpanState, sides};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -189,12 +189,11 @@ impl<'a> Coverage<'a> {
     /// `acknowledged` holds the acknowledged non-text changes.
     pub fn completion<'d>(
         &self,
-        filter: &ReviewFilter,
+        compiled: &CompiledFilter,
         diffs: impl IntoIterator<Item = &'d FileDiff>,
         non_text: &[NonTextChange],
         acknowledged: &[NonTextChange],
     ) -> Completion {
-        let compiled = filter.compile();
         let mut c = Completion::default();
         for d in diffs {
             let passes = compiled.passes(d.path());

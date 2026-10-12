@@ -1,8 +1,11 @@
 //! The review filter: a view over a changeset, never part of snapshot identity (SPEC §3).
 
+use std::collections::BTreeSet;
+
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use crate::content::{NonTextChange, NonTextKind, RepoPath};
+use crate::generated::GENERATED_NAMES;
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct ReviewFilter {
@@ -10,6 +13,10 @@ pub struct ReviewFilter {
     pub include: Vec<String>,
     pub exclude: Vec<String>,
     pub hide_binary: bool,
+    /// Lockfiles and generated files are reviewed like any other file. Otherwise they are excluded:
+    /// by name, by `linguist-generated` in `.gitattributes`, and by a header that says a tool wrote
+    /// the file (see [`crate::generated`]).
+    pub review_generated: bool,
 }
 
 impl ReviewFilter {
@@ -35,13 +42,20 @@ impl ReviewFilter {
         Ok(())
     }
 
-    /// Compiles the globs once. Invalid patterns match nothing.
-    pub fn compile(&self) -> CompiledFilter<'_> {
+    /// Compiles the globs once. Invalid patterns match nothing. `generated` holds the paths of the
+    /// diff being filtered that the repository's attributes or the files' headers mark as generated.
+    pub fn compile<'a>(&'a self, generated: &'a BTreeSet<RepoPath>) -> CompiledFilter<'a> {
+        let built_in = if self.review_generated {
+            &[][..]
+        } else {
+            GENERATED_NAMES
+        };
         CompiledFilter {
             roots: &self.roots,
-            include: (!self.include.is_empty()).then(|| GlobList::new(&self.include)),
-            exclude: GlobList::new(&self.exclude),
+            include: (!self.include.is_empty()).then(|| GlobList::new(self.include.iter().map(String::as_str))),
+            exclude: GlobList::new(self.exclude.iter().map(String::as_str).chain(built_in.iter().copied())),
             hide_binary: self.hide_binary,
+            generated: (!self.review_generated).then_some(generated),
         }
     }
 }
@@ -56,6 +70,8 @@ pub struct CompiledFilter<'a> {
     include: Option<GlobList>,
     exclude: GlobList,
     hide_binary: bool,
+    /// The paths that are generated, if they are excluded.
+    generated: Option<&'a BTreeSet<RepoPath>>,
 }
 
 impl CompiledFilter<'_> {
@@ -71,6 +87,7 @@ impl CompiledFilter<'_> {
         (self.roots.is_empty() || self.roots.iter().any(under))
             && self.include.as_ref().is_none_or(|g| g.is_match(&text))
             && !self.exclude.is_match(&text)
+            && !self.generated.is_some_and(|g| g.contains(path))
     }
 }
 
@@ -86,10 +103,10 @@ struct GlobList {
 }
 
 impl GlobList {
-    fn new(patterns: &[String]) -> Self {
+    fn new<'p>(patterns: impl Iterator<Item = &'p str> + Clone) -> Self {
         let set = |with_slash: bool| {
             let mut b = GlobSetBuilder::new();
-            for p in patterns.iter().filter(|p| p.contains('/') == with_slash) {
+            for p in patterns.clone().filter(|p| p.contains('/') == with_slash) {
                 if let Ok(g) = GlobBuilder::new(anchored(p)).literal_separator(true).build() {
                     b.add(g);
                 }
@@ -138,7 +155,7 @@ mod tests {
         let normalized = filter.clone().normalized();
         assert_eq!(normalized.roots, ["src", "a/b", "c", "d//e"].map(RepoPath::from));
         assert_eq!((&normalized.include, normalized.hide_binary), (&filter.include, true));
-        let passes = |filter: &ReviewFilter, p: &str| filter.compile().passes(&RepoPath::from(p));
+        let passes = |filter: &ReviewFilter, p: &str| filter.compile(&BTreeSet::new()).passes(&RepoPath::from(p));
         assert!(passes(&normalized, "src/lib.rs"));
         assert!(!passes(&normalized, "srcs/lib.rs"));
         // No root left: everything is under one.
@@ -156,10 +173,37 @@ mod tests {
             exclude: vec!["/top.txt".into(), "any.txt".into()],
             ..Default::default()
         };
-        let compiled = filter.compile();
+        let none = BTreeSet::new();
+        let compiled = filter.compile(&none);
         assert!(!compiled.passes(&path("top.txt")));
         assert!(compiled.passes(&path("src/top.txt")));
         assert!(!compiled.passes(&path("src/any.txt")));
         assert_eq!(filter.validate(), Ok(()));
+    }
+
+    #[test]
+    fn lockfiles_and_generated_paths_are_excluded_unless_they_are_reviewed() {
+        let path = |p: &str| RepoPath::from(p);
+        let generated = BTreeSet::from([path("src/api.rs")]);
+        let lockfile = [
+            "Cargo.lock",
+            "web/app/yarn.lock",
+            "src/Api.Designer.cs",
+            "dist/app.min.js",
+        ];
+        let hand_written = ["src/lib.rs", "docs/lock.md", "src/cargo.lock.rs"];
+        let filter = ReviewFilter::default();
+        let compiled = filter.compile(&generated);
+        assert!(lockfile.iter().all(|p| !compiled.passes(&path(p))));
+        assert!(!compiled.passes(&path("src/api.rs")));
+        assert!(hand_written.iter().all(|p| compiled.passes(&path(p))));
+
+        let reviewing = ReviewFilter {
+            review_generated: true,
+            ..Default::default()
+        };
+        let compiled = reviewing.compile(&generated);
+        assert!(lockfile.iter().all(|p| compiled.passes(&path(p))));
+        assert!(compiled.passes(&path("src/api.rs")));
     }
 }

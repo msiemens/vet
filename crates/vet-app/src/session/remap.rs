@@ -123,7 +123,12 @@ pub(super) fn part_completion(st: &State, view: View, files: &HashSet<RepoPath>)
         .cloned()
         .collect();
     let coverage = (st.remapped_in(view)).coverage_of(diffs.iter().flat_map(|d| d.old_path.iter().chain(&d.new_path)));
-    coverage.completion(&st.filter, diffs, &items, &acknowledged(st, &items))
+    coverage.completion(
+        &st.filter.compile(&diff.generated),
+        diffs,
+        &items,
+        &acknowledged(st, &items),
+    )
 }
 
 /// What the state lacks to show a view, computed without the token.

@@ -104,9 +104,13 @@ pub fn filter_rows(repo: &str, filter: &ReviewFilter) -> Vec<project_filter_item
             .collect::<Vec<_>>()
     };
     let roots = filter.roots.iter().map(|r| item(kinds::FilterKind::Root, r.0.clone()));
+    let review_generated = filter
+        .review_generated
+        .then(|| item(kinds::FilterKind::ReviewGenerated, Vec::new()));
     roots
         .chain(text(kinds::FilterKind::Include, &filter.include))
         .chain(text(kinds::FilterKind::Exclude, &filter.exclude))
+        .chain(review_generated)
         .collect()
 }
 
@@ -121,6 +125,7 @@ pub fn filter_from(hide_binary: bool, items: Vec<project_filter_item::Model>) ->
             kinds::FilterKind::Root => filter.roots.push(RepoPath(item.value)),
             kinds::FilterKind::Include => filter.include.push(text(item.value)?),
             kinds::FilterKind::Exclude => filter.exclude.push(text(item.value)?),
+            kinds::FilterKind::ReviewGenerated => filter.review_generated = true,
         }
     }
     Ok(filter)

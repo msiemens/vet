@@ -369,7 +369,7 @@ pub(super) fn find_non_text<'a>(diff: &'a SnapshotDiff, kind: NonTextKind, path:
 
 /// The non-text changes of the file at `path` that the filter shows.
 pub(super) fn shown_items(diff: &SnapshotDiff, filter: &ReviewFilter, path: &str) -> Vec<NonTextChange> {
-    let compiled = filter.compile();
+    let compiled = filter.compile(&diff.generated);
     (diff.non_text.iter())
         .filter(|n| n.path.to_string_lossy() == path && compiled.shows(n))
         .cloned()

@@ -35,7 +35,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     pub async fn list_directory(&self, path: &str) -> Result<DirListing> {
         let (st, _) = self.viewing(View::Changeset).await?;
         let changes = &st.changes().diffed;
-        let compiled = st.filter.compile();
+        let compiled = st.filter.compile(&changes.diff.generated);
         let prefix = if path.is_empty() {
             String::new()
         } else {
