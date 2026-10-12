@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import type { Thread } from "../../generated/Thread";
+  import { SUBMIT_KEY } from "../../lib/composer";
   import Icon from "../../lib/ui/Icon.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
@@ -9,8 +10,10 @@
   import { threads } from "../../state/threads.svelte";
   import { firstLine } from "./groups";
   import {
+    canPost,
     destination,
     outgoingComments,
+    outgoingKey,
     outgoingTitle,
     postLabel,
     summarizeOutgoing,
@@ -50,9 +53,41 @@
     await platform.stageVote(verdict);
   }
 
+  const postable = $derived(canPost(ready, busy, blocked));
+
   async function send() {
     if (info && (await sendComments(info))) platform.outgoingOpen = false;
   }
+
+  function onkeydown(e: KeyboardEvent) {
+    if (outgoingKey(e, platform.votePicking) !== "post") return;
+    e.preventDefault();
+    if (postable) void send();
+  }
+
+  // Keys work as soon as the list opens, and the focus goes back where it was when it closes.
+  let sheet: HTMLElement | undefined;
+  let returnTo: Element | null = null;
+  // Before the list renders: the vote picker's menu takes the focus as it mounts.
+  $effect.pre(() => {
+    if (platform.outgoingOpen) returnTo ??= document.activeElement;
+  });
+  $effect(() => {
+    if (!platform.outgoingOpen) {
+      // A focus that moved on by itself (to a thread that was opened) stays there.
+      if (returnTo instanceof HTMLElement && returnTo.isConnected && document.activeElement === document.body) {
+        returnTo.focus();
+      }
+      returnTo = null;
+      return;
+    }
+    // The vote picker's menu takes the focus itself.
+    if (untrack(() => platform.votePicking)) return;
+    void tick().then(() => {
+      const target = sheet?.querySelector<HTMLElement>("textarea, button.primary:enabled") ?? sheet;
+      target?.focus();
+    });
+  });
 </script>
 
 <Popover bind:open={platform.outgoingOpen} align="right">
@@ -74,7 +109,7 @@
   {#if platform.votePicking}
     {#if info}<Menu items={voteChoices(info)} onselect={(verdict) => void pick(verdict)} />{/if}
   {:else}
-    <div class="outgoing">
+    <div class="outgoing" role="presentation" tabindex="-1" bind:this={sheet} {onkeydown}>
       <ul>
         {#each list as { thread, message } (message.id)}
           <li>
@@ -137,8 +172,8 @@
             <button
               class="ctl primary"
               type="button"
-              disabled={ready === 0 || busy || blocked !== undefined}
-              title={blocked}
+              disabled={!postable}
+              title={blocked ?? commands.keyLabel(SUBMIT_KEY)}
               onclick={() => void send()}>{postLabel(comments, voteWaits(vote))}</button
             >
           </div>
@@ -170,6 +205,7 @@
     }
   }
   .outgoing {
+    outline: none;
     width: 380px;
     max-height: 70vh;
     display: flex;

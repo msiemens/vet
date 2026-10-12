@@ -5,6 +5,7 @@ import type { PendingVote } from "../../generated/PendingVote";
 import type { PullRequestInfo } from "../../generated/PullRequestInfo";
 import type { Thread } from "../../generated/Thread";
 import type { ThreadMessage } from "../../generated/ThreadMessage";
+import { isSubmitKey } from "../../lib/composer.ts";
 import { platformName } from "../../lib/platformName.ts";
 import type { MenuItem } from "../../lib/ui/menuItem.ts";
 import { inOrder } from "./groups.ts";
@@ -73,4 +74,20 @@ export function postLabel(comments: number, vote: boolean): string {
   if (comments === 0 && vote) return "Post vote";
   const n = `Post ${comments} ${comments === 1 ? "comment" : "comments"}`;
   return vote ? `${n} and vote` : n;
+}
+
+/** Whether posting can go ahead: something waits, nothing is on its way, and the platform lets the viewer. */
+export const canPost = (waiting: number, busy: boolean, blocked: string | undefined): boolean =>
+  waiting > 0 && !busy && blocked === undefined;
+
+/**
+ * What a key does in the popover's list: the submit key posts what the Post button would, even in
+ * a text field, where it would otherwise add a line. The vote picker has no posting; Enter there
+ * stages the vote.
+ */
+export function outgoingKey(
+  e: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey">,
+  picking: boolean,
+): "post" | undefined {
+  return !picking && isSubmitKey(e) ? "post" : undefined;
 }

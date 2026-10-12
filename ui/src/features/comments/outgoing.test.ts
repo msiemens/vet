@@ -3,8 +3,10 @@ import { test } from "node:test";
 import type { Thread } from "../../generated/Thread.ts";
 import type { ThreadMessage } from "../../generated/ThreadMessage.ts";
 import {
+  canPost,
   destination,
   outgoingComments,
+  outgoingKey,
   outgoingTitle,
   postLabel,
   summarizeOutgoing,
@@ -130,4 +132,25 @@ void test("posting says where the comments go and what it posts", () => {
   assert.equal(postLabel(4, false), "Post 4 comments");
   assert.equal(postLabel(4, true), "Post 4 comments and vote");
   assert.equal(postLabel(0, true), "Post vote");
+});
+
+void test("posting goes ahead only with something waiting, nothing on its way and no block", () => {
+  assert.equal(canPost(2, false, undefined), true);
+  assert.equal(canPost(0, false, undefined), false);
+  assert.equal(canPost(2, true, undefined), false);
+  assert.equal(canPost(2, false, "Sign in to post"), false);
+});
+
+void test("the submit key posts from the list, and does nothing in the vote picker, where Enter stages", () => {
+  const key = (k: string, mods: { ctrlKey?: boolean; metaKey?: boolean } = {}) => ({
+    key: k,
+    ctrlKey: false,
+    metaKey: false,
+    ...mods,
+  });
+  assert.equal(outgoingKey(key("Enter", { ctrlKey: true }), false), "post");
+  assert.equal(outgoingKey(key("Enter", { metaKey: true }), false), "post");
+  assert.equal(outgoingKey(key("Enter"), false), undefined);
+  assert.equal(outgoingKey(key("a", { ctrlKey: true }), false), undefined);
+  assert.equal(outgoingKey(key("Enter", { ctrlKey: true }), true), undefined);
 });
