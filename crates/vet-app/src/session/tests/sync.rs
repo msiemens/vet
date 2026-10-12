@@ -133,6 +133,35 @@ async fn a_comment_on_older_code_is_anchored_there_and_follows_the_code_to_where
 }
 
 #[tokio::test]
+async fn a_comment_on_older_code_that_a_later_push_rewrote_stays_on_the_rewritten_hunk() {
+    let base = numbered(30, &[]);
+    let first = numbered(30, &[20]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fetch_pull_request_7(&fx.git, &[("a.txt", &base)], "pr1", &[("a.txt", &first)]);
+    fx.session.open_changeset(pull_request_7()).await.unwrap();
+    // The author pushed again, rewriting the lines around the one commented on.
+    fetch_pull_request_7(
+        &fx.git,
+        &[("a.txt", &base)],
+        "pr2",
+        &[("a.txt", &numbered(30, &[17, 18, 19, 20, 21, 22, 23]))],
+    );
+    fx.session.observe().await.unwrap().expect("pushed to");
+    let hosting = FakeHosting::default();
+    hosting.thread("a.txt", (21, 21), "pr1", "marco", "Why 20?");
+
+    fx.sync(&hosting).await;
+
+    let [thread] = <[ThreadView; 1]>::try_from(fx.all().await).expect("one thread");
+    assert!(
+        matches!(thread.state, Some(AnchorState::Inferred { .. })),
+        "{:?}",
+        thread.state
+    );
+    assert_eq!(thread.location, at("a.txt", 20, 21));
+}
+
+#[tokio::test]
 async fn a_comment_whose_code_cannot_be_found_is_attached_to_its_file() {
     let (fx, hosting) = on_a_pull_request().await;
     hosting.thread("a.txt", (500, 500), "pr1", "marco", "Past the end.");

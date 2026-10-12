@@ -394,7 +394,7 @@ fn lines_deleted_inside_the_range_are_inferred() {
 }
 
 #[test]
-fn length_change_with_rewritten_context_is_stale() {
+fn length_change_with_rewritten_context_attaches_to_what_replaced_it() {
     let mut fx = Fix::default();
     let old = numbered(30);
     let mut new = old.clone();
@@ -402,6 +402,28 @@ fn length_change_with_rewritten_context_is_stale() {
     new.splice(6..17, rewritten);
     let (o, n) = (fx.blob(&join(&old)), fx.blob(&join(&new)));
     let a = anchor(Side::Target, "a.rs", &join(&old), range(10, 13));
+
+    let r = resolve(&a, &input("a.rs", o, n), &[], &fx);
+
+    assert_eq!(
+        r.state,
+        AnchorState::Inferred {
+            strategy: Strategy::ContextWindow,
+            confidence: Confidence::Low
+        }
+    );
+    assert_eq!(r.location.unwrap().range, range(6, 14));
+}
+
+#[test]
+fn a_rewrite_far_wider_than_the_context_leaves_the_anchor_stale() {
+    let mut fx = Fix::default();
+    let old = numbered(40);
+    let mut new = old.clone();
+    let rewritten: Vec<String> = (0..20).map(|i| format!("rewritten {i}")).collect();
+    new.splice(2..38, rewritten);
+    let (o, n) = (fx.blob(&join(&old)), fx.blob(&join(&new)));
+    let a = anchor(Side::Target, "a.rs", &join(&old), range(20, 23));
 
     let r = resolve(&a, &input("a.rs", o, n), &[], &fx);
 

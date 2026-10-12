@@ -3257,6 +3257,76 @@ async fn a_rebase_is_a_version_with_the_new_base() {
     assert_eq!(after.base_commit, CommitId("m3".into()));
 }
 
+/// The thread on lines 10..13 of `a.txt` of a branch with one edit at line 3, after the branch
+/// moved to a commit with the tree `files`.
+async fn thread_after_a_push(files: &[(&str, &str)]) -> (Fixture, ThreadId) {
+    let base = numbered(30, &[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &base)]).await;
+    fx.git.feature(&[("a.txt", &base)], &[("a.txt", &numbered(30, &[3]))]);
+    view_feature(&fx).await;
+    let id = fx.thread(on("a.txt", 10, 13)).await;
+    fx.git.branch("feature", "tip2", files, &["tip1", "m1"]);
+    fx.session.observe().await.unwrap().expect("the tip moved");
+    (fx, id)
+}
+
+#[tokio::test]
+async fn a_thread_on_a_branch_stays_put_when_a_push_edits_other_lines_or_rebases_the_branch() {
+    let (fx, id) = thread_after_a_push(&[("a.txt", &numbered(30, &[3, 25]))]).await;
+    let view = fx.view(id).await;
+    assert_eq!((view.state, view.location), (Some(EXACT), at("a.txt", 10, 13)));
+
+    // The default branch moved on, and the branch was rebased onto it.
+    fx.git
+        .add_commit("merge-base main tip3", "m3", &[("a.txt", &numbered(30, &[25]))]);
+    fx.git
+        .branch("feature", "tip3", &[("a.txt", &numbered(30, &[3, 25]))], &["m3"]);
+    fx.session.observe().await.unwrap().expect("tip and base moved");
+
+    let view = fx.view(id).await;
+    assert_eq!((view.state, view.location), (Some(EXACT), at("a.txt", 10, 13)));
+}
+
+#[tokio::test]
+async fn a_thread_on_a_branch_follows_its_hunk_when_a_push_rewrites_the_lines_around_it() {
+    let (fx, id) = thread_after_a_push(&[("a.txt", &numbered(30, &[3, 8, 9, 10, 11, 12, 13, 14, 15]))]).await;
+
+    let view = fx.view(id).await;
+
+    assert!(
+        matches!(view.state, Some(AnchorState::Inferred { .. })),
+        "{:?}",
+        view.state
+    );
+    assert_eq!(view.location, at("a.txt", 10, 13));
+    assert!(view.target_line.is_some(), "it is shown, not only listed");
+}
+
+#[tokio::test]
+async fn a_thread_on_a_file_the_branch_added_follows_a_later_commit_that_renamed_it() {
+    let base = numbered(30, &[]);
+    let added = numbered(30, &[]);
+    let fx = Fixture::open(&[("keep.txt", &base)], &[("keep.txt", &base)]).await;
+    fx.git
+        .feature(&[("keep.txt", &base)], &[("keep.txt", &base), ("new.txt", &added)]);
+    view_feature(&fx).await;
+    let id = fx.thread(on("new.txt", 10, 13)).await;
+    fx.git.branch(
+        "feature",
+        "tip2",
+        &[("keep.txt", &base), ("renamed.txt", &added)],
+        &["tip1", "m1"],
+    );
+    fx.session.observe().await.unwrap().expect("the tip moved");
+
+    let view = fx.view(id).await;
+
+    assert_eq!(
+        (view.path, view.location),
+        (Some(path("renamed.txt")), at("renamed.txt", 10, 13))
+    );
+}
+
 #[tokio::test]
 async fn a_moved_branch_that_is_only_browsed_follows_the_tip_and_stores_nothing() {
     let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "one\n")]).await;
