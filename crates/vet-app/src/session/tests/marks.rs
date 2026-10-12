@@ -337,6 +337,11 @@ async fn a_flag_is_independent_of_seen_and_only_toggling_it_removes_it() {
     assert_eq!(answer.review.flagged, [false, true]);
     assert_eq!(answer.review.hunks, [HunkState::Unseen, HunkState::Unseen]);
     assert_eq!(answer.completion.seen_lines, 0, "a flag covers nothing");
+    let manifest = fx.session.manifest(View::Changeset).await.unwrap();
+    assert_eq!(
+        (answer.changeset.flagged_hunks, manifest.completion.flagged_hunks),
+        (1, 1)
+    );
 
     fx.session.toggle_hunk(0, View::Changeset, "a.txt", 1).await.unwrap();
     assert_eq!(fx.hunks("a.txt").await[1], HunkState::Seen);

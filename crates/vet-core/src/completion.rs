@@ -22,6 +22,8 @@ pub struct Completion {
     pub hunks: u32,
     /// Of those, in state `Seen`.
     pub seen_hunks: u32,
+    /// Of those, flagged for later review.
+    pub flagged_hunks: u32,
     pub excluded_lines: u32,
     pub excluded_items: u32,
 }
@@ -59,6 +61,7 @@ impl Completion {
             acknowledged_items: op(self.acknowledged_items, other.acknowledged_items),
             hunks: op(self.hunks, other.hunks),
             seen_hunks: op(self.seen_hunks, other.seen_hunks),
+            flagged_hunks: op(self.flagged_hunks, other.flagged_hunks),
             excluded_lines: op(self.excluded_lines, other.excluded_lines),
             excluded_items: op(self.excluded_items, other.excluded_items),
         }
@@ -229,6 +232,7 @@ impl<'a> Coverage<'a> {
                 let states = self.hunk_states(d);
                 c.hunks += states.len() as u32;
                 c.seen_hunks += states.iter().filter(|&&s| s == HunkState::Seen).count() as u32;
+                c.flagged_hunks += self.hunk_flags(d).into_iter().filter(|&f| f).count() as u32;
             }
             for h in &d.hunks {
                 for (side, file, range) in sides(d, h) {
@@ -284,6 +288,7 @@ mod tests {
             acknowledged_items,
             hunks: 0,
             seen_hunks: 0,
+            flagged_hunks: 0,
             excluded_lines: 0,
             excluded_items: 0,
         }

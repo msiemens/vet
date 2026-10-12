@@ -18,6 +18,8 @@ pub struct Completion {
     pub hunks: u32,
     /// Hunks whose changed lines are all seen; one seen against an older base is not.
     pub seen_hunks: u32,
+    /// Hunks flagged for later review, whatever their state.
+    pub flagged_hunks: u32,
     pub items: u32,
     pub acknowledged_items: u32,
     /// Everything counted here is seen: all lines and all non-text items.

@@ -295,20 +295,23 @@ impl<'a> Lens<'a> {
     /// non-text changes. Only what the newer version's changeset has to review counts.
     fn state(&self, diff: Option<&FileDiff>, items: &[NonTextChange]) -> (ReviewView, Completion) {
         let states = diff.map(|d| self.hunk_states(d)).unwrap_or_default();
+        let flagged = diff.map(|d| self.hunk_flags(d)).unwrap_or_default();
         let mut completion = Completion::default();
         let mut old_base_lines = vec![0; states.len()];
         if let Some(d) = diff {
             let squash = self.squash(d.path());
-            for ((h, state), old_base) in self.id.compared.hunks[d.path()]
+            for (((h, state), old_base), flagged) in self.id.compared.hunks[d.path()]
                 .iter()
                 .zip(&states)
                 .zip(&mut old_base_lines)
+                .zip(&flagged)
             {
                 if *state == HunkState::Informational {
                     continue;
                 }
                 completion.hunks += 1;
                 completion.seen_hunks += u32::from(*state == HunkState::Seen);
+                completion.flagged_hunks += u32::from(*flagged);
                 let Some(s) = squash else { continue };
                 for (file, side, ranges) in [
                     (s.new_path.as_ref(), Side::Target, &h.target_lines),
@@ -340,7 +343,7 @@ impl<'a> Lens<'a> {
             ReviewView {
                 hunks: states,
                 old_base_lines,
-                flagged: diff.map(|d| self.hunk_flags(d)).unwrap_or_default(),
+                flagged,
                 acknowledged,
             },
             completion,

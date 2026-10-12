@@ -35,6 +35,7 @@ fn completion(c: &Completion) -> p::Completion {
         old_base_lines: c.old_base_lines,
         hunks: c.hunks,
         seen_hunks: c.seen_hunks,
+        flagged_hunks: c.flagged_hunks,
         items: c.items,
         acknowledged_items: c.acknowledged_items,
         complete: c.is_complete(),

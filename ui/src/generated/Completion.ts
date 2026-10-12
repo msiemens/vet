@@ -12,7 +12,11 @@ oldBaseLines: number, hunks: number,
 /**
  * Hunks whose changed lines are all seen; one seen against an older base is not.
  */
-seenHunks: number, items: number, acknowledgedItems: number, 
+seenHunks: number, 
+/**
+ * Hunks flagged for later review, whatever their state.
+ */
+flaggedHunks: number, items: number, acknowledgedItems: number, 
 /**
  * Everything counted here is seen: all lines and all non-text items.
  */
