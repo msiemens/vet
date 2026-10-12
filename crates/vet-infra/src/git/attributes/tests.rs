@@ -118,20 +118,15 @@ fn a_deeper_file_overrides_the_ones_above_and_reaches_only_its_own_directory() {
     );
 }
 
-#[cfg(unix)]
-#[test]
-fn an_attributes_file_whose_path_is_not_utf8_is_ignored() {
-    let files = vec![(
-        RepoPath(b"\xff/.gitattributes".to_vec()),
-        b"* linguist-generated\n".to_vec(),
-    )];
-
-    assert!(linguist_generated(&files, vec![path("a.rs")]).is_empty());
-}
-
 #[test]
 fn a_path_that_is_not_utf8_is_judged_like_any_other() {
-    let files = vec![(path(".gitattributes"), b"*.gen linguist-generated\n".to_vec())];
+    let files = vec![
+        (path(".gitattributes"), b"*.gen linguist-generated\n".to_vec()),
+        (
+            RepoPath(b"\xff/.gitattributes".to_vec()),
+            b"* -linguist-generated\n".to_vec(),
+        ),
+    ];
     let odd = RepoPath(b"d\xffir/a.gen".to_vec());
 
     let found = linguist_generated(&files, vec![odd.clone()]);

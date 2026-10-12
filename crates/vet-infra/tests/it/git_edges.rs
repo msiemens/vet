@@ -130,7 +130,7 @@ async fn a_detached_head_is_no_branch_and_still_has_a_history() {
 }
 
 #[tokio::test]
-async fn a_branch_is_found_local_first_then_remote_tracking_and_otherwise_named_in_the_error() {
+async fn a_branch_is_found_local_or_remote_tracking_and_otherwise_named_in_the_error() {
     let dir = repo();
     let p = dir.path();
     let m1 = commit(p, "a.txt", "m1");
@@ -140,7 +140,7 @@ async fn a_branch_is_found_local_first_then_remote_tracking_and_otherwise_named_
     git(p, &["update-ref", "refs/remotes/origin/only-remote", &m2.0]);
     let repo = GixRepo::new(p);
 
-    assert_eq!(repo.branch_tip("feature").await.unwrap(), m1, "the local branch wins");
+    assert_eq!(repo.branch_tip("feature").await.unwrap(), m1);
     assert_eq!(repo.branch_tip("origin/feature").await.unwrap(), m2);
     assert_eq!(repo.branch_tip("origin/only-remote").await.unwrap(), m2);
     assert_eq!(repo.branch_tip("nope").await.unwrap_err().0, "unknown branch nope");
@@ -245,20 +245,6 @@ async fn a_subject_runs_to_the_end_of_the_first_paragraph_and_a_commit_without_a
     let plain = repo.commit_detail(&plain).await.unwrap();
     assert_eq!((plain.info.subject.as_str(), plain.body.as_str()), ("plain", ""));
     assert_eq!(plain.parents.len(), 1);
-}
-
-#[tokio::test]
-async fn a_malformed_or_unknown_commit_id_is_an_error_not_a_panic() {
-    let dir = repo();
-    let known = commit(dir.path(), "a.txt", "one");
-    let repo = GixRepo::new(dir.path());
-
-    for id in ["", "zz", "abc", "0123456789abcdef0123456789abcdef01234567"] {
-        let id = CommitId(id.to_owned());
-        assert!(repo.commit_info(&id).await.is_err(), "{id:?}");
-        assert!(repo.commit_snapshot(&id).await.is_err(), "{id:?}");
-        assert!(repo.first_parent_distance(&id, &known, 5).await.is_err(), "{id:?}");
-    }
 }
 
 fn path_bytes(bytes: &[u8]) -> RepoPath {

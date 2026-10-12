@@ -159,7 +159,7 @@ fn bytes_that_are_not_text_or_not_a_flag_are_refused() {
 }
 
 #[test]
-fn a_count_that_outruns_the_input_is_refused_without_reserving_room_for_it() {
+fn a_count_that_outruns_the_input_is_refused() {
     for kind in [Kind::Symbols, Kind::Locations, Kind::Diagnostics] {
         assert!(decode(kind, &u32::MAX.to_le_bytes()).is_none());
     }

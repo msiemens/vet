@@ -616,7 +616,7 @@ fn messages_go_to_their_thread_in_the_order_written_and_a_platforms_own_come_fir
     };
     let messages = vec![
         message_row_model(1, 1, 50, false),
-        message_row_model(2, 2, 30, false),
+        message_row_model(2, 2, 5, false),
         message_row_model(3, 2, 20, true),
         message_row_model(4, 1, 10, false),
         message_row_model(5, 2, 20, true),
