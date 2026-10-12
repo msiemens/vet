@@ -2,6 +2,7 @@
   import type { Snippet } from "svelte";
   import { onMount, untrack } from "svelte";
   import type { MenuSpec } from "../../lib/commandMenu";
+  import { repoName } from "../../lib/paths";
   import SideBar from "../../lib/ui/SideBar.svelte";
   import type { SoftWrap } from "../../lib/softWrap";
   import type { Backend } from "../../state/backend";
@@ -82,6 +83,8 @@
   /** The file picked in the tree, until the Changes tab moves on. */
   let picked = $state<string>();
 
+  /** What the loading note names. */
+  const project = $derived(session.repo === undefined ? "the changeset" : repoName(session.repo));
   const revision = $derived(changeset.manifest?.revision);
   /** The chosen target when it already contains the changeset, so there is nothing to show. */
   const containedIn = $derived(changeset.files.length ? undefined : changeset.manifest?.base.containedIn);
@@ -131,7 +134,7 @@
       },
     });
     controller.open(true).then(
-      () => onready(controller),
+      (opened) => opened && onready(controller),
       (e: unknown) => void session.abandon(e),
     );
     return () => {
@@ -191,6 +194,8 @@
         onselect={(thread) => void controller.goToThread(thread)}
         card={(thread, open, toggle) => controller.threadCard(thread, open, toggle)}
       />
+    {:else if changeset.loading}
+      <p class="empty">Loading {project}…</p>
     {:else}
       <FileTree
         bind:this={tree}
@@ -217,14 +222,18 @@
 
 <main>
   <div class="strip">
-    <TabStrip
-      {tabs}
-      files={changeset.shownFiles}
-      {commit}
-      onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: subjectOf(id) } })}
-    />
+    {#if !changeset.loading}
+      <TabStrip
+        {tabs}
+        files={changeset.shownFiles}
+        {commit}
+        onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: subjectOf(id) } })}
+      />
+    {/if}
     <span class="grow"></span>
-    <ViewControls mode={tabs.modes.get(tabs.active)} {stepping} file={kindOf(tabs.active) === "file"} />
+    {#if !changeset.loading}
+      <ViewControls mode={tabs.modes.get(tabs.active)} {stepping} file={kindOf(tabs.active) === "file"} />
+    {/if}
   </div>
   {#if range && readOnly}
     <p class="note" role="status">
@@ -234,8 +243,10 @@
   {#if commit && tabs.active === CHANGES}<CommitHeader {commit} />{/if}
   <!-- The handler only replaces the webview's menu inside an editor. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="panes" class:readonly={readOnly} oncontextmenu={paneMenu}>
-    {#if containedIn}
+  <div class="panes" class:readonly={readOnly} class:loading={changeset.loading} oncontextmenu={paneMenu}>
+    {#if changeset.loading}
+      <p class="empty">Loading {project}…</p>
+    {:else if containedIn}
       <p class="empty">
         Nothing to review: {containedIn} already contains {changeset.manifest?.target.branch ?? "HEAD"}
       </p>
@@ -311,6 +322,10 @@
     position: absolute;
     inset: 0;
     display: flex;
+  }
+  /* The views of the previous changeset stay laid out, unseen, until the new manifest replaces them. */
+  .panes.loading .pane {
+    visibility: hidden;
   }
   /* Not `visibility: visible` on the active pane: that would show it through a hidden ancestor. */
   .pane:not(.active) {

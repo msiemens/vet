@@ -18,12 +18,11 @@ class VersionStore {
       if (event.project !== backend.project) return;
       // A settled snapshot or a base move adds a version; a mark changes where the review last was;
       // another changeset has versions of its own.
-      if (
-        event.type === "snapshotSettled" ||
-        event.type === "reviewStarted" ||
-        event.type === "reviewChanged" ||
-        event.type === "changesetOpened"
-      )
+      if (event.type === "changesetOpened") {
+        this.seq++;
+        this.items = [];
+        void this.reload(backend);
+      } else if (event.type === "snapshotSettled" || event.type === "reviewStarted" || event.type === "reviewChanged")
         void this.reload(backend);
     });
     const offResync = session.onResync(() => void this.reload(backend));

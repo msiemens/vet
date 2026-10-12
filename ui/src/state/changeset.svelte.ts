@@ -17,6 +17,7 @@ import type { CommitUnit } from "../generated/CommitUnit";
 import type { Lens } from "../generated/Lens";
 import { errorText } from "../lib/errorText";
 import { pathsBelow } from "../lib/paths";
+import { LatestLoad } from "./latestLoad";
 import type { BaseCandidates } from "./backend";
 import { commitToShow, neighbour } from "./commitLens";
 import { session } from "./session.svelte";
@@ -55,6 +56,20 @@ class ChangesetStore {
   /** The commits with their own progress, oldest first; loaded only while the changeset is reviewed by commit. */
   commits = $state.raw<CommitUnit[]>([]);
   private commitsSeq = 0;
+  /** A manifest is being fetched. */
+  private fetching = $state(false);
+  private manifestLoads = new LatestLoad<{ manifest: Manifest; commit: number | undefined }>({
+    busy: (on) => (this.fetching = on),
+    apply: ({ manifest, commit }) => {
+      this.cells.clear();
+      for (const file of manifest.files) this.cells.set(file.path, file);
+      this.manifest = manifest;
+      this.shownCommit = commit;
+      this.restoreFailures = manifest.restoreFailures;
+      if (manifest.lens === "perCommit" && manifest.commits > 1) void this.loadCommits();
+      else this.commits = [];
+    },
+  });
   /** What requests about the files read: the interdiff of `range`, a commit, or the changeset. */
   get view(): View {
     return this.range || this.commitIndex === undefined ? rangeView(this.range) : commitView(this.commitIndex);
@@ -94,12 +109,9 @@ class ChangesetStore {
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
         if (event.type === "changesetOpened") {
-          // Versions, commits and what was seen against an old base are the changeset's own.
-          this.range = undefined;
-          this.baseChanged = undefined;
-          this.commitIndex = undefined;
-          this.lastCommit = 0;
-          void this.refresh();
+          // Everything of the changeset on view is the changeset's own: the views show it loading.
+          this.clear();
+          void this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
         } else if (event.type === "snapshotSettled" || event.type === "targetChanged") void this.refresh();
         else if (event.type === "lensChanged") void this.followLens(event.lens);
         // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
@@ -116,28 +128,40 @@ class ChangesetStore {
       if (this.manifest) this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
     });
     session.onClose(() => {
-      this.manifest = undefined;
-      this.range = undefined;
-      this.baseChanged = undefined;
-      this.commitIndex = this.shownCommit = undefined;
-      this.lastCommit = 0;
-      this.commits = [];
-      this.restoreFailures = [];
-      this.cells.clear();
+      this.manifestLoads.cancel();
+      this.clear();
     });
   }
 
-  /** Fetches the manifest again; the revision may have moved. */
-  async refresh(): Promise<Manifest> {
-    const { manifest, commit } = await this.fetchManifest();
+  /** Drops everything of the changeset on view, for the views to show that the next one is loading. */
+  private clear() {
+    this.manifest = undefined;
+    this.range = undefined;
+    this.baseChanged = undefined;
+    this.commitIndex = this.shownCommit = undefined;
+    this.lastCommit = 0;
+    this.commits = [];
+    this.commitsSeq++;
+    this.restoreFailures = [];
     this.cells.clear();
-    for (const file of manifest.files) this.cells.set(file.path, file);
-    this.manifest = manifest;
-    this.shownCommit = commit;
-    this.restoreFailures = manifest.restoreFailures;
-    if (manifest.lens === "perCommit" && manifest.commits > 1) void this.loadCommits();
-    else this.commits = [];
-    return manifest;
+  }
+
+  /**
+   * The first manifest of a project or of the changeset just opened is being fetched: nothing of the
+   * changeset is known, and the views show that instead of what was on view before.
+   */
+  get loading(): boolean {
+    return this.fetching && !this.manifest;
+  }
+
+  /**
+   * Fetches the manifest again; the revision may have moved. Only the latest fetch counts: an older
+   * one that settles later gives the latest's manifest. Resolves with nothing when the project was
+   * closed meanwhile.
+   */
+  async refresh(): Promise<Manifest | undefined> {
+    const loaded = await this.manifestLoads.load(() => this.fetchManifest());
+    return loaded?.manifest;
   }
 
   /**

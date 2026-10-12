@@ -31,8 +31,12 @@ class ThreadStore {
     const off = backend.onEvent((event) => {
       if (event.project !== backend.project) return;
       // A settled snapshot invalidates the resolution; another connection changed a thread.
-      if (event.type === "threadsChanged" || event.type === "snapshotSettled" || event.type === "changesetOpened")
+      if (event.type === "changesetOpened") {
+        // The threads are the previous changeset's until the new ones are read.
+        this.seq++;
+        this.set([], undefined, "");
         void this.reload();
+      } else if (event.type === "threadsChanged" || event.type === "snapshotSettled") void this.reload();
     });
     const offResync = session.onResync(() => void this.reload());
     return () => {

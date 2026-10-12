@@ -54,8 +54,8 @@ class SymbolsState {
         const { backend, repo } = session;
         const revision = changeset.manifest?.revision;
         untrack(() => {
-          if (repo === undefined) this.reset();
-          else if (backend && revision !== undefined) void this.load(backend, revision);
+          if (repo === undefined || revision === undefined) this.reset();
+          else if (backend) void this.load(backend, revision);
         });
       });
     });
@@ -68,7 +68,7 @@ class SymbolsState {
     );
   }
 
-  /** Back to nothing: no repository is open. */
+  /** Back to nothing: no repository is open, or no changeset is known yet. */
   private reset() {
     this.listRun++;
     this.backend = this.revision = undefined;

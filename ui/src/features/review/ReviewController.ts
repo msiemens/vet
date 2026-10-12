@@ -793,11 +793,12 @@ export class ReviewController {
     this.restore = { scroll, anchor: saved?.anchor };
   }
 
-  /** Fetches the manifest and renders it; with `prefetch`, then loads the rest of the Changes tab once its first hunk is painted. */
-  async open(prefetch: boolean): Promise<void> {
+  /** Fetches the manifest and renders it, answering whether it did (not when the project was closed); with `prefetch`, then loads the rest of the Changes tab once its first hunk is painted. */
+  async open(prefetch: boolean): Promise<boolean> {
     this.views.get(CHANGES)?.destroy();
     this.views.delete(CHANGES);
     const manifest = await this.changeset.refresh();
+    if (!manifest) return false; // the project was closed meanwhile
     this.key = keyId(manifest.target.changeset);
     this.rangeChanged(manifest);
     this.filtered = this.changeset.baseChanged;
@@ -808,6 +809,7 @@ export class ReviewController {
     if (!(saved && view.restore(saved))) await view.goToHunk(0);
     await nextPaint();
     if (prefetch) await view.loadAll();
+    return true;
   }
 
   /** Builds the views anew with the setting, keeping their scroll positions and current hunks. */
