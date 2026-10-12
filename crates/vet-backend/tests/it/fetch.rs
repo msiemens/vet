@@ -428,3 +428,72 @@ async fn a_closed_project_stops_fetching() {
         git(&remote.work, &["rev-parse", "HEAD"])
     );
 }
+
+/// A local branch `feature` with a commit of its own, off the clone's `main`, opened as a changeset.
+async fn open_feature(remote: &Remote, client: &Client, project: ProjectId) {
+    git(&remote.project, &["checkout", "-q", "-b", "feature"]);
+    write(&remote.project, "f.txt", "feature\n");
+    git(&remote.project, &["add", "-A"]);
+    git(&remote.project, &["commit", "-q", "-m", "feature"]);
+    git(&remote.project, &["checkout", "-q", "main"]);
+    open_changeset(client, project, branch_key("feature")).await;
+}
+
+#[tokio::test]
+async fn a_fetch_shows_a_branch_changeset_behind_the_default_branch_it_left() {
+    for origin_head in [true, false] {
+        let remote = Remote::new();
+        if !origin_head {
+            git(&remote.project, &["remote", "set-head", "origin", "-d"]);
+        }
+        let (handler, _data) = orchestrator(LONG).await;
+        let client = Client::new(&handler);
+        let project = client.open(&remote.project).await;
+        open_feature(&remote, &client, project).await;
+        let first = manifest(&client, project).await;
+        assert_eq!(first.base.behind, None, "origin/HEAD: {origin_head}");
+
+        remote.push_commit("one");
+        remote.push_commit("two");
+        client.call(Request::Fetch { project }).await.unwrap();
+
+        let m = manifest(&client, project).await;
+        assert_eq!(m.target.name, "feature");
+        assert_eq!(m.base.commit.id, first.base.commit.id, "the base stays where it was");
+        assert_eq!(
+            m.base.behind,
+            Some(2),
+            "origin/HEAD: {origin_head}, base: {:?}",
+            m.base.choice
+        );
+    }
+}
+
+#[tokio::test]
+async fn behind_follows_a_base_however_the_branch_is_spelled() {
+    let remote = Remote::new();
+    let (handler, _data) = orchestrator(LONG).await;
+    let client = Client::new(&handler);
+    let project = client.open(&remote.project).await;
+    open_feature(&remote, &client, project).await;
+    remote.push_commit("one");
+    client.call(Request::Fetch { project }).await.unwrap();
+
+    for reference in ["main", "refs/heads/main", "origin/main", "refs/remotes/origin/main"] {
+        let base = match client
+            .call(Request::SetBase {
+                project,
+                base: BaseChoice::MergeBase {
+                    reference: reference.into(),
+                },
+            })
+            .await
+            .unwrap()
+        {
+            Response::Base(base) => base,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(base.behind, Some(1), "{reference}");
+        assert_eq!(base_behind(&client, project).await, Some(1), "{reference}");
+    }
+}

@@ -1894,6 +1894,7 @@ async fn a_branch_base_counts_how_far_the_branch_moved_on_and_latest_catches_up(
     // Two commits on main since: the base stays where it was.
     fx.git.add_branch("main", true, "m3", &["m2", "m1", "m0"]);
     fx.git.branches.lock().unwrap().retain(|b| b.commit.0 != "m1");
+    fx.git.add_commit("main", "m3", &[("a.txt", "one\n")]);
     let m = fx.session.manifest(View::Changeset).await.unwrap();
     assert_eq!((base_of(&m), m.base.behind), ((&main, "m1", "main~2"), Some(2)));
 
@@ -1903,6 +1904,39 @@ async fn a_branch_base_counts_how_far_the_branch_moved_on_and_latest_catches_up(
         (view.commit.id.0.as_str(), view.name.as_str(), view.behind),
         ("m3", "main", None)
     );
+}
+
+/// `main` is at `m3`, two commits past the base `m1`, and `origin/main` at `m5`, four.
+#[tokio::test]
+async fn behind_counts_the_branch_and_its_remote_whichever_way_the_reference_is_spelled() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "two\n")]).await;
+    fx.git.add_branch("main", true, "m3", &["m2", "m1"]);
+    fx.git.add_branch("other", false, "m5", &["m4", "m3", "m2", "m1"]);
+    fx.git
+        .branches
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|b| b.name == "main")
+        .unwrap()
+        .upstream = Some(CommitId("m5".into()));
+    for (spec, tip) in [
+        ("main", "m3"),
+        ("refs/heads/main", "m3"),
+        ("origin/main", "m5"),
+        ("refs/remotes/origin/main", "m5"),
+        ("refs/remotes/origin/HEAD", "m5"),
+    ] {
+        fx.git.add_commit(spec, tip, &[("a.txt", "one\n")]);
+        fx.git
+            .add_commit(&format!("merge-base {spec}"), "m1", &[("a.txt", "one\n")]);
+        let (view, _) = fx
+            .session
+            .set_base(BaseChoice::MergeBase { reference: spec.into() })
+            .await
+            .unwrap();
+        assert_eq!(view.behind, Some(4), "{spec}");
+    }
 }
 
 #[tokio::test]

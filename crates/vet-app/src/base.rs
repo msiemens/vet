@@ -102,9 +102,10 @@ pub fn contained_in(choice: &BaseChoice, base: &CommitId, tip: &CommitId, own: O
     }
 }
 
-/// How many commits the chosen branch has gained since `base`, on its own or on
-/// the remote as of the last fetch; `None` unless the choice is a merge base
-/// against a branch and it has moved.
+/// How many commits the chosen reference has gained since `base`, on its own or, for a local
+/// branch, on the remote as of the last fetch; `None` unless the choice is a merge base that has
+/// moved. The reference is whatever names a revision (`main`, `refs/heads/main`, `origin/main`,
+/// `refs/remotes/origin/HEAD`); only a local branch is looked up by name, for its upstream.
 pub async fn behind<G: History>(
     git: &G,
     branches: &[BranchInfo],
@@ -114,11 +115,16 @@ pub async fn behind<G: History>(
     let BaseChoice::MergeBase { reference } = choice else {
         return Ok(None);
     };
-    let Some(branch) = branches.iter().find(|b| b.name == *reference) else {
+    let Ok(tip) = git.resolve_commit(reference).await else {
         return Ok(None);
     };
-    let mut count = git.commits_behind(&branch.commit, base, MAX_BEHIND).await?;
-    if let Some(upstream) = &branch.upstream {
+    let mut count = git.commits_behind(&tip, base, MAX_BEHIND).await?;
+    let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
+    let upstream = branches
+        .iter()
+        .find(|b| !b.remote && b.name == name)
+        .and_then(|b| b.upstream.as_ref());
+    if let Some(upstream) = upstream {
         count = count.max(git.commits_behind(upstream, base, MAX_BEHIND).await?);
     }
     Ok((count > 0).then_some(count as u32))
