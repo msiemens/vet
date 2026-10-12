@@ -15,6 +15,8 @@ export interface ReviewRequests {
    * decides the direction. Its new state comes back through `renderReview`.
    */
   toggleHunk(revision: number, path: string, hunk: number): Promise<void>;
+  /** The same for a hunk's flag for later review. */
+  toggleFlag(revision: number, path: string, hunk: number): Promise<void>;
   /** The same for the acknowledgement of a non-text item. */
   toggleItem(revision: number, path: string, kind: NonTextKind): Promise<void>;
   /** The same for everything in a file. */
@@ -52,6 +54,11 @@ export class ReviewActions {
   /** Asks the backend to flip the file's `hi`-th hunk. */
   hunk({ file }: Section, hi: number): Promise<void> {
     return this.requests.toggleHunk(this.revision, file.path, hi);
+  }
+
+  /** Asks the backend to flip the flag of the file's `hi`-th hunk. */
+  flag({ file }: Section, hi: number): Promise<void> {
+    return this.requests.toggleFlag(this.revision, file.path, hi);
   }
 
   /** Asks the backend to flip the acknowledgement of the file's `ci`-th change card. */

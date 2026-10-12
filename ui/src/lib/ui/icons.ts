@@ -28,6 +28,8 @@ export const ICONS = {
   filter: '<path d="M4 5h16l-6 7v6l-4 2v-8z"/>',
   search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  // Lucide's flag (ISC).
+  flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
   reconfirm: '<path d="M20 11a8 8 0 10-2.3 5.7M20 5v6h-6"/>',
   derived: '<circle cx="12" cy="12" r="8" stroke-dasharray="2.5 2.5"/>',
   more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',

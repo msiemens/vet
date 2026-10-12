@@ -348,6 +348,12 @@ export class Backend {
     return expect(await this.conn.request(request), "review");
   }
 
+  /** Flips the flag for later review of one hunk; a flag is independent of the hunk being seen. */
+  async toggleFlag(revision: number, path: string, hunk: number, view: View): Promise<ReviewUpdate> {
+    const request = { type: "toggleFlag", project: this.pid, view, revision, path, hunk } as const;
+    return expect(await this.conn.request(request), "review");
+  }
+
   /** Flips the acknowledgement of one non-text item. */
   async toggleItem(revision: number, path: string, kind: NonTextKind, view: View): Promise<ReviewUpdate> {
     const request = { type: "toggleItem", project: this.pid, view, revision, path, kind } as const;

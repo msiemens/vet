@@ -281,6 +281,11 @@ class ChangesetStore {
     await this.review(revision, session.connected().toggleHunk(revision, path, hunk, this.view));
   }
 
+  /** Flips the flag of one hunk. */
+  async toggleFlag(revision: number, path: string, hunk: number) {
+    await this.review(revision, session.connected().toggleFlag(revision, path, hunk, this.view));
+  }
+
   /** Flips the acknowledgement of one non-text item. */
   async toggleItem(revision: number, path: string, kind: NonTextKind) {
     await this.review(revision, session.connected().toggleItem(revision, path, kind, this.view));

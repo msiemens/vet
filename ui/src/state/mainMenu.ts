@@ -112,6 +112,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
   ];
   const review: MenuSpec = [
     { command: "review.toggleSeen" },
+    { command: "review.toggleFlag" },
     { command: "review.reconfirm" },
     { command: "review.reconfirmAll" },
     "-",
@@ -140,6 +141,8 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
   const navigate: MenuSpec = [
     { command: "review.nextHunk" },
     { command: "review.previousHunk" },
+    { command: "review.nextFlagged" },
+    { command: "review.previousFlagged" },
     { command: "review.nextCommit" },
     { command: "review.previousCommit" },
     "-",

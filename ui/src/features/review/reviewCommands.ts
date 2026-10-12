@@ -12,6 +12,12 @@ export interface ViewActions {
   step(delta: number): void;
   /** Flips the hunk at the focused editor's caret, else the current one; answers whether there was one. */
   toggleSeen(): boolean;
+  /** Flips the flag of the hunk at the caret, else the current one; answers whether there was one. */
+  toggleFlag(): boolean;
+  /** Goes to the flagged hunk `delta` (1 or -1) from the current one, across files; answers whether there was one. */
+  stepFlag(delta: number): boolean;
+  /** Goes to the first flagged hunk of the changeset on view; answers whether there was one. */
+  firstFlagged(): boolean;
   /** Marks the hunk at the caret, else the current one, seen again if it is seen against an old base; answers whether there was one. */
   reconfirm(): boolean;
   /** Opens the comment form for the last editor's selection or caret line, else the current hunk; answers whether there was somewhere to comment. */
@@ -78,6 +84,20 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       run: () => a.step(-1),
     },
     {
+      id: "review.nextFlagged",
+      label: "Next Flagged Hunk",
+      enabled: inView,
+      disabledReason: () => NO_DIFF,
+      run: () => a.stepFlag(1),
+    },
+    {
+      id: "review.previousFlagged",
+      label: "Previous Flagged Hunk",
+      enabled: inView,
+      disabledReason: () => NO_DIFF,
+      run: () => a.stepFlag(-1),
+    },
+    {
       id: "review.previousCommit",
       label: "Previous Commit",
       binding: "[",
@@ -101,6 +121,13 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       enabled: inView,
       disabledReason: () => NO_DIFF,
       run: () => a.toggleSeen(),
+    },
+    {
+      id: "review.toggleFlag",
+      label: "Toggle Flag",
+      enabled: inView,
+      disabledReason: () => NO_DIFF,
+      run: () => a.toggleFlag(),
     },
     {
       id: "review.reconfirm",
@@ -305,6 +332,7 @@ export const editorMenu: MenuSpec = [
   "-",
   { command: "review.comment" },
   { command: "review.toggleSeen" },
+  { command: "review.toggleFlag" },
   { command: "review.reconfirm" },
   "-",
   { command: "edit.copy" },

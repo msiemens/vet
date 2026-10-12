@@ -6,6 +6,7 @@ export interface BarFacts {
   text: string;
   state: string;
   oldBaseLines: number;
+  flagged: boolean;
   baseDiffOpen: boolean;
   /** The view's current stop. */
   current: boolean;
@@ -24,6 +25,7 @@ export function barChange(from: BarFacts, to: BarFacts): "none" | "outline" | "r
     from.text !== to.text ||
     from.state !== to.state ||
     from.oldBaseLines !== to.oldBaseLines ||
+    from.flagged !== to.flagged ||
     from.baseDiffOpen !== to.baseDiffOpen ||
     from.actions !== to.actions
   )

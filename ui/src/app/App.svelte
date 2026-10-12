@@ -594,6 +594,11 @@
   <AboutDialog onclose={() => (dialog = undefined)} />
 {:else if dialog === "finish"}
   <FinishDialog
+    flagged={changeset.manifest?.changesetCompletion.flaggedHunks ?? 0}
+    ongoto={() => {
+      dialog = undefined;
+      reviewActions.firstFlagged();
+    }}
     onclose={() => (dialog = undefined)}
     onfinish={() => {
       dialog = undefined;

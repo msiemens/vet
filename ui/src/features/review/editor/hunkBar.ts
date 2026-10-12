@@ -11,6 +11,8 @@ import { el, iconButton, reconfirmButton } from "./dom";
 export interface BarActions {
   /** Flips the hunk; for one seen against an old base that is re-confirming it. */
   toggleSeen(hunk: number): void;
+  /** Flips the hunk's flag for later review. */
+  toggleFlag(hunk: number): void;
   comment(hunk: number): void;
   /** Jump to Source at the hunk's first line. */
   openSource(hunk: number): void;
@@ -18,11 +20,26 @@ export interface BarActions {
   toggleBaseDiff?(hunk: number): void;
 }
 
+/** The flag toggle of a hunk, in its active state while the hunk is flagged. */
+export function flagButton(flagged: boolean, onclick: () => void): HTMLButtonElement {
+  const button = iconButton(
+    commands.tooltip("review.toggleFlag", flagged ? "Remove Flag" : "Flag for Later"),
+    "flag",
+    onclick,
+    `vet-icon-btn vet-flag-toggle vet-review-action${flagged ? " vet-flagged" : ""}`,
+    13,
+    2,
+  );
+  button.ariaPressed = String(flagged);
+  return button;
+}
+
 /** What a bar shows of its hunk besides the header text. */
 export interface BarHunk {
   state: HunkState;
   /** Lines of the hunk covered only by spans seen against an old base. */
   oldBaseLines: number;
+  flagged: boolean;
   /** Its base diff is open. */
   baseDiffOpen: boolean;
 }
@@ -76,8 +93,8 @@ export class HunkBar extends WidgetType {
 
   private get facts(): BarFacts {
     const { index, text, state, current, actions } = this;
-    const { oldBaseLines, baseDiffOpen } = this.hunk;
-    return { index, text, state, oldBaseLines, baseDiffOpen, current, actions };
+    const { oldBaseLines, flagged, baseDiffOpen } = this.hunk;
+    return { index, text, state, oldBaseLines, flagged, baseDiffOpen, current, actions };
   }
 
   eq(other: HunkBar): boolean {
@@ -135,6 +152,7 @@ export class HunkBar extends WidgetType {
           () => actions.comment(this.index),
           "vet-icon-btn vet-review-action",
         ),
+        flagButton(this.hunk.flagged, () => actions.toggleFlag(this.index)),
         this.state === "seenAgainstOldBase"
           ? reconfirmButton(commands.tooltip("review.reconfirm", "Re-confirm"), () => actions.toggleSeen(this.index))
           : iconButton(

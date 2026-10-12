@@ -29,10 +29,11 @@ import { stripMarker } from "./reviewState";
 /** What the owner does for a hunk of the file, by the hunk's index. */
 export interface HunkActions {
   toggleSeen(hunk: number): void;
+  toggleFlag(hunk: number): void;
   comment(hunk: number): void;
 }
 
-export const setStates = StateEffect.define<HunkState[]>();
+export const setStates = StateEffect.define<{ states: HunkState[]; flags: boolean[] }>();
 /** Makes a hunk the current one whatever the caret is on (navigation, the wedge's click). */
 export const setCurrentHunk = StateEffect.define<number | null>();
 /** Shows or hides the lines a removal took. */
@@ -52,6 +53,8 @@ export interface ChangesSource {
 export interface ChangesState {
   layout: FileLayout;
   states: HunkState[];
+  /** Per hunk, whether it is flagged for later review. */
+  flags: boolean[];
   /** The hunk the caret is in, or that navigation or a wedge chose last. */
   current: number | null;
   /** The removals whose lines are shown. */
@@ -175,11 +178,11 @@ function build(source: ChangesSource, s: Pick<ChangesState, "layout" | "states" 
 }
 
 /** The state of a file's changes in its text: the layout, the review states, the current hunk and the open peeks. */
-export function changesField(source: ChangesSource, states: HunkState[]): StateField<ChangesState> {
+export function changesField(source: ChangesSource, states: HunkState[], flags: boolean[]): StateField<ChangesState> {
   return StateField.define<ChangesState>({
     create(state) {
       const layout = fileLayout(source.hunks, source.changes, state.doc);
-      const base = { layout, states, current: null, peeks: new Set<number>() };
+      const base = { layout, states, flags, current: null, peeks: new Set<number>() };
       return { ...base, decos: build(source, base, state.doc), ...currentMarks(layout, null, state.doc) };
     },
     update(value, tr) {
@@ -188,7 +191,7 @@ export function changesField(source: ChangesSource, states: HunkState[]): StateF
       let explicit = false;
       for (const effect of tr.effects) {
         if (effect.is(setStates)) {
-          next = { ...next, states: effect.value };
+          next = { ...next, ...effect.value };
           rebuild = true;
         } else if (effect.is(setCurrentHunk)) {
           next = { ...next, current: effect.value };

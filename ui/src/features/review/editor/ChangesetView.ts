@@ -174,6 +174,7 @@ export class ChangesetView {
       el.addEventListener("pointerdown", (e) => this.selectAt(index, e));
       const actions: BarActions = {
         toggleSeen: (h) => void this.actions.hunk(this.sections[index], h),
+        toggleFlag: (h) => void this.actions.flag(this.sections[index], h),
         comment: (h) => this.commentOnHunk(this.sections[index], h),
         openSource: (h) => listeners.openSource(file.path, file.hunks[h].targetStart),
         toggleBaseDiff: listeners.baseDiff && ((h) => void this.toggleBaseDiff(this.sections[index], h)),
@@ -753,6 +754,31 @@ export class ChangesetView {
     const [fi, si] = this.stops.locate(this.current);
     const s = this.sections[fi];
     return si < s.cards.length ? this.actions.card(s, si) : this.actions.hunk(s, si - s.cards.length);
+  }
+
+  /** The file and hunk of the current stop; the hunk is -1 for a change card. */
+  currentHunk(): { path: string; hunk: number } | undefined {
+    if (this.current < 0 || !this.stops.total) return undefined;
+    const [fi, si] = this.stops.locate(this.current);
+    const { file, cards } = this.sections[fi];
+    return { path: file.path, hunk: si - cards.length };
+  }
+
+  /** Goes to hunk `hunk` of the file at `path`; answers whether the view has it. */
+  async goToFileHunk(path: string, hunk: number): Promise<boolean> {
+    const fi = this.indexOf(path);
+    if (fi < 0 || !this.sections[fi].file.hunks[hunk]) return false;
+    await this.goToHunk(this.stopOf(fi, hunk));
+    return true;
+  }
+
+  /** Asks the backend to flip the flag of the hunk at the focused editor's caret, else of the current stop; undefined when that is no hunk. */
+  toggleFlagCurrent(): Promise<void> | undefined {
+    const stop = this.selectAtCaret() ?? (this.current >= 0 ? this.current : undefined);
+    if (stop === undefined || !this.stops.total) return undefined;
+    const [fi, si] = this.stops.locate(stop);
+    const s = this.sections[fi];
+    return si >= s.cards.length ? this.actions.flag(s, si - s.cards.length) : undefined;
   }
 
   /**

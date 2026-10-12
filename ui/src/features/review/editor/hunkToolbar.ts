@@ -1,5 +1,5 @@
-// The small toolbar at the top right of the current hunk's lines in the File view: mark seen and
-// Comment. It lies over the code, so while the caret or the pointer is on code it would cover, it
+// The small toolbar at the top right of the current hunk's lines in the File view: flag, mark seen
+// and Comment. It lies over the code, so while the caret or the pointer is on code it would cover, it
 // fades and lets the clicks through; where nothing lies under it, it stays solid.
 
 import type { Extension, StateField } from "@codemirror/state";
@@ -7,7 +7,7 @@ import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { commands } from "../../../state/commands";
 import { el, iconButton, reconfirmButton } from "./dom";
 import type { ChangesSource, ChangesState } from "./fileChanges";
-import { LABEL } from "./hunkBar";
+import { LABEL, flagButton } from "./hunkBar";
 import { lineStart } from "./positions";
 
 /** Space kept between the toolbar and the editor's right edge. */
@@ -142,11 +142,12 @@ export function hunkToolbar(source: ChangesSource, field: StateField<ChangesStat
       /** Draws the buttons for the hunk and its state, unless they are drawn. */
       private fill(hunk: number, s: ChangesState) {
         const state = s.states[hunk];
-        const key = `${hunk}:${state}`;
+        const flagged = s.flags[hunk];
+        const key = `${hunk}:${state}:${flagged}`;
         if (this.shown === key) return;
         this.shown = key;
         const { actions } = source;
-        const buttons = [];
+        const buttons = state === "informational" ? [] : [flagButton(flagged, () => actions.toggleFlag(hunk))];
         if (state === "seenAgainstOldBase")
           buttons.push(
             reconfirmButton(commands.tooltip("review.reconfirm", "Re-confirm"), () => actions.toggleSeen(hunk)),

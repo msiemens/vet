@@ -6,6 +6,7 @@
 import { EditorState, type StateField, Text } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import type { FileChange } from "../../../generated/FileChange";
+import type { FileReview } from "../../../generated/FileReview";
 import type { HunkState } from "../../../generated/HunkState";
 import type { NoTextReason } from "../../../generated/NoTextReason";
 import type { Thread } from "../../../generated/Thread";
@@ -43,6 +44,7 @@ import type { ThreadListeners } from "./threadLayer";
 /** What the owner does for the file's hunks. */
 export interface TextActions {
   toggleSeen(hunk: number): void;
+  toggleFlag(hunk: number): void;
 }
 
 /** The threads a text shows: those of this revision, and what its cards ask of the owner. */
@@ -70,8 +72,12 @@ export class TextView {
   private line?: number;
   /** The span to show once the text has arrived. */
   private span?: TextSpan;
+  /** The hunk to go to once the text has arrived. */
+  private hunk?: number;
   /** The review state of each of the file's hunks, as the backend last sent it. */
   private states: HunkState[];
+  /** Which of the file's hunks are flagged for later review. */
+  private flags: boolean[];
   private drawn?: Drawn;
   private scrollbar?: Scrollbar;
   /** The reviewer was in the editor, or navigation put its caret on a line: comments go on its selection. */
@@ -94,6 +100,7 @@ export class TextView {
     private changes?: { file: FileChange; actions: TextActions },
   ) {
     this.states = changes?.file.review.hunks ?? [];
+    this.flags = changes?.file.review.flagged ?? [];
     root.replaceChildren();
     root.classList.add("vet-text");
     // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
@@ -158,6 +165,7 @@ export class TextView {
     this.scrollbar = new Scrollbar(view.scrollDOM, { marks: drawn && (() => this.markLayout(view, drawn)) });
     this.root.after(this.scrollbar.dom);
     if (this.span) this.goToSpan(this.span);
+    else if (this.hunk !== undefined) this.goToHunk(this.hunk);
     else if (this.line !== undefined) this.goToLine(this.line);
     this.refreshDiagnostics();
   }
@@ -185,17 +193,19 @@ export class TextView {
       base: Text.of(loaded.base.split(/\r\n?|\n/)),
       actions: {
         toggleSeen: (hunk) => actions.toggleSeen(hunk),
+        toggleFlag: (hunk) => actions.toggleFlag(hunk),
         comment,
       },
       card: (view, line) => this.showCard(view, line),
     };
-    return { source, field: changesField(source, this.states) };
+    return { source, field: changesField(source, this.states, this.flags) };
   }
 
-  /** The hunks' review states changed. */
-  applyReview(states: HunkState[]) {
-    this.states = states;
-    if (this.drawn) this.view?.dispatch({ effects: setStates.of(states) });
+  /** The hunks' review states and flags changed. */
+  applyReview({ hunks, flagged }: FileReview) {
+    this.states = hunks;
+    this.flags = flagged;
+    if (this.drawn) this.view?.dispatch({ effects: setStates.of({ states: hunks, flags: flagged }) });
   }
 
   /** The file has hunks to step through. */
@@ -211,6 +221,7 @@ export class TextView {
 
   /** Puts the caret on the hunk's first line (below the wedge, for a removal, whose lines then show) and centres it. */
   goToHunk(hunk: number) {
+    this.hunk = hunk;
     const { view, drawn } = this;
     if (!view || !drawn) return;
     const h = drawn.source.hunks[hunk];
@@ -240,6 +251,14 @@ export class TextView {
     const hunk = this.current;
     if (hunk < 0 || !this.drawn) return false;
     this.drawn.source.actions.toggleSeen(hunk);
+    return true;
+  }
+
+  /** Flips the flag of the current hunk; answers whether there was one. */
+  toggleFlagCurrent(): boolean {
+    const hunk = this.current;
+    if (hunk < 0 || !this.drawn) return false;
+    this.drawn.source.actions.toggleFlag(hunk);
     return true;
   }
 

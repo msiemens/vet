@@ -93,6 +93,7 @@ export class StickyHunk {
     const state = {
       state: s.review.hunks[hunk],
       oldBaseLines: s.review.oldBaseLines[hunk],
+      flagged: s.review.flagged[hunk],
       baseDiffOpen: s.baseDiffs.has(hunk),
     };
     const bar = (actions: Section["hooks"] | null) => new HunkBar(hunk, text, state, current, actions, this.m.hunk);

@@ -86,8 +86,16 @@
 .vet-hunk-informational .vet-hunk-note {
   color: var(--note);
 }
-.vet-hunk-informational .vet-seen-toggle {
+.vet-hunk-informational .vet-seen-toggle,
+.vet-hunk-informational .vet-flag-toggle {
   display: none;
+}
+/* A hunk flagged for later review: the flag is filled. */
+.vet-flag-toggle.vet-flagged {
+  color: var(--warn);
+}
+.vet-flag-toggle.vet-flagged svg {
+  fill: currentColor;
 }
 .vet-icon-btn {
   width: 22px;

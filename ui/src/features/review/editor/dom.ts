@@ -2,7 +2,6 @@
 
 import type { EditorView } from "@codemirror/view";
 import { type IconName, iconSvg } from "../../../lib/ui/icons.ts";
-
 /**
  * Whether the editor takes the keys: its content is the document's active element. Unlike
  * `EditorView.hasFocus`, this does not also ask whether the window has the focus.

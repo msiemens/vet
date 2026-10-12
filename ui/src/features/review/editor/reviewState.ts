@@ -49,6 +49,8 @@ export interface ReviewState {
   states: HunkState[];
   /** Per hunk, the lines seen against an old base only. */
   oldBase: number[];
+  /** Per hunk, whether it is flagged for later review. */
+  flagged: boolean[];
   diffs: ReadonlyMap<number, BaseDiff>;
   current: number | null;
   decos: DecorationSet;
@@ -91,7 +93,12 @@ function build(state: Omit<ReviewState, "decos">, doc: Text, side: SideConfig): 
     // The base side of a side-by-side view has no bar where the hunk adds lines: the filler
     // that aligns it counts the target side's bar already.
     if (span.empty && !side.bar) return;
-    const hunk = { state: state.states[i], oldBaseLines: state.oldBase[i], baseDiffOpen: state.diffs.has(i) };
+    const hunk = {
+      state: state.states[i],
+      oldBaseLines: state.oldBase[i],
+      flagged: state.flagged[i],
+      baseDiffOpen: state.diffs.has(i),
+    };
     out.push(
       Decoration.widget({
         widget: new HunkBar(i, side.headers[i], hunk, state.current === i, side.bar, side.m.hunk),
@@ -131,7 +138,14 @@ export function reviewField(
         if (len === 0 || start >= doc.lines) return { from: 0, to: 0, empty: true, at };
         return { from: at, to: lineEnd(doc, start + len - 1), empty: false, at };
       });
-      const base = { spans, states: review.hunks, oldBase: review.oldBaseLines, diffs, current: null };
+      const base = {
+        spans,
+        states: review.hunks,
+        oldBase: review.oldBaseLines,
+        flagged: review.flagged,
+        diffs,
+        current: null,
+      };
       return { ...base, decos: build(base, doc, side) };
     },
     update(value, tr) {
@@ -151,7 +165,12 @@ export function reviewField(
       let rebuild = false;
       for (const effect of tr.effects) {
         if (effect.is(setReview)) {
-          next = { ...next, states: effect.value.hunks, oldBase: effect.value.oldBaseLines };
+          next = {
+            ...next,
+            states: effect.value.hunks,
+            oldBase: effect.value.oldBaseLines,
+            flagged: effect.value.flagged,
+          };
           rebuild = true;
         } else if (effect.is(setBaseDiffs)) {
           next = { ...next, diffs: effect.value };

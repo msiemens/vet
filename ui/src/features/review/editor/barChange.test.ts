@@ -8,6 +8,7 @@ const bar = (over: Partial<BarFacts> = {}): BarFacts => ({
   text: "@@ −1,2 +1,3 @@",
   state: "unseen",
   oldBaseLines: 0,
+  flagged: false,
   baseDiffOpen: false,
   current: false,
   actions,
@@ -27,6 +28,7 @@ void test("a bar whose hunk state or handlers changed is drawn anew, current or 
   assert.equal(barChange(bar(), bar({ state: "seen" })), "redraw");
   assert.equal(barChange(bar(), bar({ state: "seen", current: true })), "redraw");
   assert.equal(barChange(bar(), bar({ baseDiffOpen: true })), "redraw");
+  assert.equal(barChange(bar(), bar({ flagged: true })), "redraw");
   assert.equal(barChange(bar(), bar({ actions: {} })), "redraw");
   assert.equal(barChange(bar(), bar({ actions: null })), "redraw");
 });

@@ -116,6 +116,7 @@ void test("the Review and Navigate menus hold the work of reviewing, each with t
   const items = menuOf({}, working);
   assert.deepEqual(ids(submenu(items, "review")), [
     "review.toggleSeen",
+    "review.toggleFlag",
     "review.reconfirm",
     "review.reconfirmAll",
     "-",
@@ -132,6 +133,8 @@ void test("the Review and Navigate menus hold the work of reviewing, each with t
     [
       ["review.nextHunk", "Ctrl+Alt+Down"],
       ["review.previousHunk", "Ctrl+Alt+Up"],
+      ["review.nextFlagged", undefined],
+      ["review.previousFlagged", undefined],
       ["review.nextCommit", "]"],
       ["review.previousCommit", "["],
       ["review.jumpToSource", "F4"],

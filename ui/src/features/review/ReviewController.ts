@@ -37,6 +37,7 @@ import { type TextActions, TextView } from "./editor/TextView";
 import { type SavedView, restoredTabs } from "./changesetViews";
 import { keyId } from "../../state/changesetKey";
 import { threadMenu } from "../comments";
+import { type HunkPlace, stepFlagged } from "./flaggedHunks";
 import { provideActions } from "./reviewActions";
 import type { ViewActions } from "./reviewCommands";
 import { readPosition, writePosition } from "./savedPosition";
@@ -68,6 +69,7 @@ export type ChangesetSource = Pick<
   | "stepCommit"
   | "onReview"
   | "toggleHunk"
+  | "toggleFlag"
   | "toggleItem"
   | "toggleFileSeen"
   | "reconfirmFile"
@@ -136,7 +138,7 @@ export class ReviewController {
     semantic.reset(); // the controller belongs to one repository's screen
     const offReview = changeset.onReview((u) => {
       for (const view of this.views.values()) view.applyReview(u);
-      for (const [id, text] of this.texts) if (pathOf(id) === u.path) text.applyReview(u.review.hunks);
+      for (const [id, text] of this.texts) if (pathOf(id) === u.path) text.applyReview(u.review);
     });
     const offThreads = threads.onChange(() => this.showThreads());
     const offCommands = provideActions(this.viewActions());
@@ -262,6 +264,13 @@ export class ReviewController {
         const view = this.active;
         return !!view && this.toggleBySpace(view);
       },
+      toggleFlag: () => {
+        const text = this.activeText;
+        if (text) return text.toggleFlagCurrent();
+        return this.active?.toggleFlagCurrent() !== undefined;
+      },
+      stepFlag: (delta) => this.stepFlagged(delta > 0 ? 1 : -1),
+      firstFlagged: () => this.goToFlagged(stepFlagged(this.files, undefined, 1)),
       reconfirm: () => {
         const text = this.activeText;
         if (text) return text.reconfirmCurrent();
@@ -289,6 +298,41 @@ export class ReviewController {
     if (view.toggleAtCaret()) return true;
     if (view.current < 0 || takesSpace(document.activeElement)) return false;
     void view.toggleCurrent();
+    return true;
+  }
+
+  /** The hunk the focused tab is at: the current one of its view, or of its text. */
+  private hunkPlace(): HunkPlace | undefined {
+    const path = pathOf(this.tabs.active);
+    const text = this.activeText;
+    if (text && path !== undefined) return { path, hunk: text.current };
+    return this.active?.currentHunk();
+  }
+
+  /** Goes to the flagged hunk after or before the current one, across files; says so when there is none. */
+  private stepFlagged(delta: 1 | -1): boolean {
+    if (this.goToFlagged(stepFlagged(this.files, this.hunkPlace(), delta))) return true;
+    session.notice = delta > 0 ? "No further flagged hunk" : "No earlier flagged hunk";
+    return false;
+  }
+
+  /** Shows a hunk in the focused tab, or in the tab of its file when that is not the tab's; answers whether there was one. */
+  private goToFlagged(to: HunkPlace | undefined): boolean {
+    if (!to) return false;
+    const id = this.tabs.active;
+    void (async () => {
+      if (id === CHANGES) {
+        await this.views.get(CHANGES)?.goToFileHunk(to.path, to.hunk);
+      } else if (kindOf(id) === "text") {
+        this.tabs.showText(to.path);
+        await tick(); // a new tab's pane attaches and builds its view
+        this.texts.get(textTab(to.path))?.goToHunk(to.hunk);
+      } else {
+        this.tabs.show(to.path);
+        await tick();
+        await this.views.get(fileTab(to.path))?.goToFileHunk(to.path, to.hunk);
+      }
+    })();
     return true;
   }
 
@@ -402,6 +446,11 @@ export class ReviewController {
       toggleHunk: (revision, path, hunk) =>
         this.editing(
           () => this.changeset.toggleHunk(revision, path, hunk),
+          () => undefined,
+        ),
+      toggleFlag: (revision, path, hunk) =>
+        this.editing(
+          () => this.changeset.toggleFlag(revision, path, hunk),
           () => undefined,
         ),
       toggleItem: (revision, path, kind) =>
@@ -701,6 +750,11 @@ export class ReviewController {
       toggleSeen: (hunk) =>
         void this.editing(
           () => this.changeset.toggleHunk(revision, file.path, hunk),
+          () => undefined,
+        ),
+      toggleFlag: (hunk) =>
+        void this.editing(
+          () => this.changeset.toggleFlag(revision, file.path, hunk),
           () => undefined,
         ),
     };
