@@ -23,6 +23,7 @@ import type { BaseCandidates } from "./backend";
 import { commitToShow, neighbour } from "./commitLens";
 import { keyId } from "./changesetKey";
 import { currentFiles } from "./currentFiles";
+import { isChangesetView } from "./manifestScope";
 import { PendingOpen } from "./pendingOpen";
 import { session } from "./session.svelte";
 import { type Shown, isCurrent } from "./shown";
@@ -135,8 +136,8 @@ class ChangesetStore {
         else if (event.type === "lensChanged") void this.followLens(event.lens);
         // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
         else if (event.type === "reviewChanged" && event.revision === this.manifest?.revision) {
-          if (this.shownCommit !== undefined) this.applyTotals(event.update);
-          else if (!this.range) this.applyReview(event.update);
+          if (isChangesetView(this.manifest, this.shownCommit)) this.applyReview(event.update);
+          else this.applyTotals(event.update);
         } else if (event.type === "reviewStarted" && this.manifest)
           this.manifest = { ...this.manifest, review: event.review };
         else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
@@ -599,14 +600,15 @@ class ChangesetStore {
       ...manifest,
       completion: update.changeset,
       // Only the changeset's own view says how far the changeset as a whole is.
-      changesetCompletion:
-        this.shownCommit === undefined && !this.range ? update.changeset : manifest.changesetCompletion,
+      changesetCompletion: isChangesetView(manifest, this.shownCommit)
+        ? update.changeset
+        : manifest.changesetCompletion,
     };
     for (const listener of this.listeners) listener(update);
     if (manifest.lens === "perCommit" && manifest.commits > 1) void this.loadCommits();
   }
 
-  /** A mark in the changeset's file, which the view on screen does not show: the changeset's progress and the commits' follow. */
+  /** A mark in the changeset's file, which a range or commit on screen does not show: the changeset's progress and the commits' follow. */
   private applyTotals(update: ReviewUpdate) {
     if (!this.manifest) return;
     this.manifest = { ...this.manifest, changesetCompletion: update.changeset };
