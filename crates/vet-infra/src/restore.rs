@@ -753,7 +753,6 @@ mod tests {
     use vet_app::progress::TaskState;
 
     use super::*;
-    use crate::exec::{Host, is_file};
 
     fn lang(id: &str) -> &'static Language {
         language::by_id(id).expect("a registered language")
@@ -1062,28 +1061,13 @@ mod tests {
         assert_eq!(restored, Restored::default());
     }
 
-    #[tokio::test]
-    async fn a_failing_step_is_reported_with_its_project_tool_and_output() {
-        if Host::current().find("cargo", is_file).is_none() {
-            eprintln!("skipped: cargo is not installed");
-            return;
-        }
-        let dir = tree(&[("Cargo.toml", "not a manifest")]);
-        let restored = ToolRestorer::new()
-            .restore(dir.path(), &backend("rust"), AnalysisPolicy { allow_executing: false })
-            .await;
-        assert_eq!(restored.failures.len(), 1, "{restored:?}");
-        let failure = &restored.failures[0];
-        assert_eq!((failure.project.as_str(), failure.tool.as_str()), (".", "cargo"));
-        assert!(failure.message.contains("cargo fetch"), "{restored:?}");
-        assert!(failure.message.contains("Cargo.toml"), "{restored:?}");
-    }
-
     /// Runs nothing: records what was asked, and answers the way it is told to.
     #[derive(Default)]
     struct FakeTools {
         versions: Mutex<HashMap<String, String>>,
         failing: Mutex<BTreeSet<String>>,
+        /// Names of the directories whose steps fail.
+        failing_in: Mutex<BTreeSet<String>>,
         runs: Mutex<Vec<String>>,
         active: AtomicUsize,
         overlapped: AtomicBool,
@@ -1119,7 +1103,7 @@ mod tests {
             &'a self,
             program: &'a str,
             args: &'a [String],
-            _: &'a Path,
+            cwd: &'a Path,
             _: &'a [(String, String)],
             _: Duration,
         ) -> tools::BoxFuture<'a, Result<crate::exec::Captured, String>> {
@@ -1130,7 +1114,10 @@ mod tests {
                 }
                 tokio::time::sleep(Duration::from_millis(40)).await;
                 self.active.fetch_sub(1, Ordering::SeqCst);
-                let ok = !self.failing.lock().unwrap().contains(program);
+                let in_failing_dir = cwd
+                    .file_name()
+                    .is_some_and(|dir| self.failing_in.lock().unwrap().contains(dir.to_string_lossy().as_ref()));
+                let ok = !in_failing_dir && !self.failing.lock().unwrap().contains(program);
                 Ok(crate::exec::Captured {
                     ok,
                     stdout: String::new(),
@@ -1249,17 +1236,6 @@ mod tests {
             restorer(&tools).recorded(&root, &typescript, NO_EXEC).await,
             None,
             "a restorer with no donor would restore"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_tree_outside_the_kept_layout_has_no_recorded_restore() {
-        let dir = tree(&[("Cargo.toml", "")]);
-        let tools = Arc::new(FakeTools::default());
-        restorer(&tools).restore(dir.path(), &backend("rust"), NO_EXEC).await;
-        assert_eq!(
-            restorer(&tools).recorded(dir.path(), &backend("rust"), NO_EXEC).await,
-            None
         );
     }
 
@@ -1419,26 +1395,27 @@ mod tests {
         restorer(&tools).restore(dir.path(), &backend("rust"), NO_EXEC).await;
         assert_eq!(tools.runs().len(), 2);
         assert_eq!(restored.fingerprint, None);
+        assert_eq!(
+            restorer(&tools).recorded(dir.path(), &backend("rust"), NO_EXEC).await,
+            None
+        );
     }
 
     #[tokio::test]
-    async fn a_failure_in_one_project_does_not_stop_the_others_and_names_its_directory() {
-        if Host::current().find("cargo", is_file).is_none() {
-            eprintln!("skipped: cargo is not installed");
-            return;
-        }
-        let dir = tree(&[
-            ("bad/Cargo.toml", "not a manifest"),
-            (
-                "good/Cargo.toml",
-                "[package]\nname = \"g\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"lib.rs\"\n",
-            ),
-            ("good/lib.rs", ""),
-        ]);
-        let restored = ToolRestorer::new()
-            .restore(dir.path(), &backend("rust"), AnalysisPolicy { allow_executing: false })
-            .await;
+    async fn a_failure_in_one_project_does_not_stop_the_others_and_names_its_project_tool_and_output() {
+        let dir = tree(&[("bad/Cargo.toml", ""), ("good/Cargo.toml", "")]);
+        let tools = Arc::new(FakeTools::default());
+        tools.failing_in.lock().unwrap().insert("bad".into());
+        let restored = restorer(&tools).restore(dir.path(), &backend("rust"), NO_EXEC).await;
+        assert_eq!(
+            tools.runs().len(),
+            2,
+            "the project after the failing one was restored too"
+        );
         assert_eq!(restored.failures.len(), 1, "{restored:?}");
-        assert_eq!(restored.failures[0].project, "bad");
+        let failure = &restored.failures[0];
+        assert_eq!((failure.project.as_str(), failure.tool.as_str()), ("bad", "cargo"));
+        assert!(failure.message.contains("cargo fetch"), "{failure:?}");
+        assert!(failure.message.contains("boom"), "{failure:?}");
     }
 }

@@ -739,6 +739,7 @@ mod tests {
         assert_eq!(trees.kept(snapshot(2), POLICY).await, None);
         assert_eq!(trees.clear().await.removed, 1, "looking took no lock");
         assert_eq!(trees.kept(snapshot(1), POLICY).await, None);
+        assert!(acquire(&trees, 1, 1).await.built, "asked for again, it is built again");
     }
 
     #[tokio::test]
@@ -927,15 +928,6 @@ mod tests {
         drop(held);
         assert_eq!(trees.collect(now).await.removed, 1);
         assert!(!exists(data.path(), 1));
-    }
-
-    #[tokio::test]
-    async fn a_tree_that_a_collection_took_is_built_again_when_asked_for() {
-        let data = tempfile::tempdir().unwrap();
-        let trees = trees(data.path());
-        drop(acquire(&trees, 1, 1).await);
-        assert_eq!(trees.clear().await.removed, 1);
-        assert!(acquire(&trees, 1, 1).await.built);
     }
 
     #[tokio::test]

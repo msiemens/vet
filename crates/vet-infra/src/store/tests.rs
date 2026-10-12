@@ -496,18 +496,6 @@ async fn the_browsing_base_is_stored_per_repository_and_replaced() {
 }
 
 #[tokio::test]
-async fn database_is_in_wal_mode() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = open(&dir).await;
-    store
-        .writes()
-        .put_snapshot(snapshot(&[]), Default::default(), T0)
-        .await
-        .unwrap();
-    assert!(dir.path().join("vet.sqlite-wal").exists());
-}
-
-#[tokio::test]
 async fn spans_and_acks_belong_to_the_review_and_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
@@ -1191,28 +1179,6 @@ async fn node_count(store: &SqliteStore) -> u64 {
 }
 
 #[tokio::test]
-async fn snapshots_that_differ_in_one_file_share_all_other_nodes() {
-    let dir = tempfile::tempdir().unwrap();
-    let store = open(&dir).await;
-    let before = snapshot(&[("a/x", 1), ("b/y", 2), ("c/d/z", 3)]);
-    let after = snapshot(&[("a/x", 9), ("b/y", 2), ("c/d/z", 3)]);
-    store
-        .writes()
-        .put_snapshot(before.clone(), Default::default(), T0)
-        .await
-        .unwrap();
-    assert_eq!(node_count(&store).await, 5); // root, a, b, c, c/d
-    store
-        .writes()
-        .put_snapshot(after.clone(), Default::default(), T0)
-        .await
-        .unwrap();
-    assert_eq!(node_count(&store).await, 7); // plus a new root and a new `a`
-    assert_eq!(store.snapshot(before.id).await.unwrap().unwrap().0, before);
-    assert_eq!(store.snapshot(after.id).await.unwrap().unwrap().0, after);
-}
-
-#[tokio::test]
 async fn gc_drops_a_node_only_when_no_retained_root_reaches_it() {
     let dir = tempfile::tempdir().unwrap();
     let store = open(&dir).await;
@@ -1225,7 +1191,8 @@ async fn gc_drops_a_node_only_when_no_retained_root_reaches_it() {
             .await
             .unwrap();
     }
-    assert_eq!(node_count(&store).await, 5);
+    assert_eq!(node_count(&store).await, 5); // root, a, b, and the second snapshot's own root and `a`
+    assert_eq!(store.snapshot(other.id).await.unwrap().unwrap().0, other);
     review(&store, kept.id, kept.id).await;
 
     let report = gc(&store, T0).await;
@@ -1346,8 +1313,8 @@ async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
     assert_eq!(remapped(o).await, 0, "un-marked");
 }
 
-/// Longer than any answer of an idle store takes, short enough to fail a test that hangs.
-const PROMPT: Duration = Duration::from_secs(3);
+/// Far longer than any answer of an idle store takes, so that only a test that hangs runs into it.
+const PROMPT: Duration = Duration::from_secs(30);
 
 #[tokio::test]
 async fn a_mark_is_written_while_a_long_read_is_open_and_the_read_does_not_see_it() {

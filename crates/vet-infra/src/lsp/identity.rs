@@ -572,19 +572,25 @@ mod tests {
         let setup = Setup::new();
         let identities = setup.identities();
         let first = setup.identity(&identities).await;
+        assert_eq!(first.label, "rust-analyzer 1.0");
         let stamp = std::fs::metadata(setup.program()).unwrap().modified().unwrap();
 
         // Other content of the same size under the same modification time: only a
-        // memo that is not consulted would notice it.
+        // memo that is not consulted would notice it. The version it prints is not asked for again either.
         setup.write_program(&SCRIPT.replace("# a", "# b"));
+        std::fs::write(setup.dir.path().join("version.txt"), "rust-analyzer 2.0").unwrap();
         let program = std::fs::File::options().write(true).open(setup.program()).unwrap();
         program.set_modified(stamp).unwrap();
-        assert_eq!(setup.identity(&identities).await.fingerprint, first.fingerprint);
+        let unchanged = setup.identity(&identities).await;
+        assert_eq!(unchanged.fingerprint, first.fingerprint);
+        assert_eq!(unchanged.label, "rust-analyzer 1.0");
         assert_ne!(setup.fingerprint().await, first.fingerprint, "a fresh memo reads it");
 
-        // Its modification time moves: it is read again.
+        // Its modification time moves: it is read again, and the version asked for again.
         program.set_modified(stamp + Duration::from_secs(5)).unwrap();
-        assert_ne!(setup.identity(&identities).await.fingerprint, first.fingerprint);
+        let again = setup.identity(&identities).await;
+        assert_ne!(again.fingerprint, first.fingerprint);
+        assert_eq!(again.label, "rust-analyzer 2.0");
     }
 
     #[tokio::test]
@@ -619,24 +625,5 @@ mod tests {
         identities.renewed(&rust);
         assert_eq!(probe().await, "two", "a new generation");
         assert_eq!(runs(), 2);
-    }
-
-    #[tokio::test]
-    async fn an_unchanged_binary_is_not_asked_for_its_version_again() {
-        let setup = Setup::new();
-        let identities = setup.identities();
-        let first = setup.identity(&identities).await;
-        assert_eq!(first.label, "rust-analyzer 1.0");
-
-        let stamp = std::fs::metadata(setup.program()).unwrap().modified().unwrap();
-        std::fs::write(setup.dir.path().join("version.txt"), "rust-analyzer 2.0").unwrap();
-        assert_eq!(setup.identity(&identities).await.label, "rust-analyzer 1.0");
-
-        // Touching the binary, with the same content, makes the version be asked for again.
-        let program = std::fs::File::options().write(true).open(setup.program()).unwrap();
-        program.set_modified(stamp + Duration::from_secs(5)).unwrap();
-        let again = setup.identity(&identities).await;
-        assert_eq!(again.label, "rust-analyzer 2.0");
-        assert_ne!(again.fingerprint, first.fingerprint);
     }
 }

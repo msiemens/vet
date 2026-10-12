@@ -185,6 +185,19 @@ async fn candidates_list_branches_and_recent_commits_newest_first() {
     assert!(c.commits[0].time > 1_600_000_000);
 
     assert_eq!(repo.base_candidates(2).await.unwrap().commits.len(), 2);
+
+    // What a chip shows for one commit and for the branches.
+    let info = repo.commit_info(&fx.m1).await.unwrap();
+    assert_eq!((info.subject.as_str(), info.author.as_str()), ("m1", "Tess"));
+    assert!(info.time > 1_600_000_000);
+    let names: Vec<_> = repo
+        .branches()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|b| (b.name, b.current))
+        .collect();
+    assert_eq!(names, [("feature".to_string(), true), ("main".to_string(), false)]);
 }
 
 #[tokio::test]
@@ -219,25 +232,6 @@ async fn first_parent_distance_and_commits_behind_follow_the_history() {
         1,
         "counted up to the cap"
     );
-}
-
-#[tokio::test]
-async fn commits_and_branches_carry_what_a_chip_shows() {
-    let fx = fixture();
-    let repo = GixRepo::new(fx.dir.path());
-
-    let info = repo.commit_info(&fx.m1).await.unwrap();
-    assert_eq!((info.subject.as_str(), info.author.as_str()), ("m1", "Tess"));
-    assert!(info.time > 1_600_000_000);
-
-    let names: Vec<_> = repo
-        .branches()
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|b| (b.name, b.current))
-        .collect();
-    assert_eq!(names, [("feature".to_string(), true), ("main".to_string(), false)]);
 }
 
 #[tokio::test]

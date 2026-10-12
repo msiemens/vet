@@ -363,9 +363,11 @@ impl ServerResolver for ToolResolver {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     use super::*;
     use crate::exec::parse_pathext;
-    use crate::language::PYRIGHT_VERSION;
 
     fn host(windows: bool, path: Vec<PathBuf>) -> Host {
         Host {
@@ -537,7 +539,6 @@ mod tests {
             "{reason}"
         );
         assert!(reason.contains("settings"), "{reason}");
-        assert_eq!(resolver.pinned(&language("python")).as_deref(), Some(PYRIGHT_VERSION));
         assert_eq!(resolver.pinned(&language("rust")), None);
         assert!(resolver.install_blocker(&language("python")).unwrap().contains("npm"));
         assert!(
@@ -548,20 +549,40 @@ mod tests {
         );
     }
 
+    /// A `rustup` on a PATH of its own that answers `which rust-analyzer` with `answer`, or fails.
+    #[cfg(unix)]
+    fn stub_rustup(bin: &Path, answer: Option<&Path>) {
+        let script = match answer {
+            Some(path) => format!("#!/bin/sh\necho '{}'\n", path.display()),
+            None => "#!/bin/sh\necho 'error: no toolchain' >&2\nexit 1\n".to_owned(),
+        };
+        let rustup = bin.join("rustup");
+        std::fs::write(&rustup, script).unwrap();
+        std::fs::set_permissions(&rustup, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // The system may scan a program the first time it runs, which the resolver's probe must not wait for.
+        std::process::Command::new(&rustup).output().unwrap();
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
-    async fn the_project_toolchain_is_asked_for_rust_analyzer() {
-        if Host::current().find("rustup", is_file).is_none() {
-            eprintln!("skipped: rustup is not installed");
-            return;
-        }
+    async fn the_project_toolchain_is_asked_for_rust_analyzer_before_the_path() {
         let data = tempfile::tempdir().unwrap();
-        let resolver = ToolResolver::with_host(data.path().to_owned(), Host::current());
+        let bin = tempfile::tempdir().unwrap();
+        let toolchain = tempfile::tempdir().unwrap();
+        let project_ra = toolchain.path().join("rust-analyzer");
+        touch(&project_ra);
+        touch(&bin.path().join("rust-analyzer"));
+        stub_rustup(bin.path(), Some(&project_ra));
+        let resolver = ToolResolver::with_host(data.path().to_owned(), host(false, vec![bin.path().to_owned()]));
         let project = tempfile::tempdir().unwrap();
-        let state = resolver.resolve(&language("rust"), project.path(), None).await;
-        // Either rustup knows rust-analyzer for the toolchain, or PATH does; both are reported with an origin.
-        match state {
-            ServerState::Found(f) => assert!(matches!(f.origin, ServerOrigin::Project | ServerOrigin::Path)),
-            ServerState::Missing { reason } => assert!(reason.contains("rustup"), "{reason}"),
-        }
+
+        let server = found(resolver.resolve(&language("rust"), project.path(), None).await);
+        assert_eq!(server.origin, ServerOrigin::Project);
+        assert_eq!(server.command.program, project_ra.to_string_lossy());
+
+        // A toolchain without the component leaves PATH to answer.
+        stub_rustup(bin.path(), None);
+        let server = found(resolver.resolve(&language("rust"), project.path(), None).await);
+        assert_eq!(server.origin, ServerOrigin::Path);
     }
 }

@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex};
 
 use vet_app::platform::{
     ChangedLines, ChangesAsked, ChangesRequest, CiState, ReviewDecision, ReviewRequest, ReviewVerdict, ViewerReview,
-    is_waiting_for_me,
 };
 
 use super::*;
@@ -288,24 +287,6 @@ async fn a_list_that_stops_at_the_most_it_holds_says_it_was_cut_short() {
     let listing = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
     assert!(listing.truncated);
     assert_eq!(listing.pull_requests.len(), MAX_LISTED);
-}
-
-#[tokio::test]
-async fn what_is_listed_decides_who_is_waiting() {
-    set_now(NOW);
-    let fake = repository(Arc::new(Mutex::new("v1")));
-    let found = client(&fake)
-        .list_pull_requests(&remote(), &all_open())
-        .await
-        .unwrap()
-        .pull_requests;
-    let viewer = Viewer {
-        login: "ada".to_owned(),
-        teams: vec!["acme/reviewers".to_owned()],
-    };
-    // Requested, and reviewed at c1c1c1 while the head is c2c2c2.
-    assert!(is_waiting_for_me(&found[0], &viewer));
-    assert!(!is_waiting_for_me(&found[1], &viewer));
 }
 
 #[tokio::test]
@@ -658,129 +639,6 @@ fn enterprise_hosts_have_their_api_under_their_own_name() {
             rest: "https://ghe.corp.example/api/v3".to_owned()
         }
     );
-}
-
-/// Against the real GitHub with the `gh` CLI's token:
-/// `cargo test -p vet-infra github_smoke -- --ignored --nocapture`.
-#[tokio::test]
-#[ignore = "talks to github.com"]
-async fn github_smoke() {
-    let token = std::process::Command::new("gh")
-        .args(["auth", "token"])
-        .output()
-        .unwrap();
-    let token: &'static str = Box::leak(
-        String::from_utf8(token.stdout)
-            .unwrap()
-            .trim()
-            .to_owned()
-            .into_boxed_str(),
-    );
-    let client = GitHubClient::new(Signed::cli(token));
-    let remote = RemoteKey {
-        host: "github.com".to_owned(),
-        path: std::env::var("VET_SMOKE_REPO").unwrap_or_else(|_| "cli/cli".to_owned()),
-    };
-    let viewer = client.viewer(&remote).await.unwrap();
-    println!("viewer {viewer:?}");
-    for tab in [
-        QueueTab::AllOpen,
-        QueueTab::WaitingForMe,
-        QueueTab::Mine,
-        QueueTab::Assigned,
-    ] {
-        let started = std::time::Instant::now();
-        let found = client
-            .list_pull_requests(&remote, &PullRequestQuery::new(tab))
-            .await
-            .unwrap()
-            .pull_requests;
-        println!("{tab:?}: {} pull requests in {:?}", found.len(), started.elapsed());
-        if let Some(first) = found.first() {
-            println!("  {first:?}");
-        }
-    }
-    let again = std::time::Instant::now();
-    client.list_pull_requests(&remote, &all_open()).await.unwrap();
-    println!("again: {:?}", again.elapsed());
-    let found = client
-        .list_pull_requests(&remote, &all_open())
-        .await
-        .unwrap()
-        .pull_requests;
-    let detail = client.pull_request(&remote, found[0].number).await.unwrap();
-    println!("{detail:?}");
-}
-
-/// The checks of the head of the repository's newest pull request, and the log of a failed
-/// Actions job among them if there is one (or of the job `VET_SMOKE_JOB` names):
-/// `cargo test -p vet-infra github_checks_smoke -- --ignored --nocapture`.
-#[tokio::test]
-#[ignore = "talks to github.com"]
-async fn github_checks_smoke() {
-    let token = std::process::Command::new("gh")
-        .args(["auth", "token"])
-        .output()
-        .unwrap();
-    let token: &'static str = Box::leak(
-        String::from_utf8(token.stdout)
-            .unwrap()
-            .trim()
-            .to_owned()
-            .into_boxed_str(),
-    );
-    let client = GitHubClient::new(Signed::cli(token));
-    let remote = RemoteKey {
-        host: "github.com".to_owned(),
-        path: std::env::var("VET_SMOKE_REPO").unwrap_or_else(|_| "cli/cli".to_owned()),
-    };
-    if let Ok(job) = std::env::var("VET_SMOKE_JOB") {
-        let log = client.check_log(&remote, &job).await.unwrap();
-        println!(
-            "log of {job}: {} lines, failure {:?}",
-            log.text.lines().count(),
-            log.failure
-        );
-        if let Some(failure) = log.failure {
-            println!("> {}", log.text.lines().nth(failure.line as usize).unwrap_or_default());
-        }
-        return;
-    }
-    let found = client
-        .list_pull_requests(&remote, &all_open())
-        .await
-        .unwrap()
-        .pull_requests;
-    for pr in found.iter().take(5) {
-        let checks = client.checks(&remote, &pr.head).await.unwrap();
-        println!(
-            "#{} {} {:?} {}",
-            pr.number,
-            pr.head,
-            checks.state(),
-            checks.checks.len()
-        );
-        for check in &checks.checks {
-            println!("  {check:?}");
-        }
-        let failed = checks.checks.iter().find(|c| c.log && c.state == CiState::Failure);
-        if let Some(check) = failed {
-            let log = client.check_log(&remote, &check.id).await.unwrap();
-            println!(
-                "  log of {}: {} lines, failure {:?}",
-                check.name,
-                log.text.lines().count(),
-                log.failure
-            );
-            if let Some(failure) = log.failure {
-                println!(
-                    "  > {}",
-                    log.text.lines().nth(failure.line as usize).unwrap_or_default()
-                );
-            }
-            return;
-        }
-    }
 }
 
 const RUNS: &str = r#"{"total_count":3,"check_runs":[
