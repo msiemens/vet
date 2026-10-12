@@ -165,6 +165,7 @@ fn submenu(
 }
 
 /// The menu id of the Window menu, which the OS lists the open windows in.
+#[cfg(target_os = "macos")]
 const WINDOW_MENU: &str = "window";
 
 /// Replaces the menu bar (macOS) with the UI's definition. The UI includes the Edit menu as
@@ -182,6 +183,7 @@ pub fn set_menu(app: AppHandle, items: Vec<MenuEntry>) -> Result<(), String> {
                 children,
                 Surface::MenuBar,
             )?;
+            #[cfg(target_os = "macos")]
             if menu.id == WINDOW_MENU {
                 built.set_as_windows_menu_for_nsapp()?;
             }
