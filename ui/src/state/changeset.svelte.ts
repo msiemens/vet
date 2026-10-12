@@ -23,7 +23,7 @@ import type { BaseCandidates } from "./backend";
 import { commitToShow, neighbour } from "./commitLens";
 import { keyId } from "./changesetKey";
 import { currentFiles } from "./currentFiles";
-import { isChangesetView } from "./manifestScope";
+import { isChangesetView, withChangesetBase } from "./manifestScope";
 import { PendingOpen } from "./pendingOpen";
 import { session } from "./session.svelte";
 import { type Shown, isCurrent } from "./shown";
@@ -141,7 +141,8 @@ class ChangesetStore {
         } else if (event.type === "reviewStarted" && this.manifest)
           this.manifest = { ...this.manifest, review: event.review };
         else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
-        else if (event.type === "baseChanged" && this.manifest) this.manifest = { ...this.manifest, base: event.base };
+        else if (event.type === "baseChanged" && this.manifest)
+          this.manifest = withChangesetBase(this.manifest, event.base, this.shownCommit);
       }),
     );
     session.onResync(() => {
