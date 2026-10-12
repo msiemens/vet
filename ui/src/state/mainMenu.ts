@@ -47,8 +47,6 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
   const settings = { command: "app.settings" };
   const about = { command: "app.about" };
   const quit = { command: "app.quit", label: s.native ? "Quit Vet" : undefined };
-  // The screens that show hunks and tabs; the queue covers them.
-  const inReview = s.screen === "review" ? undefined : "Open the Review screen first";
 
   const file: MenuSpec = [
     ...openItem,
@@ -58,8 +56,8 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
       items: s.recent.map(({ path, name }) => ({ command: "file.openRecent", arg: path, label: name, detail: path })),
     },
     "-",
-    { command: "tab.close", disabled: inReview },
-    { command: "tab.closeOthers", disabled: inReview },
+    { command: "tab.close" },
+    { command: "tab.closeOthers" },
     ...(s.native ? [] : (["-", settings, "-", quit] as MenuSpec)),
   ];
   const view: MenuSpec = [
@@ -78,15 +76,14 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
       ],
     },
     "-",
-    { command: "tab.previous", disabled: inReview },
-    { command: "tab.next", disabled: inReview },
+    { command: "tab.previous" },
+    { command: "tab.next" },
     "-",
     ...MODE_ITEMS.map(({ mode, label }) => ({
       command: modeCommand(mode),
       label,
       checked: s.viewMode === mode,
       radio: true as const,
-      disabled: mode === "file" ? inReview : undefined,
     })),
     "-",
     { command: "view.softWrap", checked: s.softWrap },
@@ -113,11 +110,11 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     { command: "changeset.refresh" },
   ];
   const review: MenuSpec = [
-    { command: "review.toggleSeen", disabled: inReview },
-    { command: "review.reconfirm", disabled: inReview },
+    { command: "review.toggleSeen" },
+    { command: "review.reconfirm" },
     { command: "review.reconfirmAll" },
     "-",
-    { command: "review.comment", disabled: inReview },
+    { command: "review.comment" },
     { command: "review.commentOnChangeset" },
     "-",
     { command: "review.post", label: s.batchedReview ? "Submit Review…" : undefined },
@@ -140,16 +137,16 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     { command: "review.finish" },
   ];
   const navigate: MenuSpec = [
-    { command: "review.nextHunk", disabled: inReview },
-    { command: "review.previousHunk", disabled: inReview },
-    { command: "review.nextCommit", disabled: inReview },
-    { command: "review.previousCommit", disabled: inReview },
+    { command: "review.nextHunk" },
+    { command: "review.previousHunk" },
+    { command: "review.nextCommit" },
+    { command: "review.previousCommit" },
     "-",
-    { command: "review.jumpToSource", disabled: inReview },
-    { command: "review.goToDefinition", disabled: inReview },
-    { command: "review.changeCard", disabled: inReview },
+    { command: "review.jumpToSource" },
+    { command: "review.goToDefinition" },
+    { command: "review.changeCard" },
     "-",
-    { command: "view.revealFile", disabled: inReview },
+    { command: "view.revealFile" },
   ];
   const help: MenuSpec = [
     { command: "help.keymap" },

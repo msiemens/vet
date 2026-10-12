@@ -30,6 +30,8 @@ export interface CommandContext {
   /** A review has started and can be finished. */
   reviewOpen: boolean;
   canQuit: boolean;
+  /** The queue screen covers the review, whose views and tabs stay mounted behind it. */
+  queueShown?: boolean;
   /** A changeset is on view. */
   changesetOpen?: boolean;
   /** The review view shows a range of versions rather than the changeset. */

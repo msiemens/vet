@@ -336,6 +336,12 @@ export class ReviewController {
     await this.openLocation(symbol.id.path, symbol.span.start.line, side, symbol.span);
   }
 
+  /** Jump to Source for a changed symbol: its file's text at the symbol. A removed symbol has no text, so it is shown where it is reviewed. */
+  async jumpToSymbol(changed: ChangedSymbol) {
+    if (changed.change === "removed") await this.revealSymbol(changed);
+    else await this.openSource(changed.symbol.id.path, changed.symbol.span.start.line);
+  }
+
   /** Scrolls the Changes tab to a changed file; answers whether `path` is one. */
   async revealInChanges(path: string): Promise<boolean> {
     // The Changes tab may show only some of the changed files.

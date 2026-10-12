@@ -28,11 +28,20 @@ export interface ViewActions {
 
 const NO_DIFF = "Open the Changes tab or a changed file";
 const NOT_BY_COMMIT = "The changeset is not reviewed by commit";
+const QUEUE_SHOWN = "Open the Review screen first";
+
+/** The commands, available only on the Review screen: the queue covers the review's views and tabs, whose keys it must not take. */
+const onReviewScreen = (commands: Command<CommandContext>[]): Command<CommandContext>[] =>
+  commands.map((command) => ({
+    ...command,
+    enabled: (c, arg) => !c.queueShown && (command.enabled?.(c, arg) ?? true),
+    disabledReason: (c, arg) => (c.queueShown ? QUEUE_SHOWN : command.disabledReason?.(c, arg)),
+  }));
 
 export function viewCommands(a: ViewActions): Command<CommandContext>[] {
   const inView = (c: CommandContext) => c.diffView;
   const byCommit = (c: CommandContext) => !!c.byCommit;
-  return [
+  return onReviewScreen([
     {
       id: "review.nextHunk",
       label: "Next Hunk",
@@ -126,7 +135,7 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       disabledReason: () => "Open the tab of a changed file",
       run: () => a.showFileText(),
     },
-  ];
+  ]);
 }
 
 /** What the commands of files and tabs do; the subject is the context's `target` and `tab`. */
@@ -148,7 +157,12 @@ export interface FileActions {
 export function fileCommands(a: FileActions): Command<CommandContext>[] {
   // A log tab has no path: what it shows is a check run.
   const pathOf = (c: CommandContext) => c.target?.path ?? (c.tab?.kind === "log" ? undefined : c.tab?.path);
-  return [
+  // The paths' commands also serve the queue's rows; tabs and the tree do not.
+  const gated = (commands: Command<CommandContext>[]) => {
+    const tabs = onReviewScreen(commands.filter((c) => /^(tab|view)\./.test(c.id)));
+    return commands.map((c) => tabs.find((t) => t.id === c.id) ?? c);
+  };
+  return gated([
     {
       id: "path.copy",
       label: "Copy Path",
@@ -250,7 +264,7 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
       enabled: (c) => !!c.editor?.selection,
       run: (c) => c.editor && a.copyText(c.editor.selectedText()),
     },
-  ];
+  ]);
 }
 
 /** The context menu of a file or folder row in the file tree. */

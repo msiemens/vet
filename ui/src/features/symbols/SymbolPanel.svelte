@@ -8,7 +8,7 @@
   import type { OpenLocation } from "./symbolList";
 
   /** The panel shows what `symbols` holds; the owner says where a location opens. */
-  let { onopen, onreveal }: { onopen: OpenLocation; onreveal: (symbol: ChangedSymbol) => void } = $props();
+  let { onopen, onjump }: { onopen: OpenLocation; onjump: (symbol: ChangedSymbol) => void } = $props();
 
   const MIN_LIST = 90;
   const MIN_DETAIL = 80;
@@ -24,7 +24,7 @@
     style:flex={listHeight === undefined ? undefined : `none`}
     style:height={listHeight === undefined ? undefined : `${listHeight}px`}
   >
-    <SymbolList {onreveal} />
+    <SymbolList {onjump} />
   </div>
   <div class="divider">
     <Splitter

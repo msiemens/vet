@@ -11,8 +11,8 @@
   import { symbols } from "../../state/symbols.svelte";
   import { containerOf, fileEntries, nameOf, rowKeys, searchEntries } from "./symbolList";
 
-  /** A double click or Enter: show the symbol where it is reviewed. */
-  let { onreveal }: { onreveal: (symbol: ChangedSymbol) => void } = $props();
+  /** A double click or Enter: jump to the symbol's source. */
+  let { onjump }: { onjump: (symbol: ChangedSymbol) => void } = $props();
 
   const changed = $derived(symbols.changed);
   const search = new SpeedSearch();
@@ -36,7 +36,7 @@
     element: () => list,
     items: () => flat,
     single: (s) => symbols.select(s),
-    double: (s) => onreveal(s),
+    double: (s) => onjump(s),
     highlight: { get: () => highlighted, set: (i) => (highlighted = i) },
     reveal: (i) =>
       void tick().then(() =>

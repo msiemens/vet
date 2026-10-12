@@ -202,7 +202,7 @@ void test("without a project the same items are there, disabled, and the ones th
 });
 
 void test("on the queue screen the items that act on the review's views are disabled and say so", () => {
-  const items = menuOf({ screen: "queue" }, working);
+  const items = menuOf({ screen: "queue" }, { ...working, queueShown: true });
   for (const id of [
     "tab.close",
     "tab.previous",
@@ -224,6 +224,24 @@ void test("on the queue screen the items that act on the review's views are disa
   }
   const onReview = menuOf({ screen: "review" }, working);
   assert.equal(submenu(onReview, "navigate").find((i) => i.id === "review.nextHunk")?.enabled, undefined);
+});
+
+void test("the review's keys run on the Review screen and not while the Queue screen covers it", () => {
+  const keys: [string, Partial<KeyEventLike>, string][] = [
+    ["Next Hunk", { key: "ArrowDown", code: "ArrowDown", ctrlKey: true, altKey: true }, "step 1"],
+    ["Jump to Source", { key: "F4", code: "F4" }, "jumpToSource"],
+    ["Toggle Seen", { key: " ", code: "Space" }, "toggleSeen"],
+    ["Next Tab", { key: "ArrowRight", code: "ArrowRight", altKey: true }, "stepTab 1"],
+    ["File Text", { key: "#", code: "Digit3", altKey: true, shiftKey: true }, "showFileText"],
+  ];
+  const withTab = { ...working, tab: { kind: "changes" as const } };
+  for (const [name, init, call] of keys) {
+    calls.length = 0;
+    assert.equal(registryFor("Ctrl", { ...withTab, queueShown: true }).dispatch(press(init)), false, name);
+    assert.deepEqual(calls, [], name);
+    assert.equal(registryFor("Ctrl", { ...withTab, queueShown: false }).dispatch(press(init)), true, name);
+    assert.deepEqual(calls, [call], name);
+  }
 });
 
 const press = (init: Partial<KeyEventLike>, inField = false) =>

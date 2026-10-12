@@ -257,6 +257,7 @@
   const stopContext = commands.provide(() => ({
     repoOpen: !!session.repo,
     reviewOpen,
+    queueShown: screen === "queue",
     canQuit,
     changesetOpen: !!session.repo && !!changeset.manifest,
     rangeShown: !!range,
@@ -529,7 +530,7 @@
       >
         {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel
               onopen={openLocation}
-              onreveal={(symbol) => void controller?.revealSymbol(symbol)}
+              onjump={(symbol) => void controller?.jumpToSymbol(symbol)}
             />{/if}{/snippet}
         {#snippet bottom({ selected, select })}
           {#if timelineOpen}
