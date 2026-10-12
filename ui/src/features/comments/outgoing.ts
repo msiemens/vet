@@ -7,7 +7,7 @@ import type { Thread } from "../../generated/Thread";
 import type { ThreadMessage } from "../../generated/ThreadMessage";
 import { platformName } from "../../lib/platformName.ts";
 import type { MenuItem } from "../../lib/ui/menuItem.ts";
-import { inOrder, rowTitle } from "./groups.ts";
+import { inOrder } from "./groups.ts";
 
 export interface OutgoingComment {
   thread: Thread;
@@ -63,10 +63,6 @@ export function voteChoices(info: Pick<PullRequestInfo, "traits" | "pendingVote"
   const chosen = info.pendingVote?.verdict ?? info.viewerVerdict;
   return info.traits.verdicts.map(({ id, label }) => ({ id, label, checked: id === chosen, radio: true }));
 }
-
-/** Where a comment is: `job.rs:12`, `job.rs` for one on the file, or the pull request. */
-export const outgoingPlace = (thread: Thread): string =>
-  thread.kind === "changeset" ? "on the pull request" : rowTitle(thread);
 
 /** Where posting sends the comments: `to #123 on GitHub`. */
 export const destination = (info: Pick<PullRequestInfo, "number" | "platform">): string =>

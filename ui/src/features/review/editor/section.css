@@ -46,9 +46,6 @@
   font-size: var(--fs-mono);
   color: var(--text);
 }
-.file > header .path .dir {
-  color: var(--text-3);
-}
 .file > header .delta,
 .file > header .count {
   flex: none;

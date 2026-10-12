@@ -207,8 +207,9 @@ textarea.field {
   flex: 1;
 }
 
-/* A path on one line that gives way in its folders (`.dir`, cut with an ellipsis) before its file
-   name (`.name`), so the name stays readable; put the full path in `title`. */
+/* A path or qualified name on one line: the leading part (`.dir`, the folders or the qualifier) is
+   dimmed like a signature's qualifiers and gives way with an ellipsis before the last segment
+   (`.name`), so that stays readable; put the full text in `title`. */
 .path-text {
   display: flex;
   min-width: 0;
@@ -219,6 +220,7 @@ textarea.field {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text-3);
 }
 .path-text > .name {
   flex: none;

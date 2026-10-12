@@ -11,6 +11,7 @@
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import Marked from "../../lib/ui/Marked.svelte";
+  import PathText from "../../lib/ui/PathText.svelte";
   import type { CommitUnit } from "../../generated/CommitUnit";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
@@ -321,7 +322,7 @@
   >
     <span class="chev"><Icon name={open ? "open" : "closed"} size={10} /></span>
     <FileIcon {name} folder {open} />
-    <span class="name"><Marked text={name} ranges={hit.ranges} /></span>
+    <span class="name chain"><PathText path={name} title={path} ranges={hit.ranges} /></span>
     {#if entry?.changed}<span class="mark" title="Contains changes"></span>{/if}
   </button>
 {/snippet}
@@ -543,6 +544,9 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .chain {
+    display: flex;
   }
   .mark {
     flex: none;

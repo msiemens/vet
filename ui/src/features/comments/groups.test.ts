@@ -11,7 +11,7 @@ import {
   openedBy,
   placeLabel,
   preview,
-  rowTitle,
+  threadPlace,
   shown,
 } from "./groups.ts";
 
@@ -63,10 +63,13 @@ void test("a long list is cut after a few rows and says how many more there are"
   assert.deepEqual(shown([1, 2, 3], false), { rows: [1, 2, 3], more: 0 });
 });
 
-void test("a row is titled by file and line, the file alone or the changeset", () => {
-  assert.equal(rowTitle(thread(1, { path: "src/job.rs" })), "job.rs:5");
-  assert.equal(rowTitle(thread(1, { kind: "file", path: "src/job.rs", location: null, original: null })), "job.rs");
-  assert.equal(rowTitle(thread(1, { kind: "changeset", path: null, location: null, original: null })), "Changeset");
+void test("a thread is placed in its file with the line after the name, the file alone, or nowhere for the changeset", () => {
+  assert.deepEqual(threadPlace(thread(1, { path: "src/job.rs" })), { path: "src/job.rs", suffix: ":5" });
+  assert.deepEqual(threadPlace(thread(1, { kind: "file", path: "src/job.rs", location: null, original: null })), {
+    path: "src/job.rs",
+    suffix: "",
+  });
+  assert.equal(threadPlace(thread(1, { kind: "changeset", path: null, location: null, original: null })), undefined);
 });
 
 void test("on a platform a thread counts the messages that wait for the review and names who else opened it", () => {

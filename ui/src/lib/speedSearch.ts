@@ -129,6 +129,13 @@ export function bestMatch(query: string, texts: readonly string[]): number {
   return best;
 }
 
+/** The parts of `ranges` (merged, sorted) inside `[from, to)`, relative to `from`. */
+export function sliceRanges(ranges: readonly Range[], from: number, to: number): Range[] {
+  return ranges
+    .filter(([start, end]) => start < to && end > from)
+    .map(([start, end]) => [Math.max(start, from) - from, Math.min(end, to) - from]);
+}
+
 /** `text` cut into runs, each marked whether it lies in one of the (merged, sorted) `ranges`. */
 export function highlightRuns(text: string, ranges: readonly Range[]): { text: string; hit: boolean }[] {
   const runs: { text: string; hit: boolean }[] = [];

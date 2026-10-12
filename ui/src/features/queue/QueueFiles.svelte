@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { FileChange } from "../../generated/FileChange";
-  import { basename, dirname } from "../../lib/paths";
   import { ListNav } from "../../lib/ui/listNav";
   import Meter from "../../lib/ui/Meter.svelte";
+  import PathText from "../../lib/ui/PathText.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
 
   let {
@@ -49,8 +49,7 @@
     tabindex="-1"
     onclick={(e) => nav.click(e, index)}
   >
-    <span class="name">{basename(path)}</span>
-    <span class="mono dir">{dirname(path)}</span>
+    <span class="path"><PathText {path} /></span>
     {#if file}
       <span class="mono delta"
         ><span class="add">+{file.delta.added}</span> <span class="del">−{file.delta.removed}</span></span
@@ -102,17 +101,10 @@
   .list:focus-within .file.cur {
     background: var(--select);
   }
-  .name {
-    flex: none;
-  }
-  .dir {
+  .path {
     flex: 1;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-3);
-    font-size: var(--fs-mono-s);
+    display: flex;
   }
   .delta {
     font-size: var(--fs-mono-s);

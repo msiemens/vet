@@ -4,7 +4,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
-  import { groupThreads, preview, rowTitle } from "../comments";
+  import { groupThreads, preview, ThreadPlace } from "../comments";
 
   let {
     threads,
@@ -75,7 +75,7 @@
               />{/if}</span
           >
           <span class="preview">{preview(thread)}</span>
-          <span class="mono place">{rowTitle(thread)}</span>
+          <span class="mono place"><ThreadPlace {thread} /></span>
         </button>
       {/each}
     </section>
@@ -134,7 +134,10 @@
     color: var(--text-3);
   }
   .place {
-    color: var(--text-3);
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 50%;
+    display: flex;
     font-size: var(--fs-mono-s);
   }
   .empty {

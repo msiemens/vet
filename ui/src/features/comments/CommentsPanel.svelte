@@ -13,19 +13,11 @@
   import { attachMenu } from "./commentCommands";
   import { changesetThreads, draftComments, reviewThreads } from "./conversation";
   import ConversationList from "./ConversationList.svelte";
-  import {
-    RESOLVED_SHOWN,
-    candidates,
-    detachedReason,
-    draftCount,
-    groupThreads,
-    preview,
-    rowTitle,
-    shown,
-  } from "./groups";
+  import { RESOLVED_SHOWN, candidates, detachedReason, draftCount, groupThreads, preview, shown } from "./groups";
   import PullRequestBlock from "./PullRequestBlock.svelte";
   import SubmitReview from "./SubmitReview.svelte";
   import ThreadCards from "./ThreadCards.svelte";
+  import ThreadPlace from "./ThreadPlace.svelte";
 
   let {
     onselect,
@@ -76,7 +68,7 @@
     <button class="flat main" type="button" onclick={() => onselect(thread)}>
       <span class="text">
         <span class="top">
-          <span class="mono where" title={thread.path ?? undefined}>{rowTitle(thread)}</span>
+          <span class="mono where"><ThreadPlace {thread} /></span>
           {#if author}<span class="author" class:mine={thread.messages[0]?.mine} title={author}
               >{thread.messages[0]?.mine ? "You" : author}</span
             >{/if}

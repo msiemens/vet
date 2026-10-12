@@ -3,6 +3,7 @@
   import { formatBytes } from "../../lib/formatBytes";
   import { match } from "../../lib/speedSearch";
   import Marked from "../../lib/ui/Marked.svelte";
+  import PathText from "../../lib/ui/PathText.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
@@ -121,7 +122,9 @@
             <span><Marked text={row.title} ranges={row.ranges} /></span>
             <span class="clip">{row.server}</span>
             <span class="mono clip">{row.version ?? "–"}</span>
-            <span class="clip muted" class:mono={row.status === "custom"} title={row.source}>{row.source}</span>
+            <span class="clip muted" class:mono={row.status === "custom"} title={row.source}>
+              {#if row.status === "custom"}<PathText path={row.source} />{:else}{row.source}{/if}
+            </span>
             <span class="dot {row.status}" title={row.statusLabel}></span>
           </button>
         {/each}
@@ -171,7 +174,9 @@
         {/if}
 
         <dt>Path</dt>
-        <dd class="mono">{selected.path ?? "–"}</dd>
+        <dd class="mono">
+          {#if selected.path}<PathText path={selected.path} />{:else}–{/if}
+        </dd>
         <dt>Version</dt>
         <dd>
           {#if selected.version}<span class="mono">{selected.version}</span>{:else if !selected.pinnedVersion}–{/if}
@@ -183,7 +188,8 @@
           <dt>tsserver</dt>
           <dd class="tsserver">
             {#if selected.tsserver.type === "using"}
-              <span>{selected.tsserver.whose} ({selected.tsserver.path})</span>
+              <span>{selected.tsserver.whose}</span>
+              <span class="mono of">(<PathText path={selected.tsserver.path} />)</span>
             {:else}
               <span class="bad">Not found</span>
               {#if selected.pinnedVersion}
@@ -356,6 +362,10 @@
     display: flex;
     gap: 6px;
     align-items: center;
+  }
+  .of {
+    display: flex;
+    min-width: 0;
   }
   .source select {
     min-width: 180px;

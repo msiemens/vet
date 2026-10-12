@@ -7,6 +7,8 @@
   import type { RemovalImpact } from "../../generated/RemovalImpact";
   import type { Side } from "../../generated/Side";
   import { codeBlock } from "../../lib/codeBlock";
+  import PathText from "../../lib/ui/PathText.svelte";
+  import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import DerivedSection from "./DerivedSection.svelte";
   import { containerOf, describeFate, nameOf, type OpenLocation, place, rowLabel } from "./symbolList";
@@ -20,7 +22,10 @@
 
 <div class="head">
   <span class="mono name selectable">{nameOf(id)}</span>
-  <span class="mono qualified selectable">{[id.path, containerOf(id)].filter(Boolean).join(" · ")}</span>
+  {#if containerOf(id)}
+    <span class="mono qualified selectable"><QualifiedName name={containerOf(id)} /></span>
+  {/if}
+  <span class="mono qualified selectable"><PathText path={id.path} /></span>
   <span class="change">{symbol.change}</span>
 </div>
 
@@ -156,8 +161,7 @@
   }
   .qualified {
     font-size: var(--fs-mono-s);
-    color: var(--text-2);
-    overflow-wrap: anywhere;
+    color: var(--text);
   }
   .change {
     font-size: 11px;

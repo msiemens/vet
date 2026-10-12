@@ -4,6 +4,7 @@
   import AppLogo from "../../lib/ui/AppLogo.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
+  import PathText from "../../lib/ui/PathText.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { shortTime } from "../../lib/shortTime";
   import { commands } from "../../state/commands";
@@ -152,7 +153,7 @@
               <span class="avatar" style:background="var(--avatar-{avatarColour(project.path)})">{initials(name)}</span>
               <span class="text">
                 <span class="name"><Marked text={name} ranges={nameRanges} /></span>
-                <span class="mono path"><Marked text={project.path} ranges={pathRanges} /></span>
+                <span class="mono path"><PathText path={project.path} ranges={pathRanges} /></span>
               </span>
               <span class="when">{shortTime(project.openedAt)}</span>
             </button>
@@ -320,19 +321,13 @@
     font-size: var(--fs);
   }
   .path {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: flex;
     font-size: var(--fs-mono-s);
-    color: var(--text-3);
   }
   /* The selection is a highlight, not a toggled control: its text keeps the text colour. */
   .row.on,
   .item.on {
     color: var(--text);
-  }
-  .on .path {
-    color: var(--text-2);
   }
   .when {
     flex: none;

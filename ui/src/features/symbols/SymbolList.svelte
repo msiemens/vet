@@ -4,6 +4,8 @@
   import type { ChangedSymbol } from "../../generated/ChangedSymbol";
   import { ListNav } from "../../lib/ui/listNav";
   import Marked from "../../lib/ui/Marked.svelte";
+  import PathText from "../../lib/ui/PathText.svelte";
+  import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
@@ -94,8 +96,8 @@
       <p class="note">{changed.value.symbols.length ? "No changed symbols in this file" : "No changed symbols"}</p>
     {:else}
       {#each entries as entry, at (entry.path)}
-        <div class="file" class:current={entry.path === symbols.file} data-path={entry.path} title={entry.path}>
-          <span class="path"><bdi>{entry.path}</bdi></span>
+        <div class="file" class:current={entry.path === symbols.file} data-path={entry.path}>
+          <span class="path"><PathText path={entry.path} /></span>
           {#if entry.note}<span class="fnote">{entry.note}</span>{/if}
         </div>
         {@const keys = rowKeys(entry.symbols)}
@@ -114,7 +116,9 @@
             <span class="mono name" class:gone={s.change === "removed"}
               ><Marked text={nameOf(s.symbol.id)} ranges={searched?.ranges.get(s)} /></span
             >
-            <span class="mono container">{containerOf(s.symbol.id)}</span>
+            {#if containerOf(s.symbol.id)}
+              <span class="mono container"><QualifiedName name={containerOf(s.symbol.id)} /></span>
+            {/if}
           </button>
         {/each}
       {/each}
@@ -146,26 +150,20 @@
     padding: 0 10px;
     overflow: hidden;
     white-space: nowrap;
-    text-overflow: ellipsis;
     font-size: 11px;
-    color: var(--text-3);
   }
   .path {
-    flex: 1;
+    flex: 0 1 auto;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    /* Cut on the left so the file name stays; the <bdi> keeps the path itself left to right. */
-    direction: rtl;
-    text-align: left;
+    display: flex;
   }
   .fnote {
     flex: none;
     margin-left: 8px;
     font-style: italic;
+    color: var(--text-3);
   }
   .file.current {
-    color: var(--text);
     font-weight: 600;
   }
   .row {
@@ -205,9 +203,8 @@
     color: var(--text-2);
   }
   .container {
+    min-width: 0;
+    display: flex;
     font-size: 11px;
-    color: var(--text-3);
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 </style>

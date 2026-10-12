@@ -50,12 +50,11 @@ export function shown<T>(list: readonly T[], expanded: boolean, limit = RESOLVED
   return { rows: list.slice(0, limit), more: list.length - limit };
 }
 
-/** `file.rs:12`, `file.rs` for a comment on the file, `Changeset` for the changeset's own. */
-export function rowTitle(thread: Thread): string {
-  if (thread.kind === "changeset" || thread.path === null) return "Changeset";
-  const name = thread.path.split("/").at(-1) ?? thread.path;
+/** The file a thread is on, and `:12` to follow its name for one on lines; no place for the changeset's own. */
+export function threadPlace(thread: Thread): { path: string; suffix: string } | undefined {
+  if (thread.kind === "changeset" || thread.path === null) return undefined;
   const at = thread.location ?? thread.original;
-  return thread.kind === "range" && at ? `${name}:${at.start + 1}` : name;
+  return { path: thread.path, suffix: thread.kind === "range" && at ? `:${at.start + 1}` : "" };
 }
 
 /** The first line of `text`, cut to `max` characters. */

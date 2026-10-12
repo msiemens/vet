@@ -7,10 +7,6 @@
   flex: 1;
 }
 .vet-card-path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: var(--fs-mono-s);
   color: var(--text);
 }

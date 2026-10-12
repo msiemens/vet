@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bestMatch, highlightRuns, match, speedSearchKey, type SpeedSearchKeyEvent } from "./speedSearch.ts";
+import {
+  bestMatch,
+  highlightRuns,
+  match,
+  sliceRanges,
+  speedSearchKey,
+  type SpeedSearchKeyEvent,
+} from "./speedSearch.ts";
 
 const ranges = (query: string, text: string) => match(query, text)?.ranges;
 const score = (query: string, text: string) => match(query, text)?.score ?? -Infinity;
@@ -72,6 +79,19 @@ void test("the best match is the highest ranked, the first of equals, and -1 for
   assert.equal(bestMatch("cs", ["xcs", "CacheStore", "CsvStore"]), 2);
   assert.equal(bestMatch("a", ["b", "a1", "a2"]), 1);
   assert.equal(bestMatch("q", ["b", "a"]), -1);
+});
+
+void test("a match across the cut between two parts is split between them", () => {
+  const ranges: [number, number][] = [
+    [1, 3],
+    [5, 7],
+  ];
+  assert.deepEqual(sliceRanges(ranges, 0, 2), [[1, 2]]);
+  assert.deepEqual(sliceRanges(ranges, 2, 6), [
+    [0, 1],
+    [3, 4],
+  ]);
+  assert.deepEqual(sliceRanges(ranges, 3, 5), []);
 });
 
 void test("highlight runs cover the text exactly", () => {

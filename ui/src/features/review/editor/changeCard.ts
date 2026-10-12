@@ -6,6 +6,7 @@
 import type { BlobContent } from "../../../generated/BlobContent";
 import type { NonTextItem } from "../../../generated/NonTextItem";
 import type { Side } from "../../../generated/Side";
+import { pathText } from "../../../lib/splitText.ts";
 import { iconSvg } from "../../../lib/ui/icons";
 import { cardContent } from "./cardContent";
 import { el, iconButton } from "./dom";
@@ -74,7 +75,7 @@ export function changeCard(
   );
   const comment = iconButton("Comment", "comments", () => actions.comment(), "vet-icon-btn vet-review-action");
   const content = cardContent(item, path, oldPath);
-  bar.append(el("span", "vet-hunk-text", content.title), el("span", "vet-card-path mono", path), el("span", "grow"));
+  bar.append(el("span", "vet-hunk-text", content.title), pathText(path, "vet-card-path mono"), el("span", "grow"));
   bar.append(comment, toggle);
   root.append(bar);
 

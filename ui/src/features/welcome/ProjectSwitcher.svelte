@@ -4,6 +4,7 @@
   import Chip from "../../lib/ui/Chip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
+  import PathText from "../../lib/ui/PathText.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import { commands } from "../../state/commands";
   import { avatarColour, initials, searchRecent } from "./recentList";
@@ -107,7 +108,7 @@
             >
             <span class="text">
               <span class="name"><Marked text={projectName} ranges={nameRanges} /></span>
-              <span class="mono path"><Marked text={project.path} ranges={pathRanges} /></span>
+              <span class="mono path"><PathText path={project.path} ranges={pathRanges} /></span>
             </span>
             {#if host}<span class="host">{host}</span>{/if}
             <span class="check"
@@ -207,11 +208,8 @@
     font-size: var(--fs-ctl);
   }
   .path {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: flex;
     font-size: var(--fs-mono-s);
-    color: var(--text-3);
   }
   .host {
     flex: none;

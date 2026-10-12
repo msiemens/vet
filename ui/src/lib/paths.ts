@@ -10,10 +10,16 @@ export const dirname = (path: string) => path.slice(0, Math.max(0, path.lastInde
 export const pathsBelow = (paths: readonly string[], dir: string): string[] =>
   paths.filter((path) => path.startsWith(`${dir}/`));
 
-/** A path's folders with their trailing `/` and its file name, the parts `.path-text` shortens apart. */
+/**
+ * A path's folders with their trailing separator and its last segment, the parts `.path-text`
+ * shortens apart. Splits on `/` and on `\` (a backend-side path may be Windows') and keeps a
+ * trailing separator with the last segment, so a folder shows as `/home/me/` + `logs/`.
+ */
 export const splitPath = (path: string): { dir: string; name: string } => {
-  const name = basename(path);
-  return { dir: path.slice(0, path.length - name.length), name };
+  const end = path.search(/[/\\]*$/);
+  if (end === 0) return { dir: "", name: path };
+  const cut = Math.max(path.lastIndexOf("/", end - 1), path.lastIndexOf("\\", end - 1)) + 1;
+  return { dir: path.slice(0, cut), name: path.slice(cut) };
 };
 
 /**

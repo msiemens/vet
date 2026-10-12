@@ -11,7 +11,6 @@
   import {
     destination,
     outgoingComments,
-    outgoingPlace,
     outgoingTitle,
     postLabel,
     summarizeOutgoing,
@@ -21,6 +20,7 @@
   import PostingControls from "./PostingControls.svelte";
   import { sendComments } from "./posting";
   import { draftsToSubmit, submitBlock, voteWaits } from "./pullRequest";
+  import ThreadPlace from "./ThreadPlace.svelte";
 
   /** The toolbar's count of the viewer's comments and staged vote that the platform does not have yet; a click lists them, and posts them. */
   let { onopen }: { onopen: (thread: Thread) => void } = $props();
@@ -79,7 +79,7 @@
         {#each list as { thread, message } (message.id)}
           <li>
             <button class="flat row" type="button" onclick={() => show(thread)}>
-              <span class="mono where">{outgoingPlace(thread)}</span>
+              <span class="mono where"><ThreadPlace {thread} changeset="on the pull request" /></span>
               <span class="text">{firstLine(message.body)}</span>
               {#if message.state.type === "posting"}<span class="note">posting…</span>{/if}
             </button>
@@ -196,8 +196,10 @@
     text-align: left;
   }
   .where {
-    flex: none;
-    color: var(--text-2);
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 60%;
+    display: flex;
     font-size: var(--fs-mono-s);
   }
   .text {

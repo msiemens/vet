@@ -5,7 +5,6 @@ import type { ThreadMessage } from "../../generated/ThreadMessage.ts";
 import {
   destination,
   outgoingComments,
-  outgoingPlace,
   outgoingTitle,
   postLabel,
   summarizeOutgoing,
@@ -122,9 +121,7 @@ void test("the vote picker lists the platform's verdicts and marks the staged vo
   );
 });
 
-void test("a comment says where it goes, and posting where the comments go", () => {
-  assert.equal(outgoingPlace(thread(1, "src/job.rs", 11, [])), "job.rs:12");
-  assert.equal(outgoingPlace(thread(1, null, 0, [])), "on the pull request");
+void test("posting says where the comments go and what it posts", () => {
   assert.equal(
     destination({ number: 123, platform: { host: "github.com", kind: "github", connection: { type: "ok" } } }),
     "to #123 on GitHub",

@@ -4,6 +4,7 @@
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import PathText from "../../lib/ui/PathText.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
@@ -127,7 +128,7 @@
                 type="button"
                 onclick={() => onselect(file.path)}
               >
-                <span class="path">{file.path}</span>
+                <span class="path"><PathText path={file.path} /></span>
                 {#if file.mode}<span class="mono mode">{file.mode}</span>{/if}
                 {@render counts(file.delta)}
               </button>
@@ -255,9 +256,7 @@
   .path {
     flex: 1;
     min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    display: flex;
   }
   .mode {
     color: var(--text-3);
