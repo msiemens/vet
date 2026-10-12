@@ -74,6 +74,7 @@ export type ChangesetSource = Pick<
   | "reconfirmFile"
   | "baseDiff"
   | "currentManifest"
+  | "currentFiles"
   | "refresh"
 >;
 
@@ -271,7 +272,7 @@ export class ReviewController {
         return this.active?.toggleFlagCurrent() !== undefined;
       },
       stepFlag: (delta) => this.stepFlagged(delta > 0 ? 1 : -1),
-      firstFlagged: () => this.goToFlagged(stepFlagged(this.files, undefined, 1)),
+      firstFlagged: () => this.goToFlagged(stepFlagged(this.changeset.currentFiles(), undefined, 1)),
       reconfirm: () => {
         const text = this.activeText;
         if (text) return text.reconfirmCurrent();
@@ -312,7 +313,7 @@ export class ReviewController {
 
   /** Goes to the flagged hunk after or before the current one, across files; says so when there is none. */
   private stepFlagged(delta: 1 | -1): boolean {
-    if (this.goToFlagged(stepFlagged(this.files, this.hunkPlace(), delta))) return true;
+    if (this.goToFlagged(stepFlagged(this.changeset.currentFiles(), this.hunkPlace(), delta))) return true;
     session.notice = delta > 0 ? "No further flagged hunk" : "No earlier flagged hunk";
     return false;
   }

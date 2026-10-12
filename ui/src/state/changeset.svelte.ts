@@ -20,6 +20,7 @@ import { pathsBelow } from "../lib/paths";
 import { LatestLoad } from "./latestLoad";
 import type { BaseCandidates } from "./backend";
 import { commitToShow, neighbour } from "./commitLens";
+import { currentFiles } from "./currentFiles";
 import { session } from "./session.svelte";
 import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
 import { commitView } from "./view";
@@ -100,8 +101,13 @@ class ChangesetStore {
   currentManifest(): Manifest | undefined {
     return untrack(() => {
       const manifest = this.manifest;
-      return manifest && { ...manifest, files: manifest.files.map((f) => this.cells.get(f.path) ?? f) };
+      return manifest && { ...manifest, files: currentFiles(manifest.files, (p) => this.cells.get(p)) };
     });
+  }
+
+  /** The files with their current review state, for reading at the moment of use; reads nothing reactively. */
+  currentFiles(): FileChange[] {
+    return this.currentManifest()?.files ?? [];
   }
 
   constructor() {
