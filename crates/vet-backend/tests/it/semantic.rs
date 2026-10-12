@@ -163,6 +163,8 @@ async fn rust_semantics_through_the_protocol() {
     let row = &refs.rows[0];
     assert_eq!(row.text, "keep()");
     assert_eq!(&row.text[row.match_start as usize..row.match_end as usize], "keep");
+    // The call's name is a function, coloured as the line is in the file (here indented).
+    assert!(row.highlights.starts_with(&[0, 4, 5]), "{:?}", row.highlights);
     assert_eq!(
         row.within,
         Some(SymbolId {

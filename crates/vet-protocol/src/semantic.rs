@@ -108,6 +108,9 @@ pub struct LocationRow {
     /// The line of `line` without surrounding whitespace, and cut after a few hundred characters;
     /// empty where the file has no text to read.
     pub text: String,
+    /// The highlighting of `text` as the line has it in its file, empty for a file without a
+    /// known language or text (see [`Highlights`]).
+    pub highlights: Highlights,
     /// Where the match is in `text`: start and end (exclusive), UTF-16 offsets. The end of the
     /// text if the match goes on beyond the line.
     pub match_start: u32,

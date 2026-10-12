@@ -120,7 +120,13 @@ pub fn change_at(files: &[FileDiff], side: Side, file: &RepoPath, line: u32) -> 
 }
 
 /// A row for the reference `r`, whose line is `line_text` (the whole line, if it could be read).
-pub fn row(r: &Reference, line_text: &str, change: p::LocationChange) -> p::LocationRow {
+/// `highlights` gives the highlighting of a range of the line, in UTF-16 units from its start.
+pub fn row(
+    r: &Reference,
+    line_text: &str,
+    change: p::LocationChange,
+    highlights: impl FnOnce(u32, u32) -> p::Highlights,
+) -> p::LocationRow {
     let span = r.location.span;
     let trimmed = line_text.trim_start();
     let lead = utf16_len(&line_text[..line_text.len() - trimmed.len()]);
@@ -154,6 +160,7 @@ pub fn row(r: &Reference, line_text: &str, change: p::LocationChange) -> p::Loca
         line: span.start.line + 1,
         col: span.start.col + 1,
         within: r.within.as_ref().map(symbol_id),
+        highlights: highlights(lead, lead + len),
         text,
         match_start,
         match_end,
@@ -438,6 +445,11 @@ mod tests {
         }
     }
 
+    /// A row of an unhighlighted line.
+    fn plain_row(r: &Reference, line: &str) -> p::LocationRow {
+        row(r, line, p::LocationChange::Unchanged, |_, _| Vec::new())
+    }
+
     fn diff(path: &str, hunks: &[(u32, u32, u32, u32)]) -> FileDiff {
         FileDiff {
             old_path: Some(RepoPath::from(path)),
@@ -457,16 +469,28 @@ mod tests {
     #[test]
     fn a_row_shows_the_trimmed_line_with_the_match_inside_it() {
         let r = reference("a.cs", (3, 12), (3, 15), false);
-        let row = row(&r, "        x = Foo();  ", p::LocationChange::Unchanged);
+        let row = plain_row(&r, "        x = Foo();  ");
         assert_eq!((row.line, row.col), (4, 13));
         assert_eq!(row.text, "x = Foo();");
         assert_eq!(&row.text[row.match_start as usize..row.match_end as usize], "Foo");
     }
 
     #[test]
+    fn a_rows_highlights_are_asked_for_the_trimmed_text_in_units_of_its_line() {
+        let r = reference("a.rs", (0, 4), (0, 5), false);
+        let asked = std::cell::Cell::new((0, 0));
+        // Three units of indentation, then "é😀 f" (five units) and trailing blanks.
+        row(&r, "   é😀 f  ", p::LocationChange::Unchanged, |from, to| {
+            asked.set((from, to));
+            vec![1, 2, 3]
+        });
+        assert_eq!(asked.get(), (3, 3 + 5));
+    }
+
+    #[test]
     fn a_place_without_extent_marks_the_name_it_points_at() {
         let r = reference("Program.cs", (9, 15), (9, 15), false);
-        let row = row(&r, "    public int Area() => 4;", p::LocationChange::Unchanged);
+        let row = plain_row(&r, "    public int Area() => 4;");
         assert_eq!(&row.text[row.match_start as usize..row.match_end as usize], "Area");
     }
 
@@ -474,7 +498,7 @@ mod tests {
     fn match_columns_count_utf16_units_not_bytes() {
         // "é" is two bytes, the emoji one scalar of two UTF-16 units.
         let r = reference("a.rs", (0, 4), (0, 7), false);
-        let row = row(&r, "é😀 f(x)", p::LocationChange::Unchanged);
+        let row = plain_row(&r, "é😀 f(x)");
         let units: Vec<u16> = row.text.encode_utf16().collect();
         let matched = String::from_utf16(&units[row.match_start as usize..row.match_end as usize]).unwrap();
         assert_eq!(matched, "f(x");
@@ -483,7 +507,7 @@ mod tests {
     #[test]
     fn a_match_over_several_lines_ends_with_the_first_line() {
         let r = reference("a.rs", (1, 4), (3, 1), false);
-        let row = row(&r, "    fn run() {", p::LocationChange::Unchanged);
+        let row = plain_row(&r, "    fn run() {");
         assert_eq!(
             &row.text[row.match_start as usize..row.match_end as usize],
             "fn run() {"
@@ -494,7 +518,7 @@ mod tests {
     fn a_long_line_is_cut_and_the_match_stays_inside_the_text() {
         let line = "x".repeat(1000);
         let r = reference("a.rs", (0, 900), (0, 910), false);
-        let row = row(&r, &line, p::LocationChange::Unchanged);
+        let row = plain_row(&r, &line);
         assert_eq!(row.text.len(), 300);
         assert!(row.match_start <= row.match_end && row.match_end <= 300);
     }
@@ -502,7 +526,7 @@ mod tests {
     #[test]
     fn a_line_that_could_not_be_read_leaves_an_empty_text() {
         let r = reference("/dep/lib.rs", (7, 2), (7, 5), true);
-        let row = row(&r, "", p::LocationChange::Unchanged);
+        let row = plain_row(&r, "");
         assert_eq!((row.text.as_str(), row.match_start, row.match_end), ("", 0, 0));
         assert!(row.external);
     }
@@ -545,13 +569,8 @@ mod tests {
 
     #[test]
     fn rows_are_ordered_by_path_and_line_with_outside_places_last_and_cut_with_the_total_kept() {
-        let at = |path: &str, line: u32, external: bool| {
-            row(
-                &reference(path, (line, 0), (line, 1), external),
-                "",
-                p::LocationChange::Unchanged,
-            )
-        };
+        let at =
+            |path: &str, line: u32, external: bool| plain_row(&reference(path, (line, 0), (line, 1), external), "");
         let rows = vec![
             at("/dep/a.rs", 1, true),
             at("src/b.rs", 9, false),

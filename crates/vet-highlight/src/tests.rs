@@ -520,3 +520,22 @@ fn code_blocks_of_markdown() {
     // Indented code is not a fence.
     assert!(code_blocks("    fn g() {}\n", Some(Language::Rust)).is_empty());
 }
+
+#[test]
+fn a_slice_of_the_highlights_is_those_of_its_text_whatever_comes_before_it() {
+    // The first line has two-byte and two-unit characters, so units and bytes differ.
+    let first = "let é😀 = 1; // ü\n";
+    let line = "    fn f() -> u32 { 7 }";
+    let file = format!("{first}{line}\n");
+    let from = vet_core::text::unit_len(first);
+    let to = from + vet_core::text::unit_len(line);
+    let whole = encode(&highlight(&file, Language::Rust));
+    assert_eq!(slice(&whole, from, to), encode(&highlight(line, Language::Rust)));
+    // A range inside the line, and one that cuts a span in two.
+    let keyword = slice(&whole, from + 4, from + 6);
+    assert_eq!(keyword, [0, 2, Keyword as u32]);
+    assert_eq!(
+        slice(&whole, from + 5, from + 9),
+        [0, 1, Keyword as u32, 1, 1, Function as u32]
+    );
+}

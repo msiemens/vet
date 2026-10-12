@@ -12,6 +12,7 @@ const row = (path: string, line: number): LocationRow => ({
   col: 1,
   within: null,
   text: "",
+  highlights: [],
   matchStart: 0,
   matchEnd: 0,
   change: "unchanged",

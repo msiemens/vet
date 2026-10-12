@@ -33,7 +33,7 @@ impl Highlighter {
 
     /// The highlights of `text`, a file's content at `path`; empty if there is no text or its
     /// language has no grammar.
-    async fn text(&self, path: &str, text: Option<&str>) -> Vec<u32> {
+    pub async fn text(&self, path: &str, text: Option<&str>) -> Vec<u32> {
         let (Some(text), Some(language)) = (text, Language::of_path(path)) else {
             return Vec::new();
         };

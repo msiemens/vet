@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use vet_core::content::RepoPath;
+use vet_core::text::Lines;
 use vet_protocol::{Response, Side};
 use vet_semantic::derived::Reference;
 use vet_semantic::ports::{At, BackendId, Location};
@@ -12,6 +13,7 @@ use vet_semantic::ports::{At, BackendId, Location};
 use vet_mapping::core_side;
 use vet_mapping::semantic as map;
 
+use super::highlight::Highlighter;
 use super::open::Booted;
 use super::{highlight, message};
 
@@ -27,6 +29,24 @@ async fn read_outside(file: &RepoPath) -> Option<String> {
     }
     let bytes = tokio::fs::read(&path).await.ok()?;
     Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// A file's text as the lines of a list of places need it.
+struct FileLines {
+    text: String,
+    /// The highlighting of the whole text.
+    highlights: Vec<u32>,
+    /// The offset of each line's start, in UTF-16 units.
+    starts: Vec<u32>,
+}
+
+impl FileLines {
+    fn line_start(&self, line: u32) -> u32 {
+        self.starts
+            .get(line as usize)
+            .copied()
+            .unwrap_or_else(|| self.starts.last().copied().unwrap_or(0))
+    }
 }
 
 impl Booted {
@@ -96,6 +116,7 @@ impl Booted {
 
     pub async fn references(
         &self,
+        highlighter: &Highlighter,
         revision: u32,
         side: Side,
         path: &str,
@@ -107,11 +128,12 @@ impl Booted {
             .references(&self.view, revision, core_side(side), &at)
             .await
             .map_err(message)?;
-        Ok(Response::References(self.rows(answer, side, &at).await?))
+        Ok(Response::References(self.rows(highlighter, answer, side, &at).await?))
     }
 
     pub async fn implementations(
         &self,
+        highlighter: &Highlighter,
         revision: u32,
         side: Side,
         path: &str,
@@ -123,13 +145,16 @@ impl Booted {
             .implementations(&self.view, revision, core_side(side), &at)
             .await
             .map_err(message)?;
-        Ok(Response::Implementations(self.rows(answer, side, &at).await?))
+        Ok(Response::Implementations(
+            self.rows(highlighter, answer, side, &at).await?,
+        ))
     }
 
     /// The places of `answer` as rows to list: with their line, and where they stand against
     /// the changeset on `side`.
     async fn rows(
         &self,
+        highlighter: &Highlighter,
         answer: vet_app::semantics::Answer<Vec<Reference>>,
         side: Side,
         at: &At,
@@ -137,7 +162,7 @@ impl Booted {
         let revision = answer.revision;
         let (found, unavailable) = map::answer(answer.result, self.language_of(&at.file));
         let files = self.view.changed_files(revision).await.map_err(message)?;
-        let mut texts: HashMap<RepoPath, Option<String>> = HashMap::new();
+        let mut texts: HashMap<RepoPath, Option<FileLines>> = HashMap::new();
         let mut rows = Vec::with_capacity(found.len());
         for r in &found {
             let file = &r.location.file;
@@ -150,16 +175,34 @@ impl Booted {
                         .await
                         .map_err(message)?
                 };
-                texts.insert(file.clone(), text);
+                let lines = match text {
+                    Some(text) => {
+                        let highlights = highlighter.text(&file.to_string_lossy(), Some(&text)).await;
+                        let starts = Lines::new(&text).starts().to_vec();
+                        Some(FileLines {
+                            text,
+                            highlights,
+                            starts,
+                        })
+                    }
+                    None => None,
+                };
+                texts.insert(file.clone(), lines);
             }
             let line = r.location.span.start.line;
-            let text = texts[file].as_deref().map_or("", |t| map::line_at(t, line));
+            let source = texts[file].as_ref();
+            let text = source.map_or("", |s| map::line_at(&s.text, line));
             let change = if r.location.external {
                 vet_protocol::LocationChange::Unchanged
             } else {
                 map::change_at(&files, core_side(side), file, line)
             };
-            rows.push(map::row(r, text, change));
+            rows.push(map::row(r, text, change, |from, to| {
+                source.map_or_else(Vec::new, |s| {
+                    let start = s.line_start(line);
+                    vet_highlight::slice(&s.highlights, start + from, start + to)
+                })
+            }));
         }
         let (rows, total) = map::finish(rows);
         Ok(vet_protocol::LocationRows {

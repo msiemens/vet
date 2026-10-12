@@ -29,6 +29,11 @@ within: SymbolId | null,
  */
 text: string, 
 /**
+ * The highlighting of `text` as the line has it in its file, empty for a file without a
+ * known language or text (see [`Highlights`]).
+ */
+highlights: Array<number>, 
+/**
  * Where the match is in `text`: start and end (exclusive), UTF-16 offsets. The end of the
  * text if the match goes on beyond the line.
  */

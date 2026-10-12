@@ -106,5 +106,27 @@ pub fn encode(spans: &[Span]) -> Vec<u32> {
     out
 }
 
+/// The part of `encoded` (see [`encode`]) inside `from..to`, as the wire form of a text that
+/// starts at `from`: spans are cut to the range and moved back by `from`.
+pub fn slice(encoded: &[u32], from: u32, to: u32) -> Vec<u32> {
+    let mut spans = Vec::new();
+    let mut end = 0;
+    for &[gap, len, kind] in encoded.as_chunks::<3>().0 {
+        let start = end + gap;
+        end = start + len;
+        let (lo, hi) = (start.max(from), end.min(to));
+        if lo < hi {
+            spans.push((lo - from, hi - from, kind));
+        }
+    }
+    let mut out = Vec::with_capacity(spans.len() * 3);
+    let mut last = 0;
+    for (lo, hi, kind) in spans {
+        out.extend([lo - last, hi - lo, kind]);
+        last = hi;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests;

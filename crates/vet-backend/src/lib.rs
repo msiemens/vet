@@ -503,7 +503,7 @@ impl Orchestrator {
             } => reply(async move {
                 self.ready(project)
                     .await?
-                    .references(revision, side, &path, line, col)
+                    .references(&self.highlighter, revision, side, &path, line, col)
                     .await
             }),
             Request::Implementations {
@@ -516,7 +516,7 @@ impl Orchestrator {
             } => reply(async move {
                 self.ready(project)
                     .await?
-                    .implementations(revision, side, &path, line, col)
+                    .implementations(&self.highlighter, revision, side, &path, line, col)
                     .await
             }),
             Request::Diagnostics {
