@@ -100,6 +100,18 @@ async fn rust_analyzer_answers_the_primitive_queries() {
     assert!(names.contains(&"Counter".to_string()), "{names:?}");
     assert!(names.contains(&"impl Counter::bump".to_string()), "{names:?}");
     assert!(names.contains(&"entry".to_string()), "{names:?}");
+    // What holds code is told from the fields and locals the outline lists as well.
+    let container = |name: &str| {
+        symbols
+            .iter()
+            .find(|s| s.sym.name.join("::") == name)
+            .map(|s| s.container)
+    };
+    assert_eq!(container("Counter"), Some(true));
+    assert_eq!(container("impl Counter"), Some(true));
+    assert_eq!(container("impl Counter::bump"), Some(true));
+    assert_eq!(container("entry"), Some(true));
+    assert_eq!(container("Counter::n"), Some(false));
 
     let call = At {
         file: lib.clone(),

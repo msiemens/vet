@@ -5,7 +5,8 @@ use vet_app::servers::ServerStatus;
 use vet_core::content::RepoPath;
 use vet_protocol as p;
 use vet_semantic::derived::{
-    Bounds, CallSite, Change, ChangedSymbol, Changes, Derived, Fate, Inputs, Reach, RemovalImpact, SymbolImpact,
+    Bounds, CallSite, Change, ChangedSymbol, Changes, Derived, Fate, Inputs, Reach, Reference, RemovalImpact,
+    SymbolImpact,
 };
 use vet_semantic::pool::PoolError;
 use vet_semantic::ports::{
@@ -63,6 +64,13 @@ fn location(l: &Location) -> p::SemanticLocation {
         path: l.file.to_string_lossy(),
         span: span(l.span),
         external: l.external,
+    }
+}
+
+fn reference(r: &Reference) -> p::Reference {
+    p::Reference {
+        location: location(&r.location),
+        within: r.within.as_ref().map(symbol_id),
     }
 }
 
@@ -177,7 +185,7 @@ pub fn impact(revision: u32, d: &Derived<SymbolImpact>) -> p::Impact {
     p::Impact {
         revision,
         symbol: symbol(&d.value.symbol),
-        references: locations(&d.value.references),
+        references: d.value.references.iter().map(reference).collect(),
         callers: d.value.callers.iter().map(symbol).collect(),
         gaps: d.value.gaps.clone(),
         inputs: inputs(&d.inputs),
@@ -196,7 +204,7 @@ fn fate(f: &Fate) -> p::CallFate {
 
 fn call_site(c: &CallSite) -> p::CallSite {
     p::CallSite {
-        base: location(&c.base),
+        base: reference(&c.base),
         fate: fate(&c.fate),
     }
 }

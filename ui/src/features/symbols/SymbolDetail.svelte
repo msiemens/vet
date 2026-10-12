@@ -4,12 +4,13 @@
   import type { ChangedSymbol } from "../../generated/ChangedSymbol";
   import type { Impact } from "../../generated/Impact";
   import type { Reachability } from "../../generated/Reachability";
+  import type { Reference } from "../../generated/Reference";
   import type { RemovalImpact } from "../../generated/RemovalImpact";
   import type { Side } from "../../generated/Side";
   import { codeBlock } from "../../lib/codeBlock";
   import { symbols } from "../../state/symbols.svelte";
   import DerivedSection from "./DerivedSection.svelte";
-  import { containerOf, describeFate, nameOf, type OpenLocation, place } from "./symbolList";
+  import { containerOf, describeFate, nameOf, type OpenLocation, place, rowLabel } from "./symbolList";
 
   let { symbol, onopen }: { symbol: ChangedSymbol; onopen: OpenLocation } = $props();
 
@@ -39,14 +40,22 @@
   {/if}
 </section>
 
-{#snippet where(path: string, at: { line: number; col: number }, side: Side, external = false)}
-  {#if external}
-    <span class="tw dim"
-      ><span class="mono s">{place(path, at)}</span><span class="at">outside the repository</span></span
+{#snippet where(reference: Reference, side: Side)}
+  {@const { location, within } = reference}
+  {@const at = location.span.start}
+  {@const label = rowLabel(within, location.path)}
+  {#if location.external}
+    <span class="tw dim" title={place(location.path, at)}
+      ><span class="mono s">{label.name}</span><span class="at">outside the repository</span></span
     >
   {:else}
-    <button class="flat tw" type="button" onclick={() => onopen(path, at.line, side)}>
-      <span class="mono s">{place(path, at)}</span>
+    <button
+      class="flat tw"
+      type="button"
+      title={place(location.path, at)}
+      onclick={() => onopen(location.path, at.line, side)}
+    >
+      <span class="mono s">{label.name}</span><span class="mono at">{label.context}</span>
     </button>
   {/if}
 {/snippet}
@@ -64,7 +73,7 @@
         {#each removal.callSites as site, i (i)}
           {@const fate = describeFate(site.fate)}
           <li>
-            {@render where(site.base.path, site.base.span.start, "base", site.base.external)}
+            {@render where(site.base, "base")}
             <span class="verdict" style:color={FATE[fate.tone]}>{fate.label}</span>
             {#if fate.detail}<span class="mono at">{fate.detail}</span>{/if}
           </li>
@@ -83,10 +92,15 @@
       {#if impact.gaps.length}<p class="note">Incomplete: {impact.gaps.join("; ")}</p>{/if}
       <ul>
         {#each impact.callers as c, i (i)}
+          {@const label = rowLabel(c.id, c.id.path)}
           <li>
-            <button class="flat tw" type="button" onclick={() => onopen(c.id.path, c.at.line, "target")}>
-              <span class="mono s">{nameOf(c.id)}</span><span class="grow"></span>
-              <span class="mono at">{place(c.id.path, c.at)}</span>
+            <button
+              class="flat tw"
+              type="button"
+              title={place(c.id.path, c.at)}
+              onclick={() => onopen(c.id.path, c.at.line, "target")}
+            >
+              <span class="mono s">{label.name}</span><span class="mono at">{label.context}</span>
             </button>
           </li>
         {/each}
@@ -102,7 +116,7 @@
     {#snippet children(impact)}
       <ul>
         {#each impact.references as r, i (i)}
-          <li>{@render where(r.path, r.span.start, "target", r.external)}</li>
+          <li>{@render where(r, "target")}</li>
         {/each}
       </ul>
     {/snippet}
@@ -114,14 +128,18 @@
         <!-- the backend's path runs from the changed symbol to the entry point -->
         <ol>
           {#each [...reach.path].reverse() as step, i (i)}
+            {@const label = rowLabel(step, step.path)}
             <li>
               <button
                 class="flat tw"
                 type="button"
                 style:padding-left="{26 + i * 10}px"
+                title={step.path}
                 onclick={() => onopen(step.path, undefined, "target")}
               >
-                {#if i > 0}<span class="at">└</span>{/if}<span class="mono s">{nameOf(step)}</span>
+                {#if i > 0}<span class="at">└</span>{/if}<span class="mono s">{label.name}</span><span class="mono at"
+                  >{label.context}</span
+                >
               </button>
             </li>
           {/each}

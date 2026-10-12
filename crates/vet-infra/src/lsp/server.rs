@@ -576,6 +576,7 @@ fn outline(symbols: &[lsp::DocumentSymbol]) -> Vec<Outline> {
             span: span(s.range),
             at: pos(s.selection_range.start),
             detail: s.detail.clone(),
+            container: is_container(s.kind),
             children: outline(s.children.as_deref().unwrap_or_default()),
         })
         .collect()
@@ -595,9 +596,29 @@ fn symbols_in(file: &RepoPath, response: Option<lsp::DocumentSymbolResponse>) ->
                 span: span(s.location.range),
                 at: pos(s.location.range.start),
                 detail: None,
+                container: is_container(s.kind),
             })
             .collect(),
     }
+}
+
+/// Whether symbols of `kind` hold code. `Object` is what rust-analyzer lists an `impl` as.
+fn is_container(kind: lsp::SymbolKind) -> bool {
+    [
+        lsp::SymbolKind::MODULE,
+        lsp::SymbolKind::NAMESPACE,
+        lsp::SymbolKind::PACKAGE,
+        lsp::SymbolKind::CLASS,
+        lsp::SymbolKind::METHOD,
+        lsp::SymbolKind::CONSTRUCTOR,
+        lsp::SymbolKind::ENUM,
+        lsp::SymbolKind::INTERFACE,
+        lsp::SymbolKind::FUNCTION,
+        lsp::SymbolKind::OBJECT,
+        lsp::SymbolKind::STRUCT,
+        lsp::SymbolKind::OPERATOR,
+    ]
+    .contains(&kind)
 }
 
 fn flatten_hover(contents: lsp::HoverContents) -> String {

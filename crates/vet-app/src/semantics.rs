@@ -840,6 +840,7 @@ mod tests {
             },
             at: Pos { line: 0, col: 0 },
             detail: None,
+            container: false,
         }
     }
 

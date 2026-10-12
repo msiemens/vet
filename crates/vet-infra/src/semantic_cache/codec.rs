@@ -36,7 +36,7 @@ impl Kind {
     /// Bumped when the stored form of this kind changes.
     fn format(self) -> u32 {
         match self {
-            Kind::Symbols => 1,
+            Kind::Symbols => 2,
             Kind::Locations => 1,
             Kind::Hover => 1,
             Kind::Diagnostics => 1,
@@ -205,6 +205,7 @@ impl Writer {
         self.number(symbol.at.line);
         self.number(symbol.at.col);
         self.maybe(&symbol.detail);
+        self.0.push(u8::from(symbol.container));
     }
 }
 
@@ -317,6 +318,7 @@ impl Reader<'_> {
                 col: self.number()?,
             },
             detail: self.maybe()?,
+            container: self.flag()?,
         })
     }
 }

@@ -4,14 +4,15 @@
 use vet_core::review::Side;
 
 use super::changed::{Change, ChangedSymbol};
+use super::reference::{Reference, within};
 use super::{Derived, Inputs};
-use crate::ports::{Location, SymbolInfo};
+use crate::ports::SymbolInfo;
 use crate::query::Primitives;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SymbolImpact {
     pub symbol: SymbolInfo,
-    pub references: Vec<Location>,
+    pub references: Vec<Reference>,
     pub callers: Vec<SymbolInfo>,
     /// Queries that failed; the matching list is unknown, not empty.
     pub gaps: Vec<String>,
@@ -25,12 +26,13 @@ pub async fn impact(p: &impl Primitives, changed: &[ChangedSymbol]) -> Derived<V
         let at = c.symbol.location();
         let mut gaps = Vec::new();
         let found = p.references(Side::Target, &at).await;
-        let references = inputs
+        let found = inputs
             .asked_at("references", Side::Target, &at, found)
             .unwrap_or_else(|e| {
                 gaps.push(format!("references: {e}"));
                 Vec::new()
             });
+        let references = within(p, &mut inputs, Side::Target, found).await;
         let found = p.incoming_calls(Side::Target, &at).await;
         let callers = inputs
             .asked_at("incoming_calls", Side::Target, &at, found)

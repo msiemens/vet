@@ -199,6 +199,9 @@ pub struct SymbolInfo {
     pub at: Pos,
     /// What the server says about it in one line (`documentSymbol.detail`), often its signature.
     pub detail: Option<String>,
+    /// Code is written inside it: a namespace, module, type or function, as opposed to a
+    /// variable, parameter or field, which servers list in the outline as well.
+    pub container: bool,
 }
 
 impl SymbolInfo {

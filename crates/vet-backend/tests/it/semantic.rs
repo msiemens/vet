@@ -269,6 +269,8 @@ async fn rust_semantics_through_the_protocol() {
     };
     assert_eq!(impact.revision, revision);
     assert_eq!(impact.references.len(), 1, "{impact:?}");
+    let within = impact.references[0].within.as_ref().map(|w| w.name.clone());
+    assert_eq!(within, Some(name(&["fresh"])), "{impact:?}");
     let callers: Vec<_> = impact.callers.iter().map(|c| c.id.name.clone()).collect();
     assert_eq!(callers, [name(&["fresh"])]);
     assert!(impact.gaps.is_empty());
@@ -294,7 +296,12 @@ async fn rust_semantics_through_the_protocol() {
     assert_eq!(removal.gap, None);
     assert_eq!(removal.call_sites.len(), 1, "{removal:?}");
     assert_eq!(removal.call_sites[0].fate, CallFate::LikelyBroken);
-    assert_eq!(removal.call_sites[0].base.span.start.line, find(BASE, "gone()", 1, 0).0);
+    assert_eq!(
+        removal.call_sites[0].base.location.span.start.line,
+        find(BASE, "gone()", 1, 0).0
+    );
+    let within = removal.call_sites[0].base.within.as_ref().map(|w| w.name.clone());
+    assert_eq!(within, Some(name(&["caller"])), "{removal:?}");
     assert!(
         removal
             .inputs

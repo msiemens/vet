@@ -167,6 +167,7 @@ mod tests {
             span: Span { start: pos, end: pos },
             at: pos,
             detail: detail.map(String::from),
+            container: false,
         }
     }
 

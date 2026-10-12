@@ -101,6 +101,7 @@ async fn every_kind_of_answer_is_read_back_exactly_by_a_later_launch() {
             span: span(4),
             at: Pos { line: 4, col: 8 },
             detail: Some("fn inner()".into()),
+            container: true,
         },
         SymbolInfo {
             sym: Sym {
@@ -110,6 +111,7 @@ async fn every_kind_of_answer_is_read_back_exactly_by_a_later_launch() {
             span: span(0),
             at: Pos { line: 0, col: 0 },
             detail: None,
+            container: false,
         },
     ]);
     let locations = Value::Locations(vec![

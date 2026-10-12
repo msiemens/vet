@@ -56,6 +56,17 @@ pub struct SemanticLocation {
     pub external: bool,
 }
 
+/// A place that refers to a symbol, with the symbol it is in.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Reference {
+    pub location: SemanticLocation,
+    /// The innermost namespace, type or function around it; absent at the top level of a file,
+    /// outside the repository and where the language server cannot list the file's symbols.
+    pub within: Option<SymbolId>,
+}
+
 /// `revision` and `side` are those of the request.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -202,7 +213,7 @@ pub struct SymbolSignature {
 pub struct Impact {
     pub revision: u32,
     pub symbol: SymbolInfo,
-    pub references: Vec<SemanticLocation>,
+    pub references: Vec<Reference>,
     pub callers: Vec<SymbolInfo>,
     /// Queries that failed; the matching list is unknown, not empty.
     pub gaps: Vec<String>,
@@ -234,7 +245,7 @@ pub enum CallFate {
 #[ts(export)]
 pub struct CallSite {
     /// Where the reference is on the base side.
-    pub base: SemanticLocation,
+    pub base: Reference,
     pub fate: CallFate,
 }
 

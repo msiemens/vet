@@ -5,6 +5,7 @@ use vet_core::content::FileDiff;
 use vet_core::review::Side;
 
 use super::changed::{Change, ChangedSymbol};
+use super::reference::{Reference, within};
 use super::{Derived, Inputs};
 use crate::ports::{At, Location, Pos, SymbolInfo};
 use crate::query::Primitives;
@@ -27,7 +28,7 @@ pub enum Fate {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CallSite {
     /// Where the reference is on the base side.
-    pub base: Location,
+    pub base: Reference,
     pub fate: Fate,
 }
 
@@ -61,8 +62,8 @@ pub async fn removal_impact(
             }
         };
         let mut call_sites = Vec::new();
-        for base in refs {
-            let fate = match locate(files, &base) {
+        for base in within(p, &mut inputs, Side::Base, refs).await {
+            let fate = match locate(files, &base.location) {
                 Located::Fate(fate) => fate,
                 Located::Same(at) => {
                     let found = p.definition(Side::Target, &at).await;

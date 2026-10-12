@@ -35,6 +35,15 @@ fn sym(path: &str, name: &str, start: u32, end: u32) -> SymbolInfo {
         span: span(start, end),
         at: Pos { line: start, col: 3 },
         detail: None,
+        container: true,
+    }
+}
+
+/// Like [`sym`], but a parameter, variable or field: nothing is written inside it.
+fn variable(path: &str, name: &str, start: u32, end: u32) -> SymbolInfo {
+    SymbolInfo {
+        container: false,
+        ..sym(path, name, start, end)
     }
 }
 
@@ -353,13 +362,118 @@ fn impact_lists_references_and_callers_of_added_and_modified_symbols_only() {
     fake.callers
         .insert((Side::Target, keep), vec![sym("b.rs", "caller", 5, 9)]);
     fake.failing_callers.push(changes[1].symbol.location());
+    fake.symbols
+        .insert((Side::Target, file("b.rs")), vec![sym("b.rs", "caller", 5, 9)]);
 
     let result = block_on(impact(&fake, &changes));
     assert_eq!(result.value.len(), 3);
-    assert_eq!(result.value[0].references, [site("b.rs", 7)]);
+    assert_eq!(result.value[0].references.len(), 1);
+    assert_eq!(result.value[0].references[0].location, site("b.rs", 7));
     assert_eq!(result.value[0].callers.len(), 1);
     assert!(result.value[1].gaps.iter().any(|g| g.contains("no call hierarchy")));
-    assert_eq!(result.inputs.primitives.len(), 6);
+    assert_eq!(result.inputs.primitives.len(), 7);
+}
+
+#[test]
+fn a_reference_is_in_the_innermost_container_not_in_a_parameter_or_variable() {
+    let (mut fake, files) = changed_fixture();
+    let changes = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
+        .value
+        .symbols;
+    fake.symbols.insert(
+        (Side::Target, file("b.rs")),
+        vec![
+            sym("b.rs", "Billing", 0, 20),
+            sym("b.rs", "Billing::run", 4, 12),
+            variable("b.rs", "Billing::run::arg", 4, 5),
+            variable("b.rs", "Billing::run::total", 6, 7),
+            sym("b.rs", "Billing::run::inner", 8, 10),
+            variable("b.rs", "LIMIT", 22, 23),
+        ],
+    );
+    fake.references.insert(
+        (Side::Target, changes[0].symbol.location()),
+        vec![
+            // In the parameter's type, in a local's initializer, in the nested function, in
+            // the class body, at the top level and in a variable at the top level.
+            site("b.rs", 4),
+            site("b.rs", 6),
+            site("b.rs", 9),
+            site("b.rs", 15),
+            site("b.rs", 21),
+            site("b.rs", 22),
+        ],
+    );
+    let result = block_on(impact(&fake, &changes[..1]));
+    let within: Vec<_> = result.value[0]
+        .references
+        .iter()
+        .map(|r| r.within.as_ref().map(|s| s.name.join("::")))
+        .collect();
+    assert_eq!(
+        within,
+        [
+            Some("Billing::run".to_owned()),
+            Some("Billing::run".to_owned()),
+            Some("Billing::run::inner".to_owned()),
+            Some("Billing".to_owned()),
+            None,
+            None,
+        ]
+    );
+    // The outline is asked once for the file, however many references are in it.
+    let outlines = result
+        .inputs
+        .primitives
+        .iter()
+        .filter(|p| p.starts_with("document_symbols("))
+        .count();
+    assert_eq!(outlines, 1);
+}
+
+#[test]
+fn a_reference_whose_file_has_no_outline_or_is_outside_the_repository_is_in_nothing() {
+    let (mut fake, files) = changed_fixture();
+    let changes = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
+        .value
+        .symbols;
+    fake.failing_symbols.push(file("c.rs"));
+    let outside = Location {
+        external: true,
+        ..site("/dep/lib.rs", 3)
+    };
+    fake.references.insert(
+        (Side::Target, changes[0].symbol.location()),
+        vec![site("c.rs", 1), outside.clone(), site("unknown.rs", 1)],
+    );
+    let result = block_on(impact(&fake, &changes[..1]));
+    let refs = &result.value[0].references;
+    assert_eq!(refs.len(), 3);
+    assert!(refs.iter().all(|r| r.within.is_none()));
+    // Not an error: the references are listed and nothing is missing from them.
+    assert!(result.value[0].gaps.is_empty(), "{:?}", result.value[0].gaps);
+    assert_eq!(refs[1].location, outside);
+}
+
+#[test]
+fn a_remaining_reference_of_a_removed_symbol_is_in_the_container_it_was_in_on_the_base() {
+    let (mut fake, files) = changed_fixture();
+    let changes = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
+        .value
+        .symbols;
+    let dropped = &changes[3];
+    fake.symbols.insert(
+        (Side::Base, file("c.rs")),
+        vec![sym("c.rs", "Report", 0, 10), sym("c.rs", "Report::print", 3, 6)],
+    );
+    fake.references
+        .insert((Side::Base, dropped.symbol.location()), vec![site("c.rs", 4)]);
+    let result = block_on(removal_impact(&fake, &changes, &files));
+    let site = &result.value[0].call_sites[0];
+    assert_eq!(
+        site.base.within.as_ref().map(|s| s.name.join("::")),
+        Some("Report::print".to_owned())
+    );
 }
 
 #[test]
