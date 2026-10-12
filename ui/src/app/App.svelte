@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { type ComponentProps, onMount, untrack } from "svelte";
+  import { type ComponentProps, onMount, tick, untrack } from "svelte";
   import {
     AboutDialog,
     Banners,
@@ -130,6 +130,13 @@
     );
     untrack(() => (left.tool = next));
   });
+  /** Goes to the first flagged hunk; when the range or commit on view has none, to the first of the whole changeset. */
+  async function goToFirstFlagged() {
+    if (reviewActions.firstFlagged()) return;
+    await changeset.showWhole();
+    await tick();
+    reviewActions.firstFlagged();
+  }
   const baseChangedLeft = $derived(changeset.baseChanged ? changeset.baseChangedFiles().length : 0);
 
   /** The head commit of a pull request, whose checks the toolbar shows. */
@@ -604,7 +611,7 @@
     flagged={changeset.manifest?.changesetCompletion.flaggedHunks ?? 0}
     ongoto={() => {
       dialog = undefined;
-      reviewActions.firstFlagged();
+      void goToFirstFlagged();
     }}
     onclose={() => (dialog = undefined)}
     onfinish={() => {

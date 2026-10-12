@@ -138,6 +138,8 @@ export class ReviewController {
   /** Where file tabs' panes are put when they are built: the positions of the changeset just brought back. */
   private pending = new Map<TabId, FilePositions>();
   private saving?: ReturnType<typeof setTimeout>;
+  /** The Changes tab of the views built last going to its first hunk. */
+  private arriving: Promise<void> = Promise.resolve();
 
   constructor(
     readonly backend: Backend,
@@ -361,6 +363,8 @@ export class ReviewController {
     if (!to) return false;
     const id = this.tabs.active;
     void (async () => {
+      // New views go to their first hunk first; a later jump must not be undone by it.
+      await this.arriving.catch(() => undefined);
       if (id === CHANGES) {
         await this.views.get(CHANGES)?.goToFileHunk(to.path, to.hunk);
       } else {
@@ -887,7 +891,7 @@ export class ReviewController {
     }
     this.show(manifest);
     const restored = switching && this.restoreChanges(brought, manifest);
-    if (!restored && (switching || rangeChanged || filterChanged)) void this.changes.goToHunk(0);
+    if (!restored && (switching || rangeChanged || filterChanged)) this.arriving = this.changes.goToHunk(0);
     // The new views have loaded nothing; a newer revision replaces this load.
     this.changes.loadAll().catch(() => undefined);
   }

@@ -296,6 +296,18 @@ class ChangesetStore {
     }
   }
 
+  /** Shows the changeset as a whole, out of a range and out of the commits (the backend remembers the "All changes" lens), and fetches its manifest. */
+  async showWhole() {
+    if (this.range) await this.setRange(undefined);
+    if (this.manifest?.lens === "perCommit") await this.showLens("squash");
+    this.commitIndex = undefined;
+    try {
+      await this.refresh();
+    } catch (error) {
+      session.notice = errorText(error);
+    }
+  }
+
   /**
    * Shows the interdiff of `range`, or the changeset (or its lens's commit) for none, and fetches its
    * manifest. Only the working tree has a live end: a committed changeset's latest version does not
