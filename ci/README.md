@@ -9,7 +9,7 @@
 
 `check.sh` runs rustfmt (the workspace and `ui/src-tauri`), clippy (`-D warnings`), tests,
 `check-deps.sh`, `check-module-cycles.sh`, then in `ui/` `pnpm check`, `lint`,
-`format:check`, `test` and `build`. The module-cycle tool's own checks (rustfmt, clippy,
+`format:check`, `test`, `harness` and `build`. The module-cycle tool's own checks (rustfmt, clippy,
 self-test) run only in `quick.sh`, when the tool changed.
 
 `quick.sh` runs rustfmt on changed files, clippy, tests and module cycles for the
@@ -17,6 +17,29 @@ changed crates and their dependents, rustfmt and clippy for `ui/src-tauri` when 
 changed, rustfmt, clippy and the module-cycle self-test when `tools/module-cycles`
 changed, and svelte-check, eslint, prettier and unit
 tests for changed UI files.
+
+### UI invariant harness
+
+`pnpm harness` (in `ui/`) runs the UI's real stores, with their runes compiled by a
+module hook (`ui/test/harness/loader.mjs`), under node against a real
+`target/debug/vet-backend` (`VET_BACKEND` names another). Each scripted session
+(`sessions.ts`) gets a process, a scratch `HOME` and data directory, and a fixture
+repository of its own, and the backend is killed at the end. After every step, once the
+window has been quiet, `invariants.ts` compares what the stores hold with fresh reads
+through a second connection: file review states, view and changeset completion, base,
+review info, the queue's on-view row, versions, commits, threads, the review state an
+editor view would hold, and that every review or comment request names the view of the
+element that sent it. `pnpm harness <session>…` runs some sessions.
+
+`known.ts` lists the differences that are known bugs, by invariant and view, each with
+its bug id. A difference not listed fails the run, and so does a listed one that did not
+happen: fixing a bug means deleting its lines. A session with unlisted differences is
+run once more, because requests sent without waiting for each other can be answered out
+of order; only differences that stay fail.
+
+`check.sh` builds the backend and runs the harness after the UI unit tests (about 20 s);
+`quick.sh` runs it when `ui/src/state`, the harness, or the `vet-protocol`, `vet-backend`
+or `vet-app` crates changed.
 
 The Rust steps on their own:
 

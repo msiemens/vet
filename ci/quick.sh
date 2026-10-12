@@ -2,7 +2,8 @@
 # Fast check scoped to what changed since BASE (default: the merge base with main),
 # including uncommitted and untracked files. Rust: format the changed files; clippy,
 # test and module cycles for the changed crates and the workspace crates depending on
-# them. ui/src-tauri: rustfmt and clippy when it changed. UI: svelte-check, lint and format for the changed files, unit tests. Skips
+# them. ui/src-tauri: rustfmt and clippy when it changed. UI: svelte-check, lint and format for the changed files, unit tests,
+# and the invariant harness when ui/src/state, the harness or the backend's crates changed. Skips
 # `pnpm build`; ci/check.sh remains the full check before merging.
 #
 # Usage: ci/quick.sh [BASE]
@@ -18,13 +19,16 @@ exists() { [[ -e $1 ]]; }
 
 step() { printf '\n== %s\n' "$*"; }
 
-rust_files=() crates=() tauri=false protocol=false deps=false cycle_tool=false ui_files=()
+rust_files=() crates=() tauri=false protocol=false deps=false cycle_tool=false harness=false ui_files=()
 for f in "${changed[@]}"; do
     case $f in
         tools/module-cycles/* | ci/check-module-cycles.sh | ci/fixtures/module-cycle/*) cycle_tool=true ;;
         ui/src-tauri/*) tauri=true ;;
         ui/src/generated/*) ;;
-        ui/*) exists "$f" && ui_files+=("${f#ui/}") ;;
+        ui/*)
+            exists "$f" && ui_files+=("${f#ui/}")
+            [[ $f == ui/src/state/* || $f == ui/test/harness/* ]] && harness=true
+            ;;
         # The lint configuration of every crate.
         crates/clippy.toml) for d in crates/*/; do crates+=("$(basename "$d")"); done ;;
         crates/*)
@@ -32,6 +36,8 @@ for f in "${changed[@]}"; do
             [[ $f == *.rs ]] && exists "$f" && rust_files+=("$f")
             [[ $f == */Cargo.toml ]] && deps=true
             [[ $f == crates/vet-protocol/* ]] && protocol=true
+            # What the UI harness's real backend is made of.
+            [[ $f == crates/vet-protocol/* || $f == crates/vet-backend/* || $f == crates/vet-app/* ]] && harness=true
             ;;
         Cargo.toml | Cargo.lock) deps=true ;;
         ci/check-deps.sh) deps=true ;;
@@ -102,6 +108,12 @@ if ((${#ui_files[@]})) || $protocol; then
     fi
     step "pnpm test"
     pnpm test
+    cd ..
+fi
+if $harness; then
+    step "pnpm harness (the stores against a real backend)"
+    cargo build -p vet-backend
+    (cd ui && pnpm harness)
 fi
 
 printf '\nquick checks passed (run ci/check.sh before merging)\n'

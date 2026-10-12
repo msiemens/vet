@@ -38,6 +38,9 @@ step "pnpm format:check"
 pnpm format:check
 step "pnpm test"
 pnpm test
+step "pnpm harness (the stores against a real backend)"
+cargo build -p vet-backend
+pnpm harness
 step "pnpm build"
 pnpm build
 cd ..
