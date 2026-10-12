@@ -18,7 +18,7 @@
           "headRepository": { "nameWithOwner": "grace/app" },
           "reviewDecision": "CHANGES_REQUESTED",
           "mergeStateStatus": "BLOCKED",
-          "author": { "login": "grace", "avatarUrl": "https://avatars.githubusercontent.com/u/2?v=4" },
+          "author": { "login": "grace", "name": "Grace Hopper", "avatarUrl": "https://avatars.githubusercontent.com/u/2?v=4" },
           "labels": { "nodes": [{ "name": "performance" }, { "name": "needs-review" }] },
           "assignees": { "nodes": [{ "login": "ada" }] },
           "reviewRequests": {
@@ -30,8 +30,8 @@
           "viewerLatestReview": { "state": "COMMENTED", "commit": { "oid": "c1c1c1" } },
           "latestOpinionatedReviews": {
             "nodes": [
-              { "state": "APPROVED", "author": { "login": "ada" } },
-              { "state": "CHANGES_REQUESTED", "author": { "login": "linus" } },
+              { "state": "APPROVED", "author": { "login": "ada", "name": "" } },
+              { "state": "CHANGES_REQUESTED", "author": { "login": "linus", "name": "Linus Torvalds" } },
               { "state": "CHANGES_REQUESTED", "author": null }
             ]
           },

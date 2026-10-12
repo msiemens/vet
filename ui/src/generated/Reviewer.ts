@@ -5,4 +5,8 @@ export type Reviewer = {
 /**
  * A login, or `organization/team`.
  */
+login: string, 
+/**
+ * What the reviewer is called when shown: the display name, else the login.
+ */
 name: string, state: ReviewerState, };

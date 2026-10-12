@@ -12,7 +12,9 @@
   <dd><span class="dot state-{info.state}"></span>{stateLabel(info)}</dd>
   <dt>Author</dt>
   <dd class="author">
-    <Avatar name={info.author} url={info.authorAvatar} /><span class="cut" title={info.author}>{info.author}</span>
+    <Avatar name={info.authorName} url={info.authorAvatar} /><span class="cut" title={info.authorName}
+      >{info.authorName}</span
+    >
   </dd>
   <dt>Branch</dt>
   <dd class="mono branches" title="{info.sourceBranch} into {info.targetBranch}">
@@ -21,7 +23,7 @@
   {#if info.reviewers.length}
     <dt>Reviewers</dt>
     <dd class="list">
-      {#each info.reviewers as reviewer (reviewer.name)}
+      {#each info.reviewers as reviewer (reviewer.login)}
         <span class="reviewer verdict-{reviewer.state}" title="{reviewer.name}: {reviewer.state}">
           <span aria-hidden="true">{reviewerMark(reviewer.state)}</span>
           {reviewer.name}

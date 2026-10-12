@@ -27,21 +27,21 @@ fragment PullRequestFields on PullRequest {
   headRepository { nameWithOwner }
   reviewDecision
   mergeStateStatus
-  author { login avatarUrl }
+  author { login avatarUrl ... on User { name } }
   labels(first: 20) { nodes { name } }
   assignees(first: 10) { nodes { login } }
   reviewRequests(first: 20) {
     nodes {
       requestedReviewer {
         __typename
-        ... on User { login }
+        ... on User { login name }
         ... on Mannequin { login }
         ... on Team { slug organization { login } }
       }
     }
   }
   viewerLatestReview { state commit { oid } }
-  latestOpinionatedReviews(first: 20, writersOnly: true) { nodes { state author { login } } }
+  latestOpinionatedReviews(first: 20, writersOnly: true) { nodes { state author { login ... on User { name } } } }
   reviewThreads(first: 100) { nodes { isResolved } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 }";
@@ -158,11 +158,27 @@ pub(super) struct Login {
     pub login: String,
 }
 
+/// An account with its picture, and the profile name that only a user has (a bot or a mannequin
+/// has none).
 #[derive(Deserialize)]
 pub(super) struct Author {
     pub login: String,
-    #[serde(rename = "avatarUrl")]
+    /// Null or empty for a user who has not set a name.
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(rename = "avatarUrl", default)]
     pub avatar_url: Option<String>,
+}
+
+impl Author {
+    pub(super) fn display(&self) -> String {
+        display_name(self.name.as_deref(), &self.login)
+    }
+}
+
+/// What a person is called when shown: the profile name, else the login.
+pub(super) fn display_name(name: Option<&str>, login: &str) -> String {
+    name.filter(|n| !n.trim().is_empty()).unwrap_or(login).to_owned()
 }
 
 #[derive(Deserialize)]
@@ -187,6 +203,8 @@ struct Reviewer {
     #[serde(rename = "__typename")]
     type_name: String,
     login: Option<String>,
+    /// Only a user has one.
+    name: Option<String>,
     slug: Option<String>,
     organization: Option<Login>,
 }
@@ -202,7 +220,7 @@ struct ReviewNode {
 struct OpinionNode {
     state: String,
     /// Null for an account that was deleted.
-    author: Option<Login>,
+    author: Option<Author>,
 }
 
 #[derive(Deserialize)]
@@ -308,13 +326,22 @@ pub(super) fn is_blocked(merge_state_status: Option<&str>) -> bool {
 }
 
 pub(super) fn review_request(node: RequestNode) -> Option<ReviewRequest> {
+    requested(node).map(|(request, _)| request)
+}
+
+/// The review request with what its reviewer is called when shown.
+pub(super) fn requested(node: RequestNode) -> Option<(ReviewRequest, String)> {
     let reviewer = node.requested_reviewer?;
     match reviewer.type_name.as_str() {
-        "User" | "Mannequin" => reviewer.login.map(ReviewRequest::User),
-        "Team" => Some(ReviewRequest::Team(format!(
-            "{}/{}",
-            reviewer.organization?.login, reviewer.slug?
-        ))),
+        "User" | "Mannequin" => {
+            let login = reviewer.login?;
+            let shown = display_name(reviewer.name.as_deref(), &login);
+            Some((ReviewRequest::User(login), shown))
+        }
+        "Team" => {
+            let team = format!("{}/{}", reviewer.organization?.login, reviewer.slug?);
+            Some((ReviewRequest::Team(team.clone()), team))
+        }
         _ => None,
     }
 }
@@ -332,6 +359,7 @@ impl PullRequestNode {
                 .author
                 .as_ref()
                 .map_or_else(|| "ghost".to_owned(), |a| a.login.clone()),
+            author_name: self.author.as_ref().map_or_else(|| "ghost".to_owned(), Author::display),
             author_avatar: self.author.and_then(|a| a.avatar_url),
             source_branch: self.head_ref_name,
             target_branch: self.base_ref_name,
@@ -363,7 +391,7 @@ impl PullRequestNode {
                 .present()
                 .filter(|r| r.state == "CHANGES_REQUESTED")
                 .map(|r| ChangesRequest {
-                    reviewer: r.author.map_or_else(|| "ghost".to_owned(), |a| a.login),
+                    reviewer: r.author.as_ref().map_or_else(|| "ghost".to_owned(), Author::display),
                     how: ChangesAsked::Requested,
                 })
                 .collect(),

@@ -189,7 +189,7 @@ export interface Author {
 
 /** The Author column: a pull request's author, a branch's tip commit's author, and nobody for the working tree. */
 export function authorOf(row: QueueRow): Author | undefined {
-  if (row.pullRequest) return { name: row.pullRequest.author, avatar: row.pullRequest.authorAvatar, muted: false };
+  if (row.pullRequest) return { name: row.pullRequest.authorName, avatar: row.pullRequest.authorAvatar, muted: false };
   return row.author === undefined ? undefined : { name: row.author, muted: true };
 }
 

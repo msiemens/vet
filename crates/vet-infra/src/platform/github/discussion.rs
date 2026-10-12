@@ -16,8 +16,8 @@ use vet_app::platform::{
 };
 
 use super::wire::{
-    CommitNode, Login, Name, Nodes, Oid, PageInfo, RequestNode, latest_ci, parse_timestamp, review_request,
-    review_verdict, unexpected,
+    Author, CommitNode, Name, Nodes, Oid, PageInfo, RequestNode, latest_ci, parse_timestamp, requested, review_verdict,
+    unexpected,
 };
 use super::{Clients, GitHubClient, repository};
 
@@ -28,16 +28,16 @@ const THREAD_PAGE: u32 = 50;
 /// taken to be gone.
 const MAX_THREADS: usize = 2000;
 
-const REVIEW_COMMENT: &str =
-    "id body createdAt lastEditedAt state viewerDidAuthor author { login avatarUrl } originalCommit { oid }";
+const REVIEW_COMMENT: &str = "id body createdAt lastEditedAt state viewerDidAuthor author { login avatarUrl ... on User { name } } originalCommit { oid }";
 
-const ISSUE_COMMENT: &str = "id body createdAt lastEditedAt viewerDidAuthor author { login avatarUrl }";
+const ISSUE_COMMENT: &str =
+    "id body createdAt lastEditedAt viewerDidAuthor author { login avatarUrl ... on User { name } }";
 
 fn thread_fields() -> String {
     format!(
         "fragment ThreadFields on PullRequestReviewThread {{
   id isResolved isOutdated path diffSide line startLine originalLine originalStartLine subjectType
-  resolvedBy {{ login }}
+  resolvedBy {{ login ... on User {{ name }} }}
   comments(first: 100) {{ nodes {{ {REVIEW_COMMENT} }} pageInfo {{ hasNextPage endCursor }} }}
 }}"
     )
@@ -49,22 +49,22 @@ fn discussion_query() -> String {
   repository(owner: $owner, name: $name) {{
     pullRequest(number: $number) {{
       title url isDraft state headRefName baseRefName
-      author {{ login avatarUrl }}
+      author {{ login avatarUrl ... on User {{ name }} }}
       labels(first: 20) {{ nodes {{ name }} }}
       reviewRequests(first: 30) {{
         nodes {{
           requestedReviewer {{
             __typename
-            ... on User {{ login }}
+            ... on User {{ login name }}
             ... on Mannequin {{ login }}
             ... on Team {{ slug organization {{ login }} }}
           }}
         }}
       }}
-      latestReviews(first: 30) {{ nodes {{ state author {{ login }} }} }}
+      latestReviews(first: 30) {{ nodes {{ state author {{ login ... on User {{ name }} }} }} }}
       commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }}
       comments(last: 50) {{ nodes {{ {ISSUE_COMMENT} }} }}
-      reviews(last: 50) {{ nodes {{ id state body submittedAt viewerDidAuthor author {{ login avatarUrl }} }} }}
+      reviews(last: 50) {{ nodes {{ id state body submittedAt viewerDidAuthor author {{ login avatarUrl ... on User {{ name }} }} }} }}
       reviewThreads(first: {THREAD_PAGE}, after: $after) {{
         nodes {{ ...ThreadFields }}
         pageInfo {{ hasNextPage endCursor }}
@@ -137,13 +137,6 @@ fn capitalized(call: &str) -> String {
 }
 
 #[derive(Deserialize)]
-struct Actor {
-    login: String,
-    #[serde(rename = "avatarUrl")]
-    avatar_url: Option<String>,
-}
-
-#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CommentNode {
     id: String,
@@ -156,7 +149,7 @@ struct CommentNode {
     #[serde(default)]
     viewer_did_author: bool,
     /// Null for an account that was deleted.
-    author: Option<Actor>,
+    author: Option<Author>,
     /// Absent for an issue comment.
     #[serde(default)]
     original_commit: Option<Oid>,
@@ -170,7 +163,7 @@ impl CommentNode {
             None => created_at,
         };
         let (author, avatar) = match self.author {
-            Some(a) => (a.login, a.avatar_url),
+            Some(a) => (a.display(), a.avatar_url),
             None => ("ghost".to_owned(), None),
         };
         Ok(PlatformComment {
@@ -199,7 +192,7 @@ struct ThreadNode {
     line: Option<u32>,
     start_line: Option<u32>,
     subject_type: Option<String>,
-    resolved_by: Option<Login>,
+    resolved_by: Option<Author>,
     comments: CommentPage,
 }
 
@@ -254,7 +247,7 @@ struct DiscussionNode {
     state: String,
     head_ref_name: String,
     base_ref_name: String,
-    author: Option<Actor>,
+    author: Option<Author>,
     labels: Nodes<Name>,
     review_requests: Nodes<RequestNode>,
     latest_reviews: Nodes<LatestReview>,
@@ -267,7 +260,7 @@ struct DiscussionNode {
 #[derive(Deserialize)]
 struct LatestReview {
     state: String,
-    author: Option<Login>,
+    author: Option<Author>,
 }
 
 #[derive(Deserialize)]
@@ -278,7 +271,7 @@ struct ReviewNode {
     body: String,
     submitted_at: Option<String>,
     viewer_did_author: bool,
-    author: Option<Actor>,
+    author: Option<Author>,
 }
 
 #[derive(Deserialize)]
@@ -327,7 +320,7 @@ impl ThreadNode {
             lines,
             outdated: self.is_outdated,
             resolved: self.is_resolved,
-            resolved_by: self.resolved_by.map(|u| u.login),
+            resolved_by: self.resolved_by.as_ref().map(Author::display),
             comments,
         }))
     }
@@ -352,18 +345,21 @@ fn reviewers(latest: Nodes<LatestReview>, requests: Nodes<RequestNode>) -> Vec<R
                 "DISMISSED" => ReviewerState::Waiting,
                 _ => return None,
             };
+            let author = r.author?;
             Some(Reviewer {
-                name: r.author?.login,
+                name: author.display(),
+                login: author.login,
                 state,
             })
         })
         .collect();
-    for request in requests.present().filter_map(review_request) {
-        let (ReviewRequest::User(name) | ReviewRequest::Team(name)) = request;
-        match found.iter_mut().find(|r| r.name == name) {
+    for (request, name) in requests.present().filter_map(requested) {
+        let (ReviewRequest::User(login) | ReviewRequest::Team(login)) = request;
+        match found.iter_mut().find(|r| r.login == login) {
             // Asked again after a review: they are being waited for.
             Some(known) => known.state = ReviewerState::Waiting,
             None => found.push(Reviewer {
+                login,
                 name,
                 state: ReviewerState::Waiting,
             }),
@@ -400,7 +396,7 @@ fn conversation(
             continue;
         }
         let (author, avatar) = match review.author {
-            Some(a) => (a.login, a.avatar_url),
+            Some(a) => (a.display(), a.avatar_url),
             None => ("ghost".to_owned(), None),
         };
         items.push(ConversationItem {
@@ -547,9 +543,9 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         let (threads, complete) = self
             .all_threads(host, &clients, node.review_threads, (owner, name, number))
             .await?;
-        let (author, author_avatar) = match node.author {
-            Some(a) => (a.login, a.avatar_url),
-            None => ("ghost".to_owned(), None),
+        let (author, author_name, author_avatar) = match node.author {
+            Some(a) => (a.login.clone(), a.display(), a.avatar_url),
+            None => ("ghost".to_owned(), "ghost".to_owned(), None),
         };
         Ok(Discussion {
             title: node.title,
@@ -559,6 +555,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             target_branch: node.base_ref_name,
             state: pull_request_state(&node.state),
             author,
+            author_name,
             author_avatar,
             reviewers: reviewers(node.latest_reviews, node.review_requests),
             viewer_verdict: None,

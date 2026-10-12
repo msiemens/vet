@@ -102,7 +102,7 @@ fn reviewers(pr: &GitPullRequest, me: &Me) -> Vec<Reviewer> {
         .filter(|r| r.has_declined != Some(true))
         .map(|r| {
             let identity = &r.identity_ref;
-            let name = if identity.is_container == Some(true) {
+            let login = if identity.is_container == Some(true) {
                 identity
                     .graph_subject_base
                     .display_name
@@ -112,7 +112,8 @@ fn reviewers(pr: &GitPullRequest, me: &Me) -> Vec<Reviewer> {
                 me.name(identity)
             };
             Reviewer {
-                name,
+                login,
+                name: Me::display(identity),
                 state: reviewer_state(r.vote.unwrap_or(0)),
             }
         })
@@ -359,6 +360,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             target_branch: wire::branch(&pr.target_ref_name),
             state: pull_request_state(&pr.status),
             author: call.me.name(&pr.created_by),
+            author_name: Me::display(&pr.created_by),
             // The pictures need the sign-in that the web page has; the initials stand in.
             author_avatar: None,
             reviewers: reviewers(&pr, &call.me),

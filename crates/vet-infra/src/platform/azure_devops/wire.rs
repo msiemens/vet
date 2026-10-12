@@ -107,11 +107,7 @@ pub(super) fn pull_request(pr: &GitPullRequest, me: &Me, web: &str) -> Option<ve
         let vote = reviewer.vote.unwrap_or(0);
         if let Some(how) = changes_asked(vote).filter(|_| reviewer.has_declined != Some(true)) {
             changes_requested.push(ChangesRequest {
-                reviewer: identity
-                    .graph_subject_base
-                    .display_name
-                    .clone()
-                    .unwrap_or_else(|| me.name(identity)),
+                reviewer: Me::display(identity),
                 how,
             });
         }
@@ -139,6 +135,7 @@ pub(super) fn pull_request(pr: &GitPullRequest, me: &Me, web: &str) -> Option<ve
         title: pr.title.clone().unwrap_or_default(),
         url: format!("{web}{}", pr.pull_request_id),
         author: me.name(&pr.created_by),
+        author_name: Me::display(&pr.created_by),
         // The picture is behind the organization's login: a browser cannot load it.
         author_avatar: None,
         source_branch: branch(&pr.source_ref_name),

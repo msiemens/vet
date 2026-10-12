@@ -11,7 +11,15 @@ import type { Reviewer } from "./Reviewer";
 /**
  * What the Comments tool window shows of the pull request on view, above its threads.
  */
-export type PullRequestInfo = { number: number, title: string, url: string, draft: boolean, state: PullRequestState, author: string, authorAvatar: string | null, sourceBranch: string, targetBranch: string, reviewers: Array<Reviewer>, 
+export type PullRequestInfo = { number: number, title: string, url: string, draft: boolean, state: PullRequestState, 
+/**
+ * The author's login.
+ */
+author: string, 
+/**
+ * What the author is called when shown: the display name, else the login.
+ */
+authorName: string, authorAvatar: string | null, sourceBranch: string, targetBranch: string, reviewers: Array<Reviewer>, 
 /**
  * The id of the verdict the viewer voted, on a platform that keeps the vote apart from posting
  * (`traits.verdict_separate`); absent without a vote.

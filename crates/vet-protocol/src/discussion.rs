@@ -42,6 +42,8 @@ pub enum ReviewerState {
 #[ts(export)]
 pub struct Reviewer {
     /// A login, or `organization/team`.
+    pub login: String,
+    /// What the reviewer is called when shown: the display name, else the login.
     pub name: String,
     pub state: ReviewerState,
 }
@@ -168,7 +170,10 @@ pub struct PullRequestInfo {
     pub url: String,
     pub draft: bool,
     pub state: PullRequestState,
+    /// The author's login.
     pub author: String,
+    /// What the author is called when shown: the display name, else the login.
+    pub author_name: String,
     pub author_avatar: Option<String>,
     pub source_branch: String,
     pub target_branch: String,

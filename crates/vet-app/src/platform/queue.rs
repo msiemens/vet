@@ -23,7 +23,10 @@ pub struct PullRequestRow {
     pub number: u64,
     pub title: String,
     pub url: String,
+    /// The author's login.
     pub author: String,
+    /// What the author is called when shown: the display name, else the login.
+    pub author_name: String,
     pub author_avatar: Option<String>,
     pub source_branch: String,
     pub target_branch: String,
@@ -130,6 +133,7 @@ fn row(pr: PullRequest, viewer: &Viewer) -> PullRequestRow {
         title: pr.title,
         url: pr.url,
         author: pr.author,
+        author_name: pr.author_name,
         author_avatar: pr.author_avatar,
         source_branch: pr.source_branch,
         target_branch: pr.target_branch,
@@ -175,6 +179,7 @@ pub(crate) mod tests {
             title: format!("PR {number}"),
             url: format!("https://github.com/acme/app/pull/{number}"),
             author: "grace".to_owned(),
+            author_name: "Grace Hopper".to_owned(),
             author_avatar: None,
             source_branch: "feature".to_owned(),
             target_branch: "main".to_owned(),
@@ -304,6 +309,11 @@ pub(crate) mod tests {
             rows(all.clone(), &viewer(), &query).iter().map(|r| r.number).collect()
         };
         assert_eq!(numbers(&|q| q.author = Some("LINUS".into())), [2]);
+        assert_eq!(
+            numbers(&|q| q.author = Some("Grace Hopper".into())),
+            Vec::<u64>::new(),
+            "the author is filtered by login, not by the name shown"
+        );
         assert_eq!(numbers(&|q| q.label = Some("bug".into())), [1]);
         assert_eq!(numbers(&|q| q.draft = Some(false)), [2]);
         assert_eq!(numbers(&|q| q.ci = Some(CiState::Failure)), [1]);
@@ -404,7 +414,7 @@ pub(crate) mod tests {
         assert_eq!(
             (
                 row.title.as_str(),
-                row.author.as_str(),
+                (row.author.as_str(), row.author_name.as_str()),
                 row.source_branch.as_str(),
                 row.target_branch.as_str(),
                 row.ci,
@@ -415,7 +425,7 @@ pub(crate) mod tests {
             ),
             (
                 "PR 7",
-                "grace",
+                ("grace", "Grace Hopper"),
                 "feature",
                 "main",
                 Some(CiState::Pending),

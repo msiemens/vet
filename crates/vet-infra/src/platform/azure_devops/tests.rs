@@ -63,8 +63,16 @@ fn all_open() -> PullRequestQuery {
 
 const PULLS: &str = "/contoso/Shop/_apis/git/repositories/api/pullrequests";
 
+/// An `IdentityRef`: the address is the unique name, and the display name is the part before the `@`,
+/// capitalized (`ada@contoso.com` is "Ada").
 fn identity(id: &str, unique_name: &str, container: bool) -> Value {
-    json!({ "id": id, "displayName": unique_name, "uniqueName": unique_name, "isContainer": container })
+    let local = unique_name.split('@').next().unwrap();
+    let display: String = local
+        .chars()
+        .enumerate()
+        .map(|(i, c)| if i == 0 { c.to_ascii_uppercase() } else { c })
+        .collect();
+    json!({ "id": id, "displayName": display, "uniqueName": unique_name, "isContainer": container })
 }
 
 fn reviewer(who: Value, vote: i64) -> Value {
@@ -278,6 +286,10 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
             2,
             "https://dev.azure.com/contoso/Shop/_git/api/pullrequest/1",
         )
+    );
+    assert_eq!(
+        first.author_name, "Grace",
+        "the author is shown by display name, and compared by address"
     );
     assert_eq!(first.labels, ["performance"]);
     assert_eq!(first.comments, 4, "resolved threads count, the system's own do not");

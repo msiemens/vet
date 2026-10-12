@@ -37,14 +37,15 @@ fn first_page(threads: Value, next: Option<&str>) -> String {
     json!({ "data": { "repository": { "pullRequest": {
         "title": "Add idempotency keys", "url": "https://github.com/acme/app/pull/482", "isDraft": false,
         "state": "OPEN", "headRefName": "lena/keys", "baseRefName": "main",
-        "author": { "login": "lena", "avatarUrl": "https://avatars.example/lena" },
+        "author": { "login": "lena", "name": "Lena Berg", "avatarUrl": "https://avatars.example/lena" },
         "labels": { "nodes": [{ "name": "sync" }, { "name": "database" }] },
         "reviewRequests": { "nodes": [
-            { "requestedReviewer": { "__typename": "User", "login": "ada" } },
-            { "requestedReviewer": { "__typename": "User", "login": "marco" } }
+            { "requestedReviewer": { "__typename": "User", "login": "ada", "name": "Ada Lovelace" } },
+            { "requestedReviewer": { "__typename": "User", "login": "marco", "name": "Marco Polo" } },
+            { "requestedReviewer": { "__typename": "Team", "slug": "owners", "organization": { "login": "acme" } } }
         ] },
         "latestReviews": { "nodes": [
-            { "state": "APPROVED", "author": { "login": "marco" } },
+            { "state": "APPROVED", "author": { "login": "marco", "name": "Marco Polo" } },
             { "state": "COMMENTED", "author": { "login": "jonas" } },
             { "state": "PENDING", "author": { "login": "ada" } }
         ] },
@@ -54,7 +55,7 @@ fn first_page(threads: Value, next: Option<&str>) -> String {
             "viewerDidAuthor": false, "author": { "login": "jonas", "avatarUrl": null }
         }, {
             "id": "IC2", "body": "Thanks!", "createdAt": "2024-05-01T12:00:00Z", "lastEditedAt": null,
-            "viewerDidAuthor": true, "author": { "login": "ada", "avatarUrl": null }
+            "viewerDidAuthor": true, "author": { "login": "ada", "name": "Ada Lovelace", "avatarUrl": null }
         }] },
         "reviews": { "nodes": [
             { "id": "R1", "state": "APPROVED", "body": "", "submittedAt": "2024-05-01T11:00:00Z",
@@ -207,6 +208,24 @@ async fn the_pull_request_block_says_who_reviews_what_blocks_and_what_was_said()
         (found.title.as_str(), found.author.as_str(), found.state, found.draft),
         ("Add idempotency keys", "lena", PullRequestState::Open, false)
     );
+    assert_eq!(found.author_name, "Lena Berg");
+    assert_eq!(
+        found
+            .conversation
+            .iter()
+            .find(|i| i.id == "IC2")
+            .map(|i| i.author.as_str()),
+        Some("Ada Lovelace"),
+        "a comment is by the profile name, and by the login for a user without one"
+    );
+    assert_eq!(
+        found
+            .conversation
+            .iter()
+            .find(|i| i.id == "IC1")
+            .map(|i| i.author.as_str()),
+        Some("jonas")
+    );
     assert_eq!(
         (found.source_branch.as_str(), found.target_branch.as_str()),
         ("lena/keys", "main")
@@ -217,12 +236,13 @@ async fn the_pull_request_block_says_who_reviews_what_blocks_and_what_was_said()
         found
             .reviewers
             .iter()
-            .map(|r| (r.name.as_str(), r.state))
+            .map(|r| (r.login.as_str(), r.name.as_str(), r.state))
             .collect::<Vec<_>>(),
         [
-            ("marco", ReviewerState::Waiting),
-            ("jonas", ReviewerState::Commented),
-            ("ada", ReviewerState::Waiting)
+            ("marco", "Marco Polo", ReviewerState::Waiting),
+            ("jonas", "jonas", ReviewerState::Commented),
+            ("ada", "Ada Lovelace", ReviewerState::Waiting),
+            ("acme/owners", "acme/owners", ReviewerState::Waiting)
         ],
         "marco approved and was asked again; a review that is not submitted is no verdict"
     );

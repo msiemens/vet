@@ -13,7 +13,15 @@ export type PullRequestRow = {
 /**
  * Opens it with `OpenChangeset`.
  */
-key: ChangesetKey, title: string, author: string, 
+key: ChangesetKey, title: string, 
+/**
+ * The author's login.
+ */
+author: string, 
+/**
+ * What the author is called when shown: the display name, else the login.
+ */
+authorName: string, 
 /**
  * The address of the author's picture, when the platform gives one a browser can load.
  */

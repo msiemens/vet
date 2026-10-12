@@ -106,6 +106,7 @@ const pr: PullRequestRow = {
   key: { type: "pullRequest", remote: "github.com/acme/app", number: 482 },
   title: "Add idempotency keys to sync jobs",
   author: "lena",
+  authorName: "Lena Berg",
   sourceBranch: "lena/idempotency-keys",
   targetBranch: "main",
   lines: { added: 236, removed: 41 },
@@ -193,8 +194,12 @@ void test("a row waits for its count, and has no lines where there are none to c
 
 void test("a pull request has the author the platform names, a branch the author of its tip, the working tree none", () => {
   const withPicture = pullRequestRow({ ...pr, authorAvatar: "https://avatars.example/lena.png" });
-  assert.deepEqual(authorOf(withPicture), { name: "lena", avatar: "https://avatars.example/lena.png", muted: false });
-  assert.deepEqual(authorOf(pullRequestRow(pr)), { name: "lena", avatar: undefined, muted: false });
+  assert.deepEqual(authorOf(withPicture), {
+    name: "Lena Berg",
+    avatar: "https://avatars.example/lena.png",
+    muted: false,
+  });
+  assert.deepEqual(authorOf(pullRequestRow(pr)), { name: "Lena Berg", avatar: undefined, muted: false });
   assert.deepEqual(authorOf({ ...retry, author: "Ada" }), { name: "Ada", muted: true });
   assert.equal(authorOf(retry), undefined);
   assert.equal(authorOf(tree), undefined);

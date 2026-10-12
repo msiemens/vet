@@ -216,7 +216,10 @@ pub struct PullRequest {
     pub number: u64,
     pub title: String,
     pub url: String,
+    /// The author's login: what the queue compares with the viewer's.
     pub author: String,
+    /// What the author is called when shown: the display name, else the login.
+    pub author_name: String,
     /// The address of the author's picture, when the platform gives one that a browser can load.
     pub author_avatar: Option<String>,
     pub source_branch: String,

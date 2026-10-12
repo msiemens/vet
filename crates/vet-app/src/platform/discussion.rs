@@ -88,6 +88,8 @@ pub enum ReviewerState {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Reviewer {
     /// The login, or `organization/team`.
+    pub login: String,
+    /// What the reviewer is called when shown: the display name, else the login.
     pub name: String,
     pub state: ReviewerState,
 }
@@ -101,7 +103,10 @@ pub struct Discussion {
     pub source_branch: String,
     pub target_branch: String,
     pub state: PullRequestState,
+    /// The author's login.
     pub author: String,
+    /// What the author is called when shown: the display name, else the login.
+    pub author_name: String,
     pub author_avatar: Option<String>,
     pub reviewers: Vec<Reviewer>,
     /// The id of the platform's verdict the viewer has voted, on a platform that keeps the vote

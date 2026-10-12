@@ -213,6 +213,12 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
     assert_eq!(first.labels, ["performance", "needs-review"]);
     assert_eq!(first.assignees, ["ada"]);
     assert_eq!(
+        (first.author.as_str(), first.author_name.as_str()),
+        ("grace", "Grace Hopper"),
+        "the login to compare by, the profile name to show"
+    );
+    assert_eq!(found[2].author_name, "dependabot", "a bot has no profile name");
+    assert_eq!(
         first.review_requests,
         [
             ReviewRequest::User("ada".to_owned()),
@@ -243,7 +249,7 @@ async fn a_list_follows_the_pages_and_reads_what_the_queue_shows() {
         first.changes_requested,
         [
             ChangesRequest {
-                reviewer: "linus".to_owned(),
+                reviewer: "Linus Torvalds".to_owned(),
                 how: ChangesAsked::Requested
             },
             ChangesRequest {

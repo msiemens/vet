@@ -237,6 +237,7 @@ mod tests {
             target_branch: "main".to_owned(),
             state: PullRequestState::Open,
             author: "lena".to_owned(),
+            author_name: "lena".to_owned(),
             author_avatar: None,
             reviewers: Vec::new(),
             viewer_verdict: None,

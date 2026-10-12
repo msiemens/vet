@@ -174,7 +174,10 @@ pub struct PullRequestRow {
     /// Opens it with `OpenChangeset`.
     pub key: ChangesetKey,
     pub title: String,
+    /// The author's login.
     pub author: String,
+    /// What the author is called when shown: the display name, else the login.
+    pub author_name: String,
     /// The address of the author's picture, when the platform gives one a browser can load.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]

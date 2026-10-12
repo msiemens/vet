@@ -480,6 +480,7 @@ pub fn pull_requests(list: &PullRequestList, reviews: &[RowReview]) -> p::Respon
                     key: changeset_key(&pull_request_source(&listed.remote, row.number)),
                     title: row.title.clone(),
                     author: row.author.clone(),
+                    author_name: row.author_name.clone(),
                     author_avatar: row.author_avatar.clone(),
                     source_branch: row.source_branch.clone(),
                     target_branch: row.target_branch.clone(),
@@ -930,11 +931,13 @@ pub fn pull_request_info(
             PullRequestState::Merged => p::PullRequestState::Merged,
         },
         author: d.author.clone(),
+        author_name: d.author_name.clone(),
         author_avatar: d.author_avatar.clone(),
         source_branch: d.source_branch.clone(),
         target_branch: d.target_branch.clone(),
         reviewers: (d.reviewers.iter())
             .map(|r| p::Reviewer {
+                login: r.login.clone(),
                 name: r.name.clone(),
                 state: reviewer_state(r.state),
             })

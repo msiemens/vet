@@ -283,7 +283,7 @@ async fn a_discussion_has_the_threads_of_people_anchored_to_the_iteration_they_w
         [
             ("7/3/1", "marco@contoso.com", "Why 12?", false, Some("a1")),
             ("7/3/2", "lena@contoso.com", "Because.", false, Some("a1")),
-            ("7/3/5", "ada@contoso.com", "My answer", true, Some("a1")),
+            ("7/3/5", "Ada", "My answer", true, Some("a1")),
         ],
         "a comment deleted or by the system is left out, and the iteration of the thread is the commit"
     );
@@ -364,16 +364,17 @@ async fn a_discussion_has_the_pull_request_its_reviewers_the_viewers_vote_and_th
             "grace@contoso.com",
         )
     );
+    assert_eq!(discussion.author_name, "Grace");
     assert_eq!(
         discussion
             .reviewers
             .iter()
-            .map(|r| (r.name.as_str(), r.state))
+            .map(|r| (r.login.as_str(), r.name.as_str(), r.state))
             .collect::<Vec<_>>(),
         [
-            ("ada@contoso.com", ReviewerState::Approved),
-            ("linus@contoso.com", ReviewerState::ChangesRequested),
-            ("[Shop]\\Reviewers", ReviewerState::Waiting),
+            ("ada@contoso.com", "Ada", ReviewerState::Approved),
+            ("linus@contoso.com", "Linus", ReviewerState::ChangesRequested),
+            ("[Shop]\\Reviewers", "[Shop]\\Reviewers", ReviewerState::Waiting),
         ],
         "who declined is not listed"
     );
