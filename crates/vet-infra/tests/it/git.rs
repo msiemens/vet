@@ -54,6 +54,13 @@ fn write(dir: &Path, name: &str, content: &[u8]) {
     std::fs::write(path, content).unwrap();
 }
 
+/// Sets the modification time of `name` back, past the window in which a stat cannot vouch for content.
+fn age(dir: &Path, name: &str, secs: u64) {
+    let file = std::fs::File::options().write(true).open(dir.join(name)).unwrap();
+    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(secs))
+        .unwrap();
+}
+
 fn commit(dir: &Path) {
     git(dir, &["add", "-A"]);
     git(dir, &["commit", "-q", "-m", "c"]);
@@ -565,15 +572,19 @@ async fn repeated_scans_follow_edits_through_the_stat_cache() {
     commit(dir.path());
     write(dir.path(), "new.txt", b"aaaa\n");
     write(dir.path(), "tracked.txt", b"u\n");
+    // Older than the second the scan reads them in, so the next scans may reuse the records.
+    age(dir.path(), "new.txt", 20);
+    age(dir.path(), "tracked.txt", 20);
     let repo = GixRepo::new(dir.path());
     let first = repo.scan(Dirty::All).await.unwrap().snapshot;
-    // Past the racy window, so the next scans may reuse the records.
-    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     assert_eq!(first, repo.scan(Dirty::All).await.unwrap().snapshot);
     assert_eq!(first, repo.scan(Dirty::All).await.unwrap().snapshot);
 
     write(dir.path(), "new.txt", b"bbbb\n");
     write(dir.path(), "tracked.txt", b"v\n");
+    // Edits of the same size, as old as the files were: only the stat tells them apart.
+    age(dir.path(), "new.txt", 10);
+    age(dir.path(), "tracked.txt", 10);
     let last = repo.scan(Dirty::All).await.unwrap().snapshot;
     assert_eq!(last.entries[&path("new.txt")].blob, blob(b"bbbb\n"));
     assert_eq!(last.entries[&path("tracked.txt")].blob, blob(b"v\n"));

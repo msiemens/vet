@@ -67,7 +67,11 @@ async fn send_reply(writer: &Writer, id: &Value, reply: Reply) {
         Reply::Error(code) => json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": "failed"}}),
         Reply::Hold => return,
     };
-    let body = serde_json::to_vec(&body).expect("serializes");
+    send(writer, &body).await;
+}
+
+async fn send(writer: &Writer, body: &Value) {
+    let body = serde_json::to_vec(body).expect("serializes");
     let mut writer = writer.lock().await;
     let _ = writer
         .write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes())
@@ -130,6 +134,15 @@ impl Fake {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         panic!("the server never received: {what}\n{:#?}", self.log());
+    }
+
+    /// Tells the client something, as the server does on its own.
+    pub async fn notify(&self, method: &str, params: Value) {
+        send(
+            &self.writer,
+            &json!({"jsonrpc": "2.0", "method": method, "params": params}),
+        )
+        .await;
     }
 
     /// Answers request `id`, late or not.

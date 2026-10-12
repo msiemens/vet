@@ -182,6 +182,10 @@ struct Fixture {
 }
 
 async fn fixture(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> Fixture {
+    fixture_with_grace(base, dirty, Duration::from_millis(400)).await
+}
+
+async fn fixture_with_grace(base: &[(&str, &str)], dirty: &[(&str, &str)], orphan_grace: Duration) -> Fixture {
     let repo = tempfile::tempdir().unwrap();
     git(repo.path(), &["init", "-q", "-b", "main"]);
     write(repo.path(), ".gitignore", "target/\n");
@@ -198,7 +202,7 @@ async fn fixture(base: &[(&str, &str)], dirty: &[(&str, &str)]) -> Fixture {
     let config = Config {
         debounce: Duration::from_millis(150),
         poll: Duration::from_millis(300),
-        orphan_grace: Duration::from_millis(400),
+        orphan_grace,
         ..Config::default()
     };
     Fixture {
@@ -968,7 +972,8 @@ async fn reopening_a_repository_resumes_its_review_across_a_restart() {
 
 #[tokio::test]
 async fn an_orphaned_project_is_released_but_stays_open_for_the_next_open() {
-    let fx = fixture(&[("a.txt", &text(5, &[]))], &[("a.txt", &text(5, &[1]))]).await;
+    let grace = Duration::from_secs(3);
+    let fx = fixture_with_grace(&[("a.txt", &text(5, &[]))], &[("a.txt", &text(5, &[1]))], grace).await;
     let first = Client::new(&fx.handler);
     let project = open(&first, fx.repo.path()).await;
     assert_eq!(project_refs(fx.repo.path()), "", "browsing holds nothing");
@@ -978,22 +983,27 @@ async fn an_orphaned_project_is_released_but_stays_open_for_the_next_open() {
     // The connection goes away without closing; a reload within the grace
     // period finds the project again.
     drop(first);
-    tokio::time::sleep(Duration::from_millis(100)).await;
     let second = Client::new(&fx.handler);
     assert_eq!(open(&second, fx.repo.path()).await, project);
 
+    // Once the grace period is over the project is gone, and the deadline only tells a hang from that.
     drop(second);
-    tokio::time::sleep(Duration::from_millis(1200)).await;
     let third = Client::new(&fx.handler);
-    assert!(
-        third
+    let released = async {
+        while third
             .call(Request::Manifest {
                 project,
                 view: vet_protocol::View::Changeset,
             })
             .await
-            .is_err()
-    );
+            .is_ok()
+        {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(60), released)
+        .await
+        .expect("the orphaned project was never released");
     // Not closed: its refs stay, and opening the repository again resumes it.
     assert_eq!(project_refs(fx.repo.path()), FIRST_VERSION_REFS);
     let resumed = open(&third, fx.repo.path()).await;

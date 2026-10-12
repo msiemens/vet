@@ -915,7 +915,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-    use serde_json::Value;
+    use serde_json::{Value, json};
 
     use super::*;
     use crate::lsp::fake::{self, Fake, Reply};
@@ -1098,25 +1098,105 @@ mod tests {
         assert_eq!(requests(&fake), 1);
     }
 
-    fn doc(opened: Instant) -> Doc {
-        Doc {
-            file: RepoPath(b"a.ts".to_vec()),
-            uri: "file:///a.ts".parse().unwrap(),
-            version: 1,
-            text: String::new(),
-            opened,
+    /// Longest a query that is not meant to wait may take; it only tells a hang from an answer.
+    const HANG: Duration = Duration::from_secs(10);
+
+    fn project_server(loads_project_on_open: bool, tree: Tree, files: &[&str]) -> (LspServer, Fake, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        for name in files {
+            std::fs::write(dir.path().join(name), "x").unwrap();
+        }
+        let (conn, fake) = fake::start(|_| Reply::Result(Value::Null));
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        (
+            LspServer::new(conn, root, tree, OFFERED, loads_project_on_open, Budget::new(1)),
+            fake,
+            dir,
+        )
+    }
+
+    fn at(file: &str) -> At {
+        At {
+            file: path(file),
+            pos: Pos { line: 0, col: 0 },
         }
     }
 
-    #[test]
-    fn one_quiet_wait_settles_the_documents_opened_before_it_began() {
-        let before = Instant::now();
-        let early = doc(before);
-        let late = doc(Instant::now() + Duration::from_secs(1));
-        let mut docs = Docs::default();
-        assert!(!docs.is_settled(&early));
-        docs.quiet_from = Some(before + Duration::from_millis(1));
-        assert!(docs.is_settled(&early));
-        assert!(!docs.is_settled(&late));
+    /// The server reports work in progress, and the client has taken note of it.
+    async fn begin_work(server: &LspServer, fake: &Fake) {
+        let progress = |kind| json!({"token": "indexing", "value": {"kind": kind, "title": "Indexing"}});
+        fake.notify("$/progress", progress("begin")).await;
+        while server.conn.with_state(|s| s.readiness().idle) {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    async fn end_work(fake: &Fake) {
+        fake.notify("$/progress", json!({"token": "indexing", "value": {"kind": "end"}}))
+            .await;
+    }
+
+    fn opened(log: &[Value]) -> usize {
+        log.iter().filter(|m| m["method"] == "textDocument/didOpen").count()
+    }
+
+    #[tokio::test]
+    async fn a_server_that_has_its_projects_loaded_when_ready_is_asked_while_it_is_busy() {
+        for tree in [Tree::Immutable, Tree::Live] {
+            let files = ["c0.cs", "c1.cs", "c2.cs", "c3.cs"];
+            let (server, fake, _dir) = project_server(false, tree, &files);
+            begin_work(&server, &fake).await;
+            let hovers = async {
+                for file in files {
+                    server.hover(&at(file)).await.unwrap();
+                }
+            };
+            tokio::time::timeout(HANG, hovers)
+                .await
+                .expect("the hovers waited for the busy server to go quiet");
+        }
+    }
+
+    #[tokio::test]
+    async fn documents_opened_together_wait_for_the_server_to_go_quiet_together_and_a_later_one_waits_again() {
+        let files = ["a0.ts", "a1.ts", "a2.ts", "a3.ts", "a4.ts", "a5.ts"];
+        let (server, fake, _dir) = project_server(true, Tree::Live, &[&files[..], &["late.ts"]].concat());
+        begin_work(&server, &fake).await;
+
+        let together: Vec<At> = files.map(at).into();
+        let ask = vet_semantic::join::bounded(6, &together, |at| server.hover(at));
+        let release = async {
+            fake.until("every document opened", |log| opened(log) == 6).await;
+            assert!(
+                fake.messages("textDocument/hover").is_empty(),
+                "asked while the server was busy"
+            );
+            end_work(&fake).await;
+        };
+        let (answers, ()) = tokio::time::timeout(HANG, vet_semantic::join::join(ask, release))
+            .await
+            .expect("the documents opened together did not share one wait");
+        assert!(answers.iter().all(Result::is_ok));
+
+        // The server is busy again: a document opened after the wait began waits for the next one,
+        // one the wait covered is answered at once.
+        begin_work(&server, &fake).await;
+        let hovered = fake.messages("textDocument/hover").len();
+        let late_at = at("late.ts");
+        let late = server.hover(&late_at);
+        let release = async {
+            fake.until("the late document opened", |log| opened(log) == 7).await;
+            assert_eq!(
+                fake.messages("textDocument/hover").len(),
+                hovered,
+                "the late one was asked at once"
+            );
+            server.hover(&together[0]).await.unwrap();
+            end_work(&fake).await;
+        };
+        let (late, ()) = tokio::time::timeout(HANG, vet_semantic::join::join(late, release))
+            .await
+            .expect("a document opened after the wait began was not waited for");
+        late.unwrap();
     }
 }
