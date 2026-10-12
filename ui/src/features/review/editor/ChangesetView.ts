@@ -832,7 +832,9 @@ export class ChangesetView {
 
   /** Draws the file again if the source wrote its state since the section drew it; a missed notification costs a delay, not a wrong picture. */
   private heal(s: Section) {
-    if (s.drawn !== this.review.version(s.file.path) && this.redraw(s)) this.pin.refresh();
+    if (s.drawn === this.review.version(s.file.path) || !this.redraw(s)) return;
+    this.pin.refresh();
+    this.scrollbar.refresh();
   }
 
   /** Opens the base diff of a hunk of `s` seen against an old base, or closes it if it is open. */

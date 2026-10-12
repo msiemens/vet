@@ -54,9 +54,12 @@ async function connect(port) {
     };
 }
 
-/** Runs fn(tab) in a fresh, isolated browser context and disposes it afterwards. */
-export async function withTab(fn, { width = 1440, height = 900 } = {}) {
-    const conn = await connect(ensureBrowser());
+/**
+ * Runs fn(tab) in a fresh, isolated browser context and disposes it afterwards. `port` names a browser
+ * the caller started; without it the shared browser (browser.sh) is used.
+ */
+export async function withTab(fn, { width = 1440, height = 900, port } = {}) {
+    const conn = await connect(port ?? ensureBrowser());
     let contextId;
     const dispose = async () => {
         if (!contextId) return;

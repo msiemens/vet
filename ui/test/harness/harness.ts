@@ -14,7 +14,7 @@ import { queue } from "../../src/state/queue.svelte.ts";
 import { session } from "../../src/state/session.svelte.ts";
 import { threads } from "../../src/state/threads.svelte.ts";
 import { versions } from "../../src/state/versions.svelte.ts";
-import { checkInvariants, type Violation, ViewMirror } from "./invariants.ts";
+import { checkInvariants, type Violation } from "./invariants.ts";
 
 const REQUESTS_THAT_NAME_A_VIEW = new Set<Request["type"]>([
   "toggleHunk",
@@ -85,7 +85,7 @@ export class Fixture {
 }
 
 /** A backend process with the fixture's home as its data directory. */
-class BackendProcess {
+export class BackendProcess {
   readonly child: ChildProcess;
   readonly address: Promise<{ port: number; token: string }>;
   private stderr = "";
@@ -142,7 +142,7 @@ export interface StepResult {
   violations: Violation[];
 }
 
-const binary = () =>
+export const binary = () =>
   process.env.VET_BACKEND ??
   join(process.env.CARGO_TARGET_DIR ?? join(import.meta.dirname, "../../../target"), "debug/vet-backend");
 
@@ -201,17 +201,15 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
 
     const stopVersions = versions.start(app);
     const stopThreads = threads.start(app);
-    const mirror = new ViewMirror();
     await changeset.refresh();
     await queue.loadAll();
     // The window shows the queue, which follows the events for the changeset on view.
     const stopQueue = queue.watch();
 
-    /** No request in flight and nothing heard for a moment; the mirror of the views follows the stores meanwhile. */
+    /** No request in flight and nothing heard for a moment. */
     const idle = async () => {
       const start = Date.now();
       for (;;) {
-        mirror.follow();
         if (inFlight === 0 && Date.now() - activity > 200) return;
         if (Date.now() - start > 30_000) throw new Error("the window did not settle");
         await sleep(20);
@@ -227,7 +225,7 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
         // What another window did reaches this one as events after `run` ended.
         activity = Date.now();
         await idle();
-        const violations = [...wrongViews.splice(0), ...(await checkInvariants(other, mirror))];
+        const violations = [...wrongViews.splice(0), ...(await checkInvariants(other))];
         results.push({ name, violations });
         process.stderr.write(`  ${name}: ${violations.length ? `${violations.length} differences` : "ok"}\n`);
       },

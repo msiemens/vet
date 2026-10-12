@@ -15,8 +15,6 @@ export const known: Known[] = [
   // Another window's marks never reach a window that shows a range or a commit.
   { bug: "H2", invariant: "fileReview", view: "interdiff" },
   { bug: "H2", invariant: "viewCompletion", view: "interdiff" },
-  { bug: "H2", invariant: "viewMirror", view: "interdiff" },
   { bug: "H2", invariant: "fileReview", view: "commit" },
   { bug: "H2", invariant: "viewCompletion", view: "commit" },
-  { bug: "H2", invariant: "viewMirror", view: "commit" },
 ];

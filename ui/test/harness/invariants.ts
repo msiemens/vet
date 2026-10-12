@@ -1,6 +1,6 @@
 // What the stores hold, compared with a fresh read of the backend once a step has settled. Each
 // difference is a violation of an invariant, named so that `known.ts` can list the ones that are
-// known bugs.
+// known bugs. What the editor views draw is compared in `browser.ts`.
 
 import type { Base } from "../../src/generated/Base.ts";
 import type { Manifest } from "../../src/generated/Manifest.ts";
@@ -9,7 +9,6 @@ import type { View } from "../../src/generated/View.ts";
 import type { Backend } from "../../src/state/backend.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
-import type { FileState } from "../../src/state/reviewModel.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { rangeKey } from "../../src/state/timelineRange.ts";
 import { threads } from "../../src/state/threads.svelte.ts";
@@ -23,40 +22,6 @@ export interface Violation {
   what: string;
   ui: unknown;
   backend: unknown;
-}
-
-/**
- * What an editor view holds of the review state, as the documented channels keep it: built from the
- * files' current state when the revision, the range or commit or the file filter changes, and patched
- * by what they read of the files written, as `ReviewController` does. The editor views are not
- * Svelte-free of this contract, so the harness models them here, polled between the steps' requests.
- */
-export class ViewMirror {
-  readonly files = new Map<string, FileState>();
-  private built?: string;
-
-  constructor() {
-    changeset.subscribe((paths) => {
-      for (const path of this.files.keys()) {
-        const state = paths === "all" || paths.has(path) ? changeset.state(path) : undefined;
-        if (state) this.files.set(path, state);
-      }
-    });
-  }
-
-  /** Rebuilds the views if what they are built for changed. */
-  follow() {
-    const layout = changeset.layout;
-    if (!layout) return;
-    const key = JSON.stringify([layout.shown.revision, changeset.viewKey, [...(changeset.baseChanged ?? [])]]);
-    if (key === this.built) return;
-    this.built = key;
-    this.files.clear();
-    for (const path of layout.paths) {
-      const state = changeset.state(path);
-      if (state) this.files.set(path, state);
-    }
-  }
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -77,7 +42,7 @@ const rowReview = (review: RowReview | undefined) =>
     lastReviewed: "lastReviewed" in review ? review.lastReviewed : undefined,
   };
 
-export async function checkInvariants(other: Backend, mirror: ViewMirror): Promise<Violation[]> {
+export async function checkInvariants(other: Backend): Promise<Violation[]> {
   const layout = changeset.layout;
   const facts = changeset.facts;
   if (!layout || !facts || !changeset.viewCompletion)
@@ -161,13 +126,6 @@ export async function checkInvariants(other: Backend, mirror: ViewMirror): Promi
       backendThreads.threads.map((t) => [t.id, t.status, t.messages.length]),
     );
   } else differ("threads", "the revision the threads were read at", threads.revision, backendThreads.revision);
-
-  for (const file of fresh.files) {
-    differ("viewMirror", `state an editor view holds for ${file.path}`, mirror.files.get(file.path), {
-      review: file.review,
-      completion: file.completion,
-    });
-  }
   return found;
 }
 

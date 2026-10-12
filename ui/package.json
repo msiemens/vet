@@ -13,6 +13,7 @@
     "format:check": "prettier --check .",
     "test": "node --test \"src/**/*.test.ts\"",
     "harness": "node --import ./test/harness/register.mjs test/harness/run.ts",
+    "harness:browser": "node --import ./test/harness/register.mjs test/harness/browser.ts",
     "backend": "node scripts/build-backend.mjs",
     "tauri": "tauri"
   },

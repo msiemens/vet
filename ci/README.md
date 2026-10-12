@@ -27,15 +27,22 @@ module hook (`ui/test/harness/loader.mjs`), under node against a real
 repository of its own, and the backend is killed at the end. After every step, once the
 window has been quiet, `invariants.ts` compares what the stores hold with fresh reads
 through a second connection: file review states, view and changeset completion, base,
-review info, the queue's on-view row, versions, commits, threads, the review state an
-editor view would hold, and that every review or comment request names the view of the
-element that sent it. `pnpm harness <session>…` runs some sessions.
+review info, the queue's on-view row, versions, commits, threads, and that every review
+or comment request names the view of the element that sent it. `pnpm harness <session>…` runs some sessions.
 
 `known.ts` lists the differences that are known bugs, by invariant and view, each with
 its bug id. A difference not listed fails the run, and so does a listed one that did not
 happen: fixing a bug means deleting its lines. A session with unlisted differences is
 run once more, because requests sent without waiting for each other can be answered out
 of order; only differences that stay fail.
+
+`pnpm harness:browser [session…]` is the second tier, for local runs: the real app in a headless
+Chrome (`VET_CHROME` names the binary) on a vite dev server, against a backend of its own. After each step
+of a session (`browser.ts`) it compares what the editor views drew, read through the dev build's
+`window.__vet.rendered()` (header texts, cards, the editors' review fields, the scroll bar's marks, a
+file's text), with a fresh read of the backend. It starts its own backend, dev server and browser on free
+ports, with a scratch profile and no keychain access, and stops them at the end. It is not part of
+`check.sh` or `quick.sh`.
 
 `check.sh` builds the backend and runs the harness after the UI unit tests (about 20 s);
 `quick.sh` runs it when `ui/src/state`, the harness, or the `vet-protocol`, `vet-backend`
