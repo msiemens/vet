@@ -10,6 +10,12 @@ export const dirname = (path: string) => path.slice(0, Math.max(0, path.lastInde
 export const pathsBelow = (paths: readonly string[], dir: string): string[] =>
   paths.filter((path) => path.startsWith(`${dir}/`));
 
+/** A path's folders with their trailing `/` and its file name, the parts `.path-text` shortens apart. */
+export const splitPath = (path: string): { dir: string; name: string } => {
+  const name = basename(path);
+  return { dir: path.slice(0, path.length - name.length), name };
+};
+
 /**
  * Follows a chain of directories that each hold nothing but one directory, the way trees show
  * it as one row (`crates/vet-core/src`). `onlyChild` answers the path of a directory's single

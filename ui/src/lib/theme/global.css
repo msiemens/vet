@@ -207,6 +207,23 @@ textarea.field {
   flex: 1;
 }
 
+/* A path on one line that gives way in its folders (`.dir`, cut with an ellipsis) before its file
+   name (`.name`), so the name stays readable; put the full path in `title`. */
+.path-text {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.path-text > .dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.path-text > .name {
+  flex: none;
+}
+
 /* `.badge`: a small status pill; `.badge-moved` and `.badge-ok` colour it. */
 .badge {
   height: 16px;

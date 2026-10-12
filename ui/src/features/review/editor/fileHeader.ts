@@ -4,7 +4,7 @@
 import type { Completion } from "../../../generated/Completion.ts";
 import type { FileChange } from "../../../generated/FileChange.ts";
 import type { FileReview } from "../../../generated/FileReview.ts";
-import { basename } from "../../../lib/paths.ts";
+import { splitPath } from "../../../lib/paths.ts";
 import { el, iconButton, reconfirmButton } from "./dom.ts";
 
 export interface HeaderActions {
@@ -55,9 +55,9 @@ export function renderProgress(
 
 export function fileHeader(file: FileChange, actions: HeaderActions): FileHeader {
   const header = document.createElement("header");
-  const name = basename(file.path);
-  const title = el("span", "path mono");
-  title.append(el("span", "dir", file.path.slice(0, file.path.length - name.length)), name);
+  const { dir, name } = splitPath(file.path);
+  const title = el("span", "path path-text mono");
+  title.append(el("span", "dir", dir), el("span", "name", name));
   title.title = file.path;
   const firstLine = file.hunks[0]?.targetStart ?? 0;
   header.addEventListener("dblclick", (e) => {

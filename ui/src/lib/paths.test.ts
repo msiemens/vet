@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { basename, compactChain, dirname, joinPath, pathsBelow, repoName } from "./paths.ts";
+import { basename, compactChain, dirname, joinPath, pathsBelow, repoName, splitPath } from "./paths.ts";
 
 void test("a path splits at its last slash", () => {
   assert.equal(basename("a/b/c.rs"), "c.rs");
@@ -9,6 +9,11 @@ void test("a path splits at its last slash", () => {
   assert.equal(dirname("c.rs"), "");
   assert.equal(joinPath("", "a"), "a");
   assert.equal(joinPath("a", "b"), "a/b");
+});
+
+void test("a path shows as its folders, trailing slash kept, and its file name", () => {
+  assert.deepEqual(splitPath("a/b/c.rs"), { dir: "a/b/", name: "c.rs" });
+  assert.deepEqual(splitPath("c.rs"), { dir: "", name: "c.rs" });
 });
 
 void test("a chain stops at the first directory with anything but one directory", () => {
