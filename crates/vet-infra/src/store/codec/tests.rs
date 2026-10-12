@@ -292,10 +292,18 @@ fn an_acknowledgement_row_with_an_unreadable_side_is_corrupt() {
         before: Some((RepoPath(b"f".to_vec()), entry(EntryKind::File, 0o100644))),
         after: Some((RepoPath(b"f".to_vec()), entry(EntryKind::File, 0o100755))),
     };
-    let bad: [(&str, Damage<ack::Model>); 3] = [
+    let bad: [(&str, Damage<ack::Model>); 6] = [
         ("before blob too short", |m| m.before_blob = Some(vec![1; 5])),
         ("after blob too long", |m| m.after_blob = Some(vec![1; 33])),
         ("negative mode", |m| m.after_mode = Some(-5)),
+        ("before side without its path", |m| m.before_path = None),
+        ("after side without its kind", |m| m.after_kind = None),
+        ("after side with only its flag", |m| {
+            m.after_path = None;
+            m.after_blob = None;
+            m.after_mode = None;
+            m.after_kind = None;
+        }),
     ];
     for (what, damage) in bad {
         let mut m = ack_model(&a);
@@ -876,6 +884,22 @@ fn a_span_is_found_with_its_anchors_and_the_commit_whose_diff_it_was_marked_in()
         ]
     );
     assert_eq!(spans[0].span.target.as_ref(), Some(&target));
+}
+
+#[test]
+fn a_span_whose_anchor_row_is_missing_is_corrupt() {
+    let mut review_rows = rows(review_model());
+    review_rows.anchors = vec![anchor_for_span(1, &anchor_value(0))];
+    review_rows.spans = vec![span::Model {
+        id: 7,
+        review: 5,
+        state: kinds::SpanState::Seen,
+        base_anchor: Some(1),
+        target_anchor: Some(2),
+        origin_commit: None,
+    }];
+
+    assert!(is_corrupt(review_from(review_rows)));
 }
 
 #[test]

@@ -349,10 +349,20 @@ impl AckSide {
     }
 
     fn entry(self) -> Result<Option<(RepoPath, FileEntry)>, DbErr> {
+        let set = [
+            self.path.is_some(),
+            self.blob.is_some(),
+            self.mode.is_some(),
+            self.kind.is_some(),
+            self.unfiltered.is_some(),
+        ];
+        if set.iter().all(|s| !s) {
+            return Ok(None);
+        }
         let (Some(path), Some(blob), Some(mode), Some(kind), Some(unfiltered)) =
             (self.path, self.blob, self.mode, self.kind, self.unfiltered)
         else {
-            return Ok(None);
+            return Err(corrupt("acknowledgement side with some columns missing"));
         };
         let entry = FileEntry {
             blob: BlobId(hash(&blob)?),
@@ -447,7 +457,15 @@ pub fn review_from(rows: ReviewRows) -> Result<Review, DbErr> {
         acks,
     } = rows;
     let anchors: HashMap<i64, anchor::Model> = anchors.into_iter().map(|a| (a.id, a)).collect();
-    let anchor_of = |id: Option<i64>| id.and_then(|i| anchors.get(&i)).map(anchor_from).transpose();
+    let anchor_of = |id: Option<i64>| {
+        id.map(|i| {
+            anchors
+                .get(&i)
+                .ok_or_else(|| corrupt("span without its anchor"))
+                .and_then(anchor_from)
+        })
+        .transpose()
+    };
 
     let spans = spans
         .into_iter()
