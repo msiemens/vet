@@ -12,7 +12,16 @@
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import type { PickerView } from "../../state/pickerTypes";
-  import { codeRuns, countText, groupRows, libraryLabel, matchedRow, symbolLabel, visibleRows } from "./pickerRows";
+  import {
+    codeRuns,
+    countText,
+    groupRows,
+    libraryLabel,
+    matchedRow,
+    opensBelow,
+    symbolLabel,
+    visibleRows,
+  } from "./pickerRows";
 
   let {
     view,
@@ -61,18 +70,14 @@
     cursor = 0;
   });
 
-  // The height the popup wants with every place listed. The side it opens on is chosen from this
-  // alone, so typing or the changeset toggle shrink the popup on its side and never move it across.
-  const fullRows = $derived(
-    !results?.rows.length ? 0 : flat ? results.rows.length * 43 : groupRows(results.rows, statusOf).length * 24,
-  );
+  // The side comes from the caret alone, so the popup never crosses it while open: not from
+  // "Searching…" to the results, not while typing or toggling the changeset.
+  const down = $derived(opensBelow(view.anchor, window.innerHeight, MAX_HEIGHT));
 
   const geometry = $derived.by(() => {
     const { anchor } = view;
     const below = window.innerHeight - anchor.bottom - 12;
     const above = anchor.top - 12;
-    const full = Math.min(MAX_HEIGHT, 33 + fullRows + (results?.rows.length ? 0 : 64));
-    const down = below >= full || below >= above;
     const width = Math.min(WIDTH[!results?.rows.length ? "none" : flat ? "flat" : "grouped"], window.innerWidth - 16);
     return {
       down,

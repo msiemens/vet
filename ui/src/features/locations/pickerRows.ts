@@ -104,6 +104,16 @@ export function countText(total: number, listed: number): { count: string; cut?:
   return total > listed ? { count: format(total), cut: `first ${format(listed)}` } : { count: format(total) };
 }
 
+/**
+ * Whether a popup that may grow to `max` opens below the caret (`anchor`, in a viewport `viewport`
+ * high): when it fits there at full height, else on the roomier side. Nothing about the content
+ * enters, so the side is the same for "Searching…", every result list and every filter of it.
+ */
+export function opensBelow(anchor: { top: number; bottom: number }, viewport: number, max: number, gap = 12): boolean {
+  const below = viewport - anchor.bottom - gap;
+  return below >= max || below >= anchor.top - gap;
+}
+
 /** A stretch of a row's line: coloured as the syntax has it, and `hit` where the match is. */
 export interface CodeRun {
   text: string;

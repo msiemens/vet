@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LocationRow } from "../../generated/LocationRow.ts";
-import { codeRuns, countText, groupRows, libraryLabel, matchedRow, symbolLabel, visibleRows } from "./pickerRows.ts";
+import {
+  codeRuns,
+  countText,
+  groupRows,
+  libraryLabel,
+  matchedRow,
+  opensBelow,
+  symbolLabel,
+  visibleRows,
+} from "./pickerRows.ts";
 
 const row = (path: string, line: number, init: Partial<LocationRow> = {}): LocationRow => ({
   path,
@@ -200,6 +209,19 @@ void test("an implementation marks the searched name in its line, else the place
 void test("a cut answer says how many there were and how many are listed", () => {
   assert.deepEqual(countText(47, 47), { count: "47" });
   assert.deepEqual(countText(1340, 200), { count: "1,340", cut: "first 200" });
+});
+
+void test("the popup opens on the side with room for its full height, else on the roomier side, whatever it holds", () => {
+  const at = (top: number) => ({ top, bottom: top + 18 });
+  // 900 high: room below a caret at 100 (782 >= 520); above a caret at 800 (788 above, 70 below).
+  assert.equal(opensBelow(at(100), 900, 520), true);
+  assert.equal(opensBelow(at(800), 900, 520), false);
+  // Neither side fits 520: the larger one wins, and a tie goes below.
+  assert.equal(opensBelow(at(300), 600, 520), false);
+  assert.equal(opensBelow(at(200), 600, 520), true);
+  assert.equal(opensBelow(at(291), 600, 520), true);
+  // Room below at full height wins even where above is roomier.
+  assert.equal(opensBelow(at(1000), 1600, 520), true);
 });
 
 void test("a library's file is named by its package where the path tells", () => {
