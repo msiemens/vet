@@ -29,6 +29,17 @@ impl Me {
         same(&self.id, &identity.id) || identity.unique_name.as_deref().is_some_and(|n| same(&self.email, n))
     }
 
+    /// What a person is called when shown: the display name, else the address.
+    pub(super) fn display(identity: &IdentityRef) -> String {
+        identity
+            .graph_subject_base
+            .display_name
+            .clone()
+            .filter(|n| !n.trim().is_empty())
+            .or_else(|| identity.unique_name.clone())
+            .unwrap_or_else(|| identity.id.clone())
+    }
+
     /// The name the rest of Vet knows `identity` by.
     pub(super) fn name(&self, identity: &IdentityRef) -> String {
         if self.is(identity) {

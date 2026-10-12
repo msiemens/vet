@@ -143,7 +143,7 @@ fn comment(pull_request: i32, thread: i32, c: &Comment, me: &Me, commit: Option<
         .map_or(0, |d| d.unix_timestamp());
     Some(PlatformComment {
         id: comment_id(pull_request, thread, c.id?),
-        author: c.author.as_ref().map_or_else(|| "unknown".to_owned(), |a| me.name(a)),
+        author: c.author.as_ref().map_or_else(|| "unknown".to_owned(), Me::display),
         // The pictures need the sign-in that the web page has; the initials stand in.
         avatar: None,
         body: c.content.clone().unwrap_or_default(),
@@ -220,6 +220,7 @@ fn thread_data(
         lines,
         outdated: false,
         resolved: resolved(base.status.as_ref()),
+        // A thread carries its status but not who set it.
         resolved_by: None,
         comments,
     })

@@ -304,6 +304,40 @@ async fn a_discussion_has_the_threads_of_people_anchored_to_the_iteration_they_w
 }
 
 #[tokio::test]
+async fn comment_authors_are_shown_by_display_name_and_by_address_only_without_one() {
+    set_now(NOW);
+    // The shape of a real IdentityRef: the display name beside the address, and a picture link.
+    let person = |id: &str, display: &str, address: &str| {
+        json!({
+            "id": id, "displayName": display, "uniqueName": address,
+            "url": format!("https://dev.azure.com/contoso/_apis/Identities/{id}"),
+            "imageUrl": format!("https://dev.azure.com/contoso/_api/_common/identityImage?id={id}"),
+        })
+    };
+    let me = person("me-id", "Ada Lovelace", "ada@contoso.com");
+    let other = person("marco-id", "Marco Polo", "marco@contoso.com");
+    let nameless = json!({ "id": "x-id", "uniqueName": "x@contoso.com" });
+    let (fake, _) = hosting(vec![thread(
+        3,
+        "fixed",
+        Value::Null,
+        vec![comment(1, other, "a"), comment(2, me, "b"), comment(3, nameless, "c")],
+    )]);
+
+    let discussion = client(&fake).discussion(&remote(), 7).await.unwrap();
+
+    let authors: Vec<(&str, bool)> = discussion.threads[0]
+        .comments
+        .iter()
+        .map(|c| (c.author.as_str(), c.mine))
+        .collect();
+    assert_eq!(
+        authors,
+        [("Marco Polo", false), ("Ada Lovelace", true), ("x@contoso.com", false)]
+    );
+}
+
+#[tokio::test]
 async fn a_discussion_has_the_pull_request_its_reviewers_the_viewers_vote_and_the_labels() {
     set_now(NOW);
     let (fake, _) = hosting(vec![]);
