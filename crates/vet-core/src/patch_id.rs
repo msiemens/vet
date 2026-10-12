@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn another_change_another_file_or_another_order_of_files_decides_the_id() {
+    fn another_change_or_another_file_decides_the_id_but_the_order_of_files_does_not() {
         let base = patch("f", "x\n", "y\n").id();
         assert_ne!(base, patch("f", "x\n", "z\n").id());
         assert_ne!(base, patch("g", "x\n", "y\n").id());

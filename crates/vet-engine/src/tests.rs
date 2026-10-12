@@ -194,7 +194,7 @@ fn a_waiter_does_not_wait_for_the_thread_that_is_polling_the_computation() {
 }
 
 #[test]
-fn dropping_the_caller_that_started_the_computation_does_not_restart_it() {
+fn a_waiter_that_never_drove_the_computation_finishes_it() {
     let engine = engine(8);
     let probe = Arc::new(Probe::default());
     let mut calls: Vec<_> = (0..3).map(|_| call(&engine, Key::Kept(1), &probe, 7, true)).collect();
@@ -206,20 +206,6 @@ fn dropping_the_caller_that_started_the_computation_does_not_restart_it() {
     for polled in poll_all(&mut calls) {
         assert_eq!(finished(polled), Ok(fresh(7)));
     }
-    assert_eq!(probe.runs(), 1);
-}
-
-#[test]
-fn a_waiter_that_never_drove_the_computation_finishes_it() {
-    let engine = engine(8);
-    let probe = Arc::new(Probe::default());
-    let mut starter = call(&engine, Key::Kept(1), &probe, 7, true);
-    let mut waiter = call(&engine, Key::Kept(1), &probe, 7, true);
-    assert!(poll(&mut starter).is_pending());
-    assert!(poll(&mut waiter).is_pending());
-    drop(starter);
-    probe.open();
-    assert_eq!(finished(poll(&mut waiter)), Ok(fresh(7)));
     assert_eq!(probe.runs(), 1);
 }
 

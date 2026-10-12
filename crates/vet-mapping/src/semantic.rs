@@ -514,12 +514,16 @@ mod tests {
     }
 
     #[test]
-    fn a_long_line_is_cut_and_the_match_stays_inside_the_text() {
+    fn a_long_line_is_cut_and_a_match_beyond_the_cut_is_clamped_to_its_end() {
         let line = "x".repeat(1000);
-        let r = reference("a.rs", (0, 900), (0, 910), false);
-        let row = plain_row(&r, &line);
-        assert_eq!(row.text.len(), 300);
-        assert!(row.match_start <= row.match_end && row.match_end <= 300);
+        let matched = |from, to| {
+            let row = plain_row(&reference("a.rs", (0, from), (0, to), false), &line);
+            assert_eq!(row.text.len(), 300);
+            (row.match_start, row.match_end)
+        };
+        assert_eq!(matched(100, 110), (100, 110));
+        assert_eq!(matched(295, 310), (295, 300));
+        assert_eq!(matched(900, 910), (300, 300));
     }
 
     #[test]

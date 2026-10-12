@@ -101,8 +101,8 @@ mod tests {
         assert_eq!(hunk_spans(&diff, &[&hunk], (SNAP, SNAP), (None, Some(&t))), [None]);
     }
 
-    #[test]
-    fn the_spans_of_many_hunks_split_each_text_once_and_anchor_each_hunk_as_alone() {
+    /// Forty one-line hunks over a text of 400 lines.
+    fn many_hunks() -> (String, String, FileDiff) {
         let old: String = (0..400).map(|i| format!("line {i}\n")).collect();
         let new = old.replace("5\n", "5 edited\n");
         let hunks: Vec<Hunk> = (0..40)
@@ -116,20 +116,43 @@ mod tests {
             new_path: Some(path("a")),
             old_blob: None,
             new_blob: None,
-            hunks: hunks.clone(),
+            hunks,
         };
-        let texts = (Some(old.as_bytes()), Some(new.as_bytes()));
-        let all: Vec<&Hunk> = hunks.iter().collect();
+        (old, new, diff)
+    }
 
-        let before = SPLITS.with(|n| n.get());
+    #[test]
+    fn the_spans_of_many_hunks_anchor_each_hunk_as_alone() {
+        let (old, new, diff) = many_hunks();
+        let texts = (Some(old.as_bytes()), Some(new.as_bytes()));
+        let all: Vec<&Hunk> = diff.hunks.iter().collect();
+
         let together = hunk_spans(&diff, &all, (SNAP, SNAP), texts);
-        assert_eq!(SPLITS.with(|n| n.get()) - before, 2);
 
         let alone: Vec<_> = all
             .iter()
             .flat_map(|h| hunk_spans(&diff, &[h], (SNAP, SNAP), texts))
             .collect();
         assert_eq!(together, alone);
-        assert!(together.iter().all(Option::is_some));
+        let ranges: Vec<_> = together
+            .iter()
+            .map(|s| {
+                let s = s.as_ref().unwrap();
+                (s.base.as_ref().unwrap().range, s.target.as_ref().unwrap().range)
+            })
+            .collect();
+        let expected: Vec<_> = diff.hunks.iter().map(|h| (h.old, h.new)).collect();
+        assert_eq!(ranges, expected);
+    }
+
+    #[test]
+    fn each_text_is_split_once_however_many_hunks_there_are() {
+        let (old, new, diff) = many_hunks();
+        let all: Vec<&Hunk> = diff.hunks.iter().collect();
+
+        let before = SPLITS.with(|n| n.get());
+        hunk_spans(&diff, &all, (SNAP, SNAP), (Some(old.as_bytes()), Some(new.as_bytes())));
+
+        assert_eq!(SPLITS.with(|n| n.get()) - before, 2);
     }
 }

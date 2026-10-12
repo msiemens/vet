@@ -113,6 +113,7 @@ mod tests {
         assert_eq!(spans("a\r\n\r\nb\r\n", "A\r\n\r\nB\r\n"), [((0, 3), (0, 3))]);
         assert_eq!(spans("a\n\n\nb\n", "A\n\n\nB\n"), [((0, 4), (0, 4))]);
         assert_eq!(spans("a\n}\nb\n", "A\n}\nB\n"), [((0, 3), (0, 3))]);
+        assert_eq!(spans("a\n \nb\n", "A\n \nB\n"), [((0, 3), (0, 3))]);
     }
 
     #[test]
@@ -121,7 +122,6 @@ mod tests {
             spans("a\nxyz\nb\n", "A\nxyz\nB\n"),
             [((0, 1), (0, 1)), ((2, 3), (2, 3))]
         );
-        assert_eq!(spans("a\n \nb\n", "A\n \nB\n"), [((0, 3), (0, 3))]);
         assert_eq!(
             spans("a\n   \nb\n", "A\n   \nB\n"),
             [((0, 1), (0, 1)), ((2, 3), (2, 3))]

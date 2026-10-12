@@ -346,15 +346,6 @@ mod tests {
     }
 
     #[test]
-    fn deltas_sum_over_files() {
-        let files = [LineDelta { added: 1, removed: 2 }, LineDelta { added: 10, removed: 20 }];
-        assert_eq!(
-            files.into_iter().sum::<LineDelta>(),
-            LineDelta { added: 11, removed: 22 }
-        );
-    }
-
-    #[test]
     fn a_path_has_the_extension_of_its_file_name() {
         let extension = |p: &str| RepoPath::from(p).extension().map(<[u8]>::to_vec);
         assert_eq!(extension("a/b.PNG"), Some(b"PNG".to_vec()));

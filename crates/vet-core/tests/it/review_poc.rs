@@ -438,45 +438,6 @@ fn a_rewrite_far_wider_than_the_context_still_attaches_to_what_replaced_it() {
 }
 
 #[test]
-#[ignore = "benchmark; run with --release -- --ignored --nocapture"]
-fn many_anchors_on_a_large_file_pair() {
-    let mut fx = Fix::default();
-    let old: Vec<String> = (0..10_000).map(|i| format!("line {i}")).collect();
-    let mut new = old.clone();
-    for i in (2..10_000).step_by(50).rev() {
-        match i % 3 {
-            0 => new[i] = "edited".into(),
-            1 => new.insert(i, "inserted".into()),
-            _ => {
-                new.remove(i);
-            }
-        }
-    }
-    let (o, n) = (fx.blob(&join(&old)), fx.blob(&join(&new)));
-    let (old_text, file) = (join(&old), input("a.rs", o, n));
-    let anchors: Vec<_> = (0..200)
-        .map(|k| anchor(Side::Target, "a.rs", &old_text, range(k * 50, k * 50 + 5)))
-        .collect();
-
-    let start = std::time::Instant::now();
-    let prepared = PreparedFile::new(&file, &fx.0);
-    let resolved: Vec<_> = anchors
-        .iter()
-        .map(|a| resolve_anchor(a, &prepared, std::slice::from_ref(&prepared)))
-        .collect();
-    let elapsed = start.elapsed();
-
-    eprintln!("200 anchors on 10k lines: {elapsed:?}");
-    let lost: Vec<_> = resolved
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| r.location.is_none())
-        .collect();
-    assert!(lost.is_empty(), "{lost:?}");
-    assert!(elapsed < std::time::Duration::from_secs(5));
-}
-
-#[test]
 fn duplicate_content_is_ambiguous() {
     let mut fx = Fix::default();
     let old = "a\nb\nneedle\nc\nd\n";

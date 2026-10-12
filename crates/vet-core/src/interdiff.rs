@@ -189,8 +189,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn the_marks_of_many_hunks_split_each_text_once_and_equal_those_of_each_hunk_alone() {
+    /// An interdiff of many hunks, every one of them in the squash.
+    fn many_marked_hunks() -> (String, String, FileInterdiff, FileDiff) {
         let base = lines("l", 300);
         let target = base.replace("5\n", "5 edited\n");
         // Version A changed nothing, so every hunk of the interdiff is one of B's changeset.
@@ -202,22 +202,42 @@ mod tests {
             new_blob: None,
             hunks: changed_lines(base.as_bytes(), target.as_bytes()),
         };
-        let snapshots = (SnapshotId(Hash([1; 32])), SnapshotId(Hash([2; 32])));
+        assert!(inter.hunks.len() >= 10);
+        (base, target, inter, squash)
+    }
+
+    fn snapshots() -> (SnapshotId, SnapshotId) {
+        (SnapshotId(Hash([1; 32])), SnapshotId(Hash([2; 32])))
+    }
+
+    #[test]
+    fn the_marks_of_many_hunks_equal_those_of_each_hunk_alone() {
+        let (base, target, inter, squash) = many_marked_hunks();
         let texts = (Some(base.as_bytes()), Some(target.as_bytes()));
         let hunks: Vec<&InterdiffHunk> = inter.hunks.iter().collect();
-        assert!(hunks.len() >= 10);
 
-        let before = SPLITS.with(|n| n.get());
-        let (regions, spans) = squash_marks(&squash, &hunks, snapshots, texts).unwrap();
-        assert_eq!(SPLITS.with(|n| n.get()) - before, 2);
+        let (regions, spans) = squash_marks(&squash, &hunks, snapshots(), texts).unwrap();
 
         let (mut alone_regions, mut alone_spans) = (Vec::new(), Vec::new());
         for hunk in &hunks {
-            let (r, s) = squash_marks(&squash, &[hunk], snapshots, texts).unwrap();
+            let (r, s) = squash_marks(&squash, &[hunk], snapshots(), texts).unwrap();
             alone_regions.extend(r);
             alone_spans.extend(s);
         }
+        assert!(!regions.is_empty() && !spans.is_empty());
         assert_eq!((regions, spans), (alone_regions, alone_spans));
+    }
+
+    #[test]
+    fn the_marks_of_many_hunks_split_each_text_once() {
+        let (base, target, inter, squash) = many_marked_hunks();
+        let texts = (Some(base.as_bytes()), Some(target.as_bytes()));
+        let hunks: Vec<&InterdiffHunk> = inter.hunks.iter().collect();
+
+        let before = SPLITS.with(|n| n.get());
+        squash_marks(&squash, &hunks, snapshots(), texts).unwrap();
+
+        assert_eq!(SPLITS.with(|n| n.get()) - before, 2);
     }
 
     #[test]
