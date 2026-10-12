@@ -1,12 +1,11 @@
 //! Cancellation from the connection down to the language server: the backend served
 //! over its WebSocket, with a language server that never answers a hover and records
-//! what it is sent. Needs `python3` for that server and is skipped without it.
+//! what it is sent. Needs `python3` for that server: the tests are ignored and run by `ci/tool-tests.sh`.
 
 #![allow(clippy::disallowed_methods)]
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 use crate::common::{config, repo_with};
@@ -81,10 +80,6 @@ struct Rig {
     revision: u32,
     next_id: u32,
     _keep: (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir),
-}
-
-fn python_available() -> bool {
-    Command::new("python3").arg("--version").output().is_ok()
 }
 
 async fn send(socket: &mut Socket, message: &ClientMessage) {
@@ -238,11 +233,8 @@ fn read_log(path: &Path) -> Vec<Value> {
 }
 
 #[tokio::test]
+#[ignore = "needs python3"]
 async fn cancelling_a_hover_answers_cancelled_and_cancels_the_server_request() {
-    if !python_available() {
-        eprintln!("skipped: python3 is not installed");
-        return;
-    }
     let mut rig = Rig::start().await;
     let id = rig.hover().await;
     let hover = rig
@@ -269,11 +261,8 @@ async fn cancelling_a_hover_answers_cancelled_and_cancels_the_server_request() {
 }
 
 #[tokio::test]
+#[ignore = "needs python3"]
 async fn a_disconnect_cancels_the_server_requests_of_the_handlers_it_aborts() {
-    if !python_available() {
-        eprintln!("skipped: python3 is not installed");
-        return;
-    }
     let mut rig = Rig::start().await;
     rig.hover().await;
     let hover = rig

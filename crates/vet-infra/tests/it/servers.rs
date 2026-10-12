@@ -1,7 +1,6 @@
 //! Installing the pinned servers into a data directory and starting them
-//! through the resolver. It downloads packages, so it only runs when
-//! `VET_TEST_INSTALL` lists the languages to try (`typescript,python,csharp`);
-//! run it alone (`--test-threads=1`).
+//! through the resolver. It downloads packages, so its tests are ignored and run on
+//! request: `cargo nextest run -p vet-infra --run-ignored ignored-only servers::`.
 
 #![allow(clippy::disallowed_methods)]
 
@@ -19,14 +18,6 @@ use vet_infra::servers::ToolResolver;
 use vet_infra::store::SqliteStore;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{At, BackendId, LanguageServer, Pos, Restorer, ServerLauncher, Tree};
-
-fn wanted(language: &str) -> bool {
-    let Ok(list) = std::env::var("VET_TEST_INSTALL") else {
-        eprintln!("skipped: set VET_TEST_INSTALL={language} to download and run the server");
-        return false;
-    };
-    list.split(',').any(|l| l.trim() == language)
-}
 
 fn path(p: &str) -> RepoPath {
     RepoPath(p.as_bytes().to_vec())
@@ -69,10 +60,8 @@ async fn install(setup: &Setup, project: &Path, language: &str) -> Vec<String> {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages"]
 async fn typescript_installs_and_uses_the_project_typescript() {
-    if !wanted("typescript") {
-        return;
-    }
     let setup = setup().await;
     let project = tempfile::tempdir().unwrap();
     let src = "export function helper(): number {\n  return 1;\n}\nexport const x: number = helper();\nexport interface Greeter {\n  greet(): string;\n}\nexport class Hello implements Greeter {\n  greet(): string {\n    return 'hi';\n  }\n}\n";
@@ -135,10 +124,8 @@ async fn typescript_installs_and_uses_the_project_typescript() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages"]
 async fn csharp_installs_and_starts() {
-    if !wanted("csharp") {
-        return;
-    }
     let setup = setup().await;
     let project = tempfile::tempdir().unwrap();
     let program = "namespace App;\n\npublic static class Helper\n{\n    public static int One() => 1;\n}\n\npublic static class Program\n{\n    public static int Main() => Helper.One();\n}\n\npublic interface IShape\n{\n    int Area();\n}\n\npublic class Square : IShape\n{\n    public int Area() => 4;\n}\n";
@@ -221,10 +208,8 @@ async fn csharp_installs_and_starts() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages"]
 async fn csharp_resolves_packages_in_a_copy_that_took_the_working_trees_restore_output() {
-    if !wanted("csharp") {
-        return;
-    }
     let setup = setup().await;
     let (donor, copy) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let project = "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Library</OutputType>\n  </PropertyGroup>\n  <ItemGroup>\n    <PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.3\" />\n  </ItemGroup>\n</Project>\n";
@@ -262,10 +247,8 @@ async fn csharp_resolves_packages_in_a_copy_that_took_the_working_trees_restore_
 }
 
 #[tokio::test]
+#[ignore = "downloads packages"]
 async fn python_installs_and_starts() {
-    if !wanted("python") {
-        return;
-    }
     let setup = setup().await;
     let project = tempfile::tempdir().unwrap();
     std::fs::write(

@@ -24,6 +24,8 @@ else
 fi
 step "cargo nextest"
 cargo nextest run --workspace
+step "tests that need tools"
+ci/tool-tests.sh
 step "check-deps"
 ci/check-deps.sh
 step "module cycles"

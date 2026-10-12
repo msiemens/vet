@@ -1,17 +1,9 @@
 //! Python semantics through the protocol with the pinned Pyright. It installs
-//! Pyright from npm into a temporary data directory, so it runs only when
-//! `VET_TEST_INSTALL` lists `python`. Run it alone (`--test-threads=1`).
+//! Pyright from npm into a temporary data directory, so it is ignored and runs on
+//! request: `cargo nextest run -p vet-backend --run-ignored ignored-only python::`.
 
 use crate::common::{Client, find, handler, repo_with, write};
 use vet_protocol::{Request, Response, Severity, Side, SymbolChange};
-
-fn wanted() -> bool {
-    let listed = std::env::var("VET_TEST_INSTALL").is_ok_and(|l| l.split(',').any(|x| x.trim() == "python"));
-    if !listed {
-        eprintln!("skipped: set VET_TEST_INSTALL=python to download and run Pyright");
-    }
-    listed
-}
 
 const BASE: &str = "\
 def gone() -> int:
@@ -53,10 +45,8 @@ def main() -> int:
 ";
 
 #[tokio::test]
+#[ignore = "downloads Pyright; needs npm"]
 async fn python_semantics_through_the_protocol() {
-    if !wanted() {
-        return;
-    }
     let repo = repo_with(
         &[
             ("pyproject.toml", "[project]\nname = \"p\"\nversion = \"0\"\n"),

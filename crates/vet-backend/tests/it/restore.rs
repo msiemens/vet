@@ -1,29 +1,15 @@
 //! The base side of a review is a materialized snapshot with no dependencies:
 //! its server resolves into them only because the snapshot was restored first.
-//! These tests use the real tools and download packages, so they run only when
-//! `VET_TEST_INSTALL` lists `restore`, and each only if its tools are installed.
-//! Run them alone (`--test-threads=1`). The pinned servers are installed into a
-//! temporary data directory; the package caches are the user's own, which is
-//! the sharing a restore is meant to have.
+//! Except for the first, these tests use the real tools and download packages, so they
+//! are ignored and run on request, with the tools installed:
+//! `cargo nextest run -p vet-backend --run-ignored ignored-only restore::`. The pinned
+//! servers are installed into a temporary data directory; the package caches are the
+//! user's own, which is the sharing a restore is meant to have.
 
 use std::path::Path;
 
 use crate::common::{Client, find, git, handler, repo_with, run, write};
-use vet_infra::exec::{Host, is_file};
 use vet_protocol::{Event, Locations, Request, Response, ServerMessage, Side};
-
-fn wanted(tools: &[&str]) -> bool {
-    let listed = std::env::var("VET_TEST_INSTALL").is_ok_and(|l| l.split(',').any(|x| x.trim() == "restore"));
-    if !listed {
-        eprintln!("skipped: set VET_TEST_INSTALL=restore to download packages and servers");
-        return false;
-    }
-    if let Some(missing) = tools.iter().find(|t| Host::current().find(t, is_file).is_none()) {
-        eprintln!("skipped: {missing} is not installed");
-        return false;
-    }
-    true
-}
 
 fn commit(repo: &Path) {
     git(repo, &["add", "-A"]);
@@ -35,13 +21,9 @@ fn only(locations: &Locations) -> &str {
     &locations.locations[0].path
 }
 
-/// A restore that fails downloads nothing, so this runs wherever `cargo` is installed.
+/// A restore that fails downloads nothing, so this runs everywhere.
 #[tokio::test]
 async fn a_failed_restore_limits_the_analysis_and_says_which_project() {
-    if Host::current().find("cargo", is_file).is_none() {
-        eprintln!("skipped: cargo is not installed");
-        return;
-    }
     const LIB: &str = "pub fn show() {}\n";
     let repo = repo_with(
         &[("svc/Cargo.toml", "not a manifest"), ("svc/src/lib.rs", LIB)],
@@ -88,10 +70,8 @@ async fn a_failed_restore_limits_the_analysis_and_says_which_project() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs rust-analyzer"]
 async fn rust_base_side_resolves_into_a_registry_crate() {
-    if !wanted(&["cargo", "rust-analyzer"]) {
-        return;
-    }
     const BASE: &str = "pub fn show(n: u32) -> String {\n    let mut buffer = itoa::Buffer::new();\n    buffer.format(n).to_owned()\n}\n";
     let repo = repo_with(&[], &[]);
     write(
@@ -119,10 +99,8 @@ async fn rust_base_side_resolves_into_a_registry_crate() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs npm and node"]
 async fn typescript_base_side_resolves_into_node_modules() {
-    if !wanted(&["npm", "node"]) {
-        return;
-    }
     const BASE: &str = "import pc from \"picocolors\";\n\nexport const label: string = pc.red(\"x\");\n";
     let repo = repo_with(&[], &[]);
     write(
@@ -163,10 +141,8 @@ async fn typescript_base_side_resolves_into_node_modules() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs uv, npm and python3"]
 async fn python_base_side_resolves_into_the_restored_environment() {
-    if !wanted(&["uv", "npm", "python3"]) {
-        return;
-    }
     const BASE: &str = "import iniconfig\n\nconfig = iniconfig.IniConfig(\"x.ini\", data=\"[s]\\nk = v\\n\")\n";
     let repo = repo_with(&[], &[]);
     write(repo.path(), ".gitignore", ".venv/\n");
@@ -194,10 +170,8 @@ async fn python_base_side_resolves_into_the_restored_environment() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs dotnet"]
 async fn csharp_base_side_resolves_into_a_nuget_package() {
-    if !wanted(&["dotnet"]) {
-        return;
-    }
     const BASE: &str = "namespace App;\n\npublic static class Program\n{\n    public static string Main() => Newtonsoft.Json.JsonConvert.SerializeObject(1);\n}\n";
     let repo = repo_with(&[], &[]);
     write(repo.path(), ".gitignore", "bin/\nobj/\n");

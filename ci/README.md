@@ -63,6 +63,16 @@ in its own process, test binaries in parallel. A test is reported as slow after
 30 s and killed after 2 min. Tests that start real language servers or restores
 form the `language-servers` group, of which at most two run at once.
 
+Tests that need a tool that may be missing (`python3`, `rust-analyzer`,
+`typescript-language-server`, `roslyn-language-server` with `dotnet`) are `#[ignore = "needs …"]`,
+so a plain run lists them as skipped instead of passed. `tool-tests.sh` (run by `check.sh` and
+`quick.sh` after nextest) runs the ignored tests of every tool that is installed, prints what it
+leaves out for the others, and fails if an ignored test belongs to no tool. Ignored tests that
+download packages or use the network (`servers`, `restore`, `python`, `github`, `first_mark`
+and the benchmark in `vet-core`) run on request:
+`cargo nextest run -p vet-infra --run-ignored ignored-only restore::`. `examples/platform_smoke.rs`
+of `vet-infra` reads the real GitHub and Azure DevOps with the `gh` and `az` tokens.
+
 `check-deps.sh` fails if a crate depends on one outside its allowlist, or if a
 pure crate pulls in an async runtime, git or IO.
 

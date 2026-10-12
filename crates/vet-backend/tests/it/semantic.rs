@@ -1,6 +1,5 @@
 //! Semantic and language server requests through the handler. The Rust test
-//! needs a real rust-analyzer and is skipped without one; run it alone
-//! (`--test-threads=1`): it starts two servers.
+//! needs a real rust-analyzer: it is ignored and run by `ci/tool-tests.sh`.
 
 #![allow(clippy::disallowed_methods)]
 
@@ -61,11 +60,8 @@ fn name(parts: &[&str]) -> Vec<String> {
 }
 
 #[tokio::test]
+#[ignore = "needs rust-analyzer"]
 async fn rust_semantics_through_the_protocol() {
-    if Command::new("rust-analyzer").arg("--version").output().is_err() {
-        eprintln!("skipped: rust-analyzer is not installed");
-        return;
-    }
     let repo = tempfile::tempdir().unwrap();
     git(repo.path(), &["init", "-q", "-b", "main"]);
     write(repo.path(), ".gitignore", "target/\n");

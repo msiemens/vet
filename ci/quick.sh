@@ -63,6 +63,8 @@ if ((${#crates[@]})); then
     cargo clippy "${pkgs[@]}" --all-targets -- -D warnings
     step "cargo nextest (${affected[*]})"
     cargo nextest run "${pkgs[@]}"
+    step "tests that need tools (${affected[*]})"
+    ci/tool-tests.sh "${pkgs[@]}"
     step "module cycles (${crates[*]})"
     ci/check-module-cycles.sh "${crates[@]}"
 fi

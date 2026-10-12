@@ -1,5 +1,6 @@
-//! Restores with the real tools. They download packages, so a test only runs
-//! when `VET_TEST_INSTALL` lists `restore`, and only if its tool is installed.
+//! Restores with the real tools. They download packages, so the tests are ignored and
+//! run on request, with the tools installed:
+//! `cargo nextest run -p vet-infra --run-ignored ignored-only restore::`.
 //! Caches are redirected to temporary directories with each tool's documented
 //! variable where there is one, so the user's own caches are left alone.
 
@@ -9,24 +10,10 @@ use std::path::Path;
 use std::process::Command;
 
 use vet_core::content::RepoPath;
-use vet_infra::exec::{Host, is_file};
 use vet_infra::lsp::{BinaryLocator, LspLauncher, NoRestore, config};
 use vet_infra::restore::ToolRestorer;
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{At, Backend, LanguageServer, Pos, Restored, Restorer, ServerLauncher, Tree};
-
-fn wanted(tool: &str) -> bool {
-    let listed = std::env::var("VET_TEST_INSTALL").is_ok_and(|l| l.split(',').any(|x| x.trim() == "restore"));
-    if !listed {
-        eprintln!("skipped: set VET_TEST_INSTALL=restore to download packages");
-        return false;
-    }
-    if Host::current().find(tool, is_file).is_none() {
-        eprintln!("skipped: {tool} is not installed");
-        return false;
-    }
-    true
-}
 
 fn write(dir: &Path, name: &str, content: &str) {
     std::fs::write(dir.join(name), content).unwrap();
@@ -54,10 +41,8 @@ async fn restore(restorer: &ToolRestorer, root: &Path, backend: &Backend, allow_
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs cargo"]
 async fn cargo_fetches_into_cargo_home_without_running_build_scripts() {
-    if !wanted("cargo") {
-        return;
-    }
     let (project, home) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     write(
         project.path(),
@@ -91,10 +76,8 @@ async fn cargo_fetches_into_cargo_home_without_running_build_scripts() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs npm"]
 async fn npm_installs_from_the_lockfile_without_running_scripts() {
-    if !wanted("npm") {
-        return;
-    }
     let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     write(
         project.path(),
@@ -117,10 +100,8 @@ async fn npm_installs_from_the_lockfile_without_running_scripts() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs npm and typescript-language-server"]
 async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_resolves_into_them() {
-    if !wanted("npm") || Host::current().find("typescript-language-server", is_file).is_none() {
-        return;
-    }
     let (donor, copy, cache) = (
         tempfile::tempdir().unwrap(),
         tempfile::tempdir().unwrap(),
@@ -204,10 +185,8 @@ async fn a_copy_with_the_same_lockfile_links_the_working_trees_node_modules_and_
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs pnpm"]
 async fn pnpm_installs_from_the_lockfile_without_running_scripts() {
-    if !wanted("pnpm") {
-        return;
-    }
     let (project, store) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     write(
         project.path(),
@@ -239,10 +218,8 @@ async fn pnpm_installs_from_the_lockfile_without_running_scripts() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs uv"]
 async fn uv_installs_the_locked_dependencies_into_a_venv_the_server_gets() {
-    if !wanted("uv") {
-        return;
-    }
     let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     write(
         project.path(),
@@ -273,10 +250,8 @@ async fn uv_installs_the_locked_dependencies_into_a_venv_the_server_gets() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs npm"]
 async fn npm_restores_a_workspace_once_at_its_root_and_a_project_in_a_subdirectory_on_its_own() {
-    if !wanted("npm") {
-        return;
-    }
     let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let package = r#"{"name":"NAME","version":"1.0.0","dependencies":{"picocolors":"1.1.1"}}"#;
     write(
@@ -317,10 +292,8 @@ async fn npm_restores_a_workspace_once_at_its_root_and_a_project_in_a_subdirecto
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs yarn"]
 async fn yarn_classic_installs_from_the_lockfile_without_running_scripts() {
-    if !wanted("yarn") {
-        return;
-    }
     let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     write(
         project.path(),
@@ -345,10 +318,8 @@ async fn yarn_classic_installs_from_the_lockfile_without_running_scripts() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs uv"]
 async fn uv_installs_requirements_txt_into_a_venv_and_never_builds_a_source_package() {
-    if !wanted("uv") {
-        return;
-    }
     let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     let restorer = ToolRestorer::with_env(env("UV_CACHE_DIR", cache.path()));
     write(project.path(), "requirements.txt", "iniconfig==2.1.0\n");
@@ -388,10 +359,8 @@ async fn uv_installs_requirements_txt_into_a_venv_and_never_builds_a_source_pack
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs uv"]
 async fn uv_installs_a_pyproject_without_a_lockfile_from_its_subdirectory() {
-    if !wanted("uv") {
-        return;
-    }
     let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     std::fs::create_dir(project.path().join("svc")).unwrap();
     write(
@@ -414,10 +383,8 @@ async fn uv_installs_a_pyproject_without_a_lockfile_from_its_subdirectory() {
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs dotnet"]
 async fn a_copy_with_the_same_projects_takes_the_working_trees_restore_output() {
-    if !wanted("dotnet") {
-        return;
-    }
     let (donor, copy, packages) = (
         tempfile::tempdir().unwrap(),
         tempfile::tempdir().unwrap(),
@@ -450,10 +417,8 @@ async fn a_copy_with_the_same_projects_takes_the_working_trees_restore_output() 
 }
 
 #[tokio::test]
+#[ignore = "downloads packages; needs dotnet"]
 async fn dotnet_restores_only_where_executing_is_allowed() {
-    if !wanted("dotnet") {
-        return;
-    }
     let (project, packages) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
     write(
         project.path(),

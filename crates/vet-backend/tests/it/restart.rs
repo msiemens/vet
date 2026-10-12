@@ -1,6 +1,6 @@
 //! Restarting a language's server: the backend with a language server that names its process in
 //! every hover, leaves a hover on line 1 unanswered, dies at a hover on line 2, and can be made
-//! to fail its start. Needs `python3` for that server and is skipped without it.
+//! to fail its start. Needs `python3` for that server: the tests are ignored and run by `ci/tool-tests.sh`.
 
 #![allow(clippy::disallowed_methods)]
 
@@ -83,10 +83,6 @@ struct Rig {
     /// While this file exists the server exits at once.
     broken: PathBuf,
     _keep: (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir),
-}
-
-fn python_available() -> bool {
-    Command::new("python3").arg("--version").output().is_ok()
 }
 
 impl Rig {
@@ -214,11 +210,8 @@ async fn gone(pid: u32) -> bool {
 }
 
 #[tokio::test]
+#[ignore = "needs python3"]
 async fn restarting_a_running_server_replaces_its_process() {
-    if !python_available() {
-        eprintln!("skipped: python3 is not installed");
-        return;
-    }
     let rig = Rig::start().await;
     let before = rig.pid().await;
     assert_eq!(rig.pid().await, before, "one process serves the hovers");
@@ -231,11 +224,8 @@ async fn restarting_a_running_server_replaces_its_process() {
 }
 
 #[tokio::test]
+#[ignore = "needs python3"]
 async fn a_server_that_failed_to_start_is_started_again_by_a_restart() {
-    if !python_available() {
-        eprintln!("skipped: python3 is not installed");
-        return;
-    }
     let rig = Rig::start_with(true).await;
     let (text, unavailable) = rig.hover(0).await;
     assert_eq!(text, None);
@@ -251,11 +241,8 @@ async fn a_server_that_failed_to_start_is_started_again_by_a_restart() {
 }
 
 #[tokio::test]
+#[ignore = "needs python3"]
 async fn requests_in_flight_on_the_old_server_fail_as_restarted() {
-    if !python_available() {
-        eprintln!("skipped: python3 is not installed");
-        return;
-    }
     let rig = Rig::start().await;
     let before = rig.pid().await;
 
@@ -285,16 +272,11 @@ async fn requests_in_flight_on_the_old_server_fail_as_restarted() {
 }
 
 #[tokio::test]
-async fn a_server_that_dies_while_running_is_restarted_once_with_a_notice() {
-    if !python_available() {
-        eprintln!("skipped: python3 is not installed");
-        return;
-    }
+#[ignore = "needs python3"]
+async fn a_server_that_dies_is_restarted_once_with_a_notice_and_stays_stopped_when_it_dies_again() {
     let rig = Rig::start().await;
     let before = rig.pid().await;
-
     rig.kill().await;
-
     let notice = rig.notification().await;
     assert!(
         notice.text.contains("stopped unexpectedly and was restarted"),
@@ -303,19 +285,6 @@ async fn a_server_that_dies_while_running_is_restarted_once_with_a_notice() {
     );
     assert_ne!(rig.pid().await, before);
     assert!(gone(before).await);
-}
-
-#[tokio::test]
-async fn a_server_that_dies_again_right_away_stays_stopped_until_restarted_by_hand() {
-    if !python_available() {
-        eprintln!("skipped: python3 is not installed");
-        return;
-    }
-    let rig = Rig::start().await;
-    rig.pid().await;
-    rig.kill().await;
-    assert!(rig.notification().await.text.contains("was restarted"));
-    rig.pid().await;
 
     rig.kill().await;
     let notice = rig.notification().await;

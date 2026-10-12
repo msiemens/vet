@@ -1,5 +1,6 @@
-//! The LSP client against a real rust-analyzer on a tiny cargo project.
-//! Skipped (passes) when the binary is not installed.
+//! The LSP client against the real rust-analyzer, typescript-language-server and
+//! roslyn-language-server on tiny projects. Each test is ignored with the tool it needs
+//! as its reason; `ci/tool-tests.sh` runs those whose tool is installed.
 
 #![allow(clippy::disallowed_methods)]
 
@@ -51,10 +52,6 @@ impl Shape for Square {
 }
 ";
 
-fn installed(binary: &str) -> bool {
-    Command::new(binary).arg("--version").output().is_ok()
-}
-
 fn path(p: &str) -> RepoPath {
     RepoPath(p.as_bytes().to_vec())
 }
@@ -84,11 +81,8 @@ fn project(dir: &Path) {
 }
 
 #[tokio::test]
+#[ignore = "needs rust-analyzer"]
 async fn rust_analyzer_answers_the_primitive_queries() {
-    if !installed("rust-analyzer") {
-        eprintln!("skipped: rust-analyzer is not installed");
-        return;
-    }
     let dir = TempDir::new().unwrap();
     project(dir.path());
     let launcher = LspLauncher {
@@ -204,11 +198,8 @@ async fn rust_analyzer_answers_the_primitive_queries() {
 }
 
 #[tokio::test]
+#[ignore = "needs typescript-language-server"]
 async fn typescript_language_server_answers_the_primitive_queries() {
-    if !installed("typescript-language-server") {
-        eprintln!("skipped: typescript-language-server is not installed");
-        return;
-    }
     let dir = TempDir::new().unwrap();
     let src = "export function helper(): number {\n  return 1;\n}\nexport function entry(): number {\n  return helper();\n}\n";
     std::fs::write(
@@ -268,15 +259,13 @@ async fn typescript_language_server_answers_the_primitive_queries() {
     server.shutdown().await;
 }
 
-/// Roslyn has its projects loaded when it is ready, so opening another file of
-/// them is no reason to wait for it to go quiet: a hover on a file nobody has
-/// opened yet answers at once, on either kind of tree.
+/// Roslyn has its projects loaded when it is ready, so a hover on a file nobody has
+/// opened yet already resolves across the project, on either kind of tree. (That the
+/// client does not wait for such a server to go quiet is tested against a fake, in
+/// `lsp::server`.)
 #[tokio::test]
-async fn roslyn_answers_a_hover_on_a_newly_opened_file_without_waiting_for_quiet() {
-    if !installed("roslyn-language-server") || !installed("dotnet") {
-        eprintln!("skipped: roslyn-language-server or dotnet is not installed");
-        return;
-    }
+#[ignore = "needs roslyn-language-server and dotnet"]
+async fn roslyn_answers_a_hover_on_a_newly_opened_file() {
     let dir = TempDir::new().unwrap();
     std::fs::write(
         dir.path().join("app.csproj"),
@@ -315,7 +304,6 @@ async fn roslyn_answers_a_hover_on_a_newly_opened_file_without_waiting_for_quiet
         };
         // The first answer pays for the server's own warm-up.
         assert!(server.hover(&hover(0)).await.unwrap().is_some());
-        let started = std::time::Instant::now();
         for i in 1..5 {
             let text = server.hover(&hover(i)).await.unwrap().expect("a hover on `Run`");
             assert!(text.contains("Run"), "{text}");
@@ -323,8 +311,6 @@ async fn roslyn_answers_a_hover_on_a_newly_opened_file_without_waiting_for_quiet
         let (a, b) = vet_semantic::join::join(server.hover(&hover(5)), server.references(&hover(0))).await;
         a.unwrap();
         b.unwrap();
-        // Waiting for quiet costs three quarters of a second per file opened.
-        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
         server.shutdown().await;
     }
 }
@@ -332,11 +318,8 @@ async fn roslyn_answers_a_hover_on_a_newly_opened_file_without_waiting_for_quiet
 /// The server publishes under its own spelling of the file's URI, which differs
 /// from Vet's when the path has characters it encodes (parentheses, brackets, `+`, `@`).
 #[tokio::test]
-async fn pushed_diagnostics_are_found_for_a_path_the_server_spells_differently() {
-    if !installed("typescript-language-server") {
-        eprintln!("skipped: typescript-language-server is not installed");
-        return;
-    }
+#[ignore = "needs typescript-language-server"]
+async fn typescript_pushed_diagnostics_are_found_for_a_path_the_server_spells_differently() {
     let dir = TempDir::new().unwrap();
     let project = dir.path().join("my proj (1)");
     std::fs::create_dir_all(project.join("[id]+x")).unwrap();
@@ -352,53 +335,13 @@ async fn pushed_diagnostics_are_found_for_a_path_the_server_spells_differently()
         .await
         .expect("typescript-language-server starts")
         .server;
-    let started = std::time::Instant::now();
+    // A spelling the client does not match would leave the answer to the server's timeout,
+    // and an empty one.
     let diagnostics = server.diagnostics(&path("[id]+x/é@a.ts")).await.unwrap();
     assert!(
         diagnostics.iter().any(|d| d.message.contains("not assignable")),
         "{diagnostics:?}"
     );
-    assert!(started.elapsed() < Duration::from_secs(15));
-    server.shutdown().await;
-}
-
-/// Files opened together share one wait for the server to go quiet, instead of
-/// each waiting after the one before.
-#[tokio::test]
-async fn diagnostics_of_files_opened_together_share_one_quiet_wait() {
-    if !installed("typescript-language-server") {
-        eprintln!("skipped: typescript-language-server is not installed");
-        return;
-    }
-    let dir = TempDir::new().unwrap();
-    std::fs::write(
-        dir.path().join("tsconfig.json"),
-        "{\"compilerOptions\":{\"strict\":true}}",
-    )
-    .unwrap();
-    for i in 0..6 {
-        std::fs::write(
-            dir.path().join(format!("a{i}.ts")),
-            format!("export const x{i}: number = {i};\n"),
-        )
-        .unwrap();
-    }
-    let server = LspLauncher::new(BinaryLocator, NoRestore)
-        .start(
-            dir.path(),
-            Tree::Live,
-            &config::typescript(),
-            AnalysisPolicy { allow_executing: false },
-        )
-        .await
-        .expect("typescript-language-server starts")
-        .server;
-    let started = std::time::Instant::now();
-    let files: Vec<_> = (0..6).map(|i| path(&format!("a{i}.ts"))).collect();
-    let answers = vet_semantic::join::bounded(6, &files, |file| server.diagnostics(file)).await;
-    assert!(answers.iter().all(Result::is_ok));
-    // One after another, each file would add its own wait of three quarters of a second.
-    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
     server.shutdown().await;
 }
 

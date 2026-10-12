@@ -1,13 +1,12 @@
 //! A review under load: the symbols panel asks for the analyses of several symbols at
 //! once while the language server is slow, and the viewer goes on marking files seen.
 //! Runs the backend on the real store with a language server that takes its time over
-//! every file; needs `python3` for that server and is skipped without it.
+//! every file; needs `python3` for that server: the tests are ignored and run by `ci/tool-tests.sh`.
 
 #![allow(clippy::disallowed_methods)]
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -86,10 +85,6 @@ while True:
 
 const FILES: usize = 6;
 
-fn python_available() -> bool {
-    Command::new("python3").arg("--version").output().is_ok()
-}
-
 fn count(log: &Path, method: &str) -> usize {
     std::fs::read_to_string(log)
         .unwrap_or_default()
@@ -115,11 +110,8 @@ fn unix_now() -> f64 {
 }
 
 #[tokio::test]
+#[ignore = "needs python3"]
 async fn many_analyses_of_one_revision_share_one_search_while_files_are_marked_seen() {
-    if !python_available() {
-        eprintln!("skipped: python3 is not installed");
-        return;
-    }
     let names: Vec<_> = (0..FILES).map(|i| format!("src/m{i}.rs")).collect();
     // Every text is its own, so that every one is asked of the server.
     let text = |value: usize| format!("pub fn f() -> usize {{\n    {value}\n}}\n");
@@ -371,6 +363,7 @@ enum Stuck {
 /// The servers, their identity probes and their starts wait on a gate, and 36 analyses and
 /// hovers wait on them. The store, the repository and the backend are the real ones.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs python3"]
 async fn review_actions_answer_while_the_servers_and_their_probes_are_stuck() {
     review_actions_answer_while_semantic_work_is_stuck(Stuck::Starts).await;
 }
@@ -378,6 +371,7 @@ async fn review_actions_answer_while_the_servers_and_their_probes_are_stuck() {
 /// The servers have started, and the 36 requests are past reading the revision's sides and
 /// wait on the servers' answers.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs python3"]
 async fn review_actions_answer_while_the_servers_are_started_and_every_request_is_stuck() {
     review_actions_answer_while_semantic_work_is_stuck(Stuck::Requests).await;
 }
@@ -385,15 +379,12 @@ async fn review_actions_answer_while_the_servers_are_started_and_every_request_i
 /// Every permit of `probes` and `semantic_io` is taken. The review lane has budgets of its own,
 /// so no review request needs anything the semantic work holds.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "needs python3"]
 async fn review_actions_answer_while_every_semantic_permit_is_taken() {
     review_actions_answer_while_semantic_work_is_stuck(Stuck::Permits).await;
 }
 
 async fn review_actions_answer_while_semantic_work_is_stuck(stuck: Stuck) {
-    if !python_available() {
-        eprintln!("skipped: python3 is not installed");
-        return;
-    }
     let names: Vec<_> = (0..CHANGED_FILES).map(|i| format!("src/m{i}.rs")).collect();
     let text = |value: usize| format!("pub fn f() -> usize {{\n    {value}\n}}\n");
     let base: Vec<_> = names.iter().enumerate().map(|(i, n)| (n.clone(), text(i))).collect();

@@ -204,9 +204,11 @@ mod tests {
     async fn inotify_reports_a_write() {
         let dir = tempfile::tempdir().unwrap();
         let mut watcher = FsWatcher::open(dir.path(), Duration::from_millis(50)).unwrap();
-        if watcher.degraded().is_some() {
-            return;
-        }
+        assert!(
+            watcher.degraded().is_none(),
+            "inotify is not usable here: {:?}",
+            watcher.degraded()
+        );
         std::fs::write(dir.path().join("a.txt"), b"x").unwrap();
         let seen = tokio::time::timeout(Duration::from_secs(5), async {
             loop {

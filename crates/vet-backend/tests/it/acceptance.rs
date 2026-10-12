@@ -702,6 +702,8 @@ async fn collision_session(repo: &Path) -> (LiveSession<GixRepo, SqliteStore>, S
     (session, store, data)
 }
 
+/// Windows and macOS keep case-insensitive filesystems, where two such files cannot exist.
+#[cfg(not(any(windows, target_os = "macos")))]
 fn is_case_sensitive(dir: &Path) -> bool {
     write(dir, "probe.txt", "1\n");
     write(dir, "PROBE.txt", "2\n");
@@ -718,16 +720,16 @@ fn kept_trees(data: &Path) -> Arc<KeptTrees> {
     Arc::new(KeptTrees::new(data.join("materialized"), Limits::default(), none))
 }
 
+/// Only where files can differ in case alone; `..._in_a_commit_...` covers the other filesystems.
+#[cfg(not(any(windows, target_os = "macos")))]
 #[tokio::test]
-async fn criterion1_windows_filesystem_case_only_paths_in_the_worktree_are_flagged_and_not_materialized_where_they_merge()
- {
+async fn criterion1_case_only_paths_in_the_worktree_are_flagged_and_materialized_on_a_case_sensitive_filesystem() {
     let repo = repo_with(&[("a.txt", "a\n")], &[]);
     let p = repo.path();
-    if !is_case_sensitive(p) {
-        // Two such files cannot exist here; `..._in_a_commit_...` covers this filesystem.
-        eprintln!("skipped: the filesystem is case-insensitive");
-        return;
-    }
+    assert!(
+        is_case_sensitive(p),
+        "the temporary directory's filesystem ignores case"
+    );
     write(p, "Foo.txt", "1\n");
     write(p, "foo.txt", "2\n");
     let (session, store, data) = collision_session(p).await;
@@ -740,7 +742,7 @@ async fn criterion1_windows_filesystem_case_only_paths_in_the_worktree_are_flagg
     let result = Materialize::new(session.acquisition(), kept_trees(data.path()))
         .materialize(sides.target, POLICY)
         .await;
-    assert_eq!(result.is_err(), cfg!(any(windows, target_os = "macos")));
+    assert!(result.is_ok(), "{:?}", result.err());
 }
 
 #[tokio::test]
