@@ -78,6 +78,8 @@ Controls take one of two classes from `global.css`, which applies the state toke
 
 Chrome is not selectable (`user-select: none` on `body`); content meant to be copied opts in with `.selectable`.
 
+Requests that mark, flag, comment or reconfirm carry `Shown` (`state/shown.ts`: the revision and the view the element that sent them shows, from `changeset.currentShown()`); `changeset.admit` refuses one whose view or revision is no longer the one on screen, with the stale-revision notice, so an action in a view that is being replaced never lands in the next one.
+
 Lists share one rule (`lib/ui/listNav.ts`, `lib/listKeys.ts`): a click runs the row's single action, a double click only its open action, ↑/↓ move a highlight, Space is the single action and Enter the open one; the list container is the tab stop and carries `data-list`, inside which commands marked `yieldsToLists` (Toggle Seen on Space) do not run. `ClickGate` (`lib/ui/doubleClick.ts`) holds a click's single action for the system's double-click time, which the host reports (`double_click_ms`; read at start and on focus, 500 ms in a plain browser), so a double click never runs it first. The file tree, the Symbol list, the queue table and the queue's Files and Comments lists use it.
 
 ## Commands and menus
