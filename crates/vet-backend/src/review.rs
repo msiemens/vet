@@ -102,6 +102,25 @@ impl Orchestrator {
         Ok(Response::Review(review_changed(&open, view, &update).await))
     }
 
+    pub(crate) async fn toggle_flag(
+        &self,
+        project: ProjectId,
+        view: vet_protocol::View,
+        revision: u32,
+        path: &str,
+        hunk: u32,
+    ) -> Result<Response, String> {
+        let open = self.ready(project).await?;
+        let view = mapping::core_view(view);
+        let update = open
+            .session
+            .toggle_flag(revision, view, path, hunk)
+            .await
+            .map_err(message)?;
+        announce_start(&open, update.started);
+        Ok(Response::Review(review_changed(&open, view, &update).await))
+    }
+
     pub(crate) async fn toggle_item(
         &self,
         project: ProjectId,

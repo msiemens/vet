@@ -212,6 +212,7 @@ fn review(r: &ReviewView) -> p::FileReview {
     p::FileReview {
         hunks: r.hunks.iter().copied().map(hunk_state).collect(),
         old_base_lines: r.old_base_lines.clone(),
+        flagged: r.flagged.clone(),
         acknowledged: r.acknowledged.iter().copied().map(non_text_kind).collect(),
     }
 }

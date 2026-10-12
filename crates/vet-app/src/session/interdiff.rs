@@ -273,6 +273,24 @@ impl<'a> Lens<'a> {
             .collect()
     }
 
+    /// Whether each hunk of `diff` is flagged in the newer version's changeset.
+    fn hunk_flags(&self, diff: &FileDiff) -> Vec<bool> {
+        let squash = self.squash(diff.path());
+        (self.id.compared.hunks[diff.path()].iter())
+            .map(|h| {
+                let regions = squash.into_iter().flat_map(|s| {
+                    let target = s.new_path.as_ref().map(|p| (p, Side::Target, &h.target_lines));
+                    let base = s.old_path.as_ref().map(|p| (p, Side::Base, &h.base_lines));
+                    [target, base]
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|(p, side, ranges)| ranges.iter().map(move |&r| (p, side, r)))
+                });
+                self.coverage.flagged_in(regions)
+            })
+            .collect()
+    }
+
     /// The review state and completion of a file: its text diff, if it has one, and its shown
     /// non-text changes. Only what the newer version's changeset has to review counts.
     fn state(&self, diff: Option<&FileDiff>, items: &[NonTextChange]) -> (ReviewView, Completion) {
@@ -322,6 +340,7 @@ impl<'a> Lens<'a> {
             ReviewView {
                 hunks: states,
                 old_base_lines,
+                flagged: diff.map(|d| self.hunk_flags(d)).unwrap_or_default(),
                 acknowledged,
             },
             completion,

@@ -18,7 +18,7 @@ pub mod kinds {
 
     int_enum!(Side { Base = 0, Target = 1 });
     int_enum!(EntryKind { File = 0, Symlink = 1, Submodule = 2 });
-    int_enum!(SpanState { Seen = 0, SeenAgainstOldBase = 1 });
+    int_enum!(SpanState { Seen = 0, SeenAgainstOldBase = 1, Flagged = 2 });
     int_enum!(ThreadKind { Range = 0, File = 1, Changeset = 2 });
     int_enum!(ThreadStatus { Open = 0, Resolved = 1 });
     int_enum!(FilterKind { Root = 0, Include = 1, Exclude = 2, ReviewGenerated = 3 });

@@ -128,6 +128,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                     hunks: Vec::new(),
                     acknowledged: Vec::new(),
                     old_base_lines: Vec::new(),
+                    flagged: Vec::new(),
                 },
                 Completion::default(),
             )

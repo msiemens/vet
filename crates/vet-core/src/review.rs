@@ -241,6 +241,8 @@ impl Thread {
 pub enum SpanState {
     Seen,
     SeenAgainstOldBase,
+    /// Not coverage: the lines are flagged for later review, independent of being seen.
+    Flagged,
 }
 
 /// The durable unit of review coverage (§5.2).

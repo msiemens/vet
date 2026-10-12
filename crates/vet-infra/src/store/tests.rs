@@ -536,7 +536,7 @@ async fn spans_and_acks_belong_to_the_review_and_round_trip() {
         ReviewedSpan {
             base: Some(anchor(Side::Base, 1)),
             target: None,
-            state: SpanState::Seen,
+            state: SpanState::Flagged,
         },
     ];
     let origins = [SpanOrigin::Squash, SpanOrigin::Commit(commit("c1")), SpanOrigin::Squash];

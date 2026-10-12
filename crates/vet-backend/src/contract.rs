@@ -152,6 +152,7 @@ pub fn effect(request: &Request) -> Effect {
         Request::SetLens { .. } => tested(&[LensChanged]),
         // The first mark of a review also announces `ReviewStarted`.
         Request::ToggleHunk { .. }
+        | Request::ToggleFlag { .. }
         | Request::ToggleItem { .. }
         | Request::ToggleFileSeen { .. }
         | Request::SetFilesSeen { .. }
@@ -334,6 +335,13 @@ mod tests {
                 path: path(),
             },
             Request::ToggleHunk {
+                project,
+                view,
+                revision: 0,
+                path: path(),
+                hunk: 0,
+            },
+            Request::ToggleFlag {
                 project,
                 view,
                 revision: 0,
@@ -731,6 +739,13 @@ mod tests {
         let view = View::Changeset;
         for request in [
             Request::ToggleHunk {
+                project,
+                view,
+                revision,
+                path: "d.txt".into(),
+                hunk: 0,
+            },
+            Request::ToggleFlag {
                 project,
                 view,
                 revision,

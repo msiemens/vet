@@ -114,25 +114,53 @@ pub struct Coverage<'a> {
     seen: Ranges<'a>,
     /// `Seen` and `SeenAgainstOldBase` spans.
     any: Ranges<'a>,
+    /// `Flagged` spans, which cover nothing.
+    flagged: Ranges<'a>,
 }
 
 impl<'a> Coverage<'a> {
     pub fn new(spans: impl IntoIterator<Item = &'a ReviewedSpan>) -> Self {
         let mut seen = Ranges::new();
         let mut any = Ranges::new();
+        let mut flagged = Ranges::new();
         for s in spans {
             for a in s.base.iter().chain(&s.target) {
                 let key = (&a.file, a.side);
-                any.entry(key).or_default().push(a.range);
-                if s.state == SpanState::Seen {
-                    seen.entry(key).or_default().push(a.range);
+                match s.state {
+                    SpanState::Flagged => flagged.entry(key).or_default().push(a.range),
+                    SpanState::Seen => {
+                        any.entry(key).or_default().push(a.range);
+                        seen.entry(key).or_default().push(a.range);
+                    }
+                    SpanState::SeenAgainstOldBase => any.entry(key).or_default().push(a.range),
                 }
             }
         }
-        for v in seen.values_mut().chain(any.values_mut()) {
+        for v in seen.values_mut().chain(any.values_mut()).chain(flagged.values_mut()) {
             v.sort_by_key(|r| r.start);
         }
-        Self { seen, any }
+        Self { seen, any, flagged }
+    }
+
+    /// Whether any of the lines `regions` name is flagged, as of a hunk that covers exactly them.
+    pub fn flagged_in<'r>(&self, regions: impl IntoIterator<Item = (&'r RepoPath, Side, LineRange)>) -> bool {
+        regions
+            .into_iter()
+            .any(|(file, side, range)| self.flagged.get(&(file, side)).is_some_and(|v| covered(v, range) > 0))
+    }
+
+    /// Per hunk, whether it has a flagged line.
+    pub fn hunk_flags(&self, diff: &FileDiff) -> Vec<bool> {
+        diff.hunks
+            .iter()
+            .map(|h| {
+                self.flagged_in(
+                    sides(diff, h)
+                        .into_iter()
+                        .filter_map(|(side, file, range)| file.map(|f| (f, side, range))),
+                )
+            })
+            .collect()
     }
 
     /// Lines of `range` covered by `Seen` spans, and by any span.

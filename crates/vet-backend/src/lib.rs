@@ -359,6 +359,13 @@ impl Orchestrator {
                 path,
                 hunk,
             } => reply(async move { self.toggle_hunk(project, view, revision, &path, hunk).await }),
+            Request::ToggleFlag {
+                project,
+                view,
+                revision,
+                path,
+                hunk,
+            } => reply(async move { self.toggle_flag(project, view, revision, &path, hunk).await }),
             Request::ToggleItem {
                 project,
                 view,

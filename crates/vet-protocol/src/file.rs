@@ -192,6 +192,8 @@ pub struct FileReview {
     pub hunks: Vec<HunkState>,
     /// One per hunk: its changed lines covered only by spans seen against an old base.
     pub old_base_lines: Vec<u32>,
+    /// One per hunk: flagged for later review, whatever its state.
+    pub flagged: Vec<bool>,
     pub acknowledged: Vec<NonTextKind>,
 }
 

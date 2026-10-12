@@ -63,7 +63,8 @@ twin!(
     SpanState,
     SpanState {
         Seen,
-        SeenAgainstOldBase
+        SeenAgainstOldBase,
+        Flagged
     }
 );
 twin!(ThreadStatus, ThreadStatus { Open, Resolved });

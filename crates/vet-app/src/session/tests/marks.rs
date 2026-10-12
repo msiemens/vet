@@ -313,3 +313,83 @@ async fn the_answer_of_a_mark_is_the_file_and_the_changeset_as_the_manifest_show
         "the hunk of a.txt and the one of b.txt, two lines each"
     );
 }
+
+impl Fixture {
+    async fn flags(&self, file: &str) -> Vec<bool> {
+        let manifest = self.session.manifest(View::Changeset).await.unwrap();
+        let file = manifest.files.iter().find(|f| f.path == path(file)).unwrap();
+        file.review.flagged.clone()
+    }
+}
+
+#[tokio::test]
+async fn a_flag_is_independent_of_seen_and_only_toggling_it_removes_it() {
+    let base = numbered(&[]);
+    let a = numbered(&[(2, "a"), (14, "a")]);
+    let fx = Fixture::reviewing(&[("a.txt", &base)], &[("a.txt", &a)]).await;
+
+    let answer = fx
+        .session
+        .toggle_flag(0, View::Changeset, "a.txt", 1)
+        .await
+        .unwrap()
+        .value;
+    assert_eq!(answer.review.flagged, [false, true]);
+    assert_eq!(answer.review.hunks, [HunkState::Unseen, HunkState::Unseen]);
+    assert_eq!(answer.completion.seen_lines, 0, "a flag covers nothing");
+
+    fx.session.toggle_hunk(0, View::Changeset, "a.txt", 1).await.unwrap();
+    assert_eq!(fx.hunks("a.txt").await[1], HunkState::Seen);
+    assert_eq!(fx.flags("a.txt").await, [false, true]);
+    fx.session.toggle_hunk(0, View::Changeset, "a.txt", 1).await.unwrap();
+    assert_eq!(fx.hunks("a.txt").await[1], HunkState::Unseen);
+    assert_eq!(fx.flags("a.txt").await, [false, true], "marking unseen keeps the flag");
+    fx.session.toggle_file_seen(0, View::Changeset, "a.txt").await.unwrap();
+    fx.session.toggle_file_seen(0, View::Changeset, "a.txt").await.unwrap();
+    assert_eq!(
+        fx.flags("a.txt").await,
+        [false, true],
+        "marking a file seen and unseen keeps it"
+    );
+
+    let answer = fx
+        .session
+        .toggle_flag(0, View::Changeset, "a.txt", 1)
+        .await
+        .unwrap()
+        .value;
+    assert_eq!(answer.review.flagged, [false, false]);
+}
+
+#[tokio::test]
+async fn flagging_starts_the_review_and_a_missing_hunk_is_refused() {
+    let base = numbered(&[]);
+    let fx = Fixture::open(&[("a.txt", &base)], &[("a.txt", &numbered(&[(2, "a")]))]).await;
+
+    let missing = fx.session.toggle_flag(0, View::Changeset, "a.txt", 5).await;
+    assert!(matches!(missing, Err(SessionError::NotFound(_))), "{missing:?}");
+    let started = fx
+        .session
+        .toggle_flag(0, View::Changeset, "a.txt", 0)
+        .await
+        .unwrap()
+        .started;
+    assert!(matches!(started, Some(Lifecycle::Open { .. })));
+}
+
+#[tokio::test]
+async fn a_flag_follows_its_hunk_through_a_push_and_a_restart() {
+    let base = numbered(&[]);
+    let first = numbered(&[(2, "a"), (14, "a")]);
+    let fx = Fixture::reviewing(&[("a.txt", &base)], &[("a.txt", &first)]).await;
+    fx.session.toggle_flag(0, View::Changeset, "a.txt", 1).await.unwrap();
+
+    // The author adds a hunk between the two and edits the first one.
+    let pushed = numbered(&[(2, "b"), (8, "new"), (14, "a")]);
+    fx.settle(&[("a.txt", &pushed)]).await;
+    assert_eq!(fx.flags("a.txt").await, [false, false, true]);
+
+    let session = fx.reopen(&[("a.txt", &pushed)]).await;
+    let manifest = session.manifest(View::Changeset).await.unwrap();
+    assert_eq!(manifest.files[0].review.flagged, [false, false, true]);
+}

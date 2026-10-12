@@ -13,4 +13,8 @@ hunks: Array<HunkState>,
 /**
  * One per hunk: its changed lines covered only by spans seen against an old base.
  */
-oldBaseLines: Array<number>, acknowledged: Array<NonTextKind>, };
+oldBaseLines: Array<number>, 
+/**
+ * One per hunk: flagged for later review, whatever its state.
+ */
+flagged: Array<boolean>, acknowledged: Array<NonTextKind>, };

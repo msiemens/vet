@@ -205,6 +205,17 @@ pub enum Request {
         path: String,
         hunk: u32,
     },
+    /// Flips the flag of one hunk for later review (an index into the manifest of `revision`).
+    /// A flag is independent of the hunk being seen and only goes away with this request.
+    /// Fails like `ToggleHunk`. Answers with `Response::Review`, and every subscriber gets
+    /// `ReviewChanged`.
+    ToggleFlag {
+        project: ProjectId,
+        view: View,
+        revision: u32,
+        path: String,
+        hunk: u32,
+    },
     /// Flips the acknowledgement of one non-text item. Fails if `revision` is no longer
     /// current. Answers with `Response::Review`.
     ToggleItem {

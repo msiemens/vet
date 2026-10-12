@@ -9,7 +9,7 @@ use vet_core::content::{BlobId, NonTextKind, RepoPath};
 use vet_core::marking::{Region, hunk_regions, hunk_spans};
 use vet_core::prepared::PreparedFile;
 use vet_core::remap::cut_recorded;
-use vet_core::review::{ReviewedSpan, Side};
+use vet_core::review::{ReviewedSpan, Side, SpanState};
 
 use super::blobs::Texts;
 use super::interdiff::{HunkMarks, check_markable, interdiff_hunk_marks, squash_item, update_in};
@@ -20,6 +20,24 @@ use super::views::{Outcome, ReviewUpdateView};
 use super::{LiveSession, Result, SessionError};
 use crate::ports::{GitRepo, LiveStore, ReviewWrites};
 use crate::review::{RecordedSpan, SpanOrigin};
+
+/// What a mark does: records spans of its kind (`true`) or cuts the lines out of the spans of
+/// its kind (`false`). The kinds are independent of each other.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Mark {
+    Seen(bool),
+    Flag(bool),
+}
+
+impl Mark {
+    fn on(self) -> bool {
+        matches!(self, Self::Seen(true) | Self::Flag(true))
+    }
+
+    fn is_flag(self) -> bool {
+        matches!(self, Self::Flag(_))
+    }
+}
 
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
     /// Flips one hunk: seen becomes unseen, anything else (unseen, or seen against an old base)
@@ -45,7 +63,37 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let seen = state != HunkState::Seen;
         let started = seen && self.begin(&mut st).await?;
         let writes = st.writes();
-        self.mark_hunks_in(&writes, &mut st, &shown, path, &[hunk], seen)
+        self.mark_hunks_in(&writes, &mut st, &shown, path, &[hunk], Mark::Seen(seen))
+            .await?;
+        Ok(outcome(&st, update_in(&st, &shown, path)?, started))
+    }
+
+    /// Flips the flag of one hunk, which is independent of the hunk being seen and stays until
+    /// it is taken away. Flagging starts the review if none is open.
+    pub async fn toggle_flag(
+        &self,
+        revision: u32,
+        view: View,
+        path: &str,
+        hunk: u32,
+    ) -> Result<Outcome<ReviewUpdateView>> {
+        let (mut st, shown) = self.beginning(view).await?;
+        check_revision(&st, revision)?;
+        check_markable(&shown)?;
+        let review = update_in(&st, &shown, path)?.review;
+        let index = hunk as usize;
+        let (state, flagged) = review
+            .hunks
+            .get(index)
+            .zip(review.flagged.get(index))
+            .ok_or_else(|| SessionError::NotFound(format!("hunk {hunk}")))?;
+        if *state == HunkState::Informational {
+            return Err(SessionError::Invalid("nothing is left to review in this hunk".into()));
+        }
+        let flag = !flagged;
+        let started = flag && self.begin(&mut st).await?;
+        let writes = st.writes();
+        self.mark_hunks_in(&writes, &mut st, &shown, path, &[hunk], Mark::Flag(flag))
             .await?;
         Ok(outcome(&st, update_in(&st, &shown, path)?, started))
     }
@@ -69,7 +117,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             ));
         }
         let writes = st.writes();
-        self.mark_hunks(&writes, &mut st, View::Changeset, path, &hunks, true)
+        self.mark_hunks(&writes, &mut st, View::Changeset, path, &hunks, Mark::Seen(true))
             .await?;
         Ok(outcome(&st, update_in(&st, &shown, path)?, false))
     }
@@ -109,7 +157,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let (hunks, kinds) = file_targets(&st, &shown, path, seen)?;
         let writes = st.writes();
         if !hunks.is_empty() {
-            self.mark_hunks_in(&writes, &mut st, &shown, path, &hunks, seen).await?;
+            self.mark_hunks_in(&writes, &mut st, &shown, path, &hunks, Mark::Seen(seen))
+                .await?;
         }
         for kind in kinds {
             self.mark_item(&writes, &mut st, view, path, kind, seen).await?;
@@ -151,7 +200,8 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 shown => shown.view(),
             };
             self.keep_commit_snapshots(&writes, &st, marked, seen).await?;
-            self.apply_marks(&writes, &mut st, marked, regions, add, seen).await?;
+            self.apply_marks(&writes, &mut st, marked, regions, add, Mark::Seen(seen))
+                .await?;
         }
         for (path, kind) in items {
             self.mark_item(&writes, &mut st, view, path, kind, seen).await?;
@@ -177,19 +227,19 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         shown: &Shown,
         path: &str,
         hunks: &[u32],
-        seen: bool,
+        mark: Mark,
     ) -> Result<()> {
         match shown {
             Shown::Interdiff(_) => {
-                let (regions, add) = hunk_marks(st, shown, path, hunks, seen)?;
-                self.apply_marks(writes, st, View::Changeset, regions, add, seen).await
+                let (regions, add) = hunk_marks(st, shown, path, hunks, mark.on())?;
+                self.apply_marks(writes, st, View::Changeset, regions, add, mark).await
             }
-            _ => self.mark_hunks(writes, st, shown.view(), path, hunks, seen).await,
+            _ => self.mark_hunks(writes, st, shown.view(), path, hunks, mark).await,
         }
     }
 
     /// Records the hunks (indices into the file's hunks) of the changeset or of one commit as
-    /// seen, or cuts them out of the recorded spans.
+    /// marked, or cuts them out of the recorded spans of that kind.
     pub(super) async fn mark_hunks(
         &self,
         writes: &S::Writes,
@@ -197,11 +247,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         view: View,
         path: &str,
         hunks: &[u32],
-        seen: bool,
+        mark: Mark,
     ) -> Result<()> {
-        self.keep_commit_snapshots(writes, st, view, seen).await?;
-        let (regions, add) = view_hunk_marks(st, view, path, hunks, seen)?;
-        self.apply_marks(writes, st, view, regions, add, seen).await
+        self.keep_commit_snapshots(writes, st, view, mark.on()).await?;
+        let (regions, add) = view_hunk_marks(st, view, path, hunks, mark.on())?;
+        self.apply_marks(writes, st, view, regions, add, mark).await
     }
 
     async fn keep_commit_snapshots(&self, writes: &S::Writes, st: &State, view: View, seen: bool) -> Result<()> {
@@ -213,17 +263,22 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(())
     }
 
-    /// Cuts the lines of `regions`, which are of `view`, out of the recorded spans, then records
-    /// `add` as seen, each marked in its origin.
+    /// Cuts the lines of `regions`, which are of `view`, out of the recorded spans of the kind
+    /// `mark`, then records `add` as spans of that kind, each marked in its origin.
     pub(super) async fn apply_marks(
         &self,
         writes: &S::Writes,
         st: &mut State,
         view: View,
         regions: Vec<Region>,
-        add: Vec<(ReviewedSpan, SpanOrigin)>,
-        seen: bool,
+        mut add: Vec<(ReviewedSpan, SpanOrigin)>,
+        mark: Mark,
     ) -> Result<()> {
+        if mark.is_flag() {
+            for (span, _) in &mut add {
+                span.state = SpanState::Flagged;
+            }
+        }
         self.load_known(st).await?;
         let mut anchored = std::mem::take(&mut st.changes.as_mut().expect("computed").anchored);
         let diffed = st.diffed_in(view);
@@ -232,6 +287,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let cut_files: HashSet<(RepoPath, Side)> = regions.iter().map(|r| (r.file.clone(), r.side)).collect();
         let cuttable: Vec<&RecordedSpan> = (st.recorded.iter())
             .map(|rec| &**rec)
+            .filter(|rec| (rec.span.state == SpanState::Flagged) == mark.is_flag())
             .filter(|rec| {
                 [(true, &rec.span.base), (false, &rec.span.target)]
                     .into_iter()
@@ -277,7 +333,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 .zip(add)
                 .map(|(&id, (span, origin))| Arc::new(RecordedSpan { id, span, origin })),
         );
-        if seen {
+        if mark == Mark::Seen(true) {
             self.note_reviewed(writes, st).await?;
         }
         self.remap_marks(st, &remove, &ids).await?;

@@ -814,8 +814,15 @@ impl LiveSession<FakeGit, MemStore> {
         check_revision(&st, revision)?;
         let started = seen && self.begin(&mut st).await?;
         let writes = st.writes();
-        self.mark_hunks(&writes, &mut st, View::Changeset, path, hunks, seen)
-            .await?;
+        self.mark_hunks(
+            &writes,
+            &mut st,
+            View::Changeset,
+            path,
+            hunks,
+            super::marks::Mark::Seen(seen),
+        )
+        .await?;
         Ok(outcome(&st, update_of(&st, path)?, started))
     }
 

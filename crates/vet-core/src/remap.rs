@@ -31,7 +31,7 @@ pub enum RemapMode {
 /// identity carries coverage; a span may become several or none.
 ///
 /// In [`RemapMode::SameUnit`], target lines that survive while any base line changed are
-/// `SeenAgainstOldBase`.
+/// `SeenAgainstOldBase`; a flag keeps its state.
 pub fn remap_span(
     span: &ReviewedSpan,
     to: Changeset,
@@ -52,7 +52,7 @@ pub fn remap_span(
     }
 
     let base_changed = mode == RemapMode::SameUnit && b.as_ref().is_some_and(|s| !s.full);
-    let target_state = if base_changed {
+    let target_state = if base_changed && span.state != SpanState::Flagged {
         SpanState::SeenAgainstOldBase
     } else {
         span.state

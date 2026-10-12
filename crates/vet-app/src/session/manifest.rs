@@ -189,6 +189,7 @@ pub(super) fn review_of(
     ReviewView {
         hunks: diff.map(|d| cov.hunk_states(d)).unwrap_or_default(),
         old_base_lines: diff.map(|d| cov.old_base_lines(d)).unwrap_or_default(),
+        flagged: diff.map(|d| cov.hunk_flags(d)).unwrap_or_default(),
         acknowledged: items.iter().filter(|n| acked.contains(n)).map(|n| n.kind).collect(),
     }
 }
