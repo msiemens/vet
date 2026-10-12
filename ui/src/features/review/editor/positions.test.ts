@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type LineDoc, lineEnd, lineOf, lineStart, offsetAt, selectedLines, targetLineOfBase } from "./positions.ts";
+import {
+  type LineDoc,
+  baseLineOfTarget,
+  lineEnd,
+  lineOf,
+  lineStart,
+  offsetAt,
+  selectedLines,
+  targetLineOfBase,
+} from "./positions.ts";
 
 /** "ab\n\ncde": lines at 0..2, 3..3, 4..7. */
 const spans = [
@@ -55,6 +64,18 @@ void test("a base line stands for the target line the hunks above it move it to,
   assert.equal(targetLineOfBase(hunks, 4), 3);
   assert.equal(targetLineOfBase(hunks, 5), 5);
   assert.equal(targetLineOfBase([], 7), 7);
+});
+
+void test("an unchanged target line stands for the base line the hunks above it moved it from", () => {
+  const hunks = [
+    { baseStart: 2, baseLen: 2, targetStart: 2, targetLen: 1 },
+    { baseStart: 5, baseLen: 0, targetStart: 4, targetLen: 1 },
+  ];
+  assert.equal(baseLineOfTarget(hunks, 1), 1);
+  assert.equal(baseLineOfTarget(hunks, 3), 4);
+  assert.equal(baseLineOfTarget(hunks, 5), 5);
+  for (const base of [0, 1, 4, 6]) assert.equal(baseLineOfTarget(hunks, targetLineOfBase(hunks, base)), base);
+  assert.equal(baseLineOfTarget([], 7), 7);
 });
 
 void test("a position outside the document is clamped", () => {

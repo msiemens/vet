@@ -40,6 +40,16 @@ export function targetLineOfBase(hunks: readonly Hunk[], baseLine: number): numb
   return baseLine + shift;
 }
 
+/** The 0-based base line of an unchanged target line (one no hunk covers): the same text, moved back by the hunks above it. */
+export function baseLineOfTarget(hunks: readonly Hunk[], targetLine: number): number {
+  let shift = 0;
+  for (const h of hunks) {
+    if (targetLine < h.targetStart + h.targetLen) break;
+    shift += h.baseLen - h.targetLen;
+  }
+  return targetLine + shift;
+}
+
 /**
  * The 0-based lines the selection `from`..`to` covers, a caret its own line: a selection ending at
  * a line start does not include that line.

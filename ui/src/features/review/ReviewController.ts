@@ -6,7 +6,6 @@ import { tick } from "svelte";
 import type { CheckLog } from "../../generated/CheckLog";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { CheckRun } from "../../generated/CheckRun";
-import type { CommentAt } from "../../generated/CommentAt";
 import type { FileChange } from "../../generated/FileChange";
 import type { Manifest } from "../../generated/Manifest";
 import type { Side } from "../../generated/Side";
@@ -444,11 +443,17 @@ export class ReviewController {
     const manifest = this.changeset.currentManifest();
     if (threads.revision === undefined || !manifest || !this.threadsFit(manifest)) return;
     for (const view of this.views.values()) view.setThreads(this.shownThreads(), threads.revision);
+    for (const text of this.texts.values()) text.setThreads(this.shownThreads(), threads.revision);
   }
 
-  /** Shows a thread on code in the Changes tab: its card, or its file. The changeset's own threads are in no diff. */
+  /**
+   * Shows a thread on code: its card in the file's text when that is the tab on view, else in the
+   * Changes tab, where it is its card or its file. The changeset's own threads are in no diff.
+   */
   async goToThread(thread: Thread): Promise<boolean> {
     if (thread.kind === "changeset") return false;
+    const id = this.tabs.active;
+    if (kindOf(id) === "text" && pathOf(id) === thread.path && this.texts.get(id)?.goToThread(thread)) return true;
     this.tabs.active = CHANGES;
     return this.views.get(CHANGES)?.goToThread(thread) ?? false;
   }
@@ -470,9 +475,11 @@ export class ReviewController {
         fileSource(this.backend, manifest.revision, this.changeset.view),
         bindRevision(this.hooks, manifest.revision),
         this.softWrap,
+        { revision: manifest.revision, listeners: this.threadListeners() },
         file && { file, actions: this.textActions(file, manifest.revision) },
       );
       this.texts.set(id, text);
+      if (this.threadsFit(manifest)) text.setThreads(this.shownThreads(), manifest.revision);
       return;
     }
     const only = this.changeset.baseChanged;
@@ -614,19 +621,7 @@ export class ReviewController {
           () => this.changeset.toggleHunk(revision, file.path, hunk),
           () => undefined,
         ),
-      comment: (at) => void this.commentInDiff(file, at),
     };
-  }
-
-  /** Opens the file's diff tab at a hunk or the first of some target lines, with the form for a comment on them. */
-  private async commentInDiff(file: FileChange, at: CommentAt) {
-    this.tabs.show(file.path);
-    await tick(); // a new tab's pane attaches and builds its view
-    const view = this.views.get(fileTab(file.path));
-    if (!view) return;
-    if (at.type === "hunk") await view.goToHunk(file.nonText.length + at.index);
-    else if (at.type === "lines") await view.goToLine(0, at.start);
-    view.commentOn(at);
   }
 
   /** Opens the file's diff tab, or focuses it if it is open, and goes to a 0-based target `line` if given. */

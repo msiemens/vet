@@ -134,7 +134,7 @@ const diagnosticList = StateField.define<readonly Diagnostic[]>({
 });
 
 /** The regions hidden behind an "N unchanged lines" bar. */
-function hiddenRegions(view: EditorView): Span[] {
+export function hiddenRegions(view: EditorView): Span[] {
   const sets = view.state
     .facet(EditorView.decorations)
     .map((source) => (typeof source === "function" ? source(view) : source));

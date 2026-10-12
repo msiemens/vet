@@ -5,7 +5,6 @@
 
 import { EditorView } from "@codemirror/view";
 import type { BaseDiff } from "../../../generated/BaseDiff";
-import type { CommentAt } from "../../../generated/CommentAt";
 import type { FileChange } from "../../../generated/FileChange";
 import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
@@ -33,7 +32,7 @@ import { sectionMarks } from "./scrollMarks";
 import { Stops, firstStopFrom, hunkAt, hunkOverlapping } from "./stops";
 import type { Section } from "./section";
 import { SectionHeights, charWidth, readFont, readMetrics } from "./sectionHeights";
-import { COLLAPSE, type WrappedSides, baseDiffHeight } from "./sectionLayout";
+import { COLLAPSE, type WrappedSides, baseDiffHeight, hiddenAt } from "./sectionLayout";
 import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
 import { wraps } from "./softWrap";
 import { type ThreadListeners, ThreadLayer, threadState } from "./threadLayer";
@@ -604,19 +603,26 @@ export class ChangesetView {
     return true;
   }
 
-  /** Scrolls to a 0-based target line of file `fi` and puts the caret there. */
-  async goToLine(fi: number, line: number): Promise<void> {
+  /**
+   * Scrolls to a 0-based target line of file `fi` and puts the caret there. With `expand`, a line
+   * hidden behind an "unchanged lines" bar first expands that bar, and only that one.
+   */
+  async goToLine(fi: number, line: number, expand = false): Promise<void> {
     await this.load(fi);
-    this.reveal(fi, line);
+    this.reveal(fi, line, undefined, expand);
   }
 
   /** Scrolls near the line by the estimate and mounts the editor; CodeMirror then scrolls to the line exactly. */
-  private reveal(fi: number, line: number, hunk?: number): Handle {
+  private reveal(fi: number, line: number, hunk?: number, expand = false): Handle {
     const s = this.sections[fi];
     const offset = hunk === undefined ? 0 : s.hunkTops[hunk] - this.root.clientHeight / 2;
     this.root.scrollTop = Math.max(0, s.top + offset);
     const handle = this.mount(fi);
     this.sync();
+    if (expand && this.collapse) {
+      const hidden = hiddenAt(s.file, true, "target", line);
+      if (hidden && handle.expand(line)) this.heights.expanded(s, hidden);
+    }
     const pos = lineStart(handle.view.state.doc, line);
     handle.view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: "center" }) });
     this.lastEditor = { section: s, handle, side: "target" };
@@ -813,16 +819,11 @@ export class ChangesetView {
     this.threads.commentOn(s, hunkComment(s.file.hunks, hunk, last?.section === s ? last.selection : undefined));
   }
 
-  /** Opens the form for a comment on part of the file of a one-file view. */
-  commentOn(at: CommentAt) {
-    this.threads.commentOn(this.sections[0], at);
-  }
-
-  /** Scrolls to where a thread is shown; answers whether it is in this view. */
+  /** Scrolls to where a thread is shown, expanding the unchanged lines that hide its card; answers whether it is in this view. */
   async goToThread(thread: Thread): Promise<boolean> {
     const at = this.threads.find(thread);
     if (!at) return false;
-    if (at.line !== undefined) await this.goToLine(at.index, at.line);
+    if (at.line !== undefined) await this.goToLine(at.index, at.line, true);
     else await this.goToFile(at.index);
     return true;
   }

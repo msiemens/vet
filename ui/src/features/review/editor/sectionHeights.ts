@@ -153,7 +153,11 @@ export class SectionHeights {
     if (!s || !view) return;
     // The bar sits where the hidden lines start, which is also where the merge extension keys it.
     const line = lineOf(view.state.doc, view.posAtDOM(bar));
-    const lines = hiddenAt(s.file, this.collapse, view === s.handle?.view ? "target" : "base", line);
-    if (lines) this.resize(s, s.height + lines * this.m.line - this.m.collapsed);
+    this.expanded(s, hiddenAt(s.file, this.collapse, view === s.handle?.view ? "target" : "base", line));
   };
+
+  /** A bar that hid `lines` lines of `s` was expanded: the section grows by the lines less the bar. */
+  expanded(s: Section, lines: number) {
+    if (lines) this.resize(s, s.height + lines * this.m.line - this.m.collapsed);
+  }
 }

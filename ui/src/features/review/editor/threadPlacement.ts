@@ -51,6 +51,32 @@ export function placeThreads(threads: readonly Thread[]): Placement {
   return placement;
 }
 
+/** A new thread's form in a file's text: the range it is about and the target line it sits below. */
+export interface FileViewDraft {
+  target: Extract<ThreadTarget, { type: "range" }>;
+  line: number;
+}
+
+/**
+ * The cards a file's text shows, in line order: its range threads (not the file's own or the
+ * changeset's, which have no line), then the form, below the threads already on its line.
+ */
+export function fileViewCards(
+  threads: readonly Thread[],
+  path: string,
+  open: (thread: number) => boolean,
+  draft?: FileViewDraft,
+): InlineCard[] {
+  const mine = threads.filter((t) => t.kind !== "changeset" && t.path === path);
+  const cards: InlineCard[] = placeThreads(mine).inline.map((c) => ({ ...c, open: open(c.thread.id) }));
+  if (draft) {
+    // The sort is stable: the form lands below the threads already on that line.
+    cards.push({ draft: draft.target, line: draft.line });
+    cards.sort((a, b) => a.line - b.line);
+  }
+  return cards;
+}
+
 /** Row height and the rows a card is made of; the card's own paddings are in `threadCard.ts`. */
 export interface CardMetrics {
   line: number;

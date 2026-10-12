@@ -1,7 +1,7 @@
 // One file's CodeMirror editor(s): unified (`unifiedMergeView`) or side by side
 // (`MergeView`), with the review decorations of `reviewState.ts` (SPEC §10).
 
-import { MergeView, unifiedMergeView } from "@codemirror/merge";
+import { MergeView, uncollapseUnchanged, unifiedMergeView } from "@codemirror/merge";
 import { Compartment, EditorState, type Extension, type StateEffect } from "@codemirror/state";
 import { standardKeymap } from "@codemirror/commands";
 import { EditorView, drawSelection, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
@@ -18,7 +18,8 @@ import { currentLine } from "./currentLine";
 import { deletedLines } from "./deletedLines";
 import { backendDiff } from "./backendDiff";
 import type { BarActions } from "./hunkBar";
-import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
+import { baseLineOfTarget, lineStart } from "./positions";
+import { type SemanticHooks, hiddenRegions, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { deletedHighlights } from "./deletedHighlights";
 import { highlightExtension } from "./highlightExtension";
 import { longLines } from "./longLines";
@@ -51,6 +52,8 @@ export interface Handle {
   showDiagnostics(diagnostics: readonly Diagnostic[]): void;
   /** Scrolls to and marks a span of `side`'s text; a base span has no editor of its own in a unified view and is left to the caller. */
   revealSpan(side: Side, span: TextSpan): void;
+  /** Expands the collapsed region that hides a 0-based target line, in both editors of a side by side view; answers whether the line was hidden. */
+  expand(line: number): boolean;
   destroy(): void;
 }
 
@@ -155,7 +158,7 @@ export function mountFile(
         deletedLines(path, hooks),
       ],
     });
-    return handle(view, [view]);
+    return handle(view, [view], loaded.hunks);
   }
   const baseField = reviewField(sideConfig(loaded.hunks, "base", null, barMetrics), review, baseDiffs);
   const base: Extension[] = [
@@ -179,10 +182,19 @@ export function mountFile(
     collapseUnchanged,
     diffConfig,
   });
-  return handle(merge.b, [merge.a, merge.b], () => merge.destroy());
+  return handle(merge.b, [merge.a, merge.b], loaded.hunks, () => merge.destroy());
 }
 
-function handle(view: EditorView, views: EditorView[], destroy = () => view.destroy()): Handle {
+/** Expands the collapsed region of `view` that hides the 0-based `line`; answers whether there was one. */
+function expandAt(view: EditorView, line: number): boolean {
+  const pos = lineStart(view.state.doc, line);
+  const region = hiddenRegions(view).find((r) => r.from <= pos && pos <= r.to);
+  if (!region) return false;
+  view.dispatch({ effects: uncollapseUnchanged.of(region.from) });
+  return true;
+}
+
+function handle(view: EditorView, views: EditorView[], hunks: Hunk[], destroy = () => view.destroy()): Handle {
   return {
     view,
     views,
@@ -191,6 +203,12 @@ function handle(view: EditorView, views: EditorView[], destroy = () => view.dest
     revealSpan: (side, span) => {
       if (side === "target") revealSpan(view, span, true);
       else if (views.length > 1) revealSpan(views[0], span, false);
+    },
+    expand: (line) => {
+      if (!expandAt(view, line)) return false;
+      // A manual expand opens both sides' bars; the base side's line is the same text, moved by the hunks above it.
+      if (views.length > 1) expandAt(views[0], baseLineOfTarget(hunks, line));
+      return true;
     },
     destroy,
   };

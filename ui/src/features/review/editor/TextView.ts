@@ -5,10 +5,10 @@
 
 import { EditorState, type StateField, Text } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
-import type { CommentAt } from "../../../generated/CommentAt";
 import type { FileChange } from "../../../generated/FileChange";
 import type { HunkState } from "../../../generated/HunkState";
 import type { NoTextReason } from "../../../generated/NoTextReason";
+import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
 import { errorText } from "../../../lib/errorText";
 import { type Highlights, decodeHighlights } from "../../../lib/highlights";
@@ -35,12 +35,20 @@ import type { Loaded } from "./mount";
 import { lineOf, lineStart } from "./positions";
 import { markKind } from "./scrollMarks";
 import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
+import { readMetrics } from "./sectionHeights";
 import { softWrap, wraps } from "./softWrap";
+import { TextThreads } from "./textThreads";
+import type { ThreadListeners } from "./threadLayer";
 
-/** What the owner does for the file's hunks: a comment goes where `commentAnchor` puts it. */
+/** What the owner does for the file's hunks. */
 export interface TextActions {
   toggleSeen(hunk: number): void;
-  comment(at: CommentAt): void;
+}
+
+/** The threads a text shows: those of this revision, and what its cards ask of the owner. */
+export interface TextThreadsInit {
+  revision: number;
+  listeners: ThreadListeners;
 }
 
 const NO_TEXT: Record<NoTextReason, string> = {
@@ -68,6 +76,7 @@ export class TextView {
   private scrollbar?: Scrollbar;
   /** The reviewer was in the editor, or navigation put its caret on a line: comments go on its selection. */
   private entered = false;
+  private cards: TextThreads;
 
   /**
    * Fills `root` with the file's text from `source`. A reply of another revision is dropped:
@@ -80,12 +89,16 @@ export class TextView {
     private hooks: SemanticHooks,
     /** Which files wrap their long lines; a change builds the view anew. */
     private wrap: SoftWrap,
+    threads: TextThreadsInit,
     /** The changeset's change to the file, if it changes it: its hunks are drawn, and the owner acts on them. */
     private changes?: { file: FileChange; actions: TextActions },
   ) {
     this.states = changes?.file.review.hunks ?? [];
     root.replaceChildren();
     root.classList.add("vet-text");
+    // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
+    root.style.containerType = "inline-size";
+    this.cards = new TextThreads(path, threads.revision, threads.listeners, readMetrics(root).line);
     const fail = (error: unknown) => {
       if (!this.destroyed && !(error instanceof StaleRevision)) this.placeholder(errorText(error));
     };
@@ -127,6 +140,7 @@ export class TextView {
             ]
           : [lineNumbers()]),
         currentLine(),
+        this.cards.extension(),
         highlightExtension(highlights),
         // Read-only but focusable, so the caret and Mod+B work.
         EditorState.readOnly.of(true),
@@ -140,6 +154,7 @@ export class TextView {
       ],
     });
     const view = this.view;
+    this.cards.attach(view);
     this.scrollbar = new Scrollbar(view.scrollDOM, { marks: drawn && (() => this.markLayout(view, drawn)) });
     this.root.after(this.scrollbar.dom);
     if (this.span) this.goToSpan(this.span);
@@ -163,13 +178,14 @@ export class TextView {
   }
 
   private draw({ file, actions }: { file: FileChange; actions: TextActions }, loaded: Loaded): Drawn {
+    const comment = (hunk: number) => this.cards.commentOn(hunkComment(file.hunks, hunk, this.selection()));
     const source: ChangesSource = {
       hunks: file.hunks,
       changes: loaded.changes,
       base: Text.of(loaded.base.split(/\r\n?|\n/)),
       actions: {
         toggleSeen: (hunk) => actions.toggleSeen(hunk),
-        comment: (hunk) => actions.comment(hunkComment(file.hunks, hunk, this.selection())),
+        comment,
       },
       card: (view, line) => this.showCard(view, line),
     };
@@ -245,10 +261,23 @@ export class TextView {
 
   /** Asks for a comment on the selection, the caret's line or the current hunk; answers whether there was somewhere to comment. */
   commentHere(): boolean {
-    const { drawn, changes } = this;
+    const { drawn } = this;
     const at = drawn && fileViewComment(drawn.source.hunks, this.current, this.selection());
-    if (!at || !changes) return false;
-    changes.actions.comment(at);
+    if (!at) return false;
+    this.cards.commentOn(at);
+    return true;
+  }
+
+  /** The threads were read again. */
+  setThreads(threads: Thread[], revision: number) {
+    this.cards.setThreads(threads, revision);
+  }
+
+  /** Puts the caret on the line the thread's card sits below; answers whether the text shows the thread. */
+  goToThread(thread: Thread): boolean {
+    const line = this.cards.lineOf(thread);
+    if (line === undefined) return false;
+    this.goToLine(line);
     return true;
   }
 
@@ -320,10 +349,12 @@ export class TextView {
 
   destroy() {
     this.destroyed = true;
+    this.cards.destroy();
     closeChangeCard();
     this.scrollbar?.destroy();
     this.view?.destroy();
     this.root.classList.remove("vet-text");
+    this.root.style.containerType = "";
     this.root.replaceChildren();
   }
 }

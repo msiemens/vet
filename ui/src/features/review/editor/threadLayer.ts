@@ -22,6 +22,33 @@ export type ThreadListeners = Omit<ThreadActions, "create" | "cancelDraft" | "to
   commentTarget(revision: number, path: string, at: CommentAt): Promise<{ target: ThreadTarget; line: number | null }>;
 };
 
+/** What a card asks of its owner, from the owner's listeners: a sent form is dismissed, and `own` says how a form is dismissed and a resolved thread opened. */
+export function threadActions(
+  listeners: ThreadListeners,
+  revision: number,
+  own: Pick<ThreadActions, "cancelDraft" | "toggle">,
+): ThreadActions {
+  return {
+    create: async (target, body) => {
+      const sent = await listeners.create(revision, target, body);
+      if (sent) own.cancelDraft();
+      return sent;
+    },
+    reply: listeners.reply,
+    setStatus: listeners.setStatus,
+    remove: listeners.remove,
+    editMessage: listeners.editMessage,
+    removeMessage: listeners.removeMessage,
+    keepEdit: listeners.keepEdit,
+    platformName: listeners.platformName,
+    confirm: listeners.confirm,
+    menu: listeners.menu,
+    openLink: listeners.openLink,
+    submitKey: listeners.submitKey,
+    ...own,
+  };
+}
+
 export const threadState = (blockEl: HTMLElement): ThreadState => ({
   placement: { file: [], inline: [] },
   inline: [],
@@ -68,29 +95,13 @@ export class ThreadLayer {
     private host: ThreadHost,
     private listeners: ThreadListeners,
   ) {
-    this.actions = {
-      create: async (target, body) => {
-        const sent = await listeners.create(host.revision, target, body);
-        if (sent) this.setDraft(undefined);
-        return sent;
-      },
-      reply: listeners.reply,
-      setStatus: listeners.setStatus,
-      remove: listeners.remove,
-      editMessage: listeners.editMessage,
-      removeMessage: listeners.removeMessage,
-      keepEdit: listeners.keepEdit,
-      platformName: listeners.platformName,
-      confirm: listeners.confirm,
-      menu: listeners.menu,
-      openLink: listeners.openLink,
-      submitKey: listeners.submitKey,
+    this.actions = threadActions(listeners, host.revision, {
       cancelDraft: () => this.setDraft(undefined),
       toggle: (thread) => {
         if (!this.opened.delete(thread)) this.opened.add(thread);
         this.show();
       },
-    };
+    });
   }
 
   destroy() {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Thread } from "../../../generated/Thread.ts";
-import { bodyRows, cardHeight, placeThreads } from "./threadPlacement.ts";
+import { bodyRows, cardHeight, fileViewCards, placeThreads } from "./threadPlacement.ts";
 
 const msg = (body: string) => ({ author: "me", body, at: 0 });
 const thread = (id: number, over: Partial<Thread> = {}): Thread => ({
@@ -37,6 +37,40 @@ void test("threads split into file-level and inline, detached ones left out", ()
     [
       [7, 1],
       [1, 5],
+    ],
+  );
+});
+
+void test("a file's text shows the file's range threads, a base-side one at its mapped target line, and the form below the threads on its line", () => {
+  const threads = [
+    thread(1),
+    thread(2, { side: "base", targetLine: 5 }),
+    thread(3, { targetLine: 2, status: "resolved" }),
+    thread(4, { path: "b.rs" }),
+    thread(5, { kind: "file", location: null, original: null, targetLine: null }),
+    thread(6, {
+      kind: "changeset",
+      path: null,
+      side: null,
+      location: null,
+      original: null,
+      targetLine: null,
+      anchor: null,
+    }),
+    thread(7, { location: null, targetLine: null, anchor: { type: "stale", reason: "contextChanged" } }),
+  ];
+  const draft = {
+    target: { type: "range" as const, side: "target" as const, path: "a.rs", start: 4, len: 1 },
+    line: 5,
+  };
+  const cards = fileViewCards(threads, "a.rs", (id) => id === 3, draft);
+  assert.deepEqual(
+    cards.map((c) => [c.thread?.id ?? "form", c.line, c.open ?? false]),
+    [
+      [3, 2, true],
+      [1, 5, false],
+      [2, 5, false],
+      ["form", 5, false],
     ],
   );
 });
