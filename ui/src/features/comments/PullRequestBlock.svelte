@@ -11,7 +11,9 @@
   <dt>State</dt>
   <dd><span class="dot state-{info.state}"></span>{stateLabel(info)}</dd>
   <dt>Author</dt>
-  <dd class="author"><Avatar name={info.author} url={info.authorAvatar} />{info.author}</dd>
+  <dd class="author">
+    <Avatar name={info.author} url={info.authorAvatar} /><span class="cut" title={info.author}>{info.author}</span>
+  </dd>
   <dt>Branch</dt>
   <dd class="mono branches" title="{info.sourceBranch} into {info.targetBranch}">
     {info.sourceBranch} → {info.targetBranch}
@@ -20,7 +22,7 @@
     <dt>Reviewers</dt>
     <dd class="list">
       {#each info.reviewers as reviewer (reviewer.name)}
-        <span class="verdict-{reviewer.state}" title={reviewer.state}>
+        <span class="reviewer verdict-{reviewer.state}" title="{reviewer.name}: {reviewer.state}">
           <span aria-hidden="true">{reviewerMark(reviewer.state)}</span>
           {reviewer.name}
         </span>
@@ -39,7 +41,9 @@
   {/if}
   {#if info.blocking.length}
     <dt>Blocking</dt>
-    <dd class="blocking">{info.blocking.map(blockerText).join(" · ")}</dd>
+    <dd class="blocking">
+      {#each info.blocking as blocker, i (i)}<span class="item">{blockerText(blocker)}</span>{/each}
+    </dd>
   {/if}
 </dl>
 
@@ -63,8 +67,12 @@
     align-items: center;
     gap: 6px;
   }
-  .author {
-    gap: 6px;
+  .cut,
+  .reviewer {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .dot {
     width: 7px;
@@ -95,6 +103,15 @@
     color: var(--warn);
   }
   .blocking {
+    flex-wrap: wrap;
+    gap: 0 6px;
     color: var(--warn);
+  }
+  /* The items wrap between each other, never inside one. */
+  .item {
+    white-space: nowrap;
+  }
+  .item + .item::before {
+    content: "· ";
   }
 </style>

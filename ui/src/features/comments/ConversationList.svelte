@@ -63,7 +63,7 @@
       {@const own = isOwnComment(entry)}
       <li>
         <div class="meta">
-          <span class="author" class:mine={own}>{entry.author}</span>
+          <span class="author" class:mine={own} title={entry.author}>{entry.author}</span>
           {#if chip}<span class="chip {chip.tone}">{chip.label}</span>{/if}
           <span class="time">{shortTime(entry.at)}</span>
           <span class="grow"></span>
@@ -95,7 +95,7 @@
       {@const key = `draft:${message.id}`}
       <li>
         <div class="meta">
-          <span class="author mine">{message.author}</span>
+          <span class="author mine" title={message.author}>{message.author}</span>
           <span class="badge">Draft</span>
           <span class="time">{shortTime(message.at)}</span>
           <span class="grow"></span>
@@ -149,6 +149,20 @@
     min-height: 20px;
     color: var(--text-3);
     font-size: 11.5px;
+  }
+  /* The author's name gives way before the chip, the time and the buttons do. */
+  .meta > * {
+    flex: none;
+    white-space: nowrap;
+  }
+  .meta > .author {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .meta > .grow {
+    flex: 1 0 0;
   }
   .author {
     color: var(--text-2);

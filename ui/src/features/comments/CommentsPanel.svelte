@@ -85,7 +85,7 @@
       <span class="text">
         <span class="top">
           <span class="mono where" title={thread.path ?? undefined}>{rowTitle(thread)}</span>
-          {#if author}<span class="author" class:mine={thread.messages[0]?.mine}
+          {#if author}<span class="author" class:mine={thread.messages[0]?.mine} title={author}
               >{thread.messages[0]?.mine ? "You" : author}</span
             >{/if}
           <span class="grow"></span>
@@ -122,7 +122,7 @@
     </div>
   {:else if thread.anchor?.type === "ambiguous" || thread.anchor?.type === "stale"}
     <div class="actions">
-      <span class="reason">{detachedReason(thread)}</span>
+      <span class="reason" title={detachedReason(thread)}>{detachedReason(thread)}</span>
       <span class="grow"></span>
       {#if candidates(thread).length}
         <button
@@ -307,6 +307,24 @@
     gap: 8px;
     font-size: var(--fs-mono-s);
   }
+  /* Nothing in the line wraps: the file and the author give way with an ellipsis, the rest keeps its size. */
+  .top > * {
+    flex: none;
+    white-space: nowrap;
+  }
+  .top > .where,
+  .top > .author {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .top > .author {
+    flex-shrink: 1000;
+  }
+  .top > .grow {
+    flex: 1 0 0;
+  }
   .author {
     color: var(--note);
   }
@@ -357,6 +375,10 @@
     font-size: var(--fs-mono-s);
   }
   .reason {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: 11.5px;
     color: var(--text-3);
   }
