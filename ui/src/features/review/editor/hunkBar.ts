@@ -1,4 +1,4 @@
-// The hunk header bar: `@@ −40,5 +40,7 @@`, a seen toggle and a comment button.
+// The hunk header bar: `@@ −40,5 +40,7 @@`, a flag toggle, a comment button and a seen toggle.
 
 import { WidgetType } from "@codemirror/view";
 import { iconSvg } from "../../../lib/ui/icons";
@@ -14,8 +14,6 @@ export interface BarActions {
   /** Flips the hunk's flag for later review. */
   toggleFlag(hunk: number): void;
   comment(hunk: number): void;
-  /** Jump to Source at the hunk's first line. */
-  openSource(hunk: number): void;
   /** Opens or closes the base diff under the bar of a hunk seen against an old base; absent where there is none to show. */
   toggleBaseDiff?(hunk: number): void;
 }
@@ -145,14 +143,13 @@ export class HunkBar extends WidgetType {
       const tools = document.createElement("span");
       tools.className = "vet-hunk-tools";
       tools.append(
-        iconButton(commands.tooltip("review.jumpToSource"), "file", () => actions.openSource(this.index)),
+        flagButton(this.hunk.flagged, () => actions.toggleFlag(this.index)),
         iconButton(
           commands.tooltip("review.comment"),
           "comments",
           () => actions.comment(this.index),
           "vet-icon-btn vet-review-action",
         ),
-        flagButton(this.hunk.flagged, () => actions.toggleFlag(this.index)),
         this.state === "seenAgainstOldBase"
           ? reconfirmButton(commands.tooltip("review.reconfirm", "Re-confirm"), () => actions.toggleSeen(this.index))
           : iconButton(

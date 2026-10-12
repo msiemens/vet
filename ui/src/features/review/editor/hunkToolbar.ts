@@ -1,5 +1,5 @@
-// The small toolbar at the top right of the current hunk's lines in the File view: flag, mark seen
-// and Comment. It lies over the code, so while the caret or the pointer is on code it would cover, it
+// The small toolbar at the top right of the current hunk's lines in the File view: flag, Comment
+// and mark seen. It lies over the code, so while the caret or the pointer is on code it would cover, it
 // fades and lets the clicks through; where nothing lies under it, it stays solid.
 
 import type { Extension, StateField } from "@codemirror/state";
@@ -148,6 +148,14 @@ export function hunkToolbar(source: ChangesSource, field: StateField<ChangesStat
         this.shown = key;
         const { actions } = source;
         const buttons = state === "informational" ? [] : [flagButton(flagged, () => actions.toggleFlag(hunk))];
+        buttons.push(
+          iconButton(
+            commands.tooltip("review.comment"),
+            "comments",
+            () => actions.comment(hunk),
+            "vet-icon-btn vet-review-action",
+          ),
+        );
         if (state === "seenAgainstOldBase")
           buttons.push(
             reconfirmButton(commands.tooltip("review.reconfirm", "Re-confirm"), () => actions.toggleSeen(hunk)),
@@ -163,14 +171,6 @@ export function hunkToolbar(source: ChangesSource, field: StateField<ChangesStat
               2,
             ),
           );
-        buttons.push(
-          iconButton(
-            commands.tooltip("review.comment"),
-            "comments",
-            () => actions.comment(hunk),
-            "vet-icon-btn vet-review-action",
-          ),
-        );
         this.dom.replaceChildren(...buttons);
       }
     },

@@ -182,7 +182,6 @@ export class ChangesetView {
         toggleSeen: (h) => void this.actions.hunk(this.sections[index], h),
         toggleFlag: (h) => void this.actions.flag(this.sections[index], h),
         comment: (h) => this.commentOnHunk(this.sections[index], h),
-        openSource: (h) => listeners.openSource(file.path, file.hunks[h].targetStart),
         toggleBaseDiff: listeners.baseDiff && ((h) => void this.toggleBaseDiff(this.sections[index], h)),
       };
       this.sections.push({
