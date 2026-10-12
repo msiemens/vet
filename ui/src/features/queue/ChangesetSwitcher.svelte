@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import type { ChangesetKey } from "../../generated/ChangesetKey";
+  import { readStored, writeStored } from "../../lib/storage";
   import Chip from "../../lib/ui/Chip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
@@ -13,12 +14,12 @@
   import ChangesetName from "./ChangesetName.svelte";
   import {
     type Label,
-    type QueueTab,
     SWITCHER_FILTERS,
     changesOf,
     commentCount,
     filterRows,
     labelOf,
+    parseTab,
     queueRows,
     reviewedOf,
     sourceText,
@@ -48,8 +49,10 @@
     onopenpullrequest: () => void;
   } = $props();
 
+  const FILTER_KEY = "vet.switcher.filter";
+
   let query = $state("");
-  let filter = $state<QueueTab>("all");
+  let filter = $state(parseTab(readStored(FILTER_KEY)));
   let cursor = $state(0);
   let list = $state<HTMLElement>();
 
@@ -61,7 +64,7 @@
   // The changesets are listed afresh each time the popover opens.
   $effect(() => {
     if (!open) return;
-    [query, filter, cursor] = ["", "all", 0];
+    [query, cursor] = ["", 0];
     untrack(() => void queue.loadAll());
   });
 
@@ -120,6 +123,7 @@
         value={filter}
         onchange={(id) => {
           filter = id;
+          writeStored(FILTER_KEY, id);
           cursor = 0;
         }}
       />
