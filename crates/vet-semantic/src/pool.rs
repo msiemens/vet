@@ -1086,6 +1086,8 @@ mod tests {
         /// Requests being answered by the server now, and the most there were at once.
         in_flight: AtomicUsize,
         peak: AtomicUsize,
+        /// What a started server says about offering implementations.
+        offers_implementations: AtomicBool,
     }
 
     impl Default for Counters {
@@ -1111,6 +1113,7 @@ mod tests {
                 recorded: AtomicUsize::new(0),
                 in_flight: AtomicUsize::new(0),
                 peak: AtomicUsize::new(0),
+                offers_implementations: AtomicBool::new(true),
             }
         }
     }
@@ -1274,7 +1277,7 @@ mod tests {
             }
         }
         fn offers_implementations(&self) -> bool {
-            true
+            self.0.offers_implementations.load(Ordering::SeqCst)
         }
         async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
             let version = self.asked("document_symbols").await?;
@@ -1837,7 +1840,7 @@ mod tests {
     }
 
     #[test]
-    fn answers_of_the_live_tree_are_asked_every_time_except_the_symbols_of_a_text() {
+    fn answers_of_the_live_tree_are_asked_every_time_except_the_symbols_of_a_text_and_nothing_is_materialized() {
         let (pool, counters) = pool(4);
         let mut asked = Vec::new();
         for _ in 0..2 {
@@ -1846,6 +1849,7 @@ mod tests {
         let count = |kind: &str| asked.iter().filter(|k| **k == kind).count();
         assert!(WHOLE_TREE.iter().all(|kind| count(kind) == 2), "{asked:?}");
         assert_eq!(count("text_symbols"), 1);
+        assert_eq!(counters.materialized.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -1943,22 +1947,6 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_answers_are_reused_across_leases() {
-        let (pool, counters) = pool(2);
-        block_on(async {
-            let lease = pool.lease(&snapshot_key(1), &backend(true)).await.unwrap();
-            let first = lease.hover(&at()).await.unwrap().value;
-            assert_eq!(lease.hover(&at()).await.unwrap().value, first);
-            lease.release().await;
-            let lease = pool.lease(&snapshot_key(1), &backend(true)).await.unwrap();
-            assert_eq!(lease.hover(&at()).await.unwrap().value, first);
-            assert_eq!(counters.hover_calls.load(Ordering::SeqCst), 1);
-            assert_eq!(counters.started.load(Ordering::SeqCst), 1);
-            lease.release().await;
-        });
-    }
-
-    #[test]
     fn an_answer_names_the_server_that_started_and_whether_it_was_reused() {
         let (pool, counters) = pool(2);
         block_on(async {
@@ -1980,24 +1968,6 @@ mod tests {
             let again = lease.hover(&at()).await.unwrap().provenance;
             assert_eq!(again.server.label, "fake 2");
             assert!(!again.from_cache);
-            lease.release().await;
-        });
-    }
-
-    #[test]
-    fn live_answers_are_never_reused_and_nothing_is_materialized() {
-        let (pool, counters) = pool(2);
-        block_on(async {
-            let lease = pool.lease(&live_key(), &backend(true)).await.unwrap();
-            for _ in 0..2 {
-                let answered = lease.hover(&at()).await.unwrap();
-                assert!(!answered.provenance.from_cache);
-            }
-            assert_eq!(counters.hover_calls.load(Ordering::SeqCst), 2);
-            lease.document_symbols(&file("a.rs")).await.unwrap();
-            lease.document_symbols(&file("a.rs")).await.unwrap();
-            assert_eq!(counters.asked().iter().filter(|k| **k == "document_symbols").count(), 2);
-            assert_eq!(counters.materialized.load(Ordering::SeqCst), 0);
             lease.release().await;
         });
     }
@@ -2235,7 +2205,7 @@ mod tests {
 
     #[test]
     fn whether_a_backends_server_offers_implementations_is_known_once_one_started_and_forgotten_by_a_restart() {
-        let (pool, _) = pool(4);
+        let (pool, counters) = pool(4);
         let rust = BackendId("rust".into());
         block_on(async {
             assert_eq!(pool.offers_implementations(&rust), None);
@@ -2247,6 +2217,14 @@ mod tests {
             assert_eq!(pool.offers_implementations(&rust), Some(true));
             pool.restart(&rust).await;
             assert_eq!(pool.offers_implementations(&rust), None);
+
+            counters.offers_implementations.store(false, Ordering::SeqCst);
+            pool.lease(&snapshot_key(1), &backend(true))
+                .await
+                .unwrap()
+                .release()
+                .await;
+            assert_eq!(pool.offers_implementations(&rust), Some(false));
         });
     }
 

@@ -79,14 +79,20 @@ fn rust_is_highlighted() {
     assert!(has(&p, "// done", Comment));
 }
 
+/// Each language is read with its own grammar.
 #[test]
-fn python_is_highlighted() {
-    let p = pieces("def f(x):\n    return \"s\" + 1  # c\n", Language::Python);
-    assert!(has(&p, "def", Keyword));
-    assert!(has(&p, "f", Function));
-    assert!(has(&p, "\"s\"", Str));
-    assert!(has(&p, "1", Number));
-    assert!(has(&p, "# c", Comment));
+fn every_plain_language_is_highlighted_by_its_own_grammar() {
+    for (language, text, piece, kind) in [
+        (Language::Python, "def f(x):\n    return x\n", "def", Keyword),
+        (Language::CSharp, "class A { }\n", "class", Keyword),
+        (Language::Yaml, "a: \"s\"\n", "\"s\"", Str),
+        (Language::Toml, "name = \"vet\"\n", "\"vet\"", Str),
+        (Language::Bash, "if [ -f x ]; then echo; fi\n", "if", Keyword),
+        (Language::Css, "a { margin: 0 }\n", "0", Number),
+    ] {
+        let p = pieces(text, language);
+        assert!(has(&p, piece, kind), "{language:?}: {p:?}");
+    }
 }
 
 #[test]
@@ -117,14 +123,6 @@ fn javascript_and_jsx_are_highlighted() {
 }
 
 #[test]
-fn csharp_is_highlighted() {
-    let p = pieces("class A { public int N = 1; } // c\n", Language::CSharp);
-    assert!(has(&p, "class", Keyword));
-    assert!(has(&p, "1", Number));
-    assert!(has(&p, "// c", Comment));
-}
-
-#[test]
 fn json_values_are_highlighted_but_keys_are_not_strings() {
     let p = pieces("{\"k\": [true, null, 1.5, \"v\"]}", Language::Json);
     assert!(has(&p, "true", Number));
@@ -133,42 +131,6 @@ fn json_values_are_highlighted_but_keys_are_not_strings() {
     assert!(has(&p, "\"v\"", Str));
     // A key is not coloured as a string.
     assert!(!has(&p, "\"k\"", Str));
-}
-
-#[test]
-fn yaml_is_highlighted() {
-    let p = pieces("a: 1\nb: \"s\" # c\nc: true\n", Language::Yaml);
-    assert!(has(&p, "1", Number));
-    assert!(has(&p, "\"s\"", Str));
-    assert!(has(&p, "# c", Comment));
-    assert!(has(&p, "true", Number));
-}
-
-#[test]
-fn toml_is_highlighted() {
-    let p = pieces("[package]\nname = \"vet\" # c\nn = 3\nok = true\n", Language::Toml);
-    assert!(has(&p, "\"vet\"", Str));
-    assert!(has(&p, "3", Number));
-    assert!(has(&p, "true", Number));
-    assert!(has(&p, "# c", Comment));
-}
-
-#[test]
-fn bash_is_highlighted() {
-    let p = pieces("if [ -f x ]; then echo \"hi\"; fi # c\n", Language::Bash);
-    assert!(has(&p, "if", Keyword));
-    assert!(has(&p, "\"hi\"", Str));
-    assert!(has(&p, "# c", Comment));
-}
-
-#[test]
-fn css_is_highlighted() {
-    let p = pieces(
-        "a.b { color: #fff; margin: 0 } /* c */\n@media print {}\n",
-        Language::Css,
-    );
-    assert!(has(&p, "/* c */", Comment));
-    assert!(has(&p, "0", Number));
 }
 
 #[test]

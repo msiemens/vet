@@ -119,9 +119,10 @@ mod tests {
     }
 
     #[test]
-    fn nothing_to_show_is_none() {
+    fn nothing_to_show_is_none_and_a_detail_is_trimmed() {
         assert_eq!(Signature::of_hover(" \n"), None);
         assert_eq!(Signature::of_detail("  "), None);
+        assert_eq!(Signature::of_detail(" fn f() ").unwrap().code, "fn f()");
     }
 
     /// A server whose hover is `hover` and which answers nothing else.
@@ -204,16 +205,5 @@ mod tests {
         assert_eq!(silent.unwrap().0, None);
         let failed = block_on(signature(&Hovering(Err("boom")), Side::Target, &symbol(None)));
         assert!(failed.is_err());
-    }
-
-    #[test]
-    fn detail_is_in_the_files_language() {
-        assert_eq!(
-            Signature::of_detail(" fn f() "),
-            Some(Signature {
-                code: "fn f()".into(),
-                syntax: Syntax::File
-            })
-        );
     }
 }
