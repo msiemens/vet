@@ -2,8 +2,9 @@
 # Runs every check: Rust (format, lint, tests, architecture) and UI (types, lint, format, tests, build).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Share compiled dependencies between checkouts (worktrees) when sccache is installed.
-if [[ -z ${RUSTC_WRAPPER:-} ]] && command -v sccache >/dev/null; then export RUSTC_WRAPPER=sccache; fi
+# Share compiled dependencies between checkouts (worktrees) through sccache, if installed.
+: "${RUSTC_WRAPPER:=$PWD/ci/rustc-wrapper.sh}"
+export RUSTC_WRAPPER
 
 step() { printf '\n== %s\n' "$*"; }
 

@@ -10,8 +10,9 @@
 #        check-module-cycles.sh --self-test  check that a known cycle is detected
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Share compiled dependencies between checkouts (worktrees) when sccache is installed.
-if [[ -z ${RUSTC_WRAPPER:-} ]] && command -v sccache >/dev/null; then export RUSTC_WRAPPER=sccache; fi
+# Share compiled dependencies between checkouts (worktrees) through sccache, if installed.
+: "${RUSTC_WRAPPER:=$PWD/ci/rustc-wrapper.sh}"
+export RUSTC_WRAPPER
 
 manifest=tools/module-cycles/Cargo.toml
 # One build of the tool for all checkouts: the worktrees share the main checkout's target directory.

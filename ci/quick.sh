@@ -8,8 +8,9 @@
 # Usage: ci/quick.sh [BASE]
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Share compiled dependencies between checkouts (worktrees) when sccache is installed.
-if [[ -z ${RUSTC_WRAPPER:-} ]] && command -v sccache >/dev/null; then export RUSTC_WRAPPER=sccache; fi
+# Share compiled dependencies between checkouts (worktrees) through sccache, if installed.
+: "${RUSTC_WRAPPER:=$PWD/ci/rustc-wrapper.sh}"
+export RUSTC_WRAPPER
 
 base=$(git merge-base HEAD "${1:-main}")
 mapfile -t changed < <({ git diff --name-only "$base"; git ls-files --others --exclude-standard; } | sort -u)
