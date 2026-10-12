@@ -663,3 +663,6 @@ pub fn target_from(m: &thread::Model, anchor: Option<&anchor::Model>) -> Result<
         kinds::ThreadKind::Changeset => Ok(CommentTarget::Changeset),
     }
 }
+
+#[cfg(test)]
+mod tests;
