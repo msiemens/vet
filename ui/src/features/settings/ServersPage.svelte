@@ -258,15 +258,14 @@
   {/if}
 
   <footer>
-    <div class="text">
-      <span class="label">Semantic caches</span>
-      <span class="hint">
-        Answers kept from the language servers, in memory and between launches. Clearing them only makes the next
-        answers slower.
-      </span>
-      <div class="budget">
-        {#if backendSettings.usage !== undefined}<span>{formatBytes(backendSettings.usage)} on disk ·</span>{/if}
-        <label for="cache-budget">Keep up to</label>
+    <span class="label">Semantic caches</span>
+    <dl>
+      {#if backendSettings.usage !== undefined}
+        <dt>On disk</dt>
+        <dd>{formatBytes(backendSettings.usage)}</dd>
+      {/if}
+      <dt><label for="cache-budget">Keep up to</label></dt>
+      <dd class="budget">
         <input
           id="cache-budget"
           class="field"
@@ -277,18 +276,32 @@
           value={backendSettings.settings?.semanticCacheMb ?? ""}
           onchange={(e) => void setBudget(e.currentTarget)}
         />
-        <span>MiB, least recently used go first</span>
-      </div>
-      {#if backendSettings.loadError}<span class="problem">{backendSettings.loadError}</span>{/if}
-      {#if cacheError}<span class="problem">{cacheError}</span>{/if}
-    </div>
-    <button
-      class="ctl"
-      type="button"
-      title={commands.hint("semantic.clearCaches")}
-      disabled={backendSettings.clearing || !commands.isEnabled("semantic.clearCaches")}
-      onclick={() => commands.run("semantic.clearCaches")}>{commands.label("semantic.clearCaches")}</button
-    >
+        <span>MiB</span>
+      </dd>
+      <dt></dt>
+      <dd class="hint">
+        Answers kept from the language servers, in memory and between launches; the least recently used go first when
+        the budget is exceeded. Clearing them only makes the next answers slower.
+      </dd>
+      {#if backendSettings.loadError}
+        <dt></dt>
+        <dd class="problem">{backendSettings.loadError}</dd>
+      {/if}
+      {#if cacheError}
+        <dt></dt>
+        <dd class="problem">{cacheError}</dd>
+      {/if}
+      <dt></dt>
+      <dd>
+        <button
+          class="ctl"
+          type="button"
+          title={commands.hint("semantic.clearCaches")}
+          disabled={backendSettings.clearing || !commands.isEnabled("semantic.clearCaches")}
+          onclick={() => commands.run("semantic.clearCaches")}>{commands.label("semantic.clearCaches")}</button
+        >
+      </dd>
+    </dl>
   </footer>
 </div>
 
@@ -425,16 +438,8 @@
     padding-top: 12px;
     border-top: 1px solid var(--line-soft);
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-  }
-  .text {
-    flex: 1;
-    min-width: 0;
-    display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 8px;
   }
   .label {
     color: var(--text-2);
@@ -442,10 +447,7 @@
   .budget {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
     gap: 6px;
-    margin-top: 6px;
-    color: var(--text-2);
   }
   .budget input {
     width: 80px;

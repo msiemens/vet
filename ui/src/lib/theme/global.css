@@ -148,7 +148,7 @@ button {
   box-shadow: var(--shadow);
 }
 
-/* `.field`: a text input or textarea. */
+/* `.field`: a text input, select or textarea; the single-line ones are as tall as a `.ctl` beside them. */
 .field {
   box-sizing: border-box;
   min-width: 0;
@@ -160,7 +160,7 @@ button {
   font: inherit;
   font-size: var(--fs-ctl);
 }
-input.field {
+:is(input, select).field {
   height: var(--h-ctl);
   padding: 0 8px;
 }
