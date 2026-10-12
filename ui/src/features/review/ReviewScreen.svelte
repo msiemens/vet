@@ -253,7 +253,7 @@
   <div class="panes" class:readonly={readOnly} class:loading={changeset.loading} oncontextmenu={paneMenu}>
     {#if changeset.loading}
       <p class="empty">Loading {project}…</p>
-    {:else if containedIn}
+    {:else if containedIn && tabs.active === CHANGES}
       <p class="empty">
         Nothing to review: {containedIn} already contains {changeset.manifest?.target.branch ?? "HEAD"}
       </p>
