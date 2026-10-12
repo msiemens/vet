@@ -21,7 +21,17 @@ const featureZones = features.map((f) => ({
   message: `Import features/${f} through its index.ts.`,
 }));
 
-const connectionPatterns = ["**/connection", "**/connection.ts"];
+const connection = { group: ["**/connection", "**/connection.ts"] };
+
+const svelteImports = { group: ["svelte", "svelte/*", "**/*.svelte", "**/*.svelte.ts", "**/*.svelte.js"] };
+
+const manifestShapes = {
+  group: ["FileChange", "Manifest", "ReviewUpdate"].flatMap((name) => [
+    `**/generated/${name}`,
+    `**/generated/${name}.ts`,
+  ]),
+  message: "Read the split types of state/reviewModel.ts; only the changeset store handles the manifest's shapes.",
+};
 
 export default defineConfig(
   { ignores: ["src/generated/**", "dist/**", "src-tauri/**", "node_modules/**"] },
@@ -77,19 +87,26 @@ export default defineConfig(
     },
   },
   {
-    // Only state/backend.ts talks to the connection, and the connection's tests.
+    // Only state/backend.ts talks to the connection, and the connection's tests. The manifest's shapes mix
+    // the view's structure, the live review state and the changeset's facts: only the store, the client and
+    // the tests handle them, everything else reads the split types of `state/reviewModel.ts`.
     files: ["src/**"],
     ignores: ["src/state/backend.ts", "src/state/connection.test.ts"],
-    rules: { "no-restricted-imports": ["error", { patterns: connectionPatterns }] },
+    rules: { "no-restricted-imports": ["error", { patterns: [connection, manifestShapes] }] },
+  },
+  {
+    files: ["src/state/changeset.svelte.ts", "src/state/reviewModel.ts", "src/**/*.test.ts"],
+    ignores: ["src/state/connection.test.ts"],
+    rules: { "no-restricted-imports": ["error", { patterns: [connection] }] },
   },
   {
     files: ["src/features/review/editor/**"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        { patterns: [...connectionPatterns, "svelte", "svelte/*", "**/*.svelte", "**/*.svelte.ts", "**/*.svelte.js"] },
-      ],
-    },
+    ignores: ["src/**/*.test.ts"],
+    rules: { "no-restricted-imports": ["error", { patterns: [connection, manifestShapes, svelteImports] }] },
+  },
+  {
+    files: ["src/features/review/editor/**/*.test.ts"],
+    rules: { "no-restricted-imports": ["error", { patterns: [connection, svelteImports] }] },
   },
   {
     // The module hooks and the browser stubs are untyped glue around node's and the compilers' APIs.

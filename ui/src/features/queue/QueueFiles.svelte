@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { FileChange } from "../../generated/FileChange";
+  import type { ReviewedFile } from "../../state/reviewModel";
   import { ListNav } from "../../lib/ui/listNav";
   import Meter from "../../lib/ui/Meter.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
@@ -12,7 +12,7 @@
   }: {
     paths: readonly string[];
     /** A file as it is now, with its review state. */
-    fileOf: (path: string) => FileChange | undefined;
+    fileOf: (path: string) => ReviewedFile | undefined;
     /** Opens the review at the file: a double click or Enter. */
     onopen: (path: string) => void;
   } = $props();

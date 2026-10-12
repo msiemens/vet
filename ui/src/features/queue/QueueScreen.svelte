@@ -95,7 +95,7 @@
   const onViewId = $derived(queue.onView && keyId(queue.onView));
   const current = $derived(rows.find((r) => keyId(r.key) === onViewId));
   /** The changeset's own numbers, whatever range or commit the review shows. */
-  const own = $derived(queue.onViewManifest);
+  const own = $derived(queue.onViewFrame);
 
   onMount(() => {
     void queue.loadAll();
@@ -182,7 +182,7 @@
     {#each shown as row, index (keyId(row.key))}
       {@const id = keyId(row.key)}
       {@const numbers = ownOf(row)}
-      {@const changes = changesOf(row, numbers?.delta, queue.lines.get(id))}
+      {@const changes = changesOf(row, numbers?.layout.delta, queue.lines.get(id))}
       {@const author = authorOf(row)}
       {@const comments = commentCount(row)}
       <button
@@ -207,7 +207,7 @@
         </span>
         <span class="source">{sourceText(row)}</span>
         <span class="delta"><ChangesCell {changes} /></span>
-        <span><ReviewedCell reviewed={reviewedOf(row.review, numbers?.completion)} /></span>
+        <span><ReviewedCell reviewed={reviewedOf(row.review, numbers?.facts.completion)} /></span>
         <span class="icons">
           <CiStatus state={row.pullRequest?.ci} />
           {#if comments > 0}

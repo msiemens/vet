@@ -49,7 +49,7 @@ class ProgressStore {
 
   /** While the project opens the footer is all there is to see, so its tasks show at once. */
   private delay(): number {
-    return changeset.manifest ? SHOWN_AFTER_MS : 0;
+    return changeset.layout ? SHOWN_AFTER_MS : 0;
   }
 
   private publish() {

@@ -2,9 +2,9 @@
 // buttons that act on the whole file.
 
 import type { Completion } from "../../../generated/Completion.ts";
-import type { FileChange } from "../../../generated/FileChange.ts";
 import type { FileReview } from "../../../generated/FileReview.ts";
 import { pathText } from "../../../lib/splitText.ts";
+import type { FileLayout } from "../../../state/reviewModel.ts";
 import { el, iconButton, reconfirmButton } from "./dom.ts";
 
 export interface HeaderActions {
@@ -55,7 +55,7 @@ export function renderProgress(
   section.reconfirm.hidden = !review.hunks.includes("seenAgainstOldBase");
 }
 
-export function fileHeader(file: FileChange, actions: HeaderActions): FileHeader {
+export function fileHeader(file: FileLayout, actions: HeaderActions): FileHeader {
   const header = document.createElement("header");
   const title = pathText(file.path, "path mono");
   const firstLine = file.hunks[0]?.targetStart ?? 0;

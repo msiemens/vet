@@ -24,7 +24,7 @@ const first = () => changeset.paths[0];
 
 async function reviewByCommit(h: Harness) {
   await changeset.openChangeset({ type: "branch", name: "feature" });
-  await h.until(() => changeset.manifest?.target.changeset.type === "branch", "the branch");
+  await h.until(() => changeset.facts?.target.changeset.type === "branch", "the branch");
   await changeset.showLens("perCommit");
   await h.until(() => changeset.shownCommit !== undefined, "the first commit");
 }
@@ -32,7 +32,7 @@ async function reviewByCommit(h: Harness) {
 /** A new version of the working tree, as an edit on disk makes it. */
 async function settleVersion(h: Harness) {
   h.fixture.write("b.txt", "wt2", [7, 25, 33]);
-  await h.until(() => versions.items.length >= 2 && changeset.manifest?.review.state === "open", "the second version");
+  await h.until(() => versions.items.length >= 2 && changeset.facts?.review.state === "open", "the second version");
 }
 
 export const sessions: Record<string, (h: Harness) => Promise<void>> = {

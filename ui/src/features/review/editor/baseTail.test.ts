@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Chunk } from "@codemirror/merge";
 import { Text } from "@codemirror/state";
-import type { FileChange } from "../../../generated/FileChange.ts";
+import type { FileLayout } from "../../../state/reviewModel.ts";
 import type { TextChange } from "../../../generated/TextChange.ts";
 import { backendDiff } from "./backendDiff.ts";
 import { replacesBaseTail } from "./baseTail.ts";
@@ -142,7 +142,7 @@ function unifiedRows(c: Case, rowsOfLine: (text: string) => number): number {
   return rows;
 }
 
-const file = (c: Case): FileChange => {
+const file = (c: Case): FileLayout => {
   const [baseStart, baseLen, targetStart, targetLen] = c.hunk;
   return {
     path: "a.txt",
@@ -150,7 +150,7 @@ const file = (c: Case): FileChange => {
     targetLines: c.target.split("\n").length,
     hunks: [{ baseStart, baseLen, targetStart, targetLen }],
     nonText: [],
-  } as unknown as FileChange;
+  } as unknown as FileLayout;
 };
 
 /** A section in rows, from the height model: one-px rows and bars, no header or gap. */

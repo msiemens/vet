@@ -2,7 +2,7 @@
 // revision is dropped: the owner builds new views when the manifest moves.
 
 import type { BlobContent } from "../../../generated/BlobContent";
-import type { FileChange } from "../../../generated/FileChange";
+import type { FileLayout } from "../../../state/reviewModel";
 import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { Side } from "../../../generated/Side";
 import type { TextContent } from "../../../generated/TextContent";
@@ -21,7 +21,7 @@ export class StaleRevision extends Error {
 
 export interface FileSource {
   /** Both sides of a changed file with their highlights. */
-  contents(file: FileChange): Promise<Loaded>;
+  contents(file: FileLayout): Promise<Loaded>;
   /** The file's text in the target snapshot, for the read-only view. */
   text(path: string): Promise<TextContent>;
   /** An image or other blob of a non-text item. */

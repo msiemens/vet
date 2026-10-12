@@ -1,5 +1,4 @@
 <script lang="ts">
-  import type { Manifest } from "../../generated/Manifest";
   import type { ReviewFilter } from "../../generated/ReviewFilter";
   import type { SoftWrap } from "../../lib/softWrap";
   import { THEMES, type Theme } from "../../lib/theme/theme";
@@ -18,7 +17,8 @@
     softWrap,
     onsoftwrap,
     onclose,
-    project,
+    filter,
+    excluded,
     onfilter,
     page = $bindable("general"),
   }: {
@@ -28,8 +28,10 @@
     softWrap: SoftWrap;
     onsoftwrap: (wrap: SoftWrap) => void;
     onclose: () => void;
-    /** The open repository's current manifest, which carries its review filter. */
-    project?: Manifest;
+    /** The open repository's review filter; none without an open repository. */
+    filter?: ReviewFilter;
+    /** The changed lines and non-text items the filter hides. */
+    excluded: { lines: number; items: number };
     /** Saves the repository's review filter; resolves with the backend's message if it refused it. */
     onfilter: (filter: ReviewFilter) => Promise<string | undefined>;
   } = $props();
@@ -62,11 +64,7 @@
         {:else if page === "keymap"}
           <KeymapPage />
         {:else if page === "review"}
-          <ProjectPage
-            filter={project?.filter}
-            excluded={{ lines: project?.excludedLines ?? 0, items: project?.excludedItems ?? 0 }}
-            onsave={onfilter}
-          />
+          <ProjectPage {filter} {excluded} onsave={onfilter} />
         {:else if page === "servers"}
           <ServersPage />
         {:else if page === "accounts"}

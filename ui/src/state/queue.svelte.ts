@@ -7,14 +7,12 @@ import { untrack } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { ChangesetRow } from "../generated/ChangesetRow";
-import type { FileChange } from "../generated/FileChange";
 import type { LineDelta } from "../generated/LineDelta";
-import type { Manifest } from "../generated/Manifest";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestSource } from "../generated/PullRequestSource";
 import { changeset } from "./changeset.svelte";
 import { keyId } from "./changesetKey";
-import { changesetManifest, isChangesetView } from "./manifestScope";
+import type { Frame, Parts, ReviewedFile, ViewLayout } from "./reviewModel";
 import { session } from "./session.svelte";
 
 /** How many rows have their lines counted at once. */
@@ -46,15 +44,15 @@ class QueueStore {
   /** How many times an account changed: a listing of the pull requests that began before the last change lists again. */
   private accountChanges = 0;
   /**
-   * The manifest of the changeset on view while the review view shows a range or a commit, whose manifest is
+   * The changeset on view as a whole while the review view shows a range or a commit, whose layout is
    * not the changeset's; read while the list is shown.
    */
-  private whole = $state.raw<Manifest>();
+  private whole = $state.raw<Parts>();
   /** How many views of the list are shown. */
   private watchers = $state(0);
   private following?: ReturnType<typeof setTimeout>;
   /** Which revision and view the review shows. */
-  private screen = $derived(`${changeset.manifest?.revision}/${changeset.viewKey}`);
+  private screen = $derived(`${changeset.layout?.shown.revision}/${changeset.viewKey}`);
 
   constructor() {
     $effect.root(() => {
@@ -119,33 +117,50 @@ class QueueStore {
     }, FOLLOW_AFTER_MS);
   }
 
-  /** Reads the changeset's own manifest, which only a range or a commit on screen needs. Only the latest reading counts. */
+  /** Reads the changeset's own layout and file states, which only a range or a commit on screen needs. Only the latest reading counts. */
   private async loadWhole() {
     const seq = ++this.seq.whole;
-    const shown = changeset.manifest;
-    if (!shown || isChangesetView(shown, changeset.shownCommit)) {
+    const shown = changeset.layout;
+    if (!shown || shown.shown.view.type === "changeset") {
       this.whole = undefined;
       return;
     }
-    const whole = await changeset.wholeManifest();
+    const whole = await changeset.wholeParts();
     if (seq === this.seq.whole) this.whole = whole;
   }
 
-  /** The manifest of the changeset on view as a whole, not of the range or commit the review shows; none while it is not known. */
-  get onViewManifest(): Manifest | undefined {
-    return changesetManifest(changeset.manifest, changeset.shownCommit, this.whole);
+  /**
+   * The changeset on view as a whole, not the range or commit the review shows: its files (the review's
+   * own while it shows the changeset, else those read for the revision on screen) and what is true of
+   * it. None while that is not known.
+   */
+  private get wholeLayout(): ViewLayout | undefined {
+    const layout = changeset.layout;
+    if (!layout) return undefined;
+    if (layout.shown.view.type === "changeset") return layout;
+    return this.whole?.layout.shown.revision === layout.shown.revision ? this.whole.layout : undefined;
+  }
+
+  /** The changeset on view as a whole: its files and base, and what is true of it; none while that is not known. */
+  get onViewFrame(): Frame | undefined {
+    const layout = this.wholeLayout;
+    const facts = changeset.facts;
+    return layout && facts && { layout, facts };
   }
 
   /** The paths of the files of the changeset on view as a whole. */
   get onViewPaths(): readonly string[] {
-    const manifest = this.onViewManifest;
-    return manifest === changeset.manifest ? changeset.paths : (manifest?.files.map((f) => f.path) ?? []);
+    return this.wholeLayout?.paths ?? [];
   }
 
   /** A file of the changeset on view as a whole, with its review state. */
-  onViewFile(path: string): FileChange | undefined {
-    const manifest = this.onViewManifest;
-    return manifest === changeset.manifest ? changeset.file(path) : manifest?.files.find((f) => f.path === path);
+  onViewFile(path: string): ReviewedFile | undefined {
+    const layout = this.wholeLayout;
+    if (!layout) return undefined;
+    if (layout === changeset.layout) return changeset.reviewed(path);
+    const file = layout.files.find((f) => f.path === path);
+    const state = this.whole?.states.get(path);
+    return file && state && { ...file, ...state };
   }
 
   /** Something of the list is being fetched or listed. */

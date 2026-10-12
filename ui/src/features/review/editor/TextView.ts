@@ -5,7 +5,6 @@
 
 import { EditorState, type StateField, Text } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
-import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
 import type { HunkState } from "../../../generated/HunkState";
 import type { NoTextReason } from "../../../generated/NoTextReason";
@@ -16,6 +15,8 @@ import { type Highlights, decodeHighlights } from "../../../lib/highlights";
 import type { SoftWrap } from "../../../lib/softWrap";
 import { iconSvg } from "../../../lib/ui/icons";
 import { type MarkLayout, type ScrollMark, Scrollbar } from "../../../lib/ui/scrollbar";
+import type { FileLayout } from "../../../state/reviewModel";
+import type { ReviewSource } from "../../../state/reviewSource";
 import { type Shown, isCurrent } from "../../../state/shown";
 import type { PanePosition } from "./ChangesetView";
 import { currentLine } from "./currentLine";
@@ -103,11 +104,12 @@ export class TextView {
     private wrap: SoftWrap,
     threads: TextThreadsInit,
     /** The changeset's change to the file, if it changes it: its hunks are drawn, and the owner acts on them. */
-    private changes?: { file: FileChange; actions: TextActions },
+    private changes?: { file: FileLayout; review: ReviewSource; actions: TextActions },
   ) {
     this.shown = threads.shown;
-    this.states = changes?.file.review.hunks ?? [];
-    this.flags = changes?.file.review.flagged ?? [];
+    const review = changes?.review.state(changes.file.path)?.review;
+    this.states = review?.hunks ?? [];
+    this.flags = review?.flagged ?? [];
     root.replaceChildren();
     root.classList.add("vet-text");
     // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
@@ -193,7 +195,7 @@ export class TextView {
     return { total: view.contentHeight, marks };
   }
 
-  private draw({ file, actions }: { file: FileChange; actions: TextActions }, loaded: Loaded): Drawn {
+  private draw({ file, actions }: { file: FileLayout; actions: TextActions }, loaded: Loaded): Drawn {
     const comment = (hunk: number) => this.cards.commentOn(hunkComment(file.hunks, hunk, this.selection()));
     const source: ChangesSource = {
       hunks: file.hunks,

@@ -49,7 +49,7 @@
   const rows = $derived(queueRows(queue.local, queue.pullRequests));
   const shown = $derived(filterRows(rows, filter, query));
   const onViewId = $derived(queue.onView && keyId(queue.onView));
-  const own = $derived(queue.onViewManifest);
+  const own = $derived(queue.onViewFrame);
 
   // The changesets are listed afresh each time the popover opens.
   $effect(() => {
@@ -123,7 +123,7 @@
       {#each shown as row, index (keyId(row.key))}
         {@const id = keyId(row.key)}
         {@const numbers = id === onViewId ? own : undefined}
-        {@const changes = changesOf(row, numbers?.delta, queue.lines.get(id))}
+        {@const changes = changesOf(row, numbers?.layout.delta, queue.lines.get(id))}
         {@const comments = commentCount(row)}
         <li>
           <button
@@ -136,7 +136,7 @@
           >
             <span class="line">
               <span class="name"><ChangesetName label={labelOf(row)} /></span>
-              <ReviewedCell reviewed={reviewedOf(row.review, numbers?.completion)} width={48} />
+              <ReviewedCell reviewed={reviewedOf(row.review, numbers?.facts.completion)} width={48} />
             </span>
             <span class="line sub">
               <span class="detail">

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { FileChange } from "../../../generated/FileChange.ts";
+import type { FileLayout } from "../../../state/reviewModel.ts";
 import type { Backend } from "../../../state/backend.ts";
 import { StaleRevision, fileSource } from "./fileSource.ts";
 
@@ -32,7 +32,7 @@ const file = (hunks: number, targetLines: number) =>
     hunks: Array.from({ length: hunks }, () => ({})),
     baseLines: 0,
     targetLines,
-  }) as unknown as FileChange;
+  }) as unknown as FileLayout;
 
 void test("a changed file loads with the hunks of the manifest it belongs to", async () => {
   const { backend } = backendAt(3);

@@ -36,7 +36,8 @@
     type ReviewController,
     fileCommands,
     reviewActions,
-    summarize,
+    modeChange,
+    statusLetter,
     viewCommands,
   } from "../features/review";
   import { SettingsDialog } from "../features/settings";
@@ -106,9 +107,9 @@
   // Only the host knows these; a plain browser shows none.
   let version = $state<string>();
   let host = $state<string>();
-  const reviewOpen = $derived(changeset.manifest?.review.state === "open");
-  const lens = $derived(changeset.manifest?.lens);
-  const commitCount = $derived(changeset.manifest?.commits ?? 0);
+  const reviewOpen = $derived(changeset.facts?.review.state === "open");
+  const lens = $derived(changeset.facts?.lens);
+  const commitCount = $derived(changeset.facts?.commits ?? 0);
 
   // Selecting the Commits tool reviews the changeset by commit and leaving it returns to all changes.
   let selectedTool = untrack(() => left.tool);
@@ -118,7 +119,7 @@
     selectedTool = tool;
     if (!want) return;
     untrack(() => {
-      if (changeset.manifest && lens !== want) void changeset.showLens(want);
+      if (changeset.facts && lens !== want) void changeset.showLens(want);
     });
   });
   // A lens set elsewhere (a changeset reopened by commit) selects the tool that goes with it.
@@ -141,7 +142,7 @@
 
   /** The head commit of a pull request, whose checks the toolbar shows. */
   const headId = $derived(
-    changeset.manifest?.target.changeset.type === "pullRequest" ? changeset.manifest.target.head : undefined,
+    changeset.facts?.target.changeset.type === "pullRequest" ? changeset.facts.target.head : undefined,
   );
   /** The commits whose checks the views show: the commits by commit, the pushed versions and the head. */
   const checkedCommits = $derived(
@@ -161,7 +162,7 @@
   });
 
   /** Where the time the pull request's Comments tool window was last open is kept; none for another changeset. */
-  const seenUnder = $derived(seenKey(changeset.manifest?.target.changeset));
+  const seenUnder = $derived(seenKey(changeset.facts?.target.changeset));
   const commentsShown = $derived(screen === "review" && left.open && left.tool === "comments");
   // While the tool window is open, what comes in is seen.
   $effect(() => {
@@ -179,7 +180,7 @@
   const semanticSummary = $derived(semantic.summary(controller?.activePath));
   const range = $derived(changeset.range);
   const rangeFiles = $derived<RangeFile[]>(
-    range ? changeset.files.map((f) => ({ path: f.path, delta: f.delta, mode: summarize(f).mode })) : [],
+    range ? (changeset.layout?.files ?? []).map((f) => ({ path: f.path, delta: f.delta, mode: modeChange(f) })) : [],
   );
   const footer = $derived({
     range: range && `v${range.from} → v${range.to}`,
@@ -285,7 +286,7 @@
     reviewOpen,
     queueShown: screen === "queue",
     canQuit,
-    changesetOpen: !!session.repo && !!changeset.manifest,
+    changesetOpen: !!session.repo && !!changeset.layout,
     rangeShown: !!range,
     reconfirmable: baseChangedLeft > 0,
     pullRequest: platform.info !== undefined,
@@ -461,7 +462,7 @@
     {/if}
   {/snippet}
   {#snippet backToChangeset()}
-    {@const base = changeset.manifest?.base.name}
+    {@const base = changeset.base?.name}
     {@const latest = versions.items.at(-1)?.n}
     <button
       class="ctl back"
@@ -506,7 +507,7 @@
     {/if}
   {/snippet}
   {#snippet changesetSwitcher()}
-    {@const target = changeset.manifest?.target}
+    {@const target = changeset.facts?.target}
     <ChangesetSwitcher
       label={target && targetLabel(target)}
       draft={target?.draft}
@@ -523,18 +524,18 @@
     filtered={changeset.baseChanged ? baseChangedActions : undefined}
     checks={headChecks}
     outgoing={outgoingComments}
-    base={changeset.manifest?.base}
-    target={changeset.manifest?.target}
-    review={changeset.manifest?.review}
+    base={changeset.base}
+    target={changeset.facts?.target}
+    review={changeset.facts?.review}
     loadBase={() => changeset.baseCandidates()}
     onbase={(choice) => void changeset.setBase(choice)}
     completion={changeset.shownCommit === undefined
-      ? changeset.manifest?.completion
-      : (changeset.manifest?.changesetCompletion ?? changeset.manifest?.completion)}
+      ? changeset.viewCompletion
+      : (changeset.facts?.completion ?? changeset.viewCompletion)}
     refreshing={queue.refreshing}
   />
 
-  <Banners degraded={changeset.manifest?.degraded} failures={changeset.restoreFailures} />
+  <Banners degraded={changeset.layout?.degraded} failures={changeset.restoreFailures} />
 
   <div class="body">
     {#if screen === "queue"}
@@ -608,14 +609,15 @@
     {softWrap}
     onsoftwrap={setSoftWrap}
     onclose={() => (dialog = undefined)}
-    project={session.repo ? changeset.manifest : undefined}
+    filter={session.repo ? changeset.facts?.filter : undefined}
+    excluded={{ lines: changeset.layout?.excludedLines ?? 0, items: changeset.layout?.excludedItems ?? 0 }}
     onfilter={(f) => changeset.setFilter(f)}
   />
 {:else if dialog === "about"}
   <AboutDialog onclose={() => (dialog = undefined)} />
 {:else if dialog === "finish"}
   <FinishDialog
-    flagged={changeset.manifest?.changesetCompletion.flaggedHunks ?? 0}
+    flagged={changeset.facts?.completion.flaggedHunks ?? 0}
     ongoto={() => {
       dialog = undefined;
       void goToFirstFlagged();
@@ -639,8 +641,8 @@
 
 <LocationPicker
   statusOf={(path) => {
-    const file = controller?.files.find((f) => f.path === path);
-    return file && summarize(file).status;
+    const file = changeset.layoutOf(path);
+    return file && statusLetter(file);
   }}
   onsettings={() => showDialog("settings", "servers")}
 />

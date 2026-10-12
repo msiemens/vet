@@ -3,13 +3,13 @@
 // known bugs.
 
 import type { Base } from "../../src/generated/Base.ts";
-import type { FileChange } from "../../src/generated/FileChange.ts";
 import type { Manifest } from "../../src/generated/Manifest.ts";
 import type { RowReview } from "../../src/generated/RowReview.ts";
 import type { View } from "../../src/generated/View.ts";
 import type { Backend } from "../../src/state/backend.ts";
 import { keyId } from "../../src/state/changesetKey.ts";
 import { changeset } from "../../src/state/changeset.svelte.ts";
+import type { FileState } from "../../src/state/reviewModel.ts";
 import { queue } from "../../src/state/queue.svelte.ts";
 import { rangeKey } from "../../src/state/timelineRange.ts";
 import { threads } from "../../src/state/threads.svelte.ts";
@@ -25,8 +25,6 @@ export interface Violation {
   backend: unknown;
 }
 
-type FileState = Pick<FileChange, "review" | "completion">;
-
 /**
  * What an editor view holds of the review state, as the documented channels keep it: built from the
  * files' current state when the revision, the range or commit or the file filter changes, and patched
@@ -40,22 +38,24 @@ export class ViewMirror {
   constructor() {
     changeset.subscribe((paths) => {
       for (const path of this.files.keys()) {
-        const file = paths === "all" || paths.has(path) ? changeset.file(path) : undefined;
-        if (file) this.files.set(path, { review: file.review, completion: file.completion });
+        const state = paths === "all" || paths.has(path) ? changeset.state(path) : undefined;
+        if (state) this.files.set(path, state);
       }
     });
   }
 
   /** Rebuilds the views if what they are built for changed. */
   follow() {
-    const manifest = changeset.manifest;
-    if (!manifest) return;
-    const key = JSON.stringify([manifest.revision, changeset.viewKey, [...(changeset.baseChanged ?? [])]]);
+    const layout = changeset.layout;
+    if (!layout) return;
+    const key = JSON.stringify([layout.shown.revision, changeset.viewKey, [...(changeset.baseChanged ?? [])]]);
     if (key === this.built) return;
     this.built = key;
     this.files.clear();
-    for (const file of changeset.currentFiles())
-      this.files.set(file.path, { review: file.review, completion: file.completion });
+    for (const path of layout.paths) {
+      const state = changeset.state(path);
+      if (state) this.files.set(path, state);
+    }
   }
 }
 
@@ -78,8 +78,10 @@ const rowReview = (review: RowReview | undefined) =>
   };
 
 export async function checkInvariants(other: Backend, mirror: ViewMirror): Promise<Violation[]> {
-  const manifest: Manifest | undefined = changeset.manifest;
-  if (!manifest) return [{ invariant: "manifest", view: "changeset", what: "no manifest", ui: null, backend: null }];
+  const layout = changeset.layout;
+  const facts = changeset.facts;
+  if (!layout || !facts || !changeset.viewCompletion)
+    return [{ invariant: "manifest", view: "changeset", what: "no manifest", ui: null, backend: null }];
   const view = changeset.view;
   const found: Violation[] = [];
   const differ = (invariant: string, what: string, ui: unknown, backend: unknown) => {
@@ -95,12 +97,7 @@ export async function checkInvariants(other: Backend, mirror: ViewMirror): Promi
     other.threads(changeset.range ? view : CHANGESET),
   ]);
 
-  const shown = manifest.interdiff
-    ? { type: "interdiff", from: manifest.interdiff.from, to: manifest.interdiff.to }
-    : changeset.shownCommit === undefined
-      ? { type: "changeset" }
-      : { type: "commit", index: changeset.shownCommit };
-  differ("shownView", "the view the manifest is of", shown, view);
+  differ("shownView", "the view the layout is of", layout.shown.view, view);
 
   differ(
     "fileReview",
@@ -109,33 +106,36 @@ export async function checkInvariants(other: Backend, mirror: ViewMirror): Promi
     fresh.files.map((f) => f.path),
   );
   for (const file of fresh.files) {
-    const held = changeset.file(file.path);
-    differ("fileReview", `state of ${file.path}`, held && { review: held.review, completion: held.completion }, {
+    differ("fileReview", `state of ${file.path}`, changeset.state(file.path), {
       review: file.review,
       completion: file.completion,
     });
   }
-  differ("viewCompletion", "completion of the view", manifest.completion, fresh.completion);
-  differ("changesetCompletion", "completion of the changeset", manifest.changesetCompletion, whole.changesetCompletion);
-  differ("base", "base of the view", baseOf(manifest.base), baseOf(fresh.base));
-  differ("reviewInfo", "review of the changeset", versionOf(manifest), versionOf(fresh));
+  differ("viewCompletion", "completion of the view", changeset.viewCompletion, fresh.completion);
+  differ("changesetCompletion", "completion of the changeset", facts.completion, whole.changesetCompletion);
+  differ("base", "base of the view", baseOf(changeset.base ?? layout.base), baseOf(fresh.base));
+  differ("reviewInfo", "review of the changeset", versionOf(facts), versionOf(fresh));
 
-  // The queue and the switcher show the changeset's own manifest as the on-view row's numbers, whatever view the review shows.
-  const own = (m: Manifest | undefined) =>
-    m && {
-      completion: m.completion,
-      delta: m.delta,
-      files: m.files.map((f) => f.path),
-      base: baseOf(m.base),
-    };
+  // The queue and the switcher show the changeset's own numbers as the on-view row's, whatever view the review shows.
+  const onView = queue.onViewFrame;
   differ(
     "onViewRowFacts",
-    "what the on-view row of the queue takes from the manifest",
-    own(queue.onViewManifest),
-    own(whole),
+    "what the on-view row of the queue takes of the changeset",
+    onView && {
+      completion: onView.facts.completion,
+      delta: onView.layout.delta,
+      files: onView.layout.paths,
+      base: baseOf(onView.layout.base),
+    },
+    {
+      completion: whole.completion,
+      delta: whole.delta,
+      files: whole.files.map((f) => f.path),
+      base: baseOf(whole.base),
+    },
   );
 
-  const key = keyId(manifest.target.changeset);
+  const key = keyId(facts.target.changeset);
   const row = (rows: { key: Parameters<typeof keyId>[0]; review: RowReview }[]) =>
     rowReview(rows.find((r) => keyId(r.key) === key)?.review);
   differ("queueRow", "review of the on-view row", row(queue.local), row(listed.rows));
@@ -150,8 +150,8 @@ export async function checkInvariants(other: Backend, mirror: ViewMirror): Promi
   differ(
     "commits",
     "progress of the commits",
-    manifest.lens === "perCommit" ? unit(changeset.commits) : [],
-    manifest.lens === "perCommit" ? unit(commits) : [],
+    facts.lens === "perCommit" ? unit(changeset.commits) : [],
+    facts.lens === "perCommit" ? unit(commits) : [],
   );
   if (threads.revision === backendThreads.revision && threads.key === rangeKey(changeset.range)) {
     differ(
@@ -171,7 +171,7 @@ export async function checkInvariants(other: Backend, mirror: ViewMirror): Promi
   return found;
 }
 
-const versionOf = (m: Manifest) => ({
+const versionOf = (m: { review: Manifest["review"] }) => ({
   state: m.review.state,
   version: "version" in m.review ? m.review.version : undefined,
 });

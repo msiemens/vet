@@ -3,8 +3,8 @@
 
 import type { BaseDiff } from "../../../generated/BaseDiff";
 import type { Completion } from "../../../generated/Completion";
-import type { FileChange } from "../../../generated/FileChange";
 import type { FileReview } from "../../../generated/FileReview";
+import type { FileLayout } from "../../../state/reviewModel";
 import type { Card } from "./changeCard";
 import type { FileProgress } from "./fileHeader";
 import type { Handle, Hooks, Loaded } from "./mount";
@@ -28,7 +28,7 @@ export interface ThreadState {
 }
 
 export interface Section extends ThreadState, FileProgress {
-  file: FileChange;
+  file: FileLayout;
   review: FileReview;
   completion: Completion;
   el: HTMLElement;

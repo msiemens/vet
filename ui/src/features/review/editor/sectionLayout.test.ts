@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { FileChange } from "../../../generated/FileChange.ts";
+import type { FileLayout } from "../../../state/reviewModel.ts";
 import type { NonTextItem } from "../../../generated/NonTextItem.ts";
 import { hiddenAt, sectionLayout, shownLines } from "./sectionLayout.ts";
 import { WrapRows } from "./wrapRows.ts";
@@ -14,9 +14,9 @@ const hunk = (targetStart: number, baseLen: number, targetLen: number) => ({
 });
 const file = (targetLines: number, hunks: ReturnType<typeof hunk>[], nonText: NonTextItem[] = [], path = "a.rs") => {
   const baseLines = hunks.reduce((lines, h) => lines + h.baseLen - h.targetLen, targetLines);
-  return { path, baseLines, targetLines, hunks, nonText } as FileChange;
+  return { path, baseLines, targetLines, hunks, nonText } as FileLayout;
 };
-const layout = (f: FileChange, mode: "unified" | "split", collapse = true) => sectionLayout(f, mode, metrics, collapse);
+const layout = (f: FileLayout, mode: "unified" | "split", collapse = true) => sectionLayout(f, mode, metrics, collapse);
 const entry = { kind: "file", mode: 0o100644, target: null, size: 1 } as const;
 const item = (kind: NonTextItem["kind"], hasPreview = false): NonTextItem => ({
   kind,

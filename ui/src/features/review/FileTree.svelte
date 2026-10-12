@@ -2,7 +2,7 @@
   import { tick, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import type { DirEntry } from "../../generated/DirEntry";
-  import type { FileChange } from "../../generated/FileChange";
+  import type { ReviewedFile } from "../../state/reviewModel";
   import { dirname } from "../../lib/paths";
   import { bestMatch, type Range } from "../../lib/speedSearch";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
@@ -41,7 +41,7 @@
     /** Which tool window this is: the changed files, every file, or the commits with the files of the one on view. */
     tool: "changes" | "all" | "commits";
     /** Changes only with the changeset's revision, so the tree is built once per revision. */
-    paths: string[];
+    paths: readonly string[];
     /** The number after "Changes": how many files the changeset changes. */
     changes: number;
     /** The commits with their progress, while the changeset is reviewed by commit. */
@@ -51,7 +51,7 @@
     /** Shows the commit at this index of `commits`. */
     oncommit: (index: number) => void;
     /** A file's current state; reading it subscribes to that file alone. */
-    fileOf: (path: string) => FileChange | undefined;
+    fileOf: (path: string) => ReviewedFile | undefined;
     /** The manifest revision; "All files" reloads when it moves. */
     revision?: number;
     /** The children of a directory of the target snapshot, for "All files". */

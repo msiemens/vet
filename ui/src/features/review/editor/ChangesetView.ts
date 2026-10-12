@@ -5,7 +5,6 @@
 
 import { EditorView } from "@codemirror/view";
 import type { BaseDiff } from "../../../generated/BaseDiff";
-import type { FileChange } from "../../../generated/FileChange";
 import type { NonTextKind } from "../../../generated/NonTextKind";
 import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
@@ -14,6 +13,8 @@ import { Scrollbar } from "../../../lib/ui/scrollbar";
 import type { SoftWrap } from "../../../lib/softWrap";
 import type { Mode } from "../../../lib/viewMode";
 import { commands } from "../../../state/commands";
+import type { FileLayout, FileState } from "../../../state/reviewModel";
+import type { ReviewSource } from "../../../state/reviewSource";
 import type { Shown } from "../../../state/shown";
 import { CaretStop } from "./caretStop";
 import { changeCard } from "./changeCard";
@@ -112,7 +113,9 @@ export class ChangesetView {
     private root: HTMLElement,
     /** What the files are of: the manifest revision and the view; every request the view makes carries it. */
     readonly shown: Shown,
-    files: FileChange[],
+    files: readonly FileLayout[],
+    /** The review state of the files, which the view draws and asks for again when told it changed. */
+    review: ReviewSource,
     private source: FileSource,
     mode: Mode,
     /** Which files wrap their long lines; a change builds the view anew. */
@@ -159,6 +162,8 @@ export class ChangesetView {
     let hunks = 0;
     for (const file of files) {
       hunks += file.hunks.length;
+      const state = review.state(file.path);
+      if (!state) throw new Error(`no review state for ${file.path}`);
       const el = document.createElement("section");
       el.className = "file";
       const index = this.sections.length;
@@ -173,7 +178,7 @@ export class ChangesetView {
       const body = document.createElement("div");
       body.className = "body";
       const cards = file.nonText.map((item, ci) =>
-        changeCard(file.path, file.oldPath, item, file.review.acknowledged.includes(item.kind), {
+        changeCard(file.path, file.oldPath, item, state.review.acknowledged.includes(item.kind), {
           toggle: () => void this.actions.card(this.sections[index], ci),
           comment: () => this.threads.commentOnFile(this.sections[index]),
           blob: (side) => this.source.itemBlob(file.path, item.kind, side),
@@ -191,8 +196,8 @@ export class ChangesetView {
       };
       this.sections.push({
         file,
-        review: file.review,
-        completion: file.completion,
+        review: state.review,
+        completion: state.completion,
         el,
         header: header.el,
         body,
@@ -763,7 +768,7 @@ export class ChangesetView {
   }
 
   /** Renders a file's review state and progress as the backend sent them; a base diff of a hunk that is no longer seen against an old base closes. */
-  showReview(path: string, state: Pick<FileChange, "review" | "completion">) {
+  showReview(path: string, state: FileState) {
     const s = this.sections.find((s) => s.file.path === path);
     if (!s) return;
     renderReview(s, state);

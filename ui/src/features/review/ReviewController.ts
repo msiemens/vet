@@ -6,8 +6,6 @@ import { tick } from "svelte";
 import type { CheckLog } from "../../generated/CheckLog";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { CheckRun } from "../../generated/CheckRun";
-import type { FileChange } from "../../generated/FileChange";
-import type { Manifest } from "../../generated/Manifest";
 import type { Side } from "../../generated/Side";
 import type { TextSpan } from "../../generated/TextSpan";
 import { isAbort } from "../../lib/abort";
@@ -21,6 +19,7 @@ import { openUrl } from "../../state/host";
 import { platform } from "../../state/platform.svelte";
 import { locationPicker } from "../../state/locationPicker.svelte";
 import { LocationSearch } from "../../state/locationSearch";
+import type { FileLayout, Frame, ViewLayout } from "../../state/reviewModel";
 import { semantic } from "../../state/semantic.svelte";
 import { serverList } from "../../state/serverList.svelte";
 import { languageOf, withoutImplementations } from "../../state/serverStatus";
@@ -68,13 +67,13 @@ const takesSpace = (el: Element | null) =>
 /** What the controller reads of the open changeset and asks of it. */
 export type ChangesetSource = Pick<
   Changeset,
-  | "files"
   | "baseChanged"
   | "currentShown"
+  | "currentLayout"
   | "shownCommit"
   | "stepCommit"
   | "subscribe"
-  | "file"
+  | "state"
   | "toggleHunk"
   | "toggleFlag"
   | "toggleItem"
@@ -82,8 +81,6 @@ export type ChangesetSource = Pick<
   | "reconfirmFile"
   | "baseDiff"
   | "commentTarget"
-  | "currentManifest"
-  | "currentFiles"
   | "refresh"
   | "reportFailure"
 >;
@@ -211,19 +208,20 @@ export class ReviewController {
     this.logViews.clear();
   }
 
-  get files() {
-    return this.changeset.files;
+  /** The files of the view on screen. */
+  private get files(): readonly FileLayout[] {
+    return this.changeset.currentLayout()?.files ?? [];
   }
 
-  /** The manifest shows a range that does not end at the latest version: nothing can be marked or commented. */
+  /** The view shows a range that does not end at the latest version: nothing can be marked or commented. */
   private get readOnly(): boolean {
-    return this.changeset.currentManifest()?.interdiff?.markable === false;
+    return this.changeset.currentLayout()?.interdiff?.markable === false;
   }
 
   /** Whether the semantic layer has `side` of what the view shows: not in a commit, whose snapshots are not the changeset's. */
   private analysable(side: Side): boolean {
     if (this.changeset.shownCommit !== undefined) return false;
-    const range = this.changeset.currentManifest()?.interdiff;
+    const range = this.changeset.currentLayout()?.interdiff;
     return !range || (range.markable && side === "target");
   }
 
@@ -310,7 +308,7 @@ export class ReviewController {
         return this.active?.toggleFlagCurrent() !== undefined;
       },
       stepFlag: (delta) => this.stepFlagged(delta > 0 ? 1 : -1),
-      firstFlagged: () => this.goToFlagged(stepFlagged(this.changeset.currentFiles(), undefined, 1)),
+      firstFlagged: () => this.goToFlagged(this.flaggedFrom(undefined, 1)),
       reconfirm: () => {
         const text = this.activeText;
         if (text) return text.reconfirmCurrent();
@@ -349,9 +347,15 @@ export class ReviewController {
     return this.active?.currentHunk();
   }
 
+  /** The hunk flagged after or before `from` over the files of the view, as they are flagged now. */
+  private flaggedFrom(from: HunkPlace | undefined, delta: 1 | -1): HunkPlace | undefined {
+    const paths = this.changeset.currentLayout()?.paths ?? [];
+    return stepFlagged(paths, (path) => this.changeset.state(path)?.review.flagged, from, delta);
+  }
+
   /** Goes to the flagged hunk after or before the current one, across files; says so when there is none. */
   private stepFlagged(delta: 1 | -1): boolean {
-    if (this.goToFlagged(stepFlagged(this.changeset.currentFiles(), this.hunkPlace(), delta))) return true;
+    if (this.goToFlagged(this.flaggedFrom(this.hunkPlace(), delta))) return true;
     session.notice = delta > 0 ? "No further flagged hunk" : "No earlier flagged hunk";
     return false;
   }
@@ -461,8 +465,8 @@ export class ReviewController {
   /** Builds the tab's text view if the tab has its root and no view yet. */
   private ensureText(id: TabId) {
     const root = this.textRoots.get(id);
-    const manifest = this.changeset.currentManifest();
-    if (root && manifest && !this.texts.has(id)) this.buildText(id, root, manifest);
+    const layout = this.changeset.currentLayout();
+    if (root && layout && !this.texts.has(id)) this.buildText(id, root, layout);
   }
 
   /**
@@ -577,9 +581,9 @@ export class ReviewController {
     return buildCard({ thread, open }, actions);
   }
 
-  /** The threads were read for the revision and the range `manifest` is of. */
-  private threadsFit(manifest: Manifest): boolean {
-    return threads.revision === manifest.revision && threads.key === rangeKey(manifest.interdiff);
+  /** The threads were read for the revision and the range `layout` is of. */
+  private threadsFit(layout: ViewLayout): boolean {
+    return threads.revision === layout.shown.revision && threads.key === rangeKey(layout.interdiff);
   }
 
   /**
@@ -593,21 +597,21 @@ export class ReviewController {
     for (const view of this.views.values()) {
       if (!isCurrent(view.shown, shown)) continue;
       for (const path of view.paths()) {
-        const file = wanted(path) ? this.changeset.file(path) : undefined;
-        if (file) view.showReview(path, file);
+        const state = wanted(path) ? this.changeset.state(path) : undefined;
+        if (state) view.showReview(path, state);
       }
     }
     for (const [id, text] of this.texts) {
       const path = pathOf(id);
-      const file = path !== undefined && wanted(path) ? this.changeset.file(path) : undefined;
-      if (file && text.isFor(shown)) text.applyReview(file.review);
+      const state = path !== undefined && wanted(path) ? this.changeset.state(path) : undefined;
+      if (state && text.isFor(shown)) text.applyReview(state.review);
     }
   }
 
   /** Gives every view the threads, if they are of the view's revision and range. */
   private showThreads() {
-    const manifest = this.changeset.currentManifest();
-    if (threads.revision === undefined || !manifest || !this.threadsFit(manifest)) return;
+    const layout = this.changeset.currentLayout();
+    if (threads.revision === undefined || !layout || !this.threadsFit(layout)) return;
     for (const view of this.views.values()) view.setThreads(this.shownThreads(), threads.revision);
     for (const text of this.texts.values()) text.setThreads(this.shownThreads(), threads.revision);
   }
@@ -637,41 +641,41 @@ export class ReviewController {
   }
 
   /** Builds a file tab's text view in its root, replacing the one it had. */
-  private buildText(id: TabId, root: HTMLElement, manifest: Manifest) {
+  private buildText(id: TabId, root: HTMLElement, layout: ViewLayout) {
     const path = pathOf(id);
     if (path === undefined) return;
     this.texts.get(id)?.destroy();
     const shown = this.changeset.currentShown();
     if (!shown) return;
-    const file = manifest.files.find((f) => f.path === path);
+    const file = layout.files.find((f) => f.path === path);
     const text = new TextView(
       root,
       path,
       fileSource(this.backend, shown.revision, shown.view),
-      bindRevision(this.hooks, manifest.revision),
+      bindRevision(this.hooks, layout.shown.revision),
       this.softWrap,
       { shown, listeners: this.threadListeners() },
-      file && { file, actions: this.textActions(file, shown) },
+      file && { file, review: this.changeset, actions: this.textActions(file, shown) },
     );
     this.texts.set(id, text);
     const at = this.takePending(id, "text");
     if (at) text.showLines(at);
-    if (this.threadsFit(manifest)) text.setThreads(this.shownThreads(), manifest.revision);
+    if (this.threadsFit(layout)) text.setThreads(this.shownThreads(), layout.shown.revision);
   }
 
   /**
    * Builds the tab's diff view in its root, replacing `previous`. The scroll position and the
    * current hunk (the nearest one of the same file) carry over.
    */
-  private build(id: TabId, manifest: Manifest, previous?: ChangesetView) {
+  private build(id: TabId, layout: ViewLayout, previous?: ChangesetView) {
     const root = this.roots.get(id);
     if (!root || kindOf(id) === "log") return;
     const path = pathOf(id);
     const only = this.changeset.baseChanged;
     const files =
       path === undefined
-        ? manifest.files.filter((f) => !only || only.has(f.path))
-        : manifest.files.filter((f) => f.path === path);
+        ? layout.files.filter((f) => !only || only.has(f.path))
+        : layout.files.filter((f) => f.path === path);
     const restoring = this.restore?.scroll.has(id) ? this.restore : undefined;
     const anchor = restoring ? undefined : previous?.currentAnchor();
     const top = restoring ? (restoring.scroll.get(id) ?? 0) : root.scrollTop;
@@ -688,6 +692,7 @@ export class ReviewController {
       root,
       shown,
       files,
+      this.changeset,
       fileSource(this.backend, shown.revision, shown.view),
       this.diffModeOf(id),
       this.softWrap,
@@ -696,7 +701,7 @@ export class ReviewController {
       id === CHANGES, // only the Changes tab collapses unchanged regions
     );
     this.views.set(id, view);
-    if (this.threadsFit(manifest)) view.setThreads(this.shownThreads(), manifest.revision);
+    if (this.threadsFit(layout)) view.setThreads(this.shownThreads(), layout.shown.revision);
     root.scrollTop = top;
     view.keepCurrent(anchor);
     view.sync();
@@ -779,9 +784,9 @@ export class ReviewController {
     // Registered before the view is, so it hears the scroll that the view's own listener stops.
     root.addEventListener("scroll", this.scheduleSave, { passive: true });
     // The Changes tab is built by `open`, which fetches the manifest first.
-    const manifest = this.changeset.currentManifest();
+    const layout = this.changeset.currentLayout();
     if (kindOf(id) === "log") this.buildLog(id, root);
-    else if (id !== CHANGES && manifest) this.build(id, manifest);
+    else if (id !== CHANGES && layout) this.build(id, layout);
     return () => {
       root.removeEventListener("scroll", this.scheduleSave);
       this.views.get(id)?.destroy();
@@ -861,7 +866,7 @@ export class ReviewController {
   }
 
   /** What the file's text tab offers for the file's hunks. */
-  private textActions(file: FileChange, shown: Shown): TextActions {
+  private textActions(file: FileLayout, shown: Shown): TextActions {
     return {
       toggleSeen: (hunk) =>
         void this.editing(
@@ -876,12 +881,12 @@ export class ReviewController {
     };
   }
 
-  /** Renders `manifest` in every tab, keeping scroll positions and current hunks (a new revision replaces the views). */
-  show(manifest: Manifest) {
-    for (const id of this.roots.keys()) this.build(id, manifest, this.views.get(id));
+  /** Renders `layout` in every tab, keeping scroll positions and current hunks (a new revision replaces the views). */
+  show(layout: ViewLayout) {
+    for (const id of this.roots.keys()) this.build(id, layout, this.views.get(id));
     // A text view is built where the tab shows it or showed it.
     for (const [id, root] of this.textRoots) {
-      if (this.texts.has(id) || this.tabs.modes.get(id) === "file") this.buildText(id, root, manifest);
+      if (this.texts.has(id) || this.tabs.modes.get(id) === "file") this.buildText(id, root, layout);
     }
   }
 
@@ -890,43 +895,43 @@ export class ReviewController {
    * another changeset first remembers the tabs and positions of the one that was on view, and
    * brings back those of the new one, if it was on view before.
    */
-  update(manifest: Manifest) {
-    const key = keyId(manifest.target.changeset);
+  update({ layout, facts }: Frame) {
+    const key = keyId(facts.target.changeset);
     const switching = this.key !== undefined && key !== this.key;
-    const paths = new Set(manifest.files.map((f) => f.path));
+    const paths = new Set(layout.paths);
     const brought = switching ? this.switchTo(key, paths) : undefined;
     if (!switching) this.tabs.dropStale((path) => paths.has(path));
     this.key = key;
     const commitChanged = this.commitChanged();
-    const rangeChanged = this.rangeChanged(manifest) || commitChanged;
+    const rangeChanged = this.rangeChanged(layout) || commitChanged;
     const filterChanged = this.filtered !== this.changeset.baseChanged;
     this.filtered = this.changeset.baseChanged;
     const view = this.views.get(CHANGES);
-    if (!view || (!switching && view.revision === manifest.revision && !rangeChanged && !filterChanged)) return;
+    if (!view || (!switching && view.revision === layout.shown.revision && !rangeChanged && !filterChanged)) return;
     // Another range is another set of files: its views start at the top. So does the Changes tab when
     // it shows other files.
     if ((rangeChanged || filterChanged) && !switching) {
       const tabs = this.tabs.open.filter((tab) => hasDiff(tab) && (rangeChanged || tab === CHANGES));
       this.restore = { scroll: new Map(tabs.map((tab) => [tab, 0])) };
     }
-    this.show(manifest);
-    const restored = switching && this.restoreChanges(brought, manifest);
+    this.show(layout);
+    const restored = switching && this.restoreChanges(brought, layout);
     if (!restored && (switching || rangeChanged || filterChanged)) this.arriving = this.changes.goToHunk(0);
     // The new views have loaded nothing; a newer revision replaces this load.
     this.changes.loadAll().catch(() => undefined);
   }
 
   /**
-   * Whether `manifest` shows another range than the last one did: no range and a range differ, and
+   * Whether `layout` shows another range than the last one did: no range and a range differ, and
    * so do ranges that start at another version. A live range whose end moved with a new revision
    * is the same range.
    */
-  private rangeChanged(manifest: Manifest): boolean {
-    const now = manifest.interdiff;
+  private rangeChanged(layout: ViewLayout): boolean {
+    const now = layout.interdiff;
     const was = this.shown;
-    this.shown = now && { from: now.from, to: now.to, revision: manifest.revision };
+    this.shown = now && { from: now.from, to: now.to, revision: layout.shown.revision };
     if (!now || !was) return !now !== !was;
-    return now.from !== was.from || (now.to !== was.to && manifest.revision === was.revision);
+    return now.from !== was.from || (now.to !== was.to && layout.shown.revision === was.revision);
   }
 
   /** Whether the views show another commit than they did, or one where there was none or none where there was one. */
@@ -970,9 +975,9 @@ export class ReviewController {
   }
 
   /** Puts the Changes tab where `saved` left it and makes its hunk the current one; answers whether the position was found. */
-  private restoreChanges(saved: SavedView | undefined, manifest: Manifest): boolean {
+  private restoreChanges(saved: SavedView | undefined, layout: ViewLayout): boolean {
     const view = this.views.get(CHANGES);
-    if (!view || !saved?.changes || manifest.interdiff || this.changeset.shownCommit !== undefined) return false;
+    if (!view || !saved?.changes || layout.interdiff || this.changeset.shownCommit !== undefined) return false;
     if (!view.restore(saved.changes)) return false;
     view.keepCurrent(saved.anchor);
     return true;
@@ -982,16 +987,17 @@ export class ReviewController {
   async open(prefetch: boolean): Promise<boolean> {
     this.views.get(CHANGES)?.destroy();
     this.views.delete(CHANGES);
-    const manifest = await this.changeset.refresh();
-    if (!manifest) return false; // the project was closed meanwhile
-    this.key = keyId(manifest.target.changeset);
-    const saved = this.bringBack(this.key, new Set(manifest.files.map((f) => f.path)));
-    this.rangeChanged(manifest);
+    const frame = await this.changeset.refresh();
+    if (!frame) return false; // the project was closed meanwhile
+    const { layout, facts } = frame;
+    this.key = keyId(facts.target.changeset);
+    const saved = this.bringBack(this.key, new Set(layout.paths));
+    this.rangeChanged(layout);
     this.filtered = this.changeset.baseChanged;
     this.commitChanged();
-    this.show(manifest);
+    this.show(layout);
     const view = this.changes;
-    if (!this.restoreChanges(saved, manifest)) await view.goToHunk(0);
+    if (!this.restoreChanges(saved, layout)) await view.goToHunk(0);
     await nextPaint();
     if (prefetch) await view.loadAll();
     return true;
@@ -1001,8 +1007,8 @@ export class ReviewController {
   setSoftWrap(wrap: SoftWrap) {
     if (wrap === this.softWrap) return;
     this.softWrap = wrap;
-    const manifest = this.changeset.currentManifest();
-    if (manifest) this.show(manifest);
+    const layout = this.changeset.currentLayout();
+    if (layout) this.show(layout);
   }
 
   /** Goes to the hunk `delta` away from the current one in the focused tab. */

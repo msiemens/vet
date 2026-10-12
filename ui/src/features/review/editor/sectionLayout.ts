@@ -4,7 +4,7 @@
 // Change cards for non-text items sit between the section header and the first hunk.
 // A fixed gap closes every section.
 
-import type { FileChange } from "../../../generated/FileChange";
+import type { FileLayout } from "../../../state/reviewModel";
 import type { NonTextItem } from "../../../generated/NonTextItem";
 import type { Side } from "../../../generated/Side";
 import { cardContent } from "./cardContent.ts";
@@ -54,7 +54,7 @@ export interface WrappedSides {
 }
 
 /** A card is a header bar like a hunk's, its rows, and the preview strip if it has one. */
-const cardHeight = (item: NonTextItem, file: FileChange, m: Metrics): number =>
+const cardHeight = (item: NonTextItem, file: FileLayout, m: Metrics): number =>
   m.hunk + cardContent(item, file.path, file.oldPath).rows.length * m.line + (item.hasPreview ? m.preview : 0);
 
 /** Comment threads that add height to a section (see `threadPlacement.ts`). */
@@ -70,7 +70,7 @@ export interface ThreadSpace {
  * their context when unchanged regions collapse. What lies between the ranges is hidden behind bars.
  * The layout, the thread cards that are drawn and the size of a bar all derive from this.
  */
-export function shownLines(file: FileChange, collapse: boolean, side: Side = "target"): [number, number][] {
+export function shownLines(file: FileLayout, collapse: boolean, side: Side = "target"): [number, number][] {
   const total = side === "base" ? file.baseLines : file.targetLines;
   if (!collapse) return [[0, total]];
   const { margin } = COLLAPSE;
@@ -94,7 +94,7 @@ export function shownLines(file: FileChange, collapse: boolean, side: Side = "ta
 }
 
 /** How many lines the bar that starts at (or covers) `line` of `side` hides; 0 when `line` is shown. */
-export function hiddenAt(file: FileChange, collapse: boolean, side: Side, line: number): number {
+export function hiddenAt(file: FileLayout, collapse: boolean, side: Side, line: number): number {
   const total = side === "base" ? file.baseLines : file.targetLines;
   let end = 0;
   const ranges: [number, number][] = [...shownLines(file, collapse, side), [total, total]];
@@ -111,7 +111,7 @@ export function hiddenAt(file: FileChange, collapse: boolean, side: Side, line: 
  * the rows of the base diff each open hunk (by index) shows under its bar.
  */
 export function sectionLayout(
-  file: FileChange,
+  file: FileLayout,
   mode: "unified" | "split",
   m: Metrics,
   collapse: boolean,

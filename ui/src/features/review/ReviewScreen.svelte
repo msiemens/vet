@@ -85,9 +85,9 @@
 
   /** What the loading note names. */
   const project = $derived(session.repo === undefined ? "the changeset" : repoName(session.repo));
-  const revision = $derived(changeset.manifest?.revision);
+  const revision = $derived(changeset.layout?.shown.revision);
   /** The chosen target when it already contains the changeset, so there is nothing to show. */
-  const containedIn = $derived(changeset.files.length ? undefined : changeset.manifest?.base.containedIn);
+  const containedIn = $derived(changeset.paths.length ? undefined : changeset.base?.containedIn);
   /** The commit on view, while the changeset is reviewed by commit. */
   const commit = $derived(changeset.shownCommit === undefined ? undefined : changeset.commits[changeset.shownCommit]);
   const highlighted = $derived(pathOf(tabs.active) ?? selected);
@@ -105,7 +105,7 @@
     const path = pathOf(tabs.active);
     return kindOf(tabs.active) === "changes" || (path !== undefined && !!changeset.file(path));
   });
-  const fileOf = (path: string) => changeset.file(path);
+  const fileOf = (path: string) => changeset.reviewed(path);
   // The Symbol panel lists the file the review shows (the active file tab, else the one selected in the tree) first.
   $effect(() => {
     symbols.file = highlighted;
@@ -147,7 +147,7 @@
     };
   });
 
-  const range = $derived(changeset.manifest?.interdiff);
+  const range = $derived(changeset.layout?.interdiff);
   const readOnly = $derived(range?.markable === false);
   // A range shows the threads of its new side: they are read again for each range.
   $effect(() => {
@@ -172,9 +172,9 @@
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the file filter a dependency
     changeset.baseChanged;
     untrack(() => {
-      const manifest = changeset.currentManifest();
-      if (!manifest) return;
-      controller.update(manifest);
+      const layout = changeset.currentLayout();
+      const facts = changeset.currentFacts();
+      if (layout && facts) controller.update({ layout, facts });
     });
   });
 
@@ -212,10 +212,8 @@
         {revision}
         list={(path) => changeset.listDirectory(path)}
         selected={marked}
-        excluded={{ lines: changeset.manifest?.excludedLines ?? 0, items: changeset.manifest?.excludedItems ?? 0 }}
-        changes={changeset.shownCommit === undefined
-          ? changeset.files.length
-          : (changeset.manifest?.changesetFiles ?? 0)}
+        excluded={{ lines: changeset.layout?.excludedLines ?? 0, items: changeset.layout?.excludedItems ?? 0 }}
+        changes={changeset.shownCommit === undefined ? changeset.paths.length : (changeset.facts?.files ?? 0)}
         commits={changeset.commits}
         commit={changeset.commitIndex}
         oncommit={(index) => void changeset.showCommit(index)}
@@ -255,7 +253,7 @@
       <p class="empty">Loading {project}…</p>
     {:else if containedIn && tabs.active === CHANGES}
       <p class="empty">
-        Nothing to review: {containedIn} already contains {changeset.manifest?.target.branch ?? "HEAD"}
+        Nothing to review: {containedIn} already contains {changeset.facts?.target.branch ?? "HEAD"}
       </p>
     {/if}
     {#each tabs.open as id (id)}

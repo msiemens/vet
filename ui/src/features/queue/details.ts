@@ -3,11 +3,11 @@
 
 import type { ChangesetKey } from "../../generated/ChangesetKey";
 import type { ChangesetRow } from "../../generated/ChangesetRow";
-import type { Manifest } from "../../generated/Manifest";
 import type { ReviewFilter } from "../../generated/ReviewFilter";
 import { shortTime } from "../../lib/shortTime.ts";
 import { behindText } from "../../state/baseBehind.ts";
 import { keyId } from "../../state/changesetKey.ts";
+import type { Frame } from "../../state/reviewModel.ts";
 
 /** What a fact that is a link opens. */
 export type FactLink = "baseChanged";
@@ -48,14 +48,14 @@ function targetText(key: ChangesetKey, title: string): string {
   }
 }
 
-function changesetFacts(row: ChangesetRow, manifest: Manifest): Fact[] {
+function changesetFacts(row: ChangesetRow, { layout, facts }: Frame): Fact[] {
   const version = row.review.state === "open" ? ` · v${row.review.version}` : "";
-  const behind = behindText(manifest.base);
+  const behind = behindText(layout.base);
   return [
-    { label: "Base", value: manifest.base.commit.shortId },
+    { label: "Base", value: layout.base.commit.shortId },
     ...(behind ? [{ value: behind }] : []),
     { label: "Target", value: `${targetText(row.key, row.title)}${version}` },
-    { label: "Filter", value: filterText(manifest.filter) },
+    { label: "Filter", value: filterText(facts.filter) },
   ];
 }
 
@@ -81,8 +81,8 @@ function reviewFacts(row: ChangesetRow, nowMs: number): Fact[] {
   }
 }
 
-function progressFacts(manifest: Manifest): Fact[] {
-  const c = manifest.completion;
+function progressFacts({ facts }: Frame): Fact[] {
+  const c = facts.completion;
   return [
     { label: "Lines", value: `${c.seenLines} / ${c.lines}` },
     { label: "Other changes", value: `${c.acknowledgedItems} / ${c.items}` },
@@ -92,9 +92,9 @@ function progressFacts(manifest: Manifest): Fact[] {
   ];
 }
 
-/** `manifest` is the changeset on view as a whole; it describes `row` only when it is that one. */
-export function detailGroups(row: ChangesetRow, manifest: Manifest | undefined, nowMs = Date.now()): FactGroup[] {
-  const own = manifest && keyId(manifest.target.changeset) === keyId(row.key) ? manifest : undefined;
+/** `onView` is the changeset on view as a whole; it describes `row` only when it is that one. */
+export function detailGroups(row: ChangesetRow, onView: Frame | undefined, nowMs = Date.now()): FactGroup[] {
+  const own = onView && keyId(onView.facts.target.changeset) === keyId(row.key) ? onView : undefined;
   const groups: FactGroup[] = [];
   if (own) groups.push({ title: "Changeset", facts: changesetFacts(row, own) });
   groups.push({ title: "Review", facts: reviewFacts(row, nowMs) });

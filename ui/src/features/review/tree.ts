@@ -3,11 +3,11 @@
 // directories with a single directory child and no files are shown as one row
 // (`crates/vet-core/src`).
 
-import type { FileChange } from "../../generated/FileChange";
 import type { FileStatus } from "../../generated/FileStatus";
 import type { ModeChange } from "../../generated/ModeChange";
 import { basename, compactChain, dirname } from "../../lib/paths.ts";
 import { match, type Range } from "../../lib/speedSearch.ts";
+import type { FileLayout, ReviewedFile } from "../../state/reviewModel.ts";
 
 export interface DirRow {
   kind: "dir";
@@ -55,10 +55,14 @@ const MODE: Record<ModeChange, NonNullable<FileSummary["mode"]>> = {
   other: "mode",
 };
 
-function modeChange(file: FileChange): FileSummary["mode"] {
+/** The mode change a file shows next to its name, if its mode changed. */
+export function modeChange(file: FileLayout): FileSummary["mode"] {
   const change = file.nonText.find((i) => i.kind === "mode")?.modeChange;
   return change ? MODE[change] : undefined;
 }
+
+/** The letter that stands for how a file changed. */
+export const statusLetter = (file: FileLayout): FileSummary["status"] => LETTER[file.status];
 
 // One collator: `localeCompare` creates one per call.
 const collator = new Intl.Collator();
@@ -93,9 +97,9 @@ export function buildTree(paths: readonly string[]): DirNode {
   return finish(root);
 }
 
-export function summarize(file: FileChange): FileSummary {
+export function summarize(file: ReviewedFile): FileSummary {
   const { seenPercent, oldBasePercent } = file.completion;
-  return { status: LETTER[file.status], seenPercent, oldBasePercent, mode: modeChange(file) };
+  return { status: statusLetter(file), seenPercent, oldBasePercent, mode: modeChange(file) };
 }
 
 /**

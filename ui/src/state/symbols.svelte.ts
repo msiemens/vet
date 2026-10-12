@@ -52,7 +52,7 @@ class SymbolsState {
     $effect.root(() => {
       $effect(() => {
         const { backend, repo } = session;
-        const revision = changeset.manifest?.revision;
+        const revision = changeset.layout?.shown.revision;
         untrack(() => {
           if (repo === undefined || revision === undefined) this.reset();
           else if (backend) void this.load(backend, revision);

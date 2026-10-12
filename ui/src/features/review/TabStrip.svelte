@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { CommitUnit } from "../../generated/CommitUnit";
-  import type { FileChange } from "../../generated/FileChange";
+  import type { FileLayout } from "../../state/reviewModel";
   import { basename } from "../../lib/paths";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -18,8 +18,12 @@
     files,
     commit,
     onmenu,
-  }: { tabs: Tabs; files: FileChange[]; commit?: CommitUnit; onmenu: (id: TabId, x: number, y: number) => void } =
-    $props();
+  }: {
+    tabs: Tabs;
+    files: readonly FileLayout[];
+    commit?: CommitUnit;
+    onmenu: (id: TabId, x: number, y: number) => void;
+  } = $props();
 
   /** Closing a tab is the Close Tab command, with the tab as its subject. */
   const closing = (id: TabId) => commands.context({ tab: { kind: kindOf(id), path: subjectOf(id) } });

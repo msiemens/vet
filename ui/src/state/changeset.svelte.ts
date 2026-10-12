@@ -4,7 +4,8 @@
 import { untrack } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
 import type { BaseDiff } from "../generated/BaseDiff";
-import type { FileChange } from "../generated/FileChange";
+import type { Base } from "../generated/Base";
+import type { Completion } from "../generated/Completion";
 import type { ReviewUpdate } from "../generated/ReviewUpdate";
 import type { Manifest } from "../generated/Manifest";
 import type { RestoreFailure } from "../generated/RestoreFailure";
@@ -22,33 +23,46 @@ import { LatestLoad } from "./latestLoad";
 import type { BaseCandidates } from "./backend";
 import { commitToShow, neighbour } from "./commitLens";
 import { keyId } from "./changesetKey";
-import { currentFiles } from "./currentFiles";
-import { isChangesetView, sameManifestView, withChangesetBase } from "./manifestScope";
 import { PendingOpen } from "./pendingOpen";
+import {
+  type ChangesetFacts,
+  type FileLayout,
+  type FileState,
+  type Frame,
+  type Parts,
+  type ReviewedFile,
+  type ViewLayout,
+  partsOf,
+} from "./reviewModel";
 import { ReviewOrder } from "./reviewOrder";
+import { type ReviewSource, type WriteListener } from "./reviewSource";
 import { session } from "./session.svelte";
 import { type Shown, isCurrent } from "./shown";
 import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
-import { CHANGESET, commitView, interdiffView } from "./view";
+import { CHANGESET, commitView } from "./view";
 
-/** Told after review state was written: the paths written, or "all" after a manifest replaced it. Never the state itself. */
-type WriteListener = (paths: ReadonlySet<string> | "all") => void;
 /** Said when a request is refused or rejected because the views it came from are about to be replaced. */
 const STALE_NOTICE = "Changes arrived — try again";
 /** What happens to the changeset on view: another is asked for, announced to be fetched, or the ask came to nothing. */
 export type Opening = { type: "requested" } | { type: "opened"; changeset: ChangesetKey } | { type: "unannounced" };
 
-class ChangesetStore {
-  /**
-   * The manifest of the last refresh, with the changeset's completion kept current. Its
-   * `files` are as of the refresh (paths and hunks, which only a new revision changes);
-   * their review state is current in `file(path)`. Immutable snapshots, never deep proxies.
-   */
-  manifest = $state.raw<Manifest>();
+const NO_PATHS: readonly string[] = [];
+
+class ChangesetStore implements ReviewSource {
+  /** What the view of the last refresh looks like: its files' structure and its base. Replaced only by a manifest. */
+  layout = $state.raw<ViewLayout>();
+  /** What is true of the changeset as a whole, whatever view is shown. */
+  facts = $state.raw<ChangesetFacts>();
+  /** How far the view's files are reviewed. */
+  viewCompletion = $state.raw<Completion>();
+  /** The base a fetch moved the changeset's to since the last manifest; none in a commit or a range, whose base is their own. */
+  private movedBase = $state.raw<Base>();
+  /** The view's base as of now. */
+  base = $derived(this.movedBase ?? this.layout?.base);
   /** Dependency restores that failed: the analysis of those projects is limited. Pushed as they happen. */
   restoreFailures = $state.raw<RestoreFailure[]>([]);
-  /** The current state of each file, one reactive cell per path: a review update invalidates only its file. */
-  private cells = new SvelteMap<string, FileChange>();
+  /** The current review state of each file of the view, one reactive cell per path: a review update invalidates only its file. */
+  private cells = new SvelteMap<string, FileState>();
   private listeners = new Set<WriteListener>();
   /** Which change of the backend the review state held is as of; updates and manifests older than it do not replace it. */
   private order = new ReviewOrder();
@@ -75,26 +89,19 @@ class ChangesetStore {
   private manifestLoads = new LatestLoad<{ manifest: Manifest; commit: number | undefined }>({
     busy: (on) => (this.fetching = on),
     apply: ({ manifest, commit }) => {
-      const held = this.manifest;
+      const parts = partsOf(manifest, commit);
+      const heldFacts = this.facts;
       // A mark answered after the manifest was read is newer than the manifest, whenever the manifest arrives.
-      const newer = this.order.load(
-        manifest.seq,
-        manifest.files.map((file) => file.path),
-        sameManifestView(held, this.shownCommit, manifest, commit),
-      );
+      const newer = this.order.load(parts.seq, parts.layout.paths, isCurrent(parts.layout.shown, this.layout?.shown));
       const kept = new Map(newer.files.size ? this.cells : []);
-      this.manifest =
-        held && (newer.completion || newer.changeset)
-          ? {
-              ...manifest,
-              completion: newer.completion ? held.completion : manifest.completion,
-              changesetCompletion: newer.changeset ? held.changesetCompletion : manifest.changesetCompletion,
-            }
-          : manifest;
+      this.layout = parts.layout;
+      this.movedBase = undefined;
+      this.viewCompletion = newer.completion && this.viewCompletion ? this.viewCompletion : parts.completion;
+      this.facts = newer.changeset && heldFacts ? { ...parts.facts, completion: heldFacts.completion } : parts.facts;
       this.shownCommit = commit;
       this.restoreFailures = manifest.restoreFailures;
-      this.write(new Map(manifest.files.map((file) => [file.path, kept.get(file.path) ?? file])), "manifest");
-      if (manifest.lens === "perCommit" && manifest.commits > 1) void this.loadCommits();
+      this.write(new Map([...parts.states].map(([path, state]) => [path, kept.get(path) ?? state])), "manifest");
+      if (parts.facts.lens === "perCommit" && parts.facts.commits > 1) void this.loadCommits();
       else this.commits = [];
     },
   });
@@ -106,10 +113,8 @@ class ChangesetStore {
   get view(): View {
     return this.range || this.commitIndex === undefined ? rangeView(this.range) : commitView(this.commitIndex);
   }
-  /** The range or commit the manifest is of, as a string; empty for the changeset. */
-  viewKey = $derived(
-    rangeKey(this.manifest?.interdiff) + (this.shownCommit === undefined ? "" : `c${this.shownCommit}`),
-  );
+  /** The range or commit the layout is of, as a string; empty for the changeset. */
+  viewKey = $derived(rangeKey(this.layout?.interdiff) + (this.shownCommit === undefined ? "" : `c${this.shownCommit}`));
 
   /**
    * While the review view shows only the files that had hunks seen against an old base when it was
@@ -117,28 +122,45 @@ class ChangesetStore {
    */
   baseChanged = $state.raw<ReadonlySet<string>>();
 
-  files = $derived(this.manifest?.files ?? []);
   /** Same array while only review state changes. */
-  paths = $derived(this.files.map((f) => f.path));
+  paths = $derived(this.layout?.paths ?? NO_PATHS);
+  private layouts = $derived(new Map(this.layout?.files.map((file) => [file.path, file])));
   /** The files the Changes tab shows: all of them, or those of `baseChanged`. */
-  shownFiles = $derived(this.baseChanged ? this.files.filter((f) => this.baseChanged?.has(f.path)) : this.files);
+  shownFiles = $derived.by(() => {
+    const files = this.layout?.files ?? [];
+    return this.baseChanged ? files.filter((f) => this.baseChanged?.has(f.path)) : files;
+  });
 
-  /** A file as it is now, with its current review state and completion. */
-  file(path: string): FileChange | undefined {
+  /** The structure of a file of the view. */
+  layoutOf(path: string): FileLayout | undefined {
+    return this.layouts.get(path);
+  }
+
+  /** The review state of a file of the view as it is now. */
+  file(path: string): FileState | undefined {
     return this.cells.get(path);
   }
 
-  /** The manifest with every file's current state, for building views; reads nothing reactively. */
-  currentManifest(): Manifest | undefined {
-    return untrack(() => {
-      const manifest = this.manifest;
-      return manifest && { ...manifest, files: currentFiles(manifest.files, (p) => this.cells.get(p)) };
-    });
+  /** A file of the view with its review state as it is now; to be read, not kept. */
+  reviewed(path: string): ReviewedFile | undefined {
+    const layout = this.layouts.get(path);
+    const state = this.cells.get(path);
+    return layout && state && { ...layout, ...state };
   }
 
-  /** The files with their current review state, for reading at the moment of use; reads nothing reactively. */
-  currentFiles(): FileChange[] {
-    return this.currentManifest()?.files ?? [];
+  /** The review state of a file at the moment of use; reads nothing reactively. */
+  state(path: string): FileState | undefined {
+    return untrack(() => this.cells.get(path));
+  }
+
+  /** The layout of the view on screen, for reading at the moment of use; reads nothing reactively. */
+  currentLayout(): ViewLayout | undefined {
+    return untrack(() => this.layout);
+  }
+
+  /** What is true of the changeset as a whole, for reading at the moment of use; reads nothing reactively. */
+  currentFacts(): ChangesetFacts | undefined {
+    return untrack(() => this.facts);
   }
 
   constructor() {
@@ -153,18 +175,17 @@ class ChangesetStore {
         } else if (event.type === "snapshotSettled" || event.type === "targetChanged") void this.refresh();
         else if (event.type === "lensChanged") void this.followLens(event.lens);
         // A mark made in a range or a commit is announced as that of the changeset's file, which they do not show.
-        else if (event.type === "reviewChanged" && event.revision === this.manifest?.revision) {
-          if (isChangesetView(this.manifest, this.shownCommit)) this.applyReview(event.update);
+        else if (event.type === "reviewChanged" && event.revision === this.layout?.shown.revision) {
+          if (this.showsChangeset) this.applyReview(event.update);
           else this.applyTotals(event.update);
-        } else if (event.type === "reviewStarted" && this.manifest)
-          this.manifest = { ...this.manifest, review: event.review };
+        } else if (event.type === "reviewStarted" && this.facts) this.facts = { ...this.facts, review: event.review };
         else if (event.type === "restoreFailed") this.restoreFailures = event.failures;
-        else if (event.type === "baseChanged" && this.manifest)
-          this.manifest = withChangesetBase(this.manifest, event.base, this.shownCommit);
+        // Only the changeset's own view has the changeset's base.
+        else if (event.type === "baseChanged" && this.showsChangeset) this.movedBase = event.base;
       }),
     );
     session.onResync(() => {
-      if (this.manifest) this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
+      if (this.layout) this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
     });
     session.onClose(() => this.clear());
   }
@@ -175,7 +196,7 @@ class ChangesetStore {
    */
   private clear() {
     this.manifestLoads.cancel();
-    this.manifest = undefined;
+    this.layout = this.facts = this.viewCompletion = this.movedBase = undefined;
     this.range = undefined;
     this.baseChanged = undefined;
     this.commitIndex = this.shownCommit = undefined;
@@ -192,7 +213,12 @@ class ChangesetStore {
    * changeset is known, and the views show that instead of what was on view before.
    */
   get loading(): boolean {
-    return this.opening || (this.fetching && !this.manifest);
+    return this.opening || (this.fetching && !this.layout);
+  }
+
+  /** The layout on screen is of the changeset as a whole, not of a range or a commit. */
+  private get showsChangeset(): boolean {
+    return this.layout?.shown.view.type === "changeset";
   }
 
   /**
@@ -215,9 +241,9 @@ class ChangesetStore {
    * one that settles later gives the latest's manifest. Resolves with nothing when the project was
    * closed meanwhile.
    */
-  async refresh(): Promise<Manifest | undefined> {
+  async refresh(): Promise<Frame | undefined> {
     const loaded = await this.manifestLoads.load(() => this.fetchManifest());
-    return loaded?.manifest;
+    return loaded && this.layout && this.facts && { layout: this.layout, facts: this.facts };
   }
 
   /**
@@ -286,7 +312,7 @@ class ChangesetStore {
    */
   stepCommit(delta: number): boolean {
     if (this.shownCommit === undefined) return false;
-    const to = neighbour(this.shownCommit, delta, this.manifest?.commits ?? 0);
+    const to = neighbour(this.shownCommit, delta, this.facts?.commits ?? 0);
     if (to === undefined) return false;
     void this.showCommit(to);
     return true;
@@ -318,7 +344,7 @@ class ChangesetStore {
   /** Shows the changeset as a whole, out of a range and out of the commits (the backend remembers the "All changes" lens), and fetches its manifest. */
   async showWhole() {
     if (this.range) await this.setRange(undefined);
-    if (this.manifest?.lens === "perCommit") await this.showLens("squash");
+    if (this.facts?.lens === "perCommit") await this.showLens("squash");
     this.commitIndex = undefined;
     try {
       await this.refresh();
@@ -334,7 +360,7 @@ class ChangesetStore {
    */
   async setRange(range: Range | undefined) {
     if (range) this.baseChanged = undefined;
-    const follows = this.manifest?.target.changeset.type === "workingTree";
+    const follows = this.facts?.target.changeset.type === "workingTree";
     this.range = range && { ...range, live: range.live && follows };
     if (range) this.commitIndex = undefined;
     try {
@@ -344,18 +370,9 @@ class ChangesetStore {
     }
   }
 
-  /** What the manifest on screen is of, which the views are built for; none before the first manifest. Reads nothing reactively. */
+  /** What the layout on screen is of, which the views are built for; none before the first manifest. Reads nothing reactively. */
   currentShown(): Shown | undefined {
-    return untrack(() => {
-      const manifest = this.manifest;
-      if (!manifest) return undefined;
-      const view = manifest.interdiff
-        ? interdiffView(manifest.interdiff.from, manifest.interdiff.to)
-        : this.shownCommit === undefined
-          ? CHANGESET
-          : commitView(this.shownCommit);
-      return { revision: manifest.revision, view };
-    });
+    return untrack(() => this.layout?.shown);
   }
 
   /**
@@ -364,8 +381,7 @@ class ChangesetStore {
    * and the viewer is told so.
    */
   admit(shown: Shown): boolean {
-    const manifest = this.manifest;
-    const asked = manifest && { revision: manifest.revision, view: this.view };
+    const asked = this.layout && { revision: this.layout.shown.revision, view: this.view };
     if (isCurrent(shown, asked)) return true;
     session.notice = STALE_NOTICE;
     return false;
@@ -441,7 +457,7 @@ class ChangesetStore {
     if (!shown) return;
     for (const path of this.baseChangedFiles()) {
       // A request that failed refetched the manifest: the rest asks again.
-      if (this.manifest?.revision !== shown.revision) return;
+      if (this.layout?.shown.revision !== shown.revision) return;
       await this.reconfirmFile(shown, path);
     }
   }
@@ -463,10 +479,10 @@ class ChangesetStore {
     return session.connected().commentTarget(shown.revision, path, at, shown.view);
   }
 
-  /** The manifest of the changeset on view as a whole, whatever range or commit is shown; `undefined` where it could not be read. */
-  async wholeManifest() {
+  /** The changeset on view as a whole, whatever range or commit is shown; `undefined` where it could not be read. */
+  async wholeParts(): Promise<Parts | undefined> {
     try {
-      return await session.connected().manifest(CHANGESET);
+      return partsOf(await session.connected().manifest(CHANGESET), undefined);
     } catch {
       return undefined;
     }
@@ -581,7 +597,7 @@ class ChangesetStore {
 
   /** Limits the review to the folder `path`. */
   async reviewOnly(path: string) {
-    const filter = this.manifest?.filter;
+    const filter = this.facts?.filter;
     if (!filter) return;
     const error = await this.setFilter({ ...filter, roots: [path] });
     if (error) session.notice = error;
@@ -627,7 +643,7 @@ class ChangesetStore {
    * request was sent for, the views are about to be replaced and the action has to be repeated.
    */
   reportFailure(error: unknown, sent?: number) {
-    const current = this.manifest?.revision;
+    const current = this.layout?.shown.revision;
     session.notice =
       sent !== undefined && current !== undefined && current !== sent
         ? STALE_NOTICE
@@ -640,28 +656,25 @@ class ChangesetStore {
    * or after a later one changes nothing.
    */
   private applyReview(update: ReviewUpdate) {
-    const manifest = this.manifest;
-    if (!manifest) return;
-    const file = this.cells.get(update.path);
+    const facts = this.facts;
+    if (!this.layout || !facts) return;
+    const known = this.cells.has(update.path);
     const fresh = this.order.file(update.path, update.seq);
     const completion = this.order.completion(update.seq);
     // Only the changeset's own view says how far the changeset as a whole is.
-    const whole = isChangesetView(manifest, this.shownCommit) && this.order.changeset(update.seq);
+    const whole = this.showsChangeset && this.order.changeset(update.seq);
     if (!fresh && !completion && !whole) return;
-    this.manifest = {
-      ...manifest,
-      completion: completion ? update.changeset : manifest.completion,
-      changesetCompletion: whole ? update.changeset : manifest.changesetCompletion,
-    };
-    if (fresh && file)
-      this.write(new Map([[update.path, { ...file, review: update.review, completion: update.completion }]]), "update");
-    if (manifest.lens === "perCommit" && manifest.commits > 1) void this.loadCommits();
+    if (completion) this.viewCompletion = update.changeset;
+    if (whole) this.facts = { ...facts, completion: update.changeset };
+    if (fresh && known)
+      this.write(new Map([[update.path, { review: update.review, completion: update.completion }]]), "update");
+    if (facts.lens === "perCommit" && facts.commits > 1) void this.loadCommits();
   }
 
   /** A mark in the changeset's file, which a range or commit on screen does not show: the changeset's progress and the commits' follow. */
   private applyTotals(update: ReviewUpdate) {
-    if (!this.manifest || !this.order.changeset(update.seq)) return;
-    this.manifest = { ...this.manifest, changesetCompletion: update.changeset };
+    if (!this.facts || !this.order.changeset(update.seq)) return;
+    this.facts = { ...this.facts, completion: update.changeset };
     void this.loadCommits();
   }
 
@@ -670,7 +683,7 @@ class ChangesetStore {
    * which paths changed, or "all" for a manifest, which replaces every file. Review state arrives by
    * answer, event and manifest alike; a listener that reads the cells it is told of follows all three.
    */
-  private write(entries: ReadonlyMap<string, FileChange>, cause: "update" | "manifest") {
+  private write(entries: ReadonlyMap<string, FileState>, cause: "update" | "manifest") {
     if (cause === "manifest") this.cells.clear();
     for (const [path, file] of entries) this.cells.set(path, file);
     const paths = cause === "manifest" ? "all" : new Set(entries.keys());
