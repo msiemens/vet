@@ -63,13 +63,13 @@ const MESSAGE_PAD = 16;
 /** The hairline above every row but the first. */
 const BETWEEN = 1;
 /** The row above the messages of a resolved or moved thread (`.vet-thread-notes`). */
-const NOTES = 33;
+const NOTES = 30;
 /** The reply row while it is one line: the field's row with its padding. */
 const REPLY = 45;
 /** A new comment's form: its title, a field of three rows and the buttons below, with their padding. */
 const FORM = 138;
 /** A resolved thread's one row, besides the line (`.vet-thread-folded`). */
-const FOLDED_PAD = 11;
+const FOLDED_PAD = 10;
 /** Characters a message line holds before it wraps, in a card of ordinary width. */
 const WRAP = 100;
 

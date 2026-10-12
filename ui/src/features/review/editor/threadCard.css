@@ -33,15 +33,22 @@
   border: 1px solid var(--line);
   border-radius: var(--radius-sheet);
 }
-.vet-thread-card > * + :not(.vet-thread-actions) {
+.vet-thread-card:not(.vet-thread-folded) > * + :not(.vet-thread-actions) {
   border-top: 1px solid var(--line-soft);
 }
+/* The actions span the height of the first row, centred on its line: a message's padding and meta
+   line, or the notes row. */
 .vet-thread-actions {
   position: absolute;
-  top: 6px;
+  top: 0;
   right: 8px;
+  height: 36px;
   display: flex;
+  align-items: center;
   gap: 2px;
+}
+.vet-thread-card:has(> .vet-thread-notes.vet-thread-top) > .vet-thread-actions {
+  height: 30px;
 }
 .vet-thread-card {
   --inset-card: 14px;
@@ -60,7 +67,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-block: 6px;
+  padding-block: 4px;
+  min-height: 30px;
+  box-sizing: border-box;
 }
 .vet-thread-reply {
   display: flex;
