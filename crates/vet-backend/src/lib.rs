@@ -554,6 +554,7 @@ impl Orchestrator {
                 language,
                 path,
             } => reply(self.set_server_path(project, language, path)),
+            Request::RestartServer { project, language } => reply(self.restart_server(project, language)),
         }
     }
 }

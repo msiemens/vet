@@ -38,6 +38,17 @@ impl Orchestrator {
         self.servers_of(&open).await
     }
 
+    /// Replaces the project's servers of `language`. Other projects' servers, which are their
+    /// own, keep running. Every connection of the project is told.
+    pub(crate) async fn restart_server(&self, project: ProjectId, language: String) -> Result<Response, String> {
+        let language = self.servers.known(&language).map_err(message)?;
+        let ready = self.ready(project).await?;
+        let started = ready.restart_server(language).await;
+        ready.subscribers.broadcast(Event::ServersChanged { project });
+        started?;
+        self.servers_of(&ready.open).await
+    }
+
     async fn servers_of(&self, open: &Open) -> Result<Response, String> {
         let all = self.servers.status(&open.repo).await.map_err(message)?;
         // What a server offers is known from the project's own server; where none ran, from another's.

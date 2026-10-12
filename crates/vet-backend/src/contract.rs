@@ -193,7 +193,7 @@ pub fn effect(request: &Request) -> Effect {
         Request::InstallServer { .. } => {
             untested(&[ServersChanged], "downloads and runs the language's installer")
         }
-        Request::SetServerPath { .. } => tested(&[ServersChanged]),
+        Request::SetServerPath { .. } | Request::RestartServer { .. } => tested(&[ServersChanged]),
     }
 }
 
@@ -447,6 +447,10 @@ mod tests {
                 project,
                 language: "rust".into(),
                 path: None,
+            },
+            Request::RestartServer {
+                project,
+                language: "rust".into(),
             },
             Request::SetBase {
                 project,
@@ -860,10 +864,12 @@ mod tests {
         world
             .drive(Request::SetServerPath {
                 project,
-                language,
+                language: language.clone(),
                 path: Some("/nonexistent/server".into()),
             })
             .await;
+        // The repository has no file of the language, so nothing is started to fail.
+        world.drive(Request::RestartServer { project, language }).await;
 
         let filter = ReviewFilter {
             exclude: vec!["generated/**".into()],

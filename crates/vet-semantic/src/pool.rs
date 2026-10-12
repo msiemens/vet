@@ -130,6 +130,8 @@ pub struct Entry<S, G> {
     used: AtomicU64,
     /// Restarted while leased: stopped when the last lease ends.
     retired: AtomicBool,
+    /// The server was told to stop; stopping it again does nothing.
+    stopped: AtomicBool,
     /// Bounds the requests in flight on the server, however many questions are asked of it.
     requests: Arc<Gate>,
     _guard: Option<G>,
@@ -164,7 +166,13 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
         let asked = move || async move {
             let _turn = entry.requests.acquire().await;
             let before = entry.server.readiness();
-            let value = ask(entry.clone()).await?;
+            let value = match ask(entry.clone()).await {
+                Ok(value) => value,
+                Err(_) if entry.stopped.load(Ordering::SeqCst) => {
+                    return Err(QueryError("the language server was restarted".into()));
+                }
+                Err(e) => return Err(e),
+            };
             let keep = before.idle && before.epoch == entry.server.readiness().epoch;
             Ok(Computed { value, keep })
         };
@@ -261,7 +269,9 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
     }
 
     async fn shutdown(&self) {
-        self.server.shutdown().await;
+        if !self.stopped.swap(true, Ordering::SeqCst) {
+            self.server.shutdown().await;
+        }
     }
 }
 
@@ -428,6 +438,8 @@ pub struct Pool<M: Materializer, L: ServerLauncher> {
 const FORESEEN_KEPT: usize = 64;
 
 type EntryOf<M, L> = Entry<<L as ServerLauncher>::Server, <M as Materializer>::Guard>;
+
+type Entries<M, L> = Vec<Arc<EntryOf<M, L>>>;
 
 /// A claim on a shared server. Ends on `release` or drop. A claim is a lease of
 /// its own when cloned.
@@ -663,6 +675,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
                 leases: AtomicUsize::new(1),
                 used: AtomicU64::new(state.tick),
                 retired: AtomicBool::new(stale),
+                stopped: AtomicBool::new(false),
                 requests: Gate::new(REQUESTS_PER_SERVER),
                 _guard: dir_guard,
             });
@@ -742,25 +755,42 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
     /// Drop every server of `backend`: its settings changed (§7.2). Servers
     /// leased right now are stopped when their last lease ends.
     pub async fn restart(&self, backend: &BackendId) {
-        let stop = {
+        let (stop, _) = self.retire(backend);
+        Inner::<M, L>::stop(stop).await;
+    }
+
+    /// Drop every server of `backend`, those leased right now too: a person asked for it, and
+    /// a server that hangs would hold its leases for as long as its requests take to time out.
+    /// The requests in flight on a server stopped so fail as asked of a server that was restarted.
+    pub async fn restart_now(&self, backend: &BackendId) {
+        let (mut stop, leased) = self.retire(backend);
+        stop.extend(leased);
+        Inner::<M, L>::stop(stop).await;
+    }
+
+    /// Takes the servers of `backend` out of the pool, for a new generation to replace; returns
+    /// the ones nobody leases, to stop now, and the leased ones, which stop with their last lease.
+    fn retire(&self, backend: &BackendId) -> (Entries<M, L>, Entries<M, L>) {
+        let (idle, leased) = {
             let mut state = self.inner.lock();
             *state.generations.entry(backend.clone()).or_default() += 1;
             state.implementations.remove(backend);
             let keys: Vec<_> = state.slots.keys().filter(|k| &k.backend == backend).cloned().collect();
-            let mut stop = Vec::new();
+            let (mut idle, mut leased) = (Vec::new(), Vec::new());
             for key in keys {
                 if let Some(e) = state.slots.remove(&key) {
+                    e.retired.store(true, Ordering::SeqCst);
                     if e.leases.load(Ordering::SeqCst) == 0 {
-                        stop.push(e);
+                        idle.push(e);
                     } else {
-                        e.retired.store(true, Ordering::SeqCst);
+                        leased.push(e);
                     }
                 }
             }
-            stop
+            (idle, leased)
         };
         self.inner.launcher.restarted(backend);
-        Inner::<M, L>::stop(stop).await;
+        (idle, leased)
     }
 
     /// Whether the server of `backend` offers implementations; `None` before one has started.
@@ -920,6 +950,8 @@ mod tests {
         begins_work: AtomicBool,
         epoch: AtomicU64,
         failing: AtomicBool,
+        /// A query is not answered until the server is shut down, which fails it.
+        hang: AtomicBool,
         /// Queries and observations of the launcher take a few turns of the executor.
         slow: AtomicBool,
         /// Identities and recorded restores observed, by starts too.
@@ -947,6 +979,7 @@ mod tests {
                 begins_work: AtomicBool::new(false),
                 epoch: AtomicU64::new(0),
                 failing: AtomicBool::new(false),
+                hang: AtomicBool::new(false),
                 slow: AtomicBool::new(false),
                 identified: AtomicUsize::new(0),
                 recorded: AtomicUsize::new(0),
@@ -1089,6 +1122,13 @@ mod tests {
             let in_flight = self.0.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
             self.0.peak.fetch_max(in_flight, Ordering::SeqCst);
             self.0.take_turns().await;
+            if self.0.hang.load(Ordering::SeqCst) {
+                while self.0.shut_down.load(Ordering::SeqCst) == 0 {
+                    yield_once().await;
+                }
+                self.0.in_flight.fetch_sub(1, Ordering::SeqCst);
+                return Err(QueryError("server exited".into()));
+            }
             self.0.in_flight.fetch_sub(1, Ordering::SeqCst);
             if self.0.begins_work.load(Ordering::SeqCst) {
                 self.0.epoch.fetch_add(1, Ordering::SeqCst);
@@ -2094,6 +2134,49 @@ mod tests {
             lease.release().await;
             assert_eq!(counters.shut_down.load(Ordering::SeqCst), 1);
             assert!(pool.keys().is_empty());
+        });
+    }
+
+    #[test]
+    fn restarting_now_stops_a_leased_server_and_fails_its_requests_in_flight_as_restarted() {
+        let (pool, counters) = pool(4);
+        counters.hang.store(true, Ordering::SeqCst);
+        block_on(async {
+            let key = snapshot_key(1);
+            let lease = pool.lease(&key, &backend(true)).await.unwrap();
+            let (asked, ()) = join(lease.hover(&at()), async {
+                yield_once().await;
+                pool.restart_now(&BackendId("rust".into())).await;
+            })
+            .await;
+            assert_eq!(asked.unwrap_err().0, "the language server was restarted");
+            assert_eq!(counters.shut_down.load(Ordering::SeqCst), 1);
+            assert!(pool.keys().is_empty());
+
+            // The last lease of the stopped server ending stops nothing again.
+            lease.release().await;
+            assert_eq!(counters.shut_down.load(Ordering::SeqCst), 1);
+
+            counters.hang.store(false, Ordering::SeqCst);
+            let fresh = pool.lease(&key, &backend(true)).await.unwrap();
+            assert_eq!(counters.started.load(Ordering::SeqCst), 2);
+            assert!(fresh.hover(&at()).await.is_ok());
+            fresh.release().await;
+        });
+    }
+
+    #[test]
+    fn restarting_now_leaves_other_backends_servers_running() {
+        let (pool, counters) = pool(4);
+        block_on(async {
+            pool.lease(&snapshot_key(1), &backend(true))
+                .await
+                .unwrap()
+                .release()
+                .await;
+            pool.restart_now(&BackendId("python".into())).await;
+            assert_eq!(pool.keys().len(), 1);
+            assert_eq!(counters.shut_down.load(Ordering::SeqCst), 0);
         });
     }
 

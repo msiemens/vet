@@ -92,7 +92,8 @@ impl<R: ServerResolver + Sync, S: ServerSettings + Sync> Servers<R, S> {
         Ok(path)
     }
 
-    fn known(&self, language: &str) -> Result<&BackendId, ServersError> {
+    /// The language by the name `status` gives it.
+    pub fn known(&self, language: &str) -> Result<&BackendId, ServersError> {
         self.languages
             .iter()
             .find(|l| l.0 == language)

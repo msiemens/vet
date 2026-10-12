@@ -375,6 +375,15 @@ pub enum Request {
         language: String,
         path: Option<String>,
     },
+    /// Stops the project's servers of a language at once, requests in flight on them
+    /// included (those fail), and starts them anew, as the project's languages need.
+    /// A server that was missing or failed to start is tried again. The project's
+    /// subscribers get `ServersChanged`. Answers with `Response::Servers` once the new
+    /// servers are running; fails with why a server did not start.
+    RestartServer {
+        project: ProjectId,
+        language: String,
+    },
     /// Changes what the live tree is compared against (§6.5). Review state is
     /// remapped onto the new base. The revision increases and every subscriber,
     /// including the requester, gets `SnapshotSettled`; fetch the manifest again.

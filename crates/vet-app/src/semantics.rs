@@ -194,14 +194,16 @@ fn served(trust: &Trust, sides: &SemanticSides) -> (Served, Served) {
 }
 
 /// Starts what the changed `files` need on `sides`, and the target side's
-/// servers for the languages of `others`. Changed languages come first,
-/// because only that many fit in the pool.
+/// servers for the languages of `others`, only those of `only` if it is given.
+/// Changed languages come first, because only that many fit in the pool. The
+/// error is the first of the starts that failed.
 async fn start_servers_for<M: Materializer, L: ServerLauncher>(
     pair: &Pair<M, L>,
     files: &[FileDiff],
     sides: &[Side],
     others: &[RepoPath],
-) {
+    only: Option<&BackendId>,
+) -> Result<(), SemanticError> {
     let semantic = pair.semantic();
     let mut candidates: Vec<(Side, &Served, &RepoPath)> = Vec::new();
     for file in files.iter().filter(|f| !f.hunks.is_empty()) {
@@ -219,7 +221,10 @@ async fn start_servers_for<M: Materializer, L: ServerLauncher>(
     let mut wanted: Vec<(Side, &Served, &RepoPath)> = Vec::new();
     let mut languages: Vec<(Side, &BackendId)> = Vec::new();
     for (side, served, path) in candidates {
-        let Some(language) = semantic.language_of(path) else {
+        let Some(language) = semantic
+            .language_of(path)
+            .filter(|l| only.is_none_or(|only| only == *l))
+        else {
             continue;
         };
         if !languages.contains(&(side, language)) {
@@ -233,14 +238,17 @@ async fn start_servers_for<M: Materializer, L: ServerLauncher>(
     // target side's startup down, and the target side is what the first
     // views need. So they start once the target side's are running, and
     // are warm by the time anyone hovers the base side.
+    let mut failed = Ok(());
     for phase in [Side::Target, Side::Base] {
         let phase: Vec<_> = wanted.iter().filter(|(side, ..)| *side == phase).collect();
-        let _ = bounded(POOL_CAPACITY, 0..phase.len(), |at| {
+        let started = bounded(POOL_CAPACITY, 0..phase.len(), |at| {
             let (_, served, file) = phase[at];
             semantic.start_for(served, file)
         })
         .await;
+        failed = failed.and(started.into_iter().collect::<Result<(), _>>());
     }
+    failed
 }
 
 /// The search for the changed symbols of `revision`, as the flight that owns it.
@@ -262,7 +270,7 @@ where
     // the files are queried, so a language late in the list does not wait for
     // the servers of the languages before it.
     let (_, changes) = join(
-        start_servers_for(&pair, &files, &[Side::Target], &[]),
+        start_servers_for(&pair, &files, &[Side::Target], &[], None),
         changed_symbols(&pair, &texts, &files, &|done, total| {
             progress.report(
                 Some((done as u32, total as u32)),
@@ -496,14 +504,37 @@ where
     /// A server already running or starting is left alone. A server that
     /// fails to start is not reported here: the query that needs it reports it.
     pub async fn start_servers(&self, view: &RevisionView<G, S>, revision: u32) -> Fallible<()> {
+        let _ = self.start_servers_of(view, revision, None).await?;
+        Ok(())
+    }
+
+    /// Stops the servers of `language` at once, whatever they are doing, and starts the ones
+    /// the revision needs anew. The requests that were in flight on the old servers fail.
+    /// The error is the reason a new server did not start.
+    pub async fn restart_now(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        language: &BackendId,
+    ) -> Fallible<Result<(), SemanticError>> {
+        self.replaced();
+        self.semantic.pool().restart_now(language).await;
+        self.start_servers_of(view, revision, Some(language)).await
+    }
+
+    async fn start_servers_of(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        only: Option<&BackendId>,
+    ) -> Fallible<Result<(), SemanticError>> {
         let pair = self.pair(view, revision).await?;
         let files = view.changed_files(revision).await?;
         let repo = view
             .target_file_per_key(revision, POOL_CAPACITY, |path| self.language_of(path))
             .await?;
         let others: Vec<_> = repo.into_iter().map(|(_, path)| path).collect();
-        start_servers_for(&pair, &files, &[Side::Base, Side::Target], &others).await;
-        Ok(())
+        Ok(start_servers_for(&pair, &files, &[Side::Base, Side::Target], &others, only).await)
     }
 
     /// The symbols the revision's diff touches, on both sides of each changed

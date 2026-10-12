@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use vet_core::content::RepoPath;
 use vet_protocol::{Response, Side};
 use vet_semantic::derived::Reference;
-use vet_semantic::ports::{At, Location};
+use vet_semantic::ports::{At, BackendId, Location};
 
 use vet_mapping::core_side;
 use vet_mapping::semantic as map;
@@ -41,6 +41,16 @@ impl Booted {
     pub async fn start_servers(&self) {
         let revision = self.session.revision().await;
         let _ = self.semantics.start_servers(&self.view, revision).await;
+    }
+
+    /// Replaces the servers of `language` and waits until the ones the revision needs run.
+    pub async fn restart_server(&self, language: &BackendId) -> Result<(), String> {
+        let revision = self.session.revision().await;
+        (self.semantics)
+            .restart_now(&self.view, revision, language)
+            .await
+            .map_err(message)?
+            .map_err(|e| e.to_string())
     }
 
     pub async fn hover(&self, revision: u32, side: Side, path: &str, line: u32, col: u32) -> Result<Response, String> {
