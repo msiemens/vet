@@ -117,16 +117,6 @@ export function rowKeys(symbols: readonly ChangedSymbol[]): string[] {
   });
 }
 
-/**
- * What a click on a changed symbol's row does, by the click's `detail`: a first click, or one from
- * the keyboard, selects the symbol; the second click of a double click shows it where it is
- * reviewed without asking about it again, and selects it only if the first click went elsewhere.
- */
-export function rowClick(detail: number, selected: boolean): { select: boolean; reveal: boolean } {
-  if (detail === 2) return { select: !selected, reveal: true };
-  return { select: detail < 2, reveal: false };
-}
-
 /** `path:line` with a 1-based line, as editors print it. */
 export const place = (path: string, at: Position): string => `${path}:${at.line + 1}`;
 

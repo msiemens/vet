@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol.ts";
 import type { SymbolChange } from "../../generated/SymbolChange.ts";
-import { describeFate, fileEntries, groupByFile, rowClick, rowKeys, rowLabel, searchEntries } from "./symbolList.ts";
+import { describeFate, fileEntries, groupByFile, rowKeys, rowLabel, searchEntries } from "./symbolList.ts";
 
 const sym = (path: string, name: string[], from: number, to: number, change: SymbolChange): ChangedSymbol => ({
   symbol: {
@@ -133,17 +133,4 @@ void test("rows of symbols with the same id get distinct keys, and the same rows
   const keys = rowKeys(entry.symbols);
   assert.equal(new Set(keys).size, keys.length);
   assert.deepEqual(rowKeys(entry.symbols), keys);
-});
-
-void test("a double click selects on its first click and reveals on its second without selecting again", () => {
-  assert.deepEqual(rowClick(1, false), { select: true, reveal: false });
-  assert.deepEqual(rowClick(2, true), { select: false, reveal: true });
-});
-
-void test("a double click whose first click went to another row selects as it reveals", () => {
-  assert.deepEqual(rowClick(2, false), { select: true, reveal: true });
-});
-
-void test("a click from the keyboard selects", () => {
-  assert.deepEqual(rowClick(0, false), { select: true, reveal: false });
 });

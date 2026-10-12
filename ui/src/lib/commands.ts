@@ -6,6 +6,7 @@
 // defines: `lib/` knows nothing of the domain.
 
 import { type Binding, type KeyLike, type ModKey, bindingOf, isTextInput, matches } from "./keymap.ts";
+import { LIST } from "./listKeys.ts";
 import { SEARCHING } from "./speedSearch.ts";
 
 export interface Command<C> {
@@ -20,6 +21,8 @@ export interface Command<C> {
   accelerator?: string;
   /** Also runs while a text field has the focus; otherwise its key belongs to the field. */
   inFields?: boolean;
+  /** Its key belongs to a list that has the focus (Space selects an item there); the command runs elsewhere. */
+  yieldsToLists?: boolean;
   /** Only a menu item carries the argument it needs, so no key runs it. */
   argument?: boolean;
   /** Default: always. `arg` is the argument a menu item carries (`id:arg`). */
@@ -58,6 +61,10 @@ const inField = (target: EventTarget | null | undefined) =>
   (target as { closest?: (selector: string) => unknown } | null | undefined)?.closest?.(
     `input, textarea, [${SEARCHING}]`,
   ) != null;
+
+/** Whether the key's target is in a list, which takes some keys for its own items. */
+const inList = (target: EventTarget | null | undefined) =>
+  (target as { closest?: (selector: string) => unknown } | null | undefined)?.closest?.(`[${LIST}]`) != null;
 
 /** Splits a menu item's id into its command and the argument after the first `:`. */
 const splitId = (id: string): [string, string | undefined] => {
@@ -222,6 +229,7 @@ export class CommandRegistry<C extends object> {
     for (const { binding, command } of this.bound) {
       if (!matches(binding.spec, event, optionChord())) continue;
       if (!command.inFields && typing()) continue;
+      if (command.yieldsToLists && inList(event.target)) continue;
       context ??= this.context();
       if (command.enabled && !command.enabled(context)) continue;
       if (!this.execute(command, context)) continue;

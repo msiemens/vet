@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ClickGate } from "./doubleClick.ts";
+import { ClickGate, FALLBACK_DOUBLE_CLICK_MS, doubleClickMs, setDoubleClickMs } from "./doubleClick.ts";
 
-function gate() {
+function gate(ms = () => 10) {
   const calls: string[] = [];
   return {
     calls,
     gate: new ClickGate<string>(
       (s) => calls.push(`single ${s}`),
       (s) => calls.push(`double ${s}`),
-      10,
+      ms,
     ),
   };
 }
@@ -52,4 +52,40 @@ void test("a cancelled click never acts", async () => {
   g.cancel();
   await wait(30);
   assert.deepEqual(calls, []);
+});
+
+void test("a click waits for the double-click time as it is when the click comes", async () => {
+  let ms = 60;
+  const { calls, gate: g } = gate(() => ms);
+  g.click({ detail: 1 }, "a");
+  await wait(30);
+  assert.deepEqual(calls, [], "the first click is still waiting for a second");
+  await wait(60);
+  assert.deepEqual(calls, ["single a"]);
+  ms = 5;
+  g.click({ detail: 1 }, "b");
+  await wait(25);
+  assert.deepEqual(calls, ["single a", "single b"]);
+});
+
+void test("Enter after a click that waits runs the double action alone, and Space the single one at once", async () => {
+  const { calls, gate: g } = gate();
+  g.click({ detail: 1 }, "a");
+  g.press("double", "a");
+  await wait(30);
+  assert.deepEqual(calls, ["double a"]);
+  g.click({ detail: 1 }, "b");
+  g.press("single", "b");
+  await wait(30);
+  assert.deepEqual(calls, ["double a", "single b"]);
+});
+
+void test("the double-click time is the system's once the host has told it, else 500 ms", () => {
+  assert.equal(doubleClickMs(), FALLBACK_DOUBLE_CLICK_MS);
+  setDoubleClickMs(0);
+  setDoubleClickMs(Number.NaN);
+  assert.equal(doubleClickMs(), FALLBACK_DOUBLE_CLICK_MS);
+  setDoubleClickMs(320);
+  assert.equal(doubleClickMs(), 320);
+  setDoubleClickMs(FALLBACK_DOUBLE_CLICK_MS);
 });

@@ -70,6 +70,7 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       id: "review.toggleSeen",
       label: "Toggle Seen",
       binding: "Space",
+      yieldsToLists: true,
       enabled: inView,
       disabledReason: () => NO_DIFF,
       run: () => a.toggleSeen(),

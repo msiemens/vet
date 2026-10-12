@@ -5,6 +5,7 @@
   import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import { ListNav } from "../../lib/ui/listNav";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import ProgressBar from "../../lib/ui/ProgressBar.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
@@ -107,24 +108,34 @@
     if (keyId(row.key) !== onViewId) void changeset.openChangeset(row.key);
   }
 
+  /** Puts the changeset on view and shows its review. */
+  function openRow(row: QueueRow) {
+    select(row);
+    onopen();
+  }
+
+  let highlighted = $state(-1);
+  let tableBody = $state<HTMLElement>();
+  const nav = new ListNav<QueueRow>({
+    element: () => tableBody,
+    items: () => shown,
+    single: select,
+    double: openRow,
+    highlight: { get: () => highlighted, set: (i) => (highlighted = i) },
+    reveal: (i) => tableBody?.querySelectorAll<HTMLElement>(".row")[i]?.scrollIntoView({ block: "nearest" }),
+  });
+  $effect(() => () => nav.cancel());
+
+  function onkeydown(e: KeyboardEvent) {
+    if (!nav.keydown(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
   /** The Details tab's link to the base-changed lines: the review shows them. */
   async function openBaseChanged() {
     await changeset.showBaseChanged();
     onopen();
-  }
-
-  function move(e: KeyboardEvent, index: number) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      select(shown[index]);
-      onopen();
-      return;
-    }
-    const to = e.key === "ArrowDown" ? index + 1 : e.key === "ArrowUp" ? index - 1 : undefined;
-    if (to === undefined || to < 0 || to >= shown.length) return;
-    e.preventDefault();
-    select(shown[to]);
-    (e.currentTarget as HTMLElement).parentElement?.querySelectorAll<HTMLElement>(".row")[to]?.focus();
   }
 </script>
 
@@ -149,7 +160,15 @@
     {#if queue.loading}<ProgressBar label="Loading changesets" />{/if}
   </div>
 
-  <Table name="queue" columns={COLUMNS} bind:sort aria-label="Changesets">
+  <Table
+    name="queue"
+    columns={COLUMNS}
+    bind:sort
+    bind:body={tableBody}
+    {onkeydown}
+    {...nav.attributes}
+    aria-label="Changesets"
+  >
     {#each shown as row, index (keyId(row.key))}
       {@const id = keyId(row.key)}
       {@const numbers = ownOf(row)}
@@ -159,14 +178,11 @@
       <button
         class="flat row"
         class:on={id === onViewId}
+        class:cur={index === highlighted}
         type="button"
+        tabindex="-1"
         aria-current={id === onViewId}
-        onclick={() => select(row)}
-        ondblclick={() => {
-          select(row);
-          onopen();
-        }}
-        onkeydown={(e) => move(e, index)}
+        onclick={(e) => nav.click(e, index)}
       >
         <span class="title"><ChangesetName label={labelOf(row)} /></span>
         <span
@@ -238,7 +254,8 @@
         <!-- The list scrolls by itself. -->
         <QueueFiles paths={changeset.paths} fileOf={(path) => changeset.file(path)} onopen={onopenfile} />
       {:else}
-        <ScrollArea><QueueComments threads={threads.items} onopen={onopenthread} /></ScrollArea>
+        <!-- The list scrolls by itself. -->
+        <QueueComments threads={threads.items} onopen={onopenthread} />
       {/if}
     </div>
   </div>
@@ -282,6 +299,10 @@
   }
   .row.on {
     background: var(--toggle);
+  }
+  /* The highlighted row, which Space and Enter act on, while the list has the focus. */
+  :global([data-list]:focus-within) .row.cur {
+    background: var(--select);
   }
   .title,
   .source {

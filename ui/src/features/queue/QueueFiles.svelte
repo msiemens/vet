@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { FileChange } from "../../generated/FileChange";
   import { basename, dirname } from "../../lib/paths";
+  import { ListNav } from "../../lib/ui/listNav";
   import Meter from "../../lib/ui/Meter.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
 
@@ -12,11 +13,29 @@
     paths: readonly string[];
     /** A file as it is now, with its review state. */
     fileOf: (path: string) => FileChange | undefined;
-    /** Opens the review at the file. */
+    /** Opens the review at the file: a double click or Enter. */
     onopen: (path: string) => void;
   } = $props();
 
   let selected = $state<string>();
+  let highlighted = $state(-1);
+  let rows = $state<VirtualRows>();
+  let list = $state<HTMLElement>();
+  const nav = new ListNav<string>({
+    element: () => list,
+    items: () => paths,
+    single: (path) => (selected = path),
+    double: (path) => onopen(path),
+    highlight: { get: () => highlighted, set: (i) => (highlighted = i) },
+    reveal: (i) => void rows?.reveal(i),
+  });
+  $effect(() => () => nav.cancel());
+
+  function onkeydown(e: KeyboardEvent) {
+    if (!nav.keydown(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
 </script>
 
 {#snippet row(index: number)}
@@ -25,12 +44,10 @@
   <button
     class="flat file"
     class:on={path === selected}
+    class:cur={index === highlighted}
     type="button"
-    onclick={() => (selected = path)}
-    ondblclick={() => onopen(path)}
-    onkeydown={(e) => {
-      if (e.key === "Enter") onopen(path);
-    }}
+    tabindex="-1"
+    onclick={(e) => nav.click(e, index)}
   >
     <span class="name">{basename(path)}</span>
     <span class="mono dir">{dirname(path)}</span>
@@ -50,12 +67,22 @@
 {/snippet}
 
 {#if paths.length}
-  <VirtualRows count={paths.length} key={(i) => paths[i]} {row} />
+  <!-- The list takes the keys of its rows, which are not in the tab order. -->
+  <div class="list" role="presentation" bind:this={list} {onkeydown} {...nav.attributes}>
+    <VirtualRows bind:this={rows} count={paths.length} key={(i) => paths[i]} {row} />
+  </div>
 {:else}
   <p class="empty">No changed files</p>
 {/if}
 
 <style>
+  .list {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    outline: none;
+  }
   .file {
     display: flex;
     align-items: center;
@@ -70,6 +97,10 @@
   }
   .file.on {
     background: var(--toggle);
+  }
+  /* The highlighted row, which Space and Enter act on, while the list has the focus. */
+  .list:focus-within .file.cur {
+    background: var(--select);
   }
   .name {
     flex: none;

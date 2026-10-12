@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CommandRegistry, type KeyEventLike } from "./commands.ts";
+import { LIST } from "./listKeys.ts";
 import { SEARCHING } from "./speedSearch.ts";
 
 const space = (target: unknown): KeyEventLike => ({
@@ -41,6 +42,22 @@ void test("a command's key goes to a speed search that is typing in the list wit
 
 void test("the same key runs the command in a list that is not searching", () => {
   const { commands, ran } = registry();
+  assert.equal(commands.dispatch(space(insideAttribute("data-other"))), true);
+  assert.deepEqual(ran, ["toggle"]);
+});
+
+void test("Space selects in a list with the focus and runs the command everywhere else", () => {
+  const ran: string[] = [];
+  const commands = new CommandRegistry({}, "Ctrl");
+  commands.register({
+    id: "toggle",
+    label: "Toggle",
+    binding: "Space",
+    yieldsToLists: true,
+    run: () => ran.push("toggle"),
+  });
+  assert.equal(commands.dispatch(space(insideAttribute(LIST))), false);
+  assert.deepEqual(ran, []);
   assert.equal(commands.dispatch(space(insideAttribute("data-other"))), true);
   assert.deepEqual(ran, ["toggle"]);
 });

@@ -47,6 +47,7 @@
   import { type SoftWrap, storeSoftWrap, storedSoftWrap } from "../lib/softWrap";
   import { type Theme, applyTheme, storedTheme } from "../lib/theme/theme";
   import ContextMenu from "../lib/ui/ContextMenu.svelte";
+  import { setDoubleClickMs } from "../lib/ui/doubleClick";
   import Toast from "../lib/ui/Toast.svelte";
   import type { Mode } from "../lib/viewMode";
   import { changeset } from "../state/changeset.svelte";
@@ -63,6 +64,7 @@
     quit,
     showFolder,
     showWindow,
+    systemDoubleClickMs,
   } from "../state/host";
   import { appCommands } from "../state/appCommands";
   import { backendSettings } from "../state/backendSettings.svelte";
@@ -289,6 +291,14 @@
     };
     window.addEventListener("contextmenu", onContextMenu);
     applyTheme(theme);
+    // The viewer may change the mouse settings while the window stays open.
+    const readDoubleClick = () =>
+      void systemDoubleClickMs().then(
+        (ms) => ms !== undefined && setDoubleClickMs(ms),
+        (e: unknown) => console.error(e),
+      );
+    readDoubleClick();
+    window.addEventListener("focus", readDoubleClick);
     // The splash covers the start until the backend is connected (or the connection failed, which
     // the window then shows), so the window never shows empty.
     let shown: Promise<void> | undefined;
@@ -311,6 +321,7 @@
       stopMenu();
       window.removeEventListener("keydown", onkeydown, true);
       window.removeEventListener("contextmenu", onContextMenu);
+      window.removeEventListener("focus", readDoubleClick);
       stopContext();
       stopCommands();
     };

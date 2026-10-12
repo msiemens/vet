@@ -59,8 +59,10 @@ function setup(context: Partial<CommandContext> = {}, mod: "Ctrl" | "Meta" = "Ct
 
 const inChanges: Partial<CommandContext> = { diffView: true, tab: { kind: "changes" } };
 
-function key(init: Partial<KeyEventLike> & { inField?: boolean }): KeyEventLike & { prevented: boolean } {
-  const { inField, ...rest } = init;
+function key(
+  init: Partial<KeyEventLike> & { inField?: boolean; inList?: boolean },
+): KeyEventLike & { prevented: boolean } {
+  const { inField, inList, ...rest } = init;
   const event = {
     key: "",
     code: "",
@@ -68,7 +70,10 @@ function key(init: Partial<KeyEventLike> & { inField?: boolean }): KeyEventLike 
     altKey: false,
     shiftKey: false,
     metaKey: false,
-    target: { closest: (selector: string) => (inField && selector.includes("input") ? {} : null) } as never,
+    target: {
+      closest: (selector: string) =>
+        (inField && selector.includes("input")) || (inList && selector.includes("[data-list]")) ? {} : null,
+    } as never,
     prevented: false,
     preventDefault() {
       event.prevented = true;
@@ -106,6 +111,14 @@ void test("Space toggles, and passes on when there is nothing to toggle", () => 
   assert.equal(r.dispatch(event), false);
   assert.equal(event.prevented, false);
   assert.deepEqual(calls, ["toggle", "toggle"]);
+});
+
+void test("Space selects in a list that has the focus instead of toggling the hunk", () => {
+  const r = setup(inChanges);
+  const event = space({ inList: true });
+  assert.equal(r.dispatch(event), false);
+  assert.equal(event.prevented, false);
+  assert.deepEqual(calls, []);
 });
 
 void test("R re-confirms, and passes on when there is no hunk seen against an old base", () => {

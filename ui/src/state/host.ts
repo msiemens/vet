@@ -162,6 +162,11 @@ export async function showFolder(path: string): Promise<void> {
   await invoke("show_folder", { path });
 }
 
+/** The system's double-click time in milliseconds, from the mouse settings; none in a plain browser, which cannot tell. */
+export async function systemDoubleClickMs(): Promise<number | undefined> {
+  return inTauri ? invoke<number>("double_click_ms") : undefined;
+}
+
 /** The native file dialog; `null` if cancelled. Rejects with a message for a file the backend cannot see. */
 export async function pickFile(): Promise<string | null> {
   return inTauri ? invoke<string | null>("pick_file") : null;

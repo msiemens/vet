@@ -5,11 +5,11 @@
   import type { FileChange } from "../../generated/FileChange";
   import { dirname } from "../../lib/paths";
   import { bestMatch, type Range } from "../../lib/speedSearch";
-  import { ClickGate } from "../../lib/ui/doubleClick";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
+  import { ListNav } from "../../lib/ui/listNav";
   import Marked from "../../lib/ui/Marked.svelte";
   import type { CommitUnit } from "../../generated/CommitUnit";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
@@ -17,8 +17,9 @@
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { commands } from "../../state/commands";
   import { AllFiles } from "./AllFiles.svelte";
+  import type { AllRow } from "./allFilesRows";
   import CommitList from "./CommitList.svelte";
-  import { buildRows, buildTree, filterRows, summarize } from "./tree";
+  import { type Row, buildRows, buildTree, filterRows, summarize } from "./tree";
 
   let {
     tool,
@@ -92,15 +93,43 @@
     selected;
     untrack(() => (pressed = undefined));
   });
-  const clicks = new ClickGate<string>(
-    (path) => onselect(path),
-    (path) => onopen(path),
-  );
-  $effect(() => () => clicks.cancel());
+  // The highlighted row: an index into the rows shown, -1 for none. While searching it is the row Enter opens.
+  let cursor = $state(-1);
+  /** A single click or Space: a file's place in the review, a folder open or shut. */
+  function pick(row: Row | AllRow) {
+    if (row.kind === "file") onselect(row.path);
+    else toggleRow(row);
+  }
+  /** A double click or Enter: the file in a tab of its own; a folder opens or shuts. */
+  function openRow(row: Row | AllRow) {
+    if (row.kind === "file") onopen(row.path);
+    else toggleRow(row);
+  }
+  let body = $state<HTMLElement>();
+  const rowNav = new ListNav<Row | AllRow>({
+    element: () => body,
+    items: () => shown(),
+    single: pick,
+    double: openRow,
+    highlight: { get: () => cursor, set: (i) => (cursor = i) },
+    reveal: (i) => void rowList()?.reveal(i),
+  });
+  $effect(() => () => rowNav.cancel());
 
-  function clickFile(e: MouseEvent, path: string) {
+  function clickFile(e: MouseEvent, path: string, index: number) {
     if (e.detail !== 0) pressed = path;
-    clicks.click(e, path);
+    rowNav.click(e, index);
+  }
+
+  function clickDir(index: number, ontoggle: () => void) {
+    cursor = index;
+    body?.focus({ preventScroll: true });
+    ontoggle();
+  }
+
+  function toggleRow(row: Row | AllRow) {
+    if ("key" in row) all.toggle(row.key);
+    else if (row.kind === "dir") toggle(row.path, row.descendants);
   }
 
   /** Where `path` is in the tree: its folders open, the row scrolled into view. */
@@ -162,16 +191,12 @@
   const shownChanges = $derived(searchedChanges?.rows ?? rows);
   const shownAll = $derived(searchedAll?.rows ?? all.rows);
   const hits: ReadonlyMap<object, Range[]> | undefined = $derived((searchedChanges ?? searchedAll)?.hits);
-  /** The row Enter opens: an index into the rows shown, -1 outside a search. */
-  let cursor = $state(-1);
-  let body = $state<HTMLElement>();
 
   const hasExcluded = $derived(!!excluded && excluded.lines + excluded.items > 0 && !search.active);
   let changesList = $state<VirtualRows>();
   let allList = $state<VirtualRows>();
 
-  const shown = (): readonly { kind: "dir" | "file"; path: string; name: string }[] =>
-    scope === "changes" ? shownChanges : shownAll;
+  const shown = (): readonly (Row | AllRow)[] => (scope === "changes" ? shownChanges : shownAll);
   const rowList = () => (scope === "changes" ? changesList : allList);
 
   function revealPath(path: string) {
@@ -256,7 +281,13 @@
       }
     }
     const was = search.active;
-    if (!search.type(e)) return;
+    if (!search.type(e)) {
+      if (!search.active && rowNav.keydown(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      return;
+    }
     if (!search.active) cursor = -1;
     else {
       // The focused row may be filtered away: the list takes the focus, which the next key finds.
@@ -267,6 +298,7 @@
 </script>
 
 {#snippet dirRow(
+  index: number,
   path: string,
   name: string,
   depth: number,
@@ -280,10 +312,11 @@
     class:dim={entry?.excluded}
     class:cur={hit.cursor}
     type="button"
+    tabindex="-1"
     title={path}
     style:padding-left="calc(8px + {depth} * var(--w-indent))"
     aria-expanded={open}
-    onclick={ontoggle}
+    onclick={() => clickDir(index, ontoggle)}
     oncontextmenu={(e) => menu(e, path, true)}
   >
     <span class="chev"><Icon name={open ? "open" : "closed"} size={10} /></span>
@@ -293,7 +326,7 @@
   </button>
 {/snippet}
 
-{#snippet fileRow(path: string, name: string, depth: number, hit: Hit, entry?: DirEntry)}
+{#snippet fileRow(index: number, path: string, name: string, depth: number, hit: Hit, entry?: DirEntry)}
   {@const file = fileOf(path)}
   {@const s = file && summarize(file)}
   <button
@@ -302,14 +335,10 @@
     class:dim={entry?.excluded}
     class:cur={hit.cursor}
     type="button"
+    tabindex="-1"
     title={path}
     style:padding-left="calc(8px + {depth} * var(--w-indent))"
-    onclick={(e) => clickFile(e, path)}
-    onkeydown={(e) => {
-      if (e.key !== "Enter") return;
-      e.preventDefault();
-      onopen(path);
-    }}
+    onclick={(e) => clickFile(e, path, index)}
     oncontextmenu={(e) => menu(e, path, false)}
   >
     <span class="chev"></span>
@@ -369,7 +398,8 @@
       onkeydown={nudgeDivider}
     ></div>
   {/if}
-  <div class="body" role="presentation" tabindex="-1" bind:this={body} {onkeydown} {...search.attributes}>
+  <!-- The list takes the keys of its rows, which are not in the tab order. -->
+  <div class="body" role="presentation" bind:this={body} {onkeydown} {...rowNav.attributes} {...search.attributes}>
     {#if search.active}<SpeedSearchField query={search.query} found={!!hits?.size} />{/if}
     {#if scope === "changes"}
       <!-- The excluded group is one more row after the files. -->
@@ -397,6 +427,7 @@
           {:else if r?.kind === "dir"}
             {@const hit = { cursor: i === cursor, ranges: hits?.get(r) }}
             {@render dirRow(
+              i,
               r.path,
               r.name,
               r.depth,
@@ -405,7 +436,7 @@
               hit,
             )}
           {:else if r}
-            {@render fileRow(r.path, r.name, r.depth, { cursor: i === cursor, ranges: hits?.get(r) })}
+            {@render fileRow(i, r.path, r.name, r.depth, { cursor: i === cursor, ranges: hits?.get(r) })}
           {/if}
         {/snippet}
       </VirtualRows>
@@ -422,9 +453,9 @@
           {@const r = shownAll.at(i)}
           {#if r?.kind === "dir"}
             {@const hit = { cursor: i === cursor, ranges: hits?.get(r) }}
-            {@render dirRow(r.path, r.name, r.depth, all.expanded.has(r.key), () => all.toggle(r.key), hit, r.entry)}
+            {@render dirRow(i, r.path, r.name, r.depth, all.expanded.has(r.key), () => all.toggle(r.key), hit, r.entry)}
           {:else if r}
-            {@render fileRow(r.path, r.name, r.depth, { cursor: i === cursor, ranges: hits?.get(r) }, r.entry)}
+            {@render fileRow(i, r.path, r.name, r.depth, { cursor: i === cursor, ranges: hits?.get(r) }, r.entry)}
           {/if}
         {/snippet}
       </VirtualRows>
@@ -495,8 +526,8 @@
   .dim {
     color: var(--text-3);
   }
-  /* The row Enter opens while searching. */
-  .cur {
+  /* The highlighted row, which Space and Enter act on, while the list has the focus. */
+  .body:focus-within .cur {
     background: var(--select);
   }
   /* A fixed column, so names line up whether or not a row has a chevron. */

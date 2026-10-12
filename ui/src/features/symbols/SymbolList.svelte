@@ -2,18 +2,17 @@
   // The changed symbols by file, with the current file's group in view.
   import { tick } from "svelte";
   import type { ChangedSymbol } from "../../generated/ChangedSymbol";
+  import { ListNav } from "../../lib/ui/listNav";
   import Marked from "../../lib/ui/Marked.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { keyOf } from "../../state/symbolKey";
   import { symbols } from "../../state/symbols.svelte";
-  import { containerOf, fileEntries, nameOf, rowClick, rowKeys, searchEntries } from "./symbolList";
+  import { containerOf, fileEntries, nameOf, rowKeys, searchEntries } from "./symbolList";
 
-  /** A double-click: show the symbol where it is reviewed. */
+  /** A double click or Enter: show the symbol where it is reviewed. */
   let { onreveal }: { onreveal: (symbol: ChangedSymbol) => void } = $props();
-
-  let list = $state<HTMLElement>();
 
   const changed = $derived(symbols.changed);
   const search = new SpeedSearch();
@@ -27,10 +26,34 @@
   const selectedKey = $derived(symbols.selected && keyOf(symbols.selected.symbol.id));
   const SIGN = { added: "+", modified: "~", removed: "−" } as const;
 
-  function clickRow(e: MouseEvent, s: ChangedSymbol) {
-    const { select, reveal } = rowClick(e.detail, keyOf(s.symbol.id) === selectedKey);
-    if (select) symbols.select(s);
-    if (reveal) onreveal(s);
+  /** The symbols in the order the rows show them. */
+  const flat = $derived(entries.flatMap((e) => e.symbols));
+  /** Where the symbols of each file start in `flat`. */
+  const starts = $derived(entries.map((_, i) => entries.slice(0, i).reduce((n, e) => n + e.symbols.length, 0)));
+  let highlighted = $state(-1);
+  let list = $state<HTMLElement>();
+  const nav = new ListNav<ChangedSymbol>({
+    element: () => list,
+    items: () => flat,
+    single: (s) => symbols.select(s),
+    double: (s) => onreveal(s),
+    highlight: { get: () => highlighted, set: (i) => (highlighted = i) },
+    reveal: (i) =>
+      void tick().then(() =>
+        list?.querySelector<HTMLElement>(`[data-index="${i}"]`)?.scrollIntoView({ block: "nearest" }),
+      ),
+  });
+  $effect(() => () => nav.cancel());
+
+  function onkeydown(e: KeyboardEvent) {
+    if (search.type(e)) {
+      highlighted = flat.length ? 0 : -1;
+      return;
+    }
+    if (nav.keydown(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   }
 
   // The review moved to another file: bring its group into view (the list is not a stream, so this is cheap).
@@ -62,7 +85,7 @@
 </div>
 {#if search.active}<SpeedSearchField query={search.query} found={entries.length > 0} />{/if}
 <div class="list">
-  <ScrollArea bind:viewport={list} onkeydown={(e) => search.keydown(e, list, "button.row")} {...search.attributes}>
+  <ScrollArea bind:viewport={list} {onkeydown} {...nav.attributes} {...search.attributes}>
     {#if !changed || changed.state === "loading"}
       <p class="note">Loading…</p>
     {:else if changed.state === "failed"}
@@ -70,7 +93,7 @@
     {:else if !entries.length}
       <p class="note">{changed.value.symbols.length ? "No changed symbols in this file" : "No changed symbols"}</p>
     {:else}
-      {#each entries as entry (entry.path)}
+      {#each entries as entry, at (entry.path)}
         <div class="file" class:current={entry.path === symbols.file} data-path={entry.path} title={entry.path}>
           <span class="path"><bdi>{entry.path}</bdi></span>
           {#if entry.note}<span class="fnote">{entry.note}</span>{/if}
@@ -79,10 +102,13 @@
         {#each entry.symbols as s, i (keys[i])}
           <button
             class="flat row"
+            class:cur={starts[at] + i === highlighted}
             type="button"
+            tabindex="-1"
+            data-index={starts[at] + i}
             aria-pressed={keyOf(s.symbol.id) === selectedKey}
             title="Double-click to show it in the review"
-            onclick={(e) => clickRow(e, s)}
+            onclick={(e) => nav.click(e, starts[at] + i)}
           >
             <span class="sign {s.change}" title={s.change}>{SIGN[s.change]}</span>
             <span class="mono name" class:gone={s.change === "removed"}
@@ -152,6 +178,10 @@
     text-align: left;
     white-space: nowrap;
     overflow: hidden;
+  }
+  /* The highlighted row, which Space and Enter act on, while the list has the focus. */
+  .list:focus-within .row.cur {
+    background: var(--select);
   }
   .sign {
     width: 10px;
