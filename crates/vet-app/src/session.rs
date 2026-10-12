@@ -299,6 +299,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let state = State {
             source,
             revision: 0,
+            seq: 0,
             changeset,
             review: None,
             filter,
@@ -392,6 +393,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(Some(State {
             source,
             revision: 0,
+            seq: 0,
             changeset: Some(changeset),
             review: Some(OpenReview {
                 id,

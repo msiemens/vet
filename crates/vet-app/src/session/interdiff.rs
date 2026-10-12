@@ -111,6 +111,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         }
         Ok(ManifestView {
             revision: st.revision,
+            seq: st.seq,
             name: self.name.clone(),
             lifecycle: lifecycle_of(st),
             base,
@@ -214,6 +215,7 @@ pub(super) fn update_in(st: &State, shown: &Shown, path: &str) -> Result<ReviewU
     let files = file_views(&id.compared.diffed, &st.filter, |d, i| lens.state(d, i));
     Ok(ReviewUpdateView {
         revision: st.revision,
+        seq: st.seq,
         path: file,
         review,
         completion,

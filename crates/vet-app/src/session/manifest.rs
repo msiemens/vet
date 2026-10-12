@@ -40,6 +40,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         });
         Ok(ManifestView {
             revision: st.revision,
+            seq: st.seq,
             name: self.name.clone(),
             lifecycle: lifecycle_of(&st),
             base,
@@ -218,6 +219,7 @@ pub(super) fn update_from(
     let acked = acknowledged(st, &items);
     Ok(ReviewUpdateView {
         revision: st.revision,
+        seq: st.seq,
         path: file,
         review: review_of(&cov, diff, &items, &acked),
         completion: file_completion(&cov, &st.filter.compile(&whole.generated), diff, &items, &acked),

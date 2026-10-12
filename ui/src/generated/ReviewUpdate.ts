@@ -6,7 +6,12 @@ import type { FileReview } from "./FileReview";
  * A file's new review state with the completion it implies, so a shell never
  * derives progress itself.
  */
-export type ReviewUpdate = { path: string, review: FileReview, 
+export type ReviewUpdate = { 
+/**
+ * The project's change counter as of the state this was read from. A client applies an update
+ * only if it is newer than what it holds of the file.
+ */
+seq: number, path: string, review: FileReview, 
 /**
  * The file's completion.
  */

@@ -18,7 +18,13 @@ export type Manifest = { project: number,
 /**
  * Increases whenever the changeset's target changes.
  */
-revision: number, name: string, review: ReviewInfo, 
+revision: number, 
+/**
+ * The project's change counter as of the state this was read from: the sequence of the
+ * newest review update it reflects. A client keeps the state it holds of a file if that is
+ * newer.
+ */
+seq: number, name: string, review: ReviewInfo, 
 /**
  * What the files are compared against.
  */

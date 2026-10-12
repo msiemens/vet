@@ -163,6 +163,10 @@ pub enum BaseDiffKind {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ReviewUpdate {
+    /// The project's change counter as of the state this was read from. A client applies an update
+    /// only if it is newer than what it holds of the file.
+    #[ts(type = "number")]
+    pub seq: u64,
     pub path: String,
     pub review: FileReview,
     /// The file's completion.
@@ -179,6 +183,11 @@ pub struct Manifest {
     pub project: ProjectId,
     /// Increases whenever the changeset's target changes.
     pub revision: u32,
+    /// The project's change counter as of the state this was read from: the sequence of the
+    /// newest review update it reflects. A client keeps the state it holds of a file if that is
+    /// newer.
+    #[ts(type = "number")]
+    pub seq: u64,
     pub name: String,
     pub review: ReviewInfo,
     /// What the files are compared against.

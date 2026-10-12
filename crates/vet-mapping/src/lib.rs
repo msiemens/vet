@@ -567,6 +567,7 @@ pub fn manifest(project: p::ProjectId, m: &ManifestView, restore_failures: &[Res
     p::Manifest {
         project,
         revision: m.revision,
+        seq: m.seq,
         name: m.name.clone(),
         review: review_info(m.lifecycle),
         base: base(&m.base),
@@ -1044,6 +1045,7 @@ pub fn threads(v: &ThreadsView) -> p::Response {
 
 pub fn review_update(u: &ReviewUpdateView) -> p::ReviewUpdate {
     p::ReviewUpdate {
+        seq: u.seq,
         path: u.path.to_string_lossy(),
         review: review(&u.review),
         completion: completion(&u.completion),

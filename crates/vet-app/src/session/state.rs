@@ -215,6 +215,9 @@ pub(super) struct State {
     /// What the changeset on view is: its target comes from here.
     pub(super) source: Source,
     pub(super) revision: u32,
+    /// The project's change counter as of the last command that changed this state; what a
+    /// review update or a manifest read from it says it reflects. See [`Held`](super::hold::Held).
+    pub(super) seq: u64,
     /// The stored changeset; `None` until a review of it started.
     pub(super) changeset: Option<ChangesetId>,
     /// `None` while browsing.

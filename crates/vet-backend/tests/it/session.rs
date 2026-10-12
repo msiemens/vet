@@ -590,6 +590,32 @@ async fn non_text_changes_are_acknowledged_and_every_connection_is_told() {
 }
 
 #[tokio::test]
+async fn review_changes_are_numbered_in_order_on_answers_events_and_manifests() {
+    let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &text(30, &[2, 20]))]).await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    let opened = client.manifest(project).await.seq;
+
+    let first = client.toggle_hunk(project, 0, 0).await;
+    assert!(first.seq > opened, "a mark is newer than the manifest read before it");
+    match client.event().await {
+        Event::ReviewChanged { update, .. } => assert_eq!(update.seq, first.seq),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        client.manifest(project).await.seq,
+        first.seq,
+        "a manifest says which mark it reflects"
+    );
+
+    let second = client.toggle_hunk(project, 0, 1).await;
+    assert!(second.seq > first.seq);
+    let third = client.toggle_hunk(project, 0, 0).await;
+    assert!(third.seq > second.seq);
+    assert_eq!(client.manifest(project).await.seq, third.seq);
+}
+
+#[tokio::test]
 async fn empty_files_are_non_text_items_and_can_be_acknowledged() {
     let fx = fixture(
         &[("gone.txt", ""), ("emptied.txt", &text(3, &[]))],

@@ -248,6 +248,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         Ok(State {
             source: source.clone(),
             revision: 0,
+            seq: 0,
             changeset,
             review: None,
             filter: filter.clone(),

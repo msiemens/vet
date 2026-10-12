@@ -42,6 +42,10 @@ impl Published {
 pub(super) struct Writer<W> {
     writes: W,
     parked: HashMap<Source, Arc<State>>,
+    /// The project's change counter. Every change to a state through [`Held`] takes the next
+    /// value and stamps the state with it, so that what is read from a state says which changes
+    /// it reflects, whichever changeset was on view.
+    seq: u64,
 }
 
 impl<W> Writer<W> {
@@ -49,6 +53,7 @@ impl<W> Writer<W> {
         Self {
             writes,
             parked: HashMap::new(),
+            seq: 0,
         }
     }
 }
@@ -91,7 +96,9 @@ impl<'a, W> Held<'a, W> {
     }
 
     /// Puts `state` in place of the one this command works on, and answers that one.
-    pub(super) fn replace(&mut self, state: Arc<State>) -> Arc<State> {
+    pub(super) fn replace(&mut self, mut state: Arc<State>) -> Arc<State> {
+        self.writer.seq += 1;
+        Arc::make_mut(&mut state).seq = self.writer.seq;
         std::mem::replace(&mut self.state, state)
     }
 }
@@ -106,7 +113,10 @@ impl<W> Deref for Held<'_, W> {
 
 impl<W> DerefMut for Held<'_, W> {
     fn deref_mut(&mut self) -> &mut State {
-        Arc::make_mut(&mut self.state)
+        self.writer.seq += 1;
+        let state = Arc::make_mut(&mut self.state);
+        state.seq = self.writer.seq;
+        state
     }
 }
 

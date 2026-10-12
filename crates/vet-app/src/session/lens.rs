@@ -204,6 +204,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         };
         Ok(ManifestView {
             revision: st.revision,
+            seq: st.seq,
             name: self.name.clone(),
             lifecycle: lifecycle_of(st),
             base,

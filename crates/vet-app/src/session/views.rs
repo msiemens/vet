@@ -123,6 +123,8 @@ pub enum Lifecycle {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ManifestView {
     pub revision: u32,
+    /// The project's change counter as of the state the manifest reads.
+    pub seq: u64,
     pub name: String,
     pub lifecycle: Lifecycle,
     pub base: BaseView,
@@ -162,6 +164,8 @@ pub struct InterdiffView {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ReviewUpdateView {
     pub revision: u32,
+    /// The project's change counter as of the state the update reads.
+    pub seq: u64,
     pub path: RepoPath,
     pub review: ReviewView,
     pub completion: Completion,
