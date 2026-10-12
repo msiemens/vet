@@ -12,7 +12,16 @@
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import type { PickerView } from "../../state/pickerTypes";
-  import { FLAT_UP_TO, codeRuns, countText, groupRows, libraryLabel, symbolLabel, visibleRows } from "./pickerRows";
+  import {
+    FLAT_UP_TO,
+    codeRuns,
+    countText,
+    groupRows,
+    libraryLabel,
+    matchedRow,
+    symbolLabel,
+    visibleRows,
+  } from "./pickerRows";
 
   let {
     view,
@@ -149,7 +158,8 @@
 />
 
 {#snippet code(row: LocationRow)}
-  {#each codeRuns(row) as run, i (i)}{#if run.hit}<mark class={run.className}>{run.text}</mark
+  {#each codeRuns(view.kind === "implementations" ? matchedRow(row, view.symbol) : row) as run, i (i)}{#if run.hit}<mark
+        class={run.className}>{run.text}</mark
       >{:else if run.className}<span class={run.className}>{run.text}</span>{:else}{run.text}{/if}{/each}
 {/snippet}
 
@@ -438,6 +448,7 @@
     width: 151px;
     margin: 0 7px;
     overflow: hidden;
+    font-size: var(--fs);
     color: var(--text-2);
   }
   .code {
@@ -472,6 +483,7 @@
   }
   .sym {
     display: flex;
+    font-size: var(--fs);
     flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;

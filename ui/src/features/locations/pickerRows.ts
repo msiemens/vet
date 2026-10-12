@@ -17,13 +17,36 @@ export type Item =
   | { kind: "file"; path: string; status?: string; count: number; external: boolean }
   | { kind: "hit"; row: LocationRow; at: number };
 
-/** The places that survive what the viewer typed and the changeset toggle. */
+/** Places in changed hunks come first, then those in changed files, then other files, then libraries. */
+const tier = (row: LocationRow): number =>
+  row.external ? 3 : row.change === "hunk" ? 0 : row.change === "file" ? 1 : 2;
+
+/**
+ * The places that survive what the viewer typed and the changeset toggle, in the order a flat list
+ * shows them: by tier, then by path and line.
+ */
 export function visibleRows(rows: readonly LocationRow[], query: string, onlyChangeset: boolean): LocationRow[] {
-  return rows.filter((row) => {
-    if (onlyChangeset && (row.external || row.change === "unchanged")) return false;
-    if (!query) return true;
-    return [symbolLabel(row), row.text, row.path].some((text) => match(query, text) !== undefined);
-  });
+  return rows
+    .filter((row) => {
+      if (onlyChangeset && (row.external || row.change === "unchanged")) return false;
+      if (!query) return true;
+      return [symbolLabel(row), row.text, row.path].some((text) => match(query, text) !== undefined);
+    })
+    .sort((a, b) => tier(a) - tier(b) || a.path.localeCompare(b.path) || a.line - b.line || a.col - b.col);
+}
+
+/**
+ * Where the searched `symbol` is in the row's text, for a list of implementations, where the place
+ * found is the implementing type and the name searched for stands elsewhere in the line; the row's
+ * own match where the name does not occur.
+ */
+export function matchedRow(row: LocationRow, symbol: string): LocationRow {
+  const word = new RegExp(
+    `(?<![\\p{L}\\p{N}_])${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_])`,
+    "u",
+  );
+  const found = word.exec(row.text);
+  return found ? { ...row, matchStart: found.index, matchEnd: found.index + symbol.length } : row;
 }
 
 /**

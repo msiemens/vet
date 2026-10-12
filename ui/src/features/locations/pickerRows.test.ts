@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LocationRow } from "../../generated/LocationRow.ts";
-import { codeRuns, countText, groupRows, libraryLabel, symbolLabel, visibleRows } from "./pickerRows.ts";
+import { codeRuns, countText, groupRows, libraryLabel, matchedRow, symbolLabel, visibleRows } from "./pickerRows.ts";
 
 const row = (path: string, line: number, init: Partial<LocationRow> = {}): LocationRow => ({
   path,
@@ -151,6 +151,38 @@ void test("a match inside a coloured stretch splits it and keeps its colour", ()
     ],
   );
   assert.deepEqual(codeRuns({ text: "", highlights: [], matchStart: 0, matchEnd: 0 }), []);
+});
+
+void test("a flat list puts places in changed hunks first, then changed files, other files and libraries, each by path and line", () => {
+  const rows = visibleRows(
+    [
+      row("/dep/x.rs", 1, { external: true }),
+      row("src/a.rs", 9),
+      row("src/b.rs", 3, { change: "file" }),
+      row("src/z.rs", 5, { change: "hunk" }),
+      row("src/c.rs", 8, { change: "hunk" }),
+      row("src/c.rs", 2, { change: "hunk" }),
+    ],
+    "",
+    false,
+  );
+  assert.deepEqual(
+    rows.map((r) => `${r.path}:${r.line}`),
+    ["src/c.rs:2", "src/c.rs:8", "src/z.rs:5", "src/b.rs:3", "src/a.rs:9", "/dep/x.rs:1"],
+  );
+});
+
+void test("an implementation marks the searched name in its line, else the place found", () => {
+  const impl = row("a.rs", 1, { text: "impl Backoff for ConstantBackoff {", matchStart: 16, matchEnd: 31 });
+  const marked = matchedRow(impl, "Backoff");
+  assert.equal(impl.text.slice(marked.matchStart, marked.matchEnd), "Backoff");
+  assert.equal(marked.matchStart, 5);
+  // A longer name that contains it is not the name.
+  const other = row("a.rs", 1, { text: "impl Foo for ConstantBackoff {", matchStart: 13, matchEnd: 28 });
+  assert.deepEqual([matchedRow(other, "Backoff").matchStart, matchedRow(other, "Backoff").matchEnd], [13, 28]);
+  // Names with regular-expression characters are taken literally.
+  const dollar = row("a.ts", 1, { text: "class A extends $store {", matchStart: 0, matchEnd: 5 });
+  assert.equal(matchedRow(dollar, "$store").matchStart, 16);
 });
 
 void test("a cut answer says how many there were and how many are listed", () => {
