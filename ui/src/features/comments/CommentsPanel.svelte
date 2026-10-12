@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Thread } from "../../generated/Thread";
   import { canSubmit, isSubmitKey } from "../../lib/composer";
-  import { movedTitle } from "../../lib/movedTitle";
+  import { movedLabel, movedTitle } from "../../lib/movedTitle";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
@@ -100,7 +100,7 @@
 {#snippet actions(thread: Thread)}
   {#if thread.anchor?.type === "inferred"}
     <div class="actions">
-      <span class="badge badge-moved" title={movedTitle(thread)}>moved</span>
+      <span class="badge badge-moved" title={movedTitle(thread)}>{movedLabel(thread)}</span>
       <span class="grow"></span>
       <button class="ctl small" type="button" onclick={() => void threads.confirm(thread.id)}>Confirm</button>
     </div>

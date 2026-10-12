@@ -15,7 +15,7 @@ import { commentPreview, renderComment } from "../../../lib/commentMarkdown.ts";
 import { canSubmit, isSubmitKey, replyShape } from "../../../lib/composer.ts";
 import { isFlat } from "../../../lib/flatThread.ts";
 import { lineRange } from "../../../lib/lineRange.ts";
-import { movedTitle } from "../../../lib/movedTitle.ts";
+import { movedLabel, movedTitle } from "../../../lib/movedTitle.ts";
 import { fullTime, relativeTime } from "../../../lib/relativeTime.ts";
 import { iconSvg } from "../../../lib/ui/icons.ts";
 import { el, iconButton } from "./dom.ts";
@@ -351,7 +351,7 @@ function notes(thread: Thread, actions: ThreadActions): HTMLElement | undefined 
     if (by) row.append(el("span", "vet-thread-by", `by ${by}`));
   }
   if (thread.anchor?.type === "inferred") {
-    const moved = el("span", "badge badge-moved", "moved");
+    const moved = el("span", "badge badge-moved", movedLabel(thread));
     moved.title = movedTitle(thread);
     row.append(
       moved,
