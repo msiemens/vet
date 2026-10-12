@@ -12,16 +12,16 @@ const menu = (id: string, label: string, enabled?: boolean): MenuItem => ({
 const bar = [
   menu("file", "File"),
   menu("view", "View"),
+  menu("navigate", "Navigate"),
   menu("changeset", "Changeset"),
   menu("review", "Review"),
-  menu("navigate", "Navigate"),
   menu("help", "Help"),
 ];
 
 void test("a letter picks the menu of the bar that starts with it, in either case, and the six menus have six letters", () => {
   assert.deepEqual(
-    ["f", "v", "c", "r", "n", "h"].map((l) => mnemonicTarget(bar, l)?.id),
-    ["file", "view", "changeset", "review", "navigate", "help"],
+    ["f", "v", "n", "c", "r", "h"].map((l) => mnemonicTarget(bar, l)?.id),
+    ["file", "view", "navigate", "changeset", "review", "help"],
   );
   assert.equal(mnemonicTarget(bar, "F")?.id, "file");
 });

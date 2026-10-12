@@ -89,15 +89,15 @@ void test("every leaf item that is not the host's runs a command", () => {
 });
 
 void test("the menus follow the reviewer's nouns, with an app menu, Edit and Window around them on macOS", () => {
-  assert.deepEqual(ids(menu()), ["file", "view", "changeset", "review", "navigate", "help"]);
+  assert.deepEqual(ids(menu()), ["file", "view", "navigate", "changeset", "review", "help"]);
   assert.deepEqual(ids(menu({ native: true })), [
     "app",
     "file",
     "edit",
     "view",
+    "navigate",
     "changeset",
     "review",
-    "navigate",
     "window",
     "help",
   ]);

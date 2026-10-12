@@ -190,9 +190,9 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
         ]
       : []),
     { id: "view", label: "View", items: view },
+    { id: "navigate", label: "Navigate", items: navigate },
     { id: "changeset", label: "Changeset", items: changeset },
     { id: "review", label: "Review", items: review },
-    { id: "navigate", label: "Navigate", items: navigate },
     ...(s.native
       ? [
           {
