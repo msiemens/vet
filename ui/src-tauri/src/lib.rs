@@ -19,7 +19,11 @@ use startup::Startup;
 
 pub fn run() {
     let mut log = vet_log::data_dir().map(|dir| vet_log::init(&dir.join(vet_log::LOGS)));
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Until the UI sends its menu the bar is the host's own, not Tauri's default one.
+    #[cfg(target_os = "macos")]
+    let builder = builder.enable_macos_default_menu(false).menu(menu::startup_menu);
+    let app = builder
         .plugin(
             tauri_plugin_decoration::builder()
                 .activation_timeout(window::DECORATION_TIMEOUT)

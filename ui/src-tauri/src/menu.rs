@@ -5,9 +5,50 @@ use std::sync::mpsc;
 
 use tauri::menu::{
     CheckMenuItemBuilder, ContextMenu, IsMenuItem, Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, Submenu,
-    SubmenuBuilder,
 };
 use tauri::{AppHandle, LogicalPosition, Manager, State, Window, Wry};
+
+/// An item the OS defines itself: its label, key and behaviour are the system's (`PredefinedItem`
+/// in `ui/src/lib/ui/menuItem.ts`).
+#[derive(serde::Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+enum Predefined {
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    Services,
+    Hide,
+    HideOthers,
+    ShowAll,
+    Minimize,
+    Zoom,
+    Fullscreen,
+    BringAllToFront,
+}
+
+impl Predefined {
+    fn item(self, app: &AppHandle) -> tauri::Result<PredefinedMenuItem<Wry>> {
+        match self {
+            Self::Undo => PredefinedMenuItem::undo(app, None),
+            Self::Redo => PredefinedMenuItem::redo(app, None),
+            Self::Cut => PredefinedMenuItem::cut(app, None),
+            Self::Copy => PredefinedMenuItem::copy(app, None),
+            Self::Paste => PredefinedMenuItem::paste(app, None),
+            Self::SelectAll => PredefinedMenuItem::select_all(app, None),
+            Self::Services => PredefinedMenuItem::services(app, None),
+            Self::Hide => PredefinedMenuItem::hide(app, None),
+            Self::HideOthers => PredefinedMenuItem::hide_others(app, None),
+            Self::ShowAll => PredefinedMenuItem::show_all(app, None),
+            Self::Minimize => PredefinedMenuItem::minimize(app, None),
+            Self::Zoom => PredefinedMenuItem::maximize(app, None),
+            Self::Fullscreen => PredefinedMenuItem::fullscreen(app, None),
+            Self::BringAllToFront => PredefinedMenuItem::bring_all_to_front(app, None),
+        }
+    }
+}
 
 /// One entry of a menu the UI defines (`MenuItem` in `ui/src/lib/ui/menuItem.ts`).
 #[derive(serde::Deserialize)]
@@ -17,14 +58,17 @@ pub struct MenuEntry {
     label: String,
     /// Secondary text; a native menu has no column for it, so it follows the label.
     detail: Option<String>,
-    /// The key that runs the item in the window, as `Ctrl+Alt+C`; the menu only shows it and the window handles the key.
+    /// The key that runs the item in the window, as the viewer reads it (`⌃⌥C`); the menu only shows it and the window handles the key.
     shortcut: Option<String>,
+    /// The same key as an accelerator reads it (`Ctrl+Alt+C`), for a context menu that draws it natively.
+    chord: Option<String>,
     /// A key the menu registers and handles itself, such as `Cmd+,`.
     accelerator: Option<String>,
     enabled: Option<bool>,
     checked: Option<bool>,
     #[serde(default)]
     separator: bool,
+    predefined: Option<Predefined>,
     children: Option<Vec<MenuEntry>>,
 }
 
@@ -36,15 +80,15 @@ enum Surface {
 }
 
 /// The key a menu item shows and, in the menu bar, handles: its own accelerator or, in a context
-/// menu on macOS, the window's shortcut. A context menu is not attached to the window, so its
+/// menu on macOS, the window's key. A context menu is not attached to the window, so its
 /// accelerators only draw (right-aligned, in the OS's glyphs) and fire only while it is open.
-/// Muda reads the shortcut text (`Cmd+B`, `Ctrl+Alt+Down`, `F4`, `Space`) as an accelerator.
+/// Muda reads the chord text (`Cmd+B`, `Ctrl+Alt+Down`, `F4`, `Space`) as an accelerator.
 fn accelerator(entry: &MenuEntry, surface: Surface) -> Option<&str> {
     if let Some(accelerator) = &entry.accelerator {
         return Some(accelerator);
     }
     if surface == Surface::ContextMenu && cfg!(target_os = "macos") {
-        return entry.shortcut.as_deref();
+        return entry.chord.as_deref();
     }
     None
 }
@@ -70,6 +114,9 @@ fn item_text(entry: &MenuEntry, surface: Surface) -> String {
 fn item(app: &AppHandle, entry: &MenuEntry, surface: Surface) -> tauri::Result<Box<dyn IsMenuItem<Wry>>> {
     if entry.separator {
         return Ok(Box::new(PredefinedMenuItem::separator(app)?));
+    }
+    if let Some(predefined) = entry.predefined {
+        return Ok(Box::new(predefined.item(app)?));
     }
     let enabled = entry.enabled.unwrap_or(true);
     if let Some(children) = &entry.children {
@@ -117,39 +164,82 @@ fn submenu(
     Submenu::with_items(app, label, enabled, &refs)
 }
 
-/// Replaces the menu bar (macOS) with the UI's definition. The Edit menu is the host's: without
-/// it the webview does not get ⌘C, ⌘V and ⌘Z.
+/// The menu id of the Window menu, which the OS lists the open windows in.
+const WINDOW_MENU: &str = "window";
+
+/// Replaces the menu bar (macOS) with the UI's definition. The UI includes the Edit menu as
+/// predefined items: without it the webview does not get ⌘C, ⌘V and ⌘Z.
 #[tauri::command]
 pub fn set_menu(app: AppHandle, items: Vec<MenuEntry>) -> Result<(), String> {
     let build = || -> tauri::Result<()> {
         let mut bar = MenuBuilder::new(&app);
-        for (i, menu) in items.iter().enumerate() {
+        for menu in &items {
             let children = menu.children.as_deref().unwrap_or_default();
-            bar = bar.item(&submenu(
+            let built = submenu(
                 &app,
                 &menu.label,
                 menu.enabled.unwrap_or(true),
                 children,
                 Surface::MenuBar,
-            )?);
-            // After the app menu and File.
-            if i == 1 {
-                let edit = SubmenuBuilder::new(&app, "Edit")
-                    .undo()
-                    .redo()
-                    .separator()
-                    .cut()
-                    .copy()
-                    .paste()
-                    .select_all()
-                    .build()?;
-                bar = bar.item(&edit);
+            )?;
+            if menu.id == WINDOW_MENU {
+                built.set_as_windows_menu_for_nsapp()?;
             }
+            bar = bar.item(&built);
         }
         app.set_menu(bar.build()?)?;
         Ok(())
     };
     build().map_err(|e| e.to_string())
+}
+
+/// The menu bar from launch until the UI sends its own: the app menu, Edit and Window with only
+/// what the OS defines, so nothing appears that the UI's menu then takes away.
+#[cfg(target_os = "macos")]
+pub fn startup_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+    let about = PredefinedMenuItem::about(app, None, None)?;
+    let quit = PredefinedMenuItem::quit(app, None)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let vet = Submenu::with_items(app, "Vet", true, &[&about, &separator, &quit])?;
+    let block = |label: &str, kinds: &[Option<Predefined>]| -> tauri::Result<Submenu<Wry>> {
+        let built = kinds
+            .iter()
+            .map(|kind| -> tauri::Result<Box<dyn IsMenuItem<Wry>>> {
+                Ok(match kind {
+                    Some(kind) => Box::new(kind.item(app)?),
+                    None => Box::new(PredefinedMenuItem::separator(app)?),
+                })
+            })
+            .collect::<tauri::Result<Vec<_>>>()?;
+        let refs: Vec<&dyn IsMenuItem<Wry>> = built.iter().map(|i| i.as_ref()).collect();
+        Submenu::with_items(app, label, true, &refs)
+    };
+    use Predefined::*;
+    let edit = block(
+        "Edit",
+        &[
+            Some(Undo),
+            Some(Redo),
+            None,
+            Some(Cut),
+            Some(Copy),
+            Some(Paste),
+            Some(SelectAll),
+        ],
+    )?;
+    let window = block(
+        "Window",
+        &[
+            Some(Minimize),
+            Some(Zoom),
+            None,
+            Some(Fullscreen),
+            None,
+            Some(BringAllToFront),
+        ],
+    )?;
+    window.set_as_windows_menu_for_nsapp()?;
+    Menu::with_items(app, &[&vet, &edit, &window])
 }
 
 /// Who waits for the choice in the context menu that is open: the item chosen, or `None` once the
@@ -213,10 +303,23 @@ pub async fn show_context_menu(
 
 #[cfg(test)]
 mod tests {
-    use super::{ContextMenuChoice, MenuEntry, Surface, accelerator, item_text};
+    use super::{ContextMenuChoice, MenuEntry, Predefined, Surface, accelerator, item_text};
 
     fn entries(json: &str) -> Vec<MenuEntry> {
         serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn predefined_items_are_named_as_the_ui_names_them() {
+        let items = entries(
+            r#"[{"id":"predefined.selectAll","label":"","predefined":"selectAll"},
+            {"id":"predefined.bringAllToFront","label":"","predefined":"bringAllToFront"},
+            {"id":"a","label":"A","reason":"why not","radio":true}]"#,
+        );
+        assert_eq!(items[0].predefined, Some(Predefined::SelectAll));
+        assert_eq!(items[1].predefined, Some(Predefined::BringAllToFront));
+        assert_eq!(items[2].predefined, None);
+        assert!(serde_json::from_str::<Vec<MenuEntry>>(r#"[{"id":"x","label":"","predefined":"explode"}]"#).is_err());
     }
 
     #[test]
@@ -249,10 +352,10 @@ mod tests {
 
     #[test]
     fn a_context_menu_item_keeps_its_shortcut_out_of_the_label_except_after_a_tab_on_windows() {
-        let items = entries(r#"[{"id":"a","label":"Go to definition","shortcut":"Cmd+B"}]"#);
+        let items = entries(r#"[{"id":"a","label":"Go to definition","shortcut":"⌘B","chord":"Cmd+B"}]"#);
         let text = item_text(&items[0], Surface::ContextMenu);
         if cfg!(windows) {
-            assert_eq!(text, "Go to definition\tCmd+B");
+            assert_eq!(text, "Go to definition\t⌘B");
         } else {
             assert_eq!(text, "Go to definition");
         }
