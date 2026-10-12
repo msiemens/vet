@@ -73,7 +73,6 @@ while True:
 struct Rig {
     client: Arc<Client>,
     project: u32,
-    revision: u32,
     /// While this file exists the server exits at once.
     broken: PathBuf,
     _keep: (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir),
@@ -85,6 +84,11 @@ fn python_available() -> bool {
 
 impl Rig {
     async fn start() -> Self {
+        Self::start_with(false).await
+    }
+
+    /// A project whose rust server is the fake one, which fails its start while `broken`.
+    async fn start_with(broken: bool) -> Self {
         let repo = repo_with(
             &[
                 (
@@ -96,7 +100,11 @@ impl Rig {
             &[("src/lib.rs", "pub fn f() -> u32 {\n    2\n}\n")],
         );
         let tools = tempfile::tempdir().unwrap();
-        let broken = tools.path().join("broken");
+        let flag = tools.path().join("broken");
+        if broken {
+            std::fs::write(&flag, "").unwrap();
+        }
+        let broken = flag;
         let script = tools.path().join("fake-server");
         std::fs::write(&script, FAKE_SERVER.replace("@BROKEN@", broken.to_str().unwrap())).unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -105,11 +113,9 @@ impl Rig {
         let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
         let client = Arc::new(Client::new(&handler));
         let project = client.open(repo.path()).await;
-        let revision = client.revision(project).await;
         let rig = Self {
             client,
             project,
-            revision,
             broken,
             _keep: (data, tools, repo),
         };
@@ -137,8 +143,9 @@ impl Rig {
 
     /// The hover at `line`: the text and why there is none.
     async fn hover(&self, line: u32) -> (Option<String>, Option<vet_protocol::Unavailable>) {
+        let revision = self.client.revision(self.project).await;
         self.client
-            .hover(self.project, self.revision, Side::Target, "src/lib.rs", (line, 7))
+            .hover(self.project, revision, Side::Target, "src/lib.rs", (line, 7))
             .await
     }
 
@@ -195,8 +202,7 @@ async fn a_server_that_failed_to_start_is_started_again_by_a_restart() {
         eprintln!("skipped: python3 is not installed");
         return;
     }
-    let rig = Rig::start().await;
-    std::fs::write(&rig.broken, "").unwrap();
+    let rig = Rig::start_with(true).await;
     let (text, unavailable) = rig.hover(0).await;
     assert_eq!(text, None);
     assert_eq!(unavailable.unwrap().kind, UnavailableKind::ServerFailed);
@@ -219,7 +225,8 @@ async fn requests_in_flight_on_the_old_server_fail_as_restarted() {
     let rig = Rig::start().await;
     let before = rig.pid().await;
 
-    let (client, project, revision) = (rig.client.clone(), rig.project, rig.revision);
+    let (client, project) = (rig.client.clone(), rig.project);
+    let revision = client.revision(project).await;
     let hanging = tokio::spawn(async move {
         client
             .hover(project, revision, Side::Target, "src/lib.rs", (1, 7))
