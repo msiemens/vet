@@ -273,11 +273,11 @@ export class TextView {
     this.cards.setThreads(threads, revision);
   }
 
-  /** Puts the caret on the line the thread's card sits below; answers whether the text shows the thread. */
+  /** Puts the caret on the line the thread's card sits below (the first, for the file's own); answers whether the text shows the thread. */
   goToThread(thread: Thread): boolean {
     const line = this.cards.lineOf(thread);
     if (line === undefined) return false;
-    this.goToLine(line);
+    this.goToLine(Math.max(0, line));
     return true;
   }
 

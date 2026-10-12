@@ -23,8 +23,8 @@ export interface MenuState {
   recent: { path: string; name: string }[];
   /** Which screen shows. */
   screen: "queue" | "review";
-  /** What the review's views show: the active tab's file text, else the diff in its mode. */
-  viewMode: ViewMode;
+  /** What the active tab shows: a diff in its mode, or the file's text; none when the tab has no such choice. */
+  viewMode?: ViewMode;
   /** Long lines wrap. */
   softWrap: boolean;
   theme: Theme;

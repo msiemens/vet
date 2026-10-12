@@ -6,10 +6,11 @@ import type { Side } from "../generated/Side";
 import type { Thread } from "../generated/Thread";
 import { CommandRegistry } from "../lib/commands";
 import { type MenuSpec, resolveMenu } from "../lib/commandMenu";
+import type { ViewMode } from "../lib/viewMode";
 import { bindingSignal } from "./bindingSignal.svelte";
 import { isMac } from "./host";
 
-export type TabKind = "changes" | "file" | "text" | "log";
+export type TabKind = "changes" | "file" | "log";
 
 /** The editor that has the focus. */
 export interface FocusedEditor {
@@ -55,8 +56,10 @@ export interface CommandContext {
   tab?: { kind: TabKind; path?: string };
   /** How many tabs are open. */
   tabCount?: number;
-  /** What the active tab shows of a changed file: its diff or its text; none when it is no changed file's. */
-  fileView?: "diff" | "text";
+  /** What the active tab shows: a diff in a mode, or a file's text; none for a log. */
+  viewMode?: ViewMode;
+  /** The view modes the active tab offers. */
+  viewModes?: readonly ViewMode[];
   /** The active tab shows hunks to step through: a diff view, or a changed file's text. */
   diffView: boolean;
   /** Index of the current hunk in the active view, -1 for none. */

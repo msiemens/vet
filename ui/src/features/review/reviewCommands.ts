@@ -3,7 +3,7 @@
 
 import type { Command } from "../../lib/commands.ts";
 import type { MenuSpec } from "../../lib/commandMenu.ts";
-import { modeCommand } from "../../lib/viewMode.ts";
+import { type ViewMode, modeCommand } from "../../lib/viewMode.ts";
 import type { CommandContext, TabKind } from "../../state/commands.ts";
 
 /** What the keyboard commands do in the active tab's view. */
@@ -22,9 +22,26 @@ export interface ViewActions {
   jumpToSource(): boolean;
   /** Shows the commit `delta` away from the one on view; answers whether there was one. */
   stepCommit(delta: number): boolean;
-  /** Shows the active changed file's text rather than its diff. */
-  showFileText(): void;
+  /** Shows the active tab in the view mode: a diff drawn that way, or the file's text. */
+  setViewMode(mode: ViewMode): void;
 }
+
+/** The ways a tab shows its file, with the key that shows each. */
+const VIEW_MODES: readonly { id: ViewMode; label: string; binding: string; unavailable: string }[] = [
+  {
+    id: "unified",
+    label: "Unified Diff",
+    binding: "Alt-Shift-1",
+    unavailable: "Open the Changes tab or a changed file",
+  },
+  {
+    id: "split",
+    label: "Side-by-Side Diff",
+    binding: "Alt-Shift-2",
+    unavailable: "Open the Changes tab or a changed file",
+  },
+  { id: "file", label: "File Text", binding: "Alt-Shift-3", unavailable: "Open the tab of a file" },
+];
 
 const NO_DIFF = "Open the Changes tab or a changed file";
 const NOT_BY_COMMIT = "The changeset is not reviewed by commit";
@@ -106,7 +123,7 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       label: "Show Change Card",
       binding: "Alt-F1",
       inFields: true,
-      enabled: (c) => c.diffView && c.tab?.kind === "text",
+      enabled: (c) => c.diffView && c.viewMode === "file",
       disabledReason: () => "Open the text of a changed file",
       run: () => a.showCard(),
     },
@@ -115,8 +132,8 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       label: "Jump to Source",
       binding: "F4",
       inFields: true,
-      enabled: (c) => c.diffView && c.tab?.kind === "changes",
-      disabledReason: () => "Open the Changes tab",
+      enabled: (c) => c.diffView && c.viewMode !== "file",
+      disabledReason: () => "Open the Changes tab or a changed file's diff",
       run: () => a.jumpToSource(),
     },
     {
@@ -127,14 +144,15 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       disabledReason: () => "Put the caret in an editor",
       run: (c) => c.editor?.goToDefinition(),
     },
-    {
-      id: modeCommand("file"),
-      label: "File Text",
-      binding: "Alt-Shift-3",
-      enabled: (c) => c.fileView !== undefined,
-      disabledReason: () => "Open the tab of a changed file",
-      run: () => a.showFileText(),
-    },
+    ...VIEW_MODES.map(({ id, label, binding, unavailable }): Command<CommandContext> => ({
+      id: modeCommand(id),
+      label,
+      binding,
+      enabled: (c) => !!c.viewModes?.includes(id),
+      disabledReason: (c) =>
+        id !== "file" && c.tab?.kind === "file" ? "This file is unchanged: it has no diff" : unavailable,
+      run: () => a.setViewMode(id),
+    })),
   ]);
 }
 

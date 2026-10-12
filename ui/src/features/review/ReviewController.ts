@@ -31,7 +31,7 @@ import { type ThreadActions, buildCard } from "./editor/threadCard";
 import type { ThreadListeners } from "./editor/threadLayer";
 import { bindRevision, focusedEditor } from "./editor/semantic";
 import type { SoftWrap } from "../../lib/softWrap";
-import type { Mode } from "../../lib/viewMode";
+import type { Mode, ViewMode } from "../../lib/viewMode";
 import { type CommandContext, commands } from "../../state/commands";
 import { type TextActions, TextView } from "./editor/TextView";
 import { type SavedView, restoredTabs } from "./changesetViews";
@@ -43,15 +43,16 @@ import { readPosition, writePosition } from "./savedPosition";
 import {
   CHANGES,
   type TabId,
-  Tabs,
   fileTab,
+  hasDiff,
   kindOf,
   logTab,
+  modesOf,
   pathOf,
-  showsDiff,
+  settleMode,
   subjectOf,
-  textTab,
-} from "./Tabs.svelte";
+} from "./tabModel";
+import { Tabs } from "./Tabs.svelte";
 
 /** Space types in a field and presses a focused control; it marks the current item only when none of those has the focus. */
 const takesSpace = (el: Element | null) =>
@@ -84,17 +85,21 @@ const SAVE_AFTER_MS = 400;
 export const READ_ONLY_NOTE = "This range does not end at the latest version: marks and comments are off";
 
 export class ReviewController {
-  readonly tabs = new Tabs();
-  /** The view of each attached tab; a file tab has none while its file is not in the changeset. */
+  readonly tabs = new Tabs("unified");
+  /** The diff view of each attached tab; a file tab has none while its file is not in the changeset. */
   private views = new Map<TabId, ChangesetView>();
-  /** The view of each attached text tab. */
+  /** The text view of each file tab that showed its text; built when the tab first shows it. */
   private texts = new Map<TabId, TextView>();
   /** The logs fetched for the log tabs, which are built from them whenever their pane attaches. */
   private logs = new Map<TabId, CheckLog>();
   /** The view of each attached log tab. */
   private logViews = new Map<TabId, LogView>();
+  /** The scroll root of each attached tab's diff (or log) view. */
   private roots = new Map<TabId, HTMLElement>();
-  mode: Mode = "unified";
+  /** The scroll root of each attached file tab's text view. */
+  private textRoots = new Map<TabId, HTMLElement>();
+  /** The diff mode chosen last, which a diff tab opens in. */
+  private diffMode: Mode = "unified";
   /** Which files the views wrap the long lines of. */
   softWrap: SoftWrap = "prose";
   private hooks: ViewHooks;
@@ -210,34 +215,37 @@ export class ReviewController {
     return view;
   }
 
-  /** The view of the focused tab. */
+  /** The diff view of the focused tab, unless the tab shows its file's text. */
   private get active(): ChangesetView | undefined {
-    return this.views.get(this.tabs.active);
+    return this.activeMode === "file" ? undefined : this.views.get(this.tabs.active);
   }
 
-  /** The text of the focused tab, if it is a changed file's and has hunks to step through. */
+  /** The text of the focused tab, if it shows it and the file is a changed one with hunks to step through. */
   private get activeText(): TextView | undefined {
-    const text = this.texts.get(this.tabs.active);
+    const text = this.activeMode === "file" ? this.texts.get(this.tabs.active) : undefined;
     return text?.hasHunks ? text : undefined;
   }
 
-  /** What the active tab shows of a changed file; none when it is no changed file's tab. */
-  get fileView(): "diff" | "text" | undefined {
-    const id = this.tabs.active;
-    const path = pathOf(id);
-    if (path === undefined || !this.files.some((f) => f.path === path)) return undefined;
-    return kindOf(id) === "file" ? "diff" : "text";
+  /** What the active tab shows; none for a log. */
+  get activeMode(): ViewMode | undefined {
+    return this.tabs.modes.get(this.tabs.active);
+  }
+
+  private isChanged(path: string): boolean {
+    return this.files.some((f) => f.path === path);
   }
 
   /** The facts about the review screen that commands read. */
   private facts(): Partial<CommandContext> {
     const id = this.tabs.active;
-    const view = this.views.get(id);
+    const path = pathOf(id);
+    const view = this.active;
     const text = this.activeText;
     return {
       tab: { kind: kindOf(id), path: subjectOf(id) },
       tabCount: this.tabs.open.length,
-      fileView: this.fileView,
+      viewMode: this.activeMode,
+      viewModes: modesOf(kindOf(id), path !== undefined && this.isChanged(path)),
       diffView: view !== undefined || text !== undefined,
       byCommit: this.changeset.shownCommit !== undefined,
       hunk: view?.current ?? text?.current ?? -1,
@@ -263,13 +271,13 @@ export class ReviewController {
       comment: () => this.activeText?.commentHere() ?? this.active?.commentHere() ?? false,
       showCard: () => this.activeText?.showCaretCard() ?? false,
       jumpToSource: () => {
-        const caret = this.tabs.active === CHANGES ? this.active?.caret() : undefined;
+        const caret = this.active?.caret();
         if (!caret) return false;
         void this.openSource(caret.path, caret.line);
         return true;
       },
       stepCommit: (delta) => this.changeset.stepCommit(delta),
-      showFileText: () => void this.showFileView("text"),
+      setViewMode: (mode) => void this.setViewMode(mode),
     };
   }
 
@@ -302,26 +310,63 @@ export class ReviewController {
   }
 
   /**
-   * Shows a 0-based `line` of `side`'s text of the file at `path`, marking `span` if given. A
-   * changed file opens as its diff tab; an unchanged file (the same text on both sides) as its
-   * read-only text tab. A base-side location lands in the base content: the base editor of a
-   * side-by-side view, or the target line of the unified view where the deleted lines are drawn.
-   * Without a span a base line has no place in the diff views yet, so the diff opens at its start.
+   * Shows a 0-based `line` of `side`'s text of the file at `path`, marking `span` if given, in the
+   * file's tab. A changed file's tab keeps its mode (a new one opens in the diff mode last chosen);
+   * an unchanged file (the same text on both sides) has its text. A base-side location lands in
+   * the base content: the base editor of a side-by-side view, or the target line of the unified
+   * view where the deleted lines are drawn. Without a span a base line has no place in the diff
+   * views yet, so the diff opens at its start. The text has no base side: a tab showing it
+   * changes to the diff for such a location.
    */
   async openLocation(path: string, line: number | undefined, side: Side, span?: TextSpan) {
     // A base path is the file's old path if it was renamed.
     const file = this.files.find((f) => (side === "base" ? (f.oldPath ?? f.path) : f.path) === path);
-    if (!file) {
-      this.tabs.showText(path);
-      await tick();
-      const text = this.texts.get(textTab(path));
+    const target = file?.path ?? path;
+    const showsText = this.tabs.modes.get(fileTab(target)) === "file";
+    const mode = await this.showFile(target, side === "base" && showsText ? this.diffMode : undefined);
+    if (mode === "file") {
+      const text = this.texts.get(fileTab(target));
       if (span) text?.goToSpan(span);
       else if (line !== undefined) text?.goToLine(line);
-    } else if (span) {
-      this.tabs.show(file.path);
-      await tick();
-      await this.views.get(fileTab(file.path))?.goToSpan(0, side, span);
-    } else await this.openFile(file.path, side === "target" ? line : undefined);
+    } else {
+      const view = this.views.get(fileTab(target));
+      if (span) await view?.goToSpan(0, side, span);
+      else if (side === "target" && line !== undefined) await view?.goToLine(0, line);
+    }
+  }
+
+  /**
+   * Focuses the file's one tab, opening it if needed, showing `want` if the file has that mode
+   * (else the tab's mode, or for a new tab the diff mode last chosen), with the view built.
+   * Answers the mode.
+   */
+  private async showFile(path: string, want?: ViewMode): Promise<ViewMode> {
+    const id = fileTab(path);
+    const mode = settleMode({
+      changed: this.isChanged(path),
+      want,
+      current: this.tabs.modes.get(id),
+      last: this.diffMode,
+    });
+    this.tabs.showFile(path, mode);
+    await tick(); // a new tab's pane attaches and builds its view
+    if (mode === "file") this.ensureText(id);
+    else this.syncDiffMode(id);
+    return mode;
+  }
+
+  /** Draws the tab's diff view in the tab's diff mode. */
+  private syncDiffMode(id: TabId) {
+    const mode = this.tabs.modes.get(id);
+    const view = this.views.get(id);
+    if (view && mode !== undefined && mode !== "file" && view.mode !== mode) view.setMode(mode);
+  }
+
+  /** Builds the tab's text view if the tab has its root and no view yet. */
+  private ensureText(id: TabId) {
+    const root = this.textRoots.get(id);
+    const manifest = this.changeset.currentManifest();
+    if (root && manifest && !this.texts.has(id)) this.buildText(id, root, manifest);
   }
 
   /**
@@ -447,41 +492,56 @@ export class ReviewController {
   }
 
   /**
-   * Shows a thread on code: its card in the file's text when that is the tab on view, else in the
-   * Changes tab, where it is its card or its file. The changeset's own threads are in no diff.
+   * Shows a thread on code: its card in the file's tab, in the mode that tab is in, when the file
+   * has a tab open; else in the Changes tab, where it is its card or its file. The changeset's
+   * own threads are in no diff.
    */
   async goToThread(thread: Thread): Promise<boolean> {
     if (thread.kind === "changeset") return false;
-    const id = this.tabs.active;
-    if (kindOf(id) === "text" && pathOf(id) === thread.path && this.texts.get(id)?.goToThread(thread)) return true;
+    const id = thread.path === null ? undefined : fileTab(thread.path);
+    if (id !== undefined && this.tabs.open.includes(id)) {
+      const file = this.tabs.modes.get(id) === "file";
+      this.tabs.active = id;
+      if (file) this.ensureText(id);
+      if (file ? this.texts.get(id)?.goToThread(thread) : await this.views.get(id)?.goToThread(thread)) return true;
+    }
     this.tabs.active = CHANGES;
     return this.views.get(CHANGES)?.goToThread(thread) ?? false;
   }
 
+  /** The diff mode the tab's diff view draws in: the tab's own, or while it shows its text, the one chosen last. */
+  private diffModeOf(id: TabId): Mode {
+    const mode = this.tabs.modes.get(id);
+    return mode === undefined || mode === "file" ? this.diffMode : mode;
+  }
+
+  /** Builds a file tab's text view in its root, replacing the one it had. */
+  private buildText(id: TabId, root: HTMLElement, manifest: Manifest) {
+    const path = pathOf(id);
+    if (path === undefined) return;
+    this.texts.get(id)?.destroy();
+    const file = manifest.files.find((f) => f.path === path);
+    const text = new TextView(
+      root,
+      path,
+      fileSource(this.backend, manifest.revision, this.changeset.view),
+      bindRevision(this.hooks, manifest.revision),
+      this.softWrap,
+      { revision: manifest.revision, listeners: this.threadListeners() },
+      file && { file, actions: this.textActions(file, manifest.revision) },
+    );
+    this.texts.set(id, text);
+    if (this.threadsFit(manifest)) text.setThreads(this.shownThreads(), manifest.revision);
+  }
+
   /**
-   * Builds the tab's view in its root, replacing `previous`. The scroll position and the
+   * Builds the tab's diff view in its root, replacing `previous`. The scroll position and the
    * current hunk (the nearest one of the same file) carry over.
    */
   private build(id: TabId, manifest: Manifest, previous?: ChangesetView) {
     const root = this.roots.get(id);
     if (!root || kindOf(id) === "log") return;
     const path = pathOf(id);
-    if (kindOf(id) === "text" && path !== undefined) {
-      this.texts.get(id)?.destroy();
-      const file = manifest.files.find((f) => f.path === path);
-      const text = new TextView(
-        root,
-        path,
-        fileSource(this.backend, manifest.revision, this.changeset.view),
-        bindRevision(this.hooks, manifest.revision),
-        this.softWrap,
-        { revision: manifest.revision, listeners: this.threadListeners() },
-        file && { file, actions: this.textActions(file, manifest.revision) },
-      );
-      this.texts.set(id, text);
-      if (this.threadsFit(manifest)) text.setThreads(this.shownThreads(), manifest.revision);
-      return;
-    }
     const only = this.changeset.baseChanged;
     const files =
       path === undefined
@@ -502,7 +562,7 @@ export class ReviewController {
       manifest.revision,
       files,
       fileSource(this.backend, manifest.revision, this.changeset.view),
-      this.mode,
+      this.diffModeOf(id),
       this.softWrap,
       this.hooks,
       this.listenersFor(id),
@@ -537,7 +597,18 @@ export class ReviewController {
     this.saving = setTimeout(() => this.savePosition(), SAVE_AFTER_MS);
   };
 
-  /** A tab's pane has its scroll root; returns the function that detaches the tab. */
+  /** A file tab's text pane has its scroll root; returns the function that detaches it. The text is built once the tab shows it. */
+  attachText(id: TabId, root: HTMLElement): () => void {
+    this.textRoots.set(id, root);
+    if (this.tabs.modes.get(id) === "file") this.ensureText(id);
+    return () => {
+      this.texts.get(id)?.destroy();
+      this.texts.delete(id);
+      this.textRoots.delete(id);
+    };
+  }
+
+  /** A tab's pane has its scroll root (for a file tab, that of its diff); returns the function that detaches it. */
   attach(id: TabId, root: HTMLElement): () => void {
     this.roots.set(id, root);
     // The Changes tab is built by `open`, which fetches the manifest first.
@@ -550,8 +621,6 @@ export class ReviewController {
       if (id === CHANGES) root.removeEventListener("scroll", this.onChangesScroll);
       this.views.get(id)?.destroy();
       this.views.delete(id);
-      this.texts.get(id)?.destroy();
-      this.texts.delete(id);
       this.logViews.get(id)?.destroy();
       this.logViews.delete(id);
       this.roots.delete(id);
@@ -589,28 +658,41 @@ export class ReviewController {
   }
 
   /**
-   * Shows the active file tab as the file's diff or its text, at the line the caret is on. The
-   * other view takes the tab's place; it never opens a second tab of the file.
-   * Does nothing in any other tab, or for a file the changeset does not change.
+   * Shows the active tab in the view mode: the Changes tab or a changed file's diff drawn that way,
+   * or a file's text. The tab stays the same one; a file's other view keeps its own caret and
+   * scroll, and the caret's line carries over to the view that comes up. Does nothing in a tab
+   * that does not offer the mode.
    */
-  async showFileView(view: "diff" | "text") {
+  async setViewMode(mode: ViewMode) {
     const id = this.tabs.active;
     const path = pathOf(id);
-    if (path === undefined || this.fileView === undefined || this.fileView === view) return;
-    const toText = kindOf(id) === "file";
-    const line = toText ? this.views.get(id)?.caretLine() : this.texts.get(id)?.caretLine();
-    this.tabs.swap(id, toText ? textTab(path) : fileTab(path));
-    await tick(); // a new tab's pane attaches and builds its view
-    if (line === undefined) return;
-    if (toText) this.texts.get(textTab(path))?.goToLine(line);
-    else await this.views.get(fileTab(path))?.goToLine(0, line);
+    if (!modesOf(kindOf(id), path !== undefined && this.isChanged(path)).includes(mode)) return;
+    const from = this.tabs.modes.get(id);
+    if (mode !== "file") this.diffMode = mode;
+    if (from === mode) return;
+    if (path === undefined) {
+      this.tabs.modes.set(id, mode);
+      this.syncDiffMode(id);
+      return;
+    }
+    const line = from === "file" ? this.texts.get(id)?.caretLine() : this.views.get(id)?.caretLine();
+    this.tabs.modes.set(id, mode);
+    if (mode === "file") {
+      this.ensureText(id);
+      if (line !== undefined) this.texts.get(id)?.goToLine(line);
+    } else {
+      this.syncDiffMode(id);
+      if (from === "file" && line !== undefined) await this.views.get(id)?.goToLine(0, line);
+    }
   }
 
-  /** Jump to Source: the file's text tab, at a 0-based target `line` if given. */
+  /**
+   * Jump to Source: the file's tab shows its text, at a 0-based target `line` if given. The tab
+   * is opened in that mode if the file has none.
+   */
   async openSource(path: string, line?: number) {
-    this.tabs.showText(path);
-    await tick(); // a new tab's pane attaches and builds its view
-    if (line !== undefined) this.texts.get(textTab(path))?.goToLine(line);
+    await this.showFile(path, "file");
+    if (line !== undefined) this.texts.get(fileTab(path))?.goToLine(line);
   }
 
   /** What the file's text tab offers for the file's hunks. */
@@ -624,17 +706,13 @@ export class ReviewController {
     };
   }
 
-  /** Opens the file's diff tab, or focuses it if it is open, and goes to a 0-based target `line` if given. */
-  async openFile(path: string, line?: number) {
-    const id = fileTab(path);
-    this.tabs.show(path);
-    await tick(); // a new tab's pane attaches and builds its view
-    if (line !== undefined) await this.views.get(id)?.goToLine(0, line);
-  }
-
   /** Renders `manifest` in every tab, keeping scroll positions and current hunks (a new revision replaces the views). */
   show(manifest: Manifest) {
     for (const id of this.roots.keys()) this.build(id, manifest, this.views.get(id));
+    // A text view is built where the tab shows it or showed it.
+    for (const [id, root] of this.textRoots) {
+      if (this.texts.has(id) || this.tabs.modes.get(id) === "file") this.buildText(id, root, manifest);
+    }
   }
 
   /**
@@ -648,7 +726,7 @@ export class ReviewController {
     const paths = new Set(manifest.files.map((f) => f.path));
     const firstVisit = switching && !this.parked.has(key);
     if (switching) this.switchTo(key, paths);
-    else this.tabs.keepOnly(paths);
+    else this.tabs.dropStale((path) => paths.has(path));
     this.key = key;
     const commitChanged = this.commitChanged();
     const rangeChanged = this.rangeChanged(manifest) || commitChanged;
@@ -659,7 +737,7 @@ export class ReviewController {
     // Another range is another set of files: its views start at the top. So does the Changes tab when
     // it shows other files.
     if ((rangeChanged || filterChanged) && !switching) {
-      const tabs = this.tabs.open.filter((tab) => showsDiff(tab) && (rangeChanged || tab === CHANGES));
+      const tabs = this.tabs.open.filter((tab) => hasDiff(tab) && (rangeChanged || tab === CHANGES));
       this.restore = { scroll: new Map(tabs.map((tab) => [tab, 0])) };
     }
     this.show(manifest);
@@ -699,16 +777,19 @@ export class ReviewController {
       this.parked.set(this.key, {
         open: [...this.tabs.open],
         active: this.tabs.active,
+        modes: new Map(this.tabs.modes),
         scroll,
         anchor: this.views.get(CHANGES)?.currentAnchor(),
       });
     }
     const saved = this.parked.get(next);
-    const { open, active } = restoredTabs(saved, (tab) => kindOf(tab) !== "file" || paths.has(pathOf(tab) ?? ""));
+    const { open, active, modes } = restoredTabs(saved, (path) => paths.has(path), this.diffMode);
+    this.tabs.modes.clear();
+    for (const [id, mode] of modes) this.tabs.modes.set(id, mode);
     this.tabs.open = open;
     this.tabs.active = active;
     // Every diff tab builds with its saved position, those not mounted yet when they attach.
-    const scroll = new Map(open.filter(showsDiff).map((tab) => [tab, saved?.scroll.get(tab) ?? 0]));
+    const scroll = new Map(open.filter(hasDiff).map((tab) => [tab, saved?.scroll.get(tab) ?? 0]));
     this.restore = { scroll, anchor: saved?.anchor };
   }
 
@@ -727,11 +808,6 @@ export class ReviewController {
     if (!(saved && view.restore(saved))) await view.goToHunk(0);
     await nextPaint();
     if (prefetch) await view.loadAll();
-  }
-
-  setMode(mode: Mode) {
-    this.mode = mode;
-    for (const view of this.views.values()) view.setMode(mode);
   }
 
   /** Builds the views anew with the setting, keeping their scroll positions and current hunks. */

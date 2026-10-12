@@ -2,21 +2,19 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import { commands } from "../../state/commands";
-  import { FILE_VIEW, MODES, type Mode, type ViewMode, modeCommand } from "../../lib/viewMode";
-
-  /** What a changed file's tab shows: its diff in the view mode, or its text. */
-  type FileView = "diff" | "file";
+  import { FILE_VIEW, MODES, type ViewMode, modeCommand } from "../../lib/viewMode";
 
   let {
     mode,
     stepping,
     file,
   }: {
-    mode: Mode;
-    /** The focused tab has hunks to step through, and a view mode. */
+    /** What the focused tab shows, which the control switches; none for a log. */
+    mode?: ViewMode;
+    /** The focused tab has hunks to step through. */
     stepping: boolean;
-    /** What the focused tab of a changed file shows, which it can switch; absent in any other tab. */
-    file?: FileView;
+    /** The focused tab is a file's, which can show its text. */
+    file: boolean;
   } = $props();
 
   const options = $derived(
@@ -26,7 +24,6 @@
       disabled: !commands.isEnabled(modeCommand(m.id)),
     })),
   );
-  const value = $derived(file === "file" ? FILE_VIEW.id : mode);
 
   const choose = (id: ViewMode) => commands.run(modeCommand(id));
 </script>
@@ -47,8 +44,8 @@
       {/each}
     </div>
   {/if}
-  {#if stepping || file}
-    <Segmented small label="View" {value} onchange={choose} {options} />
+  {#if mode !== undefined}
+    <Segmented small label="View" value={mode} onchange={choose} {options} />
   {/if}
 </div>
 

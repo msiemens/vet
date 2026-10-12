@@ -1,11 +1,12 @@
-// Thread cards inside a file's editor: block widgets below the line they are anchored to.
+// Thread cards inside a file's editor: block widgets below the line they are anchored to, or above
+// the first line for the file's own threads.
 // The view feeds them with `setThreadCards`; building and measuring the cards is the host's.
 
 import { type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import { gutterWidth } from "./gutterWidth";
 import { lineEnd } from "./positions";
-import type { CardData, InlineCard } from "./threadPlacement";
+import { ABOVE_FIRST_LINE, type CardData, type InlineCard } from "./threadPlacement";
 
 /** What the owner of the editor provides for its cards. */
 export interface CardHost {
@@ -61,11 +62,12 @@ export function threadCards(host: CardHost): Extension {
         if (!effect.is(setThreadCards)) continue;
         const doc = tr.state.doc;
         decos = Decoration.set(
-          effect.value.map((card) =>
-            Decoration.widget({ widget: new CardWidget(card, host), block: true, side: 1 }).range(
-              lineEnd(doc, card.line),
-            ),
-          ),
+          effect.value.map((card) => {
+            const above = card.line === ABOVE_FIRST_LINE;
+            return Decoration.widget({ widget: new CardWidget(card, host), block: true, side: above ? -1 : 1 }).range(
+              above ? 0 : lineEnd(doc, card.line),
+            );
+          }),
           true,
         );
       }

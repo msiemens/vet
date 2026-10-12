@@ -251,6 +251,10 @@ export class ChangesetView {
     return this.heights.reset(s, scrollTop);
   }
 
+  get mode(): Mode {
+    return this.heights.mode;
+  }
+
   setMode(mode: Mode) {
     this.remount(() => {
       this.heights.mode = mode;

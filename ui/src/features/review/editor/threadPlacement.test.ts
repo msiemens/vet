@@ -41,7 +41,7 @@ void test("threads split into file-level and inline, detached ones left out", ()
   );
 });
 
-void test("a file's text shows the file's range threads, a base-side one at its mapped target line, and the form below the threads on its line", () => {
+void test("a file's text shows the file's own threads above its first line, its range threads, a base-side one at its mapped target line, and the form below the threads on its line", () => {
   const threads = [
     thread(1),
     thread(2, { side: "base", targetLine: 5 }),
@@ -67,6 +67,7 @@ void test("a file's text shows the file's range threads, a base-side one at its 
   assert.deepEqual(
     cards.map((c) => [c.thread?.id ?? "form", c.line, c.open ?? false]),
     [
+      [5, -1, false],
       [3, 2, true],
       [1, 5, false],
       [2, 5, false],

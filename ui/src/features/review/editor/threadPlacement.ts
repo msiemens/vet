@@ -57,9 +57,13 @@ export interface FileViewDraft {
   line: number;
 }
 
+/** The line of a card that sits above the first line: the file's own threads. */
+export const ABOVE_FIRST_LINE = -1;
+
 /**
- * The cards a file's text shows, in line order: its range threads (not the file's own or the
- * changeset's, which have no line), then the form, below the threads already on its line.
+ * The cards a file's text shows, in line order: the file's own threads above its first line, its
+ * range threads, then the form, below the threads already on its line. The changeset's own
+ * threads have no place in a file.
  */
 export function fileViewCards(
   threads: readonly Thread[],
@@ -67,8 +71,11 @@ export function fileViewCards(
   open: (thread: number) => boolean,
   draft?: FileViewDraft,
 ): InlineCard[] {
-  const mine = threads.filter((t) => t.kind !== "changeset" && t.path === path);
-  const cards: InlineCard[] = placeThreads(mine).inline.map((c) => ({ ...c, open: open(c.thread.id) }));
+  const mine = placeThreads(threads.filter((t) => t.kind !== "changeset" && t.path === path));
+  const cards: InlineCard[] = [
+    ...mine.file.map((thread) => ({ thread, line: ABOVE_FIRST_LINE, open: open(thread.id) })),
+    ...mine.inline.map((c) => ({ ...c, open: open(c.thread.id) })),
+  ];
   if (draft) {
     // The sort is stable: the form lands below the threads already on that line.
     cards.push({ draft: draft.target, line: draft.line });

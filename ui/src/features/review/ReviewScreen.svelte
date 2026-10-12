@@ -4,7 +4,6 @@
   import type { MenuSpec } from "../../lib/commandMenu";
   import SideBar from "../../lib/ui/SideBar.svelte";
   import type { SoftWrap } from "../../lib/softWrap";
-  import type { Mode } from "../../lib/viewMode";
   import type { Backend } from "../../state/backend";
   import type { Changeset } from "../../state/changeset.svelte";
   import type { CommandContext } from "../../state/commands";
@@ -29,7 +28,7 @@
   import { provideActions } from "./reviewActions";
   import { editorMenu, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
   import CommitHeader from "./CommitHeader.svelte";
-  import { CHANGES, kindOf, pathOf, showsDiff, subjectOf, tabOf } from "./Tabs.svelte";
+  import { CHANGES, kindOf, pathOf, subjectOf, tabOf } from "./tabModel";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
@@ -42,7 +41,6 @@
     rightOpen,
     side,
     bottom,
-    mode,
     softWrap,
     onready,
     onclose,
@@ -50,8 +48,6 @@
     backend: Backend;
     /** What the backend sent about the open changeset. */
     changeset: Changeset;
-    /** Unified or split; the owner applies a change to the controller. */
-    mode: Mode;
     /** Which files wrap their long lines; the owner applies a change to the controller. */
     softWrap: SoftWrap;
     /** The left tool window and whether its sidebar is shown. */
@@ -79,8 +75,6 @@
     openMenu(fileHeaderMenu, x, y, { target: { path, dir: false } }),
   );
   // svelte-ignore state_referenced_locally
-  controller.mode = mode;
-  // svelte-ignore state_referenced_locally
   controller.softWrap = softWrap;
   const tabs = controller.tabs;
   let tree = $state<FileTree>();
@@ -103,11 +97,10 @@
     tabs.changesFile;
     untrack(() => (picked = undefined));
   });
-  // What the active tab of a changed file shows, which the control above the editors switches.
-  const fileView = $derived.by(() => {
+  // The active tab has hunks to step through: the Changes tab, or a changed file's.
+  const stepping = $derived.by(() => {
     const path = pathOf(tabs.active);
-    if (path === undefined || !changeset.file(path)) return undefined;
-    return kindOf(tabs.active) === "file" ? "diff" : "file";
+    return kindOf(tabs.active) === "changes" || (path !== undefined && !!changeset.file(path));
   });
   const fileOf = (path: string) => changeset.file(path);
   // The Symbol panel lists the file the review shows (the active file tab, else the one selected in the tree) first.
@@ -231,7 +224,7 @@
       onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: subjectOf(id) } })}
     />
     <span class="grow"></span>
-    <ViewControls {mode} stepping={showsDiff(tabs.active) || fileView !== undefined} file={fileView} />
+    <ViewControls mode={tabs.modes.get(tabs.active)} {stepping} file={kindOf(tabs.active) === "file"} />
   </div>
   {#if range && readOnly}
     <p class="note" role="status">
@@ -248,9 +241,19 @@
       </p>
     {/if}
     {#each tabs.open as id (id)}
-      <div class="pane" class:active={tabs.active === id}>
-        <div class="scroll" {@attach (root) => controller.attach(id, root)}></div>
-      </div>
+      {@const path = pathOf(id)}
+      {@const text = tabs.modes.get(id) === "file"}
+      <!-- A file's tab has a pane for its diff, while the changeset changes the file, and one for its text. -->
+      {#if path === undefined || changeset.file(path)}
+        <div class="pane" class:active={tabs.active === id && !text}>
+          <div class="scroll" {@attach (root) => controller.attach(id, root)}></div>
+        </div>
+      {/if}
+      {#if path !== undefined}
+        <div class="pane" class:active={tabs.active === id && text}>
+          <div class="scroll" {@attach (root) => controller.attachText(id, root)}></div>
+        </div>
+      {/if}
     {/each}
   </div>
   {@render bottom?.({ selected: highlighted, select })}

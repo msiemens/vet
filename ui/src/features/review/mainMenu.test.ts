@@ -41,7 +41,6 @@ const state: MenuState = {
   native: false,
   recent: [],
   screen: "review",
-  viewMode: "unified",
   softWrap: true,
   theme: "system",
   tools: [],
@@ -58,7 +57,8 @@ const working: Partial<CommandContext> = {
   hunk: 0,
   tab: { kind: "file", path: "a.rs" },
   tabCount: 3,
-  fileView: "diff",
+  viewMode: "unified",
+  viewModes: ["unified", "split", "file"],
   byCommit: true,
   manyCommits: true,
 };
@@ -184,6 +184,28 @@ void test("the View menu holds the screens, the tool windows, the tabs and the d
   );
 });
 
+void test("the view modes are one radio group that shows what the active tab shows, and offers a tab only the modes it has", () => {
+  const modes = (viewMode: MenuState["viewMode"], context: Partial<CommandContext> = {}) =>
+    submenu(menuOf({ viewMode }, { ...working, ...context }), "view")
+      .filter((i) => i.id.startsWith("view.mode."))
+      .map((i) => [i.checked, i.enabled]);
+  assert.deepEqual(modes("unified"), [
+    [true, undefined],
+    [false, undefined],
+    [false, undefined],
+  ]);
+  assert.deepEqual(modes("file", { viewMode: "file", viewModes: ["file"] }), [
+    [false, false],
+    [false, false],
+    [true, undefined],
+  ]);
+  assert.deepEqual(modes(undefined, { viewModes: [] }), [
+    [false, false],
+    [false, false],
+    [false, false],
+  ]);
+});
+
 void test("without a project the same items are there, disabled, and the ones that need a view say what to open", () => {
   const idle = menuOf({}, {});
   const all = (items: MenuItem[]): MenuItem[] => items.flatMap((i) => [i, ...all(i.children ?? [])]);
@@ -232,7 +254,7 @@ void test("the review's keys run on the Review screen and not while the Queue sc
     ["Jump to Source", { key: "F4", code: "F4" }, "jumpToSource"],
     ["Toggle Seen", { key: " ", code: "Space" }, "toggleSeen"],
     ["Next Tab", { key: "ArrowRight", code: "ArrowRight", altKey: true }, "stepTab 1"],
-    ["File Text", { key: "#", code: "Digit3", altKey: true, shiftKey: true }, "showFileText"],
+    ["File Text", { key: "#", code: "Digit3", altKey: true, shiftKey: true }, "setViewMode file"],
   ];
   const withTab = { ...working, tab: { kind: "changes" as const } };
   for (const [name, init, call] of keys) {
@@ -270,7 +292,7 @@ void test("Alt+Shift and a digit show a view mode by the physical key, whatever 
       const event = press({ key, code: `Digit${i + 1}`, altKey: true, shiftKey: true });
       assert.equal(win.dispatch(event), true, `${layout} ${key}`);
     });
-    assert.deepEqual(calls, ["showDiff unified", "showDiff split", "showFileText"], layout);
+    assert.deepEqual(calls, ["setViewMode unified", "setViewMode split", "setViewMode file"], layout);
   }
 
   // The same keys in a text field belong to the field; Alt+digit alone is still the tool window.
@@ -284,7 +306,7 @@ void test("Alt+Shift and a digit show a view mode by the physical key, whatever 
   calls.length = 0;
   assert.equal(mac.dispatch(press({ key: "⁄", code: "Digit1", altKey: true, shiftKey: true })), true);
   assert.equal(mac.dispatch(press({ key: "⁄", code: "Digit1", altKey: true, shiftKey: true }, true)), false);
-  assert.deepEqual(calls, ["showDiff unified"]);
+  assert.deepEqual(calls, ["setViewMode unified"]);
 });
 
 void test("the keys of Post, Vote, Toggle Since Last Review and Reveal File run outside text fields, and Ctrl+Alt+F stays free", () => {

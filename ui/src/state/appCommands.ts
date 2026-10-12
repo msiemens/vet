@@ -4,7 +4,6 @@
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { Command } from "../lib/commands.ts";
 import { THEMES, type Theme } from "../lib/theme/theme.ts";
-import { type Mode, modeCommand } from "../lib/viewMode.ts";
 import { parseKeyId } from "./changesetKey.ts";
 import type { CommandContext } from "./commands.ts";
 
@@ -36,8 +35,6 @@ export interface AppActions {
   /** Opens Settings on the Accounts page. */
   showAccounts(): void;
   quit(): void;
-  /** Shows changed files as diffs drawn in `mode`; a changed file's text tab goes back to its diff. */
-  showDiff(mode: Mode): void;
   /** Wraps long lines, or stops wrapping them. */
   toggleSoftWrap(): void;
   /** Shows or hides the tool window `id`. */
@@ -76,12 +73,6 @@ export const TOOL_WINDOWS: readonly {
 
 /** The id of the command that shows or hides the tool window `id`. */
 export const toolCommand = (id: string) => `view.tool.${id}`;
-
-/** The ways to draw a diff, with the key that shows each. The third way, a file's text, is the review's. */
-const VIEW_MODES: readonly { id: Mode; label: string; binding: string }[] = [
-  { id: "unified", label: "Unified Diff", binding: "Alt-Shift-1" },
-  { id: "split", label: "Side-by-Side Diff", binding: "Alt-Shift-2" },
-];
 
 const NO_PROJECT = "Open a project first";
 const NO_CHANGESET = "No changeset is on view";
@@ -254,14 +245,6 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     { id: "app.accounts", label: "Accounts…", run: () => a.showAccounts() },
     { id: "app.about", label: "About Vet", run: () => a.showDialog("about") },
     { id: "app.quit", label: "Exit", accelerator: "Cmd+Q", enabled: (c) => c.canQuit, run: () => a.quit() },
-    ...VIEW_MODES.map(({ id, label, binding }): Command<CommandContext> => ({
-      id: modeCommand(id),
-      label,
-      binding,
-      enabled: repoOpen,
-      disabledReason: needsProject,
-      run: () => a.showDiff(id),
-    })),
     { id: "view.softWrap", label: "Soft Wrap", run: () => a.toggleSoftWrap() },
     ...TOOL_WINDOWS.map(({ id, label, binding }): Command<CommandContext> => ({
       id: toolCommand(id),

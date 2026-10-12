@@ -50,7 +50,6 @@
   import ContextMenu from "../lib/ui/ContextMenu.svelte";
   import { setDoubleClickMs } from "../lib/ui/doubleClick";
   import Toast from "../lib/ui/Toast.svelte";
-  import type { Mode } from "../lib/viewMode";
   import { changeset } from "../state/changeset.svelte";
   import { checks } from "../state/checks.svelte";
   import {
@@ -96,7 +95,6 @@
   const right = $state({ tool: "symbol", open: true });
   let timelineOpen = $state(false);
   let theme = $state<Theme>(storedTheme());
-  let mode = $state<Mode>("unified");
   let softWrap = $state<SoftWrap>(storedSoftWrap());
   let dialog = $state<"settings" | "about" | "finish" | "pullRequest">();
   let settingsPage = $state<ComponentProps<typeof SettingsDialog>["page"]>("general");
@@ -212,10 +210,6 @@
       showKeymap: () => showDialog("settings", "keymap"),
       showAccounts: () => showDialog("settings", "accounts"),
       quit: () => void quit(),
-      showDiff: (next) => {
-        setMode(next);
-        void controller?.showFileView("diff");
-      },
       toggleSoftWrap: () => setSoftWrap(softWrap === "never" ? "prose" : "never"),
       toggleTool: (id) => {
         if (id === "timeline") {
@@ -285,7 +279,7 @@
       native: hasNativeMenu,
       recent: recent.list.map(({ path }) => ({ path, name: repoName(path) })),
       screen,
-      viewMode: controller?.fileView === "text" ? "file" : mode,
+      viewMode: controller?.activeMode,
       softWrap: softWrap !== "never",
       theme,
       tools: [
@@ -424,11 +418,6 @@
     platform.changesetComment.composing = true;
   }
 
-  function setMode(next: Mode) {
-    mode = next;
-    controller?.setMode(next);
-  }
-
   function setSoftWrap(next: SoftWrap) {
     softWrap = next;
     storeSoftWrap(next);
@@ -531,7 +520,6 @@
         leftOpen={left.open}
         rightTool={right.tool}
         rightOpen={right.open}
-        {mode}
         {softWrap}
         onready={(c) => void (controller = c)}
         onclose={() => (controller = undefined)}

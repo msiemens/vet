@@ -6,7 +6,8 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import Tab from "../../lib/ui/Tab.svelte";
   import { commands } from "../../state/commands";
-  import { type TabId, type Tabs, kindOf, pathOf, subjectOf } from "./Tabs.svelte";
+  import { type TabId, kindOf, pathOf, subjectOf } from "./tabModel";
+  import type { Tabs } from "./Tabs.svelte";
 
   /**
    * `files` are the ones the first tab lists, or the commit's, which the first tab then names by its hash and

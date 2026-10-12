@@ -12,7 +12,6 @@ const state: MenuState = {
   native: false,
   recent: [{ path: "/a/vet", name: "vet" }],
   screen: "review",
-  viewMode: "split",
   softWrap: true,
   theme: "dark",
   tools: [
@@ -54,7 +53,6 @@ const actions: AppActions = {
   showDialog: (d) => calls.push(`dialog ${d}`),
   showKeymap: () => calls.push("keymap"),
   quit: () => calls.push("quit"),
-  showDiff: (mode) => calls.push(`diff ${mode}`),
   toggleSoftWrap: () => calls.push("wrap"),
   toggleTool: (id) => calls.push(`tool ${id}`),
   setTheme: (theme) => calls.push(`theme ${theme}`),
@@ -197,7 +195,7 @@ void test("without a project everything that needs one is disabled, not hidden, 
   const items = menu({ recent: [] }, { repoOpen: false, changesetOpen: false, reviewOpen: false, pullRequest: false });
   assert.equal(find(items, "recent")?.enabled, false);
   assert.equal(find(items, "file.open")?.enabled, undefined);
-  for (const id of ["view.queue", "view.review", "changeset.switch", "changeset.refresh", "view.mode.split"]) {
+  for (const id of ["view.queue", "view.review", "changeset.switch", "changeset.refresh"]) {
     const item = find(items, id);
     assert.equal(item?.enabled, false, id);
     assert.ok(item.reason, id);
@@ -253,19 +251,7 @@ void test("every tool window has its own Alt key, and Commits is offered only fo
   assert.deepEqual(calls, ["tool commits", "tool timeline"]);
 });
 
-void test("the diff mode is one radio group that sets its mode directly, and the wrap and theme settings show what is on", () => {
-  const modes = (viewMode: MenuState["viewMode"]) =>
-    ["unified", "split"].map((m) => find(menu({ viewMode }), `view.mode.${m}`)?.checked);
-  assert.deepEqual(modes("unified"), [true, false]);
-  assert.deepEqual(modes("split"), [false, true]);
-  assert.deepEqual(modes("file"), [false, false]);
-  assert.ok(["unified", "split"].every((m) => find(menu(), `view.mode.${m}`)?.radio));
-  calls.length = 0;
-  registry.run("view.mode.split", open);
-  registry.run("view.mode.split", open);
-  registry.run("view.mode.unified", open);
-  assert.deepEqual(calls, ["diff split", "diff split", "diff unified"]);
-
+void test("the wrap and theme settings show what is on", () => {
   const items = menu({ softWrap: false, theme: "light" });
   assert.equal(find(items, "view.softWrap")?.checked, false);
   assert.equal(find(items, "view.theme:light")?.checked, true);

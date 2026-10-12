@@ -36,7 +36,7 @@ const view: ViewActions = {
   showCard: () => (calls.push("card"), true),
   jumpToSource: () => (calls.push("jump"), caretFinds),
   stepCommit: (delta) => (calls.push(`commit ${delta}`), true),
-  showFileText: () => calls.push("fileText"),
+  setViewMode: (mode) => calls.push(`mode ${mode}`),
 };
 const files: FileActions = {
   copyText: (text) => calls.push(`copy ${text}`),
@@ -163,9 +163,11 @@ void test("[ and ] go to the previous and next commit, and only while reviewing 
   assert.deepEqual(calls, []);
 });
 
-void test("F4 jumps to source from the Changes tab only, and only when there is a caret", () => {
+void test("F4 jumps to source from a diff and not from a file's text, and only when there is a caret", () => {
   const f4 = () => key({ key: "F4", code: "F4" });
-  assert.equal(setup({ diffView: true, tab: { kind: "file", path: "a.rs" } }).dispatch(f4()), false);
+  const inText = { diffView: true, viewMode: "file", tab: { kind: "file", path: "a.rs" } } as const;
+  assert.equal(setup(inText).dispatch(f4()), false);
+  assert.equal(setup({ diffView: true, viewMode: "split", tab: { kind: "file", path: "a.rs" } }).dispatch(f4()), true);
   const r = setup(inChanges);
   caretFinds = false;
   const event = f4();
@@ -257,8 +259,6 @@ void test("Mod+W closes the active tab on both platforms, never the Changes tab,
   assert.deepEqual(calls, ["close file a.rs"]);
   assert.equal(setup(inFile, "Meta").dispatch(cmdW()), true);
   assert.deepEqual(calls, ["close file a.rs"]);
-  assert.equal(setup({ tab: { kind: "text", path: "b.rs" }, tabCount: 2 }, "Meta").dispatch(cmdW()), true);
-  assert.deepEqual(calls, ["close text b.rs"]);
 
   assert.equal(setup(inFile, "Meta").dispatch(ctrlW()), false);
   assert.equal(setup(inFile).dispatch(ctrlW({ inField: true })), false);
@@ -308,15 +308,37 @@ void test("Previous and Next Tab are Alt+Left and Alt+Right on Windows and â‡§âŒ
   assert.deepEqual(calls, []);
 });
 
-void test("File Text is available in the tab of a changed file only, and says what to open otherwise", () => {
-  for (const fileView of ["diff", "text"] as const) {
-    assert.equal(setup({ fileView }).run("view.mode.file"), true);
-    assert.deepEqual(calls, ["fileText"]);
-  }
-  const r = setup({ fileView: undefined });
-  assert.equal(r.run("view.mode.file"), false);
-  assert.deepEqual(calls, []);
-  assert.ok(r.disabledReason("view.mode.file"));
+void test("a view mode is available where the active tab offers it, and says why not otherwise", () => {
+  const changed = setup({ tab: { kind: "file", path: "a.rs" }, viewModes: ["unified", "split", "file"] });
+  for (const mode of ["unified", "split", "file"]) assert.equal(changed.run(`view.mode.${mode}`), true);
+  assert.deepEqual(calls, ["mode unified", "mode split", "mode file"]);
+
+  const unchanged = setup({ tab: { kind: "file", path: "a.rs" }, viewModes: ["file"] });
+  assert.equal(unchanged.run("view.mode.file"), true);
+  assert.equal(unchanged.run("view.mode.split"), false);
+  assert.deepEqual(calls, ["mode file"]);
+  assert.match(unchanged.disabledReason("view.mode.split") ?? "", /unchanged/);
+
+  const changes = setup({ tab: { kind: "changes" }, viewModes: ["unified", "split"] });
+  assert.equal(changes.isEnabled("view.mode.unified"), true);
+  assert.equal(changes.isEnabled("view.mode.file"), false);
+  assert.ok(changes.disabledReason("view.mode.file"));
+
+  assert.equal(setup({ viewModes: [] }).isEnabled("view.mode.unified"), false);
+});
+
+void test("the view modes are off while the queue covers the review", () => {
+  const r = setup({ queueShown: true, tab: { kind: "changes" }, viewModes: ["unified", "split"] });
+  assert.equal(r.isEnabled("view.mode.split"), false);
+});
+
+void test("Jump to Source and the change card follow what the active tab shows", () => {
+  const diff = { diffView: true, viewMode: "unified" } as const;
+  const text = { diffView: true, viewMode: "file" } as const;
+  assert.equal(setup({ ...diff, tab: { kind: "file", path: "a.rs" } }).isEnabled("review.jumpToSource"), true);
+  assert.equal(setup({ ...text, tab: { kind: "file", path: "a.rs" } }).isEnabled("review.jumpToSource"), false);
+  assert.equal(setup(text).isEnabled("review.changeCard"), true);
+  assert.equal(setup(diff).isEnabled("review.changeCard"), false);
 });
 
 void test("Reveal the current file runs when a tree is there to show it and says so when there is none", () => {
