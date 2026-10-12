@@ -215,6 +215,13 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
             .await
     }
 
+    pub async fn implementations(self: &Arc<Self>, at: &At) -> Result<Answered<Vec<Location>>, QueryError> {
+        let key = self.project(ProjectQuery::Implementations(at.clone()));
+        let at = at.clone();
+        self.reuse(key, move |this| async move { this.server.implementations(&at).await })
+            .await
+    }
+
     pub async fn hover(self: &Arc<Self>, at: &At) -> Result<Answered<Option<String>>, QueryError> {
         let key = self.project(ProjectQuery::Hover(at.clone()));
         let at = at.clone();
@@ -1109,6 +1116,14 @@ mod tests {
                 external: false,
             }])
         }
+        async fn implementations(&self, at: &At) -> Result<Vec<Location>, QueryError> {
+            let version = self.asked("implementations").await?;
+            Ok(vec![Location {
+                file: at.file.clone(),
+                span: span(at.pos, version),
+                external: false,
+            }])
+        }
         async fn hover(&self, at: &At) -> Result<Option<String>, QueryError> {
             let version = self.asked("hover").await?;
             self.0.hover_calls.fetch_add(1, Ordering::SeqCst);
@@ -1205,21 +1220,23 @@ mod tests {
 
     /// The kinds of query in the order `ask_all` asks them, and those that depend on
     /// a whole tree.
-    const ALL: [&str; 9] = [
+    const ALL: [&str; 10] = [
         "document_symbols",
         "text_symbols",
         "definition",
         "references",
+        "implementations",
         "hover",
         "incoming_calls",
         "outgoing_calls",
         "workspace_symbols",
         "diagnostics",
     ];
-    const WHOLE_TREE: [&str; 8] = [
+    const WHOLE_TREE: [&str; 9] = [
         "document_symbols",
         "definition",
         "references",
+        "implementations",
         "hover",
         "incoming_calls",
         "outgoing_calls",
@@ -1240,6 +1257,7 @@ mod tests {
         record!(lease.text_symbols(&ask.file, ask.text));
         record!(lease.definition(&ask.at));
         record!(lease.references(&ask.at));
+        record!(lease.implementations(&ask.at));
         record!(lease.hover(&ask.at));
         record!(lease.incoming_calls(&ask.at));
         record!(lease.outgoing_calls(&ask.at));
@@ -1329,12 +1347,26 @@ mod tests {
             (
                 "the position",
                 |_, _, ask| ask.at.pos = Pos { line: 3, col: 4 },
-                &["definition", "references", "hover", "incoming_calls", "outgoing_calls"],
+                &[
+                    "definition",
+                    "references",
+                    "implementations",
+                    "hover",
+                    "incoming_calls",
+                    "outgoing_calls",
+                ],
             ),
             (
                 "the file of the position",
                 |_, _, ask| ask.at.file = file("b.rs"),
-                &["definition", "references", "hover", "incoming_calls", "outgoing_calls"],
+                &[
+                    "definition",
+                    "references",
+                    "implementations",
+                    "hover",
+                    "incoming_calls",
+                    "outgoing_calls",
+                ],
             ),
             (
                 "the workspace query",
@@ -1396,7 +1428,7 @@ mod tests {
         let values = |answers: &[(String, bool)]| answers.iter().map(|(v, _)| v.clone()).collect::<Vec<_>>();
         assert_eq!(values(&later), values(&first));
         let reused: Vec<_> = later.iter().map(|(_, reused)| *reused).collect();
-        assert_eq!(reused, [true, true, true, true, true, true, true, false, true]);
+        assert_eq!(reused, [true, true, true, true, true, true, true, true, false, true]);
     }
 
     /// What `recall` finds of every cached kind of question: the kind and what was found.
@@ -1423,6 +1455,10 @@ mod tests {
             recalled!(
                 "references",
                 pool.recall::<Vec<Location>>(key, &be, ProjectQuery::References(at.clone()))
+            );
+            recalled!(
+                "implementations",
+                pool.recall::<Vec<Location>>(key, &be, ProjectQuery::Implementations(at.clone()))
             );
             recalled!(
                 "hover",
@@ -1576,6 +1612,7 @@ mod tests {
                 "text_symbols",
                 "definition",
                 "references",
+                "implementations",
                 "incoming_calls",
                 "outgoing_calls",
                 "workspace_symbols",
@@ -2080,6 +2117,7 @@ mod tests {
             Question::Project(ProjectQuery::DocumentSymbols(own_file.clone())),
             Question::Project(ProjectQuery::Definition(at.clone())),
             Question::Project(ProjectQuery::References(at.clone())),
+            Question::Project(ProjectQuery::Implementations(at.clone())),
             Question::Project(ProjectQuery::Hover(at.clone())),
             Question::Project(ProjectQuery::Incoming(at.clone())),
             Question::Project(ProjectQuery::Outgoing(at)),
@@ -2104,6 +2142,9 @@ mod tests {
                 }),
                 ProjectQuery::References(at) => Box::pin(async move {
                     lease.references(at).await.unwrap();
+                }),
+                ProjectQuery::Implementations(at) => Box::pin(async move {
+                    lease.implementations(at).await.unwrap();
                 }),
                 ProjectQuery::Hover(at) => Box::pin(async move {
                     lease.hover(at).await.unwrap();

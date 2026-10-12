@@ -17,6 +17,7 @@ import type { DirEntry } from "./DirEntry";
 import type { Impact } from "./Impact";
 import type { Lens } from "./Lens";
 import type { LineDelta } from "./LineDelta";
+import type { LocationRows } from "./LocationRows";
 import type { Locations } from "./Locations";
 import type { Manifest } from "./Manifest";
 import type { PullRequestInfo } from "./PullRequestInfo";
@@ -60,7 +61,7 @@ baseHighlights: Array<number>,
 /**
  * The same for `target`.
  */
-targetHighlights: Array<number>, } | { "type": "review" } & ReviewUpdate | { "type": "reviews", updates: Array<ReviewUpdate>, } | { "type": "baseDiff" } & BaseDiff | { "type": "hover", revision: number, side: Side, text: string | null, codeHighlights: Array<Array<number>>, unavailable: Unavailable | null, } | { "type": "definition" } & Locations | { "type": "references" } & Locations | { "type": "diagnostics", revision: number, path: string, diagnostics: Array<Diagnostic>, 
+targetHighlights: Array<number>, } | { "type": "review" } & ReviewUpdate | { "type": "reviews", updates: Array<ReviewUpdate>, } | { "type": "baseDiff" } & BaseDiff | { "type": "hover", revision: number, side: Side, text: string | null, codeHighlights: Array<Array<number>>, unavailable: Unavailable | null, } | { "type": "definition" } & Locations | { "type": "references" } & LocationRows | { "type": "implementations" } & LocationRows | { "type": "diagnostics", revision: number, path: string, diagnostics: Array<Diagnostic>, 
 /**
  * How many of `diagnostics` to tell the viewer about: hints are not counted.
  */

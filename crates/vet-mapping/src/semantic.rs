@@ -2,7 +2,8 @@
 
 use vet_app::ports::{FoundServer, ServerOrigin, ServerState, Tsserver};
 use vet_app::servers::ServerStatus;
-use vet_core::content::RepoPath;
+use vet_core::content::{FileDiff, LineRange, RepoPath};
+use vet_core::review::Side;
 use vet_protocol as p;
 use vet_semantic::derived::{
     Bounds, CallSite, Change, ChangedSymbol, Changes, Derived, Fate, Inputs, Reach, Reference, RemovalImpact,
@@ -76,6 +77,107 @@ fn reference(r: &Reference) -> p::Reference {
 
 pub fn locations(l: &[Location]) -> Vec<p::SemanticLocation> {
     l.iter().map(location).collect()
+}
+
+/// The most rows an answer lists.
+pub const MAX_ROWS: usize = 200;
+/// The most UTF-16 units of a line a row shows.
+const MAX_ROW_TEXT: u32 = 300;
+
+fn utf16_len(s: &str) -> u32 {
+    sat_u32(s.encode_utf16().count())
+}
+
+/// The line `line` (0-based) of `text`; empty past its end.
+pub fn line_at(text: &str, line: u32) -> &str {
+    text.lines().nth(line as usize).unwrap_or("")
+}
+
+/// Where a place on `side` stands against the diff: `files` are the changed files.
+pub fn change_at(files: &[FileDiff], side: Side, file: &RepoPath, line: u32) -> p::LocationChange {
+    let on_side = |f: &&FileDiff| match side {
+        Side::Base => f.old_path.as_ref() == Some(file),
+        Side::Target => f.new_path.as_ref() == Some(file),
+    };
+    let Some(diff) = files.iter().find(on_side) else {
+        return p::LocationChange::Unchanged;
+    };
+    let at = LineRange {
+        start: line,
+        end: line + 1,
+    };
+    let touched = diff.hunks.iter().any(|h| {
+        at.intersects(match side {
+            Side::Base => h.old,
+            Side::Target => h.new,
+        })
+    });
+    if touched {
+        p::LocationChange::Hunk
+    } else {
+        p::LocationChange::File
+    }
+}
+
+/// A row for the reference `r`, whose line is `line_text` (the whole line, if it could be read).
+pub fn row(r: &Reference, line_text: &str, change: p::LocationChange) -> p::LocationRow {
+    let span = r.location.span;
+    let trimmed = line_text.trim_start();
+    let lead = utf16_len(&line_text[..line_text.len() - trimmed.len()]);
+    let mut shown = 0;
+    let text: String = trimmed
+        .trim_end()
+        .chars()
+        .take_while(|c| {
+            shown += c.len_utf16() as u32;
+            shown <= MAX_ROW_TEXT
+        })
+        .collect();
+    let len = utf16_len(&text);
+    let match_start = span.start.col.saturating_sub(lead).min(len);
+    let mut match_end = if span.end.line == span.start.line {
+        span.end.col.saturating_sub(lead).clamp(match_start, len)
+    } else {
+        len
+    };
+    if match_end == match_start {
+        // A server may point at a name without giving its extent.
+        let word = text
+            .encode_utf16()
+            .skip(match_start as usize)
+            .take_while(|&u| char::from_u32(u.into()).is_some_and(|c| c.is_alphanumeric() || c == '_'))
+            .count();
+        match_end += sat_u32(word);
+    }
+    p::LocationRow {
+        path: r.location.file.to_string_lossy(),
+        line: span.start.line + 1,
+        col: span.start.col + 1,
+        within: r.within.as_ref().map(symbol_id),
+        text,
+        match_start,
+        match_end,
+        change,
+        external: r.location.external,
+    }
+}
+
+/// The rows by path and line, those in the repository before the others, cut to [`MAX_ROWS`];
+/// with how many there were. A cut keeps the places in changed hunks, then those in changed
+/// files, before the others.
+pub fn finish(mut rows: Vec<p::LocationRow>) -> (Vec<p::LocationRow>, u32) {
+    let total = sat_u32(rows.len());
+    if rows.len() > MAX_ROWS {
+        let rank = |r: &p::LocationRow| match r.change {
+            p::LocationChange::Hunk => 0,
+            p::LocationChange::File => 1,
+            p::LocationChange::Unchanged => 2,
+        };
+        rows.sort_by_key(|r| (rank(r), r.external));
+        rows.truncate(MAX_ROWS);
+    }
+    rows.sort_by(|a, b| (a.external, &a.path, a.line, a.col).cmp(&(b.external, &b.path, b.line, b.col)));
+    (rows, total)
 }
 
 pub fn diagnostics(d: &[Diagnostic]) -> Vec<p::Diagnostic> {
@@ -292,5 +394,173 @@ pub fn servers(all: &[ServerStatus]) -> p::Response {
                 can_install: s.can_install(),
             })
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use vet_core::content::Hunk;
+
+    use super::*;
+
+    fn reference(file: &str, from: (u32, u32), to: (u32, u32), external: bool) -> Reference {
+        Reference {
+            location: Location {
+                file: RepoPath::from(file),
+                span: Span {
+                    start: Pos {
+                        line: from.0,
+                        col: from.1,
+                    },
+                    end: Pos { line: to.0, col: to.1 },
+                },
+                external,
+            },
+            within: None,
+        }
+    }
+
+    fn diff(path: &str, hunks: &[(u32, u32, u32, u32)]) -> FileDiff {
+        FileDiff {
+            old_path: Some(RepoPath::from(path)),
+            new_path: Some(RepoPath::from(path)),
+            old_blob: None,
+            new_blob: None,
+            hunks: hunks
+                .iter()
+                .map(|&(os, oe, ns, ne)| Hunk {
+                    old: LineRange { start: os, end: oe },
+                    new: LineRange { start: ns, end: ne },
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_row_shows_the_trimmed_line_with_the_match_inside_it() {
+        let r = reference("a.cs", (3, 12), (3, 15), false);
+        let row = row(&r, "        x = Foo();  ", p::LocationChange::Unchanged);
+        assert_eq!((row.line, row.col), (4, 13));
+        assert_eq!(row.text, "x = Foo();");
+        assert_eq!(&row.text[row.match_start as usize..row.match_end as usize], "Foo");
+    }
+
+    #[test]
+    fn a_place_without_extent_marks_the_name_it_points_at() {
+        let r = reference("Program.cs", (9, 15), (9, 15), false);
+        let row = row(&r, "    public int Area() => 4;", p::LocationChange::Unchanged);
+        assert_eq!(&row.text[row.match_start as usize..row.match_end as usize], "Area");
+    }
+
+    #[test]
+    fn match_columns_count_utf16_units_not_bytes() {
+        // "é" is two bytes, the emoji one scalar of two UTF-16 units.
+        let r = reference("a.rs", (0, 4), (0, 7), false);
+        let row = row(&r, "é😀 f(x)", p::LocationChange::Unchanged);
+        let units: Vec<u16> = row.text.encode_utf16().collect();
+        let matched = String::from_utf16(&units[row.match_start as usize..row.match_end as usize]).unwrap();
+        assert_eq!(matched, "f(x");
+    }
+
+    #[test]
+    fn a_match_over_several_lines_ends_with_the_first_line() {
+        let r = reference("a.rs", (1, 4), (3, 1), false);
+        let row = row(&r, "    fn run() {", p::LocationChange::Unchanged);
+        assert_eq!(
+            &row.text[row.match_start as usize..row.match_end as usize],
+            "fn run() {"
+        );
+    }
+
+    #[test]
+    fn a_long_line_is_cut_and_the_match_stays_inside_the_text() {
+        let line = "x".repeat(1000);
+        let r = reference("a.rs", (0, 900), (0, 910), false);
+        let row = row(&r, &line, p::LocationChange::Unchanged);
+        assert_eq!(row.text.len(), 300);
+        assert!(row.match_start <= row.match_end && row.match_end <= 300);
+    }
+
+    #[test]
+    fn a_line_that_could_not_be_read_leaves_an_empty_text() {
+        let r = reference("/dep/lib.rs", (7, 2), (7, 5), true);
+        let row = row(&r, "", p::LocationChange::Unchanged);
+        assert_eq!((row.text.as_str(), row.match_start, row.match_end), ("", 0, 0));
+        assert!(row.external);
+    }
+
+    #[test]
+    fn the_line_of_a_text_is_found_whatever_its_line_ending() {
+        assert_eq!(line_at("a\r\nb\nc", 1), "b");
+        assert_eq!(line_at("a\r\nb\nc", 0), "a");
+        assert_eq!(line_at("a", 5), "");
+    }
+
+    #[test]
+    fn a_place_is_in_a_hunk_in_a_changed_file_or_unchanged() {
+        let files = [diff("a.rs", &[(10, 12, 10, 15)])];
+        let a = RepoPath::from("a.rs");
+        assert_eq!(change_at(&files, Side::Target, &a, 14), p::LocationChange::Hunk);
+        assert_eq!(change_at(&files, Side::Target, &a, 15), p::LocationChange::File);
+        assert_eq!(change_at(&files, Side::Base, &a, 12), p::LocationChange::File);
+        assert_eq!(change_at(&files, Side::Base, &a, 11), p::LocationChange::Hunk);
+        assert_eq!(
+            change_at(&files, Side::Target, &RepoPath::from("b.rs"), 14),
+            p::LocationChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn a_renamed_file_is_changed_under_the_name_of_the_side() {
+        let mut renamed = diff("new.rs", &[(0, 1, 0, 1)]);
+        renamed.old_path = Some(RepoPath::from("old.rs"));
+        let files = [renamed];
+        assert_eq!(
+            change_at(&files, Side::Base, &RepoPath::from("old.rs"), 0),
+            p::LocationChange::Hunk
+        );
+        assert_eq!(
+            change_at(&files, Side::Target, &RepoPath::from("old.rs"), 0),
+            p::LocationChange::Unchanged
+        );
+    }
+
+    #[test]
+    fn rows_are_ordered_by_path_and_line_with_outside_places_last_and_cut_with_the_total_kept() {
+        let at = |path: &str, line: u32, external: bool| {
+            row(
+                &reference(path, (line, 0), (line, 1), external),
+                "",
+                p::LocationChange::Unchanged,
+            )
+        };
+        let rows = vec![
+            at("/dep/a.rs", 1, true),
+            at("src/b.rs", 9, false),
+            at("src/a.rs", 20, false),
+            at("src/a.rs", 3, false),
+        ];
+        let (sorted, total) = finish(rows);
+        let order: Vec<_> = sorted.iter().map(|r| (r.path.as_str(), r.line)).collect();
+        assert_eq!(
+            order,
+            [("src/a.rs", 4), ("src/a.rs", 21), ("src/b.rs", 10), ("/dep/a.rs", 2)]
+        );
+        assert_eq!(total, 4);
+
+        let many = (0..MAX_ROWS as u32 + 7)
+            .map(|n| {
+                let mut r = at("src/a.rs", n, false);
+                if n >= MAX_ROWS as u32 {
+                    r.change = p::LocationChange::Hunk;
+                }
+                r
+            })
+            .collect();
+        let (cut, total) = finish(many);
+        assert_eq!((cut.len(), total as usize), (MAX_ROWS, MAX_ROWS + 7));
+        let hunks = cut.iter().filter(|r| r.change == p::LocationChange::Hunk).count();
+        assert_eq!(hunks, 7, "a cut keeps the places in changed hunks");
+        assert!(cut.windows(2).all(|w| w[0].line < w[1].line));
     }
 }

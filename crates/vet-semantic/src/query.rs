@@ -54,6 +54,7 @@ pub trait Primitives {
     fn text_symbols(&self, file: &RepoPath, text: &str) -> impl Future<Output = Asked<Vec<SymbolInfo>>> + Send;
     fn definition(&self, side: Side, at: &At) -> impl Future<Output = Asked<Vec<Location>>> + Send;
     fn references(&self, side: Side, at: &At) -> impl Future<Output = Asked<Vec<Location>>> + Send;
+    fn implementations(&self, side: Side, at: &At) -> impl Future<Output = Asked<Vec<Location>>> + Send;
     fn hover(&self, side: Side, at: &At) -> impl Future<Output = Asked<Option<String>>> + Send;
     fn incoming_calls(&self, side: Side, at: &At) -> impl Future<Output = Asked<Vec<SymbolInfo>>> + Send;
     fn outgoing_calls(&self, side: Side, at: &At) -> impl Future<Output = Asked<Vec<SymbolInfo>>> + Send;
@@ -244,6 +245,16 @@ impl<M: Materializer, L: ServerLauncher> Primitives for Pair<M, L> {
             &at.file,
             ProjectQuery::References(at.clone()),
             references(at)
+        )
+    }
+
+    async fn implementations(&self, side: Side, at: &At) -> Asked<Vec<Location>> {
+        ask!(
+            self,
+            side,
+            &at.file,
+            ProjectQuery::Implementations(at.clone()),
+            implementations(at)
         )
     }
 

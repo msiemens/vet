@@ -75,7 +75,7 @@ async fn typescript_installs_and_uses_the_project_typescript() {
     }
     let setup = setup().await;
     let project = tempfile::tempdir().unwrap();
-    let src = "export function helper(): number {\n  return 1;\n}\nexport const x: number = helper();\n";
+    let src = "export function helper(): number {\n  return 1;\n}\nexport const x: number = helper();\nexport interface Greeter {\n  greet(): string;\n}\nexport class Hello implements Greeter {\n  greet(): string {\n    return 'hi';\n  }\n}\n";
     std::fs::write(
         project.path().join("tsconfig.json"),
         "{\"compilerOptions\":{\"strict\":true}}",
@@ -124,6 +124,13 @@ async fn typescript_installs_and_uses_the_project_typescript() {
     };
     assert!(server.hover(&at).await.unwrap().is_some());
     assert_eq!(server.definition(&at).await.unwrap().len(), 1);
+    let interface_method = At {
+        file: path("a.ts"),
+        pos: Pos { line: 5, col: 3 },
+    };
+    let implementations = server.implementations(&interface_method).await.unwrap();
+    assert_eq!(implementations.len(), 1, "{implementations:?}");
+    assert_eq!(implementations[0].span.start.line, 8);
     server.shutdown().await;
 }
 
@@ -134,7 +141,7 @@ async fn csharp_installs_and_starts() {
     }
     let setup = setup().await;
     let project = tempfile::tempdir().unwrap();
-    let program = "namespace App;\n\npublic static class Helper\n{\n    public static int One() => 1;\n}\n\npublic static class Program\n{\n    public static int Main() => Helper.One();\n}\n";
+    let program = "namespace App;\n\npublic static class Helper\n{\n    public static int One() => 1;\n}\n\npublic static class Program\n{\n    public static int Main() => Helper.One();\n}\n\npublic interface IShape\n{\n    int Area();\n}\n\npublic class Square : IShape\n{\n    public int Area() => 4;\n}\n";
     std::fs::write(
         project.path().join("App.csproj"),
         "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n    <OutputType>Library</OutputType>\n  </PropertyGroup>\n</Project>\n",
@@ -180,6 +187,14 @@ async fn csharp_installs_and_starts() {
         pos: Pos { line: 4, col: 23 },
     };
     assert_eq!(server.references(&decl).await.unwrap().len(), 1);
+    // Lines: IShape.Area is on 14, Square.Area on 19.
+    let interface_method = At {
+        file: file.clone(),
+        pos: Pos { line: 14, col: 9 },
+    };
+    let implementations = server.implementations(&interface_method).await.unwrap();
+    assert_eq!(implementations.len(), 1, "{implementations:?}");
+    assert_eq!(implementations[0].span.start.line, 19);
     let callers: Vec<String> = server
         .incoming_calls(&decl)
         .await
@@ -260,7 +275,7 @@ async fn python_installs_and_starts() {
     .unwrap();
     std::fs::write(
         project.path().join("a.py"),
-        "def helper() -> int:\n    return 1\n\nx = helper()\n",
+        "def helper() -> int:\n    return 1\n\nx = helper()\n\nclass Base:\n    def run(self) -> int:\n        raise NotImplementedError\n\nclass Child(Base):\n    def run(self) -> int:\n        return 2\n",
     )
     .unwrap();
     install(&setup, project.path(), "python").await;
@@ -282,6 +297,13 @@ async fn python_installs_and_starts() {
     };
     assert!(server.hover(&at).await.unwrap().is_some());
     assert_eq!(server.definition(&at).await.unwrap().len(), 1);
+    let base_method = At {
+        file: path("a.py"),
+        pos: Pos { line: 6, col: 9 },
+    };
+    // Pyright has no implementation request: the query fails and says so.
+    let error = server.implementations(&base_method).await.unwrap_err();
+    assert!(error.0.contains("implementation"), "{error:?}");
 
     // Other text under the file's name, as for a base side.
     let names: Vec<String> = server

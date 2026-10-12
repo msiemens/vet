@@ -78,6 +78,59 @@ pub struct Locations {
     pub unavailable: Option<Unavailable>,
 }
 
+/// Where a place stands against the changeset, on the side that was asked about.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum LocationChange {
+    /// In a file the changeset does not touch, or outside the repository.
+    Unchanged,
+    /// In a changed file, outside its changed lines.
+    File,
+    /// In a changed hunk.
+    Hunk,
+}
+
+/// A place a navigation request found, with what a list of such places shows.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LocationRow {
+    /// Repository-relative; an absolute path if `external`.
+    pub path: String,
+    /// 1-based, where the match starts.
+    pub line: u32,
+    /// 1-based UTF-16 column, where the match starts.
+    pub col: u32,
+    /// The innermost namespace, type or function around it; absent at the top level of a file,
+    /// outside the repository and where the language server cannot list the file's symbols.
+    pub within: Option<SymbolId>,
+    /// The line of `line` without surrounding whitespace, and cut after a few hundred characters;
+    /// empty where the file has no text to read.
+    pub text: String,
+    /// Where the match is in `text`: start and end (exclusive), UTF-16 offsets. The end of the
+    /// text if the match goes on beyond the line.
+    pub match_start: u32,
+    pub match_end: u32,
+    pub change: LocationChange,
+    /// Outside the repository: a dependency or toolchain source, which Vet has no snapshot of.
+    pub external: bool,
+}
+
+/// `revision` and `side` are those of the request. `rows` are the first of `total` places
+/// that are in the repository, by path and line, then those outside, likewise.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LocationRows {
+    pub revision: u32,
+    pub side: Side,
+    pub rows: Vec<LocationRow>,
+    /// More than `rows` has when the answer was cut.
+    pub total: u32,
+    pub unavailable: Option<Unavailable>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

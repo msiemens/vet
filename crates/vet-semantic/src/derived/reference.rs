@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use vet_core::content::RepoPath;
 use vet_core::review::Side;
 
-use super::Inputs;
+use super::{Derived, Inputs};
 use crate::ports::{Location, Sym, SymbolInfo};
 use crate::query::Primitives;
 use crate::symbols::enclosing;
@@ -17,6 +17,13 @@ pub struct Reference {
     /// The innermost container (see [`SymbolInfo::container`]) the reference is in. `None` at the
     /// top level of a file, outside the repository and where the outline of its file is unknown.
     pub within: Option<Sym>,
+}
+
+/// `locations` on `side` with the symbols around them (derived).
+pub async fn located(p: &impl Primitives, side: Side, locations: Vec<Location>) -> Derived<Vec<Reference>> {
+    let mut inputs = Inputs::new("located");
+    let value = within(p, &mut inputs, side, locations).await;
+    Derived { value, inputs }
 }
 
 /// `locations` with the symbols around them, from the outlines of their files on `side`. An

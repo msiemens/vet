@@ -506,6 +506,19 @@ impl Orchestrator {
                     .references(revision, side, &path, line, col)
                     .await
             }),
+            Request::Implementations {
+                project,
+                revision,
+                side,
+                path,
+                line,
+                col,
+            } => reply(async move {
+                self.ready(project)
+                    .await?
+                    .implementations(revision, side, &path, line, col)
+                    .await
+            }),
             Request::Diagnostics {
                 project,
                 revision,

@@ -4,10 +4,12 @@
 //! never takes the write token, and has no handle to the review database, so semantic work can
 //! never make a review command wait, and no review command waits for it.
 
+use std::collections::BTreeMap;
 use std::ops::Deref;
 use std::sync::Arc;
 
-use vet_core::content::{FileDiff, RepoPath};
+use vet_core::content::{EntryKind, FileDiff, RepoPath};
+use vet_core::review::Side;
 
 use super::derived::{Derived, Diffed};
 use super::hold::Published;
@@ -99,6 +101,29 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> R
             }
         }
         Ok(found)
+    }
+
+    /// The text of `path` on `side` of `revision`, changed or not; `None` where the file is not
+    /// there or has no readable text.
+    pub async fn side_text(&self, revision: u32, side: Side, path: &RepoPath) -> Result<Option<String>> {
+        let entry = {
+            let st = self.published.read();
+            check_revision(&st, revision)?;
+            let snapshot = match side {
+                Side::Base => &st.base,
+                Side::Target => &st.target,
+            };
+            snapshot
+                .entries
+                .get(path)
+                .filter(|e| e.kind == EntryKind::File)
+                .map(|e| e.blob)
+        };
+        let Some(blob) = entry else {
+            return Ok(None);
+        };
+        let text = self.acquisition.text_of(&BTreeMap::new(), path, blob).await?;
+        Ok(text.ok())
     }
 
     /// The text diff of `revision`, for the analyses that map symbols to hunks. It is the state's

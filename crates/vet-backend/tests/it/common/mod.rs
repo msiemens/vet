@@ -11,7 +11,8 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    Diagnostic, Locations, ProjectId, Request, Response, ServerInfo, ServerMessage, ServerState, Side, Unavailable,
+    Diagnostic, LocationRows, Locations, ProjectId, Request, Response, ServerInfo, ServerMessage, ServerState, Side,
+    Unavailable,
 };
 use vet_transport::{Events, Handler};
 
@@ -199,7 +200,7 @@ impl Client {
         side: Side,
         path: &str,
         (line, col): (u32, u32),
-    ) -> Locations {
+    ) -> LocationRows {
         let request = Request::References {
             project,
             revision,
@@ -210,6 +211,28 @@ impl Client {
         };
         match self.call(request).await.unwrap() {
             Response::References(locations) => locations,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    pub async fn implementations(
+        &self,
+        project: ProjectId,
+        revision: u32,
+        side: Side,
+        path: &str,
+        (line, col): (u32, u32),
+    ) -> LocationRows {
+        let request = Request::Implementations {
+            project,
+            revision,
+            side,
+            path: path.into(),
+            line,
+            col,
+        };
+        match self.call(request).await.unwrap() {
+            Response::Implementations(rows) => rows,
             other => panic!("{other:?}"),
         }
     }

@@ -21,7 +21,8 @@ use lsp_types::Uri;
 use lsp_types::notification::{DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument};
 use lsp_types::request::{
     CallHierarchyIncomingCalls, CallHierarchyOutgoingCalls, CallHierarchyPrepare, DocumentDiagnosticRequest,
-    DocumentSymbolRequest, GotoDefinition, HoverRequest, References, Request, WorkspaceSymbolRequest,
+    DocumentSymbolRequest, GotoDefinition, GotoImplementation, HoverRequest, References, Request,
+    WorkspaceSymbolRequest,
 };
 use vet_core::content::RepoPath;
 use vet_semantic::ports::{
@@ -278,6 +279,19 @@ impl LspServer {
                     external: true,
                 }
             }
+        }
+    }
+
+    /// The places of an answer to `definition` or `implementation`, in the server's order.
+    fn goto_locations(&self, response: Option<lsp::GotoDefinitionResponse>) -> Vec<Location> {
+        match response {
+            None => Vec::new(),
+            Some(lsp::GotoDefinitionResponse::Scalar(l)) => vec![self.location(&l.uri, l.range)],
+            Some(lsp::GotoDefinitionResponse::Array(ls)) => ls.iter().map(|l| self.location(&l.uri, l.range)).collect(),
+            Some(lsp::GotoDefinitionResponse::Link(ls)) => ls
+                .iter()
+                .map(|l| self.location(&l.target_uri, l.target_selection_range))
+                .collect(),
         }
     }
 
@@ -695,15 +709,22 @@ impl LanguageServer for LspServer {
             .request::<GotoDefinition>(Some((&at.file, Needs::Project)), params)
             .await?;
         self.log_query("definition", Place(at), &timed, "");
-        Ok(match response? {
-            None => Vec::new(),
-            Some(lsp::GotoDefinitionResponse::Scalar(l)) => vec![self.location(&l.uri, l.range)],
-            Some(lsp::GotoDefinitionResponse::Array(ls)) => ls.iter().map(|l| self.location(&l.uri, l.range)).collect(),
-            Some(lsp::GotoDefinitionResponse::Link(ls)) => ls
-                .iter()
-                .map(|l| self.location(&l.target_uri, l.target_selection_range))
-                .collect(),
-        })
+        Ok(self.goto_locations(response?))
+    }
+
+    async fn implementations(&self, at: &At) -> Result<Vec<Location>, QueryError> {
+        let params = lsp::request::GotoImplementationParams {
+            text_document_position_params: self.position_params(at)?,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let Asked { response, timed } = self
+            .request::<GotoImplementation>(Some((&at.file, Needs::Project)), params)
+            .await?;
+        let response = response?;
+        let found = self.goto_locations(response);
+        self.log_query("implementation", Place(at), &timed, &format!(", {} found", found.len()));
+        Ok(found)
     }
 
     async fn references(&self, at: &At) -> Result<Vec<Location>, QueryError> {

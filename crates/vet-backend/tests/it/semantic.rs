@@ -11,8 +11,8 @@ use std::time::Duration;
 use crate::common::{Client, config, find, git, repo_with, write};
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{
-    CallFate, Event, Reach, Request, Response, ServerMessage, ServerState, Side, SymbolChange, SymbolId,
-    UnavailableKind,
+    CallFate, Event, LocationChange, Reach, Request, Response, ServerMessage, ServerState, Side, SymbolChange,
+    SymbolId, UnavailableKind,
 };
 
 const BASE: &str = "\
@@ -158,8 +158,20 @@ async fn rust_semantics_through_the_protocol() {
     else {
         panic!("not references");
     };
-    assert_eq!(refs.locations.len(), 1, "{refs:?}");
-    assert_eq!(refs.locations[0].span.start.line, find(DIRTY, "keep()", 1, 0).0);
+    assert_eq!(refs.rows.len(), 1, "{refs:?}");
+    assert_eq!(refs.rows[0].line, find(DIRTY, "keep()", 1, 0).0 + 1);
+    let row = &refs.rows[0];
+    assert_eq!(row.text, "keep()");
+    assert_eq!(&row.text[row.match_start as usize..row.match_end as usize], "keep");
+    assert_eq!(
+        row.within,
+        Some(SymbolId {
+            path: path.into(),
+            name: name(&["fresh"])
+        })
+    );
+    assert_eq!(row.change, LocationChange::Hunk, "{refs:?}");
+    assert!(!row.external);
 
     // The base side is a different tree: `gone` only exists there.
     let (line, col) = find(BASE, "gone()", 1, 1);

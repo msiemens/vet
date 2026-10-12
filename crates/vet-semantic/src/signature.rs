@@ -140,6 +140,9 @@ mod tests {
         async fn references(&self, _: Side, _: &At) -> Asked<Vec<Location>> {
             answered(vec![])
         }
+        async fn implementations(&self, _: Side, _: &At) -> Asked<Vec<Location>> {
+            answered(vec![])
+        }
         async fn hover(&self, _: Side, _: &At) -> Asked<Option<String>> {
             match self.0 {
                 Ok(text) => answered(text.map(String::from)),

@@ -268,6 +268,9 @@ pub trait LanguageServer: Send + Sync {
     fn definition(&self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
     /// Without the declaration itself.
     fn references(&self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
+    /// The implementations of the interface, trait or abstract member at `at`. A server that
+    /// does not offer the operation fails the query.
+    fn implementations(&self, at: &At) -> impl Future<Output = Result<Vec<Location>, QueryError>> + Send;
     fn hover(&self, at: &At) -> impl Future<Output = Result<Option<String>, QueryError>> + Send;
     /// Callers of the symbol at `at` that are inside the root.
     fn incoming_calls(&self, at: &At) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;

@@ -19,7 +19,7 @@ use crate::query::{Asked, SemanticError};
 pub use changed::{Change, ChangedSymbol, Changes, Gap, Texts, changed_symbols};
 pub use impact::{SymbolImpact, impact};
 pub use reach::{EntryPoint, EntryPoints, Reach, reachability};
-pub use reference::Reference;
+pub use reference::{Reference, located};
 pub use removal::{CallSite, Fate, RemovalImpact, removal_impact};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

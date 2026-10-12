@@ -6,9 +6,9 @@ use ts_rs::TS;
 use crate::{
     Account, BackendSettings, Base, BaseDiff, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow,
     CheckLog, CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, Highlights, Impact, Lens, LineDelta,
-    Locations, Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject,
-    RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange, TextContent,
-    Thread, ThreadTarget, Unavailable, VersionInfo,
+    LocationRows, Locations, Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability,
+    RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange,
+    TextContent, Thread, ThreadTarget, Unavailable, VersionInfo,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -124,7 +124,8 @@ pub enum Response {
         unavailable: Option<Unavailable>,
     },
     Definition(Locations),
-    References(Locations),
+    References(LocationRows),
+    Implementations(LocationRows),
     Diagnostics {
         revision: u32,
         path: String,

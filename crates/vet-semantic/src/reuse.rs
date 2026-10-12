@@ -49,6 +49,7 @@ pub enum ProjectQuery {
     DocumentSymbols(RepoPath),
     Definition(At),
     References(At),
+    Implementations(At),
     Hover(At),
     Incoming(At),
     Outgoing(At),

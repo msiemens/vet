@@ -86,8 +86,8 @@ async fn python_semantics_through_the_protocol() {
     let refs = client
         .references(project, revision, Side::Target, path, find(DIRTY, "keep", 0, 1))
         .await;
-    assert_eq!(refs.locations.len(), 1, "{refs:?}");
-    assert_eq!(refs.locations[0].span.start.line, find(DIRTY, "keep()", 1, 0).0);
+    assert_eq!(refs.rows.len(), 1, "{refs:?}");
+    assert_eq!(refs.rows[0].line, find(DIRTY, "keep()", 1, 0).0 + 1);
 
     let (diagnostics, unavailable) = client.diagnostics(project, revision, path).await;
     assert_eq!(unavailable, None);
@@ -107,8 +107,8 @@ async fn python_semantics_through_the_protocol() {
     let refs = client
         .references(project, revision, Side::Base, path, find(BASE, "gone", 0, 1))
         .await;
-    assert_eq!(refs.locations.len(), 1, "{refs:?}");
-    assert_eq!(refs.locations[0].span.start.line, find(BASE, "gone()", 1, 0).0);
+    assert_eq!(refs.rows.len(), 1, "{refs:?}");
+    assert_eq!(refs.rows[0].line, find(BASE, "gone()", 1, 0).0 + 1);
 
     // Derived results run on both servers.
     let Response::ChangedSymbols(changed) = client

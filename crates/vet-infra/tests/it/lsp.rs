@@ -37,6 +37,18 @@ pub fn helper() -> u32 {
 pub fn entry() -> u32 {
     helper()
 }
+
+pub trait Shape {
+    fn area(&self) -> u32;
+}
+
+pub struct Square(u32);
+
+impl Shape for Square {
+    fn area(&self) -> u32 {
+        self.0 * self.0
+    }
+}
 ";
 
 fn installed(binary: &str) -> bool {
@@ -133,6 +145,15 @@ async fn rust_analyzer_answers_the_primitive_queries() {
     let refs = server.references(&helper).await.unwrap();
     assert_eq!(refs.len(), 1, "{refs:?}");
     assert_eq!(refs[0].span.start.line, call.pos.line);
+
+    let trait_method = At {
+        file: lib.clone(),
+        pos: find(LIB, "fn area", 0, 3),
+    };
+    let implementations = server.implementations(&trait_method).await.unwrap();
+    assert_eq!(implementations.len(), 1, "{implementations:?}");
+    assert_eq!(implementations[0].file, lib);
+    assert_eq!(implementations[0].span.start.line, find(LIB, "fn area", 1, 0).line);
 
     let callers = server.incoming_calls(&helper).await.unwrap();
     let callers: Vec<String> = callers.iter().map(|s| s.sym.name.join("::")).collect();

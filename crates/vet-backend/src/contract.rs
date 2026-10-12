@@ -115,6 +115,7 @@ pub fn effect(request: &Request) -> Effect {
         | Request::Hover { .. }
         | Request::Definition { .. }
         | Request::References { .. }
+        | Request::Implementations { .. }
         | Request::Diagnostics { .. }
         | Request::ChangedSymbols { .. }
         | Request::Signature { .. }
@@ -396,6 +397,14 @@ mod tests {
                 col: 0,
             },
             Request::References {
+                project,
+                revision: 0,
+                side: Side::Target,
+                path: path(),
+                line: 0,
+                col: 0,
+            },
+            Request::Implementations {
                 project,
                 revision: 0,
                 side: Side::Target,

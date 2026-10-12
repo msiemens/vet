@@ -287,9 +287,20 @@ pub enum Request {
         line: u32,
         col: u32,
     },
-    /// The references to the symbol at the position, without its declaration.
-    /// Answers with `Response::References`; otherwise like `Hover`.
+    /// The references to the symbol at the position, without its declaration, as rows to list
+    /// (see `LocationRows`). Answers with `Response::References`; otherwise like `Hover`.
     References {
+        project: ProjectId,
+        revision: u32,
+        side: Side,
+        path: String,
+        line: u32,
+        col: u32,
+    },
+    /// The implementations of the interface, trait or abstract member at the position, as rows to
+    /// list. A server that cannot answer makes `unavailable` set. Answers with
+    /// `Response::Implementations`; otherwise like `Hover`.
+    Implementations {
         project: ProjectId,
         revision: u32,
         side: Side,

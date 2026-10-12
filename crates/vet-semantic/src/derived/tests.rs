@@ -141,6 +141,9 @@ impl Primitives for Fake {
     async fn references(&self, side: Side, a: &At) -> Asked<Vec<Location>> {
         self.answer(self.references.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
+    async fn implementations(&self, _: Side, _: &At) -> Asked<Vec<Location>> {
+        self.answer(vec![])
+    }
     async fn hover(&self, _: Side, _: &At) -> Asked<Option<String>> {
         self.answer(None)
     }

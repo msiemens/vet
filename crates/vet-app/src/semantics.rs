@@ -15,8 +15,8 @@ use vet_core::content::{FileDiff, RepoPath, SnapshotId};
 use vet_core::review::Side;
 use vet_engine::{Computed, Engine, Kind, Limits, Linger, Progress, Retention};
 use vet_semantic::derived::{
-    Bounds, Change, Changes, Derived, EntryPoints, Reach, RemovalImpact, SymbolImpact, Texts, changed_symbols, impact,
-    reachability, removal_impact,
+    Bounds, Change, Changes, Derived, EntryPoints, Reach, Reference, RemovalImpact, SymbolImpact, Texts,
+    changed_symbols, impact, located, reachability, removal_impact,
 };
 use vet_semantic::join::{bounded, join};
 use vet_semantic::pool::{Pool, Target};
@@ -415,21 +415,57 @@ where
         .await
     }
 
+    /// The references to the symbol at `at`, without its declaration, each with the symbol it is in.
     pub async fn references(
         &self,
         view: &RevisionView<G, S>,
         revision: u32,
         side: Side,
         at: &At,
-    ) -> Fallible<Answer<Vec<Location>>> {
+    ) -> Fallible<Answer<Vec<Reference>>> {
         self.current(
             revision,
             Box::pin(async move {
                 let pair = self.pair(view, revision).await?;
-                Ok(Answer::of(revision, pair.references(side, at).await))
+                Ok(Self::within(revision, side, &pair, pair.references(side, at).await).await)
             }),
         )
         .await
+    }
+
+    /// The implementations of the interface, trait or abstract member at `at`, each with the
+    /// symbol it is in.
+    pub async fn implementations(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        side: Side,
+        at: &At,
+    ) -> Fallible<Answer<Vec<Reference>>> {
+        self.current(
+            revision,
+            Box::pin(async move {
+                let pair = self.pair(view, revision).await?;
+                Ok(Self::within(revision, side, &pair, pair.implementations(side, at).await).await)
+            }),
+        )
+        .await
+    }
+
+    async fn within(
+        revision: u32,
+        side: Side,
+        pair: &Pair<M, L>,
+        asked: Asked<Vec<Location>>,
+    ) -> Answer<Vec<Reference>> {
+        match asked {
+            Ok(answered) => Answer {
+                revision,
+                result: Ok(located(pair, side, answered.value).await.value),
+                provenance: Some(answered.provenance),
+            },
+            Err(e) => Answer::of(revision, Err(e)),
+        }
     }
 
     /// Diagnostics of a file of the target side.
@@ -869,6 +905,9 @@ mod tests {
             Ok(vec![])
         }
         async fn references(&self, _: &At) -> Result<Vec<Location>, QueryError> {
+            Ok(vec![])
+        }
+        async fn implementations(&self, _: &At) -> Result<Vec<Location>, QueryError> {
             Ok(vec![])
         }
         async fn hover(&self, _: &At) -> Result<Option<String>, QueryError> {

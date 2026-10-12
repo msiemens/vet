@@ -62,7 +62,9 @@ fn kind_of(key: &Key) -> Option<Kind> {
     };
     match query {
         ProjectQuery::DocumentSymbols(_) | ProjectQuery::Incoming(_) | ProjectQuery::Outgoing(_) => Some(Kind::Symbols),
-        ProjectQuery::Definition(_) | ProjectQuery::References(_) => Some(Kind::Locations),
+        ProjectQuery::Definition(_) | ProjectQuery::References(_) | ProjectQuery::Implementations(_) => {
+            Some(Kind::Locations)
+        }
         ProjectQuery::Hover(_) => Some(Kind::Hover),
         ProjectQuery::Diagnostics(_) => Some(Kind::Diagnostics),
         ProjectQuery::Workspace(_) => None,
@@ -131,6 +133,10 @@ pub(super) fn address(key: &Key) -> Option<(Address, Kind)> {
                 }
                 ProjectQuery::References(place) => {
                     digest.field("references");
+                    at(&mut digest, place);
+                }
+                ProjectQuery::Implementations(place) => {
+                    digest.field("implementations");
                     at(&mut digest, place);
                 }
                 ProjectQuery::Hover(place) => {

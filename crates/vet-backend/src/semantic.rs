@@ -2,8 +2,11 @@
 //! `vet_app::semantics`; this maps requests to them and their results to the
 //! protocol, turning a language without a usable server into `unavailable`.
 
+use std::collections::HashMap;
+
 use vet_core::content::RepoPath;
 use vet_protocol::{Response, Side};
+use vet_semantic::derived::Reference;
 use vet_semantic::ports::{At, Location};
 
 use vet_mapping::core_side;
@@ -11,6 +14,20 @@ use vet_mapping::semantic as map;
 
 use super::open::Booted;
 use super::{highlight, message};
+
+/// The largest file outside the repository whose lines are shown.
+const MAX_OUTSIDE_FILE: u64 = 8 * 1024 * 1024;
+
+/// The text of a file outside the repository (a dependency or toolchain source), which is
+/// named by its absolute path; `None` if it cannot be read.
+async fn read_outside(file: &RepoPath) -> Option<String> {
+    let path = std::path::PathBuf::from(file.to_string_lossy());
+    if tokio::fs::metadata(&path).await.ok()?.len() > MAX_OUTSIDE_FILE {
+        return None;
+    }
+    let bytes = tokio::fs::read(&path).await.ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
 
 impl Booted {
     /// The language that serves `file`, as `ListServers` names it.
@@ -80,7 +97,68 @@ impl Booted {
             .references(&self.view, revision, core_side(side), &at)
             .await
             .map_err(message)?;
-        Ok(Response::References(self.locations(answer, side, &at)))
+        Ok(Response::References(self.rows(answer, side, &at).await?))
+    }
+
+    pub async fn implementations(
+        &self,
+        revision: u32,
+        side: Side,
+        path: &str,
+        line: u32,
+        col: u32,
+    ) -> Result<Response, String> {
+        let at = map::at(path, line, col);
+        let answer = (self.semantics)
+            .implementations(&self.view, revision, core_side(side), &at)
+            .await
+            .map_err(message)?;
+        Ok(Response::Implementations(self.rows(answer, side, &at).await?))
+    }
+
+    /// The places of `answer` as rows to list: with their line, and where they stand against
+    /// the changeset on `side`.
+    async fn rows(
+        &self,
+        answer: vet_app::semantics::Answer<Vec<Reference>>,
+        side: Side,
+        at: &At,
+    ) -> Result<vet_protocol::LocationRows, String> {
+        let revision = answer.revision;
+        let (found, unavailable) = map::answer(answer.result, self.language_of(&at.file));
+        let files = self.view.changed_files(revision).await.map_err(message)?;
+        let mut texts: HashMap<RepoPath, Option<String>> = HashMap::new();
+        let mut rows = Vec::with_capacity(found.len());
+        for r in &found {
+            let file = &r.location.file;
+            if !texts.contains_key(file) {
+                let text = if r.location.external {
+                    read_outside(file).await
+                } else {
+                    self.view
+                        .side_text(revision, core_side(side), file)
+                        .await
+                        .map_err(message)?
+                };
+                texts.insert(file.clone(), text);
+            }
+            let line = r.location.span.start.line;
+            let text = texts[file].as_deref().map_or("", |t| map::line_at(t, line));
+            let change = if r.location.external {
+                vet_protocol::LocationChange::Unchanged
+            } else {
+                map::change_at(&files, core_side(side), file, line)
+            };
+            rows.push(map::row(r, text, change));
+        }
+        let (rows, total) = map::finish(rows);
+        Ok(vet_protocol::LocationRows {
+            revision,
+            side,
+            rows,
+            total,
+            unavailable,
+        })
     }
 
     pub async fn diagnostics(&self, revision: u32, path: &str) -> Result<Response, String> {

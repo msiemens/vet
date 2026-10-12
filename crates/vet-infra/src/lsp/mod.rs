@@ -513,6 +513,7 @@ fn client_capabilities() -> lsp::ClientCapabilities {
             }),
             definition: Some(Default::default()),
             references: Some(Default::default()),
+            implementation: Some(Default::default()),
             document_symbol: Some(lsp::DocumentSymbolClientCapabilities {
                 hierarchical_document_symbol_support: Some(true),
                 ..Default::default()
