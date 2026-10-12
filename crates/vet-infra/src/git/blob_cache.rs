@@ -70,3 +70,6 @@ impl BlobCache {
         Ok((found && buf.len() as u64 <= cap).then_some(buf))
     }
 }
+
+#[cfg(test)]
+mod tests;

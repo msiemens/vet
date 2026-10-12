@@ -55,3 +55,6 @@ pub(crate) fn linguist_generated(files: &[(RepoPath, Vec<u8>)], paths: Vec<RepoP
     }
     found
 }
+
+#[cfg(test)]
+mod tests;

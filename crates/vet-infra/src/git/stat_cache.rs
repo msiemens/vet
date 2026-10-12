@@ -100,3 +100,6 @@ pub(crate) fn file_stamp(path: &std::path::Path) -> Option<(u64, (i64, u32))> {
     let md = std::fs::metadata(path).ok()?;
     Some((md.len(), md.modified().map_or((0, 0), stamp)))
 }
+
+#[cfg(test)]
+mod tests;

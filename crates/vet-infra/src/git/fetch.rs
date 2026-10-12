@@ -225,3 +225,6 @@ fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs)
         .count();
     Ok(changed)
 }
+
+#[cfg(test)]
+mod tests;

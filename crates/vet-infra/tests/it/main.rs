@@ -6,6 +6,7 @@ mod common;
 mod exec;
 mod fetch;
 mod git;
+mod git_edges;
 mod lsp;
 mod materialize;
 mod remerge;

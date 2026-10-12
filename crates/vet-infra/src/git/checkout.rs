@@ -90,3 +90,6 @@ fn set_mode(dest: &Path, mode: u32) -> Result<(), GitError> {
 fn set_mode(_: &Path, _: u32) -> Result<(), GitError> {
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
