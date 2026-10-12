@@ -10,8 +10,9 @@
 //! threads and statuses, so the list is ordered by it once they are in.
 //!
 //! The token goes to the host's API and nowhere else: no redirect is followed. A failed
-//! request is logged with the account, its method, host and path, the status and the
-//! platform's message; nothing else of a request or a response is.
+//! request is logged with the account, its method, address (path and query), the scheme
+//! of its credential, the status, the platform's message and the start of the answer; never
+//! the credential.
 //!
 //! Accounts are of one organization (`dev.azure.com/<organization>`), and who the user
 //! is comes from that organization's `connectionData`, which takes a token scoped to it.

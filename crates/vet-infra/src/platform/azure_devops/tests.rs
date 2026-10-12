@@ -712,7 +712,7 @@ async fn a_rejected_token_a_forbidden_repository_a_rate_limit_and_a_down_server_
 }
 
 #[tokio::test]
-async fn a_failed_request_is_logged_with_its_method_host_and_path_and_without_its_query_or_token() {
+async fn a_failed_request_is_logged_with_its_address_scheme_and_answer_and_without_its_token() {
     set_now(NOW);
     let capture = vet_log::capture::Capture::default();
     let _logging = capture.install(vet_log::filter(None).0);
@@ -727,7 +727,7 @@ async fn a_failed_request_is_logged_with_its_method_host_and_path_and_without_it
         } else if path.ends_with("/threads") {
             Canned::json(&no_value())
         } else {
-            Canned::status(404, "")
+            Canned::status(404, &format!(r#"{{"message":"Gone: {}"}}"#, "x".repeat(400)))
         }
     });
     let found = client(&fake).list_pull_requests(&remote(), &all_open()).await.unwrap();
@@ -737,18 +737,22 @@ async fn a_failed_request_is_logged_with_its_method_host_and_path_and_without_it
     let host = fake.base().trim_start_matches("http://").to_owned();
     let line = |path: &str| {
         log.lines()
-            .find(|l| l.contains(&format!("endpoint=\"GET {host}{path}\"")))
+            .find(|l| l.contains(&format!("endpoint=\"GET {host}{path}")))
             .unwrap_or_else(|| panic!("no line for {path} in {log}"))
             .to_owned()
     };
     let statuses = line("/contoso/Shop/_apis/git/repositories/api/pullRequests/1/statuses");
     assert!(
-        statuses.contains("status=404") && statuses.contains("TF401180"),
+        statuses.contains("status=404") && statuses.contains("TF401180") && statuses.contains("auth=\"Basic\""),
         "{statuses}"
     );
-    line("/contoso/_apis/identities");
+    let identities = line("/contoso/_apis/identities?");
+    assert!(identities.contains("identityIds=me-id"), "{identities}");
+    assert!(identities.contains("queryMembership=expandedUp"), "{identities}");
+    let (_, rest) = identities.split_once("body=\"").unwrap();
+    let shown = rest.split(" reason=").next().unwrap().matches('x').count();
+    assert!((150..=200).contains(&shown), "the answer is cut to its start: {shown}");
     assert!(!log.contains("endpoint=\"-\""), "{log}");
-    assert!(!log.contains("api-version") && !log.contains("identityIds"), "{log}");
     assert!(!log.contains("secret") && !log.contains("OnNlY3JldA"), "{log}");
 }
 

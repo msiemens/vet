@@ -16,6 +16,9 @@ use vet_app::platform::{Credential, CredentialSource, PlatformError};
 /// Where the organizations are.
 pub(crate) const API_ENDPOINT: &str = "https://dev.azure.com";
 
+/// How many characters of a failed response's body are logged.
+const BODY_EXCERPT: usize = 200;
+
 /// A bearer token that was obtained elsewhere (`az account get-access-token`).
 #[derive(Debug)]
 struct Bearer(Secret);
@@ -69,7 +72,7 @@ impl Access {
             .endpoint(url(endpoint)?)
             .transport(self.transport.clone())
             .retry(retries())
-            .per_call_policies(requests())
+            .per_call_policies(requests(self.source))
             .build())
     }
 
@@ -79,7 +82,7 @@ impl Access {
             .endpoint(url(endpoint)?)
             .transport(self.transport.clone())
             .retry(retries())
-            .per_call_policies(requests())
+            .per_call_policies(requests(self.source))
             .build())
     }
 
@@ -89,7 +92,7 @@ impl Access {
             .endpoint(url(endpoint)?)
             .transport(self.transport.clone())
             .retry(retries())
-            .per_call_policies(requests())
+            .per_call_policies(requests(self.source))
             .build())
     }
 
@@ -99,7 +102,7 @@ impl Access {
             .endpoint(url(endpoint)?)
             .transport(self.transport.clone())
             .retry(retries())
-            .per_call_policies(requests())
+            .per_call_policies(requests(self.source))
             .build())
     }
 
@@ -118,9 +121,10 @@ impl Access {
             CredentialSource::Pat => request.basic_auth("", Some(&self.token)),
             CredentialSource::Cli => request.bearer_auth(&self.token),
         };
+        let auth = scheme(self.source);
         let response = request.send().await.map_err(|_| {
             let error = PlatformError::Unreachable(format!("cannot reach {account}"));
-            log_failure(account, Some(&endpoint), None, &error);
+            log_failure(account, Some((&endpoint, auth)), None, "", &error);
             error
         })?;
         let status = response.status().as_u16();
@@ -131,7 +135,13 @@ impl Access {
             .and_then(|s| s.parse::<i64>().ok());
         let body = response.text().await.unwrap_or_default();
         let fail = |error: PlatformError| {
-            log_failure(account, Some(&endpoint), Some(status), &error);
+            log_failure(
+                account,
+                Some((&endpoint, auth)),
+                Some(status),
+                &excerpt(body.as_bytes()),
+                &error,
+            );
             error
         };
         if !(200..300).contains(&status) {
@@ -224,22 +234,44 @@ fn retries() -> RetryOptions {
     RetryOptions::custom(Arc::new(Retries))
 }
 
-/// The method, host and path of a request, which name what it asked for without its query.
+/// The method, host, path and query of a request, which name what it asked for. The
+/// credential never is in the address.
 fn endpoint(method: Method, url: &Url) -> String {
     let host = url.host_str().unwrap_or_default();
+    let query = url.query().map(|q| format!("?{q}")).unwrap_or_default();
     match url.port() {
-        Some(port) => format!("{method} {host}:{port}{}", url.path()),
-        None => format!("{method} {host}{}", url.path()),
+        Some(port) => format!("{method} {host}:{port}{}{query}", url.path()),
+        None => format!("{method} {host}{}{query}", url.path()),
     }
+}
+
+/// How the credential goes with a request: the name of the scheme, never the value.
+fn scheme(source: CredentialSource) -> &'static str {
+    match source {
+        CredentialSource::Pat => "Basic",
+        CredentialSource::Cli => "Bearer",
+    }
+}
+
+/// The first part of a response body, for the log.
+fn excerpt(body: &[u8]) -> String {
+    String::from_utf8_lossy(body)
+        .chars()
+        .take(BODY_EXCERPT)
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 /// The request an error came from, carried by the error to whoever makes sense of it.
 #[derive(Debug)]
-struct FailedRequest(String);
+struct FailedRequest {
+    endpoint: String,
+    auth: &'static str,
+}
 
 impl std::fmt::Display for FailedRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.endpoint)
     }
 }
 
@@ -248,7 +280,9 @@ impl std::error::Error for FailedRequest {}
 /// Sends a request to the path the API names, turns an answer that is not a success into an
 /// error once the retries are done, and has every error say which request it was.
 #[derive(Debug)]
-struct Requests;
+struct Requests {
+    auth: &'static str,
+}
 
 #[async_trait::async_trait]
 impl Policy for Requests {
@@ -266,22 +300,30 @@ impl Policy for Requests {
         };
         answer.map_err(|error| {
             let message = error.to_string();
-            azure_core::Error::with_error(error.kind().clone(), FailedRequest(endpoint), message)
+            let failed = FailedRequest {
+                endpoint,
+                auth: self.auth,
+            };
+            azure_core::Error::with_error(error.kind().clone(), failed, message)
         })
     }
 }
 
-fn requests() -> Vec<Arc<dyn Policy>> {
-    vec![Arc::new(Requests)]
+fn requests(source: CredentialSource) -> Vec<Arc<dyn Policy>> {
+    vec![Arc::new(Requests { auth: scheme(source) })]
 }
 
 /// Why Azure DevOps refused a request. Every message is fit to show. `host` is the account's.
 pub(crate) fn failure(host: &str, error: &azure_core::Error, now: i64) -> PlatformError {
+    let mut body = String::new();
     let (status, failed) = match error.kind() {
         ErrorKind::HttpResponse {
             status, raw_response, ..
         } => {
             let status = u16::from(*status);
+            if let Some(raw) = raw_response {
+                body = excerpt(raw.body().as_ref());
+            }
             let message = raw_response
                 .as_ref()
                 .and_then(|r| r.body().json::<serde_json::Value>().ok())
@@ -300,8 +342,14 @@ pub(crate) fn failure(host: &str, error: &azure_core::Error, now: i64) -> Platfo
         ),
         _ => (None, PlatformError::Unexpected(format!("{host} could not be asked"))),
     };
-    let request = error.downcast_ref::<FailedRequest>().map(|r| r.0.as_str());
-    log_failure(host, request, status, &failed);
+    let request = error.downcast_ref::<FailedRequest>();
+    log_failure(
+        host,
+        request.map(|r| (r.endpoint.as_str(), r.auth)),
+        status,
+        &body,
+        &failed,
+    );
     failed
 }
 
@@ -335,13 +383,22 @@ fn from_status(host: &str, status: u16, message: &str, retry_after: Option<i64>,
     }
 }
 
-/// Records a failed request: never the token or anything of the request but its method, host
-/// and path.
-pub(crate) fn log_failure(account: &str, endpoint: Option<&str>, status: Option<u16>, error: &PlatformError) {
+/// Records a failed request: the method, address and the scheme of its credential (never the
+/// credential), the status and the start of the answer.
+pub(crate) fn log_failure(
+    account: &str,
+    request: Option<(&str, &str)>,
+    status: Option<u16>,
+    body: &str,
+    error: &PlatformError,
+) {
+    let (endpoint, auth) = request.unwrap_or(("-", "-"));
     tracing::warn!(
         account,
-        endpoint = endpoint.unwrap_or("-"),
+        endpoint,
+        auth,
         status = status.unwrap_or(0),
+        body,
         reason = %error,
         "Azure DevOps request failed"
     );
