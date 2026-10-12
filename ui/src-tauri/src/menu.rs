@@ -85,28 +85,15 @@ enum Surface {
 /// accelerator). Only an item's own accelerator is the menu's to handle: the window's key is
 /// handled by the window, so a menu bar item that draws it ignores the menu event the key raises
 /// (`KeyOnlyItems`), and a context menu is not attached to the window, so its accelerators fire
-/// only while it is open. A punctuation key (`[`) is left out: macOS rewrites the key equivalent
-/// of such a key to another layout's character (`[` became `ö` with the German layout installed),
-/// so the item would draw and answer the wrong key.
+/// only while it is open.
 fn accelerator(entry: &MenuEntry) -> Option<&str> {
     if let Some(accelerator) = &entry.accelerator {
         return Some(accelerator);
     }
     if cfg!(target_os = "macos") {
-        return entry.chord.as_deref().filter(|chord| !ends_in_punctuation(chord));
+        return entry.chord.as_deref();
     }
     None
-}
-
-/// Whether the key of a chord (`Cmd+Shift+[`) is a punctuation character.
-fn ends_in_punctuation(chord: &str) -> bool {
-    let key = if chord.ends_with('+') {
-        "+"
-    } else {
-        chord.rsplit('+').next().unwrap_or(chord)
-    };
-    let mut chars = key.chars();
-    matches!((chars.next(), chars.next()), (Some(c), None) if !c.is_alphanumeric())
 }
 
 /// The text of an item: its label, the detail after it, and the display shortcut where the menu
@@ -442,26 +429,6 @@ mod tests {
     }
 
     #[test]
-    fn a_punctuation_key_stays_text_because_macos_rewrites_its_key_equivalent() {
-        let items = entries(
-            r#"[{"id":"a","label":"Next Tab","shortcut":"⇧⌘]","chord":"Cmd+Shift+]"},
-            {"id":"b","label":"Zoom In","shortcut":"⌘+","chord":"Cmd++"},
-            {"id":"c","label":"Down","shortcut":"⌥↓","chord":"Alt+Down"}]"#,
-        );
-        assert_eq!(accelerator(&items[0]), None);
-        assert_eq!(accelerator(&items[1]), None);
-        assert_eq!(
-            accelerator(&items[2]),
-            if cfg!(target_os = "macos") {
-                Some("Alt+Down")
-            } else {
-                None
-            }
-        );
-        assert!(item_text(&items[0], Surface::MenuBar, false).ends_with("⇧⌘]"));
-    }
-
-    #[test]
     fn only_items_that_draw_the_windows_key_ignore_the_event_it_raises() {
         let items = entries(
             r#"[{"id":"nav","label":"Navigate","children":[
@@ -475,7 +442,7 @@ mod tests {
         let mut ids = std::collections::HashSet::new();
         key_only_ids(&items, &mut ids);
         let expected: &[&str] = if cfg!(target_os = "macos") {
-            &["deep", "next"]
+            &["commit", "deep", "next", "tab"]
         } else {
             &[]
         };
