@@ -68,6 +68,20 @@ export const TABS: { id: QueueTab; label: string }[] = [
   { id: "prs", label: "Pull requests" },
 ];
 
+/** The tab a stored value names; the first for anything else. */
+export function parseTab(text: string | undefined): QueueTab {
+  return TABS.find((t) => t.id === text)?.id ?? TABS[0].id;
+}
+
+export type QueuePanel = "details" | "files" | "comments";
+
+const PANELS: readonly QueuePanel[] = ["details", "files", "comments"];
+
+/** The side panel's tab a stored value names; Details for anything else. */
+export function parsePanel(text: string | undefined): QueuePanel {
+  return PANELS.find((p) => p === text) ?? "details";
+}
+
 /** The changeset switcher's filters are the queue's tabs, with the short name for pull requests. */
 export const SWITCHER_FILTERS: { id: QueueTab; label: string }[] = TABS.map((t) =>
   t.id === "prs" ? { ...t, label: "PRs" } : t,

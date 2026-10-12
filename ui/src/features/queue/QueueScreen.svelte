@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { Thread } from "../../generated/Thread";
+  import { readStored, writeStored } from "../../lib/storage";
   import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -19,13 +20,14 @@
   import { detailGroups } from "./details";
   import {
     type QueueRow,
-    type QueueTab,
     TABS,
     authorOf,
     changesOf,
     commentCount,
     filterRows,
     labelOf,
+    parsePanel,
+    parseTab,
     queueRows,
     reviewedOf,
     sourceText,
@@ -76,9 +78,12 @@
     },
   ];
 
-  let tab = $state<QueueTab>("all");
+  const TAB_KEY = "vet.queue.tab";
+  const PANEL_KEY = "vet.queue.panel";
+
+  let tab = $state(parseTab(readStored(TAB_KEY)));
   let query = $state("");
-  let panel = $state<"details" | "files" | "comments">("details");
+  let panel = $state(parsePanel(readStored(PANEL_KEY)));
   let sort = $state<Sort>();
 
   const rows = $derived(queueRows(queue.local, queue.pullRequests));
@@ -128,7 +133,10 @@
     <PanelTabs
       label="Changesets"
       value={tab}
-      onchange={(id) => void (tab = id)}
+      onchange={(id) => {
+        tab = id;
+        writeStored(TAB_KEY, id);
+      }}
       tabs={TABS.map((t) => ({ ...t, count: counts[t.id] }))}
     />
     <span class="grow"></span>
@@ -209,7 +217,10 @@
     <PanelTabs
       label="Selected changeset"
       value={panel}
-      onchange={(id) => void (panel = id)}
+      onchange={(id) => {
+        panel = id;
+        writeStored(PANEL_KEY, id);
+      }}
       tabs={[
         { id: "details", label: "Details" },
         { id: "files", label: "Files", count: changeset.files.length },
