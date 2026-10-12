@@ -9,6 +9,7 @@ import { errorText } from "../lib/errorText";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { session } from "./session.svelte";
+import type { Shown } from "./shown";
 import { rangeKey } from "./timelineRange";
 import { CHANGESET } from "./view";
 
@@ -65,8 +66,9 @@ class ThreadStore {
   }
 
   /** Opens a thread; resolves whether it went through. */
-  async create(revision: number, target: ThreadTarget, body: string): Promise<boolean> {
-    return this.change(this.backend?.createThread(revision, target, body, changeset.view), revision);
+  async create(shown: Shown, target: ThreadTarget, body: string): Promise<boolean> {
+    if (!changeset.admit(shown)) return false;
+    return this.change(this.backend?.createThread(shown.revision, target, body, shown.view), shown.revision);
   }
 
   async reply(thread: number, body: string): Promise<boolean> {

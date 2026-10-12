@@ -8,6 +8,7 @@ import { EditorView } from "@codemirror/view";
 import type { CommentAt } from "../../../generated/CommentAt";
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
+import type { Shown } from "../../../state/shown";
 import { lineEnd } from "./positions";
 import type { Section, ThreadState } from "./section";
 import type { ThreadSpace } from "./sectionLayout";
@@ -15,22 +16,22 @@ import { type ThreadActions, buildCard } from "./threadCard";
 import { type CardData, type InlineCard, cardHeight, cardKey, heightKey, placeThreads } from "./threadPlacement";
 import { type CardHost, setThreadCards, threadCards } from "./threadWidgets";
 
-/** What the owner asks for; each resolves whether the request went through. `revision` is the view's. */
+/** What the owner asks for; each resolves whether the request went through. `shown` is the view's. */
 export type ThreadListeners = Omit<ThreadActions, "create" | "cancelDraft" | "toggle"> & {
-  create(revision: number, target: ThreadTarget, body: string): Promise<boolean>;
+  create(shown: Shown, target: ThreadTarget, body: string): Promise<boolean>;
   /** Where a comment on a part of the file at `path` attaches, and the target line its form sits below. */
-  commentTarget(revision: number, path: string, at: CommentAt): Promise<{ target: ThreadTarget; line: number | null }>;
+  commentTarget(shown: Shown, path: string, at: CommentAt): Promise<{ target: ThreadTarget; line: number | null }>;
 };
 
 /** What a card asks of its owner, from the owner's listeners: a sent form is dismissed, and `own` says how a form is dismissed and a resolved thread opened. */
 export function threadActions(
   listeners: ThreadListeners,
-  revision: number,
+  shown: Shown,
   own: Pick<ThreadActions, "cancelDraft" | "toggle">,
 ): ThreadActions {
   return {
     create: async (target, body) => {
-      const sent = await listeners.create(revision, target, body);
+      const sent = await listeners.create(shown, target, body);
       if (sent) own.cancelDraft();
       return sent;
     },
@@ -60,7 +61,7 @@ export const threadState = (blockEl: HTMLElement): ThreadState => ({
 });
 
 export interface ThreadHost {
-  readonly revision: number;
+  readonly shown: Shown;
   readonly sections: Section[];
   readonly line: number;
   /** Lays the section out again, counting its cards as `known` heights say. */
@@ -95,7 +96,7 @@ export class ThreadLayer {
     private host: ThreadHost,
     private listeners: ThreadListeners,
   ) {
-    this.actions = threadActions(listeners, host.revision, {
+    this.actions = threadActions(listeners, host.shown, {
       cancelDraft: () => this.setDraft(undefined),
       toggle: (thread) => {
         if (!this.opened.delete(thread)) this.opened.add(thread);
@@ -150,7 +151,7 @@ export class ThreadLayer {
 
   /** Threads of another revision are not shown; the view of that revision gets them. */
   setThreads(threads: Thread[], revision: number) {
-    if (revision !== this.host.revision) return;
+    if (revision !== this.host.shown.revision) return;
     this.threads = threads;
     this.show();
   }
@@ -278,7 +279,7 @@ export class ThreadLayer {
   /** Opens the form for a comment where the backend says it attaches. */
   commentOn({ file }: Section, at: CommentAt) {
     // A newer revision replaces the view, and the request fails then.
-    void this.listeners.commentTarget(this.host.revision, file.path, at).then(
+    void this.listeners.commentTarget(this.host.shown, file.path, at).then(
       ({ target, line }) => {
         if (!this.destroyed && target.type !== "changeset")
           this.setDraft({ path: file.path, target, line: line ?? undefined });

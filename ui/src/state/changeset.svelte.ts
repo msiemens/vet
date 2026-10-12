@@ -12,6 +12,7 @@ import type { ReviewFilter } from "../generated/ReviewFilter";
 import type { NonTextKind } from "../generated/NonTextKind";
 import type { BaseChoice } from "../generated/BaseChoice";
 import type { ChangesetKey } from "../generated/ChangesetKey";
+import type { CommentAt } from "../generated/CommentAt";
 import type { View } from "../generated/View";
 import type { CommitUnit } from "../generated/CommitUnit";
 import type { Lens } from "../generated/Lens";
@@ -24,10 +25,13 @@ import { keyId } from "./changesetKey";
 import { currentFiles } from "./currentFiles";
 import { PendingOpen } from "./pendingOpen";
 import { session } from "./session.svelte";
+import { type Shown, isCurrent } from "./shown";
 import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
-import { commitView } from "./view";
+import { CHANGESET, commitView, interdiffView } from "./view";
 
 type ReviewListener = (update: ReviewUpdate) => void;
+/** Said when a request is refused or rejected because the views it came from are about to be replaced. */
+const STALE_NOTICE = "Changes arrived — try again";
 /** What happens to the changeset on view: another is asked for, announced to be fetched, or the ask came to nothing. */
 export type Opening = { type: "requested" } | { type: "opened"; changeset: ChangesetKey } | { type: "unannounced" };
 
@@ -307,44 +311,78 @@ class ChangesetStore {
     }
   }
 
-  /** Flips one hunk. `revision` is the manifest the caller displays; the backend rejects a stale one. */
-  async toggleHunk(revision: number, path: string, hunk: number) {
-    await this.review(revision, session.connected().toggleHunk(revision, path, hunk, this.view));
+  /** What the manifest on screen is of, which the views are built for; none before the first manifest. Reads nothing reactively. */
+  currentShown(): Shown | undefined {
+    return untrack(() => {
+      const manifest = this.manifest;
+      if (!manifest) return undefined;
+      const view = manifest.interdiff
+        ? interdiffView(manifest.interdiff.from, manifest.interdiff.to)
+        : this.shownCommit === undefined
+          ? CHANGESET
+          : commitView(this.shownCommit);
+      return { revision: manifest.revision, view };
+    });
+  }
+
+  /**
+   * Whether a request built for `shown` may go out: the manifest is still the one it was built from and
+   * no other view has been asked for since. If not, the views it came from are about to be replaced
+   * and the viewer is told so.
+   */
+  admit(shown: Shown): boolean {
+    const manifest = this.manifest;
+    const asked = manifest && { revision: manifest.revision, view: this.view };
+    if (isCurrent(shown, asked)) return true;
+    session.notice = STALE_NOTICE;
+    return false;
+  }
+
+  /** Flips one hunk of the file in `shown`, the view the caller displays; the backend rejects a stale revision. */
+  async toggleHunk(shown: Shown, path: string, hunk: number) {
+    if (!this.admit(shown)) return;
+    await this.review(shown, session.connected().toggleHunk(shown.revision, path, hunk, shown.view));
   }
 
   /** Flips the flag of one hunk. */
-  async toggleFlag(revision: number, path: string, hunk: number) {
-    await this.review(revision, session.connected().toggleFlag(revision, path, hunk, this.view));
+  async toggleFlag(shown: Shown, path: string, hunk: number) {
+    if (!this.admit(shown)) return;
+    await this.review(shown, session.connected().toggleFlag(shown.revision, path, hunk, shown.view));
   }
 
   /** Flips the acknowledgement of one non-text item. */
-  async toggleItem(revision: number, path: string, kind: NonTextKind) {
-    await this.review(revision, session.connected().toggleItem(revision, path, kind, this.view));
+  async toggleItem(shown: Shown, path: string, kind: NonTextKind) {
+    if (!this.admit(shown)) return;
+    await this.review(shown, session.connected().toggleItem(shown.revision, path, kind, shown.view));
   }
 
   /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
-  async toggleFileSeen(revision: number, path: string) {
-    await this.review(revision, session.connected().toggleFileSeen(revision, path, this.view));
+  async toggleFileSeen(shown: Shown, path: string) {
+    if (!this.admit(shown)) return;
+    await this.review(shown, session.connected().toggleFileSeen(shown.revision, path, shown.view));
   }
 
   /** Marks everything of every file of the view below the directory `dir` seen, or takes every mark back. */
-  async setDirectorySeen(revision: number, dir: string, seen: boolean) {
+  async setDirectorySeen(shown: Shown, dir: string, seen: boolean) {
+    if (!this.admit(shown)) return;
     const paths = pathsBelow(this.paths, dir);
-    if (paths.length) await this.review(revision, session.connected().setFilesSeen(revision, paths, seen, this.view));
+    if (paths.length)
+      await this.review(shown, session.connected().setFilesSeen(shown.revision, paths, seen, shown.view));
   }
 
   /**
    * Marks the hunks of a file seen against an old base seen again. A range of versions has no such
    * request: its hunks are marked one by one, as the backend flips them.
    */
-  async reconfirmFile(revision: number, path: string) {
-    if (this.view.type === "changeset") {
-      await this.review(revision, session.connected().reconfirmFile(revision, path));
+  async reconfirmFile(shown: Shown, path: string) {
+    if (!this.admit(shown)) return;
+    if (shown.view.type === "changeset") {
+      await this.review(shown, session.connected().reconfirmFile(shown.revision, path));
       return;
     }
     const hunks = this.file(path)?.review.hunks ?? [];
     for (const [hunk, state] of hunks.entries()) {
-      if (state === "seenAgainstOldBase") await this.toggleHunk(revision, path, hunk);
+      if (state === "seenAgainstOldBase") await this.toggleHunk(shown, path, hunk);
     }
   }
 
@@ -366,23 +404,30 @@ class ChangesetStore {
 
   /** Re-confirms every hunk seen against an old base of the changeset. */
   async reconfirmAll() {
-    const revision = this.manifest?.revision;
-    if (revision === undefined) return;
+    const shown = this.currentShown();
+    if (!shown) return;
     for (const path of this.baseChangedFiles()) {
       // A request that failed refetched the manifest: the rest asks again.
-      if (this.manifest?.revision !== revision) return;
-      await this.reconfirmFile(revision, path);
+      if (this.manifest?.revision !== shown.revision) return;
+      await this.reconfirmFile(shown, path);
     }
   }
 
   /** The base diff of a hunk seen against an old base; `undefined` after showing why it could not be had. */
-  async baseDiff(revision: number, path: string, hunk: number): Promise<BaseDiff | undefined> {
+  async baseDiff(shown: Shown, path: string, hunk: number): Promise<BaseDiff | undefined> {
+    if (!this.admit(shown)) return undefined;
     try {
-      return await session.connected().baseDiff(revision, path, hunk);
+      return await session.connected().baseDiff(shown.revision, path, hunk);
     } catch (error) {
-      this.reportFailure(error, revision);
+      this.reportFailure(error, shown.revision);
       return undefined;
     }
+  }
+
+  /** Where a comment on a part of the file attaches in `shown`; rejects if `shown` is not current. */
+  async commentTarget(shown: Shown, path: string, at: CommentAt) {
+    if (!this.admit(shown)) throw new Error(STALE_NOTICE);
+    return session.connected().commentTarget(shown.revision, path, at, shown.view);
   }
 
   /** The changesets on offer and the one on view; `undefined` after showing why they could not be listed. */
@@ -524,12 +569,12 @@ class ChangesetStore {
    * Applies the review state a request returned. A rejected request is normally a
    * stale revision: refetch the manifest and tell the viewer to repeat the action.
    */
-  private async review(sent: number, request: Promise<ReviewUpdate | ReviewUpdate[]>) {
+  private async review(sent: Shown, request: Promise<ReviewUpdate | ReviewUpdate[]>) {
     try {
       for (const update of [await request].flat()) this.applyReview(update);
     } catch (error) {
       await this.refresh().catch(() => undefined);
-      this.reportFailure(error, sent);
+      this.reportFailure(error, sent.revision);
     }
   }
 
@@ -541,7 +586,7 @@ class ChangesetStore {
     const current = this.manifest?.revision;
     session.notice =
       sent !== undefined && current !== undefined && current !== sent
-        ? "Changes arrived — try again"
+        ? STALE_NOTICE
         : `Request failed: ${errorText(error)}`;
   }
 

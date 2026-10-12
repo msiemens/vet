@@ -7,6 +7,7 @@ import { type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { CommentAt } from "../../../generated/CommentAt";
 import type { Thread } from "../../../generated/Thread";
+import type { Shown } from "../../../state/shown";
 import { lineEnd } from "./positions";
 import { buildCard } from "./threadCard";
 import { type ThreadListeners, threadActions } from "./threadLayer";
@@ -24,13 +25,13 @@ export class TextThreads {
 
   constructor(
     private path: string,
-    /** The revision of the text on view. */
-    private revision: number,
+    /** What the text on view is of. */
+    private shown: Shown,
     private listeners: ThreadListeners,
     /** The height of a text row in px, which estimates a card until the editor measures it. */
     private line: number,
   ) {
-    this.actions = threadActions(listeners, revision, {
+    this.actions = threadActions(listeners, shown, {
       cancelDraft: () => this.setDraft(undefined),
       toggle: (thread) => {
         if (!this.opened.delete(thread)) this.opened.add(thread);
@@ -61,7 +62,7 @@ export class TextThreads {
 
   /** Threads of another revision are not shown; the view of that revision gets them. */
   setThreads(threads: Thread[], revision: number) {
-    if (revision !== this.revision) return;
+    if (revision !== this.shown.revision) return;
     this.threads = threads;
     this.show();
   }
@@ -79,7 +80,7 @@ export class TextThreads {
   /** Opens the form for a comment where the backend says it attaches. */
   commentOn(at: CommentAt) {
     // A newer revision replaces the view, and the request fails then.
-    void this.listeners.commentTarget(this.revision, this.path, at).then(
+    void this.listeners.commentTarget(this.shown, this.path, at).then(
       ({ target, line }) => {
         if (!this.destroyed && target.type === "range" && line !== null) this.setDraft({ target, line });
       },

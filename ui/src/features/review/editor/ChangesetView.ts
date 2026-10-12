@@ -15,6 +15,7 @@ import { Scrollbar } from "../../../lib/ui/scrollbar";
 import type { SoftWrap } from "../../../lib/softWrap";
 import type { Mode } from "../../../lib/viewMode";
 import { commands } from "../../../state/commands";
+import type { Shown } from "../../../state/shown";
 import { CaretStop } from "./caretStop";
 import { changeCard } from "./changeCard";
 import { type EditorSelection, hunkComment, linesAt } from "./commentAnchor";
@@ -103,10 +104,15 @@ export class ChangesetView {
   /** The editor the reviewer was in last, or put the caret in by navigating; it counts while its section keeps that editor mounted. */
   private lastEditor?: { section: Section; handle: Handle; side: Side };
 
+  /** The manifest revision the files are of. */
+  get revision(): number {
+    return this.shown.revision;
+  }
+
   constructor(
     private root: HTMLElement,
-    /** The manifest revision the files are of. */
-    readonly revision: number,
+    /** What the files are of: the manifest revision and the view; every request the view makes carries it. */
+    readonly shown: Shown,
     files: FileChange[],
     private source: FileSource,
     mode: Mode,
@@ -128,7 +134,7 @@ export class ChangesetView {
     this.widths = new ResizeObserver(() => this.onWidth());
     this.threads = new ThreadLayer(
       {
-        revision,
+        shown,
         sections: this.sections,
         line: metrics.line,
         estimate: (s, known) => this.heights.estimate(s, known),
@@ -136,7 +142,7 @@ export class ChangesetView {
       },
       listeners.threads,
     );
-    this.actions = new ReviewActions(revision, listeners);
+    this.actions = new ReviewActions(shown, listeners);
     this.heights = new SectionHeights(root, this.sections, metrics, this.threads, mode, collapse);
     // The scroll bar follows the height model, not thousands of sections; its gutter goes beside the root.
     this.scrollbar = new Scrollbar(root, {
@@ -204,7 +210,7 @@ export class ChangesetView {
         ...threadState(blockEl),
         hooks: {
           ...hooks,
-          ...bindRevision(hooks, revision),
+          ...bindRevision(hooks, shown.revision),
           ...actions,
           openLine: (line) => listeners.openSource(file.path, line),
         },

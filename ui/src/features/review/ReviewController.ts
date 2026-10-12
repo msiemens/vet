@@ -25,6 +25,7 @@ import { semantic } from "../../state/semantic.svelte";
 import { serverList } from "../../state/serverList.svelte";
 import { withoutImplementations } from "../../state/serverStatus";
 import { session } from "../../state/session.svelte";
+import type { Shown } from "../../state/shown";
 import { threads } from "../../state/threads.svelte";
 import { rangeKey } from "../../state/timelineRange";
 import type { Thread } from "../../generated/Thread";
@@ -69,7 +70,7 @@ export type ChangesetSource = Pick<
   Changeset,
   | "files"
   | "baseChanged"
-  | "view"
+  | "currentShown"
   | "shownCommit"
   | "stepCommit"
   | "onReview"
@@ -79,6 +80,7 @@ export type ChangesetSource = Pick<
   | "toggleFileSeen"
   | "reconfirmFile"
   | "baseDiff"
+  | "commentTarget"
   | "currentManifest"
   | "currentFiles"
   | "refresh"
@@ -485,39 +487,37 @@ export class ReviewController {
     return true;
   }
 
-  private listenersFor(id: TabId): Listeners {
+  private listenersFor(id: TabId, built: Shown): Listeners {
     return {
       pinned: id === CHANGES ? (path) => (this.tabs.changesFile = path) : undefined,
-      toggleHunk: (revision, path, hunk) =>
+      toggleHunk: (shown, path, hunk) =>
         this.editing(
-          () => this.changeset.toggleHunk(revision, path, hunk),
+          () => this.changeset.toggleHunk(shown, path, hunk),
           () => undefined,
         ),
-      toggleFlag: (revision, path, hunk) =>
+      toggleFlag: (shown, path, hunk) =>
         this.editing(
-          () => this.changeset.toggleFlag(revision, path, hunk),
+          () => this.changeset.toggleFlag(shown, path, hunk),
           () => undefined,
         ),
-      toggleItem: (revision, path, kind) =>
+      toggleItem: (shown, path, kind) =>
         this.editing(
-          () => this.changeset.toggleItem(revision, path, kind),
+          () => this.changeset.toggleItem(shown, path, kind),
           () => undefined,
         ),
-      toggleFileSeen: (revision, path) =>
+      toggleFileSeen: (shown, path) =>
         this.editing(
-          () => this.changeset.toggleFileSeen(revision, path),
+          () => this.changeset.toggleFileSeen(shown, path),
           () => undefined,
         ),
-      reconfirmFile: (revision, path) =>
+      reconfirmFile: (shown, path) =>
         this.editing(
-          () => this.changeset.reconfirmFile(revision, path),
+          () => this.changeset.reconfirmFile(shown, path),
           () => undefined,
         ),
       // Only the changeset has a base diff to show, not a range of versions.
       baseDiff:
-        this.changeset.view.type === "changeset"
-          ? (revision, path, hunk) => this.changeset.baseDiff(revision, path, hunk)
-          : undefined,
+        built.view.type === "changeset" ? (shown, path, hunk) => this.changeset.baseDiff(shown, path, hunk) : undefined,
       fileMenu: this.fileMenu,
       openSource: (path, line) => void this.openSource(path, line),
       threads: this.threadListeners(),
@@ -526,14 +526,14 @@ export class ReviewController {
 
   private threadListeners(): ThreadListeners {
     return {
-      create: (revision, target, body) =>
+      create: (shown, target, body) =>
         this.editing(
-          () => threads.create(revision, target, body),
+          () => threads.create(shown, target, body),
           () => false,
         ),
-      commentTarget: (revision, path, at) =>
+      commentTarget: (shown, path, at) =>
         this.editing(
-          () => this.backend.commentTarget(revision, path, at, this.changeset.view),
+          () => this.changeset.commentTarget(shown, path, at),
           () => {
             throw new Error(READ_ONLY_NOTE);
           },
@@ -614,15 +614,17 @@ export class ReviewController {
     const path = pathOf(id);
     if (path === undefined) return;
     this.texts.get(id)?.destroy();
+    const shown = this.changeset.currentShown();
+    if (!shown) return;
     const file = manifest.files.find((f) => f.path === path);
     const text = new TextView(
       root,
       path,
-      fileSource(this.backend, manifest.revision, this.changeset.view),
+      fileSource(this.backend, shown.revision, shown.view),
       bindRevision(this.hooks, manifest.revision),
       this.softWrap,
-      { revision: manifest.revision, listeners: this.threadListeners() },
-      file && { file, actions: this.textActions(file, manifest.revision) },
+      { shown, listeners: this.threadListeners() },
+      file && { file, actions: this.textActions(file, shown) },
     );
     this.texts.set(id, text);
     const at = this.takePending(id, "text");
@@ -653,15 +655,17 @@ export class ReviewController {
     previous?.destroy();
     this.views.delete(id);
     if (path !== undefined && !files.length) return; // the file left the changeset
+    const shown = this.changeset.currentShown();
+    if (!shown) return;
     const view = new ChangesetView(
       root,
-      manifest.revision,
+      shown,
       files,
-      fileSource(this.backend, manifest.revision, this.changeset.view),
+      fileSource(this.backend, shown.revision, shown.view),
       this.diffModeOf(id),
       this.softWrap,
       this.hooks,
-      this.listenersFor(id),
+      this.listenersFor(id, shown),
       id === CHANGES, // only the Changes tab collapses unchanged regions
     );
     this.views.set(id, view);
@@ -830,16 +834,16 @@ export class ReviewController {
   }
 
   /** What the file's text tab offers for the file's hunks. */
-  private textActions(file: FileChange, revision: number): TextActions {
+  private textActions(file: FileChange, shown: Shown): TextActions {
     return {
       toggleSeen: (hunk) =>
         void this.editing(
-          () => this.changeset.toggleHunk(revision, file.path, hunk),
+          () => this.changeset.toggleHunk(shown, file.path, hunk),
           () => undefined,
         ),
       toggleFlag: (hunk) =>
         void this.editing(
-          () => this.changeset.toggleFlag(revision, file.path, hunk),
+          () => this.changeset.toggleFlag(shown, file.path, hunk),
           () => undefined,
         ),
     };

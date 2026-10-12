@@ -10,3 +10,9 @@ export const interdiffView = (from: number, to: number): View => ({ type: "inter
 
 /** What the commit at `index` of the changeset changed. */
 export const commitView = (index: number): View => ({ type: "commit", index });
+
+export function sameView(a: View, b: View): boolean {
+  if (a.type === "interdiff") return b.type === "interdiff" && a.from === b.from && a.to === b.to;
+  if (a.type === "commit") return b.type === "commit" && a.index === b.index;
+  return b.type === "changeset";
+}

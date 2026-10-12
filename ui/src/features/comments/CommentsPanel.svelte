@@ -5,6 +5,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
+  import { changeset } from "../../state/changeset.svelte";
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -54,9 +55,11 @@
   const composeHere = $derived(draft.composing && showing === (info ? "conversation" : "review"));
 
   async function post() {
-    if (threads.revision === undefined || !canSubmit(draft.body, sending)) return;
+    // The panel is no view of files: it comments on the changeset as the manifest on screen is of.
+    const onScreen = changeset.currentShown();
+    if (!onScreen || !canSubmit(draft.body, sending)) return;
     sending = true;
-    const sent = await threads.create(threads.revision, { type: "changeset" }, draft.body.trim());
+    const sent = await threads.create(onScreen, { type: "changeset" }, draft.body.trim());
     sending = false;
     if (sent) [draft.body, draft.composing] = ["", false];
   }

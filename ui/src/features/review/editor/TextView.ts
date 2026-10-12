@@ -16,6 +16,7 @@ import { type Highlights, decodeHighlights } from "../../../lib/highlights";
 import type { SoftWrap } from "../../../lib/softWrap";
 import { iconSvg } from "../../../lib/ui/icons";
 import { type MarkLayout, type ScrollMark, Scrollbar } from "../../../lib/ui/scrollbar";
+import type { Shown } from "../../../state/shown";
 import type { PanePosition } from "./ChangesetView";
 import { currentLine } from "./currentLine";
 import { closeChangeCard, showChangeCard } from "./fileCard";
@@ -50,7 +51,7 @@ export interface TextActions {
 
 /** The threads a text shows: those of this revision, and what its cards ask of the owner. */
 export interface TextThreadsInit {
-  revision: number;
+  shown: Shown;
   listeners: ThreadListeners;
 }
 
@@ -108,7 +109,7 @@ export class TextView {
     root.classList.add("vet-text");
     // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
     root.style.containerType = "inline-size";
-    this.cards = new TextThreads(path, threads.revision, threads.listeners, readMetrics(root).line);
+    this.cards = new TextThreads(path, threads.shown, threads.listeners, readMetrics(root).line);
     const fail = (error: unknown) => {
       if (!this.destroyed && !(error instanceof StaleRevision)) this.placeholder(errorText(error));
     };
