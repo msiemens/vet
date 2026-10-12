@@ -64,6 +64,8 @@ A branch or pull request is reviewed in a `Lens`: `Squash` (All changes, the def
 
 A hunk marked seen against an earlier base is `SeenAgainstOldBase`. `FileReview.old_base_lines` gives, per hunk, how many of its changed lines only such spans cover, and every `Completion` carries the total (`old_base_lines`), which counts as unseen in `seen_lines`. `ReconfirmFile` marks a file's old-base hunks seen again against the current base; toggling one such hunk does the same for it. `BaseDiff` (`session/base_diff.rs`) answers for one such hunk with the base-side lines as they were when it was marked, as a diff to the lines the base has now, and the two base commits; it serves the changeset view only.
 
+A flag for later review is a span too (`SpanState::Flagged`), stored, remapped and cut like seen spans but kept out of the seen coverage: `ToggleFlag` only touches flagged spans and marking seen only seen ones, a hunk counts as flagged while any of its changed lines is covered (`FileReview.flagged`), and it never degrades to the old base. `Completion.flagged_hunks` counts them; finishing a review drops them with the other marks.
+
 ### Changeset listing
 
 `ListChangesets` is local: the working tree first, every local branch, then the remote-tracking branches that have commits the default branch lacks and were committed to recently (always the one on view and any with a review open), each group by last commit. A row carries the branch the working tree is on, ahead and behind counts, open threads, and what Vet has of the review (`RowReview`: none, open with version and `last_reviewed`, finished). `ListPullRequests` asks the platforms (below) and answers separately, so the local list never waits for the network.
