@@ -1,4 +1,4 @@
-//! The interdiff of two whole versions of a changeset (design-changesets §3.2): per path, what
+//! The interdiff of two whole versions of a changeset: per path, what
 //! the author changed between them with what a move of the base explains left out.
 //!
 //! Version A is rebased onto B's base entry by entry, and the result is compared with B's

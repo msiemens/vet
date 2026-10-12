@@ -1,5 +1,5 @@
 //! The interdiff of one file: what the author changed between two versions of a changeset, with
-//! what a move of the base explains left out (design-changesets §3.2, §2.4).
+//! what a move of the base explains left out.
 //!
 //! Version A is rebased onto B's base with [`merge3`], and the result is diffed against B. A
 //! change the base move brought is in both and vanishes.
@@ -93,7 +93,7 @@ pub fn interdiff(base_a: &[u8], target_a: &[u8], base_b: &[u8], target_b: &[u8])
     }
 }
 
-/// What marking interdiff hunks seen records in B's changeset (design-changesets §2.4): for each
+/// What marking interdiff hunks seen records in B's changeset: for each
 /// of `hunks`, the lines of `squash` (B's own diff of the file) it covers, and a `Seen` span for
 /// them per squash hunk they fall in, two-sided where both sides have one range there. `texts`
 /// are the base and target text of the file in the snapshots `snapshots` (B's base and target),

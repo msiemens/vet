@@ -1,5 +1,5 @@
 //! Patch ids, and pairing the units of two versions of a changeset the way `git range-diff`
-//! pairs commits (design-changesets §3.3).
+//! pairs commits.
 //!
 //! A unit is described by plain data: its patch, its subject and its author.
 

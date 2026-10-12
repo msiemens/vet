@@ -1,7 +1,6 @@
 //! Acceptance tests for SPEC §12 POC criteria 1 (anchor robustness, I3) and 4
 //! (reconciliation), one test per sub-case, against real temporary repositories
-//! and real git operations (amend, rebase, mv, rm, update-index). The matrix of
-//! what is covered where is in `notes/acceptance.md`.
+//! and real git operations (amend, rebase, mv, rm, update-index).
 //!
 //! Criterion 1 goes through the protocol like a shell would. Criterion 4 needs to
 //! lose watcher events, which the real watcher cannot be told to do, so those

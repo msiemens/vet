@@ -1,7 +1,6 @@
 # Architecture
 
-What Vet does is in `SPEC.md`; the UI is built as `ui/ARCHITECTURE.md` says. This file is the backend: the Rust crates under `crates/`, how they depend on each other and where each concept lives. The design notes in `notes/` give the reasons behind the larger pieces (`design-changesets.md`, `design-semantics.md`, `design-concurrency.md`).
-
+What Vet does is in `SPEC.md`; the UI is built as `ui/ARCHITECTURE.md` says. This file is the backend: the Rust crates under `crates/`, how they depend on each other and where each concept lives.
 ## Crates
 
 The dependency direction is enforced by `ci/check-deps.sh` (an allowlist per crate; the pure crates may not pull in IO, git, a database or an async runtime).
@@ -105,7 +104,7 @@ Credentials (`platform/accounts.rs`, per account and not per session: a host for
 
 ## Concurrency
 
-The reasons, the alternatives and the measurements are in `notes/design-concurrency.md`; this is the structure they led to. Three lanes own their resources and share nothing but the engine: the review lane (the commands that change review state), the semantic lane (`Semantics` and the pool) and the platform lane (exchanges with a platform, serialized by the session's `exchange` lock, with the state released while the platform is asked).
+Three lanes own their resources and share nothing but the engine: the review lane (the commands that change review state), the semantic lane (`Semantics` and the pool) and the platform lane (exchanges with a platform, serialized by the session's `exchange` lock, with the state released while the platform is asked).
 
 - **Commands.** A review command (a mark, a thread, settling, a base, filter or lens change, opening a changeset, starting or finishing a review) takes the write token (`LiveSession::hold`, FIFO) and gets a `Held` (`vet-app/src/session/hold.rs`): the token and a copy-on-write `Arc<State>`. Reading dereferences it; the first change copies the state, which is cheap because the snapshots, spans and anchored texts are behind `Arc`s. `Held::publish`, or dropping the `Held`, makes the copy the state readers see. A command that announces a new revision publishes first, so whoever hears of it finds it. Holding the token a command awaits its own store connection, git ref writes on the review's I/O budget and engine flights of the review kinds, and never a language server, a platform or the semantic budgets; the diff it needs is computed before it takes the token, and the commands that move the revision publish the state with the new diff installed and the review state remapped onto it. Every change through a `Held` takes the project's next change sequence (`State.seq`); `ReviewUpdate.seq` and `Manifest.seq` carry it, so the UI applies an answer or an event only if it is newer than what it holds, and a manifest never overwrites a newer mark.
 - **Writes are typed.** `ReviewWrites` (`vet-app/src/ports.rs`) holds every change to the review database; the read traits (`Store`, `ChangesetStore`, `ReviewStore`, `ThreadStore`) have none. `LiveStore::writes()` gives the store's write connection (`vet_infra::store::ReviewWriter`) to the session, which keeps it inside the token and hands it out as `Held::writes()`, so only a command that holds the token can write. A read pool of connections serves everything else.

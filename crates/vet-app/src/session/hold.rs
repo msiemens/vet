@@ -1,4 +1,4 @@
-//! The session's single writer and the state it publishes (design-concurrency §1.2).
+//! The session's single writer and the state it publishes.
 //!
 //! Review state is changed by commands, one at a time: each takes the write token, works on a copy
 //! of the state it finds published, and publishes the copy when it is done. Readers take the

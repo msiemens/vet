@@ -1,4 +1,4 @@
-//! The by-commit lens (design-changesets §1.5, §2.3): a committed changeset cut into its
+//! The by-commit lens: a committed changeset cut into its
 //! commits, each with its own diff and its own progress. A commit is compared with its parent;
 //! a merge is compared with the automatic merge of its parents, so it shows only what the person
 //! who made it decided (`git show --remerge-diff`), and a merge that decided nothing has nothing

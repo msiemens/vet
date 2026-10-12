@@ -1,7 +1,6 @@
 # Vet
 
-A review-first IDE for the agentic coding age. See [SPEC.md](SPEC.md); the POC's
-progress is in [notes/poc-plan.md](notes/poc-plan.md).
+A review-first IDE for the agentic coding age. See [SPEC.md](SPEC.md).
 
 ## Layout
 

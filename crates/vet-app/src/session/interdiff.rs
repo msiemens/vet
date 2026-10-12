@@ -1,4 +1,4 @@
-//! Interdiffs of the open review's versions (design-changesets §3, §2.4): what the author changed
+//! Interdiffs of the open review's versions: what the author changed
 //! between two versions, with what a move of the base explains left out, shown as a manifest of
 //! its own. Its marks are not review state of its own: they are recorded in the changeset of the
 //! newer version, which is the one the review remaps, so seen state carries over.

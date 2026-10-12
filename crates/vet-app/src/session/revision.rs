@@ -1,4 +1,4 @@
-//! What the semantic layer reads of a session (design-concurrency §1.2): the published state's
+//! What the semantic layer reads of a session: the published state's
 //! snapshots and diff of a revision, and where the content of their files comes from. A
 //! [`RevisionView`] reads and nothing else: it has no part in the commands that change review state,
 //! never takes the write token, and has no handle to the review database, so semantic work can
