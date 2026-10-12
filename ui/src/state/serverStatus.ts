@@ -22,6 +22,12 @@ export function hasServer(path: string, servers: readonly ServerInfo[]): boolean
   return servers.some((s) => s.state.type === "found" && extension !== undefined && s.extensions.includes(extension));
 }
 
+/** The language whose server serves the type of file `path` is; none if no language does. */
+export function languageOf(path: string, servers: readonly ServerInfo[]): string | undefined {
+  const extension = extensionOf(path);
+  return servers.find((s) => extension !== undefined && s.extensions.includes(extension))?.language;
+}
+
 /**
  * The name of the server for the type of file `path` is when that server has said it does not offer
  * implementations; none while it has not said (it has not started yet) or offers them.

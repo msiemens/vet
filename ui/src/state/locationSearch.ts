@@ -5,7 +5,7 @@
 import type { LocationRow } from "../generated/LocationRow.ts";
 import type { LocationRows } from "../generated/LocationRows.ts";
 import type { Side } from "../generated/Side.ts";
-import type { CaretRect, PickerKind, PickerSink } from "./pickerTypes.ts";
+import type { CaretRect, PickerKind, PickerSink, PickerView } from "./pickerTypes.ts";
 
 /** How long a search runs before the popup shows "Searching…". */
 const SHOW_AFTER_MS = 250;
@@ -33,6 +33,8 @@ export interface SearchDeps {
   isAbort(error: unknown): boolean;
   /** Tells the viewer why a request failed that was sent for `revision`. */
   fail(error: unknown, revision: number): void;
+  /** Restarts the servers of `language`; resolves with why they did not start, if so. */
+  restartServer(language: string): Promise<string | undefined>;
 }
 
 /** Whose answer is the popup's: the newest search; an older one that comes in late is dropped. */
@@ -51,6 +53,23 @@ export class LocationSearch {
     this.running?.abort.abort();
     this.running = undefined;
     this.deps.picker.close();
+  }
+
+  /** Restarts the server of `language`, then asks again; a server that does not start is told, not asked. */
+  private async restart(search: Search, language: string, shown: Omit<PickerView, "body">): Promise<void> {
+    this.running?.abort.abort();
+    const mine = { abort: new AbortController() };
+    this.running = mine;
+    this.deps.picker.show({ ...shown, body: { phase: "searching" } });
+    const problem = await this.deps.restartServer(language);
+    if (this.running !== mine) return;
+    if (problem !== undefined) {
+      this.running = undefined;
+      this.deps.picker.close();
+      this.deps.notice(`Cannot restart the ${language} language server: ${problem}`);
+      return;
+    }
+    await this.start(search);
   }
 
   async start(search: Search): Promise<void> {
@@ -92,7 +111,9 @@ export class LocationSearch {
     if (!current()) return;
     const { unavailable, rows, total } = answer;
     if (unavailable?.kind === "serverMissing" || unavailable?.kind === "serverFailed") {
-      picker.show({ ...shown, body: { phase: "stopped", message: unavailable.message } });
+      const { language } = unavailable;
+      const onretry = language === null ? shown.onretry : () => void this.restart(search, language, shown);
+      picker.show({ ...shown, onretry, body: { phase: "stopped", message: unavailable.message } });
       return;
     }
     this.running = undefined;

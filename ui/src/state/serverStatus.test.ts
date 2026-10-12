@@ -4,7 +4,7 @@ import type { ServerInfo } from "../generated/ServerInfo.ts";
 import type { Task } from "../generated/Task.ts";
 import type { Unavailable } from "../generated/Unavailable.ts";
 import { summarize } from "./semanticSummary.ts";
-import { hasServer, serverLine, withoutImplementations } from "./serverStatus.ts";
+import { hasServer, languageOf, serverLine, withoutImplementations } from "./serverStatus.ts";
 
 const server = (language: string, name: string, extensions: string[]): ServerInfo => ({
   language,
@@ -94,6 +94,13 @@ void test("a server that is missing or failed is named with the backend's messag
   });
   const absent = summarize(new Map(), new Map([["a.py", unavailable("serverMissing", "python")]]), "a.py");
   assert.equal(serverLine("a.py", SERVERS, [], absent)?.state, "not installed");
+});
+
+void test("the language of a file is the one whose server serves its extension, whether or not that server is found", () => {
+  assert.equal(languageOf("src/app.PY", SERVERS), "python");
+  assert.equal(languageOf("lib/a.pyi", SERVERS), "python");
+  assert.equal(languageOf("notes.md", SERVERS), undefined);
+  assert.equal(languageOf("Makefile", SERVERS), undefined);
 });
 
 void test("a server is without implementations only once it has said so, whatever the language", () => {

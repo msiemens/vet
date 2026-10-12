@@ -54,6 +54,8 @@ export interface AppActions {
   showLog(): void;
   /** Ends the backend and starts another. */
   restartBackend(): void;
+  /** Restarts the open project's servers of `language`, and says if they do not start. */
+  restartLanguageServer(language: string): void;
 }
 
 /** The tool windows of the rails, with the key that shows or hides each. */
@@ -270,5 +272,15 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     { id: "help.keymap", label: "Keyboard Shortcuts", run: () => a.showKeymap() },
     { id: "help.showLog", label: "Show Log Folder", run: () => a.showLog() },
     { id: "app.restartBackend", label: "Restart Backend", run: () => a.restartBackend() },
+    {
+      id: "app.restartLanguageServer",
+      label: "Restart Language Server",
+      enabled: (c) => c.serverLanguage !== undefined,
+      disabledReason: () => "The active file has no language server",
+      run: (c) => {
+        if (c.serverLanguage === undefined) return false;
+        a.restartLanguageServer(c.serverLanguage);
+      },
+    },
   ];
 }

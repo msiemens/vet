@@ -237,6 +237,7 @@
       clearSemanticCaches: () => void clearSemanticCaches(),
       showLog: () => void showLog(),
       restartBackend: () => void session.restartBackend(),
+      restartLanguageServer: (language) => void restartLanguageServer(language),
     }),
     ...queueCommands({
       open: (key) => {
@@ -373,6 +374,11 @@
   async function clearSemanticCaches() {
     const problem = await backendSettings.clearCaches();
     session.notice = problem === undefined ? "Semantic caches cleared" : `Cannot clear the semantic caches: ${problem}`;
+  }
+
+  async function restartLanguageServer(language: string) {
+    const problem = await serverList.restart(language);
+    if (problem !== undefined) session.notice = `Cannot restart the ${language} language server: ${problem}`;
   }
 
   /** Asks for a pull request by its number, in the repository the project has on GitHub. */

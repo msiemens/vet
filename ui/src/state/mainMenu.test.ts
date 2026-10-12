@@ -63,6 +63,7 @@ const actions: AppActions = {
   clearSemanticCaches: () => calls.push("clearCaches"),
   showLog: () => calls.push("showLog"),
   restartBackend: () => calls.push("restart"),
+  restartLanguageServer: (language) => calls.push(`restart ${language}`),
 };
 
 const registry = new CommandRegistry<CommandContext>(open, "Ctrl");
@@ -81,7 +82,7 @@ void test("every leaf item that is not the host's runs a command", () => {
     for (const item of flatten(menu({ native, votes: { verdicts: [{ id: "approved", label: "Approve" }] } }))) {
       if (item.children || item.separator || item.predefined) continue;
       calls.length = 0;
-      assert.ok(registry.run(item.id, { ...open, manyCommits: true }), item.id);
+      assert.ok(registry.run(item.id, { ...open, manyCommits: true, serverLanguage: "rust" }), item.id);
       assert.equal(calls.length, 1, item.id);
     }
   }
@@ -401,6 +402,21 @@ void test("the Vote submenu exists only for a platform that keeps the vote apart
 void test("Restart Backend is offered only where the host can restart it", () => {
   assert.ok(find(menu({ canRestart: true }), "app.restartBackend"));
   assert.equal(find(menu({ canRestart: false }), "app.restartBackend"), undefined);
+});
+
+void test("Restart Language Server restarts the language of the active file, and says why it is off for a file without a server", () => {
+  const item = (context: Partial<CommandContext>) =>
+    submenu(menu({}, context), "help")?.find((i) => i.id === "app.restartLanguageServer");
+  assert.equal(item({ serverLanguage: "python" })?.enabled, undefined);
+  const off = item({});
+  assert.ok(off);
+  assert.equal(off.enabled, false);
+  assert.equal(off.reason, "The active file has no language server");
+
+  calls.length = 0;
+  assert.equal(registry.run("app.restartLanguageServer", { ...open, serverLanguage: "python" }), true);
+  assert.equal(registry.run("app.restartLanguageServer", open), false);
+  assert.deepEqual(calls, ["restart python"]);
 });
 
 void test("Clear Semantic Caches and Show Log Folder are in the Help menu and need no repository", () => {

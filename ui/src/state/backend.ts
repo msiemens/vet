@@ -577,6 +577,11 @@ export class Backend {
       .servers;
   }
 
+  /** Stops the project's servers of the language at once and starts them anew; resolves when they run. Rejects with why one did not start. */
+  async restartServer(language: string): Promise<ServerInfo[]> {
+    return expect(await this.conn.request({ type: "restartServer", project: this.pid, language }), "servers").servers;
+  }
+
   /** The symbols the changeset touches, as of `revision` (the manifest's; a stale one is rejected). */
   async changedSymbols(revision: number, signal?: AbortSignal): Promise<ChangedSymbols> {
     const request = { type: "changedSymbols", project: this.pid, revision } as const;

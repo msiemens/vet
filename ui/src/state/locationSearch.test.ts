@@ -33,7 +33,7 @@ const stopped: Unavailable = {
   language: "rust",
 };
 
-function setup(delayMs = 5) {
+function setup(delayMs = 5, restart: () => Promise<string | undefined> = () => Promise.resolve(undefined)) {
   const events: string[] = [];
   let view: PickerView | undefined;
   const picker: PickerSink = {
@@ -53,6 +53,10 @@ function setup(delayMs = 5) {
       open: (r, side) => events.push(`open ${r.path}:${r.line} ${side}`),
       isAbort: (e) => e instanceof DOMException && e.name === "AbortError",
       fail: (e, revision) => events.push(`fail ${String(e)} at ${revision}`),
+      restartServer: async (language) => {
+        events.push(`restart ${language}`);
+        return restart();
+      },
     },
     delayMs,
   );
@@ -129,9 +133,6 @@ void test("a server that is down shows its state with a retry; any other reason 
   await down.search.start(down.ask(() => answer([], stopped)));
   const body = down.view()?.body;
   assert.equal(body?.phase === "stopped" && body.message, "rust-analyzer stopped");
-  down.events.length = 0;
-  down.view()?.onretry();
-  assert.equal(down.events[0], "close");
 
   const other = setup();
   await other.search.start(
@@ -140,6 +141,50 @@ void test("a server that is down shows its state with a retry; any other reason 
     ),
   );
   assert.deepEqual(other.events.slice(-2), ["close", "notice no implementation request"]);
+});
+
+void test("Restart in the popup restarts the server, and only once it runs asks again", async () => {
+  const answers = [answer([], stopped), answer([row("a.rs", 3)])];
+  const { events, search, ask, view } = setup(5, () => Promise.resolve(undefined));
+  await search.start(ask(() => answers.shift() ?? answer([])));
+  events.length = 0;
+  view()?.onretry();
+  await settled(20);
+  assert.deepEqual(events, ["show searching", "restart rust", "close", "close", "open a.rs:3 target"]);
+});
+
+void test("a server that does not start again is told, and the search is not repeated", async () => {
+  let asked = 0;
+  const { events, search, ask, view } = setup(5, () => Promise.resolve("no such binary"));
+  await search.start(
+    ask(() => {
+      asked++;
+      return answer([], stopped);
+    }),
+  );
+  events.length = 0;
+  view()?.onretry();
+  await settled(20);
+  assert.deepEqual(events, [
+    "show searching",
+    "restart rust",
+    "close",
+    "notice Cannot restart the rust language server: no such binary",
+  ]);
+  assert.equal(asked, 1);
+});
+
+void test("closing the popup while the server restarts drops the search that would follow", async () => {
+  let release: () => void = () => undefined;
+  const { events, search, ask, view } = setup(5, () => new Promise((resolve) => (release = () => resolve(undefined))));
+  await search.start(ask(() => answer([], stopped)));
+  const popup = view();
+  popup?.onretry();
+  popup?.onclose();
+  events.length = 0;
+  release();
+  await settled(20);
+  assert.deepEqual(events, []);
 });
 
 void test("the changeset moving on says so, and any other failure is the backend's to report", async () => {

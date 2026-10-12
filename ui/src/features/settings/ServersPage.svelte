@@ -12,14 +12,15 @@
   import { type Sort, sortRows } from "../../lib/ui/sorting";
   import { backendSettings } from "../../state/backendSettings.svelte";
   import { commands } from "../../state/commands";
+  import { serverList } from "../../state/serverList.svelte";
   import { servers } from "../../state/servers.svelte";
   import ServerPathSheet from "./ServerPathSheet.svelte";
   import { serverRow, type ServerRow } from "./serverRows";
 
   /** The server whose custom path sheet is open. */
   let editing = $state<ServerRow>();
-  /** Why going back to the automatic server failed, with its language. */
-  let pathError = $state<{ language: string; message: string }>();
+  /** Why going back to the automatic server or restarting a server failed, with its language. */
+  let actionError = $state<{ language: string; message: string }>();
 
   const COLUMNS: Column<ServerRow>[] = [
     { id: "language", label: "Language", width: 90, min: 60, sortBy: (row) => row.title },
@@ -55,12 +56,22 @@
 
   async function automatic(language: string) {
     const message = await servers.setPath(language, null);
-    pathError = message === undefined ? undefined : { language, message };
+    actionError = message === undefined ? undefined : { language, message };
+  }
+
+  let restarting = $state<string>();
+
+  async function restart(language: string) {
+    actionError = undefined;
+    restarting = language;
+    const message = await serverList.restart(language);
+    restarting = undefined;
+    if (message !== undefined) actionError = { language, message };
   }
 
   /** What the Source select offers besides the source in use; picking one acts and the select shows the source in use again. */
   function chooseSource(row: ServerRow, choice: string) {
-    pathError = undefined;
+    actionError = undefined;
     if (choice === "install") void servers.install(row.language);
     else if (choice === "custom") editing = row;
     else if (choice === "automatic") void automatic(row.language);
@@ -156,6 +167,12 @@
             <option value="custom">{selected.customPath ? "Change custom path…" : "Custom path…"}</option>
             {#if selected.customPath}<option value="automatic">Automatic</option>{/if}
           </select>
+          <button
+            class="ctl"
+            type="button"
+            disabled={busy || restarting !== undefined}
+            onclick={() => void restart(selected.language)}>Restart</button
+          >
           {#if selected.pinnedVersion && !selected.path}
             <button
               class="ctl"
@@ -168,9 +185,9 @@
           {/if}
         </dd>
 
-        {#if pathError?.language === selected.language}
+        {#if actionError?.language === selected.language}
           <dt></dt>
-          <dd class="problem">{pathError.message}</dd>
+          <dd class="problem">{actionError.message}</dd>
         {/if}
 
         <dt>Path</dt>

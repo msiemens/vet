@@ -75,6 +75,8 @@ export interface CommandContext {
   editor?: FocusedEditor;
   /** The name of the focused editor's language server when it has said it offers no implementations. */
   noImplementations?: string;
+  /** The language of the active file's server, if some language serves its type of file. */
+  serverLanguage?: string;
   /** The file or folder a context menu was opened on. */
   target?: { path: string; dir: boolean };
   /** The queue row a context menu was opened on; `url` is its pull request's page. */

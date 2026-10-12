@@ -23,7 +23,7 @@ import { locationPicker } from "../../state/locationPicker.svelte";
 import { LocationSearch } from "../../state/locationSearch";
 import { semantic } from "../../state/semantic.svelte";
 import { serverList } from "../../state/serverList.svelte";
-import { withoutImplementations } from "../../state/serverStatus";
+import { languageOf, withoutImplementations } from "../../state/serverStatus";
 import { session } from "../../state/session.svelte";
 import type { Shown } from "../../state/shown";
 import { threads } from "../../state/threads.svelte";
@@ -121,6 +121,7 @@ export class ReviewController {
     open: (row, side) => void this.openRow(row, side),
     isAbort,
     fail: (error, revision) => this.changeset.reportFailure(error, revision),
+    restartServer: (language) => serverList.restart(language),
   });
   /** The changeset on view, by `keyId`; unknown before the first manifest. */
   private key?: string;
@@ -279,6 +280,7 @@ export class ReviewController {
     const view = this.active;
     const text = this.activeText;
     const editor = focusedEditor(document.activeElement);
+    const file = editor?.path ?? path;
     return {
       tab: { kind: kindOf(id), path: subjectOf(id) },
       tabCount: this.tabs.open.length,
@@ -289,6 +291,7 @@ export class ReviewController {
       hunk: view?.current ?? text?.current ?? -1,
       editor,
       noImplementations: editor && withoutImplementations(editor.path, serverList.servers),
+      serverLanguage: file === undefined ? undefined : languageOf(file, serverList.servers),
     };
   }
 

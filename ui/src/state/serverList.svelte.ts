@@ -2,6 +2,7 @@
 // for commands to know what it offers. Settings loads its own copy, with the installs it drives.
 
 import type { ServerInfo } from "../generated/ServerInfo";
+import { errorText } from "../lib/errorText";
 import { session } from "./session.svelte";
 
 class ServerList {
@@ -21,6 +22,18 @@ class ServerList {
       if (session.repo !== undefined) void this.load();
     });
     session.onClose(() => (this.servers = []));
+  }
+
+  /** Restarts the servers of `language` in the open project; resolves with why they did not start, if so. */
+  async restart(language: string): Promise<string | undefined> {
+    const backend = session.backend;
+    if (!backend) return "No project is open";
+    try {
+      this.servers = await backend.restartServer(language);
+      return undefined;
+    } catch (error) {
+      return errorText(error);
+    }
   }
 
   private async load() {

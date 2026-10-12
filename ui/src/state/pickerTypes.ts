@@ -32,7 +32,7 @@ export interface PickerView {
   body: PickerBody;
   /** Opens the row's place. */
   onpick(row: LocationRow): void;
-  /** Asks again, for a server that was not running. */
+  /** Starts the server that was not running anew, and asks again. */
   onretry(): void;
   /** The popup was closed without a pick. */
   onclose(): void;

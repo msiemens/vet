@@ -159,6 +159,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     "-",
     { command: "help.showLog" },
     ...(s.canRestart ? [{ command: "app.restartBackend" }] : []),
+    { command: "app.restartLanguageServer" },
     { command: "semantic.clearCaches" },
     ...(s.native ? [] : (["-", about] as MenuSpec)),
   ];
