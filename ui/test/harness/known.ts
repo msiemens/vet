@@ -17,4 +17,7 @@ export const known: Known[] = [
   { bug: "H2", invariant: "viewCompletion", view: "interdiff" },
   { bug: "H2", invariant: "fileReview", view: "commit" },
   { bug: "H2", invariant: "viewCompletion", view: "commit" },
+  // Found by the `changeset` session's "fetched" step: the on-view queue row takes its base from the
+  // manifest's layout, so a fetch that moves the base (`behind`) does not reach it.
+  { bug: "fetch-behind-queue-row", invariant: "onViewRowFacts", view: "changeset" },
 ];

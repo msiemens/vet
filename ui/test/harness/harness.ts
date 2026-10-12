@@ -26,6 +26,16 @@ const REQUESTS_THAT_NAME_A_VIEW = new Set<Request["type"]>([
   "createThread",
 ]);
 
+/** The requests that change review state or add comments: a step says how many of them it sends. */
+const MARKS = new Set<Request["type"]>([
+  "toggleHunk",
+  "toggleFlag",
+  "toggleItem",
+  "toggleFileSeen",
+  "setFilesSeen",
+  "createThread",
+]);
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** The repository the sessions review: `feature` has three commits on `main`, and the working tree has a change of its own. */
@@ -44,6 +54,9 @@ export class Fixture {
     this.write("src/c.txt", "x", []);
     this.git(this.repo, "add", ".");
     this.git(this.repo, "commit", "-qm", "base");
+    // The backend's fetch writes reflog entries, which need an identity from the repository's configuration.
+    this.git(this.repo, "config", "user.name", "t");
+    this.git(this.repo, "config", "user.email", "t@t");
     this.git(this.repo, "remote", "add", "origin", origin);
     this.git(this.repo, "push", "-q", "origin", "main");
     this.git(this.repo, "checkout", "-qb", "feature");
@@ -54,8 +67,20 @@ export class Fixture {
     this.git(this.repo, "commit", "-qam", "c2: b.txt and src/c.txt");
     this.write("a.txt", "c3", [2, 10, 30]);
     this.git(this.repo, "commit", "-qam", "c3: a.txt again");
-    this.git(this.repo, "push", "-q", "origin", "feature");
+    this.git(this.repo, "push", "-q", "-u", "origin", "feature");
+    this.write("a.txt", "wt", [2, 10, 18, 30]);
     this.write("b.txt", "wt", [7, 25]);
+    this.write("src/c.txt", "wt", [12, 20]);
+  }
+
+  /** A commit on origin's `feature` that the repository has not fetched: the working tree's base falls behind it. */
+  advanceOrigin() {
+    const clone = join(this.root, "clone");
+    this.git(this.root, "clone", "-q", "-b", "feature", join(this.root, "origin.git"), clone);
+    writeFileSync(join(clone, "upstream.txt"), "new\n");
+    this.git(clone, "add", ".");
+    this.git(clone, "commit", "-qm", "upstream");
+    this.git(clone, "push", "-q", "origin", "feature");
   }
 
   /** A 40-line file of which the lines `edited` differ from the base text. */
@@ -122,8 +147,12 @@ export interface Harness {
   readonly other: Backend;
   /** The requests the window sent, in order. */
   readonly sent: Request[];
-  /** Runs `run`, waits until the window has settled, then compares the stores with the backend. */
-  step(name: string, run: () => unknown): Promise<void>;
+  /**
+   * Runs `run`, waits until the window has settled, then compares the stores with the backend. The step
+   * also fails unless the window sent `marks` review requests (default none), the backend answered every
+   * request, and the window's notice is `notice` (default none).
+   */
+  step(name: string, run: () => unknown, expected?: { marks?: number; notice?: string }): Promise<void>;
   /** Resolves when `condition` holds; fails after a while. */
   until(condition: () => boolean, what: string): Promise<void>;
   /** The view the elements on screen were built for: what the manifest on view is of. */
@@ -165,6 +194,7 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
 
     const sent: Request[] = [];
     const wrongViews: Violation[] = [];
+    const failed: string[] = [];
     let element: View | undefined;
     let activity = Date.now();
     let inFlight = 0;
@@ -192,7 +222,12 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
       }
       inFlight++;
       activity = Date.now();
-      return request(r, s).finally(() => {
+      const answer = request(r, s);
+      // A request the window itself gave up on is not a failure.
+      answer.catch((error: unknown) => {
+        if (!s?.aborted) failed.push(`${r.type}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+      return answer.finally(() => {
         inFlight--;
         activity = Date.now();
       });
@@ -220,12 +255,22 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
       fixture,
       other,
       sent,
-      async step(name, run) {
+      async step(name, run, expected = {}) {
+        const marksBefore = sent.filter((r) => MARKS.has(r.type)).length;
+        failed.length = 0;
+        session.notice = undefined;
         await run();
         // What another window did reaches this one as events after `run` ended.
         activity = Date.now();
         await idle();
         const violations = [...wrongViews.splice(0), ...(await checkInvariants(other))];
+        const step = (what: string, ui: unknown, backend: unknown) =>
+          violations.push({ invariant: "step", view: changeset.view.type, what, ui, backend });
+        const marks = sent.filter((r) => MARKS.has(r.type)).length - marksBefore;
+        const wantMarks = expected.marks ?? 0;
+        if (marks !== wantMarks) step("the number of review requests the step sent", marks, wantMarks);
+        if (failed.length) step("requests the backend rejected", failed.slice(), []);
+        if (session.notice !== expected.notice) step("the notice after the step", session.notice, expected.notice);
         results.push({ name, violations });
         process.stderr.write(`  ${name}: ${violations.length ? `${violations.length} differences` : "ok"}\n`);
       },

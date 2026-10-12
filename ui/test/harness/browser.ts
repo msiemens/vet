@@ -52,12 +52,17 @@ interface Driver {
   otherFlag(path: string, hunk: number): Promise<unknown>;
   /**
    * Runs `run`, waits until the page has settled, then compares what the views drew with the backend.
+   * The step also fails unless the page sent `marks` review requests (default none), the backend answered
+   * every request, and the page shows no notice.
    * With `stale` the views are expected to differ (they were not told of a change): the step fails if they do not.
    */
-  step(name: string, run: () => Promise<unknown>, stale?: "stale"): Promise<void>;
+  step(name: string, run: () => Promise<unknown>, expected?: { marks?: number; stale?: boolean }): Promise<void>;
   /** Double-clicks the row of `path` in the file tree and waits for its text. */
   openText(path: string): Promise<void>;
 }
+
+/** A step that sends one review request. */
+const ONE = { marks: 1 };
 
 const call = (method: string, path: string, hunk?: number) =>
   `__t.changeset.${method}(__t.changeset.currentShown(), ${JSON.stringify(path)}${hunk === undefined ? "" : `, ${hunk}`})`;
@@ -66,12 +71,12 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
   /** The Changes tab and a file's text follow marks made here and in another window. */
   async views(d) {
     await d.step("opened", () => Promise.resolve());
-    await d.step("hunk seen", () => d.page(call("toggleHunk", "b.txt", 0)));
-    await d.step("hunk flagged", () => d.page(call("toggleFlag", "b.txt", 1)));
-    await d.step("file seen", () => d.page(call("toggleFileSeen", "b.txt")));
-    await d.step("hunk unseen", () => d.page(call("toggleHunk", "b.txt", 0)));
+    await d.step("hunk seen", () => d.page(call("toggleHunk", "b.txt", 0)), ONE);
+    await d.step("hunk flagged", () => d.page(call("toggleFlag", "b.txt", 1)), ONE);
+    await d.step("file seen", () => d.page(call("toggleFileSeen", "b.txt")), ONE);
+    await d.step("hunk unseen", () => d.page(call("toggleHunk", "b.txt", 0)), ONE);
     await d.step("text of a file opened", () => d.openText("b.txt"));
-    await d.step("hunk seen with the text open", () => d.page(call("toggleHunk", "b.txt", 1)));
+    await d.step("hunk seen with the text open", () => d.page(call("toggleHunk", "b.txt", 1)), ONE);
     await d.step("another window marks", () => d.otherMark("b.txt", 0));
     await d.step("another window flags", () => d.otherFlag("b.txt", 1));
   },
@@ -87,14 +92,14 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
       await d.otherFlag("b.txt", 1);
       await back;
     });
-    await d.step("hunk seen after reconnecting", () => d.page(call("toggleHunk", "b.txt", 1)));
+    await d.step("hunk seen after reconnecting", () => d.page(call("toggleHunk", "b.txt", 1)), ONE);
   },
 
   /** A change that no notification announced is still drawn once the view is looked at again. */
   async healing(d) {
     await d.step("opened", () => Promise.resolve());
     await d.page(`(() => { window.__muted = new Set(__t.changeset.listeners); __t.changeset.listeners.clear(); })()`);
-    await d.step("another window marks while the views are not told", () => d.otherMark("b.txt", 0), "stale");
+    await d.step("another window marks while the views are not told", () => d.otherMark("b.txt", 0), { stale: true });
     await d.page(`window.__muted.forEach((l) => __t.changeset.listeners.add(l))`);
     await d.step("the view is scrolled", () =>
       d.page(`document.querySelector(".pane.active .scroll").dispatchEvent(new Event("scroll"))`),
@@ -119,6 +124,19 @@ async function runSession(tab: Tab, other: Backend, url: string, script: (d: Dri
       import("/src/state/commands.ts"),
     ]);
     window.__t = { changeset: changeset.changeset, session: session.session, commands: commands.commands };
+    // What the page asked of the backend: the review requests it sent, and the requests that were rejected.
+    const marks = new Set(["toggleHunk", "toggleFlag", "toggleItem", "toggleFileSeen", "setFilesSeen", "createThread"]);
+    const conn = session.session.backend.conn;
+    const request = conn.request.bind(conn);
+    window.__requests = { marks: 0, failed: [] };
+    conn.request = (r, signal) => {
+      if (marks.has(r.type)) window.__requests.marks++;
+      const answer = request(r, signal);
+      answer.catch((error) => {
+        if (!signal?.aborted) window.__requests.failed.push(r.type + ": " + (error?.message ?? error));
+      });
+      return answer;
+    };
   })()`);
   await until(() => ready(`!!__t.changeset.layout`), "the changeset");
   await page(`__t.commands.run("view.review")`);
@@ -155,19 +173,34 @@ async function runSession(tab: Tab, other: Backend, url: string, script: (d: Dri
     async otherFlag(path, hunk) {
       return other.toggleFlag((await other.manifest(CHANGESET)).revision, path, hunk, CHANGESET);
     },
-    async step(name, run, stale) {
+    async step(name, run, expected = {}) {
+      await page(
+        `(() => { window.__requests.marks = 0; window.__requests.failed = []; __t.session.notice = undefined; })()`,
+      );
       await run();
       await settle();
       const found = await check();
-      if (stale) {
+      const { marks, failed, notice } = (await page(`({ ...window.__requests, notice: __t.session.notice })`)) as {
+        marks: number;
+        failed: string[];
+        notice?: string;
+      };
+      const problems: Difference[] = [];
+      const wantMarks = expected.marks ?? 0;
+      if (marks !== wantMarks)
+        problems.push({ what: "the number of review requests the step sent", page: marks, backend: wantMarks });
+      if (failed.length) problems.push({ what: "requests the backend rejected", page: failed, backend: [] });
+      if (notice !== undefined) problems.push({ what: "the notice after the step", page: notice, backend: undefined });
+      if (expected.stale) {
         if (!found.length)
           throw new Error(`${name}: the views followed a change they were not told of; the test cannot fail`);
         process.stderr.write(`  ${name}: stale, as wanted\n`);
-        results.push({ step: name, differences: [] });
+        results.push({ step: name, differences: problems });
         return;
       }
-      process.stderr.write(`  ${name}: ${found.length ? `${found.length} differences` : "ok"}\n`);
-      results.push({ step: name, differences: found });
+      const differences = [...found, ...problems];
+      process.stderr.write(`  ${name}: ${differences.length ? `${differences.length} differences` : "ok"}\n`);
+      results.push({ step: name, differences });
     },
     async openText(path) {
       const at = (await page(`(() => {
