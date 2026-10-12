@@ -204,6 +204,8 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
     const mirror = new ViewMirror();
     await changeset.refresh();
     await queue.loadAll();
+    // The window shows the queue, which follows the events for the changeset on view.
+    const stopQueue = queue.watch();
 
     /** No request in flight and nothing heard for a moment; the mirror of the views follows the stores meanwhile. */
     const idle = async () => {
@@ -260,6 +262,7 @@ export async function runSession(script: (h: Harness) => Promise<void>): Promise
     } finally {
       stopVersions();
       stopThreads();
+      stopQueue();
     }
     return results;
   } finally {

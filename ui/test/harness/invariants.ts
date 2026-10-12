@@ -119,16 +119,20 @@ export async function checkInvariants(other: Backend, mirror: ViewMirror): Promi
   differ("base", "base of the view", baseOf(manifest.base), baseOf(fresh.base));
   differ("reviewInfo", "review of the changeset", versionOf(manifest), versionOf(fresh));
 
-  if (!manifest.interdiff) {
-    // The queue and the switcher show the manifest as the on-view row's numbers, unless it is an interdiff.
-    const own = (m: Manifest) => ({
+  // The queue and the switcher show the changeset's own manifest as the on-view row's numbers, whatever view the review shows.
+  const own = (m: Manifest | undefined) =>
+    m && {
       completion: m.completion,
       delta: m.delta,
       files: m.files.map((f) => f.path),
       base: baseOf(m.base),
-    });
-    differ("onViewRowFacts", "what the on-view row of the queue takes from the manifest", own(manifest), own(whole));
-  }
+    };
+  differ(
+    "onViewRowFacts",
+    "what the on-view row of the queue takes from the manifest",
+    own(queue.onViewManifest),
+    own(whole),
+  );
 
   const key = keyId(manifest.target.changeset);
   const row = (rows: { key: Parameters<typeof keyId>[0]; review: RowReview }[]) =>

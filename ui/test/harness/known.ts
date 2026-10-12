@@ -12,15 +12,6 @@ export interface Known {
 }
 
 export const known: Known[] = [
-  // The Finish dialog's flagged count: a range never updates the changeset's totals.
-  { bug: "P1", invariant: "changesetCompletion", view: "interdiff" },
-  // A fetch writes the changeset's base over the base of a commit.
-  { bug: "P2", invariant: "base", view: "commit" },
-  // The queue takes the numbers of the commit on view as those of the changeset.
-  { bug: "P3", invariant: "onViewRowFacts", view: "commit" },
-  // The queue's on-view row ignores a settled version and a mark in a new version.
-  { bug: "P5", invariant: "queueRow", view: "changeset" },
-  { bug: "P5", invariant: "queueRow", view: "interdiff" },
   // The open editor views keep their review state across a reconnect.
   { bug: "P6", invariant: "viewMirror", view: "changeset" },
   // Another window's marks never reach a window that shows a range or a commit.

@@ -20,7 +20,7 @@ import { session } from "./session.svelte";
 /** How many rows have their lines counted at once. */
 const LINE_COUNTS_AT_ONCE = 3;
 /** A list shown follows a version or a mark this long after the last one. */
-const FOLLOW_AFTER_MS = 300;
+const FOLLOW_AFTER_MS = 100;
 
 class QueueStore {
   /** The working tree and the branches. */
