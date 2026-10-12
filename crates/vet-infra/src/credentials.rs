@@ -45,7 +45,7 @@ impl HttpValidator {
     async fn github_user(&self, host: &str, credential: &Credential) -> Result<Owner, ValidationError> {
         let base = self.endpoint(|| github::Endpoints::of(host).rest);
         let unusable = |_| ValidationError::Unreachable(format!("cannot set up the client for {host}"));
-        let crab = github::client(self.http()?, &base, credential, false).map_err(unusable)?;
+        let crab = github::checking_client(self.http()?, &base, credential, host).map_err(unusable)?;
         let answer = match crab._get("/user").await {
             Ok(response) => octocrab::map_github_error(response).await,
             Err(e) => Err(e),

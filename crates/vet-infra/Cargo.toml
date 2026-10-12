@@ -38,6 +38,8 @@ async-trait = "0.1"
 # Failures of the platforms are logged as structured events; the subscriber is the binary's.
 tracing = "0.1"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
+tower = { version = "0.5", default-features = false, features = ["retry"] }
+http = "1.5.0"
 
 [target.'cfg(not(windows))'.dependencies]
 notify = "8.2.0"

@@ -68,7 +68,12 @@ impl Orchestrator {
         fetch_heads_in_background(open.open.clone(), list.clone());
         for source in &list.sources {
             if let Some(error) = &source.error {
-                tracing::warn!(repository = %source.remote, %error, "listing the pull requests failed");
+                // The client told of a rate limit once, when it began.
+                if matches!(error, PlatformError::RateLimited { .. }) {
+                    tracing::debug!(repository = %source.remote, %error, "listing the pull requests failed");
+                } else {
+                    tracing::warn!(repository = %source.remote, %error, "listing the pull requests failed");
+                }
                 self.refused(error, &source.remote.account());
             } else {
                 let listed = list.rows.iter().filter(|r| r.remote == source.remote).count();

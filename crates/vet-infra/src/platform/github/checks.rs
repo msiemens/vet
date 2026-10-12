@@ -156,14 +156,14 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
                     Some(&page),
                 )
                 .await;
-            self.settle(host, &clients.rest, Bucket::Core, found).await
+            self.settle(host, Bucket::Core, found).await
         };
         let statuses = async {
             let found: octocrab::Result<CombinedStatus> = clients
                 .rest
                 .get(format!("/repos/{owner}/{name}/commits/{commit}/status"), Some(&page))
                 .await;
-            self.settle(host, &clients.rest, Bucket::Core, found).await
+            self.settle(host, Bucket::Core, found).await
         };
         let (runs, statuses) = try_join(runs, statuses).await?;
         let checks = commit_checks(remote, commit, runs, statuses);
@@ -189,14 +189,14 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         let job: octocrab::Result<Job> = rest
             .get(format!("/repos/{owner}/{name}/actions/jobs/{job_id}"), None::<&()>)
             .await;
-        let job = self.settle(host, rest, Bucket::Core, job).await?;
+        let job = self.settle(host, Bucket::Core, job).await?;
 
         // The log is behind a redirect to a signed address on another host, which the token must
         // not be sent to: the client follows none, and the address is fetched without it.
         let answer = rest
             ._get(format!("/repos/{owner}/{name}/actions/jobs/{job_id}/logs"))
             .await;
-        let answer = self.settle(host, rest, Bucket::Core, answer).await?;
+        let answer = self.settle(host, Bucket::Core, answer).await?;
         let body = if answer.status().is_redirection() {
             let location = answer
                 .headers()
@@ -206,10 +206,8 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
                 .to_owned();
             self.plain_get(host, &location).await?
         } else {
-            let answered = self
-                .settle(host, rest, Bucket::Core, map_github_error(answer).await)
-                .await?;
-            self.settle(host, rest, Bucket::Core, rest.body_to_string(answered).await)
+            let answered = self.settle(host, Bucket::Core, map_github_error(answer).await).await?;
+            self.settle(host, Bucket::Core, rest.body_to_string(answered).await)
                 .await?
         };
         let failed = job.steps.iter().find(|s| s.conclusion.as_deref() == Some("failure"));

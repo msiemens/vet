@@ -11,13 +11,21 @@
 //! `octocrab` leaves it off a request to another host, as for a `Link` header that points
 //! elsewhere. Nothing here logs a request or a response.
 
+use std::backtrace::Backtrace;
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
-use octocrab::Octocrab;
+use http::HeaderValue;
+use http::header::USER_AGENT;
+use octocrab::service::middleware::auth_header::AuthHeaderLayer;
+use octocrab::service::middleware::base_uri::BaseUriLayer;
 use octocrab::service::middleware::cache::mem::InMemoryCache;
+use octocrab::service::middleware::cache::{CacheStorage, HttpCacheLayer};
+use octocrab::service::middleware::extra_headers::ExtraHeadersLayer;
+use octocrab::service::middleware::reqwest_connector::ReqwestConnector;
 use octocrab::service::middleware::retry::RetryConfig;
+use octocrab::{AuthState, Octocrab, OctocrabBuilder};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -30,10 +38,14 @@ use vet_app::platform::{
 
 use crate::clock::unix_now;
 use crate::http::http_client;
+use limits::{Blocked, Limits, SECONDARY_WAIT, Watch, WatchLayer};
+use tower::Layer;
+use tower::retry::RetryLayer;
 use wire::{DetailData, SearchData};
 
 mod checks;
 mod discussion;
+mod limits;
 mod wire;
 
 #[cfg(test)]
@@ -66,24 +78,61 @@ pub(crate) struct Endpoints {
     pub(crate) rest: String,
 }
 
-/// A client for the API under `base` that sends `credential` to it and nowhere else.
-/// With `cache`, requests are conditional on what was answered before.
-pub(crate) fn client(
+/// A client for one request that checks a credential: it shares no rate-limit state with the
+/// clients of the platform.
+pub(crate) fn checking_client(
+    http: &reqwest::Client,
+    base: &str,
+    credential: &Credential,
+    host: &str,
+) -> octocrab::Result<Octocrab> {
+    let watch = Watch {
+        limits: Arc::default(),
+        host: host.to_owned(),
+        bucket: Bucket::Core,
+        now: unix_now,
+    };
+    client(http, base, credential, false, watch)
+}
+
+/// A client for the API under `base` that sends `credential` to it and nowhere else. With `cache`,
+/// requests are conditional on what was answered before. `watch` sees every response and holds
+/// requests back while the bucket is used up.
+///
+/// This is the stack `octocrab` builds for a `reqwest` client, with the watch right above the
+/// transport: it sees each response before a retry, and a retry meets the gate.
+fn client(
     http: &reqwest::Client,
     base: &str,
     credential: &Credential,
     cache: bool,
+    watch: Watch,
 ) -> octocrab::Result<Octocrab> {
-    let builder = Octocrab::builder()
-        .base_uri(base)?
-        .personal_token(credential.token.expose().to_owned())
-        .add_retry_config(RetryConfig::Simple(RETRIES));
-    let builder = if cache {
-        builder.cache(InMemoryCache::new())
-    } else {
-        builder
-    };
-    builder.build_with_reqwest(http.clone())
+    let base: http::Uri = base.parse().map_err(|source| octocrab::Error::Uri {
+        source,
+        backtrace: Backtrace::capture(),
+    })?;
+    let mut token = HeaderValue::from_str(&format!("Bearer {}", credential.token.expose())).map_err(|e| {
+        octocrab::Error::Other {
+            source: Box::new(e),
+            backtrace: Backtrace::capture(),
+        }
+    })?;
+    token.set_sensitive(true);
+    let storage: Option<Arc<dyn CacheStorage>> = cache.then(|| Arc::new(InMemoryCache::new()) as _);
+
+    let service = WatchLayer(watch).layer(ReqwestConnector::new(http.clone()));
+    let service = RetryLayer::new(RetryConfig::Simple(RETRIES)).layer(service);
+    let service =
+        ExtraHeadersLayer::new(Arc::new(vec![(USER_AGENT, HeaderValue::from_static("octocrab"))])).layer(service);
+    let service = BaseUriLayer::new(base.clone()).layer(service);
+    let service = AuthHeaderLayer::new(Some(token), base.clone(), base).layer(service);
+    let service = HttpCacheLayer::new(storage).layer(service);
+    Ok(OctocrabBuilder::new_empty()
+        .with_service(service)
+        .with_auth(AuthState::None)
+        .build()
+        .unwrap_or_else(|never| match never {}))
 }
 
 impl Endpoints {
@@ -103,7 +152,7 @@ impl Endpoints {
 }
 
 /// The rate-limit bucket a request is counted in.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Bucket {
     Core,
     GraphQl,
@@ -144,6 +193,8 @@ pub struct GitHubClient<C> {
     endpoints: Option<Endpoints>,
     now: fn() -> i64,
     state: Mutex<State>,
+    /// Which hosts' buckets are used up; kept across the rebuilds of a host's clients.
+    limits: Arc<Limits>,
 }
 
 #[derive(Deserialize)]
@@ -168,6 +219,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             endpoints: None,
             now: unix_now,
             state: Mutex::default(),
+            limits: Arc::default(),
         }
     }
 
@@ -204,9 +256,15 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         let unusable = |e: octocrab::Error| {
             PlatformError::Unexpected(format!("cannot set up the client for {host}: {}", short(&e)))
         };
+        let watch = |bucket| Watch {
+            limits: self.limits.clone(),
+            host: host.to_owned(),
+            bucket,
+            now: self.now,
+        };
         let clients = Clients {
-            rest: client(http, &endpoints.rest, &credential, true).map_err(unusable)?,
-            graphql: client(http, &endpoints.graphql, &credential, false).map_err(unusable)?,
+            rest: client(http, &endpoints.rest, &credential, true, watch(Bucket::Core)).map_err(unusable)?,
+            graphql: client(http, &endpoints.graphql, &credential, false, watch(Bucket::GraphQl)).map_err(unusable)?,
         };
         self.state()
             .clients
@@ -214,14 +272,9 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         Ok(clients)
     }
 
-    /// `result`, or why it failed in terms fit to show.
-    async fn settle<T>(
-        &self,
-        host: &str,
-        crab: &Octocrab,
-        bucket: Bucket,
-        result: octocrab::Result<T>,
-    ) -> Result<T, PlatformError> {
+    /// `result`, or why it failed in terms fit to show. A rate limit is logged where it is first
+    /// seen (`limits`), not here.
+    async fn settle<T>(&self, host: &str, bucket: Bucket, result: octocrab::Result<T>) -> Result<T, PlatformError> {
         let error = match result {
             Ok(value) => return Ok(value),
             Err(error) => error,
@@ -230,25 +283,44 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         let failed = match error {
             octocrab::Error::GitHub { source, .. } => {
                 let (status, message) = (source.status_code, source.message);
+                let announced = self.limits.blocked_until(host, bucket, now);
                 if status == StatusCode::TOO_MANY_REQUESTS
-                    || (status == StatusCode::FORBIDDEN && message.to_ascii_lowercase().contains("rate limit"))
+                    || (status == StatusCode::FORBIDDEN
+                        && (announced.is_some() || message.to_ascii_lowercase().contains("rate limit")))
                 {
-                    rate_limited(host, reset_of(crab, bucket).await, now)
-                } else {
-                    refusal(host, status, &message)
+                    return Err(self.limited(host, bucket));
                 }
+                refusal(host, status, &message)
             }
             octocrab::Error::Reqwest { source, .. } => unreachable_host(host, &source),
             // The transport's failures arrive wrapped.
-            octocrab::Error::Service { source, .. } => match source.downcast_ref::<octocrab::Error>() {
-                Some(octocrab::Error::Reqwest { source, .. }) => unreachable_host(host, source),
-                _ => PlatformError::Unreachable(format!("cannot reach {host}")),
-            },
+            octocrab::Error::Service { source, .. } => {
+                if let Some(Blocked { until }) = source.downcast_ref() {
+                    return Err(rate_limited(host, *until, now));
+                }
+                match source.downcast_ref::<octocrab::Error>() {
+                    Some(octocrab::Error::Reqwest { source, .. }) => unreachable_host(host, source),
+                    _ => PlatformError::Unreachable(format!("cannot reach {host}")),
+                }
+            }
             octocrab::Error::Hyper { .. } => PlatformError::Unreachable(format!("cannot reach {host}")),
             other => PlatformError::Unexpected(format!("{host} sent something that Vet cannot use: {}", short(&other))),
         };
         tracing::warn!(host, reason = %failed, "GitHub request failed");
         Err(failed)
+    }
+
+    /// The error for a response that said the bucket is used up. The limit ends when the response
+    /// said (`limits` has it); a refusal that did not say, GitHub asks to wait at least a minute for.
+    fn limited(&self, host: &str, bucket: Bucket) -> PlatformError {
+        let now = (self.now)();
+        let until = self.limits.blocked_until(host, bucket, now).unwrap_or_else(|| {
+            let until = now + SECONDARY_WAIT;
+            self.limits
+                .block(host, bucket, until, now, "refused as rate limited without a time");
+            until
+        });
+        rate_limited(host, until, now)
     }
 
     async fn graphql<T: DeserializeOwned>(
@@ -262,14 +334,13 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             .graphql
             .post("/graphql", Some(&json!({ "query": query, "variables": variables })))
             .await;
-        let response = self.settle(host, &clients.graphql, Bucket::GraphQl, reply).await?;
+        let response = self.settle(host, Bucket::GraphQl, reply).await?;
         if response
             .errors
             .iter()
             .any(|e| e.kind.as_deref() == Some("RATE_LIMITED"))
         {
-            let resets_at = reset_of(&clients.graphql, Bucket::GraphQl).await;
-            return Err(rate_limited(host, resets_at, (self.now)()));
+            return Err(self.limited(host, Bucket::GraphQl));
         }
         // Errors next to data are about parts of it (a pull request in an organization that
         // enforces SAML); the rest is still the answer.
@@ -299,7 +370,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
             crab.all_pages(first).await
         }
         .await;
-        match self.settle(host, crab, Bucket::Core, found).await {
+        match self.settle(host, Bucket::Core, found).await {
             Ok(teams) => Ok(teams
                 .into_iter()
                 .filter_map(|team| Some(format!("{}/{}", team.organization?.login, team.slug)))
@@ -331,7 +402,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
                 ]),
             )
             .await;
-        let newest = self.settle(host, &clients.rest, Bucket::Core, found).await?.pop();
+        let newest = self.settle(host, Bucket::Core, found).await?.pop();
         Ok(self.state().probed.insert(remote.clone(), newest.clone()) == Some(newest))
     }
 }
@@ -351,7 +422,7 @@ impl<C: CredentialProvider + Sync> Platform for GitHubClient<C> {
         }
         let clients = self.clients(host).await?;
         let user = clients.rest.current().user().await;
-        let user = self.settle(host, &clients.rest, Bucket::Core, user).await?;
+        let user = self.settle(host, Bucket::Core, user).await?;
         let viewer = Viewer {
             login: user.login,
             teams: self.teams(host, &clients.rest).await?,
@@ -539,18 +610,6 @@ fn is_login_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '[' || c == ']'
 }
 
-/// When the bucket is used up, if it is and the platform says. `octocrab` reports a
-/// refusal without the rate-limit headers, so the limits are asked for (which costs
-/// nothing). A secondary limit leaves the bucket unspent and has no time to give.
-async fn reset_of(crab: &Octocrab, bucket: Bucket) -> Option<i64> {
-    let limits = crab.ratelimit().get().await.ok()?;
-    let rate = match bucket {
-        Bucket::Core => limits.resources.core,
-        Bucket::GraphQl => limits.resources.graphql?,
-    };
-    (rate.remaining == 0).then(|| i64::try_from(rate.reset).ok())?
-}
-
 fn unreachable_host(host: &str, error: &reqwest::Error) -> PlatformError {
     let why = if error.is_timeout() {
         "timed out"
@@ -567,14 +626,13 @@ fn short(error: &octocrab::Error) -> String {
     error.to_string().lines().next().unwrap_or_default().to_owned()
 }
 
-fn rate_limited(host: &str, resets_at: Option<i64>, now: i64) -> PlatformError {
-    let when = resets_at.map_or_else(
-        || "; try again in a minute".to_owned(),
-        |at| format!("; it resets in {}", duration_in_words(at - now)),
-    );
+fn rate_limited(host: &str, resets_at: i64, now: i64) -> PlatformError {
     PlatformError::RateLimited {
-        message: format!("{host}'s rate limit is used up{when}"),
-        retry_at: resets_at,
+        message: format!(
+            "{host}'s rate limit is used up; it resets in {}",
+            duration_in_words(resets_at - now)
+        ),
+        retry_at: Some(resets_at),
     }
 }
 

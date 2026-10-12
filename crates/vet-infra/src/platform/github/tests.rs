@@ -68,6 +68,7 @@ fn client_with<C: CredentialProvider + Sync>(fake: &Fake, credentials: C) -> Git
         }),
         now,
         state: Mutex::default(),
+        limits: Arc::default(),
     }
 }
 
@@ -76,14 +77,6 @@ const PROBE: &str = "/repos/acme/app/pulls?state=all&sort=updated&direction=desc
 /// The pull request that was updated last, as the probe sees it.
 fn newest(version: &str) -> String {
     format!(r#"[{{"number":7,"updated_at":"2024-05-01T12:00:00Z/{version}"}}]"#)
-}
-
-fn rate_limits(remaining: u64, reset: i64) -> String {
-    let bucket = format!(
-        r#"{{"limit":5000,"used":{},"remaining":{remaining},"reset":{reset}}}"#,
-        5000 - remaining
-    );
-    format!(r#"{{"resources":{{"core":{bucket},"search":{bucket},"graphql":{bucket}}},"rate":{bucket}}}"#)
 }
 
 /// A user as GitHub documents one: `octocrab` needs every URL.
@@ -371,14 +364,35 @@ fn the_search_says_what_the_tab_and_the_filters_say() {
     );
 }
 
+/// `canned` with the headers GitHub puts on every response.
+fn counted(canned: Canned, remaining: u64, reset: i64) -> Canned {
+    canned
+        .with("x-ratelimit-remaining", remaining.to_string())
+        .with("x-ratelimit-reset", reset.to_string())
+}
+
+fn rate_limited_until(reset: i64, now: i64) -> PlatformError {
+    rate_limited("github.com", reset, now)
+}
+
+const SECONDARY: &str = r#"{"message":"You have exceeded a secondary rate limit. Please wait a few minutes."}"#;
+
 #[tokio::test]
 async fn a_rate_limit_is_reported_with_when_it_ends() {
     set_now(NOW);
     let reset = NOW + 600;
-    let fake = Fake::start(move |request, _| match request.path.as_str() {
-        "/rate_limit" => Canned::json(&rate_limits(0, reset)),
-        p if p == PROBE => Canned::json(&newest("v1")),
-        _ => Canned::json(r#"{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded for user ID 1."}]}"#),
+    let fake = Fake::start(move |request, _| {
+        if request.path == "/graphql" {
+            counted(
+                Canned::json(
+                    r#"{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded for user ID 1."}]}"#,
+                ),
+                0,
+                reset,
+            )
+        } else {
+            Canned::json(&newest("v1"))
+        }
     });
     let error = client(&fake)
         .list_pull_requests(&remote(), &all_open())
@@ -393,15 +407,96 @@ async fn a_rate_limit_is_reported_with_when_it_ends() {
     );
 }
 
+/// A host whose REST probe answers fine but says the bucket is used up.
+fn used_up_rest(reset: i64) -> (Fake, GitHubClient<Signed>) {
+    set_now(NOW);
+    let fake = Fake::start(move |request, _| {
+        if is_probe(request) {
+            counted(Canned::json(&newest("v1")), 0, reset)
+        } else {
+            Canned::json(SEARCH_PAGE_2)
+        }
+    });
+    let client = client(&fake);
+    (fake, client)
+}
+
 #[tokio::test]
-async fn a_secondary_limit_says_to_wait_and_a_refusal_to_read_is_not_one() {
+async fn a_used_up_bucket_is_not_asked_again_until_it_resets() {
+    let reset = NOW + 600;
+    let (fake, client) = used_up_rest(reset);
+    // The answer that used the bucket up is still an answer, and GraphQL has a bucket of its own.
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    let sent = fake.requests().len();
+
+    set_now(NOW + 100);
+    assert_eq!(
+        client.list_pull_requests(&remote(), &all_open()).await.unwrap_err(),
+        rate_limited_until(reset, NOW + 100)
+    );
+    assert_eq!(
+        client.viewer(&remote()).await.unwrap_err(),
+        rate_limited_until(reset, NOW + 100)
+    );
+    assert_eq!(fake.requests().len(), sent, "nothing is sent to a used-up bucket");
+}
+
+#[tokio::test]
+async fn requests_are_sent_again_once_the_limit_has_ended() {
+    let reset = NOW + 600;
+    let (fake, client) = used_up_rest(reset);
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    set_now(reset - 1);
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
+    let sent = fake.requests().len();
+
+    set_now(reset);
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap();
+    assert!(fake.requests().len() > sent, "the probe goes out again");
+}
+
+#[tokio::test]
+async fn a_secondary_limit_is_waited_out_as_retry_after_says() {
+    set_now(NOW);
+    let fake = Fake::start(|_, _| counted(Canned::status(403, SECONDARY), 4000, NOW + 3000).with("retry-after", "120"));
+    let client = client(&fake);
+    assert_eq!(
+        client.list_pull_requests(&remote(), &all_open()).await.unwrap_err(),
+        rate_limited_until(NOW + 120, NOW),
+        "the bucket still has points: the limit lasts as long as retry-after says"
+    );
+    let sent = fake.requests().len();
+
+    set_now(NOW + 119);
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
+    assert_eq!(fake.requests().len(), sent);
+
+    set_now(NOW + 120);
+    client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
+    assert!(fake.requests().len() > sent, "asked again when retry-after has passed");
+}
+
+#[tokio::test]
+async fn a_429_is_not_sent_again_at_once() {
+    set_now(NOW);
+    let fake = Fake::start(|_, _| Canned::status(429, SECONDARY).with("retry-after", "30"));
+    let error = client(&fake)
+        .list_pull_requests(&remote(), &all_open())
+        .await
+        .unwrap_err();
+    assert_eq!(error, rate_limited_until(NOW + 30, NOW));
+    assert_eq!(
+        fake.requests().len(),
+        1,
+        "a server error is tried again, a limit is not"
+    );
+}
+
+#[tokio::test]
+async fn a_refusal_as_rate_limited_without_a_time_waits_a_minute_and_a_refusal_to_read_is_not_one() {
     set_now(NOW);
     let fake = Fake::start(|request, _| match request.path.as_str() {
-        "/rate_limit" => Canned::json(&rate_limits(4000, NOW + 3000)),
-        PROBE => Canned::status(
-            403,
-            r#"{"message":"You have exceeded a secondary rate limit. Please wait a few minutes."}"#,
-        ),
+        PROBE => Canned::status(403, SECONDARY),
         _ => Canned::status(
             403,
             r#"{"message":"Resource protected by organization SAML enforcement."}"#,
@@ -410,15 +505,34 @@ async fn a_secondary_limit_says_to_wait_and_a_refusal_to_read_is_not_one() {
     let client = client(&fake);
     assert_eq!(
         client.list_pull_requests(&remote(), &all_open()).await.unwrap_err(),
-        PlatformError::RateLimited {
-            message: "github.com's rate limit is used up; try again in a minute".to_owned(),
-            retry_at: None
-        },
-        "the bucket still has points, so the limit has no time to give"
+        rate_limited_until(NOW + 60, NOW),
+        "GitHub asks for at least a minute when it says nothing else"
     );
     let error = client.pull_request(&remote(), 1).await.unwrap_err();
     assert!(matches!(error, PlatformError::Forbidden(_)), "{error:?}");
     assert!(error.to_string().contains("SAML"), "{error}");
+}
+
+#[tokio::test]
+async fn a_limit_is_logged_once_for_its_window() {
+    set_now(NOW);
+    let fake = Fake::start(|_, _| counted(Canned::status(403, SECONDARY), 4000, NOW + 3000).with("retry-after", "120"));
+    let client = client(&fake);
+    let log = vet_log::capture::Capture::default();
+    let _guard = log.install(vet_log::filter(None).0);
+    let mentions = || log.text().matches("rate limit is used up").count();
+
+    for _ in 0..5 {
+        client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
+    }
+    assert_eq!(mentions(), 1, "{}", log.text());
+    assert!(!log.text().contains("GitHub request failed"), "{}", log.text());
+
+    set_now(NOW + 121);
+    for _ in 0..5 {
+        client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
+    }
+    assert_eq!(mentions(), 2, "the next window is told of again: {}", log.text());
 }
 
 #[tokio::test]
