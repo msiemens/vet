@@ -757,6 +757,52 @@ async fn a_failed_request_is_logged_with_its_address_scheme_and_answer_and_witho
 }
 
 #[tokio::test]
+async fn many_groups_are_named_over_several_requests_so_no_query_gets_too_long() {
+    set_now(NOW);
+    let descriptors: Vec<String> = (0..52)
+        .map(|i| format!("Microsoft.TeamFoundation.Identity;S-1-9-1551374245-2249841213-4234504771-2956991958-2555110769-1-1452809802-541141059-2234181250-{i:09}"))
+        .collect();
+    let member_of = descriptors.clone();
+    let fake = Fake::start(move |request, _| {
+        let path = request.path.split('?').next().unwrap();
+        if path.ends_with("/_apis/connectionData") {
+            Canned::json(&profile())
+        } else if path == "/contoso/_apis/identities" {
+            if query_has(request, "identityIds=me-id") {
+                return Canned::json(
+                    &json!({ "count": 1, "value": [{ "id": "me-id", "memberOf": member_of }] }).to_string(),
+                );
+            }
+            let value = request
+                .path
+                .split(['?', '&'])
+                .find_map(|p| p.strip_prefix("descriptors="))
+                .unwrap_or_default();
+            // The real service answers a bare 404 to a query this long.
+            if value.len() > 4000 {
+                return Canned::status(404, "");
+            }
+            let named = value
+                .replace("%2C", ",")
+                .split(',')
+                .map(|d| d.rsplit("-").next().unwrap().to_owned())
+                .collect::<Vec<_>>();
+            let groups = named
+                .iter()
+                .map(|n| json!({ "id": n, "providerDisplayName": format!("group {n}"), "isContainer": true }))
+                .collect::<Vec<_>>();
+            Canned::json(&json!({ "count": groups.len(), "value": groups }).to_string())
+        } else {
+            Canned::json(&no_value())
+        }
+    });
+    let viewer = client(&fake).viewer(&remote()).await.unwrap();
+    let expected: Vec<String> = (0..52).map(|i| format!("group {i:09}")).collect();
+    assert_eq!(viewer.teams, expected);
+    assert!(requests_to(&fake, "/identities") > 2, "named by more than one request");
+}
+
+#[tokio::test]
 async fn groups_the_organization_refuses_are_explained_once_and_not_asked_for_again_for_an_hour() {
     set_now(NOW);
     let capture = vet_log::capture::Capture::default();

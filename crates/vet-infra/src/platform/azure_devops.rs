@@ -57,8 +57,35 @@ const MAX_LISTED: usize = 200;
 /// How many pull requests have their checks and threads asked for at once.
 const CONCURRENCY: usize = 6;
 
-/// How many groups are named by one request.
-const GROUPS_PER_REQUEST: usize = 50;
+/// The most characters, percent-encoded, of the descriptors one request names groups by.
+/// The identities service answers a bare 404 once the query is too long: 3,600 characters
+/// were measured to work and 6,000 not.
+const DESCRIPTORS_BUDGET: usize = 2000;
+
+/// `descriptors` in runs whose encoded, comma-joined value stays within `DESCRIPTORS_BUDGET`;
+/// a descriptor over the budget on its own is a run of its own.
+fn descriptor_runs(descriptors: &[String]) -> Vec<&[String]> {
+    // A comma is sent as `%2C`.
+    const SEPARATOR: usize = 3;
+    let mut runs = Vec::new();
+    let mut start = 0;
+    let mut length = 0;
+    for (i, descriptor) in descriptors.iter().enumerate() {
+        let encoded = url::form_urlencoded::byte_serialize(descriptor.as_bytes())
+            .map(str::len)
+            .sum::<usize>();
+        if i > start && length + SEPARATOR + encoded > DESCRIPTORS_BUDGET {
+            runs.push(&descriptors[start..i]);
+            start = i;
+            length = 0;
+        }
+        length += encoded + if i > start { SEPARATOR } else { 0 };
+    }
+    if start < descriptors.len() {
+        runs.push(&descriptors[start..]);
+    }
+    runs
+}
 
 /// How long the checks and threads of a pull request are reused while its source branch
 /// stays where it was.
@@ -217,7 +244,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .flat_map(|i| i.identity_base.member_of)
             .collect::<Vec<_>>();
         let mut names = Vec::new();
-        for chunk in member_of.chunks(GROUPS_PER_REQUEST) {
+        for chunk in descriptor_runs(&member_of) {
             let groups = self
                 .settle(
                     host,
