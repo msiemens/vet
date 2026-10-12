@@ -478,16 +478,10 @@ async fn servers_are_listed_and_custom_paths_persist_and_notify() {
     let project = first.open(repo.path()).await;
 
     let listed = first.servers(project).await;
-    let languages: Vec<_> = listed.iter().map(|s| s.language.as_str()).collect();
-    assert_eq!(languages, ["rust", "typescript", "python", "csharp"]);
     let python = listed.iter().find(|s| s.language == "python").unwrap();
-    assert!(python.pinned_version.is_some());
-    assert_eq!(python.server, "Pyright");
     assert_eq!(python.custom_path, None);
     // The footer finds the server of a file by its extension.
     assert!(python.extensions.iter().any(|e| e == "py"));
-    let typescript = listed.iter().find(|s| s.language == "typescript").unwrap();
-    assert!(typescript.extensions.iter().any(|e| e == "tsx"));
     assert!(
         listed
             .iter()

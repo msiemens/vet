@@ -23,18 +23,20 @@ async fn recorded_projects_are_listed_newest_first_until_forgotten() {
     assert!(paths(&client, Request::RecentProjects).await.is_empty());
     paths(&client, record("/a")).await;
     paths(&client, record("/b")).await;
-    assert_eq!(paths(&client, record("/a")).await, ["/a", "/b"]);
+    let seconds = || {
+        let since_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+        u32::try_from(since_epoch.unwrap().as_secs()).unwrap()
+    };
+    let before = seconds();
+    let listed = projects(&client, record("/a")).await;
+    let after = seconds();
+    assert_eq!(listed.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(), ["/a", "/b"]);
+    assert!(
+        (before..=after).contains(&listed[0].opened_at),
+        "a project carries when it was recorded, in seconds: {listed:?}, between {before} and {after}"
+    );
     assert_eq!(paths(&client, Request::RecentProjects).await, ["/a", "/b"]);
 
     let forget = Request::ForgetRecentProject { path: "/a".into() };
     assert_eq!(paths(&client, forget).await, ["/b"]);
-}
-
-#[tokio::test]
-async fn a_recorded_project_carries_when_it_was_opened() {
-    let (handler, _data) = handler().await;
-    let client = Client::new(&handler);
-
-    let listed = projects(&client, Request::RecordRecentProject { path: "/a".into() }).await;
-    assert!(listed[0].opened_at > 1_700_000_000, "{listed:?}");
 }

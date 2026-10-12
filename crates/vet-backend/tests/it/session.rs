@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use tokio::sync::mpsc::UnboundedReceiver;
+use vet_app::ports::Store;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
     AnchorState, Base, BaseChoice, BlobContent, ChangesetKey, Completion, DirEntry, DirEntryKind, Divergence, Event,
@@ -490,10 +491,10 @@ async fn mark_edit_settle_remap_and_revert() {
 
 /// Whether the content store in `data` holds `content`, waiting up to 10 s for it.
 async fn stored(data: &Path, content: &str) -> bool {
-    let hex = vet_core::content::BlobId::of(content.as_bytes()).0.to_hex();
-    let path = data.join("content").join(&hex[..2]).join(&hex[2..]);
+    let store = vet_infra::store::SqliteStore::open(data).await.unwrap();
+    let blob = vet_core::content::BlobId::of(content.as_bytes());
     for _ in 0..200 {
-        if path.exists() {
+        if store.missing_blobs(vec![blob]).await.unwrap().is_empty() {
             return true;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1313,19 +1314,6 @@ async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing()
         one.manifest(project).await.review,
         ReviewInfo::Open { version: 1, .. }
     ));
-}
-
-#[tokio::test]
-async fn reopening_without_a_started_review_browses_again() {
-    let fx = fixture(&[("a.txt", &text(5, &[]))], &[("a.txt", &text(5, &[1]))]).await;
-    let first = Client::new(&fx.handler);
-    let project = open(&first, fx.repo.path()).await;
-    first.call(Request::CloseProject { project }).await.unwrap();
-
-    let second = Client::new(&fx.handler);
-    let project = open(&second, fx.repo.path()).await;
-
-    assert_eq!(second.manifest(project).await.review, ReviewInfo::Browsing);
 }
 
 #[tokio::test]

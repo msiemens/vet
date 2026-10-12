@@ -25,9 +25,10 @@ async fn opening_answers_before_the_first_scan_and_the_first_request_that_needs_
     let client = Client::new(&handler);
 
     let project = client.open(repo.path()).await;
-    let Ok(Response::Tasks { .. }) = client.call(Request::Tasks { project }).await else {
+    let Ok(Response::Tasks { tasks }) = client.call(Request::Tasks { project }).await else {
         panic!("the tasks of a project that has not scanned are listed");
     };
+    assert!(tasks.is_empty(), "a scan that failed is not left running: {tasks:?}");
 
     let first = client
         .call(Request::Manifest {
@@ -43,7 +44,7 @@ async fn opening_answers_before_the_first_scan_and_the_first_request_that_needs_
         })
         .await
         .unwrap_err();
-    assert!(!first.is_empty());
+    assert!(first.contains("does not have any commits"), "{first}");
     assert_eq!(first, again);
 }
 

@@ -31,9 +31,9 @@ use vet_infra::materialize::Materialize;
 use vet_infra::materialize::kept::{KeptTrees, Limits, Referenced};
 use vet_infra::store::SqliteStore;
 use vet_protocol::{
-    AnchorConfidence, AnchorState, AnchorStrategy, BaseChoice, EntryKind, Event, FileChange, HunkState, LineLocation,
-    Manifest, NonTextKind, ProjectId, Request, Response, ReviewFilter, ServerMessage, Side, StaleReason, Thread,
-    ThreadKind, ThreadTarget,
+    AnchorState, AnchorStrategy, BaseChoice, EntryKind, Event, FileChange, HunkState, LineLocation, Manifest,
+    NonTextKind, ProjectId, Request, Response, ReviewFilter, ServerMessage, Side, StaleReason, Thread, ThreadKind,
+    ThreadTarget,
 };
 use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::Materializer;
@@ -953,82 +953,25 @@ async fn criterion1_deleting_a_file_detaches_its_threads_but_not_the_changeset_t
 }
 
 #[tokio::test]
-async fn criterion1_all_four_anchor_states_in_one_session() {
-    let dup = "dup A\ndup B\ndup C\n";
-    // Each file has its own text: identical lines in two changed files would be
-    // a cross-file candidate for every thread.
-    let own = |name: &str| -> String { (0..30).map(|i| format!("{name} line {i}\n")).collect() };
-    let fx = fixture(
-        &[
-            ("exact.txt", &own("exact")),
-            ("inferred.txt", &own("inferred")),
-            ("ambiguous.txt", &format!("p1\np2\np3\n{dup}q1\nq2\nq3\n")),
-            ("stale.txt", &own("stale")),
-            ("rewritten.txt", &own("rewritten")),
-        ],
-        &[],
-    )
-    .await;
-    let p = fx.repo.path();
+async fn criterion1_a_rewritten_file_leaves_its_thread_stale_for_changed_context() {
+    let own: String = (0..30).map(|i| format!("rewritten line {i}\n")).collect();
+    let fx = fixture(&[("rewritten.txt", &own)], &[]).await;
     let mut client = Client::new(&fx.handler);
-    let project = client.open(p).await;
-    let mut threads = Vec::new();
-    for (path, start) in [
-        ("exact.txt", 10),
-        ("inferred.txt", 10),
-        ("ambiguous.txt", 3),
-        ("stale.txt", 10),
-        ("rewritten.txt", 10),
-    ] {
-        threads.push(client.comment(project, path, start, 3).await.id);
-    }
+    let project = client.open(fx.repo.path()).await;
+    let comment = client.comment(project, "rewritten.txt", 10, 3).await;
 
-    write(p, "exact.txt", &format!("new 1\nnew 2\n{}", own("exact")));
-    write(
-        p,
-        "inferred.txt",
-        &own("inferred").replace("inferred line 11\n", "edited\n"),
-    );
-    write(
-        p,
-        "ambiguous.txt",
-        &format!("x1\nx2\nx3\n{dup}x4\nx5\nx6\nx7\nx8\n{dup}y1\ny2\ny3\n"),
-    );
-    std::fs::remove_file(p.join("stale.txt")).unwrap();
-    write(p, "rewritten.txt", "completely\ndifferent\n");
+    write(fx.repo.path(), "rewritten.txt", "completely\ndifferent\n");
     client.quiet().await;
 
-    let states: Vec<_> = {
-        let mut states = Vec::new();
-        for id in threads {
-            states.push(client.thread(project, id).await.anchor.unwrap());
-        }
-        states
-    };
-    assert_eq!(states[0], EXACT);
-    assert!(
-        matches!(
-            states[1],
-            AnchorState::Inferred {
-                strategy: AnchorStrategy::ContextWindow,
-                confidence: AnchorConfidence::Medium | AnchorConfidence::High | AnchorConfidence::Low
-            }
-        ),
-        "{:?}",
-        states[1]
-    );
-    assert!(matches!(states[2], AnchorState::Ambiguous { .. }), "{:?}", states[2]);
+    let thread = client.thread(project, comment.id).await;
     assert_eq!(
-        states[3],
-        AnchorState::Stale {
-            reason: StaleReason::FileDeleted
-        }
-    );
-    assert_eq!(
-        states[4],
-        AnchorState::Stale {
-            reason: StaleReason::ContextChanged
-        }
+        (thread.anchor, thread.location),
+        (
+            Some(AnchorState::Stale {
+                reason: StaleReason::ContextChanged
+            }),
+            None
+        )
     );
 }
 

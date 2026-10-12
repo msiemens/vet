@@ -7,7 +7,6 @@ mod cancel;
 mod checks;
 mod common;
 mod fetch;
-mod first_mark;
 mod github;
 mod load;
 mod progress;

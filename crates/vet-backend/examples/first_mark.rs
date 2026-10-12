@@ -1,8 +1,7 @@
 //! How long the first marks take on a large changeset, against SPEC §13's 100 ms. A
-//! measurement, not a check: it is ignored, prints its timings and asserts nothing about
-//! them. Run it alone, in the build to measure:
+//! measurement, not a check: it prints its timings and asserts nothing about them.
 //!
-//! `cargo test --release -p vet-backend --test it first_mark -- --ignored --nocapture`
+//! `cargo run --release -p vet-backend --example first_mark`
 //!
 //! The changeset is `VET_MEASURE_FILES` (300) of this repository's own source files, edited
 //! in the working tree. They are named `*.txt`, so that no language server starts.
@@ -11,7 +10,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::common::{Client, config, git, init, write};
+#[path = "../tests/it/common/mod.rs"]
+mod common;
+
+use common::{Client, config, git, init, write};
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{Event, ProjectId, Request, Response, ServerMessage, TaskKind, TaskState, View};
 
@@ -209,9 +211,8 @@ async fn session(
     println!("{label}: a mark with everything seen: unmark {undo:?}, mark {redo:?}");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "a measurement: run it alone with --ignored --nocapture"]
-async fn the_first_marks_on_a_large_changeset() {
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+async fn main() {
     let count = std::env::var("VET_MEASURE_FILES").map_or(300, |n| n.parse().unwrap());
     let files = sources(count);
     let bytes: usize = files.iter().map(|(_, t)| t.len()).sum();

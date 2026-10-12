@@ -273,7 +273,8 @@ async fn requests_in_flight_on_the_old_server_fail_as_restarted() {
 
 #[tokio::test]
 #[ignore = "needs python3"]
-async fn a_server_that_dies_is_restarted_once_with_a_notice_and_stays_stopped_when_it_dies_again() {
+async fn a_server_that_dies_is_restarted_once_with_a_notice_and_the_second_death_stays_stopped_until_restarted_by_hand()
+{
     let rig = Rig::start().await;
     let before = rig.pid().await;
     rig.kill().await;
