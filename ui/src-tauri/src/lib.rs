@@ -45,6 +45,7 @@ pub fn run() {
             }
         })
         .on_window_event(geometry::on_window_event)
+        .on_page_load(window::on_page_load)
         .setup(|app| {
             app.manage(menu::ContextMenuChoice::default());
             app.manage(menu::KeyOnlyItems::default());

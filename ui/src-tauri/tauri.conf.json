@@ -18,7 +18,7 @@
         "height": 900,
         "decorations": true,
         "visible": false,
-        "titleBarStyle": "Overlay",
+        "titleBarStyle": "Visible",
         "hiddenTitle": true
       }
     ],

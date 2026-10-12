@@ -24,6 +24,10 @@ pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static 
     async fn native(window: &tauri::WebviewWindow, cause: impl std::fmt::Display) -> Result<&'static str, String> {
         tracing::warn!(%cause, "app-drawn title bar unavailable, using the native frame");
         let restored = window.restore_decoration().await;
+        #[cfg(target_os = "macos")]
+        if let Err(e) = window.set_title_bar_style(tauri::TitleBarStyle::Visible) {
+            tracing::warn!(error = %e, "cannot give the native frame its own title bar");
+        }
         reveal(window).map_err(|e| format!("{cause}; showing the native frame failed: {e}"))?;
         restored
             .map(|()| "native")
@@ -47,6 +51,12 @@ pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static 
         tracing::warn!(attempt, of = DECORATION_ATTEMPTS, error = %e, "app-drawn title bar failed");
         attempt += 1;
     }
+    // The app header runs under the traffic lights, which only the activated title bar makes room
+    // for; until then the native title bar keeps the page below them.
+    #[cfg(target_os = "macos")]
+    if let Err(e) = window.set_title_bar_style(tauri::TitleBarStyle::Overlay) {
+        return native(&window, e).await;
+    }
     // Centres the traffic lights in the 40px header: the plugin centres them in a titlebar of
     // their own height (14pt) plus `y`, so `y` is what makes that titlebar 40pt tall.
     #[cfg(target_os = "macos")]
@@ -61,6 +71,19 @@ pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static 
         Ok(()) => Ok("custom"),
         Err(e) => native(&window, e).await,
     }
+}
+
+/// A page that starts loading has no app-drawn title bar yet (the plugin drops it with the old
+/// page), so on macOS the window gets its native title bar back until the page activates one.
+pub fn on_page_load(webview: &tauri::Webview, payload: &tauri::webview::PageLoadPayload) {
+    #[cfg(target_os = "macos")]
+    if payload.event() == tauri::webview::PageLoadEvent::Started
+        && let Err(e) = webview.window().set_title_bar_style(tauri::TitleBarStyle::Visible)
+    {
+        tracing::warn!(error = %e, "cannot give the window its native title bar");
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (webview, payload);
 }
 
 /// Shows the main window, then closes the splash that covered its start.
