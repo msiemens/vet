@@ -28,8 +28,8 @@
     summarizeOutgoing,
     unreadCount,
   } from "../features/comments";
-  import { NotificationCards, PlatformFooter } from "../features/platform";
-  import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, targetLabel } from "../features/queue";
+  import { NotificationCards, PlatformFooter, copyText } from "../features/platform";
+  import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, queueCommands, targetLabel } from "../features/queue";
   import {
     ReviewScreen,
     type ReviewController,
@@ -69,6 +69,7 @@
   } from "../state/host";
   import { appCommands } from "../state/appCommands";
   import { backendSettings } from "../state/backendSettings.svelte";
+  import { keyId } from "../state/changesetKey";
   import { commands } from "../state/commands";
   import { contextMenus } from "../state/contextMenu.svelte";
   import { keymap } from "../state/keymap.svelte";
@@ -199,8 +200,8 @@
         switcherOpen = true;
       },
       openPullRequest: () => void openPullRequest(),
-      openInBrowser: () => {
-        const url = platform.info?.url;
+      openInBrowser: (at) => {
+        const url = at ?? platform.info?.url;
         if (url === undefined) return;
         void openUrl(url).catch((e: unknown) => {
           session.notice = `Could not open the browser: ${errorText(e)}`;
@@ -235,6 +236,13 @@
       clearSemanticCaches: () => void clearSemanticCaches(),
       showLog: () => void showLog(),
       restartBackend: () => void session.restartBackend(),
+    }),
+    ...queueCommands({
+      open: (key) => {
+        if (!queue.onView || keyId(queue.onView) !== keyId(key)) void changeset.openChangeset(key);
+        screen = "review";
+      },
+      copyText: (text) => void copyText(text),
     }),
     ...viewCommands(reviewActions),
     ...fileCommands(reviewActions),

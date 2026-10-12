@@ -15,6 +15,7 @@
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
+  import { contextMenus } from "../../state/contextMenu.svelte";
   import { queue } from "../../state/queue.svelte";
   import { threads } from "../../state/threads.svelte";
   import ChangesCell from "./ChangesCell.svelte";
@@ -39,6 +40,7 @@
     updatedAt,
     updatedText,
   } from "./queueRows";
+  import { rowMenu } from "./queueCommands";
   import QueueComments from "./QueueComments.svelte";
   import QueueDetails from "./QueueDetails.svelte";
   import QueueFiles from "./QueueFiles.svelte";
@@ -124,6 +126,14 @@
   });
   $effect(() => () => nav.cancel());
 
+  /** A right click selects the row at once, and opens its menu. */
+  function openMenu(e: MouseEvent, row: QueueRow, index: number) {
+    nav.cancel();
+    highlighted = index;
+    select(row);
+    void contextMenus.open(rowMenu, e.clientX, e.clientY, { row: { key: row.key, url: row.pullRequest?.url } });
+  }
+
   function onkeydown(e: KeyboardEvent) {
     if (!nav.keydown(e)) return;
     e.preventDefault();
@@ -181,6 +191,7 @@
         tabindex="-1"
         aria-current={id === onViewId}
         onclick={(e) => nav.click(e, index)}
+        oncontextmenu={(e) => openMenu(e, row, index)}
       >
         <span class="title"><ChangesetName label={labelOf(row)} /></span>
         <span

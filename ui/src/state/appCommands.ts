@@ -27,8 +27,8 @@ export interface AppActions {
   showChangesets(): void;
   /** Asks for a pull request by its number. */
   openPullRequest(): void;
-  /** Shows the pull request on view on its platform's web page. */
-  openInBrowser(): void;
+  /** Shows the pull request at `url`, or the one on view, on its platform's web page. */
+  openInBrowser(url?: string): void;
   showDialog(dialog: "settings" | "about"): void;
   /** Opens Settings on the Keymap page. */
   showKeymap(): void;
@@ -131,9 +131,10 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     {
       id: "changeset.openInBrowser",
       label: "Open in Browser",
-      enabled: (c) => !!c.pullRequest,
-      disabledReason: () => NO_PULL_REQUEST,
-      run: () => a.openInBrowser(),
+      // On a queue row's menu it is that row's pull request, else the one on view.
+      enabled: (c) => (c.row ? c.row.url !== undefined : !!c.pullRequest),
+      disabledReason: (c) => (c.row ? "Only a pull request has a page on its platform" : NO_PULL_REQUEST),
+      run: (c) => a.openInBrowser(c.row ? c.row.url : undefined),
     },
     {
       id: "changeset.open",
