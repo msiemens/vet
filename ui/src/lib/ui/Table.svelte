@@ -133,7 +133,7 @@
       {@const sorted = sort?.column === column.id ? sort.direction : undefined}
       <span class="cell" class:right={column.align === "right"} role="columnheader" aria-sort={ariaSort(column)}>
         {#if column.sortBy}
-          <button class="flat sort" type="button" onclick={() => sortBy(column)}>
+          <button class="sort" type="button" onclick={() => sortBy(column)}>
             <span class="label">{column.label}</span>
             {#if sorted}<Icon name={sorted === "ascending" ? "up" : "down"} size={11} />{/if}
           </button>
@@ -224,20 +224,54 @@
   .cell.right {
     justify-content: flex-end;
   }
+  /* A sortable header is one button over the whole cell, from divider to divider and the header's full
+     height (the first and last cell run to the header's edges). The grips lie above it. The sort arrow
+     sits at the cell's right edge; in a right-aligned column it goes before the label, so the label
+     stays flush right and does not move when the sort changes. */
   .sort {
-    display: inline-flex;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--gap) / -2);
+    right: calc(var(--gap) / -2);
+    display: flex;
     align-items: center;
-    gap: 3px;
-    min-width: 0;
-    height: calc(100% - 4px);
-    margin: 0 -4px;
-    padding: 0 4px;
-    border-radius: var(--radius);
+    gap: 4px;
+    margin: 0;
+    padding: 0 calc(var(--gap) / 2);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
     color: inherit;
     font: inherit;
+    text-align: left;
+    cursor: default;
   }
-  .sort :global(svg) {
+  .cell:first-child > .sort {
+    left: calc(var(--pad) * -1);
+    padding-left: var(--pad);
+  }
+  .cell:last-child > .sort {
+    right: calc(var(--pad-end) * -1);
+    padding-right: var(--pad-end);
+  }
+  .cell.right > .sort {
+    justify-content: flex-end;
+  }
+  .cell.right > .sort > :global(svg) {
+    order: -1;
+  }
+  .sort:hover {
+    background: var(--hover);
+  }
+  .sort:active {
+    background: var(--press);
+  }
+  .sort > :global(svg) {
     flex: none;
+  }
+  .cell:not(.right) > .sort > :global(svg) {
+    margin-left: auto;
   }
   .label {
     overflow: hidden;
