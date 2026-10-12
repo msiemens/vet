@@ -16,7 +16,7 @@ import { canSubmit, isSubmitKey, replyShape } from "../../../lib/composer.ts";
 import { isFlat } from "../../../lib/flatThread.ts";
 import { lineRange } from "../../../lib/lineRange.ts";
 import { movedLabel, movedTitle } from "../../../lib/movedTitle.ts";
-import { fullTime, relativeTime } from "../../../lib/relativeTime.ts";
+import { fullTime, shortTime } from "../../../lib/shortTime.ts";
 import { iconSvg } from "../../../lib/ui/icons.ts";
 import { el, iconButton } from "./dom.ts";
 import type { CardData } from "./threadPlacement.ts";
@@ -255,7 +255,7 @@ function messageRow(thread: Thread, message: ThreadMessage, actions: ThreadActio
   const draft = isDraft(thread, message);
   const row = el("div", draft ? "vet-msg vet-msg-draft" : "vet-msg");
   const meta = el("div", "vet-msg-meta");
-  const when = el("span", "vet-msg-time", relativeTime(message.at));
+  const when = el("span", "vet-msg-time", shortTime(message.at, Date.now(), "detailed"));
   when.title = fullTime(message.at);
   meta.append(el("span", "vet-msg-author", message.author), when);
   if (message.editedAt !== null) {

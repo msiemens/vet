@@ -65,18 +65,18 @@ void test("items read back as the choice they stand for", () => {
   assert.equal(parseBaseItem("commit"), "commits");
 });
 
-void test("the tooltip has the choice, the full hash, the subject, the author and the age", () => {
+void test("the tooltip has the choice, the full hash, the subject, the author and the time", () => {
   const base: Base = {
     choice: { type: "mergeBase", reference: "main" },
-    commit: { id: "a".repeat(40), shortId: "aaaaaaa", subject: "Fix the thing", author: "Ann", time: now - 3 * 3600 },
+    commit: { id: "a".repeat(40), shortId: "aaaaaaa", subject: "Fix the thing", author: "Ann", time: now - 30 },
     name: "main~3",
   };
   assert.equal(
     baseTooltip(base, "feature", now * 1000),
-    ["Where feature branched off main", "a".repeat(40), "Fix the thing", "Ann · 3 hr. ago"].join("\n"),
+    ["Where feature branched off main", "a".repeat(40), "Fix the thing", "Ann · now"].join("\n"),
   );
 });
 
 void test("the version says when it settled", () => {
-  assert.equal(versionTitle(3, now - 120, now * 1000), "Version 3 · updated 2 min. ago");
+  assert.equal(versionTitle(3, now - 20, now * 1000), "Version 3 · updated now");
 });

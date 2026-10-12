@@ -3,9 +3,8 @@
 import type { Base } from "../../generated/Base";
 import type { BaseChoice } from "../../generated/BaseChoice";
 import type { BranchInfo } from "../../generated/BranchInfo";
+import { shortTime } from "../../lib/shortTime.ts";
 import { type MenuItem, separator } from "../../lib/ui/menuItem.ts";
-import { relativeTime } from "./relativeTime.ts";
-
 /** How the choice came about, for the tooltip. `branch` is the working tree's. */
 export function baseDescription(choice: BaseChoice, branch: string | undefined): string {
   switch (choice.type) {
@@ -18,16 +17,19 @@ export function baseDescription(choice: BaseChoice, branch: string | undefined):
   }
 }
 
-/** Full hash, subject, author and age of the base commit, under what the choice is. */
+/** Full hash, subject, author and time of the base commit, under what the choice is. */
 export function baseTooltip(base: Base, branch: string | undefined, nowMs = Date.now()): string {
   const c = base.commit;
-  return [baseDescription(base.choice, branch), c.id, c.subject, `${c.author} · ${relativeTime(c.time, nowMs)}`].join(
-    "\n",
-  );
+  return [
+    baseDescription(base.choice, branch),
+    c.id,
+    c.subject,
+    `${c.author} · ${shortTime(c.time, nowMs, "detailed")}`,
+  ].join("\n");
 }
 
 export function versionTitle(version: number, updatedAt: number, nowMs = Date.now()): string {
-  return `Version ${version} · updated ${relativeTime(updatedAt, nowMs)}`;
+  return `Version ${version} · updated ${shortTime(updatedAt, nowMs, "detailed")}`;
 }
 
 /** The current branch first, the default one next, then the rest in the order listed. */

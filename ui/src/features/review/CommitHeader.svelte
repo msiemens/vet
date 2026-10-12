@@ -26,7 +26,7 @@
       <span class="avatar" style:--hue={hue} aria-hidden="true">{initial}</span>
       {info.author}
     </span>
-    <span class="meta">{shortTime(info.time)}</span>
+    <span class="meta">{shortTime(info.time, Date.now(), "detailed")}</span>
     <span class="mono meta">{info.shortId}</span>
     {#if checked && look}
       <span class="meta ci {look.tone}" title={`${count.passed} of ${count.total} checks passed`}>

@@ -2,7 +2,7 @@
   import { onMount, tick } from "svelte";
   import type { CommitInfo } from "../../generated/CommitInfo";
   import { searchCommits } from "./commitSearch";
-  import { relativeTime } from "./relativeTime";
+  import { shortTime } from "../../lib/shortTime";
 
   let {
     commits,
@@ -74,7 +74,7 @@
           <span class="mono id">{commit.shortId}</span>
           <span class="subject">{commit.subject}</span>
           <span class="author">{commit.author}</span>
-          <span class="when">{relativeTime(commit.time)}</span>
+          <span class="when">{shortTime(commit.time, Date.now(), "detailed")}</span>
         </button>
       </li>
     {/each}
@@ -149,7 +149,7 @@
     text-overflow: ellipsis;
   }
   .when {
-    width: 72px;
+    width: 88px;
     text-align: right;
   }
   .empty {

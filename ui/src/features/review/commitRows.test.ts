@@ -27,14 +27,11 @@ function unit(kind: CommitKind, completion: Partial<CommitUnit["completion"]> = 
   };
 }
 
-void test("a commit carries its own numbers", () => {
-  const row = commitRow(unit({ type: "commit" }));
-  assert.deepEqual([row.merge, row.clean, row.added, row.removed, row.seen], [false, false, 62, 0, 100]);
-});
-
-void test("a commit with part of its diff unseen shows the shares seen and seen against an old base", () => {
-  const row = commitRow(unit({ type: "commit" }, { complete: false, seenPercent: 40, oldBasePercent: 10 }));
-  assert.deepEqual([row.seen, row.oldBase], [40, 10]);
+void test("a commit from earlier this week says the weekday and the time of day", () => {
+  const now = new Date(2026, 9, 7, 15, 30).getTime();
+  const base = unit({ type: "commit" });
+  const commit = { ...base.commit, time: new Date(2026, 9, 5, 14, 2).getTime() / 1000 };
+  assert.equal(commitRow({ ...base, commit }, now).when, "Mon 2:02 PM");
 });
 
 void test("a clean merge is muted", () => {

@@ -28,7 +28,7 @@ export function commitRow(unit: CommitUnit, now = Date.now()): CommitRow {
     subject: unit.commit.subject,
     shortId: unit.commit.shortId,
     author: unit.commit.author,
-    when: shortTime(unit.commit.time, now),
+    when: shortTime(unit.commit.time, now, "detailed"),
     merge,
     clean,
     notRemerged: unit.kind.type === "merge" && !unit.kind.remerged,
