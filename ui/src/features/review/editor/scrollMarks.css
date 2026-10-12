@@ -1,4 +1,7 @@
 /* The colours of the hunk marks in a view's scroll bar (`scrollMarks.ts`). */
+.vet-scrollmark-flagged {
+  background: var(--warn);
+}
 .vet-scrollmark-seen {
   background: var(--seen);
 }

@@ -176,7 +176,7 @@ export class TextView {
 
   /** Where the hunks lie in the editor's content, for the marks in its scroll bar. */
   private markLayout(view: EditorView, { source, field }: Drawn): MarkLayout {
-    const { states } = view.state.field(field);
+    const { states, flags } = view.state.field(field);
     const { doc } = view.state;
     const marks = source.hunks.map((h, i): ScrollMark => {
       const first = view.lineBlockAt(lineStart(doc, h.targetStart));
@@ -184,7 +184,7 @@ export class TextView {
       const last = removal ? first : view.lineBlockAt(lineStart(doc, h.targetStart + h.targetLen - 1));
       // Lines removed at the end lie below the last line.
       const top = removal && h.targetStart >= doc.lines ? first.bottom : first.top;
-      return { top, height: removal ? 0 : last.bottom - first.top, kind: markKind(states[i], removal) };
+      return { top, height: removal ? 0 : last.bottom - first.top, kind: markKind(states[i], removal, flags[i]) };
     });
     return { total: view.contentHeight, marks };
   }

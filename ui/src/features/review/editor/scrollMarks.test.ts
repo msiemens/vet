@@ -13,12 +13,17 @@ const hunk = (baseStart: number, baseLen: number, targetStart: number, targetLen
 const METRICS = { hunk: 24, line: 20 };
 
 void test("a hunk's mark says what is left of it: removals show apart while unseen only", () => {
-  assert.equal(markKind("unseen", false), "unseen");
-  assert.equal(markKind("unseen", true), "deletion");
-  assert.equal(markKind("seen", true), "seen");
-  assert.equal(markKind("seenAgainstOldBase", true), "baseChanged");
-  assert.equal(markKind("unapplied", false), "unseen");
-  assert.equal(markKind("informational", false), "seen");
+  assert.equal(markKind("unseen", false, false), "unseen");
+  assert.equal(markKind("unseen", true, false), "deletion");
+  assert.equal(markKind("seen", true, false), "seen");
+  assert.equal(markKind("seenAgainstOldBase", true, false), "baseChanged");
+  assert.equal(markKind("unapplied", false, false), "unseen");
+  assert.equal(markKind("informational", false, false), "seen");
+});
+
+void test("a flag outranks every state in the mark", () => {
+  for (const state of ["unseen", "seen", "seenAgainstOldBase", "unapplied", "informational"] as HunkState[])
+    for (const deletion of [false, true]) assert.equal(markKind(state, deletion, true), "flagged");
 });
 
 void test("a diff view's marks lie where the height model puts its hunks", () => {
@@ -27,13 +32,13 @@ void test("a diff view's marks lie where the height model puts its hunks", () =>
       top: 100,
       hunkTops: [30, 200],
       file: { hunks: [hunk(0, 2, 0, 3), hunk(9, 4, 12, 0)] },
-      review: { hunks: ["seen", "unseen"] as HunkState[] },
+      review: { hunks: ["seen", "unseen"] as HunkState[], flagged: [false, false] },
     },
     {
       top: 900,
       hunkTops: [30],
       file: { hunks: [hunk(0, 1, 0, 1)] },
-      review: { hunks: ["seenAgainstOldBase"] as HunkState[] },
+      review: { hunks: ["seenAgainstOldBase"] as HunkState[], flagged: [true] },
     },
   ];
   assert.deepEqual(sectionMarks(sections, 1200, "unified", METRICS), {
@@ -41,7 +46,7 @@ void test("a diff view's marks lie where the height model puts its hunks", () =>
     marks: [
       { top: 130, height: 24 + 5 * 20, kind: "seen" },
       { top: 300, height: 24 + 4 * 20, kind: "deletion" },
-      { top: 930, height: 24 + 2 * 20, kind: "baseChanged" },
+      { top: 930, height: 24 + 2 * 20, kind: "flagged" },
     ],
   });
   // Split shows the taller side of a hunk only.

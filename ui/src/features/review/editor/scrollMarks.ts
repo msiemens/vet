@@ -8,10 +8,12 @@ import type { Mode } from "../../../lib/viewMode.ts";
 import type { MarkLayout, ScrollMark } from "../../../lib/ui/scrollbar.ts";
 import type { Metrics } from "./sectionLayout.ts";
 
-/** What a mark says of its hunk: seen, still to review, seen against an old base, or lines removed and still to review. */
-export type MarkKind = "seen" | "unseen" | "baseChanged" | "deletion";
+/** What a mark says of its hunk: flagged for later, seen, still to review, seen against an old base, or lines removed and still to review. */
+export type MarkKind = "flagged" | "seen" | "unseen" | "baseChanged" | "deletion";
 
-export function markKind(state: HunkState, deletion: boolean): MarkKind {
+/** A flag outranks the state: it is what the viewer set out to come back to. */
+export function markKind(state: HunkState, deletion: boolean, flagged: boolean): MarkKind {
+  if (flagged) return "flagged";
   switch (state) {
     case "seen":
     case "informational":
@@ -30,7 +32,7 @@ export interface MarkedSection {
   /** Estimated offset of each hunk bar from the top of the section. */
   hunkTops: readonly number[];
   file: { hunks: readonly Hunk[] };
-  review: { hunks: readonly HunkState[] };
+  review: { hunks: readonly HunkState[]; flagged: readonly boolean[] };
 }
 
 /** The px a hunk of a diff takes below its bar: its lines on both sides, or the taller side. */
@@ -51,7 +53,7 @@ export function sectionMarks(
       marks.push({
         top: s.top + s.hunkTops[i],
         height: m.hunk + hunkRows(h, mode, m.line),
-        kind: markKind(s.review.hunks[i], h.targetLen === 0),
+        kind: markKind(s.review.hunks[i], h.targetLen === 0, s.review.flagged[i]),
       }),
     );
   return { total, marks };
