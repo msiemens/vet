@@ -370,8 +370,9 @@
     {:else if tool === "all"}
       <IconButton
         icon="locate"
-        label="Reveal File in Tree"
-        title={commands.tooltip("view.revealFile")}
+        label={commands.label("view.revealFile")}
+        title={commands.hint("view.revealFile")}
+        disabled={!commands.isEnabled("view.revealFile")}
         size={22}
         iconSize={13}
         onclick={() => commands.run("view.revealFile")}

@@ -14,6 +14,7 @@
   import { type Sort, sortRows } from "../../lib/ui/sorting";
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
+  import { commands } from "../../state/commands";
   import { queue } from "../../state/queue.svelte";
   import { threads } from "../../state/threads.svelte";
   import ChangesCell from "./ChangesCell.svelte";
@@ -48,7 +49,6 @@
     onopen,
     onopenfile,
     onopenthread,
-    onsignin,
   }: {
     /** Shows the review of the changeset on view. */
     onopen: () => void;
@@ -56,8 +56,6 @@
     onopenfile: (path: string) => void;
     /** … at a thread. */
     onopenthread: (thread: Thread) => void;
-    /** Opens Settings at the accounts, for a repository that has none of the credential it needs. */
-    onsignin: () => void;
   } = $props();
 
   const COLUMNS: Column<QueueRow>[] = [
@@ -105,7 +103,7 @@
 
   /** The selected row is the changeset on view: choosing one puts it on view. */
   function select(row: QueueRow) {
-    if (keyId(row.key) !== onViewId) void changeset.openChangeset(row.key);
+    if (keyId(row.key) !== onViewId) commands.run(`changeset.open:${keyId(row.key)}`);
   }
 
   /** Puts the changeset on view and shows its review. */
@@ -224,7 +222,9 @@
     {#each unlisted as source (source.remote)}
       <p class="unlisted">
         {source.remote}: {source.error}
-        {#if source.signedOut}<button class="link" type="button" onclick={onsignin}>Sign in…</button>{/if}
+        {#if source.signedOut}<button class="link" type="button" onclick={() => commands.run("app.accounts")}
+            >Sign in…</button
+          >{/if}
       </p>
     {/each}
   </Table>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { PullRequestInfo } from "../../generated/PullRequestInfo";
+  import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
   import { threads } from "../../state/threads.svelte";
   import PostingControls from "./PostingControls.svelte";
@@ -39,7 +40,7 @@
   {/if}
   <PostingControls {info} part="vote" disabled={blocked !== undefined} />
   {#if blocked}
-    <button class="flat link" type="button" onclick={() => platform.openAccounts()}>Sign in…</button>
+    <button class="flat link" type="button" onclick={() => commands.run("app.accounts")}>Sign in…</button>
   {/if}
   {#if info.traits.batchedReview && form.open && !blocked}
     <div class="form">

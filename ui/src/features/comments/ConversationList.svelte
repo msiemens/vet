@@ -110,7 +110,7 @@
             {#if message.state.type !== "posting"}
               <IconButton
                 icon="close"
-                label="Delete the comment"
+                label="Discard the draft"
                 size={20}
                 iconSize={11}
                 onclick={() => void threads.removeMessage(message.id)}

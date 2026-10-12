@@ -1,4 +1,4 @@
-// The comments panel's commands and the description of its context menu.
+// The commands on comment threads and the descriptions of their context menus.
 
 import type { Thread } from "../../generated/Thread";
 import type { MenuSpec } from "../../lib/commandMenu.ts";
@@ -9,6 +9,8 @@ import { candidateLabel, candidates } from "./groups.ts";
 export interface ThreadActions {
   /** Re-anchors `thread` at its `candidate`th candidate. */
   attach(thread: number, candidate: number): void;
+  /** Deletes the thread with its comments. */
+  remove(thread: number): void;
 }
 
 export function threadCommands(a: ThreadActions): Command<CommandContext>[] {
@@ -28,9 +30,21 @@ export function threadCommands(a: ThreadActions): Command<CommandContext>[] {
         a.attach(c.thread.id, at);
       },
     },
+    {
+      id: "thread.delete",
+      label: "Delete Thread",
+      enabled: (c) => c.thread !== undefined,
+      run: (c) => {
+        if (!c.thread) return false;
+        a.remove(c.thread.id);
+      },
+    },
   ];
 }
 
 /** The menu that attaches a detached thread at one of its candidates. */
 export const attachMenu = (thread: Thread): MenuSpec =>
   candidates(thread).map((at, i) => ({ command: "thread.attach", arg: String(i), label: candidateLabel(at) }));
+
+/** The menu of a thread's less common actions. */
+export const threadMenu: MenuSpec = [{ command: "thread.delete" }];

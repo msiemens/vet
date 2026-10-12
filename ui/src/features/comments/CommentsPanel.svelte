@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import type { Thread } from "../../generated/Thread";
   import { canSubmit, isSubmitKey } from "../../lib/composer";
   import { movedTitle } from "../../lib/movedTitle";
@@ -11,7 +10,7 @@
   import { threads } from "../../state/threads.svelte";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import { platform } from "../../state/platform.svelte";
-  import { attachMenu, threadCommands } from "./commentCommands";
+  import { attachMenu } from "./commentCommands";
   import { changesetThreads, draftComments, reviewThreads } from "./conversation";
   import ConversationList from "./ConversationList.svelte";
   import {
@@ -61,13 +60,6 @@
   let sending = $state(false);
   /** A comment on the changeset is written below its conversation, where it will be; without a pull request, below the threads. */
   const composeHere = $derived(draft.composing && showing === (info ? "conversation" : "review"));
-
-  function compose() {
-    draft.composing = !draft.composing;
-    if (draft.composing) platform.commentsTab = "conversation";
-  }
-
-  onMount(() => commands.register(...threadCommands({ attach: (thread, at) => void threads.attach(thread, at) })));
 
   async function post() {
     if (threads.revision === undefined || !canSubmit(draft.body, sending)) return;
@@ -133,7 +125,12 @@
           Attach to {candidates(thread).length}
         </button>
       {/if}
-      <button class="ctl small" type="button" onclick={() => void threads.remove(thread.id)}>Discard</button>
+      <button
+        class="ctl small"
+        type="button"
+        onclick={() => commands.run("thread.delete", commands.context({ thread }))}
+        >{commands.label("thread.delete")}</button
+      >
     </div>
   {/if}
 {/snippet}
@@ -165,7 +162,15 @@
       <div class="sh sh-bar">
         <span>Comments</span>
         <span class="grow"></span>
-        <IconButton icon="comments" label="Comment on the changeset" size={22} iconSize={13} onclick={compose} />
+        <IconButton
+          icon="comments"
+          label={commands.label("review.commentOnChangeset")}
+          title={commands.hint("review.commentOnChangeset")}
+          disabled={!commands.isEnabled("review.commentOnChangeset")}
+          size={22}
+          iconSize={13}
+          onclick={() => commands.run("review.commentOnChangeset")}
+        />
       </div>
       {#if info}
         <PullRequestBlock {info} />

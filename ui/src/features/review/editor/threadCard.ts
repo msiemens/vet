@@ -45,6 +45,8 @@ export interface ThreadActions {
   menu(thread: number, x: number, y: number): void;
   /** Shows a link of a comment in the browser. */
   openLink(url: string): void;
+  /** The key that posts a form, as the viewer reads keys on this platform. */
+  submitKey: string;
 }
 
 /** What a new comment is attached to, for the form's title. */
@@ -151,7 +153,7 @@ function draftCard(target: ThreadTarget, actions: ThreadActions): HTMLElement {
     if (e.key === "Escape") dismiss();
   });
   const foot = el("div", "vet-thread-foot");
-  foot.append(el("span", "vet-thread-hint", "Ctrl+Enter to post"), cancel, send);
+  foot.append(el("span", "vet-thread-hint", `${actions.submitKey} to post`), cancel, send);
   form.append(el("div", "vet-thread-title", draftTitle(target)), field, foot);
   card.append(form);
   // The card is in the document once the editor has laid it out, which may take a few frames if it is scrolled to.
@@ -286,7 +288,7 @@ function messageRow(thread: Thread, message: ThreadMessage, actions: ThreadActio
     const first = thread.messages[0] === message;
     const edit = iconButton("Edit the comment", "edit", showForm, "vet-thread-btn", 12, 2);
     const remove = iconButton(
-      first ? "Delete the thread" : "Remove the comment",
+      draft ? "Discard the draft" : first ? "Delete the thread" : "Delete the comment",
       "close",
       () => void actions.removeMessage(message.id),
       "vet-thread-btn",

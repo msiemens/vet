@@ -14,8 +14,6 @@
     recent,
     host,
     canPick,
-    onopen,
-    onpick,
   }: {
     /** The open project's name and path. */
     name: string;
@@ -26,8 +24,6 @@
     host?: string;
     /** A native folder dialog exists. */
     canPick: boolean;
-    onopen: (path: string) => void;
-    onpick: () => void;
   } = $props();
 
   let open = $state(false);
@@ -56,12 +52,12 @@
 
   function choose(project: string) {
     open = false;
-    if (project !== path) onopen(project);
+    if (project !== path) commands.run(`file.openRecent:${project}`);
   }
 
   function pick() {
     open = false;
-    onpick();
+    commands.run("file.open");
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -125,8 +121,14 @@
     </ul>
     {#if canPick}
       <div class="foot">
-        <button class="flat" class:cursor={onOpenRow} type="button" tabindex="-1" onclick={pick}
-          >Open… <span class="key">{commands.binding("file.open")?.label}</span></button
+        <button
+          class="flat"
+          class:cursor={onOpenRow}
+          type="button"
+          tabindex="-1"
+          title={commands.hint("file.open")}
+          disabled={!commands.isEnabled("file.open")}
+          onclick={pick}>Open… <span class="key">{commands.binding("file.open")?.label}</span></button
         >
       </div>
     {/if}

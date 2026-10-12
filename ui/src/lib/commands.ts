@@ -181,6 +181,24 @@ export class CommandRegistry<C extends object> {
     return shortcut ? `${label} (${shortcut})` : label;
   }
 
+  /** The command's label. */
+  label(id: string): string {
+    return this.find(id)?.label ?? "";
+  }
+
+  /** How a key spec (`Mod-Enter`) reads to the viewer on this platform, as a menu shows a binding. */
+  keyLabel(spec: string): string {
+    return bindingOf(spec, this.mod).label;
+  }
+
+  /**
+   * The tooltip of a control that does the command's job: why the command cannot run now, if it
+   * cannot, else `tooltip`.
+   */
+  hint(id: string, text?: string, context: C = this.context()): string {
+    return this.disabledReason(id, context) ?? this.tooltip(id, text);
+  }
+
   isEnabled(id: string, context: C = this.context()): boolean {
     const [, arg] = splitId(id);
     const command = this.find(id);

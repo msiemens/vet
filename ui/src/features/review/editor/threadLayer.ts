@@ -84,6 +84,7 @@ export class ThreadLayer {
       confirm: listeners.confirm,
       menu: listeners.menu,
       openLink: listeners.openLink,
+      submitKey: listeners.submitKey,
       cancelDraft: () => this.setDraft(undefined),
       toggle: (thread) => {
         if (!this.opened.delete(thread)) this.opened.add(thread);

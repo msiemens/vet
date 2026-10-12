@@ -128,14 +128,17 @@ export class HunkBar extends WidgetType {
       const tools = document.createElement("span");
       tools.className = "vet-hunk-tools";
       tools.append(
-        iconButton(commands.tooltip("review.jumpToSource", "Jump to Source"), "file", () =>
-          actions.openSource(this.index),
+        iconButton(commands.tooltip("review.jumpToSource"), "file", () => actions.openSource(this.index)),
+        iconButton(
+          commands.tooltip("review.comment"),
+          "comments",
+          () => actions.comment(this.index),
+          "vet-icon-btn vet-review-action",
         ),
-        iconButton("Comment", "comments", () => actions.comment(this.index), "vet-icon-btn vet-review-action"),
         this.state === "seenAgainstOldBase"
           ? reconfirmButton(commands.tooltip("review.reconfirm", "Re-confirm"), () => actions.toggleSeen(this.index))
           : iconButton(
-              LABEL[this.state],
+              commands.tooltip("review.toggleSeen", LABEL[this.state]),
               "check",
               () => actions.toggleSeen(this.index),
               "vet-icon-btn vet-seen-toggle vet-review-action",

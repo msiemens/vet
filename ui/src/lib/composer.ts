@@ -11,6 +11,9 @@ export function replyShape(text: string, focused: boolean): { rows: number; send
   return { rows: focused || text !== "" ? 3 : 1, send: text.trim() !== "" };
 }
 
+/** The key that posts the form, as a binding spec: Ctrl+Enter, Cmd+Enter on macOS. */
+export const SUBMIT_KEY = "Mod-Enter";
+
 /** Ctrl+Enter (Cmd+Enter on macOS) posts the form. */
 export const isSubmitKey = (e: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey">): boolean =>
   e.key === "Enter" && (e.ctrlKey || e.metaKey);

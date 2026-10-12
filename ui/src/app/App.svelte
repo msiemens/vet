@@ -19,6 +19,7 @@
   import { ChecksButton } from "../features/checks";
   import {
     OutgoingButton,
+    threadCommands,
     commentsSeen,
     outgoingComments,
     seenKey,
@@ -97,7 +98,7 @@
   let mode = $state<Mode>("unified");
   let softWrap = $state<SoftWrap>(storedSoftWrap());
   let dialog = $state<"settings" | "about" | "finish" | "pullRequest">();
-  let settingsPage = $state<ComponentProps<typeof SettingsDialog>["page"]>("appearance");
+  let settingsPage = $state<ComponentProps<typeof SettingsDialog>["page"]>("general");
   let switcherOpen = $state(false);
   // The queue is the project's home; the review screen stays mounted behind it, so its views survive.
   let screen = $state<Screen>("queue");
@@ -201,6 +202,7 @@
       openPullRequest: () => void openPullRequest(),
       showDialog: (d) => showDialog(d),
       showKeymap: () => showDialog("settings", "keymap"),
+      showAccounts: () => showDialog("settings", "accounts"),
       quit: () => void quit(),
       toggleSplit: () => setMode(mode === "split" ? "unified" : "split"),
       toggleSoftWrap: () => setSoftWrap(softWrap === "never" ? "prose" : "never"),
@@ -225,6 +227,10 @@
     }),
     ...viewCommands(reviewActions),
     ...fileCommands(reviewActions),
+    ...threadCommands({
+      attach: (thread, at) => void threads.attach(thread, at),
+      remove: (thread) => void threads.remove(thread),
+    }),
   );
   keymap.load();
   session.onOpen(() => (screen = "queue"));
@@ -327,15 +333,10 @@
     };
   });
 
-  function showDialog(d: "settings" | "about", page: typeof settingsPage = "appearance") {
+  function showDialog(d: "settings" | "about", page: typeof settingsPage = "general") {
     settingsPage = page;
     dialog = d;
   }
-
-  // The platform's footer item, its notifications and the review's Submit ask for the page that signs in.
-  $effect(() => {
-    if (platform.accountsRequests > 0) untrack(() => showDialog("settings", "accounts"));
-  });
 
   /** Opens the folder of the log files in the file manager; a plain browser says where it is. */
   async function showLog() {
@@ -429,8 +430,9 @@
     <button
       class="ctl back"
       type="button"
-      title="Show the whole changeset again"
-      onclick={() => void changeset.setRange(undefined)}
+      title={commands.hint("changeset.whole", "Show the whole changeset again")}
+      disabled={!commands.isEnabled("changeset.whole")}
+      onclick={() => commands.run("changeset.whole")}
       >Back to {base ?? "…"}{latest === undefined ? "" : ` → v${latest}`}</button
     >
   {/snippet}
@@ -438,9 +440,9 @@
     <button
       class="ctl"
       type="button"
-      title="Mark every hunk seen against an old base seen again"
-      disabled={baseChangedLeft === 0}
-      onclick={() => void changeset.reconfirmAll()}>Re-confirm all</button
+      title={commands.hint("review.reconfirmAll", "Mark every hunk seen against an old base seen again")}
+      disabled={!commands.isEnabled("review.reconfirmAll")}
+      onclick={() => commands.run("review.reconfirmAll")}>{commands.label("review.reconfirmAll")}</button
     >
     <button class="ctl" type="button" title="Show all changes again" onclick={() => changeset.showAll()}
       >Back to all changes</button
@@ -464,8 +466,6 @@
         recent={recent.list}
         {host}
         canPick={hasNativeDialogs}
-        onopen={openProject}
-        onpick={() => void pickProject()}
       />
     {/if}
   {/snippet}
@@ -475,15 +475,11 @@
       label={target && targetLabel(target)}
       draft={target?.draft}
       title={target?.branch && `On ${target.branch}`}
-      onpick={(key) => void changeset.openChangeset(key)}
-      onqueue={() => (screen = "queue")}
-      onopenpullrequest={() => void openPullRequest()}
       bind:open={switcherOpen}
     />
   {/snippet}
   <Header
     {screen}
-    onscreen={(s) => void (screen = s)}
     project={projectSwitcher}
     changesets={changesetSwitcher}
     chips={range ? rangeChips : undefined}
@@ -499,33 +495,17 @@
     completion={changeset.shownCommit === undefined
       ? changeset.manifest?.completion
       : (changeset.manifest?.changesetCompletion ?? changeset.manifest?.completion)}
-    onfinish={() => (dialog = "finish")}
     refreshing={queue.refreshing}
-    onrefresh={() => void queue.refresh()}
   />
 
   <Banners degraded={changeset.manifest?.degraded} failures={changeset.restoreFailures} />
 
   <div class="body">
     {#if screen === "queue"}
-      <QueueScreen
-        onopen={() => (screen = "review")}
-        onopenfile={openFile}
-        onopenthread={openThread}
-        onsignin={() => showDialog("settings", "accounts")}
-      />
+      <QueueScreen onopen={() => (screen = "review")} onopenfile={openFile} onopenthread={openThread} />
     {/if}
     <div class="review" class:away={screen !== "review"} inert={screen !== "review"}>
-      <ToolRail
-        bind:active={left.tool}
-        bind:open={left.open}
-        unavailable={commitCount > 1
-          ? {}
-          : { commits: "Only a changeset of several commits can be reviewed by commit" }}
-        counts={{ comments: unreadComments }}
-        timeline={timelineOpen}
-        ontimeline={toggleTimeline}
-      />
+      <ToolRail active={left.tool} open={left.open} counts={{ comments: unreadComments }} timeline={timelineOpen} />
       <ReviewScreen
         backend={session.backend}
         {changeset}
@@ -534,7 +514,6 @@
         rightTool={right.tool}
         rightOpen={right.open}
         {mode}
-        onmode={setMode}
         {softWrap}
         onready={(c) => void (controller = c)}
         onclose={() => (controller = undefined)}
@@ -557,7 +536,7 @@
           {/if}
         {/snippet}
       </ReviewScreen>
-      <ToolRail side="right" bind:active={right.tool} bind:open={right.open} />
+      <ToolRail side="right" active={right.tool} open={right.open} />
     </div>
   </div>
 {:else if session.backend}
@@ -569,10 +548,7 @@
       failed={session.openError}
       canPick={hasNativeDialogs}
       {version}
-      onpick={() => void pickProject()}
-      onopen={openProject}
       onforget={(path) => void session.forget(path)}
-      onsettings={() => showDialog("settings")}
     />
   </div>
 {:else}
@@ -594,7 +570,6 @@
   <SettingsDialog
     bind:page={settingsPage}
     {theme}
-    ontheme={(t) => applyTheme((theme = t))}
     {softWrap}
     onsoftwrap={setSoftWrap}
     onclose={() => (dialog = undefined)}

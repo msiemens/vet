@@ -43,7 +43,6 @@
     side,
     bottom,
     mode,
-    onmode,
     softWrap,
     onready,
     onclose,
@@ -53,7 +52,6 @@
     changeset: Changeset;
     /** Unified or split; the owner applies a change to the controller. */
     mode: Mode;
-    onmode: (mode: Mode) => void;
     /** Which files wrap their long lines; the owner applies a change to the controller. */
     softWrap: SoftWrap;
     /** The left tool window and whether its sidebar is shown. */
@@ -233,14 +231,7 @@
       onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: subjectOf(id) } })}
     />
     <span class="grow"></span>
-    <ViewControls
-      {mode}
-      {onmode}
-      onstep={(delta) => controller.stepHunk(delta)}
-      stepping={showsDiff(tabs.active) || fileView !== undefined}
-      file={fileView}
-      onfile={() => void controller.toggleFileView()}
-    />
+    <ViewControls {mode} stepping={showsDiff(tabs.active) || fileView !== undefined} file={fileView} />
   </div>
   {#if range && readOnly}
     <p class="note" role="status">

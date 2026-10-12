@@ -3,6 +3,7 @@
   import type { Thread } from "../../generated/Thread";
   import Icon from "../../lib/ui/Icon.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
+  import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
   import { threads } from "../../state/threads.svelte";
   import { firstLine } from "./groups";
@@ -76,7 +77,7 @@
                 class="ctl small"
                 type="button"
                 disabled={busy}
-                onclick={() => void threads.removeMessage(message.id)}>Discard</button
+                onclick={() => void threads.removeMessage(message.id)}>Discard draft</button
               >
               <button
                 class="ctl small"
@@ -98,7 +99,7 @@
             <div class="failure">
               <span class="error">{vote.state.error}</span>
               <button class="ctl small" type="button" disabled={busy} onclick={() => void platform.discardVote()}
-                >Discard</button
+                >Discard vote</button
               >
               <button
                 class="ctl small"
@@ -118,7 +119,7 @@
         <div class="send">
           <span class="where-to">{destination(info)}</span>
           {#if blocked}
-            <button class="flat link" type="button" onclick={() => platform.openAccounts()}>Sign in…</button>
+            <button class="flat link" type="button" onclick={() => commands.run("app.accounts")}>Sign in…</button>
           {/if}
           <button
             class="ctl primary"

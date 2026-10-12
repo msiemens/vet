@@ -10,6 +10,8 @@ import { el, iconButton, reconfirmButton } from "./dom.ts";
 export interface HeaderActions {
   /** Jump to Source at a 0-based target line. */
   openSource(line: number): void;
+  /** What the Jump to Source button is called, with its key. */
+  openSourceTitle: string;
   comment(): void;
   /** Flips everything in the file. */
   toggleSeen(): void;
@@ -63,7 +65,7 @@ export function fileHeader(file: FileChange, actions: HeaderActions): FileHeader
   header.addEventListener("dblclick", (e) => {
     if (!(e.target instanceof Element && e.target.closest("button"))) actions.openSource(firstLine);
   });
-  const open = iconButton("Open file in tab", "file", () => actions.openSource(firstLine));
+  const open = iconButton(actions.openSourceTitle, "file", () => actions.openSource(firstLine));
   const comment = iconButton(
     "Comment on this file",
     "comments",

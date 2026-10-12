@@ -19,62 +19,51 @@
 
 <script lang="ts">
   import IconButton from "../../lib/ui/IconButton.svelte";
-  import { toggleTool } from "./toggleTool";
 
   let {
     side = "left",
-    active = $bindable(),
-    open = $bindable(true),
-    unavailable = {},
+    active,
+    open = true,
     counts = {},
-    timeline = false,
-    ontimeline,
+    timeline,
   }: {
     side?: "left" | "right";
     /** A number on a tool's icon: what is new there. */
     counts?: Record<string, number>;
-    /** Tools that are shown but cannot be picked now, with the reason for the tooltip. */
-    unavailable?: Record<string, string>;
     /** The selected tool; it stays selected while its sidebar is hidden. */
     active?: string;
     /** Whether the selected tool's sidebar is shown. */
     open?: boolean;
-    /** The timeline panel is shown. */
+    /** Whether the timeline panel is shown; the left rail has its icon at the bottom, the right one none. */
     timeline?: boolean;
-    /** The left rail's icon at the bottom shows or hides the timeline. */
-    ontimeline?: () => void;
   } = $props();
-
-  /** The active tool's icon shows or hides its sidebar; any other icon selects that tool and shows it. */
-  function select(id: string) {
-    const next = toggleTool({ tool: active ?? "", open }, id);
-    [active, open] = [next.tool, next.open];
-  }
 </script>
 
 <nav class={side} aria-label={side === "left" ? "Tool windows" : "Right tool windows"}>
   {#each TOOLS[side] as tool (tool.id)}
     {@const count = counts[tool.id] ?? 0}
+    {@const command = toolCommand(tool.id)}
     <span class="slot">
       <IconButton
         icon={ICONS[tool.id]}
         label={count > 0 ? `${tool.label}, ${count} new` : tool.label}
-        title={unavailable[tool.id] ?? commands.tooltip(toolCommand(tool.id))}
-        disabled={tool.id in unavailable}
+        title={commands.hint(command)}
+        disabled={!commands.isEnabled(command)}
         active={open && tool.id === active}
-        onclick={() => select(tool.id)}
+        onclick={() => commands.run(command)}
       />
       {#if count > 0}<span class="count mono" aria-hidden="true">{count > 99 ? "99+" : count}</span>{/if}
     </span>
   {/each}
-  {#if ontimeline}
+  {#if timeline !== undefined}
     <span class="bottom"
       ><IconButton
         icon="timeline"
         label="Timeline"
-        title={commands.tooltip(toolCommand("timeline"))}
+        title={commands.hint(toolCommand("timeline"))}
+        disabled={!commands.isEnabled(toolCommand("timeline"))}
         active={timeline}
-        onclick={ontimeline}
+        onclick={() => commands.run(toolCommand("timeline"))}
       /></span
     >
   {/if}

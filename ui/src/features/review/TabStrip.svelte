@@ -5,7 +5,8 @@
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import Tab from "../../lib/ui/Tab.svelte";
-  import { CHANGES, type TabId, type Tabs, pathOf } from "./Tabs.svelte";
+  import { commands } from "../../state/commands";
+  import { type TabId, type Tabs, kindOf, pathOf, subjectOf } from "./Tabs.svelte";
 
   /**
    * `files` are the ones the first tab lists, or the commit's, which the first tab then names by its hash and
@@ -18,17 +19,22 @@
     onmenu,
   }: { tabs: Tabs; files: FileChange[]; commit?: CommitUnit; onmenu: (id: TabId, x: number, y: number) => void } =
     $props();
+
+  /** Closing a tab is the Close Tab command, with the tab as its subject. */
+  const closing = (id: TabId) => commands.context({ tab: { kind: kindOf(id), path: subjectOf(id) } });
 </script>
 
 <div class="tabs" role="tablist" aria-label="Open views">
   {#each tabs.open as id (id)}
     {@const path = pathOf(id)}
     {@const log = tabs.logs.get(id)}
+    {@const subject = closing(id)}
     <Tab
       selected={tabs.active === id}
       title={log ? (log.hint ?? log.title) : (path ?? (commit ? commit.commit.subject : "Every changed file"))}
       onselect={() => (tabs.active = id)}
-      onclose={id === CHANGES ? undefined : () => tabs.close(id)}
+      onclose={commands.isEnabled("tab.close", subject) ? () => commands.run("tab.close", subject) : undefined}
+      closeLabel={tabs.active === id ? commands.tooltip("tab.close") : commands.label("tab.close")}
       onmenu={(x, y) => onmenu(id, x, y)}
     >
       {#if log}

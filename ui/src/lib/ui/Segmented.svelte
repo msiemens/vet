@@ -9,7 +9,7 @@
     label,
     small = false,
   }: {
-    options: { id: T; label: string; icon?: IconName }[];
+    options: { id: T; label: string; icon?: IconName; title?: string; disabled?: boolean }[];
     value: T;
     onchange: (id: T) => void;
     /** Names the group for assistive technology. */
@@ -21,7 +21,13 @@
 
 <div class="ctl-group" class:small role="group" aria-label={label}>
   {#each options as option (option.id)}
-    <button class="ctl" type="button" aria-pressed={option.id === value} onclick={() => onchange(option.id)}
+    <button
+      class="ctl"
+      type="button"
+      title={option.title}
+      disabled={option.disabled}
+      aria-pressed={option.id === value}
+      onclick={() => onchange(option.id)}
       >{#if option.icon}<Icon name={option.icon} size={13} />{/if}{option.label}</button
     >
   {/each}

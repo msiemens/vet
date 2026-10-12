@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "../../lib/ui/Icon.svelte";
+  import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
   import { connectionLabel } from "./platformLabels";
   import NotificationList from "./NotificationList.svelte";
@@ -7,12 +8,16 @@
   const status = $derived(platform.status);
   const label = $derived(status && connectionLabel(status));
   let listing = $state(false);
-
-  const signIn = () => platform.openAccounts();
 </script>
 
 {#if label && status}
-  <button class="flat footer-item platform" class:warn={label.warn} type="button" title={label.title} onclick={signIn}>
+  <button
+    class="flat footer-item platform"
+    class:warn={label.warn}
+    type="button"
+    title={label.title}
+    onclick={() => commands.run("app.accounts")}
+  >
     <Icon name={status.kind === "github" ? "github" : "azureDevOps"} size={12} />
     <span class="dot" class:ok={!label.warn}></span>
     {label.text}
@@ -30,7 +35,7 @@
     >
       <Icon name="bell" size={13} />
     </button>
-    {#if listing}<NotificationList onclose={() => (listing = false)} onsignin={signIn} />{/if}
+    {#if listing}<NotificationList onclose={() => (listing = false)} />{/if}
   </span>
 {/if}
 

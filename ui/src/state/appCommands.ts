@@ -30,6 +30,8 @@ export interface AppActions {
   showDialog(dialog: "settings" | "about"): void;
   /** Opens Settings on the Keymap page. */
   showKeymap(): void;
+  /** Opens Settings on the Accounts page. */
+  showAccounts(): void;
   quit(): void;
   /** Switches between the diff drawn side by side and inline. */
   toggleSplit(): void;
@@ -209,6 +211,7 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
       inFields: true,
       run: () => a.showDialog("settings"),
     },
+    { id: "app.accounts", label: "Accounts…", run: () => a.showAccounts() },
     { id: "app.about", label: "About Vet", run: () => a.showDialog("about") },
     { id: "app.quit", label: "Exit", accelerator: "Cmd+Q", enabled: (c) => c.canQuit, run: () => a.quit() },
     {

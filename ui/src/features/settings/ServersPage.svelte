@@ -10,6 +10,7 @@
   import type { Column } from "../../lib/ui/columns";
   import { type Sort, sortRows } from "../../lib/ui/sorting";
   import { backendSettings } from "../../state/backendSettings.svelte";
+  import { commands } from "../../state/commands";
   import { servers } from "../../state/servers.svelte";
   import ServerPathSheet from "./ServerPathSheet.svelte";
   import { serverRow, type ServerRow } from "./serverRows";
@@ -65,10 +66,6 @@
   }
 
   let cacheError = $state<string>();
-
-  async function clearCaches() {
-    cacheError = await backendSettings.clearCaches();
-  }
 
   /** A whole number of MiB, at least one; anything else puts the kept budget back in the field. */
   async function setBudget(input: HTMLInputElement) {
@@ -262,8 +259,12 @@
       {#if backendSettings.loadError}<span class="problem">{backendSettings.loadError}</span>{/if}
       {#if cacheError}<span class="problem">{cacheError}</span>{/if}
     </div>
-    <button class="ctl" type="button" disabled={backendSettings.clearing} onclick={() => void clearCaches()}
-      >Clear semantic caches</button
+    <button
+      class="ctl"
+      type="button"
+      title={commands.hint("semantic.clearCaches")}
+      disabled={backendSettings.clearing || !commands.isEnabled("semantic.clearCaches")}
+      onclick={() => commands.run("semantic.clearCaches")}>{commands.label("semantic.clearCaches")}</button
     >
   </footer>
 </div>

@@ -1,9 +1,10 @@
 <script lang="ts">
+  import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
   import { shortTime } from "../../lib/shortTime";
   import { copyText } from "./copy";
 
-  let { onclose, onsignin }: { onclose: () => void; onsignin: () => void } = $props();
+  let { onclose }: { onclose: () => void } = $props();
 </script>
 
 <div class="surface list" role="dialog" aria-label="Notifications">
@@ -22,7 +23,7 @@
           </button>
         {/if}
         {#if item.notification.kind === "syncStopped"}
-          <button class="flat" type="button" onclick={onsignin}>Sign in…</button>
+          <button class="flat" type="button" onclick={() => commands.run("app.accounts")}>Sign in…</button>
         {/if}
       </li>
     {/each}

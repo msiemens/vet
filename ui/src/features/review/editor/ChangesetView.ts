@@ -15,6 +15,7 @@ import type { TextSpan } from "../../../generated/TextSpan";
 import { Scrollbar } from "../../../lib/ui/scrollbar";
 import type { SoftWrap } from "../../../lib/softWrap";
 import type { Mode } from "../../../lib/viewMode";
+import { commands } from "../../../state/commands";
 import { CaretStop } from "./caretStop";
 import { changeCard } from "./changeCard";
 import { type EditorSelection, hunkComment, linesAt } from "./commentAnchor";
@@ -153,6 +154,7 @@ export class ChangesetView {
       const index = this.sections.length;
       const header = fileHeader(file, {
         openSource: (line) => listeners.openSource(file.path, line),
+        openSourceTitle: commands.tooltip("review.jumpToSource"),
         comment: () => this.threads.commentOnFile(this.sections[index]),
         toggleSeen: () => void this.actions.file(this.sections[index]),
         reconfirm: () => void this.actions.reconfirm(this.sections[index]),

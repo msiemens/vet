@@ -6,20 +6,17 @@
   import Marked from "../../lib/ui/Marked.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import { shortTime } from "../../lib/shortTime";
+  import { commands } from "../../state/commands";
   import { avatarColour, initials, searchRecent } from "./recentList";
 
-  // Self-contained: it renders from its props and draws its own window-controls area, so it can
-  // live in any window.
+  // It draws its own window-controls area, and its buttons run the window's commands.
   let {
     menu,
     recent,
     failed,
     canPick,
     version,
-    onpick,
-    onopen,
     onforget,
-    onsettings,
   }: {
     /** The application menu, where the window draws it itself; at the top of the sidebar. */
     menu?: Snippet;
@@ -30,11 +27,10 @@
     /** A native folder dialog exists; otherwise a typed path is opened with Enter. */
     canPick: boolean;
     version?: string;
-    onpick: () => void;
-    onopen: (path: string) => void;
     onforget: (path: string) => void;
-    onsettings: () => void;
   } = $props();
+
+  const open = (path: string) => commands.run(`file.openRecent:${path}`);
 
   let query = $state("");
   let selected = $state(0);
@@ -57,8 +53,8 @@
       void move(e.key === "ArrowDown" ? 1 : -1);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (found.length) onopen(found[current].project.path);
-      else if (!canPick && typed) onopen(typed);
+      if (found.length) open(found[current].project.path);
+      else if (!canPick && typed) open(typed);
     } else if (e.key === "Escape") {
       query = "";
     }
@@ -84,12 +80,22 @@
         <button class="flat item on" type="button" aria-current="page"><Icon name="files" size={16} />Projects</button>
       </li>
       <li>
-        <button class="flat item" type="button" disabled title="Coming later"
-          ><Icon name="user" size={16} />Accounts</button
+        <button
+          class="flat item"
+          type="button"
+          title={commands.hint("app.accounts")}
+          disabled={!commands.isEnabled("app.accounts")}
+          onclick={() => commands.run("app.accounts")}><Icon name="user" size={16} />Accounts</button
         >
       </li>
       <li>
-        <button class="flat item" type="button" onclick={onsettings}><Icon name="settings" size={16} />Settings</button>
+        <button
+          class="flat item"
+          type="button"
+          title={commands.hint("app.settings")}
+          disabled={!commands.isEnabled("app.settings")}
+          onclick={() => commands.run("app.settings")}><Icon name="settings" size={16} />Settings</button
+        >
       </li>
     </ul>
   </nav>
@@ -111,7 +117,13 @@
         />
       </label>
       {#if canPick}
-        <button class="ctl" type="button" onclick={onpick}>Open…</button>
+        <button
+          class="ctl"
+          type="button"
+          title={commands.hint("file.open")}
+          disabled={!commands.isEnabled("file.open")}
+          onclick={() => commands.run("file.open")}>Open…</button
+        >
       {/if}
       <button class="ctl" type="button" disabled title="Coming later">Clone…</button>
     </div>
@@ -135,7 +147,7 @@
               type="button"
               tabindex="-1"
               title={project.path}
-              onclick={() => onopen(project.path)}
+              onclick={() => open(project.path)}
             >
               <span class="avatar" style:background="var(--avatar-{avatarColour(project.path)})">{initials(name)}</span>
               <span class="text">

@@ -191,6 +191,22 @@ void test("a tooltip names the command's key", () => {
   assert.equal(r.tooltip("plain"), "Plain");
 });
 
+void test("a control that does a command's job is titled by why the command cannot run, else by its key", () => {
+  const r = registry();
+  r.register(
+    { ...next(() => undefined), enabled: (c) => c.open, disabledReason: () => "Open it first" },
+    { id: "plain", label: "Plain", enabled: () => false, run: () => undefined },
+  );
+  assert.equal(r.hint("next", undefined, { open: false }), "Open it first");
+  assert.equal(r.hint("next", undefined, { open: true }), "Next (Ctrl+Alt+Down)");
+  assert.equal(r.hint("plain", "Do it", { open: false }), "Do it");
+});
+
+void test("a key spec reads as the platform writes keys", () => {
+  assert.equal(registry("Ctrl").keyLabel("Mod-Enter"), "Ctrl+Enter");
+  assert.equal(registry("Meta").keyLabel("Mod-Enter"), "⌘↩");
+});
+
 void test("menu items take label, shortcut and enabled state from the registry", () => {
   const r = registry();
   r.register(

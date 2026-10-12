@@ -23,6 +23,7 @@ import { session } from "../../state/session.svelte";
 import { threads } from "../../state/threads.svelte";
 import { rangeKey } from "../../state/timelineRange";
 import type { Thread } from "../../generated/Thread";
+import { SUBMIT_KEY } from "../../lib/composer";
 import { errorText } from "../../lib/errorText";
 import { ChangesetView, type Listeners, type ScrollPosition, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
@@ -36,6 +37,7 @@ import { type CommandContext, commands } from "../../state/commands";
 import { type TextActions, TextView } from "./editor/TextView";
 import { type SavedView, restoredTabs } from "./changesetViews";
 import { keyId } from "../../state/changesetKey";
+import { threadMenu } from "../comments";
 import { provideActions } from "./reviewActions";
 import type { ViewActions } from "./reviewCommands";
 import { readPosition, writePosition } from "./savedPosition";
@@ -400,17 +402,15 @@ export class ReviewController {
       keepEdit: (message, keep) => threads.keepEdit(message, keep),
       platformName: () => (platform.status ? platformName(platform.status.kind) : "the platform"),
       confirm: (thread) => threads.confirm(thread),
-      menu: (thread, x, y) =>
-        void contextMenus.show({
-          x,
-          y,
-          items: [{ id: "delete", label: "Delete thread" }],
-          onselect: () => void threads.remove(thread),
-        }),
+      menu: (thread, x, y) => {
+        const subject = threads.items.find((t) => t.id === thread);
+        if (subject) void contextMenus.open(threadMenu, x, y, { thread: subject });
+      },
       openLink: (url) =>
         void openUrl(url).catch((e: unknown) => {
           session.notice = `Could not open the browser: ${errorText(e)}`;
         }),
+      submitKey: commands.keyLabel(SUBMIT_KEY),
     };
   }
 

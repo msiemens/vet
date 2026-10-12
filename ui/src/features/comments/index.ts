@@ -1,6 +1,7 @@
 export { default as CommentsPanel } from "./CommentsPanel.svelte";
 export { default as OutgoingButton } from "./OutgoingButton.svelte";
 export { commentsSeen } from "./commentsSeen.svelte";
+export { threadCommands, threadMenu } from "./commentCommands";
 export { seenKey, seenNow, unreadCount } from "./unread";
 export { groupThreads, placeLabel, preview, rowTitle } from "./groups";
 export { outgoingComments, summarizeOutgoing } from "./outgoing";

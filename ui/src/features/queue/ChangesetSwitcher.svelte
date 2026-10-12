@@ -1,6 +1,5 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import type { ChangesetKey } from "../../generated/ChangesetKey";
   import { readStored, writeStored } from "../../lib/storage";
   import Chip from "../../lib/ui/Chip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -32,9 +31,6 @@
     draft = false,
     title,
     open = $bindable(false),
-    onpick,
-    onqueue,
-    onopenpullrequest,
   }: {
     /** What the changeset on view is called; unknown until the manifest arrives. */
     label?: Label;
@@ -42,11 +38,6 @@
     draft?: boolean;
     title?: string;
     open?: boolean;
-    onpick: (key: ChangesetKey) => void;
-    /** Shows the queue. */
-    onqueue: () => void;
-    /** Asks for a pull request by its number. */
-    onopenpullrequest: () => void;
   } = $props();
 
   const FILTER_KEY = "vet.switcher.filter";
@@ -80,7 +71,7 @@
     const row = shown.at(index);
     if (!row) return;
     open = false;
-    onpick(row.key);
+    commands.run(`changeset.open:${keyId(row.key)}`);
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -165,17 +156,21 @@
       <button
         class="flat"
         type="button"
+        title={commands.hint("view.queue")}
+        disabled={!commands.isEnabled("view.queue")}
         onclick={() => {
           open = false;
-          onqueue();
+          commands.run("view.queue");
         }}>Open queue <span class="key">{commands.binding("view.queue")?.label}</span></button
       >
       <button
         class="flat"
         type="button"
+        title={commands.hint("changeset.openPullRequest")}
+        disabled={!commands.isEnabled("changeset.openPullRequest")}
         onclick={() => {
           open = false;
-          onopenpullrequest();
+          commands.run("changeset.openPullRequest");
         }}>Open pull request… <span class="key">{commands.binding("changeset.openPullRequest")?.label}</span></button
       >
     </div>

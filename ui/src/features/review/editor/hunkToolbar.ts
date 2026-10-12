@@ -162,7 +162,14 @@ export function hunkToolbar(source: ChangesSource, field: StateField<ChangesStat
               2,
             ),
           );
-        buttons.push(iconButton("Comment", "comments", () => actions.comment(hunk), "vet-icon-btn vet-review-action"));
+        buttons.push(
+          iconButton(
+            commands.tooltip("review.comment"),
+            "comments",
+            () => actions.comment(hunk),
+            "vet-icon-btn vet-review-action",
+          ),
+        );
         this.dom.replaceChildren(...buttons);
       }
     },

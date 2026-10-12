@@ -6,6 +6,7 @@
   import Dialog from "../../lib/ui/Dialog.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
+  import { commands } from "../../state/commands";
   import AccountsPage from "./AccountsPage.svelte";
   import GeneralPage from "./GeneralPage.svelte";
   import KeymapPage from "./KeymapPage.svelte";
@@ -14,18 +15,16 @@
 
   let {
     theme,
-    ontheme,
     softWrap,
     onsoftwrap,
     onclose,
     project,
     onfilter,
-    page = $bindable("appearance"),
+    page = $bindable("general"),
   }: {
     /** The page shown; the viewer's choice of another is passed back. */
     page?: Page;
     theme: Theme;
-    ontheme: (theme: Theme) => void;
     softWrap: SoftWrap;
     onsoftwrap: (wrap: SoftWrap) => void;
     onclose: () => void;
@@ -78,7 +77,12 @@
               <span>Theme</span>
               <span class="hint">System follows the operating system's light or dark setting.</span>
             </div>
-            <Segmented label="Theme" value={theme} onchange={ontheme} options={THEMES} />
+            <Segmented
+              label="Theme"
+              value={theme}
+              onchange={(id) => commands.run(`view.theme:${id}`)}
+              options={THEMES}
+            />
           </div>
         {/if}
       </div>

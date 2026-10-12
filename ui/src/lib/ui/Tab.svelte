@@ -7,6 +7,7 @@
     title,
     onselect,
     onclose,
+    closeLabel = "Close tab",
     onmenu,
     children,
   }: {
@@ -15,6 +16,8 @@
     onselect: () => void;
     /** Absent for a tab that cannot be closed. */
     onclose?: () => void;
+    /** What the close button is called, and its tooltip. */
+    closeLabel?: string;
     /** Context menu on the tab, at the pointer position. */
     onmenu?: (x: number, y: number) => void;
     children: Snippet;
@@ -41,7 +44,7 @@
     {@render children()}
   </button>
   {#if onclose}
-    <button class="flat close" type="button" aria-label="Close tab" title="Close" tabindex="-1" onclick={onclose}>
+    <button class="flat close" type="button" aria-label={closeLabel} title={closeLabel} tabindex="-1" onclick={onclose}>
       <Icon name="close" size={10} stroke={2} />
     </button>
   {/if}

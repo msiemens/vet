@@ -33,8 +33,6 @@ class PlatformStore {
   status = $state.raw<PlatformStatus>();
   /** Newest first: what the bell lists. */
   notified = $state.raw<Notified[]>([]);
-  /** Counts the asks for Settings on the Accounts page; the app window opens the dialog on each. */
-  accountsRequests = $state(0);
   /** The Submit review form, kept here so that switching tool windows does not empty it. */
   review = $state({
     open: false,
@@ -192,11 +190,6 @@ class PlatformStore {
 
   dismiss(id: number) {
     this.notified = this.notified.map((n) => (n.id === id ? { ...n, card: false } : n));
-  }
-
-  /** Asks for Settings to open on the Accounts page, where the viewer signs in. */
-  openAccounts() {
-    this.accountsRequests++;
   }
 
   private notify(notification: Notification) {

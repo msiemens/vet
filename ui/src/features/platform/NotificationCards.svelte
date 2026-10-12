@@ -1,5 +1,6 @@
 <script lang="ts">
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
   import { copyText } from "./copy";
 
@@ -7,7 +8,7 @@
 
   function signIn(id: number) {
     platform.dismiss(id);
-    platform.openAccounts();
+    commands.run("app.accounts");
   }
 </script>
 

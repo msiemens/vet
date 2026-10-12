@@ -18,7 +18,8 @@
   });
 </script>
 
-<div class="surface toast" role="status">
+<!-- A popover is in the top layer, so a toast shows over a modal dialog (Settings) too. -->
+<div class="surface toast" role="status" popover="manual" {@attach (toast) => void toast.showPopover()}>
   <span>{message}</span>
   <IconButton icon="close" label="Dismiss" size={20} iconSize={12} onclick={onclose} />
 </div>
@@ -26,6 +27,8 @@
 <style>
   .toast {
     position: fixed;
+    inset: auto;
+    margin: 0;
     left: 50%;
     bottom: calc(var(--h-footer) + 12px);
     transform: translateX(-50%);

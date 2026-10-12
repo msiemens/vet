@@ -14,6 +14,7 @@
   import Meter from "../../lib/ui/Meter.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import type { BaseCandidates } from "../../state/backend";
+  import { commands } from "../../state/commands";
   import BaseChip from "./BaseChip.svelte";
   import { completionTitle } from "./completionTitle";
   import TitleBar from "./TitleBar.svelte";
@@ -21,7 +22,6 @@
 
   let {
     screen,
-    onscreen,
     project,
     changesets,
     base,
@@ -30,9 +30,7 @@
     loadBase,
     onbase,
     completion,
-    onfinish,
     refreshing = false,
-    onrefresh,
     chips,
     back,
     filtered,
@@ -41,7 +39,6 @@
   }: {
     /** Which screen shows: the queue of changesets, or the review of the one on view. */
     screen: Screen;
-    onscreen: (screen: Screen) => void;
     /** The project's name with its switcher. */
     project: Snippet;
     /** The changeset's name with its switcher; shown in the review. */
@@ -55,25 +52,25 @@
     /** Lists the branches and commits the base can be picked from. */
     loadBase: () => Promise<BaseCandidates | undefined>;
     onbase: (choice: BaseChoice) => void;
-    /** "Finish review", offered while a review is open. */
-    onfinish: () => void;
     /** The changeset's progress. */
     completion?: Completion;
     /** The queue is being refreshed. */
     refreshing?: boolean;
-    /** Fetches and lists the queue again. */
-    onrefresh: () => void;
     /** While the review view shows a range of versions: its ends, in place of the base and the progress. */
     chips?: Snippet;
     /** The way back to the changeset, at the right end. */
     back?: Snippet;
     /** While the review view shows a filtered part of the changeset: what acts on it and the way back, before the progress. */
     filtered?: Snippet;
-    /** The head commit's checks, after Finish review. */
+    /** The head commit's checks, after the Finish Review button. */
     checks?: Snippet;
     /** The viewer's comments on their way to the platform, at the end. */
     outgoing?: Snippet;
   } = $props();
+  const SCREENS = [
+    { id: "queue", icon: "queue" },
+    { id: "review", icon: "review" },
+  ] as const;
   const seen = $derived(completion?.seenPercent ?? 0);
   const oldBase = $derived(completion?.oldBasePercent ?? 0);
   const title = $derived(completion && completionTitle(completion));
@@ -82,12 +79,15 @@
 <TitleBar>
   <Segmented
     label="Screen"
-    options={[
-      { id: "queue", label: "Queue", icon: "queue" },
-      { id: "review", label: "Review", icon: "review" },
-    ]}
+    options={SCREENS.map(({ id, icon }) => ({
+      id,
+      icon,
+      label: commands.label(`view.${id}`),
+      title: commands.hint(`view.${id}`),
+      disabled: !commands.isEnabled(`view.${id}`),
+    }))}
     value={screen}
-    onchange={onscreen}
+    onchange={(id) => commands.run(`view.${id}`)}
   />
   {@render project()}
   {#if screen === "review"}
@@ -121,7 +121,13 @@
   {/if}
   <span class="grow" data-tauri-drag-region></span>
   {#if screen === "queue"}
-    <IconButton icon="reconfirm" label={refreshing ? "Fetching…" : "Fetch and refresh the queue"} onclick={onrefresh} />
+    <IconButton
+      icon="reconfirm"
+      label={refreshing ? "Fetching…" : commands.label("changeset.refresh")}
+      title={commands.hint("changeset.refresh")}
+      disabled={!commands.isEnabled("changeset.refresh")}
+      onclick={() => commands.run("changeset.refresh")}
+    />
   {:else if chips}
     {@render back?.()}
   {:else}
@@ -140,8 +146,9 @@
       <button
         class="ctl finish"
         type="button"
-        title="End this review; edits are browsed until the next mark"
-        onclick={onfinish}>Finish review</button
+        title={commands.hint("review.finish", "End this review; edits are browsed until the next mark")}
+        disabled={!commands.isEnabled("review.finish")}
+        onclick={() => commands.run("review.finish")}>{commands.label("review.finish")}</button
       >
     {/if}
     {@render checks?.()}
