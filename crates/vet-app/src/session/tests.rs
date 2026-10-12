@@ -3751,6 +3751,28 @@ async fn a_pull_request_has_lines_once_it_was_fetched_and_the_working_tree_has_n
     );
 }
 
+#[tokio::test]
+async fn a_pull_request_pushed_to_and_fetched_again_is_counted_anew_and_not_from_the_old_head() {
+    let fx = Fixture::open(&[("a.txt", "one\n")], &[("a.txt", "dirty\n")]).await;
+    fetch_pull_request_7(&fx.git, &[("a.txt", "one\n")], "pr1", &[("a.txt", "two\n")]);
+    assert_eq!(
+        fx.session.lines_of(&pull_request_7()).await.unwrap(),
+        Some(LineDelta { added: 1, removed: 1 })
+    );
+
+    fetch_pull_request_7(
+        &fx.git,
+        &[("a.txt", "one\n")],
+        "pr2",
+        &[("a.txt", "two\n"), ("new.txt", "n\nm\n")],
+    );
+
+    assert_eq!(
+        fx.session.lines_of(&pull_request_7()).await.unwrap(),
+        Some(LineDelta { added: 3, removed: 1 })
+    );
+}
+
 mod ahead;
 mod derived;
 mod marks;

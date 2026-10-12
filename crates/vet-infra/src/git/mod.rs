@@ -23,8 +23,8 @@ use gix::bstr::ByteSlice;
 use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
     BaseCandidates, BlobRead, BlobReader, BranchInfo, ChangesetRefs, Checkout, CheckoutError, CommitDetail, CommitInfo,
-    Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefUpdate, Remerged, RemoteInfo, Scan, Scanner,
-    Store, TextDiff,
+    Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefTip, RefUpdate, Remerged, RemoteInfo, Scan,
+    Scanner, Store, TextDiff,
 };
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot};
@@ -380,7 +380,7 @@ impl Fetcher for GixRepo {
             .await
     }
 
-    async fn refs_below(&self, prefix: &str) -> Result<Vec<String>, GitError> {
+    async fn refs_below(&self, prefix: &str) -> Result<Vec<RefTip>, GitError> {
         let prefix = prefix.to_owned();
         self.blocking(move |i| fetch::refs_below(&i.open()?, &prefix)).await
     }

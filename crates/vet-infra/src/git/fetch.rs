@@ -19,7 +19,7 @@ use gix::remote::fetch::refs::update::Mode;
 use gix::remote::fetch::{Status, Tags};
 use gix::sec::identity::Account;
 use vet_app::platform::{CredentialSource, PlatformKind};
-use vet_app::ports::{FetchAuth, GitError, RefUpdate, RemoteInfo};
+use vet_app::ports::{FetchAuth, GitError, RefTip, RefUpdate, RemoteInfo};
 
 use super::err;
 
@@ -118,13 +118,20 @@ pub(super) fn fetch_refs(
 /// Where the refs of fetched pull requests are kept: the only refs a fetch may delete.
 const DELETABLE: &str = "refs/vet/pr/";
 
-pub(super) fn refs_below(repo: &gix::Repository, prefix: &str) -> Result<Vec<String>, GitError> {
+/// The refs below `prefix`, each with its commit; a symbolic ref has none and is left out.
+pub(super) fn refs_below(repo: &gix::Repository, prefix: &str) -> Result<Vec<RefTip>, GitError> {
     let platform = repo.references().map_err(err)?;
-    let mut names = Vec::new();
+    let mut tips = Vec::new();
     for reference in platform.prefixed(prefix).map_err(err)? {
-        names.push(reference.map_err(err)?.name().as_bstr().to_str_lossy().into_owned());
+        let reference = reference.map_err(err)?;
+        if let Some(id) = reference.target().try_id() {
+            tips.push(RefTip {
+                name: reference.name().as_bstr().to_str_lossy().into_owned(),
+                commit: id.to_string(),
+            });
+        }
     }
-    Ok(names)
+    Ok(tips)
 }
 
 /// Deletes the refs `names` that exist, all or none if one is outside [`DELETABLE`].

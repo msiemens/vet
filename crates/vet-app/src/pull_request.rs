@@ -324,8 +324,8 @@ pub async fn unlisted_fetched<G: Fetcher>(
         if shared {
             continue;
         }
-        for name in fetch.refs_below(&prefix).await? {
-            let Some(number) = PullRequestRefs::number_of(remote, &name) else {
+        for tip in fetch.refs_below(&prefix).await? {
+            let Some(number) = PullRequestRefs::number_of(remote, &tip.name) else {
                 continue;
             };
             let listed = list.rows.iter().any(|l| l.remote == *remote && l.row.number == number);
@@ -358,16 +358,24 @@ pub async fn delete_pull_request_refs<G: Fetcher>(
 /// How many pull requests one fetch brings in.
 const HEADS_PER_FETCH: usize = 8;
 
-/// Fetches the pull requests of `list` whose refs are not in the repository yet, newest first, so
-/// every row of the queue has commits to count lines from. Does not touch a pull request that is
-/// there already. A batch the remote refuses (a branch deleted since the listing) is fetched one
-/// pull request at a time, so one cannot hold back the rest. Answers whether anything was brought in.
+/// How many of the listed pull requests, newest first across the repositories, are fetched for
+/// their lines; the rest has none until it is opened.
+const LISTED_FETCHED: usize = 50;
+
+/// Fetches the newest [`LISTED_FETCHED`] pull requests of `list` whose refs are not in the
+/// repository yet or whose head ref is not at the head the list names (it was pushed to since), so
+/// every such row of the queue has current commits to count lines from. Does not touch a pull
+/// request that is there and current. A batch the remote refuses (a branch deleted since the
+/// listing) is fetched one pull request at a time, so one cannot hold back the rest. A second call
+/// meanwhile waits and then fetches what the first did not. Answers whether anything was brought in.
 pub async fn fetch_listed_heads<G: Fetcher>(
     fetch: &Fetch<G>,
     credentials: &(impl Credentials + Sync),
     list: &PullRequestList,
 ) -> Result<bool, String> {
+    let _one_listing = fetch.listed_heads().await;
     let remotes = fetch.remotes().await?;
+    let newest: Vec<&ListedPullRequest> = list.rows.iter().take(LISTED_FETCHED).collect();
     let mut brought = false;
     for source in list.sources.iter().filter(|s| s.error.is_none()) {
         let repository = &source.remote;
@@ -379,13 +387,13 @@ pub async fn fetch_listed_heads<G: Fetcher>(
             continue;
         };
         let have = fetch.refs_below(&PullRequestRefs::of_repository(repository)).await?;
-        let missing: Vec<Vec<RefUpdate>> = list
-            .rows
+        let missing: Vec<Vec<RefUpdate>> = newest
             .iter()
             .filter(|listed| listed.remote == *repository)
             .filter(|listed| {
                 let refs = PullRequestRefs::of(repository, listed.row.number);
-                !have.contains(&refs.head) || !have.contains(&refs.target)
+                let at = |name: &str| have.iter().find(|tip| tip.name == name).map(|tip| tip.commit.as_str());
+                at(&refs.head) != Some(listed.row.head.as_str()) || at(&refs.target).is_none()
             })
             .map(|listed| {
                 let number = listed.row.number;
@@ -420,7 +428,7 @@ mod tests {
         CheckLog, CommitChecks, Credential, PullRequest, PullRequestDetail, PullRequestListing, ReviewRequest, Viewer,
         pr, viewer,
     };
-    use crate::ports::{FetchAuth, GitError};
+    use crate::ports::{FetchAuth, GitError, RefTip};
     use crate::progress::Tasks;
 
     fn github(path: &str) -> RemoteKey {
@@ -606,13 +614,21 @@ mod tests {
     type Fetched = Arc<Mutex<Vec<(String, Vec<RefUpdate>)>>>;
 
     /// The refs of the repository.
-    type Refs = Arc<Mutex<Vec<String>>>;
+    type Refs = Arc<Mutex<Vec<RefTip>>>;
+
+    /// The commit the remote has at each of its refs; a ref not in it is at `tip`.
+    type Served = Arc<Mutex<std::collections::HashMap<String, String>>>;
+
+    fn names(refs: &Refs) -> Vec<String> {
+        refs.lock().unwrap().iter().map(|r| r.name.clone()).collect()
+    }
 
     /// Git remotes that record what they were asked to fetch, into refs.
     struct Remotes {
         remotes: Vec<RemoteInfo>,
         fetched: Fetched,
         refs: Refs,
+        served: Served,
         /// Sources the remote does not have: a fetch asking for one fails.
         gone: Vec<String>,
     }
@@ -636,23 +652,34 @@ mod tests {
             if let Some(lacking) = updates.iter().find(|u| self.gone.contains(&u.source)) {
                 return Err(GitError(format!("{} is not on the remote", lacking.source)));
             }
+            // The transfer takes a moment, in which another call may look at the refs.
+            tokio::task::yield_now().await;
             let mut refs = self.refs.lock().unwrap();
             for update in &updates {
-                if !refs.contains(&update.destination) {
-                    refs.push(update.destination.clone());
-                }
+                let commit = self
+                    .served
+                    .lock()
+                    .unwrap()
+                    .get(&update.source)
+                    .cloned()
+                    .unwrap_or_else(|| "tip".to_owned());
+                refs.retain(|r| r.name != update.destination);
+                refs.push(RefTip {
+                    name: update.destination.clone(),
+                    commit,
+                });
             }
             Ok(())
         }
 
-        async fn refs_below(&self, prefix: &str) -> Result<Vec<String>, GitError> {
+        async fn refs_below(&self, prefix: &str) -> Result<Vec<RefTip>, GitError> {
             let refs = self.refs.lock().unwrap();
-            Ok(refs.iter().filter(|r| r.starts_with(prefix)).cloned().collect())
+            Ok(refs.iter().filter(|r| r.name.starts_with(prefix)).cloned().collect())
         }
 
         async fn delete_refs(&self, names: Vec<String>) -> Result<(), GitError> {
             assert!(names.iter().all(|n| n.starts_with("refs/vet/pr/")), "{names:?}");
-            self.refs.lock().unwrap().retain(|r| !names.contains(r));
+            self.refs.lock().unwrap().retain(|r| !names.contains(&r.name));
             Ok(())
         }
     }
@@ -672,15 +699,35 @@ mod tests {
 
     /// A repository with the refs `refs` already.
     fn fetching_into(remotes: Vec<RemoteInfo>, refs: &[&str]) -> (Fetch<Remotes>, Fetched, Refs) {
+        let refs = refs
+            .iter()
+            .map(|r| RefTip {
+                name: (*r).to_owned(),
+                commit: "tip".to_owned(),
+            })
+            .collect();
+        let (fetch, fetched, refs, _) = fetching_with(remotes, refs, &[]);
+        (fetch, fetched, refs)
+    }
+
+    /// A repository with `refs` already, and the remote's [`Served`] to move; the remote lacks the
+    /// sources `gone`.
+    fn fetching_with(
+        remotes: Vec<RemoteInfo>,
+        refs: Vec<RefTip>,
+        gone: &[&str],
+    ) -> (Fetch<Remotes>, Fetched, Refs, Served) {
         let fetched = Arc::default();
-        let refs: Refs = Arc::new(Mutex::new(refs.iter().map(|r| (*r).to_owned()).collect()));
+        let refs: Refs = Arc::new(Mutex::new(refs));
+        let served = Served::default();
         let git = Remotes {
             remotes,
             fetched: Arc::clone(&fetched),
             refs: Arc::clone(&refs),
-            gone: Vec::new(),
+            served: Arc::clone(&served),
+            gone: gone.iter().map(|g| (*g).to_owned()).collect(),
         };
-        (Fetch::new(git, Tasks::default()), fetched, refs)
+        (Fetch::new(git, Tasks::default()), fetched, refs, served)
     }
 
     fn listed_ado(numbers: &[u64]) -> PullRequestList {
@@ -691,9 +738,14 @@ mod tests {
         PullRequestList {
             rows: numbers
                 .iter()
-                .map(|n| ListedPullRequest {
-                    remote: remote.clone(),
-                    row: rows(vec![pr(*n)], &viewer(), &PullRequestQuery::new(QueueTab::AllOpen)).remove(0),
+                .map(|n| {
+                    let mut listed = pr(*n);
+                    listed.source_branch = format!("pr{n}");
+                    listed.head = format!("c{n}");
+                    ListedPullRequest {
+                        remote: remote.clone(),
+                        row: rows(vec![listed], &viewer(), &PullRequestQuery::new(QueueTab::AllOpen)).remove(0),
+                    }
                 })
                 .collect(),
             sources: vec![RepositoryStatus {
@@ -1001,11 +1053,46 @@ mod tests {
             .unwrap();
 
         assert_eq!(deleted, [of(4).head, of(4).target, of(6).head, of(6).target]);
-        assert_eq!(*refs.lock().unwrap(), [of(5).head, of(5).target]);
+        assert_eq!(names(&refs), [of(5).head, of(5).target]);
     }
 
     fn ado_remote() -> RemoteInfo {
         info("origin", "https://dev.azure.com/contoso/Shop/_git/api")
+    }
+
+    /// The refs of pull request `number` of `list` as a fetch of it leaves them.
+    fn fetched_refs(list: &PullRequestList, number: u64) -> Vec<RefTip> {
+        let refs = PullRequestRefs::of(&list.sources[0].remote, number);
+        vec![
+            RefTip {
+                name: refs.head,
+                commit: format!("c{number}"),
+            },
+            RefTip {
+                name: refs.target,
+                commit: "tip".to_owned(),
+            },
+        ]
+    }
+
+    /// The remote has each listed pull request's source branch at the head the list names.
+    fn serve_heads(served: &Served, list: &PullRequestList) {
+        let mut served = served.lock().unwrap();
+        for listed in &list.rows {
+            served.insert(
+                format!("refs/heads/{}", listed.row.source_branch),
+                listed.row.head.clone(),
+            );
+        }
+    }
+
+    fn destinations(fetched: &Fetched) -> Vec<String> {
+        fetched
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|(_, u)| u.iter().map(|u| u.destination.clone()))
+            .collect()
     }
 
     #[tokio::test]
@@ -1013,24 +1100,77 @@ mod tests {
         let list = listed_ado(&[1, 2, 3]);
         let remote = list.sources[0].remote.clone();
         let of = |number| PullRequestRefs::of(&remote, number);
-        let kept = [of(2).head, of(2).target];
-        let kept: Vec<&str> = kept.iter().map(String::as_str).collect();
-        let (fetch, fetched, refs) = fetching_into(vec![ado_remote()], &kept);
+        let (fetch, fetched, refs, served) = fetching_with(vec![ado_remote()], fetched_refs(&list, 2), &[]);
+        serve_heads(&served, &list);
 
         assert!(fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
 
-        let destinations: Vec<String> = fetched
-            .lock()
-            .unwrap()
-            .iter()
-            .flat_map(|(_, u)| u.iter().map(|u| u.destination.clone()))
-            .collect();
-        assert_eq!(destinations, [of(1).head, of(1).target, of(3).head, of(3).target]);
+        assert_eq!(
+            destinations(&fetched),
+            [of(1).head, of(1).target, of(3).head, of(3).target]
+        );
         assert_eq!(fetched.lock().unwrap().len(), 1, "one fetch for the lot");
-        assert!(refs.lock().unwrap().contains(&of(3).head));
+        assert!(names(&refs).contains(&of(3).head));
 
         assert!(!fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
         assert_eq!(fetched.lock().unwrap().len(), 1, "nothing is fetched twice");
+    }
+
+    #[tokio::test]
+    async fn a_pull_request_pushed_to_since_it_was_fetched_is_fetched_again_and_the_others_are_not() {
+        let mut list = listed_ado(&[1, 2]);
+        let remote = list.sources[0].remote.clone();
+        let refs: Vec<RefTip> = [1, 2].iter().flat_map(|n| fetched_refs(&list, *n)).collect();
+        let (fetch, fetched, refs, served) = fetching_with(vec![ado_remote()], refs, &[]);
+        list.rows[1].row.head = "c2-pushed".to_owned();
+        serve_heads(&served, &list);
+
+        assert!(fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+
+        let of = PullRequestRefs::of(&remote, 2);
+        assert_eq!(destinations(&fetched), [of.head.clone(), of.target]);
+        let head = refs
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|r| r.name == of.head)
+            .cloned()
+            .unwrap();
+        assert_eq!(head.commit, "c2-pushed");
+        assert!(!fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
+        assert_eq!(fetched.lock().unwrap().len(), 1, "the head is current now");
+    }
+
+    #[tokio::test]
+    async fn only_the_newest_fifty_listed_pull_requests_are_fetched() {
+        let last = LISTED_FETCHED as u64;
+        let numbers: Vec<u64> = (1..=last + 5).collect();
+        let list = listed_ado(&numbers);
+        let remote = list.sources[0].remote.clone();
+        let (fetch, _, refs, served) = fetching_with(vec![ado_remote()], Vec::new(), &[]);
+        serve_heads(&served, &list);
+
+        fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap();
+
+        let names = names(&refs);
+        let has = |number| names.contains(&PullRequestRefs::of(&remote, number).head);
+        assert!(has(1) && has(last), "the first fifty rows of the list");
+        assert!(!has(last + 1) && !has(last + 5));
+    }
+
+    #[tokio::test]
+    async fn listings_that_overlap_do_not_fetch_the_same_pull_requests_twice() {
+        let list = listed_ado(&[1, 2, 3]);
+        let (fetch, fetched, _, served) = fetching_with(vec![ado_remote()], Vec::new(), &[]);
+        serve_heads(&served, &list);
+
+        let (first, second) = tokio::join!(
+            fetch_listed_heads(&fetch, &Anonymous, &list),
+            fetch_listed_heads(&fetch, &Anonymous, &list)
+        );
+
+        assert_eq!((first, second), (Ok(true), Ok(false)));
+        assert_eq!(fetched.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1038,20 +1178,12 @@ mod tests {
         let mut list = listed_ado(&[1, 2, 3]);
         list.rows[1].row.source_branch = "deleted".to_owned();
         let remote = list.sources[0].remote.clone();
-        let fetched = Arc::default();
-        let refs: Refs = Arc::default();
-        let git = Remotes {
-            remotes: vec![ado_remote()],
-            fetched: Arc::clone(&fetched),
-            refs: Arc::clone(&refs),
-            gone: vec!["refs/heads/deleted".to_owned()],
-        };
-        let fetch = Fetch::new(git, Tasks::default());
+        let (fetch, _, refs, _) = fetching_with(vec![ado_remote()], Vec::new(), &["refs/heads/deleted"]);
 
         assert!(fetch_listed_heads(&fetch, &Anonymous, &list).await.unwrap());
 
-        let refs = refs.lock().unwrap();
-        let has = |number| refs.contains(&PullRequestRefs::of(&remote, number).head);
+        let names = names(&refs);
+        let has = |number| names.contains(&PullRequestRefs::of(&remote, number).head);
         assert_eq!((has(1), has(2), has(3)), (true, false, true));
     }
 }

@@ -331,13 +331,18 @@ async fn the_refs_of_fetched_pull_requests_are_listed_and_deleted_and_no_other_r
     git(&fx.clone, &["update-ref", "refs/vet/changesets/1/1/target", &main]);
     let before = fx.outside_remotes();
 
-    let app = repo.refs_below("refs/vet/pr/github_com/acme/app/").await.unwrap();
+    let tips = repo.refs_below("refs/vet/pr/github_com/acme/app/").await.unwrap();
+    let app: Vec<String> = tips.iter().map(|t| t.name.clone()).collect();
     assert_eq!(
         app,
         [
             "refs/vet/pr/github_com/acme/app/7/head",
             "refs/vet/pr/github_com/acme/app/7/target"
         ]
+    );
+    assert_eq!(
+        tips[0].commit,
+        fx.rev("refs/vet/pr/github_com/acme/app/7/head").unwrap()
     );
 
     let outside = repo

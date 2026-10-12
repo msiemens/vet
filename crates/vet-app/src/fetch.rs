@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 
 use crate::platform::{Credential, PlatformKind, parse_remote};
-use crate::ports::{FetchAuth, Fetcher, RefUpdate, RemoteInfo};
+use crate::ports::{FetchAuth, Fetcher, RefTip, RefUpdate, RemoteInfo};
 use crate::progress::{TaskKind, Tasks};
 
 /// How often a project's remotes are fetched while it is open.
@@ -27,6 +27,7 @@ pub struct Fetch<G> {
     /// A fetch started while another runs waits for it: both write the same refs. Refs are
     /// deleted under it too.
     running: Mutex<()>,
+    listed_heads: Mutex<()>,
     /// How many times [`Fetch::refs`] was called, and the count when each ref was last fetched.
     fetched: StdMutex<(u64, HashMap<String, u64>)>,
 }
@@ -41,6 +42,7 @@ impl<G: Fetcher> Fetch<G> {
             git,
             tasks,
             running: Mutex::new(()),
+            listed_heads: Mutex::new(()),
             fetched: StdMutex::default(),
         }
     }
@@ -54,9 +56,15 @@ impl<G: Fetcher> Fetch<G> {
         FetchMark(self.fetched().0)
     }
 
-    /// The full names of the refs whose names start with `prefix`.
-    pub async fn refs_below(&self, prefix: &str) -> Result<Vec<String>, String> {
+    /// The refs whose names start with `prefix`, each with its commit.
+    pub async fn refs_below(&self, prefix: &str) -> Result<Vec<RefTip>, String> {
         self.git.refs_below(prefix).await.map_err(|e| e.0)
+    }
+
+    /// Held while the pull requests of a listing are brought in: a second listing waits, and then
+    /// finds what the first fetched instead of fetching it again.
+    pub async fn listed_heads(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.listed_heads.lock().await
     }
 
     /// Deletes those of the refs `names` that were not fetched since `since`, which must all be
@@ -247,7 +255,7 @@ mod tests {
             Ok(())
         }
 
-        async fn refs_below(&self, _: &str) -> Result<Vec<String>, GitError> {
+        async fn refs_below(&self, _: &str) -> Result<Vec<RefTip>, GitError> {
             unreachable!("nothing is deleted")
         }
 

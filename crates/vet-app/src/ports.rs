@@ -284,6 +284,15 @@ pub struct FetchAuth {
     pub credential: Credential,
 }
 
+/// A ref of the repository and the commit it points to.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RefTip {
+    /// Full name.
+    pub name: String,
+    /// The hex id of the commit.
+    pub commit: String,
+}
+
 /// A ref of a remote and the ref of the repository it is kept under.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RefUpdate {
@@ -313,8 +322,8 @@ pub trait Fetcher {
         updates: Vec<RefUpdate>,
         auth: Option<FetchAuth>,
     ) -> impl Future<Output = Result<(), GitError>> + Send;
-    /// The full names of the refs whose names start with `prefix`.
-    fn refs_below(&self, prefix: &str) -> impl Future<Output = Result<Vec<String>, GitError>> + Send;
+    /// The refs whose names start with `prefix`, each with the commit it points to.
+    fn refs_below(&self, prefix: &str) -> impl Future<Output = Result<Vec<RefTip>, GitError>> + Send;
     /// Deletes the refs `names`, which must all be below `refs/vet/pr/`, where the refs of fetched
     /// pull requests are kept. Fails, deleting nothing, if one is not; a ref that is not there is
     /// left out.
