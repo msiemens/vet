@@ -2,7 +2,10 @@
 // file under the changeset, the other files and the libraries, or as a short flat list.
 
 import type { LocationRow } from "../../generated/LocationRow.ts";
+import { decodeHighlights, eachRange } from "../../lib/highlights.ts";
+import { splitQualified } from "../../lib/qualified.ts";
 import { match } from "../../lib/speedSearch.ts";
+import { rowLabel } from "../../lib/symbolLabel.ts";
 
 /** Up to this many places the popup lists them flat, two lines each; above, grouped by file. */
 export const FLAT_UP_TO = 20;
@@ -19,8 +22,7 @@ export function visibleRows(rows: readonly LocationRow[], query: string, onlyCha
   return rows.filter((row) => {
     if (onlyChangeset && (row.external || row.change === "unchanged")) return false;
     if (!query) return true;
-    const within = row.within?.name.join("::") ?? "";
-    return [within, row.text, row.path].some((text) => match(query, text) !== undefined);
+    return [symbolLabel(row), row.text, row.path].some((text) => match(query, text) !== undefined);
   });
 }
 
@@ -77,6 +79,55 @@ export function groupRows(rows: readonly LocationRow[], statusOf: (path: string)
 export function countText(total: number, listed: number): { count: string; cut?: string } {
   const format = (n: number) => n.toLocaleString("en-US");
   return total > listed ? { count: format(total), cut: `first ${format(listed)}` } : { count: format(total) };
+}
+
+/** A stretch of a row's line: coloured as the syntax has it, and `hit` where the match is. */
+export interface CodeRun {
+  text: string;
+  className?: string;
+  hit: boolean;
+}
+
+/** The row's line cut where its syntax colour changes or the match starts or ends. */
+export function codeRuns(row: Pick<LocationRow, "text" | "highlights" | "matchStart" | "matchEnd">): CodeRun[] {
+  const { text, matchStart, matchEnd } = row;
+  const spans: { from: number; to: number; className?: string }[] = [];
+  let at = 0;
+  eachRange(decodeHighlights(row.highlights), 0, text.length, (from, to, className) => {
+    if (from > at) spans.push({ from: at, to: from });
+    spans.push({ from, to, className });
+    at = to;
+  });
+  if (at < text.length) spans.push({ from: at, to: text.length });
+
+  const runs: CodeRun[] = [];
+  for (const span of spans) {
+    const cuts = [span.from, ...[matchStart, matchEnd].filter((c) => c > span.from && c < span.to), span.to];
+    for (let i = 1; i < cuts.length; i++) {
+      const [from, to] = [cuts[i - 1], cuts[i]];
+      runs.push({
+        text: text.slice(from, to),
+        className: span.className,
+        hit: matchStart < matchEnd && from >= matchStart && to <= matchEnd,
+      });
+    }
+  }
+  return runs;
+}
+
+/** What separates a container from its member in the language of the file at `path`. */
+const separatorOf = (path: string): string => (/\.(rs|c|h|cc|cpp|cxx|hpp)$/i.test(path) ? "::" : ".");
+
+/**
+ * What a place is in, short: the innermost symbol around it with the last segment of its container
+ * (`Ledger::commit`, `TaskDispatcher.Trigger`), else just the symbol; the file's name where there is
+ * no symbol.
+ */
+export function symbolLabel(row: Pick<LocationRow, "within" | "path">): string {
+  const { within, path } = row;
+  const { name, context } = rowLabel(within, path);
+  if (!within || within.name.length < 2) return name;
+  return `${splitQualified(context).name || context}${separatorOf(within.path)}${name}`;
 }
 
 /** A library's file: the package it belongs to, if the path tells, and the rest of the path. */

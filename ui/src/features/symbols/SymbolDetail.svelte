@@ -7,11 +7,12 @@
   import type { RemovalImpact } from "../../generated/RemovalImpact";
   import type { Side } from "../../generated/Side";
   import { codeBlock } from "../../lib/codeBlock";
+  import { nameOf, rowLabel } from "../../lib/symbolLabel";
   import PathText from "../../lib/ui/PathText.svelte";
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import DerivedSection from "./DerivedSection.svelte";
-  import { containerOf, describeFate, nameOf, type OpenLocation, place, rowLabel } from "./symbolList";
+  import { containerOf, describeFate, type OpenLocation, place } from "./symbolList";
 
   let { symbol, onopen }: { symbol: ChangedSymbol; onopen: OpenLocation } = $props();
 

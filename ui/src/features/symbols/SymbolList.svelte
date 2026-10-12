@@ -2,6 +2,7 @@
   // The changed symbols by file, with the current file's group in view.
   import { tick } from "svelte";
   import type { ChangedSymbol } from "../../generated/ChangedSymbol";
+  import { nameOf } from "../../lib/symbolLabel";
   import { ListNav } from "../../lib/ui/listNav";
   import Marked from "../../lib/ui/Marked.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
@@ -11,7 +12,7 @@
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import { keyOf } from "../../state/symbolKey";
   import { symbols } from "../../state/symbols.svelte";
-  import { containerOf, fileEntries, nameOf, rowKeys, searchEntries } from "./symbolList";
+  import { containerOf, fileEntries, rowKeys, searchEntries } from "./symbolList";
 
   /** A double click or Enter: jump to the symbol's source. */
   let { onjump }: { onjump: (symbol: ChangedSymbol) => void } = $props();

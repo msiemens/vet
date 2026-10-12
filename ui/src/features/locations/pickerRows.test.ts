@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LocationRow } from "../../generated/LocationRow.ts";
-import { countText, groupRows, libraryLabel, visibleRows } from "./pickerRows.ts";
+import { codeRuns, countText, groupRows, libraryLabel, symbolLabel, visibleRows } from "./pickerRows.ts";
 
 const row = (path: string, line: number, init: Partial<LocationRow> = {}): LocationRow => ({
   path,
@@ -96,6 +96,56 @@ void test("typing keeps the places whose symbol, line or file matches, and the t
     visibleRows(rows, "", true).map((r) => r.line),
     [1],
   );
+});
+
+void test("a place is named by its symbol and the last part of its container, in the file's language's separator", () => {
+  const label = (path: string, name: string[]) => symbolLabel({ path, within: { path, name } });
+  assert.equal(label("src/sync/retry.rs", ["RetryPolicy", "preview"]), "RetryPolicy::preview");
+  assert.equal(label("src/retry.ts", ["Retry", "preview"]), "Retry.preview");
+  assert.equal(
+    label("src/Services/TaskDispatcher.cs", [
+      "HES.LCD500.Application.Services.TaskEngine",
+      "TaskDispatcher",
+      "Trigger<TTask, TState>(TTask task, Job job) : void",
+    ]),
+    "TaskDispatcher.Trigger<TTask, TState>",
+  );
+  assert.equal(label("src/A.cs", ["HES.LCD500.TaskEngine", "TaskDispatcher"]), "TaskEngine.TaskDispatcher");
+  assert.equal(label("src/lib.rs", ["free_fn"]), "free_fn");
+  assert.equal(symbolLabel({ path: "src/billing/util.py", within: null }), "util.py");
+});
+
+void test("a line is cut where its colours change and where the match is, in UTF-16 units", () => {
+  // `let` is a keyword (0..3), `foo` a function (10..13) after "é😀", which is three units.
+  const runs = codeRuns({
+    text: "let é😀 = foo();",
+    highlights: [0, 3, 0, 7, 3, 5],
+    matchStart: 10,
+    matchEnd: 13,
+  });
+  assert.deepEqual(
+    runs.map((r) => [r.text, r.className, r.hit]),
+    [
+      ["let", "syn-keyword", false],
+      [" é😀 = ", undefined, false],
+      ["foo", "syn-function", true],
+      ["();", undefined, false],
+    ],
+  );
+});
+
+void test("a match inside a coloured stretch splits it and keeps its colour", () => {
+  const runs = codeRuns({ text: "next_delay(3)", highlights: [0, 10, 5], matchStart: 5, matchEnd: 8 });
+  assert.deepEqual(
+    runs.map((r) => [r.text, r.className, r.hit]),
+    [
+      ["next_", "syn-function", false],
+      ["del", "syn-function", true],
+      ["ay", "syn-function", false],
+      ["(3)", undefined, false],
+    ],
+  );
+  assert.deepEqual(codeRuns({ text: "", highlights: [], matchStart: 0, matchEnd: 0 }), []);
 });
 
 void test("a cut answer says how many there were and how many are listed", () => {

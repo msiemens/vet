@@ -5,14 +5,14 @@
   import { onDestroy, onMount, tick } from "svelte";
   import type { LocationRow } from "../../generated/LocationRow";
   import { LIST } from "../../lib/listKeys";
-  import { highlightRuns } from "../../lib/speedSearch";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
+  import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import type { PickerView } from "../../state/pickerTypes";
-  import { FLAT_UP_TO, countText, groupRows, libraryLabel, visibleRows } from "./pickerRows";
+  import { FLAT_UP_TO, codeRuns, countText, groupRows, libraryLabel, symbolLabel, visibleRows } from "./pickerRows";
 
   let {
     view,
@@ -65,8 +65,8 @@
     const { anchor } = view;
     const below = window.innerHeight - anchor.bottom - 12;
     const above = anchor.top - 12;
-    const rows = flat ? shown.length * 46 : items.length * 24;
-    const want = Math.min(MAX_HEIGHT, 56 + rows + (search.active ? 32 : 0) + (results ? 0 : 56));
+    const rows = flat ? shown.length * 43 : items.length * 24;
+    const want = Math.min(MAX_HEIGHT, 33 + rows + (search.active ? 32 : 0) + (results ? 0 : 64));
     const down = below >= want || below >= above;
     const width = Math.min(WIDTH, window.innerWidth - 16);
     return {
@@ -141,9 +141,6 @@
       }
     }
   }
-
-  /** What a place is in: its symbol, else its file. */
-  const symbolOf = (row: LocationRow) => row.within?.name.join("::") ?? row.path.slice(row.path.lastIndexOf("/") + 1);
 </script>
 
 <svelte:window
@@ -152,8 +149,12 @@
 />
 
 {#snippet code(row: LocationRow)}
-  {#each highlightRuns(row.text, [[row.matchStart, row.matchEnd]]) as run, i (i)}{#if run.hit}<mark>{run.text}</mark
-      >{:else}{run.text}{/if}{/each}
+  {#each codeRuns(row) as run, i (i)}{#if run.hit}<mark class={run.className}>{run.text}</mark
+      >{:else if run.className}<span class={run.className}>{run.text}</span>{:else}{run.text}{/if}{/each}
+{/snippet}
+
+{#snippet symbol(row: LocationRow)}
+  <QualifiedName name={symbolLabel(row)} title={row.within ? row.within.name.join(" › ") : row.path} />
 {/snippet}
 
 {#snippet status(path: string)}
@@ -181,12 +182,12 @@
     <span class="title">{view.kind === "usages" ? "Usages of" : "Implementations of"} <code>{view.symbol}</code></span>
     {#if count}
       <span class="mono count">{count.count}</span>
-      {#if count.cut}<span class="mono cut">· {count.cut}</span>{/if}
+      {#if count.cut}<span class="mono cut">{count.cut}</span>{/if}
     {/if}
     <span class="grow"></span>
     {#if view.body.phase !== "stopped"}
       <IconButton
-        icon="review"
+        icon="filter"
         label="Only Changeset Hits"
         size={24}
         iconSize={14}
@@ -232,17 +233,18 @@
             <span class="dot" class:on={row.change === "hunk"}></span>
             <span class="rows">
               <span class="first">
-                <span class="sym">{symbolOf(row)}</span>
+                <span class="sym">{@render symbol(row)}</span>
                 <span class="where">
                   {#if row.external}
                     {@const lib = libraryLabel(row.path)}
                     <Icon name="module" size={12} />
-                    {#if lib.package}<span>{lib.package}</span><span class="sep">›</span>{/if}
-                    <PathText path={lib.rest} suffix=":{row.line}" title={row.path} />
+                    {#if lib.package}<span class="pkg">{lib.package}</span><span class="sep">›</span>{/if}
+                    <PathText path={lib.rest} title={row.path} />
                   {:else}
-                    <PathText path={row.path} suffix=":{row.line}" />
-                    {@render status(row.path)}
+                    <PathText path={row.path} />
                   {/if}
+                  <span class="mono at">:{row.line}</span>
+                  {#if !row.external}{@render status(row.path)}{/if}
                 </span>
               </span>
               <span class="mono code">{@render code(row)}</span>
@@ -275,7 +277,7 @@
             >
               <span class="dot" class:on={item.row.change === "hunk"}></span>
               <span class="mono line">{item.row.line}</span>
-              <span class="within">{item.row.within?.name.join("::") ?? ""}</span>
+              <span class="within">{@render symbol(item.row)}</span>
               <span class="mono code">{@render code(item.row)}</span>
             </button>
           {/if}
@@ -302,7 +304,8 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 36px;
+    box-sizing: border-box;
+    height: 33px;
     padding: 0 8px 0 12px;
     border-bottom: 1px solid var(--line-soft);
     color: var(--text);
@@ -324,7 +327,7 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    height: 56px;
+    height: 64px;
     padding: 0 12px;
     color: var(--text-2);
   }
@@ -368,7 +371,7 @@
     gap: 6px;
     height: var(--h-row);
     padding: 0 12px;
-    color: var(--text-2);
+    color: var(--text);
     white-space: nowrap;
   }
   .letter {
@@ -383,9 +386,7 @@
   .two {
     display: flex;
     align-items: center;
-    gap: 8px;
     width: 100%;
-    padding: 0 12px;
     border: 0;
     background: transparent;
     color: var(--text);
@@ -397,36 +398,47 @@
   }
   .hit {
     height: var(--h-row);
+    padding: 0 12px 0 23px;
   }
   .two {
-    padding-top: 5px;
-    padding-bottom: 5px;
-    align-items: center;
+    align-items: flex-start;
+    gap: 11px;
+    padding: 5px 14px 5px 12px;
+  }
+  .two + .two {
+    border-top: 1px solid var(--line-soft);
   }
   .cur {
     background: var(--select);
   }
   .dot {
     flex: none;
-    width: 6px;
-    height: 6px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
+  }
+  .hit .dot {
+    margin-right: 8px;
+  }
+  .two .dot {
+    margin-top: 5px;
   }
   .dot.on {
     background: var(--add-text);
   }
   .line {
     flex: none;
-    width: 36px;
+    width: 37px;
     text-align: right;
     font-size: var(--fs-mono-s);
     color: var(--text-3);
   }
   .within {
     flex: none;
-    width: 170px;
+    display: flex;
+    width: 151px;
+    margin: 0 7px;
     overflow: hidden;
-    text-overflow: ellipsis;
     color: var(--text-2);
   }
   .code {
@@ -434,11 +446,11 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: pre;
     font-size: var(--fs-mono);
   }
   mark {
     background: var(--find);
-    color: inherit;
     border-radius: 2px;
   }
   .rows {
@@ -446,34 +458,41 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+  }
+  .two .code {
+    flex: none;
+    line-height: 15px;
   }
   .first {
     display: flex;
     align-items: baseline;
+    justify-content: space-between;
     gap: 12px;
+    line-height: 17px;
   }
   .sym {
-    flex: 1;
+    display: flex;
+    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
   }
   .where {
-    flex: none;
-    max-width: 55%;
+    flex: 0 10 auto;
     min-width: 0;
     display: flex;
-    align-items: center;
-    gap: 5px;
+    align-items: baseline;
+    gap: 6px;
     overflow: hidden;
     font-size: var(--fs-mono-s);
-    color: var(--text-3);
+    color: var(--text);
   }
+  .where > :global(svg) {
+    align-self: center;
+  }
+  .at,
+  .pkg,
   .sep {
-    color: var(--text-3);
-  }
-  .two .code {
     flex: none;
+    color: var(--text-3);
   }
 </style>
