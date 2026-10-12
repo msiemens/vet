@@ -13,6 +13,10 @@ use azure_devops_rust_api::{Credential as ApiCredential, build, git, ims, policy
 use serde::Deserialize;
 use vet_app::platform::{Credential, CredentialSource, PlatformError};
 
+use super::limits::{Gating, Signals, UNSAID_WAIT, Watch};
+use crate::clock::unix_now;
+use crate::platform::limits::Blocked;
+
 /// Where the organizations are.
 pub(crate) const API_ENDPOINT: &str = "https://dev.azure.com";
 
@@ -46,12 +50,24 @@ pub(crate) struct Access {
     http: reqwest::Client,
     token: String,
     source: CredentialSource,
+    watch: Watch,
 }
 
 impl Access {
+    /// An access that shares no rate-limit state with the others: for one request that checks a
+    /// credential.
+    pub(crate) fn unshared(credential: &Credential, http: &reqwest::Client, account: &str) -> Self {
+        let watch = Watch {
+            gate: Arc::default(),
+            account: account.to_owned(),
+            now: unix_now,
+        };
+        Self::new(credential, http, watch)
+    }
+
     /// A personal access token goes as the password of a user with no name, a CLI token
-    /// as a bearer token.
-    pub(crate) fn new(credential: &Credential, http: &reqwest::Client) -> Self {
+    /// as a bearer token. `watch` holds requests back while the account's limit is used up.
+    pub(super) fn new(credential: &Credential, http: &reqwest::Client, watch: Watch) -> Self {
         let token = credential.token.expose().to_owned();
         let api_credential = match credential.source {
             CredentialSource::Pat => ApiCredential::from_pat(token.clone()),
@@ -63,7 +79,12 @@ impl Access {
             http: http.clone(),
             token,
             source: credential.source,
+            watch,
         }
+    }
+
+    fn gating(&self) -> Vec<Arc<dyn Policy>> {
+        vec![Arc::new(Gating(self.watch.clone()))]
     }
 
     /// Pull requests, their threads, statuses and iterations.
@@ -73,6 +94,7 @@ impl Access {
             .transport(self.transport.clone())
             .retry(retries())
             .per_call_policies(requests(self.source))
+            .per_try_policies(self.gating())
             .build())
     }
 
@@ -83,6 +105,7 @@ impl Access {
             .transport(self.transport.clone())
             .retry(retries())
             .per_call_policies(requests(self.source))
+            .per_try_policies(self.gating())
             .build())
     }
 
@@ -93,6 +116,7 @@ impl Access {
             .transport(self.transport.clone())
             .retry(retries())
             .per_call_policies(requests(self.source))
+            .per_try_policies(self.gating())
             .build())
     }
 
@@ -103,6 +127,7 @@ impl Access {
             .transport(self.transport.clone())
             .retry(retries())
             .per_call_policies(requests(self.source))
+            .per_try_policies(self.gating())
             .build())
     }
 
@@ -122,17 +147,24 @@ impl Access {
             CredentialSource::Cli => request.bearer_auth(&self.token),
         };
         let auth = scheme(self.source);
+        if let Err(Blocked { until }) = self.watch.check() {
+            return Err(rate_limited(account, until, now));
+        }
         let response = request.send().await.map_err(|_| {
             let error = PlatformError::Unreachable(format!("cannot reach {account}"));
             log_failure(account, Some((&endpoint, auth)), None, "", &error);
             error
         })?;
         let status = response.status().as_u16();
-        let retry_after = response
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<i64>().ok());
+        let header = |name: &str| response.headers().get(name).and_then(|v| v.to_str().ok());
+        self.watch.observe(&Signals {
+            status,
+            retry_after: header("retry-after"),
+            remaining: header("x-ratelimit-remaining"),
+            reset: header("x-ratelimit-reset"),
+            resource: header("x-ratelimit-resource"),
+        });
+        let retry_after = header("retry-after").and_then(|s| s.parse::<i64>().ok());
         let body = response.text().await.unwrap_or_default();
         let fail = |error: PlatformError| {
             log_failure(
@@ -299,6 +331,9 @@ impl Policy for Requests {
             failed => failed,
         };
         answer.map_err(|error| {
+            if blocked_until(&error).is_some() {
+                return error;
+            }
             let message = error.to_string();
             let failed = FailedRequest {
                 endpoint,
@@ -315,6 +350,10 @@ fn requests(source: CredentialSource) -> Vec<Arc<dyn Policy>> {
 
 /// Why Azure DevOps refused a request. Every message is fit to show. `host` is the account's.
 pub(crate) fn failure(host: &str, error: &azure_core::Error, now: i64) -> PlatformError {
+    // The limit was logged when it began.
+    if let Some(until) = blocked_until(error) {
+        return rate_limited(host, until, now);
+    }
     let mut body = String::new();
     let (status, failed) = match error.kind() {
         ErrorKind::HttpResponse {
@@ -367,19 +406,30 @@ fn from_status(host: &str, status: u16, message: &str, retry_after: Option<i64>,
         300..=399 | 401 => PlatformError::Rejected(reason("refused the token")),
         403 => PlatformError::Forbidden(reason("does not allow the token this")),
         404 => PlatformError::NotFound(reason("does not know this, or the token cannot see it")),
-        429 => {
-            let retry_at = retry_after.map(|secs| now + secs);
-            let when = retry_after.map_or_else(
-                || "; try again in a minute".to_owned(),
-                |secs| format!("; try again in {}", in_words(secs)),
-            );
-            PlatformError::RateLimited {
-                message: format!("{host} asks to slow down{when}"),
-                retry_at,
-            }
-        }
+        429 => rate_limited(host, now + retry_after.unwrap_or(UNSAID_WAIT), now),
         500..=599 => PlatformError::Unreachable(format!("{host} answered {status}")),
         _ => PlatformError::Unexpected(reason("answered")),
+    }
+}
+
+/// When the limit ends that kept the request from being sent, if that is why `error` is one. The
+/// libraries wrap errors on their way out, so the chain is searched.
+fn blocked_until(error: &(dyn std::error::Error + 'static)) -> Option<i64> {
+    let mut current = Some(error);
+    while let Some(error) = current {
+        if let Some(Blocked { until }) = error.downcast_ref() {
+            return Some(*until);
+        }
+        current = error.source();
+    }
+    None
+}
+
+/// The limit on `host` ends at `until`.
+fn rate_limited(host: &str, until: i64, now: i64) -> PlatformError {
+    PlatformError::RateLimited {
+        message: format!("{host} asks to slow down; try again in {}", in_words(until - now)),
+        retry_at: Some(until),
     }
 }
 

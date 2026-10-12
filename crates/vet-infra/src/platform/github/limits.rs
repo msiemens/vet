@@ -8,11 +8,9 @@
 //! once a limit is used up no request to that host and bucket is sent until it ends: the transport
 //! fails it at once with [`Blocked`], and the limit is logged once for its window.
 
-use std::collections::HashMap;
-use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use http::{HeaderMap, Request, Response, StatusCode};
@@ -20,6 +18,7 @@ use octocrab::OctoBody;
 use tower::{BoxError, Layer, Service};
 
 use super::Bucket;
+use crate::platform::limits::{Blocked, Gate};
 
 /// How long a secondary limit lasts when GitHub does not say: "at least one minute".
 pub(super) const SECONDARY_WAIT: i64 = 60;
@@ -27,24 +26,19 @@ pub(super) const SECONDARY_WAIT: i64 = 60;
 /// Until when each host's bucket is used up.
 #[derive(Default)]
 pub(super) struct Limits {
-    until: Mutex<HashMap<(String, Bucket), i64>>,
+    gate: Gate<(String, Bucket)>,
 }
 
 impl Limits {
     /// When the bucket's limit ends, if it is used up at `now`.
     pub(super) fn blocked_until(&self, host: &str, bucket: Bucket, now: i64) -> Option<i64> {
-        let until = self.until.lock().unwrap_or_else(PoisonError::into_inner);
-        until.get(&(host.to_owned(), bucket)).copied().filter(|&at| at > now)
+        self.gate.blocked_until(&(host.to_owned(), bucket), now)
     }
 
     /// The bucket is used up until `until`. The first report of a limit is logged, the ones for the
     /// same window are not.
     pub(super) fn block(&self, host: &str, bucket: Bucket, until: i64, now: i64, why: &str) {
-        let mut windows = self.until.lock().unwrap_or_else(PoisonError::into_inner);
-        let current = windows.entry((host.to_owned(), bucket)).or_insert(0);
-        let begins = *current <= now;
-        *current = (*current).max(until);
-        if begins {
+        if self.gate.block(&(host.to_owned(), bucket), until, now) {
             tracing::warn!(
                 host,
                 bucket = ?bucket,
@@ -55,20 +49,6 @@ impl Limits {
         }
     }
 }
-
-/// A request that was not sent: the bucket it counts against is used up until `until`.
-#[derive(Debug)]
-pub(super) struct Blocked {
-    pub(super) until: i64,
-}
-
-impl fmt::Display for Blocked {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "the rate limit is used up until {}", self.until)
-    }
-}
-
-impl std::error::Error for Blocked {}
 
 /// What the responses of one client (one host's REST or GraphQL API) say of its bucket, and a gate
 /// that keeps requests back while it is used up.

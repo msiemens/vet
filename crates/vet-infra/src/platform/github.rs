@@ -38,7 +38,8 @@ use vet_app::platform::{
 
 use crate::clock::unix_now;
 use crate::http::http_client;
-use limits::{Blocked, Limits, SECONDARY_WAIT, Watch, WatchLayer};
+use crate::platform::limits::Blocked;
+use limits::{Limits, SECONDARY_WAIT, Watch, WatchLayer};
 use tower::Layer;
 use tower::retry::RetryLayer;
 use wire::{DetailData, SearchData};

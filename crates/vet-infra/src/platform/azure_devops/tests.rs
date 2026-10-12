@@ -15,6 +15,7 @@ use crate::platform::fake::{Canned, Fake, Seen, Signed};
 
 mod checks;
 mod discussion;
+mod limits;
 
 const NOW: i64 = 1_700_000_000;
 
@@ -47,6 +48,7 @@ fn client_with<C: CredentialProvider + Sync>(fake: &Fake, credentials: C) -> Azu
         page_size: PAGE_SIZE,
         now,
         state: Mutex::default(),
+        limits: Arc::default(),
     }
 }
 
@@ -680,7 +682,12 @@ async fn a_rejected_token_a_forbidden_repository_a_rate_limit_and_a_down_server_
             return Canned::json(&no_value());
         }
         let (code, body) = *served.lock().unwrap();
-        Canned::status(code, body).with("Retry-After", "120")
+        let canned = Canned::status(code, body);
+        if code == 429 {
+            canned.with("Retry-After", "120")
+        } else {
+            canned
+        }
     });
     let client = client(&fake);
 
@@ -705,6 +712,7 @@ async fn a_rejected_token_a_forbidden_repository_a_rate_limit_and_a_down_server_
         }
     );
 
+    set_now(NOW + 120);
     *answer.lock().unwrap() = (500, "");
     let error = client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
     assert_eq!(

@@ -93,7 +93,7 @@ impl HttpValidator {
             )));
         };
         let endpoint = self.endpoint(|| API_ENDPOINT.to_owned());
-        let me = Access::new(credential, self.http()?)
+        let me = Access::unshared(credential, self.http()?, host)
             .me(&endpoint, organization, host, unix_now())
             .await
             .map_err(|e| match e {

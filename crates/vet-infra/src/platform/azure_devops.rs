@@ -20,7 +20,7 @@
 //! A pull request's threads, votes and checks are in `discussion` and `checks`.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use azure_devops_rust_api::git::models::{GitPullRequest, PullRequestStatus};
@@ -35,12 +35,15 @@ use vet_app::platform::{
 
 use crate::clock::unix_now;
 use crate::http::http_client;
+use crate::platform::limits::Gate;
 use access::{API_ENDPOINT, Access, failure};
+use limits::Watch;
 use wire::Me;
 
 pub(crate) mod access;
 mod checks;
 mod discussion;
+mod limits;
 mod wire;
 
 #[cfg(test)]
@@ -155,6 +158,8 @@ pub struct AzureDevOpsClient<C> {
     page_size: i32,
     now: fn() -> i64,
     state: Mutex<State>,
+    /// Which accounts' limits are used up; kept across the rebuilds of the accounts' clients.
+    limits: Arc<Gate<String>>,
 }
 
 /// An organization, project and repository.
@@ -182,6 +187,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             page_size: PAGE_SIZE,
             now: unix_now,
             state: Mutex::default(),
+            limits: Arc::default(),
         }
     }
 
@@ -204,7 +210,12 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .get_or_init(|| http_client(TIMEOUT))
             .as_ref()
             .map_err(|why| PlatformError::Unreachable(why.clone()))?;
-        Ok(Access::new(&credential, http))
+        let watch = Watch {
+            gate: self.limits.clone(),
+            account: host.to_owned(),
+            now: self.now,
+        };
+        Ok(Access::new(&credential, http, watch))
     }
 
     /// `result`, or why it failed in terms fit to show.
