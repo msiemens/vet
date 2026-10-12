@@ -5,7 +5,6 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
-  import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
   import { queue } from "../../state/queue.svelte";
@@ -50,7 +49,7 @@
   const rows = $derived(queueRows(queue.local, queue.pullRequests));
   const shown = $derived(filterRows(rows, filter, query));
   const onViewId = $derived(queue.onView && keyId(queue.onView));
-  const own = $derived(changeset.manifest && !changeset.manifest.interdiff ? changeset.manifest : undefined);
+  const own = $derived(queue.onViewManifest);
 
   // The changesets are listed afresh each time the popover opens.
   $effect(() => {

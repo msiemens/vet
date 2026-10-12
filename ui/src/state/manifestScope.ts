@@ -9,6 +9,20 @@ export function isChangesetView(manifest: Pick<Manifest, "interdiff">, shownComm
   return !manifest.interdiff && shownCommit === undefined;
 }
 
+/**
+ * The manifest of the changeset on view as a whole: the one on screen when it is that, else `whole`, if it was
+ * read for the revision on screen. None while it is not known.
+ */
+export function changesetManifest(
+  shown: Manifest | undefined,
+  shownCommit: number | undefined,
+  whole: Manifest | undefined,
+): Manifest | undefined {
+  if (!shown) return undefined;
+  if (isChangesetView(shown, shownCommit)) return shown;
+  return whole?.revision === shown.revision ? whole : undefined;
+}
+
 /** The changeset's base moved: only the changeset's own manifest says so; a commit's or a range's base is its own. */
 export function withChangesetBase(manifest: Manifest, base: Base, shownCommit: number | undefined): Manifest {
   return isChangesetView(manifest, shownCommit) ? { ...manifest, base } : manifest;

@@ -92,11 +92,10 @@
   const shown = $derived(sortRows(filterRows(rows, tab, query), COLUMNS, sort));
   /** The repositories whose pull requests could not be listed. */
   const unlisted = $derived(tab === "all" || tab === "prs" ? queue.sources.filter((s) => s.error !== undefined) : []);
-  const manifest = $derived(changeset.manifest);
   const onViewId = $derived(queue.onView && keyId(queue.onView));
   const current = $derived(rows.find((r) => keyId(r.key) === onViewId));
-  /** The changeset's own numbers; a range of versions is not them. */
-  const own = $derived(manifest && !manifest.interdiff ? manifest : undefined);
+  /** The changeset's own numbers, whatever range or commit the review shows. */
+  const own = $derived(queue.onViewManifest);
 
   onMount(() => {
     void queue.loadAll();
@@ -253,7 +252,7 @@
       }}
       tabs={[
         { id: "details", label: "Details" },
-        { id: "files", label: "Files", count: changeset.files.length },
+        { id: "files", label: "Files", count: queue.onViewPaths.length },
         { id: "comments", label: "Comments", count: threads.items.length },
       ]}
     />
@@ -262,11 +261,11 @@
         <p class="empty">Select a changeset</p>
       {:else if panel === "details"}
         <ScrollArea>
-          <QueueDetails groups={detailGroups(current, manifest)} onlink={() => void openBaseChanged()} />
+          <QueueDetails groups={detailGroups(current, own)} onlink={() => void openBaseChanged()} />
         </ScrollArea>
       {:else if panel === "files"}
         <!-- The list scrolls by itself. -->
-        <QueueFiles paths={changeset.paths} fileOf={(path) => changeset.file(path)} onopen={onopenfile} />
+        <QueueFiles paths={queue.onViewPaths} fileOf={(path) => queue.onViewFile(path)} onopen={onopenfile} />
       {:else}
         <!-- The list scrolls by itself. -->
         <QueueComments threads={threads.items} onopen={onopenthread} />

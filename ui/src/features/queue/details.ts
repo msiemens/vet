@@ -92,13 +92,9 @@ function progressFacts(manifest: Manifest): Fact[] {
   ];
 }
 
-/**
- * `manifest` is the changeset on view; it describes `row` only when it is that one, and not while
- * the review view shows a range of versions.
- */
+/** `manifest` is the changeset on view as a whole; it describes `row` only when it is that one. */
 export function detailGroups(row: ChangesetRow, manifest: Manifest | undefined, nowMs = Date.now()): FactGroup[] {
-  const own =
-    manifest && !manifest.interdiff && keyId(manifest.target.changeset) === keyId(row.key) ? manifest : undefined;
+  const own = manifest && keyId(manifest.target.changeset) === keyId(row.key) ? manifest : undefined;
   const groups: FactGroup[] = [];
   if (own) groups.push({ title: "Changeset", facts: changesetFacts(row, own) });
   groups.push({ title: "Review", facts: reviewFacts(row, nowMs) });

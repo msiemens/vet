@@ -3,14 +3,18 @@
 // changesets come at once; the pull requests, which the platform has to be asked for, follow, and
 // the lines each row changes come last, row by row, as the backend counts them.
 
+import { untrack } from "svelte";
 import { SvelteMap } from "svelte/reactivity";
 import type { ChangesetKey } from "../generated/ChangesetKey";
 import type { ChangesetRow } from "../generated/ChangesetRow";
+import type { FileChange } from "../generated/FileChange";
 import type { LineDelta } from "../generated/LineDelta";
+import type { Manifest } from "../generated/Manifest";
 import type { PullRequestRow } from "../generated/PullRequestRow";
 import type { PullRequestSource } from "../generated/PullRequestSource";
 import { changeset } from "./changeset.svelte";
 import { keyId } from "./changesetKey";
+import { changesetManifest, isChangesetView } from "./manifestScope";
 import { session } from "./session.svelte";
 
 /** How many rows have their lines counted at once. */
@@ -38,14 +42,26 @@ class QueueStore {
    */
   lines = new SvelteMap<string, LineDelta | null>();
   /** Only the latest load of each kind counts. */
-  private seq = { local: 0, pullRequests: 0, lines: 0 };
+  private seq = { local: 0, pullRequests: 0, lines: 0, whole: 0 };
   /** How many times an account changed: a listing of the pull requests that began before the last change lists again. */
   private accountChanges = 0;
+  /**
+   * The manifest of the changeset on view while the review view shows a range or a commit, whose manifest is
+   * not the changeset's; read while the list is shown.
+   */
+  private whole = $state.raw<Manifest>();
   /** How many views of the list are shown. */
   private watchers = $state(0);
   private following?: ReturnType<typeof setTimeout>;
+  /** Which revision and view the review shows. */
+  private screen = $derived(`${changeset.manifest?.revision}/${changeset.viewKey}`);
 
   constructor() {
+    $effect.root(() => {
+      $effect(() => {
+        if (this.watchers > 0 && this.screen) untrack(() => void this.loadWhole());
+      });
+    });
     session.onConnect((backend) => {
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
@@ -55,7 +71,8 @@ class QueueStore {
         else if (event.type === "changesetsChanged") void this.load();
         else if (event.type === "threadsChanged") void this.load(false);
         // A new version or a mark changes the version, the last reviewed version and the progress of the row on view.
-        else if (event.type === "snapshotSettled" || event.type === "reviewChanged") this.follow();
+        else if (event.type === "snapshotSettled" || event.type === "reviewChanged" || event.type === "baseChanged")
+          this.follow();
       });
       // Another credential may list other pull requests, or list them where it could not before.
       backend.onAccountsChanged(() => {
@@ -77,6 +94,8 @@ class QueueStore {
       this.listingLocal = false;
       this.listingPullRequests = false;
       this.lines.clear();
+      this.seq.whole++;
+      this.whole = undefined;
       clearTimeout(this.following);
     });
   }
@@ -94,7 +113,39 @@ class QueueStore {
   private follow() {
     if (this.watchers === 0) return;
     clearTimeout(this.following);
-    this.following = setTimeout(() => void this.load(false), FOLLOW_AFTER_MS);
+    this.following = setTimeout(() => {
+      void this.load(false);
+      void this.loadWhole();
+    }, FOLLOW_AFTER_MS);
+  }
+
+  /** Reads the changeset's own manifest, which only a range or a commit on screen needs. Only the latest reading counts. */
+  private async loadWhole() {
+    const seq = ++this.seq.whole;
+    const shown = changeset.manifest;
+    if (!shown || isChangesetView(shown, changeset.shownCommit)) {
+      this.whole = undefined;
+      return;
+    }
+    const whole = await changeset.wholeManifest();
+    if (seq === this.seq.whole) this.whole = whole;
+  }
+
+  /** The manifest of the changeset on view as a whole, not of the range or commit the review shows; none while it is not known. */
+  get onViewManifest(): Manifest | undefined {
+    return changesetManifest(changeset.manifest, changeset.shownCommit, this.whole);
+  }
+
+  /** The paths of the files of the changeset on view as a whole. */
+  get onViewPaths(): readonly string[] {
+    const manifest = this.onViewManifest;
+    return manifest === changeset.manifest ? changeset.paths : (manifest?.files.map((f) => f.path) ?? []);
+  }
+
+  /** A file of the changeset on view as a whole, with its review state. */
+  onViewFile(path: string): FileChange | undefined {
+    const manifest = this.onViewManifest;
+    return manifest === changeset.manifest ? changeset.file(path) : manifest?.files.find((f) => f.path === path);
   }
 
   /** Something of the list is being fetched or listed. */

@@ -105,14 +105,6 @@ void test("a finished review says when, and shows no progress", () => {
   assert.deepEqual(groups[1].facts[1], { label: "Finished", value: "11:40 AM · v14" });
 });
 
-void test("while the review view shows a range the manifest is not the changeset's", () => {
-  const ranged = { ...manifest, interdiff: {} } as Manifest;
-  assert.deepEqual(
-    detailGroups(open, ranged, NOW).map((g) => g.title),
-    ["Review"],
-  );
-});
-
 void test("the filter reads as what it lets through", () => {
   const filter: ReviewFilter = {
     roots: ["src/sync"],

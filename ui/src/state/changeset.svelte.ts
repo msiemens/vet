@@ -432,6 +432,15 @@ class ChangesetStore {
     return session.connected().commentTarget(shown.revision, path, at, shown.view);
   }
 
+  /** The manifest of the changeset on view as a whole, whatever range or commit is shown; `undefined` where it could not be read. */
+  async wholeManifest() {
+    try {
+      return await session.connected().manifest(CHANGESET);
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The changesets on offer and the one on view; `undefined` after showing why they could not be listed. */
   async listChangesets() {
     try {
