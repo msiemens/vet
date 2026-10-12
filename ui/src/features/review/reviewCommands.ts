@@ -86,6 +86,7 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
     {
       id: "review.nextFlagged",
       label: "Next Flagged Hunk",
+      binding: "Alt-f",
       enabled: inView,
       disabledReason: () => NO_DIFF,
       run: () => a.stepFlag(1),
@@ -93,6 +94,7 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
     {
       id: "review.previousFlagged",
       label: "Previous Flagged Hunk",
+      binding: "Alt-Shift-f",
       enabled: inView,
       disabledReason: () => NO_DIFF,
       run: () => a.stepFlag(-1),
@@ -125,6 +127,7 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
     {
       id: "review.toggleFlag",
       label: "Toggle Flag",
+      binding: "f",
       enabled: inView,
       disabledReason: () => NO_DIFF,
       run: () => a.toggleFlag(),

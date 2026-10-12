@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { resolveMenu } from "../../lib/commandMenu.ts";
 import { CommandRegistry, type KeyEventLike } from "../../lib/commands.ts";
 import { canonicalSpec } from "../../lib/keymap.ts";
+import { AltTap } from "../../lib/ui/altTap.ts";
 import type { MenuItem } from "../../lib/ui/menuItem.ts";
 import { type AppActions, appCommands } from "../../state/appCommands.ts";
 import type { CommandContext } from "../../state/commands.ts";
@@ -133,8 +134,8 @@ void test("the Review and Navigate menus hold the work of reviewing, each with t
     [
       ["review.nextHunk", "Ctrl+Alt+Down"],
       ["review.previousHunk", "Ctrl+Alt+Up"],
-      ["review.nextFlagged", undefined],
-      ["review.previousFlagged", undefined],
+      ["review.nextFlagged", "Alt+F"],
+      ["review.previousFlagged", "Alt+Shift+F"],
       ["review.nextCommit", "]"],
       ["review.previousCommit", "["],
       ["review.jumpToSource", "F4"],
@@ -310,6 +311,47 @@ void test("Alt+Shift and a digit show a view mode by the physical key, whatever 
   assert.equal(mac.dispatch(press({ key: "⁄", code: "Digit1", altKey: true, shiftKey: true })), true);
   assert.equal(mac.dispatch(press({ key: "⁄", code: "Digit1", altKey: true, shiftKey: true }, true)), false);
   assert.deepEqual(calls, ["setViewMode unified"]);
+});
+
+void test("F flags like Space marks seen, and Alt+F and Alt+Shift+F step between flags, outside text fields only", () => {
+  const keys: [string, Partial<KeyEventLike>, string][] = [
+    ["F", { key: "f", code: "KeyF" }, "toggleFlag"],
+    ["Alt+F", { key: "f", code: "KeyF", altKey: true }, "stepFlag 1"],
+    ["Alt+Shift+F", { key: "F", code: "KeyF", altKey: true, shiftKey: true }, "stepFlag -1"],
+    // Option+F types "ƒ" on macOS.
+    ["Option+F", { key: "ƒ", code: "KeyF", altKey: true }, "stepFlag 1"],
+    ["Option+Shift+F", { key: "Í", code: "KeyF", altKey: true, shiftKey: true }, "stepFlag -1"],
+  ];
+  for (const mod of ["Ctrl", "Meta"] as const) {
+    const registry = registryFor(mod, working);
+    for (const [name, init, call] of keys) {
+      if (mod === "Ctrl" && name.startsWith("Option")) continue;
+      calls.length = 0;
+      assert.equal(registry.dispatch(press(init)), true, `${mod} ${name}`);
+      assert.deepEqual(calls, [call], `${mod} ${name}`);
+      assert.equal(registry.dispatch(press(init, true)), false, `${mod} ${name} in a field`);
+    }
+    calls.length = 0;
+    assert.equal(
+      registry.dispatch(press({ key: "ƒ", code: "KeyF", ctrlKey: true, altKey: true })),
+      false,
+      "Ctrl+Alt+F",
+    );
+    assert.equal(
+      registry.dispatch(press({ key: "f", code: "KeyF", ctrlKey: true, altKey: true })),
+      false,
+      "Ctrl+Alt+F",
+    );
+    assert.deepEqual(calls, []);
+  }
+});
+
+void test("Alt+F is a chord and no Alt tap, so the File menu's mnemonic stays shut", () => {
+  const tap = new AltTap();
+  const alt = { key: "Alt", ctrlKey: false, shiftKey: false, metaKey: false };
+  tap.keydown(alt);
+  tap.keydown({ ...alt, key: "f" });
+  assert.equal(tap.keyup({ key: "Alt" }), false);
 });
 
 void test("the keys of Post, Vote, Toggle Since Last Review and Reveal File run outside text fields, and Ctrl+Alt+F stays free", () => {
