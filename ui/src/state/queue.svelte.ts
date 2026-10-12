@@ -15,6 +15,8 @@ import { session } from "./session.svelte";
 
 /** How many rows have their lines counted at once. */
 const LINE_COUNTS_AT_ONCE = 3;
+/** A list shown follows a version or a mark this long after the last one. */
+const FOLLOW_AFTER_MS = 300;
 
 class QueueStore {
   /** The working tree and the branches. */
@@ -39,6 +41,9 @@ class QueueStore {
   private seq = { local: 0, pullRequests: 0, lines: 0 };
   /** How many times an account changed: a listing of the pull requests that began before the last change lists again. */
   private accountChanges = 0;
+  /** How many views of the list are shown. */
+  private watchers = $state(0);
+  private following?: ReturnType<typeof setTimeout>;
 
   constructor() {
     session.onConnect((backend) => {
@@ -49,6 +54,8 @@ class QueueStore {
         if (event.type === "changesetOpened" || event.type === "reviewStarted") void this.loadAll();
         else if (event.type === "changesetsChanged") void this.load();
         else if (event.type === "threadsChanged") void this.load(false);
+        // A new version or a mark changes the version, the last reviewed version and the progress of the row on view.
+        else if (event.type === "snapshotSettled" || event.type === "reviewChanged") this.follow();
       });
       // Another credential may list other pull requests, or list them where it could not before.
       backend.onAccountsChanged(() => {
@@ -70,7 +77,24 @@ class QueueStore {
       this.listingLocal = false;
       this.listingPullRequests = false;
       this.lines.clear();
+      clearTimeout(this.following);
     });
+  }
+
+  /**
+   * The list is shown (the queue, or the switcher opened): it follows the events that change what it says
+   * about the changeset on view. Returns the function that ends that.
+   */
+  watch(): () => void {
+    this.watchers++;
+    return () => this.watchers--;
+  }
+
+  /** Lists the local changesets again once a burst of marks pauses, if the list is shown. */
+  private follow() {
+    if (this.watchers === 0) return;
+    clearTimeout(this.following);
+    this.following = setTimeout(() => void this.load(false), FOLLOW_AFTER_MS);
   }
 
   /** Something of the list is being fetched or listed. */

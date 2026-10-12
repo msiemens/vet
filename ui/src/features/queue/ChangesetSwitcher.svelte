@@ -57,6 +57,7 @@
     if (!open) return;
     [query, cursor] = ["", 0];
     untrack(() => void queue.loadAll());
+    return queue.watch();
   });
 
   const focus = (node: HTMLElement) => node.focus();

@@ -98,7 +98,10 @@
   /** The changeset's own numbers; a range of versions is not them. */
   const own = $derived(manifest && !manifest.interdiff ? manifest : undefined);
 
-  onMount(() => void queue.loadAll());
+  onMount(() => {
+    void queue.loadAll();
+    return queue.watch();
+  });
 
   /** What the table knows of a row's lines: only the changeset on view has them. */
   const ownOf = (row: QueueRow) => (keyId(row.key) === onViewId ? own : undefined);
