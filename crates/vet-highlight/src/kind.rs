@@ -14,4 +14,6 @@ pub enum Kind {
     Attribute = 6,
     Heading = 7,
     Link = 8,
+    /// The namespace, module or container part of a qualified name in a signature.
+    Qualifier = 9,
 }

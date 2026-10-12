@@ -102,14 +102,37 @@ impl Language {
     pub(crate) fn config(self) -> &'static HighlightConfiguration {
         static CONFIGS: [OnceLock<HighlightConfiguration>; Language::ALL.len()] =
             [const { OnceLock::new() }; Language::ALL.len()];
-        CONFIGS[self as usize].get_or_init(|| {
-            let mut config = self.build();
-            config.configure(&RECOGNIZED.map(|(name, _)| name));
-            config
-        })
+        CONFIGS[self as usize].get_or_init(|| self.configured(""))
     }
 
-    fn build(self) -> HighlightConfiguration {
+    /// Like [`Self::config`], except that it also tells the qualifier of a qualified name from the
+    /// name.
+    pub(crate) fn signature_config(self) -> &'static HighlightConfiguration {
+        static CONFIGS: [OnceLock<HighlightConfiguration>; Language::ALL.len()] =
+            [const { OnceLock::new() }; Language::ALL.len()];
+        CONFIGS[self as usize].get_or_init(|| self.configured(self.qualifier_query()))
+    }
+
+    fn configured(self, extra_highlights: &str) -> HighlightConfiguration {
+        let mut config = self.build(extra_highlights);
+        config.configure(&RECOGNIZED.map(|(name, _)| name));
+        config
+    }
+
+    /// The patterns that capture the qualifier of a qualified name: every segment before the last
+    /// one, and the separators. They come after the language's own, which win otherwise.
+    fn qualifier_query(self) -> &'static str {
+        match self {
+            Self::Rust => RUST_QUALIFIERS,
+            Self::Python => PYTHON_QUALIFIERS,
+            Self::TypeScript | Self::Tsx => TYPESCRIPT_QUALIFIERS,
+            Self::JavaScript => JAVASCRIPT_QUALIFIERS,
+            Self::CSharp => CSHARP_QUALIFIERS,
+            _ => "",
+        }
+    }
+
+    fn build(self, extra_highlights: &str) -> HighlightConfiguration {
         let (language, highlights, injections) = match self {
             Self::Rust => (
                 tree_sitter_rust::LANGUAGE,
@@ -199,6 +222,7 @@ impl Language {
                 tree_sitter_html::INJECTIONS_QUERY,
             ),
         };
+        let highlights = format!("{highlights}\n{extra_highlights}");
         HighlightConfiguration::new(language.into(), format!("{self:?}"), &highlights, injections, "")
             .unwrap_or_else(|error| panic!("the highlight query of {self:?} does not fit its grammar: {error}"))
     }
@@ -218,10 +242,54 @@ const MARKDOWN_INJECTIONS: &str = r#"
   (#set! injection.include-children))
 "#;
 
+// A path is read as a qualifier up to its last segment: whether a segment names a namespace, a
+// module or a type is not in the syntax. The innermost capture of a range colours it, so a
+// segment that the language's own query captures (`crate`) is captured again by itself.
+const RUST_QUALIFIERS: &str = r#"
+(scoped_identifier path: (_) @qualifier)
+(scoped_type_identifier path: (_) @qualifier)
+(scoped_identifier path: [(crate) (self) (super)] @qualifier)
+(scoped_type_identifier path: [(crate) (self) (super)] @qualifier)
+(scoped_identifier "::" @qualifier)
+(scoped_type_identifier "::" @qualifier)
+"#;
+
+const PYTHON_QUALIFIERS: &str = r#"
+(attribute object: (identifier) @qualifier)
+(attribute object: (attribute attribute: (identifier) @qualifier))
+(attribute "." @qualifier)
+"#;
+
+const JAVASCRIPT_QUALIFIERS: &str = r#"
+(member_expression object: (identifier) @qualifier)
+(member_expression object: (member_expression property: (property_identifier) @qualifier))
+(member_expression "." @qualifier)
+"#;
+
+const TYPESCRIPT_QUALIFIERS: &str = r#"
+(member_expression object: (identifier) @qualifier)
+(member_expression object: (member_expression property: (property_identifier) @qualifier))
+(member_expression "." @qualifier)
+(nested_type_identifier module: (identifier) @qualifier)
+(nested_identifier object: (identifier) @qualifier)
+(nested_identifier property: (property_identifier) @qualifier)
+(nested_identifier object: (member_expression property: (property_identifier) @qualifier))
+(nested_identifier "." @qualifier)
+(nested_type_identifier "." @qualifier)
+"#;
+
+const CSHARP_QUALIFIERS: &str = r#"
+(qualified_name qualifier: (identifier) @qualifier)
+(qualified_name qualifier: (qualified_name name: (identifier) @qualifier))
+(qualified_name "." @qualifier)
+(explicit_interface_specifier (identifier) @qualifier)
+(explicit_interface_specifier "." @qualifier)
+"#;
+
 /// The capture names the queries use that are shown, with what they become; a capture takes the
 /// entry with the longest matching prefix (`function.method` the `function` one). `None` leaves a
 /// range plain although an enclosing capture is shown.
-pub(crate) const RECOGNIZED: [(&str, Option<Kind>); 19] = [
+pub(crate) const RECOGNIZED: [(&str, Option<Kind>); 20] = [
     ("keyword", Some(Kind::Keyword)),
     ("string", Some(Kind::String)),
     ("string.special.key", None),
@@ -241,4 +309,5 @@ pub(crate) const RECOGNIZED: [(&str, Option<Kind>); 19] = [
     ("text.strong", Some(Kind::Heading)),
     ("text.uri", Some(Kind::Link)),
     ("text.reference", Some(Kind::Link)),
+    ("qualifier", Some(Kind::Qualifier)),
 ];

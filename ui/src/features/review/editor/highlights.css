@@ -26,3 +26,6 @@
 .syn-link {
   color: var(--accent);
 }
+.syn-qualifier {
+  color: var(--text-3);
+}

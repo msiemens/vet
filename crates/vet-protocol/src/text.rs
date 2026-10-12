@@ -15,8 +15,8 @@ pub enum Side {
 /// Syntax highlighting of a text, as the plain numbers of a `Vec<u32>`: three per coloured
 /// range, in order and not overlapping: the gap since the end of the previous range (since the
 /// start of the text for the first), the range's length, and its kind (0 keyword, 1 string,
-/// 2 number, 3 comment, 4 type, 5 function, 6 attribute, 7 heading, 8 link). Offsets are
-/// UTF-16 units of the text with `\r\n` counted as one unit, as for [`TextChange`].
+/// 2 number, 3 comment, 4 type, 5 function, 6 attribute, 7 heading, 8 link, 9 qualifier).
+/// Offsets are UTF-16 units of the text with `\r\n` counted as one unit, as for [`TextChange`].
 pub type Highlights = Vec<u32>;
 
 /// A changed range of the base and target text, as a view that draws changes by whole lines needs

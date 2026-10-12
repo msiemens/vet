@@ -95,7 +95,7 @@ pub fn signature(
 ) -> Response {
     let signature = signature.map(|s| SymbolSignature {
         highlights: (s.syntax.language(path)).map_or_else(Vec::new, |l| {
-            vet_highlight::encode(&vet_highlight::highlight(&s.code, l))
+            vet_highlight::encode(&vet_highlight::highlight_signature(&s.code, l))
         }),
         code: s.code,
     });

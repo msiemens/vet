@@ -10,7 +10,7 @@ mod language;
 mod markdown;
 mod syntax;
 
-use tree_sitter_highlight::{HighlightEvent, Highlighter};
+use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 use vet_core::text::Units;
 
 pub use cache::Cache;
@@ -33,11 +33,38 @@ pub struct Span {
 /// The coloured ranges of `text`, in order and not overlapping; none for a text over
 /// [`MAX_BYTES`] or one the grammar fails on.
 pub fn highlight(text: &str, language: Language) -> Vec<Span> {
+    spans(text, language.config())
+}
+
+/// The coloured ranges of a signature `code`, which tell the qualifier of a qualified name from
+/// the name ([`Kind::Qualifier`]). A signature is a declaration without its body, often not valid
+/// code on its own: C# is read as a member of a class, where it is.
+pub fn highlight_signature(code: &str, language: Language) -> Vec<Span> {
+    let config = language.signature_config();
+    if language != Language::CSharp {
+        return spans(code, config);
+    }
+    let before = "class _ { ";
+    let wrapped = format!("{before}{code}; }}");
+    let mut units = Units::new(&wrapped);
+    let (shift, end) = (units.at(before.len()), units.at(before.len() + code.len()));
+    spans(&wrapped, config)
+        .into_iter()
+        .filter(|s| s.from >= shift && s.to <= end)
+        .map(|s| Span {
+            from: s.from - shift,
+            to: s.to - shift,
+            ..s
+        })
+        .collect()
+}
+
+fn spans(text: &str, config: &HighlightConfiguration) -> Vec<Span> {
     if text.len() > MAX_BYTES {
         return Vec::new();
     }
     let mut highlighter = Highlighter::new();
-    let events = highlighter.highlight(language.config(), text.as_bytes(), None, None, |name| {
+    let events = highlighter.highlight(config, text.as_bytes(), None, None, |name| {
         Language::of_fence(name).map(Language::config)
     });
     let Ok(events) = events else { return Vec::new() };

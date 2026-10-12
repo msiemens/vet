@@ -1,5 +1,5 @@
 use super::*;
-use Kind::{Attribute, Comment, Function, Heading, Keyword, Link, Number, String as Str, Type};
+use Kind::{Attribute, Comment, Function, Heading, Keyword, Link, Number, Qualifier, String as Str, Type};
 
 /// The highlighted pieces of `text` with their kind, read back through the encoding's offsets
 /// (UTF-16 units, line breaks normalized to `\n`).
@@ -30,7 +30,9 @@ fn repository_file(path: &str) -> String {
 /// written by hand: this ties them to `Kind`, whose variant names (in lower case) they use.
 #[test]
 fn the_protocol_docs_and_the_ui_list_the_kinds_in_wire_order() {
-    let mut kinds = [Keyword, Str, Number, Comment, Type, Function, Attribute, Heading, Link];
+    let mut kinds = [
+        Keyword, Str, Number, Comment, Type, Function, Attribute, Heading, Link, Qualifier,
+    ];
     kinds.sort_by_key(|&k| k as u8);
     assert!(
         kinds.iter().enumerate().all(|(i, &k)| k as usize == i),
@@ -293,6 +295,7 @@ fn a_fence_info_string_names_its_language() {
 fn every_language_builds() {
     for language in Language::ALL {
         language.config();
+        language.signature_config();
     }
 }
 
@@ -354,6 +357,111 @@ fn cache_does_not_keep_what_exceeds_it() {
     let tokens = cache.get(&1u32, "fn f() { 1 }", Language::Rust);
     assert!(!tokens.is_empty());
     assert_eq!(cache.size(), 0);
+}
+
+/// The highlighted pieces of a signature with their kind.
+fn signature_pieces(code: &str, language: Language) -> Vec<(String, Kind)> {
+    let units: Vec<u16> = code.encode_utf16().collect();
+    highlight_signature(code, language)
+        .iter()
+        .map(|s| {
+            (
+                String::from_utf16(&units[s.from as usize..s.to as usize]).unwrap(),
+                s.kind,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_csharp_signature_shows_its_namespaces_apart_from_its_types() {
+    let p = signature_pieces(
+        "System.Collections.Generic.List<Line> Invoice.Merge(System.Collections.Generic.Dictionary<string, \
+         System.Collections.Generic.List<Line>> groups, Task<Line> x)",
+        Language::CSharp,
+    );
+    assert!(has(&p, "System.Collections.Generic.", Qualifier));
+    assert!(has(&p, "List", Type));
+    assert!(has(&p, "Dictionary", Type));
+    assert!(has(&p, "Invoice.", Qualifier));
+    assert!(has(&p, "Merge", Function));
+    // Without a namespace there is nothing to dim.
+    assert!(has(&p, "Task", Type));
+    assert!(
+        !p.iter()
+            .any(|(t, k)| *k == Qualifier && (t.contains("Task") || t.contains("Merge")))
+    );
+}
+
+#[test]
+fn a_csharp_signature_is_offset_in_utf16_units_whatever_comes_before() {
+    let code = "Zähler Acme.Billing.Core.Line Merge(Zähler z, Acme.Core.Line l)";
+    let p = signature_pieces(code, Language::CSharp);
+    assert!(has(&p, "Acme.Billing.Core.", Qualifier));
+    assert!(has(&p, "Acme.Core.", Qualifier));
+    assert!(has(&p, "Merge", Function));
+}
+
+#[test]
+fn a_rust_signature_shows_its_modules_apart_from_its_types() {
+    let p = signature_pieces(
+        "fn merge(groups: std::collections::HashMap<String, std::vec::Vec<crate::billing::core::Line>>) \
+         -> crate::billing::core::Line",
+        Language::Rust,
+    );
+    assert!(has(&p, "std::collections::", Qualifier));
+    assert!(has(&p, "std::vec::", Qualifier));
+    assert!(has(&p, "crate::billing::core::", Qualifier));
+    assert!(has(&p, "HashMap", Type));
+    assert!(has(&p, "Vec", Type));
+    assert!(has(&p, "Line", Type));
+    assert!(has(&p, "merge", Function));
+    assert!(has(&p, "fn", Keyword));
+}
+
+#[test]
+fn a_typescript_signature_shows_its_namespaces_apart_from_its_types() {
+    let p = signature_pieces(
+        "Acme.Billing.Core.Invoice.merge(groups: Map<string, Array<Acme.Billing.Core.Line>>, \
+         extra: Promise<import(\"./models\").Item>)",
+        Language::TypeScript,
+    );
+    assert!(has(&p, "Acme.Billing.Core.Invoice.", Qualifier));
+    assert!(has(&p, "merge", Function));
+    assert!(has(&p, "Acme.Billing.Core.", Qualifier));
+    assert!(has(&p, "Line", Type));
+    assert!(has(&p, "Map", Type));
+}
+
+#[test]
+fn a_python_signature_shows_its_modules_apart_from_its_types() {
+    let p = signature_pieces(
+        "def merge(self, groups: dict[str, list[Line]], other: billing.core.Line) -> billing.core.Line",
+        Language::Python,
+    );
+    assert_eq!(
+        p.iter()
+            .filter(|(t, k)| t == "billing.core." && *k == Qualifier)
+            .count(),
+        2
+    );
+    assert!(!p.iter().any(|(t, k)| *k == Qualifier && t.contains("Line")));
+}
+
+#[test]
+fn qualifiers_are_only_told_apart_in_signatures() {
+    let code = "fn f(a: std::vec::Vec<u8>) {}";
+    assert!(!pieces(code, Language::Rust).iter().any(|(_, k)| *k == Qualifier));
+    assert!(
+        signature_pieces(code, Language::Rust)
+            .iter()
+            .any(|(_, k)| *k == Qualifier)
+    );
+    // A language without qualified names has a signature like any other text.
+    assert_eq!(
+        highlight_signature("a: 1", Language::Yaml),
+        highlight("a: 1", Language::Yaml)
+    );
 }
 
 #[test]

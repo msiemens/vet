@@ -13,6 +13,7 @@ const CLASSES = [
   "syn-attribute",
   "syn-heading",
   "syn-link",
+  "syn-qualifier",
 ] as const;
 
 /** Coloured ranges in order and not overlapping. */
