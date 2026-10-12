@@ -68,20 +68,19 @@ class PlatformStore {
         void this.reload();
       } else if (event.type === "notification") {
         this.notify(event.notification);
-      } else if (event.type === "changesetOpened") {
-        this.opened = event.changeset;
-        this.info = undefined;
-        Object.assign(this.changesetComment, { composing: false, body: "" });
-        void this.reload();
       } else if (event.type === "threadsChanged") {
         void this.reload();
       }
     });
     const offResync = session.onResync(() => void this.reload());
-    const offOpening = changeset.onOpening((phase) => {
+    const offOpening = changeset.onOpening((opening) => {
       this.seq++;
-      if (phase === "requested") this.info = undefined;
-      else void this.reload();
+      if (opening.type === "opened") {
+        this.opened = opening.changeset;
+        Object.assign(this.changesetComment, { composing: false, body: "" });
+      }
+      if (opening.type !== "unannounced") this.info = undefined;
+      if (opening.type !== "requested") void this.reload();
     });
     // A credential given or removed, here or in another window, changes what the platform answers.
     const resync = new AccountResync({ sync: () => this.sync(), reload: () => this.reload() });

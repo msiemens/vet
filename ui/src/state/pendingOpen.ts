@@ -6,24 +6,33 @@
 export class PendingOpen {
   private seq = 0;
   private active = false;
-
+  /** The changeset the latest request asked for. */
+  private wanted = "";
   private busy: (on: boolean) => void;
 
   constructor(busy: (on: boolean) => void) {
     this.busy = busy;
   }
 
-  /** A request is sent; the token goes to `settle` when it is answered. */
-  begin(): number {
+  /** A request for the changeset `id` is sent; the token goes to `settle` when it is answered. */
+  begin(id: string): number {
     this.active = true;
+    this.wanted = id;
     this.busy(true);
     return ++this.seq;
   }
 
-  /** The backend announced the changeset: the views fetch it from here. */
-  announced() {
+  /**
+   * The backend announced the changeset `id`. Whether the views are to fetch it: not while a newer
+   * request is pending, whose own announcement follows (an earlier request's would show its changeset
+   * for a moment).
+   */
+  announced(id: string): boolean {
+    if (!this.active) return true;
+    if (id !== this.wanted) return false;
     this.active = false;
     this.busy(false);
+    return true;
   }
 
   /**

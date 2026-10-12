@@ -20,6 +20,7 @@ import { pathsBelow } from "../lib/paths";
 import { LatestLoad } from "./latestLoad";
 import type { BaseCandidates } from "./backend";
 import { commitToShow, neighbour } from "./commitLens";
+import { keyId } from "./changesetKey";
 import { currentFiles } from "./currentFiles";
 import { PendingOpen } from "./pendingOpen";
 import { session } from "./session.svelte";
@@ -27,7 +28,8 @@ import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
 import { commitView } from "./view";
 
 type ReviewListener = (update: ReviewUpdate) => void;
-export type OpeningPhase = "requested" | "unannounced";
+/** What happens to the changeset on view: another is asked for, announced to be fetched, or the ask came to nothing. */
+export type Opening = { type: "requested" } | { type: "opened"; changeset: ChangesetKey } | { type: "unannounced" };
 
 class ChangesetStore {
   /**
@@ -76,7 +78,7 @@ class ChangesetStore {
   /** Another changeset was asked for and is not announced yet. */
   private opening = $state(false);
   private pendingOpen = new PendingOpen((on) => (this.opening = on));
-  private openingListeners = new Set<(phase: OpeningPhase) => void>();
+  private openingListeners = new Set<(opening: Opening) => void>();
   /** What requests about the files read: the interdiff of `range`, a commit, or the changeset. */
   get view(): View {
     return this.range || this.commitIndex === undefined ? rangeView(this.range) : commitView(this.commitIndex);
@@ -121,8 +123,9 @@ class ChangesetStore {
       backend.onEvent((event) => {
         if (event.project !== backend.project) return;
         if (event.type === "changesetOpened") {
-          this.pendingOpen.announced();
+          if (!this.pendingOpen.announced(keyId(event.changeset))) return;
           this.clear();
+          this.notifyOpening({ type: "opened", changeset: event.changeset });
           void this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
         } else if (event.type === "snapshotSettled" || event.type === "targetChanged") void this.refresh();
         else if (event.type === "lensChanged") void this.followLens(event.lens);
@@ -168,13 +171,18 @@ class ChangesetStore {
   }
 
   /**
-   * Called when a changeset is asked for ("requested": whatever belongs to the changeset on view is to
-   * be dropped now) and when the backend answered without announcing one ("unannounced": the changeset
-   * on view stays, to be read again). Returns the unsubscribe function.
+   * Called when a changeset is asked for (whatever belongs to the changeset on view is to be dropped
+   * now), when the backend announced the one on view (to be read anew; not an earlier request's while a
+   * newer is pending) and when it answered without announcing one (the changeset on view stays, to be
+   * read again). Returns the unsubscribe function.
    */
-  onOpening(listener: (phase: OpeningPhase) => void): () => void {
+  onOpening(listener: (opening: Opening) => void): () => void {
     this.openingListeners.add(listener);
     return () => this.openingListeners.delete(listener);
+  }
+
+  private notifyOpening(opening: Opening) {
+    for (const listener of this.openingListeners) listener(opening);
   }
 
   /**
@@ -413,16 +421,16 @@ class ChangesetStore {
    */
   async openChangeset(key: ChangesetKey) {
     const backend = session.connected();
-    const token = this.pendingOpen.begin();
+    const token = this.pendingOpen.begin(keyId(key));
     this.clear();
-    for (const listener of this.openingListeners) listener("requested");
+    this.notifyOpening({ type: "requested" });
     try {
       await backend.openChangeset(key);
     } catch (error) {
       session.notice = errorText(error);
     }
     if (!this.pendingOpen.settle(token)) return;
-    for (const listener of this.openingListeners) listener("unannounced");
+    this.notifyOpening({ type: "unannounced" });
     await this.refresh().catch((error: unknown) => (session.notice = errorText(error)));
   }
 
