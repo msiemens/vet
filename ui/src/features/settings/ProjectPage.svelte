@@ -36,6 +36,7 @@
       <textarea
         class="field mono"
         rows="2"
+        spellcheck="false"
         aria-label="Review roots, one folder per line"
         value={filter.roots.join("\n")}
         onchange={(e) => save({ roots: parseLines(e.currentTarget.value) })}></textarea>
@@ -52,6 +53,7 @@
       <textarea
         class="field mono"
         rows="2"
+        spellcheck="false"
         aria-label="Include globs, one per line"
         value={filter.include.join("\n")}
         onchange={(e) => save({ include: parseLines(e.currentTarget.value) })}></textarea>
@@ -61,6 +63,7 @@
       <textarea
         class="field mono"
         rows="3"
+        spellcheck="false"
         aria-label="Exclude globs, one per line"
         value={filter.exclude.join("\n")}
         onchange={(e) => save({ exclude: parseLines(e.currentTarget.value) })}></textarea>
