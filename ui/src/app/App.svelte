@@ -17,6 +17,7 @@
     toolFor,
   } from "../features/chrome";
   import { ChecksButton } from "../features/checks";
+  import { LocationPicker } from "../features/locations";
   import {
     OutgoingButton,
     threadCommands,
@@ -615,6 +616,14 @@
     }}
   />
 {/if}
+
+<LocationPicker
+  statusOf={(path) => {
+    const file = controller?.files.find((f) => f.path === path);
+    return file && summarize(file).status;
+  }}
+  onsettings={() => showDialog("settings", "servers")}
+/>
 
 {#if contextMenus.drawn}
   {@const request = contextMenus.drawn}

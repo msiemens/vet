@@ -31,6 +31,8 @@
      of the change still reads, and a stronger blue on its line numbers. */
   --current-hunk: light-dark(rgba(45, 111, 216, 0.1), rgba(107, 156, 247, 0.12));
   --current-hunk-gutter: light-dark(rgba(45, 111, 216, 0.26), rgba(107, 156, 247, 0.3));
+  /* What a search found in a line of code; translucent, so it lies over a selected row too. */
+  --find: light-dark(rgba(250, 204, 21, 0.45), rgba(234, 179, 8, 0.4));
   --accent: light-dark(#2d6fd8, #6b9cf7);
   /* The file whose hunk is current (the Changes tab): a frame round its section and a light blue
      header, opaque since the header is pinned over the text. */
