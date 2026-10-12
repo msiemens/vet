@@ -15,7 +15,8 @@ use crate::backend;
 /// The welcome screen's size in logical pixels.
 const WELCOME_SIZE: (f64, f64) = (960.0, 620.0);
 const FILE: &str = "window-geometry.json";
-const MAIN: &str = "main";
+/// The main window's label.
+pub const MAIN: &str = "main";
 /// A saved window is on a display when the middle of its title bar, this far below its top, is.
 const TITLE_BAR_PROBE: i64 = 16;
 

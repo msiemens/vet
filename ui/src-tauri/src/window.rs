@@ -4,11 +4,10 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 
-use crate::startup;
+use crate::{geometry, startup};
 
 /// How long one activation of the app-drawn title bar may take before the plugin restores the
-/// native frame. Now and then its page handshake gets lost and an attempt only ends here; a new
-/// attempt challenges the then-loaded page afresh.
+/// native frame; a new attempt challenges the page afresh.
 pub const DECORATION_TIMEOUT: Duration = Duration::from_secs(4);
 const DECORATION_ATTEMPTS: u32 = 3;
 /// The window shows by then even while the app-drawn title bar is still activating.
@@ -75,15 +74,33 @@ pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static 
 
 /// A page that starts loading has no app-drawn title bar yet (the plugin drops it with the old
 /// page), so on macOS the window gets its native title bar back until the page activates one.
+///
+/// The main window's activation starts with its page, long before the page asks for it in
+/// [`activate_and_show`], which joins it. tauri-plugin-decoration 3.0.5's script announces the page
+/// as it starts and retries for less than 2 s; an activation in that page completes only if one was
+/// pending during the announcement. Without one the plugin answers in a shape the script rejects,
+/// and every activation of that page times out.
 pub fn on_page_load(webview: &tauri::Webview, payload: &tauri::webview::PageLoadPayload) {
+    use tauri_plugin_decoration::WebviewWindowExt;
+
+    if payload.event() != tauri::webview::PageLoadEvent::Started {
+        return;
+    }
     #[cfg(target_os = "macos")]
-    if payload.event() == tauri::webview::PageLoadEvent::Started
-        && let Err(e) = webview.window().set_title_bar_style(tauri::TitleBarStyle::Visible)
-    {
+    if let Err(e) = webview.window().set_title_bar_style(tauri::TitleBarStyle::Visible) {
         tracing::warn!(error = %e, "cannot give the window its native title bar");
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = (webview, payload);
+    if webview.label() != geometry::MAIN {
+        return;
+    }
+    let Some(window) = webview.app_handle().get_webview_window(webview.label()) else {
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = window.activate_decoration().await {
+            tracing::debug!(error = %e, "app-drawn title bar not active as the page started");
+        }
+    });
 }
 
 /// Shows the main window, then closes the splash that covered its start.
