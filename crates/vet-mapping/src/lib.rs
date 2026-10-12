@@ -4,6 +4,7 @@ pub mod account;
 pub mod progress;
 pub mod semantic;
 
+use base64::Engine;
 use vet_app::changeset::{BaseChoice, CommitId, Lens, RemoteKey, Source, VersionOrigin};
 use vet_app::platform::{
     ChangesAsked, CheckLog, CiState, CommitChecks, ConversationKind, PlatformError, PlatformKind, PlatformTraits,
@@ -645,7 +646,6 @@ pub fn target_text(t: &TargetText, highlights: p::Highlights) -> p::Response {
 }
 
 pub fn item_blob(blob: ItemBlob) -> p::Response {
-    use base64::Engine;
     let content = match blob {
         ItemBlob::Bytes { media_type, bytes } => p::BlobContent::Bytes {
             media_type: media_type.map(String::from),

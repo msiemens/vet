@@ -9,6 +9,8 @@
 //! test that goes through the real watcher is a write storm.
 
 use std::collections::HashSet;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +19,7 @@ use crate::common::{git, handler, init, repo_with, write};
 use tempfile::TempDir;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
-use vet_app::ports::{Degraded, Dirty, Scanner, WatchEvent, Watcher};
+use vet_app::ports::{Degraded, Dirty, Scanner, Store, WatchEvent, Watcher};
 use vet_app::session::{FileStatus as AppFileStatus, LiveSession};
 use vet_app::settle::Settling;
 use vet_backend::{Orchestrator, open_store};
@@ -538,7 +540,6 @@ async fn criterion1_a_seen_line_that_appears_twice_is_unseen_once_its_context_is
 #[cfg(unix)]
 #[tokio::test]
 async fn criterion1_a_mode_only_changeset_is_not_complete_until_acknowledged() {
-    use std::os::unix::fs::PermissionsExt;
     let fx = fixture(&[("run.sh", "echo\n"), ("a.txt", &text(5, &[]))], &[]).await;
     let p = fx.repo.path();
     let mut client = Client::new(&fx.handler);
@@ -588,7 +589,6 @@ async fn criterion1_windows_filesystem_mode_comes_from_the_index_when_filemode_i
     // On disk the mode bits are whatever the filesystem says; git is told to ignore them.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         let set = |name: &str, mode| std::fs::set_permissions(p.join(name), std::fs::Permissions::from_mode(mode));
         set("run.sh", 0o644).unwrap();
         set("plain.txt", 0o755).unwrap();
@@ -611,7 +611,6 @@ async fn criterion1_windows_filesystem_mode_comes_from_the_index_when_filemode_i
     write(p, "new.sh", "echo\n");
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(p.join("new.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     client.settled().await;
@@ -722,7 +721,6 @@ fn kept_trees(data: &Path) -> Arc<KeptTrees> {
 #[tokio::test]
 async fn criterion1_windows_filesystem_case_only_paths_in_the_worktree_are_flagged_and_not_materialized_where_they_merge()
  {
-    use vet_app::ports::Store;
     let repo = repo_with(&[("a.txt", "a\n")], &[]);
     let p = repo.path();
     if !is_case_sensitive(p) {
@@ -747,7 +745,6 @@ async fn criterion1_windows_filesystem_case_only_paths_in_the_worktree_are_flagg
 
 #[tokio::test]
 async fn criterion1_windows_filesystem_case_only_paths_in_a_commit_are_flagged_and_not_materialized_where_they_merge() {
-    use vet_app::ports::Store;
     let repo = colliding_repo();
     let (session, store, data) = collision_session(repo.path()).await;
     let sides = session.view().semantic_sides(0).await.unwrap();

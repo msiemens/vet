@@ -71,6 +71,8 @@ pub struct CheckLog {
 
 #[cfg(test)]
 mod tests {
+    use CiState::*;
+
     use super::*;
 
     fn check(state: CiState) -> Check {
@@ -95,7 +97,6 @@ mod tests {
 
     #[test]
     fn a_running_check_outweighs_a_failed_one_and_a_failure_outweighs_success() {
-        use CiState::*;
         assert_eq!(commit(&[]).state(), None);
         assert_eq!(commit(&[Success, Failure, Pending]).state(), Some(Pending));
         assert_eq!(commit(&[Success, Failure, Skipped]).state(), Some(Failure));
@@ -106,7 +107,6 @@ mod tests {
 
     #[test]
     fn checks_are_final_once_there_are_some_and_none_runs() {
-        use CiState::*;
         assert!(!commit(&[]).is_final());
         assert!(!commit(&[Success, Pending]).is_final());
         assert!(commit(&[Success, Failure]).is_final());

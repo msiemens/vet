@@ -4,9 +4,11 @@
 #![allow(clippy::disallowed_methods)]
 
 use std::collections::{BTreeMap, HashMap};
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::common;
 use tempfile::TempDir;
@@ -16,6 +18,7 @@ use vet_app::ports::{
     BlobRead, BlobReader, ChangesetRefs, Differ, Dirty, History, IgnoreRules, Scanner, Store, StoreError, TextDiff,
 };
 use vet_core::content::{BlobId, EntryKind, NonTextKind, RepoPath, Snapshot, SnapshotId, SnapshotStatus};
+use vet_infra::budget::Budget;
 use vet_infra::git::GixRepo;
 
 const EMPTY_BLOB: &str = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
@@ -137,7 +140,6 @@ async fn crlf_without_conversion_is_a_change() {
 
 #[tokio::test]
 async fn mode_comes_from_the_index_when_filemode_is_off() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = repo();
     write(dir.path(), "run.sh", b"#!/bin/sh\n");
     write(dir.path(), "plain.txt", b"x\n");
@@ -348,7 +350,6 @@ async fn renames_are_detected_with_their_edits() {
 
 #[tokio::test]
 async fn binary_mode_and_symlink_changes_are_non_text_items() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = repo();
     write(dir.path(), "img.bin", b"\0\x01\x02");
     write(dir.path(), "run.sh", b"#!/bin/sh\n");
@@ -580,9 +581,6 @@ async fn repeated_scans_follow_edits_through_the_stat_cache() {
 
 #[tokio::test]
 async fn a_read_waits_only_for_the_budget_of_the_handle_it_is_made_through() {
-    use std::time::Duration;
-    use vet_infra::budget::Budget;
-
     let dir = repo();
     write(dir.path(), "a.txt", b"one\n");
     commit(dir.path());

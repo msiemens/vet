@@ -9,13 +9,15 @@ use vet_app::gc::{Retention, collect, open_bases};
 use vet_app::ports::{GcReport, ReviewWrites, Store};
 use vet_app::review::{NonTextAck, SpanOrigin};
 use vet_core::content::{
-    BlobId, EntryKind, FileEntry, Hash, LineDelta, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId,
+    BlobId, Changeset, EntryKind, FileEntry, Hash, LineDelta, LineRange, NonTextKind, RepoPath, Snapshot, SnapshotId,
     SnapshotStatus,
 };
 use vet_core::filter::ReviewFilter;
+use vet_core::prepared::PreparedFile;
+use vet_core::remap::{RemapMode, remap_span};
 use vet_core::review::{
-    Anchor, CommentTarget, EditConflict, Message, Outgoing, PendingVote, PlatformThread, RemoteComment, ReviewedSpan,
-    Side, SpanState, ThreadStatus,
+    Anchor, CommentTarget, EditConflict, FileRemapInput, Message, Outgoing, PendingVote, PlatformThread, RemoteComment,
+    ReviewedSpan, Side, SpanState, ThreadStatus,
 };
 
 use super::*;
@@ -1274,11 +1276,6 @@ async fn a_long_run_of_versions_over_a_large_tree_stays_small() {
 
 #[tokio::test]
 async fn recorded_spans_survive_remapping_so_a_revert_restores_coverage() {
-    use vet_core::content::Changeset;
-    use vet_core::prepared::PreparedFile;
-    use vet_core::remap::{RemapMode, remap_span};
-    use vet_core::review::FileRemapInput;
-
     let text = |line15: &str| -> String {
         (0..40)
             .map(|i| {

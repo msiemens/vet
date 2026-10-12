@@ -154,6 +154,9 @@ fn is_plain_name(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+
     use super::*;
 
     #[test]
@@ -270,7 +273,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_name_that_is_not_utf8_survives_on_unix() {
-        use std::os::unix::ffi::OsStrExt;
         let name = std::ffi::OsStr::from_bytes(b"d\xff/f");
         let path = from_relative(Path::new(name)).unwrap();
         assert_eq!(path.0, b"d\xff/f");

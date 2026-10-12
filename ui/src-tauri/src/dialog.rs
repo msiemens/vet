@@ -1,5 +1,7 @@
 //! The native file dialogs, with their results translated to the backend's paths.
 
+use tauri_plugin_dialog::DialogExt;
+
 use crate::backend::wsl_distro;
 
 /// The backend-side path of a folder the native dialog returned. In the WSL split the
@@ -33,7 +35,6 @@ fn backend_path(picked: &str, distro: Option<&str>) -> Result<String, String> {
 /// The native folder dialog; `None` if the user cancelled.
 #[tauri::command]
 pub async fn pick_repository(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
     let Some(folder) = app.dialog().file().blocking_pick_folder() else {
         return Ok(None);
     };
@@ -44,7 +45,6 @@ pub async fn pick_repository(app: tauri::AppHandle) -> Result<Option<String>, St
 /// The native file dialog (a language server's executable); `None` if the user cancelled.
 #[tauri::command]
 pub async fn pick_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
     let Some(file) = app.dialog().file().blocking_pick_file() else {
         return Ok(None);
     };

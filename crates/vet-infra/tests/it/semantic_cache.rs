@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use Question::*;
 use vet_core::content::{BlobId, Hash, SnapshotId};
 use vet_infra::semantic_cache::SqliteSemanticCache;
 use vet_semantic::policy::AnalysisPolicy;
@@ -70,7 +71,6 @@ fn key(question: &Question) -> Key {
 
 /// The session: the questions of one launch, in order, and what each answered.
 fn session() -> Vec<Question> {
-    use Question::*;
     vec![
         Symbols {
             text: "one",

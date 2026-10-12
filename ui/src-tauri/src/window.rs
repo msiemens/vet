@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
+use tauri_plugin_decoration::WebviewWindowExt;
 
 use crate::{geometry, startup};
 
@@ -18,8 +19,6 @@ const SHOW_WITHIN: Duration = Duration::from_secs(2);
 /// fails, the native frame is restored and shown instead. Returns "custom" or "native".
 #[tauri::command]
 pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static str, String> {
-    use tauri_plugin_decoration::WebviewWindowExt;
-
     async fn native(window: &tauri::WebviewWindow, cause: impl std::fmt::Display) -> Result<&'static str, String> {
         tracing::warn!(%cause, "app-drawn title bar unavailable, using the native frame");
         let restored = window.restore_decoration().await;
@@ -81,8 +80,6 @@ pub async fn activate_and_show(window: tauri::WebviewWindow) -> Result<&'static 
 /// pending during the announcement. Without one the plugin answers in a shape the script rejects,
 /// and every activation of that page times out.
 pub fn on_page_load(webview: &tauri::Webview, payload: &tauri::webview::PageLoadPayload) {
-    use tauri_plugin_decoration::WebviewWindowExt;
-
     if payload.event() != tauri::webview::PageLoadEvent::Started {
         return;
     }

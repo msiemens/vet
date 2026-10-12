@@ -1,5 +1,6 @@
 //! Semantic results and language server status to protocol DTOs.
 
+use p::UnavailableKind as Kind;
 use vet_app::ports::{FoundServer, ServerOrigin, ServerState, Tsserver};
 use vet_app::servers::ServerStatus;
 use vet_core::content::{FileDiff, LineRange, RepoPath};
@@ -206,7 +207,6 @@ pub fn diagnostics(d: &[Diagnostic]) -> Vec<p::Diagnostic> {
 
 /// The few words that name a kind of missing answer.
 fn label(kind: p::UnavailableKind) -> &'static str {
-    use p::UnavailableKind as Kind;
     match kind {
         Kind::Unsupported => "No language support",
         Kind::ServerMissing => "No language server",
@@ -219,7 +219,6 @@ fn label(kind: p::UnavailableKind) -> &'static str {
 
 /// A failed query as the reason to show; `language` is the file's.
 pub fn unavailable(error: &SemanticError, language: Option<String>) -> p::Unavailable {
-    use p::UnavailableKind as Kind;
     let kind = match error {
         SemanticError::NoBackend(_) => Kind::Unsupported,
         SemanticError::Pool(PoolError::Launch(LaunchError::NotInstalled(_))) => Kind::ServerMissing,

@@ -8,6 +8,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+use base64::Engine;
 use tokio::sync::mpsc::UnboundedReceiver;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
@@ -682,14 +683,11 @@ async fn binary_items_serve_the_bytes_of_either_side() {
         };
         client.call(request)
     };
-    let bytes = |media_type: &str, content: &[u8]| {
-        use base64::Engine;
-        Response::ItemBlob {
-            content: BlobContent::Bytes {
-                media_type: Some(media_type.into()),
-                bytes: base64::engine::general_purpose::STANDARD.encode(content),
-            },
-        }
+    let bytes = |media_type: &str, content: &[u8]| Response::ItemBlob {
+        content: BlobContent::Bytes {
+            media_type: Some(media_type.into()),
+            bytes: base64::engine::general_purpose::STANDARD.encode(content),
+        },
     };
     let absent = Response::ItemBlob {
         content: BlobContent::Absent,

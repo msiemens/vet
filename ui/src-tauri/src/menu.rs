@@ -4,6 +4,10 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 use std::sync::mpsc;
 
+#[cfg(target_os = "macos")]
+use objc2::MainThreadMarker;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSApplication, NSEventType};
 use tauri::menu::{
     CheckMenuItemBuilder, ContextMenu, IsMenuItem, Menu, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, Submenu,
 };
@@ -200,8 +204,6 @@ pub fn raised_by_window_key(app: &AppHandle, id: &str) -> bool {
 
 #[cfg(target_os = "macos")]
 fn key_press_in_progress() -> bool {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSApplication, NSEventType};
     MainThreadMarker::new()
         .and_then(|main| NSApplication::sharedApplication(main).currentEvent())
         .is_some_and(|event| event.r#type() == NSEventType::KeyDown)

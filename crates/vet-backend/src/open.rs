@@ -419,7 +419,10 @@ impl Orchestrator {
 
 #[cfg(test)]
 mod tests {
+    use vet_app::ports::Store;
     use vet_app::progress::TaskKind;
+    use vet_app::session::View;
+    use vet_core::content::BlobId;
     use vet_protocol::{ServerMessage, TaskState};
     use vet_transport::Events;
 
@@ -472,10 +475,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_copy_ahead_draws_on_the_background_budget_and_never_on_the_reviews() {
-        use vet_app::ports::Store;
-        use vet_app::session::View;
-        use vet_core::content::BlobId;
-
         let data = tempfile::tempdir().unwrap();
         // The tree is never quiet long enough for the session to copy it by itself.
         let config = Config {

@@ -3,6 +3,8 @@
 
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::process::{Child, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -325,7 +327,6 @@ fn spawn_command(mut command: Command, binary: &str, report: &dyn Fn(Step)) -> R
         .stderr(Stdio::inherit());
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }

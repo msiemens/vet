@@ -1,6 +1,10 @@
 //! Writing a snapshot into a directory (§7.2). Content is written as stored:
 //! nothing here runs hooks, filters or smudging.
 
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use vet_app::ports::GitError;
@@ -67,7 +71,6 @@ fn checked(path: &RepoPath) -> Result<&Path, GitError> {
 
 #[cfg(unix)]
 fn symlink(target: &[u8], dest: &Path) -> Result<(), GitError> {
-    use std::os::unix::ffi::OsStrExt;
     std::os::unix::fs::symlink(std::ffi::OsStr::from_bytes(target), dest).map_err(err)
 }
 
@@ -79,7 +82,6 @@ fn symlink(target: &[u8], dest: &Path) -> Result<(), GitError> {
 
 #[cfg(unix)]
 fn set_mode(dest: &Path, mode: u32) -> Result<(), GitError> {
-    use std::os::unix::fs::PermissionsExt;
     let bits = if mode & 0o111 != 0 { 0o755 } else { 0o644 };
     std::fs::set_permissions(dest, std::fs::Permissions::from_mode(bits)).map_err(err)
 }

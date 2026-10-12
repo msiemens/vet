@@ -3,6 +3,8 @@
 
 use std::collections::HashMap;
 use std::fs::Metadata;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -25,10 +27,7 @@ pub(crate) struct StatKey {
 impl StatKey {
     pub fn of(md: &Metadata, index_mode: Option<u32>) -> Self {
         #[cfg(unix)]
-        let (ctime, ino) = {
-            use std::os::unix::fs::MetadataExt;
-            ((md.ctime(), md.ctime_nsec() as u32), md.ino())
-        };
+        let (ctime, ino) = { ((md.ctime(), md.ctime_nsec() as u32), md.ino()) };
         #[cfg(not(unix))]
         let (ctime, ino) = ((0, 0), 0);
         Self {

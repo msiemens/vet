@@ -173,6 +173,8 @@ fn runs(lines: impl IntoIterator<Item = u32>) -> Vec<LineRange> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::content::Hash;
+    use crate::text::SPLITS;
 
     fn lines(prefix: &str, n: usize) -> String {
         (0..n).map(|i| format!("{prefix}{i}\n")).collect()
@@ -189,9 +191,6 @@ mod tests {
 
     #[test]
     fn the_marks_of_many_hunks_split_each_text_once_and_equal_those_of_each_hunk_alone() {
-        use crate::content::Hash;
-        use crate::text::SPLITS;
-
         let base = lines("l", 300);
         let target = base.replace("5\n", "5 edited\n");
         // Version A changed nothing, so every hunk of the interdiff is one of B's changeset.
