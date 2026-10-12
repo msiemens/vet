@@ -5,7 +5,6 @@
 import type { Base } from "../../src/generated/Base.ts";
 import type { FileChange } from "../../src/generated/FileChange.ts";
 import type { Manifest } from "../../src/generated/Manifest.ts";
-import type { ReviewUpdate } from "../../src/generated/ReviewUpdate.ts";
 import type { RowReview } from "../../src/generated/RowReview.ts";
 import type { View } from "../../src/generated/View.ts";
 import type { Backend } from "../../src/state/backend.ts";
@@ -31,17 +30,19 @@ type FileState = Pick<FileChange, "review" | "completion">;
 /**
  * What an editor view holds of the review state, as the documented channels keep it: built from the
  * files' current state when the revision, the range or commit or the file filter changes, and patched
- * by each `onReview` push. The editor views are not Svelte-free of this contract, so the harness
- * models them here, polled between the steps' requests.
+ * by what they read of the files written, as `ReviewController` does. The editor views are not
+ * Svelte-free of this contract, so the harness models them here, polled between the steps' requests.
  */
 export class ViewMirror {
   readonly files = new Map<string, FileState>();
   private built?: string;
 
   constructor() {
-    changeset.onReview((update: ReviewUpdate) => {
-      if (this.files.has(update.path))
-        this.files.set(update.path, { review: update.review, completion: update.completion });
+    changeset.subscribe((paths) => {
+      for (const path of this.files.keys()) {
+        const file = paths === "all" || paths.has(path) ? changeset.file(path) : undefined;
+        if (file) this.files.set(path, { review: file.review, completion: file.completion });
+      }
     });
   }
 

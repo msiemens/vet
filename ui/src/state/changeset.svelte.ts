@@ -31,7 +31,8 @@ import { type Shown, isCurrent } from "./shown";
 import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
 import { CHANGESET, commitView, interdiffView } from "./view";
 
-type ReviewListener = (update: ReviewUpdate) => void;
+/** Told after review state was written: the paths written, or "all" after a manifest replaced it. Never the state itself. */
+type WriteListener = (paths: ReadonlySet<string> | "all") => void;
 /** Said when a request is refused or rejected because the views it came from are about to be replaced. */
 const STALE_NOTICE = "Changes arrived — try again";
 /** What happens to the changeset on view: another is asked for, announced to be fetched, or the ask came to nothing. */
@@ -48,7 +49,7 @@ class ChangesetStore {
   restoreFailures = $state.raw<RestoreFailure[]>([]);
   /** The current state of each file, one reactive cell per path: a review update invalidates only its file. */
   private cells = new SvelteMap<string, FileChange>();
-  private listeners = new Set<ReviewListener>();
+  private listeners = new Set<WriteListener>();
   /** Which change of the backend the review state held is as of; updates and manifests older than it do not replace it. */
   private order = new ReviewOrder();
 
@@ -82,8 +83,6 @@ class ChangesetStore {
         sameManifestView(held, this.shownCommit, manifest, commit),
       );
       const kept = new Map(newer.files.size ? this.cells : []);
-      this.cells.clear();
-      for (const file of manifest.files) this.cells.set(file.path, kept.get(file.path) ?? file);
       this.manifest =
         held && (newer.completion || newer.changeset)
           ? {
@@ -94,6 +93,7 @@ class ChangesetStore {
           : manifest;
       this.shownCommit = commit;
       this.restoreFailures = manifest.restoreFailures;
+      this.write(new Map(manifest.files.map((file) => [file.path, kept.get(file.path) ?? file])), "manifest");
       if (manifest.lens === "perCommit" && manifest.commits > 1) void this.loadCommits();
       else this.commits = [];
     },
@@ -639,12 +639,11 @@ class ChangesetStore {
    * kept if it is as new or newer, so an update that arrives twice (as the answer and as the event)
    * or after a later one changes nothing.
    */
-  applyReview(update: ReviewUpdate) {
+  private applyReview(update: ReviewUpdate) {
     const manifest = this.manifest;
     if (!manifest) return;
     const file = this.cells.get(update.path);
     const fresh = this.order.file(update.path, update.seq);
-    if (fresh && file) this.cells.set(update.path, { ...file, review: update.review, completion: update.completion });
     const completion = this.order.completion(update.seq);
     // Only the changeset's own view says how far the changeset as a whole is.
     const whole = isChangesetView(manifest, this.shownCommit) && this.order.changeset(update.seq);
@@ -654,7 +653,8 @@ class ChangesetStore {
       completion: completion ? update.changeset : manifest.completion,
       changesetCompletion: whole ? update.changeset : manifest.changesetCompletion,
     };
-    if (fresh) for (const listener of this.listeners) listener(update);
+    if (fresh && file)
+      this.write(new Map([[update.path, { ...file, review: update.review, completion: update.completion }]]), "update");
     if (manifest.lens === "perCommit" && manifest.commits > 1) void this.loadCommits();
   }
 
@@ -665,8 +665,20 @@ class ChangesetStore {
     void this.loadCommits();
   }
 
-  /** Called after each review update, whether it came from a request or an event. */
-  onReview(listener: ReviewListener): () => void {
+  /**
+   * Every write of the files' review state goes through here: the cells take it and the listeners hear
+   * which paths changed, or "all" for a manifest, which replaces every file. Review state arrives by
+   * answer, event and manifest alike; a listener that reads the cells it is told of follows all three.
+   */
+  private write(entries: ReadonlyMap<string, FileChange>, cause: "update" | "manifest") {
+    if (cause === "manifest") this.cells.clear();
+    for (const [path, file] of entries) this.cells.set(path, file);
+    const paths = cause === "manifest" ? "all" : new Set(entries.keys());
+    for (const listener of this.listeners) listener(paths);
+  }
+
+  /** Calls `listener` after review state was written, with the paths it concerns; returns the unsubscribe function. */
+  subscribe(listener: WriteListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }

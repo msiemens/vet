@@ -7,7 +7,6 @@ import { EditorView } from "@codemirror/view";
 import type { BaseDiff } from "../../../generated/BaseDiff";
 import type { FileChange } from "../../../generated/FileChange";
 import type { NonTextKind } from "../../../generated/NonTextKind";
-import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
 import type { Side } from "../../../generated/Side";
 import type { Thread } from "../../../generated/Thread";
 import type { TextSpan } from "../../../generated/TextSpan";
@@ -364,6 +363,11 @@ export class ChangesetView {
       }
       this.measured.clear();
     });
+  }
+
+  /** The paths of the files in the view. */
+  paths(): string[] {
+    return this.sections.map((s) => s.file.path);
   }
 
   /** Index of the file with this path, if it is in the view. */
@@ -759,10 +763,10 @@ export class ChangesetView {
   }
 
   /** Renders a file's review state and progress as the backend sent them; a base diff of a hunk that is no longer seen against an old base closes. */
-  applyReview(update: ReviewUpdate) {
-    const s = this.sections.find((s) => s.file.path === update.path);
+  showReview(path: string, state: Pick<FileChange, "review" | "completion">) {
+    const s = this.sections.find((s) => s.file.path === path);
     if (!s) return;
-    renderReview(s, update);
+    renderReview(s, state);
     for (const hi of s.baseDiffs.keys()) if (s.review.hunks[hi] !== "seenAgainstOldBase") this.setBaseDiff(s, hi);
     this.pin.refresh();
     this.scrollbar.refresh();

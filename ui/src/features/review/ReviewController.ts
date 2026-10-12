@@ -25,7 +25,7 @@ import { semantic } from "../../state/semantic.svelte";
 import { serverList } from "../../state/serverList.svelte";
 import { languageOf, withoutImplementations } from "../../state/serverStatus";
 import { session } from "../../state/session.svelte";
-import type { Shown } from "../../state/shown";
+import { type Shown, isCurrent } from "../../state/shown";
 import { threads } from "../../state/threads.svelte";
 import { rangeKey } from "../../state/timelineRange";
 import type { Thread } from "../../generated/Thread";
@@ -73,7 +73,8 @@ export type ChangesetSource = Pick<
   | "currentShown"
   | "shownCommit"
   | "stepCommit"
-  | "onReview"
+  | "subscribe"
+  | "file"
   | "toggleHunk"
   | "toggleFlag"
   | "toggleItem"
@@ -173,10 +174,7 @@ export class ReviewController {
         this.analysable("target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
     };
     semantic.reset(); // the controller belongs to one repository's screen
-    const offReview = changeset.onReview((u) => {
-      for (const view of this.views.values()) view.applyReview(u);
-      for (const [id, text] of this.texts) if (pathOf(id) === u.path) text.applyReview(u.review);
-    });
+    const offReview = changeset.subscribe((paths) => this.showReview(paths));
     const offThreads = threads.onChange(() => this.showThreads());
     const offCommands = provideActions(this.viewActions());
     const offContext = commands.provide(() => this.facts());
@@ -582,6 +580,28 @@ export class ReviewController {
   /** The threads were read for the revision and the range `manifest` is of. */
   private threadsFit(manifest: Manifest): boolean {
     return threads.revision === manifest.revision && threads.key === rangeKey(manifest.interdiff);
+  }
+
+  /**
+   * Review state was written for `paths`: the views of what is on screen show it as the changeset holds
+   * it now. The views of another revision or view are about to be replaced and are left alone.
+   */
+  private showReview(paths: ReadonlySet<string> | "all") {
+    const shown = this.changeset.currentShown();
+    if (!shown) return;
+    const wanted = (path: string) => paths === "all" || paths.has(path);
+    for (const view of this.views.values()) {
+      if (!isCurrent(view.shown, shown)) continue;
+      for (const path of view.paths()) {
+        const file = wanted(path) ? this.changeset.file(path) : undefined;
+        if (file) view.showReview(path, file);
+      }
+    }
+    for (const [id, text] of this.texts) {
+      const path = pathOf(id);
+      const file = path !== undefined && wanted(path) ? this.changeset.file(path) : undefined;
+      if (file && text.isFor(shown)) text.applyReview(file.review);
+    }
   }
 
   /** Gives every view the threads, if they are of the view's revision and range. */

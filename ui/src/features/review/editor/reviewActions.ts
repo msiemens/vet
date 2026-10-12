@@ -4,7 +4,7 @@
 
 import type { BaseDiff } from "../../../generated/BaseDiff";
 import type { NonTextKind } from "../../../generated/NonTextKind";
-import type { ReviewUpdate } from "../../../generated/ReviewUpdate";
+import type { FileChange } from "../../../generated/FileChange";
 import type { Shown } from "../../../state/shown";
 import { renderProgress } from "./fileHeader";
 import { setReview } from "./reviewState";
@@ -69,7 +69,7 @@ export class ReviewActions {
 }
 
 /** Renders a file's review state and progress as the backend sent them. */
-export function renderReview(s: Section, { review, completion }: ReviewUpdate) {
+export function renderReview(s: Section, { review, completion }: Pick<FileChange, "review" | "completion">) {
   s.review = review;
   s.completion = completion;
   s.handle?.dispatchAll(setReview.of(review));

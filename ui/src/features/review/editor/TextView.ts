@@ -16,7 +16,7 @@ import { type Highlights, decodeHighlights } from "../../../lib/highlights";
 import type { SoftWrap } from "../../../lib/softWrap";
 import { iconSvg } from "../../../lib/ui/icons";
 import { type MarkLayout, type ScrollMark, Scrollbar } from "../../../lib/ui/scrollbar";
-import type { Shown } from "../../../state/shown";
+import { type Shown, isCurrent } from "../../../state/shown";
 import type { PanePosition } from "./ChangesetView";
 import { currentLine } from "./currentLine";
 import { closeChangeCard, showChangeCard } from "./fileCard";
@@ -69,6 +69,8 @@ interface Drawn {
 
 export class TextView {
   private view?: EditorView;
+  /** What the text is of: the manifest revision and the view. */
+  private shown: Shown;
   private destroyed = false;
   /** The 0-based line to show once the text has arrived. */
   private line?: number;
@@ -103,6 +105,7 @@ export class TextView {
     /** The changeset's change to the file, if it changes it: its hunks are drawn, and the owner acts on them. */
     private changes?: { file: FileChange; actions: TextActions },
   ) {
+    this.shown = threads.shown;
     this.states = changes?.file.review.hunks ?? [];
     this.flags = changes?.file.review.flagged ?? [];
     root.replaceChildren();
@@ -204,6 +207,11 @@ export class TextView {
       card: (view, line) => this.showCard(view, line),
     };
     return { source, field: changesField(source, this.states, this.flags) };
+  }
+
+  /** Whether the text is of `shown`. */
+  isFor(shown: Shown): boolean {
+    return isCurrent(this.shown, shown);
   }
 
   /** The hunks' review states and flags changed. */

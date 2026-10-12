@@ -12,8 +12,6 @@ export interface Known {
 }
 
 export const known: Known[] = [
-  // The open editor views keep their review state across a reconnect.
-  { bug: "P6", invariant: "viewMirror", view: "changeset" },
   // Another window's marks never reach a window that shows a range or a commit.
   { bug: "H2", invariant: "fileReview", view: "interdiff" },
   { bug: "H2", invariant: "viewCompletion", view: "interdiff" },
