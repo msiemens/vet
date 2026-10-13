@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fileTab, isStale, kindOf, modesOf, pathOf, settleMode, tabAfter, tabOf } from "./tabModel.ts";
+import { fileTab, isStale, kindOf, modesOf, pathOf, scrollToReveal, settleMode, tabAfter, tabOf } from "./tabModel.ts";
 
 void test("a file has one tab id whatever asks for it, and the id tells the path back", () => {
   assert.equal(tabOf("file", "src/a.rs"), fileTab("src/a.rs"));
@@ -52,4 +52,13 @@ void test("stepping through the tabs wraps around both ends", () => {
   assert.equal(tabAfter(open, "changes", -1), "b");
   assert.equal(tabAfter(open, "a", -1), "changes");
   assert.equal(tabAfter(["changes"], "changes", 1), "changes");
+});
+
+void test("revealing a tab scrolls the least that shows it whole", () => {
+  // View [100, 300): a tab in view stays put, one past either edge moves just far enough.
+  assert.equal(scrollToReveal(100, 200, 150, 80), 100);
+  assert.equal(scrollToReveal(100, 200, 250, 80), 130);
+  assert.equal(scrollToReveal(100, 200, 60, 80), 60);
+  // A tab wider than the view shows its start.
+  assert.equal(scrollToReveal(100, 200, 250, 300), 250);
 });

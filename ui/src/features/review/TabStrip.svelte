@@ -6,7 +6,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import Tab from "../../lib/ui/Tab.svelte";
   import { commands } from "../../state/commands";
-  import { type TabId, kindOf, pathOf, subjectOf } from "./tabModel";
+  import { type TabId, kindOf, pathOf, scrollToReveal, subjectOf } from "./tabModel";
   import type { Tabs } from "./Tabs.svelte";
 
   /**
@@ -27,9 +27,31 @@
 
   /** Closing a tab is the Close Tab command, with the tab as its subject. */
   const closing = (id: TabId) => commands.context({ tab: { kind: kindOf(id), path: subjectOf(id) } });
+
+  let strip: HTMLElement | undefined = $state();
+
+  /** Scrolls the strip, never the page, so the active tab shows whole. */
+  function revealActive() {
+    const el = strip?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.parentElement;
+    if (!strip || !el) return;
+    const at = el.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft;
+    strip.scrollLeft = scrollToReveal(strip.scrollLeft, strip.clientWidth, at, el.offsetWidth);
+  }
+
+  // Opening or closing a tab shifts the active one, so the list is watched with the active tab.
+  $effect(() => {
+    if (tabs.open.includes(tabs.active)) revealActive();
+  });
+
+  $effect(() => {
+    if (!strip) return;
+    const observer = new ResizeObserver(revealActive);
+    observer.observe(strip);
+    return () => observer.disconnect();
+  });
 </script>
 
-<div class="tabs" role="tablist" aria-label="Open views">
+<div class="tabs" role="tablist" aria-label="Open views" bind:this={strip}>
   {#each tabs.open as id (id)}
     {@const path = pathOf(id)}
     {@const log = tabs.logs.get(id)}

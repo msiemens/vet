@@ -58,3 +58,13 @@ export function tabAfter<T>(open: readonly T[], active: T, delta: number): T {
   const at = open.indexOf(active);
   return open[(((at + delta) % open.length) + open.length) % open.length];
 }
+
+/**
+ * The scroll offset of a strip showing `[scroll, scroll + view)` that brings the tab `[start, start + size)`
+ * fully into view with the least movement; a tab wider than the view lines up its start.
+ */
+export function scrollToReveal(scroll: number, view: number, start: number, size: number): number {
+  if (start < scroll || size > view) return start;
+  if (start + size > scroll + view) return start + size - view;
+  return scroll;
+}
