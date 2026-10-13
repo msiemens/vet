@@ -8,12 +8,15 @@
     all: "tree",
     commits: "gitCommit",
     comments: "comments",
+    timeline: "timeline",
+    problems: "problems",
     symbol: "module",
     structure: "structure",
   };
 
   export const TOOLS = {
     left: TOOL_WINDOWS.filter((t) => t.side === "left"),
+    bottom: TOOL_WINDOWS.filter((t) => t.side === "bottom"),
     right: TOOL_WINDOWS.filter((t) => t.side === "right"),
   };
 </script>
@@ -26,7 +29,7 @@
     active,
     open = true,
     counts = {},
-    timeline,
+    bottom,
   }: {
     side?: "left" | "right";
     /** A number on a tool's icon: what is new there. */
@@ -35,38 +38,37 @@
     active?: string;
     /** Whether the selected tool's sidebar is shown. */
     open?: boolean;
-    /** Whether the timeline panel is shown; the left rail has its icon at the bottom, the right one none. */
-    timeline?: boolean;
+    /** The bottom tool whose panel is shown, if one is; the left rail has the bottom tools' icons, the right one none. */
+    bottom?: string | null;
   } = $props();
 </script>
 
+{#snippet slot(tool: { id: string; label: string }, shown: boolean)}
+  {@const count = counts[tool.id] ?? 0}
+  {@const command = toolCommand(tool.id)}
+  <span class="slot">
+    <IconButton
+      icon={ICONS[tool.id]}
+      label={count > 0 ? `${tool.label}, ${count} new` : tool.label}
+      title={commands.hint(command)}
+      disabled={!commands.isEnabled(command)}
+      active={shown}
+      onclick={() => commands.run(command)}
+    />
+    {#if count > 0}<span class="count mono" aria-hidden="true">{count > 99 ? "99+" : count}</span>{/if}
+  </span>
+{/snippet}
+
 <nav class={side} aria-label={side === "left" ? "Tool windows" : "Right tool windows"}>
   {#each TOOLS[side] as tool (tool.id)}
-    {@const count = counts[tool.id] ?? 0}
-    {@const command = toolCommand(tool.id)}
-    <span class="slot">
-      <IconButton
-        icon={ICONS[tool.id]}
-        label={count > 0 ? `${tool.label}, ${count} new` : tool.label}
-        title={commands.hint(command)}
-        disabled={!commands.isEnabled(command)}
-        active={open && tool.id === active}
-        onclick={() => commands.run(command)}
-      />
-      {#if count > 0}<span class="count mono" aria-hidden="true">{count > 99 ? "99+" : count}</span>{/if}
-    </span>
+    {@render slot(tool, open && tool.id === active)}
   {/each}
-  {#if timeline !== undefined}
-    <span class="bottom"
-      ><IconButton
-        icon="timeline"
-        label="Timeline"
-        title={commands.hint(toolCommand("timeline"))}
-        disabled={!commands.isEnabled(toolCommand("timeline"))}
-        active={timeline}
-        onclick={() => commands.run(toolCommand("timeline"))}
-      /></span
-    >
+  {#if bottom !== undefined}
+    <span class="bottom">
+      {#each TOOLS.bottom as tool (tool.id)}
+        {@render slot(tool, tool.id === bottom)}
+      {/each}
+    </span>
   {/if}
 </nav>
 
@@ -84,6 +86,10 @@
   }
   .bottom {
     margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
   }
   /* Not `.tool`: that global class pads the span wider than the rail. */
   .slot {

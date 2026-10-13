@@ -8,3 +8,8 @@ export interface ToolWindow {
 export function toggleTool(current: ToolWindow, id: string): ToolWindow {
   return current.tool === id ? { tool: id, open: !current.open } : { tool: id, open: true };
 }
+
+/** The bottom panel shown after `id` is toggled: one at a time, so the tool shown gives way to another, and hides itself. */
+export function toggleBottom(shown: string | undefined, id: string): string | undefined {
+  return shown === id ? undefined : id;
+}

@@ -41,6 +41,8 @@ export interface AppActions {
   toggleSoftWrap(): void;
   /** Shows or hides the tool window `id`. */
   toggleTool(id: string): void;
+  /** Shows the problem `delta` after the one shown, new ones first. */
+  stepProblem(delta: 1 | -1): void;
   setTheme(theme: Theme): void;
   /** Opens the comment form on the changeset as a whole. */
   commentOnChangeset(): void;
@@ -75,8 +77,10 @@ export const TOOL_WINDOWS: readonly {
   { side: "left", id: "commits", label: "Commits", binding: "Alt-3" },
   { side: "left", id: "comments", label: "Comments", binding: "Alt-4" },
   { side: "bottom", id: "timeline", label: "Timeline", binding: "Alt-5" },
-  { side: "right", id: "symbol", label: "Symbol", binding: "Alt-6" },
-  { side: "right", id: "structure", label: "Structure", binding: "Alt-7" },
+  { side: "bottom", id: "problems", label: "Problems", binding: "Alt-6" },
+  // Alt-7 and Alt-8 are the bottom tools to come (Find and Pipelines).
+  { side: "right", id: "symbol", label: "Symbol", binding: "Alt-9" },
+  { side: "right", id: "structure", label: "Structure", binding: "Alt-0" },
 ];
 
 /** The id of the command that shows or hides the tool window `id`. */
@@ -86,6 +90,7 @@ const NO_PROJECT = "Open a project first";
 const NO_CHANGESET = "No changeset is on view";
 const NO_REVIEW = "No review is open";
 const NO_PULL_REQUEST = "No pull request is on view";
+const NO_PROBLEMS = "The changeset has no problems";
 
 export function appCommands(a: AppActions): Command<CommandContext>[] {
   const repoOpen = (c: CommandContext) => c.repoOpen;
@@ -279,6 +284,22 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
         c.repoOpen ? "Only a changeset of several commits can be reviewed by commit" : NO_PROJECT,
       run: () => a.toggleTool(id),
     })),
+    {
+      id: "nav.nextProblem",
+      label: "Next Problem",
+      binding: "F2",
+      enabled: (c) => !!c.problems,
+      disabledReason: () => NO_PROBLEMS,
+      run: () => a.stepProblem(1),
+    },
+    {
+      id: "nav.previousProblem",
+      label: "Previous Problem",
+      binding: "Shift-F2",
+      enabled: (c) => !!c.problems,
+      disabledReason: () => NO_PROBLEMS,
+      run: () => a.stepProblem(-1),
+    },
     {
       id: "view.theme",
       label: "Theme",

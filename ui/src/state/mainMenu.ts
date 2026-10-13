@@ -72,6 +72,7 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
         ...["changes", "all", "commits", "comments"].map((id) => toolItem(s, id)),
         "-",
         toolItem(s, "timeline"),
+        toolItem(s, "problems"),
         "-",
         toolItem(s, "symbol"),
         toolItem(s, "structure"),
@@ -163,6 +164,9 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
     { command: "nav.goToImplementation" },
     { command: "nav.showUsages" },
     { command: "review.changeCard" },
+    "-",
+    { command: "nav.nextProblem" },
+    { command: "nav.previousProblem" },
     "-",
     { command: "view.revealFile" },
   ];

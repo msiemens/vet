@@ -10,21 +10,28 @@
     cursor?: string;
     eol?: string;
     encoding?: string;
-    diagnostics?: number;
+    /** What the changeset's problems come to; absent while there is nothing to analyse. */
+    problems?: Summary;
   }
 </script>
 
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import Icon from "../../lib/ui/Icon.svelte";
+  import Spinner from "../../lib/ui/Spinner.svelte";
+  import type { Summary } from "../../state/problemsSummary";
 
   let {
     info,
     onserver,
+    onproblems,
     progress,
   }: {
     info: FooterInfo;
     /** Shows the details of the language servers. */
     onserver?: () => void;
+    /** Shows the Problems tool, narrowed to the problems the change introduced. */
+    onproblems?: () => void;
     progress?: Snippet;
   } = $props();
 </script>
@@ -42,8 +49,27 @@
   {/if}
   <span class="grow"></span>
   {#if progress}{@render progress()}{/if}
-  {#if info.diagnostics !== undefined}<span class="footer-item" title="Diagnostics">{info.diagnostics} diagnostics</span
-    >{/if}
+  {#if info.problems}
+    {@const problems = info.problems}
+    <button class="flat footer-item" type="button" title={problems.title} onclick={onproblems}>
+      {#if problems.icon === "busy"}
+        <Spinner />
+      {:else if problems.icon}
+        <span
+          class="mark"
+          class:error={problems.icon === "error"}
+          class:warning={problems.icon === "warning"}
+          class:ok={problems.icon === "ok"}
+          ><Icon
+            name={problems.icon === "ok" ? "check" : problems.icon}
+            size={13}
+            stroke={problems.icon === "ok" ? 1.8 : 1.6}
+          /></span
+        >
+      {/if}
+      {problems.text}
+    </button>
+  {/if}
   {#if info.cursor}<span class="footer-item mono small">{info.cursor}</span>{/if}
   {#if info.eol}<span class="footer-item">{info.eol}</span>{/if}
   {#if info.encoding}<span class="footer-item">{info.encoding}</span>{/if}
@@ -64,6 +90,18 @@
   }
   .state {
     color: var(--text-3);
+  }
+  .error {
+    color: var(--severity-error);
+  }
+  .warning {
+    color: var(--severity-warning);
+  }
+  .ok {
+    color: var(--ok);
+  }
+  .mark {
+    display: inline-flex;
   }
   .small {
     font-size: var(--fs-mono-s);

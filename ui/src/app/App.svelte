@@ -15,6 +15,7 @@
     baseNote,
     lensOnSelect,
     scopeChip,
+    toggleBottom,
     toggleTool,
     toolFor,
   } from "../features/chrome";
@@ -40,6 +41,7 @@
     watchDoubleShift,
   } from "../features/palette";
   import { NotificationCards, PlatformFooter, copyText } from "../features/platform";
+  import { ProblemsPanel } from "../features/problems";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, queueCommands, targetLabel } from "../features/queue";
   import {
     ON_SCREEN,
@@ -92,6 +94,7 @@
   import { mainMenu } from "../state/mainMenu.svelte";
   import { pendingEdits } from "../state/pendingEdits.svelte";
   import { platform } from "../state/platform.svelte";
+  import { problems } from "../state/problems.svelte";
   import { progress as backgroundTasks } from "../state/progress.svelte";
   import { queue } from "../state/queue.svelte";
   import { recent } from "../state/recent.svelte";
@@ -112,7 +115,8 @@
   // The selected tool of each rail, and whether its sidebar is shown.
   const left = $state({ tool: "changes", open: true });
   const right = $state({ tool: "symbol", open: true });
-  let timelineOpen = $state(false);
+  // The bottom tool whose panel is shown; they exclude each other.
+  let bottomTool = $state<string>();
   let theme = $state<Theme>(storedTheme());
   let softWrap = $state<SoftWrap>(storedSoftWrap());
   let dialog = $state<"settings" | "about" | "finish" | "pullRequest">();
@@ -224,7 +228,12 @@
     commit:
       changeset.shownCommit === undefined ? undefined : `${changeset.shownCommit + 1} / ${changeset.commits.length}`,
     languageServer: serverLine(controller?.semanticPath, serverList.servers, backgroundTasks.tasks, semanticSummary),
-    diagnostics: semanticSummary.diagnostics,
+    problems: problems.summary,
+  });
+  // The changeset's problems are asked about while the review is on screen.
+  $effect(() => {
+    if (!session.backend || !session.repo) return;
+    return problems.start();
   });
 
   const openLocation: OpenLocation = (path, line, side) => void controller?.openLocation(ON_SCREEN, path, line, side);
@@ -260,12 +269,17 @@
       quit: () => void quit(),
       toggleSoftWrap: () => setSoftWrap(softWrap === "never" ? "prose" : "never"),
       toggleTool: (id) => {
-        if (id === "timeline") {
-          toggleTimeline();
+        if (TOOLS.bottom.some((t) => t.id === id)) {
+          bottomTool = toggleBottom(bottomTool, id);
+          if (bottomTool === "problems") void focusProblems();
           return;
         }
         const side = TOOLS.left.some((t) => t.id === id) ? left : right;
         Object.assign(side, toggleTool(side, id));
+      },
+      stepProblem: (delta) => {
+        const found = problems.step(delta);
+        if (found) void controller?.showProblem(found.path, found.line, false);
       },
       setTheme: (t) => applyTheme((theme = t)),
       commentOnChangeset,
@@ -335,6 +349,7 @@
     voteSeparate: !!platform.traits?.verdictSeparate,
     voteBlock,
     manyCommits: commitCount > 1,
+    problems: problems.problems.length > 0,
   }));
 
   // The main menu follows the state it shows.
@@ -351,7 +366,7 @@
       tools: [
         ...TOOLS.left.map((t) => ({ id: t.id, shown: shown(left, t.id) })),
         ...TOOLS.right.map((t) => ({ id: t.id, shown: shown(right, t.id) })),
-        { id: "timeline", shown: timelineOpen },
+        ...TOOLS.bottom.map((t) => ({ id: t.id, shown: bottomTool === t.id })),
       ],
       range: !!range,
       canRestart: canRestartBackend,
@@ -470,19 +485,21 @@
 
   /** Shows a tool window: the Timeline under the editors, or one of the left rail's. */
   function showTool(tool: "changes" | "all" | "comments" | "timeline") {
-    if (tool === "timeline") timelineOpen = true;
+    if (tool === "timeline") bottomTool = "timeline";
     else Object.assign(left, { tool, open: true });
-  }
-
-  function toggleTimeline() {
-    timelineOpen = !timelineOpen;
   }
 
   /** Shows the timeline, or moves the focus into it where it is shown. */
   async function focusTimeline() {
-    timelineOpen = true;
+    bottomTool = "timeline";
     await tick();
     document.querySelector<HTMLElement>('[aria-label="Timeline"]')?.focus();
+  }
+
+  /** Moves the focus into the Problems list once it is up. */
+  async function focusProblems() {
+    await tick();
+    document.querySelector<HTMLElement>('[aria-label="Problems"] [data-list]')?.focus();
   }
 
   /** Escape, with the focus nowhere in particular or in the timeline or the chip, goes back to all changes. */
@@ -623,7 +640,12 @@
       <QueueScreen onopen={() => (screen = "review")} onopenfile={openFile} onopenthread={openThread} />
     {/if}
     <div class="review" class:away={screen !== "review"} inert={screen !== "review"}>
-      <ToolRail active={left.tool} open={left.open} counts={{ comments: unreadComments }} timeline={timelineOpen} />
+      <ToolRail
+        active={left.tool}
+        open={left.open}
+        counts={{ comments: unreadComments, problems: problems.summary?.badge ?? 0 }}
+        bottom={bottomTool ?? null}
+      />
       <ReviewScreen
         backend={session.backend}
         {changeset}
@@ -649,7 +671,7 @@
           {/if}
         {/snippet}
         {#snippet bottom({ selected, select })}
-          {#if timelineOpen}
+          {#if bottomTool === "timeline"}
             <TimelinePanel
               versions={versions.items}
               base={changeset.facts?.base.commit}
@@ -659,7 +681,16 @@
               {selected}
               onrange={(r) => void changeset.setRange(r)}
               onselect={select}
-              onclose={() => (timelineOpen = false)}
+              onclose={() => (bottomTool = undefined)}
+            />
+          {:else if bottomTool === "problems"}
+            <ProblemsPanel
+              openFiles={controller?.openPaths ?? []}
+              currentFile={controller?.activePath}
+              onshow={(p, jump) => void controller?.showProblem(p.path, p.line, jump)}
+              onfile={(path) => void controller?.revealFileInChanges(path)}
+              oneditor={() => controller?.focusEditor()}
+              onservers={() => showDialog("settings", "servers")}
             />
           {/if}
         {/snippet}
@@ -773,7 +804,15 @@
   />
 {/if}
 
-<StatusFooter info={footer} onserver={() => showDialog("settings", "servers")}>
+<StatusFooter
+  info={footer}
+  onserver={() => showDialog("settings", "servers")}
+  onproblems={() => {
+    screen = "review";
+    bottomTool = "problems";
+    if (problems.summary?.icon !== "busy") problems.origin = "new";
+  }}
+>
   {#snippet progress()}<TaskProgress tasks={backgroundTasks.tasks} /><PlatformFooter />{/snippet}
 </StatusFooter>
 

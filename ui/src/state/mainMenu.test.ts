@@ -18,6 +18,7 @@ const state: MenuState = {
     { id: "changes", shown: true },
     { id: "commits", shown: false },
     { id: "timeline", shown: true },
+    { id: "problems", shown: false },
   ],
   range: false,
   canRestart: true,
@@ -56,6 +57,7 @@ const actions: AppActions = {
   quit: () => calls.push("quit"),
   toggleSoftWrap: () => calls.push("wrap"),
   toggleTool: (id) => calls.push(`tool ${id}`),
+  stepProblem: (delta) => calls.push(`problem ${delta}`),
   setTheme: (theme) => calls.push(`theme ${theme}`),
   commentOnChangeset: () => calls.push("commentOnChangeset"),
   postComments: () => calls.push("post"),
@@ -83,7 +85,7 @@ void test("every leaf item that is not the host's runs a command", () => {
     for (const item of flatten(menu({ native, votes: { verdicts: [{ id: "approved", label: "Approve" }] } }))) {
       if (item.children || item.separator || item.predefined) continue;
       calls.length = 0;
-      assert.ok(registry.run(item.id, { ...open, manyCommits: true, serverLanguage: "rust" }), item.id);
+      assert.ok(registry.run(item.id, { ...open, manyCommits: true, serverLanguage: "rust", problems: true }), item.id);
       assert.equal(calls.length, 1, item.id);
     }
   }
@@ -174,9 +176,15 @@ void test("the Queue and Review screens are a radio pair, and the tool windows a
       ["view.tool.commits", false],
       ["view.tool.comments", false],
       ["view.tool.timeline", true],
+      ["view.tool.problems", false],
       ["view.tool.symbol", false],
       ["view.tool.structure", false],
     ],
+  );
+  // The keys count the left tools, then the bottom ones, then the right ones.
+  assert.deepEqual(
+    (tools(onReview) ?? []).filter((t) => !t.separator).map((t) => t.shortcut),
+    ["Alt+1", "Alt+2", "Alt+3", "Alt+4", "Alt+5", "Alt+6", "Alt+9", "Alt+0"],
   );
   const onQueue = menu({ screen: "queue" });
   assert.equal(find(onQueue, "view.queue")?.checked, true);
@@ -198,6 +206,21 @@ void test("every tool window has a key of its own, and Commits is offered only f
   assert.equal(registry.run("view.tool.commits", { ...open, manyCommits: true }), true);
   assert.equal(registry.run("view.tool.timeline", open), true);
   assert.deepEqual(calls, ["tool commits", "tool timeline"]);
+});
+
+void test("Next and Previous Problem step through the problems and are off, with the reason, when there are none", () => {
+  const some = { ...open, problems: true };
+  assert.equal(find(menu({}, some), "nav.nextProblem")?.shortcut, "F2");
+  assert.equal(find(menu({}, some), "nav.previousProblem")?.shortcut, "Shift+F2");
+  assert.equal(find(menu({}, some), "nav.nextProblem")?.enabled, undefined);
+  const none = find(menu({}, { problems: false }), "nav.nextProblem");
+  assert.equal(none?.enabled, false);
+  assert.ok(none.reason);
+  calls.length = 0;
+  assert.equal(registry.run("nav.nextProblem", { ...open, problems: false }), false);
+  assert.equal(registry.run("nav.nextProblem", some), true);
+  assert.equal(registry.run("nav.previousProblem", some), true);
+  assert.deepEqual(calls, ["problem 1", "problem -1"]);
 });
 
 void test("the wrap and theme settings show what is on", () => {
