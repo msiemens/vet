@@ -177,6 +177,7 @@ void test("a narrowed review offers the folders its narrowing left out and no wa
     }),
   );
   assert.equal(view.title, "Nothing in src/legacy");
+  assert.match(view.lead, /The 4 changed files are elsewhere/);
   const folders = view.panels[0].rows;
   assert.deepEqual(
     folders.map((r) => [r.value, r.meta, r.action?.filter?.roots]),

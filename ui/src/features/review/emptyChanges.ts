@@ -68,7 +68,7 @@ export interface Panel {
 }
 
 export interface EmptyView {
-  glyph: "eye" | "minus" | "merge" | "check" | "filter" | "commit" | "timeline";
+  glyph: "eye" | "circleMinus" | "merge" | "circleCheck" | "filter" | "commit" | "timeline";
   title: string;
   lead: string;
   panels: Panel[];
@@ -116,7 +116,7 @@ export function emptyView(input: EmptyInput): EmptyView {
   if (input.changesetBase.containedIn) return contained(input);
   if (input.key.type === "workingTree") return emptyWorkingTree(input);
   return {
-    glyph: "minus",
+    glyph: "circleMinus",
     title: "No changes",
     lead: `Nothing differs from ${input.changesetBase.commit.shortId}.`,
     panels: [],
@@ -130,7 +130,7 @@ export function emptyView(input: EmptyInput): EmptyView {
 export function ruleName(by: ExcludedBy): string {
   switch (by.kind) {
     case "narrowing":
-      return "Outside this review's narrowing";
+      return "Outside the narrowing";
     case "outsideRoots":
       return "Outside review roots";
     case "notIncluded":
@@ -229,7 +229,7 @@ function filtered(input: EmptyInput): EmptyView {
     return {
       glyph: "filter",
       title: `Nothing in ${where}`,
-      lead: `This review is narrowed to ${where}. The ${plural(count, "changed file")} ${count === 1 ? "is" : "are"} elsewhere.`,
+      lead: `This review is narrowed to ${where}. The ${plural(narrowed.count, "changed file")} ${narrowed.count === 1 ? "is" : "are"} elsewhere.`,
       panels,
       actions: [
         { id: "reset", label: "Reset to the project filter", primary: true },
@@ -321,11 +321,11 @@ function emptyWorkingTree(input: EmptyInput): EmptyView {
         label: `v${v.n}`,
         value: [shortTime(v.at, input.now, "detailed"), ...(v.files.length ? [" ", mono(delta(total))] : [])],
         meta: names || (v.n === 1 ? "opened" : undefined),
-        action: v.n === 1 ? undefined : ({ id: "pick", label: "Show", n: v.n } as const),
+        action: v.files.length ? ({ id: "pick", label: "Show", n: v.n } as const) : undefined,
       };
     });
     return {
-      glyph: "minus",
+      glyph: "circleMinus",
       title: "No changes left",
       lead: "The working tree matches what it was when opened. The edits made since were undone.",
       panels: [{ heading: "Versions", rows }],
@@ -372,7 +372,7 @@ function contained(input: EmptyInput): EmptyView {
     ];
     if (pr) rows.push({ label: "Opened by", value: [pr.authorName] });
     return {
-      glyph: "minus",
+      glyph: "circleMinus",
       title: "No commits yet",
       lead: isPr
         ? `The source branch is at the same commit as ${held.branch}. Vet refreshes when the author pushes.`
@@ -400,7 +400,7 @@ function contained(input: EmptyInput): EmptyView {
       });
     }
     return {
-      glyph: "check",
+      glyph: "circleCheck",
       title: "Merged",
       lead: `#${pr.number} is merged into ${held.branch}, so it no longer adds anything.`,
       panels: [{ rows }],

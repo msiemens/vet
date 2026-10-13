@@ -840,7 +840,7 @@
   }
   .why {
     flex: none;
-    max-width: 50%;
+    max-width: 62%;
     overflow: hidden;
     text-overflow: ellipsis;
     font-size: 11px;

@@ -14,8 +14,8 @@ void test("each excluded file is listed with why the review leaves it out, a nar
   assert.deepEqual(
     rows.map((r) => [r.name, r.why]),
     [
-      ["lib/a.rs", "Outside this review's narrowing"],
-      ["lib/b.rs", "Outside this review's narrowing"],
+      ["lib/a.rs", "Outside the narrowing"],
+      ["lib/b.rs", "Outside the narrowing"],
       ["Cargo.lock", "Generated"],
       ["+ 4 more", "Generated"],
     ],

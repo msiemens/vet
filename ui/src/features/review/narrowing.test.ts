@@ -16,8 +16,8 @@ void test("a narrowing to a folder names the folder", () => {
 });
 
 void test("a narrowing that lifts a rule names the files the rule left out", () => {
-  assert.equal(narrowingLabel(project, { ...project, reviewGenerated: true }), "Only generated files");
-  assert.equal(narrowingLabel(project, { ...project, roots: [] }), "Only files outside the roots");
-  assert.equal(narrowingLabel(project, { ...project, exclude: [] }), "Only files matching **/*.snap");
-  assert.equal(narrowingLabel(project, { ...project, hideBinary: false }), "Only binary files");
+  assert.equal(narrowingLabel(project, { ...project, reviewGenerated: true }), "Only generated");
+  assert.equal(narrowingLabel(project, { ...project, roots: [] }), "Only outside roots");
+  assert.equal(narrowingLabel(project, { ...project, exclude: [] }), "Only matching **/*.snap");
+  assert.equal(narrowingLabel(project, { ...project, hideBinary: false }), "Only binary");
 });
