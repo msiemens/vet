@@ -12,7 +12,7 @@ const sameKey = (a: string | undefined, b: string | undefined) =>
 
 /** The other commands that a key already runs. */
 export function conflictsOf(listing: CommandListing[], id: string, spec: string): CommandListing[] {
-  return listing.filter((c) => c.id !== id && sameKey(c.binding?.spec, spec));
+  return listing.filter((c) => c.id !== id && [c.binding, ...c.alsoBindings].some((b) => sameKey(b?.spec, spec)));
 }
 
 /** `overrides` without the command's: it has its default again. */
@@ -27,10 +27,19 @@ export function withBinding(overrides: Overrides, command: CommandListing, spec:
   return sameKey(spec, command.defaultBinding?.spec) ? rest : { ...rest, [command.id]: spec };
 }
 
-/** Binds `spec` to the command and takes it from the commands that had it. */
+/**
+ * Binds `spec` to the command and takes it from the commands that had it. A command that had it as
+ * a further key keeps its main one, which setting a binding makes explicit.
+ */
 export function withReplacedBinding(overrides: Overrides, listing: CommandListing[], id: string, spec: string) {
   let next = overrides;
-  for (const other of conflictsOf(listing, id, spec)) next = withBinding(next, other, null);
+  for (const other of conflictsOf(listing, id, spec)) {
+    const main = other.binding;
+    next =
+      main && !sameKey(main.spec, spec)
+        ? { ...withoutOverride(next, other.id), [other.id]: main.spec }
+        : withBinding(next, other, null);
+  }
   const command = listing.find((c) => c.id === id);
   return command ? withBinding(next, command, spec) : next;
 }

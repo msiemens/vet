@@ -72,6 +72,28 @@ void test("taking over a key unbinds the command that had it", () => {
   assert.equal(r.binding("b.free")?.label, "Ctrl+O");
 });
 
+void test("a further key of a command clashes like its main key, and taking it over leaves the main key", () => {
+  const r = registry();
+  r.register({ id: "t.step", label: "Step", binding: "Alt-ArrowRight", alsoBindings: ["Ctrl-PageDown"], run: () => 1 });
+  const listing = r.list();
+  assert.deepEqual(
+    listing.find((c) => c.id === "t.step")?.alsoBindings.map((b) => b.label),
+    ["Ctrl+PageDown"],
+  );
+  assert.deepEqual(
+    conflictsOf(listing, "b.free", "Ctrl-PageDown").map((c) => c.label),
+    ["Step"],
+  );
+
+  const overrides = withReplacedBinding({}, listing, "b.free", "Ctrl-PageDown");
+  r.setBindings(overrides);
+  assert.equal(r.binding("t.step")?.label, "Alt+Right");
+  assert.equal(r.binding("b.free")?.label, "Ctrl+PageDown");
+  const taken = key({ key: "PageDown", code: "PageDown", ctrlKey: true });
+  assert.equal(r.dispatch(taken), true);
+  assert.deepEqual(r.list().find((c) => c.id === "t.step")?.alsoBindings, []);
+});
+
 void test("overrides survive being kept, and damaged ones cost only themselves", () => {
   const overrides: Overrides = { "a.next": "Alt-n", "a.open": null };
   assert.deepEqual(parseOverrides(serializeOverrides(overrides)), overrides);

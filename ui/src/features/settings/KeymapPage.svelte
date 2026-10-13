@@ -77,6 +77,9 @@
             {:else}
               <span class="none">{row.changed ? "Removed" : "None"}</span>
             {/if}
+            {#each row.alsoBindings as also (also.spec)}
+              <kbd>{also.label}</kbd>
+            {/each}
             <span class="actions">
               <button class="ctl" type="button" onclick={() => record(row.id)}>Change</button>
               <button class="ctl" type="button" disabled={!row.binding} onclick={() => keymap.unbind(row.id)}>

@@ -37,10 +37,12 @@ const areaLabel = (area: string) =>
 
 export function keymapGroups(listing: CommandListing[], overrides: Overrides, query: string): KeymapGroup[] {
   const owners = new Map<string, string[]>();
-  for (const { id, binding } of listing) {
-    if (!binding) continue;
-    const key = canonicalSpec(binding.spec);
-    owners.set(key, [...(owners.get(key) ?? []), id]);
+  for (const { id, binding, alsoBindings } of listing) {
+    for (const bound of [binding, ...alsoBindings]) {
+      if (!bound) continue;
+      const key = canonicalSpec(bound.spec);
+      owners.set(key, [...(owners.get(key) ?? []), id]);
+    }
   }
   const label = new Map(listing.map((c) => [c.id, c.label]));
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -48,13 +50,14 @@ export function keymapGroups(listing: CommandListing[], overrides: Overrides, qu
   const groups = new Map<string, KeymapRow[]>();
   for (const command of listing) {
     const area = areaOf(command.id);
-    const haystack = [command.label, command.id, areaLabel(area), command.binding?.label ?? ""].join(" ").toLowerCase();
+    const keys = [command.binding, ...command.alsoBindings].filter((b) => b !== undefined);
+    const haystack = [command.label, command.id, areaLabel(area), ...keys.map((b) => b.label)].join(" ").toLowerCase();
     if (!words.every((w) => haystack.includes(w))) continue;
-    const shared = command.binding ? (owners.get(canonicalSpec(command.binding.spec)) ?? []) : [];
+    const shared = keys.flatMap((b) => owners.get(canonicalSpec(b.spec)) ?? []);
     const row: KeymapRow = {
       ...command,
       changed: command.id in overrides,
-      sharedWith: shared.filter((id) => id !== command.id).map((id) => label.get(id) ?? id),
+      sharedWith: [...new Set(shared.filter((id) => id !== command.id))].map((id) => label.get(id) ?? id),
     };
     groups.set(area, [...(groups.get(area) ?? []), row]);
   }

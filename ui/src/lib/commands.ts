@@ -50,6 +50,8 @@ export interface CommandListing {
   binding?: Binding;
   /** The key it has unless the viewer changed it. */
   defaultBinding?: Binding;
+  /** The further keys that run it now; none once the viewer set its binding. */
+  alsoBindings: Binding[];
 }
 
 /** Lets the registry's bindings be read reactively: `read` runs whenever one is read, `write` when they change. */
@@ -163,6 +165,8 @@ export class CommandRegistry<C extends object> {
           id: command.id,
           label: command.label,
           binding: this.binding(command.id),
+          alsoBindings:
+            command.id in this.overrides ? [] : (command.alsoBindings ?? []).map((s) => bindingOf(s, this.mod)),
           ...(spec ? { defaultBinding: bindingOf(spec, this.mod) } : {}),
         };
       });
