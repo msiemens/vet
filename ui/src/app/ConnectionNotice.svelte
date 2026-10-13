@@ -26,7 +26,7 @@
 <!-- Connecting again says nothing: only a connection that does not come back for long is told. -->
 {#if link === "stalled" || restarting}
   <div class="surface notice" role="status">
-    <span>{restarting ? "Restarting the backend…" : "The backend does not answer."}</span>
+    <span class="selectable">{restarting ? "Restarting the backend…" : "The backend does not answer."}</span>
     {#if canRestart}
       <button class="flat" type="button" disabled={restarting} onclick={() => void restart()}>Restart backend</button>
     {/if}

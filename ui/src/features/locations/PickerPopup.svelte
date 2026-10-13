@@ -221,7 +221,7 @@
   {:else if view.body.phase === "stopped"}
     <div class="state stopped">
       <span class="warn"><Icon name="warning" size={16} /></span>
-      <span class="message">{view.body.message}</span>
+      <span class="message selectable">{view.body.message}</span>
       <span class="grow"></span>
       <button class="ctl" type="button" onclick={() => view.onretry()}>Restart</button>
       <button

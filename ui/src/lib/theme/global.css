@@ -23,12 +23,18 @@ a {
   font-family: var(--font-mono);
 }
 
-/* Chrome is not selectable; content that is meant to be copied opts in with `.selectable`. */
+/* Chrome is not selectable; content that is meant to be copied opts in with `.selectable`. The
+   panel lines `.note` and the failure messages (`.err`, `.error`, `.problem`) are text to copy too,
+   so they are. */
 body {
   user-select: none;
   -webkit-user-select: none;
 }
 .selectable,
+.note,
+.err,
+.error,
+.problem,
 input,
 textarea,
 .cm-editor {
@@ -36,6 +42,10 @@ textarea,
   -webkit-user-select: text;
 }
 .selectable,
+.note,
+.err,
+.error,
+.problem,
 input,
 textarea {
   cursor: text;

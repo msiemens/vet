@@ -15,7 +15,7 @@
   <ul>
     {#each platform.notified as item (item.id)}
       <li>
-        <span class="text">{item.notification.text}</span>
+        <span class="text selectable">{item.notification.text}</span>
         <span class="time">{shortTime(item.at)}</span>
         {#if item.notification.copyText}
           <button class="flat" type="button" onclick={() => void copyText(item.notification.copyText ?? "")}>

@@ -21,7 +21,7 @@
 
 <div class="banner" role="status">
   <div class="line">
-    <span>{message}</span>
+    <span class="selectable">{message}</span>
     {#if action}
       <button class="flat" type="button" onclick={action.onclick}>{action.label}</button>
     {/if}
@@ -35,7 +35,7 @@
     {/if}
   </div>
   {#if details && expanded}
-    <div class="details">{@render details()}</div>
+    <div class="details selectable">{@render details()}</div>
   {/if}
 </div>
 
@@ -53,7 +53,7 @@
     gap: 10px;
   }
   span {
-    flex: 1;
+    margin-right: auto;
   }
   button {
     padding: 0 6px;

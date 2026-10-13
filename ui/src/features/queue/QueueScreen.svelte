@@ -234,7 +234,7 @@
     {/if}
     {#each unlisted as source (source.remote)}
       <p class="unlisted">
-        {source.remote}: {source.error}
+        <span class="selectable">{source.remote}: {source.error}</span>
         {#if source.signedOut}<button class="link" type="button" onclick={() => commands.run("app.accounts")}
             >Sign in…</button
           >{/if}

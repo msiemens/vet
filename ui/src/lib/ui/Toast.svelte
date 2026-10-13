@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { HoldTimer, holdWhileUsed } from "./holdTimer";
   import IconButton from "./IconButton.svelte";
 
   let {
@@ -12,15 +13,27 @@
     duration?: number;
   } = $props();
 
+  // It stays while the viewer hovers or selects it.
+  let timer: HoldTimer | undefined;
   $effect(() => {
-    const timer = setTimeout(onclose, duration);
-    return () => clearTimeout(timer);
+    const own = new HoldTimer(onclose, duration);
+    timer = own;
+    return () => own.stop();
   });
 </script>
 
 <!-- A popover is in the top layer, so a toast shows over a modal dialog (Settings) too. -->
-<div class="surface toast" role="status" popover="manual" {@attach (toast) => void toast.showPopover()}>
-  <span>{message}</span>
+<div
+  class="surface toast"
+  role="status"
+  popover="manual"
+  {@attach (toast) => void toast.showPopover()}
+  {@attach holdWhileUsed(
+    () => timer?.hold(),
+    () => timer?.release(),
+  )}
+>
+  <span class="selectable">{message}</span>
   <IconButton icon="close" label="Dismiss" size={20} iconSize={12} onclick={onclose} />
 </div>
 

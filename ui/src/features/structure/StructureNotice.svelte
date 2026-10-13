@@ -28,7 +28,7 @@
 {:else if outline?.unavailable}
   <div class="empty">
     <b>{outline.unavailable.label}</b>
-    <span>{outline.unavailable.message}</span>
+    <span class="selectable">{outline.unavailable.message}</span>
   </div>
 {:else if !total}
   <div class="empty"><b>No symbols</b><span>{file} declares none.</span></div>

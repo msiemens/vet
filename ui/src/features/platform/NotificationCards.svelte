@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { holdWhileUsed } from "../../lib/ui/holdTimer";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
@@ -14,9 +15,16 @@
 
 <div class="cards" aria-live="polite">
   {#each cards as item (item.id)}
-    <div class="surface card" role="status">
+    <div
+      class="surface card"
+      role="status"
+      {@attach holdWhileUsed(
+        () => platform.holdCard(item.id),
+        () => platform.releaseCard(item.id),
+      )}
+    >
       <div class="top">
-        <span class="text">{item.notification.text}</span>
+        <span class="text selectable">{item.notification.text}</span>
         <IconButton icon="close" label="Dismiss" size={20} iconSize={12} onclick={() => platform.dismiss(item.id)} />
       </div>
       <div class="buttons">

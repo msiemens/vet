@@ -9,6 +9,7 @@ import type { PlatformTraits } from "../generated/PlatformTraits";
 import type { PullRequestInfo } from "../generated/PullRequestInfo";
 import type { ReviewSubmitted } from "../generated/ReviewSubmitted";
 import { errorText } from "../lib/errorText";
+import { HoldTimer } from "../lib/ui/holdTimer";
 import { AccountResync } from "./accountResync";
 import type { Backend } from "./backend";
 import { changeset } from "./changeset.svelte";
@@ -57,6 +58,7 @@ class PlatformStore {
   private backend?: Backend;
   private seq = 0;
   private lastId = 0;
+  private cardTimers = new Map<number, HoldTimer>();
 
   start(backend: Backend): () => void {
     this.backend = backend;
@@ -197,14 +199,25 @@ class PlatformStore {
   }
 
   dismiss(id: number) {
+    this.cardTimers.get(id)?.stop();
+    this.cardTimers.delete(id);
     this.notified = this.notified.map((n) => (n.id === id ? { ...n, card: false } : n));
+  }
+
+  /** The viewer is reading or selecting the card: it stays until `releaseCard`. */
+  holdCard(id: number) {
+    this.cardTimers.get(id)?.hold();
+  }
+
+  releaseCard(id: number) {
+    this.cardTimers.get(id)?.release();
   }
 
   private notify(notification: Notification) {
     const id = ++this.lastId;
     this.notified = [{ id, notification, at: Math.floor(Date.now() / 1000), card: true }, ...this.notified];
     // A stopped sync stays on screen until the viewer deals with it; the rest is only told.
-    if (notification.kind === "info") setTimeout(() => this.dismiss(id), CARD_MS);
+    if (notification.kind === "info") this.cardTimers.set(id, new HoldTimer(() => this.dismiss(id), CARD_MS));
   }
 }
 

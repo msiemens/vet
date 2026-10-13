@@ -45,7 +45,7 @@
     {:else if symbols.unavailable}
       <div class="empty">
         <b>{symbols.unavailable.label}</b>
-        <span>{symbols.unavailable.message}</span>
+        <span class="selectable">{symbols.unavailable.message}</span>
       </div>
     {:else}
       <div class="empty">
