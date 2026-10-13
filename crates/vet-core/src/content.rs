@@ -98,6 +98,14 @@ pub fn decode_text(bytes: &[u8]) -> Option<String> {
     (!is_binary(bytes)).then(|| String::from_utf8_lossy(bytes).into_owned())
 }
 
+/// Like [`decode_text`] for bytes that are given up: valid UTF-8 is not copied.
+pub fn decode_text_owned(bytes: Vec<u8>) -> Option<String> {
+    if is_binary(&bytes) {
+        return None;
+    }
+    Some(String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EntryKind {
     File,
@@ -373,6 +381,13 @@ mod tests {
         assert_eq!(decode_text(b"caf\xc3\xa9\n").as_deref(), Some("caf\u{e9}\n"));
         assert_eq!(decode_text(b"a\xffb").as_deref(), Some("a\u{fffd}b"));
         assert_eq!(decode_text(b"a\0b"), None);
+    }
+
+    #[test]
+    fn owned_bytes_decode_as_borrowed_ones_do() {
+        for bytes in [&b"caf\xc3\xa9\n"[..], b"a\xffb", b"a\0b", b""] {
+            assert_eq!(decode_text_owned(bytes.to_vec()), decode_text(bytes));
+        }
     }
 
     #[test]

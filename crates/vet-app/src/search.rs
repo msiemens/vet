@@ -25,6 +25,12 @@ pub struct SearchPattern {
 pub trait LineMatcher: Send + Sync {
     /// The non-empty matches in `line`, in order, as byte ranges.
     fn hits(&self, line: &str) -> Vec<Range<usize>>;
+
+    /// Whether a line of `text`, which holds many, may have a match: `false` only if none has.
+    /// A matcher that cannot tell says `true`.
+    fn may_match(&self, _text: &str) -> bool {
+        true
+    }
 }
 
 /// The sides of a diff to look in; a context line is on both.
@@ -147,12 +153,20 @@ pub fn search_text(
     filters: SearchFilters,
     sides: Sides,
 ) -> Vec<FoundLine> {
-    let target_lines = lines_of(target);
-    let base_lines = if sides == Sides::Both {
+    // A text no line of which can match is not split into lines.
+    let target_lines = if matcher.may_match(target) {
+        lines_of(target)
+    } else {
+        Vec::new()
+    };
+    let base_lines = if sides == Sides::Both && matcher.may_match(base) {
         lines_of(base)
     } else {
         Vec::new()
     };
+    if target_lines.is_empty() && base_lines.is_empty() {
+        return Vec::new();
+    }
     let mut found = Vec::new();
     let mut visit = |kind: LineKind, text: Option<&str>, line: usize, hunk: Option<usize>| {
         let state = hunk.and_then(|h| states.get(h)).copied();
@@ -348,6 +362,26 @@ mod tests {
         assert_eq!(run(not_seen, Sides::Both, &[HunkState::Unseen]).len(), 3);
         assert_eq!(run(not_seen, Sides::Both, &[HunkState::SeenAgainstOldBase]).len(), 3);
         assert_eq!(run(not_seen, Sides::Both, &[HunkState::Seen]).len(), 0);
+    }
+
+    /// Rules out every text, and fails the test if it is asked about a line after all.
+    struct RulesOut;
+
+    impl LineMatcher for RulesOut {
+        fn hits(&self, line: &str) -> Vec<Range<usize>> {
+            panic!("{line:?} was matched");
+        }
+
+        fn may_match(&self, _: &str) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn a_text_the_matcher_rules_out_is_not_matched_line_by_line() {
+        let (base, target, hunks) = file();
+        let found = search_text(base, target, &hunks, &[], &RulesOut, ALL, Sides::Both);
+        assert!(found.is_empty());
     }
 
     #[test]

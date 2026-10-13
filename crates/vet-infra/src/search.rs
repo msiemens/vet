@@ -7,13 +7,19 @@ use vet_app::search::{LineMatcher, SearchPattern};
 pub struct RegexMatcher {
     /// `None` for an empty pattern, which matches nothing.
     regex: Option<Regex>,
+    /// The pattern matched over a whole text, where `^` and `$` stand for the ends of its lines:
+    /// a line matches only if the text does. `None` where the pattern can't be read that way.
+    whole: Option<Regex>,
 }
 
 impl RegexMatcher {
     /// Fails with the regex engine's message, reduced to the part fit to show.
     pub fn compile(pattern: &SearchPattern) -> Result<Self, String> {
         if pattern.text.is_empty() {
-            return Ok(Self { regex: None });
+            return Ok(Self {
+                regex: None,
+                whole: None,
+            });
         }
         let source = if pattern.regex {
             pattern.text.clone()
@@ -29,8 +35,33 @@ impl RegexMatcher {
             .case_insensitive(!pattern.match_case)
             .build()
             .map_err(|e| short_message(&e))?;
-        Ok(Self { regex: Some(regex) })
+        Ok(Self {
+            regex: Some(regex),
+            whole: whole_text(&source, pattern.match_case),
+        })
     }
+}
+
+/// `source` over a whole text, a line ending at `\n`, `\r\n` or `\r` as the search splits lines.
+/// Not for a pattern that anchors at the ends of the text itself (`\A`, `\z`), which a line's
+/// own ends would satisfy.
+fn whole_text(source: &str, match_case: bool) -> Option<Regex> {
+    let hir = regex_syntax::ParserBuilder::new()
+        .multi_line(true)
+        .crlf(true)
+        .case_insensitive(!match_case)
+        .build()
+        .parse(source)
+        .ok()?;
+    if hir.properties().look_set().contains_anchor_haystack() {
+        return None;
+    }
+    RegexBuilder::new(source)
+        .multi_line(true)
+        .crlf(true)
+        .case_insensitive(!match_case)
+        .build()
+        .ok()
 }
 
 impl LineMatcher for RegexMatcher {
@@ -43,6 +74,14 @@ impl LineMatcher for RegexMatcher {
             .map(|m| m.range())
             .filter(|r| !r.is_empty())
             .collect()
+    }
+
+    fn may_match(&self, text: &str) -> bool {
+        match (&self.regex, &self.whole) {
+            (None, _) => false,
+            (Some(_), Some(whole)) => whole.is_match(text),
+            (Some(_), None) => true,
+        }
     }
 }
 
@@ -120,6 +159,49 @@ mod tests {
                 .collect();
             assert_eq!(found, expected, "{text:?} in {line:?}");
         }
+    }
+
+    /// What the search does with a text a matcher rules out must be what matching its lines
+    /// one by one would have found: nothing.
+    #[test]
+    fn a_text_is_ruled_out_only_if_none_of_its_lines_match() {
+        let texts = [
+            "",
+            "alpha\nbeta\n",
+            "use a;\nlet x;\n",
+            "let x;\nuse a;",
+            "x\ruse a\r\nend",
+            "ab\ncd",
+            "foo bar\n  baz",
+            "é\nÜBER\n",
+        ];
+        let patterns = [
+            pattern("use", false, false, false),
+            pattern("^use", true, false, true),
+            pattern("a;$", true, false, true),
+            pattern(r"\Ause", true, false, true),
+            pattern(r"a;\z", true, false, true),
+            pattern(r"(?-m)^let", true, false, true),
+            pattern("ab|cd", true, true, true),
+            pattern(r"b\s+c", true, false, true),
+            pattern(r"\bbaz\b", true, false, true),
+            pattern("über", false, false, false),
+            pattern(r"a.*b", false, false, true),
+            pattern("^$", true, false, true),
+        ];
+        let mut ruled_out = 0;
+        for p in &patterns {
+            let matcher = RegexMatcher::compile(p).unwrap();
+            for text in texts {
+                let lines = text.split(['\n', '\r']);
+                let found = lines.clone().any(|line| !matcher.hits(line).is_empty());
+                if !matcher.may_match(text) {
+                    assert!(!found, "{:?} was ruled out of {text:?}", p.text);
+                    ruled_out += 1;
+                }
+            }
+        }
+        assert!(ruled_out > 20, "the matcher rules out almost nothing");
     }
 
     #[test]

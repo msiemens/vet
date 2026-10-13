@@ -5813,6 +5813,7 @@ dependencies = [
  "notify",
  "octocrab",
  "regex",
+ "regex-syntax",
  "reqwest",
  "rustix",
  "rustls",

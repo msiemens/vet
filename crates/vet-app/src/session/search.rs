@@ -9,7 +9,7 @@ use futures::StreamExt;
 use futures::stream::FuturesOrdered;
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{
-    BlobId, EntryKind, FileDiff, FileEntry, Hunk, NonTextChange, RepoPath, SnapshotDiff, decode_text,
+    BlobId, EntryKind, FileDiff, FileEntry, Hunk, NonTextChange, RepoPath, SnapshotDiff, decode_text_owned,
 };
 use vet_core::filter::FileMask;
 
@@ -217,6 +217,10 @@ impl LineMatcher for Stoppable<'_> {
         }
         self.matcher.hits(line)
     }
+
+    fn may_match(&self, text: &str) -> bool {
+        !self.stopped.load(Ordering::Relaxed) && self.matcher.may_match(text)
+    }
 }
 
 /// Where a search is over: it ended, or nobody is waiting for it any more.
@@ -260,7 +264,7 @@ impl Source {
                 BlobRead::TooLarge | BlobRead::Missing => return Ok(None),
             },
         };
-        Ok(decode_text(&bytes))
+        Ok(decode_text_owned(bytes))
     }
 }
 
