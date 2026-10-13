@@ -49,23 +49,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         path: &str,
         hunk: u32,
     ) -> Result<Outcome<ReviewUpdateView>> {
-        let (mut st, shown) = self.beginning(view).await?;
-        check_revision(&st, revision)?;
-        check_markable(&shown)?;
-        let state = *update_in(&st, &shown, path)?
-            .review
-            .hunks
-            .get(hunk as usize)
-            .ok_or_else(|| SessionError::NotFound(format!("hunk {hunk}")))?;
-        if state == HunkState::Informational {
-            return Err(SessionError::Invalid("nothing is left to review in this hunk".into()));
-        }
-        let seen = state != HunkState::Seen;
-        let started = seen && self.begin(&mut st).await?;
-        let writes = st.writes();
-        self.mark_hunks_in(&writes, &mut st, &shown, path, &[hunk], Mark::Seen(seen))
-            .await?;
-        Ok(outcome(&st, update_in(&st, &shown, path)?, started))
+        self.toggle_hunk_mark(revision, view, path, hunk, false).await
     }
 
     /// Flips the flag of one hunk, which is independent of the hunk being seen and stays until
@@ -76,6 +60,18 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         view: View,
         path: &str,
         hunk: u32,
+    ) -> Result<Outcome<ReviewUpdateView>> {
+        self.toggle_hunk_mark(revision, view, path, hunk, true).await
+    }
+
+    /// Flips the flag of one hunk (`flag`) or whether it is seen.
+    async fn toggle_hunk_mark(
+        &self,
+        revision: u32,
+        view: View,
+        path: &str,
+        hunk: u32,
+        flag: bool,
     ) -> Result<Outcome<ReviewUpdateView>> {
         let (mut st, shown) = self.beginning(view).await?;
         check_revision(&st, revision)?;
@@ -90,10 +86,14 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         if *state == HunkState::Informational {
             return Err(SessionError::Invalid("nothing is left to review in this hunk".into()));
         }
-        let flag = !flagged;
-        let started = flag && self.begin(&mut st).await?;
+        let mark = if flag {
+            Mark::Flag(!flagged)
+        } else {
+            Mark::Seen(*state != HunkState::Seen)
+        };
+        let started = mark.on() && self.begin(&mut st).await?;
         let writes = st.writes();
-        self.mark_hunks_in(&writes, &mut st, &shown, path, &[hunk], Mark::Flag(flag))
+        self.mark_hunks_in(&writes, &mut st, &shown, path, &[hunk], mark)
             .await?;
         Ok(outcome(&st, update_in(&st, &shown, path)?, started))
     }
