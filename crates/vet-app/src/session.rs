@@ -101,8 +101,8 @@ pub use self::threads::{CommentAt, CommentSpot, NewThread, ThreadView, ThreadsVi
 pub use self::versions::VersionView;
 use self::versions::first_change;
 pub use self::views::{
-    BaseView, EntryInfo, FileStatus, FileView, InterdiffView, ItemView, Lifecycle, ManifestView, ModeChange, Outcome,
-    ReviewUpdateView, ReviewView, SemanticSides, TargetView,
+    BaseView, Contained, EntryInfo, ExcludedBy, ExcludedFile, ExcludedGroup, FileStatus, FileView, InterdiffView,
+    ItemView, Lifecycle, ManifestView, ModeChange, Outcome, ReviewUpdateView, ReviewView, SemanticSides, TargetView,
 };
 use crate::acquisition::{Acquisition, BlobError};
 use crate::base;
@@ -314,6 +314,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             changeset,
             review: None,
             filter,
+            project: None,
             base,
             base_choice,
             base_commit,
@@ -432,6 +433,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
                 summary: review.summary,
             }),
             filter,
+            project: None,
             base,
             base_choice: review.base,
             base_commit: latest.base_commit.clone(),
@@ -634,11 +636,44 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// The base with its display facts; `branches` are the repository's.
     async fn base_view(&self, st: &State, branches: &[BranchInfo]) -> Result<BaseView> {
         let own = manifest::target_view(&st.source, &st.head, branches).branch;
+        let contained = base::contained_in(&st.base_choice, &st.base_commit, &st.head, own.as_deref());
         Ok(BaseView {
             commit: self.commit_info(&st.base_commit).await?,
-            contained_in: base::contained_in(&st.base_choice, &st.base_commit, &st.head, own.as_deref()),
+            contained_in: match contained {
+                Some(reference) => Some(self.contained(st, &reference).await?),
+                None => None,
+            },
             into: self.merged_into(st).await?,
             head_off_base: st.off_base,
+        })
+    }
+
+    /// What there is to say of a changeset whose tip `reference` already holds.
+    async fn contained(&self, st: &State, reference: &str) -> Result<Contained> {
+        let git = &self.acquisition.git;
+        let named = match &st.source {
+            Source::PullRequest { .. } => self.pull_request_head(&st.source).await?.map(|head| head.target_branch),
+            _ => git.default_branch().await?,
+        };
+        let branch = named.unwrap_or_else(|| base::short_reference(reference));
+        let reference_tip = git.resolve_commit(reference).await?;
+        let same_tip = reference_tip == st.head;
+        let merged_by = if same_tip {
+            None
+        } else {
+            match base::merging_commit(git, &st.head, &reference_tip).await {
+                Ok(Some(merge)) => Some(self.commit_info(&merge).await?),
+                Ok(None) => None,
+                Err(e) => {
+                    tracing::warn!(error = e, "the commit that merged the changeset is not found");
+                    None
+                }
+            }
+        };
+        Ok(Contained {
+            branch,
+            same_tip,
+            merged_by,
         })
     }
 
@@ -678,7 +713,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     /// the revision.
     pub async fn exclude_path(&self, path: &str, directory: bool) -> Result<u32> {
         let mut st = self.hold().await;
-        let mut filter = st.filter.clone();
+        let mut filter = st.project_filter().clone();
         let glob = exclude_glob(path, directory);
         if !filter.exclude.contains(&glob) {
             filter.exclude.push(glob);
@@ -689,12 +724,38 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     async fn replace_filter(&self, st: &mut Held<'_, S::Writes>, filter: ReviewFilter) -> Result<u32> {
         let filter = filter.normalized();
         filter.validate().map_err(SessionError::Invalid)?;
-        if st.filter == filter {
+        if *st.project_filter() == filter && st.project.is_none() {
             return Ok(st.revision);
         }
         let writes = st.writes();
         writes.set_filter(self.repo.clone(), filter.clone()).await?;
         st.filter = filter;
+        st.project = None;
+        self.refilter(st).await
+    }
+
+    /// Narrows the review on view to `filter`, which replaces the project's filter until the
+    /// narrowing is reset (`None`), the project's filter is edited or another changeset comes
+    /// on view. Nothing is stored. Returns the revision.
+    pub async fn narrow(&self, filter: Option<ReviewFilter>) -> Result<u32> {
+        let mut st = self.hold().await;
+        let project = st.project_filter().clone();
+        let (filter, narrowed) = match filter {
+            Some(narrowing) => (narrowing.normalized(), true),
+            None => (project.clone(), false),
+        };
+        filter.validate().map_err(SessionError::Invalid)?;
+        if st.filter == filter {
+            return Ok(st.revision);
+        }
+        st.filter = filter;
+        st.project = narrowed.then_some(project);
+        self.refilter(&mut st).await
+    }
+
+    /// Counts the review again under `st.filter` as a new revision.
+    async fn refilter(&self, st: &mut Held<'_, S::Writes>) -> Result<u32> {
+        let writes = st.writes();
         st.revision += 1;
         if st.changes.is_some() {
             for view in st.remapped_views() {

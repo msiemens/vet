@@ -15,14 +15,14 @@ use vet_app::pull_request::PullRequestList;
 use vet_app::search::{FoundLine, LineKind, SearchFilters, SearchPattern, SearchSide};
 use vet_app::session::{
     BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView, DirEntryKind,
-    DirListing, DiscussionView, EntryInfo, FileListing, FileStatus, FileView, ItemBlob, ItemView, Lifecycle,
-    ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, RowReview, SearchResult, SearchScope,
-    SubmitReport, SyncNotice, TargetText, ThreadView, ThreadsView, VersionView, View, VoteSent,
+    DirListing, DiscussionView, EntryInfo, ExcludedBy, ExcludedGroup, FileListing, FileStatus, FileView, ItemBlob,
+    ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, RowReview,
+    SearchResult, SearchScope, SubmitReport, SyncNotice, TargetText, ThreadView, ThreadsView, VersionView, View, VoteSent,
 };
 use vet_app::trust::{Origin, Trust};
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{EntryKind, Hunk, LineDelta, LineRange, NonTextKind, RepoPath};
-use vet_core::filter::ReviewFilter;
+use vet_core::filter::{Exclusion, ReviewFilter};
 use vet_core::inline::TextChange;
 use vet_core::review::{
     AnchorState, CommentTarget, Confidence, Location, Message, Outgoing, PendingVote, Side, StaleReason, Strategy,
@@ -295,7 +295,11 @@ fn unix_secs(time: i64) -> u32 {
 pub fn base(b: &BaseView) -> p::Base {
     p::Base {
         commit: commit_info(&b.commit),
-        contained_in: b.contained_in.clone(),
+        contained_in: b.contained_in.as_ref().map(|c| p::Contained {
+            branch: c.branch.clone(),
+            same_tip: c.same_tip,
+            merged_by: c.merged_by.as_ref().map(commit_info),
+        }),
         into: b.into.clone(),
         head_off_base: b.head_off_base,
     }
@@ -551,6 +555,31 @@ pub fn analysis_trust(trust: &Trust, head: &CommitId) -> p::AnalysisTrust {
     }
 }
 
+fn excluded_group(g: &ExcludedGroup) -> p::ExcludedGroup {
+    p::ExcludedGroup {
+        by: match &g.by {
+            ExcludedBy::Narrowing => p::ExcludedBy::Narrowing,
+            ExcludedBy::Rule(Exclusion::OutsideRoots) => p::ExcludedBy::OutsideRoots,
+            ExcludedBy::Rule(Exclusion::NotIncluded) => p::ExcludedBy::NotIncluded,
+            ExcludedBy::Rule(Exclusion::Pattern(pattern)) => p::ExcludedBy::Pattern {
+                pattern: pattern.clone(),
+            },
+            ExcludedBy::Rule(Exclusion::Generated) => p::ExcludedBy::Generated,
+            ExcludedBy::Rule(Exclusion::Binary) => p::ExcludedBy::Binary,
+        },
+        count: g.count,
+        delta: line_delta(g.delta),
+        files: g
+            .files
+            .iter()
+            .map(|f| p::ExcludedFile {
+                path: f.path.to_string_lossy(),
+                delta: line_delta(f.delta),
+            })
+            .collect(),
+    }
+}
+
 pub fn manifest(
     project: p::ProjectId,
     m: &ManifestView,
@@ -574,7 +603,9 @@ pub fn manifest(
             draft: false,
         },
         filter: filter(&m.filter),
+        narrowing: m.narrowing.as_ref().map(filter),
         files: m.files.iter().map(file).collect(),
+        excluded: m.excluded.iter().map(excluded_group).collect(),
         delta: line_delta(m.delta),
         completion: completion(&m.completion),
         excluded_lines: m.completion.excluded_lines,

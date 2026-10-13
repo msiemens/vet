@@ -54,10 +54,26 @@ impl ReviewFilter {
             roots: &self.roots,
             include: (!self.include.is_empty()).then(|| GlobList::new(self.include.iter().map(String::as_str))),
             exclude: GlobList::new(self.exclude.iter().map(String::as_str).chain(built_in.iter().copied())),
+            patterns: &self.exclude,
             hide_binary: self.hide_binary,
             generated: (!self.review_generated).then_some(generated),
         }
     }
+}
+
+/// Which rule of the filter leaves a path out.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Exclusion {
+    /// Not under any of the review roots.
+    OutsideRoots,
+    /// Matches none of the include globs.
+    NotIncluded,
+    /// Matches this exclude glob of the filter.
+    Pattern(String),
+    /// A lockfile or a generated file, which the filter leaves out unless they are reviewed.
+    Generated,
+    /// A binary change, hidden by the filter.
+    Binary,
 }
 
 /// A [`ReviewFilter`] with its globs compiled. `*` and `?` stop at `/`, `**`
@@ -69,6 +85,8 @@ pub struct CompiledFilter<'a> {
     /// `None` includes everything.
     include: Option<GlobList>,
     exclude: GlobList,
+    /// The filter's own exclude globs, to name the one that matched.
+    patterns: &'a [String],
     hide_binary: bool,
     /// The paths that are generated, if they are excluded.
     generated: Option<&'a BTreeSet<RepoPath>>,
@@ -81,13 +99,37 @@ impl CompiledFilter<'_> {
     }
 
     pub fn passes(&self, path: &RepoPath) -> bool {
+        self.exclusion(path).is_none()
+    }
+
+    /// The rule that leaves a non-text change out, if one does.
+    pub fn exclusion_of(&self, change: &NonTextChange) -> Option<Exclusion> {
+        self.exclusion(&change.path)
+            .or((self.hide_binary && change.kind == NonTextKind::Binary).then_some(Exclusion::Binary))
+    }
+
+    /// The first rule that leaves `path` out: the roots, then the include globs, the exclude globs
+    /// and last the generated files.
+    pub fn exclusion(&self, path: &RepoPath) -> Option<Exclusion> {
         let p = path.0.as_slice();
         let under = |root: &RepoPath| p.starts_with(&root.0) && (p.len() == root.0.len() || p[root.0.len()] == b'/');
         let text = String::from_utf8_lossy(p);
-        (self.roots.is_empty() || self.roots.iter().any(under))
-            && self.include.as_ref().is_none_or(|g| g.is_match(&text))
-            && !self.exclude.is_match(&text)
-            && !self.generated.is_some_and(|g| g.contains(path))
+        if !(self.roots.is_empty() || self.roots.iter().any(under)) {
+            return Some(Exclusion::OutsideRoots);
+        }
+        if !self.include.as_ref().is_none_or(|g| g.is_match(&text)) {
+            return Some(Exclusion::NotIncluded);
+        }
+        if self.exclude.is_match(&text) {
+            let own = self
+                .patterns
+                .iter()
+                .find(|pattern| GlobList::new(std::iter::once(pattern.as_str())).is_match(&text));
+            return Some(own.map_or(Exclusion::Generated, |pattern| Exclusion::Pattern(pattern.clone())));
+        }
+        self.generated
+            .is_some_and(|g| g.contains(path))
+            .then_some(Exclusion::Generated)
     }
 }
 
@@ -235,6 +277,29 @@ mod tests {
         assert!(compiled.passes(&path("src/top.txt")));
         assert!(!compiled.passes(&path("src/any.txt")));
         assert_eq!(filter.validate(), Ok(()));
+    }
+
+    #[test]
+    fn the_rule_that_leaves_a_path_out_is_named() {
+        let path = |p: &str| RepoPath::from(p);
+        let generated = BTreeSet::from([path("src/api.rs")]);
+        let filter = ReviewFilter {
+            roots: vec![path("src")],
+            include: vec!["*.rs".into(), "*.lock".into()],
+            exclude: vec!["**/*.snap.rs".into()],
+            ..Default::default()
+        };
+        let compiled = filter.compile(&generated);
+        let named = |p: &str| compiled.exclusion(&path(p));
+        assert_eq!(named("docs/a.rs"), Some(Exclusion::OutsideRoots));
+        assert_eq!(named("src/a.md"), Some(Exclusion::NotIncluded));
+        assert_eq!(
+            named("src/t/x.snap.rs"),
+            Some(Exclusion::Pattern("**/*.snap.rs".into()))
+        );
+        assert_eq!(named("src/Cargo.lock"), Some(Exclusion::Generated));
+        assert_eq!(named("src/api.rs"), Some(Exclusion::Generated));
+        assert_eq!(named("src/lib.rs"), None);
     }
 
     #[test]

@@ -40,7 +40,7 @@ pub struct Base {
     /// is nothing to review.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
-    pub contained_in: Option<String>,
+    pub contained_in: Option<Contained>,
     /// The branch a pull request is merged into, when that is not the repository's default branch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -48,6 +48,62 @@ pub struct Base {
     /// The working tree's `HEAD` no longer builds on the base, so what is shown includes work that
     /// came from elsewhere (a rebase, a reset).
     pub head_off_base: bool,
+}
+
+/// The branch that already holds a changeset's tip.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Contained {
+    /// The branch's short name.
+    pub branch: String,
+    /// The changeset's tip is the branch's tip: it has no commit of its own.
+    pub same_tip: bool,
+    /// The commit that brought the tip into the branch; absent when the branch only advanced past
+    /// the tip, or git cannot say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub merged_by: Option<CommitInfo>,
+}
+
+/// Why the review leaves a file out.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum ExcludedBy {
+    /// The project's filter shows it, but this review is narrowed to something else.
+    Narrowing,
+    /// Not under any of the filter's review roots.
+    OutsideRoots,
+    /// Matches none of the filter's include globs.
+    NotIncluded,
+    /// Matches this exclude glob of the filter.
+    Pattern { pattern: String },
+    /// A lockfile or a generated file.
+    Generated,
+    /// A binary change, hidden by the filter.
+    Binary,
+}
+
+/// A file left out of the review, with the lines it changes.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ExcludedFile {
+    pub path: String,
+    pub delta: LineDelta,
+}
+
+/// The files left out of the review for one reason.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ExcludedGroup {
+    pub by: ExcludedBy,
+    /// How many files, of which `files` lists the first ones.
+    pub count: u32,
+    pub delta: LineDelta,
+    pub files: Vec<ExcludedFile>,
 }
 
 /// What the changes lead to: the live working tree, or a branch's tip.
@@ -164,8 +220,16 @@ pub struct Manifest {
     pub base: Base,
     /// What the files lead to.
     pub target: Target,
+    /// The project's filter.
     pub filter: ReviewFilter,
+    /// The filter this review is narrowed to (`NarrowReview`); absent unless it is. It replaces
+    /// the project's filter until reset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub narrowing: Option<ReviewFilter>,
     pub files: Vec<FileChange>,
+    /// The files the filter leaves out, by the reason.
+    pub excluded: Vec<ExcludedGroup>,
     /// The lines `files` add and remove, together.
     pub delta: LineDelta,
     /// Completion of the whole changeset.

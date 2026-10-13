@@ -6,11 +6,14 @@ use std::slice;
 
 use vet_core::completion::{Completion, Coverage};
 use vet_core::content::{BlobId, FileDiff, LineDelta, NonTextChange, RepoPath, SnapshotDiff};
-use vet_core::filter::{CompiledFilter, ReviewFilter};
+use vet_core::filter::{CompiledFilter, Exclusion, ReviewFilter};
 
 use super::derived::Diffed;
 use super::state::{Remapped, Shown, State, View, acknowledged, find_diff, lifecycle_of, shown_items};
-use super::views::{FileStatus, FileView, ManifestView, ReviewUpdateView, ReviewView, TargetView};
+use super::views::{
+    ExcludedBy, ExcludedFile, ExcludedGroup, FileStatus, FileView, ManifestView, ReviewUpdateView, ReviewView,
+    TargetView,
+};
 use super::{LiveSession, Result, SessionError};
 use crate::changeset::{CommitId, Source};
 use crate::editor::line_count;
@@ -44,9 +47,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             lifecycle: lifecycle_of(&st),
             base: facts.base.clone(),
             target: target_view(&st.source, &st.head, &branches),
-            filter: st.filter.clone(),
+            filter: st.project_filter().clone(),
+            narrowing: st.narrowing(),
             completion: changes.remapped.completion,
             delta: files.iter().map(|f| f.delta).sum(),
+            excluded: excluded_groups(&changes.diffed, &st),
             files,
             degraded: self.degraded_for(&st.source),
             interdiff: None,
@@ -103,6 +108,57 @@ pub(super) fn target_view(source: &Source, tip: &CommitId, branches: &[BranchInf
             head: None,
         },
     }
+}
+
+/// How many files of a group the manifest lists; the rest are counted.
+const EXCLUDED_LISTED: usize = 500;
+
+/// The files of `changes` that the review leaves out, by the reason, with the lines each changes.
+pub(super) fn excluded_groups(changes: &Diffed, st: &State) -> Vec<ExcludedGroup> {
+    let narrowed = st.filter.compile(&changes.diff.generated);
+    let project = st.project.as_ref().map(|p| p.compile(&changes.diff.generated));
+    // Why the review leaves a file out, given the rules that the filter in force and the project's
+    // name for it: the project's own rule wins over the narrowing.
+    let why = |named: Option<Exclusion>, project_named: Option<Exclusion>| {
+        if project.is_none() {
+            named.map(ExcludedBy::Rule)
+        } else {
+            project_named
+                .map(ExcludedBy::Rule)
+                .or(named.map(|_| ExcludedBy::Narrowing))
+        }
+    };
+    let mut by_path: BTreeMap<&RepoPath, (ExcludedBy, LineDelta)> = BTreeMap::new();
+    for d in &changes.diff.files {
+        let project_named = project.as_ref().and_then(|p| p.exclusion(d.path()));
+        if let Some(by) = why(narrowed.exclusion(d.path()), project_named) {
+            by_path.insert(d.path(), (by, LineDelta::of(&d.hunks)));
+        }
+    }
+    for n in &changes.diff.non_text {
+        let project_named = project.as_ref().and_then(|p| p.exclusion_of(n));
+        if let Some(by) = why(narrowed.exclusion_of(n), project_named) {
+            by_path.entry(&n.path).or_insert((by, LineDelta::default()));
+        }
+    }
+    let mut groups: BTreeMap<ExcludedBy, ExcludedGroup> = BTreeMap::new();
+    for (path, (by, delta)) in by_path {
+        let group = groups.entry(by.clone()).or_insert_with(|| ExcludedGroup {
+            by,
+            count: 0,
+            delta: LineDelta::default(),
+            files: Vec::new(),
+        });
+        group.count += 1;
+        group.delta = [group.delta, delta].into_iter().sum();
+        if group.files.len() < EXCLUDED_LISTED {
+            group.files.push(ExcludedFile {
+                path: path.clone(),
+                delta,
+            });
+        }
+    }
+    groups.into_values().collect()
 }
 
 /// The files of `changes` the filter shows. `state` gives a file's review state and completion

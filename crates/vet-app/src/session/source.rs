@@ -117,7 +117,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let was_parked = st.parked().contains_key(&source);
         let mut incoming = match st.parked().remove(&source) {
             Some(state) => state,
-            None => Arc::new(self.enter(&writes, &source, &st.filter).await?),
+            None => Arc::new(self.enter(&writes, &source, st.project_filter()).await?),
         };
         if let Err(e) = self.observe_in(&writes, Arc::make_mut(&mut incoming)).await {
             if was_parked {
@@ -126,8 +126,10 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             return Err(e);
         }
         let tree = Arc::make_mut(&mut incoming);
-        // The filter is the project's, and was perhaps changed while this one was off view.
-        tree.filter = st.filter.clone();
+        // The filter is the project's, and was perhaps changed while this one was off view; a
+        // narrowing ends when its changeset leaves the view.
+        tree.filter = st.project_filter().clone();
+        tree.project = None;
         tree.revision = st.revision.max(tree.revision) + 1;
         let outgoing = st.replace(incoming);
         st.parked().insert(outgoing.source.clone(), outgoing);
@@ -257,6 +259,7 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             changeset,
             review: None,
             filter: filter.clone(),
+            project: None,
             base,
             base_choice,
             base_commit,

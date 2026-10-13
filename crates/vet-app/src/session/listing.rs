@@ -88,6 +88,7 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
             Some(reference) => git.resolve_commit(&reference).await.ok(),
             None => None,
         };
+        let default_branch = git.default_branch().await?;
         let all = git.branches().await?;
         let (review, open_threads) = self.row_state(&Source::WorkingTree).await?;
         let mut rows = vec![ChangesetRow {
@@ -104,6 +105,10 @@ impl<G: GitRepo + Sync, S: LiveStore + Sync> LiveSession<G, S> {
         let now = (self.clock)();
         let (mut local, mut remote) = (Vec::new(), Vec::new());
         for branch in all {
+            // The default branch holds what the others are compared with: it has nothing to review.
+            if default_branch.as_deref() == Some(branch.name.as_str()) {
+                continue;
+            }
             let source = Source::Branch {
                 name: branch.name.clone(),
             };

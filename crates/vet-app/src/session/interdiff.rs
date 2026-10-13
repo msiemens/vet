@@ -12,7 +12,7 @@ use vet_core::marking::Region;
 use vet_core::review::{ReviewedSpan, Side};
 
 use super::derived::{Compared, Interdiff};
-use super::manifest::{file_views, target_view};
+use super::manifest::{excluded_groups, file_views, target_view};
 use super::state::{Interdiffed, Shown, State, ack_of, find_diff, find_non_text, lifecycle_of, shown_items};
 use super::views::{InterdiffView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
@@ -123,9 +123,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             lifecycle: lifecycle_of(st),
             base,
             target: target_view(&st.source, &st.head, &branches),
-            filter: st.filter.clone(),
+            filter: st.project_filter().clone(),
+            narrowing: st.narrowing(),
             completion: files.iter().map(|f| f.completion).sum(),
             delta: files.iter().map(|f| f.delta).sum(),
+            excluded: excluded_groups(&id.compared.diffed, st),
             files,
             degraded: self.degraded_for(&st.source),
             lens: facts.lens,

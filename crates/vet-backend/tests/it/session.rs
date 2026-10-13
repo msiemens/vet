@@ -13,8 +13,8 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use vet_app::ports::Store;
 use vet_backend::{Config, Orchestrator, open_store};
 use vet_protocol::{
-    AnchorState, BlobContent, ChangesetKey, Completion, DirEntry, DirEntryKind, Divergence, Event, FileStatus,
-    HunkState, LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, ProjectId, Request, Response,
+    AnchorState, BlobContent, ChangesetKey, Completion, DirEntry, DirEntryKind, Divergence, Event, ExcludedBy,
+    FileStatus, HunkState, LineDelta, LineLocation, Manifest, NoTextReason, NonTextKind, ProjectId, Request, Response,
     ReviewFilter, ReviewInfo, ReviewUpdate, RowReview, ServerMessage, Side, TextContent, Thread, ThreadStatus,
     ThreadTarget,
 };
@@ -1652,13 +1652,8 @@ async fn every_local_branch_is_listed_however_old_and_whatever_its_name() {
     names.sort();
     assert_eq!(
         names,
-        [
-            "feature/rework-docs",
-            "main",
-            "merged",
-            "ostafen-master",
-            "patch/1/deep"
-        ]
+        ["feature/rework-docs", "merged", "ostafen-master", "patch/1/deep"],
+        "every local branch but the default one"
     );
 }
 
@@ -1818,4 +1813,261 @@ async fn lockfiles_and_generated_files_are_excluded_until_the_filter_reviews_the
     assert_eq!(client.settled().await, 1);
     let m = client.manifest(project).await;
     assert_eq!((m.files.len(), m.excluded_lines), (13, 0));
+}
+
+fn excluded(m: &Manifest) -> Vec<(ExcludedBy, u32, Vec<&str>)> {
+    (m.excluded.iter())
+        .map(|g| (g.by.clone(), g.count, g.files.iter().map(|f| f.path.as_str()).collect()))
+        .collect()
+}
+
+#[tokio::test]
+async fn the_files_the_filter_leaves_out_are_listed_by_the_rule_that_does() {
+    let fx = fixture(
+        &[
+            ("src/a.rs", "1\n"),
+            ("docs/b.md", "1\n"),
+            ("tests/snap/x.snap", "1\n"),
+            ("Cargo.lock", "1\n"),
+            ("other/c.rs", "1\n"),
+        ],
+        &[
+            ("src/a.rs", "2\n"),
+            ("docs/b.md", "2\n3\n"),
+            ("tests/snap/x.snap", "2\n"),
+            ("Cargo.lock", "2\n"),
+            ("other/c.rs", "2\n"),
+        ],
+    )
+    .await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    let filter = ReviewFilter {
+        roots: vec!["src".into(), "tests".into()],
+        exclude: vec!["**/*.snap".into()],
+        ..Default::default()
+    };
+    client.set_filter(project, &filter).await.unwrap();
+    client.settled().await;
+
+    let m = client.manifest(project).await;
+    assert_eq!(paths(&m), ["src/a.rs"]);
+    assert_eq!(
+        excluded(&m),
+        [
+            (
+                ExcludedBy::OutsideRoots,
+                3,
+                vec!["Cargo.lock", "docs/b.md", "other/c.rs"]
+            ),
+            (
+                ExcludedBy::Pattern {
+                    pattern: "**/*.snap".into()
+                },
+                1,
+                vec!["tests/snap/x.snap"]
+            ),
+        ]
+    );
+    let docs = m.excluded[0].files.iter().find(|f| f.path == "docs/b.md").unwrap();
+    assert_eq!(docs.delta, LineDelta { added: 2, removed: 1 });
+}
+
+#[tokio::test]
+async fn a_review_narrowed_to_something_else_lists_the_rest_as_left_out_by_the_narrowing() {
+    let fx = fixture(
+        &[("src/a.rs", "1\n"), ("lib/b.rs", "1\n"), ("docs/c.md", "1\n")],
+        &[("src/a.rs", "2\n"), ("lib/b.rs", "2\n"), ("docs/c.md", "2\n")],
+    )
+    .await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    let filter = ReviewFilter {
+        exclude: vec!["docs/**".into()],
+        ..Default::default()
+    };
+    client.set_filter(project, &filter).await.unwrap();
+    client.settled().await;
+
+    let narrowing = ReviewFilter {
+        roots: vec!["src".into()],
+        exclude: vec!["docs/**".into()],
+        ..Default::default()
+    };
+    let call = Request::NarrowReview {
+        project,
+        filter: Some(narrowing.clone()),
+    };
+    assert!(matches!(client.call(call).await.unwrap(), Response::Done));
+    client.settled().await;
+    let m = client.manifest(project).await;
+    assert_eq!(paths(&m), ["src/a.rs"]);
+    assert_eq!((&m.filter, m.narrowing.as_ref()), (&filter, Some(&narrowing)));
+    assert_eq!(
+        excluded(&m),
+        [
+            (ExcludedBy::Narrowing, 1, vec!["lib/b.rs"]),
+            (
+                ExcludedBy::Pattern {
+                    pattern: "docs/**".into()
+                },
+                1,
+                vec!["docs/c.md"]
+            ),
+        ],
+        "the project's own rule is named, not the narrowing"
+    );
+
+    client
+        .call(Request::NarrowReview { project, filter: None })
+        .await
+        .unwrap();
+    client.settled().await;
+    let m = client.manifest(project).await;
+    assert_eq!((paths(&m), m.narrowing.is_none()), (vec!["lib/b.rs", "src/a.rs"], true));
+
+    // A narrowing ends with an edit of the project's filter, which is not the narrowing's.
+    client
+        .call(Request::NarrowReview {
+            project,
+            filter: Some(narrowing),
+        })
+        .await
+        .unwrap();
+    client.settled().await;
+    let widened = ReviewFilter::default();
+    client.set_filter(project, &widened).await.unwrap();
+    client.settled().await;
+    let m = client.manifest(project).await;
+    assert_eq!((m.narrowing, m.files.len()), (None, 3));
+}
+
+#[tokio::test]
+async fn excluding_a_path_while_narrowed_keeps_the_narrowing_out_of_the_project_filter() {
+    let fx = fixture(
+        &[("src/a.rs", "1\n"), ("lib/b.rs", "1\n")],
+        &[("src/a.rs", "2\n"), ("lib/b.rs", "2\n")],
+    )
+    .await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    let narrowing = ReviewFilter {
+        roots: vec!["src".into()],
+        ..Default::default()
+    };
+    client
+        .call(Request::NarrowReview {
+            project,
+            filter: Some(narrowing),
+        })
+        .await
+        .unwrap();
+    client.settled().await;
+    client
+        .call(Request::ExcludePath {
+            project,
+            path: "lib/b.rs".into(),
+            directory: false,
+        })
+        .await
+        .unwrap();
+    client.settled().await;
+
+    let m = client.manifest(project).await;
+    assert_eq!(m.filter.roots, Vec::<String>::new());
+    assert_eq!(m.filter.exclude, ["/lib/b.rs"]);
+}
+
+#[tokio::test]
+async fn a_branch_the_default_branch_holds_says_which_merge_brought_it_in() {
+    let fx = fixture(&[("a.txt", "1\n")], &[]).await;
+    let p = fx.repo.path();
+    git(p, &["checkout", "-q", "-b", "feature"]);
+    write(p, "b.txt", "from the branch\n");
+    git(p, &["add", "b.txt"]);
+    git(p, &["commit", "-q", "-m", "feature"]);
+    git(p, &["checkout", "-q", "main"]);
+    write(p, "c.txt", "from main\n");
+    git(p, &["add", "c.txt"]);
+    git(p, &["commit", "-q", "-m", "main moves on"]);
+    git(
+        p,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "feature",
+            "-m",
+            "Merge pull request #7 from feature",
+        ],
+    );
+    write(p, "d.txt", "later\n");
+    git(p, &["add", "d.txt"]);
+    git(p, &["commit", "-q", "-m", "after the merge"]);
+    let merge = git(p, &["rev-parse", "HEAD~1"]);
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, p).await;
+    client.open_branch(project, "feature").await;
+
+    let m = client.manifest(project).await;
+    assert!(m.files.is_empty());
+    let contained = m.base.contained_in.expect("the default branch holds the tip");
+    assert_eq!((contained.branch.as_str(), contained.same_tip), ("main", false));
+    let by = contained.merged_by.expect("a merge commit brought it in");
+    assert_eq!(
+        (by.id, by.subject),
+        (merge, "Merge pull request #7 from feature".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn a_branch_that_was_fast_forwarded_into_the_default_branch_has_no_merge_to_name() {
+    let fx = fixture(&[("a.txt", "1\n")], &[]).await;
+    let p = fx.repo.path();
+    git(p, &["checkout", "-q", "-b", "feature"]);
+    write(p, "b.txt", "from the branch\n");
+    git(p, &["add", "b.txt"]);
+    git(p, &["commit", "-q", "-m", "feature"]);
+    git(p, &["checkout", "-q", "main"]);
+    git(p, &["merge", "-q", "--ff-only", "feature"]);
+    write(p, "d.txt", "later\n");
+    git(p, &["add", "d.txt"]);
+    git(p, &["commit", "-q", "-m", "after the merge"]);
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, p).await;
+    client.open_branch(project, "feature").await;
+
+    let contained = client.manifest(project).await.base.contained_in.unwrap();
+    assert_eq!((contained.same_tip, contained.merged_by), (false, None));
+}
+
+#[tokio::test]
+async fn a_branch_at_the_default_branchs_tip_has_no_commits_of_its_own() {
+    let fx = fixture(&[("a.txt", "1\n")], &[]).await;
+    let p = fx.repo.path();
+    git(p, &["branch", "feature"]);
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, p).await;
+    client.open_branch(project, "feature").await;
+
+    let contained = client.manifest(project).await.base.contained_in.unwrap();
+    assert_eq!((contained.branch.as_str(), contained.same_tip), ("main", true));
+}
+
+#[tokio::test]
+async fn the_default_branch_is_not_offered_as_a_changeset() {
+    let fx = fixture_with_feature().await;
+    let client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    let Response::Changesets { rows, .. } = client.call(Request::ListChangesets { project }).await.unwrap() else {
+        panic!("not a list")
+    };
+    let keys: Vec<_> = rows.iter().map(|r| r.key.clone()).collect();
+    assert_eq!(
+        keys,
+        [
+            ChangesetKey::WorkingTree,
+            ChangesetKey::Branch { name: "feature".into() }
+        ]
+    );
 }

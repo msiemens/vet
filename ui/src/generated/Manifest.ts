@@ -2,6 +2,7 @@
 import type { AnalysisTrust } from "./AnalysisTrust";
 import type { Base } from "./Base";
 import type { Completion } from "./Completion";
+import type { ExcludedGroup } from "./ExcludedGroup";
 import type { FileChange } from "./FileChange";
 import type { InterdiffInfo } from "./InterdiffInfo";
 import type { Lens } from "./Lens";
@@ -33,7 +34,20 @@ base: Base,
 /**
  * What the files lead to.
  */
-target: Target, filter: ReviewFilter, files: Array<FileChange>, 
+target: Target, 
+/**
+ * The project's filter.
+ */
+filter: ReviewFilter, 
+/**
+ * The filter this review is narrowed to (`NarrowReview`); absent unless it is. It replaces
+ * the project's filter until reset.
+ */
+narrowing?: ReviewFilter, files: Array<FileChange>, 
+/**
+ * The files the filter leaves out, by the reason.
+ */
+excluded: Array<ExcludedGroup>, 
 /**
  * The lines `files` add and remove, together.
  */

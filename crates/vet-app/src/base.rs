@@ -69,6 +69,39 @@ pub fn contained_in(choice: &BaseChoice, base: &CommitId, tip: &CommitId, own: O
     }
 }
 
+/// A reference as people name the branch: `refs/heads/main` is `main`, `refs/remotes/origin/main`
+/// is `origin/main`.
+pub fn short_reference(reference: &str) -> String {
+    let name = reference
+        .strip_prefix("refs/heads/")
+        .or_else(|| reference.strip_prefix("refs/remotes/"))
+        .unwrap_or(reference);
+    name.to_owned()
+}
+
+/// The commit that brought `tip` into the first-parent history of `into`: the oldest commit of it
+/// that has `tip` among its ancestors. `None` when `into` merely advanced past `tip` (the commit
+/// after `tip` is its child, a fast-forward) or when `into` does not contain `tip`.
+pub async fn merging_commit<G: History>(git: &G, tip: &CommitId, into: &CommitId) -> Result<Option<CommitId>, String> {
+    // Along the history, `tip` is reachable from a commit exactly when it is not older than the merge.
+    let history = git.first_parent_range(tip, into).await.map_err(|e| e.0)?;
+    let (mut low, mut high) = (0, history.len());
+    while low < high {
+        let mid = (low + high) / 2;
+        let reaches = git.commits_behind(tip, &history[mid], 1).await.map_err(|e| e.0)? == 0;
+        if reaches {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    let Some(merge) = history.get(low) else {
+        return Ok(None);
+    };
+    let detail = git.commit_detail(merge).await.map_err(|e| e.0)?;
+    Ok((detail.parents.first() != Some(tip)).then(|| merge.clone()))
+}
+
 /// Whether `HEAD` no longer builds on `base`: `base` is neither `HEAD` nor one of its ancestors.
 /// A `HEAD` that cannot be compared with it has not been seen to leave.
 pub async fn head_left<G: History>(git: &G, base: &CommitId) -> bool {

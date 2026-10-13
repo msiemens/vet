@@ -3352,14 +3352,13 @@ async fn the_list_has_the_working_tree_first_then_every_branch_the_most_recent_f
     let titles: Vec<_> = list.rows.iter().map(|r| r.title.as_str()).collect();
     assert_eq!(
         titles,
-        ["Working tree", "main", "merged", "feature", "older", "stale"],
-        "branches with nothing of their own or long untouched are listed too; the most recent first"
+        ["Working tree", "merged", "feature", "older", "stale"],
+        "branches with nothing of their own or long untouched are listed too, the default branch is not; the most recent first"
     );
     assert_eq!(list.on_view, Source::WorkingTree);
-    let feature = &list.rows[3];
+    let feature = &list.rows[2];
     assert_eq!(feature.divergence, Some(Divergence { ahead: 1, behind: 1 }));
     assert_eq!(feature.last_commit, Some(-DAY));
-    assert!(list.rows[1].checked_out);
     assert_eq!(
         (list.rows[0].author.as_deref(), feature.author.as_deref()),
         (None, Some("Ann")),
@@ -3422,10 +3421,7 @@ async fn the_list_names_the_branch_of_the_working_tree_and_counts_the_open_threa
         .unwrap();
     let after = fx.session.changesets().await.unwrap();
     let count_of = |title: &str| after.rows.iter().find(|r| r.title == title).unwrap().open_threads;
-    assert_eq!(
-        (count_of("Working tree"), count_of("main"), count_of("feature")),
-        (1, 0, 0)
-    );
+    assert_eq!((count_of("Working tree"), count_of("feature")), (1, 0));
     assert!(after.rows.iter().skip(1).all(|r| r.branch.is_none()));
 }
 

@@ -300,7 +300,7 @@
       <p class="empty">Loading {project}…</p>
     {:else if containedIn && tabs.active === CHANGES}
       <p class="empty">
-        Nothing to review: {containedIn} already contains {changeset.facts?.target.branch ?? "HEAD"}
+        Nothing to review: {containedIn.branch} already contains {changeset.facts?.target.branch ?? "HEAD"}
       </p>
     {/if}
     {#each tabs.open as id (id)}

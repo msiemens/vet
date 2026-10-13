@@ -11,7 +11,7 @@ use vet_core::completion::Completion;
 use vet_core::content::{LineDelta, SnapshotId, SnapshotStatus};
 
 use super::derived::{CommitUnit, CommitsBetween, UnitKind};
-use super::manifest::{file_completion, file_views, review_of, target_view, update_from};
+use super::manifest::{excluded_groups, file_completion, file_views, review_of, target_view, update_from};
 use super::state::{Commits, Remapped, State, View, acknowledged, lifecycle_of};
 use super::views::{BaseView, ManifestView, ReviewUpdateView, ReviewView};
 use super::{LiveSession, Result, SessionError};
@@ -209,9 +209,11 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             lifecycle: lifecycle_of(st),
             base,
             target: target_view(&st.source, &st.head, &branches),
-            filter: st.filter.clone(),
+            filter: st.project_filter().clone(),
+            narrowing: st.narrowing(),
             completion: remapped.completion,
             delta: files.iter().map(|f| f.delta).sum(),
+            excluded: excluded_groups(&unit.diffed, st),
             files,
             degraded: None,
             interdiff: None,

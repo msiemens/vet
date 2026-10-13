@@ -3,7 +3,7 @@
 
 use vet_core::completion::{Completion, HunkState};
 use vet_core::content::{FileEntry, Hunk, LineDelta, NonTextKind, RepoPath, SnapshotId};
-use vet_core::filter::ReviewFilter;
+use vet_core::filter::{Exclusion, ReviewFilter};
 
 use crate::changeset::{CommitId, Lens, Source};
 use crate::ports::{CommitInfo, Degraded};
@@ -81,13 +81,51 @@ pub struct FileView {
     pub completion: Completion,
 }
 
+/// The branch that already holds a changeset's tip, so the changeset is empty.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Contained {
+    /// The branch's short name.
+    pub branch: String,
+    /// The changeset's tip is the branch's tip: the changeset has no commit of its own.
+    pub same_tip: bool,
+    /// The commit that brought the tip into the branch; none when the branch only advanced past
+    /// the tip, or git cannot say.
+    pub merged_by: Option<CommitInfo>,
+}
+
+/// A file the review filter leaves out of a view that shows no file.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ExcludedFile {
+    pub path: RepoPath,
+    pub delta: LineDelta,
+}
+
+/// Why the review does not show a file.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum ExcludedBy {
+    /// The project's filter shows it, but this review is narrowed to something else.
+    Narrowing,
+    /// A rule of the project's filter.
+    Rule(Exclusion),
+}
+
+/// The files left out for one reason.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ExcludedGroup {
+    pub by: ExcludedBy,
+    /// How many files the rule leaves out, of which `files` lists the first ones.
+    pub count: u32,
+    pub delta: LineDelta,
+    pub files: Vec<ExcludedFile>,
+}
+
 /// What a view is compared against, with what to say of it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct BaseView {
     pub commit: CommitInfo,
-    /// The branch the base was taken from when it already contains the changeset's tip, so the
+    /// Set when the branch the base was taken from already contains the changeset's tip, so the
     /// changeset is empty.
-    pub contained_in: Option<String>,
+    pub contained_in: Option<Contained>,
     /// The branch a pull request is merged into, when that is not the repository's default one.
     pub into: Option<String>,
     /// The working tree's `HEAD` no longer builds on the base, so what is shown includes work
@@ -142,8 +180,13 @@ pub struct ManifestView {
     pub lifecycle: Lifecycle,
     pub base: BaseView,
     pub target: TargetView,
+    /// The project's filter.
     pub filter: ReviewFilter,
+    /// The filter this review is narrowed to, which replaces the project's while it is set.
+    pub narrowing: Option<ReviewFilter>,
     pub files: Vec<FileView>,
+    /// The files the filter leaves out, by the reason.
+    pub excluded: Vec<ExcludedGroup>,
     /// The lines the shown files add and remove.
     pub delta: LineDelta,
     pub completion: Completion,

@@ -222,7 +222,10 @@ pub(super) struct State {
     pub(super) changeset: Option<ChangesetId>,
     /// `None` while browsing.
     pub(super) review: Option<OpenReview>,
+    /// The filter in force: the project's, or while the review is narrowed the narrowing.
     pub(super) filter: ReviewFilter,
+    /// The project's filter while the review is narrowed; kept in memory only.
+    pub(super) project: Option<ReviewFilter>,
     /// The snapshots are shared: a command copies the state it changes, and a tree of 100k
     /// entries is not copied with it.
     pub(super) base: Arc<Snapshot>,
@@ -247,6 +250,16 @@ pub(super) struct State {
 }
 
 impl State {
+    /// The repository's filter, whether or not this review is narrowed.
+    pub(super) fn project_filter(&self) -> &ReviewFilter {
+        self.project.as_ref().unwrap_or(&self.filter)
+    }
+
+    /// The filter this review is narrowed to, if it is.
+    pub(super) fn narrowing(&self) -> Option<ReviewFilter> {
+        self.project.as_ref().map(|_| self.filter.clone())
+    }
+
     /// The changes of the current revision, which the caller made sure are computed.
     pub(super) fn changes(&self) -> &Changes {
         self.changes.as_ref().expect("computed")

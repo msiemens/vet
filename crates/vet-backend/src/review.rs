@@ -289,6 +289,21 @@ impl Orchestrator {
         Ok(Response::Done)
     }
 
+    pub(crate) async fn narrow_review(
+        &self,
+        project: ProjectId,
+        filter: Option<vet_protocol::ReviewFilter>,
+    ) -> Result<Response, String> {
+        let open = self.ready(project).await?;
+        let revision = open
+            .session
+            .narrow(filter.map(mapping::core_filter))
+            .await
+            .map_err(message)?;
+        settled(&open.subscribers, project, revision);
+        Ok(Response::Done)
+    }
+
     pub(crate) async fn exclude_path(
         &self,
         project: ProjectId,

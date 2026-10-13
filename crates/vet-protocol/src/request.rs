@@ -448,6 +448,15 @@ pub enum Request {
         project: ProjectId,
         filter: ReviewFilter,
     },
+    /// Narrows the review on view to `filter`, which replaces the project's filter for this
+    /// review only (`None` ends the narrowing). Nothing is stored: the narrowing ends with a
+    /// change to the project's filter and when another changeset comes on view. Announces like
+    /// `SetProjectFilter`. Fails with a message fit to show if a glob is invalid, and then
+    /// changes nothing. Answers with `Response::Done`.
+    NarrowReview {
+        project: ProjectId,
+        filter: Option<ReviewFilter>,
+    },
     /// Marks the repository `project` has open as trusted, or not (§7.5): a project setting, as
     /// the review filter is. A trusted project's changesets are analysed with restores and
     /// language servers that execute project code (pull requests from a fork excepted).

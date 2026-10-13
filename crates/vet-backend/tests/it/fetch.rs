@@ -227,20 +227,15 @@ async fn a_branch_that_exists_only_on_the_remote_is_a_changeset_compared_from_wh
     let head = remote.rev("HEAD");
 
     let mut rows = listed(&client, project).await;
-    let remote_rows = rows.split_off(4);
+    let remote_rows = rows.split_off(3);
     rows[1..].sort_by_key(|k| format!("{k:?}"));
     assert_eq!(
         (rows, remote_rows),
         (
-            vec![
-                ChangesetKey::WorkingTree,
-                branch_key("feature/y"),
-                branch_key("main"),
-                branch_key("mine")
-            ],
+            vec![ChangesetKey::WorkingTree, branch_key("feature/y"), branch_key("mine")],
             vec![branch_key("origin/feature/x")]
         ),
-        "local branches first; the remote one a local branch follows is listed once; origin/main has nothing of its own"
+        "local branches first; the remote one a local branch follows is listed once; the default branch is not offered"
     );
 
     open_changeset(&client, project, branch_key("origin/feature/x")).await;

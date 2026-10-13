@@ -163,7 +163,9 @@ pub fn effect(request: &Request) -> Effect {
         | Request::ToggleFileSeen { .. }
         | Request::SetFilesSeen { .. }
         | Request::ReconfirmFile { .. } => tested(&[ReviewChanged]),
-        Request::SetProjectFilter { .. } | Request::ExcludePath { .. } => tested(&[SnapshotSettled]),
+        Request::SetProjectFilter { .. } | Request::ExcludePath { .. } | Request::NarrowReview { .. } => {
+            tested(&[SnapshotSettled])
+        }
         Request::SetProjectTrusted { .. } => tested(&[TargetChanged, ServersChanged]),
         Request::TrustPullRequest { .. } => untested(&[TargetChanged, ServersChanged], NEEDS_A_PLATFORM),
         // When a remote was fetched. A pull request on view whose head moved settles
@@ -490,6 +492,7 @@ mod tests {
                 project,
                 filter: ReviewFilter::default(),
             },
+            Request::NarrowReview { project, filter: None },
             Request::SetProjectTrusted { project, trusted: true },
             Request::TrustPullRequest { project },
             Request::ExcludePath {
@@ -927,6 +930,16 @@ mod tests {
             ..ReviewFilter::default()
         };
         world.drive(Request::SetProjectFilter { project, filter }).await;
+        let narrowing = ReviewFilter {
+            roots: vec!["src".into()],
+            ..ReviewFilter::default()
+        };
+        world
+            .drive(Request::NarrowReview {
+                project,
+                filter: Some(narrowing),
+            })
+            .await;
         world.drive(Request::SetProjectTrusted { project, trusted: true }).await;
         world
             .drive(Request::ExcludePath {
