@@ -453,6 +453,16 @@ export class Backend {
     expect(await this.conn.request({ type: "setProjectFilter", project: this.pid, filter }), "done");
   }
 
+  /** Marks the open repository trusted or not; every subscriber, this one included, then gets `targetChanged` and `serversChanged`. */
+  async setProjectTrusted(trusted: boolean): Promise<void> {
+    expect(await this.conn.request({ type: "setProjectTrusted", project: this.pid, trusted }), "done");
+  }
+
+  /** Trusts the pull request on view at its current head; announced like `setProjectTrusted`. */
+  async trustPullRequest(): Promise<void> {
+    expect(await this.conn.request({ type: "trustPullRequest", project: this.pid }), "done");
+  }
+
   /** Excludes a file, or with `directory` everything below a folder, from the review; every subscriber, this one included, then gets `snapshotSettled`. */
   async excludePath(path: string, directory: boolean): Promise<void> {
     expect(await this.conn.request({ type: "excludePath", project: this.pid, path, directory }), "done");

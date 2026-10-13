@@ -20,6 +20,8 @@
     filter,
     excluded,
     onfilter,
+    trusted,
+    ontrusted,
     page = $bindable("general"),
   }: {
     /** The page shown; the viewer's choice of another is passed back. */
@@ -34,6 +36,10 @@
     excluded: { lines: number; items: number };
     /** Saves the repository's review filter; resolves with the backend's message if it refused it. */
     onfilter: (filter: ReviewFilter) => Promise<string | undefined>;
+    /** Whether the open repository is marked trusted; none without an open repository. */
+    trusted?: boolean;
+    /** Marks the repository trusted or not. */
+    ontrusted: (trusted: boolean) => void;
   } = $props();
 
   // A Backends page is not listed: SPEC names no setting of its own for it.
@@ -64,7 +70,7 @@
         {:else if page === "keymap"}
           <KeymapPage />
         {:else if page === "review"}
-          <ProjectPage {filter} {excluded} onsave={onfilter} />
+          <ProjectPage {filter} {excluded} onsave={onfilter} {trusted} {ontrusted} />
         {:else if page === "servers"}
           <ServersPage />
         {:else if page === "accounts"}

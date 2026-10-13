@@ -3,6 +3,7 @@
 // shape; only `changeset.svelte.ts` and the backend client handle them. Everything else reads these
 // types, so a snapshot cannot be taken for the live review state.
 
+import type { AnalysisTrust } from "../generated/AnalysisTrust";
 import type { Base } from "../generated/Base";
 import type { Completion } from "../generated/Completion";
 import type { FileChange } from "../generated/FileChange";
@@ -49,6 +50,8 @@ export interface ChangesetFacts {
   readonly target: Target;
   readonly review: ReviewInfo;
   readonly filter: ReviewFilter;
+  /** What analysis of the changeset may execute: the project's trust, and a pull request's own. */
+  readonly trust: AnalysisTrust;
   readonly lens: Lens;
   readonly commits: number;
   /** How many files the changeset changes. */
@@ -108,6 +111,7 @@ export function partsOf(manifest: Manifest, commit: number | undefined): Parts {
       target: manifest.target,
       review: manifest.review,
       filter: manifest.filter,
+      trust: manifest.trust,
       lens: manifest.lens,
       commits: manifest.commits,
       files: manifest.changesetFiles,

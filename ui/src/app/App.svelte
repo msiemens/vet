@@ -536,7 +536,12 @@
     refreshing={queue.refreshing}
   />
 
-  <Banners degraded={changeset.layout?.degraded} failures={changeset.restoreFailures} />
+  <Banners
+    degraded={changeset.layout?.degraded}
+    failures={changeset.restoreFailures}
+    pullRequest={changeset.facts?.trust.pullRequest}
+    ontrust={() => void changeset.trustPullRequest()}
+  />
 
   <div class="body">
     {#if screen === "queue"}
@@ -610,6 +615,8 @@
     filter={session.repo ? changeset.facts?.filter : undefined}
     excluded={{ lines: changeset.layout?.excludedLines ?? 0, items: changeset.layout?.excludedItems ?? 0 }}
     onfilter={(f) => changeset.setFilter(f)}
+    trusted={session.repo ? changeset.facts?.trust.project : undefined}
+    ontrusted={(trusted) => void changeset.setProjectTrusted(trusted)}
   />
 {:else if dialog === "about"}
   <AboutDialog onclose={() => (dialog = undefined)} />

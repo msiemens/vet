@@ -6,10 +6,13 @@
     message,
     ondismiss,
     details,
+    action,
   }: {
     message: string;
     ondismiss: () => void;
     details?: Snippet;
+    /** A button next to the message. */
+    action?: { label: string; onclick: () => void };
   } = $props();
 
   let expanded = $state(false);
@@ -18,6 +21,9 @@
 <div class="banner" role="status">
   <div class="line">
     <span>{message}</span>
+    {#if action}
+      <button class="flat" type="button" onclick={action.onclick}>{action.label}</button>
+    {/if}
     {#if details}
       <button class="flat" type="button" aria-expanded={expanded} onclick={() => (expanded = !expanded)}>
         {expanded ? "Hide details" : "Details"}

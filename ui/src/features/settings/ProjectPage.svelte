@@ -6,7 +6,13 @@
     filter,
     excluded,
     onsave,
+    trusted,
+    ontrusted,
   }: {
+    /** Whether the repository is marked trusted. */
+    trusted?: boolean;
+    /** Marks the repository trusted or not. */
+    ontrusted: (trusted: boolean) => void;
     /** The repository's filter, as the manifest carries it; undefined without an open repository. */
     filter: ReviewFilter | undefined;
     /** Changes the filter currently excludes; the backend computes them. */
@@ -27,6 +33,14 @@
   <p class="empty">Open a repository to edit its review filter.</p>
 {:else}
   <form onsubmit={(e) => e.preventDefault()}>
+    <label class="check"
+      ><input type="checkbox" checked={trusted} onchange={(e) => ontrusted(e.currentTarget.checked)} />Trust this
+      project</label
+    >
+    <p class="hint">
+      Dependencies of its changesets are installed with their install scripts, and language servers may run its code, as
+      for your own. A pull request from a fork still needs to be trusted on its own.
+    </p>
     <p class="hint">
       What a review shows and counts in this repository. It applies to every changeset of it and never changes review
       state.

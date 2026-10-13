@@ -577,6 +577,24 @@ class ChangesetStore implements ViewSource {
     }
   }
 
+  /** Marks the repository trusted or not. The backend then pushes `targetChanged`, which fetches the manifest that says so. */
+  async setProjectTrusted(trusted: boolean) {
+    try {
+      await session.connected().setProjectTrusted(trusted);
+    } catch (error) {
+      session.notice = errorText(error);
+    }
+  }
+
+  /** Trusts the pull request on view at its current head; announced like `setProjectTrusted`. */
+  async trustPullRequest() {
+    try {
+      await session.connected().trustPullRequest();
+    } catch (error) {
+      session.notice = errorText(error);
+    }
+  }
+
   /** Excludes `path` (a file, or a folder with `dir`) from the review. As with `setFilter`, the backend then pushes `snapshotSettled`. */
   async excludePath(path: string, dir: boolean) {
     try {
