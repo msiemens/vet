@@ -108,6 +108,8 @@ export type ChangesetSource = Pick<
 
 const NO_HOVER = { text: "", code: [] };
 
+const FIND_TYPING_MS = 120;
+
 /** The tabs and positions are saved this long after the last change. */
 const SAVE_AFTER_MS = 400;
 
@@ -686,6 +688,7 @@ export class ReviewController {
   closeFind() {
     const id = this.tabs.active;
     this.landing = undefined;
+    clearTimeout(this.findTyping);
     this.finder(id, this.findPane(id))?.selectFound();
     this.find.open.delete(id);
     this.finder(id, "diff")?.find(undefined);
@@ -702,8 +705,16 @@ export class ReviewController {
       this.find.wrapped = { text: delta > 0 ? "Wrapped to the start" : "Wrapped to the end", n: ++this.wraps };
   }
 
+  /** The query is searched this long after the last key, so typing does not search a long changeset for every letter. */
+  private findTyping?: ReturnType<typeof setTimeout>;
+
   setFindOptions(patch: Partial<FindOptions>) {
     Object.assign(this.find.options, patch);
+    clearTimeout(this.findTyping);
+    if (Object.keys(patch).length === 1 && "text" in patch) {
+      this.findTyping = setTimeout(() => this.applyFind(this.tabs.active), FIND_TYPING_MS);
+      return;
+    }
     this.applyFind(this.tabs.active);
   }
 

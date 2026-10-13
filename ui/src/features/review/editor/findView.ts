@@ -9,8 +9,7 @@ import {
   type FindSide,
   type SectionMatches,
   indexOf,
-  posOf,
-  totalOf,
+  isMatch,
 } from "./findMatches.ts";
 
 /** One match of a line: columns of the line. */
@@ -101,15 +100,14 @@ export interface Finder {
 
 export const NO_SUMMARY: FindSummary = { total: 0, index: -1, unchanged: 0, pending: 0, skipped: 0 };
 
-export function summarize(sets: SectionMatches, at: FindPos | undefined, skipped: number): FindSummary {
-  const found = sets.flatMap((set, section) => (set ?? []).map((m) => posOf(section, m)));
-  const here = at && found.some((p) => p.section === at.section && p.order === at.order && p.from === at.from);
-  return {
-    total: totalOf(sets),
-    index: here ? indexOf(sets, at) : -1,
-    unchanged: sets.reduce((n, set) => n + (set?.filter((m) => m.kind === "context").length ?? 0), 0),
-    pending: sets.filter((set) => set === undefined).length,
-    skipped,
-    at: here ? at : undefined,
-  };
+/** What a run counts as sections are searched, so a summary costs no pass over the matches. */
+export interface Counts {
+  total: number;
+  unchanged: number;
+  pending: number;
+}
+
+export function summarize(sets: SectionMatches, at: FindPos | undefined, skipped: number, counts: Counts): FindSummary {
+  const here = at && isMatch(sets, at);
+  return { ...counts, index: here ? indexOf(sets, at) : -1, skipped, at: here ? at : undefined };
 }

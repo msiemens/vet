@@ -10,11 +10,12 @@ import {
   type FindPos,
   type SectionMatches,
   findInFile,
+  isMatch,
   nearest,
   nearestAfter,
   step,
 } from "./findMatches.ts";
-import { type FindSummary, summarize } from "./findView.ts";
+import { type Counts, type FindSummary, summarize } from "./findView.ts";
 
 /** Texts over this many characters (both sides) are not searched. */
 export const MAX_SEARCH_CHARS = 4_000_000;
@@ -26,6 +27,7 @@ export class FindRun {
   private re?: RegExp;
   private skipped = 0;
   private error?: string;
+  private counts: Counts = { total: 0, unchanged: 0, pending: 0 };
   /** Where the current match is, which may be a place that is no match (yet). */
   current?: FindPos;
 
@@ -40,11 +42,13 @@ export class FindRun {
     this.mode = mode;
     this.sets = new Array<readonly FindMatch[] | undefined>(sections).fill(undefined);
     this.current = seed;
+    this.counts.pending = sections;
     const compiled = compile(options);
     if (compiled.type === "ok") this.re = compiled.re;
     else {
       if (compiled.type === "error") this.error = compiled.message;
       this.sets.fill([]);
+      this.counts.pending = 0;
     }
   }
 
@@ -56,13 +60,25 @@ export class FindRun {
   /** The matches of a section whose text arrived (or `undefined` for one too large to search). */
   add(section: number, file: FileText | undefined) {
     if (!this.re) return;
+    const before = this.sets[section];
+    if (before) this.count(before, -1);
+    else this.counts.pending--;
+    let found: readonly FindMatch[];
     if (!file || file.base.length + file.target.length > MAX_SEARCH_CHARS) {
       this.skipped++;
-      this.sets[section] = [];
+      found = [];
     } else {
-      this.sets[section] = findInFile(file, this.re, this.options, this.mode);
+      found = findInFile(file, this.re, this.options, this.mode);
     }
+    this.sets[section] = found;
+    this.count(found, 1);
     this.settle();
+  }
+
+  /** Adds (1) or takes back (-1) a section's matches to the counts. */
+  private count(set: readonly FindMatch[], sign: 1 | -1) {
+    this.counts.total += sign * set.length;
+    for (const m of set) if (m.kind === "context") this.counts.unchanged += sign;
   }
 
   /** The current match is a match: the first at or after where it was, else the first of all. */
@@ -71,7 +87,7 @@ export class FindRun {
     const here = this.current;
     // Where it was is waiting to be searched: it moves once that section has been.
     if (here && here.section < sets.length && sets[here.section] === undefined) return;
-    if (here && sets[here.section]?.some((m) => m.order === here.order && m.from === here.from)) return;
+    if (here && isMatch(sets, here)) return;
     const from = here ?? { section: 0, order: -1, from: 0 };
     const after = nearestAfter(sets, from);
     if (after) {
@@ -85,7 +101,7 @@ export class FindRun {
   }
 
   summary(): FindSummary {
-    const s = summarize(this.sets, this.current, this.skipped);
+    const s = summarize(this.sets, this.current, this.skipped, this.counts);
     return this.error === undefined ? s : { ...s, error: this.error };
   }
 

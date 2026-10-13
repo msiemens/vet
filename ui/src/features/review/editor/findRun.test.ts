@@ -66,6 +66,20 @@ void test("while sections are still being read the summary says so", () => {
   assert.equal(run.summary().total, 1);
 });
 
+void test("the summary counts the matches in unchanged lines, and a section searched again counts once", () => {
+  const changed: FileText = {
+    base: "ab\nold ab",
+    target: "ab\nnew ab",
+    hunks: [{ baseStart: 1, baseLen: 1, targetStart: 1, targetLen: 1 }],
+  };
+  const run = new FindRun(options("ab"), 2, "diff", { section: 0, order: 0, from: 0 });
+  run.add(0, changed);
+  assert.deepEqual([run.summary().total, run.summary().unchanged, run.summary().pending], [3, 1, 1]);
+  run.add(0, plain("ab"));
+  run.add(1, plain("ab\nab"));
+  assert.deepEqual([run.summary().total, run.summary().unchanged, run.summary().pending], [3, 3, 0]);
+});
+
 void test("a query the engine rejects finds nothing and says why", () => {
   const run = new FindRun(options("(", { regex: true }), 1, "diff");
   run.add(0, plain("("));

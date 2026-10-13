@@ -83,6 +83,9 @@ export interface HunkAnchor {
   card?: NonTextKind;
 }
 
+/** How long a find searches texts before it lets the page draw. */
+const FIND_SLICE_MS = 8;
+
 export class ChangesetView {
   private sections: Section[] = [];
   /** Hunk navigation stops at every change card and every hunk. */
@@ -511,10 +514,31 @@ export class ChangesetView {
     const seed = from ?? { section: this.heights.indexAt(this.root.scrollTop), order: -1, from: 0 };
     const run = new FindRun(options, this.sections.length, "diff", seed);
     this.findRun = run;
+    const read: number[] = [];
     const unread: number[] = [];
-    this.sections.forEach((s, fi) => (s.loaded ? run.add(fi, s.loaded) : unread.push(fi)));
+    this.sections.forEach((s, fi) => (s.loaded ? read : unread).push(fi));
+    void this.findRead(run, read, unread);
+  }
+
+  /**
+   * Searches the sections that have their text, then those that have not. A long run of sections is
+   * searched in slices, with a draw between them, so the page stays responsive.
+   */
+  private async findRead(run: FindRun, read: number[], unread: number[]) {
+    let sliceStart = performance.now();
+    if (run.active) {
+      for (const fi of read) {
+        const loaded = this.sections[fi].loaded;
+        if (loaded) run.add(fi, loaded);
+        if (performance.now() - sliceStart < FIND_SLICE_MS) continue;
+        this.drawFind();
+        await new Promise((resolve) => setTimeout(resolve));
+        if (this.findRun !== run || this.destroyed) return;
+        sliceStart = performance.now();
+      }
+    }
     this.drawFind();
-    if (run.active) void this.findUnread(run, unread);
+    if (run.active) await this.findUnread(run, unread);
   }
 
   /** Searches the sections that had no text when the find began, as their texts arrive. */

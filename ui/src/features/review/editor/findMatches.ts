@@ -123,10 +123,18 @@ export function totalOf(sets: SectionMatches): number {
 /** How many matches lie before `pos`, counting the sections searched so far. */
 export function indexOf(sets: SectionMatches, pos: FindPos): number {
   let n = 0;
-  sets.forEach((set, section) => {
-    for (const m of set ?? []) if (compare(posOf(section, m), pos) < 0) n++;
-  });
+  for (let section = 0; section < Math.min(pos.section, sets.length); section++) n += sets[section]?.length ?? 0;
+  // The matches of a section are in the order of the search.
+  for (const m of sets[pos.section] ?? []) {
+    if (m.order > pos.order || (m.order === pos.order && m.from >= pos.from)) break;
+    n++;
+  }
   return n;
+}
+
+/** Whether `pos` is one of the matches. */
+export function isMatch(sets: SectionMatches, pos: FindPos): boolean {
+  return sets[pos.section]?.some((m) => m.order === pos.order && m.from === pos.from) ?? false;
 }
 
 /** The first match at or after `pos`; none when no match lies after it in the sections searched. */
