@@ -3,7 +3,7 @@
 use std::cell::OnceCell;
 use std::collections::BTreeSet;
 
-use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 
 use crate::content::{NonTextChange, NonTextKind, RepoPath};
 use crate::generated::GENERATED_NAMES;
@@ -35,22 +35,16 @@ impl ReviewFilter {
 
     /// The first invalid glob of `include` and `exclude`, as a message fit to show.
     pub fn validate(&self) -> Result<(), String> {
-        for pattern in self.include.iter().chain(&self.exclude) {
-            if let Err(e) = GlobBuilder::new(anchored(pattern)).literal_separator(true).build() {
-                return Err(format!("invalid pattern \"{pattern}\": {}", e.kind()));
-            }
-        }
-        Ok(())
+        self.include
+            .iter()
+            .chain(&self.exclude)
+            .try_for_each(|pattern| glob(pattern).map(drop))
     }
 
     /// Compiles the globs once. Invalid patterns match nothing. `generated` holds the paths of the
     /// diff being filtered that the repository's attributes or the files' headers mark as generated.
     pub fn compile<'a>(&'a self, generated: &'a BTreeSet<RepoPath>) -> CompiledFilter<'a> {
-        let built_in = if self.review_generated {
-            &[][..]
-        } else {
-            GENERATED_NAMES
-        };
+        let built_in = built_in_excludes(self.review_generated);
         CompiledFilter {
             roots: &self.roots,
             include: (!self.include.is_empty()).then(|| GlobList::new(self.include.iter().map(String::as_str))),
@@ -110,11 +104,16 @@ impl CompiledFilter<'_> {
         self.passes(&change.path) && !(self.hide_binary && change.kind == NonTextKind::Binary)
     }
 
-    pub fn passes(&self, path: &RepoPath) -> bool {
+    /// Whether `path` is under one of the roots, or there are none.
+    fn in_roots(&self, path: &RepoPath) -> bool {
         let p = path.0.as_slice();
         let under = |root: &RepoPath| p.starts_with(&root.0) && (p.len() == root.0.len() || p[root.0.len()] == b'/');
-        let text = String::from_utf8_lossy(p);
-        (self.roots.is_empty() || self.roots.iter().any(under))
+        self.roots.is_empty() || self.roots.iter().any(under)
+    }
+
+    pub fn passes(&self, path: &RepoPath) -> bool {
+        let text = String::from_utf8_lossy(&path.0);
+        self.in_roots(path)
             && self.include.as_ref().is_none_or(|g| g.is_match(&text))
             && !self.exclude.is_match(&text)
             && !self.generated.is_some_and(|g| g.contains(path))
@@ -131,11 +130,9 @@ impl CompiledFilter<'_> {
 
     /// Every rule that leaves `path` out, in the order of [`Exclusion`]; none exactly when `passes`.
     pub fn exclusions(&self, path: &RepoPath) -> Vec<Exclusion> {
-        let p = path.0.as_slice();
-        let under = |root: &RepoPath| p.starts_with(&root.0) && (p.len() == root.0.len() || p[root.0.len()] == b'/');
-        let text = String::from_utf8_lossy(p);
+        let text = String::from_utf8_lossy(&path.0);
         let mut rules = Vec::new();
-        if !(self.roots.is_empty() || self.roots.iter().any(under)) {
+        if !self.in_roots(path) {
             rules.push(Exclusion::OutsideRoots);
         }
         if !self.include.as_ref().is_none_or(|g| g.is_match(&text)) {
@@ -148,15 +145,7 @@ impl CompiledFilter<'_> {
                     .iter()
                     .map(|p| (p.as_str(), GlobList::new(std::iter::once(p.as_str()))))
                     .collect(),
-                built_in: GlobList::new(
-                    if self.review_generated {
-                        &[][..]
-                    } else {
-                        GENERATED_NAMES
-                    }
-                    .iter()
-                    .copied(),
-                ),
+                built_in: GlobList::new(built_in_excludes(self.review_generated).iter().copied()),
             });
             for (pattern, list) in &apart.patterns {
                 let named = Exclusion::Pattern((*pattern).to_owned());
@@ -195,9 +184,7 @@ impl FileMask {
                 Some(pattern) => (&mut exclude, pattern.trim()),
                 None => (&mut include, token),
             };
-            if let Err(e) = GlobBuilder::new(anchored(pattern)).literal_separator(true).build() {
-                return Err(format!("invalid pattern \"{pattern}\": {}", e.kind()));
-            }
+            glob(pattern)?;
             list.push(pattern);
         }
         Ok(Self {
@@ -211,9 +198,22 @@ impl FileMask {
     }
 }
 
+/// The exclude globs every filter has, unless generated files are reviewed.
+fn built_in_excludes(review_generated: bool) -> &'static [&'static str] {
+    if review_generated { &[] } else { GENERATED_NAMES }
+}
+
 /// The pattern to compile: paths are relative, so a root anchor is dropped.
 fn anchored(pattern: &str) -> &str {
     pattern.strip_prefix('/').unwrap_or(pattern)
+}
+
+/// The compiled glob, or why the pattern is invalid, as a message fit to show.
+fn glob(pattern: &str) -> Result<Glob, String> {
+    GlobBuilder::new(anchored(pattern))
+        .literal_separator(true)
+        .build()
+        .map_err(|e| format!("invalid pattern \"{pattern}\": {}", e.kind()))
 }
 
 /// Patterns with a `/` match the whole path, the others the file name.
@@ -227,7 +227,7 @@ impl GlobList {
         let set = |with_slash: bool| {
             let mut b = GlobSetBuilder::new();
             for p in patterns.clone().filter(|p| p.contains('/') == with_slash) {
-                if let Ok(g) = GlobBuilder::new(anchored(p)).literal_separator(true).build() {
+                if let Ok(g) = glob(p) {
                     b.add(g);
                 }
             }
