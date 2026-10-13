@@ -94,6 +94,16 @@ fn count(log: &Path, method: &str) -> usize {
         .count()
 }
 
+/// How many requests the gated server received once started (not notifications, not `initialize`).
+fn requests(log: &Path) -> usize {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|entry| entry["request"] == true && entry["method"] != "initialize")
+        .count()
+}
+
 /// How many `--version` probes were asked at or after unix time `since`.
 fn probes_since(log: &Path, since: f64) -> usize {
     std::fs::read_to_string(log)
@@ -289,7 +299,7 @@ while True:
     if message is None:
         break
     method = message.get("method")
-    log({"method": method})
+    log({"method": method, "request": "id" in message})
     if "id" in message:
         wait_for_gate(START_GATE if method == "initialize" else REQUEST_GATE)
     if method == "initialize":
@@ -463,22 +473,22 @@ async fn review_actions_answer_while_semantic_work_is_stuck(stuck: Stuck) {
             semantic.spawn(async move { client.call(request).await });
         }
     }
-    // Until the probes have been asked for, or the servers their first request.
-    let first = match stuck {
-        Stuck::Starts => Some("--version"),
-        Stuck::Requests => Some("textDocument/hover"),
-        Stuck::Permits => None,
+    // Until the probes have been asked for, or a server its first request. A gated server
+    // reads one request and waits on it, so which request that is depends on timing; the
+    // others stay unread.
+    let begun = || match stuck {
+        Stuck::Starts => count(&log, "--version") > 0,
+        Stuck::Requests => requests(&log) > 0,
+        Stuck::Permits => true,
     };
-    if let Some(first) = first {
-        let started = async {
-            while count(&log, first) == 0 {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        };
-        tokio::time::timeout(ANSWERED, started)
-            .await
-            .expect("nothing semantic started");
-    }
+    let started = async {
+        while !begun() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    tokio::time::timeout(ANSWERED, started)
+        .await
+        .expect("nothing semantic started");
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(semantic.try_join_next().is_none(), "the semantic requests are stuck");
     let slowest = std::cell::Cell::new(Duration::ZERO);
