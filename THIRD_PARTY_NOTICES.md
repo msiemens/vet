@@ -167,6 +167,30 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
 
+## JSON schemas (for YAML and JSON files)
+
+The schemas in `crates/vet-infra/schemas` are served to the YAML and JSON language servers when a project is not trusted (§7.5). Each is the upstream file with its white space removed; the schema of `package.json` also has its references to other schemas of the schema store cut. See the `README.md` there for the exact sources.
+
+- GitHub Actions workflow, `package.json` and `tsconfig.json`: SchemaStore, https://github.com/SchemaStore/schemastore, Apache License 2.0.
+- Compose: the Compose Specification, https://github.com/compose-spec/compose-spec, Apache License 2.0.
+- Kubernetes: https://github.com/yannh/kubernetes-json-schema (Copyright (C) 2017 Gareth Rushgrove and Yann Hamon, generated from the Kubernetes OpenAPI description), Apache License 2.0.
+
+The Apache License 2.0 is at https://www.apache.org/licenses/LICENSE-2.0.
+
+Azure Pipelines: https://github.com/microsoft/azure-pipelines-vscode, `service-schema.json`.
+
+```
+MIT License
+
+Copyright (c) Microsoft Corporation.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+```
+
 ## simple-icons (platform marks)
 
 The GitHub and Azure DevOps marks are from simple-icons, released under CC0 1.0; no notice is required. The marks themselves are trademarks of their owners.

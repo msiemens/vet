@@ -250,10 +250,16 @@ This catches base changes **within the reviewed region only**. Semantic changes 
 |---|---|---|
 | Rust | rust-analyzer (pinned) | cargo registry sources |
 | TypeScript | `typescript-language-server` (LSP adapter over tsserver) → TS7 native server (speaks LSP) | JSDoc from `.d.ts` |
-| Svelte | svelte-language-server (→ tsserver) | as TS + component docs |
-| Angular | Angular Language Server | as TS + template symbols |
+| Svelte | svelte-language-server (→ tsserver; loads the project's `svelte.config.js`) | as TS + component docs |
+| Angular | Angular Language Server (`.html` templates only; TypeScript files, inline templates included, stay with the TypeScript server) | as TS + template symbols |
 | Python | Pyright (→ `ty` if/when stable) | docstrings + typeshed |
 | C# | `roslyn-language-server` (pinned) | XML docs in NuGet packages |
+| YAML | yaml-language-server | schema descriptions (§7.5) |
+| JSON | vscode-json-languageserver (`vscode-langservers-extracted`) | schema descriptions (§7.5) |
+| Shell | bash-language-server (with ShellCheck when installed) | none |
+| Dockerfile | dockerfile-language-server-nodejs (offline, unlike Docker's own server, which needs Buildx and asks Docker Scout) | instruction docs |
+
+A file is served by the language whose extension it has, or, for files like `Dockerfile`, whose file name it has; no two languages claim the same one.
 
 ```rust
 enum Backend {
@@ -320,6 +326,8 @@ The analysis policy has two parts: whether language servers may execute project 
 - **Pull requests from a fork** (the head is in a repository other than the one the pull request is opened against, or the platform's data on it was never stored) are limited in a trusted project too.
 - **Trust this PR** lifts the limit, restores and servers alike, for the PR's **current head commit**. Any new push to the PR voids the trust and restores the restrictions. A pull request that a trusted project's repository itself holds is trusted by the project and a push does not void that. There is no action to withdraw trust from a PR; unchecking "Trust this project" withdraws the project's.
 - A pull request's base side executes only where its project is trusted; trusting a PR covers its head commit alone.
+
+**Schemas.** The YAML and JSON servers check files against JSON schemas and would fetch them from the network (SchemaStore, a `$schema` key, a modeline). That is a download decided by the repository's content, so it follows trust: schema downloads are allowed only where restores may execute (a trusted project, a trusted PR). Everywhere else network fetching is off and the servers are served a fixed set bundled with Vet (GitHub Actions workflows, Azure Pipelines, Kubernetes, docker-compose, `package.json`, `tsconfig.json`); a schema outside it is refused with a visible diagnostic naming the address, never silently skipped. Where a schema comes from is part of the server's identity, and answers obtained online are not reused by later sessions, so answers under different schema policies never mix.
 
 ### 7.6 Reuse of answers (I2)
 

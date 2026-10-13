@@ -16,13 +16,22 @@ export RUSTC_WRAPPER
 scope=("${@:---workspace}")
 
 # Tool, the command that tells it is installed, and the tests that need it.
-names=(python3 rust-analyzer typescript-language-server pyright-langserver roslyn-language-server)
+names=(python3 rust-analyzer typescript-language-server pyright-langserver roslyn-language-server
+    svelteserver ngserver yaml-language-server vscode-json-language-server bash-language-server
+    "bash-language-server and shellcheck" docker-langserver)
 probes=(
     "python3 --version"
     "rust-analyzer --version"
     "typescript-language-server --version"
     "command -v pyright-langserver"
     "command -v roslyn-language-server && dotnet --version"
+    "command -v svelteserver"
+    "command -v ngserver && command -v npm"
+    "command -v yaml-language-server"
+    "command -v vscode-json-language-server"
+    "command -v bash-language-server"
+    "command -v bash-language-server && command -v shellcheck"
+    "command -v docker-langserver"
 )
 filters=(
     'package(vet-backend) & binary(it) & test(/^(restart|cancel|load)::/)'
@@ -30,6 +39,13 @@ filters=(
     'package(vet-infra) & binary(it) & test(/^lsp::typescript/)'
     'package(vet-infra) & binary(it) & test(/^lsp::pyright/)'
     'package(vet-infra) & binary(it) & test(/^lsp::roslyn/)'
+    'package(vet-infra) & binary(it) & test(/^lsp::svelte/)'
+    'package(vet-infra) & binary(it) & test(/^lsp::angular/)'
+    'package(vet-infra) & binary(it) & test(/^lsp::yaml/)'
+    'package(vet-infra) & binary(it) & test(/^lsp::json/)'
+    'package(vet-infra) & binary(it) & test(/^lsp::bash_language_server_answers/)'
+    'package(vet-infra) & binary(it) & test(/^lsp::bash_language_server_reports/)'
+    'package(vet-infra) & binary(it) & test(/^lsp::dockerfile/)'
 )
 # Ignored tests that run on request: they download packages, talk to a network service, take
 # long to measure, or are started by another test.

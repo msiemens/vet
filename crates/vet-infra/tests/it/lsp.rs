@@ -1,5 +1,6 @@
-//! The LSP client against the real rust-analyzer, typescript-language-server and
-//! roslyn-language-server on tiny projects. Each test is ignored with the tool it needs
+//! The LSP client against the real rust-analyzer, typescript-language-server,
+//! roslyn-language-server and the servers of Svelte, Angular, YAML, JSON, shell scripts and
+//! Dockerfiles on tiny projects. Each test is ignored with the tool it needs
 //! as its reason; `ci/tool-tests.sh` runs those whose tool is installed.
 
 #![allow(clippy::disallowed_methods)]
@@ -12,7 +13,7 @@ use tempfile::TempDir;
 use vet_core::content::RepoPath;
 use vet_infra::lsp::{BinaryLocator, LspLauncher, NoRestore, config};
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{At, LanguageServer, Pos, ServerLauncher, Tree};
+use vet_semantic::ports::{At, Backend, Feature, LanguageServer, Pos, ServerLauncher, Tree};
 
 const LIB: &str = "\
 pub struct Counter {
@@ -709,4 +710,370 @@ fn symbol_names(mut symbols: Vec<vet_semantic::ports::SymbolInfo>) -> Vec<String
     let mut names: Vec<String> = symbols.iter().map(|s| s.sym.name.join("::")).collect();
     names.sort();
     names
+}
+
+/// A server of `backend` on `dir` for the language servers without dependencies to restore.
+async fn start_server(dir: &Path, backend: &Backend, policy: AnalysisPolicy) -> vet_infra::lsp::LspServer {
+    LspLauncher::new(BinaryLocator, NoRestore)
+        .start(dir, Tree::Immutable, backend, policy)
+        .await
+        .unwrap_or_else(|e| panic!("{} starts: {e}", backend.config().binary))
+        .server
+}
+
+fn write(dir: &Path, name: &str, text: &str) {
+    let file = dir.join(name);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, text).unwrap();
+}
+
+fn messages(diagnostics: &[vet_semantic::ports::Diagnostic]) -> String {
+    diagnostics
+        .iter()
+        .map(|d| d.message.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+const WORKFLOW: &str = "\
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        bogus: 1
+";
+
+/// yaml-language-server offers no references, call hierarchy, workspace symbols or implementations:
+/// the launch accepts it and says which it lacks. While the project is not trusted the workflow is
+/// checked against the bundled schema, and an address a file names is refused by Vet, not fetched.
+#[tokio::test]
+#[ignore = "needs yaml-language-server"]
+async fn yaml_checks_against_the_bundled_schemas_and_refuses_the_address_a_file_names() {
+    // The server's own globs skip directories that start with a dot, which temporary ones do.
+    let dir = TempDir::with_prefix("vet-yaml-").unwrap();
+    write(dir.path(), ".github/workflows/ci.yml", WORKFLOW);
+    write(
+        dir.path(),
+        "deploy/k8s/app.yaml",
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\nspec:\n  replicas: many\n",
+    );
+    write(
+        dir.path(),
+        "other.yaml",
+        "# yaml-language-server: $schema=https://schemas.invalid/own.json\nname: x\n",
+    );
+    let server = start_server(dir.path(), &config::yaml(), AnalysisPolicy::LIMITED).await;
+
+    let offered = server.features();
+    assert!(offered.offers(Feature::DocumentSymbols) && offered.offers(Feature::Hover));
+    for lacking in [
+        Feature::References,
+        Feature::CallHierarchy,
+        Feature::WorkspaceSymbols,
+        Feature::Implementations,
+    ] {
+        assert!(!offered.offers(lacking), "{lacking:?}");
+    }
+
+    let workflow = path(".github/workflows/ci.yml");
+    let found = server.diagnostics(&workflow).await.unwrap();
+    assert!(
+        messages(&found).contains("bogus"),
+        "the bundled schema is applied: {found:?}"
+    );
+    let names = symbol_names(server.document_symbols(&workflow).await.unwrap());
+    assert!(names.contains(&"jobs".to_owned()), "{names:?}");
+    let hover = At {
+        file: workflow,
+        pos: find(WORKFLOW, "runs-on", 0, 1),
+    };
+    let text = server
+        .hover(&hover)
+        .await
+        .unwrap()
+        .expect("the schema describes runs-on");
+    assert!(text.to_lowercase().contains("runner"), "{text}");
+
+    let own = server.diagnostics(&path("other.yaml")).await.unwrap();
+    assert!(
+        messages(&own).contains("not one of the schemas bundled with Vet"),
+        "the request for the address reached Vet and was refused: {own:?}"
+    );
+
+    // The schema of a Kubernetes kind is picked from the bundled one.
+    let manifest = path("deploy/k8s/app.yaml");
+    let found = server.diagnostics(&manifest).await.unwrap();
+    assert!(
+        messages(&found).contains("Missing property \"selector\""),
+        "the manifest is checked: {found:?}"
+    );
+    server.shutdown().await;
+}
+
+/// A trusted project lets the server load what a file names itself: the same file fails here
+/// with the network's answer, not with Vet's refusal.
+#[tokio::test]
+#[ignore = "needs yaml-language-server"]
+async fn yaml_loads_the_address_a_file_names_itself_once_the_project_is_trusted() {
+    let dir = TempDir::new().unwrap();
+    write(
+        dir.path(),
+        "other.yaml",
+        "# yaml-language-server: $schema=https://schemas.invalid/own.json\nname: x\n",
+    );
+    let server = start_server(dir.path(), &config::yaml(), AnalysisPolicy::EXECUTING).await;
+    let own = server.diagnostics(&path("other.yaml")).await.unwrap();
+    let text = messages(&own);
+    assert!(
+        text.contains("schemas.invalid"),
+        "the server tried the address: {own:?}"
+    );
+    assert!(!text.contains("bundled with Vet"), "{own:?}");
+    server.shutdown().await;
+}
+
+/// The JSON server checks `package.json` against the bundled schema without the network, and
+/// refuses an address a `$schema` names.
+#[tokio::test]
+#[ignore = "needs vscode-json-language-server"]
+async fn json_checks_against_the_bundled_schemas_and_refuses_the_address_a_file_names() {
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "package.json", "{\"name\": 1, \"version\": \"1.0.0\"}\n");
+    write(dir.path(), "broken.json", "{\"a\": 1,\n");
+    write(
+        dir.path(),
+        "own.json",
+        "{\"$schema\": \"https://schemas.invalid/own.json\", \"a\": 1}\n",
+    );
+    let server = start_server(dir.path(), &config::json(), AnalysisPolicy::LIMITED).await;
+
+    let offered = server.features();
+    assert!(offered.offers(Feature::DocumentSymbols) && offered.offers(Feature::Hover));
+    for lacking in [
+        Feature::Definition,
+        Feature::References,
+        Feature::CallHierarchy,
+        Feature::WorkspaceSymbols,
+    ] {
+        assert!(!offered.offers(lacking), "{lacking:?}");
+    }
+
+    let package = server.diagnostics(&path("package.json")).await.unwrap();
+    assert!(
+        messages(&package).contains("string"),
+        "the bundled schema is applied: {package:?}"
+    );
+    let broken = server.diagnostics(&path("broken.json")).await.unwrap();
+    assert!(!broken.is_empty(), "a syntax error is reported");
+    let own = server.diagnostics(&path("own.json")).await.unwrap();
+    assert!(
+        messages(&own).contains("not one of the schemas bundled with Vet"),
+        "the request for the address reached Vet and was refused: {own:?}"
+    );
+    assert_eq!(
+        symbol_names(server.document_symbols(&path("package.json")).await.unwrap()),
+        ["name", "version"]
+    );
+    server.shutdown().await;
+}
+
+#[tokio::test]
+#[ignore = "needs vscode-json-language-server"]
+async fn json_loads_the_address_a_file_names_itself_once_the_project_is_trusted() {
+    let dir = TempDir::new().unwrap();
+    write(
+        dir.path(),
+        "own.json",
+        "{\"$schema\": \"https://schemas.invalid/own.json\", \"a\": 1}\n",
+    );
+    let server = start_server(dir.path(), &config::json(), AnalysisPolicy::EXECUTING).await;
+    let own = server.diagnostics(&path("own.json")).await.unwrap();
+    let text = messages(&own);
+    assert!(
+        text.contains("schemas.invalid"),
+        "the server tried the address: {own:?}"
+    );
+    assert!(!text.contains("bundled with Vet"), "{own:?}");
+    server.shutdown().await;
+}
+
+const SCRIPT: &str = "\
+#!/bin/bash
+greet() {
+  echo \"hello $1\"
+}
+name=$1
+greet $name
+";
+
+/// bash-language-server answers symbols, definitions, references and hover; it has no call
+/// hierarchy and no implementations.
+#[tokio::test]
+#[ignore = "needs bash-language-server"]
+async fn bash_language_server_answers_what_it_offers() {
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "run.sh", SCRIPT);
+    let server = start_server(dir.path(), &config::bash(), AnalysisPolicy::LIMITED).await;
+    let offered = server.features();
+    assert!(offered.offers(Feature::DocumentSymbols) && offered.offers(Feature::References));
+    assert!(!offered.offers(Feature::CallHierarchy) && !offered.offers(Feature::Implementations));
+
+    let file = path("run.sh");
+    let names = symbol_names(server.document_symbols(&file).await.unwrap());
+    assert!(
+        names.contains(&"greet".to_owned()) && names.contains(&"name".to_owned()),
+        "{names:?}"
+    );
+    let call = At {
+        file: file.clone(),
+        pos: find(SCRIPT, "greet $name", 0, 1),
+    };
+    assert_eq!(server.definition(&call).await.unwrap().len(), 1);
+    assert_eq!(server.references(&call).await.unwrap().len(), 1);
+    server.shutdown().await;
+}
+
+/// With ShellCheck on `PATH` the server reports its findings as diagnostics.
+#[tokio::test]
+#[ignore = "needs bash-language-server and shellcheck"]
+async fn bash_language_server_reports_shellcheck_findings() {
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "run.sh", SCRIPT);
+    let server = start_server(dir.path(), &config::bash(), AnalysisPolicy::LIMITED).await;
+    let found = server.diagnostics(&path("run.sh")).await.unwrap();
+    let shellcheck: Vec<_> = found
+        .iter()
+        .filter(|d| d.source.as_deref() == Some("shellcheck"))
+        .collect();
+    assert!(
+        shellcheck.iter().any(|d| d.code.as_deref() == Some("SC2086")),
+        "the unquoted $name is reported: {found:?}"
+    );
+    server.shutdown().await;
+}
+
+const DOCKERFILE: &str = "\
+FROM alpine:3.20 AS base
+ARG VERSION=1
+RUN echo $VERSION
+COPY
+";
+
+/// The Dockerfile server is routed by file name: it needs no extension.
+#[tokio::test]
+#[ignore = "needs docker-langserver"]
+async fn dockerfile_language_server_answers_what_it_offers() {
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "Dockerfile", DOCKERFILE);
+    let server = start_server(dir.path(), &config::dockerfile(), AnalysisPolicy::LIMITED).await;
+    let offered = server.features();
+    assert!(offered.offers(Feature::DocumentSymbols) && offered.offers(Feature::Definition));
+    assert!(!offered.offers(Feature::CallHierarchy) && !offered.offers(Feature::WorkspaceSymbols));
+
+    let file = path("Dockerfile");
+    let found = server.diagnostics(&file).await.unwrap();
+    assert!(
+        messages(&found).contains("COPY"),
+        "the instruction without arguments is reported: {found:?}"
+    );
+    assert!(!server.document_symbols(&file).await.unwrap().is_empty());
+    let hover = At {
+        file,
+        pos: find(DOCKERFILE, "FROM", 0, 1),
+    };
+    assert!(server.hover(&hover).await.unwrap().is_some());
+    server.shutdown().await;
+}
+
+const COMPONENT: &str = "\
+<script lang=\"ts\">
+  export let count: number = 0;
+  function bump(): number {
+    return count + 1;
+  }
+  const bad: string = 1;
+</script>
+
+<button on:click={bump}>{count}</button>
+";
+
+/// svelte-language-server serves a component through TypeScript, which it finds beside itself.
+#[tokio::test]
+#[ignore = "needs svelteserver"]
+async fn svelte_language_server_answers_through_typescript() {
+    let dir = TempDir::new().unwrap();
+    write(dir.path(), "tsconfig.json", "{\"compilerOptions\":{\"strict\":true}}");
+    write(dir.path(), "App.svelte", COMPONENT);
+    let server = LspLauncher::new(BinaryLocator, NoRestore)
+        .start(
+            dir.path(),
+            Tree::Immutable,
+            &config::svelte(),
+            AnalysisPolicy::EXECUTING,
+        )
+        .await
+        .expect("svelteserver starts")
+        .server;
+    let file = path("App.svelte");
+    let found = server.diagnostics(&file).await.unwrap();
+    assert!(messages(&found).contains("not assignable"), "{found:?}");
+    let call = At {
+        file: file.clone(),
+        pos: find(COMPONENT, "bump", 1, 1),
+    };
+    let hover = server.hover(&call).await.unwrap().expect("a hover on bump");
+    assert!(hover.contains("bump"), "{hover}");
+    assert_eq!(server.definition(&call).await.unwrap().len(), 1);
+    let names = symbol_names(server.document_symbols(&file).await.unwrap());
+    assert!(names.iter().any(|n| n.contains("bump")), "{names:?}");
+    server.shutdown().await;
+}
+
+/// The Angular server resolves `typescript` and `@angular/language-service` from the project, or
+/// from its own install, and reports an error in a template. The project's Angular packages come
+/// from the network.
+#[tokio::test]
+#[ignore = "needs ngserver and npm"]
+async fn angular_language_server_checks_a_template() {
+    let dir = TempDir::new().unwrap();
+    write(
+        dir.path(),
+        "package.json",
+        "{\"name\":\"app\",\"version\":\"0.0.0\",\"private\":true,\"dependencies\":{\"@angular/core\":\"22.2.2\",\"@angular/common\":\"22.2.2\",\"@angular/compiler\":\"22.2.2\",\"rxjs\":\"7.8.2\",\"tslib\":\"2.8.1\"}}",
+    );
+    let installed = Command::new("npm")
+        .args(["install", "--no-audit", "--no-fund", "--ignore-scripts"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    write(
+        dir.path(),
+        "tsconfig.json",
+        "{\"compilerOptions\":{\"strict\":true,\"target\":\"ES2022\",\"module\":\"ES2022\",\"moduleResolution\":\"bundler\",\"experimentalDecorators\":false},\"angularCompilerOptions\":{\"strictTemplates\":true},\"files\":[\"app.ts\"]}",
+    );
+    write(
+        dir.path(),
+        "app.ts",
+        "import { Component } from '@angular/core';\n\n@Component({ selector: 'app-root', templateUrl: './app.html' })\nexport class App {\n  title = 'hello';\n}\n",
+    );
+    write(dir.path(), "app.html", "<h1>{{ title }}</h1>\n<p>{{ missing }}</p>\n");
+    let launcher = LspLauncher {
+        ready_timeout: Duration::from_secs(120),
+        ..LspLauncher::new(BinaryLocator, NoRestore)
+    };
+    let server = launcher
+        .start(dir.path(), Tree::Immutable, &config::angular(), AnalysisPolicy::LIMITED)
+        .await
+        .expect("ngserver starts")
+        .server;
+    let found = server.diagnostics(&path("app.html")).await.unwrap();
+    assert!(messages(&found).contains("missing"), "{found:?}");
+    server.shutdown().await;
 }
