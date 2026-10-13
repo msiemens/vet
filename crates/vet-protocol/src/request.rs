@@ -452,10 +452,12 @@ pub enum Request {
         project: ProjectId,
         path: String,
     },
-    /// The target-side text of any path of the current target snapshot, changed
-    /// or not.
+    /// The text of any path on the target side of `view`, changed or not: the file as the
+    /// changeset ends with it, or as the commit leaves it for a commit's view (an interdiff
+    /// reads the changeset's). Fails if the file is not there.
     FileText {
         project: ProjectId,
+        view: View,
         path: String,
     },
     /// The bytes of one side of a non-text item's file, to preview an image. The

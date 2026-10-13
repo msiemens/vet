@@ -415,7 +415,9 @@ impl Orchestrator {
             Request::ListBaseCandidates { project } => reply(self.list_base_candidates(project)),
             Request::Fetch { project } => reply(self.fetch(project)),
             Request::ListDirectory { project, path } => reply(async move { self.list_directory(project, &path).await }),
-            Request::FileText { project, path } => reply(async move { self.file_text(project, &path).await }),
+            Request::FileText { project, view, path } => {
+                reply(async move { self.file_text(project, view, &path).await })
+            }
             Request::TargetLine {
                 project,
                 view,

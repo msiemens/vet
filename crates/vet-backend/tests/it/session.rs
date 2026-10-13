@@ -767,6 +767,7 @@ impl Client {
         match self
             .call(Request::FileText {
                 project,
+                view: vet_protocol::View::Changeset,
                 path: path.into(),
             })
             .await?

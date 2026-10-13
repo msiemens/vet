@@ -462,6 +462,41 @@ mod tests {
         assert!(matches!(created, Err(SessionError::Invalid(_))));
     }
 
+    #[tokio::test]
+    async fn a_commits_files_are_read_as_that_commit_leaves_them() {
+        let base = [("a.txt", "a0\n"), ("b.txt", "b0\n"), ("gone.txt", "g0\n")];
+        let fx = Fixture::open(&base, &base).await;
+        fx.git.feature_commits(
+            &base,
+            &[
+                ("c1", &[("a.txt", "a1\n"), ("b.txt", "b0\n"), ("gone.txt", "g0\n")]),
+                ("c2", &[("a.txt", "a2\n"), ("b.txt", "b0\n"), ("late.txt", "l2\n")]),
+            ],
+        );
+        fx.session.open_changeset(feature()).await.unwrap().unwrap();
+        let text = |view: View, path: &'static str| {
+            let session = &fx.session;
+            async move { session.target_text(view, path).await.map(|t| t.content.unwrap()) }
+        };
+        let (first, second) = (View::Commit { index: 0 }, View::Commit { index: 1 });
+
+        assert_eq!(text(first, "a.txt").await.unwrap(), "a1\n", "changed by the commit");
+        assert_eq!(text(first, "b.txt").await.unwrap(), "b0\n", "not touched by it");
+        assert_eq!(
+            text(first, "gone.txt").await.unwrap(),
+            "g0\n",
+            "deleted by a later commit"
+        );
+        assert!(matches!(text(first, "late.txt").await, Err(SessionError::NotFound(_))));
+        assert_eq!(text(second, "late.txt").await.unwrap(), "l2\n");
+        assert!(matches!(text(second, "gone.txt").await, Err(SessionError::NotFound(_))));
+        assert_eq!(text(View::Changeset, "a.txt").await.unwrap(), "a2\n");
+        assert!(matches!(
+            text(View::Commit { index: 9 }, "a.txt").await,
+            Err(SessionError::NotFound(_))
+        ));
+    }
+
     /// `feature` is `c1`, then the merge `mg` of `main`'s `m2` into it, whose tree is `resolution`
     /// and whose parents merge to `remerged` by themselves.
     async fn merged(resolution: &str, remerged: &str) -> Fixture {

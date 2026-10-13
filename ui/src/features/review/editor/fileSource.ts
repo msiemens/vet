@@ -22,7 +22,7 @@ export class StaleRevision extends Error {
 export interface FileSource {
   /** Both sides of a changed file with their highlights. */
   contents(file: FileLayout): Promise<Loaded>;
-  /** The file's text in the target snapshot, for the read-only view. */
+  /** The file's text on the target side of the source's view (for a commit, as the commit leaves it), for the read-only view. */
   text(path: string): Promise<TextContent>;
   /** An image or other blob of a non-text item. */
   itemBlob(path: string, kind: NonTextKind, side: Side): Promise<BlobContent>;
@@ -56,7 +56,7 @@ export function fileSource(backend: Backend, revision: number, view: View): File
       };
     },
     async text(path) {
-      const reply = atRevision(revision, await backend.fileText(path));
+      const reply = atRevision(revision, await backend.fileText(path, view));
       if (!reply) throw new StaleRevision();
       return reply.content;
     },

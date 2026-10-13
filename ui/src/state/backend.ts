@@ -327,10 +327,10 @@ export class Backend {
     return { revision, entries };
   }
 
-  /** The target-side text of any path of the target snapshot, changed or not. */
-  async fileText(path: string): Promise<{ revision: number; content: TextContent }> {
+  /** The text of any path on the target side of `view`, changed or not: for a commit, the file as the commit leaves it. */
+  async fileText(path: string, view: View): Promise<{ revision: number; content: TextContent }> {
     const { revision, content } = expect(
-      await this.conn.request({ type: "fileText", project: this.pid, path }),
+      await this.conn.request({ type: "fileText", project: this.pid, view, path }),
       "fileText",
     );
     return { revision, content };

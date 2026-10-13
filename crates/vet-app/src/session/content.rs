@@ -92,12 +92,19 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         })
     }
 
-    /// The text of any file of the target snapshot, changed or not.
-    pub async fn target_text(&self, path: &str) -> Result<TargetText> {
-        let st = self.published.read();
+    /// The text of any file on the target side of `view`, changed or not: the changeset's target
+    /// snapshot, or for a commit the tree it leaves (an interdiff reads the changeset's).
+    pub async fn target_text(&self, view: View, path: &str) -> Result<TargetText> {
+        let st = match view {
+            View::Commit { .. } => self.viewing(view).await?.0,
+            _ => self.published.read(),
+        };
+        let target = match view {
+            View::Commit { index } => &st.units()[index as usize].new,
+            _ => &*st.target,
+        };
         let key = RepoPath::from(path);
-        let entry = st
-            .target
+        let entry = target
             .entries
             .get(&key)
             .ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;

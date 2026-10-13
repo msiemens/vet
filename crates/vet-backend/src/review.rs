@@ -72,12 +72,17 @@ impl Orchestrator {
         Ok(self.highlighter.file_contents(path, text).await)
     }
 
-    pub(crate) async fn file_text(&self, project: ProjectId, path: &str) -> Result<Response, String> {
+    pub(crate) async fn file_text(
+        &self,
+        project: ProjectId,
+        view: vet_protocol::View,
+        path: &str,
+    ) -> Result<Response, String> {
         let text = self
             .ready(project)
             .await?
             .session
-            .target_text(path)
+            .target_text(mapping::core_view(view), path)
             .await
             .map_err(message)?;
         Ok(self.highlighter.file_text(path, &text).await)

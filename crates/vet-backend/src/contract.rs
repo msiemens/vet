@@ -490,7 +490,11 @@ mod tests {
                 project,
                 path: String::new(),
             },
-            Request::FileText { project, path: path() },
+            Request::FileText {
+                project,
+                view,
+                path: path(),
+            },
             Request::ItemBlob {
                 project,
                 view,

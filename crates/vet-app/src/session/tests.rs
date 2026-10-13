@@ -2493,14 +2493,14 @@ async fn target_text_reads_unchanged_files_and_explains_missing_text() {
         .kind = EntryKind::Symlink;
     drop(st);
 
-    let text = fx.session.target_text("a.txt").await.unwrap();
+    let text = fx.session.target_text(View::Changeset, "a.txt").await.unwrap();
     assert_eq!((text.revision, text.content), (0, Ok("one\n".into())));
     assert_eq!(
-        fx.session.target_text("bin").await.unwrap().content,
+        fx.session.target_text(View::Changeset, "bin").await.unwrap().content,
         Err(NoText::Binary)
     );
     assert_eq!(
-        fx.session.target_text("link").await.unwrap().content,
+        fx.session.target_text(View::Changeset, "link").await.unwrap().content,
         Err(NoText::NotAFile)
     );
     // Over the cap, and not retained by the store (as the scan would do).
@@ -2513,20 +2513,31 @@ async fn target_text_reads_unchanged_files_and_explains_missing_text() {
     drop(st);
     *fx.git.cap.lock().unwrap() = Some(10);
     assert_eq!(
-        fx.session.target_text("big.txt").await.unwrap().content,
+        fx.session
+            .target_text(View::Changeset, "big.txt")
+            .await
+            .unwrap()
+            .content,
         Err(NoText::Unavailable)
     );
     *fx.git.cap.lock().unwrap() = None;
-    assert_eq!(fx.session.target_text("big.txt").await.unwrap().content, Ok(big));
+    assert_eq!(
+        fx.session
+            .target_text(View::Changeset, "big.txt")
+            .await
+            .unwrap()
+            .content,
+        Ok(big)
+    );
     // Content no source has any more.
     fx.git.blobs.lock().unwrap().clear();
     fx.store.0.lock().unwrap().blobs.clear();
     assert_eq!(
-        fx.session.target_text("a.txt").await.unwrap().content,
+        fx.session.target_text(View::Changeset, "a.txt").await.unwrap().content,
         Err(NoText::Unavailable)
     );
     assert!(matches!(
-        fx.session.target_text("nope").await,
+        fx.session.target_text(View::Changeset, "nope").await,
         Err(SessionError::NotFound(_))
     ));
 }
