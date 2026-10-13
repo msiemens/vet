@@ -323,6 +323,7 @@
     repoOpen: !!session.repo,
     reviewOpen,
     queueShown: screen === "queue",
+    paletteOpen: palette.open,
     canQuit,
     changesetOpen: !!session.repo && !!changeset.layout,
     rangeShown: !!range,

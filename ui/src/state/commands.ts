@@ -41,6 +41,8 @@ export interface CommandContext {
   canQuit: boolean;
   /** The queue screen covers the review, whose views and tabs stay mounted behind it. */
   queueShown?: boolean;
+  /** Search Everywhere is open and takes the keys of the window. */
+  paletteOpen?: boolean;
   /** A changeset is on view. */
   changesetOpen?: boolean;
   /** The review view shows a range of versions rather than the changeset. */

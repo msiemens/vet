@@ -37,6 +37,29 @@ export function queueCommands(a: QueueActions): Command<CommandContext>[] {
   ];
 }
 
+/** The commands on the tab row of the queue screen, which exist while it is mounted. */
+export function queueTabCommands(a: { stepTab(delta: -1 | 1): void }): Command<CommandContext>[] {
+  const shown = (c: CommandContext) => !!c.queueShown && !c.paletteOpen;
+  return [
+    {
+      id: "queue.previousTab",
+      label: "Previous Queue Tab",
+      binding: "Ctrl-Shift-Tab",
+      inFields: true,
+      enabled: shown,
+      run: () => a.stepTab(-1),
+    },
+    {
+      id: "queue.nextTab",
+      label: "Next Queue Tab",
+      binding: "Ctrl-Tab",
+      inFields: true,
+      enabled: shown,
+      run: () => a.stepTab(1),
+    },
+  ];
+}
+
 /** The context menu of a row in the queue. */
 export const rowMenu: MenuSpec = [
   { command: "queue.open" },

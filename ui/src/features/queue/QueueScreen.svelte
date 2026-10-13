@@ -23,6 +23,7 @@
   import { detailGroups } from "./details";
   import {
     type QueueRow,
+    type QueueTab,
     TABS,
     authorOf,
     changesOf,
@@ -35,12 +36,13 @@
     reviewedOf,
     sourceText,
     statusOrder,
+    stepTab,
     statusTitle,
     tabCounts,
     updatedAt,
     updatedText,
   } from "./queueRows";
-  import { rowMenu } from "./queueCommands";
+  import { queueTabCommands, rowMenu } from "./queueCommands";
   import QueueComments from "./QueueComments.svelte";
   import QueueDetails from "./QueueDetails.svelte";
   import QueueFiles from "./QueueFiles.svelte";
@@ -97,9 +99,19 @@
   /** The changeset's own numbers, whatever range or commit the review shows. */
   const own = $derived(queue.onViewFrame);
 
+  function showTab(id: QueueTab) {
+    tab = id;
+    writeStored(TAB_KEY, id);
+  }
+
   onMount(() => {
     void queue.loadAll();
-    return queue.watch();
+    const stopWatching = queue.watch();
+    const unregister = commands.register(...queueTabCommands({ stepTab: (delta) => showTab(stepTab(tab, delta)) }));
+    return () => {
+      stopWatching();
+      unregister();
+    };
   });
 
   /** What the table knows of a row's lines: only the changeset on view has them. */
@@ -154,10 +166,7 @@
     <PanelTabs
       label="Changesets"
       value={tab}
-      onchange={(id) => {
-        tab = id;
-        writeStored(TAB_KEY, id);
-      }}
+      onchange={showTab}
       tabs={TABS.map((t) => ({ ...t, count: counts[t.id] }))}
     />
     <span class="grow"></span>

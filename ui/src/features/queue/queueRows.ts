@@ -73,6 +73,12 @@ export function parseTab(text: string | undefined): QueueTab {
   return TABS.find((t) => t.id === text)?.id ?? TABS[0].id;
 }
 
+/** The tab `delta` places after `tab`, wrapping around the row. */
+export function stepTab(tab: QueueTab, delta: number): QueueTab {
+  const at = TABS.findIndex((t) => t.id === tab);
+  return TABS[(((at + delta) % TABS.length) + TABS.length) % TABS.length].id;
+}
+
 export type QueuePanel = "details" | "files" | "comments";
 
 const PANELS: readonly QueuePanel[] = ["details", "files", "comments"];

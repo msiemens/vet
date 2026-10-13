@@ -5,7 +5,8 @@ import { resolveMenu } from "../../lib/commandMenu.ts";
 import { CommandRegistry } from "../../lib/commands.ts";
 import { type AppActions, appCommands } from "../../state/appCommands.ts";
 import type { CommandContext } from "../../state/commands.ts";
-import { queueCommands, rowMenu } from "./queueCommands.ts";
+import { queueCommands, queueTabCommands, rowMenu } from "./queueCommands.ts";
+import { type QueueTab, stepTab } from "./queueRows.ts";
 
 // The pull request on view is not the row the menu is opened on.
 const onView: CommandContext = {
@@ -72,4 +73,57 @@ void test("Open in Browser without a row still opens the pull request on view", 
   const { registry, calls } = setup();
   assert.equal(registry.run("changeset.openInBrowser", registry.context()), true);
   assert.deepEqual(calls, ["browser undefined"]);
+});
+
+function tabs(context: Partial<CommandContext>, mod: "Ctrl" | "Meta" = "Ctrl") {
+  let tab: QueueTab = "all";
+  const registry = new CommandRegistry<CommandContext>({ ...onView, queueShown: true, ...context }, mod);
+  registry.register(...queueTabCommands({ stepTab: (delta) => (tab = stepTab(tab, delta)) }));
+  const press = (shiftKey = false, ctrlKey = true) =>
+    registry.dispatch({
+      key: "Tab",
+      code: "Tab",
+      ctrlKey,
+      altKey: false,
+      shiftKey,
+      metaKey: false,
+      preventDefault: () => undefined,
+    });
+  return { registry, press, tab: () => tab };
+}
+
+void test("Ctrl+Tab and Ctrl+Shift+Tab step the queue's tabs and wrap around, on macOS too", () => {
+  for (const mod of ["Ctrl", "Meta"] as const) {
+    const { press, tab } = tabs({}, mod);
+    const seen: QueueTab[] = [];
+    for (let i = 0; i < 4; i++) {
+      assert.equal(press(), true);
+      seen.push(tab());
+    }
+    assert.deepEqual(seen, ["blocking", "local", "prs", "all"]);
+    assert.equal(press(true), true);
+    assert.equal(tab(), "prs");
+  }
+});
+
+void test("the queue's tab keys do nothing off the queue screen or while Search Everywhere is open", () => {
+  for (const context of [{ queueShown: false }, { paletteOpen: true }]) {
+    const { press, tab } = tabs(context);
+    assert.equal(press(), false);
+    assert.equal(press(true), false);
+    assert.equal(tab(), "all");
+  }
+});
+
+void test("a plain Tab is left to the page", () => {
+  const { press, tab } = tabs({});
+  assert.equal(press(false, false), false);
+  assert.equal(tab(), "all");
+});
+
+void test("a binding the viewer sets replaces Ctrl+Tab", () => {
+  const { registry, press, tab } = tabs({});
+  registry.setBindings({ "queue.nextTab": "Alt-n" });
+  assert.equal(press(), false);
+  assert.equal(tab(), "all");
 });
