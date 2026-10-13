@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "../../lib/ui/Icon.svelte";
+  import StatusDot from "../../lib/ui/StatusDot.svelte";
   import type { ScopeChip } from "./scopeText";
 
   let {
@@ -15,23 +16,21 @@
   } = $props();
 </script>
 
+{#snippet dot()}
+  {#if chip.dot}
+    <StatusDot
+      tone="ok"
+      hollow={chip.dot === "pending"}
+      label={chip.dot === "pending" ? "Edits wait to become a version" : "Follows the working tree"}
+    />
+  {/if}
+{/snippet}
+
 <span class="scope" class:narrowed={chip.narrowed} data-escapes-scope>
   {#if onopen}
-    <button class="chip" type="button" title={chip.tip} onclick={onopen}
-      >{chip.label}{#if chip.dot}<span
-          class="live-dot"
-          class:pending={chip.dot === "pending"}
-          aria-label={chip.dot === "pending" ? "Edits wait to become a version" : "Follows the working tree"}
-        ></span>{/if}</button
-    >
+    <button class="chip" type="button" title={chip.tip} onclick={onopen}>{chip.label}{@render dot()}</button>
   {:else}
-    <span class="chip static" title={chip.tip}
-      >{chip.label}{#if chip.dot}<span
-          class="live-dot"
-          class:pending={chip.dot === "pending"}
-          aria-label={chip.dot === "pending" ? "Edits wait to become a version" : "Follows the working tree"}
-        ></span>{/if}</span
-    >
+    <span class="chip static" title={chip.tip}>{chip.label}{@render dot()}</span>
   {/if}
   {#if chip.narrowed && onclear}
     <button class="x" type="button" aria-label="Back to all changes" title="Back to all changes (Esc)" onclick={onclear}
@@ -75,10 +74,8 @@
   .chip.static {
     color: var(--text-2);
   }
-  .live-dot.pending {
-    box-sizing: border-box;
-    background: transparent;
-    border: 1.5px solid var(--ok);
+  .chip :global(.dot) {
+    margin-left: 6px;
   }
   .x {
     display: inline-flex;

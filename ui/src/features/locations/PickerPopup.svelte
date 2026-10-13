@@ -18,6 +18,7 @@
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
+  import StatusDot from "../../lib/ui/StatusDot.svelte";
   import { isMac } from "../../state/host";
   import type { PickerView } from "../../state/pickerTypes";
   import { countText, groupRows, matchedRow, opensBelow, symbolLabel, visibleRows } from "./pickerRows";
@@ -261,7 +262,7 @@
             onclick={() => pick(row)}
             onmousemove={(e) => hover(e, at)}
           >
-            <span class="dot" class:on={row.change === "hunk"}></span>
+            <StatusDot tone={row.change === "hunk" ? "ok" : "none"} />
             <span class="rows">
               <span class="first">
                 <span class="sym">{@render symbol(row)}</span>
@@ -304,7 +305,7 @@
               onclick={() => pick(item.row)}
               onmousemove={(e) => hover(e, item.at)}
             >
-              <span class="dot" class:on={item.row.change === "hunk"}></span>
+              <StatusDot tone={item.row.change === "hunk" ? "ok" : "none"} />
               <span class="mono line">{item.row.line}</span>
               <span class="within">{@render symbol(item.row)}</span>
               <span class="mono code">{@render code(item.row)}</span>
@@ -418,20 +419,11 @@
   .cur {
     background: var(--select);
   }
-  .dot {
-    flex: none;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-  }
-  .hit .dot {
+  .hit > :global(.dot) {
     margin-right: 8px;
   }
-  .two .dot {
+  .two > :global(.dot) {
     margin-top: 5px;
-  }
-  .dot.on {
-    background: var(--add-text);
   }
   .line {
     flex: none;

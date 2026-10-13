@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "../../lib/ui/Icon.svelte";
+  import StatusDot from "../../lib/ui/StatusDot.svelte";
   import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
   import { connectionLabel } from "./platformLabels";
@@ -19,7 +20,7 @@
     onclick={() => commands.run("app.accounts")}
   >
     <Icon name={status.kind === "github" ? "github" : "azureDevOps"} size={12} />
-    <span class="dot" class:ok={!label.warn}></span>
+    <StatusDot tone={label.warn ? "warn" : "ok"} />
     {label.text}
   </button>
 {/if}
@@ -42,15 +43,6 @@
 <style>
   .platform.warn {
     color: var(--warn);
-  }
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--warn);
-  }
-  .dot.ok {
-    background: var(--ok);
   }
   .bell {
     position: relative;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ServerInfo } from "../../generated/ServerInfo.ts";
-import { serverRow } from "./serverRows.ts";
+import { serverRow, serverTone } from "./serverRows.ts";
 
 const found = (origin: "custom" | "project" | "installed" | "path"): ServerInfo => ({
   language: "rust",
@@ -32,6 +32,14 @@ void test("a found server is found unless its origin is custom, which is its own
   const row = serverRow(found("custom"));
   assert.equal(row.status, "custom");
   assert.equal(row.customPath, "/bin/ra");
+});
+
+void test("a missing server and a failed install are errors, an install under way is not yet well", () => {
+  assert.equal(serverTone("found"), "ok");
+  assert.equal(serverTone("custom"), "ok");
+  assert.equal(serverTone("missing"), "error");
+  assert.equal(serverTone("failed"), "error");
+  assert.equal(serverTone("installing"), "warn");
 });
 
 void test("the table names a custom source by its path and a missing server's by nothing", () => {

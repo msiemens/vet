@@ -3,7 +3,15 @@ import { test } from "node:test";
 import type { PendingVote } from "../../generated/PendingVote.ts";
 import type { Thread } from "../../generated/Thread.ts";
 import type { ThreadMessage } from "../../generated/ThreadMessage.ts";
-import { blockerText, draftsToSubmit, postedNote, stateLabel, submitBlock, waitingToPost } from "./pullRequest.ts";
+import {
+  blockerText,
+  draftsToSubmit,
+  postedNote,
+  stateLabel,
+  stateTone,
+  submitBlock,
+  waitingToPost,
+} from "./pullRequest.ts";
 
 const message = (state: ThreadMessage["state"]): ThreadMessage => ({
   id: 1,
@@ -62,6 +70,12 @@ void test("a post tells how many comments went through and that the vote was cas
   assert.equal(postedNote({ posted: 1, skipped: 0, voteCast: true }), "1 comment posted, vote cast");
   assert.equal(postedNote({ posted: 0, skipped: 0, voteCast: true }), "Vote cast");
   assert.match(postedNote({ posted: 1, skipped: 2, voteCast: true }), /^1 comment posted, vote cast\. 2 drafts wait/);
+});
+
+void test("a closed pull request is flagged, a merged one has its own colour, an open one is well", () => {
+  assert.equal(stateTone("open"), "ok");
+  assert.equal(stateTone("closed"), "warn");
+  assert.equal(stateTone("merged"), "note");
 });
 
 void test("the pull request's state and what blocks it read as words", () => {

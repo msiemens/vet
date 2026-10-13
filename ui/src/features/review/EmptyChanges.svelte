@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "../../lib/ui/Icon.svelte";
+  import StatusDot from "../../lib/ui/StatusDot.svelte";
   import type { Action, EmptyView, Row } from "./emptyChanges";
 
   let {
@@ -13,7 +14,7 @@
 </script>
 
 {#snippet value(row: Row)}
-  {#if row.live}<i class="live"></i>{/if}
+  {#if row.live}<StatusDot tone="ok" />{/if}
   {#each row.value as seg, i (i)}
     {#if typeof seg === "string"}{seg}{:else}<span class="mono code">{seg.mono}</span>{/if}
   {/each}
@@ -191,13 +192,8 @@
   .value > .code:first-of-type {
     color: var(--text);
   }
-  .live {
-    display: inline-block;
-    width: 7px;
-    height: 7px;
+  .value > :global(.dot) {
     margin-right: 6px;
-    border-radius: 50%;
-    background: var(--ok);
   }
   .actions {
     display: flex;

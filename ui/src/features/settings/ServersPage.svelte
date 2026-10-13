@@ -9,6 +9,7 @@
   import SettingsSection from "../../lib/ui/SettingsSection.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
+  import StatusDot from "../../lib/ui/StatusDot.svelte";
   import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
   import { type Sort, sortRows } from "../../lib/ui/sorting";
@@ -17,7 +18,7 @@
   import { serverList } from "../../state/serverList.svelte";
   import { servers } from "../../state/servers.svelte";
   import ServerPathSheet from "./ServerPathSheet.svelte";
-  import { serverRow, type ServerRow } from "./serverRows";
+  import { serverRow, serverTone, type ServerRow } from "./serverRows";
 
   /** The server whose custom path sheet is open. */
   let editing = $state<ServerRow>();
@@ -138,7 +139,7 @@
             <span class="clip muted" class:mono={row.status === "custom"} title={row.source}>
               {#if row.status === "custom"}<PathText path={row.source} />{:else}{row.source}{/if}
             </span>
-            <span class="dot {row.status}" title={row.statusLabel}></span>
+            <StatusDot tone={serverTone(row.status)} title={row.statusLabel} />
           </button>
         {/each}
         {#if !rows.length}<p class="empty pad">No language server matches.</p>{/if}
@@ -357,23 +358,8 @@
     font-family: var(--font-mono);
     font-size: var(--fs-mono);
   }
-  .dot {
+  .row > :global(.dot) {
     justify-self: center;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-3);
-  }
-  .dot.found,
-  .dot.custom {
-    background: var(--ok);
-  }
-  .dot.missing,
-  .dot.failed {
-    background: var(--del-text);
-  }
-  .dot.installing {
-    background: var(--warn);
   }
   .empty {
     color: var(--text-3);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Account } from "../../generated/Account.ts";
-import { accountRow } from "./accountRows.ts";
+import { accountRow, accountTone } from "./accountRows.ts";
 
 const account = (over: Partial<Account>): Account => ({
   host: "github.com",
@@ -62,4 +62,11 @@ void test("a refused or unchecked credential carries the platform's reason", () 
   assert.deepEqual([rejected.status, rejected.problem, rejected.user], ["rejected", "Bad credentials", undefined]);
   const unverified = accountRow(account({ state: { type: "unverified", message: "no route to host" } }), true);
   assert.deepEqual([unverified.statusLabel, unverified.problem], ["Not verified", "no route to host"]);
+});
+
+void test("a refused credential and one the CLI cannot deliver are errors, one not checked yet is not", () => {
+  assert.equal(accountTone("signedIn"), "ok");
+  assert.equal(accountTone("rejected"), "error");
+  assert.equal(accountTone("unusable"), "error");
+  assert.equal(accountTone("unverified"), "neutral");
 });

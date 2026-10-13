@@ -2,12 +2,13 @@
   import { onMount } from "svelte";
   import { accounts } from "../../state/accounts.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import StatusDot from "../../lib/ui/StatusDot.svelte";
   import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
   import { type Sort, sortRows } from "../../lib/ui/sorting";
   import { hasKeychain } from "../../state/host";
   import AccountSheet from "./AccountSheet.svelte";
-  import { accountRow, type AccountRow } from "./accountRows";
+  import { accountRow, accountTone, type AccountRow } from "./accountRows";
 
   const COLUMNS: Column<AccountRow>[] = [
     { id: "platform", label: "", width: 50, fixed: true },
@@ -90,7 +91,7 @@
             <span class="host">{row.host}</span>
             <span>{row.user ?? ""}</span>
             <span>{row.credential}</span>
-            <span class="dot {row.status}" title={row.statusLabel}></span>
+            <StatusDot tone={accountTone(row.status)} title={row.statusLabel} />
           </button>
         {/each}
         {#if !rows.length}
@@ -192,19 +193,8 @@
     display: flex;
     color: var(--text-2);
   }
-  .dot {
+  .row > :global(.dot) {
     justify-self: center;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-3);
-  }
-  .dot.signedIn {
-    background: var(--ok);
-  }
-  .dot.rejected,
-  .dot.unusable {
-    background: var(--warn);
   }
   .empty {
     padding: 12px 10px;

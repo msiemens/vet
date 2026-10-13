@@ -4,6 +4,7 @@ import type { ServerFeatures } from "../../generated/ServerFeatures";
 import type { ServerInfo } from "../../generated/ServerInfo";
 import type { ServerOrigin } from "../../generated/ServerOrigin";
 import type { Tsserver } from "../../generated/Tsserver";
+import type { StatusTone } from "../../lib/ui/statusTone.ts";
 import type { InstallProgress } from "../../state/installLog";
 
 /** `installing` and `failed` are the page's own: the protocol only knows found and missing. */
@@ -61,6 +62,20 @@ const STATUS_LABELS: Record<ServerStatus, string> = {
   installing: "Installing…",
   failed: "Install failed",
 };
+
+/** The dot of a server's status: a failure is an error, a install under way is not well yet. */
+export function serverTone(status: ServerStatus): StatusTone {
+  switch (status) {
+    case "found":
+    case "custom":
+      return "ok";
+    case "missing":
+    case "failed":
+      return "error";
+    case "installing":
+      return "warn";
+  }
+}
 
 /** The features in the order the page lists them, named as the app names them elsewhere. */
 const FEATURES: [keyof ServerFeatures, string][] = [

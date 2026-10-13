@@ -3,6 +3,7 @@
 import type { Account } from "../../generated/Account";
 import type { PlatformKind } from "../../generated/PlatformKind";
 import type { IconName } from "../../lib/ui/icons";
+import type { StatusTone } from "../../lib/ui/statusTone.ts";
 
 export type AccountStatus = "signedIn" | "rejected" | "unverified" | "unusable";
 
@@ -54,6 +55,19 @@ const STATUS_LABELS: Record<AccountStatus, string> = {
   unverified: "Not verified",
   unusable: "Unusable",
 };
+
+/** The dot of an account's status: a credential the platform refused, or the CLI could not give, is an error. */
+export function accountTone(status: AccountStatus): StatusTone {
+  switch (status) {
+    case "signedIn":
+      return "ok";
+    case "rejected":
+    case "unusable":
+      return "error";
+    case "unverified":
+      return "neutral";
+  }
+}
 
 export const GITHUB_HOST = "github.com";
 

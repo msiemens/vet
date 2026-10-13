@@ -2,14 +2,15 @@
   import type { PullRequestInfo } from "../../generated/PullRequestInfo";
   import Avatar from "../../lib/ui/Avatar.svelte";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
-  import { blockerText, reviewerMark, stateLabel } from "./pullRequest";
+  import StatusDot from "../../lib/ui/StatusDot.svelte";
+  import { blockerText, reviewerMark, stateLabel, stateTone } from "./pullRequest";
 
   let { info }: { info: PullRequestInfo } = $props();
 </script>
 
 <dl class="pr">
   <dt>State</dt>
-  <dd><span class="dot state-{info.state}"></span>{stateLabel(info)}</dd>
+  <dd><StatusDot tone={stateTone(info.state)} />{stateLabel(info)}</dd>
   <dt>Author</dt>
   <dd class="author">
     <Avatar name={info.authorName} url={info.authorAvatar} /><span class="cut" title={info.authorName}
@@ -75,18 +76,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--ok);
-  }
-  .dot.state-closed {
-    background: var(--warn);
-  }
-  .dot.state-merged {
-    background: var(--note);
   }
   .branches {
     overflow: hidden;

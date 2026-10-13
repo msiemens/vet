@@ -20,6 +20,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
+  import StatusDot from "../../lib/ui/StatusDot.svelte";
   import type { Summary } from "../../state/problemsSummary";
 
   let {
@@ -46,7 +47,7 @@
     >
   {/if}
   {#if info.topology}
-    <span class="footer-item"><span class="dot" class:ok={info.topology.ok}></span>{info.topology.label}</span>
+    <span class="footer-item"><StatusDot tone={info.topology.ok ? "ok" : "warn"} />{info.topology.label}</span>
   {/if}
   <span class="grow"></span>
   {#if progress}{@render progress()}{/if}
@@ -93,14 +94,5 @@
   }
   .grow {
     flex: 1;
-  }
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--warn);
-  }
-  .dot.ok {
-    background: var(--ok);
   }
 </style>

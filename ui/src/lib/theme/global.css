@@ -345,16 +345,6 @@ textarea.field {
   }
 }
 
-/* The dot on what follows the working tree: the target, and the end of a range. */
-.live-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-left: 6px;
-  border-radius: 50%;
-  background: var(--ok);
-}
-
 /* Joined `.ctl` buttons: the right part owns the one border between the parts. */
 .ctl-group {
   display: inline-flex;

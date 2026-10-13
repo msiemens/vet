@@ -8,10 +8,16 @@ import type { ReviewerState } from "../../generated/ReviewerState";
 import type { ReviewSubmitted } from "../../generated/ReviewSubmitted";
 import type { Thread } from "../../generated/Thread";
 import type { ThreadMessage } from "../../generated/ThreadMessage";
+import type { StatusTone } from "../../lib/ui/statusTone.ts";
 
 export function stateLabel(info: Pick<PullRequestInfo, "state" | "draft">): string {
   if (info.state === "open") return info.draft ? "Draft" : "Open";
   return info.state === "merged" ? "Merged" : "Closed";
+}
+
+/** The dot beside a pull request's state: open is well, closed is not, merged is its own. */
+export function stateTone(state: PullRequestInfo["state"]): StatusTone {
+  return state === "open" ? "ok" : state === "merged" ? "note" : "warn";
 }
 
 export function blockerText(blocker: Blocker): string {
