@@ -32,7 +32,7 @@
   import { exposeRendered } from "./devHook";
   import type { SymbolRow } from "./symbolRows";
   import CommitStrip from "./CommitStrip.svelte";
-  import { CHANGES, commitOf, kindOf, pathOf } from "./tabModel";
+  import { CHANGES, ON_SCREEN, commitOf, kindOf, pathOf } from "./tabModel";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
@@ -229,7 +229,7 @@
         commit={changeset.commitIndex}
         oncommit={(index) => void changeset.showCommit(index)}
         onselect={select}
-        onopen={(path) => void controller.openSource(path)}
+        onopen={(path) => void controller.openSource(ON_SCREEN, path)}
         onopensymbol={openSymbol}
         onmenu={(path, dir, x, y) => openMenu(treeMenu(dir), x, y, { target: { path, dir } })}
       />

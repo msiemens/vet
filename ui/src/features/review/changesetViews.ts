@@ -29,21 +29,21 @@ export interface SavedView {
 
 /**
  * The tabs a changeset comes back with: those it had that still have something to show (see
- * `isStale`; `changed` says which files the changeset changes; `hasLog` which logs are still
- * held), the Changes tab first, and the one that was active unless it is gone. A tab that stays
- * at a commit is kept: only the commit's own view can say whether it has anything left. A
+ * `isStale`; `changed` says whether the view the tab reads changes a file; `hasLog` which logs are
+ * still held), the Changes tab first, and the one that was active unless it is gone. A tab that
+ * stays at a commit is kept: only the commit's own view can say whether it has anything left. A
  * changeset seen for the first time has the Changes tab alone, in the diff mode `diffMode`.
  */
 export function restoredTabs(
   saved: SavedView | undefined,
-  changed: (path: string) => boolean,
+  changed: (tab: TabId, path: string) => boolean,
   diffMode: Mode,
   hasLog: (tab: TabId) => boolean,
 ) {
   const open = saved
     ? saved.open.filter((tab) => {
         if (kindOf(tab) === "log") return hasLog(tab);
-        return commitOf(tab) !== undefined || !isStale(tab, saved.modes.get(tab), changed);
+        return commitOf(tab) !== undefined || !isStale(tab, saved.modes.get(tab), (path) => changed(tab, path));
       })
     : [CHANGES];
   const active = saved && open.includes(saved.active) ? saved.active : CHANGES;

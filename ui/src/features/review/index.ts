@@ -3,3 +3,4 @@ export { ReviewController } from "./ReviewController";
 export { reviewActions } from "./reviewActions";
 export { fileCommands, viewCommands } from "./reviewCommands";
 export { modeChange, statusLetter } from "./tree";
+export { ON_SCREEN } from "./tabModel";

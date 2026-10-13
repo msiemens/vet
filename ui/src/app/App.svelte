@@ -32,6 +32,7 @@
   import { NotificationCards, PlatformFooter, copyText } from "../features/platform";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, queueCommands, targetLabel } from "../features/queue";
   import {
+    ON_SCREEN,
     ReviewScreen,
     type ReviewController,
     fileCommands,
@@ -190,7 +191,7 @@
     diagnostics: semanticSummary.diagnostics,
   });
 
-  const openLocation: OpenLocation = (path, line, side) => void controller?.openLocation(path, line, side);
+  const openLocation: OpenLocation = (path, line, side) => void controller?.openLocation(ON_SCREEN, path, line, side);
 
   // Registered before the first render, so the menu below is built from them.
   const stopCommands = commands.register(

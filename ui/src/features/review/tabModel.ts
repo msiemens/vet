@@ -7,6 +7,12 @@ import type { Mode, ViewMode } from "../../lib/viewMode.ts";
 
 export const CHANGES: TabId = "changes";
 
+/** The view on screen, as the origin of a request that no tab makes: the file tree, a panel. */
+export const ON_SCREEN = "screen";
+
+/** What a request to open a file starts from: a tab, whose view it reads, or `ON_SCREEN`. */
+export type Origin = TabId | typeof ON_SCREEN;
+
 /** The tab of a file; with `commit` (a full id), the one that stays at that commit. */
 export const fileTab = (path: string, commit?: string): TabId =>
   commit === undefined ? `file:${path}` : `pin:${commit}:${path}`;

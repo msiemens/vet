@@ -50,7 +50,19 @@ import { threadMenu } from "../comments";
 import { type HunkPlace, stepFlagged } from "./flaggedHunks";
 import { provideActions } from "./reviewActions";
 import type { ViewActions } from "./reviewCommands";
-import { CHANGES, commitOf, fileTab, hasDiff, kindOf, logTab, modesOf, pathOf, settleMode } from "./tabModel";
+import {
+  CHANGES,
+  ON_SCREEN,
+  type Origin,
+  commitOf,
+  fileTab,
+  hasDiff,
+  kindOf,
+  logTab,
+  modesOf,
+  pathOf,
+  settleMode,
+} from "./tabModel";
 import { Tabs } from "./Tabs.svelte";
 
 /** Space types in a field and presses a focused control; it marks the current item only when none of those has the focus. */
@@ -117,7 +129,6 @@ export class ReviewController {
   private search = new LocationSearch({
     picker: locationPicker,
     notice: (text) => (session.notice = text),
-    open: (row, side) => void this.openRow(row, side),
     isAbort,
     fail: (error, revision) => this.changeset.reportFailure(error, revision),
     restartServer: (language) => serverList.restart(language),
@@ -197,7 +208,7 @@ export class ReviewController {
       hover: (revision, side, path, line, col, signal) =>
         this.analysable(id, side) ? semantic.hover(revision, side, path, line, col, signal) : Promise.resolve(NO_HOVER),
       definition: (revision, side, path, line, col) => {
-        if (this.analysable(id, side)) void this.goToDefinition(revision, side, path, line, col);
+        if (this.analysable(id, side)) void this.goToDefinition(id, revision, side, path, line, col);
       },
       locations: (revision, kind, side, path, at, subject) => {
         if (!this.analysable(id, side)) return;
@@ -208,6 +219,7 @@ export class ReviewController {
           anchor: subject.anchor,
           side,
           revision,
+          open: (row) => void this.openRow(id, row, side),
           ask: (signal) =>
             kind === "usages"
               ? backend.usages(revision, side, path, at.line, at.col, signal)
@@ -339,13 +351,23 @@ export class ReviewController {
     this.logViews.clear();
   }
 
-  /** The files of the view on screen. */
-  private get files(): readonly FileLayout[] {
-    return this.changeset.currentLayout()?.files ?? [];
+  /**
+   * The view a request that starts from `origin` reads: the tab's own (see `sourceOf`), or for
+   * `ON_SCREEN` the one on screen. Whatever a tab asks for goes through here, never to `changeset`
+   * directly: a tab may read another view than the one on screen.
+   */
+  private viewOf(origin: Origin): ViewSource {
+    return origin === ON_SCREEN ? this.changeset : this.sourceOf(origin);
   }
 
-  /** The view shows a range that does not end at the latest version: nothing can be marked or commented. */
-  private get readOnly(): boolean {
+  /** The full id of the commit the view `origin` reads is of; none if it is of the changeset. */
+  private async commitAt(origin: Origin): Promise<string | undefined> {
+    if (this.viewOf(origin) === this.changeset) return this.commitOnScreen();
+    return origin === ON_SCREEN ? undefined : commitOf(origin);
+  }
+
+  /** The view on screen shows a range that does not end at the latest version: nothing in it can be marked or commented. */
+  private get screenReadOnly(): boolean {
     return this.changeset.currentLayout()?.interdiff?.markable === false;
   }
 
@@ -370,7 +392,7 @@ export class ReviewController {
 
   /** Runs a request that marks or comments in `source`, unless the view on screen is read-only: then it says so and `refuse` answers. */
   private async editing<T>(source: ViewSource, request: () => Promise<T>, refuse: () => T): Promise<T> {
-    if (source !== this.changeset || !this.readOnly) return request();
+    if (source !== this.changeset || !this.screenReadOnly) return request();
     session.notice = READ_ONLY_NOTE;
     return refuse();
   }
@@ -471,7 +493,7 @@ export class ReviewController {
       jumpToSource: () => {
         const caret = this.active?.caret();
         if (!caret) return false;
-        void this.openSource(caret.path, caret.line, this.tabs.active);
+        void this.openSource(this.tabs.active, caret.path, caret.line);
         return true;
       },
       stepCommit: (delta) => this.changeset.stepCommit(delta),
@@ -523,7 +545,7 @@ export class ReviewController {
         await this.views.get(CHANGES)?.goToFileHunk(to.path, to.hunk);
       } else {
         // The file's tab at the commit of the tab the step started from, in the mode that tab is in.
-        const opened = await this.showFile(to.path, this.tabs.modes.get(id), id);
+        const opened = await this.showFile(id, to.path, this.tabs.modes.get(id));
         if (!opened) return;
         if (opened.mode === "file") this.texts.get(opened.id)?.goToHunk(to.hunk);
         else await this.views.get(opened.id)?.goToFileHunk(to.path, to.hunk);
@@ -537,8 +559,8 @@ export class ReviewController {
     return pathOf(this.tabs.active);
   }
 
-  /** Shows a place the popup listed: in its file's tab, or says where it is when it is outside the repository. */
-  private async openRow(row: LocationRow, side: Side) {
+  /** Shows a place the popup listed, which the tab `from` asked for: in its file's tab, or says where it is when it is outside the repository. */
+  private async openRow(from: TabId, row: LocationRow, side: Side) {
     if (row.external) {
       session.notice = `Outside the repository: ${row.path}`;
       return;
@@ -546,11 +568,11 @@ export class ReviewController {
     const line = row.line - 1;
     const col = row.col - 1;
     const width = row.matchEnd - row.matchStart;
-    await this.openLocation(row.path, line, side, { start: { line, col }, end: { line, col: col + width } });
+    await this.openLocation(from, row.path, line, side, { start: { line, col }, end: { line, col: col + width } });
   }
 
-  /** The definition of the symbol at a position of `side`'s text, shown by `openLocation`. */
-  private async goToDefinition(revision: number, side: Side, path: string, line: number, col: number) {
+  /** The definition of the symbol at a position of `side`'s text in the tab `from`, shown by `openLocation`. */
+  private async goToDefinition(from: TabId, revision: number, side: Side, path: string, line: number, col: number) {
     const found = await semantic.definition(revision, side, path, line, col);
     const location = found?.[0];
     if (!location) return;
@@ -558,23 +580,24 @@ export class ReviewController {
       session.notice = `Defined outside the repository: ${location.path}`;
       return;
     }
-    await this.openLocation(location.path, location.span.start.line, side, location.span);
+    await this.openLocation(from, location.path, location.span.start.line, side, location.span);
   }
 
   /**
    * Shows a 0-based `line` of `side`'s text of the file at `path`, marking `span` if given, in the
-   * file's tab. A changed file's tab keeps its mode (a new one opens in the diff mode last chosen);
+   * file's tab of the view `origin` reads. A changed file's tab keeps its mode (a new one opens in the diff mode last chosen);
    * an unchanged file (the same text on both sides) has its text. A base-side location lands in
    * the base content: the base editor of a side-by-side view, or the target line of the unified
    * view where the deleted lines are drawn. Without a span a base line has no place in the diff
    * views yet, so the diff opens at its start. The text has no base side: a tab showing it
    * changes to the diff for such a location.
    */
-  async openLocation(path: string, line: number | undefined, side: Side, span?: TextSpan) {
+  async openLocation(origin: Origin, path: string, line: number | undefined, side: Side, span?: TextSpan) {
     // A base path is the file's old path if it was renamed.
-    const file = this.files.find((f) => (side === "base" ? (f.oldPath ?? f.path) : f.path) === path);
+    const files = this.viewOf(origin).currentLayout()?.files ?? [];
+    const file = files.find((f) => (side === "base" ? (f.oldPath ?? f.path) : f.path) === path);
     const target = file?.path ?? path;
-    const opened = await this.showFile(target, (current) =>
+    const opened = await this.showFile(origin, target, (current) =>
       side === "base" && current === "file" ? this.diffMode : undefined,
     );
     if (!opened) return;
@@ -592,18 +615,18 @@ export class ReviewController {
   /**
    * Focuses the file's tab, opening it if needed, showing `want` (a mode, or what to want given the tab's
    * mode) if the file has that mode (else the tab's mode, or for a new tab the diff mode last chosen),
-   * with the view built. The tab is the one at the commit of `origin`, a tab the request comes from; with
-   * none, at the commit on screen if there is one. Answers the tab and its mode, or nothing after saying
-   * why it could not be opened.
+   * with the view built. The tab is the one in the view `origin` reads: at the commit of a tab at a
+   * commit, else at the commit on screen if the origin reads the view on screen. Answers the tab and
+   * its mode, or nothing after saying why it could not be opened.
    */
   private async showFile(
+    origin: Origin,
     path: string,
     want?: ViewMode | ((current?: ViewMode) => ViewMode | undefined),
-    origin?: TabId,
   ): Promise<{ id: TabId; mode: ViewMode } | undefined> {
     let commit: string | undefined;
     try {
-      commit = origin !== undefined && origin !== CHANGES ? commitOf(origin) : await this.commitOnScreen();
+      commit = await this.commitAt(origin);
     } catch (error) {
       session.notice = errorText(error);
       return undefined;
@@ -653,13 +676,13 @@ export class ReviewController {
     const side: Side = change === "removed" ? "base" : "target";
     this.tabs.active = CHANGES;
     if (await this.views.get(CHANGES)?.goToSymbol(symbol.id.path, side, symbol.span)) return;
-    await this.openLocation(symbol.id.path, symbol.span.start.line, side, symbol.span);
+    await this.openLocation(ON_SCREEN, symbol.id.path, symbol.span.start.line, side, symbol.span);
   }
 
   /** Jump to Source for a changed symbol: its file's text at the symbol. A removed symbol has no text, so it is shown where it is reviewed. */
   async jumpToSymbol(changed: ChangedSymbol) {
     if (changed.change === "removed") await this.revealSymbol(changed);
-    else await this.openSource(changed.symbol.id.path, changed.symbol.span.start.line);
+    else await this.openSource(ON_SCREEN, changed.symbol.id.path, changed.symbol.span.start.line);
   }
 
   /** Scrolls the Changes tab to a changed file; answers whether `path` is one. */
@@ -708,7 +731,7 @@ export class ReviewController {
       // Only the changeset has a base diff to show, not a range of versions.
       baseDiff: built.view.type === "changeset" ? (shown, path, hunk) => source.baseDiff(shown, path, hunk) : undefined,
       fileMenu: this.fileMenu,
-      openSource: (path, line) => void this.openSource(path, line, id),
+      openSource: (path, line) => void this.openSource(id, path, line),
       threads: this.threadListeners(source),
       commentable: commitOf(id) === undefined,
     };
@@ -1062,10 +1085,10 @@ export class ReviewController {
 
   /**
    * Jump to Source: the file's tab shows its text, at a 0-based target `line` if given. The tab
-   * is opened in that mode if the file has none.
+   * is opened in that mode if the file has none, in the view `origin` reads.
    */
-  async openSource(path: string, line?: number, origin?: TabId) {
-    const opened = await this.showFile(path, "file", origin);
+  async openSource(origin: Origin, path: string, line?: number) {
+    const opened = await this.showFile(origin, path, "file");
     if (opened && line !== undefined) this.texts.get(opened.id)?.goToLine(line);
   }
 
@@ -1109,8 +1132,7 @@ export class ReviewController {
       this.frozen = false;
       if (!switching) this.reloadScopes(); // the scopes made meanwhile have read nothing
     }
-    const paths = new Set(layout.paths);
-    const brought = switching ? this.switchTo(key, paths) : undefined;
+    const brought = switching ? this.switchTo(key) : undefined;
     if (!switching) this.tabs.dropStale((id, path) => this.stillChanged(id, path));
     this.key = key;
     const commitChanged = this.commitChanged();
@@ -1156,14 +1178,14 @@ export class ReviewController {
   }
 
   /** Remembers the changeset on view and brings back the tabs of `next`; answers what was remembered of it. */
-  private switchTo(next: string, paths: ReadonlySet<string>): SavedView | undefined {
+  private switchTo(next: string): SavedView | undefined {
     clearTimeout(this.saving);
     this.saveView();
-    return this.bringBack(next, paths);
+    return this.bringBack(next);
   }
 
-  /** Sets the tabs the changeset `key` had, and what its panes are put at when they are built. */
-  private bringBack(key: string, paths: ReadonlySet<string>): SavedView | undefined {
+  /** Sets the tabs the changeset `key` had, and what its panes are put at when they are built. Each tab is judged by the view it reads. */
+  private bringBack(key: string): SavedView | undefined {
     const repo = session.repo;
     if (repo !== undefined) this.memory ??= new ViewMemory(repo);
     const saved = this.memory?.get(key);
@@ -1171,7 +1193,7 @@ export class ReviewController {
     this.frozen = false;
     const { open, active, modes } = restoredTabs(
       saved,
-      (path) => paths.has(path),
+      (tab, path) => this.stillChanged(tab, path),
       this.diffMode,
       (tab) => this.tabs.logs.has(tab),
     );
@@ -1206,7 +1228,7 @@ export class ReviewController {
     if (!frame) return false; // the project was closed meanwhile
     const { layout, facts } = frame;
     this.key = keyId(facts.target.changeset);
-    const saved = this.bringBack(this.key, new Set(layout.paths));
+    const saved = this.bringBack(this.key);
     this.rangeChanged(layout);
     this.filtered = this.changeset.baseChanged;
     this.commitChanged();

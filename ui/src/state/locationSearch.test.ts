@@ -51,7 +51,6 @@ function setup(delayMs = 5, restart: () => Promise<string | undefined> = () => P
     {
       picker,
       notice: (text) => events.push(`notice ${text}`),
-      open: (r, side) => events.push(`open ${r.path}:${r.line} ${side}`),
       isAbort: (e) => e instanceof DOMException && e.name === "AbortError",
       fail: (e, revision) => events.push(`fail ${String(e)} at ${revision}`),
       restartServer: async (language) => {
@@ -61,13 +60,14 @@ function setup(delayMs = 5, restart: () => Promise<string | undefined> = () => P
     },
     delayMs,
   );
-  const ask = (reply: () => LocationRows | Promise<LocationRows>): Search => ({
+  const ask = (reply: () => LocationRows | Promise<LocationRows>, from = "tab"): Search => ({
     kind: "usages",
     symbol: "f",
     anchor: { left: 0, top: 0, bottom: 10 },
     side: "target",
     revision: 7,
     ask: () => Promise.resolve(reply()),
+    open: (r) => events.push(`open ${r.path}:${r.line} from ${from}`),
   });
   return { events, search, ask, view: () => view };
 }
@@ -79,7 +79,7 @@ const collapsed = (events: string[]) => events.filter((event, i) => event !== ev
 void test("one place is gone to without the popup showing", async () => {
   const { events, search, ask } = setup();
   await search.start(ask(() => answer([row("a.rs", 3)])));
-  assert.deepEqual(collapsed(events), ["close", "open a.rs:3 target"]);
+  assert.deepEqual(collapsed(events), ["close", "open a.rs:3 from tab"]);
 });
 
 void test("no place shows the popup's empty state, and several its list", async () => {
@@ -107,12 +107,22 @@ void test("a search that takes a moment shows 'Searching…' until the answer re
   assert.equal(view()?.body.phase, "results");
 });
 
-void test("picking a place closes the popup and goes there on the side that was asked", async () => {
+void test("picking a place closes the popup and goes there from where the search was asked", async () => {
   const { events, search, ask, view } = setup();
-  await search.start(ask(() => answer([row("a.rs", 1), row("a.rs", 2)])));
+  await search.start(ask(() => answer([row("a.rs", 1), row("a.rs", 2)]), "pinned tab"));
   events.length = 0;
   view()?.onpick(row("a.rs", 2));
-  assert.deepEqual(events, ["close", "open a.rs:2 target"]);
+  assert.deepEqual(events, ["close", "open a.rs:2 from pinned tab"]);
+});
+
+void test("a lone place is gone to from where its own search was asked, whatever searched before", async () => {
+  const { events, search, ask } = setup();
+  await search.start(ask(() => answer([row("a.rs", 1)]), "first"));
+  await search.start(ask(() => answer([row("b.rs", 2)]), "second"));
+  assert.deepEqual(
+    events.filter((e) => e.startsWith("open")),
+    ["open a.rs:1 from first", "open b.rs:2 from second"],
+  );
 });
 
 void test("an answer that comes in after a newer search began is dropped", async () => {
@@ -127,7 +137,7 @@ void test("an answer that comes in after a newer search began is dropped", async
   await first;
   assert.deepEqual(
     events.filter((e) => e.startsWith("open")),
-    ["open new.rs:5 target"],
+    ["open new.rs:5 from tab"],
   );
 });
 
@@ -153,7 +163,7 @@ void test("Restart in the popup restarts the server, and only once it runs asks 
   events.length = 0;
   view()?.onretry();
   await settled(20);
-  assert.deepEqual(collapsed(events), ["show searching", "restart rust", "close", "open a.rs:3 target"]);
+  assert.deepEqual(collapsed(events), ["show searching", "restart rust", "close", "open a.rs:3 from tab"]);
 });
 
 void test("a server that does not start again is told, and the search is not repeated", async () => {

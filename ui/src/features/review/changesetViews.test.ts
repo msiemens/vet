@@ -11,7 +11,7 @@ const saved = (open: string[], active: string, modes: Record<string, string> = {
 
 const changed =
   (...paths: string[]) =>
-  (path: string) =>
+  (_tab: string, path: string) =>
     paths.includes(path);
 
 const noLogs = () => false;
@@ -57,6 +57,17 @@ void test("a diff of a file the changeset no longer changes is not restored, and
   const { open, active } = restoredTabs(view, changed("a.rs"), "unified", noLogs);
   assert.deepEqual(open, ["changes", "file:a.rs"]);
   assert.equal(active, "changes");
+});
+
+void test("each tab is judged by the view it reads, not by the one on screen", () => {
+  const view = saved(["changes", "file:a.rs", "file:b.rs"], "changes", {
+    "file:a.rs": "unified",
+    "file:b.rs": "unified",
+  });
+  // a.rs is changed in the view the first tab reads (the changeset's) but not in the one on screen.
+  const reads = (tab: string, path: string) => (tab === "file:a.rs" ? path === "a.rs" : false);
+  const { open } = restoredTabs(view, reads, "unified", noLogs);
+  assert.deepEqual(open, ["changes", "file:a.rs"]);
 });
 
 void test("a file's text is restored whether or not the changeset changes the file", () => {

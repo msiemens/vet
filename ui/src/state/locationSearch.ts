@@ -21,14 +21,14 @@ export interface Search {
   revision: number;
   /** Asks the backend; `signal` aborts it. */
   ask(signal: AbortSignal): Promise<LocationRows>;
+  /** Goes to the place of `row`, where the search was asked from. */
+  open(row: LocationRow): void;
 }
 
 export interface SearchDeps {
   picker: PickerSink;
   /** Tells the viewer something in a toast. */
   notice(text: string): void;
-  /** Goes to the place of `row`. */
-  open(row: LocationRow, side: Side): void;
   /** Tells whether the error is the changeset moving on, which aborts what was asked of the old revision. */
   isAbort(error: unknown): boolean;
   /** Tells the viewer why a request failed that was sent for `revision`. */
@@ -87,7 +87,7 @@ export class LocationSearch {
       onpick: (row: LocationRow) => {
         this.running = undefined;
         picker.close();
-        this.deps.open(row, search.side);
+        search.open(row);
       },
       onretry: () => void this.start(search),
       onclose: () => this.cancel(),
@@ -122,7 +122,7 @@ export class LocationSearch {
       this.deps.notice(unavailable.message);
     } else if (total === 1 && rows.length === 1) {
       picker.close();
-      this.deps.open(rows[0], search.side);
+      search.open(rows[0]);
     } else {
       picker.show({ ...shown, body: { phase: "results", rows, total } });
     }
