@@ -6,7 +6,7 @@ use vet_core::content::{FileDiff, Hunk, LineRange, RepoPath};
 use vet_core::review::Side;
 
 use super::*;
-use crate::ports::{Diagnostic, Location, Pos, Span, Sym, SymbolInfo, SymbolKind};
+use crate::ports::{Diagnostic, Location, Pos, Severity, Span, Sym, SymbolInfo, SymbolKind};
 use crate::query::{Asked, Primitives, SemanticError};
 use crate::testutil::{answered, block_on};
 
@@ -89,6 +89,9 @@ struct Fake {
     failing_symbols: Vec<RepoPath>,
     /// What the target side's server answers for a text under a file's name.
     texts: HashMap<(RepoPath, String), Vec<SymbolInfo>>,
+    problems: HashMap<(Side, RepoPath), Vec<Diagnostic>>,
+    /// The sides whose server fails to give diagnostics.
+    failing_problems: Vec<Side>,
     /// Every answer is one reused from an earlier question.
     cached: bool,
 }
@@ -156,8 +159,11 @@ impl Primitives for Fake {
         self.call_hierarchy()?;
         self.answer(self.callees.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
-    async fn diagnostics(&self, _: Side, _: &RepoPath) -> Asked<Vec<Diagnostic>> {
-        self.answer(vec![])
+    async fn diagnostics(&self, side: Side, f: &RepoPath) -> Asked<Vec<Diagnostic>> {
+        if self.failing_problems.contains(&side) {
+            return Err(SemanticError::Query(crate::ports::QueryError("server crashed".into())));
+        }
+        self.answer(self.problems.get(&(side, f.clone())).cloned().unwrap_or_default())
     }
 }
 
@@ -957,4 +963,110 @@ fn usages_are_the_references_on_the_target_and_a_failure_is_a_gap() {
     let found = block_on(usages(&fake, &keep)).value;
     assert_eq!(found.references.len(), 1);
     assert_eq!(found.gap, None);
+}
+
+fn problem(line: u32, severity: Severity, message: &str) -> Diagnostic {
+    Diagnostic {
+        span: span(line, line + 1),
+        severity,
+        message: message.into(),
+        source: Some("rustc".into()),
+        code: Some("dead_code".into()),
+    }
+}
+
+fn origins_of(fake: &Fake, old: Option<&str>, new: &str, hunks: &[Hunk]) -> Vec<Origin> {
+    let old = old.map(file);
+    let found = block_on(judged(fake, old.as_ref(), &file(new), hunks)).value.unwrap();
+    found.diagnostics.iter().map(|j| j.origin).collect()
+}
+
+#[test]
+fn a_diagnostic_is_pre_existing_when_the_base_has_it_on_the_line_that_maps_to_it() {
+    let mut fake = Fake::default();
+    // Two lines are inserted above: base line 5 is target line 7.
+    let hunks = [hunk((2, 2), (2, 4))];
+    fake.problems.insert(
+        (Side::Base, file("a.rs")),
+        vec![
+            problem(5, Severity::Warning, "unused  `x`"),
+            problem(1, Severity::Warning, "unused `y`"),
+        ],
+    );
+    fake.problems.insert(
+        (Side::Target, file("a.rs")),
+        vec![
+            // The same text with its whitespace collapsed, where the line moved to.
+            problem(7, Severity::Warning, "unused `x`"),
+            // On an inserted line, which the base cannot have had.
+            problem(3, Severity::Warning, "unused `y`"),
+            // Another message, severity and place.
+            problem(7, Severity::Error, "unused `x`"),
+            problem(1, Severity::Warning, "unused `z`"),
+        ],
+    );
+    assert_eq!(
+        origins_of(&fake, Some("a.rs"), "a.rs", &hunks),
+        [Origin::Existing, Origin::New, Origin::New, Origin::New]
+    );
+}
+
+#[test]
+fn a_changed_line_has_no_base_line_even_when_the_base_reports_the_same_text() {
+    let mut fake = Fake::default();
+    let hunks = [hunk((4, 5), (4, 5))];
+    let same = problem(4, Severity::Warning, "unused `x`");
+    fake.problems.insert((Side::Base, file("a.rs")), vec![same.clone()]);
+    fake.problems.insert((Side::Target, file("a.rs")), vec![same]);
+    assert_eq!(origins_of(&fake, Some("a.rs"), "a.rs", &hunks), [Origin::New]);
+}
+
+#[test]
+fn a_base_diagnostic_vouches_for_one_target_diagnostic_only() {
+    let mut fake = Fake::default();
+    let twin = problem(2, Severity::Warning, "unused `x`");
+    fake.problems.insert((Side::Base, file("a.rs")), vec![twin.clone()]);
+    fake.problems
+        .insert((Side::Target, file("a.rs")), vec![twin.clone(), twin]);
+    assert_eq!(
+        origins_of(&fake, Some("a.rs"), "a.rs", &[]),
+        [Origin::Existing, Origin::New]
+    );
+}
+
+#[test]
+fn without_base_diagnostics_no_origin_is_claimed_and_the_target_is_still_listed() {
+    let mut fake = Fake::default();
+    fake.problems
+        .insert((Side::Target, file("a.rs")), vec![problem(2, Severity::Error, "boom")]);
+    fake.failing_problems.push(Side::Base);
+    let found = block_on(judged(&fake, Some(&file("a.rs")), &file("a.rs"), &[]))
+        .value
+        .unwrap();
+    assert_eq!(found.diagnostics.len(), 1);
+    assert_eq!(found.diagnostics[0].origin, Origin::Unknown);
+    assert!(found.base.unwrap().to_string().contains("server crashed"));
+}
+
+#[test]
+fn a_new_file_has_only_new_diagnostics_and_asks_no_base_server() {
+    let mut fake = Fake::default();
+    fake.problems.insert(
+        (Side::Target, file("new.rs")),
+        vec![problem(0, Severity::Warning, "unused `x`")],
+    );
+    fake.failing_problems.push(Side::Base);
+    let found = block_on(judged(&fake, None, &file("new.rs"), &[hunk((0, 0), (0, 3))]));
+    let judgement = found.value.unwrap();
+    assert_eq!(judgement.diagnostics[0].origin, Origin::New);
+    assert!(judgement.base.is_none());
+    assert_eq!(found.inputs.primitives, ["diagnostics(target:new.rs) [fake]"]);
+}
+
+#[test]
+fn a_failing_target_side_fails_the_judgement() {
+    let mut fake = Fake::default();
+    fake.failing_problems.push(Side::Target);
+    let found = block_on(judged(&fake, Some(&file("a.rs")), &file("a.rs"), &[]));
+    assert!(found.value.is_err());
 }
