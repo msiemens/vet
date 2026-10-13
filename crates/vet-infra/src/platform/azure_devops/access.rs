@@ -13,7 +13,7 @@ use azure_devops_rust_api::{Credential as ApiCredential, build, git, ims, policy
 use serde::Deserialize;
 use vet_app::platform::{Credential, CredentialSource, PlatformError};
 
-use super::limits::{Gating, Signals, UNSAID_WAIT, Watch};
+use super::limits::{Gating, Signals, Watch};
 use crate::clock::unix_now;
 use crate::platform::limits::Blocked;
 
@@ -157,14 +157,15 @@ impl Access {
         })?;
         let status = response.status().as_u16();
         let header = |name: &str| response.headers().get(name).and_then(|v| v.to_str().ok());
-        self.watch.observe(&Signals {
+        let signals = Signals {
             status,
             retry_after: header("retry-after"),
             remaining: header("x-ratelimit-remaining"),
             reset: header("x-ratelimit-reset"),
             resource: header("x-ratelimit-resource"),
-        });
-        let retry_after = header("retry-after").and_then(|s| s.parse::<i64>().ok());
+        };
+        self.watch.observe(&signals);
+        let limit_end = signals.block_end(now).map(|(until, _)| until);
         let body = response.text().await.unwrap_or_default();
         let fail = |error: PlatformError| {
             log_failure(
@@ -181,7 +182,7 @@ impl Access {
                 .ok()
                 .and_then(|b| b.get("message")?.as_str().map(str::to_owned))
                 .unwrap_or_default();
-            return Err(fail(from_status(account, status, &message, retry_after, now)));
+            return Err(fail(from_status(account, status, &message, limit_end, now)));
         }
         let me = serde_json::from_str::<ConnectionData>(&body)
             .ok()
@@ -368,11 +369,21 @@ pub(crate) fn failure(host: &str, error: &azure_core::Error, now: i64) -> Platfo
                 .and_then(|r| r.body().json::<serde_json::Value>().ok())
                 .and_then(|b| b.get("message")?.as_str().map(str::to_owned))
                 .unwrap_or_default();
-            let retry_after = raw_response
-                .as_ref()
-                .and_then(|r| r.headers().get_optional_str(&HeaderName::from_static("retry-after")))
-                .and_then(|s| s.parse::<i64>().ok());
-            (Some(status), from_status(host, status, &message, retry_after, now))
+            let header = |name: &'static str| {
+                raw_response
+                    .as_ref()
+                    .and_then(|r| r.headers().get_optional_str(&HeaderName::from_static(name)))
+            };
+            let limit_end = Signals {
+                status,
+                retry_after: header("retry-after"),
+                remaining: header("x-ratelimit-remaining"),
+                reset: header("x-ratelimit-reset"),
+                resource: None,
+            }
+            .block_end(now)
+            .map(|(until, _)| until);
+            (Some(status), from_status(host, status, &message, limit_end, now))
         }
         ErrorKind::Io | ErrorKind::Connection => (None, PlatformError::Unreachable(format!("cannot reach {host}"))),
         ErrorKind::DataConversion => (
@@ -393,7 +404,8 @@ pub(crate) fn failure(host: &str, error: &azure_core::Error, now: i64) -> Platfo
 }
 
 /// What an HTTP status, and the message the platform gave with it, mean for the caller.
-fn from_status(host: &str, status: u16, message: &str, retry_after: Option<i64>, now: i64) -> PlatformError {
+/// `limit_end` is when the limit its signals announce ends.
+fn from_status(host: &str, status: u16, message: &str, limit_end: Option<i64>, now: i64) -> PlatformError {
     let reason = |what: &str| {
         if message.is_empty() {
             format!("{host} {what} ({status})")
@@ -406,7 +418,7 @@ fn from_status(host: &str, status: u16, message: &str, retry_after: Option<i64>,
         300..=399 | 401 => PlatformError::Rejected(reason("refused the token")),
         403 => PlatformError::Forbidden(reason("does not allow the token this")),
         404 => PlatformError::NotFound(reason("does not know this, or the token cannot see it")),
-        429 => rate_limited(host, now + retry_after.unwrap_or(UNSAID_WAIT), now),
+        429 => rate_limited(host, limit_end.unwrap_or(now), now),
         500..=599 => PlatformError::Unreachable(format!("{host} answered {status}")),
         _ => PlatformError::Unexpected(reason("answered")),
     }

@@ -32,6 +32,21 @@ pub(super) struct Signals<'a> {
     pub(super) resource: Option<&'a str>,
 }
 
+impl Signals<'_> {
+    /// When the limit these signals announce ends, and which signal says so; the latest one wins.
+    pub(super) fn block_end(&self, now: i64) -> Option<(i64, &'static str)> {
+        let refused = self.status == 429;
+        let wait = seconds(self.retry_after).map(|secs| now + secs.max(0));
+        let used_up = seconds(self.remaining) == Some(0);
+        let reset = seconds(self.reset).filter(|_| refused && used_up);
+        match (wait, reset) {
+            (Some(wait), reset) if reset.is_none_or(|r| wait >= r) => Some((wait, "Retry-After")),
+            (_, Some(reset)) => Some((reset, "X-RateLimit-Reset")),
+            _ => refused.then_some((now + UNSAID_WAIT, "a 429 without a time")),
+        }
+    }
+}
+
 /// A number of seconds or an epoch, which may carry decimals; rounded up.
 fn seconds(text: Option<&str>) -> Option<i64> {
     let value = text?.trim().parse::<f64>().ok().filter(|v| v.is_finite())?;
@@ -59,18 +74,8 @@ impl Watch {
 
     pub(super) fn observe(&self, signals: &Signals<'_>) {
         let now = (self.now)();
-        let wait = seconds(signals.retry_after).map(|secs| now + secs.max(0));
-        let refused = signals.status == 429;
-        let used_up = seconds(signals.remaining) == Some(0);
-        let reset = seconds(signals.reset).filter(|_| refused && used_up);
-        let unsaid = refused.then_some(now + UNSAID_WAIT);
-        let (until, why) = match (wait, reset) {
-            (Some(wait), reset) if reset.is_none_or(|r| wait >= r) => (wait, "Retry-After"),
-            (_, Some(reset)) => (reset, "X-RateLimit-Reset"),
-            _ => match unsaid {
-                Some(until) => (until, "a 429 without a time"),
-                None => return,
-            },
+        let Some((until, why)) = signals.block_end(now) else {
+            return;
         };
         if until > now && self.gate.block(&self.account, until, now) {
             tracing::warn!(

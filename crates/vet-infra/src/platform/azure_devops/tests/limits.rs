@@ -45,7 +45,11 @@ fn counted(canned: Canned, remaining: u32, reset: i64) -> Canned {
 async fn a_429_with_nothing_left_is_not_asked_again_until_the_reset() {
     let reset = NOW + 600;
     let (fake, client) = limited(move || counted(Canned::status(429, ""), 0, reset));
-    client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
+    assert_eq!(
+        client.list_pull_requests(&remote(), &all_open()).await.unwrap_err(),
+        rate_limited_until(reset, NOW),
+        "the answer that hit the limit tells the time the gate holds until"
+    );
     let sent = fake.requests().len();
 
     set_now(NOW + 100);
