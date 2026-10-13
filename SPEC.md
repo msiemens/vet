@@ -520,7 +520,8 @@ Grouped by area; areas and the items within each are in priority order.
 
 #### Search and keyboard
 
-- Search in the open file (find with next/previous, matches marked) and search in the project (text across the repository's files, results grouped by file, opening a result at its line)
+- Search in the open view (⌘F): a find bar docked in All changes, Unified, Split and File views, with match case, whole word and regular expression, the side to look in (both, target, base) and only changed lines, next and previous with counts, and the matches marked in the text and the scroll bar; stepping opens the unchanged lines that hide a match, and All changes searches the unchanged text of every file too. One query per window, with a position per tab
+- Search in the project (Find in Files, ⌘⇧F): a dialog with the same options, a file mask, and a place to search (All changes, a version range, one commit, or the whole repository without ignored files); filters for side, only changed lines and changed lines not yet seen; results grouped by file with review progress and status, a preview of the code around the chosen match, and the first 1,000 matches listed. A result opens in All changes when that is on show, else in the file's own tab (Alt+Enter: always there), with the find bar carrying the query. Lines are matched one at a time; the find bar uses JavaScript's regular expressions and Find in Files Rust's
 - Keyboard shortcuts for every action, shown in menus and tooltips, with a Keymap page in Settings (beyond the JetBrains-feel package's keymap import)
 - Speed search: typing in any menu, dropdown, list or tree filters it (camel-hump matching, matches highlighted, Escape clears; trees keep the folders on the path to a match), as in IntelliJ
 - JetBrains-feel package
