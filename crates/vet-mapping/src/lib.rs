@@ -591,7 +591,7 @@ pub fn pipeline_action(action: p::PipelineAction) -> PipelineAction {
 /// The answer to `ChangePipeline` after the platform's `result`. A failure that the viewer can
 /// act on is an outcome; any other is returned for the request to fail with.
 pub fn pipeline_outcome(result: Result<(), PlatformError>) -> Result<p::Response, PlatformError> {
-    Ok(p::Response::PipelineChanged(match result {
+    let outcome = match result {
         Ok(()) => p::PipelineOutcome::Accepted,
         Err(PlatformError::Forbidden(message)) => p::PipelineOutcome::Forbidden { message },
         Err(PlatformError::RateLimited { message, retry_at }) => p::PipelineOutcome::RateLimited {
@@ -599,7 +599,8 @@ pub fn pipeline_outcome(result: Result<(), PlatformError>) -> Result<p::Response
             until: retry_at.map(unix_secs),
         },
         Err(other) => return Err(other),
-    }))
+    };
+    Ok(p::Response::PipelineChanged { outcome })
 }
 
 pub fn check_log(log: &CheckLog) -> p::Response {
@@ -1251,12 +1252,13 @@ mod tests {
 
     #[test]
     fn what_the_viewer_can_act_on_is_an_outcome_and_any_other_failure_fails_the_request() {
+        let changed = |outcome| p::Response::PipelineChanged { outcome };
         let done = pipeline_outcome(Ok(())).unwrap();
-        assert_eq!(done, p::Response::PipelineChanged(p::PipelineOutcome::Accepted));
+        assert_eq!(done, changed(p::PipelineOutcome::Accepted));
         let forbidden = pipeline_outcome(Err(PlatformError::Forbidden("no write".to_owned()))).unwrap();
         assert_eq!(
             forbidden,
-            p::Response::PipelineChanged(p::PipelineOutcome::Forbidden {
+            changed(p::PipelineOutcome::Forbidden {
                 message: "no write".to_owned()
             })
         );
@@ -1267,7 +1269,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             limited,
-            p::Response::PipelineChanged(p::PipelineOutcome::RateLimited {
+            changed(p::PipelineOutcome::RateLimited {
                 message: "slow down".to_owned(),
                 until: Some(1_700)
             })

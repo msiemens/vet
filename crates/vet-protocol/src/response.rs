@@ -85,7 +85,9 @@ pub enum Response {
         steps: Vec<PipelineStep>,
     },
     /// The answer to `ChangePipeline`.
-    PipelineChanged(PipelineOutcome),
+    PipelineChanged {
+        outcome: PipelineOutcome,
+    },
     /// The versions of the open review, oldest first.
     Versions {
         versions: Vec<VersionInfo>,
