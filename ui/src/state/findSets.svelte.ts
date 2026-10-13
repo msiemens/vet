@@ -86,7 +86,7 @@ export class FindSet {
   truncated = $state(false);
   limit?: number;
   abort?: AbortController;
-  hasRun = false;
+  hasRun = $state(false);
   /** Where the places of the files changed since the run are now, by place id. */
   moves = $state.raw<ReadonlyMap<string, MappedLine>>(new SvelteMap());
   /** The revision `moves` was asked for. */

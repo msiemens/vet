@@ -56,7 +56,7 @@
     statusLetter,
     viewCommands,
   } from "../features/review";
-  import { FindInFilesDialog, findInFiles, openFindInFiles, searchCommands } from "../features/search";
+  import { FindInFilesDialog, findInFiles, searchCommands } from "../features/search";
   import { SettingsDialog } from "../features/settings";
   import { StructurePanel } from "../features/structure";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
@@ -806,7 +806,6 @@
               onopen={openPlace}
               onclose={() => (bottomTool = undefined)}
               oneditor={() => controller?.focusEditor()}
-              oninfiles={(text) => openFindInFiles({ query: text })}
             />
           {:else if bottomTool === "pipelines"}
             <PipelinesPanel

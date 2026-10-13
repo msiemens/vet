@@ -28,7 +28,6 @@
     backend,
     onopen,
     oneditor,
-    oninfiles,
     onclose,
   }: {
     backend: Backend;
@@ -38,8 +37,6 @@
     onopen: (set: FindSet, place: Place, ownTab: boolean) => void;
     /** Gives the keyboard focus back to the editor. */
     oneditor: () => void;
-    /** Opens Find in Files with the text, for a set that found nothing because no server could answer. */
-    oninfiles: (text: string) => void;
   } = $props();
 
   const LETTER_COLOR = {
@@ -299,12 +296,7 @@
             <span class="warn-icon"><Icon name="warning" size={18} /></span>
             <b>{set.phase === "failed" ? "The search failed" : "No result"}</b>
             <span class="sub selectable">{set.message}</span>
-            <span class="actions">
-              <button class="ctl" type="button" onclick={() => findSets.rerun(set)}>Rerun</button>
-              {#if set.spec.type === "usages" && set.phase === "stopped"}
-                <button class="ctl" type="button" onclick={() => oninfiles(set.title)}>Find in Files</button>
-              {/if}
-            </span>
+            <button class="ctl" type="button" onclick={() => findSets.rerun(set)}>Rerun</button>
           </div>
         {:else if !set.places.length}
           <div class="empty">
@@ -394,7 +386,6 @@
                     >{/if}
                   {#if move && !move.kept}<span class="tag" title="This line was changed since the run">edited</span
                     >{/if}
-                  {#if p.changed && p.side === "target"}<span class="chg" title="Changed line">+</span>{/if}
                 </button>
               {/if}
             {/snippet}
@@ -580,10 +571,6 @@
     color: var(--warn);
     display: inline-flex;
   }
-  .actions {
-    display: inline-flex;
-    gap: 8px;
-  }
   .line {
     display: flex;
     align-items: center;
@@ -725,11 +712,6 @@
     color: var(--text-3);
     font-size: 10.5px;
     line-height: 14px;
-  }
-  .chg {
-    flex: none;
-    color: var(--add-text);
-    font: 600 11px var(--font-mono);
   }
   .sel {
     background: color-mix(in srgb, var(--accent) 12%, transparent);
