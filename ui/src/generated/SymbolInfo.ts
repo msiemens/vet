@@ -4,7 +4,11 @@ import type { SymbolId } from "./SymbolId";
 import type { SymbolKind } from "./SymbolKind";
 import type { TextSpan } from "./TextSpan";
 
-export type SymbolInfo = { id: SymbolId, kind: SymbolKind, 
+export type SymbolInfo = { id: SymbolId, 
+/**
+ * See [`SymbolName`].
+ */
+modules: number, kind: SymbolKind, 
 /**
  * The whole definition, including its body.
  */

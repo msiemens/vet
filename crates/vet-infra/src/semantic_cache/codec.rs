@@ -38,7 +38,7 @@ impl Kind {
     /// Bumped when the stored form of this kind changes.
     fn format(self) -> u32 {
         match self {
-            Kind::Symbols => 5,
+            Kind::Symbols => 6,
             Kind::Locations => 1,
             Kind::Hover => 1,
             Kind::Diagnostics => 1,
@@ -219,6 +219,7 @@ impl Writer {
             SymbolKind::Module => 2,
             SymbolKind::Other => 3,
         });
+        self.number(symbol.modules as u32);
     }
 }
 
@@ -338,6 +339,7 @@ impl Reader<'_> {
                 3 => SymbolKind::Other,
                 _ => return None,
             },
+            modules: self.number()? as usize,
         })
     }
 }

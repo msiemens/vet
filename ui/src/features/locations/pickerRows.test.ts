@@ -101,7 +101,10 @@ void test("the places are numbered in the order shown, and only the changeset's 
 void test("typing keeps the places whose symbol, line or file matches, and the toggle only those of the changeset", () => {
   const rows = [
     row("src/a.rs", 1, { text: "let d = next_delay();", change: "hunk" }),
-    row("src/a.rs", 2, { text: "print()", within: { path: "src/a.rs", name: ["Retry", "preview"] } }),
+    row("src/a.rs", 2, {
+      text: "print()",
+      within: { id: { path: "src/a.rs", name: ["Retry", "preview"] }, modules: 0 },
+    }),
     row("lib/b.rs", 3, { text: "x", external: true }),
   ];
   assert.equal(visibleRows(rows, "", false).length, 3);
@@ -120,18 +123,23 @@ void test("typing keeps the places whose symbol, line or file matches, and the t
 });
 
 void test("a place is named by its symbol and the last part of its container, in the file's language's separator", () => {
-  const label = (path: string, name: string[]) => symbolLabel({ path, within: { path, name } });
+  const label = (path: string, name: string[], modules = 0) =>
+    symbolLabel({ path, within: { id: { path, name }, modules } });
   assert.equal(label("src/sync/retry.rs", ["RetryPolicy", "preview"]), "RetryPolicy::preview");
   assert.equal(label("src/retry.ts", ["Retry", "preview"]), "Retry.preview");
   assert.equal(
-    label("src/Services/TaskDispatcher.cs", [
-      "HES.LCD500.Application.Services.TaskEngine",
-      "TaskDispatcher",
-      "Trigger<TTask, TState>(TTask task, Job job) : void",
-    ]),
+    label(
+      "src/Services/TaskDispatcher.cs",
+      [
+        "HES.LCD500.Application.Services.TaskEngine",
+        "TaskDispatcher",
+        "Trigger<TTask, TState>(TTask task, Job job) : void",
+      ],
+      1,
+    ),
     "TaskDispatcher.Trigger<TTask, TState>",
   );
-  assert.equal(label("src/A.cs", ["HES.LCD500.TaskEngine", "TaskDispatcher"]), "TaskEngine.TaskDispatcher");
+  assert.equal(label("src/A.cs", ["HES.LCD500.TaskEngine", "TaskDispatcher"], 1), "TaskDispatcher");
   // A Rust impl block is named by its type.
   assert.equal(label("src/http/client.rs", ["impl Client", "send"]), "Client::send");
   assert.equal(label("src/sync/retry.rs", ["impl Backoff for RetryPolicy", "delay_for"]), "RetryPolicy::delay_for");

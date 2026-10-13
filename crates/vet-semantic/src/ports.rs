@@ -214,6 +214,10 @@ pub struct SymbolInfo {
     /// What the server says about it in one line (`documentSymbol.detail`), often its signature.
     pub detail: Option<String>,
     pub kind: SymbolKind,
+    /// How many of the leading names of `sym` are modules or namespaces (`HES.Domain` in
+    /// `HES.Domain` › `Device` › `Create`), which a list leaves out. Display only: it is no part of
+    /// the identity.
+    pub modules: usize,
 }
 
 impl SymbolInfo {

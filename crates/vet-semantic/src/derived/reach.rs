@@ -43,7 +43,7 @@ impl Default for EntryPoints {
 pub enum Reach {
     /// Path from the changed symbol to the entry point.
     Reached {
-        path: Vec<Sym>,
+        path: Vec<SymbolInfo>,
     },
     UnreachedWithinBound,
     /// Backend gaps (DI, reflection, serialization).
@@ -66,16 +66,16 @@ pub async fn reachability(
         .map(|e| format!("entry point {}::{}", e.path_prefix, e.name))
         .collect();
     let mut gaps = Vec::new();
-    let mut parent: HashMap<Sym, Option<Sym>> = HashMap::from([(start.sym.clone(), None)]);
+    let mut parent: HashMap<Sym, Option<SymbolInfo>> = HashMap::from([(start.sym.clone(), None)]);
     let mut frontier = VecDeque::from([(start.clone(), 0u32)]);
 
     while let Some((node, depth)) = frontier.pop_front() {
         if entries.matches(&node.sym) {
-            let mut path = vec![node.sym.clone()];
+            let mut path = vec![node.clone()];
             let mut at = &node.sym;
             while let Some(Some(up)) = parent.get(at) {
                 path.push(up.clone());
-                at = up;
+                at = &up.sym;
             }
             path.reverse();
             return Derived {
@@ -92,7 +92,7 @@ pub async fn reachability(
             Ok(callers) => {
                 for caller in callers {
                     if parent.len() < bounds.max_nodes && !parent.contains_key(&caller.sym) {
-                        parent.insert(caller.sym.clone(), Some(node.sym.clone()));
+                        parent.insert(caller.sym.clone(), Some(node.clone()));
                         frontier.push_back((caller, depth + 1));
                     }
                 }

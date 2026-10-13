@@ -10,14 +10,14 @@
   import type { SymbolInfo } from "../../generated/SymbolInfo";
   import type { Usages } from "../../generated/Usages";
   import { codeBlock } from "../../lib/codeBlock";
-  import { nameOf, qualified, rowLabel } from "../../lib/symbolLabel";
+  import { nameOf, placeLabel, shortLabel } from "../../lib/symbolLabel";
   import PathText from "../../lib/ui/PathText.svelte";
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import type { Shown } from "../../state/symbolLoad";
   import { symbols } from "../../state/symbols.svelte";
   import DerivedSection from "./DerivedSection.svelte";
   import SymbolGlyph from "./SymbolGlyph.svelte";
-  import { containerOf, describeFate, type OpenLocation, place, placeShort } from "./symbolDetail";
+  import { containerOf, describeFate, type OpenLocation, rowTitle } from "./symbolDetail";
 
   let { shown, onopen }: { shown: Shown; onopen: OpenLocation } = $props();
 
@@ -26,6 +26,13 @@
   const FATE = { bad: "var(--del-text)", warn: "var(--old-base)", mute: "var(--text-3)" } as const;
   const LETTER = { modified: "M", added: "A", removed: "D" } as const;
   const WORDS = { modified: "modified", added: "added", removed: "removed" } as const;
+
+  /** What closes a row's first line: the change's letter, or the fate of a reference in words. */
+  interface End {
+    text: string;
+    color: string;
+    word?: boolean;
+  }
 
   /** A changed symbol listed in the panel: shown in the tree and opened where it is. */
   function goTo(symbol: SymbolInfo, change: SymbolChange) {
@@ -59,43 +66,63 @@
   {/snippet}
 </DerivedSection>
 
-{#snippet where(reference: Reference, side: Side)}
+{#snippet lines(label: string, elbow: boolean, below: string, suffix: string, end?: End, extra?: string)}
+  <span class="top">
+    {#if elbow}<span class="elbow">└</span>{/if}
+    <span class="mono s"><QualifiedName name={label} /></span>
+    {@render ending(end)}
+  </span>
+  <span class="mono under"><PathText path={below} {suffix} /></span>
+  {#if extra}<span class="mono extra">{extra}</span>{/if}
+{/snippet}
+
+{#snippet ending(end?: End)}
+  {#if end}<span class="end" class:mono={!end.word} style:color={end.color}>{end.text}</span>{/if}
+{/snippet}
+
+{#snippet where(reference: Reference, side: Side, end?: End, extra?: string)}
   {@const { location, within } = reference}
   {@const at = location.span.start}
-  {@const label = rowLabel(within, location.path)}
+  {@const label = placeLabel(within, location.path)}
   {#if location.external}
-    <span class="drow dim" title={place(location.path, at)}
-      ><span class="mono s">{label.name}</span><span class="mono at">outside the repository</span></span
-    >
+    <span class="drow two dim" title={rowTitle(within?.id ?? null, location.path, at)}>
+      <span class="top">
+        <span class="mono s"><QualifiedName name={label} /></span>
+        {@render ending(end)}
+      </span>
+      <span class="mono under">outside the repository</span>
+    </span>
   {:else}
     <button
-      class="flat drow"
+      class="flat drow two"
       type="button"
-      title={place(location.path, at)}
+      title={rowTitle(within?.id ?? null, location.path, at)}
       onclick={() => onopen(location.path, at.line, side)}
     >
-      <span class="mono s">{label.name}</span><span class="mono at">{label.context}</span>
+      {@render lines(label, false, location.path, `:${at.line + 1}`, end, extra)}
     </button>
   {/if}
 {/snippet}
 
-{#snippet symbolRow(symbol: SymbolInfo, change: SymbolChange, depth: number)}
+{#snippet symbolRow(symbol: SymbolInfo, change: SymbolChange | undefined, depth: number, open: () => void)}
   <button
-    class="flat drow"
+    class="flat drow two"
     class:gone={change === "removed"}
     type="button"
     style:padding-left="{26 + depth * 12}px"
-    title={place(symbol.id.path, symbol.at)}
-    onclick={() => goTo(symbol, change)}
+    title={rowTitle(symbol.id, symbol.id.path, symbol.at)}
+    onclick={open}
   >
-    {#if depth}<span class="elbow">└</span>{/if}
-    <span class="mono s"><QualifiedName name={qualified(symbol.id)} /></span>
-    <span class="mono at">{placeShort(symbol.id.path, symbol.at)}</span>
-    <span
-      class="mono letter"
-      style:color="var(--{change === 'added' ? 'add-text' : change === 'removed' ? 'del-text' : 'old-base'})"
-      >{LETTER[change]}</span
-    >
+    {@render lines(
+      shortLabel(symbol),
+      depth > 0,
+      symbol.id.path,
+      `:${symbol.at.line + 1}`,
+      change && {
+        text: LETTER[change],
+        color: `var(--${change === "added" ? "add-text" : change === "removed" ? "del-text" : "old-base"})`,
+      },
+    )}
   </button>
 {/snippet}
 
@@ -113,9 +140,7 @@
         {#each removal.callSites as site, i (i)}
           {@const fate = describeFate(site.fate)}
           <li>
-            {@render where(site.base, "base")}
-            <span class="verdict" style:color={FATE[fate.tone]}>{fate.label}</span>
-            {#if fate.detail}<span class="mono at">{fate.detail}</span>{/if}
+            {@render where(site.base, "base", { text: fate.label, color: FATE[fate.tone], word: true }, fate.detail)}
           </li>
         {/each}
       </ul>
@@ -133,7 +158,7 @@
     {#snippet children(calls)}
       {#if calls.gaps.length}<p class="note">Incomplete: {calls.gaps.join("; ")}</p>{/if}
       {#each calls.callers as c, i (i)}
-        {@render symbolRow(c.symbol, c.change, c.depth)}
+        {@render symbolRow(c.symbol, c.change, c.depth, () => goTo(c.symbol, c.change))}
       {:else}
         <p class="note">None</p>
       {/each}
@@ -148,7 +173,7 @@
   >
     {#snippet children(calls)}
       {#each calls.callees as c, i (i)}
-        {@render symbolRow(c.symbol, c.change, 0)}
+        {@render symbolRow(c.symbol, c.change, 0, () => goTo(c.symbol, c.change))}
       {:else}
         <p class="note">None</p>
       {/each}
@@ -166,15 +191,7 @@
       {#snippet children(calls)}
         <p class="note">Unchanged direct callers; their behaviour may differ now.</p>
         {#each calls.affected as s, i (i)}
-          <button
-            class="flat drow"
-            type="button"
-            title={place(s.id.path, s.at)}
-            onclick={() => onopen(s.id.path, s.at.line, "target")}
-          >
-            <span class="mono s"><QualifiedName name={qualified(s.id)} /></span>
-            <span class="mono at">{placeShort(s.id.path, s.at)}</span>
-          </button>
+          {@render symbolRow(s, undefined, 0, () => onopen(s.id.path, s.at.line, "target"))}
         {:else}
           <p class="note">None</p>
         {/each}
@@ -188,18 +205,15 @@
         <!-- the backend's path runs from the symbol to the entry point -->
         <ol>
           {#each [...reach.path].reverse() as step, i (i)}
-            {@const label = rowLabel(step, step.path)}
             <li>
               <button
-                class="flat drow"
+                class="flat drow two"
                 type="button"
                 style:padding-left="{26 + i * 10}px"
-                title={step.path}
-                onclick={() => onopen(step.path, undefined, "target")}
+                title={rowTitle(step.id, step.id.path)}
+                onclick={() => onopen(step.id.path, undefined, "target")}
               >
-                {#if i > 0}<span class="elbow">└</span>{/if}<span class="mono s">{label.name}</span><span
-                  class="mono at">{label.context}</span
-                >
+                {@render lines(shortLabel(step), i > 0, step.id.path, "")}
               </button>
             </li>
           {/each}
@@ -235,6 +249,7 @@
   }
   .nm {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
     font-size: var(--fs-ctl);
@@ -292,6 +307,28 @@
   span.drow {
     width: auto;
   }
+  .drow.two {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    gap: 0;
+    height: auto;
+    min-height: var(--h-row);
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .under {
+    display: flex;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--text-3);
+  }
   .dim {
     color: var(--text-3);
   }
@@ -302,10 +339,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .at {
-    margin-left: auto;
+  .extra {
+    overflow: hidden;
     font-size: 11px;
     color: var(--text-3);
+    text-overflow: ellipsis;
   }
   .elbow {
     font-size: 11px;
@@ -315,15 +353,9 @@
     text-decoration: line-through;
     color: var(--text-2);
   }
-  .letter {
+  .end {
     flex: none;
-    width: 10px;
+    margin-left: auto;
     font-size: 11px;
-    text-align: center;
-  }
-  .verdict {
-    font-size: 12px;
-    white-space: nowrap;
-    padding-right: 10px;
   }
 </style>

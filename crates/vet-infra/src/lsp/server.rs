@@ -622,6 +622,7 @@ fn symbols_in(file: &RepoPath, response: Option<lsp::DocumentSymbolResponse>) ->
                 at: pos(s.location.range.start),
                 detail: None,
                 kind: symbol_kind(s.kind),
+                modules: 0,
             })
             .collect(),
     }

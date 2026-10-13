@@ -104,6 +104,7 @@ async fn every_kind_of_answer_is_read_back_exactly_by_a_later_launch() {
             at: Pos { line: 4, col: 8 },
             detail: Some("fn inner()".into()),
             kind: SymbolKind::Function,
+            modules: 1,
         },
         SymbolInfo {
             sym: Sym {
@@ -114,6 +115,7 @@ async fn every_kind_of_answer_is_read_back_exactly_by_a_later_launch() {
             at: Pos { line: 0, col: 0 },
             detail: None,
             kind: SymbolKind::Other,
+            modules: 0,
         },
     ]);
     let locations = Value::Locations(vec![

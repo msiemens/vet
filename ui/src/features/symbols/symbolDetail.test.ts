@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { containerOf, describeFate, placeShort } from "./symbolDetail.ts";
+import { containerOf, describeFate, rowTitle } from "./symbolDetail.ts";
 
 void test("fates read as words, the broken one as the bad tone", () => {
   assert.equal(describeFate({ type: "likelyBroken" }).tone, "bad");
@@ -18,7 +18,9 @@ void test("a symbol's container is the names above it, none at the top level", (
   assert.equal(containerOf({ path: "a.rs", name: ["run"] }), "");
 });
 
-void test("a place with little room names the file and the 1-based line", () => {
-  assert.equal(placeShort("src/sync/job.rs", { line: 117, col: 4 }), "job.rs:118");
-  assert.equal(placeShort("C:\\repo\\job.rs", { line: 0, col: 0 }), "job.rs:1");
+void test("a row's tooltip gives the whole name, then where it is with a 1-based line", () => {
+  const id = { path: "src/Device.cs", name: ["HES.Domain", "Device", "Create(int) : Device"] };
+  assert.equal(rowTitle(id, id.path, { line: 13, col: 4 }), "HES.Domain.Device.Create\nsrc/Device.cs:14");
+  assert.equal(rowTitle(null, "src/a.rs", { line: 0, col: 0 }), "src/a.rs:1");
+  assert.equal(rowTitle(id, id.path), "HES.Domain.Device.Create\nsrc/Device.cs");
 });

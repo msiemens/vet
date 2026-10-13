@@ -36,6 +36,7 @@ fn sym(path: &str, name: &str, start: u32, end: u32) -> SymbolInfo {
         at: Pos { line: start, col: 3 },
         detail: None,
         kind: SymbolKind::Function,
+        modules: 0,
     }
 }
 
@@ -383,7 +384,7 @@ fn a_reference_is_in_the_innermost_symbol_around_it() {
     let within: Vec<_> = result
         .value
         .iter()
-        .map(|r| r.within.as_ref().map(|s| s.name.join("::")))
+        .map(|r| r.within.as_ref().map(|s| s.sym.name.join("::")))
         .collect();
     assert_eq!(
         within,
@@ -437,7 +438,7 @@ fn a_remaining_reference_of_a_removed_symbol_is_in_the_container_it_was_in_on_th
     let result = block_on(removal_impact(&fake, &changes, &files));
     let site = &result.value[0].call_sites[0];
     assert_eq!(
-        site.base.within.as_ref().map(|s| s.name.join("::")),
+        site.base.within.as_ref().map(|s| s.sym.name.join("::")),
         Some("Report::print".to_owned())
     );
 }
@@ -531,7 +532,7 @@ const BOUNDS: Bounds = Bounds {
 fn reached_reports_the_path_and_the_queries_it_used() {
     let fake = graph(&[("leaf", &["mid"]), ("mid", &["main"])]);
     let result = block_on(reachability(&fake, &node("leaf"), &EntryPoints::default(), BOUNDS));
-    let names = |path: &[Sym]| path.iter().map(|s| s.name.join("::")).collect::<Vec<_>>();
+    let names = |path: &[SymbolInfo]| path.iter().map(|s| s.sym.name.join("::")).collect::<Vec<_>>();
     match result.value {
         Reach::Reached { path } => assert_eq!(names(&path), ["leaf", "mid", "main"]),
         other => panic!("{other:?}"),

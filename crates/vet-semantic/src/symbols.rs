@@ -50,15 +50,28 @@ pub fn is_declared_at(symbols: &[SymbolInfo], name: &str, at: Pos) -> bool {
 /// around them. A function declared inside a function is one, a class or type declared
 /// there too.
 pub fn flatten(file: &RepoPath, outline: &[Outline]) -> Vec<SymbolInfo> {
-    fn walk(file: &RepoPath, chain: &mut Vec<String>, local: bool, outline: &[Outline], out: &mut Vec<SymbolInfo>) {
+    /// `modules` is how many of the names of `chain` at its start are modules.
+    fn walk(
+        file: &RepoPath,
+        chain: &mut Vec<String>,
+        modules: usize,
+        local: bool,
+        outline: &[Outline],
+        out: &mut Vec<SymbolInfo>,
+    ) {
         for symbol in outline {
             let anonymous = is_anonymous(&symbol.name);
             // What a variable holds (a function, a class, an object) is inside it as well.
             let holds_code = symbol.callable || anonymous || (!symbol.container && !symbol.children.is_empty());
             if anonymous || (local && !symbol.container) {
-                walk(file, chain, holds_code, &symbol.children, out);
+                walk(file, chain, modules, holds_code, &symbol.children, out);
                 continue;
             }
+            let modules = if symbol.kind == SymbolKind::Module && modules == chain.len() {
+                modules + 1
+            } else {
+                modules
+            };
             chain.push(symbol.name.clone());
             out.push(SymbolInfo {
                 sym: Sym {
@@ -69,13 +82,14 @@ pub fn flatten(file: &RepoPath, outline: &[Outline]) -> Vec<SymbolInfo> {
                 at: symbol.at,
                 detail: symbol.detail.clone(),
                 kind: symbol.kind,
+                modules,
             });
-            walk(file, chain, holds_code, &symbol.children, out);
+            walk(file, chain, modules, holds_code, &symbol.children, out);
             chain.pop();
         }
     }
     let mut out = Vec::new();
-    walk(file, &mut Vec::new(), false, outline, &mut out);
+    walk(file, &mut Vec::new(), 0, false, outline, &mut out);
     out
 }
 
@@ -115,6 +129,7 @@ pub fn resolve(symbols: &[SymbolInfo], file: RepoPath, name: &str, span: Span, a
         at,
         detail: None,
         kind: SymbolKind::Other,
+        modules: 0,
     })
 }
 
@@ -433,6 +448,94 @@ mod tests {
             Some(vec!["impl Invoice".into(), "f".into()])
         );
         assert_eq!(within(&symbols, pos(0, 25)), Some(vec!["impl Invoice".into()]));
+    }
+
+    fn module(name: &str, children: Vec<Outline>) -> Outline {
+        Outline {
+            kind: SymbolKind::Module,
+            ..outline(name, span(0, 0, 99, 0), pos(0, 0), children)
+        }
+    }
+
+    fn modules(symbols: &[SymbolInfo]) -> Vec<(String, usize)> {
+        symbols.iter().map(|s| (s.sym.name.join("::"), s.modules)).collect()
+    }
+
+    /// What roslyn-language-server lists for a file-scoped namespace and for nested block
+    /// namespaces: a namespace is one name, however many dots it has.
+    #[test]
+    fn the_namespaces_a_csharp_symbol_is_in_are_counted_as_modules() {
+        let tree = vec![
+            module(
+                "HES.LCD500.Domain.Entities",
+                vec![outline(
+                    "Device",
+                    span(1, 0, 9, 1),
+                    pos(1, 6),
+                    vec![function("Create(int) : Device", span(2, 4, 3, 5), pos(2, 11), vec![])],
+                )],
+            ),
+            module(
+                "Old.Style",
+                vec![module("Inner", vec![outline("K", span(1, 0, 4, 1), pos(1, 6), vec![])])],
+            ),
+        ];
+        assert_eq!(
+            modules(&flatten(&file(), &tree)),
+            [
+                ("HES.LCD500.Domain.Entities".into(), 1),
+                ("HES.LCD500.Domain.Entities::Device".into(), 1),
+                ("HES.LCD500.Domain.Entities::Device::Create(int) : Device".into(), 1),
+                ("Old.Style".into(), 1),
+                ("Old.Style::Inner".into(), 2),
+                ("Old.Style::Inner::K".into(), 2),
+            ]
+        );
+    }
+
+    /// What rust-analyzer lists: `mod billing { mod core { struct Invoice; impl Backoff for Invoice } }`.
+    #[test]
+    fn nested_rust_modules_are_counted_and_an_impl_is_not_one() {
+        let tree = vec![module(
+            "billing",
+            vec![module(
+                "core",
+                vec![
+                    outline("Invoice", span(1, 0, 1, 20), pos(1, 11), vec![]),
+                    outline(
+                        "impl Backoff for Invoice",
+                        span(2, 0, 4, 1),
+                        pos(2, 5),
+                        vec![function("wait", span(3, 4, 3, 20), pos(3, 7), vec![])],
+                    ),
+                ],
+            )],
+        )];
+        let counts: Vec<_> = modules(&flatten(&file(), &tree)).into_iter().map(|(_, n)| n).collect();
+        assert_eq!(counts, [1, 2, 2, 2, 2]);
+    }
+
+    /// A module inside a type is not part of the leading namespace.
+    #[test]
+    fn only_the_modules_at_the_start_of_the_chain_count() {
+        let tree = vec![outline(
+            "Widget",
+            span(0, 0, 9, 1),
+            pos(0, 6),
+            vec![module(
+                "inner",
+                vec![function("f", span(2, 0, 3, 0), pos(2, 3), vec![])],
+            )],
+        )];
+        let counts: Vec<_> = modules(&flatten(&file(), &tree)).into_iter().map(|(_, n)| n).collect();
+        assert_eq!(counts, [0, 0, 0]);
+    }
+
+    /// pyright and typescript-language-server list no namespace for plain classes and functions.
+    #[test]
+    fn symbols_in_no_module_have_none() {
+        assert!(python_invoice().iter().all(|s| s.modules == 0));
+        assert!(typescript_widget().iter().all(|s| s.modules == 0));
     }
 
     #[test]

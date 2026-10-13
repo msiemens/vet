@@ -5,7 +5,7 @@
   import type { ReviewedFile } from "../../state/reviewModel";
   import { dirname } from "../../lib/paths";
   import { bestMatch, type Range } from "../../lib/speedSearch";
-  import { qualified } from "../../lib/symbolLabel";
+  import { fullName } from "../../lib/symbolLabel";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -526,7 +526,7 @@
     class:cur={hit.cursor}
     type="button"
     tabindex="-1"
-    title={qualified(r.symbol.id)}
+    title={fullName(r.symbol.id)}
     style:padding-left="calc(8px + {r.depth} * var(--w-indent))"
     onclick={(e) => clickSymbol(e, r, index)}
   >

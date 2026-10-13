@@ -5,7 +5,7 @@
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { SymbolChange } from "../../generated/SymbolChange";
 import type { SymbolInfo } from "../../generated/SymbolInfo";
-import { rowLabel } from "../../lib/symbolLabel.ts";
+import { nameOf } from "../../lib/symbolLabel.ts";
 import { keyOf } from "../../state/symbolKey.ts";
 
 export interface SymbolRow {
@@ -80,7 +80,7 @@ export function fileSymbolRows(
         kind: "symbol",
         path,
         key: e.key,
-        name: rowLabel(e.symbol.id, path).name,
+        name: nameOf(e.symbol.id),
         depth: at,
         symbol: e.symbol,
         change: e.change,

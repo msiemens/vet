@@ -33,6 +33,16 @@ pub struct SymbolId {
     pub name: Vec<String>,
 }
 
+/// A symbol as a list names it: its identity, and how many of the leading names of the chain are
+/// modules or namespaces, which a list leaves out. The count is display data, not identity.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SymbolName {
+    pub id: SymbolId,
+    pub modules: u32,
+}
+
 /// What a symbol is, as far as a list needs to tell them apart.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +63,8 @@ pub enum SymbolKind {
 #[ts(export)]
 pub struct SymbolInfo {
     pub id: SymbolId,
+    /// See [`SymbolName`].
+    pub modules: u32,
     pub kind: SymbolKind,
     /// The whole definition, including its body.
     pub span: TextSpan,
@@ -80,7 +92,7 @@ pub struct Reference {
     pub location: SemanticLocation,
     /// The innermost namespace, type or function around it; absent at the top level of a file,
     /// outside the repository and where the language server cannot list the file's symbols.
-    pub within: Option<SymbolId>,
+    pub within: Option<SymbolName>,
 }
 
 /// `revision` and `side` are those of the request.
@@ -120,7 +132,7 @@ pub struct LocationRow {
     pub col: u32,
     /// The innermost namespace, type or function around it; absent at the top level of a file,
     /// outside the repository and where the language server cannot list the file's symbols.
-    pub within: Option<SymbolId>,
+    pub within: Option<SymbolName>,
     /// The line of `line` without surrounding whitespace, and cut after a few hundred characters;
     /// empty where the file has no text to read.
     pub text: String,
@@ -379,7 +391,7 @@ pub struct RemovalImpact {
 #[ts(export)]
 pub enum Reach {
     /// The path from the changed symbol to the entry point.
-    Reached { path: Vec<SymbolId> },
+    Reached { path: Vec<SymbolName> },
     /// No entry point within the bounds and entry points in `inputs`.
     UnreachedWithinBound,
     /// Backend gaps (dependency injection, reflection, serialization).

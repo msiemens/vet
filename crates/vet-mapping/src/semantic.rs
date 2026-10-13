@@ -62,9 +62,17 @@ fn symbol_kind(kind: SymbolKind) -> p::SymbolKind {
     }
 }
 
+fn symbol_name(info: &SymbolInfo) -> p::SymbolName {
+    p::SymbolName {
+        id: symbol_id(&info.sym),
+        modules: sat_u32(info.modules),
+    }
+}
+
 fn symbol(info: &SymbolInfo) -> p::SymbolInfo {
     p::SymbolInfo {
         id: symbol_id(&info.sym),
+        modules: sat_u32(info.modules),
         kind: symbol_kind(info.kind),
         span: span(info.span),
         at: position(info.at),
@@ -82,7 +90,7 @@ fn location(l: &Location) -> p::SemanticLocation {
 fn reference(r: &Reference) -> p::Reference {
     p::Reference {
         location: location(&r.location),
-        within: r.within.as_ref().map(symbol_id),
+        within: r.within.as_ref().map(symbol_name),
     }
 }
 
@@ -170,7 +178,7 @@ pub fn row(
         path: r.location.file.to_string_lossy(),
         line: span.start.line + 1,
         col: span.start.col + 1,
-        within: r.within.as_ref().map(symbol_id),
+        within: r.within.as_ref().map(symbol_name),
         highlights: highlights(lead, lead + len),
         text,
         match_start,
@@ -383,7 +391,7 @@ pub fn reachability(revision: u32, info: &SymbolInfo, d: &Derived<Reach>) -> p::
         symbol: symbol(info),
         reach: match &d.value {
             Reach::Reached { path } => p::Reach::Reached {
-                path: path.iter().map(symbol_id).collect(),
+                path: path.iter().map(symbol_name).collect(),
             },
             Reach::UnreachedWithinBound => p::Reach::UnreachedWithinBound,
             Reach::Unknown { gaps } => p::Reach::Unknown { gaps: gaps.clone() },

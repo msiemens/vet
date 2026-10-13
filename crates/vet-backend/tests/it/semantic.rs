@@ -11,7 +11,7 @@ use crate::common::{Client, config, find, git, repo_with, write};
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{
     CallFate, Event, LocationChange, Reach, Request, Response, ServerMessage, ServerState, Side, SymbolChange,
-    SymbolId, UnavailableKind,
+    SymbolId, SymbolName, UnavailableKind,
 };
 
 const BASE: &str = "\
@@ -163,9 +163,12 @@ async fn rust_semantics_through_the_protocol() {
     assert!(row.highlights.starts_with(&[0, 4, 5]), "{:?}", row.highlights);
     assert_eq!(
         row.within,
-        Some(SymbolId {
-            path: path.into(),
-            name: name(&["fresh"])
+        Some(SymbolName {
+            id: SymbolId {
+                path: path.into(),
+                name: name(&["fresh"])
+            },
+            modules: 0
         })
     );
     assert_eq!(row.change, LocationChange::Hunk, "{refs:?}");
@@ -381,7 +384,7 @@ async fn rust_semantics_through_the_protocol() {
     else {
         panic!("not usages");
     };
-    let within = usages.references[0].within.as_ref().map(|w| w.name.clone());
+    let within = usages.references[0].within.as_ref().map(|w| w.id.name.clone());
     assert_eq!((usages.references.len(), within), (1, Some(name(&["fresh"]))));
     assert_eq!(usages.gap, None);
     assert!(
@@ -410,7 +413,7 @@ async fn rust_semantics_through_the_protocol() {
         removal.call_sites[0].base.location.span.start.line,
         find(BASE, "gone()", 1, 0).0
     );
-    let within = removal.call_sites[0].base.within.as_ref().map(|w| w.name.clone());
+    let within = removal.call_sites[0].base.within.as_ref().map(|w| w.id.name.clone());
     assert_eq!(within, Some(name(&["caller"])), "{removal:?}");
     assert!(
         removal
@@ -435,7 +438,7 @@ async fn rust_semantics_through_the_protocol() {
         panic!("{reach:?}");
     };
     assert_eq!(
-        via.iter().map(|s| s.name[0].as_str()).collect::<Vec<_>>(),
+        via.iter().map(|s| s.id.name[0].as_str()).collect::<Vec<_>>(),
         ["fresh", "main"]
     );
     assert_eq!(reach.inputs.bounds.map(|b| b.max_depth), Some(8));

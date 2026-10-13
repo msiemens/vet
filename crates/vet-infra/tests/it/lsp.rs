@@ -510,16 +510,17 @@ public class W
         .expect("roslyn starts")
         .server;
     let file = path("W.cs");
+    // The namespace is the one module, whatever its depth.
     assert_eq!(
-        symbol_names(server.document_symbols(&file).await.unwrap()),
-        [
-            "App",
-            "App::W",
-            "App::W::Cb : Func<int>",
-            "App::W::Helper() : int",
-            "App::W::Method(int[], int) : int",
-            "App::W::Method(int[], int) : int::Local(int) : int",
-        ]
+        module_counts(server.document_symbols(&file).await.unwrap()),
+        counts(&[
+            ("App", 1),
+            ("App::W", 1),
+            ("App::W::Cb : Func<int>", 1),
+            ("App::W::Helper() : int", 1),
+            ("App::W::Method(int[], int) : int", 1),
+            ("App::W::Method(int[], int) : int::Local(int) : int", 1),
+        ])
     );
     let helper = At {
         file,
@@ -617,6 +618,98 @@ async fn typescript_pushed_diagnostics_are_found_for_a_path_the_server_spells_di
     assert!(
         diagnostics.iter().any(|d| d.message.contains("not assignable")),
         "{diagnostics:?}"
+    );
+    server.shutdown().await;
+}
+
+/// Each symbol's name with how many of its leading names are modules or namespaces.
+fn module_counts(symbols: Vec<vet_semantic::ports::SymbolInfo>) -> Vec<(String, usize)> {
+    let mut counts: Vec<_> = symbols.iter().map(|s| (s.sym.name.join("::"), s.modules)).collect();
+    counts.sort();
+    counts
+}
+
+fn counts(expected: &[(&str, usize)]) -> Vec<(String, usize)> {
+    expected.iter().map(|(name, n)| ((*name).to_owned(), *n)).collect()
+}
+
+/// A TypeScript namespace is one module item named with its dots, whatever its depth.
+#[tokio::test]
+#[ignore = "needs typescript-language-server"]
+async fn typescript_namespaces_are_counted_as_modules() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("tsconfig.json"),
+        "{\"compilerOptions\":{\"strict\":true}}",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("a.ts"),
+        "export namespace Acme.Billing {\n  export class Invoice { merge() {} }\n}\nexport class Box { create() {} }\n",
+    )
+    .unwrap();
+    let server = LspLauncher::new(BinaryLocator, NoRestore)
+        .start(
+            dir.path(),
+            Tree::Immutable,
+            &config::typescript(),
+            AnalysisPolicy { allow_executing: false },
+        )
+        .await
+        .expect("typescript-language-server starts and has every required capability")
+        .server;
+    assert_eq!(
+        module_counts(server.document_symbols(&path("a.ts")).await.unwrap()),
+        counts(&[
+            ("Acme.Billing", 1),
+            ("Acme.Billing::Invoice", 1),
+            ("Acme.Billing::Invoice::merge", 1),
+            ("Box", 0),
+            ("Box::create", 0),
+        ])
+    );
+    server.shutdown().await;
+}
+
+/// rust-analyzer lists `mod`s as modules, and an `impl` inside them in their chain.
+#[tokio::test]
+#[ignore = "needs rust-analyzer"]
+async fn rust_analyzer_modules_are_counted_as_modules() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("src/lib.rs"),
+        "pub mod billing {\n    pub mod core {\n        pub struct Invoice;\n        impl Invoice {\n            pub fn merge(&self) {}\n        }\n    }\n}\n",
+    )
+    .unwrap();
+    let launcher = LspLauncher {
+        ready_timeout: Duration::from_secs(120),
+        ..LspLauncher::new(BinaryLocator, NoRestore)
+    };
+    let server = launcher
+        .start(
+            dir.path(),
+            Tree::Live,
+            &config::rust_analyzer(),
+            AnalysisPolicy { allow_executing: true },
+        )
+        .await
+        .expect("rust-analyzer starts and has every required capability")
+        .server;
+    assert_eq!(
+        module_counts(server.document_symbols(&path("src/lib.rs")).await.unwrap()),
+        counts(&[
+            ("billing", 1),
+            ("billing::core", 2),
+            ("billing::core::Invoice", 2),
+            ("billing::core::impl Invoice", 2),
+            ("billing::core::impl Invoice::merge", 2),
+        ])
     );
     server.shutdown().await;
 }

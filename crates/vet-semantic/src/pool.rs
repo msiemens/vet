@@ -1241,6 +1241,7 @@ mod tests {
             at,
             detail: None,
             kind: SymbolKind::Other,
+            modules: 0,
         }
     }
 

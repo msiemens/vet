@@ -5,6 +5,7 @@
   import { onDestroy, onMount, tick } from "svelte";
   import type { LocationRow } from "../../generated/LocationRow";
   import { LIST } from "../../lib/listKeys";
+  import { fullName } from "../../lib/symbolLabel";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
@@ -171,7 +172,7 @@
 {/snippet}
 
 {#snippet symbol(row: LocationRow)}
-  <QualifiedName name={symbolLabel(row)} title={row.within ? row.within.name.join(" › ") : row.path} />
+  <QualifiedName name={symbolLabel(row)} title={row.within ? fullName(row.within.id) : row.path} />
 {/snippet}
 
 {#snippet status(path: string)}

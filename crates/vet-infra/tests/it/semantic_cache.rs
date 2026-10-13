@@ -34,6 +34,7 @@ fn symbols(text: &str, version: u8) -> Vec<SymbolInfo> {
         at: Pos { line: 0, col: 3 },
         detail: None,
         kind: SymbolKind::Other,
+        modules: 0,
     }]
 }
 

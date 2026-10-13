@@ -172,6 +172,7 @@ mod tests {
             at: pos,
             detail: detail.map(String::from),
             kind: SymbolKind::Other,
+            modules: 0,
         }
     }
 

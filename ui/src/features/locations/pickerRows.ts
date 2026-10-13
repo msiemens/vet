@@ -4,9 +4,8 @@
 
 import type { LocationRow } from "../../generated/LocationRow.ts";
 import { decodeHighlights, eachRange } from "../../lib/highlights.ts";
-import { splitQualified } from "../../lib/qualified.ts";
 import { match } from "../../lib/speedSearch.ts";
-import { rowLabel, separatorOf } from "../../lib/symbolLabel.ts";
+import { placeLabel } from "../../lib/symbolLabel.ts";
 
 export type Section = "CHANGESET" | "OTHER FILES" | "LIBRARIES";
 
@@ -148,23 +147,12 @@ export function codeRuns(row: Pick<LocationRow, "text" | "highlights" | "matchSt
   return runs;
 }
 
-/** The type a Rust `impl` block is for (`impl Backoff for Retry` is `Retry`); any other name as it is. */
-const containerName = (container: string): string =>
-  /^impl\b/.test(container) ? container.replace(/^impl(<[^>]*>)?\s+/, "").replace(/^.* for /, "") : container;
-
 /**
- * What a place is in, short: the innermost symbol around it with the last segment of its container
- * (`Ledger::commit`, `TaskDispatcher.Trigger`), else just the symbol; the file's name where there is
- * no symbol.
+ * What a place is in, short: the innermost symbol around it with its container, outside the
+ * namespaces (`Ledger::commit`, `TaskDispatcher.Trigger`), else just the symbol; the file's name
+ * where there is no symbol.
  */
-export function symbolLabel(row: Pick<LocationRow, "within" | "path">): string {
-  const { within, path } = row;
-  const { name, context } = rowLabel(within, path);
-  if (!within) return name;
-  if (within.name.length < 2) return containerName(name);
-  const container = containerName(context);
-  return `${splitQualified(container).name || container}${separatorOf(within.path)}${name}`;
-}
+export const symbolLabel = (row: Pick<LocationRow, "within" | "path">): string => placeLabel(row.within, row.path);
 
 /** A library's file: the package it belongs to, if the path tells, and the rest of the path. */
 export function libraryLabel(path: string): { package?: string; rest: string } {

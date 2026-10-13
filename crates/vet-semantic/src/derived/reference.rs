@@ -7,7 +7,7 @@ use vet_core::content::RepoPath;
 use vet_core::review::Side;
 
 use super::{Derived, Inputs};
-use crate::ports::{Location, Sym, SymbolInfo};
+use crate::ports::{Location, SymbolInfo};
 use crate::query::Primitives;
 use crate::symbols::enclosing;
 
@@ -16,7 +16,7 @@ pub struct Reference {
     pub location: Location,
     /// The innermost symbol the reference is in. `None` at the top level of a file, outside the
     /// repository and where the outline of its file is unknown.
-    pub within: Option<Sym>,
+    pub within: Option<SymbolInfo>,
 }
 
 /// `locations` on `side` with the symbols around them (derived).
@@ -51,7 +51,7 @@ pub(super) async fn within(
         let within = outlines
             .get(&location.file)
             .and_then(|symbols| enclosing(symbols, location.span.start))
-            .map(|s| s.sym.clone());
+            .cloned();
         out.push(Reference { location, within });
     }
     out
