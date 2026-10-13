@@ -130,6 +130,7 @@ pub fn effect(request: &Request) -> Effect {
         | Request::ListServers { .. }
         | Request::ListDirectory { .. }
         | Request::ListFiles { .. }
+        | Request::PatternMatches { .. }
         | Request::FileText { .. }
         | Request::Search { .. }
         | Request::ItemBlob { .. }
@@ -524,6 +525,10 @@ mod tests {
                 path: String::new(),
             },
             Request::ListFiles { project },
+            Request::PatternMatches {
+                project,
+                filter: ReviewFilter::default(),
+            },
             Request::FileText {
                 project,
                 view,

@@ -6,10 +6,10 @@ use ts_rs::TS;
 use crate::{
     Account, BackendSettings, BaseDiff, BlobContent, Calls, ChangesetKey, ChangesetRow, CheckLog, CommitChecks,
     CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta, LocationRows, Locations,
-    Manifest, MappedLine, PipelineOutcome, PipelineStep, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource,
-    Reachability, RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate, SearchFile, ServerInfo, Side, SymbolAt,
-    SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo,
-    WorkspaceSymbols,
+    Manifest, MappedLine, PatternMatch, PipelineOutcome, PipelineStep, ProjectId, PullRequestInfo, PullRequestRow,
+    PullRequestSource, Reachability, RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate, SearchFile,
+    ServerInfo, Side, SymbolAt, SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable,
+    Usages, VersionInfo, WorkspaceSymbols,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -178,6 +178,13 @@ pub enum Response {
     Files {
         revision: u32,
         paths: Vec<String>,
+    },
+    /// The answer to `PatternMatches`, at `revision`: one entry per glob of the draft filter, in
+    /// the order it lists them.
+    PatternMatches {
+        revision: u32,
+        include: Vec<PatternMatch>,
+        exclude: Vec<PatternMatch>,
     },
     /// The answer to `FileText`, at `revision`.
     FileText {

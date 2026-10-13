@@ -1768,6 +1768,63 @@ async fn the_filter_moves_completion_and_the_excluded_counts() {
 }
 
 #[tokio::test]
+async fn each_glob_of_a_draft_filter_counts_the_changed_files_and_lines_it_matches() {
+    let fx = fixture(
+        &[("a.txt", "1\n"), ("docs/b.md", "1\n2\n"), ("docs/c.md", "x\n")],
+        &[("a.txt", "2\n"), ("docs/b.md", "1\n3\n4\n"), ("docs/c.md", "y\n")],
+    )
+    .await;
+    let mut client = Client::new(&fx.handler);
+    let project = open(&client, fx.repo.path()).await;
+    let draft = ReviewFilter {
+        include: vec!["*.md".into()],
+        exclude: vec!["docs/**".into(), "*.txt".into(), "src/[".into(), "*.rs".into()],
+        ..Default::default()
+    };
+
+    let Response::PatternMatches {
+        revision,
+        include,
+        exclude,
+    } = client
+        .call(Request::PatternMatches { project, filter: draft })
+        .await
+        .unwrap()
+    else {
+        panic!("not the matches")
+    };
+
+    let counted = |list: &[vet_protocol::PatternMatch]| {
+        list.iter()
+            .map(|m| (m.files, m.lines, m.invalid.is_some()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        counted(&include),
+        [(2, 5, false)],
+        "added and removed lines of both documents"
+    );
+    assert_eq!(
+        counted(&exclude),
+        [(2, 5, false), (1, 2, false), (0, 0, true), (0, 0, false)]
+    );
+    assert!(
+        exclude[2]
+            .invalid
+            .as_deref()
+            .unwrap()
+            .starts_with("invalid pattern \"src/[\"")
+    );
+    assert_eq!(revision, 0);
+    assert_eq!(
+        client.manifest(project).await.filter,
+        ReviewFilter::default(),
+        "a draft is not applied"
+    );
+    assert!(client.no_event());
+}
+
+#[tokio::test]
 async fn the_project_filter_reaches_every_connection_and_outlives_the_project() {
     let fx = fixture(
         &[("a.txt", "1\n"), ("docs/b.md", "1\n")],

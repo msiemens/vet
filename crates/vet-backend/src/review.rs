@@ -275,6 +275,18 @@ impl Orchestrator {
         Ok(Response::Done)
     }
 
+    pub(crate) async fn pattern_matches(
+        &self,
+        project: ProjectId,
+        filter: vet_protocol::ReviewFilter,
+    ) -> Result<Response, String> {
+        let filter = mapping::core_filter(filter);
+        let matches = self
+            .asking(project, async |session| session.pattern_matches(&filter).await)
+            .await?;
+        Ok(mapping::pattern_matches(&matches))
+    }
+
     pub(crate) async fn narrow_review(
         &self,
         project: ProjectId,

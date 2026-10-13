@@ -470,6 +470,14 @@ pub enum Request {
         project: ProjectId,
         filter: ReviewFilter,
     },
+    /// What each include and exclude glob of the draft `filter` matches among the changed files of
+    /// the changeset on view: files and lines, whatever else the filter does. A glob that is
+    /// invalid is answered, not failed on. Changes nothing. Answers with
+    /// `Response::PatternMatches`.
+    PatternMatches {
+        project: ProjectId,
+        filter: ReviewFilter,
+    },
     /// Narrows the review on view to `filter`, which replaces the project's filter for this
     /// review only (`None` ends the narrowing). Nothing is stored: the narrowing ends with a
     /// change to the project's filter and when another changeset comes on view. Announces like

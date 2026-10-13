@@ -1,6 +1,9 @@
 //! The directory tree of the target snapshot.
 
-use vet_core::content::{EntryKind, RepoPath};
+use std::collections::BTreeMap;
+
+use vet_core::content::{EntryKind, LineDelta, RepoPath};
+use vet_core::filter::{PatternMatcher, ReviewFilter};
 
 use super::{LiveSession, Result, SessionError, View};
 use crate::ports::{GitRepo, LiveStore};
@@ -37,7 +40,65 @@ pub struct FileListing {
     pub paths: Vec<String>,
 }
 
+/// What one glob of a draft filter matches in the changeset.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PatternMatch {
+    /// The changed files it matches, text or not.
+    pub files: u32,
+    /// The lines added and removed in them.
+    pub lines: u32,
+    /// Why the glob is invalid; it then matches nothing.
+    pub invalid: Option<String>,
+}
+
+/// What each glob of a draft filter matches, in the order the filter lists them.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PatternMatches {
+    pub revision: u32,
+    pub include: Vec<PatternMatch>,
+    pub exclude: Vec<PatternMatch>,
+}
+
 impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> LiveSession<G, S> {
+    /// What each include and exclude glob of `filter` matches among the changed files of the
+    /// changeset on view, whatever else the filter does.
+    pub async fn pattern_matches(&self, filter: &ReviewFilter) -> Result<PatternMatches> {
+        let (st, _) = self.viewing(View::Changeset).await?;
+        let diff = &st.changes().diffed.diff;
+        let mut lines: BTreeMap<&RepoPath, u32> = BTreeMap::new();
+        for file in &diff.files {
+            let delta = LineDelta::of(&file.hunks);
+            *lines.entry(file.path()).or_default() += delta.added + delta.removed;
+        }
+        for change in &diff.non_text {
+            lines.entry(&change.path).or_default();
+        }
+        let matched = |pattern: &String| match PatternMatcher::new(pattern) {
+            Ok(matcher) => {
+                let hit: Vec<u32> = lines
+                    .iter()
+                    .filter(|(p, _)| matcher.matches(p))
+                    .map(|(_, n)| *n)
+                    .collect();
+                PatternMatch {
+                    files: hit.len() as u32,
+                    lines: hit.iter().sum(),
+                    invalid: None,
+                }
+            }
+            Err(invalid) => PatternMatch {
+                files: 0,
+                lines: 0,
+                invalid: Some(invalid),
+            },
+        };
+        Ok(PatternMatches {
+            revision: st.revision,
+            include: filter.include.iter().map(matched).collect(),
+            exclude: filter.exclude.iter().map(matched).collect(),
+        })
+    }
+
     /// Every file (not a symlink or a submodule) of the target snapshot, for a search by name.
     pub async fn list_files(&self) -> Result<FileListing> {
         let (st, _) = self.viewing(View::Changeset).await?;

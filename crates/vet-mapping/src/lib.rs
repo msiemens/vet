@@ -16,9 +16,9 @@ use vet_app::search::{FoundLine, LineKind, SearchFilters, SearchPattern, SearchS
 use vet_app::session::{
     BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView, DirEntryKind,
     DirListing, DiscussionView, EntryInfo, ExcludedBy, ExcludedGroup, FileListing, FileStatus, FileView, ItemBlob,
-    ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, RowReview,
-    SearchResult, SearchScope, SubmitReport, SyncNotice, TargetText, ThreadView, ThreadsView, VersionView, View,
-    VoteSent,
+    ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, PatternMatch, PatternMatches, ReviewUpdateView,
+    ReviewView, RowReview, SearchResult, SearchScope, SubmitReport, SyncNotice, TargetText, ThreadView, ThreadsView,
+    VersionView, View, VoteSent,
 };
 use vet_app::trust::{Origin, Trust};
 use vet_core::completion::{Completion, HunkState};
@@ -727,6 +727,23 @@ pub fn directory(l: &DirListing) -> p::Response {
                 excluded: e.excluded,
             })
             .collect(),
+    }
+}
+
+pub fn pattern_matches(m: &PatternMatches) -> p::Response {
+    let each = |list: &[PatternMatch]| {
+        list.iter()
+            .map(|m| p::PatternMatch {
+                files: m.files,
+                lines: m.lines,
+                invalid: m.invalid.clone(),
+            })
+            .collect()
+    };
+    p::Response::PatternMatches {
+        revision: m.revision,
+        include: each(&m.include),
+        exclude: each(&m.exclude),
     }
 }
 

@@ -29,6 +29,19 @@ pub struct ReviewFilter {
     pub review_generated: bool,
 }
 
+/// What one glob of a draft filter matches among the changed files of the changeset on view.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PatternMatch {
+    /// The changed files it matches, text or not.
+    pub files: u32,
+    /// The lines added and removed in them.
+    pub lines: u32,
+    /// Why the glob is invalid, as a message fit to show; it then matches nothing.
+    pub invalid: Option<String>,
+}
+
 /// What a view is compared against. The base is fixed by the kind of changeset and never chosen.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

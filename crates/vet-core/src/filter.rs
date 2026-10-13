@@ -165,6 +165,21 @@ impl CompiledFilter<'_> {
     }
 }
 
+/// One glob of a filter on its own, to ask which paths it matches, read as the filter reads it.
+pub struct PatternMatcher(GlobList);
+
+impl PatternMatcher {
+    /// Fails with why the pattern is invalid, as a message fit to show.
+    pub fn new(pattern: &str) -> Result<Self, String> {
+        glob(pattern)?;
+        Ok(Self(GlobList::new(std::iter::once(pattern))))
+    }
+
+    pub fn matches(&self, path: &RepoPath) -> bool {
+        self.0.is_match(&String::from_utf8_lossy(&path.0))
+    }
+}
+
 /// The files a text search looks in, as the viewer writes them: globs separated by commas, a leading
 /// `!` makes one exclude. Globs read as the review filter's do (a pattern without `/` matches the
 /// file name at any depth). An empty mask takes every file.

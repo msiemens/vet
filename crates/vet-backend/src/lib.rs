@@ -424,6 +424,7 @@ impl Orchestrator {
             Request::Fetch { project } => reply(self.fetch(project)),
             Request::ListDirectory { project, path } => reply(async move { self.list_directory(project, &path).await }),
             Request::ListFiles { project } => reply(self.list_files(project)),
+            Request::PatternMatches { project, filter } => reply(self.pattern_matches(project, filter)),
             Request::FileText { project, view, path } => {
                 reply(async move { self.file_text(project, view, &path).await })
             }
