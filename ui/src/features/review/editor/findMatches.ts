@@ -129,17 +129,40 @@ export function indexOf(sets: SectionMatches, pos: FindPos): number {
   return n;
 }
 
-/** The first match at or after `pos`, else the first of all; none without matches. */
-export function nearest(sets: SectionMatches, pos: FindPos): FindPos | undefined {
-  let first: FindPos | undefined;
+/** The first match at or after `pos`; none when no match lies after it in the sections searched. */
+export function nearestAfter(sets: SectionMatches, pos: FindPos): FindPos | undefined {
   for (const [section, set] of sets.entries()) {
     for (const m of set ?? []) {
       const at = posOf(section, m);
-      first ??= at;
       if (compare(at, pos) >= 0) return at;
     }
   }
-  return first;
+  return undefined;
+}
+
+/** The first match at or after `pos`, else the first of all; none without matches. */
+export function nearest(sets: SectionMatches, pos: FindPos): FindPos | undefined {
+  const first = sets.flatMap((set, section) => (set ?? []).slice(0, 1).map((m) => posOf(section, m)))[0];
+  return nearestAfter(sets, pos) ?? first;
+}
+
+/** A place in a view of several files that survives the files before it coming and going. */
+export interface PathPos {
+  path: string;
+  order: number;
+  from: number;
+}
+
+/** The place `pos` is, named by the file; `paths` are those of the sections, in order. */
+export function toPathPos(paths: readonly string[], pos: FindPos): PathPos | undefined {
+  const path = paths.at(pos.section);
+  return path === undefined ? undefined : { path, order: pos.order, from: pos.from };
+}
+
+/** Where `at` is in the sections now; none if its file is not among them any more. */
+export function fromPathPos(paths: readonly string[], at: PathPos): FindPos | undefined {
+  const section = paths.indexOf(at.path);
+  return section < 0 ? undefined : { section, order: at.order, from: at.from };
 }
 
 /** The match `delta` (1 or -1) from `pos`, and whether the step wrapped round the end. */

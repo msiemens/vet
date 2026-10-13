@@ -148,6 +148,8 @@ export class Scrollbar {
         this.dom.insertBefore(mark, this.thumb);
         this.markEls.push(mark);
       }
+      // The nodes of marks that are gone leave with them.
+      while (this.markEls.length > rects.length) this.markEls.pop()?.remove();
       this.markEls.forEach((mark, i) => {
         const rect = rects.at(i);
         mark.hidden = !rect;

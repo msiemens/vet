@@ -7,11 +7,13 @@ import {
   type FindOptions,
   type SectionMatches,
   findInFile,
+  fromPathPos,
   indexOf,
   nearest,
   orderOf,
   posOf,
   step,
+  toPathPos,
 } from "./findMatches.ts";
 
 const OPTIONS: FindOptions = {
@@ -70,6 +72,14 @@ void test("the File view searches the target's text and ignores the side", () =>
   assert.deepEqual(shape(run({ onlyChanges: true }, "file")), ["added:2", "added:3"]);
 });
 
+void test("lines end at a lone CR and at CRLF as well as at LF, as the editor and the backend see them", () => {
+  for (const eol of ["\r", "\r\n", "\n"]) {
+    const text = ["no", "a delay", "no", "delay b"].join(eol);
+    const file: FileText = { base: text, target: text, hunks: [] };
+    assert.deepEqual(shape(run({}, "diff", file)), ["context:1", "context:3"], JSON.stringify(eol));
+  }
+});
+
 void test("a file without hunks is all context", () => {
   const same: FileText = { base: "x delay\ny", target: "x delay\ny", hunks: [] };
   assert.deepEqual(shape(run({}, "diff", same)), ["context:0"]);
@@ -111,6 +121,17 @@ void test("a section not searched yet adds nothing to the count before a place",
   const list = run();
   const all: SectionMatches = [undefined, list];
   assert.equal(indexOf(all, posOf(1, nth(list, 2))), 2);
+});
+
+void test("a place kept by its file follows the file when files before it come and go", () => {
+  const before = ["a.rs", "b.rs", "c.rs"];
+  const at = toPathPos(before, { section: 2, order: 7, from: 3 });
+  assert.deepEqual(at, { path: "c.rs", order: 7, from: 3 });
+  assert.deepEqual(fromPathPos(["new.rs", "a.rs", "b.rs", "c.rs"], at), { section: 3, order: 7, from: 3 });
+  assert.deepEqual(fromPathPos(["c.rs"], at), { section: 0, order: 7, from: 3 });
+  // Its file is gone: the find starts from the view instead.
+  assert.equal(fromPathPos(["a.rs", "b.rs"], at), undefined);
+  assert.equal(toPathPos(before, { section: 5, order: 0, from: 0 }), undefined);
 });
 
 void test("the place of a line in the order is the one the search gave its matches", () => {

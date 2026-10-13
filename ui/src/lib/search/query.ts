@@ -27,12 +27,17 @@ function reason(error: unknown): string {
   return message.replace(/^Invalid regular expression: \/.*\/[a-z]*: /, "");
 }
 
+/** A character of a word as Unicode has it, which is what the backend's `\b` is made of. */
+const WORD = "[\\p{Alphabetic}\\p{M}\\p{Nd}\\p{Pc}\\p{Join_Control}]";
+/** `\b` for Unicode text: the browser's own knows ASCII letters only, so `über` would not be a word. */
+const BOUNDARY = `(?:(?<=${WORD})(?!${WORD})|(?<!${WORD})(?=${WORD}))`;
+
 export function compile(query: SearchText): Compiled {
   if (!query.text) return { type: "none" };
   let source = query.regex ? query.text : query.text.replace(SPECIAL, "\\$&");
-  if (query.wholeWord) source = `\\b(?:${source})\\b`;
+  if (query.wholeWord) source = `${BOUNDARY}(?:${source})${BOUNDARY}`;
   try {
-    return { type: "ok", re: new RegExp(source, query.matchCase ? "g" : "gi") };
+    return { type: "ok", re: new RegExp(source, query.matchCase ? "gu" : "giu") };
   } catch (error) {
     return { type: "error", message: reason(error) };
   }
