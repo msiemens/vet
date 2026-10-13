@@ -47,6 +47,12 @@ async function until(condition: () => Promise<boolean>, what: string, ms = 60_00
 interface Driver {
   /** Evaluates `js` in the page (a promise is awaited). */
   page(js: string): Promise<unknown>;
+  /** Waits until `js` evaluates to something true in the page. */
+  until(js: string, what: string): Promise<void>;
+  /** Presses and releases a key. */
+  press(key: string, code: string): Promise<void>;
+  /** Clicks the middle of the element `selector` names. */
+  click(selector: string): Promise<void>;
   /** Another window of the same project marks or flags a hunk of the changeset. */
   otherMark(path: string, hunk: number): Promise<unknown>;
   otherFlag(path: string, hunk: number): Promise<unknown>;
@@ -110,6 +116,54 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.step("the view is scrolled", () =>
       d.page(`document.querySelector(".pane.active .scroll").dispatchEvent(new Event("scroll"))`),
     );
+  },
+
+  /** Search Everywhere gives the focus back to where it was after Escape and a choice, never after a click elsewhere. */
+  async palette(d) {
+    await d.page(`(() => {
+      for (const [id, left] of [["probe-a", 4], ["probe-b", 220]]) {
+        const field = document.createElement("input");
+        field.id = id;
+        field.style.cssText = "position: fixed; bottom: 4px; left: " + left + "px; z-index: 1;";
+        document.body.append(field);
+      }
+    })()`);
+    const open = async (command: string) => {
+      await d.page(
+        `(() => { document.getElementById("probe-a").focus(); __t.commands.run(${JSON.stringify(command)}); })()`,
+      );
+      await d.until(`document.activeElement?.closest(".palette") !== null`, "the popup to take the focus");
+    };
+    const closed = (focus: string) =>
+      d.until(
+        `document.querySelector(".palette") === null && document.activeElement?.id === ${JSON.stringify(focus)}`,
+        `the popup closed with the focus on ${focus}`,
+      );
+    await d.step("Escape gives the focus back", async () => {
+      await open("palette.all");
+      await d.press("Escape", "Escape");
+      await closed("probe-a");
+    });
+    await d.step("a choice gives the focus back before it is carried out", async () => {
+      await open("palette.actions");
+      await d.page(`(() => {
+        const field = document.querySelector(".palette input");
+        field.value = "Soft Wrap";
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      })()`);
+      await d.until(
+        `document.querySelector(".palette .r")?.textContent.includes("Soft Wrap")`,
+        "the action to be found",
+      );
+      await d.press("Enter", "Enter");
+      await closed("probe-a");
+      await d.page(`__t.commands.run("view.softWrap")`);
+    });
+    await d.step("a click elsewhere leaves the focus where it went", async () => {
+      await open("palette.all");
+      await d.click("#probe-b");
+      await closed("probe-b");
+    });
   },
 
   /** Panels fuller than the window scroll inside themselves: the page never does (checked after every step). */
@@ -198,6 +252,20 @@ async function runSession(
   };
   const driver: Driver = {
     page,
+    until: (js, what) => until(() => ready(js), what),
+    async press(key, code) {
+      await tab.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key, code });
+      await tab.send("Input.dispatchKeyEvent", { type: "keyUp", key, code });
+    },
+    async click(selector) {
+      const at = (await page(`(() => {
+        const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      })()`)) as { x: number; y: number };
+      await tab.mouse("mouseMoved", at.x, at.y);
+      await tab.mouse("mousePressed", at.x, at.y, { button: "left", clickCount: 1 });
+      await tab.mouse("mouseReleased", at.x, at.y, { button: "left", clickCount: 1 });
+    },
     async otherMark(path, hunk) {
       return other.toggleHunk((await other.manifest(CHANGESET)).revision, path, hunk, CHANGESET);
     },

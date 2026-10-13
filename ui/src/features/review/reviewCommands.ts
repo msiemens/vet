@@ -52,6 +52,7 @@ const VIEW_MODES: readonly { id: ViewMode; label: string; binding: string; unava
   { id: "file", label: "File Text", binding: "Alt-Shift-3", unavailable: "Open the tab of a file" },
 ];
 
+const NO_FILE = "Open a file first";
 const NO_DIFF = "Open the Changes tab or a changed file";
 const NOT_BY_COMMIT = "The changeset is not reviewed by commit";
 const QUEUE_SHOWN = "Open the Review screen first";
@@ -248,6 +249,7 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
       id: "path.copy",
       label: "Copy Path",
       enabled: (c) => subjectPath(c) !== undefined,
+      disabledReason: () => NO_FILE,
       run: (c) => {
         const path = subjectPath(c);
         if (path === undefined) return false;
@@ -257,15 +259,18 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
     {
       id: "path.exclude",
       label: "Exclude from Review",
-      enabled: (c) => c.target !== undefined,
+      enabled: (c) => subjectPath(c) !== undefined,
+      disabledReason: () => NO_FILE,
       run: (c) => {
-        if (!c.target) return false;
-        a.excludePath(c.target.path, c.target.dir);
+        const path = subjectPath(c);
+        if (path === undefined) return false;
+        a.excludePath(path, c.target?.dir ?? false);
       },
     },
     {
       id: "path.reviewOnly",
       label: "Review Only This Folder",
+      subject: true,
       enabled: (c) => !!c.target?.dir,
       run: (c) => {
         if (!c.target) return false;
@@ -275,6 +280,7 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
     {
       id: "path.markSeen",
       label: "Mark All Seen",
+      subject: true,
       enabled: (c) => !!c.target?.dir,
       run: (c) => {
         if (!c.target) return false;
@@ -284,6 +290,7 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
     {
       id: "path.markUnseen",
       label: "Mark All Unseen",
+      subject: true,
       enabled: (c) => !!c.target?.dir,
       run: (c) => {
         if (!c.target) return false;
@@ -345,6 +352,7 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
       id: "edit.copy",
       label: "Copy",
       enabled: (c) => !!c.editor?.selection,
+      disabledReason: () => "No text is selected",
       run: (c) => c.editor && a.copyText(c.editor.selectedText()),
     },
   ]);

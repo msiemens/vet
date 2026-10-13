@@ -31,7 +31,14 @@
     summarizeOutgoing,
     unreadCount,
   } from "../features/comments";
-  import { type Choice, Palette, palette, paletteCommands, watchDoubleShift } from "../features/palette";
+  import {
+    type ChoiceHost,
+    Palette,
+    openChoice,
+    palette,
+    paletteCommands,
+    watchDoubleShift,
+  } from "../features/palette";
   import { NotificationCards, PlatformFooter, copyText } from "../features/platform";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, queueCommands, targetLabel } from "../features/queue";
   import {
@@ -393,7 +400,7 @@
     void session.connect().then(reveal);
     const stopMenu = mainMenu.listen();
     const stopDoubleShift = watchDoubleShift(
-      () => !!session.repo,
+      () => !!session.repo && !commands.isCapturing(),
       () => commands.run("palette.all"),
     );
     return () => {
@@ -494,46 +501,29 @@
   }
 
   /** Does what was chosen in Search Everywhere, which has closed and given the focus back. */
-  async function openChoice(choice: Choice) {
-    switch (choice.type) {
-      case "file":
-        screen = "review";
-        if (!choice.inChanges) {
-          void controller?.openSource(ON_SCREEN, choice.path, choice.line);
-          break;
-        }
-        // The file is shown among all the changes, which a commit on screen does not list.
-        if (changeset.shownCommit !== undefined) await changeset.showWhole();
-        await tick();
-        void controller?.revealInChanges(choice.path);
-        break;
-      case "symbol": {
-        screen = "review";
-        const { symbol, change } = choice;
-        // A removed symbol has no text to open, so it is shown where it is reviewed.
-        if (change !== undefined && (change === "removed" || choice.reveal)) {
-          symbols.choose(symbol, change, true);
-          void controller?.revealSymbol({ symbol, change });
-        } else {
-          // The symbol was found in the changeset's target, so its file opens there, never at a pinned commit.
-          void controller?.openSource(fileTab(symbol.id.path), symbol.id.path, symbol.span.start.line);
-        }
-        break;
-      }
-      case "changeset":
-        screen = "review";
-        if (!queue.onView || keyId(queue.onView) !== choice.id) commands.run(`changeset.open:${choice.id}`);
-        break;
-      case "thread": {
-        const thread = threads.items.find((t) => t.id === choice.id);
-        if (thread) openThread(thread);
-        break;
-      }
-      case "action":
-        commands.run(choice.id);
-        break;
-    }
-  }
+  const choiceHost: ChoiceHost = {
+    showReview: () => (screen = "review"),
+    commitShown: () => changeset.shownCommit !== undefined,
+    showWhole: async () => {
+      await changeset.showWhole();
+      await tick();
+    },
+    openOnScreen: (path, line) => void controller?.openSource(ON_SCREEN, path, line),
+    openUnpinned: (path, line) => void controller?.openSource(fileTab(path), path, line),
+    revealFile: (path) => void controller?.revealInChanges(path),
+    revealSymbol: (symbol, change) => {
+      symbols.choose(symbol, change, true);
+      void controller?.revealSymbol({ symbol, change });
+    },
+    openChangeset: (id) => {
+      if (!queue.onView || keyId(queue.onView) !== id) commands.run(`changeset.open:${id}`);
+    },
+    openThread: (id) => {
+      const thread = threads.items.find((t) => t.id === id);
+      if (thread) openThread(thread);
+    },
+    run: (command) => commands.run(command),
+  };
 
   /** Opens the Comments tool window at the form for a comment on the changeset as a whole. */
   function commentOnChangeset() {
@@ -733,7 +723,10 @@
 {/if}
 
 {#if palette.open}
-  <Palette onchoose={(choice) => void openChoice(choice)} onsettings={() => showDialog("settings", "servers")} />
+  <Palette
+    onchoose={(choice) => void openChoice(choice, choiceHost)}
+    onsettings={() => showDialog("settings", "servers")}
+  />
 {/if}
 
 <LocationPicker

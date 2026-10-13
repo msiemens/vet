@@ -33,6 +33,7 @@ export function threadCommands(a: ThreadActions): Command<CommandContext>[] {
     {
       id: "thread.delete",
       label: "Delete Thread",
+      subject: true,
       enabled: (c) => c.thread !== undefined,
       run: (c) => {
         if (!c.thread) return false;

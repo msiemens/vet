@@ -154,6 +154,7 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     {
       id: "changeset.open",
       label: "Open Changeset",
+      argument: true,
       enabled: repoOpen,
       run: (_, id) => {
         const key = parseKeyId(id);
@@ -260,7 +261,14 @@ export function appCommands(a: AppActions): Command<CommandContext>[] {
     },
     { id: "app.accounts", label: "Accounts…", run: () => a.showAccounts() },
     { id: "app.about", label: "About Vet", run: () => a.showDialog("about") },
-    { id: "app.quit", label: "Exit", accelerator: "Cmd+Q", enabled: (c) => c.canQuit, run: () => a.quit() },
+    {
+      id: "app.quit",
+      label: "Exit",
+      accelerator: "Cmd+Q",
+      enabled: (c) => c.canQuit,
+      disabledReason: () => "Only the desktop app can be exited",
+      run: () => a.quit(),
+    },
     { id: "view.softWrap", label: "Soft Wrap", run: () => a.toggleSoftWrap() },
     ...TOOL_WINDOWS.map(({ id, label, binding }): Command<CommandContext> => ({
       id: toolCommand(id),

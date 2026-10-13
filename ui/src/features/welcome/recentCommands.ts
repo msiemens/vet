@@ -16,6 +16,7 @@ export function recentCommands(a: RecentActions): Command<CommandContext>[] {
     {
       id: "recent.open",
       label: "Open",
+      subject: true,
       enabled: (c) => c.recentProject !== undefined,
       run: (c) => {
         if (!c.recentProject) return false;
@@ -25,6 +26,7 @@ export function recentCommands(a: RecentActions): Command<CommandContext>[] {
     {
       id: "recent.forget",
       label: "Remove from Recent Projects",
+      subject: true,
       enabled: (c) => c.recentProject !== undefined,
       run: (c) => {
         if (!c.recentProject) return false;

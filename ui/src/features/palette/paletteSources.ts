@@ -11,7 +11,10 @@ import type { Thread } from "../../generated/Thread";
 import type { UnavailableKind } from "../../generated/UnavailableKind";
 import { splitQualified } from "../../lib/qualified.ts";
 import { shortLabel } from "../../lib/symbolLabel.ts";
+import type { CommandRegistry } from "../../lib/commands.ts";
+import type { CommandContext } from "../../state/commands.ts";
 import { fractionOf } from "../../state/taskHeadline.ts";
+import { PALETTE_COMMANDS } from "./paletteCommands.ts";
 import type {
   ActionCandidate,
   ChangesetCandidate,
@@ -207,14 +210,31 @@ export interface CommandEntry {
   id: string;
   label: string;
   binding?: string;
+  /** It acts on the subject of a context menu only. */
+  subject?: boolean;
   enabled: boolean;
   reason?: string;
 }
 
-/** The commands a key can run, but not the popup's own. */
-export function actionCandidates(commands: readonly CommandEntry[], skip: (id: string) => boolean): ActionCandidate[] {
+/** The registry's commands as they are in `context`. */
+export function commandEntries(
+  registry: Pick<CommandRegistry<CommandContext>, "list" | "isEnabled" | "disabledReason">,
+  context: CommandContext,
+): CommandEntry[] {
+  return registry.list().map((c) => ({
+    id: c.id,
+    label: c.label,
+    binding: c.binding?.label,
+    subject: c.subject,
+    enabled: registry.isEnabled(c.id, context),
+    reason: registry.disabledReason(c.id, context),
+  }));
+}
+
+/** The commands a key can run anywhere in the window: not the popup's own, nor those of a context menu's subject. */
+export function actionCandidates(commands: readonly CommandEntry[]): ActionCandidate[] {
   return commands
-    .filter((c) => !skip(c.id))
+    .filter((c) => !c.subject && !(PALETTE_COMMANDS as readonly string[]).includes(c.id))
     .map((c) => ({
       kind: "action",
       key: c.id,

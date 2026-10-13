@@ -27,6 +27,8 @@ export interface Command<C> {
   yieldsToLists?: boolean;
   /** Only a menu item carries the argument it needs, so no key runs it. */
   argument?: boolean;
+  /** Acts on what a context menu was opened on, which nothing else in the window offers it. */
+  subject?: boolean;
   /** Default: always. `arg` is the argument a menu item carries (`id:arg`). */
   enabled?(context: C, arg?: string): boolean;
   /** Why the command is not enabled in `context`, where a menu can say so. */
@@ -50,6 +52,8 @@ export interface CommandListing {
   binding?: Binding;
   /** The key it has unless the viewer changed it. */
   defaultBinding?: Binding;
+  /** It acts on the subject of a context menu only (`Command.subject`). */
+  subject?: boolean;
   /** The further keys that run it now; none once the viewer set its binding. */
   alsoBindings: Binding[];
 }
@@ -164,6 +168,7 @@ export class CommandRegistry<C extends object> {
         return {
           id: command.id,
           label: command.label,
+          subject: command.subject,
           binding: this.binding(command.id),
           alsoBindings:
             command.id in this.overrides ? [] : (command.alsoBindings ?? []).map((s) => bindingOf(s, this.mod)),
@@ -181,6 +186,11 @@ export class CommandRegistry<C extends object> {
     return () => {
       if (this.capturing === handler) this.capturing = undefined;
     };
+  }
+
+  /** A new binding is being read from the keyboard (`capture`). */
+  isCapturing(): boolean {
+    return this.capturing !== undefined;
   }
 
   /** `text`, or the command's label, followed by its shortcut in parentheses if it has one. */

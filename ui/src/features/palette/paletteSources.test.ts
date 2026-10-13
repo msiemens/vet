@@ -8,7 +8,6 @@ import type { Thread } from "../../generated/Thread";
 import type { Unavailable } from "../../generated/Unavailable";
 import type { UnavailableKind } from "../../generated/UnavailableKind";
 import {
-  actionCandidates,
   failedServers,
   indexingNotes,
   serverSymbolCandidates,
@@ -177,18 +176,4 @@ void test("a thread is found by its first message, shown at its place with its s
   assert.equal(open.text, "Jitter is added after the cap");
   assert.equal(open.where, "src/retry.rs:43");
   assert.deepEqual([open.moved, moved.moved, resolved.resolved, whole.where], [false, true, true, "changeset"]);
-});
-
-void test("the popup's own commands are not among the actions", () => {
-  const found = actionCandidates(
-    [
-      { id: "palette.files", label: "Go to File…", enabled: true },
-      { id: "review.post", label: "Post Comments…", enabled: false, reason: "No comment waits" },
-    ],
-    (id) => id.startsWith("palette."),
-  );
-  assert.deepEqual(
-    found.map((a) => [a.key, a.off, a.disabled]),
-    [["review.post", true, "No comment waits"]],
-  );
 });

@@ -16,6 +16,7 @@ export function queueCommands(a: QueueActions): Command<CommandContext>[] {
     {
       id: "queue.open",
       label: "Open",
+      subject: true,
       enabled: (c) => c.row !== undefined,
       run: (c) => {
         if (!c.row) return false;
@@ -25,6 +26,7 @@ export function queueCommands(a: QueueActions): Command<CommandContext>[] {
     {
       id: "queue.copyLink",
       label: "Copy Link",
+      subject: true,
       enabled: (c) => c.row?.url !== undefined,
       disabledReason: () => "Only a pull request has a link",
       run: (c) => {

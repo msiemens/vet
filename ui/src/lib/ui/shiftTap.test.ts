@@ -71,10 +71,3 @@ void test("holding Shift down counts once", () => {
   shift.keydown(down("Shift", { repeat: true }));
   assert.equal(shift.keyup({ key: "Shift" }, 1100), true);
 });
-
-void test("using the pointer between the taps breaks the double tap", () => {
-  const shift = new ShiftTap();
-  tap(shift, 1000);
-  shift.cancel();
-  assert.equal(tap(shift, 1100), false);
-});

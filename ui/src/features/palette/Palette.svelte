@@ -1,18 +1,3 @@
-<script module lang="ts">
-  import type { SymbolChange } from "../../generated/SymbolChange";
-  import type { SymbolInfo } from "../../generated/SymbolInfo";
-
-  /** What the viewer chose; the owner makes it happen once the popup has gone and the focus is back. */
-  export type Choice =
-    /** `line` is 0-based; `inChanges` shows the file in All changes instead of opening its tab. */
-    | { type: "file"; path: string; line?: number; inChanges: boolean }
-    /** `reveal` selects a changed symbol where it is reviewed. */
-    | { type: "symbol"; symbol: SymbolInfo; change?: SymbolChange; reveal: boolean }
-    | { type: "changeset"; id: string }
-    | { type: "thread"; id: number }
-    | { type: "action"; id: string };
-</script>
-
 <script lang="ts">
   // Search Everywhere: one popup under the header for names (files, symbols, changesets, comment
   // threads, actions), with a tab for each kind. Arrow keys move, Tab changes the tab, Enter chooses,
@@ -37,6 +22,7 @@
   import { queueRows, labelOf, reviewedOf, sourceText } from "../queue";
   import { statusLetter } from "../review";
   import { SymbolGlyph } from "../symbols";
+  import type { Choice } from "./choice";
   import { FIND_IN_FILES, PALETTE_COMMANDS } from "./paletteCommands";
   import { palette } from "./paletteState.svelte";
   import {
@@ -54,6 +40,7 @@
   import {
     actionCandidates,
     changesetCandidates,
+    commandEntries,
     failedServers,
     fileCandidates,
     indexingNotes,
@@ -82,6 +69,8 @@
   let before: Element | null = null;
   // A click that began before the popup was there is not one outside it: the button that opens it.
   let shownAt = 0;
+  // What was clicked outside took the focus itself.
+  let clickedAway = false;
 
   const files = $derived(
     fileCandidates(
@@ -131,18 +120,7 @@
       }),
     ),
   );
-  const actions = $derived(
-    actionCandidates(
-      commands.list().map((c) => ({
-        id: c.id,
-        label: c.label,
-        binding: c.binding?.label,
-        enabled: commands.isEnabled(c.id, palette.context),
-        reason: commands.disabledReason(c.id, palette.context),
-      })),
-      (id) => (PALETTE_COMMANDS as readonly string[]).includes(id),
-    ),
-  );
+  const actions = $derived(actionCandidates(commandEntries(commands, palette.context)));
   /** The files the changeset does not change, once the list of all of them is here. */
   const others = $derived(palette.files ? unchangedCandidates(palette.files.paths, new Set(changeset.paths)) : []);
   const typed = $derived(palette.query.trim());
@@ -240,9 +218,9 @@
     before = document.activeElement;
     input?.focus();
   });
-  // The focus goes back to where it was; a choice that moves it does so after.
+  // The focus goes back to where it was, unless a click went elsewhere; a choice that moves it does so after.
   onDestroy(() => {
-    if (before instanceof HTMLElement && before.isConnected) before.focus({ preventScroll: true });
+    if (!clickedAway && before instanceof HTMLElement && before.isConnected) before.focus({ preventScroll: true });
   });
 
   async function move(to: number) {
@@ -367,7 +345,9 @@
 
 <svelte:window
   onclick={(e) => {
-    if (e.timeStamp >= shownAt && root && !root.contains(e.target as Node)) palette.close();
+    if (e.timeStamp < shownAt || !root || root.contains(e.target as Node)) return;
+    clickedAway = true;
+    palette.close();
   }}
 />
 
