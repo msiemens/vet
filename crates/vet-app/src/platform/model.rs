@@ -135,6 +135,8 @@ pub enum CiState {
     Pending,
     Success,
     Failure,
+    /// A run the platform holds back until a maintainer approves it (a fork's workflow run).
+    NeedsApproval,
     Neutral,
     Skipped,
 }

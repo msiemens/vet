@@ -456,6 +456,7 @@ fn ci_state(state: CiState) -> p::CiState {
         CiState::Pending => p::CiState::Pending,
         CiState::Success => p::CiState::Success,
         CiState::Failure => p::CiState::Failure,
+        CiState::NeedsApproval => p::CiState::NeedsApproval,
         CiState::Neutral => p::CiState::Neutral,
         CiState::Skipped => p::CiState::Skipped,
     }

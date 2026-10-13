@@ -5,7 +5,7 @@ import type { IconName } from "./ui/icons.ts";
 
 export interface CiLook {
   icon: IconName;
-  tone: "ok" | "failing" | "running";
+  tone: "ok" | "failing" | "running" | "attention";
   title: string;
 }
 
@@ -18,6 +18,8 @@ export function ciIcon(ci: CiState | undefined): CiLook | undefined {
       return { icon: "close", tone: "failing", title: "Checks failing" };
     case "pending":
       return { icon: "timeline", tone: "running", title: "Checks running" };
+    case "needsApproval":
+      return { icon: "lock", tone: "attention", title: "Waiting for approval to run" };
     default:
       return undefined;
   }

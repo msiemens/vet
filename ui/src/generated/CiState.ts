@@ -3,4 +3,4 @@
 /**
  * The rolled-up state of a commit's checks.
  */
-export type CiState = "pending" | "success" | "failure" | "neutral" | "skipped";
+export type CiState = "pending" | "success" | "failure" | "needsApproval" | "neutral" | "skipped";

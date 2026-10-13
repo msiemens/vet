@@ -13,9 +13,11 @@ const commit = (...states: CheckRun["state"][]): CommitChecks => ({
     ? "pending"
     : states.includes("failure")
       ? "failure"
-      : states.includes("success")
-        ? "success"
-        : "neutral",
+      : states.includes("needsApproval")
+        ? "needsApproval"
+        : states.includes("success")
+          ? "success"
+          : "neutral",
 });
 
 void test("a run that was skipped or decided nothing does not count against the commit", () => {
@@ -26,6 +28,7 @@ void test("the badge counts what the combined state is about", () => {
   assert.equal(badgeCount(commit("success", "failure", "failure")), 2);
   assert.equal(badgeCount(commit("success", "pending", "failure")), 1);
   assert.equal(badgeCount(commit("success", "success", "skipped")), 3);
+  assert.equal(badgeCount(commit("success", "needsApproval", "needsApproval")), 2);
 });
 
 void test("durations read as the platform shows them", () => {

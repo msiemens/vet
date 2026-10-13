@@ -846,6 +846,36 @@ async fn the_checks_of_a_commit_are_its_runs_and_its_statuses() {
     assert_eq!(fake.requests()[0].header("authorization"), Some("Bearer gho_secret"));
 }
 
+const FORK_RUNS: &str = r#"{"total_count":2,"check_runs":[
+{"id":31,"name":"test","status":"completed","conclusion":"action_required","started_at":null,"completed_at":null,"html_url":"https://github.com/acme/app/actions/runs/6","app":{"slug":"github-actions"}},
+{"id":32,"name":"build","status":"action_required","conclusion":null,"started_at":null,"completed_at":null,"html_url":null,"app":{"slug":"github-actions"}}
+]}"#;
+
+#[tokio::test]
+async fn runs_waiting_for_a_maintainer_to_approve_them_are_not_failures() {
+    let runs = Arc::new(Mutex::new(FORK_RUNS.to_owned()));
+    let fake = checks_server(runs.clone());
+    let client = client(&fake);
+
+    let waiting = client.checks(&remote(), "abc123").await.unwrap();
+    let runs_only: Vec<_> = waiting.checks.iter().take(2).map(|c| c.state).collect();
+    assert_eq!(runs_only, [CiState::NeedsApproval, CiState::NeedsApproval]);
+    assert_eq!(waiting.state(), Some(CiState::NeedsApproval));
+
+    client.checks(&remote(), "abc123").await.unwrap();
+    assert_eq!(
+        requests_to(&fake, "check-runs"),
+        2,
+        "approval can come any time, so the commit is asked again"
+    );
+
+    *runs.lock().unwrap() = RUNS.to_owned();
+    assert_eq!(
+        client.checks(&remote(), "abc123").await.unwrap().state(),
+        Some(CiState::Failure)
+    );
+}
+
 #[tokio::test]
 async fn checks_that_are_done_are_asked_for_once_and_running_ones_again() {
     let running = RUNS.replace(

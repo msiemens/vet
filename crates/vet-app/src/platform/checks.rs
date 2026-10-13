@@ -28,8 +28,10 @@ pub struct CommitChecks {
 }
 
 impl CommitChecks {
-    /// The combined state: running if any check runs, else failing if any failed, else passing if
-    /// any passed. None for a commit without checks.
+    /// The combined state: running if any check runs, else failing if any failed, else waiting for
+    /// approval if any check has not run for that, else passing if any passed. A failure shows
+    /// before a missing approval, because it is settled; a pass does not hide a check that has not
+    /// run. None for a commit without checks.
     pub fn state(&self) -> Option<CiState> {
         let any = |wanted: CiState| self.checks.iter().any(|c| c.state == wanted);
         if self.checks.is_empty() {
@@ -38,6 +40,8 @@ impl CommitChecks {
             Some(CiState::Pending)
         } else if any(CiState::Failure) {
             Some(CiState::Failure)
+        } else if any(CiState::NeedsApproval) {
+            Some(CiState::NeedsApproval)
         } else if any(CiState::Success) {
             Some(CiState::Success)
         } else if any(CiState::Neutral) {
@@ -47,10 +51,15 @@ impl CommitChecks {
         }
     }
 
-    /// The checks will not change: there are some and none runs. A commit's checks may not have
-    /// been created yet when it was pushed a moment ago, so none is not final.
+    /// The checks will not change: there are some and none runs or waits for approval, which can
+    /// be given any time. A commit's checks may not have been created yet when it was pushed a
+    /// moment ago, so none is not final.
     pub fn is_final(&self) -> bool {
-        !self.checks.is_empty() && self.checks.iter().all(|c| c.state != CiState::Pending)
+        !self.checks.is_empty()
+            && self
+                .checks
+                .iter()
+                .all(|c| !matches!(c.state, CiState::Pending | CiState::NeedsApproval))
     }
 }
 
@@ -101,6 +110,9 @@ mod tests {
         assert_eq!(commit(&[Success, Failure, Pending]).state(), Some(Pending));
         assert_eq!(commit(&[Success, Failure, Skipped]).state(), Some(Failure));
         assert_eq!(commit(&[Skipped, Success, Neutral]).state(), Some(Success));
+        assert_eq!(commit(&[Success, NeedsApproval, Skipped]).state(), Some(NeedsApproval));
+        assert_eq!(commit(&[Success, NeedsApproval, Failure]).state(), Some(Failure));
+        assert_eq!(commit(&[NeedsApproval, Pending]).state(), Some(Pending));
         assert_eq!(commit(&[Skipped, Neutral]).state(), Some(Neutral));
         assert_eq!(commit(&[Skipped]).state(), Some(Skipped));
     }
@@ -110,5 +122,6 @@ mod tests {
         assert!(!commit(&[]).is_final());
         assert!(!commit(&[Success, Pending]).is_final());
         assert!(commit(&[Success, Failure]).is_final());
+        assert!(!commit(&[Success, NeedsApproval]).is_final());
     }
 }

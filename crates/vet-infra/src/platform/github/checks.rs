@@ -72,14 +72,18 @@ struct Step {
 }
 
 /// The state of a check run: running until it completed, then by its conclusion. A cancelled run
-/// decided nothing about the commit.
+/// decided nothing about the commit. A run that needs a maintainer's approval has not run, and
+/// GitHub reports it as `action_required`, as a conclusion or (for a workflow run) as a status.
 fn run_state(status: &str, conclusion: Option<&str>) -> CiState {
+    if status == "action_required" || conclusion == Some("action_required") {
+        return CiState::NeedsApproval;
+    }
     if status != "completed" {
         return CiState::Pending;
     }
     match conclusion {
         Some("success") => CiState::Success,
-        Some("failure" | "timed_out" | "startup_failure" | "action_required") => CiState::Failure,
+        Some("failure" | "timed_out" | "startup_failure") => CiState::Failure,
         Some("skipped") => CiState::Skipped,
         _ => CiState::Neutral,
     }

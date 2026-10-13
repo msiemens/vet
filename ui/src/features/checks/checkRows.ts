@@ -14,12 +14,13 @@ export function passed(checks: CommitChecks): { passed: number; total: number } 
 
 /**
  * The number beside the toolbar's icon: the runs that failed while some failed, else those still
- * running, else those that passed.
+ * running, else those waiting for approval, else those that passed.
  */
 export function badgeCount(checks: CommitChecks): number {
   const count = (state: CheckRun["state"]) => checks.runs.filter((r) => r.state === state).length;
   if (checks.state === "failure") return count("failure");
   if (checks.state === "pending") return count("pending");
+  if (checks.state === "needsApproval") return count("needsApproval");
   return passed(checks).passed;
 }
 

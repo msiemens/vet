@@ -126,6 +126,7 @@ pub enum CiState {
     Pending,
     Success,
     Failure,
+    NeedsApproval,
     Neutral,
     Skipped,
 }
