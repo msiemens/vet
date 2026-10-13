@@ -15,6 +15,7 @@ const ICONS = {
   triangle: SVG('<path d="M8 1.8 14.6 13.6H1.4Z"/><path d="M8 6.2v3.6M8 11.6v.2"/>'),
   clock: SVG('<circle cx="8" cy="8" r="6"/><path d="M8 4.8V8l2.2 1.4"/>'),
   cross: SVG('<circle cx="8" cy="8" r="6"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5"/>'),
+  info: SVG('<circle cx="8" cy="8" r="6"/><path d="M8 7.4v3.4M8 5.2v.2"/>'),
 };
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
@@ -36,15 +37,22 @@ function withCode(text: string): Node[] {
 }
 
 const SEVERITY_CLASS = { error: "error", warning: "warning", info: "info", hint: "info" } as const;
+const SEVERITY_ICON = { error: "cross", warning: "triangle", info: "info", hint: "info" } as const;
+const ORIGIN_NOTE = {
+  new: "new in this change",
+  existing: "existing: the base has it too",
+  pending: "",
+  unknown: "",
+} as const;
 
 function diagnosticRow(d: Diagnostic): HTMLElement {
   const row = el("div", "vet-hover-diagnostic");
-  row.append(icon("triangle", SEVERITY_CLASS[d.severity]));
+  row.append(icon(SEVERITY_ICON[d.severity], SEVERITY_CLASS[d.severity]));
   const lines = el("div", "vet-hover-diagnostic-text");
   const message = el("div", "");
   message.append(...withCode(d.message));
   lines.append(message);
-  const source = [d.source, d.code].filter(Boolean).join(" ");
+  const source = [d.source, d.code, ORIGIN_NOTE[d.origin]].filter(Boolean).join(" · ");
   if (source) lines.append(el("div", "vet-hover-detail", source));
   row.append(lines);
   return row;

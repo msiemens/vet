@@ -3,9 +3,24 @@
 // snapshot its positions are in (the target editor, or the base editor of a side-by-side view).
 // Diagnostics exist for the target side only.
 
-import { type Diagnostic as LintDiagnostic, linter, lintGutter, setDiagnostics } from "@codemirror/lint";
+import {
+  type Diagnostic as LintDiagnostic,
+  forEachDiagnostic,
+  linter,
+  setDiagnostics,
+  setDiagnosticsEffect,
+} from "@codemirror/lint";
 import { type Extension, Facet, StateEffect, StateField } from "@codemirror/state";
-import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, tooltips } from "@codemirror/view";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  GutterMarker,
+  ViewPlugin,
+  type ViewUpdate,
+  gutter,
+  tooltips,
+} from "@codemirror/view";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Position } from "../../../generated/Position";
 import type { Side } from "../../../generated/Side";
@@ -168,10 +183,57 @@ function drawDiagnostics(view: EditorView, stored: readonly Diagnostic[], store:
       severity: d.severity,
       message: d.message,
       source: [d.source, d.code].filter(Boolean).join(" ") || undefined,
+      markClass: d.origin === "existing" ? EXISTING : undefined,
     }));
   });
   view.dispatch(setDiagnostics(view.state, lint), store ? { effects: setDiagnosticList.of(stored) } : {});
 }
+
+/** The class of the mark of a diagnostic that was already there on the base. */
+const EXISTING = "vet-existing";
+
+/** The gutter's dot for a line's worst diagnostic: filled for one the change introduced, hollow for one already there. */
+class DiagnosticDot extends GutterMarker {
+  constructor(
+    private readonly severity: string,
+    private readonly existing: boolean,
+  ) {
+    super();
+  }
+
+  eq(other: GutterMarker) {
+    return other instanceof DiagnosticDot && other.severity === this.severity && other.existing === this.existing;
+  }
+
+  toDOM() {
+    const dot = document.createElement("span");
+    dot.className = `vet-diag-dot ${this.severity}${this.existing ? " existing" : ""}`;
+    return dot;
+  }
+}
+
+const SEVERITY_RANK: Record<string, number> = { error: 0, warning: 1, info: 2, hint: 3 };
+
+interface Found {
+  severity: string;
+  existing: boolean;
+}
+
+const diagnosticGutter = gutter({
+  class: "vet-diag-gutter",
+  lineMarker(view, line) {
+    let worst: Found | undefined;
+    forEachDiagnostic(view.state, (d, from) => {
+      if (from < line.from || from > line.to) return;
+      const found: Found = { severity: d.severity, existing: d.markClass === EXISTING };
+      const rank = (x: Found) => SEVERITY_RANK[x.severity] * 2 + (x.existing ? 1 : 0);
+      if (!worst || rank(found) < rank(worst)) worst = found;
+    });
+    const dot: Found | undefined = worst;
+    return dot ? new DiagnosticDot(dot.severity === "hint" ? "info" : dot.severity, dot.existing) : null;
+  },
+  lineMarkerChange: (update) => update.transactions.some((tr) => tr.effects.some((e) => e.is(setDiagnosticsEffect))),
+});
 
 /** Replaces the editor's diagnostics. */
 export function showDiagnostics(view: EditorView, diagnostics: readonly Diagnostic[]) {
@@ -347,7 +409,7 @@ export function semanticExtensions(path: string, side: Side, hooks: SemanticHook
     semanticTarget.of({ side, path, hooks }),
     // The hover popup shows the diagnostics at its symbol, so the squiggles have no tooltip of their own.
     ...(side === "target"
-      ? [lintGutter(), linter(null, { tooltipFilter: () => [] }), diagnosticList, diagnosticsFollowCollapse]
+      ? [diagnosticGutter, linter(null, { tooltipFilter: () => [] }), diagnosticList, diagnosticsFollowCollapse]
       : []),
   ];
 }

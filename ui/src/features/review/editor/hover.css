@@ -209,8 +209,60 @@
   cursor: pointer;
 }
 
-/* Diagnostics (@codemirror/lint): the squiggles and gutter markers are severity-coloured by the
-   extension; its tooltip follows the theme. */
+/* Diagnostics (@codemirror/lint): a wavy underline in the severity's colour, dotted and fainter for a
+   problem that was already there on the base; the gutter's dot is filled for a new one and hollow for
+   an existing one. The extension's tooltip follows the theme. */
+.cm-lintRange {
+  background-image: none !important;
+  padding-bottom: 0;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.cm-lintRange-error {
+  text-decoration-color: var(--severity-error);
+}
+.cm-lintRange-warning {
+  text-decoration-color: var(--severity-warning);
+}
+.cm-lintRange-info,
+.cm-lintRange-hint {
+  text-decoration-color: var(--severity-info);
+  text-decoration-style: dotted;
+}
+.cm-lintRange.vet-existing {
+  text-decoration-style: dotted;
+  opacity: 0.8;
+}
+.vet-diag-gutter {
+  width: 17px;
+}
+.vet-diag-gutter .cm-gutterElement {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.vet-diag-dot {
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  background: currentColor;
+}
+.vet-diag-dot.existing {
+  background: transparent;
+}
+.vet-diag-dot.error {
+  color: var(--severity-error);
+}
+.vet-diag-dot.warning {
+  color: var(--severity-warning);
+}
+.vet-diag-dot.info {
+  color: var(--severity-info);
+}
 .cm-tooltip.cm-tooltip-lint {
   background: var(--bg-sheet);
   color: var(--text);

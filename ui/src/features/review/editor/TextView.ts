@@ -492,10 +492,10 @@ export class TextView {
     return true;
   }
 
-  /** Asks for the file's diagnostics again (the first time, or after the servers changed). */
-  refreshDiagnostics() {
+  /** Asks for the file's diagnostics again (the first time, after the servers changed, or when they gained their origins). */
+  refreshDiagnostics(path?: string) {
     const view = this.view;
-    if (!view) return;
+    if (!view || (path !== undefined && path !== this.path)) return;
     void this.hooks.diagnostics(this.path).then((list) => {
       if (!this.destroyed) showDiagnostics(view, list);
     });

@@ -688,9 +688,11 @@ export class ChangesetView {
     });
   }
 
-  /** The servers changed: asks again for the diagnostics of every mounted editor. */
-  refreshDiagnostics() {
-    for (const fi of this.windowing.mounted) this.showDiagnostics(this.sections[fi]);
+  /** The servers changed, or a file's diagnostics gained their origins: asks again for those of the mounted editors (of `path` only, if given). */
+  refreshDiagnostics(path?: string) {
+    for (const fi of this.windowing.mounted) {
+      if (path === undefined || this.sections[fi].file.path === path) this.showDiagnostics(this.sections[fi]);
+    }
   }
 
   /** Scrolls to `top` px and pins what belongs there: a scroll that leaves the position as it is raises no event. */

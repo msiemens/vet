@@ -183,6 +183,10 @@ export class ReviewController {
     const offCommands = provideActions(this.viewActions());
     const offContext = commands.provide(() => this.facts());
     const offResync = session.onResync(() => this.reloadScopes());
+    const offOrigins = semantic.onOrigins((path) => {
+      for (const view of this.views.values()) view.refreshDiagnostics(path);
+      for (const text of this.texts.values()) text.refreshDiagnostics(path);
+    });
     // The open tabs are the old changeset's until the new one's manifest has come and brought its tabs back.
     const offOpening = changeset.onOpening((opening) => {
       if (opening.type === "requested") {
@@ -199,6 +203,7 @@ export class ReviewController {
       offCommands();
       offContext();
       offResync();
+      offOrigins();
       offOpening();
     };
     this.unsubscribeEvents = backend.onEvent((event) => {
