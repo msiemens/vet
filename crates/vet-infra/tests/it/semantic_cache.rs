@@ -8,7 +8,7 @@ use Question::*;
 use vet_core::content::{BlobId, Hash, SnapshotId};
 use vet_infra::semantic_cache::SqliteSemanticCache;
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{At, BackendId, Pos, ServerIdentity, Span, Sym, SymbolInfo};
+use vet_semantic::ports::{At, BackendId, Pos, ServerIdentity, Span, Sym, SymbolInfo, SymbolKind};
 use vet_semantic::reuse::{Answers, Basis, Computed, KEPT, Key, ProjectQuery, Restore, SemanticCache};
 
 const BUDGET: u64 = 256 << 20;
@@ -33,6 +33,7 @@ fn symbols(text: &str, version: u8) -> Vec<SymbolInfo> {
         },
         at: Pos { line: 0, col: 3 },
         detail: None,
+        kind: SymbolKind::Other,
     }]
 }
 

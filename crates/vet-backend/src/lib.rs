@@ -527,11 +527,39 @@ impl Orchestrator {
             Request::ChangedSymbols { project, revision } => {
                 reply(async move { self.ready(project).await?.changed_symbols(revision).await })
             }
+            Request::FileSymbols {
+                project,
+                revision,
+                path,
+            } => reply(async move { self.ready(project).await?.file_symbols(revision, &path).await }),
+            Request::SymbolAt {
+                project,
+                revision,
+                side,
+                path,
+                line,
+                col,
+            } => reply(async move {
+                self.ready(project)
+                    .await?
+                    .symbol_at(revision, side, &path, line, col)
+                    .await
+            }),
             Request::Signature {
                 project,
                 revision,
                 symbol,
             } => reply(async move { self.ready(project).await?.signature(revision, &symbol).await }),
+            Request::Calls {
+                project,
+                revision,
+                symbol,
+            } => reply(async move { self.ready(project).await?.calls(revision, &symbol).await }),
+            Request::Usages {
+                project,
+                revision,
+                symbol,
+            } => reply(async move { self.ready(project).await?.usages(revision, &symbol).await }),
             Request::Impact {
                 project,
                 revision,

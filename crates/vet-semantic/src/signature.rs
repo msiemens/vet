@@ -76,7 +76,7 @@ mod tests {
     use vet_core::content::RepoPath;
 
     use super::*;
-    use crate::ports::{At, Diagnostic, Location, Pos, QueryError, Span, Sym};
+    use crate::ports::{At, Diagnostic, Location, Pos, QueryError, Span, Sym, SymbolKind};
     use crate::query::Asked;
     use crate::testutil::{answered, block_on};
 
@@ -171,6 +171,7 @@ mod tests {
             span: Span { start: pos, end: pos },
             at: pos,
             detail: detail.map(String::from),
+            kind: SymbolKind::Other,
         }
     }
 

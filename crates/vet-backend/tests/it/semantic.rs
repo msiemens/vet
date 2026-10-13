@@ -250,12 +250,83 @@ async fn rust_semantics_through_the_protocol() {
     );
     assert!(!changed.inputs.hunks.is_empty());
 
+    // The same per file; every symbol is at the top level, so none has a holder.
+    let Response::FileSymbols(file) = client
+        .call(Request::FileSymbols {
+            project,
+            revision,
+            path: path.into(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not file symbols");
+    };
+    assert_eq!(file.symbols, changed.symbols);
+    assert!(file.context.is_empty() && file.gap.is_none(), "{file:?}");
+    assert!(
+        client
+            .call(Request::FileSymbols {
+                project,
+                revision,
+                path: "Cargo.toml".into()
+            })
+            .await
+            .is_err(),
+        "not a changed file"
+    );
+
+    // The symbol under the cursor: changed or not, on either side.
+    let symbol_at = |side, (line, col): (u32, u32)| {
+        let client = &client;
+        async move {
+            let Response::SymbolAt(at) = client
+                .call(Request::SymbolAt {
+                    project,
+                    revision,
+                    side,
+                    path: path.into(),
+                    line,
+                    col,
+                })
+                .await
+                .unwrap()
+            else {
+                panic!("not a symbol");
+            };
+            (at.symbol.map(|s| s.id.name), at.change)
+        }
+    };
+    assert_eq!(
+        symbol_at(Side::Target, find(DIRTY, "    3", 0, 4)).await,
+        (Some(name(&["keep"])), Some(SymbolChange::Modified))
+    );
+    assert_eq!(
+        symbol_at(Side::Target, find(DIRTY, "    fresh()", 0, 4)).await,
+        (Some(name(&["main"])), Some(SymbolChange::Modified))
+    );
+    assert_eq!(
+        symbol_at(Side::Target, find(DIRTY, "pub fn caller", 0, 8)).await,
+        (Some(name(&["caller"])), None)
+    );
+    // Between two declarations.
+    let (fresh, _) = find(DIRTY, "pub fn fresh", 0, 0);
+    assert_eq!(symbol_at(Side::Target, (fresh - 1, 0)).await, (None, None));
+    assert_eq!(
+        symbol_at(Side::Base, find(BASE, "    1", 0, 4)).await,
+        (Some(name(&["gone"])), Some(SymbolChange::Removed))
+    );
+
     let id = |symbol: &str| SymbolId {
         path: path.into(),
         name: name(&[symbol]),
     };
     // A removed symbol's signature comes from the base side.
-    for (symbol, expected) in [("keep", "fn keep() -> u32"), ("gone", "fn gone() -> u32")] {
+    for (symbol, expected) in [
+        ("keep", "fn keep() -> u32"),
+        ("gone", "fn gone() -> u32"),
+        ("caller", "fn caller() -> u32"),
+    ] {
         let Response::Signature {
             signature, unavailable, ..
         } = client
@@ -299,6 +370,58 @@ async fn rust_semantics_through_the_protocol() {
             .iter()
             .any(|p| p.starts_with("references(target:"))
     );
+
+    let calls = |symbol| {
+        let client = &client;
+        async move {
+            let Response::Calls(calls) = client
+                .call(Request::Calls {
+                    project,
+                    revision,
+                    symbol,
+                })
+                .await
+                .unwrap()
+            else {
+                panic!("not calls");
+            };
+            calls
+        }
+    };
+    // `main` calls `fresh` and `fresh` calls `keep`: both changed, so the walk goes through them.
+    let around_keep = calls(id("keep")).await;
+    let callers: Vec<_> = (around_keep.callers.iter())
+        .map(|c| (c.symbol.id.name.clone(), c.change, c.depth))
+        .collect();
+    assert_eq!(
+        callers,
+        [
+            (name(&["fresh"]), SymbolChange::Added, 0),
+            (name(&["main"]), SymbolChange::Modified, 1)
+        ]
+    );
+    assert!(around_keep.callees.is_empty() && around_keep.affected.is_empty());
+    let around_fresh = calls(id("fresh")).await;
+    let callees: Vec<_> = (around_fresh.callees.iter())
+        .map(|c| (c.symbol.id.name.clone(), c.change))
+        .collect();
+    assert_eq!(callees, [(name(&["keep"]), SymbolChange::Modified)]);
+    assert!(around_fresh.gaps.is_empty(), "{around_fresh:?}");
+
+    let Response::Usages(usages) = client
+        .call(Request::Usages {
+            project,
+            revision,
+            symbol: id("keep"),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("not usages");
+    };
+    let within = usages.references[0].within.as_ref().map(|w| w.name.clone());
+    assert_eq!((usages.references.len(), within), (1, Some(name(&["fresh"]))));
+    assert_eq!(usages.gap, None);
 
     let Response::RemovalImpact(removal) = client
         .call(Request::RemovalImpact {
@@ -373,7 +496,15 @@ async fn rust_semantics_through_the_protocol() {
             symbol: id("nothing"),
         })
         .await;
-    assert!(unknown.unwrap_err().contains("changed symbol"));
+    assert!(unknown.unwrap_err().contains("no such symbol"));
+    let removed = client
+        .call(Request::Calls {
+            project,
+            revision,
+            symbol: id("gone"),
+        })
+        .await;
+    assert!(removed.unwrap_err().contains("removed"));
     for request in [
         Request::Hover {
             project,

@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    Account, BackendSettings, Base, BaseDiff, BlobContent, BranchInfo, ChangedSymbols, ChangesetKey, ChangesetRow,
-    CheckLog, CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, Highlights, Impact, Lens, LineDelta,
-    LocationRows, Locations, Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability,
-    RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolSignature, Task, TextChange,
-    TextContent, Thread, ThreadTarget, Unavailable, VersionInfo,
+    Account, BackendSettings, Base, BaseDiff, BlobContent, BranchInfo, Calls, ChangedSymbols, ChangesetKey,
+    ChangesetRow, CheckLog, CommitChecks, CommitInfo, CommitUnit, Diagnostic, DirEntry, FileSymbols, Highlights,
+    Impact, Lens, LineDelta, LocationRows, Locations, Manifest, ProjectId, PullRequestInfo, PullRequestRow,
+    PullRequestSource, Reachability, RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side,
+    SymbolAt, SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -135,6 +135,8 @@ pub enum Response {
         unavailable: Option<Unavailable>,
     },
     ChangedSymbols(ChangedSymbols),
+    FileSymbols(FileSymbols),
+    SymbolAt(SymbolAt),
     /// `None` with `unavailable` unset means the server has nothing to say.
     Signature {
         revision: u32,
@@ -142,6 +144,8 @@ pub enum Response {
         unavailable: Option<Unavailable>,
     },
     Impact(Impact),
+    Calls(Calls),
+    Usages(Usages),
     RemovalImpact(RemovalImpact),
     Reachability(Reachability),
     Servers {

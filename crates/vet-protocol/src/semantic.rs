@@ -33,11 +33,27 @@ pub struct SymbolId {
     pub name: Vec<String>,
 }
 
+/// What a symbol is, as far as a list needs to tell them apart.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SymbolKind {
+    /// A class, struct, enum, interface or the like.
+    Type,
+    /// A function, method, constructor or operator.
+    Function,
+    /// A module, namespace or package.
+    Module,
+    /// A variable, field, constant or anything else.
+    Other,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SymbolInfo {
     pub id: SymbolId,
+    pub kind: SymbolKind,
     /// The whole definition, including its body.
     pub span: TextSpan,
     /// Where its name is: the position to ask `References` about.
@@ -253,6 +269,37 @@ pub struct ChangedSymbols {
     pub inputs: DerivedInputs,
 }
 
+/// What the changeset did to the symbols of one file (derived, §7.3).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FileSymbols {
+    pub revision: u32,
+    pub path: String,
+    /// In source order, a removed symbol where it was on the base side.
+    pub symbols: Vec<ChangedSymbol>,
+    /// Unchanged symbols that hold changed ones, in source order: the containers to show them in.
+    pub context: Vec<SymbolInfo>,
+    /// Set when the file's symbols could not be determined: they are unknown, not unchanged.
+    pub gap: Option<String>,
+    pub inputs: DerivedInputs,
+}
+
+/// The symbol a position is in, if any.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SymbolAt {
+    pub revision: u32,
+    /// The innermost function, type or module that holds the position: the target side's symbol,
+    /// or the base side's if it exists there only. Absent outside every one of them, and where
+    /// the language server cannot list the file's symbols (`unavailable`).
+    pub symbol: Option<SymbolInfo>,
+    /// Absent: the changeset did not change it.
+    pub change: Option<SymbolChange>,
+    pub unavailable: Option<Unavailable>,
+}
+
 /// A symbol's declaration as text, with its syntax highlighting.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -273,6 +320,49 @@ pub struct Impact {
     pub callers: Vec<SymbolInfo>,
     /// Queries that failed; the matching list is unknown, not empty.
     pub gaps: Vec<String>,
+    pub inputs: DerivedInputs,
+}
+
+/// A changed symbol that reaches the one asked about through calls of changed symbols alone.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ChangedCaller {
+    pub symbol: SymbolInfo,
+    /// Added or modified.
+    pub change: SymbolChange,
+    /// How many changed symbols lie between it and the one asked about.
+    pub depth: u32,
+}
+
+/// The calls around a symbol of the target side (derived, §7.3).
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Calls {
+    pub revision: u32,
+    pub symbol: SymbolInfo,
+    /// In the order of a walk down the callers: each is followed by those that call it.
+    pub callers: Vec<ChangedCaller>,
+    /// What it calls that was added or modified (target side) or removed (base side).
+    pub callees: Vec<ChangedSymbol>,
+    /// Unchanged symbols that call it directly; empty unless the symbol itself changed.
+    pub affected: Vec<SymbolInfo>,
+    /// Queries that failed or bounds that cut the walk; the matching list is incomplete.
+    pub gaps: Vec<String>,
+    pub inputs: DerivedInputs,
+}
+
+/// The references to a symbol of the target side, each with the symbol it is in.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Usages {
+    pub revision: u32,
+    pub symbol: SymbolInfo,
+    pub references: Vec<Reference>,
+    /// Set when the references could not be listed: they are unknown, not absent.
+    pub gap: Option<String>,
     pub inputs: DerivedInputs,
 }
 

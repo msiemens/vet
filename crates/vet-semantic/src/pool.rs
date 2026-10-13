@@ -1027,7 +1027,7 @@ mod tests {
     use super::*;
     use crate::join::{bounded, join};
     use crate::policy::AnalysisPolicy;
-    use crate::ports::{Materialized, Pos, Readiness, ServerConfig, Severity, Span, Sym};
+    use crate::ports::{Materialized, Pos, Readiness, ServerConfig, Severity, Span, Sym, SymbolKind};
     use crate::reuse::Value;
     use crate::testutil::{block_on, yield_once};
 
@@ -1240,6 +1240,7 @@ mod tests {
             span: span(at, version),
             at,
             detail: None,
+            kind: SymbolKind::Other,
         }
     }
 

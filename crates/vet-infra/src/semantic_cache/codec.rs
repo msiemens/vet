@@ -12,7 +12,7 @@
 //! eviction removes them. The other kinds keep theirs.
 
 use vet_core::content::{Hash, RepoPath};
-use vet_semantic::ports::{At, Diagnostic, Location, Pos, ServerIdentity, Severity, Span, Sym, SymbolInfo};
+use vet_semantic::ports::{At, Diagnostic, Location, Pos, ServerIdentity, Severity, Span, Sym, SymbolInfo, SymbolKind};
 use vet_semantic::reuse::{Key, ProjectQuery, Restore, Value};
 
 use crate::restore::record::Digest;
@@ -38,7 +38,7 @@ impl Kind {
     /// Bumped when the stored form of this kind changes.
     fn format(self) -> u32 {
         match self {
-            Kind::Symbols => 4,
+            Kind::Symbols => 5,
             Kind::Locations => 1,
             Kind::Hover => 1,
             Kind::Diagnostics => 1,
@@ -213,6 +213,12 @@ impl Writer {
         self.number(symbol.at.line);
         self.number(symbol.at.col);
         self.maybe(&symbol.detail);
+        self.0.push(match symbol.kind {
+            SymbolKind::Type => 0,
+            SymbolKind::Function => 1,
+            SymbolKind::Module => 2,
+            SymbolKind::Other => 3,
+        });
     }
 }
 
@@ -325,6 +331,13 @@ impl Reader<'_> {
                 col: self.number()?,
             },
             detail: self.maybe()?,
+            kind: match self.take(1)?[0] {
+                0 => SymbolKind::Type,
+                1 => SymbolKind::Function,
+                2 => SymbolKind::Module,
+                3 => SymbolKind::Other,
+                _ => return None,
+            },
         })
     }
 }

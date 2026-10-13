@@ -26,7 +26,8 @@ use lsp_types::request::{
 };
 use vet_core::content::RepoPath;
 use vet_semantic::ports::{
-    At, Diagnostic, Exited, LanguageServer, Location, Pos, QueryError, Readiness, Severity, Span, Sym, SymbolInfo, Tree,
+    At, Diagnostic, Exited, LanguageServer, Location, Pos, QueryError, Readiness, Severity, Span, Sym, SymbolInfo,
+    SymbolKind, Tree,
 };
 use vet_semantic::symbols::{self, Outline};
 
@@ -600,6 +601,7 @@ fn outline(symbols: &[lsp::DocumentSymbol]) -> Vec<Outline> {
             detail: s.detail.clone(),
             container: is_container(s.kind),
             callable: is_callable(s.kind),
+            kind: symbol_kind(s.kind),
             children: outline(s.children.as_deref().unwrap_or_default()),
         })
         .collect()
@@ -619,8 +621,27 @@ fn symbols_in(file: &RepoPath, response: Option<lsp::DocumentSymbolResponse>) ->
                 span: span(s.location.range),
                 at: pos(s.location.range.start),
                 detail: None,
+                kind: symbol_kind(s.kind),
             })
             .collect(),
+    }
+}
+
+fn symbol_kind(kind: lsp::SymbolKind) -> SymbolKind {
+    if is_callable(kind) {
+        SymbolKind::Function
+    } else if [
+        lsp::SymbolKind::MODULE,
+        lsp::SymbolKind::NAMESPACE,
+        lsp::SymbolKind::PACKAGE,
+    ]
+    .contains(&kind)
+    {
+        SymbolKind::Module
+    } else if is_container(kind) {
+        SymbolKind::Type
+    } else {
+        SymbolKind::Other
     }
 }
 

@@ -5,7 +5,7 @@
 
 use vet_core::content::RepoPath;
 
-use crate::ports::{Pos, Span, Sym, SymbolInfo};
+use crate::ports::{Pos, Span, Sym, SymbolInfo, SymbolKind};
 
 /// A symbol of a document outline with the symbols nested in it.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -20,6 +20,7 @@ pub struct Outline {
     pub container: bool,
     /// Whether it is a function, method or the like: what it declares is local to it.
     pub callable: bool,
+    pub kind: SymbolKind,
     pub children: Vec<Outline>,
 }
 
@@ -67,6 +68,7 @@ pub fn flatten(file: &RepoPath, outline: &[Outline]) -> Vec<SymbolInfo> {
                 span: symbol.span,
                 at: symbol.at,
                 detail: symbol.detail.clone(),
+                kind: symbol.kind,
             });
             walk(file, chain, holds_code, &symbol.children, out);
             chain.pop();
@@ -112,6 +114,7 @@ pub fn resolve(symbols: &[SymbolInfo], file: RepoPath, name: &str, span: Span, a
         span,
         at,
         detail: None,
+        kind: SymbolKind::Other,
     })
 }
 
@@ -154,6 +157,7 @@ mod tests {
             detail: None,
             container: true,
             callable: false,
+            kind: SymbolKind::Type,
             children,
         }
     }
@@ -162,6 +166,7 @@ mod tests {
     fn function(name: &str, span: Span, at: Pos, children: Vec<Outline>) -> Outline {
         Outline {
             callable: true,
+            kind: SymbolKind::Function,
             ..outline(name, span, at, children)
         }
     }
@@ -340,6 +345,7 @@ mod tests {
     fn variable(name: &str, span: Span, at: Pos) -> Outline {
         Outline {
             container: false,
+            kind: SymbolKind::Other,
             ..outline(name, span, at, vec![])
         }
     }

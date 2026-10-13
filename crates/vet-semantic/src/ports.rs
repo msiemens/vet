@@ -190,6 +190,19 @@ impl fmt::Display for Sym {
     }
 }
 
+/// What a symbol is, as far as a list needs to tell them apart.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum SymbolKind {
+    /// A class, struct, enum, interface or the like; rust-analyzer lists an `impl` as one.
+    Type,
+    /// A function, method, constructor or operator.
+    Function,
+    /// A module, namespace or package.
+    Module,
+    /// A variable, field, constant or anything else.
+    Other,
+}
+
 /// A symbol with where it is.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct SymbolInfo {
@@ -200,6 +213,7 @@ pub struct SymbolInfo {
     pub at: Pos,
     /// What the server says about it in one line (`documentSymbol.detail`), often its signature.
     pub detail: Option<String>,
+    pub kind: SymbolKind,
 }
 
 impl SymbolInfo {

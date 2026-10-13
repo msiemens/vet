@@ -7,12 +7,12 @@ use vet_core::content::{FileDiff, LineRange, RepoPath};
 use vet_core::review::Side;
 use vet_protocol as p;
 use vet_semantic::derived::{
-    Bounds, CallSite, Change, ChangedSymbol, Changes, Derived, Fate, Inputs, Reach, Reference, RemovalImpact,
-    SymbolImpact,
+    Bounds, CallSite, Calls, Change, ChangedSymbol, Changes, Derived, Fate, FileChanges, Inputs, Located, Reach,
+    Reference, RemovalImpact, SymbolImpact, Usages,
 };
 use vet_semantic::pool::{Outcome, PoolError};
 use vet_semantic::ports::{
-    At, BackendId, Diagnostic, LaunchError, Location, Pos, RestoreFailure, Severity, Span, Sym, SymbolInfo,
+    At, BackendId, Diagnostic, LaunchError, Location, Pos, RestoreFailure, Severity, Span, Sym, SymbolInfo, SymbolKind,
 };
 use vet_semantic::query::SemanticError;
 
@@ -53,9 +53,19 @@ fn span(span: Span) -> p::TextSpan {
     }
 }
 
+fn symbol_kind(kind: SymbolKind) -> p::SymbolKind {
+    match kind {
+        SymbolKind::Type => p::SymbolKind::Type,
+        SymbolKind::Function => p::SymbolKind::Function,
+        SymbolKind::Module => p::SymbolKind::Module,
+        SymbolKind::Other => p::SymbolKind::Other,
+    }
+}
+
 fn symbol(info: &SymbolInfo) -> p::SymbolInfo {
     p::SymbolInfo {
         id: symbol_id(&info.sym),
+        kind: symbol_kind(info.kind),
         span: span(info.span),
         at: position(info.at),
     }
@@ -301,6 +311,55 @@ pub fn changed_symbols(revision: u32, d: &Derived<Changes>) -> p::ChangedSymbols
                 reason: g.reason.clone(),
             })
             .collect(),
+        inputs: inputs(&d.inputs),
+    }
+}
+
+/// `gap` is why the symbols of the file are unknown, if they are.
+pub fn file_symbols(revision: u32, path: &str, d: &Derived<FileChanges>, gap: Option<String>) -> p::FileSymbols {
+    p::FileSymbols {
+        revision,
+        path: path.to_owned(),
+        symbols: d.value.symbols.iter().map(changed).collect(),
+        context: d.value.context.iter().map(symbol).collect(),
+        gap,
+        inputs: inputs(&d.inputs),
+    }
+}
+
+pub fn symbol_at(revision: u32, found: Option<&Located>, unavailable: Option<p::Unavailable>) -> p::SymbolAt {
+    p::SymbolAt {
+        revision,
+        symbol: found.map(|l| symbol(&l.symbol)),
+        change: found.and_then(|l| l.change).map(change),
+        unavailable,
+    }
+}
+
+pub fn calls(revision: u32, info: &SymbolInfo, d: &Derived<Calls>) -> p::Calls {
+    p::Calls {
+        revision,
+        symbol: symbol(info),
+        callers: (d.value.callers.iter())
+            .map(|c| p::ChangedCaller {
+                symbol: symbol(&c.symbol),
+                change: change(c.change),
+                depth: c.depth,
+            })
+            .collect(),
+        callees: d.value.callees.iter().map(changed).collect(),
+        affected: d.value.affected.iter().map(symbol).collect(),
+        gaps: d.value.gaps.clone(),
+        inputs: inputs(&d.inputs),
+    }
+}
+
+pub fn usages(revision: u32, info: &SymbolInfo, d: &Derived<Usages>) -> p::Usages {
+    p::Usages {
+        revision,
+        symbol: symbol(info),
+        references: d.value.references.iter().map(reference).collect(),
+        gap: d.value.gap.clone(),
         inputs: inputs(&d.inputs),
     }
 }

@@ -118,8 +118,12 @@ pub fn effect(request: &Request) -> Effect {
         | Request::Implementations { .. }
         | Request::Diagnostics { .. }
         | Request::ChangedSymbols { .. }
+        | Request::FileSymbols { .. }
+        | Request::SymbolAt { .. }
         | Request::Signature { .. }
         | Request::Impact { .. }
+        | Request::Calls { .. }
+        | Request::Usages { .. }
         | Request::RemovalImpact { .. }
         | Request::Reachability { .. }
         | Request::ListServers { .. }
@@ -418,12 +422,35 @@ mod tests {
                 path: path(),
             },
             Request::ChangedSymbols { project, revision: 0 },
+            Request::FileSymbols {
+                project,
+                revision: 0,
+                path: path(),
+            },
+            Request::SymbolAt {
+                project,
+                revision: 0,
+                side: Side::Target,
+                path: path(),
+                line: 0,
+                col: 0,
+            },
             Request::Signature {
                 project,
                 revision: 0,
                 symbol: symbol(),
             },
             Request::Impact {
+                project,
+                revision: 0,
+                symbol: symbol(),
+            },
+            Request::Calls {
+                project,
+                revision: 0,
+                symbol: symbol(),
+            },
+            Request::Usages {
                 project,
                 revision: 0,
                 symbol: symbol(),

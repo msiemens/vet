@@ -15,8 +15,9 @@ use vet_core::content::{FileDiff, RepoPath, SnapshotId};
 use vet_core::review::Side;
 use vet_engine::{Computed, Engine, Kind, Limits, Linger, Progress, Retention};
 use vet_semantic::derived::{
-    Bounds, Change, Changes, Derived, EntryPoints, Reach, Reference, RemovalImpact, SymbolImpact, Texts,
-    changed_symbols, impact, located, reachability, removal_impact,
+    Bounds, Calls, Change, Changes, Derived, EntryPoints, FileChanges, Located, Reach, Reference, RemovalImpact,
+    SymbolImpact, Texts, Usages, calls, changed_symbols, compared, impact, located, reachability, removal_impact,
+    symbol_at, usages,
 };
 use vet_semantic::join::{bounded, join};
 use vet_semantic::pool::{Pool, Supervision, Target};
@@ -27,6 +28,7 @@ use vet_semantic::ports::{
 use vet_semantic::query::{Asked, Pair, Primitives, Semantic, SemanticError, Served};
 use vet_semantic::reuse::SemanticCache;
 use vet_semantic::signature::{Signature, signature};
+use vet_semantic::symbols::enclosing;
 use vet_semantic::trace;
 
 use crate::acquisition::Acquisition;
@@ -53,6 +55,12 @@ const LINGER: Duration = Duration::from_secs(10);
 const REACH_BOUNDS: Bounds = Bounds {
     max_depth: 8,
     max_nodes: 200,
+};
+
+/// The calls of a symbol are followed this far, through this many changed callers.
+const CALLS_BOUNDS: Bounds = Bounds {
+    max_depth: 6,
+    max_nodes: 50,
 };
 
 /// An answer to a primitive query, at a revision. The query itself can fail
@@ -84,6 +92,31 @@ impl<T> Answer<T> {
 }
 
 type Fallible<T> = Result<T, SessionError>;
+
+/// The changed file with `path` on one of its sides.
+fn changed_file<'a>(files: &'a [FileDiff], path: &RepoPath) -> Option<&'a FileDiff> {
+    files
+        .iter()
+        .find(|f| f.new_path.as_ref() == Some(path) || f.old_path.as_ref() == Some(path))
+}
+
+/// What the changeset did to the symbols of one file.
+pub struct FileSymbols {
+    pub changes: Derived<FileChanges>,
+    /// Why the file's symbols are unknown, if they are.
+    pub gap: Option<String>,
+}
+
+/// A symbol found by its identity, with the side it exists on.
+struct Resolved {
+    /// The target side's symbol, or the base side's if it exists there only.
+    symbol: SymbolInfo,
+    side: Side,
+    /// `None`: unchanged.
+    change: Option<Change>,
+    /// The symbol on the base side, for a modified one.
+    base: Option<SymbolInfo>,
+}
 
 /// How many of a file's diagnostics count towards what a viewer is told: hints are not counted.
 pub fn countable(diagnostics: &[Diagnostic]) -> u32 {
@@ -581,6 +614,150 @@ where
         self.current(revision, Box::pin(work)).await
     }
 
+    fn content(&self, view: &RevisionView<G, S>) -> Content<G, S> {
+        Content(self.texts.clone().unwrap_or_else(|| view.acquisition()))
+    }
+
+    /// What the changeset did to the symbols of the changed file `path`, from the texts of its
+    /// sides: a revision that changed one file asks a server for that file only, and the
+    /// symbols of a text are kept (I2).
+    pub async fn file_symbols(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        path: &RepoPath,
+    ) -> Fallible<FileSymbols> {
+        self.current(
+            revision,
+            Box::pin(async move {
+                let started = Instant::now();
+                let files = view.changed_files(revision).await?;
+                let file = changed_file(&files, path)
+                    .ok_or_else(|| SessionError::NotFound(format!("changed file {}", path.to_string_lossy())))?;
+                let none = |gap| FileSymbols {
+                    changes: Derived {
+                        value: FileChanges::default(),
+                        inputs: Default::default(),
+                    },
+                    gap,
+                };
+                let pair = self.pair(view, revision).await?;
+                let Derived { value, inputs } = compared(&pair, &self.content(view), file).await;
+                trace::log(
+                    || format!("symbols of {} (both sides' texts)", path.to_string_lossy()),
+                    started,
+                );
+                Ok(match value {
+                    Ok(found) => FileSymbols {
+                        changes: Derived {
+                            value: found.changes,
+                            inputs,
+                        },
+                        gap: None,
+                    },
+                    // A language no server handles has no symbols to know.
+                    Err(SemanticError::NoBackend(_)) => none(None),
+                    Err(e) => none(Some(e.to_string())),
+                })
+            }),
+        )
+        .await
+    }
+
+    /// The symbol of the target side (the base side's if it exists there only) that holds `at`
+    /// on `side`, and what became of it. A file the changeset left alone has its symbols from
+    /// the server of its side.
+    pub async fn symbol_at(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        side: Side,
+        at: &At,
+    ) -> Fallible<Answer<Option<Located>>> {
+        self.current(
+            revision,
+            Box::pin(async move {
+                let files = view.changed_files(revision).await?;
+                let pair = self.pair(view, revision).await?;
+                let on_side = |f: &&FileDiff| match side {
+                    Side::Base => f.old_path.as_ref() == Some(&at.file),
+                    Side::Target => f.new_path.as_ref() == Some(&at.file),
+                };
+                Ok(match files.iter().find(on_side) {
+                    Some(file) => Answer {
+                        revision,
+                        result: compared(&pair, &self.content(view), file)
+                            .await
+                            .value
+                            .map(|found| symbol_at(&found, side, at.pos)),
+                        provenance: None,
+                    },
+                    None => Answer::of(
+                        revision,
+                        pair.document_symbols(side, &at.file).await.map(|answered| {
+                            answered.map(|symbols| {
+                                enclosing(&symbols, at.pos).map(|symbol| Located {
+                                    symbol: symbol.clone(),
+                                    change: None,
+                                })
+                            })
+                        }),
+                    ),
+                })
+            }),
+        )
+        .await
+    }
+
+    /// The symbol `sym` by its identity: where the changeset changed its file, from the texts of
+    /// both sides, else from its side's server.
+    async fn resolve(&self, view: &RevisionView<G, S>, revision: u32, sym: &Sym) -> Fallible<Resolved> {
+        let files = view.changed_files(revision).await?;
+        let pair = self.pair(view, revision).await?;
+        let not_found = || SessionError::NotFound(format!("symbol {sym}"));
+        let Some(file) = changed_file(&files, &sym.file) else {
+            let found = pair
+                .document_symbols(Side::Target, &sym.file)
+                .await
+                .map_err(|e| SessionError::Invalid(e.to_string()))?;
+            let symbol = found.value.into_iter().find(|s| s.sym == *sym).ok_or_else(not_found)?;
+            return Ok(Resolved {
+                symbol,
+                side: Side::Target,
+                change: None,
+                base: None,
+            });
+        };
+        let found = compared(&pair, &self.content(view), file)
+            .await
+            .value
+            .map_err(|e| SessionError::Invalid(e.to_string()))?;
+        let named = |symbols: &[SymbolInfo]| symbols.iter().find(|s| s.sym.name == sym.name).cloned();
+        let base = named(&found.base);
+        match named(&found.target).filter(|_| file.new_path.as_ref() == Some(&sym.file)) {
+            Some(symbol) => {
+                let change = (found.changes.change_of(&symbol.sym).map(|c| c.change))
+                    .or_else(|| base.is_none().then_some(Change::Added));
+                Ok(Resolved {
+                    symbol,
+                    side: Side::Target,
+                    change,
+                    base: base.filter(|_| change == Some(Change::Modified)),
+                })
+            }
+            // A symbol of the base side's file that the target does not have.
+            None if file.old_path.as_ref() == Some(&sym.file) => base
+                .map(|symbol| Resolved {
+                    symbol,
+                    side: Side::Base,
+                    change: Some(Change::Removed),
+                    base: None,
+                })
+                .ok_or_else(not_found),
+            None => Err(not_found()),
+        }
+    }
+
     /// The changed symbol `sym` and whether it was added, modified or removed,
     /// for the `analysis` that asks. The time it takes is the wait for the
     /// revision's changed symbols, which every analysis shares.
@@ -614,14 +791,9 @@ where
             revision,
             Box::pin(async move {
                 let started = Instant::now();
-                let changed = self.changed(view, revision, "signature", sym).await?;
-                let side = if changed.change == Change::Removed {
-                    Side::Base
-                } else {
-                    Side::Target
-                };
+                let Resolved { symbol, side, .. } = self.resolve(view, revision, sym).await?;
                 let pair = self.pair(view, revision).await?;
-                let signed = signature(&pair, side, &changed.symbol).await;
+                let signed = signature(&pair, side, &symbol).await;
                 trace::log(
                     || {
                         format!(
@@ -679,13 +851,17 @@ where
             revision,
             Box::pin(async move {
                 let started = Instant::now();
-                let changed = self.changed(view, revision, "removal impact", sym).await?;
-                if changed.change != Change::Removed {
+                let resolved = self.resolve(view, revision, sym).await?;
+                if resolved.change != Some(Change::Removed) {
                     return Err(SessionError::Invalid("the symbol was not removed".into()));
                 }
                 let files = view.changed_files(revision).await?;
                 let pair = self.pair(view, revision).await?;
-                let Derived { mut value, inputs } = removal_impact(&pair, &[changed], &files).await;
+                let removed = vet_semantic::derived::ChangedSymbol {
+                    symbol: resolved.symbol,
+                    change: Change::Removed,
+                };
+                let Derived { mut value, inputs } = removal_impact(&pair, &[removed], &files).await;
                 let value = value.pop().expect("one symbol in, one impact out");
                 trace::log(|| format!("removal impact {sym}"), started);
                 Ok(Derived { value, inputs })
@@ -694,7 +870,73 @@ where
         .await
     }
 
-    /// Whether an added or modified symbol is reached from an entry point; the
+    /// The symbol `sym` of the target side, which a removed one is not.
+    async fn on_target(&self, view: &RevisionView<G, S>, revision: u32, sym: &Sym) -> Fallible<Resolved> {
+        let resolved = self.resolve(view, revision, sym).await?;
+        if resolved.side == Side::Base {
+            return Err(SessionError::Invalid("the symbol was removed".into()));
+        }
+        Ok(resolved)
+    }
+
+    /// The changed callers and callees of a symbol of the target side, and its unchanged direct
+    /// callers if it changed; the symbol is returned with its position.
+    pub async fn calls(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        sym: &Sym,
+    ) -> Fallible<(SymbolInfo, Derived<Calls>)> {
+        self.current(
+            revision,
+            Box::pin(async move {
+                let started = Instant::now();
+                let resolved = self.on_target(view, revision, sym).await?;
+                let files = view.changed_files(revision).await?;
+                let pair = self.pair(view, revision).await?;
+                let changed = resolved.change.is_some();
+                let derived = calls(
+                    &pair,
+                    &self.content(view),
+                    &files,
+                    &resolved.symbol,
+                    resolved.base.as_ref(),
+                    changed,
+                    CALLS_BOUNDS,
+                )
+                .await;
+                trace::log(
+                    || format!("calls {sym} (incoming calls level by level, then outgoing; target and base)"),
+                    started,
+                );
+                Ok((resolved.symbol, derived))
+            }),
+        )
+        .await
+    }
+
+    /// The references to a symbol of the target side; the symbol is returned with its position.
+    pub async fn usages(
+        &self,
+        view: &RevisionView<G, S>,
+        revision: u32,
+        sym: &Sym,
+    ) -> Fallible<(SymbolInfo, Derived<Usages>)> {
+        self.current(
+            revision,
+            Box::pin(async move {
+                let started = Instant::now();
+                let resolved = self.on_target(view, revision, sym).await?;
+                let pair = self.pair(view, revision).await?;
+                let derived = usages(&pair, &resolved.symbol).await;
+                trace::log(|| format!("usages {sym} (target: references)"), started);
+                Ok((resolved.symbol, derived))
+            }),
+        )
+        .await
+    }
+
+    /// Whether a symbol of the target side is reached from an entry point; the
     /// symbol is returned with its position.
     pub async fn reachability(
         &self,
@@ -704,12 +946,9 @@ where
     ) -> Fallible<(SymbolInfo, Derived<Reach>)> {
         self.current(revision, Box::pin(async move {
             let started = Instant::now();
-            let changed = self.changed(view, revision, "reachability", sym).await?;
-            if changed.change == Change::Removed {
-                return Err(SessionError::Invalid("a removed symbol has nothing to reach".into()));
-            }
+            let resolved = self.on_target(view, revision, sym).await?;
             let pair = self.pair(view, revision).await?;
-            let derived = reachability(&pair, &changed.symbol, &EntryPoints::default(), REACH_BOUNDS).await;
+            let derived = reachability(&pair, &resolved.symbol, &EntryPoints::default(), REACH_BOUNDS).await;
             trace::log(
                 || {
                     format!(
@@ -719,7 +958,7 @@ where
                 },
                 started,
             );
-            Ok((changed.symbol, derived))
+            Ok((resolved.symbol, derived))
         }))
         .await
     }
@@ -746,7 +985,7 @@ mod tests {
     use vet_semantic::policy::AnalysisPolicy;
     use vet_semantic::ports::{
         Diagnostic, LanguageServer, LaunchError, Materialized, NotMaterializable, Pos, QueryError, Readiness,
-        ServerConfig, ServerIdentity, Span, Started, Tree,
+        ServerConfig, ServerIdentity, Span, Started, SymbolKind, Tree,
     };
 
     use super::*;
@@ -914,6 +1153,7 @@ mod tests {
             },
             at: Pos { line: 0, col: 0 },
             detail: None,
+            kind: SymbolKind::Function,
         }
     }
 
@@ -1301,6 +1541,45 @@ mod tests {
         let third = semantics.changed_symbols(&fx.view, 0).await.unwrap();
         assert_eq!(third.value, first.value);
         assert_eq!(counters.text_symbol_requests.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn the_symbols_of_a_file_ask_a_server_for_that_files_texts_only() {
+        let (fx, semantics, counters) = semantics().await;
+        let path = |p: &str| RepoPath(p.as_bytes().to_vec());
+
+        let found = semantics.file_symbols(&fx.view, 0, &path("a.rs")).await.unwrap();
+        let changed: Vec<_> = found.changes.value.symbols.iter().map(|c| c.change).collect();
+        assert_eq!((changed, found.gap), (vec![Change::Modified], None));
+        assert_eq!(
+            counters.text_symbol_requests.load(Ordering::SeqCst),
+            2,
+            "a.rs, both sides"
+        );
+
+        // No language handles Markdown: no symbols to know, and no gap.
+        let notes = semantics.file_symbols(&fx.view, 0, &path("c.md")).await.unwrap();
+        assert!(notes.changes.value.symbols.is_empty() && notes.gap.is_none());
+
+        let unchanged = semantics.file_symbols(&fx.view, 0, &path("untouched.rs")).await;
+        assert!(matches!(unchanged, Err(SessionError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn the_symbol_at_a_position_of_a_changed_file_is_found_in_the_texts_of_the_sides() {
+        let (fx, semantics, _) = semantics().await;
+        let at = |line| At {
+            file: RepoPath(b"a.rs".to_vec()),
+            pos: Pos { line, col: 1 },
+        };
+        let inside = semantics.symbol_at(&fx.view, 0, Side::Target, &at(2)).await.unwrap();
+        let inside = inside.result.unwrap().unwrap();
+        assert_eq!(
+            (inside.symbol.sym.name, inside.change),
+            (vec!["f".to_string()], Some(Change::Modified))
+        );
+        let outside = semantics.symbol_at(&fx.view, 0, Side::Target, &at(9)).await.unwrap();
+        assert_eq!(outside.result.unwrap(), None);
     }
 
     /// Semantics over a repository with a Rust and a Python file changed, and the ids of the

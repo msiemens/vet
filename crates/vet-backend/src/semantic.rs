@@ -239,6 +239,57 @@ impl Booted {
         Ok(Response::ChangedSymbols(map::changed_symbols(revision, &changes)))
     }
 
+    pub async fn file_symbols(&self, revision: u32, path: &str) -> Result<Response, String> {
+        let file = RepoPath::from(path);
+        let found = (self.semantics)
+            .file_symbols(&self.view, revision, &file)
+            .await
+            .map_err(message)?;
+        Ok(Response::FileSymbols(map::file_symbols(
+            revision,
+            path,
+            &found.changes,
+            found.gap,
+        )))
+    }
+
+    pub async fn symbol_at(
+        &self,
+        revision: u32,
+        side: Side,
+        path: &str,
+        line: u32,
+        col: u32,
+    ) -> Result<Response, String> {
+        let at = map::at(path, line, col);
+        let answer = (self.semantics)
+            .symbol_at(&self.view, revision, core_side(side), &at)
+            .await
+            .map_err(message)?;
+        let (found, unavailable) = map::answer(answer.result, self.language_of(&at.file));
+        Ok(Response::SymbolAt(map::symbol_at(
+            revision,
+            found.as_ref(),
+            unavailable,
+        )))
+    }
+
+    pub async fn calls(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
+        let (info, calls) = (self.semantics)
+            .calls(&self.view, revision, &map::core_sym(symbol))
+            .await
+            .map_err(message)?;
+        Ok(Response::Calls(map::calls(revision, &info, &calls)))
+    }
+
+    pub async fn usages(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
+        let (info, usages) = (self.semantics)
+            .usages(&self.view, revision, &map::core_sym(symbol))
+            .await
+            .map_err(message)?;
+        Ok(Response::Usages(map::usages(revision, &info, &usages)))
+    }
+
     pub async fn signature(&self, revision: u32, symbol: &vet_protocol::SymbolId) -> Result<Response, String> {
         let answer = (self.semantics)
             .signature(&self.view, revision, &map::core_sym(symbol))

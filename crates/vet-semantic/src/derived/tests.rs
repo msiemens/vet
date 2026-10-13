@@ -6,7 +6,7 @@ use vet_core::content::{FileDiff, Hunk, LineRange, RepoPath};
 use vet_core::review::Side;
 
 use super::*;
-use crate::ports::{Diagnostic, Location, Pos, Span, Sym, SymbolInfo};
+use crate::ports::{Diagnostic, Location, Pos, Span, Sym, SymbolInfo, SymbolKind};
 use crate::query::{Asked, Primitives, SemanticError};
 use crate::testutil::{answered, block_on};
 
@@ -35,6 +35,7 @@ fn sym(path: &str, name: &str, start: u32, end: u32) -> SymbolInfo {
         span: span(start, end),
         at: Pos { line: start, col: 3 },
         detail: None,
+        kind: SymbolKind::Function,
     }
 }
 
@@ -78,6 +79,7 @@ struct Fake {
     symbols: HashMap<(Side, RepoPath), Vec<SymbolInfo>>,
     references: HashMap<(Side, At), Vec<Location>>,
     callers: HashMap<(Side, At), Vec<SymbolInfo>>,
+    callees: HashMap<(Side, At), Vec<SymbolInfo>>,
     definitions: HashMap<(Side, At), Vec<Location>>,
     failing_callers: Vec<At>,
     /// Files whose document symbols the server fails to answer.
@@ -146,8 +148,8 @@ impl Primitives for Fake {
         }
         self.answer(self.callers.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
-    async fn outgoing_calls(&self, _: Side, _: &At) -> Asked<Vec<SymbolInfo>> {
-        self.answer(vec![])
+    async fn outgoing_calls(&self, side: Side, a: &At) -> Asked<Vec<SymbolInfo>> {
+        self.answer(self.callees.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
     async fn diagnostics(&self, _: Side, _: &RepoPath) -> Asked<Vec<Diagnostic>> {
         self.answer(vec![])
@@ -634,4 +636,255 @@ fn entry_points_match_by_path_prefix_and_name() {
     assert!(entries.matches(&sym("src/bin/x.rs", "run", 0, 1).sym));
     assert!(!entries.matches(&sym("src/lib.rs", "run", 0, 1).sym));
     assert!(!entries.matches(&sym("src/bin/x.rs", "main", 0, 1).sym));
+}
+
+// base:   s.rs  S { a 1..3, b 4..6, gone 7..9 }
+// target: s.rs  S { a 1..3, b 4..7 (edited) } and S ends where b does
+fn holder_fixture() -> (Fake, FileDiff) {
+    let mut fake = Fake::default();
+    fake.symbols.insert(
+        (Side::Base, file("s.rs")),
+        vec![
+            sym("s.rs", "S", 0, 10),
+            sym("s.rs", "S::a", 1, 3),
+            sym("s.rs", "S::b", 4, 6),
+            sym("s.rs", "S::gone", 7, 9),
+        ],
+    );
+    fake.symbols.insert(
+        (Side::Target, file("s.rs")),
+        vec![
+            sym("s.rs", "S", 0, 7),
+            sym("s.rs", "S::a", 1, 3),
+            sym("s.rs", "S::b", 4, 7),
+        ],
+    );
+    (fake, diff("s.rs", vec![hunk((4, 6), (4, 7)), hunk((7, 9), (7, 7))]))
+}
+
+#[test]
+fn a_changed_symbol_lists_the_unchanged_containers_around_it() {
+    let (fake, file) = holder_fixture();
+    let compared = block_on(compared(&fake, &NoTexts, &file)).value.unwrap();
+    let changed: Vec<_> = compared
+        .changes
+        .symbols
+        .iter()
+        .map(|c| (c.symbol.sym.name.join("::"), c.change))
+        .collect();
+    assert_eq!(
+        changed,
+        [
+            ("S::b".to_string(), Change::Modified),
+            ("S::gone".to_string(), Change::Removed)
+        ]
+    );
+    let context: Vec<_> = compared.changes.context.iter().map(|s| s.sym.name.join("::")).collect();
+    assert_eq!(context, ["S"], "once, for both");
+}
+
+#[test]
+fn the_container_of_a_removed_symbol_is_the_targets_if_the_target_has_it() {
+    let (fake, _) = holder_fixture();
+    let only_removed = diff("s.rs", vec![hunk((7, 9), (7, 7))]);
+    let compared = block_on(compared(&fake, &NoTexts, &only_removed)).value.unwrap();
+    assert_eq!(compared.changes.symbols.len(), 1);
+    assert_eq!(compared.changes.context[0].span, span(0, 7));
+}
+
+#[test]
+fn a_container_that_changed_itself_is_no_context() {
+    let (fake, files) = changed_fixture();
+    let compared = block_on(compared(&fake, &NoTexts, &files[0])).value.unwrap();
+    assert!(compared.changes.symbols.iter().any(|c| c.symbol.sym.name == ["S"]));
+    assert!(compared.changes.context.is_empty());
+}
+
+#[test]
+fn the_symbol_at_a_position_is_the_innermost_container_and_knows_what_became_of_it() {
+    let (fake, file) = holder_fixture();
+    let compared = block_on(compared(&fake, &NoTexts, &file)).value.unwrap();
+    let at =
+        |side, line| symbol_at(&compared, side, Pos { line, col: 1 }).map(|l| (l.symbol.sym.name.join("::"), l.change));
+    assert_eq!(at(Side::Target, 2), Some(("S::a".into(), None)));
+    assert_eq!(at(Side::Target, 5), Some(("S::b".into(), Some(Change::Modified))));
+    // Between the members, in the container itself.
+    assert_eq!(at(Side::Target, 3), Some(("S".into(), None)));
+    assert_eq!(at(Side::Target, 20), None);
+    // On the base side a removed symbol is itself, and a modified one is the target's.
+    assert_eq!(at(Side::Base, 8), Some(("S::gone".into(), Some(Change::Removed))));
+    let on_base = symbol_at(&compared, Side::Base, Pos { line: 4, col: 1 }).unwrap();
+    assert_eq!(
+        (on_base.symbol.span, on_base.change),
+        (span(4, 7), Some(Change::Modified))
+    );
+}
+
+#[test]
+fn a_symbol_only_one_side_has_was_added_even_if_no_hunk_is_inside_it_itself() {
+    // A class added with a member: the member is the innermost symbol a hunk touches.
+    let mut fake = Fake::default();
+    fake.symbols.insert((Side::Base, file("n.rs")), vec![]);
+    fake.symbols.insert(
+        (Side::Target, file("n.rs")),
+        vec![sym("n.rs", "Fresh", 5, 12), sym("n.rs", "Fresh::m", 6, 8)],
+    );
+    let added = diff("n.rs", vec![hunk((5, 5), (6, 8))]);
+    let compared = block_on(compared(&fake, &NoTexts, &added)).value.unwrap();
+    let class = symbol_at(&compared, Side::Target, Pos { line: 10, col: 0 }).unwrap();
+    assert_eq!(
+        (class.symbol.sym.name, class.change),
+        (vec!["Fresh".to_string()], Some(Change::Added))
+    );
+}
+
+/// Callers, callees and what is changed around `x`.
+///
+/// calls:   c1 -> x, u1 -> x, c3 -> c1, u2 -> c3;  x -> n, x -> u1;  on the base x -> g
+/// changed: c1 and c3 (m.rs) modified, n added, g removed; u1 and u2 are not
+fn call_fixture() -> (Fake, Vec<FileDiff>, SymbolInfo, SymbolInfo) {
+    let x = sym("x.rs", "x", 10, 14);
+    let x_on_base = sym("x.rs", "x", 9, 12);
+    let c1 = sym("m.rs", "c1", 0, 3);
+    let c3 = sym("m.rs", "c3", 5, 8);
+    let u1 = sym("u.rs", "u1", 0, 3);
+    let u2 = sym("u.rs", "u2", 5, 8);
+    let n = sym("n.rs", "n", 0, 4);
+    let g = sym("g.rs", "g", 0, 3);
+
+    let mut fake = Fake::default();
+    for (side, path, symbols) in [
+        (Side::Base, "m.rs", vec![c1.clone(), c3.clone()]),
+        (Side::Target, "m.rs", vec![c1.clone(), c3.clone()]),
+        (Side::Target, "n.rs", vec![n.clone()]),
+        (Side::Base, "g.rs", vec![g.clone()]),
+    ] {
+        fake.symbols.insert((side, file(path)), symbols);
+    }
+    let target = |s: &SymbolInfo| (Side::Target, s.location());
+    fake.callers.insert(target(&x), vec![c1.clone(), u1.clone()]);
+    fake.callers.insert(target(&c1), vec![c3.clone()]);
+    fake.callers.insert(target(&c3), vec![u2]);
+    fake.callees.insert(target(&x), vec![n, u1]);
+    fake.callees.insert((Side::Base, x_on_base.location()), vec![g]);
+    let files = vec![
+        diff("m.rs", vec![hunk((0, 8), (0, 8))]),
+        FileDiff {
+            old_path: None,
+            new_path: Some(file("n.rs")),
+            old_blob: None,
+            new_blob: None,
+            hunks: vec![hunk((0, 0), (0, 4))],
+        },
+        FileDiff {
+            old_path: Some(file("g.rs")),
+            new_path: None,
+            old_blob: None,
+            new_blob: None,
+            hunks: vec![hunk((0, 3), (0, 0))],
+        },
+    ];
+    (fake, files, x, x_on_base)
+}
+
+fn named<'a>(symbols: impl IntoIterator<Item = &'a SymbolInfo>) -> Vec<String> {
+    symbols.into_iter().map(|s| s.sym.name.join("::")).collect()
+}
+
+#[test]
+fn callers_are_followed_through_changed_symbols_only_and_the_unchanged_direct_ones_are_flagged() {
+    let (fake, files, x, x_on_base) = call_fixture();
+    let found = block_on(calls(&fake, &NoTexts, &files, &x, Some(&x_on_base), true, BOUNDS)).value;
+    let callers: Vec<_> = found
+        .callers
+        .iter()
+        .map(|c| (c.symbol.sym.name.join("::"), c.change, c.depth))
+        .collect();
+    assert_eq!(
+        callers,
+        [
+            ("c1".to_string(), Change::Modified, 0),
+            ("c3".to_string(), Change::Modified, 1)
+        ]
+    );
+    // u2 calls c3, not x.
+    assert_eq!(named(&found.affected), ["u1"]);
+    assert!(found.gaps.is_empty(), "{:?}", found.gaps);
+}
+
+#[test]
+fn the_callees_are_the_changed_ones_and_the_removed_ones_of_the_base() {
+    let (fake, files, x, x_on_base) = call_fixture();
+    let found = block_on(calls(&fake, &NoTexts, &files, &x, Some(&x_on_base), true, BOUNDS)).value;
+    let callees: Vec<_> = found
+        .callees
+        .iter()
+        .map(|c| (c.symbol.sym.name.join("::"), c.change))
+        .collect();
+    assert_eq!(
+        callees,
+        [("n".to_string(), Change::Added), ("g".to_string(), Change::Removed)]
+    );
+
+    let without_base = block_on(calls(&fake, &NoTexts, &files, &x, None, true, BOUNDS)).value;
+    assert_eq!(named(without_base.callees.iter().map(|c| &c.symbol)), ["n"]);
+}
+
+#[test]
+fn an_unchanged_symbols_callers_are_not_possibly_affected() {
+    let (fake, files, x, _) = call_fixture();
+    let found = block_on(calls(&fake, &NoTexts, &files, &x, None, false, BOUNDS)).value;
+    assert!(found.affected.is_empty());
+    assert_eq!(named(found.callers.iter().map(|c| &c.symbol)), ["c1", "c3"]);
+}
+
+#[test]
+fn the_walk_down_the_callers_stops_at_the_depth_bound_and_at_cycles() {
+    let (mut fake, files, x, _) = call_fixture();
+    let shallow = Bounds { max_depth: 1, ..BOUNDS };
+    let found = block_on(calls(&fake, &NoTexts, &files, &x, None, false, shallow)).value;
+    assert_eq!(named(found.callers.iter().map(|c| &c.symbol)), ["c1"]);
+
+    // c3 is called by c1, which calls x: a cycle.
+    fake.callers.insert(
+        (Side::Target, sym("m.rs", "c3", 5, 8).location()),
+        vec![sym("m.rs", "c1", 0, 3)],
+    );
+    let found = block_on(calls(&fake, &NoTexts, &files, &x, None, false, BOUNDS)).value;
+    assert_eq!(named(found.callers.iter().map(|c| &c.symbol)), ["c1", "c3"]);
+}
+
+#[test]
+fn a_failed_call_hierarchy_is_a_gap_not_an_empty_list() {
+    let (mut fake, files, x, _) = call_fixture();
+    fake.failing_callers.push(x.location());
+    let found = block_on(calls(&fake, &NoTexts, &files, &x, None, true, BOUNDS)).value;
+    assert!(found.callers.is_empty());
+    assert!(
+        found.gaps.iter().any(|g| g.contains("no call hierarchy")),
+        "{:?}",
+        found.gaps
+    );
+    assert_eq!(
+        named(found.callees.iter().map(|c| &c.symbol)),
+        ["n"],
+        "the other lists are still given"
+    );
+}
+
+#[test]
+fn usages_are_the_references_on_the_target_and_a_failure_is_a_gap() {
+    let (mut fake, files) = changed_fixture();
+    let keep = block_on(changed_symbols(&fake, &NoTexts, &files, &|_, _| {}))
+        .value
+        .symbols[0]
+        .symbol
+        .clone();
+    let unlisted = block_on(usages(&fake, &keep)).value;
+    assert_eq!(unlisted.references.len(), 0);
+    fake.references
+        .insert((Side::Target, keep.location()), vec![site("b.rs", 7)]);
+    let found = block_on(usages(&fake, &keep)).value;
+    assert_eq!(found.references.len(), 1);
+    assert_eq!(found.gap, None);
 }

@@ -4,7 +4,9 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use tempfile::TempDir;
 use vet_core::content::{BlobId, Hash, RepoPath, SnapshotId};
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{At, BackendId, Diagnostic, Location, Pos, ServerIdentity, Severity, Span, Sym, SymbolInfo};
+use vet_semantic::ports::{
+    At, BackendId, Diagnostic, Location, Pos, ServerIdentity, Severity, Span, Sym, SymbolInfo, SymbolKind,
+};
 use vet_semantic::reuse::{Basis, ProjectQuery, Restore};
 
 use super::codec::address;
@@ -101,6 +103,7 @@ async fn every_kind_of_answer_is_read_back_exactly_by_a_later_launch() {
             span: span(4),
             at: Pos { line: 4, col: 8 },
             detail: Some("fn inner()".into()),
+            kind: SymbolKind::Function,
         },
         SymbolInfo {
             sym: Sym {
@@ -110,6 +113,7 @@ async fn every_kind_of_answer_is_read_back_exactly_by_a_later_launch() {
             span: span(0),
             at: Pos { line: 0, col: 0 },
             detail: None,
+            kind: SymbolKind::Other,
         },
     ]);
     let locations = Value::Locations(vec![

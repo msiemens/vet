@@ -5,6 +5,7 @@ import type { Base } from "./Base";
 import type { BaseDiff } from "./BaseDiff";
 import type { BlobContent } from "./BlobContent";
 import type { BranchInfo } from "./BranchInfo";
+import type { Calls } from "./Calls";
 import type { ChangedSymbols } from "./ChangedSymbols";
 import type { ChangesetKey } from "./ChangesetKey";
 import type { ChangesetRow } from "./ChangesetRow";
@@ -14,6 +15,7 @@ import type { CommitInfo } from "./CommitInfo";
 import type { CommitUnit } from "./CommitUnit";
 import type { Diagnostic } from "./Diagnostic";
 import type { DirEntry } from "./DirEntry";
+import type { FileSymbols } from "./FileSymbols";
 import type { Impact } from "./Impact";
 import type { Lens } from "./Lens";
 import type { LineDelta } from "./LineDelta";
@@ -30,6 +32,7 @@ import type { ReviewSubmitted } from "./ReviewSubmitted";
 import type { ReviewUpdate } from "./ReviewUpdate";
 import type { ServerInfo } from "./ServerInfo";
 import type { Side } from "./Side";
+import type { SymbolAt } from "./SymbolAt";
 import type { SymbolSignature } from "./SymbolSignature";
 import type { Task } from "./Task";
 import type { TextChange } from "./TextChange";
@@ -37,6 +40,7 @@ import type { TextContent } from "./TextContent";
 import type { Thread } from "./Thread";
 import type { ThreadTarget } from "./ThreadTarget";
 import type { Unavailable } from "./Unavailable";
+import type { Usages } from "./Usages";
 import type { VersionInfo } from "./VersionInfo";
 
 export type Response = { "type": "pong", payload: string, } | { "type": "project", project: number, 
@@ -65,4 +69,4 @@ targetHighlights: Array<number>, } | { "type": "review" } & ReviewUpdate | { "ty
 /**
  * How many of `diagnostics` to tell the viewer about: hints are not counted.
  */
-count: number, unavailable: Unavailable | null, } | { "type": "changedSymbols" } & ChangedSymbols | { "type": "signature", revision: number, signature: SymbolSignature | null, unavailable: Unavailable | null, } | { "type": "impact" } & Impact | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "base" } & Base | { "type": "reviewFinished", complete: boolean, } | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "commentTarget", target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread | { "type": "pullRequestInfo" } & PullRequestInfo | { "type": "reviewSubmitted" } & ReviewSubmitted;
+count: number, unavailable: Unavailable | null, } | { "type": "changedSymbols" } & ChangedSymbols | { "type": "fileSymbols" } & FileSymbols | { "type": "symbolAt" } & SymbolAt | { "type": "signature", revision: number, signature: SymbolSignature | null, unavailable: Unavailable | null, } | { "type": "impact" } & Impact | { "type": "calls" } & Calls | { "type": "usages" } & Usages | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "base" } & Base | { "type": "reviewFinished", complete: boolean, } | { "type": "baseCandidates", branches: Array<BranchInfo>, commits: Array<CommitInfo>, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "commentTarget", target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread | { "type": "pullRequestInfo" } & PullRequestInfo | { "type": "reviewSubmitted" } & ReviewSubmitted;

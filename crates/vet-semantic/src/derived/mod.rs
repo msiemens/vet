@@ -1,11 +1,14 @@
 //! Derived analyses (I6): built over primitives, labeled as derived, and carrying
 //! the inputs they were computed from so the UI can show them.
 
+mod calls;
 mod changed;
+mod cursor;
 mod impact;
 mod reach;
 mod reference;
 mod removal;
+mod usages;
 
 #[cfg(test)]
 mod tests;
@@ -16,11 +19,14 @@ use vet_core::review::Side;
 use crate::ports::{At, Pos, Provenance};
 use crate::query::{Asked, SemanticError};
 
-pub use changed::{Change, ChangedSymbol, Changes, Gap, Texts, changed_symbols};
+pub use calls::{Caller, Calls, calls};
+pub use changed::{Change, ChangedSymbol, Changes, Compared, FileChanges, Gap, Texts, changed_symbols, compared};
+pub use cursor::{Located, symbol_at};
 pub use impact::{SymbolImpact, impact};
 pub use reach::{EntryPoint, EntryPoints, Reach, reachability};
 pub use reference::{Reference, located};
 pub use removal::{CallSite, Fate, RemovalImpact, removal_impact};
+pub use usages::{Usages, usages};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Bounds {

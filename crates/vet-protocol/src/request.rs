@@ -323,10 +323,47 @@ pub enum Request {
         project: ProjectId,
         revision: u32,
     },
-    /// The declaration of a changed symbol, from the language server, on the side
-    /// the symbol exists on. Fails like `Impact` but also for a removed symbol.
-    /// Answers with `Response::Signature`.
+    /// What the changeset did to the symbols of one changed file (derived, §7.3): the file's
+    /// symbols on both sides, from their texts, intersected with its diff hunks. A file no
+    /// language server handles has none. Fails if `revision` is no longer current or `path` is
+    /// not a changed file. Answers with `Response::FileSymbols`.
+    FileSymbols {
+        project: ProjectId,
+        revision: u32,
+        path: String,
+    },
+    /// The innermost function, type or module that holds a position of one side of the
+    /// changeset, and what became of it (derived). The position is in the text of that side,
+    /// 0-based lines and UTF-16 columns. A language without a usable server answers with
+    /// `unavailable` set and no symbol. Fails if `revision` is no longer current. Answers with
+    /// `Response::SymbolAt`.
+    SymbolAt {
+        project: ProjectId,
+        revision: u32,
+        side: Side,
+        path: String,
+        line: u32,
+        col: u32,
+    },
+    /// The declaration of a symbol, from the language server, on the side the symbol exists on
+    /// (the base for a removed one). Fails if `revision` is no longer current or the symbol is
+    /// in no outline of its file. Answers with `Response::Signature`.
     Signature {
+        project: ProjectId,
+        revision: u32,
+        symbol: SymbolId,
+    },
+    /// The changed callers of a symbol of the target side, followed through changed symbols
+    /// only, its changed callees and, if it changed, its unchanged direct callers (derived).
+    /// Fails like `Signature`, and for a removed symbol. Answers with `Response::Calls`.
+    Calls {
+        project: ProjectId,
+        revision: u32,
+        symbol: SymbolId,
+    },
+    /// The references to a symbol of the target side (derived). Fails like `Calls`. Answers
+    /// with `Response::Usages`.
+    Usages {
         project: ProjectId,
         revision: u32,
         symbol: SymbolId,
@@ -340,15 +377,15 @@ pub enum Request {
         symbol: SymbolId,
     },
     /// What became of the references to a removed symbol (derived). Fails if the
-    /// symbol is not a removed one of `ChangedSymbols` at `revision`. Answers
+    /// symbol is not a removed one of its file at `revision`. Answers
     /// with `Response::RemovalImpact`.
     RemovalImpact {
         project: ProjectId,
         revision: u32,
         symbol: SymbolId,
     },
-    /// Whether an added or modified changed symbol is reached from an entry
-    /// point (derived, §7.4). Fails like `Impact`. Answers with `Response::Reachability`.
+    /// Whether a symbol of the target side is reached from an entry
+    /// point (derived, §7.4). Fails like `Calls`. Answers with `Response::Reachability`.
     Reachability {
         project: ProjectId,
         revision: u32,
