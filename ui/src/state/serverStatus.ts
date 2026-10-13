@@ -38,6 +38,15 @@ export function languageOf(path: string, servers: readonly ServerInfo[]): string
   return servers.find((s) => serves(s, path))?.language;
 }
 
+/** Whether the server serving `path` is starting or indexing, by the running background `tasks`. */
+export function atWork(path: string, servers: readonly ServerInfo[], tasks: readonly Task[]): boolean {
+  const server = servers.find((s) => serves(s, path));
+  return (
+    !!server &&
+    tasks.some((t) => (t.kind === "serverIndex" || t.kind === "serverStart") && t.title.includes(server.server))
+  );
+}
+
 /**
  * The name of the server for the type of file `path` is when that server has said it does not offer
  * `feature`; none while it has not said (it has not started yet) or offers it.
@@ -101,5 +110,5 @@ export function serverLine(
   }
   const starting = own.find((t) => t.kind === "serverStart");
   if (starting) return { name: server.server, state: "starting", title: starting.title };
-  return { name: server.server, state: summary.diagnostics === undefined ? undefined : "ready" };
+  return { name: server.server, state: summary.answered ? "ready" : undefined };
 }

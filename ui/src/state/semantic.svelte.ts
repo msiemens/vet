@@ -9,40 +9,22 @@ import type { SemanticLocation } from "../generated/SemanticLocation";
 import type { Side } from "../generated/Side";
 import type { Unavailable } from "../generated/Unavailable";
 import { isAbort } from "../lib/abort";
-import type { Backend, HoverAnswer } from "./backend";
+import type { HoverAnswer } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { commands } from "./commands";
 import { DefinitionProbe } from "./definitionProbe";
-import { Gate } from "./gate";
+import { DiagnosticsBook, type FileDiagnostics } from "./diagnosticsBook";
 import { InFlight } from "./inFlight";
 import { progress } from "./progress.svelte";
 import { type SemanticSummary, summarize } from "./semanticSummary";
 import { serverList } from "./serverList.svelte";
-import { hasServer, serverLine } from "./serverStatus";
+import { atWork, hasServer, serverLine } from "./serverStatus";
 import { session } from "./session.svelte";
 
 const NOTHING: HoverAnswer = { text: "", code: [] };
 
-/** Files compared with the base at once. */
-const COMPARED_AT_ONCE = 2;
-
-/** A file's target-side diagnostics, each with its origin. */
-export interface FileDiagnostics {
-  diagnostics: Diagnostic[];
-  /** The base side has answered (or failed to): the origins are as known as they will be. */
-  compared: boolean;
-  /** Why the origins are unknown, when the base side could not be analysed. */
-  originUnavailable?: Unavailable;
-}
-
 class SemanticStore {
-  private revision = -1;
-  /** Bumped when the cache is dropped, so an answer to an earlier question is not stored. */
-  private epoch = 0;
-  private pending = new Map<string, Promise<void>>();
-  private comparing = new Gate(COMPARED_AT_ONCE);
-  private originListeners = new Set<(path: string) => void>();
-  /** The latest diagnostics of each file asked about at `revision`, with the origins once they are known. */
+  /** The latest diagnostics of each file asked about at the current revision, with the origins once they are known. */
   files = new SvelteMap<string, FileDiagnostics>();
   /** What `files` held when the revision last advanced, for what shows until the new revision has answered. */
   previous = $state.raw<ReadonlyMap<string, FileDiagnostics>>(new Map());
@@ -50,32 +32,35 @@ class SemanticStore {
   generation = $state(0);
   private hovering = new InFlight<HoverAnswer>();
   private probe = new DefinitionProbe((key, signal) => this.lookUp(key, signal));
-  /** The number of diagnostics to tell the viewer about, per file asked about at `revision`. */
-  private counts = new SvelteMap<string, number>();
   /** The files the backend could not answer for, and why. */
   private missing = new SvelteMap<string, Unavailable>();
+  private book = new DiagnosticsBook(
+    {
+      ask: (revision, path, againstBase, signal) => this.askDiagnostics(revision, path, againstBase, signal),
+      busy: (path) => atWork(path, serverList.servers, progress.tasks),
+      untilIdle: (path, signal) => this.untilIdle(path, signal),
+      drop: () => {
+        this.generation++;
+        this.hovering.clear();
+        this.probe.clear();
+      },
+      hold: (held) => (this.previous = held),
+    },
+    this.files,
+    this.missing,
+  );
 
   summary(path?: string): SemanticSummary {
-    return summarize(this.counts, this.missing, path);
+    return summarize(this.files, this.missing, path);
   }
 
-  /** The files of a new revision are asked afresh; `false` for a request of an older one. */
   private enter(revision: number): boolean {
-    if (revision < this.revision) return false;
-    if (revision > this.revision) {
-      this.revision = revision;
-      const held = new Map(this.files);
-      this.invalidate();
-      this.previous = held;
-    }
-    return true;
+    return this.book.enter(revision);
   }
 
   /** A repository was opened: its revisions are numbered afresh. */
   reset() {
-    this.revision = -1;
-    this.invalidate();
-    this.previous = new Map();
+    this.book.reset();
   }
 
   /** The reason the backend gave for having no diagnostics of `path`, if it did. */
@@ -85,14 +70,7 @@ class SemanticStore {
 
   /** What the servers answered may differ now (a server was installed or its path changed). */
   invalidate() {
-    this.epoch++;
-    this.generation++;
-    this.pending.clear();
-    this.hovering.clear();
-    this.probe.clear();
-    this.counts.clear();
-    this.missing.clear();
-    this.files.clear();
+    this.book.invalidate();
   }
 
   /** Remembers that the file has no answers. A server lacking one operation still serves the file. */
@@ -189,65 +167,41 @@ class SemanticStore {
   /**
    * The target-side diagnostics of a file, asked once per revision; empty if unavailable or stale. They
    * come at once with their origin pending, and a comparison with the base follows, whose answer
-   * replaces them (`files`) and is announced to the listeners.
+   * replaces them (`files`) and is announced to the `onOrigins` listeners.
    */
-  async diagnostics(revision: number, path: string): Promise<Diagnostic[]> {
-    if (!this.enter(revision)) return [];
-    let answer = this.pending.get(path);
-    if (!answer) {
-      answer = this.fetch(revision, path);
-      this.pending.set(path, answer);
-    }
-    await answer;
-    return this.files.get(path)?.diagnostics ?? [];
+  diagnostics(revision: number, path: string): Promise<Diagnostic[]> {
+    return this.book.diagnostics(revision, path);
   }
 
   /** Calls `listener` with the path of a file whose diagnostics were replaced by ones with their origins. */
   onOrigins(listener: (path: string) => void): () => void {
-    this.originListeners.add(listener);
-    return () => this.originListeners.delete(listener);
+    return this.book.onOrigins(listener);
   }
 
-  private async fetch(revision: number, path: string): Promise<void> {
+  private askDiagnostics(revision: number, path: string, againstBase: boolean, signal: AbortSignal) {
     const backend = session.backend;
-    const epoch = this.epoch;
-    if (!backend) return;
-    try {
-      const r = await backend.diagnostics(revision, path, false);
-      if (epoch !== this.epoch) return;
-      this.take(path, r, false);
-      if (!r.unavailable) void this.compare(backend, revision, path, epoch);
-    } catch {
-      if (epoch === this.epoch) this.pending.delete(path); // stale: the next revision asks again
-    }
+    if (!backend) return Promise.reject(new Error("no backend"));
+    return backend.diagnostics(revision, path, againstBase, signal);
   }
 
-  /** Asks for the file's diagnostics with their origins, a few files at a time: the base side is slow to analyse. */
-  private async compare(backend: Backend, revision: number, path: string, epoch: number) {
-    try {
-      const r = await this.comparing.run(() =>
-        epoch === this.epoch ? backend.diagnostics(revision, path, true) : Promise.resolve(undefined),
+  /** Resolves once the server of the file's language is not starting or indexing. */
+  private async untilIdle(path: string, signal: AbortSignal): Promise<void> {
+    const stops: (() => void)[] = [];
+    await new Promise<void>((resolve) => {
+      if (signal.aborted) {
+        resolve();
+        return;
+      }
+      signal.addEventListener("abort", () => resolve(), { once: true });
+      stops.push(
+        $effect.root(() => {
+          $effect(() => {
+            if (!atWork(path, serverList.servers, progress.tasks)) resolve();
+          });
+        }),
       );
-      if (!r || epoch !== this.epoch || r.unavailable) return;
-      this.take(path, r, true);
-      for (const listener of this.originListeners) listener(path);
-    } catch {
-      // The diagnostics stay as they are, with their origin pending.
-    }
-  }
-
-  private take(
-    path: string,
-    r: { diagnostics: Diagnostic[]; count: number; unavailable?: Unavailable; originUnavailable?: Unavailable },
-    compared: boolean,
-  ) {
-    if (r.unavailable) {
-      this.missing.set(path, r.unavailable);
-      return;
-    }
-    this.missing.delete(path);
-    this.counts.set(path, r.count);
-    this.files.set(path, { diagnostics: r.diagnostics, compared, originUnavailable: r.originUnavailable });
+    });
+    for (const stop of stops) stop();
   }
 }
 

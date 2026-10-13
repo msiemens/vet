@@ -78,7 +78,7 @@ void test("another language's server running does not show for this file", () =>
 });
 
 void test("a server is ready once it has answered for the file", () => {
-  const answered = summarize(new Map([["a.py", 0]]), new Map(), "a.py");
+  const answered = summarize(new Map([["a.py", true]]), new Map(), "a.py");
   assert.deepEqual(serverLine("a.py", SERVERS, [], answered), { name: "Pyright", state: "ready" });
   assert.deepEqual(serverLine("a.py", SERVERS, [], summarize(new Map(), new Map(), "a.py")), {
     name: "Pyright",
