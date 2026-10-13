@@ -558,6 +558,7 @@
         rightTool={right.tool}
         rightOpen={right.open}
         {softWrap}
+        onservers={() => showDialog("settings", "servers")}
         onready={(c) => void (controller = c)}
         onclose={() => (controller = undefined)}
       >
@@ -567,6 +568,7 @@
           {:else if tool === "structure"}
             <StructurePanel
               onjump={(symbol, removed) => void controller?.jumpToOutlineSymbol(symbol, removed)}
+              oneditor={() => controller?.focusEditor()}
               onsettings={() => showDialog("settings", "servers")}
             />
           {/if}

@@ -48,6 +48,7 @@
     side,
     bottom,
     softWrap,
+    onservers,
     onready,
     onclose,
   }: {
@@ -56,6 +57,8 @@
     changeset: Changeset;
     /** Which files wrap their long lines; the owner applies a change to the controller. */
     softWrap: SoftWrap;
+    /** Opens Settings at the language servers. */
+    onservers: () => void;
     /** The left tool window and whether its sidebar is shown. */
     leftTool: string;
     leftOpen: boolean;
@@ -296,7 +299,11 @@
   </div>
   {@render bottom?.({ selected: highlighted, select })}
   {#if structure.popup}
-    <StructurePopup onjump={(symbol, removed) => void controller.jumpToOutlineSymbol(symbol, removed)} />
+    <StructurePopup
+      onjump={(symbol, removed) => void controller.jumpToOutlineSymbol(symbol, removed)}
+      oneditor={() => controller.focusEditor()}
+      {onservers}
+    />
   {/if}
 </main>
 

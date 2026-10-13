@@ -38,7 +38,14 @@ import type { Loaded } from "./mount";
 import { lineOf, lineStart } from "./positions";
 import type { RenderedText } from "./rendered";
 import { markKind } from "./scrollMarks";
-import { type SemanticHooks, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
+import {
+  type SemanticHooks,
+  type TextPosition,
+  caretPosition,
+  revealSpan,
+  semanticExtensions,
+  showDiagnostics,
+} from "./semantic";
 import { readMetrics } from "./sectionHeights";
 import { softWrap, wraps } from "./softWrap";
 import { TextThreads } from "./textThreads";
@@ -389,6 +396,16 @@ export class TextView {
     if (!view) return;
     const from = lineStart(view.state.doc, line);
     view.dispatch({ selection: { anchor: from }, effects: EditorView.scrollIntoView(from, { y: "center" }) });
+  }
+
+  /** Gives the keyboard focus to the editor once the text has arrived. */
+  focusEditor() {
+    this.view?.focus();
+  }
+
+  /** Where the caret is; none until the text has arrived. */
+  caret(): TextPosition | undefined {
+    return this.view && caretPosition(this.view);
   }
 
   /** The 0-based line the caret is on; none until the text has arrived. */

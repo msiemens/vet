@@ -35,7 +35,7 @@ import { Stops, firstStopFrom, hunkAt, hunkOverlapping } from "./stops";
 import type { Section } from "./section";
 import { SectionHeights, charWidth, readFont, readMetrics } from "./sectionHeights";
 import { COLLAPSE, type WrappedSides, baseDiffHeight, hiddenAt } from "./sectionLayout";
-import { type SemanticHooks, type SemanticSource, bindRevision } from "./semantic";
+import { type SemanticHooks, type SemanticSource, type TextPosition, bindRevision, caretPosition } from "./semantic";
 import { wraps } from "./softWrap";
 import { type ThreadListeners, ThreadLayer, threadState } from "./threadLayer";
 import { Windowing } from "./windowing";
@@ -714,6 +714,24 @@ export class ChangesetView {
         };
     }
     return undefined;
+  }
+
+  /** The caret of file `path`'s target editor, focused or not; none while that editor is not mounted. */
+  caretIn(path: string): TextPosition | undefined {
+    const view = this.sections.find((s) => s.file.path === path)?.handle?.view;
+    return view && caretPosition(view);
+  }
+
+  /** Gives the keyboard focus to the editor the reviewer was in last, else to file `path`'s, while one is mounted. */
+  focusEditor(path: string) {
+    const last = this.lastEditor;
+    const view =
+      last && last.section.handle === last.handle
+        ? last.side === "target"
+          ? last.handle.view
+          : last.handle.views[0]
+        : this.sections.find((s) => s.file.path === path)?.handle?.view;
+    view?.focus();
   }
 
   /** The target line of the first file's caret, focused or not; none while its editor is not mounted. */

@@ -2,7 +2,7 @@
   // The Structure tool window: every symbol of the file the active tab shows, the changed ones
   // marked as in the Changes tree. A click selects a row (and puts its symbol on show in the Symbol
   // tool), Enter, F4 and a double click jump to it; typing speed-searches.
-  import { onDestroy, tick, untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import type { SymbolInfo } from "../../generated/SymbolInfo";
   import { arrowKey } from "../../lib/foldKeys";
   import { match } from "../../lib/speedSearch";
@@ -21,10 +21,13 @@
 
   let {
     onjump,
+    oneditor,
     onsettings,
   }: {
     /** Shows the symbol in the file's tab, at the base side's text for a removed one. */
     onjump: (symbol: SymbolInfo, removed: boolean) => void;
+    /** Gives the keyboard focus back to the editor. */
+    oneditor: () => void;
     /** Opens Settings at the language servers. */
     onsettings: () => void;
   } = $props();
@@ -65,7 +68,7 @@
     });
   });
 
-  // The selection moved (the cursor of an editor): its row comes into view.
+  // The selection moved (a reveal): its row comes into view.
   $effect(() => {
     const id = structure.selected;
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the rows a dependency
@@ -86,7 +89,6 @@
     reveal: (i) => void list?.reveal(i),
   });
   $effect(() => () => nav.cancel());
-  onDestroy(() => (structure.focused = false));
 
   function click(e: MouseEvent, index: number, chevron: boolean) {
     const row = rows.at(index);
@@ -165,6 +167,11 @@
       take();
       return;
     }
+    if (e.key === "Escape" && !search.active && plain(e)) {
+      take();
+      oneditor();
+      return;
+    }
     if (search.type(e)) {
       if (search.active) aim();
       else cursor = -1;
@@ -174,7 +181,7 @@
   }
 
   function focusin() {
-    structure.focused = focused = true;
+    focused = true;
     if (cursor < 0) {
       const id = structure.selected;
       cursor = rows.findIndex((r) => keyOf(r.symbol.id) === id);
@@ -183,7 +190,7 @@
 
   function focusout(e: FocusEvent) {
     if (e.relatedTarget instanceof Node && root?.contains(e.relatedTarget)) return;
-    structure.focused = focused = false;
+    focused = false;
   }
 </script>
 
@@ -211,12 +218,11 @@
     />
     <IconButton
       icon="locate"
-      label="Follow the cursor"
-      active={structure.follow}
+      label="Reveal Symbol in Structure"
       disabled={!outline || !!outline.unavailable}
       size={22}
-      iconSize={14}
-      onclick={() => structure.setFollow(!structure.follow)}
+      iconSize={13}
+      onclick={() => structure.revealCaret()}
     />
     <IconButton
       icon={allShut ? "expandAll" : "collapseAll"}

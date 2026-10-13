@@ -1,7 +1,7 @@
 <script lang="ts">
   // The structure of the active file in a popup over the editor: the same list as the window, with
   // a filter field on top. A click or Enter jumps to the symbol and closes it; Escape closes it.
-  import { onDestroy, onMount, tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import type { SymbolInfo } from "../../generated/SymbolInfo";
   import { LIST } from "../../lib/listKeys";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -15,9 +15,15 @@
 
   let {
     onjump,
+    oneditor,
+    onservers,
   }: {
     /** Shows the symbol in the file's tab, at the base side's text for a removed one. */
     onjump: (symbol: SymbolInfo, removed: boolean) => void;
+    /** Gives the keyboard focus back to the editor. */
+    oneditor: () => void;
+    /** Opens Settings at the language servers. */
+    onservers: () => void;
   } = $props();
 
   /** How far the Page keys move. */
@@ -28,8 +34,6 @@
   let root = $state<HTMLElement>();
   let input = $state<HTMLInputElement>();
   let list = $state<VirtualRows>();
-  let jumped = false;
-  let before: Element | null = null;
 
   const target = $derived(structure.target);
   const outline = $derived(structure.load.state === "done" ? structure.load.outline : undefined);
@@ -56,14 +60,7 @@
 
   const selected = (r: StructureRow) => keyOf(r.symbol.id) === structure.selected;
 
-  onMount(() => {
-    before = document.activeElement;
-    input?.focus();
-  });
-  // A popup closed without a jump gives the focus back to the editor it came from.
-  onDestroy(() => {
-    if (!jumped && before instanceof HTMLElement && before.isConnected) before.focus({ preventScroll: true });
-  });
+  onMount(() => input?.focus());
 
   function close() {
     structure.popup = false;
@@ -71,9 +68,13 @@
 
   function jump(row: StructureRow | undefined) {
     if (!row) return;
-    jumped = true;
     close();
     onjump(row.symbol, row.change === "removed");
+  }
+
+  function servers() {
+    close();
+    onservers();
   }
 
   async function move(to: number) {
@@ -98,6 +99,7 @@
       case "Escape":
         take();
         close();
+        oneditor();
         break;
       case "ArrowDown":
         take();
@@ -179,7 +181,7 @@
         onhover={hover}
       />
     {:else}
-      <StructureNotice load={structure.load} file={fileName} matches={rows.length} />
+      <StructureNotice load={structure.load} file={fileName} matches={rows.length} onsettings={servers} />
     {/if}
   </div>
   <div class="foot">

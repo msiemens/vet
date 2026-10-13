@@ -1,12 +1,10 @@
 // The Structure tool's state: the outline of the file the active tab shows, the viewer's choices
-// (sort, changed only and whether to follow the cursor, which are remembered) and the symbol
-// selected in it. The backend derives the outline (SPEC §7.3, I5); this loads and holds it. The
+// (sort and changed only, which are remembered) and the symbol selected in it. The backend derives the outline (SPEC §7.3, I5); this loads and holds it. The
 // outline belongs to a tab: switching tabs starts it over, with every holder open.
 
 import { untrack } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 import type { FileOutline } from "../generated/FileOutline";
-import type { Side } from "../generated/Side";
 import { isAbort } from "../lib/abort";
 import { errorText } from "../lib/errorText";
 import { readStored, writeStored } from "../lib/storage";
@@ -33,9 +31,16 @@ export interface StructureTarget {
   shown: Shown;
   /** The Symbol panel works for what the tab shows, so a symbol selected here is put on show there. */
   panel: boolean;
+  /** Where the caret of the tab's editor for the file is; none while no editor is mounted. */
+  caret: () => Place | undefined;
 }
 
-const PREFS = { sort: "vet.structure.sort", changedOnly: "vet.structure.changedOnly", follow: "vet.structure.follow" };
+interface Place {
+  line: number;
+  col: number;
+}
+
+const PREFS = { sort: "vet.structure.sort", changedOnly: "vet.structure.changedOnly" };
 
 function flag(key: string, fallback: boolean): boolean {
   const stored = readStored(key);
@@ -46,8 +51,6 @@ class StructureState {
   /** The symbols under each holder alphabetically. */
   sort = $state(flag(PREFS.sort, false));
   changedOnly = $state(flag(PREFS.changedOnly, false));
-  /** The selection moves with the cursor of the editor. */
-  follow = $state(flag(PREFS.follow, true));
   target = $state.raw<StructureTarget>();
   load = $state.raw<OutlineLoad>({ state: "loading" });
   /** The keys of the rows of holders that are shut. */
@@ -56,8 +59,6 @@ class StructureState {
   selected = $state<string>();
   /** The popup over the editor is open. */
   popup = $state(false);
-  /** The keyboard focus is in the window: the selection stays where the viewer put it. */
-  focused = false;
 
   private asking?: AbortController;
   /** The tab and file the outline held is of. */
@@ -69,14 +70,6 @@ class StructureState {
         const { backend } = session;
         const target = this.target;
         untrack(() => this.fetch(backend, target));
-      });
-      // The symbol on show in the Symbol panel is where the cursor is, or what was last chosen.
-      $effect(() => {
-        const shown = symbols.selected;
-        const on = this.follow && this.target?.panel;
-        // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the outline a dependency
-        this.load;
-        if (on) untrack(() => this.moveTo(shown && keyOf(shown.symbol.id)));
       });
     });
     session.onResync((backend) => {
@@ -135,21 +128,17 @@ class StructureState {
     );
   }
 
-  /** The cursor of the editor of `tab` is at a position of `side`'s text of `path`. */
-  cursor(tab: TabId, side: Side, path: string, line: number, col: number) {
+  /**
+   * Selects the symbol the caret of the tab's editor is in, once, and opens the holders around it;
+   * with the caret in no symbol the selection is cleared.
+   */
+  revealCaret() {
     const { target, load } = this;
-    // Where the Symbol panel works it finds the symbol, for either side; elsewhere only the target's text is known.
-    if (!this.follow || this.focused || !target || target.panel || load.state !== "done") return;
-    if (target.tab !== tab && target.path !== path) return;
-    if (side === "target") this.moveTo(enclosingId(load.outline.symbols, { line, col }));
-  }
-
-  /** Selects the symbol `id` and opens the holders around it; none clears the selection. */
-  private moveTo(id: string | undefined) {
-    if (this.focused) return;
+    const place = target?.caret();
+    if (!place || load.state !== "done") return;
+    const id = enclosingId(load.outline.symbols, place);
     this.selected = id;
-    if (id === undefined || this.load.state !== "done") return;
-    for (const key of holdersOf(this.load.outline.symbols, id)) this.closed.delete(key);
+    if (id !== undefined) for (const key of holdersOf(load.outline.symbols, id)) this.closed.delete(key);
   }
 
   /** The viewer chose a row: it is selected, and put on show in the Symbol panel where that works. */
@@ -170,11 +159,6 @@ class StructureState {
   setChangedOnly(on: boolean) {
     this.changedOnly = on;
     writeStored(PREFS.changedOnly, on ? "1" : "0");
-  }
-
-  setFollow(on: boolean) {
-    this.follow = on;
-    writeStored(PREFS.follow, on ? "1" : "0");
   }
 }
 

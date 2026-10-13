@@ -221,6 +221,9 @@ const at = (view: EditorView, pos: number): TextPosition => {
   return { line, col: pos - lineStart(doc, line) };
 };
 
+/** Where the editor's caret is. */
+export const caretPosition = (view: EditorView): TextPosition => at(view, view.state.selection.main.head);
+
 /**
  * The word of the document under the pointer, if it is on text: a hover over a block widget (a
  * deleted chunk, a thread card), the line numbers or blank space is none.

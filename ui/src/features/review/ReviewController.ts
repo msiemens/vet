@@ -235,7 +235,6 @@ export class ReviewController {
       diagnostics: (revision, path) =>
         this.analysable(id, "target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
       cursor: (revision, side, path, line, col) => {
-        structure.cursor(id, side, path, line, col);
         if (this.analysable(id, side)) symbols.follow(revision, side, path, line, col);
       },
     };
@@ -328,7 +327,17 @@ export class ReviewController {
     // The Symbol panel works on the changeset's snapshots, which no commit on screen has.
     const panel =
       shown.view.type === "changeset" && this.changeset.shownCommit === undefined && this.analysable(id, "target");
-    return { tab: id, path, commit: commitOf(id), shown, panel };
+    const caret = () =>
+      this.tabs.modes.get(id) === "file" ? this.texts.get(id)?.caret() : this.views.get(id)?.caretIn(path);
+    return { tab: id, path, commit: commitOf(id), shown, panel, caret };
+  }
+
+  /** Gives the keyboard focus back to the editor of the active tab, where the Structure window or popup took it from. */
+  focusEditor() {
+    const id = this.tabs.active;
+    const path = pathOf(id) ?? (id === CHANGES ? this.tabs.changesFile : undefined);
+    if (this.tabs.modes.get(id) === "file") this.texts.get(id)?.focusEditor();
+    else if (path !== undefined) this.views.get(id)?.focusEditor(path);
   }
 
   /** Shows a symbol of the Structure list where it is declared, in the file's tab (the base side's text for a removed one). */
