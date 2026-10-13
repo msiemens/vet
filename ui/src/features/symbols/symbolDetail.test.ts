@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeFate, placeShort } from "./symbolDetail.ts";
+import { containerOf, describeFate, placeShort } from "./symbolDetail.ts";
 
 void test("fates read as words, the broken one as the bad tone", () => {
   assert.equal(describeFate({ type: "likelyBroken" }).tone, "bad");
@@ -10,6 +10,11 @@ void test("fates read as words, the broken one as the bad tone", () => {
   });
   assert.deepEqual([moved.label, moved.detail], ["binds elsewhere now", "u.rs:10"]);
   assert.equal(describeFate({ type: "unknown", reason: "no server" }).detail, "no server");
+});
+
+void test("a symbol's container is the names above it, none at the top level", () => {
+  assert.equal(containerOf({ path: "a.rs", name: ["Policy", "Backoff", "next"] }), "Policy::Backoff");
+  assert.equal(containerOf({ path: "a.rs", name: ["run"] }), "");
 });
 
 void test("a place with little room names the file and the 1-based line", () => {
