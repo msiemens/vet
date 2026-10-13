@@ -9,9 +9,11 @@
   import { segments, trimmed } from "../../lib/foundText";
   import { basename, dirname } from "../../lib/paths";
   import { NO_HIGHLIGHTS } from "../../lib/highlights";
+  import { SEARCH_OPTION_TOGGLES } from "../../lib/search/optionToggles";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
+  import FilterChip from "../../lib/ui/FilterChip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
@@ -20,6 +22,7 @@
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import PopupShell from "../../lib/ui/PopupShell.svelte";
+  import SearchOptionToggles from "../../lib/ui/SearchOptionToggles.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import type { Backend, SearchQuery, SearchResults } from "../../state/backend";
@@ -177,12 +180,6 @@
     })),
   );
 
-  const toggles = [
-    { key: "matchCase", label: "Aa", name: "Match case", code: "KeyC", id: "find.matchCase" },
-    { key: "wholeWord", label: "ab", name: "Whole word", code: "KeyW", id: "find.wholeWord" },
-    { key: "regex", label: ".*", name: "Regular expression", code: "KeyR", id: "find.regex" },
-  ] as const;
-
   const scopeItems = $derived.by((): MenuItem[] => {
     const groups: [ScopeChoice["group"], string][] = [
       ["view", "The view on show"],
@@ -300,7 +297,7 @@
     const target = e.target as HTMLElement;
     if (e.altKey && !e.ctrlKey && e.metaKey === isMac && !e.shiftKey) {
       // Option types a letter, so the toggles are read by the key's place.
-      const toggle = toggles.find((t) => t.code === e.code);
+      const toggle = SEARCH_OPTION_TOGGLES.find((t) => t.code === e.code);
       if (toggle) {
         e.preventDefault();
         find[toggle.key] = !find[toggle.key];
@@ -385,20 +382,14 @@
 {/snippet}
 
 {#snippet trailing()}
-  <span class="toggles">
-    {#each toggles as t (t.key)}
-      <button
-        class="flat toggle"
-        class:word={t.key === "wholeWord"}
-        type="button"
-        aria-pressed={find[t.key]}
-        title={t.key === "regex"
-          ? `${commands.tooltip(t.id, t.name)}. Rust syntax here; the find bar uses JavaScript's`
-          : commands.tooltip(t.id, t.name)}
-        onclick={() => (find[t.key] = !find[t.key])}>{t.label}</button
-      >
-    {/each}
-  </span>
+  <SearchOptionToggles
+    values={find}
+    title={(t) =>
+      t.key === "regex"
+        ? `${commands.tooltip(t.id, t.name)}. Rust syntax here; the find bar uses JavaScript's`
+        : commands.tooltip(t.id, t.name)}
+    onchange={(key) => (find[key] = !find[key])}
+  />
 {/snippet}
 
 <svelte:window onkeydowncapture={escapeKey} />
@@ -427,19 +418,15 @@
         onchange={(s: SearchSide) => void (find.side = s)}
         options={sideOptions}
       />
-      <button
-        class="ctl chip"
-        type="button"
-        aria-pressed={find.onlyChanges}
+      <FilterChip
+        on={find.onlyChanges}
         title="Only lines the change added or removed"
-        onclick={() => (find.onlyChanges = !find.onlyChanges)}>Only changes</button
+        onclick={() => (find.onlyChanges = !find.onlyChanges)}>Only changes</FilterChip
       >
-      <button
-        class="ctl chip"
-        type="button"
-        aria-pressed={find.notSeen}
+      <FilterChip
+        on={find.notSeen}
         title="Only changed lines in hunks you have not marked seen"
-        onclick={() => (find.notSeen = !find.notSeen)}>Not seen</button
+        onclick={() => (find.notSeen = !find.notSeen)}>Not seen</FilterChip
       >
       <OpenInFindButton
         keys="{isMac ? '⌘' : 'Ctrl+'}↵"
@@ -582,21 +569,6 @@
     flex-direction: column;
     min-height: 0;
   }
-  .toggles {
-    display: inline-flex;
-    gap: 1px;
-  }
-  .toggle {
-    width: 24px;
-    height: 22px;
-    border-radius: 4px;
-    color: var(--text-2);
-    font: 600 11px var(--font-mono);
-  }
-  .toggle.word {
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
   .filters {
     display: flex;
     align-items: center;
@@ -612,12 +584,6 @@
   }
   .grow {
     flex: 1;
-  }
-  .chip {
-    height: 22px;
-    padding: 0 9px;
-    border-radius: 11px;
-    font-size: 11.5px;
   }
   .results {
     flex: 1;

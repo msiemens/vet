@@ -1,6 +1,9 @@
 <script lang="ts">
+  import { SEARCH_OPTION_TOGGLES } from "../../lib/search/optionToggles";
+  import FilterChip from "../../lib/ui/FilterChip.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import SearchOptionToggles from "../../lib/ui/SearchOptionToggles.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
   import { commands } from "../../state/commands";
@@ -76,13 +79,6 @@
     })),
   );
 
-  // Option types letters on macOS, so the toggles are Command and Option there.
-  const toggles = [
-    { key: "matchCase", label: "Aa", name: "Match case", code: "KeyC", id: "find.matchCase" },
-    { key: "wholeWord", label: "ab", name: "Whole word", code: "KeyW", id: "find.wholeWord" },
-    { key: "regex", label: ".*", name: "Regular expression", code: "KeyR", id: "find.regex" },
-  ] as const;
-
   /** Escape closes the bar from any of its controls. */
   function escape(e: KeyboardEvent) {
     if (e.key !== "Escape") return;
@@ -96,7 +92,7 @@
       onstep(e.shiftKey ? -1 : 1);
     } else if (e.altKey && !e.ctrlKey && !e.shiftKey && e.metaKey === isMac) {
       // Option types a letter in a field, so the toggles are read by the key's place.
-      const toggle = toggles.find((t) => t.code === e.code);
+      const toggle = SEARCH_OPTION_TOGGLES.find((t) => t.code === e.code);
       if (!toggle) return;
       e.preventDefault();
       onoption({ [toggle.key]: !options[toggle.key] });
@@ -120,20 +116,14 @@
       oninput={(e) => onoption({ text: e.currentTarget.value })}
       onkeydown={keydown}
     />
-    <span class="toggles">
-      {#each toggles as t (t.key)}
-        <button
-          class="flat toggle"
-          class:word={t.key === "wholeWord"}
-          type="button"
-          aria-pressed={options[t.key]}
-          title={t.key === "regex"
-            ? `${commands.tooltip(t.id, t.name)}. JavaScript syntax here; Find in Files uses Rust's`
-            : commands.tooltip(t.id, t.name)}
-          onclick={() => onoption({ [t.key]: !options[t.key] })}>{t.label}</button
-        >
-      {/each}
-    </span>
+    <SearchOptionToggles
+      values={options}
+      title={(t) =>
+        t.key === "regex"
+          ? `${commands.tooltip(t.id, t.name)}. JavaScript syntax here; Find in Files uses Rust's`
+          : commands.tooltip(t.id, t.name)}
+      onchange={(key) => onoption({ [key]: !options[key] })}
+    />
   </div>
   <span class="count {count.tone}" title={countTitle}>{count.text}</span>
   {#if summary.pending}<Spinner label="Reading the texts of {summary.pending} more files" />{/if}
@@ -168,13 +158,11 @@
     onchange={(side) => onoption({ side })}
     options={sideOptions}
   />
-  <button
-    class="ctl chip"
-    type="button"
-    aria-pressed={options.onlyChanges}
+  <FilterChip
+    on={options.onlyChanges}
     disabled={unchanged}
     title="Only lines the change added or removed"
-    onclick={() => onoption({ onlyChanges: !options.onlyChanges })}>Only changes</button
+    onclick={() => onoption({ onlyChanges: !options.onlyChanges })}>Only changes</FilterChip
   >
   <span class="grow"></span>
   <IconButton
@@ -250,21 +238,6 @@
     color: var(--text-3);
     font-family: var(--font-ui);
   }
-  .toggles {
-    display: inline-flex;
-    gap: 1px;
-  }
-  .toggle {
-    width: 22px;
-    height: 20px;
-    border-radius: 4px;
-    color: var(--text-2);
-    font: 600 11px var(--font-mono);
-  }
-  .toggle.word {
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
   .count {
     min-width: 60px;
     font-variant-numeric: tabular-nums;
@@ -284,12 +257,6 @@
     height: 16px;
     background: var(--line);
     flex: none;
-  }
-  .chip {
-    height: 22px;
-    padding: 0 9px;
-    border-radius: 11px;
-    font-size: 11.5px;
   }
   .grow {
     flex: 1;

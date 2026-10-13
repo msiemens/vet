@@ -9,6 +9,7 @@
   import Banner from "../../lib/ui/Banner.svelte";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
+  import FilterChip from "../../lib/ui/FilterChip.svelte";
   import FilterField from "../../lib/ui/FilterField.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -336,16 +337,14 @@
         ]}
       />
       {#each LEVELS as level (level.id)}
-        <button
-          class="flat chip mono"
-          type="button"
+        <FilterChip
           title={level.title}
-          aria-pressed={filters.levels[level.id]}
+          on={filters.levels[level.id]}
           onclick={() => (filters.levels[level.id] = !filters.levels[level.id])}
         >
           <SeverityIcon severity={level.id} />
-          {levelCounts[level.id]}
-        </button>
+          <span class="mono">{levelCounts[level.id]}</span>
+        </FilterChip>
       {/each}
       <Segmented
         small
@@ -591,26 +590,6 @@
   }
   .grow {
     flex: 1;
-  }
-  .chip {
-    height: 22px;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0 7px;
-    border-radius: var(--radius);
-    font-size: var(--fs-mono-s);
-    color: var(--text-2);
-  }
-  .chip[aria-pressed="true"] {
-    background: var(--toggle);
-    color: var(--text);
-  }
-  .chip[aria-pressed="false"] {
-    opacity: 0.55;
-  }
-  .chip[aria-pressed="false"]:hover {
-    opacity: 0.9;
   }
   .bar {
     margin-top: 5px;

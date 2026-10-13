@@ -12,7 +12,7 @@
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FilterField from "../../lib/ui/FilterField.svelte";
   import Banner from "../../lib/ui/Banner.svelte";
-  import Chip from "../../lib/ui/Chip.svelte";
+  import FilterChip from "../../lib/ui/FilterChip.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import Spinner from "../../lib/ui/Spinner.svelte";
@@ -208,15 +208,15 @@
             />
           {/if}
         </span>
-        <Chip
+        <FilterChip
           title="Only places in the changeset"
-          active={set.filters.changeset}
-          onclick={() => (set.filters.changeset = !set.filters.changeset)}>Changeset</Chip
+          on={set.filters.changeset}
+          onclick={() => (set.filters.changeset = !set.filters.changeset)}>Changeset</FilterChip
         >
-        <Chip
+        <FilterChip
           title="Only places in hunks not seen"
-          active={set.filters.notSeen}
-          onclick={() => (set.filters.notSeen = !set.filters.notSeen)}>Not seen</Chip
+          on={set.filters.notSeen}
+          onclick={() => (set.filters.notSeen = !set.filters.notSeen)}>Not seen</FilterChip
         >
         <span class="grow"></span>
         <span

@@ -11,6 +11,7 @@
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
+  import FilterChip from "../../lib/ui/FilterChip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import Kbd from "../../lib/ui/Kbd.svelte";
@@ -485,11 +486,9 @@
         </button>
       {/each}
       <span class="grow"></span>
-      <button
-        class="flat tog"
-        type="button"
-        tabindex="-1"
-        aria-pressed={palette.unchanged}
+      <FilterChip
+        focusable={false}
+        on={palette.unchanged}
         disabled={!TOGGLES.includes(palette.tab)}
         title={TOGGLES.includes(palette.tab)
           ? "Also search the files the changeset does not change"
@@ -497,12 +496,8 @@
         onclick={() => {
           palette.setUnchanged(!palette.unchanged);
           input?.focus();
-        }}
+        }}>Unchanged files</FilterChip
       >
-        <span class="cb"
-          >{#if palette.unchanged}<Icon name="check" size={9} stroke={3.2} />{/if}</span
-        >Unchanged files
-      </button>
     </div>
   {/snippet}
   {#snippet trailing()}
@@ -611,36 +606,6 @@
   }
   .tab[aria-selected="true"] {
     border-bottom-color: var(--accent);
-  }
-  .tog {
-    align-self: center;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 22px;
-    padding: 0 8px;
-    border-radius: var(--radius);
-    font-size: var(--fs-ctl);
-    color: var(--text-2);
-  }
-  .tog:disabled {
-    opacity: 0.5;
-  }
-  .tog .cb {
-    width: 12px;
-    height: 12px;
-    box-sizing: border-box;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    background: var(--bg-control);
-  }
-  .tog[aria-pressed="true"] .cb {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: var(--bg-editor);
   }
   .wait {
     font-weight: 400;
