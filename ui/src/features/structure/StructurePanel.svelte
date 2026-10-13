@@ -288,7 +288,6 @@
   .commit {
     flex: none;
     display: inline-flex;
-    color: var(--note);
   }
   .path {
     min-width: 0;

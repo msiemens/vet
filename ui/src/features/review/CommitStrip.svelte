@@ -39,7 +39,6 @@
   }
   .glyph {
     display: inline-flex;
-    color: var(--accent);
   }
   .lead {
     color: var(--text-2);

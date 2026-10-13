@@ -507,7 +507,7 @@
   {#snippet trailing()}
     {#if pinned}
       <span class="at-chip" title="Files open in a tab pinned to this commit"
-        ><Icon name="gitCommit" size={11} stroke={1.8} />at {pinned}</span
+        ><Icon name="commit" size={11} stroke={1.8} />at {pinned}</span
       >
     {/if}
   {/snippet}
@@ -577,8 +577,7 @@
       <span>{hint}</span>
     {:else}
       <span class="where">
-        {#if pinned}<Icon name="gitCommit" size={11} stroke={1.8} />Files open at {pinned}{:else}Files open on All
-          changes{/if}
+        {#if pinned}<Icon name="commit" size={11} stroke={1.8} />Files open at {pinned}{:else}Files open on All changes{/if}
       </span>
     {/if}
   {/snippet}

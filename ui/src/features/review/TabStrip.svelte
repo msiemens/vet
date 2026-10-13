@@ -115,7 +115,6 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    color: var(--accent);
   }
   .at .mono {
     color: var(--text-2);

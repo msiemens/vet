@@ -6,7 +6,7 @@
   const ICONS: Record<string, IconName> = {
     changes: "review",
     all: "tree",
-    commits: "gitCommit",
+    commits: "commit",
     comments: "comments",
     timeline: "timeline",
     problems: "problems",
