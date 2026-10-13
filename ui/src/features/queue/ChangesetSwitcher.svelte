@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { untrack } from "svelte";
   import { readStored, writeStored } from "../../lib/storage";
   import Chip from "../../lib/ui/Chip.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
-  import Popover from "../../lib/ui/Popover.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
+  import SwitcherPopover from "../../lib/ui/SwitcherPopover.svelte";
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
   import { queue } from "../../state/queue.svelte";
@@ -43,8 +43,6 @@
 
   let query = $state("");
   let filter = $state(parseTab(readStored(FILTER_KEY)));
-  let cursor = $state(0);
-  let list = $state<HTMLElement>();
 
   const rows = $derived(queueRows(queue.local, queue.pullRequests));
   const shown = $derived(filterRows(rows, filter, query));
@@ -54,180 +52,79 @@
   // The changesets are listed afresh each time the popover opens.
   $effect(() => {
     if (!open) return;
-    [query, cursor] = ["", 0];
     untrack(() => void queue.loadAll());
     return queue.watch();
   });
 
-  const focus = (node: HTMLElement) => node.focus();
-
-  async function move(by: number) {
-    cursor = Math.max(0, Math.min(cursor + by, shown.length - 1));
-    await tick();
-    list?.querySelector(".cur")?.scrollIntoView({ block: "nearest" });
-  }
-
-  function pick(index: number) {
-    const row = shown.at(index);
-    if (!row) return;
-    open = false;
-    commands.run(`changeset.open:${keyId(row.key)}`);
-  }
-
-  function onkeydown(e: KeyboardEvent) {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      void move(e.key === "ArrowDown" ? 1 : -1);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      pick(Math.min(cursor, shown.length - 1));
-    }
-  }
+  /** An action under the rows that runs a command. */
+  const action = (id: string, text: string) => ({
+    label: text,
+    key: commands.binding(id)?.label,
+    title: commands.hint(id),
+    disabled: !commands.isEnabled(id),
+    run: () => commands.run(id),
+  });
 </script>
 
-<Popover bind:open>
+<SwitcherPopover
+  bind:open
+  bind:query
+  label="Search changesets"
+  items={shown}
+  key={(row) => keyId(row.key)}
+  isOn={(row) => keyId(row.key) === onViewId}
+  listLabel="Changesets"
+  empty={rows.length ? "No matching changesets" : "No changesets"}
+  actions={[action("view.queue", "Open queue"), action("changeset.openPullRequest", "Open pull request…")]}
+  onchoose={(row) => commands.run(`changeset.open:${keyId(row.key)}`)}
+>
   {#snippet trigger(toggle)}
     <Chip active={open} {title} onclick={toggle}>
       <Icon name="branch" />{#if label}<span class="current"><ChangesetName {label} /></span>{:else}…{/if}
       {#if draft}<span class="badge">Draft</span>{/if}
     </Chip>
   {/snippet}
-  <div class="switcher">
-    <div class="top">
-      <label class="search">
-        <Icon name="search" size={13} />
-        <input
-          class="field"
-          type="text"
-          use:focus
-          bind:value={query}
-          oninput={() => (cursor = 0)}
-          {onkeydown}
-          aria-label="Search changesets"
-          spellcheck="false"
-        />
-      </label>
-      <Segmented
-        small
-        label="Show"
-        options={SWITCHER_FILTERS}
-        value={filter}
-        onchange={(id) => {
-          filter = id;
-          writeStored(FILTER_KEY, id);
-          cursor = 0;
-        }}
-      />
-    </div>
-    <ul bind:this={list} aria-label="Changesets">
-      {#each shown as row, index (keyId(row.key))}
-        {@const id = keyId(row.key)}
-        {@const numbers = id === onViewId ? own : undefined}
-        {@const changes = changesOf(row, numbers?.layout.delta, queue.lines.get(id))}
-        {@const comments = commentCount(row)}
-        <li>
-          <button
-            class="flat pick row"
-            class:on={id === onViewId}
-            class:cur={index === Math.min(cursor, shown.length - 1)}
-            type="button"
-            tabindex="-1"
-            onclick={() => pick(index)}
-          >
-            <span class="line">
-              <span class="name"><ChangesetName label={labelOf(row)} /></span>
-              <ReviewedCell reviewed={reviewedOf(row.review, numbers?.facts.completion)} width={48} />
-            </span>
-            <span class="line sub">
-              <span class="detail">
-                {sourceText(row)}
-                <ChangesCell {changes} />
-                {#if comments > 0}<span class="threads"><Icon name="comments" size={11} />{comments}</span>{/if}
-              </span>
-              <span>{updatedText(row)}</span>
-            </span>
-          </button>
-        </li>
-      {:else}
-        <li class="empty">{rows.length ? "No matching changesets" : "No changesets"}</li>
-      {/each}
-    </ul>
-    <div class="foot">
-      <button
-        class="flat"
-        type="button"
-        title={commands.hint("view.queue")}
-        disabled={!commands.isEnabled("view.queue")}
-        onclick={() => {
-          open = false;
-          commands.run("view.queue");
-        }}>Open queue <span class="key">{commands.binding("view.queue")?.label}</span></button
-      >
-      <button
-        class="flat"
-        type="button"
-        title={commands.hint("changeset.openPullRequest")}
-        disabled={!commands.isEnabled("changeset.openPullRequest")}
-        onclick={() => {
-          open = false;
-          commands.run("changeset.openPullRequest");
-        }}>Open pull request… <span class="key">{commands.binding("changeset.openPullRequest")?.label}</span></button
-      >
-    </div>
-  </div>
-</Popover>
+  {#snippet filters(reset)}
+    <Segmented
+      small
+      label="Show"
+      options={SWITCHER_FILTERS}
+      value={filter}
+      onchange={(id) => {
+        filter = id;
+        writeStored(FILTER_KEY, id);
+        reset();
+      }}
+    />
+  {/snippet}
+  {#snippet row(changeset)}
+    {@const id = keyId(changeset.key)}
+    {@const numbers = id === onViewId ? own : undefined}
+    {@const changes = changesOf(changeset, numbers?.layout.delta, queue.lines.get(id))}
+    {@const comments = commentCount(changeset)}
+    <span class="row">
+      <span class="line">
+        <span class="name"><ChangesetName label={labelOf(changeset)} /></span>
+        <ReviewedCell reviewed={reviewedOf(changeset.review, numbers?.facts.completion)} width={48} />
+      </span>
+      <span class="line sub">
+        <span class="detail">
+          {sourceText(changeset)}
+          <ChangesCell {changes} />
+          {#if comments > 0}<span class="threads"><Icon name="comments" size={11} />{comments}</span>{/if}
+        </span>
+        <span>{updatedText(changeset)}</span>
+      </span>
+    </span>
+  {/snippet}
+</SwitcherPopover>
 
 <style>
-  .switcher {
-    width: var(--w-switcher);
-    display: flex;
-    flex-direction: column;
-  }
-  .top {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px;
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .search {
-    position: relative;
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    color: var(--text-3);
-  }
-  .search :global(svg) {
-    position: absolute;
-    left: 8px;
-    pointer-events: none;
-  }
-  .search input {
-    flex: 1;
-    min-width: 0;
-    height: 22px;
-    padding-left: 26px;
-  }
-  ul {
-    list-style: none;
-    margin: 0;
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    max-height: min(60vh, 420px);
-    overflow: hidden auto;
-  }
   .row {
     display: flex;
     flex-direction: column;
     gap: 1px;
-    width: 100%;
     padding: 4px 8px;
-    box-sizing: border-box;
-    border-radius: var(--radius);
-    text-align: left;
   }
   .line {
     display: flex;
@@ -257,36 +154,10 @@
     gap: 2px;
     color: var(--accent);
   }
-  .empty {
-    padding: 8px;
-    color: var(--text-3);
-    font-size: var(--fs-ctl);
-  }
-  .foot {
-    display: flex;
-    padding: 4px;
-    border-top: 1px solid var(--line-soft);
-  }
-  .foot button {
-    flex: 1;
-    box-sizing: border-box;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    height: var(--h-row);
-    padding: 0 8px;
-    border-radius: var(--radius);
-    font-size: var(--fs-ctl);
-  }
   .current {
     display: block;
     max-width: 320px;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .key {
-    color: var(--text-3);
-    font-size: var(--fs-mono-s);
   }
 </style>

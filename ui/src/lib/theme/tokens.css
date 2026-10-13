@@ -151,8 +151,9 @@
   /* The queue: a row of its table, and the panel beside the table. */
   --h-queue-row: 29px;
   --w-queue-panel: 460px;
-  /* The popovers of the project and the changeset switcher. */
+  /* The popovers of the project and the changeset switcher, and a recent project's row in the first. */
   --w-switcher: 440px;
+  --h-switcher-row: 44px;
   /* Search Everywhere: the popup, a result and the line of keys under the list. */
   --w-palette: 680px;
   --h-palette: 520px;

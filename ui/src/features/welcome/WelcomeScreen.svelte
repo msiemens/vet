@@ -1,18 +1,18 @@
 <script lang="ts">
-  import { type Snippet, tick } from "svelte";
+  import type { Snippet } from "svelte";
   import type { RecentProject } from "../../generated/RecentProject";
   import AppLogo from "../../lib/ui/AppLogo.svelte";
   import Banner from "../../lib/ui/Banner.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
-  import Marked from "../../lib/ui/Marked.svelte";
-  import PathText from "../../lib/ui/PathText.svelte";
+  import { ListNav, revealCurrent } from "../../lib/ui/listNav";
+  import PickList from "../../lib/ui/PickList.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
+  import SearchField from "../../lib/ui/SearchField.svelte";
   import { shortTime } from "../../lib/shortTime";
   import { commands } from "../../state/commands";
-  import { contextMenus } from "../../state/contextMenu.svelte";
-  import { recentMenu } from "./recentCommands";
-  import ProjectAvatar from "./ProjectAvatar.svelte";
-  import { searchRecent } from "./recentList";
+  import { openRecent, openRecentMenu } from "./openRecent";
+  import RecentRow from "./RecentRow.svelte";
+  import { type RecentMatch, searchRecent } from "./recentList";
 
   // It draws its own window-controls area, and its buttons run the window's commands.
   let {
@@ -35,45 +35,29 @@
     onforget: (path: string) => void;
   } = $props();
 
-  const open = (path: string) => commands.run(`file.openRecent:${path}`);
-
   let query = $state("");
-  let selected = $state(0);
-  let list: HTMLElement | undefined;
+  let cursor = $state(0);
+  let list = $state<HTMLElement>();
 
   const found = $derived(searchRecent(recent, query));
   const typed = $derived(query.trim());
   // The highlighted row stays within the list as it narrows.
-  const current = $derived(Math.min(selected, found.length - 1));
+  const current = $derived(Math.min(cursor, found.length - 1));
 
-  async function move(by: number) {
-    selected = Math.max(0, Math.min(current + by, found.length - 1));
-    await tick();
-    list?.querySelector(".on")?.scrollIntoView({ block: "nearest" });
-  }
-
-  /** A right click selects the row, and opens its menu. */
-  function openMenu(e: MouseEvent, path: string, index: number) {
-    e.preventDefault();
-    selected = index;
-    void contextMenus.open(recentMenu, e.clientX, e.clientY, { recentProject: { path } });
-  }
+  const nav = new ListNav<RecentMatch>({
+    items: () => found,
+    single: (match) => openRecent(match.project.path),
+    highlight: { get: () => current, set: (i) => (cursor = i) },
+    reveal: () => void revealCurrent(list),
+    field: true,
+  });
 
   function onkeydown(e: KeyboardEvent) {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (e.key === "Enter" && !found.length && !canPick && typed) {
       e.preventDefault();
-      void move(e.key === "ArrowDown" ? 1 : -1);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (found.length) open(found[current].project.path);
-      else if (!canPick && typed) open(typed);
-    } else if (e.key === "Escape") {
-      query = "";
-    }
-  }
-
-  function focus(node: HTMLElement) {
-    node.focus();
+      openRecent(typed);
+    } else if (nav.keydown(e)) e.preventDefault();
+    else if (e.key === "Escape") query = "";
   }
 </script>
 
@@ -116,20 +100,14 @@
 
   <main>
     <div class="bar" data-tauri-drag-region>
-      <label class="search">
-        <Icon name="search" size={15} />
-        <input
-          class="field"
-          type="text"
-          use:focus
-          bind:value={query}
-          oninput={() => (selected = 0)}
-          {onkeydown}
-          placeholder={canPick ? "Search projects" : "Search projects or enter a path"}
-          aria-label="Search projects"
-          spellcheck="false"
-        />
-      </label>
+      <SearchField
+        autofocus
+        bind:value={query}
+        oninput={() => (cursor = 0)}
+        {onkeydown}
+        placeholder={canPick ? "Search projects" : "Search projects or enter a path"}
+        label="Search projects"
+      />
       {#if canPick}
         <button
           class="ctl"
@@ -153,31 +131,28 @@
     {/if}
 
     <ScrollArea>
-      <ul class="projects" bind:this={list} role="listbox" aria-label="Recent projects">
-        {#each found as { project, name, nameRanges, pathRanges }, i (project.path)}
-          <li role="option" aria-selected={i === current}>
-            <button
-              class="flat pick row"
-              class:on={i === current}
-              type="button"
-              tabindex="-1"
-              title={project.path}
-              onclick={() => open(project.path)}
-              oncontextmenu={(e) => openMenu(e, project.path, i)}
-            >
-              <ProjectAvatar path={project.path} />
-              <span class="text">
-                <span class="name"><Marked text={name} ranges={nameRanges} /></span>
-                <span class="mono path"><PathText path={project.path} ranges={pathRanges} /></span>
-              </span>
-              <span class="when">{shortTime(project.openedAt)}</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
-      {#if !found.length}
-        <p class="empty">{recent.length ? "No matching projects" : "No recent projects"}</p>
-      {/if}
+      <div class="projects">
+        <PickList
+          bind:list
+          items={found}
+          key={(match: RecentMatch) => match.project.path}
+          cursor={current}
+          label="Recent projects"
+          empty={recent.length ? "No matching projects" : "No recent projects"}
+          --pick-empty-pad="12px 24px"
+          onpick={(_, index, e) => nav.click(e, index)}
+          onmenu={(match, index, e) => {
+            cursor = index;
+            openRecentMenu(e, match.project.path);
+          }}
+        >
+          {#snippet row(match)}
+            <RecentRow {match} roomy>
+              {#snippet trailing()}<span class="when">{shortTime(match.project.openedAt)}</span>{/snippet}
+            </RecentRow>
+          {/snippet}
+        </PickList>
+      </div>
     </ScrollArea>
   </main>
 </div>
@@ -271,65 +246,13 @@
     gap: 8px;
     padding: 8px calc(var(--tauri-plugin-decoration-right-clearance, 0px) + 12px) 8px 12px;
   }
-  .search {
-    flex: 1;
-    min-width: 0;
-    position: relative;
-    display: flex;
-    align-items: center;
-    color: var(--text-3);
-  }
-  .search :global(svg) {
-    position: absolute;
-    left: 9px;
-    pointer-events: none;
-  }
-  .search input {
-    flex: 1;
-    padding-left: 30px;
-  }
   /* The scroll bar's gutter is the margin on the right. */
   .projects {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
     padding: 0 0 0 12px;
-  }
-  .row {
-    width: 100%;
-    height: var(--h-welcome-row);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 0 12px;
-    border-radius: var(--radius-sheet);
-    text-align: left;
-  }
-  .text {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--fs);
-  }
-  .path {
-    display: flex;
-    font-size: var(--fs-mono-s);
   }
   .when {
     flex: none;
     font-size: var(--fs-ctl);
     color: var(--text-2);
-  }
-  .empty {
-    margin: 0;
-    padding: 12px 24px;
-    color: var(--text-3);
-    font-size: var(--fs-ctl);
   }
 </style>
