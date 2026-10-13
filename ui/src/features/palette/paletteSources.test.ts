@@ -121,6 +121,7 @@ void test("a language whose server failed is named by its server, with why and w
       answer("python", [], failure("serverMissing", "not installed")),
       answer("go", [], failure("analysisLimited")),
       answer("csharp", [], failure("serverFailed")),
+      answer("yaml", [], failure("notOffered")),
     ],
     servers,
   );
@@ -130,6 +131,7 @@ void test("a language whose server failed is named by its server, with why and w
       ["Pyright", "not installed", ["settings"]],
       ["gopls", "why", []],
       ["Roslyn", "why", ["restart", "settings"]],
+      ["yaml", "why", []],
     ],
   );
 });

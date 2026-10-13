@@ -2279,7 +2279,9 @@ mod tests {
                 );
             }
             assert!(pair.hover(Side::Target, &at()).await.is_ok());
-            let workspace = semantic.workspace_symbols(&served, "x").await;
+            let workspace = semantic
+                .workspace_symbols(&served, &[BackendId("rust".into())], "x")
+                .await;
             assert!(matches!(
                 workspace[0].1,
                 Err(SemanticError::NotOffered {

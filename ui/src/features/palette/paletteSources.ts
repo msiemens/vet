@@ -126,6 +126,7 @@ function actionsFor(kind: UnavailableKind): FailureAction[] {
       return ["settings"];
     case "analysisLimited":
     case "unsupported":
+    case "notOffered":
     case "snapshotUnavailable":
       return [];
   }
