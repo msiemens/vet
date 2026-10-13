@@ -57,6 +57,73 @@ void test("Space and Enter with nothing highlighted do nothing", () => {
   assert.deepEqual(log, []);
 });
 
+void test("the Page keys, Home and End move the highlight", () => {
+  const { nav, highlight } = list(Array.from({ length: 30 }, (_, i) => `i${i}`));
+  nav.keydown(key("PageDown"));
+  nav.keydown(key("PageDown"));
+  assert.equal(highlight(), 0 + 8);
+  nav.keydown(key("End"));
+  assert.equal(highlight(), 29);
+  nav.keydown(key("PageUp"));
+  assert.equal(highlight(), 21);
+  nav.keydown(key("Home"));
+  assert.equal(highlight(), 0);
+});
+
+void test("beside a text field Space and Home are left to the text", () => {
+  const log: string[] = [];
+  let highlight = 1;
+  const nav = new ListNav<string>({
+    items: () => ["a", "b", "c"],
+    single: (s) => log.push(`single ${s}`),
+    highlight: { get: () => highlight, set: (i) => (highlight = i) },
+    field: true,
+  });
+  assert.equal(nav.keydown(key(" ")), false);
+  assert.equal(nav.keydown(key("Home")), false);
+  assert.equal(nav.keydown(key("PageDown")), true);
+  assert.equal(highlight, 2);
+  assert.deepEqual(log, []);
+});
+
+void test("a list with one action does it at once on a click and on Enter, and once on a double click", () => {
+  const log: string[] = [];
+  let highlight = -1;
+  const nav = new ListNav<string>({
+    items: () => ["a", "b"],
+    single: (s) => log.push(s),
+    highlight: { get: () => highlight, set: (i) => (highlight = i) },
+  });
+  nav.click({ detail: 1 }, 1);
+  nav.click({ detail: 2 }, 1);
+  assert.deepEqual(log, ["b"]);
+  nav.keydown(key("Enter"));
+  assert.deepEqual(log, ["b", "b"]);
+});
+
+void test("only a pointer that moved takes the highlight", () => {
+  const { nav, highlight } = list();
+  nav.hover({ movementX: 0, movementY: 0 }, 2);
+  assert.equal(highlight(), -1);
+  nav.hover({ movementX: 0, movementY: 3 }, 2);
+  assert.equal(highlight(), 2);
+});
+
+void test("a list that takes the focus starts its highlight where it says, unless it has one", () => {
+  let highlight = -1;
+  const nav = new ListNav<string>({
+    items: () => ["a", "b", "c"],
+    single: () => undefined,
+    highlight: { get: () => highlight, set: (i) => (highlight = i) },
+    start: () => 1,
+  });
+  nav.focusin();
+  assert.equal(highlight, 1);
+  highlight = 2;
+  nav.focusin();
+  assert.equal(highlight, 2);
+});
+
 void test("a key with a modifier is not the list's", () => {
   const { nav, log, highlight } = list();
   assert.equal(nav.keydown(key("ArrowDown", { metaKey: true })), false);
