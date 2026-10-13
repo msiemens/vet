@@ -41,10 +41,15 @@ export interface TickSection extends MarkedSection {
   file: { path: string; hunks: readonly Hunk[]; targetLines: number };
 }
 
+/** The most ticks of one kind a find's scroll bar draws: matches that fall into the same share of the content are one tick. */
+export const TICK_ROWS = 1000;
+
 /**
- * The ticks of a find's matches in the scroll bar of a column of sections. A changed line is placed
- * by its hunk's row; an unchanged one by its share of the section, since the editor that would tell
- * is not always there.
+ * The ticks of a find's matches in the scroll bar of a column of sections `total` px tall. A changed
+ * line is placed by its hunk's row; an unchanged one by its share of the section, since the editor
+ * that would tell is not always there. Matches that lie within the same 1/`TICK_ROWS` of the content
+ * share a tick, so a find with a match on every line costs the bar as little as one with a few; the
+ * current match keeps a tick of its own.
  */
 export function findTicks(
   sections: readonly TickSection[],
@@ -52,8 +57,11 @@ export function findTicks(
   current: FindPos | undefined,
   mode: Mode,
   m: Pick<Metrics, "hunk" | "line" | "header" | "gap">,
+  total: number,
 ): ScrollMark[] {
   const ticks: ScrollMark[] = [];
+  const row = Math.max(total / TICK_ROWS, 1);
+  const drawn = new Set<number>();
   sections.forEach((s, section) => {
     for (const match of matches(section)) {
       const h = match.hunk >= 0 ? s.file.hunks[match.hunk] : undefined;
@@ -71,6 +79,11 @@ export function findTicks(
         top = s.top + s.hunkTops[match.hunk] + m.hunk + row * m.line;
       }
       const at = current?.section === section && current.order === match.order && current.from === match.from;
+      if (!at) {
+        const key = Math.floor(top / row);
+        if (drawn.has(key)) continue;
+        drawn.add(key);
+      }
       ticks.push({ top, height: 0, kind: at ? "findCurrent" : "find" });
     }
   });

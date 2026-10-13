@@ -177,6 +177,7 @@ export class ChangesetView {
           run.current,
           this.heights.mode,
           this.heights.m,
+          this.heights.total,
         );
         return { ...hunks, marks: [...hunks.marks, ...ticks] };
       },

@@ -32,27 +32,46 @@ const file = (path: string, ...lines: SearchLine[]): SearchFile => ({
   hits: lines.length,
 });
 
-void test("the scope menu lists the view, the versions, the commits and the repository", () => {
-  const choices = scopeChoices({
-    view: { type: "commit", index: 1 },
-    files: 1,
-    range: { from: 2, to: 3 },
-    commits: [
-      { shortId: "aaa", subject: "first" },
-      { shortId: "bbb", subject: "second" },
-    ],
-  });
+const SOURCES = {
+  files: 4,
+  range: { from: 2, to: 3 },
+  commits: [
+    { shortId: "aaa", subject: "first" },
+    { shortId: "bbb", subject: "second" },
+  ],
+};
+
+void test("every place has one choice that searches it, and the view on show is the one marked", () => {
+  for (const view of [
+    { type: "changeset" },
+    { type: "commit", index: 1 },
+    { type: "interdiff", from: 2, to: 3 },
+  ] as const) {
+    const choices = scopeChoices({ ...SOURCES, view });
+    assert.equal(new Set(choices.map((c) => c.id)).size, choices.length);
+    // The id of the view on show is the id of the choice that searches that view.
+    const onShow = choices.find((c) => c.id === viewScopeId(view));
+    assert.deepEqual(onShow?.scope, { type: "view", view });
+    assert.deepEqual(
+      choices.filter((c) => c.detail === "on show").map((c) => c.id),
+      view.type === "changeset" ? [] : [viewScopeId(view)],
+    );
+  }
+  const repository = scopeChoices({ ...SOURCES, view: { type: "changeset" } }).at(-1);
+  assert.deepEqual(repository?.scope, { type: "repository" });
+});
+
+void test("the versions are offered only when the review has some, and the commits in their order", () => {
+  const without = scopeChoices({ ...SOURCES, range: undefined, view: { type: "changeset" } });
   assert.deepEqual(
-    choices.map((c) => [c.id, c.label, c.detail]),
-    [
-      ["changes", "All changes", "1 changed file"],
-      ["versions:2:3", "Versions v2 → v3", "what changed between them"],
-      ["commit:0", "Commit aaa", "first"],
-      ["commit:1", "Commit bbb", "on show"],
-      ["repository", "Whole repository", "every file of the target, ignored ones apart"],
-    ],
+    without.map((c) => c.scope.type === "view" && c.scope.view.type),
+    ["changeset", "commit", "commit", false],
   );
-  assert.equal(viewScopeId({ type: "commit", index: 1 }), "commit:1");
+  const commits = without.filter((c) => c.group === "commit").map((c) => c.scope);
+  assert.deepEqual(commits, [
+    { type: "view", view: { type: "commit", index: 0 } },
+    { type: "view", view: { type: "commit", index: 1 } },
+  ]);
 });
 
 void test("a scope whose commit or versions left the changeset falls back to All changes", () => {
@@ -120,6 +139,21 @@ void test("a preview of the target alone has no removed lines and keeps its line
     rows.map((r) => r.newNo),
     [3, 4, 5],
   );
+});
+
+void test("a preview's line starts count a line break as the editor does, one unit", () => {
+  for (const eol of ["\r\n", "\r", "\n"]) {
+    const text = ["aa", "bbb", "c"].join(eol);
+    const rows = previewRows({ base: "", target: text, hunks: [], kind: "context", line: 2, span: 5, withBase: false });
+    assert.deepEqual(
+      rows.map((r) => [r.text, r.start]),
+      [
+        ["aa", 0],
+        ["bbb", 3],
+        ["c", 7],
+      ],
+    );
+  }
 });
 
 void test("a result that is not in the text has no preview", () => {

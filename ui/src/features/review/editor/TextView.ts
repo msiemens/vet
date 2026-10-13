@@ -44,7 +44,7 @@ import { hunkToolbar } from "./hunkToolbar";
 import type { Loaded } from "./mount";
 import { lineOf, lineStart } from "./positions";
 import type { RenderedText } from "./rendered";
-import { markKind } from "./scrollMarks";
+import { TICK_ROWS, markKind } from "./scrollMarks";
 import {
   type SemanticHooks,
   type TextPosition,
@@ -225,9 +225,16 @@ export class TextView {
     }
     const run = this.findRun;
     const current = run?.current;
+    const row = Math.max(view.contentHeight / TICK_ROWS, 1);
+    const ticked = new Set<number>();
     for (const m of run?.matchesOf(0) ?? []) {
       const block = view.lineBlockAt(lineStart(doc, m.line));
       const at = current?.order === m.order && current.from === m.from;
+      if (!at) {
+        const key = Math.floor(block.top / row);
+        if (ticked.has(key)) continue;
+        ticked.add(key);
+      }
       marks.push({ top: block.top, height: 0, kind: at ? "findCurrent" : "find" });
     }
     return { total: view.contentHeight, marks };
