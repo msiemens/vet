@@ -692,6 +692,7 @@
               onfile={(path) => void controller?.revealFileInChanges(path)}
               oneditor={() => controller?.focusEditor()}
               oninstall={() => showDialog("settings", "servers")}
+              onclose={() => (bottomTool = undefined)}
             />
           {/if}
         {/snippet}

@@ -6,6 +6,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import type { Unavailable } from "../../generated/Unavailable";
   import { limitedMessage } from "../chrome";
+  import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import { ListNav } from "../../lib/ui/listNav";
@@ -38,6 +39,7 @@
     onfile,
     oneditor,
     oninstall,
+    onclose,
   }: {
     /** The files with a tab open, and the file of the tab on screen. */
     openFiles: readonly string[];
@@ -50,6 +52,8 @@
     oneditor: () => void;
     /** Opens Settings at the language servers, to install the one a file lacks. */
     oninstall: () => void;
+    /** Hides the tool. */
+    onclose: () => void;
   } = $props();
 
   type Scope = "changed" | "open" | "file";
@@ -310,93 +314,95 @@
 </script>
 
 <section aria-label="Problems" bind:this={root} onfocusin={focusin} onfocusout={focusout}>
-  <div class="tool">
-    <Segmented
-      small
-      label="Scope"
-      value={scope}
-      onchange={(s) => {
-        scope = s;
-      }}
-      options={[
-        { id: "changed", label: "Changed files" },
-        { id: "open", label: "Open files" },
-        { id: "file", label: "This file" },
-      ]}
-    />
-    {#each LEVELS as level (level.id)}
-      <button
-        class="flat chip mono"
-        type="button"
-        title={level.title}
-        aria-pressed={filters.levels[level.id]}
-        onclick={() => (filters.levels[level.id] = !filters.levels[level.id])}
-      >
-        <span class="ico {level.id}"><Icon name={level.id} size={14} /></span>
-        {levelCounts[level.id]}
-      </button>
-    {/each}
-    <Segmented
-      small
-      label="Origin"
-      value={problems.origin}
-      onchange={(o) => {
-        problems.origin = o;
-      }}
-      options={[
-        {
-          id: "new",
-          label: "New",
-          disabled: !settled,
-          title: settled ? "Only problems this change introduced" : "Not known yet",
-        },
-        { id: "all", label: "All" },
-      ]}
-    />
-    <span class="grow"></span>
-    <label class="find">
-      <Icon name="search" size={13} />
-      <input
-        bind:this={field}
-        bind:value={filters.query}
-        type="text"
-        placeholder="Filter"
-        aria-label="Filter problems"
-        spellcheck="false"
-        {onkeydown}
+  <BottomToolHeader title="Problems" count={problems.summary?.badge ?? 0} {onclose}>
+    {#snippet controls()}
+      <Segmented
+        small
+        label="Scope"
+        value={scope}
+        onchange={(s) => {
+          scope = s;
+        }}
+        options={[
+          { id: "changed", label: "Changed files" },
+          { id: "open", label: "Open files" },
+          { id: "file", label: "This file" },
+        ]}
       />
-    </label>
-    <Popover align="right">
-      {#snippet trigger(toggle)}
+      {#each LEVELS as level (level.id)}
         <button
-          class="flat menu"
-          class:on={filters.unseenOnly || filters.changedOnly || grouping !== "origin"}
+          class="flat chip mono"
           type="button"
-          title="Group and filter"
-          aria-label="Group and filter"
-          onclick={toggle}><Icon name="filter" size={14} /></button
+          title={level.title}
+          aria-pressed={filters.levels[level.id]}
+          onclick={() => (filters.levels[level.id] = !filters.levels[level.id])}
         >
-      {/snippet}
-      <div class="menu-sheet">
-        <h5>Group by</h5>
-        {#each [{ id: "origin", label: "Origin, then file" }, { id: "file", label: "File" }, { id: "severity", label: "Severity" }] as g (g.id)}
-          <label class:off={g.id === "origin" && !settled}>
-            <input
-              type="radio"
-              name="problems-group"
-              checked={grouping === g.id}
-              disabled={g.id === "origin" && !settled}
-              onchange={() => (grouping = g.id as Grouping)}
-            />
-            {g.label}
-          </label>
-        {/each}
-        <h5>Show only</h5>
-        <label><input type="checkbox" bind:checked={filters.unseenOnly} /> Problems in hunks not seen</label>
-        <label><input type="checkbox" bind:checked={filters.changedOnly} /> Problems on changed lines</label>
-      </div>
-    </Popover>
-  </div>
+          <span class="ico {level.id}"><Icon name={level.id} size={14} /></span>
+          {levelCounts[level.id]}
+        </button>
+      {/each}
+      <Segmented
+        small
+        label="Origin"
+        value={problems.origin}
+        onchange={(o) => {
+          problems.origin = o;
+        }}
+        options={[
+          {
+            id: "new",
+            label: "New",
+            disabled: !settled,
+            title: settled ? "Only problems this change introduced" : "Not known yet",
+          },
+          { id: "all", label: "All" },
+        ]}
+      />
+      <span class="grow"></span>
+      <label class="find">
+        <Icon name="search" size={13} />
+        <input
+          bind:this={field}
+          bind:value={filters.query}
+          type="text"
+          placeholder="Filter"
+          aria-label="Filter problems"
+          spellcheck="false"
+          {onkeydown}
+        />
+      </label>
+      <Popover align="right">
+        {#snippet trigger(toggle)}
+          <button
+            class="flat menu"
+            class:on={filters.unseenOnly || filters.changedOnly || grouping !== "origin"}
+            type="button"
+            title="Group and filter"
+            aria-label="Group and filter"
+            onclick={toggle}><Icon name="filter" size={14} /></button
+          >
+        {/snippet}
+        <div class="menu-sheet">
+          <h5>Group by</h5>
+          {#each [{ id: "origin", label: "Origin, then file" }, { id: "file", label: "File" }, { id: "severity", label: "Severity" }] as g (g.id)}
+            <label class:off={g.id === "origin" && !settled}>
+              <input
+                type="radio"
+                name="problems-group"
+                checked={grouping === g.id}
+                disabled={g.id === "origin" && !settled}
+                onchange={() => (grouping = g.id as Grouping)}
+              />
+              {g.label}
+            </label>
+          {/each}
+          <h5>Show only</h5>
+          <label><input type="checkbox" bind:checked={filters.unseenOnly} /> Problems in hunks not seen</label>
+          <label><input type="checkbox" bind:checked={filters.changedOnly} /> Problems on changed lines</label>
+        </div>
+      </Popover>
+    {/snippet}
+  </BottomToolHeader>
 
   {#if indexing && serverOf}
     <div class="notice info">
@@ -619,17 +625,6 @@
     background: var(--bg-panel);
     outline: none;
   }
-  .tool {
-    flex: none;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px 10px;
-    padding: 4px 8px;
-    min-height: 32px;
-    box-sizing: border-box;
-    border-bottom: 1px solid var(--line-soft);
-  }
   .grow {
     flex: 1;
   }
@@ -668,6 +663,8 @@
   }
   .find {
     position: relative;
+    flex: 0 1 150px;
+    min-width: 80px;
     display: inline-flex;
     align-items: center;
     color: var(--text-3);
@@ -679,7 +676,8 @@
   }
   .find input {
     height: 22px;
-    width: 150px;
+    width: 100%;
+    min-width: 0;
     box-sizing: border-box;
     padding: 0 6px 0 24px;
     border: 1px solid var(--line);
