@@ -26,6 +26,7 @@ import type { RecentProject } from "./RecentProject";
 import type { RemovalImpact } from "./RemovalImpact";
 import type { ReviewSubmitted } from "./ReviewSubmitted";
 import type { ReviewUpdate } from "./ReviewUpdate";
+import type { SearchFile } from "./SearchFile";
 import type { ServerInfo } from "./ServerInfo";
 import type { Side } from "./Side";
 import type { SymbolAt } from "./SymbolAt";
@@ -66,4 +67,20 @@ targetHighlights: Array<number>, } | { "type": "review" } & ReviewUpdate | { "ty
 /**
  * How many of `diagnostics` to tell the viewer about: hints are not counted.
  */
-count: number, unavailable: Unavailable | null, } | { "type": "fileSymbols" } & FileSymbols | { "type": "fileOutline" } & FileOutline | { "type": "workspaceSymbols" } & WorkspaceSymbols | { "type": "symbolAt" } & SymbolAt | { "type": "signature", revision: number, signature: SymbolSignature | null, unavailable: Unavailable | null, } | { "type": "calls" } & Calls | { "type": "usages" } & Usages | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "reviewFinished", complete: boolean, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "files", revision: number, paths: Array<string>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "commentTarget", target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread | { "type": "pullRequestInfo" } & PullRequestInfo | { "type": "reviewSubmitted" } & ReviewSubmitted;
+count: number, unavailable: Unavailable | null, } | { "type": "fileSymbols" } & FileSymbols | { "type": "fileOutline" } & FileOutline | { "type": "workspaceSymbols" } & WorkspaceSymbols | { "type": "symbolAt" } & SymbolAt | { "type": "signature", revision: number, signature: SymbolSignature | null, unavailable: Unavailable | null, } | { "type": "calls" } & Calls | { "type": "usages" } & Usages | { "type": "removalImpact" } & RemovalImpact | { "type": "reachability" } & Reachability | { "type": "servers", servers: Array<ServerInfo>, } | { "type": "reviewFinished", complete: boolean, } | { "type": "directory", revision: number, entries: Array<DirEntry>, } | { "type": "files", revision: number, paths: Array<string>, } | { "type": "fileText", revision: number, content: TextContent, } | { "type": "searchResults", revision: number, 
+/**
+ * The files with matches, in path order.
+ */
+files: Array<SearchFile>, 
+/**
+ * The matches in `files`.
+ */
+hits: number, 
+/**
+ * The search stopped at the limit; more matches may follow.
+ */
+truncated: boolean, 
+/**
+ * How many files had text to look in.
+ */
+searched: number, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "commentTarget", target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread | { "type": "pullRequestInfo" } & PullRequestInfo | { "type": "reviewSubmitted" } & ReviewSubmitted;

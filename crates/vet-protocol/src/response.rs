@@ -7,8 +7,8 @@ use crate::{
     Account, BackendSettings, BaseDiff, BlobContent, Calls, ChangesetKey, ChangesetRow, CheckLog, CommitChecks,
     CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta, LocationRows, Locations,
     Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject,
-    RemovalImpact, ReviewSubmitted, ReviewUpdate, ServerInfo, Side, SymbolAt, SymbolSignature, Task, TextChange,
-    TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo, WorkspaceSymbols,
+    RemovalImpact, ReviewSubmitted, ReviewUpdate, SearchFile, ServerInfo, Side, SymbolAt, SymbolSignature, Task,
+    TextChange, TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo, WorkspaceSymbols,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -170,6 +170,18 @@ pub enum Response {
     FileText {
         revision: u32,
         content: TextContent,
+    },
+    /// The answer to `Search`, at `revision`.
+    SearchResults {
+        revision: u32,
+        /// The files with matches, in path order.
+        files: Vec<SearchFile>,
+        /// The matches in `files`.
+        hits: u32,
+        /// The search stopped at the limit; more matches may follow.
+        truncated: bool,
+        /// How many files had text to look in.
+        searched: u32,
     },
     /// The answer to `ItemBlob`.
     ItemBlob {

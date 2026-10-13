@@ -3,6 +3,10 @@
 //! tells every subscriber what changed.
 
 use vet_app::changeset::Source;
+use vet_app::search::SearchFilters;
+use vet_app::session::SearchQuery;
+use vet_core::filter::FileMask;
+use vet_infra::search::RegexMatcher;
 use vet_mapping as mapping;
 use vet_protocol::{Event, ProjectId, Response};
 
@@ -87,6 +91,34 @@ impl Orchestrator {
             .await
             .map_err(message)?;
         Ok(self.highlighter.file_text(path, &text).await)
+    }
+
+    pub(crate) async fn search(
+        &self,
+        project: ProjectId,
+        scope: vet_protocol::SearchScope,
+        pattern: vet_protocol::SearchPattern,
+        mask: &str,
+        filters: SearchFilters,
+        limit: u32,
+    ) -> Result<Response, String> {
+        let matcher = RegexMatcher::compile(&mapping::core_search_pattern(pattern))?;
+        let mask = FileMask::parse(mask)?;
+        let query = SearchQuery {
+            scope: mapping::core_search_scope(scope),
+            matcher: &matcher,
+            mask: &mask,
+            filters,
+            limit: limit as usize,
+        };
+        let result = self
+            .ready(project)
+            .await?
+            .session
+            .search(&query)
+            .await
+            .map_err(message)?;
+        Ok(mapping::search_results(&result))
     }
 
     pub(crate) async fn toggle_hunk(

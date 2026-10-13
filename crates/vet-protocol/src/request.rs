@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    BackendSettings, ChangesetKey, CommentAt, EditChoice, Lens, NonTextKind, ProjectId, ReviewFilter, Secret, Side,
-    SymbolId, ThreadStatus, ThreadTarget, View,
+    BackendSettings, ChangesetKey, CommentAt, EditChoice, Lens, NonTextKind, ProjectId, ReviewFilter, SearchPattern,
+    SearchScope, SearchSide, Secret, Side, SymbolId, ThreadStatus, ThreadTarget, View,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -492,6 +492,23 @@ pub enum Request {
         project: ProjectId,
         view: View,
         path: String,
+    },
+    /// The lines of the files in `scope` that `pattern` matches, grouped by file in path order.
+    /// `mask` limits the files: globs separated by commas, a leading `!` excludes (`*.rs, !tests/**`),
+    /// a glob without `/` matching the file name at any depth; empty takes every file. `side`,
+    /// `only_changes` (leave out unchanged lines) and `not_seen` (only changed lines of hunks that
+    /// are not seen; it implies `only_changes`) narrow the lines. The search stops after `limit`
+    /// matches (`truncated`). Fails with a message fit to show if the pattern or the mask is
+    /// invalid. Answers with `Response::SearchResults`.
+    Search {
+        project: ProjectId,
+        scope: SearchScope,
+        pattern: SearchPattern,
+        mask: String,
+        side: SearchSide,
+        only_changes: bool,
+        not_seen: bool,
+        limit: u32,
     },
     /// The bytes of one side of a non-text item's file, to preview an image. The
     /// item is found by `path` and `kind` as in `ToggleItem`; `Base` is the file

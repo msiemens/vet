@@ -420,6 +420,19 @@ impl Orchestrator {
             Request::FileText { project, view, path } => {
                 reply(async move { self.file_text(project, view, &path).await })
             }
+            Request::Search {
+                project,
+                scope,
+                pattern,
+                mask,
+                side,
+                only_changes,
+                not_seen,
+                limit,
+            } => {
+                let filters = vet_mapping::core_search_filters(side, only_changes, not_seen);
+                reply(async move { self.search(project, scope, pattern, &mask, filters, limit).await })
+            }
             Request::TargetLine {
                 project,
                 view,

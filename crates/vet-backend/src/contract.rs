@@ -130,6 +130,7 @@ pub fn effect(request: &Request) -> Effect {
         | Request::ListDirectory { .. }
         | Request::ListFiles { .. }
         | Request::FileText { .. }
+        | Request::Search { .. }
         | Request::ItemBlob { .. }
         | Request::Threads { .. }
         | Request::TargetLine { .. }
@@ -210,7 +211,8 @@ mod tests {
     use tokio::sync::mpsc::UnboundedReceiver;
     use vet_protocol::{
         AnchorState, BackendSettings, ChangesetKey, CommentAt, EditChoice, Lens, Manifest, NonTextKind, ProjectId,
-        Response, ReviewFilter, Secret, ServerMessage, Side, SymbolId, Thread, ThreadStatus, ThreadTarget, View,
+        Response, ReviewFilter, SearchPattern, SearchScope, SearchSide, Secret, ServerMessage, Side, SymbolId, Thread,
+        ThreadStatus, ThreadTarget, View,
     };
     use vet_transport::Events;
 
@@ -504,6 +506,21 @@ mod tests {
                 project,
                 view,
                 path: path(),
+            },
+            Request::Search {
+                project,
+                scope: SearchScope::Repository,
+                pattern: SearchPattern {
+                    text: "needle".into(),
+                    match_case: false,
+                    whole_word: false,
+                    regex: false,
+                },
+                mask: String::new(),
+                side: SearchSide::Both,
+                only_changes: false,
+                not_seen: false,
+                limit: 10,
             },
             Request::ItemBlob {
                 project,

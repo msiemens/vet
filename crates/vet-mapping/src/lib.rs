@@ -12,11 +12,12 @@ use vet_app::platform::{
 };
 use vet_app::ports::{CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
+use vet_app::search::{FoundLine, LineKind, SearchFilters, SearchPattern, SearchSide};
 use vet_app::session::{
     BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView, DirEntryKind,
     DirListing, DiscussionView, EntryInfo, FileListing, FileStatus, FileView, ItemBlob, ItemView, Lifecycle,
-    ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, RowReview, SubmitReport, SyncNotice,
-    TargetText, ThreadView, ThreadsView, VersionView, View, VoteSent,
+    ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, RowReview, SearchResult, SearchScope,
+    SubmitReport, SyncNotice, TargetText, ThreadView, ThreadsView, VersionView, View, VoteSent,
 };
 use vet_app::trust::{Origin, Trust};
 use vet_core::completion::{Completion, HunkState};
@@ -623,6 +624,69 @@ pub fn files(l: &FileListing) -> p::Response {
     p::Response::Files {
         revision: l.revision,
         paths: l.paths.clone(),
+    }
+}
+
+pub fn core_search_scope(scope: p::SearchScope) -> SearchScope {
+    match scope {
+        p::SearchScope::View { view } => SearchScope::View(core_view(view)),
+        p::SearchScope::Repository => SearchScope::Repository,
+    }
+}
+
+pub fn core_search_filters(side: p::SearchSide, only_changes: bool, not_seen: bool) -> SearchFilters {
+    SearchFilters {
+        side: match side {
+            p::SearchSide::Both => SearchSide::Both,
+            p::SearchSide::Target => SearchSide::Target,
+            p::SearchSide::Base => SearchSide::Base,
+        },
+        only_changes,
+        not_seen,
+    }
+}
+
+pub fn core_search_pattern(pattern: p::SearchPattern) -> SearchPattern {
+    SearchPattern {
+        text: pattern.text,
+        match_case: pattern.match_case,
+        whole_word: pattern.whole_word,
+        regex: pattern.regex,
+    }
+}
+
+pub fn search_results(r: &SearchResult) -> p::Response {
+    p::Response::SearchResults {
+        revision: r.revision,
+        files: r
+            .files
+            .iter()
+            .map(|f| p::SearchFile {
+                path: f.path.to_string_lossy(),
+                status: f.status.map(status),
+                completion: f.completion.as_ref().map(completion),
+                lines: f.lines.iter().map(search_line).collect(),
+                hits: f.hits,
+            })
+            .collect(),
+        hits: r.hits,
+        truncated: r.truncated,
+        searched: r.searched,
+    }
+}
+
+fn search_line(l: &FoundLine) -> p::SearchLine {
+    p::SearchLine {
+        kind: match l.kind {
+            LineKind::Context => p::SearchLineKind::Context,
+            LineKind::Added => p::SearchLineKind::Added,
+            LineKind::Removed => p::SearchLineKind::Removed,
+        },
+        line: l.line,
+        hunk: l.hunk,
+        text: l.text.clone(),
+        text_start: l.text_start,
+        hits: l.hits.iter().map(|&(from, to)| p::SearchHit { from, to }).collect(),
     }
 }
 

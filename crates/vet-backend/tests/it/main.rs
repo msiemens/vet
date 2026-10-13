@@ -14,6 +14,7 @@ mod python;
 mod recent;
 mod restart;
 mod restore;
+mod search;
 mod semantic;
 mod session;
 mod trust;
