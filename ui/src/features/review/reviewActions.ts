@@ -31,8 +31,8 @@ export const reviewActions: ReviewActions = {
   excludePath: (path, dir) => live().excludePath?.(path, dir),
   reviewOnly: (path) => live().reviewOnly?.(path),
   setFolderSeen: (path, seen) => live().setFolderSeen?.(path, seen),
-  closeTab: (kind, path) => live().closeTab?.(kind, path),
-  closeOtherTabs: (kind, path) => live().closeOtherTabs?.(kind, path),
+  closeTab: (kind, path, commit) => live().closeTab?.(kind, path, commit),
+  closeOtherTabs: (kind, path, commit) => live().closeOtherTabs?.(kind, path, commit),
   stepTab: (delta) => live().stepTab?.(delta),
   revealFile: () => live().revealFile?.() ?? false,
 };
