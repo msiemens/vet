@@ -121,7 +121,7 @@
     {@render checks?.()}
     {@render outgoing?.()}
   {/if}
-  <IconButton icon="search" label="Search everywhere" />
+  <IconButton icon="search" label="Search everywhere" onclick={() => commands.run("palette.all")} />
 </TitleBar>
 
 <style>
