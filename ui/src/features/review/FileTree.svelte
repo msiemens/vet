@@ -11,6 +11,7 @@
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import Marked from "../../lib/ui/Marked.svelte";
@@ -513,7 +514,7 @@
     {#if analysis?.state === "loading"}
       <Spinner label="Analysing the symbols" />
     {:else if analysis?.state === "failed"}
-      <span class="warn" title={analysis.message}><Icon name="warning" size={11} /></span>
+      <span class="warn" title={analysis.message}><SeverityIcon severity="warning" /></span>
     {:else if analysis?.state === "done" && analysis.symbols.length && !open}
       {@const n = analysis.symbols.length}
       <span class="mono x" title="{n} changed {n === 1 ? 'symbol' : 'symbols'}">{n}</span>
@@ -816,7 +817,6 @@
   .warn {
     flex: none;
     display: inline-flex;
-    color: var(--old-base);
   }
   .progress {
     flex: none;

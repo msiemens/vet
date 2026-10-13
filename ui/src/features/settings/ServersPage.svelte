@@ -3,6 +3,7 @@
   import { formatBytes } from "../../lib/formatBytes";
   import { match } from "../../lib/speedSearch";
   import Icon from "../../lib/ui/Icon.svelte";
+  import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
@@ -278,7 +279,7 @@
   <footer>
     <span class="label"
       >Semantic caches
-      <span class="info" role="img" aria-label={CACHES_HINT} title={CACHES_HINT}><Icon name="info" size={12} /></span
+      <span class="info" role="img" aria-label={CACHES_HINT} title={CACHES_HINT}><SeverityIcon severity="info" /></span
       ></span
     >
     <dl>
@@ -464,7 +465,6 @@
   .info {
     display: inline-flex;
     vertical-align: middle;
-    color: var(--text-3);
   }
   dt.top {
     align-self: start;

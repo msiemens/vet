@@ -18,6 +18,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
   import type { Summary } from "../../state/problemsSummary";
 
@@ -54,18 +55,10 @@
     <button class="flat footer-item" type="button" title={problems.title} onclick={onproblems}>
       {#if problems.icon === "busy"}
         <Spinner />
+      {:else if problems.icon === "ok"}
+        <span class="ok"><Icon name="check" size={13} stroke={1.8} /></span>
       {:else if problems.icon}
-        <span
-          class="mark"
-          class:error={problems.icon === "error"}
-          class:warning={problems.icon === "warning"}
-          class:ok={problems.icon === "ok"}
-          ><Icon
-            name={problems.icon === "ok" ? "check" : problems.icon}
-            size={13}
-            stroke={problems.icon === "ok" ? 1.8 : 1.6}
-          /></span
-        >
+        <SeverityIcon severity={problems.icon} />
       {/if}
       {problems.text}
     </button>
@@ -91,17 +84,9 @@
   .state {
     color: var(--text-3);
   }
-  .error {
-    color: var(--severity-error);
-  }
-  .warning {
-    color: var(--severity-warning);
-  }
   .ok {
-    color: var(--ok);
-  }
-  .mark {
     display: inline-flex;
+    color: var(--ok);
   }
   .small {
     font-size: var(--fs-mono-s);

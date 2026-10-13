@@ -67,6 +67,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## IntelliJ Platform (severity and Problems icons)
+
+Source: https://github.com/JetBrains/intellij-community, `platform/icons/src/expui/status/{error,warning,info}.svg` and `platform/icons/src/expui/toolwindows/problems.svg`.
+
+```
+Copyright 2000-2023 JetBrains s.r.o. and contributors.
+Use of this source code is governed by the Apache 2.0 license.
+```
+
+The Apache License 2.0 is at https://www.apache.org/licenses/LICENSE-2.0. Modified: recoloured and combined into single-path `currentColor` icons (each status shape with its glyph cut out; the Problems icon recoloured).
+
 ## JetBrains Mono (font)
 
 Source: https://github.com/JetBrains/JetBrainsMono, package `@fontsource/jetbrains-mono`.

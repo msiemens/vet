@@ -9,14 +9,8 @@ import type { Diagnostic } from "../../../generated/Diagnostic";
 import { renderMarkdown } from "../../../lib/hoverMarkdown.ts";
 import type { HoverAnswer } from "../../../state/backend";
 
-const SVG = (paths: string) =>
-  `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round">${paths}</svg>`;
-const ICONS = {
-  triangle: SVG('<path d="M8 1.8 14.6 13.6H1.4Z"/><path d="M8 6.2v3.6M8 11.6v.2"/>'),
-  clock: SVG('<circle cx="8" cy="8" r="6"/><path d="M8 4.8V8l2.2 1.4"/>'),
-  cross: SVG('<circle cx="8" cy="8" r="6"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5"/>'),
-  info: SVG('<circle cx="8" cy="8" r="6"/><path d="M8 7.4v3.4M8 5.2v.2"/>'),
-};
+import { iconSvg } from "../../../lib/ui/icons.ts";
+import { severitySvg } from "../../../lib/ui/severity.ts";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -25,9 +19,9 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, te
   return node;
 }
 
-function icon(kind: keyof typeof ICONS, className: string): HTMLElement {
-  const node = el("span", `vet-hover-icon ${className}`);
-  node.innerHTML = ICONS[kind];
+function icon(svg: string): HTMLElement {
+  const node = el("span", "vet-hover-icon");
+  node.innerHTML = svg;
   return node;
 }
 
@@ -36,8 +30,6 @@ function withCode(text: string): Node[] {
   return text.split(/`([^`]+)`/).map((part, i) => (i % 2 ? el("code", "", part) : document.createTextNode(part)));
 }
 
-const SEVERITY_CLASS = { error: "error", warning: "warning", info: "info", hint: "info" } as const;
-const SEVERITY_ICON = { error: "cross", warning: "triangle", info: "info", hint: "info" } as const;
 const ORIGIN_NOTE = {
   new: "new in this change",
   existing: "existing: the base has it too",
@@ -47,7 +39,7 @@ const ORIGIN_NOTE = {
 
 function diagnosticRow(d: Diagnostic): HTMLElement {
   const row = el("div", "vet-hover-diagnostic");
-  row.append(icon(SEVERITY_ICON[d.severity], SEVERITY_CLASS[d.severity]));
+  row.append(icon(severitySvg(d.severity)));
   const lines = el("div", "vet-hover-diagnostic-text");
   const message = el("div", "");
   message.append(...withCode(d.message));
@@ -87,9 +79,9 @@ function footer(answer: HoverAnswer): HTMLElement | undefined {
   return foot;
 }
 
-function notice(kind: "clock" | "cross", text: string): HTMLElement {
+function notice(svg: string, text: string): HTMLElement {
   const dom = el("div", "vet-hover vet-hover-notice");
-  dom.append(icon(kind, ""), el("span", "", text));
+  dom.append(icon(svg), el("span", "", text));
   return dom;
 }
 
@@ -106,9 +98,10 @@ function indexingText(name: string, fraction: number | undefined): string {
 export function hoverContent(answer: HoverAnswer, diagnostics: readonly Diagnostic[]): (() => HTMLElement) | undefined {
   if (!answer.text && !diagnostics.length) {
     const { server, unavailable } = answer;
-    if (server?.indexing) return () => notice("clock", indexingText(server.name, server.indexing?.fraction));
+    if (server?.indexing)
+      return () => notice(iconSvg("timeline", 14, 1.6), indexingText(server.name, server.indexing?.fraction));
     if (unavailable && unavailable.kind !== "unsupported" && unavailable.kind !== "notOffered") {
-      return () => notice("cross", unavailable.message);
+      return () => notice(severitySvg("error"), unavailable.message);
     }
     return undefined;
   }

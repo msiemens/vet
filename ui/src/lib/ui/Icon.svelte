@@ -1,16 +1,16 @@
 <script lang="ts">
-  import { ICONS, SOLID, type IconName } from "./icons";
+  import { ICONS, iconFrame, type IconName } from "./icons";
 
   let { name, size = 14, stroke = 1.6 }: { name: IconName; size?: number; stroke?: number } = $props();
-  const solid = $derived(SOLID.has(name));
+  const frame = $derived(iconFrame(name));
 </script>
 
 <svg
   width={size}
   height={size}
-  viewBox="0 0 24 24"
-  fill={solid ? "currentColor" : "none"}
-  stroke={solid ? "none" : "currentColor"}
+  viewBox={frame.viewBox}
+  fill={frame.fill}
+  stroke={frame.stroke}
   stroke-width={stroke}
   aria-hidden="true"
 >

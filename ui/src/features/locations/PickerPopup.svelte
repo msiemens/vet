@@ -8,6 +8,7 @@
   import { fullName } from "../../lib/symbolLabel";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
@@ -220,7 +221,7 @@
     <div class="state"><span class="spinner" aria-hidden="true"></span>Searching…</div>
   {:else if view.body.phase === "stopped"}
     <div class="state stopped">
-      <span class="warn"><Icon name="warning" size={16} /></span>
+      <SeverityIcon severity="warning" />
       <span class="message selectable">{view.body.message}</span>
       <span class="grow"></span>
       <button class="ctl" type="button" onclick={() => view.onretry()}>Restart</button>
@@ -350,10 +351,6 @@
   .stopped {
     justify-content: flex-start;
     color: var(--text);
-  }
-  .warn {
-    display: inline-flex;
-    color: var(--warn);
   }
   .spinner {
     width: 12px;

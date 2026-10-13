@@ -50,15 +50,6 @@
   display: flex;
   flex: none;
 }
-.vet-hover-icon.error {
-  color: var(--severity-error);
-}
-.vet-hover-icon.warning {
-  color: var(--severity-warning);
-}
-.vet-hover-icon.info {
-  color: var(--severity-info);
-}
 
 /* The signature: code blocks without a box, the first of them an item's path when another follows. */
 .vet-hover-signature {
@@ -248,15 +239,6 @@
 }
 .vet-diag-dot.existing {
   opacity: 0.55;
-}
-.vet-diag-dot.error {
-  color: var(--severity-error);
-}
-.vet-diag-dot.warning {
-  color: var(--severity-warning);
-}
-.vet-diag-dot.info {
-  color: var(--severity-info);
 }
 .cm-tooltip.cm-tooltip-lint {
   background: var(--bg-sheet);

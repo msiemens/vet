@@ -7,6 +7,7 @@
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import SectionHead from "../../lib/ui/SectionHead.svelte";
+  import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
   import type { Load } from "../../state/symbols.svelte";
   import { SvelteSet } from "svelte/reactivity";
@@ -134,10 +135,10 @@
   <section>
     <SectionHead {title} open={shown} count={body?.count ?? body?.meta} ontoggle={toggle}>
       {#snippet before()}
-        {#if warn}<span class="warn"><Icon name="warning" size={12} /></span>{/if}
+        {#if warn}<SeverityIcon severity="warning" />{/if}
       {/snippet}
       {#snippet after()}
-        {#if hint}<span class="hint" role="img" aria-label={hint} title={hint}><Icon name="info" size={12} /></span
+        {#if hint}<span class="hint" role="img" aria-label={hint} title={hint}><SeverityIcon severity="info" /></span
           >{/if}
       {/snippet}
       {#snippet aside()}
@@ -173,13 +174,8 @@
 {/if}
 
 <style>
-  .warn {
-    display: inline-flex;
-    color: var(--old-base);
-  }
   .hint {
     display: inline-flex;
-    color: var(--text-3);
   }
   .find {
     display: inline-flex;

@@ -2,7 +2,7 @@
   import type { CommitChecks } from "../../generated/CommitChecks";
   import { ciIcon } from "../../lib/ciStatus";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
-  import Icon from "../../lib/ui/Icon.svelte";
+  import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import { badgeCount } from "./checkRows";
 
   /** The head commit's combined checks in the toolbar; a click shows the Pipelines tool. */
@@ -27,7 +27,7 @@
 {#if warn || ciIcon(checks.state)}
   <button class="ctl status" class:stale type="button" {title} onclick={onopen}>
     {#if warn}
-      <span class="warn"><Icon name="warning" size={12} /></span>
+      <SeverityIcon severity="warning" />
     {:else}
       <CiStatus state={checks.state} size={12} {title} />
       <span class="mono">{badgeCount(checks)}</span>
@@ -41,9 +41,5 @@
   }
   .stale {
     opacity: 0.65;
-  }
-  .warn {
-    display: inline-flex;
-    color: var(--old-base);
   }
 </style>

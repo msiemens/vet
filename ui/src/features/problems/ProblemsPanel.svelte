@@ -9,6 +9,7 @@
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
+  import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import Popover from "../../lib/ui/Popover.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
@@ -337,7 +338,7 @@
           aria-pressed={filters.levels[level.id]}
           onclick={() => (filters.levels[level.id] = !filters.levels[level.id])}
         >
-          <span class="ico {level.id}"><Icon name={level.id} size={14} /></span>
+          <SeverityIcon severity={level.id} />
           {levelCounts[level.id]}
         </button>
       {/each}
@@ -406,7 +407,7 @@
 
   {#if indexing && serverOf}
     <div class="notice info">
-      <Icon name="info" size={14} />
+      <SeverityIcon severity="info" />
       <div>
         {serverOf.server} is indexing{indexing.fraction === undefined
           ? ""
@@ -420,7 +421,7 @@
   {/if}
   {#if limited}
     <div class="notice warn">
-      <Icon name="warning" size={14} />
+      <SeverityIcon severity="warning" />
       <div>
         {limited}{onlyStoodIn(changeset.restoreFailures) ? "" : " Errors about unresolved names may not be real."}
         <button class="link" type="button" aria-expanded={limitedOpen} onclick={() => (limitedOpen = !limitedOpen)}
@@ -438,19 +439,19 @@
   {/if}
   {#if lensNote}
     <div class="notice info">
-      <Icon name="info" size={14} />
+      <SeverityIcon severity="info" />
       <div>{lensNote}</div>
     </div>
   {/if}
   {#if origins === "pending" && !waiting && !everyFileUnserved && reach.answered > 0}
     <div class="notice info">
-      <Icon name="info" size={14} />
+      <SeverityIcon severity="info" />
       <div>Comparing with the base to tell new problems from existing ones. They are listed by file until then.</div>
     </div>
   {/if}
   {#if origins === "unknown"}
     <div class="notice warn">
-      <Icon name="warning" size={14} />
+      <SeverityIcon severity="warning" />
       <div>
         Cannot tell which problems are new{unknownFiles > 1 ? ` in ${unknownFiles} files` : ""}: {unknownWhy
           ? unknownWhy.message
@@ -521,7 +522,7 @@
               >
                 <span class="chev"><Icon name={item.open ? "open" : "closed"} size={10} /></span>
                 {#if item.tone === "error" || item.tone === "warning" || item.tone === "info"}
-                  <span class="ico {item.tone}"><Icon name={item.tone} size={14} /></span>
+                  <SeverityIcon severity={item.tone} />
                 {/if}
                 <span>{item.title}</span>
                 <span class="n" class:strong={item.tone === "new"}>{item.count}</span>
@@ -552,7 +553,7 @@
                 title={tip(p)}
                 onclick={(e) => click(e, i)}
               >
-                <span class="sev {p.level}"><Icon name={p.level} size={14} /></span>
+                <SeverityIcon severity={p.level} />
                 <span class="msg"
                   >{#each parts(p.diagnostic.message) as part, n (n)}{#if part.code}<code>{part.text}</code
                       >{:else}{part.text}{/if}{/each}</span
@@ -648,19 +649,6 @@
   .chip[aria-pressed="false"]:hover {
     opacity: 0.9;
   }
-  .ico {
-    flex: none;
-    display: inline-flex;
-  }
-  .error {
-    color: var(--severity-error);
-  }
-  .warning {
-    color: var(--severity-warning);
-  }
-  .info {
-    color: var(--severity-info);
-  }
   .find {
     position: relative;
     flex: 0 1 150px;
@@ -739,20 +727,14 @@
     color: var(--text-2);
     border-bottom: 1px solid var(--line-soft);
   }
-  .notice :global(svg) {
+  .notice :global(.severity-icon) {
     margin-top: 2px;
   }
   .notice.warn {
-    background: color-mix(in srgb, var(--old-base) 12%, var(--bg-panel));
-  }
-  .notice.warn :global(svg) {
-    color: var(--old-base);
+    background: color-mix(in srgb, var(--severity-warning) 12%, var(--bg-panel));
   }
   .notice.info {
-    background: color-mix(in srgb, var(--accent) 9%, var(--bg-panel));
-  }
-  .notice.info :global(svg) {
-    color: var(--accent);
+    background: color-mix(in srgb, var(--severity-info) 9%, var(--bg-panel));
   }
   .bar {
     margin-top: 5px;
@@ -874,12 +856,8 @@
   .problem.old {
     color: var(--text-2);
   }
-  .problem.old .sev {
+  .problem.old :global(.severity-icon) {
     opacity: 0.8;
-  }
-  .sev {
-    flex: none;
-    display: inline-flex;
   }
   .msg {
     flex: 1;

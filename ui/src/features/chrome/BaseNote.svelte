@@ -1,13 +1,13 @@
 <script lang="ts">
-  import Icon from "../../lib/ui/Icon.svelte";
+  import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import type { BaseNote } from "./scopeText";
 
   let { note }: { note: BaseNote } = $props();
 </script>
 
 <span class="base" class:alert={note.alert} title={note.tip} data-tauri-drag-region>
-  {#if note.alert}<span class="warn" aria-label="HEAD no longer builds on this base"
-      ><Icon name="warning" size={13} /></span
+  {#if note.alert}<span class="warn" role="img" aria-label="HEAD no longer builds on this base"
+      ><SeverityIcon severity="warning" /></span
     >{/if}{note.text}
 </span>
 
@@ -25,10 +25,9 @@
   }
   .base.alert {
     color: var(--text);
-    background: color-mix(in srgb, var(--old-base) 16%, transparent);
+    background: color-mix(in srgb, var(--severity-warning) 16%, transparent);
   }
   .warn {
     display: inline-flex;
-    color: var(--old-base);
   }
 </style>

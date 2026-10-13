@@ -23,9 +23,10 @@ import {
 } from "@codemirror/view";
 import type { Diagnostic } from "../../../generated/Diagnostic";
 import type { Position } from "../../../generated/Position";
+import type { Severity } from "../../../generated/Severity";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
-import { iconSvg } from "../../../lib/ui/icons";
+import { severitySvg } from "../../../lib/ui/severity";
 import type { HoverAnswer } from "../../../state/backend";
 import type { CaretRect, PickerKind } from "../../../state/pickerTypes";
 import { gotoLinks, isGotoModifier } from "./gotoLinkDom";
@@ -196,7 +197,7 @@ const EXISTING = "vet-existing";
 /** The gutter's mark for a line's worst diagnostic, in the shape of its severity: strong for one the change introduced, faded for one already there. */
 class DiagnosticDot extends GutterMarker {
   constructor(
-    private readonly severity: string,
+    private readonly severity: Severity,
     private readonly existing: boolean,
   ) {
     super();
@@ -208,20 +209,16 @@ class DiagnosticDot extends GutterMarker {
 
   toDOM() {
     const mark = document.createElement("span");
-    mark.className = `vet-diag-dot ${this.severity}${this.existing ? " existing" : ""}`;
-    mark.innerHTML = iconSvg(
-      this.severity === "error" ? "error" : this.severity === "warning" ? "warning" : "info",
-      13,
-      1.8,
-    );
+    mark.className = `vet-diag-dot${this.existing ? " existing" : ""}`;
+    mark.innerHTML = severitySvg(this.severity);
     return mark;
   }
 }
 
-const SEVERITY_RANK: Record<string, number> = { error: 0, warning: 1, info: 2, hint: 3 };
+const SEVERITY_RANK: Record<Severity, number> = { error: 0, warning: 1, info: 2, hint: 3 };
 
 interface Found {
-  severity: string;
+  severity: Severity;
   existing: boolean;
 }
 
@@ -236,7 +233,7 @@ const diagnosticGutter = gutter({
       if (!worst || rank(found) < rank(worst)) worst = found;
     });
     const dot: Found | undefined = worst;
-    return dot ? new DiagnosticDot(dot.severity === "hint" ? "info" : dot.severity, dot.existing) : null;
+    return dot ? new DiagnosticDot(dot.severity, dot.existing) : null;
   },
   lineMarkerChange: (update) => update.transactions.some((tr) => tr.effects.some((e) => e.is(setDiagnosticsEffect))),
 });

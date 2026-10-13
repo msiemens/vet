@@ -1,4 +1,4 @@
-// 24x24 icons. `fill` icons are solid shapes, the rest are strokes.
+// 24x24 icons unless VIEW_BOX says otherwise. SOLID icons are filled shapes, the rest are strokes.
 export const ICONS = {
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
   // Lucide's inbox (ISC).
@@ -51,16 +51,16 @@ export const ICONS = {
     '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
   module: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12L4 7.5M12 12v9"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
-  // Lucide's info (ISC). The dots of this and the next two are zero-length strokes, which only a round cap draws.
-  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4" stroke-linecap="round"/><path d="M12 8h.01" stroke-linecap="round"/>',
-  // Lucide's triangle-alert (ISC).
+  // The IntelliJ Platform's status icons (expui/status/{info,warning,error}.svg, Apache 2.0, JetBrains s.r.o.),
+  // each shape and its glyph as one path with the glyph cut out; see THIRD_PARTY_NOTICES.md.
+  info: '<path fill-rule="evenodd" d="M1 8a7 7 0 1 0 14 0A7 7 0 0 0 1 8ZM7 11C7 11.5523 7.44772 12 8 12C8.55228 12 9 11.5523 9 11L9 8.5C9 7.94771 8.55228 7.5 8 7.5C7.44771 7.5 7 7.94772 7 8.5L7 11ZM8 4C7.44771 4 7 4.44772 7 5C7 5.55228 7.44771 6 8 6C8.55228 6 9 5.55228 9 5C9 4.44772 8.55228 4 8 4Z"/>',
   warning:
-    '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4" stroke-linecap="round"/><path d="M12 17h.01" stroke-linecap="round"/>',
-  // Lucide's circle-alert (ISC).
+    '<path fill-rule="evenodd" d="M1.27603 10.8634L6.3028 1.98903C7.04977 0.670323 8.94893 0.670326 9.69589 1.98903L14.7227 10.8634C15.516 12.2639 14.5047 14 12.8956 14H3.10308C1.494 14 0.482737 12.2639 1.27603 10.8634ZM9 5C9 4.44772 8.55228 4 8 4C7.44772 4 7 4.44772 7 5V7.5C7 8.05229 7.44772 8.5 8 8.5C8.55229 8.5 9 8.05228 9 7.5L9 5ZM8 12C8.55228 12 9 11.5523 9 11C9 10.4477 8.55228 10 8 10C7.44772 10 7 10.4477 7 11C7 11.5523 7.44772 12 8 12Z"/>',
+  error:
+    '<path fill-rule="evenodd" d="M1 8a7 7 0 1 0 14 0A7 7 0 0 0 1 8ZM9 5C9 4.44772 8.55228 4 8 4C7.44772 4 7 4.44772 7 5V7.5C7 8.05229 7.44772 8.5 8 8.5C8.55229 8.5 9 8.05228 9 7.5L9 5ZM8 12C8.55228 12 9 11.5523 9 11C9 10.4477 8.55228 10 8 10C7.44772 10 7 10.4477 7 11C7 11.5523 7.44772 12 8 12Z"/>',
+  // The IntelliJ Platform's outline Problems icon (expui/toolwindows/problems.svg, Apache 2.0, JetBrains s.r.o.).
   problems:
-    '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12" stroke-linecap="round"/><line x1="12" x2="12.01" y1="16" y2="16" stroke-linecap="round"/>',
-  // Lucide's circle-x (ISC).
-  error: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+    '<circle cx="8" cy="8" r="6.5" stroke-width="1"/><path d="M8 4.6V8.4" stroke-width="1.2" stroke-linecap="round"/><circle cx="8.00078" cy="10.7" r="0.5" fill="currentColor" stroke-width="0.4"/>',
   minus: '<path d="M6 12h12"/>',
   // The marks of a view that shows no file.
   emptyWatch:
@@ -93,12 +93,40 @@ export const ICONS = {
   azureDevOps:
     '<path d="M0 8.877L2.247 5.91l8.405-3.416V.022l7.37 5.393L2.966 8.338v8.225L0 15.707zm24-4.45v14.651l-5.753 4.9-9.303-3.057v3.056l-5.978-7.416 15.057 1.798V5.415z"/>',
 } as const;
-export const SOLID: ReadonlySet<string> = new Set(["open", "closed", "more", "stop", "github", "azureDevOps"]);
+export const SOLID: ReadonlySet<string> = new Set([
+  "open",
+  "closed",
+  "more",
+  "stop",
+  "github",
+  "azureDevOps",
+  "info",
+  "warning",
+  "error",
+]);
+
+/** The icons that are not drawn on the 24x24 grid, with the area of their own grid they fill (the 16x16 grid of the IntelliJ Platform's icons, less its empty margin). */
+const VIEW_BOX: Partial<Record<string, string>> = {
+  info: "1 1 14 14",
+  warning: "1 1 14 14",
+  error: "1 1 14 14",
+  problems: "1 1 14 14",
+};
 
 export type IconName = keyof typeof ICONS;
 
+/** The attributes of an icon's `<svg>` besides its size and stroke width. */
+export function iconFrame(name: IconName): { viewBox: string; fill: string; stroke: string } {
+  const solid = SOLID.has(name);
+  return {
+    viewBox: VIEW_BOX[name] ?? "0 0 24 24",
+    fill: solid ? "currentColor" : "none",
+    stroke: solid ? "none" : "currentColor",
+  };
+}
+
 /** Markup for code that builds DOM outside Svelte (CodeMirror widgets). */
 export function iconSvg(name: IconName, size = 13, stroke = 2): string {
-  const solid = SOLID.has(name);
-  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${solid ? "currentColor" : "none"}" stroke="${solid ? "none" : "currentColor"}" stroke-width="${stroke}" aria-hidden="true">${ICONS[name]}</svg>`;
+  const { viewBox, fill, stroke: strokeColor } = iconFrame(name);
+  return `<svg width="${size}" height="${size}" viewBox="${viewBox}" fill="${fill}" stroke="${strokeColor}" stroke-width="${stroke}" aria-hidden="true">${ICONS[name]}</svg>`;
 }
