@@ -654,6 +654,7 @@
         rightTool={right.tool}
         rightOpen={right.open}
         {softWrap}
+        bottomOpen={bottomTool !== undefined}
         onfilter={() => showDialog("settings", "review")}
         ontool={showTool}
         scope={scope?.label ?? "All changes"}

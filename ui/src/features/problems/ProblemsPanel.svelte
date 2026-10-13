@@ -12,7 +12,6 @@
   import Popover from "../../lib/ui/Popover.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
-  import Splitter from "../../lib/ui/Splitter.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { changeset } from "../../state/changeset.svelte";
   import {
@@ -60,10 +59,6 @@
     | { kind: "na"; key: string; open: boolean; count: number }
     | { kind: "naFile"; key: string; path: string; why: Unavailable };
 
-  /** The smallest height the panel is dragged to, and the room the review above it keeps. */
-  const MIN_HEIGHT = 120;
-  const KEPT_ABOVE = 140;
-
   const LEVELS: { id: Level; title: string }[] = [
     { id: "error", title: "Errors" },
     { id: "warning", title: "Warnings" },
@@ -91,7 +86,6 @@
   let folded = $state.raw<ReadonlySet<string>>(new Set());
   let naOpen = $state(false);
   let limitedOpen = $state(false);
-  let height = $state<number>();
   let cursor = $state(-1);
   let focused = $state(false);
   let root = $state<HTMLElement>();
@@ -287,12 +281,6 @@
     problems.origin = "all";
   }
 
-  /** The smallest and largest height the splitter above the panel gives it. */
-  const limits = (): [number, number] => [
-    MIN_HEIGHT,
-    Math.max(MIN_HEIGHT, (root?.parentElement?.clientHeight ?? 0) - KEPT_ABOVE),
-  ];
-
   function showMissing() {
     naOpen = true;
     void tick().then(() => {
@@ -318,23 +306,7 @@
   const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 </script>
 
-<section
-  aria-label="Problems"
-  bind:this={root}
-  style:height={height === undefined ? undefined : `${height}px`}
-  onfocusin={focusin}
-  onfocusout={focusout}
->
-  <Splitter
-    orientation="horizontal"
-    label="Resize Problems"
-    storageKey="vet.dock.problems"
-    direction={-1}
-    current={() => root?.offsetHeight ?? MIN_HEIGHT}
-    {limits}
-    bind:size={height}
-    style="top: calc(var(--w-splitter) / -2)"
-  />
+<section aria-label="Problems" bind:this={root} onfocusin={focusin} onfocusout={focusout}>
   <div class="tool">
     <Segmented
       small
@@ -624,9 +596,8 @@
 
 <style>
   section {
-    position: relative;
-    flex: none;
-    height: var(--h-problems);
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     border-top: 1px solid var(--line);

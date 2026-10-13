@@ -178,8 +178,8 @@
 
 <style>
   section {
-    flex: none;
-    height: var(--h-timeline);
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     border-top: 1px solid var(--line);

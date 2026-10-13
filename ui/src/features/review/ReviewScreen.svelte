@@ -34,6 +34,7 @@
   import { provideActions } from "./reviewActions";
   import { editorMenu, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
   import CommitHeader from "./CommitHeader.svelte";
+  import Dock from "./Dock.svelte";
   import EmptyChanges from "./EmptyChanges.svelte";
   import { type Action, type EmptyView, emptyView, pickRange } from "./emptyChanges";
   import { narrowingLabel } from "./narrowing";
@@ -54,6 +55,7 @@
     rightTool,
     rightOpen,
     side,
+    bottomOpen = false,
     bottom,
     softWrap,
     onfilter,
@@ -80,6 +82,8 @@
     rightOpen: boolean;
     /** The right sidebar's content for a tool. */
     side: Snippet<[tool: string]>;
+    /** A bottom tool is shown: `bottom` renders its panel in the dock, which fills the dock's height. */
+    bottomOpen?: boolean;
     /** A panel under the editors; `selected` is the file the review is at, and `select` goes to one. */
     bottom?: Snippet<[view: { selected?: string; select: (path: string) => void }]>;
     /** The changeset is open in the controller. */
@@ -421,7 +425,9 @@
       {/if}
     {/each}
   </div>
-  {@render bottom?.({ selected: highlighted, select })}
+  {#if bottomOpen}
+    <Dock>{@render bottom?.({ selected: highlighted, select })}</Dock>
+  {/if}
   {#if structure.popup}
     <StructurePopup
       onjump={(symbol, removed) => void controller.jumpToOutlineSymbol(symbol, removed)}
