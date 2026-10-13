@@ -595,9 +595,13 @@ export class ReviewController {
     return true;
   }
 
-  /** The file of the focused file or text tab; none for the Changes tab. */
-  get activePath(): string | undefined {
-    return pathOf(this.tabs.active);
+  /**
+   * The file of the focused tab whose text the semantic layer has, which the footer words servers and
+   * diagnostics for; none for the Changes tab and for a tab at a commit, whose text is not the changeset's.
+   */
+  get semanticPath(): string | undefined {
+    const id = this.tabs.active;
+    return this.analysable(id, "target") ? pathOf(id) : undefined;
   }
 
   /** Shows a place the popup listed, which the tab `from` asked for: in its file's tab, or says where it is when it is outside the repository. */

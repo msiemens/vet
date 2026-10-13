@@ -192,7 +192,7 @@
       : unreadCount(platform.info, threads.items, commentsSeen.at(seenUnder)),
   );
 
-  const semanticSummary = $derived(semantic.summary(controller?.activePath));
+  const semanticSummary = $derived(semantic.summary(controller?.semanticPath));
   const range = $derived(changeset.range);
   const rangeFiles = $derived<RangeFile[]>(
     range ? (changeset.layout?.files ?? []).map((f) => ({ path: f.path, delta: f.delta, mode: modeChange(f) })) : [],
@@ -222,7 +222,7 @@
   const footer = $derived({
     commit:
       changeset.shownCommit === undefined ? undefined : `${changeset.shownCommit + 1} / ${changeset.commits.length}`,
-    languageServer: serverLine(controller?.activePath, serverList.servers, backgroundTasks.tasks, semanticSummary),
+    languageServer: serverLine(controller?.semanticPath, serverList.servers, backgroundTasks.tasks, semanticSummary),
     diagnostics: semanticSummary.diagnostics,
   });
 
