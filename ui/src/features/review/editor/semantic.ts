@@ -11,8 +11,8 @@ import type { Position } from "../../../generated/Position";
 import type { Side } from "../../../generated/Side";
 import type { TextSpan } from "../../../generated/TextSpan";
 import type { HoverAnswer } from "../../../state/backend";
-import { isMac } from "../../../state/host";
 import type { CaretRect, PickerKind } from "../../../state/pickerTypes";
+import { gotoLinks, isGotoModifier } from "./gotoLinkDom";
 import { type Span, collapsedRegions, outsideHidden } from "./hiddenRanges";
 import { hoverContent } from "./hoverContent";
 import { type HoverAnchor, hoverPopups } from "./hoverDom";
@@ -25,6 +25,8 @@ export interface SemanticHooks {
   hover(side: Side, path: string, line: number, col: number, signal?: AbortSignal): Promise<HoverAnswer>;
   /** Goes to the definition; the owner opens the target. */
   definition(side: Side, path: string, line: number, col: number): void;
+  /** Whether the symbol at the position has a definition; false if there is no way to tell. Rejects with an abort when `signal` aborts. */
+  hasDefinition(side: Side, path: string, line: number, col: number, signal: AbortSignal): Promise<boolean>;
   /** Finds the implementations or the usages of the symbol at the position; the owner goes to the place or lists them. */
   locations(kind: PickerKind, side: Side, path: string, at: TextPosition, subject: Subject): void;
   /** The target-side diagnostics of the file, empty if there are none or the server is unavailable. */
@@ -45,6 +47,7 @@ export function bindRevision(source: SemanticSource, revision: number): Semantic
   return {
     hover: (side, path, line, col, signal) => source.hover(revision, side, path, line, col, signal),
     definition: (side, path, line, col) => source.definition(revision, side, path, line, col),
+    hasDefinition: (side, path, line, col, signal) => source.hasDefinition(revision, side, path, line, col, signal),
     locations: (kind, side, path, at, subject) => source.locations(revision, kind, side, path, at, subject),
     diagnostics: (path) => source.diagnostics(revision, path),
     cursor: (side, path, line, col) => source.cursor(revision, side, path, line, col),
@@ -82,8 +85,7 @@ export async function queryHover(
   return hoverContent(hover, diagnostics);
 }
 
-/** Mod is Cmd on macOS (Ctrl+click is the context menu there) and Ctrl elsewhere. */
-const isGotoClick = (e: MouseEvent) => e.button === 0 && (isMac ? e.metaKey : e.ctrlKey);
+const isGotoClick = (e: MouseEvent) => e.button === 0 && isGotoModifier(e);
 
 /** Mod+click goes to the definition at the position `at` finds; answers whether the click was one and has been taken. */
 export function gotoOnClick(
@@ -328,6 +330,9 @@ export function semanticExtensions(path: string, side: Side, hooks: SemanticHook
     tooltips({ parent: document.body }),
     hoverPopups(wordUnderPointer, (anchor, signal, view) =>
       queryHover(hooks, side, path, anchor.at, diagnosticsAt(view, anchor.at, anchor.endCol), signal),
+    ),
+    gotoLinks(wordUnderPointer, (anchor, signal) =>
+      hooks.hasDefinition(side, path, anchor.at.line, anchor.at.col, signal),
     ),
     EditorView.domEventHandlers({
       mousedown: (event, view) =>

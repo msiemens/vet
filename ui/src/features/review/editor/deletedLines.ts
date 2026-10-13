@@ -1,10 +1,11 @@
-// Hover and Mod+click on the deleted lines of a unified diff: base-side text. `unifiedMergeView`
+// Hover, the definition link and Mod+click on the deleted lines of a unified diff: base-side text. `unifiedMergeView`
 // draws them as block widgets outside the editor's document, so CodeMirror's own position lookups
 // do not see them; this maps the pointer to a base line and column from the DOM.
 
 import { getChunks, getOriginalDoc } from "@codemirror/merge";
 import { type Extension } from "@codemirror/state";
 import { type EditorView, ViewPlugin } from "@codemirror/view";
+import { gotoLinks } from "./gotoLinkDom";
 import { type HoverAnchor, hoverPopups } from "./hoverDom";
 import { wordRange } from "./hoverPopup";
 import { type SemanticHooks, type TextPosition, gotoOnClick, queryHover } from "./semantic";
@@ -87,5 +88,11 @@ export function deletedLines(path: string, hooks: SemanticHooks): Extension {
       }
     },
   );
-  return [goto, hoverPopups(deletedWordAt, (anchor, signal) => queryHover(hooks, "base", path, anchor.at, [], signal))];
+  return [
+    goto,
+    hoverPopups(deletedWordAt, (anchor, signal) => queryHover(hooks, "base", path, anchor.at, [], signal)),
+    gotoLinks(deletedWordAt, (anchor, signal) =>
+      hooks.hasDefinition("base", path, anchor.at.line, anchor.at.col, signal),
+    ),
+  ];
 }

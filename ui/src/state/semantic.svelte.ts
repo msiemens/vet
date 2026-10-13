@@ -12,6 +12,7 @@ import { isAbort } from "../lib/abort";
 import type { HoverAnswer } from "./backend";
 import { changeset } from "./changeset.svelte";
 import { commands } from "./commands";
+import { DefinitionProbe } from "./definitionProbe";
 import { InFlight } from "./inFlight";
 import { progress } from "./progress.svelte";
 import { type SemanticSummary, summarize } from "./semanticSummary";
@@ -27,6 +28,7 @@ class SemanticStore {
   private epoch = 0;
   private pending = new Map<string, Promise<Diagnostic[]>>();
   private hovering = new InFlight<HoverAnswer>();
+  private probe = new DefinitionProbe((key, signal) => this.lookUp(key, signal));
   /** The number of diagnostics to tell the viewer about, per file asked about at `revision`. */
   private counts = new SvelteMap<string, number>();
   /** The files the backend could not answer for, and why. */
@@ -57,6 +59,7 @@ class SemanticStore {
     this.epoch++;
     this.pending.clear();
     this.hovering.clear();
+    this.probe.clear();
     this.counts.clear();
     this.missing.clear();
   }
@@ -121,6 +124,31 @@ class SemanticStore {
       else changeset.reportFailure(error, revision);
     }
     return undefined;
+  }
+
+  /**
+   * Whether the position has a definition, asked once per position and without telling the viewer
+   * anything; `false` with no server for the file's type, and on a failure (which is asked again).
+   */
+  async hasDefinition(
+    revision: number,
+    side: Side,
+    path: string,
+    line: number,
+    col: number,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (!session.backend || !hasServer(path, serverList.servers)) return false;
+    if (!this.enter(revision)) return false;
+    return this.probe.has(JSON.stringify([revision, side, path, line, col]), signal);
+  }
+
+  private async lookUp(key: string, signal: AbortSignal): Promise<boolean> {
+    const [revision, side, path, line, col] = JSON.parse(key) as [number, Side, string, number, number];
+    const r = await session.backend?.definition(revision, side, path, line, col, signal);
+    if (!r) return false;
+    this.note(revision, path, r.unavailable);
+    return r.locations.length > 0;
   }
 
   /** The target-side diagnostics of a file, asked once per revision; empty if unavailable or stale. */

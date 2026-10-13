@@ -196,6 +196,19 @@
   background: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 
+/* A symbol that Mod+click goes to the definition of: underlined (an element in the body over it), and the pointer a hand. */
+.vet-goto-line {
+  position: fixed;
+  height: 1px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 1000;
+}
+.vet-goto-live .cm-content,
+.vet-goto-live .cm-deletedLine {
+  cursor: pointer;
+}
+
 /* Diagnostics (@codemirror/lint): the squiggles and gutter markers are severity-coloured by the
    extension; its tooltip follows the theme. */
 .cm-tooltip.cm-tooltip-lint {

@@ -210,6 +210,10 @@ export class ReviewController {
       definition: (revision, side, path, line, col) => {
         if (this.analysable(id, side)) void this.goToDefinition(id, revision, side, path, line, col);
       },
+      hasDefinition: (revision, side, path, line, col, signal) =>
+        this.analysable(id, side)
+          ? semantic.hasDefinition(revision, side, path, line, col, signal)
+          : Promise.resolve(false),
       locations: (revision, kind, side, path, at, subject) => {
         if (!this.analysable(id, side)) return;
         const backend = this.backend;
