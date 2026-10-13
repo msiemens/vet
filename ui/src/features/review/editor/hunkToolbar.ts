@@ -148,14 +148,16 @@ export function hunkToolbar(source: ChangesSource, field: StateField<ChangesStat
         this.shown = key;
         const { actions } = source;
         const buttons = state === "informational" ? [] : [flagButton(flagged, () => actions.toggleFlag(hunk))];
-        buttons.push(
-          iconButton(
-            commands.tooltip("review.comment"),
-            "comments",
-            () => actions.comment(hunk),
-            "vet-icon-btn vet-review-action",
-          ),
-        );
+        if (actions.comment) {
+          buttons.push(
+            iconButton(
+              commands.tooltip("review.comment"),
+              "comments",
+              () => actions.comment?.(hunk),
+              "vet-icon-btn vet-review-action",
+            ),
+          );
+        }
         if (state === "seenAgainstOldBase")
           buttons.push(
             reconfirmButton(commands.tooltip("review.reconfirm", "Re-confirm"), () => actions.toggleSeen(hunk)),

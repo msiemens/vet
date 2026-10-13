@@ -54,12 +54,15 @@ export interface TextActions {
 export interface TextThreadsInit {
   shown: Shown;
   listeners: ThreadListeners;
+  /** Whether the text offers comments: not where the commit it shows has none of its own. */
+  commentable: boolean;
 }
 
 const NO_TEXT: Record<NoTextReason, string> = {
   binary: "Binary file: there is no text to show.",
   unavailable: "The content of this file is not available: it is over the size limit, or it could not be read.",
   notAFile: "Not a regular file: a symlink or a submodule has no text.",
+  absent: "This file does not exist in this commit.",
 };
 
 /** What a changed file's text draws its changes from. */
@@ -88,6 +91,7 @@ export class TextView {
   /** The reviewer was in the editor, or navigation put its caret on a line: comments go on its selection. */
   private entered = false;
   private cards: TextThreads;
+  private commentable: boolean;
 
   /**
    * Fills `root` with the file's text from `source`. A reply of another revision is dropped:
@@ -105,6 +109,7 @@ export class TextView {
     private changes?: { file: FileLayout; review: ReviewSource; actions: TextActions },
   ) {
     this.shown = threads.shown;
+    this.commentable = threads.commentable;
     root.replaceChildren();
     root.classList.add("vet-text");
     // Thread cards size themselves to the view's width (`cqw`), not to the width of the longest line.
@@ -200,7 +205,7 @@ export class TextView {
       actions: {
         toggleSeen: (hunk) => actions.toggleSeen(hunk),
         toggleFlag: (hunk) => actions.toggleFlag(hunk),
-        comment,
+        comment: this.commentable ? comment : undefined,
       },
       card: (view, line) => this.showCard(view, line),
     };
@@ -322,7 +327,7 @@ export class TextView {
   /** Asks for a comment on the selection, the caret's line or the current hunk; answers whether there was somewhere to comment. */
   commentHere(): boolean {
     const { drawn } = this;
-    const at = drawn && fileViewComment(drawn.source.hunks, this.current, this.selection());
+    const at = this.commentable && drawn && fileViewComment(drawn.source.hunks, this.current, this.selection());
     if (!at) return false;
     this.cards.commentOn(at);
     return true;

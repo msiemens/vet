@@ -298,8 +298,9 @@ export class Backend {
   }
 
   /** The commits of the changeset on view with their own progress, oldest first; none for the working tree. */
-  async commits(): Promise<CommitUnit[]> {
-    return expect(await this.conn.request({ type: "commits", project: this.pid }), "commits").commits;
+  async commits(): Promise<{ revision: number; commits: CommitUnit[] }> {
+    const { revision, commits } = expect(await this.conn.request({ type: "commits", project: this.pid }), "commits");
+    return { revision, commits };
   }
 
   /** Remembers the lens the changeset on view is reviewed in; every subscriber, this one included, then gets `lensChanged`. */

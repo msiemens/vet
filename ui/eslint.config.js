@@ -100,11 +100,6 @@ export default defineConfig(
     rules: { "no-restricted-imports": ["error", { patterns: [connection] }] },
   },
   {
-    // The view scopes take the review state a request returned, as the store does.
-    files: ["src/state/viewScope.svelte.ts"],
-    rules: { "no-restricted-imports": ["error", { patterns: [connection] }] },
-  },
-  {
     files: ["src/features/review/editor/**"],
     ignores: ["src/**/*.test.ts"],
     rules: { "no-restricted-imports": ["error", { patterns: [connection, manifestShapes, svelteImports] }] },

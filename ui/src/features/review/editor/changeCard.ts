@@ -32,7 +32,8 @@ export interface Card {
 export interface CardActions {
   /** Acknowledge or un-acknowledge: the opposite of what the card shows now. */
   toggle(): void;
-  comment(): void;
+  /** Absent where the view has no comments to offer. */
+  comment?(): void;
   /** One side of the item's file, for the preview. */
   blob(side: Side): Promise<BlobContent>;
 }
@@ -73,10 +74,11 @@ export function changeCard(
     13,
     2,
   );
-  const comment = iconButton("Comment", "comments", () => actions.comment(), "vet-icon-btn vet-review-action");
+  const comment =
+    actions.comment && iconButton("Comment", "comments", () => actions.comment?.(), "vet-icon-btn vet-review-action");
   const content = cardContent(item, path, oldPath);
   bar.append(el("span", "vet-hunk-text", content.title), pathText(path, "vet-card-path mono"), el("span", "grow"));
-  bar.append(comment, toggle);
+  bar.append(...(comment ? [comment] : []), toggle);
   root.append(bar);
 
   for (const row of content.rows) {

@@ -98,6 +98,8 @@ pub enum NoTextReason {
     Unavailable,
     /// A symlink or a submodule.
     NotAFile,
+    /// The commit that was asked for has no such file.
+    Absent,
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]

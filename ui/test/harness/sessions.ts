@@ -109,6 +109,9 @@ export const sessions: Record<string, (h: Harness) => Promise<void>> = {
       const text = await h.other.fileText("b.txt", commit(0));
       if (text.content.type !== "text" || text.content.text.includes("c2"))
         throw new Error("a file the commit does not touch is not read as the commit leaves it");
+      const missing = await h.other.fileText("not/there.txt", commit(0));
+      if (missing.content.type !== "noText" || missing.content.reason !== "absent")
+        throw new Error("a file the commit lacks is not answered as absent");
     });
     await h.step("a mark in the scope", async () => {
       const shown = scope.currentShown();
@@ -120,6 +123,49 @@ export const sessions: Record<string, (h: Harness) => Promise<void>> = {
       if (held?.[0] !== "seen" || JSON.stringify(held) !== JSON.stringify(real))
         throw new Error("the scope does not hold the mark");
     });
+    await h.step("a mark made elsewhere is read once, its echo is not read again", async () => {
+      let reads = 0;
+      const manifest = h.other.manifest.bind(h.other);
+      h.other.manifest = (view) => {
+        reads++;
+        return manifest(view);
+      };
+      const revision = scope.currentShown()?.revision ?? -1;
+      const answer = await h.other.toggleHunk(revision, "a.txt", 1, commit(0));
+      scope.heard(answer, revision);
+      await scope.whenLoaded();
+      if (scope.state("a.txt")?.review.hunks[1] !== "seen") throw new Error("the scope did not follow the mark");
+      const afterMark = reads;
+      scope.heard(answer, revision);
+      await scope.whenLoaded();
+      if (reads !== afterMark || afterMark !== 1) throw new Error(`the scope read ${reads} times for one mark`);
+      h.other.manifest = manifest;
+    });
+    await h.step("the changeset's scope takes a mark of its file as the store does", async () => {
+      const whole = newScope(h.other, { type: "changeset" }, () => undefined);
+      await whole.load();
+      const revision = whole.currentShown()?.revision ?? -1;
+      const answer = await h.other.toggleHunk(revision, "b.txt", 0, CHANGESET);
+      whole.heard(answer, revision);
+      if (whole.state("b.txt")?.review.hunks[0] !== "seen") throw new Error("the changeset's scope did not follow");
+    });
+    // A tab on the changeset while a commit is on screen comments through its own view, not the one on screen.
+    await h.step(
+      "a comment from the changeset's scope while a commit is on screen",
+      async () => {
+        const whole = newScope(h.other, { type: "changeset" }, () => undefined);
+        await whole.load();
+        const shown = whole.currentShown();
+        if (!shown) throw new Error("the scope has not read");
+        const target = { type: "file", side: "target", path: "a.txt" } as const;
+        const sent = await h.asElement(
+          () => threads.create(shown, target, "a file note", (s) => whole.admit(s)),
+          shown,
+        );
+        if (!sent) throw new Error("the comment was refused");
+      },
+      ONE,
+    );
   },
 
   /** A mark sent while the commit to show has not arrived is meant for the commit on screen. */

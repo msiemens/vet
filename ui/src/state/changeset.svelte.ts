@@ -2,7 +2,6 @@
 // backend's; this holds and distributes them (SPEC I5).
 
 import { untrack } from "svelte";
-import { SvelteMap } from "svelte/reactivity";
 import type { BaseDiff } from "../generated/BaseDiff";
 import type { Base } from "../generated/Base";
 import type { Completion } from "../generated/Completion";
@@ -34,10 +33,12 @@ import {
   type ViewLayout,
   partsOf,
 } from "./reviewModel";
-import { ReviewOrder } from "./reviewOrder";
-import { type ReviewSource, type WriteListener } from "./reviewSource";
+import { newReviewCells } from "./reviewCells.svelte";
+import { reportFailure, reviewMarks } from "./reviewMarks";
+import { type WriteListener } from "./reviewSource";
 import { session } from "./session.svelte";
 import { STALE_NOTICE, type Shown, isCurrent } from "./shown";
+import type { ViewSource } from "./viewScope.svelte";
 import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
 import { CHANGESET, commitView } from "./view";
 
@@ -46,7 +47,7 @@ export type Opening = { type: "requested" } | { type: "opened"; changeset: Chang
 
 const NO_PATHS: readonly string[] = [];
 
-class ChangesetStore implements ReviewSource {
+class ChangesetStore implements ViewSource {
   /** What the view of the last refresh looks like: its files' structure and its base. Replaced only by a manifest. */
   layout = $state.raw<ViewLayout>();
   /** What is true of the changeset as a whole, whatever view is shown. */
@@ -59,14 +60,21 @@ class ChangesetStore implements ReviewSource {
   base = $derived(this.movedBase ?? this.layout?.base);
   /** Dependency restores that failed: the analysis of those projects is limited. Pushed as they happen. */
   restoreFailures = $state.raw<RestoreFailure[]>([]);
-  /** The current review state of each file of the view, one reactive cell per path: a review update invalidates only its file. */
-  private cells = new SvelteMap<string, FileState>();
-  private listeners = new Set<WriteListener>();
-  /** When each path was last written, in writes counted from the start; never reset, so a path that comes back is newer. */
-  private versions = new Map<string, number>();
-  private clock = 0;
-  /** Which change of the backend the review state held is as of; updates and manifests older than it do not replace it. */
-  private order = new ReviewOrder();
+  /**
+   * The current review state of each file of the view, one reactive cell per path: a review update invalidates
+   * only its file. It knows which change of the backend the state is as of; updates and manifests older than
+   * it do not replace it.
+   */
+  private cells = newReviewCells();
+  /** The requests that mark, as the view on screen sends them. */
+  private marks = reviewMarks({
+    backend: () => session.connected(),
+    admit: (shown) => this.admit(shown),
+    current: () => this.currentShown(),
+    apply: (update) => this.applyReview(update),
+    refresh: () => this.refresh(),
+    hunks: (path) => this.cells.state(path)?.review.hunks ?? [],
+  });
 
   /**
    * The versions the review view compares instead of showing the changeset; none for the changeset.
@@ -93,15 +101,18 @@ class ChangesetStore implements ReviewSource {
       const parts = partsOf(manifest, commit);
       const heldFacts = this.facts;
       // A mark answered after the manifest was read is newer than the manifest, whenever the manifest arrives.
-      const newer = this.order.load(parts.seq, parts.layout.paths, isCurrent(parts.layout.shown, this.layout?.shown));
-      const kept = new Map(newer.files.size ? this.cells : []);
+      const newer = this.cells.order.load(
+        parts.seq,
+        parts.layout.paths,
+        isCurrent(parts.layout.shown, this.layout?.shown),
+      );
       this.layout = parts.layout;
       this.movedBase = undefined;
       this.viewCompletion = newer.completion && this.viewCompletion ? this.viewCompletion : parts.completion;
       this.facts = newer.changeset && heldFacts ? { ...parts.facts, completion: heldFacts.completion } : parts.facts;
       this.shownCommit = commit;
       this.restoreFailures = manifest.restoreFailures;
-      this.write(new Map([...parts.states].map(([path, state]) => [path, kept.get(path) ?? state])), "manifest");
+      this.cells.replace(parts.states, newer);
       if (parts.facts.lens === "perCommit" && parts.facts.commits > 1) void this.loadCommits();
       else this.commits = [];
     },
@@ -139,23 +150,23 @@ class ChangesetStore implements ReviewSource {
 
   /** The review state of a file of the view as it is now. */
   file(path: string): FileState | undefined {
-    return this.cells.get(path);
+    return this.cells.file(path);
   }
 
   /** A file of the view with its review state as it is now; to be read, not kept. */
   reviewed(path: string): ReviewedFile | undefined {
     const layout = this.layouts.get(path);
-    const state = this.cells.get(path);
+    const state = this.cells.file(path);
     return layout && state && { ...layout, ...state };
   }
 
   /** The review state of a file at the moment of use; reads nothing reactively. */
   state(path: string): FileState | undefined {
-    return untrack(() => this.cells.get(path));
+    return this.cells.state(path);
   }
 
   version(path: string): number {
-    return this.versions.get(path) ?? 0;
+    return this.cells.version(path);
   }
 
   /** The layout of the view on screen, for reading at the moment of use; reads nothing reactively. */
@@ -209,8 +220,7 @@ class ChangesetStore implements ReviewSource {
     this.commits = [];
     this.commitsSeq++;
     this.restoreFailures = [];
-    this.cells.clear();
-    this.order = new ReviewOrder();
+    this.cells.reset();
   }
 
   /**
@@ -292,7 +302,7 @@ class ChangesetStore implements ReviewSource {
   async loadCommits() {
     const seq = ++this.commitsSeq;
     try {
-      const commits = await session.connected().commits();
+      const { commits } = await session.connected().commits();
       if (seq === this.commitsSeq) this.commits = commits;
     } catch (error) {
       if (seq === this.commitsSeq) session.notice = `Could not load the commits: ${errorText(error)}`;
@@ -393,51 +403,34 @@ class ChangesetStore implements ReviewSource {
   }
 
   /** Flips one hunk of the file in `shown`, the view the caller displays; the backend rejects a stale revision. */
-  async toggleHunk(shown: Shown, path: string, hunk: number) {
-    if (!this.admit(shown)) return;
-    await this.review(shown, session.connected().toggleHunk(shown.revision, path, hunk, shown.view));
+  toggleHunk(shown: Shown, path: string, hunk: number) {
+    return this.marks.toggleHunk(shown, path, hunk);
   }
 
   /** Flips the flag of one hunk. */
-  async toggleFlag(shown: Shown, path: string, hunk: number) {
-    if (!this.admit(shown)) return;
-    await this.review(shown, session.connected().toggleFlag(shown.revision, path, hunk, shown.view));
+  toggleFlag(shown: Shown, path: string, hunk: number) {
+    return this.marks.toggleFlag(shown, path, hunk);
   }
 
   /** Flips the acknowledgement of one non-text item. */
-  async toggleItem(shown: Shown, path: string, kind: NonTextKind) {
-    if (!this.admit(shown)) return;
-    await this.review(shown, session.connected().toggleItem(shown.revision, path, kind, shown.view));
+  toggleItem(shown: Shown, path: string, kind: NonTextKind) {
+    return this.marks.toggleItem(shown, path, kind);
   }
 
   /** Marks everything of a file seen, or takes every mark back if it all is seen already. */
-  async toggleFileSeen(shown: Shown, path: string) {
-    if (!this.admit(shown)) return;
-    await this.review(shown, session.connected().toggleFileSeen(shown.revision, path, shown.view));
+  toggleFileSeen(shown: Shown, path: string) {
+    return this.marks.toggleFileSeen(shown, path);
   }
 
   /** Marks everything of every file of the view below the directory `dir` seen, or takes every mark back. */
   async setDirectorySeen(shown: Shown, dir: string, seen: boolean) {
-    if (!this.admit(shown)) return;
     const paths = pathsBelow(this.paths, dir);
-    if (paths.length)
-      await this.review(shown, session.connected().setFilesSeen(shown.revision, paths, seen, shown.view));
+    if (paths.length) await this.marks.setFilesSeen(shown, paths, seen);
   }
 
-  /**
-   * Marks the hunks of a file seen against an old base seen again. A range of versions has no such
-   * request: its hunks are marked one by one, as the backend flips them.
-   */
-  async reconfirmFile(shown: Shown, path: string) {
-    if (!this.admit(shown)) return;
-    if (shown.view.type === "changeset") {
-      await this.review(shown, session.connected().reconfirmFile(shown.revision, path));
-      return;
-    }
-    const hunks = this.file(path)?.review.hunks ?? [];
-    for (const [hunk, state] of hunks.entries()) {
-      if (state === "seenAgainstOldBase") await this.toggleHunk(shown, path, hunk);
-    }
+  /** Marks the hunks of a file seen against an old base seen again. */
+  reconfirmFile(shown: Shown, path: string) {
+    return this.marks.reconfirmFile(shown, path);
   }
 
   /** The files that have hunks seen against an old base, as they are now. */
@@ -468,20 +461,13 @@ class ChangesetStore implements ReviewSource {
   }
 
   /** The base diff of a hunk seen against an old base; `undefined` after showing why it could not be had. */
-  async baseDiff(shown: Shown, path: string, hunk: number): Promise<BaseDiff | undefined> {
-    if (!this.admit(shown)) return undefined;
-    try {
-      return await session.connected().baseDiff(shown.revision, path, hunk);
-    } catch (error) {
-      this.reportFailure(error, shown.revision);
-      return undefined;
-    }
+  baseDiff(shown: Shown, path: string, hunk: number): Promise<BaseDiff | undefined> {
+    return this.marks.baseDiff(shown, path, hunk);
   }
 
   /** Where a comment on a part of the file attaches in `shown`; rejects if `shown` is not current. */
-  async commentTarget(shown: Shown, path: string, at: CommentAt) {
-    if (!this.admit(shown)) throw new Error(STALE_NOTICE);
-    return session.connected().commentTarget(shown.revision, path, at, shown.view);
+  commentTarget(shown: Shown, path: string, at: CommentAt) {
+    return this.marks.commentTarget(shown, path, at);
   }
 
   /** The changeset on view as a whole, whatever range or commit is shown; `undefined` where it could not be read. */
@@ -629,30 +615,16 @@ class ChangesetStore implements ReviewSource {
   }
 
   /**
-   * Applies the review state a request returned, unless the view it was sent for has been replaced
-   * (the manifest of the new one has the state). A rejected request is normally a stale revision:
-   * refetch the manifest and tell the viewer to repeat the action.
-   */
-  private async review(sent: Shown, request: Promise<ReviewUpdate | ReviewUpdate[]>) {
-    try {
-      const updates = [await request].flat();
-      if (isCurrent(sent, this.currentShown())) for (const update of updates) this.applyReview(update);
-    } catch (error) {
-      await this.refresh().catch(() => undefined);
-      this.reportFailure(error, sent.revision);
-    }
-  }
-
-  /**
    * Tells the viewer why a request failed. When the manifest has moved on from the revision the
    * request was sent for, the views are about to be replaced and the action has to be repeated.
    */
   reportFailure(error: unknown, sent?: number) {
-    const current = this.layout?.shown.revision;
-    session.notice =
-      sent !== undefined && current !== undefined && current !== sent
-        ? STALE_NOTICE
-        : `Request failed: ${errorText(error)}`;
+    reportFailure(error, sent, this.layout?.shown.revision);
+  }
+
+  /** An answer another view of this window got for the view on screen's own lines (a tab at the commit on screen): it is as good as one this store asked for. */
+  adopt(shown: Shown, update: ReviewUpdate) {
+    if (isCurrent(shown, this.currentShown())) this.applyReview(update);
   }
 
   /**
@@ -664,45 +636,27 @@ class ChangesetStore implements ReviewSource {
     const facts = this.facts;
     if (!this.layout || !facts) return;
     const known = this.cells.has(update.path);
-    const fresh = this.order.file(update.path, update.seq);
-    const completion = this.order.completion(update.seq);
+    const fresh = this.cells.order.file(update.path, update.seq);
+    const completion = this.cells.order.completion(update.seq);
     // Only the changeset's own view says how far the changeset as a whole is.
-    const whole = this.showsChangeset && this.order.changeset(update.seq);
+    const whole = this.showsChangeset && this.cells.order.changeset(update.seq);
     if (!fresh && !completion && !whole) return;
     if (completion) this.viewCompletion = update.changeset;
     if (whole) this.facts = { ...facts, completion: update.changeset };
-    if (fresh && known)
-      this.write(new Map([[update.path, { review: update.review, completion: update.completion }]]), "update");
+    if (fresh && known) this.cells.put(update.path, { review: update.review, completion: update.completion });
     if (facts.lens === "perCommit" && facts.commits > 1) void this.loadCommits();
   }
 
   /** A mark in the changeset's file, which a range or commit on screen does not show: the changeset's progress and the commits' follow. */
   private applyTotals(update: ReviewUpdate) {
-    if (!this.facts || !this.order.changeset(update.seq)) return;
+    if (!this.facts || !this.cells.order.changeset(update.seq)) return;
     this.facts = { ...this.facts, completion: update.changeset };
     void this.loadCommits();
   }
 
-  /**
-   * Every write of the files' review state goes through here: the cells take it and the listeners hear
-   * which paths changed, or "all" for a manifest, which replaces every file. Review state arrives by
-   * answer, event and manifest alike; a listener that reads the cells it is told of follows all three.
-   */
-  private write(entries: ReadonlyMap<string, FileState>, cause: "update" | "manifest") {
-    if (cause === "manifest") this.cells.clear();
-    const stamp = ++this.clock;
-    for (const [path, file] of entries) {
-      this.cells.set(path, file);
-      this.versions.set(path, stamp);
-    }
-    const paths = cause === "manifest" ? "all" : new Set(entries.keys());
-    for (const listener of this.listeners) listener(paths);
-  }
-
   /** Calls `listener` after review state was written, with the paths it concerns; returns the unsubscribe function. */
   subscribe(listener: WriteListener): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return this.cells.subscribe(listener);
   }
 }
 

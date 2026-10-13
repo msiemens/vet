@@ -25,7 +25,7 @@ import { semantic } from "../../state/semantic.svelte";
 import { serverList } from "../../state/serverList.svelte";
 import { languageOf, withoutImplementations } from "../../state/serverStatus";
 import { session } from "../../state/session.svelte";
-import { type Shown, isCurrent } from "../../state/shown";
+import { STALE_NOTICE, type Shown, isCurrent } from "../../state/shown";
 import { symbols } from "../../state/symbols.svelte";
 import { threads } from "../../state/threads.svelte";
 import { rangeKey } from "../../state/timelineRange";
@@ -76,7 +76,9 @@ export type ChangesetSource = Pick<
   | "currentShown"
   | "currentLayout"
   | "layoutOf"
-  | "commits"
+  | "admit"
+  | "adopt"
+  | "onOpening"
   | "shownCommit"
   | "stepCommit"
   | "subscribe"
@@ -121,6 +123,8 @@ export class ReviewController {
   softWrap: SoftWrap = "prose";
   /** The views that file tabs read while they are not the one on screen, by `scopeKey`. */
   private scopes = new Map<string, { scope: ViewScope; off: () => void }>();
+  /** Another changeset is on its way: the open tabs are the old one's, and no scope may read for them. */
+  private frozen = false;
   /** Show Usages and Go to Implementation: goes to the one place found, or lists the places in the popup. */
   private search = new LocationSearch({
     picker: locationPicker,
@@ -160,12 +164,23 @@ export class ReviewController {
     const offCommands = provideActions(this.viewActions());
     const offContext = commands.provide(() => this.facts());
     const offResync = session.onResync(() => this.reloadScopes());
+    // The open tabs are the old changeset's until the new one's manifest has come and brought its tabs back.
+    const offOpening = changeset.onOpening((opening) => {
+      if (opening.type === "requested") {
+        this.dropScopes();
+        this.frozen = true;
+      } else if (opening.type === "unannounced") {
+        this.frozen = false;
+        this.reloadScopes();
+      }
+    });
     this.unsubscribe = () => {
       offReview();
       offThreads();
       offCommands();
       offContext();
       offResync();
+      offOpening();
     };
     this.unsubscribeEvents = backend.onEvent((event) => {
       if (event.project !== backend.project) return;
@@ -174,7 +189,9 @@ export class ReviewController {
         semantic.invalidate();
         for (const view of this.views.values()) view.refreshDiagnostics();
         for (const text of this.texts.values()) text.refreshDiagnostics();
-      } else if (event.type === "reviewChanged" || event.type === "snapshotSettled" || event.type === "targetChanged") {
+      } else if (event.type === "reviewChanged") {
+        for (const { scope } of this.scopes.values()) scope.heard(event.update, event.revision);
+      } else if (event.type === "snapshotSettled" || event.type === "targetChanged") {
         this.reloadScopes();
       }
     });
@@ -234,10 +251,11 @@ export class ReviewController {
     const key = scopeKey(spec);
     const held = this.scopes.get(key);
     if (held) return held.scope;
-    const scope = newScope(this.backend, spec, () => this.marked());
+    // What a mark in a tab got is the view on screen's own answer too, if it shows the same commit.
+    const scope = newScope(this.backend, spec, (shown, update) => this.changeset.adopt(shown, update));
     const off = scope.subscribe((paths) => this.scopeWritten(scope, paths));
     this.scopes.set(key, { scope, off });
-    void scope.load();
+    if (!this.frozen) void scope.load();
     return scope;
   }
 
@@ -264,17 +282,21 @@ export class ReviewController {
     return source.currentLayout() === undefined || source.layoutOf(path) !== undefined;
   }
 
-  /** Drops the scopes no open tab reads, and reads the others again. */
-  private reloadScopes() {
+  /** Drops the scopes no open tab reads (a tab closed). */
+  pruneScopes() {
     const used = new Set(this.tabs.open.flatMap((id) => this.specOf(id) ?? []).map(scopeKey));
-    for (const [key, { scope, off }] of this.scopes) {
-      if (used.has(key)) {
-        void scope.load();
-      } else {
-        off();
-        this.scopes.delete(key);
-      }
+    for (const [key, { off }] of this.scopes) {
+      if (used.has(key)) continue;
+      off();
+      this.scopes.delete(key);
     }
+  }
+
+  /** Reads the scopes the open tabs need again, as the changeset moved on. */
+  private reloadScopes() {
+    this.pruneScopes();
+    if (this.frozen) return;
+    for (const { scope } of this.scopes.values()) void scope.load();
   }
 
   private dropScopes() {
@@ -290,11 +312,6 @@ export class ReviewController {
   /** The tabs that read `scope`. */
   private tabsOf(scope: ViewScope): TabId[] {
     return this.tabs.open.filter((id) => this.specOf(id) !== undefined && this.sourceOf(id) === scope);
-  }
-
-  /** A mark was made in a scope: the view on screen may show the same lines. */
-  private marked() {
-    if (this.changeset.shownCommit !== undefined) void this.changeset.refresh().catch(() => undefined);
   }
 
   /** A scope read its manifest or took review state: the views of its tabs follow. */
@@ -400,20 +417,20 @@ export class ReviewController {
     return this.tabs.modes.get(this.tabs.active);
   }
 
-  /** Whether the view on screen changes the file. */
-  private isChanged(path: string): boolean {
-    return this.files.some((f) => f.path === path);
-  }
-
-  /** The full id of the commit on screen, if one is. */
-  private shownCommitId(): string | undefined {
+  /**
+   * The full id of the commit on screen, if one is. The commits are asked for rather than taken from
+   * the store, whose list may not be of this revision yet; a reply of another revision, or a commit
+   * that changed meanwhile, is an error.
+   */
+  private async commitOnScreen(): Promise<string | undefined> {
     const index = this.changeset.shownCommit;
-    return index === undefined ? undefined : this.changeset.commits[index]?.commit.id;
-  }
-
-  /** The tab a file opens in now: the one at the commit on screen, else the one at no commit. */
-  private tabFor(path: string): TabId {
-    return fileTab(path, this.shownCommitId());
+    const shown = this.changeset.currentShown();
+    if (index === undefined || !shown) return undefined;
+    const { revision, commits } = await this.backend.commits();
+    const id =
+      revision === shown.revision && this.changeset.shownCommit === index ? commits[index]?.commit.id : undefined;
+    if (id === undefined) throw new Error(STALE_NOTICE);
+    return id;
   }
 
   /** The facts about the review screen that commands read. */
@@ -430,6 +447,7 @@ export class ReviewController {
       viewMode: this.activeMode,
       viewModes: modesOf(kindOf(id), this.fileChanged(id)),
       diffView: view !== undefined || text !== undefined,
+      noComments: commitOf(id) !== undefined,
       byCommit: this.changeset.shownCommit !== undefined,
       hunk: view?.current ?? text?.current ?? -1,
       editor,
@@ -465,7 +483,7 @@ export class ReviewController {
       jumpToSource: () => {
         const caret = this.active?.caret();
         if (!caret) return false;
-        void this.openSource(caret.path, caret.line);
+        void this.openSource(caret.path, caret.line, this.tabs.active);
         return true;
       },
       stepCommit: (delta) => this.changeset.stepCommit(delta),
@@ -494,8 +512,9 @@ export class ReviewController {
 
   /** The hunk flagged after or before `from` over the files of the view, as they are flagged now. */
   private flaggedFrom(from: HunkPlace | undefined, delta: 1 | -1): HunkPlace | undefined {
-    const paths = this.changeset.currentLayout()?.paths ?? [];
-    return stepFlagged(paths, (path) => this.changeset.state(path)?.review.flagged, from, delta);
+    const source = this.sourceOf(this.tabs.active);
+    const paths = source.currentLayout()?.paths ?? [];
+    return stepFlagged(paths, (path) => source.state(path)?.review.flagged, from, delta);
   }
 
   /** Goes to the flagged hunk after or before the current one, across files; says so when there is none. */
@@ -515,11 +534,11 @@ export class ReviewController {
       if (id === CHANGES) {
         await this.views.get(CHANGES)?.goToFileHunk(to.path, to.hunk);
       } else {
-        // The file's tab, in the mode of the tab the step started from.
-        const mode = await this.showFile(to.path, this.tabs.modes.get(id));
-        const tab = this.tabFor(to.path);
-        if (mode === "file") this.texts.get(tab)?.goToHunk(to.hunk);
-        else await this.views.get(tab)?.goToFileHunk(to.path, to.hunk);
+        // The file's tab at the commit of the tab the step started from, in the mode that tab is in.
+        const opened = await this.showFile(to.path, this.tabs.modes.get(id), id);
+        if (!opened) return;
+        if (opened.mode === "file") this.texts.get(opened.id)?.goToHunk(to.hunk);
+        else await this.views.get(opened.id)?.goToFileHunk(to.path, to.hunk);
       }
     })();
     return true;
@@ -567,42 +586,62 @@ export class ReviewController {
     // A base path is the file's old path if it was renamed.
     const file = this.files.find((f) => (side === "base" ? (f.oldPath ?? f.path) : f.path) === path);
     const target = file?.path ?? path;
-    const showsText = this.tabs.modes.get(this.tabFor(target)) === "file";
-    const mode = await this.showFile(target, side === "base" && showsText ? this.diffMode : undefined);
-    const tab = this.tabFor(target);
-    if (mode === "file") {
-      const text = this.texts.get(tab);
+    const opened = await this.showFile(target, (current) =>
+      side === "base" && current === "file" ? this.diffMode : undefined,
+    );
+    if (!opened) return;
+    if (opened.mode === "file") {
+      const text = this.texts.get(opened.id);
       if (span) text?.goToSpan(span);
       else if (line !== undefined) text?.goToLine(line);
     } else {
-      const view = this.views.get(tab);
+      const view = this.views.get(opened.id);
       if (span) await view?.goToSpan(0, side, span);
       else if (side === "target" && line !== undefined) await view?.goToLine(0, line);
     }
   }
 
   /**
-   * Focuses the file's tab, opening it if needed (at the commit on screen, if there is one; the tab
-   * of a file and a commit is one), showing `want` if the file has that mode (else the tab's mode,
-   * or for a new tab the diff mode last chosen), with the view built. Answers the mode.
+   * Focuses the file's tab, opening it if needed, showing `want` (a mode, or what to want given the tab's
+   * mode) if the file has that mode (else the tab's mode, or for a new tab the diff mode last chosen),
+   * with the view built. The tab is the one at the commit of `origin`, a tab the request comes from; with
+   * none, at the commit on screen if there is one. Answers the tab and its mode, or nothing after saying
+   * why it could not be opened.
    */
-  private async showFile(path: string, want?: ViewMode): Promise<ViewMode> {
-    const commit = this.shownCommitId();
+  private async showFile(
+    path: string,
+    want?: ViewMode | ((current?: ViewMode) => ViewMode | undefined),
+    origin?: TabId,
+  ): Promise<{ id: TabId; mode: ViewMode } | undefined> {
+    let commit: string | undefined;
+    try {
+      commit = origin !== undefined && origin !== CHANGES ? commitOf(origin) : await this.commitOnScreen();
+    } catch (error) {
+      session.notice = errorText(error);
+      return undefined;
+    }
     const id = fileTab(path, commit);
+    const source = this.sourceOf(id);
+    const spec = this.specOf(id);
+    const scope = spec && this.scope(spec);
+    await scope?.whenLoaded();
+    if (scope?.gone) {
+      session.notice = "That commit is not in the changeset any more";
+      return undefined;
+    }
+    const current = this.tabs.modes.get(id);
     const mode = settleMode({
-      changed: this.isChanged(path),
-      want,
-      current: this.tabs.modes.get(id),
+      changed: source.layoutOf(path) !== undefined,
+      want: typeof want === "function" ? want(current) : want,
+      current,
       last: this.diffMode,
     });
     this.tabs.showFile(path, mode, commit);
     this.ensureScopes();
-    const spec = this.specOf(id);
-    if (spec) await this.scope(spec).whenLoaded();
     await tick(); // a new tab's pane attaches and builds its view
     if (mode === "file") this.ensureText(id);
     else this.syncDiffMode(id);
-    return mode;
+    return { id, mode };
   }
 
   /** Draws the tab's diff view in the tab's diff mode. */
@@ -681,17 +720,19 @@ export class ReviewController {
       // Only the changeset has a base diff to show, not a range of versions.
       baseDiff: built.view.type === "changeset" ? (shown, path, hunk) => source.baseDiff(shown, path, hunk) : undefined,
       fileMenu: this.fileMenu,
-      openSource: (path, line) => void this.openSource(path, line),
+      openSource: (path, line) => void this.openSource(path, line, id),
       threads: this.threadListeners(source),
+      commentable: commitOf(id) === undefined,
     };
   }
 
+  /** What the cards ask of the owner, for threads of the view `source` shows; they go through that view's own admission. */
   private threadListeners(source: ViewSource = this.changeset): ThreadListeners {
     return {
       create: (shown, target, body) =>
         this.editing(
           source,
-          () => threads.create(shown, target, body),
+          () => threads.create(shown, target, body, (sent) => source.admit(sent)),
           () => false,
         ),
       commentTarget: (shown, path, at) =>
@@ -778,8 +819,8 @@ export class ReviewController {
 
   /**
    * Shows a thread on code: its card in the file's tab, in the mode that tab is in, when the file
-   * has a tab open; else in the Changes tab, where it is its card or its file. The changeset's
-   * own threads are in no diff.
+   * has a tab open (a tab at a commit shows no threads, so only the file's other tab counts); else in
+   * the Changes tab, where it is its card or its file. The changeset's own threads are in no diff.
    */
   async goToThread(thread: Thread): Promise<boolean> {
     if (thread.kind === "changeset") return false;
@@ -809,6 +850,7 @@ export class ReviewController {
     const previous = this.texts.get(id);
     // A scope's views are rebuilt when its own manifest comes.
     if (!force && previous && source !== this.changeset && layout && previous.isFor(layout.shown)) return;
+    if (!layout) this.keepPlace(id, "text", previous?.lines());
     previous?.destroy();
     this.texts.delete(id);
     if (!layout) return;
@@ -820,7 +862,7 @@ export class ReviewController {
       fileSource(this.backend, shown.revision, shown.view),
       bindRevision(this.hooksFor(id), shown.revision),
       this.softWrap,
-      { shown, listeners: this.threadListeners(source) },
+      { shown, listeners: this.threadListeners(source), commentable: commitOf(id) === undefined },
       file && { file, review: source, actions: this.textActions(source, file, shown) },
     );
     this.texts.set(id, text);
@@ -853,6 +895,7 @@ export class ReviewController {
       restoring.scroll.delete(id);
       if (restoring.scroll.size === 0) this.restore = undefined;
     }
+    if (!layout) this.keepPlace(id, "diff", previous?.lines());
     previous?.destroy();
     this.views.delete(id);
     if (!layout || (path !== undefined && !files.length)) return; // the file left the view, or it is not read yet
@@ -879,6 +922,11 @@ export class ReviewController {
     if (path === undefined) return;
     const at = this.takePending(id, "diff");
     (at ? view.showLines(at) : view.load(0)).catch(() => undefined);
+  }
+
+  /** Remembers where a pane was, for the view that replaces it once its source has read. */
+  private keepPlace(id: TabId, pane: keyof FilePositions, at: PanePosition | undefined) {
+    if (at) this.pending.set(id, { ...this.pending.get(id), [pane]: at });
   }
 
   /** The position a pane is put at when it is built, once. */
@@ -1028,9 +1076,9 @@ export class ReviewController {
    * Jump to Source: the file's tab shows its text, at a 0-based target `line` if given. The tab
    * is opened in that mode if the file has none.
    */
-  async openSource(path: string, line?: number) {
-    await this.showFile(path, "file");
-    if (line !== undefined) this.texts.get(this.tabFor(path))?.goToLine(line);
+  async openSource(path: string, line?: number, origin?: TabId) {
+    const opened = await this.showFile(path, "file", origin);
+    if (opened && line !== undefined) this.texts.get(opened.id)?.goToLine(line);
   }
 
   /** What the file's text tab offers for the file's hunks. */
@@ -1069,6 +1117,10 @@ export class ReviewController {
   update({ layout, facts }: Frame) {
     const key = keyId(facts.target.changeset);
     const switching = this.key !== undefined && key !== this.key;
+    if (this.frozen) {
+      this.frozen = false;
+      if (!switching) this.reloadScopes(); // the scopes made meanwhile have read nothing
+    }
     const paths = new Set(layout.paths);
     const brought = switching ? this.switchTo(key, paths) : undefined;
     if (!switching) this.tabs.dropStale((id, path) => this.stillChanged(id, path));
@@ -1128,6 +1180,7 @@ export class ReviewController {
     if (repo !== undefined) this.memory ??= new ViewMemory(repo);
     const saved = this.memory?.get(key);
     this.dropScopes();
+    this.frozen = false;
     const { open, active, modes } = restoredTabs(
       saved,
       (path) => paths.has(path),

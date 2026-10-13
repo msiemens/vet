@@ -639,6 +639,7 @@ pub fn target_text(t: &TargetText, highlights: p::Highlights) -> p::Response {
                     NoText::Binary => p::NoTextReason::Binary,
                     NoText::Unavailable => p::NoTextReason::Unavailable,
                     NoText::NotAFile => p::NoTextReason::NotAFile,
+                    NoText::Absent => p::NoTextReason::Absent,
                 },
             },
         },

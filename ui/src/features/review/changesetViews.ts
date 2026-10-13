@@ -57,7 +57,10 @@ export function restoredTabs(
 const VIEW_MODES: readonly unknown[] = ["unified", "split", "file"];
 
 const isLine = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
-const isTab = (v: unknown): v is TabId => v === CHANGES || (typeof v === "string" && isFileTab(v as TabId));
+/** A commit's full id, as git writes it: 40 hexadecimal digits, or 64 for the long hash. */
+const PINNED = /^pin:[0-9a-f]{40}(?:[0-9a-f]{24})?:./;
+const isTab = (v: unknown): v is TabId =>
+  v === CHANGES || (typeof v === "string" && (v.startsWith("pin:") ? PINNED.test(v) : isFileTab(v as TabId)));
 const record = (v: unknown): Record<string, unknown> | undefined =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
 

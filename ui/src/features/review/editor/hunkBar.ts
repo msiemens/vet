@@ -13,7 +13,8 @@ export interface BarActions {
   toggleSeen(hunk: number): void;
   /** Flips the hunk's flag for later review. */
   toggleFlag(hunk: number): void;
-  comment(hunk: number): void;
+  /** Absent where the view has no comments to offer. */
+  comment?(hunk: number): void;
   /** Opens or closes the base diff under the bar of a hunk seen against an old base; absent where there is none to show. */
   toggleBaseDiff?(hunk: number): void;
 }
@@ -144,12 +145,16 @@ export class HunkBar extends WidgetType {
       tools.className = "vet-hunk-tools";
       tools.append(
         flagButton(this.hunk.flagged, () => actions.toggleFlag(this.index)),
-        iconButton(
-          commands.tooltip("review.comment"),
-          "comments",
-          () => actions.comment(this.index),
-          "vet-icon-btn vet-review-action",
-        ),
+        ...(actions.comment
+          ? [
+              iconButton(
+                commands.tooltip("review.comment"),
+                "comments",
+                () => actions.comment?.(this.index),
+                "vet-icon-btn vet-review-action",
+              ),
+            ]
+          : []),
         this.state === "seenAgainstOldBase"
           ? reconfirmButton(commands.tooltip("review.reconfirm", "Re-confirm"), () => actions.toggleSeen(this.index))
           : iconButton(

@@ -93,7 +93,9 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
     }
 
     /// The text of any file on the target side of `view`, changed or not: the changeset's target
-    /// snapshot, or for a commit the tree it leaves (an interdiff reads the changeset's).
+    /// snapshot, or for a commit the tree it leaves (an interdiff reads the changeset's). A path
+    /// the changeset's target lacks is an error; a path a commit lacks is an ordinary answer
+    /// ([`NoText::Absent`]), since a tab stays at its commit while the file comes and goes.
     pub async fn target_text(&self, view: View, path: &str) -> Result<TargetText> {
         let st = match view {
             View::Commit { .. } => self.viewing(view).await?.0,
@@ -104,10 +106,15 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             _ => &*st.target,
         };
         let key = RepoPath::from(path);
-        let entry = target
-            .entries
-            .get(&key)
-            .ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
+        let Some(entry) = target.entries.get(&key) else {
+            if matches!(view, View::Commit { .. }) {
+                return Ok(TargetText {
+                    revision: st.revision,
+                    content: Err(NoText::Absent),
+                });
+            }
+            return Err(SessionError::NotFound(format!("file {path}")));
+        };
         let content = match entry.kind {
             EntryKind::File => self.acquisition.text_of(&BTreeMap::new(), &key, entry.blob).await?,
             EntryKind::Symlink | EntryKind::Submodule => Err(NoText::NotAFile),

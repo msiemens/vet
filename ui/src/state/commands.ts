@@ -68,6 +68,8 @@ export interface CommandContext {
   viewModes?: readonly ViewMode[];
   /** The active tab shows hunks to step through: a diff view, or a changed file's text. */
   diffView: boolean;
+  /** The active tab offers no comments: it stays at a commit, whose comments are made in All changes. */
+  noComments?: boolean;
   /** Index of the current hunk in the active view, -1 for none. */
   hunk: number;
   /** The review view shows one commit of a changeset that is reviewed by commit. */

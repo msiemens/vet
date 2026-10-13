@@ -164,7 +164,10 @@
   $effect(() => {
     // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the reads make the tabs a dependency
     [tabs.open.length, tabs.active, ...tabs.open.map((id) => tabs.modes.get(id))];
-    untrack(() => controller.scheduleSave());
+    untrack(() => {
+      controller.scheduleSave();
+      controller.pruneScopes();
+    });
   });
 
   // A settled snapshot moved the changeset to a new revision, another changeset is on view, or

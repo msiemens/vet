@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type SavedView, type Storage, ViewMemory, restoredTabs } from "./changesetViews.ts";
+import { type SavedView, type Storage, ViewMemory, decodeView, restoredTabs } from "./changesetViews.ts";
 
 const saved = (open: string[], active: string, modes: Record<string, string> = {}): SavedView => ({
   open: open as SavedView["open"],
@@ -75,6 +75,23 @@ void test("a tab that stays at a commit comes back whatever the changeset change
   const storage = fakeStorage();
   new ViewMemory("/repo", storage).set("k", view);
   assert.deepEqual(new ViewMemory("/repo", storage).get("k")?.open, ["changes", pinned]);
+});
+
+void test("a stored tab that stays at a commit is kept only if its id says a commit", () => {
+  const good = `pin:${"a".repeat(40)}:src/a.rs`;
+  const view = decodeView({
+    open: [
+      "changes",
+      good,
+      "pin:short:src/a.rs",
+      `pin:${"g".repeat(40)}:src/a.rs`,
+      `pin:${"a".repeat(40)}:`,
+      "file:b.rs",
+    ],
+    active: "pin:short:src/a.rs",
+  });
+  assert.deepEqual(view?.open, ["changes", good, "file:b.rs"]);
+  assert.equal(view.active, "changes");
 });
 
 void test("a log tab is restored only while its log is held", () => {

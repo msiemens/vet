@@ -65,9 +65,14 @@ class ThreadStore {
     }
   }
 
-  /** Opens a thread; resolves whether it went through. */
-  async create(shown: Shown, target: ThreadTarget, body: string): Promise<boolean> {
-    if (!changeset.admit(shown)) return false;
+  /** Opens a thread; resolves whether it went through. `admit` is the view `shown` is of, which says whether it still is the one asked about; by default the view on screen. */
+  async create(
+    shown: Shown,
+    target: ThreadTarget,
+    body: string,
+    admit: (shown: Shown) => boolean = (s) => changeset.admit(s),
+  ): Promise<boolean> {
+    if (!admit(shown)) return false;
     return this.change(this.backend?.createThread(shown.revision, target, body, shown.view), shown.revision);
   }
 

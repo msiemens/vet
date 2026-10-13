@@ -18,6 +18,8 @@ pub enum NoText {
     Unavailable,
     /// A symlink or a submodule.
     NotAFile,
+    /// The commit that was asked for has no such file.
+    Absent,
 }
 
 /// The media type of a common image format, from the file extension (any case).

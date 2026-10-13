@@ -144,8 +144,8 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       id: "review.comment",
       label: "Add Comment",
       binding: "Ctrl-Alt-c",
-      enabled: inView,
-      disabledReason: () => NO_DIFF,
+      enabled: (c) => inView(c) && !c.noComments,
+      disabledReason: (c) => (c.noComments ? "Comments are made in All changes" : NO_DIFF),
       run: () => a.comment(),
     },
     {

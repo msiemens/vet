@@ -58,7 +58,7 @@ export async function checkInvariants(other: Backend): Promise<Violation[]> {
     other.manifest(CHANGESET),
     other.listChangesets(),
     other.versions(),
-    other.commits(),
+    other.commits().then((r) => r.commits),
     other.threads(changeset.range ? view : CHANGESET),
   ]);
 

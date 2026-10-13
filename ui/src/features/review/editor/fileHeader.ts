@@ -12,7 +12,8 @@ export interface HeaderActions {
   openSource(line: number): void;
   /** What the Jump to Source button is called, with its key. */
   openSourceTitle: string;
-  comment(): void;
+  /** Absent where the view has no comments to offer. */
+  comment?(): void;
   /** Flips everything in the file. */
   toggleSeen(): void;
   /** Marks the hunks seen against an old base seen again. */
@@ -63,12 +64,9 @@ export function fileHeader(file: FileLayout, actions: HeaderActions): FileHeader
     if (!(e.target instanceof Element && e.target.closest("button"))) actions.openSource(firstLine);
   });
   const open = iconButton(actions.openSourceTitle, "file", () => actions.openSource(firstLine));
-  const comment = iconButton(
-    "Comment on this file",
-    "comments",
-    () => actions.comment(),
-    "vet-icon-btn vet-review-action",
-  );
+  const comment =
+    actions.comment &&
+    iconButton("Comment on this file", "comments", () => actions.comment?.(), "vet-icon-btn vet-review-action");
   const delta = el("span", "delta mono");
   delta.innerHTML = `<span class="add">+${file.delta.added}</span> <span class="del">−${file.delta.removed}</span>`;
   const count = el("span", "count");
@@ -87,7 +85,7 @@ export function fileHeader(file: FileLayout, actions: HeaderActions): FileHeader
     actions.reconfirm(),
   );
   const tools = el("span", "tools");
-  tools.append(open, comment, reconfirm, seen);
+  tools.append(...(comment ? [open, comment] : [open]), reconfirm, seen);
   header.append(title, delta, count, bar, tools);
   header.addEventListener("contextmenu", (e) => {
     e.preventDefault();

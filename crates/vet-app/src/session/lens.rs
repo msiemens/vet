@@ -250,7 +250,7 @@ mod tests {
     use vet_core::completion::HunkState;
     use vet_core::review::Side;
 
-    use super::super::{CommentAt, NewThread};
+    use super::super::{CommentAt, NewThread, NoText};
     use super::*;
     use crate::session::tests::Fixture;
 
@@ -476,21 +476,37 @@ mod tests {
         fx.session.open_changeset(feature()).await.unwrap().unwrap();
         let text = |view: View, path: &'static str| {
             let session = &fx.session;
-            async move { session.target_text(view, path).await.map(|t| t.content.unwrap()) }
+            async move { session.target_text(view, path).await.map(|t| t.content) }
         };
         let (first, second) = (View::Commit { index: 0 }, View::Commit { index: 1 });
 
-        assert_eq!(text(first, "a.txt").await.unwrap(), "a1\n", "changed by the commit");
-        assert_eq!(text(first, "b.txt").await.unwrap(), "b0\n", "not touched by it");
+        assert_eq!(
+            text(first, "a.txt").await.unwrap(),
+            Ok("a1\n".into()),
+            "changed by the commit"
+        );
+        assert_eq!(
+            text(first, "b.txt").await.unwrap(),
+            Ok("b0\n".into()),
+            "not touched by it"
+        );
         assert_eq!(
             text(first, "gone.txt").await.unwrap(),
-            "g0\n",
+            Ok("g0\n".into()),
             "deleted by a later commit"
         );
-        assert!(matches!(text(first, "late.txt").await, Err(SessionError::NotFound(_))));
-        assert_eq!(text(second, "late.txt").await.unwrap(), "l2\n");
-        assert!(matches!(text(second, "gone.txt").await, Err(SessionError::NotFound(_))));
-        assert_eq!(text(View::Changeset, "a.txt").await.unwrap(), "a2\n");
+        assert_eq!(
+            text(first, "late.txt").await.unwrap(),
+            Err(NoText::Absent),
+            "added by a later one"
+        );
+        assert_eq!(text(second, "late.txt").await.unwrap(), Ok("l2\n".into()));
+        assert_eq!(text(second, "gone.txt").await.unwrap(), Err(NoText::Absent));
+        assert_eq!(text(View::Changeset, "a.txt").await.unwrap(), Ok("a2\n".into()));
+        assert!(matches!(
+            text(View::Changeset, "late.nope").await,
+            Err(SessionError::NotFound(_))
+        ));
         assert!(matches!(
             text(View::Commit { index: 9 }, "a.txt").await,
             Err(SessionError::NotFound(_))

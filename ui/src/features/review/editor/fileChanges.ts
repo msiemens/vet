@@ -30,7 +30,8 @@ import { stripMarker } from "./reviewState";
 export interface HunkActions {
   toggleSeen(hunk: number): void;
   toggleFlag(hunk: number): void;
-  comment(hunk: number): void;
+  /** Absent where the view has no comments to offer. */
+  comment?(hunk: number): void;
 }
 
 export const setStates = StateEffect.define<{ states: HunkState[]; flags: boolean[] }>();

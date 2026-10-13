@@ -52,6 +52,8 @@ export interface Listeners extends ReviewRequests {
   /** The file whose header is pinned at the top of the view changed; none above the first file. */
   pinned?(path: string | undefined): void;
   threads: ThreadListeners;
+  /** Whether the view offers comments: not where the commit it shows has none of its own. */
+  commentable: boolean;
 }
 
 /** Where a view is scrolled to: below the top of a file's section. */
@@ -181,7 +183,7 @@ export class ChangesetView {
       const header = fileHeader(file, {
         openSource: (line) => listeners.openSource(file.path, line),
         openSourceTitle: commands.tooltip("review.jumpToSource"),
-        comment: () => this.threads.commentOnFile(this.sections[index]),
+        comment: listeners.commentable ? () => this.threads.commentOnFile(this.sections[index]) : undefined,
         toggleSeen: () => void this.actions.file(this.sections[index]),
         reconfirm: () => void this.actions.reconfirm(this.sections[index]),
         menu: (x, y) => listeners.fileMenu(file.path, x, y),
@@ -191,7 +193,7 @@ export class ChangesetView {
       const cards = file.nonText.map((item, ci) =>
         changeCard(file.path, file.oldPath, item, state.review.acknowledged.includes(item.kind), {
           toggle: () => void this.actions.card(this.sections[index], ci),
-          comment: () => this.threads.commentOnFile(this.sections[index]),
+          comment: listeners.commentable ? () => this.threads.commentOnFile(this.sections[index]) : undefined,
           blob: (side) => this.source.itemBlob(file.path, item.kind, side),
         }),
       );
@@ -202,7 +204,7 @@ export class ChangesetView {
       const actions: BarActions = {
         toggleSeen: (h) => void this.actions.hunk(this.sections[index], h),
         toggleFlag: (h) => void this.actions.flag(this.sections[index], h),
-        comment: (h) => this.commentOnHunk(this.sections[index], h),
+        comment: listeners.commentable ? (h) => this.commentOnHunk(this.sections[index], h) : undefined,
         toggleBaseDiff: listeners.baseDiff && ((h) => void this.toggleBaseDiff(this.sections[index], h)),
       };
       this.sections.push({
@@ -947,6 +949,7 @@ export class ChangesetView {
    * line without one), else on the current stop. Answers whether there was somewhere to comment.
    */
   commentHere(): boolean {
+    if (!this.listeners.commentable) return false;
     const last = this.remembered();
     if (last) {
       this.threads.commentOn(last.section, linesAt(last.selection));
