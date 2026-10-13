@@ -413,6 +413,39 @@ async fn a_remote_that_cannot_be_reached_fails_with_a_message_and_changes_nothin
     assert!(repo.branches().await.is_ok(), "the repository still works");
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn an_ssh_remote_that_refuses_the_key_says_so_in_every_kind_of_fetch() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fx = Fixture::new();
+    git(
+        &fx.clone,
+        &["remote", "add", "hosted", "git@git.example.invalid:acme/app.git"],
+    );
+    let ssh = fx._dir.path().join("fake-ssh");
+    std::fs::write(
+        &ssh,
+        "#!/bin/sh\necho 'git@git.example.invalid: Permission denied (publickey).' >&2\nexit 255\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(&fx.clone, &["config", "core.sshCommand", ssh.to_str().unwrap()]);
+    let repo = GixRepo::new(&fx.clone);
+    let expected = "hosted: SSH authentication to git.example.invalid failed: Permission denied (publickey). \
+                    If your key has a passphrase, add it to an agent (ssh-add) or use an agent such as \
+                    1Password's; Vet runs ssh without prompting.";
+
+    let configured = repo.fetch("hosted", None).await.unwrap_err();
+    let refs = repo
+        .fetch_refs("hosted", vec![update("refs/pull/7/head", "refs/vet/pr/7/head")], None)
+        .await
+        .unwrap_err();
+
+    assert_eq!(configured.0, expected);
+    assert_eq!(refs.0, expected);
+}
+
 impl Fixture {
     /// Who the newest reflog entry of `name` was written as, `name <email>`.
     fn reflog_writer(&self, name: &str) -> String {

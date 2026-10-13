@@ -85,6 +85,44 @@ fn headless(mut repo: gix::Repository) -> Result<gix::Repository, GitError> {
     Ok(repo)
 }
 
+/// The error of a fetch from `remote`. When `ssh` was refused, gix reports credentials that were
+/// "not accepted"; Vet passes none to ssh, so the message says what ssh itself said and what to do.
+fn fetch_err(remote: &str, url: Option<&gix::Url>, error: &(dyn std::error::Error + 'static)) -> GitError {
+    match url.and_then(|url| ssh_denied(url, error)) {
+        Some(message) => GitError(format!("{remote}: {message}")),
+        None => err(error),
+    }
+}
+
+/// The message for an `ssh` remote that refused to let `ssh` in, from the line `ssh` printed.
+fn ssh_denied(url: &gix::Url, error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if url.scheme != gix::url::Scheme::Ssh {
+        return None;
+    }
+    let mut source = Some(error);
+    let refusal = loop {
+        let current = source?;
+        if let Some(io) = current.downcast_ref::<std::io::Error>()
+            && io.kind() == std::io::ErrorKind::PermissionDenied
+        {
+            break io.to_string();
+        }
+        source = current.source();
+    };
+    let host = url.host().unwrap_or("the remote");
+    // `ssh` prefixes its line with `user@host: `.
+    let line = refusal.trim();
+    let line = match line.split_once(": ") {
+        Some((who, rest)) if !who.contains(' ') => rest,
+        _ => line,
+    };
+    let stop = if line.ends_with('.') { "" } else { "." };
+    Some(format!(
+        "SSH authentication to {host} failed: {line}{stop} If your key has a passphrase, add it to an agent \
+         (ssh-add) or use an agent such as 1Password's; Vet runs ssh without prompting."
+    ))
+}
+
 /// What a fetch asks the remote for.
 enum Specs {
     /// The remote's configured refspecs, the ones that stay below `refs/remotes/`.
@@ -186,6 +224,7 @@ fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs)
     }
     remote.replace_refspecs(specs, Direction::Fetch).map_err(err)?;
 
+    let url = remote.url(Direction::Fetch).cloned();
     let connection = remote.connect(Direction::Fetch).map_err(err)?;
     let mut configured = connection.configured_credentials_for_current_url();
     let mut offered = false;
@@ -213,10 +252,10 @@ fn run(repo: gix::Repository, name: &str, auth: Option<FetchAuth>, specs: Specs)
 
     let prepared = connection
         .prepare_fetch(gix::progress::Discard, Default::default())
-        .map_err(err)?;
+        .map_err(|e| fetch_err(name, url.as_ref(), &e))?;
     let outcome = prepared
         .receive(gix::progress::Discard, &AtomicBool::new(false))
-        .map_err(err)?;
+        .map_err(|e| fetch_err(name, url.as_ref(), &e))?;
     let (Status::Change { update_refs, .. } | Status::NoPackReceived { update_refs, .. }) = outcome.status;
     let changed = update_refs
         .updates
