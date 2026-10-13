@@ -396,6 +396,7 @@
     <Banner
       panel
       icon
+      tone="warn"
       message="{limited}{onlyStoodIn(changeset.restoreFailures)
         ? ''
         : ' Errors about unresolved names may not be real.'}"
@@ -420,6 +421,7 @@
     <Banner
       panel
       icon
+      tone="warn"
       message="Cannot tell which problems are new{unknownFiles > 1 ? ` in ${unknownFiles} files` : ''}: {unknownWhy
         ? unknownWhy.message
         : 'the base could not be analysed'}, so none of {unknownFiles > 1 ? 'theirs is' : "that file's is"} marked new."

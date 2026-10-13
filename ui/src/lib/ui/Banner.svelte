@@ -9,14 +9,14 @@
     details,
     action,
     extra,
-    tone = "warn",
+    tone = "caution",
     icon = false,
     panel = false,
   }: {
     message: string;
-    /** What it tints with: blue for news, orange for a warning, red for something that failed, amber
-     * for a note about an old base (the colour of the old-base stripes). */
-    tone?: "info" | "warn" | "bad" | "oldBase";
+    /** What it tints with: amber for a caution, blue for news, orange for a warning (the problems'
+     * warning colour), red for something that failed. */
+    tone?: "caution" | "info" | "warn" | "bad";
     /** The tone's icon before the message. */
     icon?: boolean;
     /** A notice inside a panel, a size smaller, rather than one under the header. */
@@ -33,7 +33,7 @@
   const TONES = {
     info: { color: "var(--severity-info)", severity: "info" },
     warn: { color: "var(--severity-warning)", severity: "warning" },
-    oldBase: { color: "var(--old-base)", severity: "warning" },
+    caution: { color: "var(--old-base)", severity: "warning" },
     bad: { color: "var(--del-text)", severity: "error" },
   } as const;
 
