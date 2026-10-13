@@ -7,6 +7,7 @@ import { queue } from "../../src/state/queue.svelte.ts";
 import { threads } from "../../src/state/threads.svelte.ts";
 import { defaultRange } from "../../src/state/timelineRange.ts";
 import { versions } from "../../src/state/versions.svelte.ts";
+import { newScope } from "../../src/state/viewScope.svelte.ts";
 import type { Harness } from "./harness.ts";
 import { watchFromEffect } from "./watching.svelte.ts";
 
@@ -87,6 +88,38 @@ export const sessions: Record<string, (h: Harness) => Promise<void>> = {
     await h.step("lens back to the whole", () => changeset.showLens("squash"));
     await h.step("seen in the changeset", () => hunk(h, "a.txt", 0), ONE);
     await h.step("by commit again", () => changeset.showLens("perCommit"));
+  },
+
+  /** A scope of a commit that is not the one on screen has that commit's files and marks, and keeps them while the window moves on. */
+  async pinned(h) {
+    await h.step("opened the branch by commit", () => reviewByCommit(h));
+    const commit = (index: number): View => ({ type: "commit", index });
+    const id = changeset.commits[0].commit.id;
+    const scope = newScope(h.other, { type: "commit", id }, () => undefined);
+    const hunksOf = (layout: { files: readonly { path: string; hunks: readonly unknown[] }[] } | undefined) =>
+      layout?.files.find((f) => f.path === "a.txt")?.hunks.length;
+    await h.step("another commit on screen", async () => {
+      await changeset.showCommit(2);
+      await scope.load();
+      const own = await h.other.manifest(commit(0));
+      const wanted = own.files.find((f) => f.path === "a.txt")?.hunks.length;
+      if (!wanted || hunksOf(scope.layout) !== wanted || scope.commit?.commit.id !== id)
+        throw new Error("the scope does not read its own commit");
+      if (hunksOf(changeset.currentLayout()) === wanted) throw new Error("the commits cannot be told apart");
+      const text = await h.other.fileText("b.txt", commit(0));
+      if (text.content.type !== "text" || text.content.text.includes("c2"))
+        throw new Error("a file the commit does not touch is not read as the commit leaves it");
+    });
+    await h.step("a mark in the scope", async () => {
+      const shown = scope.currentShown();
+      if (!shown) throw new Error("the scope has not read");
+      await scope.toggleHunk(shown, "a.txt", 0);
+      const own = await h.other.manifest(commit(0));
+      const held = scope.state("a.txt")?.review.hunks;
+      const real = own.files.find((f) => f.path === "a.txt")?.review.hunks;
+      if (held?.[0] !== "seen" || JSON.stringify(held) !== JSON.stringify(real))
+        throw new Error("the scope does not hold the mark");
+    });
   },
 
   /** A mark sent while the commit to show has not arrived is meant for the commit on screen. */
