@@ -10,8 +10,8 @@ use std::time::Duration;
 use crate::common::{Client, config, find, git, repo_with, write};
 use vet_backend::{Orchestrator, open_store};
 use vet_protocol::{
-    CallFate, Event, LocationChange, Reach, Request, Response, ServerMessage, ServerState, Side, SymbolChange,
-    SymbolId, SymbolName, UnavailableKind, View,
+    CallFate, ChangesetKey, Event, LocationChange, Reach, Request, Response, ServerMessage, ServerState, Side,
+    SymbolChange, SymbolId, SymbolName, UnavailableKind, View,
 };
 
 const BASE: &str = "\
@@ -540,6 +540,97 @@ async fn rust_semantics_through_the_protocol() {
         assert!(error.contains("stale revision"), "{error}");
     }
     client.call(Request::CloseProject { project }).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "needs rust-analyzer"]
+async fn the_outline_at_a_commit_is_that_commits_text_without_marks() {
+    let repo = tempfile::tempdir().unwrap();
+    let p = repo.path();
+    git(p, &["init", "-q", "-b", "main"]);
+    write(p, ".gitignore", "target/\n");
+    write(
+        p,
+        "Cargo.toml",
+        "[package]\nname = \"tiny\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write(p, "src/lib.rs", "pub fn old() {}\n");
+    let lock = Command::new("cargo")
+        .args(["generate-lockfile", "--offline"])
+        .current_dir(p)
+        .output()
+        .unwrap();
+    assert!(lock.status.success(), "{}", String::from_utf8_lossy(&lock.stderr));
+    git(p, &["add", "-A"]);
+    git(p, &["commit", "-q", "-m", "base"]);
+    git(p, &["checkout", "-q", "-b", "feature"]);
+    write(p, "src/lib.rs", "pub fn old() {}\n\npub fn in_commit() {}\n");
+    git(p, &["commit", "-q", "-am", "add in_commit"]);
+    write(
+        p,
+        "src/lib.rs",
+        "pub fn old() {}\n\npub fn in_commit() {}\n\npub fn later() {}\n",
+    );
+    git(p, &["commit", "-q", "-am", "add later"]);
+
+    let data = tempfile::tempdir().unwrap();
+    let handler = Arc::new(Orchestrator::new(open_store(data.path()).await.unwrap(), config()));
+    let client = Client::new(&handler);
+    let project = client.open(p).await;
+    client
+        .call(Request::OpenChangeset {
+            project,
+            changeset: ChangesetKey::Branch { name: "feature".into() },
+        })
+        .await
+        .unwrap();
+    let revision = client.revision(project).await;
+    let Response::Commits { commits, .. } = client.call(Request::Commits { project }).await.unwrap() else {
+        panic!("not commits");
+    };
+    assert_eq!(commits.len(), 2, "{commits:?}");
+
+    let outline = |view, path: &str| {
+        let request = Request::FileOutline {
+            project,
+            view,
+            revision,
+            path: path.into(),
+        };
+        let client = &client;
+        async move {
+            let Response::FileOutline(outline) = client.call(request).await.unwrap() else {
+                panic!("not an outline");
+            };
+            outline
+        }
+    };
+    let names = |outline: &vet_protocol::FileOutline| {
+        (outline.symbols.iter())
+            .map(|o| (o.symbol.id.name[0].clone(), o.change))
+            .collect::<Vec<_>>()
+    };
+
+    let at_commit = outline(View::Commit { index: 0 }, "src/lib.rs").await;
+    assert_eq!(at_commit.unavailable, None);
+    assert_eq!(
+        names(&at_commit),
+        [("old".to_owned(), None), ("in_commit".to_owned(), None)]
+    );
+
+    let whole = outline(View::Changeset, "src/lib.rs").await;
+    assert_eq!(
+        names(&whole),
+        [
+            ("old".to_owned(), None),
+            ("in_commit".to_owned(), Some(SymbolChange::Added)),
+            ("later".to_owned(), Some(SymbolChange::Added)),
+        ]
+    );
+
+    // Not in the commit: no symbols, and nothing is wrong with the file's language.
+    let absent = outline(View::Commit { index: 0 }, "src/missing.rs").await;
+    assert!(absent.symbols.is_empty() && absent.unavailable.is_none(), "{absent:?}");
 }
 
 #[tokio::test]
