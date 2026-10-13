@@ -174,7 +174,8 @@ export interface ChangesetEntry {
   github: boolean;
   onView: boolean;
   /** `finished` also says whether it was complete. */
-  progress: { kind: "none" } | { kind: "started" } | { kind: "progress"; seen: number } | { kind: "finished" };
+  progress:
+    { kind: "none" } | { kind: "started" } | { kind: "progress"; seen: number; oldBase: number } | { kind: "finished" };
 }
 
 export const changesetCandidates = (entries: readonly ChangesetEntry[]): ChangesetCandidate[] =>
@@ -187,6 +188,7 @@ export const changesetCandidates = (entries: readonly ChangesetEntry[]): Changes
     icon: e.github ? "github" : "branch",
     onView: e.onView,
     seen: e.progress.kind === "progress" ? e.progress.seen : e.progress.kind === "finished" ? 100 : undefined,
+    oldBase: e.progress.kind === "progress" ? e.progress.oldBase : undefined,
     finished: e.progress.kind === "finished",
   }));
 

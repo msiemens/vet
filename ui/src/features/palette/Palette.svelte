@@ -10,8 +10,8 @@
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
-  import Meter from "../../lib/ui/Meter.svelte";
   import PopupShell from "../../lib/ui/PopupShell.svelte";
+  import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
@@ -112,7 +112,7 @@
           onView: id === onViewId,
           progress:
             reviewed.kind === "progress"
-              ? { kind: "progress", seen: reviewed.seen }
+              ? { kind: "progress", seen: reviewed.seen, oldBase: reviewed.oldBase }
               : reviewed.kind === "finished"
                 ? { kind: "finished" }
                 : reviewed,
@@ -391,12 +391,8 @@
       <span class="sp"></span>
       <span class="meta">
         <span>{item.source}</span>
-        {#if item.finished}
-          <span class="done"><Icon name="check" size={12} stroke={2.4} /></span>
-        {/if}
         {#if item.seen !== undefined}
-          <Meter width={48} segments={[{ value: item.seen, color: "var(--seen)" }]} />
-          {#if !item.finished}<span class="pct">{Math.round(item.seen)}%</span>{/if}
+          <SeenMeter width={48} seen={item.seen} old={item.oldBase} pct={!item.finished} done={item.finished} />
         {:else}
           <span>—</span>
         {/if}
@@ -761,16 +757,8 @@
     text-align: center;
     font-size: 11px;
   }
-  .meta .pct {
-    width: 30px;
-    text-align: right;
-  }
   .meta .prose {
     font-family: var(--font-ui);
-  }
-  .done {
-    display: inline-flex;
-    color: var(--ok);
   }
   .keys {
     flex: none;

@@ -14,7 +14,7 @@
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
   import type { MenuItem } from "../../lib/ui/menuItem";
-  import Meter from "../../lib/ui/Meter.svelte";
+  import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
   import PopupShell from "../../lib/ui/PopupShell.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
@@ -479,13 +479,11 @@
                 <span class="grow"></span>
                 <span class="count">{r.file.hits}</span>
                 {#if r.file.completion && letter}
-                  <Meter
+                  <SeenMeter
                     width={30}
                     title="{Math.round(r.file.completion.seenPercent)}% seen"
-                    segments={[
-                      { value: r.file.completion.seenPercent, color: "var(--seen)" },
-                      { value: r.file.completion.oldBasePercent, color: "var(--old-base-stripes)" },
-                    ]}
+                    seen={r.file.completion.seenPercent}
+                    old={r.file.completion.oldBasePercent}
                   />
                   <span class="mono letter" style:color={STATUS_COLOR[letter]} title={r.file.status}>{letter}</span>
                 {:else}

@@ -12,9 +12,9 @@
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
-  import Meter from "../../lib/ui/Meter.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
   import SectionHead from "../../lib/ui/SectionHead.svelte";
+  import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import { CheckRuns, failedFirst, passed } from "../checks";
   import { ThreadCards, commentsSeen, groupThreads, seenKey, threadPlace } from "../comments";
   import { isUnread, markdownBody, needsShowAll, buildBriefCard } from "../review";
@@ -226,12 +226,7 @@
               <span class="grow"></span>
               {#if summary.percent !== undefined}<span class="mono pct">{summary.percent} %</span>{/if}
             </div>
-            <Meter
-              segments={[
-                { value: summary.seen, color: "var(--seen)" },
-                { value: summary.oldBase, color: "var(--old-base-stripes)" },
-              ]}
-            />
+            <SeenMeter seen={summary.seen} old={summary.oldBase} />
             {#if summary.asked}
               <div class="line top muted">
                 <span class="accent"><Icon name="bell" size={12} /></span><span>Your review is asked for.</span>

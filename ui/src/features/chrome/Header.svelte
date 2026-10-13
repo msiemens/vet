@@ -7,8 +7,8 @@
   import type { Completion } from "../../generated/Completion";
   import type { ReviewInfo } from "../../generated/ReviewInfo";
   import IconButton from "../../lib/ui/IconButton.svelte";
-  import Meter from "../../lib/ui/Meter.svelte";
   import Segmented from "../../lib/ui/Segmented.svelte";
+  import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import { commands } from "../../state/commands";
   import BaseNote from "./BaseNote.svelte";
   import { completionTitle, nothingToReview } from "./completionTitle";
@@ -64,6 +64,7 @@
   ] as const;
   const seen = $derived(completion?.seenPercent ?? 0);
   const oldBase = $derived(completion?.oldBasePercent ?? 0);
+  const nothing = $derived(completion !== undefined && nothingToReview(completion));
   const title = $derived(completion && completionTitle(completion));
 </script>
 
@@ -100,18 +101,8 @@
   {:else}
     {@render filtered?.()}
     <span class="completion" {title} data-tauri-drag-region>
-      <Meter
-        width={96}
-        segments={[
-          { value: seen, color: "var(--seen)" },
-          { value: oldBase, color: "var(--old-base-stripes)" },
-        ]}
-      />
-      {#if completion && nothingToReview(completion)}
-        <span class="none">nothing to review</span>
-      {:else}
-        <span class="mono pct">{Math.round(seen)}%</span>
-      {/if}
+      <SeenMeter width={96} {seen} old={oldBase} pct={!nothing} />
+      {#if nothing}<span class="none">nothing to review</span>{/if}
     </span>
     {#if review?.state === "open"}
       <button
@@ -145,9 +136,6 @@
     align-items: center;
     gap: 8px;
     margin-right: 6px;
-  }
-  .pct {
-    font-size: var(--fs-mono);
   }
   .none {
     font-size: var(--fs-ctl);

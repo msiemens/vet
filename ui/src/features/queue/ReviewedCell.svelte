@@ -1,6 +1,5 @@
 <script lang="ts">
-  import Icon from "../../lib/ui/Icon.svelte";
-  import Meter from "../../lib/ui/Meter.svelte";
+  import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import type { Reviewed } from "./queueRows";
 
   let { reviewed, width = 56 }: { reviewed: Reviewed; width?: number } = $props();
@@ -11,40 +10,18 @@
 {:else if reviewed.kind === "started"}
   <span class="none">in progress</span>
 {:else if reviewed.kind === "progress"}
-  <span class="cell">
-    <Meter
-      {width}
-      segments={[
-        { value: reviewed.seen, color: "var(--seen)" },
-        { value: reviewed.oldBase, color: "var(--old-base-stripes)" },
-      ]}
-    />
-    <span class="mono pct">{Math.round(reviewed.seen)}%</span>
-  </span>
+  <SeenMeter {width} seen={reviewed.seen} old={reviewed.oldBase} pct />
 {:else}
-  <span class="cell" title={reviewed.percent === undefined ? "Finished with changes unseen" : "Finished"}>
-    <span class="done"><Icon name="check" size={12} stroke={2.4} /></span>
-    {#if reviewed.percent !== undefined}
-      <Meter {width} segments={[{ value: reviewed.percent, color: "var(--seen)" }]} />
-      <span class="mono pct">{reviewed.percent}%</span>
-    {/if}
-  </span>
+  <SeenMeter
+    {width}
+    done
+    pct
+    seen={reviewed.percent}
+    title={reviewed.percent === undefined ? "Finished with changes unseen" : "Finished"}
+  />
 {/if}
 
 <style>
-  .cell {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .pct {
-    min-width: 34px;
-    font-size: var(--fs-mono);
-  }
-  .done {
-    display: inline-flex;
-    color: var(--ok);
-  }
   .none {
     color: var(--text-3);
   }

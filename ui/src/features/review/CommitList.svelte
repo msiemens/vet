@@ -2,8 +2,8 @@
   import type { CommitUnit } from "../../generated/CommitUnit";
   import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
-  import Meter from "../../lib/ui/Meter.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
+  import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import { checks } from "../../state/checks.svelte";
   import { commitRow } from "./commitRows";
 
@@ -52,13 +52,7 @@
         <span class="text">
           <span class="first">
             <span class="subject">{row.subject}</span>
-            <Meter
-              width={36}
-              segments={[
-                { value: row.seen, color: "var(--seen)" },
-                { value: row.oldBase, color: "var(--old-base)" },
-              ]}
-            />
+            <SeenMeter width={36} seen={row.seen} old={row.oldBase} />
           </span>
           <span class="second">
             <span class="mono hash">{row.shortId}</span>

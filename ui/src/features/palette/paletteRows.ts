@@ -86,6 +86,8 @@ export interface ChangesetCandidate {
   onView: boolean;
   /** Progress of the review in percent; absent when none was started. */
   seen?: number;
+  /** How much of it is seen only against an old base, in percent. */
+  oldBase?: number;
   finished: boolean;
 }
 

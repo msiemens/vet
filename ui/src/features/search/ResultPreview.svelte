@@ -6,7 +6,7 @@
   import { basename, dirname } from "../../lib/paths";
   import { NO_HIGHLIGHTS, type Highlights, decodeHighlights } from "../../lib/highlights";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
-  import Meter from "../../lib/ui/Meter.svelte";
+  import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import type { Backend } from "../../state/backend";
   import { type PreviewRow, previewRows } from "./searchModel";
 
@@ -121,13 +121,11 @@
     <span class="grow"></span>
     <span class="dim">{line.kind === "removed" ? "base line" : "line"} {line.line + 1}</span>
     {#if file.completion && letter}
-      <Meter
+      <SeenMeter
         width={30}
         title="{Math.round(file.completion.seenPercent)}% seen"
-        segments={[
-          { value: file.completion.seenPercent, color: "var(--seen)" },
-          { value: file.completion.oldBasePercent, color: "var(--old-base-stripes)" },
-        ]}
+        seen={file.completion.seenPercent}
+        old={file.completion.oldBasePercent}
       />
       <span class="mono letter" title={status}>{letter}</span>
     {:else}
