@@ -321,9 +321,16 @@ void test("the tool windows open with Alt and a digit, outside a text field only
   assert.equal(win.dispatch(press({ key: "1", code: "Digit1", altKey: true })), true);
   assert.equal(win.dispatch(press({ key: "5", code: "Digit5", altKey: true })), true);
   assert.equal(win.dispatch(press({ key: "6", code: "Digit6", altKey: true })), true);
+  assert.equal(win.dispatch(press({ key: "7", code: "Digit7", altKey: true })), true);
   assert.equal(win.dispatch(press({ key: "0", code: "Digit0", altKey: true })), true);
   assert.equal(win.dispatch(press({ key: "1", code: "Digit1", altKey: true }, true)), false);
-  assert.deepEqual(calls, ["toggleTool changes", "toggleTool timeline", "toggleTool problems", "toggleTool structure"]);
+  assert.deepEqual(calls, [
+    "toggleTool changes",
+    "toggleTool timeline",
+    "toggleTool problems",
+    "toggleTool find",
+    "toggleTool structure",
+  ]);
 
   // On a German Windows layout AltGr+digit types a character and stays text.
   const altGr = press({ key: "}", code: "Digit0", ctrlKey: true, altKey: true });

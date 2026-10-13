@@ -41,6 +41,7 @@
     watchDoubleShift,
   } from "../features/palette";
   import { NotificationCards, PlatformFooter, copyText } from "../features/platform";
+  import { FindPanel } from "../features/find";
   import { PipelinesPanel, belongsTo, clock, headerTitle, logKey } from "../features/pipelines";
   import { ProblemsPanel } from "../features/problems";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, queueCommands, targetLabel } from "../features/queue";
@@ -55,7 +56,7 @@
     statusLetter,
     viewCommands,
   } from "../features/review";
-  import { FindInFilesDialog, findInFiles, searchCommands } from "../features/search";
+  import { FindInFilesDialog, findInFiles, openFindInFiles, searchCommands } from "../features/search";
   import { SettingsDialog } from "../features/settings";
   import { StructurePanel } from "../features/structure";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
@@ -92,6 +93,8 @@
   import { keyId } from "../state/changesetKey";
   import { commands } from "../state/commands";
   import { contextMenus } from "../state/contextMenu.svelte";
+  import { type FindSet, findSets } from "../state/findSets.svelte";
+  import type { Place } from "../state/foundPlace";
   import { keymap } from "../state/keymap.svelte";
   import { mainMenu } from "../state/mainMenu.svelte";
   import { pendingEdits } from "../state/pendingEdits.svelte";
@@ -307,6 +310,7 @@
         if (TOOLS.bottom.some((t) => t.id === id)) {
           bottomTool = toggleBottom(bottomTool, id);
           if (bottomTool === "problems") void focusProblems();
+          if (bottomTool === "find") void focusFind();
           if (bottomTool === "pipelines") void focusPipelines();
           return;
         }
@@ -355,8 +359,16 @@
     ...paletteCommands({ show: (tab) => palette.show(tab) }),
   );
   keymap.load();
+  findSets.show = (focus) => {
+    screen = "review";
+    bottomTool = "find";
+    if (focus) void focusFind();
+  };
   session.onOpen(() => (screen = "queue"));
-  session.onClose(() => palette.close());
+  session.onClose(() => {
+    palette.close();
+    findSets.reset();
+  });
   /** Comments and a staged vote that wait to be sent to the platform of the pull request on view. */
   const outgoing = $derived(
     platform.info === undefined
@@ -449,12 +461,17 @@
     void hostLabel().then((label) => (host = label));
     session.onConnect(reveal);
     void session.connect().then(reveal);
+    // Result sets belong to the changeset on view.
+    const stopSets = changeset.onOpening((opening) => {
+      if (opening.type === "requested") findSets.reset();
+    });
     const stopMenu = mainMenu.listen();
     const stopDoubleShift = watchDoubleShift(
       () => !!session.repo && !commands.isCapturing(),
       () => commands.run("palette.all"),
     );
     return () => {
+      stopSets();
       stopMenu();
       stopDoubleShift();
       window.removeEventListener("keydown", onkeydown, true);
@@ -550,6 +567,35 @@
   async function focusProblems() {
     await tick();
     document.querySelector<HTMLElement>('[aria-label="Problems"] [data-list]')?.focus();
+  }
+
+  /** Moves the focus into the Find list once it is up. */
+  async function focusFind() {
+    await tick();
+    document.querySelector<HTMLElement>('[aria-label="Find"] [data-list]')?.focus();
+  }
+
+  /** Opens a place of a result set where it was found. */
+  function openPlace(set: FindSet, place: Place, ownTab: boolean) {
+    screen = "review";
+    const { spec } = set;
+    if (spec.type === "usages") {
+      const { file, side, line, col, width } = place;
+      void controller?.openUsage({ path: file.path, side, line, col, width, external: file.external }, ownTab);
+      return;
+    }
+    void controller?.openFound({
+      path: place.file.path,
+      hunks: place.file.hunks,
+      kind: place.kind,
+      line: place.line,
+      col: place.col,
+      width: place.width,
+      scope: spec.request.scope,
+      commit: spec.scope.commit?.id,
+      ownTab,
+      options: spec.options,
+    });
   }
 
   /** Escape, with the focus nowhere in particular or in the timeline or the chip, goes back to all changes. */
@@ -754,6 +800,13 @@
               oninstall={() => showDialog("settings", "servers")}
               onclose={() => (bottomTool = undefined)}
             />
+          {:else if bottomTool === "find" && session.backend}
+            <FindPanel
+              backend={session.backend}
+              onopen={openPlace}
+              oneditor={() => controller?.focusEditor()}
+              oninfiles={(text) => openFindInFiles({ query: text })}
+            />
           {:else if bottomTool === "pipelines"}
             <PipelinesPanel
               checks={pipelineCommit === undefined ? undefined : checks.of(pipelineCommit)}
@@ -854,6 +907,7 @@
       screen = "review";
       void controller?.openFound(result);
     }}
+    onkeep={(kept) => findSets.keepSearch(kept)}
   />
 {/if}
 

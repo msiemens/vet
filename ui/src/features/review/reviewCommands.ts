@@ -68,6 +68,7 @@ const FIND_OPTIONS = [
 ] as const;
 
 const NO_FIND = "Open the find bar first";
+const NO_USAGES = "Usages are not found in a commit's text";
 const findOpen = (c: CommandContext) => !!c.findOpen;
 
 const NO_DIFF = "Open the Changes tab or a changed file";
@@ -210,9 +211,17 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       id: "nav.showUsages",
       label: "Show Usages",
       binding: "Mod-Alt-F7",
-      enabled: (c) => c.editor !== undefined,
-      disabledReason: () => "Put the caret in an editor",
+      enabled: (c) => c.editor !== undefined && !c.noUsages,
+      disabledReason: (c) => (c.noUsages ? NO_USAGES : "Put the caret in an editor"),
       run: (c) => c.editor?.showUsages(),
+    },
+    {
+      id: "nav.findUsages",
+      label: "Find Usages",
+      binding: "Alt-F7",
+      enabled: (c) => c.editor !== undefined && !c.noUsages,
+      disabledReason: (c) => (c.noUsages ? NO_USAGES : "Put the caret in an editor"),
+      run: (c) => c.editor?.findUsages(),
     },
     {
       id: "nav.fileStructure",
@@ -430,6 +439,7 @@ export const editorMenu: MenuSpec = [
   { command: "review.goToDefinition" },
   { command: "nav.goToImplementation" },
   { command: "nav.showUsages" },
+  { command: "nav.findUsages" },
   { command: "nav.fileStructure" },
   { command: "review.changeCard" },
   { command: "review.jumpToSource" },

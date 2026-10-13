@@ -46,6 +46,8 @@ export interface SemanticHooks {
   hasDefinition(side: Side, path: string, line: number, col: number, signal: AbortSignal): Promise<boolean>;
   /** Finds the implementations or the usages of the symbol at the position; the owner goes to the place or lists them. */
   locations(kind: PickerKind, side: Side, path: string, at: TextPosition, subject: Subject): void;
+  /** Finds the usages of the symbol at the position into the Find tool, without the popup. */
+  findUsages(side: Side, path: string, at: TextPosition, subject: Subject): void;
   /** The target-side diagnostics of the file, empty if there are none or the server is unavailable. */
   diagnostics(path: string): Promise<Diagnostic[]>;
   /** The reviewer put the cursor at the position; the owner shows the symbol it is in. */
@@ -66,6 +68,7 @@ export function bindRevision(source: SemanticSource, revision: number): Semantic
     definition: (side, path, line, col) => source.definition(revision, side, path, line, col),
     hasDefinition: (side, path, line, col, signal) => source.hasDefinition(revision, side, path, line, col, signal),
     locations: (kind, side, path, at, subject) => source.locations(revision, kind, side, path, at, subject),
+    findUsages: (side, path, at, subject) => source.findUsages(revision, side, path, at, subject),
     diagnostics: (path) => source.diagnostics(revision, path),
     cursor: (side, path, line, col) => source.cursor(revision, side, path, line, col),
   };
@@ -334,8 +337,8 @@ function diagnosticsAt(view: EditorView, at: TextPosition, endCol: number): read
   );
 }
 
-/** Finds the places of the kind for the word at the caret, which the popup names and opens below. */
-function locationsAtCaret(view: EditorView, target: SemanticTarget, kind: PickerKind) {
+/** The word at the caret and where it is: what a list of its places is about. */
+function caretSubject(view: EditorView): { position: TextPosition; subject: Subject } {
   const head = view.state.selection.main.head;
   const line = view.state.doc.lineAt(head);
   // A caret just after a name is still on it.
@@ -346,7 +349,13 @@ function locationsAtCaret(view: EditorView, target: SemanticTarget, kind: Picker
   if (word) position.col = word.from;
   const edge = view.coordsAtPos(head);
   const anchor = edge ? { left: edge.left, top: edge.top, bottom: edge.bottom } : { left: 0, top: 0, bottom: 0 };
-  target.hooks.locations(kind, target.side, target.path, position, { name, anchor });
+  return { position, subject: { name, anchor } };
+}
+
+/** Finds the places of the kind for the word at the caret, which the popup names and opens below. */
+function locationsAtCaret(view: EditorView, target: SemanticTarget, kind: PickerKind) {
+  const { position, subject } = caretSubject(view);
+  target.hooks.locations(kind, target.side, target.path, position, subject);
 }
 
 /** The editor with the focus, if `active` (the document's active element) is one with the semantic layer. */
@@ -373,6 +382,10 @@ export function focusedEditor(active: Element | null) {
     },
     showUsages() {
       locationsAtCaret(view, target, "usages");
+    },
+    findUsages() {
+      const { position, subject } = caretSubject(view);
+      target.hooks.findUsages(target.side, target.path, position, subject);
     },
   };
 }

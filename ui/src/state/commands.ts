@@ -30,6 +30,8 @@ export interface FocusedEditor {
   goToImplementation(): void;
   /** Lists the usages of the symbol at the caret, or goes to the one there is. */
   showUsages(): void;
+  /** Lists the usages of the symbol at the caret in the Find tool. */
+  findUsages(): void;
 }
 
 /** What a command can ask about the window when it is offered or run. */
@@ -83,6 +85,8 @@ export interface CommandContext {
   editor?: FocusedEditor;
   /** The name of the focused editor's language server when it has said it offers no implementations. */
   noImplementations?: string;
+  /** The active tab shows a commit's text, whose usages the language servers cannot find. */
+  noUsages?: boolean;
   /** The language of the active file's server, if some language serves its type of file. */
   serverLanguage?: string;
   /** The file or folder a context menu was opened on. */

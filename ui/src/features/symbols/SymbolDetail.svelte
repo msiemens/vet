@@ -7,6 +7,7 @@
   import { splitPath } from "../../lib/paths";
   import { nameOf } from "../../lib/symbolLabel";
   import Icon from "../../lib/ui/Icon.svelte";
+  import { findSets } from "../../state/findSets.svelte";
   import type { Shown } from "../../state/symbolLoad";
   import { symbols } from "../../state/symbols.svelte";
   import SymbolGlyph from "./SymbolGlyph.svelte";
@@ -33,8 +34,18 @@
   const CALLERS_HINT =
     "Call hierarchy cannot see calls made through interfaces or virtual methods, callbacks, reflection or generated code, so callers and callees may be missing.";
   const AFFECTED_HINT = "Unchanged direct callers; their behaviour may differ now.";
-  // The one place that wires the usages to the Find window once it is built: give it a handler and drop `unavailable`.
-  const FIND = { label: "Open all usages in the Find window", unavailable: "Find window is not built yet" };
+  const FIND = {
+    label: "Open all usages in the Find window",
+    onclick: () =>
+      findSets.findUsages({
+        type: "usages",
+        symbol: nameOf(id),
+        side: "target",
+        path: id.path,
+        line: shown.symbol.at.line,
+        col: shown.symbol.at.col,
+      }),
+  };
 
   function go(target: Target) {
     if (target.type === "open") {

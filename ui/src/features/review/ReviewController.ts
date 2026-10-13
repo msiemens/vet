@@ -7,6 +7,7 @@ import type { CheckLog } from "../../generated/CheckLog";
 import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { CheckRun } from "../../generated/CheckRun";
 import type { CommitUnit } from "../../generated/CommitUnit";
+import type { SearchScope } from "../../generated/SearchScope";
 import type { Side } from "../../generated/Side";
 import type { View } from "../../generated/View";
 import type { SymbolInfo } from "../../generated/SymbolInfo";
@@ -18,6 +19,7 @@ import { platformName } from "../../lib/platformName";
 import type { Backend } from "../../state/backend";
 import type { Changeset } from "../../state/changeset.svelte";
 import { contextMenus } from "../../state/contextMenu.svelte";
+import { findSets } from "../../state/findSets.svelte";
 import { openUrl } from "../../state/host";
 import { platform } from "../../state/platform.svelte";
 import { locationPicker } from "../../state/locationPicker.svelte";
@@ -252,11 +254,18 @@ export class ReviewController {
           side,
           revision,
           open: (row) => void this.openRow(id, row, side),
+          keep:
+            kind === "usages"
+              ? (answer) => findSets.keepUsages({ type: "usages", symbol: subject.name, side, path, ...at }, answer)
+              : undefined,
           ask: (signal) =>
             kind === "usages"
               ? backend.usages(revision, side, path, at.line, at.col, signal)
               : backend.implementations(revision, side, path, at.line, at.col, signal),
         });
+      },
+      findUsages: (_revision, side, path, at, subject) => {
+        if (this.analysable(id, side)) findSets.findUsages({ type: "usages", symbol: subject.name, side, path, ...at });
       },
       diagnostics: (revision, path) =>
         this.analysable(id, "target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
@@ -531,6 +540,7 @@ export class ReviewController {
       findOpen: this.find.open.has(id),
       editor,
       noImplementations: editor && withoutFeature(editor.path, serverList.servers, "implementations"),
+      noUsages: this.showsCommit(id),
       serverLanguage: file === undefined ? undefined : languageOf(file, serverList.servers),
     };
   }
@@ -666,30 +676,57 @@ export class ReviewController {
   async openFound(result: OpenedResult) {
     const { path, kind, line, col, width } = result;
     const side: Side = kind === "removed" ? "base" : "target";
-    const span: TextSpan = { start: { line, col }, end: { line, col: col + width } };
-    const route = routeFound(result.scope, this.viewOnShow(), result.ownTab);
-    if (route.show) {
-      if (route.show.type === "interdiff") await this.changeset.setRange({ from: route.show.from, to: route.show.to });
-      else await this.changeset.showWhole();
-      await tick();
-    }
-    const section = this.tabs.active === CHANGES && route.inChanges ? this.changes.indexOf(path) : -1;
-    let id: TabId;
-    if (section >= 0) {
-      id = CHANGES;
-      await this.changes.goToSpan(section, side, span);
-    } else {
-      const pinned = route.pinned && result.commit !== undefined ? result.commit : undefined;
-      await this.openLocation(fileTab(path, pinned), path, line, side, span);
-      id = this.tabs.active;
-      if (pathOf(id) !== path) return;
-    }
+    const id = await this.showFound(result.scope, result.ownTab, result.commit, { path, side, line, col, width });
+    if (id === undefined) return;
     const mode = this.findPane(id) === "text" ? "file" : "diff";
     Object.assign(this.find.options, result.options);
     this.findAt.set(id, { path, order: orderOf(result.hunks, kind, line, mode), from: col });
     this.find.open.add(id);
     this.landing = id;
     this.applyFind(id);
+  }
+
+  /**
+   * Shows a place a list found in `scope`, in the view the route says (`routeFound`). Answers the tab
+   * it landed in, or nothing where the file has no tab to show it in.
+   */
+  private async showFound(
+    scope: SearchScope,
+    ownTab: boolean,
+    commit: string | undefined,
+    at: { path: string; side: Side; line: number; col: number; width: number },
+  ): Promise<TabId | undefined> {
+    const { path, side, line, col, width } = at;
+    const span: TextSpan = { start: { line, col }, end: { line, col: col + width } };
+    const route = routeFound(scope, this.viewOnShow(), ownTab);
+    if (route.show) {
+      if (route.show.type === "interdiff") await this.changeset.setRange({ from: route.show.from, to: route.show.to });
+      else await this.changeset.showWhole();
+      await tick();
+    }
+    const section = this.tabs.active === CHANGES && route.inChanges ? this.changes.indexOf(path) : -1;
+    if (section >= 0) {
+      await this.changes.goToSpan(section, side, span);
+      return CHANGES;
+    }
+    const pinned = route.pinned && commit !== undefined ? commit : undefined;
+    await this.openLocation(fileTab(path, pinned), path, line, side, span);
+    return pathOf(this.tabs.active) === path ? this.tabs.active : undefined;
+  }
+
+  /**
+   * Shows a place of the Find tool's list of usages, which are of the changeset: in the Changes tab
+   * when that is on show, else in the file's own tab, on the side the place is on.
+   */
+  async openUsage(
+    at: { path: string; side: Side; line: number; col: number; width: number; external: boolean },
+    ownTab: boolean,
+  ) {
+    if (at.external) {
+      session.notice = `Outside the repository: ${at.path}`;
+      return;
+    }
+    await this.showFound({ type: "view", view: { type: "changeset" } }, ownTab, undefined, at);
   }
 
   /** Closes the bar: the current match stays selected in the editor, which gets the focus. */

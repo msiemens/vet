@@ -79,7 +79,7 @@ export const TOOL_WINDOWS: readonly {
   { side: "left", id: "comments", label: "Comments", binding: "Alt-4" },
   { side: "bottom", id: "timeline", label: "Timeline", binding: "Alt-5" },
   { side: "bottom", id: "problems", label: "Problems", binding: "Alt-6" },
-  // Alt-7 is the bottom tool to come (Find).
+  { side: "bottom", id: "find", label: "Find", binding: "Alt-7" },
   { side: "bottom", id: "pipelines", label: "Pipelines", binding: "Alt-8" },
   { side: "right", id: "symbol", label: "Symbol", binding: "Alt-9" },
   { side: "right", id: "structure", label: "Structure", binding: "Alt-0" },

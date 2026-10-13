@@ -10,6 +10,7 @@
     comments: "comments",
     timeline: "timeline",
     problems: "problems",
+    find: "find",
     pipelines: "pipelines",
     symbol: "module",
     structure: "structure",

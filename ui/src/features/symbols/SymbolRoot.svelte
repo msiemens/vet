@@ -40,7 +40,7 @@
     /** A caveat about the answer, in a tooltip next to the title. */
     hint?: string;
     /** Opens the places in the Find window; a button in the title line. */
-    find?: { label: string; unavailable?: string };
+    find?: { label: string; onclick: () => void };
   } = $props();
 
   const KEY = "vet.symbols.section.";
@@ -143,13 +143,7 @@
       {/snippet}
       {#snippet aside()}
         {#if find}
-          <button
-            class="flat find"
-            type="button"
-            title={find.unavailable ?? find.label}
-            aria-label={find.label}
-            disabled={find.unavailable !== undefined}
-          >
+          <button class="flat find" type="button" title={find.label} aria-label={find.label} onclick={find.onclick}>
             <Icon name="search" size={12} />
           </button>
         {/if}

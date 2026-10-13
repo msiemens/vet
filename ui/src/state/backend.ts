@@ -561,7 +561,10 @@ export class Backend {
     return { locations: r.locations, unavailable: r.unavailable ?? undefined };
   }
 
-  /** The places that refer to the symbol at the position, without its declaration, as rows to list; otherwise like `definition`. */
+  /**
+   * The places that refer to the symbol at the position, without its declaration, as rows to list,
+   * at most `limit` of them (a default number if absent); otherwise like `definition`.
+   */
   async usages(
     revision: number,
     side: Side,
@@ -569,8 +572,9 @@ export class Backend {
     line: number,
     col: number,
     signal?: AbortSignal,
+    limit?: number,
   ): Promise<LocationRows> {
-    const request = { type: "references", project: this.pid, revision, side, path, line, col } as const;
+    const request = { type: "references", project: this.pid, revision, side, path, line, col, limit } as const;
     return expect(await this.semantic(revision, request, signal), "references");
   }
 
