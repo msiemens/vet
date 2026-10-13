@@ -522,7 +522,7 @@
       >Unchanged files
     </button>
   </div>
-  <div class="field">
+  <div class="query">
     <Icon name="search" size={14} stroke={1.7} />
     <input
       bind:this={input}
@@ -715,7 +715,7 @@
     color: var(--text-3);
     font: var(--fs-mono-s) var(--font-mono);
   }
-  .field {
+  .query {
     display: flex;
     align-items: center;
     gap: 10px;
@@ -725,7 +725,7 @@
     color: var(--text-3);
     flex: none;
   }
-  .field input {
+  .query input {
     flex: 1;
     min-width: 0;
     height: 100%;
