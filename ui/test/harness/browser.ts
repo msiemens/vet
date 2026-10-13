@@ -59,6 +59,8 @@ interface Driver {
   step(name: string, run: () => Promise<unknown>, expected?: { marks?: number; stale?: boolean }): Promise<void>;
   /** Double-clicks the row of `path` in the file tree and waits for its text. */
   openText(path: string): Promise<void>;
+  /** Another window comments on the changeset `count` times, each comment long enough to fill a side panel. */
+  manyThreads(count: number): Promise<void>;
 }
 
 /** A step that sends one review request. */
@@ -104,6 +106,14 @@ const sessions: Record<string, (d: Driver) => Promise<void>> = {
     await d.step("the view is scrolled", () =>
       d.page(`document.querySelector(".pane.active .scroll").dispatchEvent(new Event("scroll"))`),
     );
+  },
+
+  /** Panels fuller than the window scroll inside themselves: the page never does (checked after every step). */
+  async layout(d) {
+    await d.manyThreads(40);
+    for (const tool of ["all", "commits", "comments", "changes", "symbol"])
+      await d.step(`the ${tool} tool window is open`, () => d.page(`__t.commands.run("view.tool.${tool}")`));
+    await d.step("the timeline is open", () => d.page(`__t.commands.run("view.tool.timeline")`));
   },
 };
 
@@ -191,6 +201,10 @@ async function runSession(tab: Tab, other: Backend, url: string, script: (d: Dri
         problems.push({ what: "the number of review requests the step sent", page: marks, backend: wantMarks });
       if (failed.length) problems.push({ what: "requests the backend rejected", page: failed, backend: [] });
       if (notice !== undefined) problems.push({ what: "the notice after the step", page: notice, backend: undefined });
+      const overflow = (await page(
+        `document.scrollingElement.scrollHeight - document.scrollingElement.clientHeight`,
+      )) as number;
+      if (overflow > 0) problems.push({ what: "how far the page scrolls (px)", page: overflow, backend: 0 });
       if (expected.stale) {
         if (!found.length)
           throw new Error(`${name}: the views followed a change they were not told of; the test cannot fail`);
@@ -201,6 +215,16 @@ async function runSession(tab: Tab, other: Backend, url: string, script: (d: Dri
       const differences = [...found, ...problems];
       process.stderr.write(`  ${name}: ${differences.length ? `${differences.length} differences` : "ok"}\n`);
       results.push({ step: name, differences });
+    },
+    async manyThreads(count) {
+      const body = Array.from({ length: 12 }, (_, i) => `Line ${i} of a long comment that wraps in a narrow panel.`);
+      for (let i = 0; i < count; i++)
+        await other.createThread(
+          (await other.manifest(CHANGESET)).revision,
+          { type: "changeset" },
+          `Comment ${i}\n\n${body.join(" ")}`,
+          CHANGESET,
+        );
     },
     async openText(path) {
       const at = (await page(`(() => {
