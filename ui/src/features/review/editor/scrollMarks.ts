@@ -5,6 +5,7 @@
 import type { Hunk } from "../../../generated/Hunk";
 import type { HunkState } from "../../../generated/HunkState";
 import type { Mode } from "../../../lib/viewMode.ts";
+import type { FindMatch, FindPos } from "./findMatches.ts";
 import type { MarkLayout, ScrollMark } from "../../../lib/ui/scrollbar.ts";
 import type { Metrics } from "./sectionLayout.ts";
 
@@ -32,6 +33,48 @@ export interface MarkedSection {
   /** Estimated offset of each hunk bar from the top of the section. */
   hunkTops: readonly number[];
   file: { path: string; hunks: readonly Hunk[] };
+}
+
+/** What a find's tick needs of a section. */
+export interface TickSection extends MarkedSection {
+  height: number;
+  file: { path: string; hunks: readonly Hunk[]; targetLines: number };
+}
+
+/**
+ * The ticks of a find's matches in the scroll bar of a column of sections. A changed line is placed
+ * by its hunk's row; an unchanged one by its share of the section, since the editor that would tell
+ * is not always there.
+ */
+export function findTicks(
+  sections: readonly TickSection[],
+  matches: (section: number) => readonly FindMatch[],
+  current: FindPos | undefined,
+  mode: Mode,
+  m: Pick<Metrics, "hunk" | "line" | "header" | "gap">,
+): ScrollMark[] {
+  const ticks: ScrollMark[] = [];
+  sections.forEach((s, section) => {
+    for (const match of matches(section)) {
+      const h = match.hunk >= 0 ? s.file.hunks[match.hunk] : undefined;
+      let top: number;
+      if (!h) {
+        const body = Math.max(s.height - m.header - m.gap, 0);
+        top = s.top + m.header + (match.line / Math.max(s.file.targetLines, 1)) * body;
+      } else {
+        const row =
+          mode === "split"
+            ? match.line - (match.kind === "removed" ? h.baseStart : h.targetStart)
+            : match.kind === "removed"
+              ? match.line - h.baseStart
+              : h.baseLen + match.line - h.targetStart;
+        top = s.top + s.hunkTops[match.hunk] + m.hunk + row * m.line;
+      }
+      const at = current?.section === section && current.order === match.order && current.from === match.from;
+      ticks.push({ top, height: 0, kind: at ? "findCurrent" : "find" });
+    }
+  });
+  return ticks;
 }
 
 /** What a mark needs of a hunk's review state. */

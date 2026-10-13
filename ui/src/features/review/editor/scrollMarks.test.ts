@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Hunk } from "../../../generated/Hunk";
 import type { HunkState } from "../../../generated/HunkState";
-import { markKind, sectionMarks } from "./scrollMarks.ts";
+import type { FindMatch } from "./findMatches.ts";
+import { findTicks, markKind, sectionMarks } from "./scrollMarks.ts";
 
 const hunk = (baseStart: number, baseLen: number, targetStart: number, targetLen: number): Hunk => ({
   baseStart,
@@ -47,4 +48,36 @@ void test("a diff view's marks lie where the height model puts its hunks", () =>
   // Split shows the taller side of a hunk only.
   const split = sectionMarks(sections, review, 1200, "split", METRICS).marks.map((m) => m.height);
   assert.deepEqual(split, [24 + 3 * 20, 24 + 4 * 20, 24 + 20]);
+});
+
+void test("a find's ticks sit on their hunk's rows, and the current one is told apart", () => {
+  const section = {
+    top: 100,
+    height: 400,
+    hunkTops: [30],
+    file: { path: "a", hunks: [hunk(0, 2, 0, 3)], targetLines: 50 },
+  };
+  const at = (kind: FindMatch["kind"], line: number, order: number): FindMatch => ({
+    kind,
+    line,
+    baseLine: line,
+    hunk: kind === "context" ? -1 : 0,
+    order,
+    from: 0,
+    to: 1,
+  });
+  const found = [at("removed", 1, 1), at("added", 2, 2), at("context", 25, 3)];
+  const metrics = { ...METRICS, header: 26, gap: 8 };
+  const current = { section: 0, order: 2, from: 0 };
+  const ticks = findTicks([section], () => found, current, "unified", metrics);
+  assert.deepEqual(
+    ticks.map((t) => [t.top, t.kind]),
+    [
+      [100 + 30 + 24 + 20, "find"],
+      [100 + 30 + 24 + (2 + 2) * 20, "findCurrent"],
+      [100 + 26 + (25 / 50) * (400 - 26 - 8), "find"],
+    ],
+  );
+  const split = findTicks([section], () => found, undefined, "split", metrics);
+  assert.equal(split[1].top, 100 + 30 + 24 + 2 * 20);
 });

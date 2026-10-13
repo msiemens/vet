@@ -22,6 +22,9 @@ import { type EditorSelection, hunkComment, linesAt } from "./commentAnchor";
 import { takesKeys } from "./dom";
 import { fileHeader } from "./fileHeader";
 import type { FileSource } from "./fileSource";
+import { type FindOptions, type FindPos } from "./findMatches";
+import { FindRun } from "./findRun";
+import { type FindSummary, NO_MARKS, NO_SUMMARY, editorMarks } from "./findView";
 import type { BarActions } from "./hunkBar";
 import { setColumns } from "./longLines";
 import { type Handle, type Hooks, type Loaded, mountFile } from "./mount";
@@ -30,7 +33,7 @@ import { type ReviewRequests, ReviewActions, renderReview } from "./reviewAction
 import { setBaseDiffs, setCurrent } from "./reviewState";
 import type { RenderedFile, RenderedView } from "./rendered";
 import { StickyHunk } from "./stickyHunk";
-import { sectionMarks } from "./scrollMarks";
+import { findTicks, sectionMarks } from "./scrollMarks";
 import { Stops, firstStopFrom, hunkAt, hunkOverlapping } from "./stops";
 import type { Section } from "./section";
 import { SectionHeights, charWidth, readFont, readMetrics } from "./sectionHeights";
@@ -108,6 +111,10 @@ export class ChangesetView {
   private reached?: { file: number; top: number };
   /** The editor the reviewer was in last, or put the caret in by navigating; it counts while its section keeps that editor mounted. */
   private lastEditor?: { section: Section; handle: Handle; side: Side };
+  /** The find the view runs, if one is open, and who hears of what it finds. */
+  private findRun?: FindRun;
+  private findListener?: (summary: FindSummary) => void;
+  private findFrame?: number;
 
   /** The manifest revision the files are of. */
   get revision(): number {
@@ -155,13 +162,23 @@ export class ChangesetView {
     this.scrollbar = new Scrollbar(root, {
       marks: () => {
         for (const s of this.sections) this.heal(s);
-        return sectionMarks(
+        const hunks = sectionMarks(
           this.sections,
           (path) => this.review.state(path)?.review,
           this.heights.total,
           this.heights.mode,
           this.heights.m,
         );
+        const run = this.findRun;
+        if (!run) return hunks;
+        const ticks = findTicks(
+          this.sections,
+          (fi) => run.matchesOf(fi),
+          run.current,
+          this.heights.mode,
+          this.heights.m,
+        );
+        return { ...hunks, marks: [...hunks.marks, ...ticks] };
       },
       watchContent: false,
     });
@@ -270,6 +287,8 @@ export class ChangesetView {
     this.pin.destroy();
     this.widths.disconnect();
     if (this.measuring !== undefined) cancelAnimationFrame(this.measuring);
+    if (this.findFrame !== undefined) cancelAnimationFrame(this.findFrame);
+    this.findRun = undefined;
     this.root.removeEventListener("click", this.heights.onExpand, true);
     this.root.removeEventListener("focusin", this.onFocusIn);
     for (const fi of this.windowing.mounted) this.sections[fi].handle?.destroy();
@@ -296,6 +315,7 @@ export class ChangesetView {
       this.publishPane();
       this.measureWraps();
     });
+    this.drawFind();
   }
 
   /** The width of one editor, which the bars inside it size themselves to (`hunkBar.css`). */
@@ -461,7 +481,153 @@ export class ChangesetView {
     if (this.current >= first && this.current < first + s.file.hunks.length)
       s.handle.dispatchAll(setCurrent.of(this.current - first));
     this.showDiagnostics(s);
+    this.markFind(fi);
     return s.handle;
+  }
+
+  /** Hands the listener what the find found, now and after each change to it. */
+  onFind(listener: (summary: FindSummary) => void) {
+    this.findListener = listener;
+  }
+
+  /**
+   * Starts a find with `options`, or ends it (none). It reads the texts of the sections the view has
+   * and loads the others, the ones nearest the viewport first, so the count completes as they arrive.
+   * The current match is the first from `from`, else from the top of the view.
+   */
+  find(options: FindOptions | undefined, from?: FindPos) {
+    if (!options) {
+      this.findRun = undefined;
+      this.drawFind();
+      return;
+    }
+    const seed = from ?? { section: this.heights.indexAt(this.root.scrollTop), order: -1, from: 0 };
+    const run = new FindRun(options, this.sections.length, "diff", seed);
+    this.findRun = run;
+    const unread: number[] = [];
+    this.sections.forEach((s, fi) => (s.loaded ? run.add(fi, s.loaded) : unread.push(fi)));
+    this.drawFind();
+    if (run.active) void this.findUnread(run, unread);
+  }
+
+  /** Searches the sections that had no text when the find began, as their texts arrive. */
+  private async findUnread(run: FindRun, unread: number[], concurrency = 8) {
+    const middle = this.root.scrollTop + this.root.clientHeight / 2;
+    const distance = (fi: number) => Math.abs(this.sections[fi].top + this.sections[fi].height / 2 - middle);
+    unread.sort((a, b) => distance(a) - distance(b));
+    let next = 0;
+    const worker = async () => {
+      while (next < unread.length && this.findRun === run) {
+        const fi = unread[next++];
+        const loaded = await this.load(fi).catch(() => undefined);
+        // A newer revision replaces this view, and a newer find this run.
+        if (this.findRun !== run || this.destroyed) return;
+        run.add(fi, loaded);
+        this.drawFindSoon();
+      }
+    };
+    await Promise.all(Array.from({ length: concurrency }, worker));
+  }
+
+  /** Draws the find once the frame is due: many sections arriving at once cost one draw. */
+  private drawFindSoon() {
+    this.findFrame ??= requestAnimationFrame(() => {
+      this.findFrame = undefined;
+      this.drawFind();
+    });
+  }
+
+  /** Marks the matches in the mounted editors and the scroll bar, and tells the listener. */
+  private drawFind() {
+    if (this.destroyed) return;
+    for (const fi of this.windowing.mounted) this.markFind(fi);
+    this.scrollbar.refresh();
+    this.findListener?.(this.findRun?.summary() ?? NO_SUMMARY);
+  }
+
+  /** The editors of a mounted section mark the find's matches (none without a find). */
+  private markFind(fi: number) {
+    const run = this.findRun;
+    const handle = this.sections[fi].handle;
+    if (!handle) return;
+    const marks = run
+      ? editorMarks(fi, run.matchesOf(fi), run.current, this.heights.mode, run.options.side)
+      : { target: NO_MARKS, base: NO_MARKS };
+    handle.showFind(marks);
+  }
+
+  /**
+   * Goes to the match `delta` (1 or -1) from the current one: loads and mounts its section, opens the
+   * unchanged lines that hide it and scrolls it into view. Answers whether the step wrapped, or none
+   * without matches.
+   */
+  async findStep(delta: 1 | -1): Promise<{ wrapped: boolean } | undefined> {
+    const run = this.findRun;
+    const next = run?.stepFrom(delta);
+    if (!run || !next) return undefined;
+    run.moveTo(next.to);
+    this.drawFind();
+    await this.showMatch(run, next.to);
+    return { wrapped: next.wrapped };
+  }
+
+  private async showMatch(run: FindRun, pos: FindPos) {
+    const m = run.matchesOf(pos.section).find((x) => x.order === pos.order && x.from === pos.from);
+    if (!m) return;
+    const fi = pos.section;
+    const s = this.sections[fi];
+    await this.load(fi);
+    if (this.destroyed || this.findRun !== run) return;
+    const offset = m.hunk >= 0 ? s.hunkTops[m.hunk] - this.root.clientHeight / 2 : 0;
+    this.root.scrollTop = Math.max(0, s.top + offset);
+    const handle = this.mount(fi);
+    this.sync();
+    if (this.collapse && m.kind === "context") {
+      const hidden = hiddenAt(s.file, true, "target", m.line);
+      if (hidden && handle.expand(m.line)) this.heights.expanded(s, hidden);
+    }
+    const split = this.heights.mode === "split";
+    // A removed line of a unified diff is not in the editor's document: the DOM scroll below brings it.
+    const view = m.kind === "removed" ? (split ? handle.views[0] : undefined) : handle.view;
+    if (view) {
+      const at = lineStart(view.state.doc, m.kind === "removed" ? m.baseLine : m.line) + m.from;
+      view.dispatch({ effects: EditorView.scrollIntoView(at, { y: "center" }) });
+    }
+    this.sync();
+    this.centreMark(run, s);
+  }
+
+  /** Once the editor has drawn the current mark, scrolls it to the middle of the view if it is out of it. */
+  private centreMark(run: FindRun, s: Section) {
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const mark = s.el.querySelector(".vet-find-current");
+        if (!mark || this.destroyed || this.findRun !== run) return;
+        const [at, root] = [mark.getBoundingClientRect(), this.root.getBoundingClientRect()];
+        const [top, bottom] = [root.top + this.covered, root.bottom];
+        if (at.top >= top && at.bottom <= bottom) return;
+        this.root.scrollTop += at.top + at.height / 2 - (top + bottom) / 2;
+      }),
+    );
+  }
+
+  /** Puts the caret on the current match, and the focus in its editor, as the find ends; answers whether there was one. */
+  selectFound(): boolean {
+    const run = this.findRun;
+    const pos = run?.current;
+    const m = pos && run.matchesOf(pos.section).find((x) => x.order === pos.order && x.from === pos.from);
+    const s = pos && this.sections[pos.section];
+    if (!m || !s?.handle) return false;
+    const { view } = s.handle;
+    const split = this.heights.mode === "split";
+    const target = m.kind !== "removed";
+    const editor = target ? view : split ? s.handle.views[0] : undefined;
+    if (!editor) return false;
+    const start = lineStart(editor.state.doc, target ? m.line : m.baseLine) + m.from;
+    editor.dispatch({ selection: { anchor: start, head: start + (m.to - m.from) } });
+    editor.focus();
+    this.lastEditor = { section: s, handle: s.handle, side: target ? "target" : "base" };
+    return true;
   }
 
   /** Asks for the file's diagnostics (answered from the store's cache after the first time) and shows them once they arrive. */
@@ -841,7 +1007,7 @@ export class ChangesetView {
       };
     });
     const marks = [...this.scrollbar.dom.querySelectorAll<HTMLElement>(".vet-scrollmark")]
-      .filter((mark) => !mark.hidden)
+      .filter((mark) => !mark.hidden && !mark.className.includes("vet-scrollmark-find"))
       .map((mark) => mark.className.replace("vet-scrollmark vet-scrollmark-", ""));
     return { files, marks };
   }

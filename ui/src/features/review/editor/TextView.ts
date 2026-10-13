@@ -6,6 +6,7 @@
 import { EditorState, type StateField, Text } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import type { FileReview } from "../../../generated/FileReview";
+import type { Hunk } from "../../../generated/Hunk";
 import type { NoTextReason } from "../../../generated/NoTextReason";
 import type { Thread } from "../../../generated/Thread";
 import type { View } from "../../../generated/View";
@@ -34,6 +35,10 @@ import {
 } from "./fileChanges";
 import { hunkAtLine, oldLinesOf, stepHunk } from "./fileLayout";
 import { type FileSource, StaleRevision } from "./fileSource";
+import { findMarks, setFindMarks } from "./findMarks";
+import type { FindOptions, FindPos } from "./findMatches";
+import { FindRun } from "./findRun";
+import { type FindSummary, NO_MARKS, NO_SUMMARY, editorMarks } from "./findView";
 import { highlightExtension } from "./highlightExtension";
 import { hunkToolbar } from "./hunkToolbar";
 import type { Loaded } from "./mount";
@@ -101,6 +106,12 @@ export class TextView {
   private entered = false;
   private cards: TextThreads;
   private commentable: boolean;
+  /** The text the editor shows, and the hunks it draws, which a find reads. */
+  private found?: { text: string; hunks: Hunk[] };
+  /** The find to run once the text has arrived, and the one running. */
+  private wanted?: { options: FindOptions; from?: FindPos };
+  private findRun?: FindRun;
+  private findListener?: (summary: FindSummary) => void;
 
   /**
    * Fills `root` with the file's text from `source`. A reply of another revision is dropped:
@@ -144,11 +155,13 @@ export class TextView {
   private mountEditor(text: string, highlights: Highlights, loaded?: Loaded) {
     const drawn = loaded && this.changes && this.draw(this.changes, loaded);
     this.drawn = drawn;
+    this.found = { text, hunks: loaded && this.changes ? loaded.hunks : [] };
     this.view = new EditorView({
       parent: this.root,
       doc: text,
       extensions: [
         softWrap(wraps(this.path, this.wrap)),
+        findMarks(false),
         ...(drawn
           ? [
               ...fileChanges(drawn.source, drawn.field),
@@ -180,8 +193,9 @@ export class TextView {
     });
     const view = this.view;
     this.cards.attach(view);
-    this.scrollbar = new Scrollbar(view.scrollDOM, { marks: drawn && (() => this.markLayout(view, drawn)) });
+    this.scrollbar = new Scrollbar(view.scrollDOM, { marks: () => this.markLayout(view, drawn) });
     this.root.after(this.scrollbar.dom);
+    if (this.wanted) this.find(this.wanted.options, this.wanted.from);
     if (this.span) this.goToSpan(this.span);
     else if (this.hunk !== undefined) this.goToHunk(this.hunk);
     else if (this.line !== undefined) this.goToLine(this.line);
@@ -190,19 +204,94 @@ export class TextView {
   }
 
   /** Where the hunks lie in the editor's content, for the marks in its scroll bar. */
-  private markLayout(view: EditorView, { source, field }: Drawn): MarkLayout {
-    this.heal();
-    const { states, flags } = view.state.field(field);
+  private markLayout(view: EditorView, drawn?: Drawn): MarkLayout {
     const { doc } = view.state;
-    const marks = source.hunks.map((h, i): ScrollMark => {
-      const first = view.lineBlockAt(lineStart(doc, h.targetStart));
-      const removal = h.targetLen === 0;
-      const last = removal ? first : view.lineBlockAt(lineStart(doc, h.targetStart + h.targetLen - 1));
-      // Lines removed at the end lie below the last line.
-      const top = removal && h.targetStart >= doc.lines ? first.bottom : first.top;
-      return { top, height: removal ? 0 : last.bottom - first.top, kind: markKind(states[i], removal, flags[i]) };
-    });
+    const marks: ScrollMark[] = [];
+    if (drawn) {
+      this.heal();
+      const { states, flags } = view.state.field(drawn.field);
+      for (const [i, h] of drawn.source.hunks.entries()) {
+        const first = view.lineBlockAt(lineStart(doc, h.targetStart));
+        const removal = h.targetLen === 0;
+        const last = removal ? first : view.lineBlockAt(lineStart(doc, h.targetStart + h.targetLen - 1));
+        // Lines removed at the end lie below the last line.
+        const top = removal && h.targetStart >= doc.lines ? first.bottom : first.top;
+        marks.push({
+          top,
+          height: removal ? 0 : last.bottom - first.top,
+          kind: markKind(states[i], removal, flags[i]),
+        });
+      }
+    }
+    const run = this.findRun;
+    const current = run?.current;
+    for (const m of run?.matchesOf(0) ?? []) {
+      const block = view.lineBlockAt(lineStart(doc, m.line));
+      const at = current?.order === m.order && current.from === m.from;
+      marks.push({ top: block.top, height: 0, kind: at ? "findCurrent" : "find" });
+    }
     return { total: view.contentHeight, marks };
+  }
+
+  /** Hands the listener what the find found, now and after each change to it. */
+  onFind(listener: (summary: FindSummary) => void) {
+    this.findListener = listener;
+  }
+
+  /**
+   * Starts a find with `options` in the file's text, or ends it (none). The current match is the first
+   * from `from`, else from the caret's line.
+   */
+  find(options: FindOptions | undefined, from?: FindPos) {
+    this.wanted = options && { options, from };
+    const { found, view } = this;
+    if (!found || !view) return;
+    if (!options) {
+      this.findRun = undefined;
+    } else {
+      const caret = lineOf(view.state.doc, view.state.selection.main.head);
+      const run = new FindRun(options, 1, "file", from ?? { section: 0, order: caret, from: 0 });
+      run.add(0, { base: "", target: found.text, hunks: found.hunks });
+      this.findRun = run;
+    }
+    this.drawFind();
+  }
+
+  private drawFind() {
+    const { view, findRun: run } = this;
+    if (!view) return;
+    const marks = run ? editorMarks(0, run.matchesOf(0), run.current, "file", run.options.side) : undefined;
+    view.dispatch({ effects: setFindMarks.of(marks?.target ?? NO_MARKS) });
+    this.scrollbar?.refresh();
+    this.findListener?.(run?.summary() ?? NO_SUMMARY);
+  }
+
+  /** Goes to the match `delta` (1 or -1) from the current one; answers whether the step wrapped, or none without matches. */
+  findStep(delta: 1 | -1): { wrapped: boolean } | undefined {
+    const { view, findRun: run } = this;
+    const next = run?.stepFrom(delta);
+    if (!view || !run || !next) return undefined;
+    run.moveTo(next.to);
+    this.drawFind();
+    const m = run.matchesOf(0).find((x) => x.order === next.to.order && x.from === next.to.from);
+    if (m)
+      view.dispatch({
+        effects: EditorView.scrollIntoView(lineStart(view.state.doc, m.line) + m.from, { y: "center" }),
+      });
+    return { wrapped: next.wrapped };
+  }
+
+  /** Puts the caret on the current match, and the focus in the editor, as the find ends; answers whether there was one. */
+  selectFound(): boolean {
+    const { view, findRun: run } = this;
+    const at = run?.current;
+    const m = at && run.matchesOf(0).find((x) => x.order === at.order && x.from === at.from);
+    if (!view || !m) return false;
+    const start = lineStart(view.state.doc, m.line) + m.from;
+    this.entered = true;
+    view.dispatch({ selection: { anchor: start, head: start + (m.to - m.from) } });
+    view.focus();
+    return true;
   }
 
   private draw({ file, actions }: { file: FileLayout; actions: TextActions }, loaded: Loaded): Drawn {

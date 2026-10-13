@@ -1,0 +1,38 @@
+/* The matches of a find (`findMarks.ts`) and their ticks in a view's scroll bar (`scrollMarks.ts`). */
+.cm-editor .vet-find,
+.cm-editor .cm-deletedLine mark.vet-find {
+  background: var(--find);
+  color: inherit;
+  border-radius: 2px;
+}
+.cm-editor .vet-find.vet-find-current,
+.cm-editor .cm-deletedLine mark.vet-find.vet-find-current {
+  background: var(--find-current);
+  box-shadow: 0 0 0 1px var(--find-current-ring);
+}
+/* The copy of a context line on the side that was not asked for. */
+.cm-editor .vet-find.vet-find-dim {
+  background: color-mix(in srgb, var(--find) 45%, transparent);
+  box-shadow: none;
+}
+
+/* On an "N unchanged lines" bar: how many matches it hides. */
+.cm-editor .vet-find-gap {
+  margin-left: auto;
+  padding: 0 7px;
+  border-radius: 8px;
+  background: var(--find);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.vet-scrollmark-find {
+  left: 1px;
+  right: 1px;
+  background: var(--find-tick);
+}
+.vet-scrollmark-findCurrent {
+  left: 0;
+  right: 0;
+  background: var(--find-current-ring);
+}

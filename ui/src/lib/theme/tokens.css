@@ -31,6 +31,11 @@
   --current-hunk-gutter: light-dark(rgba(45, 111, 216, 0.26), rgba(107, 156, 247, 0.3));
   /* What a search found in a line of code; translucent, so it lies over a selected row too. */
   --find: light-dark(rgba(250, 204, 21, 0.45), rgba(234, 179, 8, 0.4));
+  /* The match a find is on, stronger than the rest, with the ring that sets it apart (and marks it in the scroll bar). */
+  --find-current: light-dark(rgba(245, 130, 32, 0.55), rgba(251, 146, 60, 0.55));
+  --find-current-ring: light-dark(#c2570c, #fdba74);
+  /* A match in the scroll bar. */
+  --find-tick: light-dark(#e0a800, #eab308);
   --accent: light-dark(#2d6fd8, #6b9cf7);
   /* The file whose hunk is current (the Changes tab): a frame round its section and a light blue
      header, opaque since the header is pinned over the text. */

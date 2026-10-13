@@ -22,6 +22,8 @@ import type { BarActions } from "./hunkBar";
 import { baseLineOfTarget, lineStart } from "./positions";
 import { type SemanticHooks, hiddenRegions, revealSpan, semanticExtensions, showDiagnostics } from "./semantic";
 import { deletedHighlights } from "./deletedHighlights";
+import { findMarks, setFindMarks } from "./findMarks";
+import type { EditorMarks } from "./findView";
 import { highlightExtension } from "./highlightExtension";
 import { longLines } from "./longLines";
 import { openOnDoubleClick } from "./openAtLine";
@@ -53,6 +55,8 @@ export interface Handle {
   drawn(): { hunks: HunkState[]; flagged: boolean[] };
   /** Replaces the target view's diagnostics. */
   showDiagnostics(diagnostics: readonly Diagnostic[]): void;
+  /** Marks the matches of a find in the editors; the base marks go to the base editor of a side by side view. */
+  showFind(marks: EditorMarks): void;
   /** Scrolls to and marks a span of `side`'s text; a base span has no editor of its own in a unified view and is left to the caller. */
   revealSpan(side: Side, span: TextSpan): void;
   /** Expands the collapsed region that hides a 0-based target line, in both editors of a side by side view; answers whether the line was hidden. */
@@ -134,6 +138,7 @@ export function mountFile(
     longLines(targetField, columns),
     lineNumbers(),
     highlightExtension(loaded.targetHighlights),
+    findMarks(mode === "unified"),
     barText,
     // Vet never writes the tree: both sides keep a caret and selection but take no edits.
     EditorState.readOnly.of(true),
@@ -171,6 +176,7 @@ export function mountFile(
     longLines(baseField, columns),
     lineNumbers(),
     highlightExtension(loaded.baseHighlights),
+    findMarks(false),
     barText,
     EditorState.readOnly.of(true),
     openOnDoubleClick("base", loaded.hunks, (line) => hooks.openLine(line)),
@@ -213,6 +219,10 @@ function handle(
       return { hunks: states, flagged };
     },
     showDiagnostics: (diagnostics) => showDiagnostics(view, diagnostics),
+    showFind: ({ target, base }) => {
+      view.dispatch({ effects: setFindMarks.of(target) });
+      if (views.length > 1) views[0].dispatch({ effects: setFindMarks.of(base) });
+    },
     revealSpan: (side, span) => {
       if (side === "target") revealSpan(view, span, true);
       else if (views.length > 1) revealSpan(views[0], span, false);
