@@ -8,6 +8,7 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import KeyHints from "../../lib/ui/KeyHints.svelte";
+  import TextToggle from "../../lib/ui/TextToggle.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { structure } from "../../state/structure.svelte";
   import { structureRows, type StructureRow } from "../../state/structureRows";
@@ -135,12 +136,8 @@
     <span class="title">Structure of <code>{fileName}</code></span>
     {#if outline && !outline.unavailable}<span class="mono n">{symbols.length}</span>{/if}
     <span class="grow"></span>
-    <button
-      class="flat txtbtn mono"
-      type="button"
-      aria-pressed={structure.sort}
-      title="Sort alphabetically"
-      onclick={() => structure.setSort(!structure.sort)}>A–Z</button
+    <TextToggle on={structure.sort} title="Sort alphabetically" onclick={() => structure.setSort(!structure.sort)}
+      >A–Z</TextToggle
     >
     <IconButton
       icon="filter"
@@ -220,16 +217,6 @@
   .n {
     font-size: var(--fs-mono-s);
     color: var(--text-3);
-  }
-  .txtbtn {
-    height: 22px;
-    flex: none;
-    padding: 0 6px;
-    border-radius: var(--radius);
-    color: var(--text-2);
-    font-size: 10.5px;
-    font-weight: 500;
-    line-height: 1;
   }
   .search {
     flex: none;

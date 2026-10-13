@@ -12,6 +12,7 @@
   import { ListNav } from "../../lib/ui/listNav";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
+  import TextToggle from "../../lib/ui/TextToggle.svelte";
   import VirtualRows from "../../lib/ui/VirtualRows.svelte";
   import { structure } from "../../state/structure.svelte";
   import { holderKeys, structureRows, type StructureRow } from "../../state/structureRows";
@@ -196,13 +197,11 @@
     <span>Structure</span>
     {#if outline && !outline.unavailable}<span class="mono n">{symbols.length}</span>{/if}
     <span class="grow"></span>
-    <button
-      class="flat txtbtn mono"
-      type="button"
-      aria-pressed={structure.sort}
+    <TextToggle
+      on={structure.sort}
       title="Sort alphabetically"
       disabled={!rows.length}
-      onclick={() => structure.setSort(!structure.sort)}>A–Z</button
+      onclick={() => structure.setSort(!structure.sort)}>A–Z</TextToggle
     >
     <IconButton
       icon="filter"
@@ -263,16 +262,6 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-  }
-  .txtbtn {
-    height: 22px;
-    flex: none;
-    padding: 0 6px;
-    border-radius: var(--radius);
-    color: var(--text-2);
-    font-size: 10.5px;
-    font-weight: 500;
-    line-height: 1;
   }
   .strip {
     flex: none;

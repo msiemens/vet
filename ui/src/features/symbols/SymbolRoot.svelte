@@ -6,7 +6,7 @@
   import { letterOfChange } from "../../lib/changeLetter";
   import { readStored, writeStored } from "../../lib/storage";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
-  import Icon from "../../lib/ui/Icon.svelte";
+  import IconButton from "../../lib/ui/IconButton.svelte";
   import SectionHead from "../../lib/ui/SectionHead.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import TreeRow from "../../lib/ui/TreeRow.svelte";
@@ -141,9 +141,7 @@
       {/snippet}
       {#snippet aside()}
         {#if find}
-          <button class="flat find" type="button" title={find.label} aria-label={find.label} onclick={find.onclick}>
-            <Icon name="search" size={12} />
-          </button>
+          <IconButton icon="search" label={find.label} size={22} iconSize={12} onclick={find.onclick} />
         {/if}
       {/snippet}
     </SectionHead>
@@ -168,15 +166,6 @@
 <style>
   .hint {
     display: inline-flex;
-  }
-  .find {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 22px;
-    height: 22px;
-    border-radius: var(--radius);
-    color: var(--text-3);
   }
   .quiet {
     display: flex;
