@@ -18,13 +18,32 @@ pub struct Outline {
     pub detail: Option<String>,
     /// See [`SymbolInfo::container`].
     pub container: bool,
+    /// Whether it is a function, method or the like: what it declares is local to it.
+    pub callable: bool,
     pub children: Vec<Outline>,
 }
 
-/// The symbols of `outline`, each named by the chain of its containers.
+/// Whether a server names a symbol only by where it is: a function or class expression it
+/// reports as `<function>` or `<class>`, or a callback it reports as `items.map() callback`.
+fn is_anonymous(name: &str) -> bool {
+    (name.starts_with('<') && name.ends_with('>')) || name.ends_with(" callback")
+}
+
+/// The symbols of `outline`, each named by the chain of its named containers. Only what is
+/// declared by name is a symbol: closures, callbacks and the variables, parameters and
+/// constants local to a function are not, and what they hold belongs to the nearest symbol
+/// around them. A function declared inside a function is one, a class or type declared
+/// there too.
 pub fn flatten(file: &RepoPath, outline: &[Outline]) -> Vec<SymbolInfo> {
-    fn walk(file: &RepoPath, chain: &mut Vec<String>, outline: &[Outline], out: &mut Vec<SymbolInfo>) {
+    fn walk(file: &RepoPath, chain: &mut Vec<String>, local: bool, outline: &[Outline], out: &mut Vec<SymbolInfo>) {
         for symbol in outline {
+            let anonymous = is_anonymous(&symbol.name);
+            // What a variable holds (a function, a class, an object) is inside it as well.
+            let holds_code = symbol.callable || anonymous || (!symbol.container && !symbol.children.is_empty());
+            if anonymous || (local && !symbol.container) {
+                walk(file, chain, holds_code, &symbol.children, out);
+                continue;
+            }
             chain.push(symbol.name.clone());
             out.push(SymbolInfo {
                 sym: Sym {
@@ -36,12 +55,12 @@ pub fn flatten(file: &RepoPath, outline: &[Outline]) -> Vec<SymbolInfo> {
                 detail: symbol.detail.clone(),
                 container: symbol.container,
             });
-            walk(file, chain, &symbol.children, out);
+            walk(file, chain, holds_code, &symbol.children, out);
             chain.pop();
         }
     }
     let mut out = Vec::new();
-    walk(file, &mut Vec::new(), outline, &mut out);
+    walk(file, &mut Vec::new(), false, outline, &mut out);
     out
 }
 
@@ -60,8 +79,8 @@ fn contains(span: Span, pos: Pos) -> bool {
 /// The symbol a server item (a call hierarchy entry, a workspace symbol)
 /// refers to, as one of the `symbols` of its file: the one whose name is at
 /// `at`, else the innermost one that contains `at`. An item the outline does
-/// not know is named by its own name alone.
-pub fn resolve(symbols: &[SymbolInfo], file: RepoPath, name: &str, span: Span, at: Pos) -> SymbolInfo {
+/// not know is named by its own name alone, unless it is anonymous: that is no symbol.
+pub fn resolve(symbols: &[SymbolInfo], file: RepoPath, name: &str, span: Span, at: Pos) -> Option<SymbolInfo> {
     let exact = symbols.iter().find(|s| s.at == at);
     let innermost = || {
         symbols
@@ -69,7 +88,10 @@ pub fn resolve(symbols: &[SymbolInfo], file: RepoPath, name: &str, span: Span, a
             .filter(|s| contains(s.span, at))
             .max_by_key(|s| (s.span.start.line, s.span.start.col))
     };
-    exact.or_else(innermost).cloned().unwrap_or_else(|| SymbolInfo {
+    if let Some(found) = exact.or_else(innermost) {
+        return Some(found.clone());
+    }
+    (!is_anonymous(name)).then(|| SymbolInfo {
         sym: Sym {
             file,
             name: vec![name.to_owned()],
@@ -118,8 +140,21 @@ mod tests {
             at,
             detail: None,
             container: true,
+            callable: false,
             children,
         }
+    }
+
+    /// A function or method: what it declares is local to it.
+    fn function(name: &str, span: Span, at: Pos, children: Vec<Outline>) -> Outline {
+        Outline {
+            callable: true,
+            ..outline(name, span, at, children)
+        }
+    }
+
+    fn names(symbols: Vec<SymbolInfo>) -> Vec<Vec<String>> {
+        symbols.into_iter().map(|s| s.sym.name).collect()
     }
 
     fn symbols() -> Vec<SymbolInfo> {
@@ -151,17 +186,123 @@ mod tests {
 
     #[test]
     fn an_item_resolves_to_the_symbol_named_at_its_position() {
-        let found = resolve(&symbols(), file(), "area", span(2, 4, 6, 5), pos(2, 11));
+        let found = resolve(&symbols(), file(), "area", span(2, 4, 6, 5), pos(2, 11)).unwrap();
         assert_eq!(found.sym.name, ["Shape", "area"]);
     }
 
     #[test]
     fn an_item_inside_a_symbol_resolves_to_the_innermost_one() {
-        let found = resolve(&symbols(), file(), "closure", span(9, 8, 10, 9), pos(9, 10));
+        let found = resolve(&symbols(), file(), "closure", span(9, 8, 10, 9), pos(9, 10)).unwrap();
         assert_eq!(found.sym.name, ["Shape", "scale"]);
         // Only the container holds this position.
-        let found = resolve(&symbols(), file(), "field", span(14, 4, 14, 9), pos(14, 4));
+        let found = resolve(&symbols(), file(), "field", span(14, 4, 14, 9), pos(14, 4)).unwrap();
         assert_eq!(found.sym.name, ["Shape"]);
+    }
+
+    #[test]
+    fn a_callback_outside_every_symbol_resolves_to_none() {
+        let found = resolve(
+            &symbols(),
+            file(),
+            "describe(\"suite\") callback",
+            span(30, 0, 32, 1),
+            pos(30, 0),
+        );
+        assert_eq!(found, None);
+        let found = resolve(&symbols(), file(), "<function>", span(30, 0, 32, 1), pos(30, 0));
+        assert_eq!(found, None);
+    }
+
+    /// What typescript-language-server lists for a class whose method has a callback, a local
+    /// constant holding a closure, a local function and a function expression.
+    fn typescript_widget() -> Vec<SymbolInfo> {
+        let callback = |name: &str, line| function(name, span(line, 20, line, 40), pos(line, 20), vec![]);
+        let method = function(
+            "method",
+            span(2, 2, 10, 3),
+            pos(2, 2),
+            vec![
+                variable_with(
+                    "local",
+                    span(3, 4, 3, 40),
+                    pos(3, 10),
+                    vec![callback("items.map() callback", 3)],
+                ),
+                variable_with("inner", span(4, 4, 4, 40), pos(4, 10), vec![]),
+                function("named", span(5, 4, 5, 30), pos(5, 13), vec![]),
+                callback("items.forEach() callback", 6),
+                function("<function>", span(7, 4, 7, 30), pos(7, 5), vec![]),
+            ],
+        );
+        let tree = vec![
+            outline(
+                "Widget",
+                span(0, 0, 12, 1),
+                pos(0, 13),
+                vec![variable("field", span(1, 2, 1, 12), pos(1, 2)), method],
+            ),
+            variable("arrow", span(14, 0, 14, 40), pos(14, 13)),
+        ];
+        flatten(&file(), &tree)
+    }
+
+    fn variable_with(name: &str, span: Span, at: Pos, children: Vec<Outline>) -> Outline {
+        Outline {
+            children,
+            ..variable(name, span, at)
+        }
+    }
+
+    #[test]
+    fn closures_and_callbacks_are_no_symbols_but_named_declarations_are() {
+        assert_eq!(
+            names(typescript_widget()),
+            [
+                vec!["Widget"],
+                vec!["Widget", "field"],
+                vec!["Widget", "method"],
+                vec!["Widget", "method", "named"],
+                vec!["arrow"],
+            ]
+        );
+    }
+
+    #[test]
+    fn a_closure_assigned_at_module_level_is_a_named_symbol() {
+        let tree = vec![variable_with(
+            "handler",
+            span(0, 0, 4, 1),
+            pos(0, 6),
+            vec![function("items.map() callback", span(1, 4, 3, 5), pos(1, 4), vec![])],
+        )];
+        assert_eq!(names(flatten(&file(), &tree)), [vec!["handler"]]);
+    }
+
+    #[test]
+    fn a_class_declared_inside_a_function_keeps_its_members() {
+        let tree = vec![function(
+            "make",
+            span(0, 0, 8, 1),
+            pos(0, 9),
+            vec![outline(
+                "Local",
+                span(1, 2, 6, 3),
+                pos(1, 8),
+                vec![
+                    variable("count", span(2, 4, 2, 14), pos(2, 4)),
+                    function("bump", span(3, 4, 5, 5), pos(3, 4), vec![]),
+                ],
+            )],
+        )];
+        assert_eq!(
+            names(flatten(&file(), &tree)),
+            [
+                vec!["make"],
+                vec!["make", "Local"],
+                vec!["make", "Local", "count"],
+                vec!["make", "Local", "bump"]
+            ]
+        );
     }
 
     /// An outline entry that holds no code of its own: a parameter, variable or field.
@@ -175,7 +316,7 @@ mod tests {
     /// What a Python server lists for `class Invoice` with `merge(self, groups)`, which has a local
     /// `total` and a nested function `key`: its parameters and locals are in the outline.
     fn python_invoice() -> Vec<SymbolInfo> {
-        let merge = outline(
+        let merge = function(
             "merge",
             span(2, 4, 12, 0),
             pos(2, 8),
@@ -183,7 +324,7 @@ mod tests {
                 variable("self", span(2, 14, 2, 18), pos(2, 14)),
                 variable("groups", span(2, 20, 2, 26), pos(2, 20)),
                 variable("total", span(4, 8, 4, 17), pos(4, 8)),
-                outline("key", span(6, 8, 8, 20), pos(6, 12), vec![]),
+                function("key", span(6, 8, 8, 20), pos(6, 12), vec![]),
             ],
         );
         let tree = vec![
@@ -251,7 +392,7 @@ mod tests {
 
     #[test]
     fn an_item_the_outline_does_not_know_is_named_by_itself() {
-        let found = resolve(&symbols(), file(), "free", span(30, 0, 32, 1), pos(30, 3));
+        let found = resolve(&symbols(), file(), "free", span(30, 0, 32, 1), pos(30, 3)).unwrap();
         assert_eq!(
             found.sym,
             Sym {

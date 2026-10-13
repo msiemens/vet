@@ -36,7 +36,7 @@ impl Kind {
     /// Bumped when the stored form of this kind changes.
     fn format(self) -> u32 {
         match self {
-            Kind::Symbols => 2,
+            Kind::Symbols => 3,
             Kind::Locations => 1,
             Kind::Hover => 1,
             Kind::Diagnostics => 1,

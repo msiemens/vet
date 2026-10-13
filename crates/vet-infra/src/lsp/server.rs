@@ -503,7 +503,7 @@ impl LspServer {
     ) -> Option<SymbolInfo> {
         let file = self.file_of(uri)?;
         let symbols = self.symbols_cached(cache, &file).await;
-        Some(symbols::resolve(&symbols, file, name, span(range), pos(selection)))
+        symbols::resolve(&symbols, file, name, span(range), pos(selection))
     }
 
     async fn prepare_calls(&self, at: &At) -> Result<Vec<lsp::CallHierarchyItem>, QueryError> {
@@ -591,6 +591,7 @@ fn outline(symbols: &[lsp::DocumentSymbol]) -> Vec<Outline> {
             at: pos(s.selection_range.start),
             detail: s.detail.clone(),
             container: is_container(s.kind),
+            callable: is_callable(s.kind),
             children: outline(s.children.as_deref().unwrap_or_default()),
         })
         .collect()
@@ -630,6 +631,17 @@ fn is_container(kind: lsp::SymbolKind) -> bool {
         lsp::SymbolKind::FUNCTION,
         lsp::SymbolKind::OBJECT,
         lsp::SymbolKind::STRUCT,
+        lsp::SymbolKind::OPERATOR,
+    ]
+    .contains(&kind)
+}
+
+/// Whether symbols of `kind` are executable code with locals of its own.
+fn is_callable(kind: lsp::SymbolKind) -> bool {
+    [
+        lsp::SymbolKind::METHOD,
+        lsp::SymbolKind::CONSTRUCTOR,
+        lsp::SymbolKind::FUNCTION,
         lsp::SymbolKind::OPERATOR,
     ]
     .contains(&kind)

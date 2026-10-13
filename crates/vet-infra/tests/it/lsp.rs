@@ -259,6 +259,68 @@ async fn typescript_language_server_answers_the_primitive_queries() {
     server.shutdown().await;
 }
 
+/// typescript-language-server lists every callback, function expression and local constant in
+/// its outline; none of them is a symbol, and a call in one is a call of the function around it.
+#[tokio::test]
+#[ignore = "needs typescript-language-server"]
+async fn typescript_closures_belong_to_the_function_around_them() {
+    let dir = TempDir::new().unwrap();
+    let src = "\
+export function helper(): number {
+  return 1;
+}
+export const arrow = (a: number) => a + helper();
+export class Widget {
+  field = 1;
+  method(items: number[]) {
+    const local = items.map((i) => i + helper());
+    const inner = function () { return 1; };
+    function named() { return 2; }
+    items.forEach(function (i) { console.log(i); });
+    return local;
+  }
+}
+";
+    std::fs::write(
+        dir.path().join("tsconfig.json"),
+        "{\"compilerOptions\":{\"strict\":true}}",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("a.ts"), src).unwrap();
+    let server = LspLauncher::new(BinaryLocator, NoRestore)
+        .start(
+            dir.path(),
+            Tree::Immutable,
+            &config::typescript(),
+            AnalysisPolicy { allow_executing: false },
+        )
+        .await
+        .expect("typescript-language-server starts and has every required capability")
+        .server;
+    let file = path("a.ts");
+    assert_eq!(
+        symbol_names(server.document_symbols(&file).await.unwrap()),
+        [
+            "Widget",
+            "Widget::field",
+            "Widget::method",
+            "Widget::method::named",
+            "arrow",
+            "helper"
+        ]
+    );
+
+    let helper = At {
+        file: file.clone(),
+        pos: find(src, "helper", 0, 1),
+    };
+    assert_eq!(
+        symbol_names(server.incoming_calls(&helper).await.unwrap()),
+        ["Widget::method", "arrow"]
+    );
+    server.shutdown().await;
+}
+
 /// Roslyn has its projects loaded when it is ready, so a hover on a file nobody has
 /// opened yet already resolves across the project, on either kind of tree. (That the
 /// client does not wait for such a server to go quiet is tested against a fake, in
