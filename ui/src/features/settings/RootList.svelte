@@ -49,7 +49,7 @@
   }
 </script>
 
-<SettingsTable name="roots" label="Review roots" columns={COLUMNS}>
+<SettingsTable name="roots" aria-label="Review roots" columns={COLUMNS}>
   {#each roots as root, i (root)}
     <div class="row">
       <span class="path" title={root}>{root}</span>

@@ -2,6 +2,7 @@
 // shown as zero (SPEC I6): a file no server has answered for counts as waiting or as not analysed,
 // and a file whose problems cannot be told new from existing is named, not counted as either.
 
+import { plural } from "../lib/plural.ts";
 import type { Counts } from "./problemRows.ts";
 
 /** Whether the answers for some files still compare with the base, say which problems are new, or could not. */
@@ -35,8 +36,6 @@ export interface Summary {
   badgeText: string;
   title: string;
 }
-
-const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 export function summarize({ counts, comparing, unknownFiles, files, changed }: SummaryInput): Summary | undefined {
   if (files.total === 0) {

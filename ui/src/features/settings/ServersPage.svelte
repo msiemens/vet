@@ -10,7 +10,6 @@
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
   import StatusDot from "../../lib/ui/StatusDot.svelte";
-  import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
   import { type Sort, sortRows } from "../../lib/ui/sorting";
   import { backendSettings } from "../../state/backendSettings.svelte";
@@ -18,6 +17,7 @@
   import { serverList } from "../../state/serverList.svelte";
   import { servers } from "../../state/servers.svelte";
   import ServerPathSheet from "./ServerPathSheet.svelte";
+  import SettingsTable from "./SettingsTable.svelte";
   import { serverRow, serverTone, type ServerRow } from "./serverRows";
 
   /** The server whose custom path sheet is open. */
@@ -105,47 +105,37 @@
     <p class="empty">Looking for language servers…</p>
   {:else}
     {#if search.active}<SpeedSearchField query={search.query} found={rows.length > 0} />{/if}
-    <div class="box">
-      <Table
-        name="servers"
-        columns={COLUMNS}
-        bind:sort
-        scroll={false}
-        ruled
-        bind:body={tableEl}
-        role="listbox"
-        aria-label="Language servers"
-        tabindex={-1}
-        onkeydown={(e) => search.keydown(e, tableEl, "button:enabled")}
-        {...search.attributes}
-        --table-gap="8px"
-        --table-pad="10px"
-        --table-pad-end="6px"
-        --table-row="30px"
-        --table-head="30px"
-        --table-head-color="var(--text-3)"
-      >
-        {#each rows as row (row.language)}
-          <button
-            class="flat pick row"
-            class:on={row === selected}
-            type="button"
-            role="option"
-            aria-selected={row === selected}
-            onclick={() => (selectedLanguage = row.language)}
-          >
-            <span><Marked text={row.title} ranges={row.ranges} /></span>
-            <span class="clip">{row.server}</span>
-            <span class="mono clip">{row.version ?? "–"}</span>
-            <span class="clip muted" class:mono={row.status === "custom"} title={row.source}>
-              {#if row.status === "custom"}<PathText path={row.source} />{:else}{row.source}{/if}
-            </span>
-            <StatusDot tone={serverTone(row.status)} title={row.statusLabel} />
-          </button>
-        {/each}
-        {#if !rows.length}<p class="empty pad">No language server matches.</p>{/if}
-      </Table>
-    </div>
+    <SettingsTable
+      name="servers"
+      columns={COLUMNS}
+      bind:sort
+      bind:body={tableEl}
+      role="listbox"
+      aria-label="Language servers"
+      tabindex={-1}
+      onkeydown={(e) => search.keydown(e, tableEl, "button:enabled")}
+      {...search.attributes}
+    >
+      {#each rows as row (row.language)}
+        <button
+          class="flat pick row"
+          class:on={row === selected}
+          type="button"
+          role="option"
+          aria-selected={row === selected}
+          onclick={() => (selectedLanguage = row.language)}
+        >
+          <span><Marked text={row.title} ranges={row.ranges} /></span>
+          <span class="clip">{row.server}</span>
+          <span class="mono clip">{row.version ?? "–"}</span>
+          <span class="clip muted" class:mono={row.status === "custom"} title={row.source}>
+            {#if row.status === "custom"}<PathText path={row.source} />{:else}{row.source}{/if}
+          </span>
+          <StatusDot tone={serverTone(row.status)} title={row.statusLabel} />
+        </button>
+      {/each}
+      {#if !rows.length}<p class="empty pad">No language server matches.</p>{/if}
+    </SettingsTable>
 
     {#if selected}
       {@const busy = selected.status === "installing"}
@@ -336,15 +326,6 @@
   }
   p {
     margin: 0;
-  }
-  .box {
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--bg-editor);
-    overflow: hidden;
-  }
-  .box .row:last-child {
-    border-bottom: 0;
   }
   .clip {
     min-width: 0;

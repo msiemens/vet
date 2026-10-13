@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { PatternMatch } from "../../generated/PatternMatch";
   import type { ReviewFilter } from "../../generated/ReviewFilter";
+  import { noun } from "../../lib/plural";
   import Checkbox from "../../lib/ui/Checkbox.svelte";
   import SettingsSection from "../../lib/ui/SettingsSection.svelte";
   import { changeset } from "../../state/changeset.svelte";
@@ -80,8 +81,8 @@
   >
   {#if error}<p class="err" role="alert">{error}</p>{/if}
   <p class="count">
-    <span class="mono">{excluded.lines}</span> changed lines and <span class="mono">{excluded.items}</span> other changes
-    excluded
+    <span class="mono">{excluded.lines}</span> changed {noun(excluded.lines, "line")} and
+    <span class="mono">{excluded.items}</span> other {noun(excluded.items, "change")} excluded
   </p>
 </div>
 

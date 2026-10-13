@@ -9,6 +9,7 @@ import type { Reviewer } from "../../generated/Reviewer";
 import type { RowReview } from "../../generated/RowReview";
 import type { Thread } from "../../generated/Thread";
 import type { VersionInfo } from "../../generated/VersionInfo";
+import { plural } from "../../lib/plural.ts";
 import { type QueueRow, authorOf, sourceText, updatedText } from "./queueRows.ts";
 
 /** One clause of a reason; `bold` is the name it is about. */
@@ -56,8 +57,6 @@ export function metaOf(row: QueueRow, files: number | undefined, nowMs = Date.no
     ...(updated ? [{ type: "text" as const, text: `updated ${updated}` }] : []),
   ];
 }
-
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 const number = new Intl.NumberFormat("en");
 

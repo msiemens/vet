@@ -66,7 +66,7 @@
   {/if}
 {/snippet}
 
-<SettingsTable {name} {label} columns={COLUMNS}>
+<SettingsTable {name} aria-label={label} columns={COLUMNS}>
   {#each patterns as pattern, i (i)}
     <div class="row">
       <input

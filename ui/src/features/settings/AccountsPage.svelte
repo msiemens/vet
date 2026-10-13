@@ -3,11 +3,11 @@
   import { accounts } from "../../state/accounts.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import StatusDot from "../../lib/ui/StatusDot.svelte";
-  import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
   import { type Sort, sortRows } from "../../lib/ui/sorting";
   import { hasKeychain } from "../../state/host";
   import AccountSheet from "./AccountSheet.svelte";
+  import SettingsTable from "./SettingsTable.svelte";
   import { accountRow, accountTone, type AccountRow } from "./accountRows";
 
   const COLUMNS: Column<AccountRow>[] = [
@@ -62,58 +62,50 @@
   {#if accounts.loadError}
     <p class="problem">{accounts.loadError}</p>
   {/if}
-  <div class="box">
-    <div class="list">
-      <Table
-        name="accounts"
-        columns={COLUMNS}
-        bind:sort
-        scroll={false}
-        ruled
-        role="listbox"
-        aria-label="Accounts"
-        --table-gap="4px"
-        --table-pad="10px"
-        --table-pad-end="6px"
-        --table-row="30px"
-        --table-head="30px"
-        --table-head-color="var(--text-3)"
-      >
-        {#each rows as row (row.key)}
-          <button
-            class="flat pick row"
-            class:on={row === selected}
-            type="button"
-            role="option"
-            aria-selected={row === selected}
-            onclick={() => (selectedKey = row.key)}
-          >
-            <span class="mark" title={row.platform.name}><Icon name={row.platform.icon} size={16} /></span>
-            <span class="host">{row.host}</span>
-            <span>{row.user ?? ""}</span>
-            <span>{row.credential}</span>
-            <StatusDot tone={accountTone(row.status)} title={row.statusLabel} />
-          </button>
-        {/each}
-        {#if !rows.length}
-          <p class="empty">
-            {accounts.loading
-              ? "Looking for accounts…"
-              : "No accounts yet. Sign in with gh auth login or az login, or add a personal access token."}
-          </p>
-        {/if}
-      </Table>
-    </div>
-    <div class="strip">
-      <button type="button" aria-label="Add account" onclick={() => (sheet = "add")}>+</button>
+  <SettingsTable
+    name="accounts"
+    columns={COLUMNS}
+    gap="4px"
+    bind:sort
+    role="listbox"
+    aria-label="Accounts"
+    style="min-height: 150px"
+  >
+    {#each rows as row (row.key)}
       <button
+        class="flat pick row"
+        class:on={row === selected}
         type="button"
-        aria-label="Remove account"
-        disabled={!selected?.removable}
-        onclick={() => selected && void remove(selected.host, selected.key)}>−</button
+        role="option"
+        aria-selected={row === selected}
+        onclick={() => (selectedKey = row.key)}
       >
-    </div>
-  </div>
+        <span class="mark" title={row.platform.name}><Icon name={row.platform.icon} size={16} /></span>
+        <span class="host">{row.host}</span>
+        <span>{row.user ?? ""}</span>
+        <span>{row.credential}</span>
+        <StatusDot tone={accountTone(row.status)} title={row.statusLabel} />
+      </button>
+    {/each}
+    {#if !rows.length}
+      <p class="empty">
+        {accounts.loading
+          ? "Looking for accounts…"
+          : "No accounts yet. Sign in with gh auth login or az login, or add a personal access token."}
+      </p>
+    {/if}
+    {#snippet below()}
+      <div class="strip">
+        <button type="button" aria-label="Add account" onclick={() => (sheet = "add")}>+</button>
+        <button
+          type="button"
+          aria-label="Remove account"
+          disabled={!selected?.removable}
+          onclick={() => selected && void remove(selected.host, selected.key)}>−</button
+        >
+      </div>
+    {/snippet}
+  </SettingsTable>
 
   {#if selected}
     <dl>
@@ -175,15 +167,6 @@
   }
   p {
     margin: 0;
-  }
-  .box {
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--bg-editor);
-    overflow: hidden;
-  }
-  .list {
-    min-height: 150px;
   }
   .host,
   .mono {

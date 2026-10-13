@@ -3,6 +3,7 @@
 // judge (SPEC I5); nothing here reads one.
 
 import type { PatternMatch } from "../../generated/PatternMatch";
+import { plural } from "../../lib/plural.ts";
 
 /** What is typed into a pattern list: edits to rows by index, and the text of the add field. */
 export interface PatternDraft {
@@ -27,9 +28,7 @@ export function rootPath(text: string): string {
   return text.trim().replace(/^\/+|\/+$/g, "");
 }
 
-const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-
 /** What a pattern matches, as a cell says it. */
 export function matchText(match: Pick<PatternMatch, "files" | "lines">): string {
-  return `${count(match.files, "file")} · ${count(match.lines, "line")}`;
+  return `${plural(match.files, "file")} · ${plural(match.lines, "line")}`;
 }
