@@ -12,7 +12,7 @@ const found = (origin: "custom" | "project" | "installed" | "path"): ServerInfo 
   pinnedVersion: "2026-01-01",
   installBlocker: null,
   canInstall: true,
-  implementations: null,
+  features: null,
 });
 
 const missing: ServerInfo = {
@@ -24,7 +24,7 @@ const missing: ServerInfo = {
   pinnedVersion: "1.1.400",
   installBlocker: null,
   canInstall: true,
-  implementations: null,
+  features: null,
 };
 
 void test("a found server is found unless its origin is custom, which is its own status and keeps the path to reset", () => {

@@ -27,8 +27,8 @@ use lsp_types::request::{
 use vet_core::content::RepoPath;
 use vet_semantic::join::bounded;
 use vet_semantic::ports::{
-    At, Diagnostic, Exited, LanguageServer, Location, Pos, QueryError, Readiness, Severity, Span, Sym, SymbolInfo,
-    SymbolKind, Tree,
+    At, Diagnostic, Exited, Features, LanguageServer, Location, Pos, QueryError, Readiness, Severity, Span, Sym,
+    SymbolInfo, SymbolKind, Tree,
 };
 use vet_semantic::symbols::{self, Outline};
 
@@ -715,8 +715,8 @@ impl LanguageServer for LspServer {
         self.conn.with_state(|state| state.readiness())
     }
 
-    fn offers_implementations(&self) -> bool {
-        self.offered.implementations
+    fn features(&self) -> Features {
+        self.offered.features
     }
 
     async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
@@ -982,7 +982,7 @@ mod tests {
 
     const OFFERED: Offered = Offered {
         diagnostics: Diagnostics::Pull,
-        implementations: false,
+        features: Features::ALL,
     };
     const CONTENT_MODIFIED: i64 = -32801;
     const SERVER_CANCELLED: i64 = -32802;

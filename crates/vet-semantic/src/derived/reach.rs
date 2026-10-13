@@ -5,7 +5,7 @@ use std::collections::{HashMap, VecDeque};
 
 use vet_core::review::Side;
 
-use super::{Bounds, Derived, Inputs};
+use super::{Bounds, Derived, Inputs, note_gap};
 use crate::ports::{Sym, SymbolInfo};
 use crate::query::Primitives;
 
@@ -97,7 +97,7 @@ pub async fn reachability(
                     }
                 }
             }
-            Err(e) => gaps.push(format!("{}: {e}", node.sym)),
+            Err(e) => note_gap(&mut gaps, &node.sym.to_string(), &e),
         }
     }
 

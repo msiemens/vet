@@ -12,8 +12,8 @@ use crate::join::bounded;
 use crate::policy::AnalysisPolicy;
 use crate::pool::{Lease, Pool, PoolError, PoolKey, Supervision, Target};
 use crate::ports::{
-    Answered, At, Backend, BackendId, Diagnostic, Location, Materializer, QueryError, ServerLauncher, SymbolInfo,
-    backend_for,
+    Answered, At, Backend, BackendId, Diagnostic, Feature, Location, Materializer, QueryError, ServerLauncher,
+    SymbolInfo, backend_for,
 };
 use crate::reuse::{ProjectQuery, Reused, SemanticCache};
 
@@ -30,11 +30,18 @@ pub enum SemanticError {
     NoBackend(RepoPath),
     Pool(PoolError),
     Query(QueryError),
+    /// The language's server does not offer the operation, so it was not asked (I6).
+    NotOffered {
+        feature: Feature,
+        /// The server as a person knows it.
+        server: String,
+    },
 }
 
 impl fmt::Display for SemanticError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NotOffered { feature, server } => write!(f, "{server} does not offer {}", feature.name()),
             Self::NoBackend(file) => write!(f, "no language backend for {}", file.to_string_lossy()),
             Self::Pool(e) => e.fmt(f),
             Self::Query(e) => e.fmt(f),
@@ -125,9 +132,16 @@ impl<M: Materializer, L: ServerLauncher> Semantic<M, L> {
         bounded(asked.len().max(1), asked, |backend| async move {
             let result = match self.lease(served, backend).await {
                 Ok(lease) => {
-                    let r = lease.workspace_symbols(query).await;
+                    let r = match offered(&lease, Feature::WorkspaceSymbols) {
+                        Ok(()) => lease
+                            .workspace_symbols(query)
+                            .await
+                            .map(|answered| answered.value)
+                            .map_err(SemanticError::Query),
+                        Err(e) => Err(e),
+                    };
                     lease.release().await;
-                    r.map(|answered| answered.value).map_err(SemanticError::Query)
+                    r
                 }
                 Err(e) => Err(e),
             };
@@ -204,16 +218,32 @@ impl<M: Materializer, L: ServerLauncher> Pair<M, L> {
     }
 }
 
-/// The answer kept for `$query` if there is one, else the server's.
+/// Whether the leased server offers `feature`; the error says which server does not.
+fn offered<M: Materializer, L: ServerLauncher>(lease: &Lease<M, L>, feature: Feature) -> Result<(), SemanticError> {
+    if lease.features().offers(feature) {
+        return Ok(());
+    }
+    Err(SemanticError::NotOffered {
+        feature,
+        server: lease.identity().label.clone(),
+    })
+}
+
+/// The answer kept for `$query` if there is one, else the server's, if it offers `$feature`
+/// (`None`: the operation is one every server has).
 macro_rules! ask {
-    ($self:ident, $side:expr, $file:expr, $query:expr, $method:ident($($arg:expr),*)) => {{
+    ($self:ident, $side:expr, $file:expr, $query:expr, $feature:expr, $method:ident($($arg:expr),*)) => {{
         if let Some(kept) = $self.semantic.recall($self.served($side), $file, $query).await {
             return Ok(kept);
         }
         let lease = $self.semantic.lease_for($self.served($side), $file).await?;
-        let answer = lease.$method($($arg),*).await;
+        let feature: Option<Feature> = $feature;
+        let answer = match feature.map_or(Ok(()), |f| offered(&lease, f)) {
+            Ok(()) => lease.$method($($arg),*).await.map_err(SemanticError::Query),
+            Err(e) => Err(e),
+        };
         lease.release().await;
-        answer.map_err(SemanticError::Query)
+        answer
     }};
 }
 
@@ -224,6 +254,7 @@ impl<M: Materializer, L: ServerLauncher> Primitives for Pair<M, L> {
             side,
             file,
             ProjectQuery::DocumentSymbols(file.clone()),
+            Some(Feature::DocumentSymbols),
             document_symbols(file)
         )
     }
@@ -234,9 +265,12 @@ impl<M: Materializer, L: ServerLauncher> Primitives for Pair<M, L> {
             return Ok(kept);
         }
         let lease = self.semantic.lease_for(served, file).await?;
-        let answer = lease.text_symbols(file, text).await;
+        let answer = match offered(&lease, Feature::DocumentSymbols) {
+            Ok(()) => lease.text_symbols(file, text).await.map_err(SemanticError::Query),
+            Err(e) => Err(e),
+        };
         lease.release().await;
-        answer.map_err(SemanticError::Query)
+        answer
     }
 
     async fn definition(&self, side: Side, at: &At) -> Asked<Vec<Location>> {
@@ -245,6 +279,7 @@ impl<M: Materializer, L: ServerLauncher> Primitives for Pair<M, L> {
             side,
             &at.file,
             ProjectQuery::Definition(at.clone()),
+            Some(Feature::Definition),
             definition(at)
         )
     }
@@ -255,6 +290,7 @@ impl<M: Materializer, L: ServerLauncher> Primitives for Pair<M, L> {
             side,
             &at.file,
             ProjectQuery::References(at.clone()),
+            Some(Feature::References),
             references(at)
         )
     }
@@ -265,12 +301,20 @@ impl<M: Materializer, L: ServerLauncher> Primitives for Pair<M, L> {
             side,
             &at.file,
             ProjectQuery::Implementations(at.clone()),
+            Some(Feature::Implementations),
             implementations(at)
         )
     }
 
     async fn hover(&self, side: Side, at: &At) -> Asked<Option<String>> {
-        ask!(self, side, &at.file, ProjectQuery::Hover(at.clone()), hover(at))
+        ask!(
+            self,
+            side,
+            &at.file,
+            ProjectQuery::Hover(at.clone()),
+            Some(Feature::Hover),
+            hover(at)
+        )
     }
 
     async fn incoming_calls(&self, side: Side, at: &At) -> Asked<Vec<SymbolInfo>> {
@@ -279,6 +323,7 @@ impl<M: Materializer, L: ServerLauncher> Primitives for Pair<M, L> {
             side,
             &at.file,
             ProjectQuery::Incoming(at.clone()),
+            Some(Feature::CallHierarchy),
             incoming_calls(at)
         )
     }
@@ -289,6 +334,7 @@ impl<M: Materializer, L: ServerLauncher> Primitives for Pair<M, L> {
             side,
             &at.file,
             ProjectQuery::Outgoing(at.clone()),
+            Some(Feature::CallHierarchy),
             outgoing_calls(at)
         )
     }
@@ -299,6 +345,7 @@ impl<M: Materializer, L: ServerLauncher> Primitives for Pair<M, L> {
             side,
             file,
             ProjectQuery::Diagnostics(file.clone()),
+            None,
             diagnostics(file)
         )
     }

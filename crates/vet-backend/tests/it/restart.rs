@@ -30,6 +30,7 @@ if os.path.exists("@BROKEN@"):
     sys.exit(3)
 
 CAPABILITIES = {
+    "textDocumentSync": 1,
     "documentSymbolProvider": True,
     "definitionProvider": True,
     "referencesProvider": True,

@@ -64,8 +64,9 @@ class SemanticStore {
     this.missing.clear();
   }
 
+  /** Remembers that the file has no answers. A server lacking one operation still serves the file. */
   private note(revision: number, path: string, unavailable: Unavailable | undefined) {
-    if (unavailable && this.enter(revision)) this.missing.set(path, unavailable);
+    if (unavailable && unavailable.kind !== "notOffered" && this.enter(revision)) this.missing.set(path, unavailable);
   }
 
   /**
@@ -148,8 +149,9 @@ class SemanticStore {
     const r = await session.backend?.definition(revision, side, path, line, col, signal);
     if (!r) return false;
     this.note(revision, path, r.unavailable);
-    // An unavailable server (still starting, say) may answer later, so this is no answer to keep.
-    if (r.unavailable) throw new Error(r.unavailable.message);
+    // An unavailable server (still starting, say) may answer later, so this is no answer to keep;
+    // one that does not offer definitions never will.
+    if (r.unavailable && r.unavailable.kind !== "notOffered") throw new Error(r.unavailable.message);
     return r.locations.length > 0;
   }
 

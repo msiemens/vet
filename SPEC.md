@@ -32,7 +32,7 @@ Vet is a **review-first IDE** for the agentic coding age. The unit of work is th
 | **I3** | **Annotations and review state are content-anchored, never line-anchored. Outcomes distinguish `Exact` / `Inferred` / `Stale` / `Ambiguous`. `Seen` applies only to content identical to the content that was reviewed — new or modified content is never silently marked seen.** | Annotations survive amend, rebase, force-push, renames, moves, agent edits — repositioned with recorded confidence, never silently orphaned. A seen region split by new edits yields seen parts for identical content and unseen parts for the rest. |
 | **I4** | **All writers are opaque.** Everything is learned from observing the git object graph and filesystem. Never detect, parse, or infer harness behavior. | Identical behavior whether the writer is Claude Code, Aider, a human, or `sed`. |
 | **I5** | **The shell is a thin client.** All product logic sits behind the orchestrator's IPC boundary. | A shell port touches rendering only. No backend, store, or acquisition decision may reference the shell. |
-| **I6** | **Semantic *primitives* — types, references, diagnostics, call edges — come exclusively from authoritative language backends; there is no heuristic tier. Vet may build *derived analyses* over those primitives, but derived results are labeled as such and their derivation is inspectable.** | Every primitive traceable to a vendor backend. Derived claims display their inputs. Missing server capabilities fail loudly → language unsupported, never silently degraded. |
+| **I6** | **Semantic *primitives* — types, references, diagnostics, call edges — come exclusively from authoritative language backends; there is no heuristic tier. Vet may build *derived analyses* over those primitives, but derived results are labeled as such and their derivation is inspectable.** | Every primitive traceable to a vendor backend. Derived claims display their inputs. An operation a server does not offer is shown as not offered by that language's server, never as an empty answer; a server that cannot take documents is refused loudly. |
 
 ---
 
@@ -269,9 +269,11 @@ struct ServerConfig {
 }
 ```
 
-Adding a language means adding a config entry plus a one-time manual check that its server supports the required operations. The orchestrator asserts `ServerCapabilities` at startup and **fails loudly** if a required operation is missing.
+Adding a language means adding a config entry plus a one-time manual check of which operations its server offers. The orchestrator reads `ServerCapabilities` at startup.
 
-**Required operations:** `documentSymbol`, `definition`, `references`, `hover`, `callHierarchy` (incoming and outgoing), `workspace/symbol`, and diagnostics (push or pull).
+**Required:** text document synchronization, since Vet feeds the server the documents it asks about; a server without it is refused loudly.
+
+**Optional, per feature:** `documentSymbol`, `definition`, `references`, `implementation`, `hover`, `callHierarchy` (incoming and outgoing), `workspace/symbol`. Diagnostics (push or pull) are always asked for: servers publish them without announcing it. A request for an operation the server did not advertise is not sent; it is answered as *not offered by this language's server* (I6) and every consumer says so where it would have shown the answer: a hover or go-to-definition says it, the Symbol panel's callers and callees say that call hierarchy is not available, a workspace symbol search reports the languages whose servers cannot be searched. A server that offers only some operations (a diagnostics-only server, a YAML server without references) still serves the rest.
 
 ### 7.2 Server pool and reuse (I2)
 

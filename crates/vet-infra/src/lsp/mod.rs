@@ -434,7 +434,7 @@ async fn handshake(
         .request::<Initialize>(params)
         .await
         .map_err(|e| LaunchError::Protocol(conn.describe(e.message)))?;
-    let offered = capabilities::assert_capabilities(&init.capabilities)?;
+    let offered = capabilities::read_capabilities(&init.capabilities)?;
     conn.notify::<lsp::notification::Initialized>(lsp::InitializedParams {})
         .map_err(LaunchError::Protocol)?;
     Ok(offered)

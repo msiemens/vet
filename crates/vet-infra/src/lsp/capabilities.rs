@@ -1,10 +1,13 @@
-//! The required operations (§7.1), asserted on the server's `initialize`
-//! result. A missing one means the language is unsupported (I6).
+//! What a server offers (§7.1), read from its `initialize` result. A server that
+//! cannot be fed documents cannot work with Vet at all and is refused; every other
+//! operation is optional, and a query for one the server lacks is answered with
+//! "not offered" (I6), never with an empty answer.
 
 use lsp_types::{
-    CallHierarchyServerCapability, HoverProviderCapability, ImplementationProviderCapability, OneOf, ServerCapabilities,
+    CallHierarchyServerCapability, HoverProviderCapability, ImplementationProviderCapability, OneOf,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
 };
-use vet_semantic::ports::LaunchError;
+use vet_semantic::ports::{Feature, Features, LaunchError};
 
 /// How diagnostics are obtained.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -15,59 +18,78 @@ pub(super) enum Diagnostics {
     Push,
 }
 
-/// What a server offers beyond the required operations.
+/// What a server offers.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct Offered {
     pub diagnostics: Diagnostics,
-    /// `textDocument/implementation`.
-    pub implementations: bool,
+    pub features: Features,
 }
 
 fn one_of<T>(cap: &Option<OneOf<bool, T>>) -> bool {
     !matches!(cap, None | Some(OneOf::Left(false)))
 }
 
-pub(super) fn assert_capabilities(caps: &ServerCapabilities) -> Result<Offered, LaunchError> {
-    let missing = |name| Err(LaunchError::MissingCapability(name));
-    if !one_of(&caps.document_symbol_provider) {
-        return missing("textDocument/documentSymbol");
+/// Whether the server takes the full text of changed documents, which is how Vet keeps it in step
+/// with the disk.
+fn follows_documents(sync: &Option<TextDocumentSyncCapability>) -> bool {
+    match sync {
+        None => false,
+        Some(TextDocumentSyncCapability::Kind(kind)) => *kind != TextDocumentSyncKind::NONE,
+        Some(TextDocumentSyncCapability::Options(options)) => {
+            options.open_close != Some(false) && !matches!(options.change, None | Some(TextDocumentSyncKind::NONE))
+        }
     }
-    if !one_of(&caps.definition_provider) {
-        return missing("textDocument/definition");
+}
+
+pub(super) fn read_capabilities(caps: &ServerCapabilities) -> Result<Offered, LaunchError> {
+    if !follows_documents(&caps.text_document_sync) {
+        return Err(LaunchError::MissingCapability("text document synchronization"));
     }
-    if !one_of(&caps.references_provider) {
-        return missing("textDocument/references");
-    }
-    if matches!(caps.hover_provider, None | Some(HoverProviderCapability::Simple(false))) {
-        return missing("textDocument/hover");
-    }
-    if matches!(
-        caps.call_hierarchy_provider,
-        None | Some(CallHierarchyServerCapability::Simple(false))
-    ) {
-        return missing("callHierarchy (incoming and outgoing calls)");
-    }
-    if !one_of(&caps.workspace_symbol_provider) {
-        return missing("workspace/symbol");
-    }
+    let features = Features::NONE
+        .with(Feature::DocumentSymbols, one_of(&caps.document_symbol_provider))
+        .with(Feature::Definition, one_of(&caps.definition_provider))
+        .with(Feature::References, one_of(&caps.references_provider))
+        .with(
+            Feature::Implementations,
+            !matches!(
+                caps.implementation_provider,
+                None | Some(ImplementationProviderCapability::Simple(false))
+            ),
+        )
+        .with(
+            Feature::Hover,
+            !matches!(caps.hover_provider, None | Some(HoverProviderCapability::Simple(false))),
+        )
+        .with(
+            Feature::CallHierarchy,
+            !matches!(
+                caps.call_hierarchy_provider,
+                None | Some(CallHierarchyServerCapability::Simple(false))
+            ),
+        )
+        .with(Feature::WorkspaceSymbols, one_of(&caps.workspace_symbol_provider));
     Ok(Offered {
         diagnostics: if caps.diagnostic_provider.is_some() {
             Diagnostics::Pull
         } else {
             Diagnostics::Push
         },
-        implementations: !matches!(
-            caps.implementation_provider,
-            None | Some(ImplementationProviderCapability::Simple(false))
-        ),
+        features,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use lsp_types::{DiagnosticServerCapabilities, StaticTextDocumentRegistrationOptions};
+    use lsp_types::{DiagnosticServerCapabilities, StaticTextDocumentRegistrationOptions, TextDocumentSyncOptions};
 
     use super::*;
+
+    fn synced() -> ServerCapabilities {
+        ServerCapabilities {
+            text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+            ..Default::default()
+        }
+    }
 
     fn full() -> ServerCapabilities {
         ServerCapabilities {
@@ -77,61 +99,96 @@ mod tests {
             hover_provider: Some(HoverProviderCapability::Simple(true)),
             call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
             workspace_symbol_provider: Some(OneOf::Left(true)),
-            ..Default::default()
+            implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
+            ..synced()
         }
     }
 
-    fn missing(caps: &ServerCapabilities) -> &'static str {
-        match assert_capabilities(caps) {
-            Err(LaunchError::MissingCapability(name)) => name,
-            other => panic!("{other:?}"),
-        }
+    fn features(caps: &ServerCapabilities) -> Features {
+        read_capabilities(caps).unwrap().features
     }
 
     #[test]
-    fn complete_server_is_accepted_with_push_diagnostics_by_default() {
-        assert_eq!(assert_capabilities(&full()).unwrap().diagnostics, Diagnostics::Push);
+    fn diagnostics_are_pushed_unless_the_server_announces_pull() {
+        assert_eq!(read_capabilities(&full()).unwrap().diagnostics, Diagnostics::Push);
         let mut caps = full();
         caps.diagnostic_provider = Some(DiagnosticServerCapabilities::Options(Default::default()));
-        assert_eq!(assert_capabilities(&caps).unwrap().diagnostics, Diagnostics::Pull);
+        assert_eq!(read_capabilities(&caps).unwrap().diagnostics, Diagnostics::Pull);
     }
 
     #[test]
-    fn implementations_are_offered_only_when_the_server_advertises_them() {
-        let mut caps = full();
-        assert!(!assert_capabilities(&caps).unwrap().implementations);
-        caps.implementation_provider = Some(ImplementationProviderCapability::Simple(false));
-        assert!(!assert_capabilities(&caps).unwrap().implementations);
-        caps.implementation_provider = Some(ImplementationProviderCapability::Simple(true));
-        assert!(assert_capabilities(&caps).unwrap().implementations);
+    fn a_server_offering_nothing_but_document_sync_is_accepted_and_offers_no_feature() {
+        assert_eq!(features(&synced()), Features::NONE);
+        assert_eq!(features(&full()), Features::ALL);
+    }
+
+    #[test]
+    fn each_feature_is_offered_only_when_the_server_advertises_it() {
+        type Remove = fn(&mut ServerCapabilities);
+        let lacking: [(Feature, Remove); 7] = [
+            (Feature::DocumentSymbols, |c| c.document_symbol_provider = None),
+            (Feature::Definition, |c| {
+                c.definition_provider = Some(OneOf::Left(false))
+            }),
+            (Feature::References, |c| c.references_provider = None),
+            (Feature::Hover, |c| {
+                c.hover_provider = Some(HoverProviderCapability::Simple(false))
+            }),
+            (Feature::CallHierarchy, |c| c.call_hierarchy_provider = None),
+            (Feature::WorkspaceSymbols, |c| c.workspace_symbol_provider = None),
+            (Feature::Implementations, |c| c.implementation_provider = None),
+        ];
+        for (feature, remove) in lacking {
+            let mut caps = full();
+            remove(&mut caps);
+            let offered = features(&caps);
+            for other in Feature::ALL {
+                assert_eq!(
+                    offered.offers(other),
+                    other != feature,
+                    "{feature:?} removed, {other:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn implementation_options_count_as_offered() {
+        let mut caps = synced();
         caps.implementation_provider = Some(ImplementationProviderCapability::Options(
             StaticTextDocumentRegistrationOptions {
                 document_selector: None,
                 id: None,
             },
         ));
-        assert!(assert_capabilities(&caps).unwrap().implementations);
+        assert!(features(&caps).offers(Feature::Implementations));
     }
 
     #[test]
-    fn each_missing_operation_is_named() {
+    fn a_server_that_does_not_follow_documents_is_refused() {
+        let refused = |caps: ServerCapabilities| match read_capabilities(&caps) {
+            Err(LaunchError::MissingCapability(name)) => name,
+            other => panic!("{other:?}"),
+        };
         let mut caps = full();
-        caps.document_symbol_provider = None;
-        assert_eq!(missing(&caps), "textDocument/documentSymbol");
+        caps.text_document_sync = None;
+        assert!(refused(caps).contains("synchronization"));
         let mut caps = full();
-        caps.definition_provider = Some(OneOf::Left(false));
-        assert_eq!(missing(&caps), "textDocument/definition");
+        caps.text_document_sync = Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::NONE));
+        refused(caps);
         let mut caps = full();
-        caps.references_provider = None;
-        assert_eq!(missing(&caps), "textDocument/references");
+        caps.text_document_sync = Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
+            open_close: Some(true),
+            change: None,
+            ..Default::default()
+        }));
+        refused(caps);
         let mut caps = full();
-        caps.hover_provider = None;
-        assert_eq!(missing(&caps), "textDocument/hover");
-        let mut caps = full();
-        caps.call_hierarchy_provider = None;
-        assert!(missing(&caps).starts_with("callHierarchy"));
-        let mut caps = full();
-        caps.workspace_symbol_provider = None;
-        assert_eq!(missing(&caps), "workspace/symbol");
+        caps.text_document_sync = Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
+            open_close: Some(true),
+            change: Some(TextDocumentSyncKind::INCREMENTAL),
+            ..Default::default()
+        }));
+        assert!(read_capabilities(&caps).is_ok());
     }
 }

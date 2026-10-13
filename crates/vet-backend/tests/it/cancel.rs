@@ -27,6 +27,7 @@ if "--version" in sys.argv:
 
 LOG = "@LOG@"
 CAPABILITIES = {
+    "textDocumentSync": 1,
     "documentSymbolProvider": True,
     "definitionProvider": True,
     "referencesProvider": True,

@@ -34,6 +34,7 @@ if "--version" in sys.argv:
     sys.exit(0)
 
 CAPABILITIES = {
+    "textDocumentSync": 1,
     "documentSymbolProvider": True,
     "definitionProvider": True,
     "referencesProvider": True,
@@ -262,6 +263,7 @@ if "--version" in sys.argv:
     sys.exit(0)
 
 CAPABILITIES = {
+    "textDocumentSync": 1,
     "documentSymbolProvider": True,
     "definitionProvider": True,
     "referencesProvider": True,

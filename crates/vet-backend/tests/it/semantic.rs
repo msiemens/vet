@@ -175,11 +175,14 @@ async fn rust_semantics_through_the_protocol() {
     assert_eq!(row.change, LocationChange::Hunk, "{refs:?}");
     assert!(!row.external);
 
-    // A server that ran says whether it offers implementations; one that has not started does not.
+    // A server that ran says what it offers; one that has not started does not.
     let Response::Servers { servers } = client.call(Request::ListServers { project }).await.unwrap() else {
         panic!("not servers");
     };
-    let offers = |language: &str| servers.iter().find(|s| s.language == language).unwrap().implementations;
+    let offers = |language: &str| {
+        let server = servers.iter().find(|s| s.language == language).unwrap();
+        server.features.map(|f| f.implementations)
+    };
     assert_eq!(offers("rust"), Some(true));
     assert_eq!(offers("python"), None);
 

@@ -18,8 +18,8 @@ use vet_semantic::derived::{
 use vet_semantic::join::bounded;
 use vet_semantic::pool::{Pool, Supervision, Target};
 use vet_semantic::ports::{
-    At, Backend, BackendId, Diagnostic, Location, Materializer, Provenance, RestoreFailure, ServerLauncher, Severity,
-    Sym, SymbolInfo, prefer_openable,
+    At, Backend, BackendId, Diagnostic, Features, Location, Materializer, Provenance, RestoreFailure, ServerLauncher,
+    Severity, Sym, SymbolInfo, prefer_openable,
 };
 use vet_semantic::query::{Asked, Pair, Primitives, Semantic, SemanticError, Served};
 use vet_semantic::reuse::SemanticCache;
@@ -355,9 +355,9 @@ where
         self.semantic.language_of(file)
     }
 
-    /// Whether the server of `language` offers implementations; `None` before one has started.
-    pub fn offers_implementations(&self, language: &BackendId) -> Option<bool> {
-        self.semantic.pool().offers_implementations(language)
+    /// What the server of `language` offers; `None` before one has started.
+    pub fn features(&self, language: &BackendId) -> Option<Features> {
+        self.semantic.pool().features(language)
     }
 
     /// Restores that failed and have not succeeded since.
@@ -1136,8 +1136,8 @@ mod tests {
         fn readiness(&self) -> Readiness {
             Readiness { idle: true, epoch: 0 }
         }
-        fn offers_implementations(&self) -> bool {
-            true
+        fn features(&self) -> Features {
+            Features::ALL
         }
         async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
             if self.1 == Tree::Live {

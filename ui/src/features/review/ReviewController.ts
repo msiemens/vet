@@ -24,7 +24,7 @@ import { LocationSearch } from "../../state/locationSearch";
 import type { FileLayout, Frame, ViewLayout } from "../../state/reviewModel";
 import { semantic } from "../../state/semantic.svelte";
 import { serverList } from "../../state/serverList.svelte";
-import { languageOf, withoutImplementations } from "../../state/serverStatus";
+import { languageOf, withoutFeature } from "../../state/serverStatus";
 import { session } from "../../state/session.svelte";
 import { STALE_NOTICE, type Shown, isCurrent } from "../../state/shown";
 import { type StructureTarget, structure } from "../../state/structure.svelte";
@@ -497,7 +497,7 @@ export class ReviewController {
       byCommit: this.changeset.shownCommit !== undefined,
       hunk: view?.current ?? text?.current ?? -1,
       editor,
-      noImplementations: editor && withoutImplementations(editor.path, serverList.servers),
+      noImplementations: editor && withoutFeature(editor.path, serverList.servers, "implementations"),
       serverLanguage: file === undefined ? undefined : languageOf(file, serverList.servers),
     };
   }

@@ -13,7 +13,8 @@ use vet_semantic::derived::{
 };
 use vet_semantic::pool::{Outcome, PoolError};
 use vet_semantic::ports::{
-    At, BackendId, Diagnostic, LaunchError, Location, Pos, RestoreFailure, Severity, Span, Sym, SymbolInfo, SymbolKind,
+    At, BackendId, Diagnostic, Feature, Features, LaunchError, Location, Pos, RestoreFailure, Severity, Span, Sym,
+    SymbolInfo, SymbolKind,
 };
 use vet_semantic::query::SemanticError;
 
@@ -230,6 +231,7 @@ fn label(kind: p::UnavailableKind) -> &'static str {
         Kind::Unsupported => "No language support",
         Kind::ServerMissing => "No language server",
         Kind::ServerFailed => "Language server failed",
+        Kind::NotOffered => "Not available for this language",
         Kind::AnalysisLimited => "Analysis limited",
         Kind::SnapshotUnavailable => "Base not available",
         Kind::QueryFailed => "Language server query failed",
@@ -245,6 +247,7 @@ pub fn unavailable(error: &SemanticError, language: Option<String>) -> p::Unavai
         SemanticError::Pool(PoolError::AnalysisLimited(_)) => Kind::AnalysisLimited,
         SemanticError::Pool(PoolError::NotMaterializable(_)) => Kind::SnapshotUnavailable,
         SemanticError::Query(_) => Kind::QueryFailed,
+        SemanticError::NotOffered { .. } => Kind::NotOffered,
     };
     p::Unavailable {
         language: language.filter(|_| kind != Kind::Unsupported),
@@ -488,8 +491,20 @@ pub fn restore_failures(all: &[RestoreFailure]) -> Vec<p::RestoreFailure> {
         .collect()
 }
 
-/// `implementations` tells for a language whether its server advertised them.
-pub fn servers(all: &[ServerStatus], implementations: impl Fn(&BackendId) -> Option<bool>) -> p::Response {
+fn server_features(f: Features) -> p::ServerFeatures {
+    p::ServerFeatures {
+        document_symbols: f.offers(Feature::DocumentSymbols),
+        definition: f.offers(Feature::Definition),
+        references: f.offers(Feature::References),
+        implementations: f.offers(Feature::Implementations),
+        hover: f.offers(Feature::Hover),
+        call_hierarchy: f.offers(Feature::CallHierarchy),
+        workspace_symbols: f.offers(Feature::WorkspaceSymbols),
+    }
+}
+
+/// `features` tells for a language what its server advertised.
+pub fn servers(all: &[ServerStatus], features: impl Fn(&BackendId) -> Option<Features>) -> p::Response {
     p::Response::Servers {
         servers: all
             .iter()
@@ -503,7 +518,7 @@ pub fn servers(all: &[ServerStatus], implementations: impl Fn(&BackendId) -> Opt
                 pinned_version: s.pinned.clone(),
                 install_blocker: s.install_blocker.clone(),
                 can_install: s.can_install(),
-                implementations: implementations(&s.language),
+                features: features(&s.language).map(server_features),
             })
             .collect(),
     }

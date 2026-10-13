@@ -4,7 +4,7 @@ import type { ServerInfo } from "../generated/ServerInfo.ts";
 import type { Task } from "../generated/Task.ts";
 import type { Unavailable } from "../generated/Unavailable.ts";
 import { summarize } from "./semanticSummary.ts";
-import { hasServer, languageOf, serverLine, withoutImplementations } from "./serverStatus.ts";
+import { hasServer, languageOf, serverLine, withoutFeature } from "./serverStatus.ts";
 
 const server = (language: string, name: string, extensions: string[]): ServerInfo => ({
   language,
@@ -16,7 +16,7 @@ const server = (language: string, name: string, extensions: string[]): ServerInf
   pinnedVersion: null,
   installBlocker: null,
   canInstall: false,
-  implementations: null,
+  features: null,
 });
 const SERVERS = [server("rust", "rust-analyzer", ["rs"]), server("python", "Pyright", ["py", "pyi"])];
 
@@ -103,17 +103,29 @@ void test("the language of a file is the one whose server serves its extension, 
   assert.equal(languageOf("Makefile", SERVERS), undefined);
 });
 
-void test("a server is without implementations only once it has said so, whatever the language", () => {
-  const says = (implementations: boolean | null) => [
-    { ...server("rust", "rust-analyzer", ["rs"]), implementations },
-    { ...server("python", "Pyright", ["py"]), implementations: implementations === null ? null : !implementations },
+void test("a server is without a feature only once it has said so, whatever the language", () => {
+  const all = {
+    documentSymbols: true,
+    definition: true,
+    references: true,
+    implementations: true,
+    hover: true,
+    callHierarchy: true,
+    workspaceSymbols: true,
+  };
+  const says = (rust: Partial<typeof all> | null, python: Partial<typeof all> | null) => [
+    { ...server("rust", "rust-analyzer", ["rs"]), features: rust && { ...all, ...rust } },
+    { ...server("python", "Pyright", ["py"]), features: python && { ...all, ...python } },
   ];
-  assert.equal(withoutImplementations("a.py", says(true)), "Pyright");
-  assert.equal(withoutImplementations("a.rs", says(true)), undefined);
-  assert.equal(withoutImplementations("a.rs", says(false)), "rust-analyzer");
-  assert.equal(withoutImplementations("a.py", says(null)), undefined);
-  assert.equal(withoutImplementations("a.txt", says(true)), undefined);
-  assert.equal(withoutImplementations("a.py", []), undefined);
+  const servers = says({}, { implementations: false, callHierarchy: false });
+  assert.equal(withoutFeature("a.py", servers, "implementations"), "Pyright");
+  assert.equal(withoutFeature("a.py", servers, "callHierarchy"), "Pyright");
+  assert.equal(withoutFeature("a.py", servers, "hover"), undefined);
+  assert.equal(withoutFeature("a.rs", servers, "implementations"), undefined);
+  assert.equal(withoutFeature("a.rs", says({ hover: false }, null), "hover"), "rust-analyzer");
+  assert.equal(withoutFeature("a.py", says(null, null), "hover"), undefined);
+  assert.equal(withoutFeature("a.txt", servers, "implementations"), undefined);
+  assert.equal(withoutFeature("a.py", [], "implementations"), undefined);
 });
 
 void test("a file without a server shows the backend's label alone", () => {

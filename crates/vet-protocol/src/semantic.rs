@@ -185,7 +185,7 @@ pub struct Diagnostic {
 }
 
 /// Why a semantic answer is missing, so the shell can say so instead of
-/// showing nothing (§7.1: a language without a usable server degrades).
+/// showing nothing (I6: unavailable is never shown as nothing).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -208,8 +208,10 @@ pub enum UnavailableKind {
     Unsupported,
     /// No server was found for the language: see `ListServers`.
     ServerMissing,
-    /// The server does not start, lacks a required operation or broke the protocol.
+    /// The server does not start, cannot take documents or broke the protocol.
     ServerFailed,
+    /// The language's server does not offer the operation asked for.
+    NotOffered,
     /// The server would execute project code, which the review does not allow.
     AnalysisLimited,
     /// The base snapshot cannot be rebuilt (§6.1).

@@ -95,6 +95,18 @@ impl Inputs {
     }
 }
 
+/// Adds to `gaps` that `what` is unknown because the query failed with `error`. A server that lacks
+/// the operation lacks it for everything, which is said once and not per thing asked about.
+fn note_gap(gaps: &mut Vec<String>, what: &str, error: &SemanticError) {
+    let gap = match error {
+        SemanticError::NotOffered { .. } => error.to_string(),
+        _ => format!("{what}: {error}"),
+    };
+    if !gaps.contains(&gap) {
+        gaps.push(gap);
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Derived<T> {
     pub value: T,

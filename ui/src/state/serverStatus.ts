@@ -1,6 +1,7 @@
 // What the footer says about the language server of the focused file: its name and, as far as
 // the backend has told, whether it is starting, indexing, ready, failed or not installed.
 
+import type { ServerFeatures } from "../generated/ServerFeatures";
 import type { ServerInfo } from "../generated/ServerInfo";
 import type { Task } from "../generated/Task";
 import type { SemanticSummary } from "./semanticSummary";
@@ -30,12 +31,16 @@ export function languageOf(path: string, servers: readonly ServerInfo[]): string
 
 /**
  * The name of the server for the type of file `path` is when that server has said it does not offer
- * implementations; none while it has not said (it has not started yet) or offers them.
+ * `feature`; none while it has not said (it has not started yet) or offers it.
  */
-export function withoutImplementations(path: string, servers: readonly ServerInfo[]): string | undefined {
+export function withoutFeature(
+  path: string,
+  servers: readonly ServerInfo[],
+  feature: keyof ServerFeatures,
+): string | undefined {
   const extension = extensionOf(path);
   const server = servers.find((s) => extension !== undefined && s.extensions.includes(extension));
-  return server?.implementations === false ? server.server : undefined;
+  return server?.features?.[feature] === false ? server.server : undefined;
 }
 
 export interface ServerLine {

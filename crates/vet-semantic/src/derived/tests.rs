@@ -83,6 +83,8 @@ struct Fake {
     callees: HashMap<(Side, At), Vec<SymbolInfo>>,
     definitions: HashMap<(Side, At), Vec<Location>>,
     failing_callers: Vec<At>,
+    /// The server offers no call hierarchy.
+    without_call_hierarchy: bool,
     /// Files whose document symbols the server fails to answer.
     failing_symbols: Vec<RepoPath>,
     /// What the target side's server answers for a text under a file's name.
@@ -142,6 +144,7 @@ impl Primitives for Fake {
         self.answer(None)
     }
     async fn incoming_calls(&self, side: Side, a: &At) -> Asked<Vec<SymbolInfo>> {
+        self.call_hierarchy()?;
         if self.failing_callers.contains(a) {
             return Err(SemanticError::Query(crate::ports::QueryError(
                 "no call hierarchy".into(),
@@ -150,6 +153,7 @@ impl Primitives for Fake {
         self.answer(self.callers.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
     async fn outgoing_calls(&self, side: Side, a: &At) -> Asked<Vec<SymbolInfo>> {
+        self.call_hierarchy()?;
         self.answer(self.callees.get(&(side, a.clone())).cloned().unwrap_or_default())
     }
     async fn diagnostics(&self, _: Side, _: &RepoPath) -> Asked<Vec<Diagnostic>> {
@@ -158,6 +162,16 @@ impl Primitives for Fake {
 }
 
 impl Fake {
+    fn call_hierarchy(&self) -> Result<(), SemanticError> {
+        if self.without_call_hierarchy {
+            return Err(SemanticError::NotOffered {
+                feature: crate::ports::Feature::CallHierarchy,
+                server: "yaml-language-server 1.25".into(),
+            });
+        }
+        Ok(())
+    }
+
     fn answer<T>(&self, value: T) -> Asked<T> {
         let mut answered = answered(value)?;
         answered.provenance.from_cache = self.cached;
@@ -919,6 +933,15 @@ fn a_failed_call_hierarchy_is_a_gap_not_an_empty_list() {
         ["n"],
         "the other lists are still given"
     );
+}
+
+#[test]
+fn a_server_without_call_hierarchy_is_named_once_as_the_gap_of_callers_and_callees() {
+    let (mut fake, files, x, _) = call_fixture();
+    fake.without_call_hierarchy = true;
+    let found = block_on(calls(&fake, &NoTexts, &files, &x, None, true, BOUNDS)).value;
+    assert!(found.callers.is_empty() && found.callees.is_empty());
+    assert_eq!(found.gaps, ["yaml-language-server 1.25 does not offer call hierarchy"]);
 }
 
 #[test]

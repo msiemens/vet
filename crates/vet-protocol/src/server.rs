@@ -56,7 +56,7 @@ pub enum ServerState {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ServerInfo {
-    /// `rust`, `typescript`, `python` or `csharp`.
+    /// The language's id, e.g. `rust`.
     pub language: String,
     /// The language's name as a person knows it, e.g. "C#".
     pub title: String,
@@ -73,9 +73,23 @@ pub struct ServerInfo {
     pub install_blocker: Option<String>,
     /// `InstallServer` can run now: there is a version to install and no blocker.
     pub can_install: bool,
-    /// Whether the server advertised implementations (`textDocument/implementation`), as of the
-    /// last one started; `None` before one has.
-    pub implementations: Option<bool>,
+    /// What the last server started advertised; `None` before one has started.
+    pub features: Option<ServerFeatures>,
+}
+
+/// The operations a language server advertised. A request for one it lacks is answered with
+/// `UnavailableKind::NotOffered`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ServerFeatures {
+    pub document_symbols: bool,
+    pub definition: bool,
+    pub references: bool,
+    pub implementations: bool,
+    pub hover: bool,
+    pub call_hierarchy: bool,
+    pub workspace_symbols: bool,
 }
 
 /// A dependency restore step that failed (§7.2): what that project's analysis

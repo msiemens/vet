@@ -3,7 +3,7 @@ import type { UnavailableKind } from "./UnavailableKind";
 
 /**
  * Why a semantic answer is missing, so the shell can say so instead of
- * showing nothing (§7.1: a language without a usable server degrades).
+ * showing nothing (I6: unavailable is never shown as nothing).
  */
 export type Unavailable = { kind: UnavailableKind, 
 /**

@@ -32,8 +32,8 @@ use vet_engine::{self as engine, Engine, Kind, Limits, Retention};
 use crate::gate::Gate;
 use crate::policy::AnalysisPolicy;
 use crate::ports::{
-    Answered, At, Backend, BackendId, Detach, Diagnostic, LanguageServer, LaunchError, Location, Materializer,
-    NotMaterializable, Provenance, QueryError, ServerIdentity, ServerLauncher, Started, SymbolInfo, Tree,
+    Answered, At, Backend, BackendId, Detach, Diagnostic, Features, LanguageServer, LaunchError, Location,
+    Materializer, NotMaterializable, Provenance, QueryError, ServerIdentity, ServerLauncher, Started, SymbolInfo, Tree,
 };
 use crate::reuse::{Answers, Basis, Computed, KEPT, Key, ProjectQuery, Restore, Reused, SemanticCache};
 
@@ -185,6 +185,10 @@ impl<S: LanguageServer + 'static, G: Send + Sync + 'static> Entry<S, G> {
         &self.identity
     }
 
+    pub fn features(&self) -> Features {
+        self.server.features()
+    }
+
     /// The key of a question about the whole tree; none on the live tree, which
     /// changes under the server.
     fn project(&self, query: ProjectQuery) -> Option<Key> {
@@ -325,9 +329,9 @@ struct State<S, G> {
     slots: HashMap<PoolKey, Arc<Entry<S, G>>>,
     /// Of the keys whose server died; a manual restart of the backend forgets them.
     health: HashMap<PoolKey, Health>,
-    /// Whether a backend's server offers implementations, as of the server started last; not
-    /// known before one has started.
-    implementations: HashMap<BackendId, bool>,
+    /// What a backend's server offers, as of the server started last; not known before one has
+    /// started.
+    features: HashMap<BackendId, Features>,
 }
 
 /// A server being started: the key of the flight that starts it. Callers of
@@ -555,7 +559,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
                     generations: HashMap::new(),
                     slots: HashMap::new(),
                     health: HashMap::new(),
-                    implementations: HashMap::new(),
+                    features: HashMap::new(),
                 }),
                 starts: Engine::new(Limits::entries(0)),
                 supervision: None,
@@ -718,9 +722,7 @@ impl<M: Materializer, L: ServerLauncher> Inner<M, L> {
             let stale = state.generations.get(&key.backend).copied().unwrap_or(0) != generation;
             state.tick += 1;
             if !stale {
-                state
-                    .implementations
-                    .insert(key.backend.clone(), server.offers_implementations());
+                state.features.insert(key.backend.clone(), server.features());
             }
             let entry = Arc::new(Entry {
                 server,
@@ -903,7 +905,7 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         let (idle, leased) = {
             let mut state = self.inner.lock();
             *state.generations.entry(backend.clone()).or_default() += 1;
-            state.implementations.remove(backend);
+            state.features.remove(backend);
             state.health.retain(|key, _| &key.backend != backend);
             let keys: Vec<_> = state.slots.keys().filter(|k| &k.backend == backend).cloned().collect();
             let (mut idle, mut leased) = (Vec::new(), Vec::new());
@@ -923,9 +925,9 @@ impl<M: Materializer, L: ServerLauncher> Pool<M, L> {
         (idle, leased)
     }
 
-    /// Whether the server of `backend` offers implementations; `None` before one has started.
-    pub fn offers_implementations(&self, backend: &BackendId) -> Option<bool> {
-        self.inner.lock().implementations.get(backend).copied()
+    /// The operations the server of `backend` offers; `None` before one has started.
+    pub fn features(&self, backend: &BackendId) -> Option<Features> {
+        self.inner.lock().features.get(backend).copied()
     }
 
     /// Stop every server that is not leased.
@@ -1031,7 +1033,7 @@ mod tests {
     use super::*;
     use crate::join::{bounded, join};
     use crate::policy::AnalysisPolicy;
-    use crate::ports::{Materialized, Pos, Readiness, ServerConfig, Severity, Span, Sym, SymbolKind};
+    use crate::ports::{Feature, Materialized, Pos, Readiness, ServerConfig, Severity, Span, Sym, SymbolKind};
     use crate::reuse::Value;
     use crate::testutil::{block_on, yield_once};
 
@@ -1090,8 +1092,8 @@ mod tests {
         /// Requests being answered by the server now, and the most there were at once.
         in_flight: AtomicUsize,
         peak: AtomicUsize,
-        /// What a started server says about offering implementations.
-        offers_implementations: AtomicBool,
+        /// The operations a started server does not offer.
+        lacking: Mutex<Vec<Feature>>,
     }
 
     impl Default for Counters {
@@ -1117,7 +1119,7 @@ mod tests {
                 recorded: AtomicUsize::new(0),
                 in_flight: AtomicUsize::new(0),
                 peak: AtomicUsize::new(0),
-                offers_implementations: AtomicBool::new(true),
+                lacking: Mutex::default(),
             }
         }
     }
@@ -1281,8 +1283,9 @@ mod tests {
                 epoch: self.0.epoch.load(Ordering::SeqCst),
             }
         }
-        fn offers_implementations(&self) -> bool {
-            self.0.offers_implementations.load(Ordering::SeqCst)
+        fn features(&self) -> Features {
+            let lacking = self.0.lacking.lock().unwrap();
+            lacking.iter().fold(Features::ALL, |all, f| all.with(*f, false))
         }
         async fn document_symbols(&self, file: &RepoPath) -> Result<Vec<SymbolInfo>, QueryError> {
             let version = self.asked("document_symbols").await?;
@@ -2209,27 +2212,82 @@ mod tests {
     }
 
     #[test]
-    fn whether_a_backends_server_offers_implementations_is_known_once_one_started_and_forgotten_by_a_restart() {
+    fn what_a_backends_server_offers_is_known_once_one_started_and_forgotten_by_a_restart() {
         let (pool, counters) = pool(4);
         let rust = BackendId("rust".into());
         block_on(async {
-            assert_eq!(pool.offers_implementations(&rust), None);
+            assert_eq!(pool.features(&rust), None);
             pool.lease(&snapshot_key(1), &backend(true))
                 .await
                 .unwrap()
                 .release()
                 .await;
-            assert_eq!(pool.offers_implementations(&rust), Some(true));
+            assert_eq!(pool.features(&rust), Some(Features::ALL));
             pool.restart(&rust).await;
-            assert_eq!(pool.offers_implementations(&rust), None);
+            assert_eq!(pool.features(&rust), None);
 
-            counters.offers_implementations.store(false, Ordering::SeqCst);
+            counters.lacking.lock().unwrap().push(Feature::CallHierarchy);
             pool.lease(&snapshot_key(1), &backend(true))
                 .await
                 .unwrap()
                 .release()
                 .await;
-            assert_eq!(pool.offers_implementations(&rust), Some(false));
+            let offered = pool.features(&rust).unwrap();
+            assert!(!offered.offers(Feature::CallHierarchy));
+            assert!(offered.offers(Feature::Hover));
+        });
+    }
+
+    #[test]
+    fn a_query_for_an_operation_the_server_lacks_is_not_sent_and_says_which_server_lacks_it() {
+        use crate::query::{Primitives, Semantic, SemanticError, Served};
+        use vet_core::review::Side;
+
+        let (pool, counters) = pool(4);
+        counters
+            .lacking
+            .lock()
+            .unwrap()
+            .extend([Feature::CallHierarchy, Feature::WorkspaceSymbols]);
+        let semantic = Arc::new(Semantic::new(pool, vec![backend(true)]));
+        let served = Served {
+            target: Target::Live,
+            policy: AnalysisPolicy::EXECUTING,
+        };
+        let pair = semantic.pair(served, served);
+        block_on(async {
+            for error in [
+                pair.incoming_calls(Side::Target, &at()).await.unwrap_err(),
+                pair.outgoing_calls(Side::Target, &at()).await.unwrap_err(),
+            ] {
+                assert!(
+                    matches!(
+                        error,
+                        SemanticError::NotOffered {
+                            feature: Feature::CallHierarchy,
+                            ..
+                        }
+                    ),
+                    "{error:?}"
+                );
+            }
+            assert!(pair.hover(Side::Target, &at()).await.is_ok());
+            let workspace = semantic.workspace_symbols(&served, "x").await;
+            assert!(matches!(
+                workspace[0].1,
+                Err(SemanticError::NotOffered {
+                    feature: Feature::WorkspaceSymbols,
+                    ..
+                })
+            ));
+            let asked = counters.asked();
+            assert!(asked.contains(&"hover"), "{asked:?}");
+            assert!(
+                !asked
+                    .iter()
+                    .any(|k| ["incoming_calls", "outgoing_calls", "workspace_symbols"].contains(k)),
+                "{asked:?}"
+            );
         });
     }
 

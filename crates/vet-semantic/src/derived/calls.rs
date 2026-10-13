@@ -7,7 +7,7 @@ use vet_core::content::{FileDiff, RepoPath};
 use vet_core::review::Side;
 
 use super::changed::{Change, ChangedSymbol, Compared, Texts, compared};
-use super::{Bounds, Derived, Inputs};
+use super::{Bounds, Derived, Inputs, note_gap};
 use crate::ports::{Sym, SymbolInfo};
 use crate::query::Primitives;
 
@@ -126,7 +126,7 @@ pub async fn calls(
                         }
                         pending.extend(changed_callers.into_iter().rev());
                     }
-                    Err(e) => out.gaps.push(format!("callers of {}: {e}", node.sym)),
+                    Err(e) => note_gap(&mut out.gaps, &format!("callers of {}", node.sym), &e),
                 }
             }
         }
@@ -161,7 +161,7 @@ pub async fn calls(
                 }
             }
         }
-        Err(e) => out.gaps.push(format!("callees: {e}")),
+        Err(e) => note_gap(&mut out.gaps, "callees", &e),
     }
     if let Some(base) = base {
         let at = base.location();
@@ -177,7 +177,7 @@ pub async fn calls(
                     }
                 }
             }
-            Err(e) => out.gaps.push(format!("callees on the base side: {e}")),
+            Err(e) => note_gap(&mut out.gaps, "callees on the base side", &e),
         }
     }
     Derived { value: out, inputs }

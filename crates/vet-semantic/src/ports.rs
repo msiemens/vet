@@ -96,9 +96,77 @@ pub fn backend_for<'a>(backends: &'a [Backend], file: &RepoPath) -> Option<&'a B
         .find(|b| b.config().filetypes.iter().any(|t| t.as_bytes() == ext))
 }
 
+/// An operation a server may not offer. A query for one it lacks is answered with
+/// [`crate::query::SemanticError::NotOffered`], never with an empty answer (I6).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Feature {
+    DocumentSymbols,
+    Definition,
+    References,
+    Implementations,
+    Hover,
+    CallHierarchy,
+    WorkspaceSymbols,
+}
+
+impl Feature {
+    pub const ALL: [Feature; 7] = [
+        Self::DocumentSymbols,
+        Self::Definition,
+        Self::References,
+        Self::Implementations,
+        Self::Hover,
+        Self::CallHierarchy,
+        Self::WorkspaceSymbols,
+    ];
+
+    /// What a person calls it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::DocumentSymbols => "document symbols",
+            Self::Definition => "go to definition",
+            Self::References => "find references",
+            Self::Implementations => "implementations",
+            Self::Hover => "hover",
+            Self::CallHierarchy => "call hierarchy",
+            Self::WorkspaceSymbols => "workspace symbol search",
+        }
+    }
+}
+
+/// The operations a started server offers (diagnostics are not among them: servers
+/// publish them without announcing it, so they cannot be told from none).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Features {
+    offered: [bool; Feature::ALL.len()],
+}
+
+impl Features {
+    pub const NONE: Self = Self {
+        offered: [false; Feature::ALL.len()],
+    };
+
+    pub const ALL: Self = Self {
+        offered: [true; Feature::ALL.len()],
+    };
+
+    fn index(feature: Feature) -> usize {
+        Feature::ALL.iter().position(|f| *f == feature).unwrap_or(0)
+    }
+
+    pub fn with(mut self, feature: Feature, offered: bool) -> Self {
+        self.offered[Self::index(feature)] = offered;
+        self
+    }
+
+    pub fn offers(self, feature: Feature) -> bool {
+        self.offered[Self::index(feature)]
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum LaunchError {
-    /// A required operation is missing: the language is unsupported (I6).
+    /// The server cannot work with Vet at all: it does not take documents (I6).
     MissingCapability(&'static str),
     /// No server for the language was found; the reason says where Vet looked.
     NotInstalled(String),
@@ -272,8 +340,8 @@ pub struct Readiness {
 /// Methods take `&self`: the pool lets several callers use one server at once.
 pub trait LanguageServer: Send + Sync {
     fn readiness(&self) -> Readiness;
-    /// Whether the server advertised `textDocument/implementation`; `implementations` fails if not.
-    fn offers_implementations(&self) -> bool;
+    /// The operations the server advertised. The pool does not ask for one it lacks.
+    fn features(&self) -> Features;
     fn document_symbols(&self, file: &RepoPath) -> impl Future<Output = Result<Vec<SymbolInfo>, QueryError>> + Send;
     /// The symbols `text` declares if it were the content of `file`, which need
     /// not exist in the tree. They depend on the text alone, so any server of
