@@ -2,6 +2,8 @@
 //! filter. The rules are in `vet_app::session`; this maps requests to them and
 //! tells every subscriber what changed.
 
+use std::sync::Arc;
+
 use vet_app::changeset::Source;
 use vet_app::search::SearchFilters;
 use vet_app::session::SearchQuery;
@@ -106,7 +108,7 @@ impl Orchestrator {
         let mask = FileMask::parse(mask)?;
         let query = SearchQuery {
             scope: mapping::core_search_scope(scope),
-            matcher: &matcher,
+            matcher: Arc::new(matcher),
             mask: &mask,
             filters,
             limit: limit as usize,

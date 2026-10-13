@@ -23,9 +23,9 @@ use std::sync::{Arc, OnceLock};
 use gix::bstr::ByteSlice;
 use vet_app::changeset::{ChangesetId, CommitId};
 use vet_app::ports::{
-    Attributes, BlobRead, BlobReader, BranchInfo, ChangesetRefs, Checkout, CheckoutError, CommitDetail, CommitInfo,
-    Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefTip, RefUpdate, Remerged, RemoteInfo, Scan,
-    Scanner, Store, TextDiff,
+    Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRefs, Checkout, CheckoutError,
+    CommitDetail, CommitInfo, Differ, Dirty, FetchAuth, Fetcher, GitError, History, IgnoreRules, RefTip, RefUpdate,
+    Remerged, RemoteInfo, Scan, Scanner, Store, TextDiff,
 };
 use vet_core::classify::{changes, text_blobs};
 use vet_core::content::{BlobId, EntryKind, RepoPath, Snapshot};
@@ -216,24 +216,24 @@ impl Inner {
         Ok(self.opened.get_or_init(|| opened).to_thread_local())
     }
 
-    fn read_blob(&self, path: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
-        let repo = self.open_shared()?;
-        if let Some(bytes) = self.blobs.odb_content(&repo, blob, u64::MAX)? {
+    fn read_blob(&self, repo: &gix::Repository, path: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
+        if let Some(bytes) = self.blobs.odb_content(repo, blob, u64::MAX)? {
             return Ok(Some(bytes));
         }
         let item =
-            scan::Worktree::new(&repo, &self.blobs, &self.stats, self.cap)?.item_by_path(path.0.as_bstr(), true)?;
+            scan::Worktree::new(repo, &self.blobs, &self.stats, self.cap)?.item_by_path(path.0.as_bstr(), true)?;
         Ok(item.filter(|i| i.entry.blob == blob).and_then(|i| i.bytes))
     }
 
     /// The object's size is checked before its content is read.
-    fn read_blob_capped(&self, path: &RepoPath, blob: BlobId) -> Result<BlobRead, GitError> {
-        let repo = self.open_shared()?;
-        if self.blobs.odb_size(&repo, blob)?.is_some_and(|size| size > self.cap) {
+    fn read_blob_capped(&self, repo: &gix::Repository, path: &RepoPath, blob: BlobId) -> Result<BlobRead, GitError> {
+        if self.blobs.odb_size(repo, blob)?.is_some_and(|size| size > self.cap) {
             return Ok(BlobRead::TooLarge);
         }
         // A blob not in git is read from the worktree, which applies the cap itself.
-        Ok(self.read_blob(path, blob)?.map_or(BlobRead::Missing, BlobRead::Found))
+        Ok(self
+            .read_blob(repo, path, blob)?
+            .map_or(BlobRead::Missing, BlobRead::Found))
     }
 
     fn diff(&self, stored: BTreeMap<BlobId, Vec<u8>>, old: &Snapshot, new: &Snapshot) -> Result<TextDiff, GitError> {
@@ -297,16 +297,41 @@ impl Checkout for GixRepo {
 impl BlobReader for GixRepo {
     async fn read_blob(&self, path: &RepoPath, blob: BlobId) -> Result<Option<Vec<u8>>, GitError> {
         let path = path.clone();
-        self.blocking(move |i| i.read_blob(&path, blob)).await
+        self.blocking(move |i| i.read_blob(&i.open_shared()?, &path, blob))
+            .await
     }
 
     async fn read_blob_capped(&self, path: &RepoPath, blob: BlobId) -> Result<BlobRead, GitError> {
         let path = path.clone();
-        self.blocking(move |i| i.read_blob_capped(&path, blob)).await
+        self.blocking(move |i| i.read_blob_capped(&i.open_shared()?, &path, blob))
+            .await
     }
 
     async fn submodule_commit(&self, blob: BlobId) -> Result<Option<String>, GitError> {
         Ok(self.0.blobs.submodule_commit(blob))
+    }
+
+    async fn with_blobs<J: BlobJob>(&self, job: J) -> Result<J::Output, GitError> {
+        self.blocking(move |i| {
+            let mut session = Session {
+                inner: i,
+                repo: i.open_shared()?,
+            };
+            Ok(job.run(&mut session))
+        })
+        .await
+    }
+}
+
+/// One open repository for many reads.
+struct Session<'a> {
+    inner: &'a Inner,
+    repo: gix::Repository,
+}
+
+impl BlobSession for Session<'_> {
+    fn read_blob_capped(&mut self, path: &RepoPath, blob: BlobId) -> Result<BlobRead, GitError> {
+        self.inner.read_blob_capped(&self.repo, path, blob)
     }
 }
 

@@ -218,6 +218,22 @@ pub trait BlobReader {
     ) -> impl Future<Output = Result<BlobRead, GitError>> + Send;
     /// The commit a submodule entry with this `BlobId` is pinned at, for display.
     fn submodule_commit(&self, blob: BlobId) -> impl Future<Output = Result<Option<String>, GitError>> + Send;
+    /// Runs `job` on a blocking thread with a reader that serves many blobs from one open
+    /// repository, for a job that reads a lot of them and does its own work on each.
+    fn with_blobs<J: BlobJob>(&self, job: J) -> impl Future<Output = Result<J::Output, GitError>> + Send;
+}
+
+/// Work on a blocking thread that reads many blobs.
+pub trait BlobJob: Send + 'static {
+    type Output: Send + 'static;
+
+    fn run(self, git: &mut dyn BlobSession) -> Self::Output;
+}
+
+/// Reads blobs on a blocking thread, as [`BlobReader::read_blob_capped`] does, without opening the
+/// repository for each.
+pub trait BlobSession {
+    fn read_blob_capped(&mut self, path: &RepoPath, blob: BlobId) -> Result<BlobRead, GitError>;
 }
 
 /// Commits, branches and the history between them.

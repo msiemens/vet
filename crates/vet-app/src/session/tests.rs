@@ -24,8 +24,9 @@ use super::*;
 use crate::changeset::{BaseChoice, ChangesetId, CommitId, Lens, RemoteKey, Source, Version, VersionOrigin};
 use crate::platform::{FakeHosting, PullRequestHead};
 use crate::ports::{
-    Attributes, BlobRead, BlobReader, BranchInfo, ChangesetRefs, ChangesetStore, Checkout, CommitDetail, CommitInfo,
-    Differ, Dirty, GitError, History, Remerged, ReviewStore, Scan, Scanner, Store, StoreError, TextDiff, ThreadStore,
+    Attributes, BlobJob, BlobRead, BlobReader, BlobSession, BranchInfo, ChangesetRefs, ChangesetStore, Checkout,
+    CommitDetail, CommitInfo, Differ, Dirty, GitError, History, Remerged, ReviewStore, Scan, Scanner, Store,
+    StoreError, TextDiff, ThreadStore,
 };
 use crate::pull_request::PullRequestRefs;
 use crate::review::{ChangesetThread, NonTextAck, RecordedSpan, Review, ReviewId, ReviewSummary, SpanId, SpanOrigin};
@@ -136,6 +137,27 @@ pub(crate) struct FakeGit {
     reads: Arc<Mutex<Vec<BlobId>>>,
     /// Held by a test, diffs and blob reads wait until it lets go.
     pub(crate) paused: Arc<tokio::sync::Mutex<()>>,
+    /// How many `with_blobs` jobs were started.
+    pub(crate) jobs: Arc<AtomicUsize>,
+    /// When set, the first jobs of `with_blobs` take this much longer the earlier they started, so
+    /// that they end in the opposite order.
+    pub(crate) stagger: Arc<Mutex<Option<std::time::Duration>>>,
+}
+
+/// Reads from the blobs of a [`FakeGit`], as a repository would on a blocking thread.
+struct FakeBlobs {
+    blobs: Arc<Mutex<HashMap<BlobId, Vec<u8>>>>,
+    cap: Option<usize>,
+}
+
+impl BlobSession for FakeBlobs {
+    fn read_blob_capped(&mut self, _: &RepoPath, blob: BlobId) -> std::result::Result<BlobRead, GitError> {
+        Ok(match self.blobs.lock().unwrap().get(&blob) {
+            Some(bytes) if self.cap.is_some_and(|cap| bytes.len() > cap) => BlobRead::TooLarge,
+            Some(bytes) => BlobRead::Found(bytes.clone()),
+            None => BlobRead::Missing,
+        })
+    }
 }
 
 fn clock() -> i64 {
@@ -279,6 +301,24 @@ impl BlobReader for FakeGit {
     /// The first byte of the blob id, in hex.
     async fn submodule_commit(&self, blob: BlobId) -> std::result::Result<Option<String>, GitError> {
         Ok(Some(format!("{:02x}", blob.0.0[0])))
+    }
+    async fn with_blobs<J: BlobJob>(&self, job: J) -> std::result::Result<J::Output, GitError> {
+        let started = self.jobs.fetch_add(1, Ordering::SeqCst);
+        let stagger = *self.stagger.lock().unwrap();
+        if let Some(step) = stagger {
+            tokio::time::sleep(step * 4u32.saturating_sub(started as u32)).await;
+        }
+        let mut blobs = FakeBlobs {
+            blobs: self.blobs.clone(),
+            cap: *self.cap.lock().unwrap(),
+        };
+        let (done, result) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .spawn(move || {
+                let _ = done.send(job.run(&mut blobs));
+            })
+            .map_err(|e| GitError(e.to_string()))?;
+        result.await.map_err(|e| GitError(e.to_string()))
     }
 }
 

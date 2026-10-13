@@ -1,18 +1,30 @@
 //! Text search over the files of a view, or over the whole target tree.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::ops::Range;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use futures::StreamExt;
+use futures::stream::FuturesOrdered;
 use vet_core::completion::{Completion, HunkState};
-use vet_core::content::{EntryKind, Hunk, RepoPath};
+use vet_core::content::{
+    BlobId, EntryKind, FileDiff, FileEntry, Hunk, NonTextChange, RepoPath, SnapshotDiff, decode_text,
+};
 use vet_core::filter::FileMask;
 
 use super::views::{FileStatus, FileView};
-use super::{LiveSession, NoText, Result, SessionError, View};
-use crate::ports::{GitRepo, LiveStore};
+use super::{LiveSession, Result, SessionError, View};
+use crate::ports::{BlobJob, BlobRead, BlobSession, GitError, GitRepo, LiveStore};
 use crate::search::{FoundLine, LineMatcher, SearchFilters, Sides, search_text};
 
 /// The most matches a search lists, whatever limit it asks for.
 pub const MAX_HITS: usize = 1000;
+
+/// How many files a worker reads and matches in one go.
+const CHUNK: usize = 64;
+/// How many chunks are worked on at once.
+const WORKERS: usize = 4;
 
 /// Where to look.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -26,7 +38,7 @@ pub enum SearchScope {
 
 pub struct SearchQuery<'a> {
     pub scope: SearchScope,
-    pub matcher: &'a dyn LineMatcher,
+    pub matcher: Arc<dyn LineMatcher>,
     pub mask: &'a FileMask,
     pub filters: SearchFilters,
     /// Stop after this many matches.
@@ -70,79 +82,309 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
         let mut out = Collector::new(revision, query.limit.clamp(1, MAX_HITS));
         match query.scope {
             SearchScope::View(view) => {
-                for file in &manifest.files {
-                    let path = file.path.to_string_lossy();
-                    if !query.mask.matches(&path) {
-                        continue;
-                    }
-                    // A search that was given up on stops here, and the others get their turn.
-                    tokio::task::yield_now().await;
-                    let text = match self.file_text(view, &path).await {
-                        Ok(text) => text,
-                        Err(SessionError::NotText(_)) => continue,
-                        Err(e) => return Err(e),
-                    };
-                    if text.revision != revision {
-                        return Err(SessionError::Stale { current: text.revision });
-                    }
-                    let found = search_text(
-                        text.base.as_deref().unwrap_or_default(),
-                        text.target.as_deref().unwrap_or_default(),
-                        &file.hunks,
-                        &file.review.hunks,
-                        query.matcher,
-                        query.filters,
-                        Sides::Both,
-                    );
-                    out.file(file.path.clone(), Some(file), found);
-                    if out.full() {
-                        break;
-                    }
-                }
-            }
-            SearchScope::Repository => {
-                let changed: BTreeMap<&RepoPath, _> = manifest.files.iter().map(|f| (&f.path, f)).collect();
-                let st = self.published.read();
+                let (st, shown) = self.viewing(view).await?;
                 if st.revision != revision {
                     return Err(SessionError::Stale { current: st.revision });
                 }
-                let skip_unchanged = query.filters.only_changes || query.filters.not_seen;
-                for (path, entry) in &st.target.entries {
-                    let name = path.to_string_lossy();
-                    if entry.kind != EntryKind::File || !query.mask.matches(&name) {
-                        continue;
+                let changes = shown.diffed(&st);
+                let jobs = view_jobs(&manifest.files, query.mask, &changes.diff)?;
+                self.look(jobs, &changes.blobs, query, &manifest.files, &mut out)
+                    .await?;
+            }
+            SearchScope::Repository => {
+                let jobs = {
+                    let st = self.published.read();
+                    if st.revision != revision {
+                        return Err(SessionError::Stale { current: st.revision });
                     }
-                    let file = changed.get(path).copied();
-                    if file.is_none() && skip_unchanged {
-                        continue;
-                    }
-                    tokio::task::yield_now().await;
-                    let text = match self.target_text(View::Changeset, &name).await?.content {
-                        Ok(text) => text,
-                        Err(NoText::Binary | NoText::Unavailable | NoText::NotAFile | NoText::Absent) => continue,
-                    };
-                    let (hunks, states): (&[_], &[HunkState]) = match file {
-                        Some(f) => (&f.hunks, &f.review.hunks),
-                        None => (&[], &[]),
-                    };
-                    let found = search_text(
-                        "",
-                        &text,
-                        hunks,
-                        states,
-                        query.matcher,
-                        query.filters,
-                        Sides::TargetOnly,
-                    );
-                    out.file(path.clone(), file, found);
-                    if out.full() {
-                        break;
-                    }
-                }
+                    repository_jobs(&st.target.entries, &manifest.files, query)
+                };
+                self.look(jobs, &BTreeMap::new(), query, &manifest.files, &mut out)
+                    .await?;
             }
         }
         Ok(out.finish())
     }
+
+    /// Looks in the files of `jobs` in chunks, a few at a time, and files their matches in `out`
+    /// in the order of `jobs` until the limit is reached. `known` has the texts at hand. The
+    /// chunks left are not worked on once this stops, or is given up on.
+    async fn look(
+        &self,
+        jobs: Vec<Job>,
+        known: &BTreeMap<BlobId, Vec<u8>>,
+        query: &SearchQuery<'_>,
+        files: &[FileView],
+        out: &mut Collector,
+    ) -> Result<()> {
+        let stop = Stop::default();
+        let mut pending = jobs.into_iter();
+        let mut chunks = std::iter::from_fn(|| {
+            let chunk: Vec<Job> = pending.by_ref().take(CHUNK).collect();
+            (!chunk.is_empty()).then_some(chunk)
+        });
+        let mut worked = FuturesOrdered::new();
+        loop {
+            while worked.len() < WORKERS
+                && let Some(chunk) = chunks.next()
+            {
+                worked.push_back(self.work(chunk, known, query, &stop));
+            }
+            let Some(chunk) = worked.next().await else { break };
+            for looked in chunk? {
+                let Some(found) = looked.found else { continue };
+                out.file(looked.path, looked.changed.map(|i| &files[i]), found);
+                if out.full() {
+                    return Ok(());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads and matches one chunk of files on a blocking thread.
+    async fn work(
+        &self,
+        mut jobs: Vec<Job>,
+        known: &BTreeMap<BlobId, Vec<u8>>,
+        query: &SearchQuery<'_>,
+        stop: &Stop,
+    ) -> Result<Vec<Looked>> {
+        for source in jobs.iter_mut().flat_map(Job::sources) {
+            source.bytes = known.get(&source.blob).cloned();
+        }
+        let wanted: Vec<BlobId> = (jobs.iter_mut().flat_map(Job::sources))
+            .filter(|s| s.bytes.is_none())
+            .map(|s| s.blob)
+            .collect();
+        if !wanted.is_empty() {
+            let stored = self.acquisition.store.blobs(wanted).await?;
+            for source in jobs.iter_mut().flat_map(Job::sources) {
+                if source.bytes.is_none() {
+                    source.bytes = stored.get(&source.blob).cloned();
+                }
+            }
+        }
+        let chunk = Chunk {
+            jobs,
+            matcher: query.matcher.clone(),
+            filters: query.filters,
+            stopped: stop.flag(),
+        };
+        let looked = self.acquisition.git.with_blobs(chunk).await?;
+        Ok(looked.into_iter().collect::<std::result::Result<_, GitError>>()?)
+    }
+}
+
+/// The files a worker reads and matches in one go.
+struct Chunk {
+    jobs: Vec<Job>,
+    matcher: Arc<dyn LineMatcher>,
+    filters: SearchFilters,
+    stopped: Arc<AtomicBool>,
+}
+
+impl BlobJob for Chunk {
+    type Output = Vec<std::result::Result<Looked, GitError>>;
+
+    fn run(self, git: &mut dyn BlobSession) -> Self::Output {
+        let matcher = Stoppable {
+            matcher: &*self.matcher,
+            stopped: &self.stopped,
+        };
+        let mut looked = Vec::with_capacity(self.jobs.len());
+        for job in self.jobs {
+            if self.stopped.load(Ordering::Relaxed) {
+                break;
+            }
+            looked.push(job.look(git, &matcher, self.filters));
+        }
+        looked
+    }
+}
+
+/// A matcher that finds nothing once the search is over, so that a worker in the middle of a file
+/// stops at its next line.
+struct Stoppable<'a> {
+    matcher: &'a dyn LineMatcher,
+    stopped: &'a AtomicBool,
+}
+
+impl LineMatcher for Stoppable<'_> {
+    fn hits(&self, line: &str) -> Vec<Range<usize>> {
+        if self.stopped.load(Ordering::Relaxed) {
+            return Vec::new();
+        }
+        self.matcher.hits(line)
+    }
+}
+
+/// Where a search is over: it ended, or nobody is waiting for it any more.
+#[derive(Default)]
+struct Stop(Arc<AtomicBool>);
+
+impl Stop {
+    fn flag(&self) -> Arc<AtomicBool> {
+        self.0.clone()
+    }
+}
+
+impl Drop for Stop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// A text to look in, with its bytes once they are at hand.
+struct Source {
+    path: RepoPath,
+    blob: BlobId,
+    bytes: Option<Vec<u8>>,
+}
+
+impl Source {
+    fn new((path, blob): (RepoPath, BlobId)) -> Self {
+        Self {
+            path,
+            blob,
+            bytes: None,
+        }
+    }
+
+    /// The text, or `None` if the file has none: binary, over the cap, or gone.
+    fn text(self, git: &mut dyn BlobSession) -> std::result::Result<Option<String>, GitError> {
+        let bytes = match self.bytes {
+            Some(bytes) => bytes,
+            None => match git.read_blob_capped(&self.path, self.blob)? {
+                BlobRead::Found(bytes) => bytes,
+                BlobRead::TooLarge | BlobRead::Missing => return Ok(None),
+            },
+        };
+        Ok(decode_text(&bytes))
+    }
+}
+
+/// A file to look in. A side the file lacks is an empty text.
+struct Job {
+    path: RepoPath,
+    /// The index of the file in the manifest, for a changed file.
+    changed: Option<usize>,
+    base: Option<Source>,
+    target: Option<Source>,
+    hunks: Vec<Hunk>,
+    states: Vec<HunkState>,
+    sides: Sides,
+}
+
+/// What a job found; `None` if the file has no text to look in.
+struct Looked {
+    path: RepoPath,
+    changed: Option<usize>,
+    found: Option<Vec<FoundLine>>,
+}
+
+impl Job {
+    fn sources(&mut self) -> impl Iterator<Item = &mut Source> {
+        self.base.iter_mut().chain(self.target.iter_mut())
+    }
+
+    fn look(
+        self,
+        git: &mut dyn BlobSession,
+        matcher: &dyn LineMatcher,
+        filters: SearchFilters,
+    ) -> std::result::Result<Looked, GitError> {
+        let Self {
+            path,
+            changed,
+            base,
+            target,
+            hunks,
+            states,
+            sides,
+        } = self;
+        let mut texts = [None, None];
+        for (text, source) in texts.iter_mut().zip([base, target]) {
+            *text = match source {
+                Some(source) => source.text(git)?,
+                None => Some(String::new()),
+            };
+        }
+        let found = match texts {
+            [Some(base), Some(target)] => Some(search_text(&base, &target, &hunks, &states, matcher, filters, sides)),
+            _ => None,
+        };
+        Ok(Looked { path, changed, found })
+    }
+}
+
+/// The changed files of a view that the mask lets through, with both sides of each.
+fn view_jobs(files: &[FileView], mask: &FileMask, diff: &SnapshotDiff) -> Result<Vec<Job>> {
+    let mut texts: HashMap<String, &FileDiff> = HashMap::new();
+    for d in &diff.files {
+        texts.entry(d.path().to_string_lossy()).or_insert(d);
+    }
+    let mut non_texts: HashMap<String, &NonTextChange> = HashMap::new();
+    for n in &diff.non_text {
+        non_texts.entry(n.path.to_string_lossy()).or_insert(n);
+    }
+    let mut jobs = Vec::new();
+    for (i, file) in files.iter().enumerate() {
+        let name = file.path.to_string_lossy();
+        if !mask.matches(&name) {
+            continue;
+        }
+        let (base, target) = if let Some(d) = texts.get(&name) {
+            let side = |p: &Option<RepoPath>, b: Option<BlobId>| p.clone().zip(b);
+            (side(&d.old_path, d.old_blob), side(&d.new_path, d.new_blob))
+        } else if let Some(n) = non_texts.get(&name) {
+            let side = |p: RepoPath, e: &Option<FileEntry>| {
+                e.as_ref().filter(|e| e.kind == EntryKind::File).map(|e| (p, e.blob))
+            };
+            (
+                side(n.from.clone().unwrap_or_else(|| n.path.clone()), &n.before),
+                side(n.path.clone(), &n.after),
+            )
+        } else {
+            return Err(SessionError::NotFound(format!("file {name}")));
+        };
+        jobs.push(Job {
+            path: file.path.clone(),
+            changed: Some(i),
+            base: base.map(Source::new),
+            target: target.map(Source::new),
+            hunks: file.hunks.clone(),
+            states: file.review.hunks.clone(),
+            sides: Sides::Both,
+        });
+    }
+    Ok(jobs)
+}
+
+/// The files of the target tree that the mask lets through, the changed ones with their hunks.
+fn repository_jobs(entries: &BTreeMap<RepoPath, FileEntry>, files: &[FileView], query: &SearchQuery<'_>) -> Vec<Job> {
+    let changed: BTreeMap<&RepoPath, usize> = files.iter().enumerate().map(|(i, f)| (&f.path, i)).collect();
+    let skip_unchanged = query.filters.only_changes || query.filters.not_seen;
+    let mut jobs = Vec::new();
+    for (path, entry) in entries {
+        if entry.kind != EntryKind::File || !query.mask.matches(&path.to_string_lossy()) {
+            continue;
+        }
+        let file = changed.get(path).copied();
+        if file.is_none() && skip_unchanged {
+            continue;
+        }
+        jobs.push(Job {
+            path: path.clone(),
+            changed: file,
+            base: None,
+            target: Some(Source::new((path.clone(), entry.blob))),
+            hunks: file.map(|i| files[i].hunks.clone()).unwrap_or_default(),
+            states: file.map(|i| files[i].review.hunks.clone()).unwrap_or_default(),
+            sides: Sides::TargetOnly,
+        });
+    }
+    jobs
 }
 
 /// Gathers the matches of the files until the limit.
@@ -242,7 +484,7 @@ mod tests {
         let mask = FileMask::parse(mask).unwrap();
         let query = SearchQuery {
             scope,
-            matcher: &Substring("delay"),
+            matcher: Arc::new(Substring("delay")),
             mask: &mask,
             filters,
             limit,
@@ -340,6 +582,30 @@ mod tests {
         assert_eq!(none.hits, 1);
     }
 
+    #[tokio::test]
+    async fn the_first_hits_are_those_of_the_first_files_whichever_chunks_end_first() {
+        let names: Vec<String> = (0..5 * CHUNK).map(|i| format!("f{i:03}.txt")).collect();
+        let text = "delay\n".repeat(4);
+        let files: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), text.as_str())).collect();
+        let fx = Fixture::open(&[], &files).await;
+        let in_order = &names[..MAX_HITS / 4];
+        for scope in [SearchScope::Repository, SearchScope::View(View::Changeset)] {
+            let inverted = std::time::Duration::from_millis(20);
+            *fx.git.stagger.lock().unwrap() = Some(inverted);
+            fx.git.jobs.store(0, Ordering::SeqCst);
+            let result = run(&fx, scope, "", ALL, usize::MAX).await;
+            *fx.git.stagger.lock().unwrap() = None;
+            assert!(
+                fx.git.jobs.load(Ordering::SeqCst) >= WORKERS,
+                "the chunks were not worked on together"
+            );
+            assert_eq!(paths(&result), in_order);
+            assert_eq!((result.hits as usize, result.truncated), (MAX_HITS, true));
+            assert_eq!(result.searched as usize, in_order.len() + 1);
+            assert_eq!(result, run(&fx, scope, "", ALL, usize::MAX).await);
+        }
+    }
+
     /// A matcher that takes its time, so a search is under way for a while.
     struct Slow(Arc<AtomicUsize>);
 
@@ -358,10 +624,9 @@ mod tests {
         let fx = Fixture::open(&[], &files).await;
         let calls = Arc::new(AtomicUsize::new(0));
         let mask = FileMask::parse("").unwrap();
-        let matcher = Slow(calls.clone());
         let query = SearchQuery {
             scope: SearchScope::Repository,
-            matcher: &matcher,
+            matcher: Arc::new(Slow(calls.clone())),
             mask: &mask,
             filters: ALL,
             limit: 10,
