@@ -22,7 +22,7 @@ probes=(
     "rust-analyzer --version"
     "typescript-language-server --version"
     "command -v pyright-langserver"
-    "roslyn-language-server --version && dotnet --version"
+    "command -v roslyn-language-server && dotnet --version"
 )
 filters=(
     'package(vet-backend) & binary(it) & test(/^(restart|cancel|load)::/)'
