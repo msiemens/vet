@@ -14,6 +14,7 @@
 //! |---|---|---|
 //! | Rust | `cargo fetch` | Cargo home |
 //! | npm | `npm ci --ignore-scripts`, or `npm install --ignore-scripts` without a lockfile | npm cache |
+//! | npm, lockfile out of sync | `npm install --ignore-scripts --no-save --no-audit --no-fund` after `npm ci` refused | npm cache |
 //! | pnpm | `pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile` | pnpm store |
 //! | Yarn classic | `yarn install --frozen-lockfile --ignore-scripts --non-interactive` | Yarn cache |
 //! | Yarn berry | `yarn install --immutable --mode=skip-build` | Yarn cache |
@@ -39,6 +40,7 @@
 //! of the languages of one tree run one at a time.
 
 pub(crate) mod discover;
+mod excerpt;
 pub(crate) mod record;
 mod reuse;
 mod tools;
@@ -55,7 +57,7 @@ use vet_semantic::policy::AnalysisPolicy;
 use vet_semantic::ports::{Backend, RestoreFailure, Restored, Restorer};
 
 use crate::budget::{Budget, Budgets, SEMANTIC_IO};
-use crate::exec::{OUTPUT_TAIL_LINES, Tail, dotnet_env};
+use crate::exec::dotnet_env;
 use crate::git::list_files;
 use crate::language::{self, Language, Restore};
 use crate::lsp::dotnet;
@@ -85,7 +87,14 @@ struct Step {
     /// The members of the project's workspace, relative to the root, which the
     /// step installs along with the project.
     covers: Vec<PathBuf>,
+    /// The arguments of the command that stands in for the step when `npm ci` refuses
+    /// because the lock file is out of sync with `package.json`.
+    out_of_sync: Option<Vec<String>>,
 }
+
+/// What a lock file that `npm ci` refused leaves the viewer to know.
+const LOCK_OUT_OF_SYNC: &str = "lock file out of sync with package.json: dependencies installed with `npm install`, \
+                                keeping the locked versions";
 
 impl Step {
     fn new(project: &Path, program: &'static str, args: &[&str]) -> Self {
@@ -96,11 +105,12 @@ impl Step {
             executes: false,
             project: project.to_owned(),
             covers: Vec::new(),
+            out_of_sync: None,
         }
     }
 
     fn describe(&self) -> String {
-        format!("{} {}", self.program, self.args.join(" "))
+        describe(self.program, &self.args)
     }
 
     fn failure(&self, message: String) -> RestoreFailure {
@@ -108,14 +118,23 @@ impl Step {
     }
 
     fn record(&self, outcome: Outcome) -> StepRecord {
+        self.record_of(&self.args, outcome)
+    }
+
+    /// The record of the run of `args`, the step's own or its stand-in.
+    fn record_of(&self, args: &[String], outcome: Outcome) -> StepRecord {
         StepRecord {
             project: label(&self.project),
             program: self.program.to_owned(),
-            args: self.args.clone(),
+            args: args.to_vec(),
             env: self.env.clone(),
             outcome,
         }
     }
+}
+
+fn describe(program: &str, args: &[String]) -> String {
+    format!("{program} {}", args.join(" "))
 }
 
 fn label(project: &Path) -> String {
@@ -358,28 +377,67 @@ impl ToolRestorer {
         }
     }
 
-    async fn run(&self, root: &Path, step: &Step) -> Result<(), String> {
-        let env: Vec<_> = self.env.iter().chain(&step.env).cloned().collect();
-        let cwd = root.join(&step.project);
-        let out = self
-            .tools
-            .run(step.program, &step.args, &cwd, &env, STEP_TIMEOUT)
-            .await
-            .map_err(|e| format!("`{}`: {e}", step.describe()))?;
+    /// Runs `step`; an `npm ci` that refuses an out-of-sync lock file is followed by the
+    /// step's stand-in.
+    async fn run(&self, root: &Path, step: &Step) -> Result<Ran, String> {
+        let out = self.invoke(root, step, &step.args).await?;
         if out.ok {
-            return Ok(());
+            return Ok(Ran::AsPlanned);
         }
-        let text = if out.stderr.trim().is_empty() {
-            &out.stdout
-        } else {
-            &out.stderr
+        let Some(args) = step
+            .out_of_sync
+            .as_ref()
+            .filter(|_| excerpt::npm_lock_out_of_sync(&out.stderr))
+        else {
+            return Err(failed(step, &step.args, &out));
         };
-        Err(format!(
-            "`{}` failed:\n{}",
-            step.describe(),
-            Tail::of(text, OUTPUT_TAIL_LINES).text()
-        ))
+        let out = self.invoke(root, step, args).await?;
+        if out.ok {
+            Ok(Ran::StoodIn(args.clone()))
+        } else {
+            Err(failed(step, args, &out))
+        }
     }
+
+    async fn invoke(&self, root: &Path, step: &Step, args: &[String]) -> Result<crate::exec::Captured, String> {
+        let env: Vec<_> = self.env.iter().chain(&step.env).cloned().collect();
+        self.tools
+            .run(step.program, args, &root.join(&step.project), &env, STEP_TIMEOUT)
+            .await
+            .map_err(|e| format!("`{}`: {e}", describe(step.program, args)))
+    }
+}
+
+/// How a step that did not fail was run.
+enum Ran {
+    AsPlanned,
+    /// With these arguments instead.
+    StoodIn(Vec<String>),
+}
+
+/// What a tool printed: stderr, or stdout if there is none.
+fn output_of(out: &crate::exec::Captured) -> &str {
+    if out.stderr.trim().is_empty() {
+        &out.stdout
+    } else {
+        &out.stderr
+    }
+}
+
+/// The message of a step that failed: the command and the part of its output that says why.
+/// The output as a whole goes to the debug log.
+fn failed(step: &Step, args: &[String], out: &crate::exec::Captured) -> String {
+    tracing::debug!(
+        project = %label(&step.project),
+        tool = step.program,
+        output = %output_of(out),
+        "the failed restore command's whole output"
+    );
+    format!(
+        "`{}` failed:\n{}",
+        describe(step.program, args),
+        excerpt::of(step.program, output_of(out))
+    )
 }
 
 /// The JavaScript package manager of the project in `abs`: `packageManager` in
@@ -433,7 +491,15 @@ fn javascript_step(abs: &Path, project: &Path, executing: bool) -> Step {
             let locked = has("package-lock.json") || has("npm-shrinkwrap.json");
             let mut args = vec![if locked { "ci" } else { "install" }];
             args.extend(inert(&["--ignore-scripts"]));
-            Step::new(project, "npm", &args)
+            let mut step = Step::new(project, "npm", &args);
+            // `--no-save` leaves the lock file alone; the versions it locks are kept.
+            if locked {
+                let mut stand_in = vec!["install"];
+                stand_in.extend(inert(&["--ignore-scripts"]));
+                stand_in.extend(["--no-save", "--no-audit", "--no-fund"]);
+                step.out_of_sync = Some(stand_in.into_iter().map(str::to_owned).collect());
+            }
+            step
         }
         Manager::Yarn { berry: false } => {
             let mut args = vec!["install"];
@@ -544,7 +610,11 @@ impl ToolRestorer {
                 continue;
             }
             match self.run(root, step).await {
-                Ok(()) => records.push(step.record(Outcome::Ran)),
+                Ok(Ran::AsPlanned) => records.push(step.record(Outcome::Ran)),
+                Ok(Ran::StoodIn(args)) => {
+                    records.push(step.record_of(&args, Outcome::StoodIn(LOCK_OUT_OF_SYNC.into())));
+                    restored.failures.push(step.failure(LOCK_OUT_OF_SYNC.into()));
+                }
                 Err(why) => {
                     // The tool's output can quote code: only its first line is logged above `debug`.
                     tracing::warn!(
@@ -626,6 +696,10 @@ impl ToolRestorer {
             for (key, value) in &step.env {
                 digest.field(key).field(value);
             }
+            digest.field("stand-in");
+            for arg in step.out_of_sync.iter().flatten() {
+                digest.field(arg);
+            }
         }
         digest.field("failures");
         for failure in &plan.failures {
@@ -701,7 +775,19 @@ impl ToolRestorer {
         if let Some(record) = record {
             vet_semantic::trace::log(|| format!("restore {} (kept)", language.id), started);
             return Restored {
-                failures: plan.failures.clone(),
+                failures: plan
+                    .failures
+                    .iter()
+                    .cloned()
+                    .chain(record.steps.iter().filter_map(|s| match &s.outcome {
+                        Outcome::StoodIn(note) => Some(RestoreFailure {
+                            project: s.project.clone(),
+                            tool: s.program.clone(),
+                            message: note.clone(),
+                        }),
+                        _ => None,
+                    }))
+                    .collect(),
                 ran: steps
                     .iter()
                     .map(|s| (label(&s.project), s.program.to_owned()))
@@ -1198,6 +1284,8 @@ mod tests {
         /// Names of the directories whose steps fail.
         failing_in: Mutex<BTreeSet<String>>,
         runs: Mutex<Vec<String>>,
+        /// Command line to the success and stderr it answers with, instead of the program's.
+        answers: Mutex<HashMap<String, (bool, String)>>,
         active: AtomicUsize,
         overlapped: AtomicBool,
     }
@@ -1220,6 +1308,10 @@ mod tests {
         fn runs(&self) -> Vec<String> {
             self.runs.lock().unwrap().clone()
         }
+
+        fn answer(&self, command: &str, ok: bool, stderr: &str) {
+            self.answers.lock().unwrap().insert(command.into(), (ok, stderr.into()));
+        }
     }
 
     impl Tools for FakeTools {
@@ -1237,12 +1329,20 @@ mod tests {
             _: Duration,
         ) -> tools::BoxFuture<'a, Result<crate::exec::Captured, String>> {
             Box::pin(async move {
-                self.runs.lock().unwrap().push(format!("{program} {}", args.join(" ")));
+                let command = format!("{program} {}", args.join(" "));
+                self.runs.lock().unwrap().push(command.clone());
                 if self.active.fetch_add(1, Ordering::SeqCst) > 0 {
                     self.overlapped.store(true, Ordering::SeqCst);
                 }
                 tokio::time::sleep(Duration::from_millis(40)).await;
                 self.active.fetch_sub(1, Ordering::SeqCst);
+                if let Some((ok, stderr)) = self.answers.lock().unwrap().get(&command) {
+                    return Ok(crate::exec::Captured {
+                        ok: *ok,
+                        stdout: String::new(),
+                        stderr: stderr.clone(),
+                    });
+                }
                 let in_failing_dir = cwd
                     .file_name()
                     .is_some_and(|dir| self.failing_in.lock().unwrap().contains(dir.to_string_lossy().as_ref()));
@@ -1544,5 +1644,78 @@ mod tests {
         assert_eq!((failure.project.as_str(), failure.tool.as_str()), ("bad", "cargo"));
         assert!(failure.message.contains("cargo fetch"), "{failure:?}");
         assert!(failure.message.contains("boom"), "{failure:?}");
+    }
+
+    const OUT_OF_SYNC: &str = "npm error code EUSAGE\nnpm error\nnpm error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync.\nnpm error Missing: x@1.0.0 from lock file\n";
+
+    #[tokio::test]
+    async fn an_npm_ci_refused_over_the_lock_file_is_replaced_by_an_install_that_keeps_the_lock_file() {
+        let (_dir, root) = kept(&[("package.json", "{}"), ("package-lock.json", "{}")]);
+        let tools = Arc::new(FakeTools::default());
+        tools.answer("npm ci --ignore-scripts", false, OUT_OF_SYNC);
+        let typescript = backend("typescript");
+
+        let restored = restorer(&tools).restore(&root, &typescript, NO_EXEC).await;
+        assert_eq!(
+            tools.runs(),
+            [
+                "npm ci --ignore-scripts",
+                "npm install --ignore-scripts --no-save --no-audit --no-fund"
+            ]
+        );
+        assert_eq!(restored.failures.len(), 1, "{restored:?}");
+        assert_eq!(restored.failures[0].tool, "npm");
+        assert!(
+            restored.failures[0]
+                .message
+                .contains("lock file out of sync with package.json"),
+            "{restored:?}"
+        );
+
+        // The kept tree is not restored again, and still says so.
+        let again = restorer(&tools).restore(&root, &typescript, NO_EXEC).await;
+        assert_eq!(tools.runs().len(), 2);
+        assert_eq!(again, restored);
+
+        // An executing restore runs the project's scripts, so its stand-in does too.
+        let (_dir, root) = kept(&[("package.json", "{}"), ("package-lock.json", "{}")]);
+        let tools = Arc::new(FakeTools::default());
+        tools.answer("npm ci", false, OUT_OF_SYNC);
+        restorer(&tools)
+            .restore(&root, &typescript, AnalysisPolicy::EXECUTING)
+            .await;
+        assert_eq!(tools.runs(), ["npm ci", "npm install --no-save --no-audit --no-fund"]);
+    }
+
+    #[tokio::test]
+    async fn an_npm_ci_that_failed_for_another_reason_is_not_replaced_and_shows_the_error_not_the_usage() {
+        let dir = tree(&[("package.json", "{}"), ("package-lock.json", "{}")]);
+        let tools = Arc::new(FakeTools::default());
+        let usage = "npm error code EUSAGE\nnpm error\nnpm error `npm ci` can only install with an existing package-lock.json\nnpm error\nnpm error Clean install a project\nnpm error\nnpm error Usage:\nnpm error npm ci\nnpm error\nnpm error Run \"npm help ci\" for more info\n";
+        tools.answer("npm ci --ignore-scripts", false, usage);
+        let restored = restorer(&tools)
+            .restore(dir.path(), &backend("typescript"), NO_EXEC)
+            .await;
+        assert_eq!(tools.runs(), ["npm ci --ignore-scripts"]);
+        let message = &restored.failures[0].message;
+        assert!(message.contains("existing package-lock.json"), "{message}");
+        assert!(!message.contains("Usage:"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn a_stand_in_that_fails_too_is_the_steps_failure() {
+        let dir = tree(&[("package.json", "{}"), ("package-lock.json", "{}")]);
+        let tools = Arc::new(FakeTools::default());
+        tools.answer("npm ci --ignore-scripts", false, OUT_OF_SYNC);
+        tools.answer(
+            "npm install --ignore-scripts --no-save --no-audit --no-fund",
+            false,
+            "npm error code E404\n",
+        );
+        let restored = restorer(&tools)
+            .restore(dir.path(), &backend("typescript"), NO_EXEC)
+            .await;
+        let message = &restored.failures[0].message;
+        assert!(message.contains("--no-save") && message.contains("E404"), "{message}");
     }
 }

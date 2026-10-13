@@ -41,6 +41,9 @@ pub(super) enum Outcome {
     },
     /// The restore output of another tree, copied.
     Copied,
+    /// The step's command refused and another one, whose arguments the record holds,
+    /// installed instead; the note says why.
+    StoodIn(String),
     /// Failed, or not run because an earlier step of the project failed.
     Failed(String),
 }
@@ -82,6 +85,7 @@ impl Record {
                 Outcome::Ran => digest.field("ran"),
                 Outcome::Linked { donor, inputs } => digest.field("linked").field(donor).field(&inputs.to_hex()),
                 Outcome::Copied => digest.field("copied"),
+                Outcome::StoodIn(note) => digest.field("stood-in").field(note),
                 Outcome::Failed(message) => digest.field("failed").field(message),
             };
         }
@@ -122,6 +126,7 @@ impl Record {
                 let outcome = match outcome.get("kind")?.as_str()? {
                     "ran" => Outcome::Ran,
                     "copied" => Outcome::Copied,
+                    "stood-in" => Outcome::StoodIn(text(outcome, "note")?),
                     "linked" => Outcome::Linked {
                         donor: text(outcome, "donor")?,
                         inputs: Hash::from_hex(&text(outcome, "inputs")?)?,
@@ -150,6 +155,7 @@ impl Record {
         let outcome = |o: &Outcome| match o {
             Outcome::Ran => json!({"kind": "ran"}),
             Outcome::Copied => json!({"kind": "copied"}),
+            Outcome::StoodIn(note) => json!({"kind": "stood-in", "note": note}),
             Outcome::Linked { donor, inputs } => json!({"kind": "linked", "donor": donor, "inputs": inputs.to_hex()}),
             Outcome::Failed(message) => json!({"kind": "failed", "message": message}),
         };

@@ -102,6 +102,66 @@ async fn npm_installs_from_the_lockfile_without_running_scripts() {
     assert!(cache.path().join("_cacache").is_dir());
 }
 
+/// A lock file that lacks a package `package.json` asks for: npm ci refuses, and the install
+/// that stands in for it adds the package and rewrites nothing. Only local packages are used.
+#[tokio::test]
+#[ignore = "needs npm"]
+async fn npm_installs_what_an_out_of_sync_lockfile_lacks_and_leaves_the_lockfile_alone() {
+    let (project, cache) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    for name in ["a", "b"] {
+        std::fs::create_dir(project.path().join(name)).unwrap();
+        write(
+            project.path(),
+            &format!("{name}/package.json"),
+            &format!(r#"{{"name":"{name}","version":"1.0.0"}}"#),
+        );
+    }
+    write(
+        project.path(),
+        "package.json",
+        r#"{"name":"p","version":"1.0.0","dependencies":{"a":"file:a"}}"#,
+    );
+    run(
+        project.path(),
+        "npm",
+        &["install", "--package-lock-only", "--ignore-scripts"],
+    );
+    write(
+        project.path(),
+        "package.json",
+        r#"{"name":"p","version":"1.0.0","dependencies":{"a":"file:a","b":"file:b"}}"#,
+    );
+    let locked = std::fs::read_to_string(project.path().join("package-lock.json")).unwrap();
+
+    let restorer = ToolRestorer::with_env(vec![
+        ("npm_config_cache".into(), cache.path().to_string_lossy().into_owned()),
+        ("npm_config_offline".into(), "true".into()),
+    ]);
+    let restored = restorer
+        .restore(project.path(), &config::typescript(), AnalysisPolicy::LIMITED)
+        .await;
+    assert_eq!(restored.failures.len(), 1, "{:?}", restored.failures);
+    assert!(
+        restored.failures[0].message.contains("lock file out of sync"),
+        "{:?}",
+        restored.failures
+    );
+    for name in ["a", "b"] {
+        assert!(
+            project
+                .path()
+                .join("node_modules")
+                .join(name)
+                .join("package.json")
+                .is_file()
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(project.path().join("package-lock.json")).unwrap(),
+        locked
+    );
+}
+
 #[tokio::test]
 #[ignore = "downloads packages; needs npm"]
 async fn an_executing_npm_restore_runs_the_install_scripts() {

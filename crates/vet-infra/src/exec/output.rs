@@ -16,15 +16,6 @@ impl Tail {
         }
     }
 
-    /// The tail of `text`.
-    pub fn of(text: &str, capacity: usize) -> Self {
-        let mut tail = Self::new(capacity);
-        for line in text.lines() {
-            tail.push(line.to_owned());
-        }
-        tail
-    }
-
     pub fn push(&mut self, line: String) {
         if line.trim().is_empty() {
             return;
@@ -69,9 +60,14 @@ mod tests {
 
     #[test]
     fn the_tail_keeps_the_last_lines_and_skips_blank_ones() {
-        let tail = Tail::of("one\n\ntwo\n   \nthree\nfour\n", 3);
+        let mut tail = Tail::new(3);
+        for line in ["one", "", "two", "   ", "three", "four"] {
+            tail.push(line.to_owned());
+        }
         assert_eq!(tail.text(), "two\nthree\nfour");
-        assert!(Tail::of("\n \n", 3).is_empty());
+        let mut blank = Tail::new(3);
+        blank.push(" ".to_owned());
+        assert!(blank.is_empty());
     }
 
     #[test]
