@@ -1,2 +1,2 @@
 export { default as PipelinesPanel } from "./PipelinesPanel.svelte";
-export { clock, headerTitle, logKey } from "./pipelineRows";
+export { belongsTo, clock, headerTitle, logKey } from "./pipelineRows";

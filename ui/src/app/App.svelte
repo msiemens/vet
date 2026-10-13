@@ -41,7 +41,7 @@
     watchDoubleShift,
   } from "../features/palette";
   import { NotificationCards, PlatformFooter, copyText } from "../features/platform";
-  import { PipelinesPanel, clock, headerTitle, logKey } from "../features/pipelines";
+  import { PipelinesPanel, belongsTo, clock, headerTitle, logKey } from "../features/pipelines";
   import { ProblemsPanel } from "../features/problems";
   import { ChangesetSwitcher, OpenPullRequestDialog, QueueScreen, queueCommands, targetLabel } from "../features/queue";
   import {
@@ -217,9 +217,9 @@
     const word = head.state === "failure" ? "failing" : head.state === "pending" ? "running" : "waiting";
     return { count, text: `${count} ${word}`, bad: head.state === "failure" };
   });
-  // The tool belongs to a pull request.
+  // The tool belongs to a pull request; while the changeset reloads there are no facts yet and it stays.
   $effect(() => {
-    if (headId === undefined && bottomTool === "pipelines") bottomTool = undefined;
+    if (!belongsTo(changeset.facts?.target.changeset.type) && bottomTool === "pipelines") bottomTool = undefined;
   });
 
   /** Where the time the pull request's Comments tool window was last open is kept; none for another changeset. */
@@ -753,11 +753,10 @@
               oninstall={() => showDialog("settings", "servers")}
               onclose={() => (bottomTool = undefined)}
             />
-          {:else if bottomTool === "pipelines" && pipelineCommit !== undefined}
+          {:else if bottomTool === "pipelines"}
             <PipelinesPanel
-              checks={checks.of(pipelineCommit)}
+              checks={pipelineCommit === undefined ? undefined : checks.of(pipelineCommit)}
               commit={pipelineCommit}
-              shortId={pipelineCommit.slice(0, 7)}
               onlog={(job, run) => void controller?.openLog(job, logKey(job, run))}
               onbrowser={browse}
               onsignin={() => showDialog("settings", "accounts")}

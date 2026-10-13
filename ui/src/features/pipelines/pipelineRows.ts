@@ -32,37 +32,9 @@ export function defaultJob(checks: CommitChecks): string | undefined {
   return (jobs.find((j) => j.state === "failure") ?? jobs.find((j) => j.phase === "running") ?? jobs.at(0))?.id;
 }
 
-export type Look = "success" | "failure" | "running" | "queued" | "cancelled" | "skipped" | "approval";
-
-/** How a job, step or run reads: its phase while it waits, runs or was stopped, else how it ended. */
-export function look(state: CheckRun["state"], phase: CheckPhase): Look {
-  if (phase === "queued") return "queued";
-  if (phase === "running") return "running";
-  if (phase === "cancelled") return "cancelled";
-  switch (state) {
-    case "success":
-      return "success";
-    case "failure":
-      return "failure";
-    case "needsApproval":
-      return "approval";
-    default:
-      return "skipped";
-  }
-}
-
-const TITLES: Record<Look, string> = {
-  success: "Passed",
-  failure: "Failed",
-  running: "Running",
-  queued: "Queued",
-  cancelled: "Cancelled",
-  skipped: "Skipped",
-  approval: "Needs approval",
-};
-
-/** What a look is called. */
-export const lookTitle = (l: Look): string => TITLES[l];
+/** Whether the tool stays open for a changeset of this kind; one that is still loading (none yet) keeps it. */
+export const belongsTo = (changesetType: string | undefined): boolean =>
+  changesetType === undefined || changesetType === "pullRequest";
 
 /** A run or job that is not going to change by itself. */
 export const finished = (phase: CheckPhase) => phase === "finished" || phase === "cancelled";

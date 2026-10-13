@@ -6,9 +6,11 @@
   import type { CheckRun } from "../../generated/CheckRun";
   import type { CommitChecks } from "../../generated/CommitChecks";
   import type { Pipeline } from "../../generated/Pipeline";
+  import { phaseLook } from "../../lib/ciStatus";
   import { platformName } from "../../lib/platformName";
   import Banner from "../../lib/ui/Banner.svelte";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
+  import CiStatus from "../../lib/ui/CiStatus.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import Table from "../../lib/ui/Table.svelte";
@@ -19,15 +21,12 @@
   import { pipelines } from "../../state/pipelines.svelte";
   import { platform } from "../../state/platform.svelte";
   import { durationText } from "../checks";
-  import StateIcon from "./StateIcon.svelte";
   import {
     type ActionKind,
     clock,
     defaultJob,
     disabledReason,
     finished,
-    look,
-    lookTitle,
     rerunnable,
     runMeta,
     runOf,
@@ -37,7 +36,6 @@
   let {
     checks,
     commit,
-    shortId,
     onlog,
     onbrowser,
     onsignin,
@@ -46,9 +44,8 @@
   }: {
     /** The checks of the commit on view; none until the platform has answered. */
     checks?: CommitChecks;
-    /** The full id of that commit. */
-    commit: string;
-    shortId: string;
+    /** The full id of that commit; none while the changeset loads. */
+    commit?: string;
     /** Opens the log of a finished job in a tab. */
     onlog: (job: CheckRun, run: Pipeline | undefined) => void;
     /** Shows the page of the commit's checks on the platform. */
@@ -158,11 +155,11 @@
     disabledReason(kind, { run: acting, jobs: actingJobs, held, busy: pipelines.busy });
 
   function act(kind: ActionKind) {
-    if (acting) void pipelines.act({ type: kind, run: acting.id }, commit, account);
+    if (acting && commit) void pipelines.act({ type: kind, run: acting.id }, commit, account);
   }
 
   function rerunJob(check: CheckRun) {
-    void pipelines.act({ type: "rerunJob", check: check.id }, commit, account);
+    if (commit) void pipelines.act({ type: "rerunJob", check: check.id }, commit, account);
   }
 
   /** Why the job's log cannot be opened, if it cannot. */
@@ -180,7 +177,7 @@
 <section aria-label="Pipelines" tabindex="-1">
   <BottomToolHeader title="Pipelines" count={checks?.pipelines.length} {onclose}>
     {#snippet controls()}
-      <span class="mono commit" title="The commit these runs belong to">{shortId}</span>
+      <span class="mono commit" title="The commit these runs belong to">{commit?.slice(0, 7) ?? ""}</span>
       <span class="sep"></span>
       {#if words}
         {@render action("rerunFailed", words.rerunFailed, "reconfirm")}
@@ -197,7 +194,7 @@
       {/if}
       {#if checks?.url}
         {@const url = checks.url}
-        <IconButton icon="link" label="Open in browser" size={22} iconSize={13} onclick={() => onbrowser(url)} />
+        <IconButton icon="external" label="Open in browser" size={22} iconSize={13} onclick={() => onbrowser(url)} />
       {/if}
     {/snippet}
   </BottomToolHeader>
@@ -251,7 +248,7 @@
                   title={group.run.name}
                   onclick={(e) => nav.click(e, index)}
                 >
-                  {#snippet glyph()}<StateIcon state={group.run.state} phase={group.run.phase} />{/snippet}
+                  {#snippet glyph()}<CiStatus state={group.run.state} phase={group.run.phase} size={12} />{/snippet}
                   {group.run.name}<span class="mono meta">{runMeta(group.run)}</span>
                 </TreeRow>
                 <span></span>
@@ -269,7 +266,7 @@
                   title={item.job.name}
                   onclick={(e) => nav.click(e, index)}
                 >
-                  {#snippet glyph()}<StateIcon state={item.job.state} phase={item.job.phase} />{/snippet}
+                  {#snippet glyph()}<CiStatus state={item.job.state} phase={item.job.phase} size={12} />{/snippet}
                   {item.job.name}
                 </TreeRow>
                 <span class="act">
@@ -290,7 +287,7 @@
             {:else}
               <div class="row" role="treeitem" aria-selected="false">
                 <TreeRow tone="plain" cur={cursor === index} title={item.job.name}>
-                  {#snippet glyph()}<StateIcon state={item.job.state} phase={item.job.phase} />{/snippet}
+                  {#snippet glyph()}<CiStatus state={item.job.state} phase={item.job.phase} size={12} />{/snippet}
                   {item.job.name}<span class="mono meta">status from a service</span>
                 </TreeRow>
                 <span></span>
@@ -303,10 +300,10 @@
       <div class="detail">
         {#if chosen}
           <div class="head">
-            <StateIcon state={chosen.state} phase={chosen.phase} />
+            <CiStatus state={chosen.state} phase={chosen.phase} size={12} />
             <b class="job">{chosen.name}</b>
             <span class="mono sub"
-              >{chosenRun?.name} · {lookTitle(look(chosen.state, chosen.phase)).toLowerCase()}{timeOf(chosen)
+              >{chosenRun?.name} · {phaseLook(chosen.state, chosen.phase).title.toLowerCase()}{timeOf(chosen)
                 ? ` · ${timeOf(chosen)}`
                 : ""}</span
             >
@@ -341,7 +338,8 @@
               {#each pipelines.steps.steps as step, index (index)}
                 <div class="row step" class:failing={step.state === "failure"}>
                   <span class="stepname"
-                    ><StateIcon state={step.state} phase={step.phase} /><span class="label">{step.name}</span></span
+                    ><CiStatus state={step.state} phase={step.phase} size={12} /><span class="label">{step.name}</span
+                    ></span
                   >
                   <span class="mono time"
                     >{step.phase === "running"

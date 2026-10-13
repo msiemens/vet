@@ -4,11 +4,11 @@ import type { CheckRun } from "../../generated/CheckRun.ts";
 import type { CommitChecks } from "../../generated/CommitChecks.ts";
 import type { Pipeline } from "../../generated/Pipeline.ts";
 import {
+  belongsTo,
   defaultJob,
   disabledReason,
   headerTitle,
   logKey,
-  look,
   rerunnable,
   runMeta,
   runOf,
@@ -97,14 +97,10 @@ void test("a job is re-run on its own when it failed or was stopped and its run 
   assert.equal(rerunnable(job("1", { state: "failure" }), undefined), false);
 });
 
-void test("a job reads by how far it has come before how it ended", () => {
-  assert.equal(look("pending", "queued"), "queued");
-  assert.equal(look("pending", "running"), "running");
-  assert.equal(look("neutral", "cancelled"), "cancelled");
-  assert.equal(look("success", "finished"), "success");
-  assert.equal(look("failure", "finished"), "failure");
-  assert.equal(look("needsApproval", "finished"), "approval");
-  assert.equal(look("skipped", "finished"), "skipped");
+void test("the tool stays for a pull request and while the changeset loads, and goes for any other", () => {
+  assert.equal(belongsTo("pullRequest"), true);
+  assert.equal(belongsTo(undefined), true);
+  assert.equal(belongsTo("workingTree"), false);
 });
 
 void test("the button's tooltip names what failed, and says the result is old while the platform limits requests", () => {
