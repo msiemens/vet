@@ -40,7 +40,7 @@
   {/if}
   <PostingControls {info} part="vote" disabled={blocked !== undefined} />
   {#if blocked}
-    <button class="flat link" type="button" onclick={() => commands.run("app.accounts")}>Sign in…</button>
+    <button class="link" type="button" onclick={() => commands.run("app.accounts")}>Sign in…</button>
   {/if}
   {#if info.traits.batchedReview && form.open && !blocked}
     <div class="form">
@@ -67,10 +67,6 @@
   .n {
     margin-left: 6px;
     font-family: var(--font-mono);
-  }
-  .link {
-    color: var(--accent);
-    font-size: var(--fs-ctl);
   }
   .form {
     flex: 1 0 100%;

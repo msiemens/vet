@@ -25,7 +25,7 @@
   <span class="meta">{row.meta ?? ""}</span>
   {#if row.action}
     {@const action = row.action}
-    <button class="flat link" type="button" onclick={() => onact(action)}>{action.label}</button>
+    <button class="link" type="button" onclick={() => onact(action)}>{action.label}</button>
   {:else}
     <span></span>
   {/if}
@@ -44,7 +44,7 @@
             {#if panel.count !== undefined}<span class="mono n">{panel.count}</span>{/if}
             {#if panel.link}
               {@const link = panel.link}
-              <button class="flat link end" type="button" onclick={() => onact(link)}>{link.label}</button>
+              <button class="link end" type="button" onclick={() => onact(link)}>{link.label}</button>
             {/if}
           </div>
         {/if}
@@ -198,12 +198,6 @@
     margin-right: 6px;
     border-radius: 50%;
     background: var(--ok);
-  }
-  .link {
-    padding: 0 6px;
-    height: 20px;
-    color: var(--accent);
-    white-space: nowrap;
   }
   .actions {
     display: flex;

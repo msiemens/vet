@@ -167,7 +167,7 @@
           <div class="send">
             <span class="where-to">{destination(info)}</span>
             {#if blocked}
-              <button class="flat link" type="button" onclick={() => commands.run("app.accounts")}>Sign in…</button>
+              <button class="link" type="button" onclick={() => commands.run("app.accounts")}>Sign in…</button>
             {/if}
             <button
               class="ctl primary"
@@ -280,8 +280,5 @@
   .where-to {
     flex: 1;
     color: var(--text-3);
-  }
-  .link {
-    color: var(--accent);
   }
 </style>

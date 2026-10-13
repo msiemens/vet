@@ -664,17 +664,6 @@
     height: 100%;
     background: var(--accent);
   }
-  .link {
-    padding: 0;
-    border: 0;
-    background: none;
-    font: inherit;
-    color: var(--accent);
-    cursor: default;
-  }
-  .link:hover {
-    text-decoration: underline;
-  }
   .body {
     flex: 1;
     min-height: 0;

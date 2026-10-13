@@ -64,15 +64,4 @@
     color: var(--text-3);
     font-size: var(--fs-mono-s);
   }
-  .link {
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--accent);
-    font: inherit;
-    cursor: pointer;
-  }
-  .link:hover {
-    text-decoration: underline;
-  }
 </style>

@@ -132,6 +132,25 @@ button {
   background: var(--toggle-press);
 }
 
+/* `.link`: an action in a line of text, drawn as text; underlined on hover, with no hover background. */
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  white-space: nowrap;
+}
+.link:enabled:is(:hover, :active) {
+  background: transparent;
+}
+.link:enabled:hover {
+  text-decoration: underline;
+}
+
 .ctl.primary {
   border-color: var(--primary);
   background: var(--primary);

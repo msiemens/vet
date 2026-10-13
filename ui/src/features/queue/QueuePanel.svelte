@@ -189,7 +189,7 @@
                   {#if reason.protection}
                     <span class="part">
                       Blocked by branch protection ·
-                      <button class="flat link" type="button" onclick={openInBrowser}
+                      <button class="link" type="button" onclick={openInBrowser}
                         >Open on {platformName(kind ?? "github")} <Icon name="external" size={11} /></button
                       >
                     </span>
@@ -210,7 +210,7 @@
                 }}
               ></div>
               {#if !descriptionAll && needsShowAll(description)}
-                <button class="flat link small" type="button" onclick={() => (descriptionAll = true)}>Show all</button>
+                <button class="link small" type="button" onclick={() => (descriptionAll = true)}>Show all</button>
               {/if}
             </div>
           {/snippet}
@@ -241,7 +241,7 @@
             {#if summary.oldBaseNote}
               <div class="line top">
                 <span class="stripes"></span>
-                <button class="flat link note" type="button" onclick={onbasechanged}>{summary.oldBaseNote}</button>
+                <button class="link wrap" type="button" onclick={onbasechanged}>{summary.oldBaseNote}</button>
               </div>
             {/if}
           </div>
@@ -362,16 +362,7 @@
   .part b {
     font-weight: 600;
   }
-  .link {
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    color: var(--accent);
-    font: inherit;
-    white-space: nowrap;
-  }
-  .link.note {
+  .link.wrap {
     white-space: normal;
     text-align: left;
   }

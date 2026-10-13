@@ -356,15 +356,6 @@
     color: var(--text-3);
     font-size: var(--fs-ctl);
   }
-  .link {
-    padding: 0;
-    border: 0;
-    background: transparent;
-    color: var(--accent);
-    font: inherit;
-    text-decoration: underline;
-    cursor: pointer;
-  }
   .empty {
     margin: 12px 16px;
     color: var(--text-3);
