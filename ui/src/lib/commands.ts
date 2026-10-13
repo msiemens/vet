@@ -17,6 +17,8 @@ export interface Command<C> {
   binding?: string;
   /** The default key on macOS, where the platform's habit differs from `binding`. */
   macBinding?: string;
+  /** Further keys that run it on every platform; a binding the viewer sets replaces them as it does the default. */
+  alsoBindings?: string[];
   /** Key the native menu bar shows and handles itself, where the window's own binding is not used. */
   accelerator?: string;
   /** Also runs while a text field has the focus; otherwise its key belongs to the field. */
@@ -127,8 +129,11 @@ export class CommandRegistry<C extends object> {
   private rebind() {
     this.bound = [];
     for (const command of this.commands.values()) {
-      const spec = command.id in this.overrides ? this.overrides[command.id] : this.defaultSpec(command);
-      if (spec) this.bound.push({ binding: bindingOf(spec, this.mod), command });
+      const overridden = command.id in this.overrides;
+      const specs = overridden
+        ? [this.overrides[command.id]]
+        : [this.defaultSpec(command), ...(command.alsoBindings ?? [])];
+      for (const spec of specs) if (spec) this.bound.push({ binding: bindingOf(spec, this.mod), command });
     }
     this.signal?.write();
   }

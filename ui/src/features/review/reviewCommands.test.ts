@@ -385,6 +385,30 @@ void test("Previous and Next Tab are Alt+Left and Alt+Right on Windows and â‡§âŒ
   assert.deepEqual(calls, []);
 });
 
+void test("Ctrl+PageUp and Ctrl+PageDown step the tabs on every platform and give way to a binding the viewer sets", () => {
+  const ctrlPageUp = () => key({ key: "PageUp", code: "PageUp", ctrlKey: true });
+  const ctrlPageDown = () => key({ key: "PageDown", code: "PageDown", ctrlKey: true });
+  const plainPageDown = key({ key: "PageDown", code: "PageDown" });
+
+  for (const mod of ["Ctrl", "Meta"] as const) {
+    const registry = setup({ tabCount: 3 }, mod);
+    assert.equal(registry.dispatch(ctrlPageUp()), true);
+    assert.equal(registry.dispatch(ctrlPageDown()), true);
+    assert.equal(registry.dispatch(plainPageDown), false);
+    assert.deepEqual(calls, ["tab -1", "tab 1"]);
+  }
+
+  const alone = ctrlPageDown();
+  assert.equal(setup({ tabCount: 1 }).dispatch(alone), false);
+  assert.equal(alone.prevented, false);
+
+  const rebound = setup({ tabCount: 3 });
+  rebound.setBindings({ "tab.next": "Ctrl-Alt-n" });
+  assert.equal(rebound.dispatch(ctrlPageDown()), false);
+  assert.equal(rebound.dispatch(key({ key: "n", code: "KeyN", ctrlKey: true, altKey: true })), true);
+  assert.deepEqual(calls, ["tab 1"]);
+});
+
 void test("a view mode is available where the active tab offers it, and says why not otherwise", () => {
   const changed = setup({ tab: "file:a.rs", viewModes: ["unified", "split", "file"] });
   for (const mode of ["unified", "split", "file"]) assert.equal(changed.run(`view.mode.${mode}`), true);
