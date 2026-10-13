@@ -7,6 +7,7 @@
   import type { Unavailable } from "../../generated/Unavailable";
   import { limitedMessage, onlyStoodIn } from "../chrome";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
+  import FilterField from "../../lib/ui/FilterField.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
@@ -360,18 +361,7 @@
         ]}
       />
       <span class="grow"></span>
-      <label class="find">
-        <Icon name="search" size={13} />
-        <input
-          bind:this={field}
-          bind:value={filters.query}
-          type="text"
-          placeholder="Filter"
-          aria-label="Filter problems"
-          spellcheck="false"
-          {onkeydown}
-        />
-      </label>
+      <FilterField bind:input={field} bind:value={filters.query} label="Filter problems" {onkeydown} />
       <Popover align="right">
         {#snippet trigger(toggle)}
           <button
@@ -648,32 +638,6 @@
   }
   .chip[aria-pressed="false"]:hover {
     opacity: 0.9;
-  }
-  .find {
-    position: relative;
-    flex: 0 1 150px;
-    min-width: 80px;
-    display: inline-flex;
-    align-items: center;
-    color: var(--text-3);
-  }
-  .find :global(svg) {
-    position: absolute;
-    left: 6px;
-    pointer-events: none;
-  }
-  .find input {
-    height: 22px;
-    width: 100%;
-    min-width: 0;
-    box-sizing: border-box;
-    padding: 0 6px 0 24px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--bg-control);
-    color: var(--text);
-    font: inherit;
-    font-size: 12px;
   }
   .menu {
     width: 22px;

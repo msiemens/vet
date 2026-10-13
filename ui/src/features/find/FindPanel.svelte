@@ -7,6 +7,7 @@
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
+  import FilterField from "../../lib/ui/FilterField.svelte";
   import Banner from "../../lib/ui/Banner.svelte";
   import Chip from "../../lib/ui/Chip.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -235,18 +236,7 @@
           {#if set.commit}<Icon name="commit" size={12} />{/if}
           <span class:mono={set.commit}>{chipLabel(set)}</span>
         </span>
-        <label class="filter">
-          <Icon name="search" size={13} />
-          <input
-            bind:this={field}
-            bind:value={set.filters.query}
-            type="text"
-            placeholder="Filter"
-            aria-label="Filter results"
-            spellcheck="false"
-            {onkeydown}
-          />
-        </label>
+        <FilterField bind:input={field} bind:value={set.filters.query} label="Filter results" {onkeydown} />
         <IconButton
           icon="preview"
           label="Preview of the code"
@@ -496,29 +486,6 @@
     color: var(--text-3);
     font-size: 11.5px;
     white-space: nowrap;
-  }
-  .filter {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    color: var(--text-3);
-  }
-  .filter :global(svg) {
-    position: absolute;
-    left: 6px;
-    pointer-events: none;
-  }
-  .filter input {
-    height: 22px;
-    width: 130px;
-    box-sizing: border-box;
-    padding: 0 6px 0 24px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--bg-control);
-    color: var(--text);
-    font: inherit;
-    font-size: 12px;
   }
   .main {
     flex: 1;
