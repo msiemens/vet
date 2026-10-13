@@ -18,6 +18,7 @@
   import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
+  import { ListNav } from "../../lib/ui/listNav";
   import Menu from "../../lib/ui/Menu.svelte";
   import type { MenuItem } from "../../lib/ui/menuItem";
   import OpenInFindButton from "../../lib/ui/OpenInFindButton.svelte";
@@ -44,7 +45,6 @@
     rowKey,
     scopeChoices,
     selectedRow,
-    stepLine,
     viewScopeId,
   } from "./searchModel";
 
@@ -74,6 +74,8 @@
 
   /** The most matches a search lists. */
   const LIMIT = 1000;
+  /** The keys that move the highlight, which a focused button leaves to the list. */
+  const MOVES = ["ArrowDown", "ArrowUp", "PageDown", "PageUp"];
   const find = findInFiles;
 
   let commits = $state<{ shortId: string; subject: string; id: string }[]>([]);
@@ -215,16 +217,24 @@
     const row = rows.at(index);
     if (row?.kind !== "line") return;
     find.selected = resultId(row.file.path, row.lineIndex);
+    // The first result of a file shows its header too.
     list?.reveal(index);
+    if (rows[index - 1]?.kind === "file") list?.reveal(index - 1);
   }
 
-  function move(delta: 1 | -1) {
-    const to = stepLine(rows, at, delta);
-    if (to === undefined) return;
-    // Up from the first result still shows its file's header.
-    select(to);
-    if (delta < 0 && rows[to - 1]?.kind === "file") list?.reveal(to - 1);
-  }
+  /** The indices of the rows that are results; the file headers are no stops. */
+  const lines = $derived(rows.flatMap((r, i) => (r.kind === "line" ? [i] : [])));
+  const nav = new ListNav<number>({
+    items: () => lines,
+    single: (i) => open(rows[i], false),
+    highlight: {
+      get: () => lines.indexOf(at),
+      set: (n) => {
+        if (n >= 0) select(lines[n]);
+      },
+    },
+    field: true,
+  });
 
   const toggleFile = (path: string) => toggleIn(collapsed, path);
 
@@ -310,16 +320,15 @@
       return;
     }
     if (target.closest(".mask")) return;
-    if (target.closest("button, [role=menuitem], [role=menuitemradio]") && e.key !== "ArrowDown" && e.key !== "ArrowUp")
+    const onControl = target.closest("button, [role=menuitem], [role=menuitemradio]") !== null;
+    if (e.key === "Enter" && e.altKey && !e.ctrlKey && !e.metaKey && !onControl) {
+      e.preventDefault();
+      open(current, true);
       return;
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      if (target.closest("[role=menu]")) return;
-      e.preventDefault();
-      move(e.key === "ArrowDown" ? 1 : -1);
-    } else if (e.key === "Enter" && current) {
-      e.preventDefault();
-      open(current, e.altKey);
     }
+    if (onControl && !MOVES.includes(e.key)) return;
+    if (target.closest("[role=menu]")) return;
+    if (nav.keydown(e)) e.preventDefault();
   }
 
   /** The 1-based number of a result's line. */
