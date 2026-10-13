@@ -66,6 +66,17 @@ void test("a file's text is restored whether or not the changeset changes the fi
   assert.equal(active, "file:lib.rs");
 });
 
+void test("a tab that stays at a commit comes back whatever the changeset changes, and survives storage", () => {
+  const pinned = `pin:${"c".repeat(40)}:gone.rs`;
+  const view = saved(["changes", pinned], pinned, { [pinned]: "unified" });
+  const { open, active } = restoredTabs(view, changed(), "unified", noLogs);
+  assert.deepEqual(open, ["changes", pinned]);
+  assert.equal(active, pinned);
+  const storage = fakeStorage();
+  new ViewMemory("/repo", storage).set("k", view);
+  assert.deepEqual(new ViewMemory("/repo", storage).get("k")?.open, ["changes", pinned]);
+});
+
 void test("a log tab is restored only while its log is held", () => {
   const view = saved(["changes", "log:7", "log:8"], "log:7");
   const { open } = restoredTabs(view, changed(), "unified", (tab) => tab === "log:8");

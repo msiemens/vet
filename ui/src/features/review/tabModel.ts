@@ -1,32 +1,52 @@
-// What a tab is: its identity and its view mode. A file has one tab, whatever it shows of the file;
-// the view mode (a diff in a mode, or the file's text) is the tab's state.
+// What a tab is: its identity and its view mode. A file has one tab per commit it is opened at (and
+// one that is at no commit), whatever it shows of the file; the view mode (a diff in a mode, or the
+// file's text) is the tab's state.
 
 import type { TabKind } from "../../state/commands.ts";
 import type { Mode, ViewMode } from "../../lib/viewMode.ts";
 
-export type TabId = "changes" | `file:${string}` | `log:${string}`;
+/** `pin:<commit id>:<path>` is a file's tab that stays at a commit. */
+export type TabId = "changes" | `file:${string}` | `pin:${string}` | `log:${string}`;
 
 export const CHANGES: TabId = "changes";
 
-export const fileTab = (path: string): TabId => `file:${path}`;
+/** The tab of a file; with `commit` (a full id), the one that stays at that commit. */
+export const fileTab = (path: string, commit?: string): TabId =>
+  commit === undefined ? `file:${path}` : `pin:${commit}:${path}`;
 /** The tab of the log of the check run `run`. */
 export const logTab = (run: string): TabId => `log:${run}`;
 
 /** The tab of a kind (and, but for the Changes tab, what it shows: a file, or a check run for a log). */
-export const tabOf = (kind: TabKind, subject?: string): TabId =>
-  kind === "changes" || subject === undefined ? CHANGES : kind === "file" ? fileTab(subject) : logTab(subject);
+export const tabOf = (kind: TabKind, subject?: string, commit?: string): TabId =>
+  kind === "changes" || subject === undefined ? CHANGES : kind === "file" ? fileTab(subject, commit) : logTab(subject);
 
-export const kindOf = (id: TabId): TabKind => (id === CHANGES ? "changes" : id.startsWith("file:") ? "file" : "log");
+export const isFileTab = (id: TabId): boolean => id.startsWith("file:") || id.startsWith("pin:");
+
+export const kindOf = (id: TabId): TabKind => (id === CHANGES ? "changes" : isFileTab(id) ? "file" : "log");
 
 /** The tab can show the changeset's diff: the Changes tab, or one file's. */
 export const hasDiff = (id: TabId): boolean => kindOf(id) !== "log";
 
 /** The path of a file tab; `undefined` for the Changes tab and a log. */
-export const pathOf = (id: TabId): string | undefined => (kindOf(id) === "file" ? subjectOf(id) : undefined);
+export const pathOf = (id: TabId): string | undefined => {
+  if (id.startsWith("file:")) return id.slice("file:".length);
+  if (id.startsWith("pin:")) return id.slice(id.indexOf(":", "pin:".length) + 1);
+  return undefined;
+};
+
+/** The full id of the commit a file tab stays at; none for any other tab. */
+export const commitOf = (id: TabId): string | undefined =>
+  id.startsWith("pin:") ? id.slice("pin:".length, id.indexOf(":", "pin:".length)) : undefined;
 
 /** What a tab shows, to name it to `tabOf`: the path of a file tab, the run of a log; none for the Changes tab. */
 export const subjectOf = (id: TabId): string | undefined =>
-  id === CHANGES ? undefined : id.slice(id.indexOf(":") + 1);
+  id === CHANGES ? undefined : (pathOf(id) ?? id.slice(id.indexOf(":") + 1));
+
+/** Whether the file of the pinned tab `id` is open in another tab too, so its commit has to be told apart by name. */
+export const needsCommitName = (open: readonly TabId[], id: TabId): boolean => {
+  const path = pathOf(id);
+  return commitOf(id) !== undefined && open.some((other) => other !== id && pathOf(other) === path);
+};
 
 /** The view modes a tab offers: the Changes tab and a changed file's show a diff; any file's tab shows its text. */
 export function modesOf(kind: TabKind, changed: boolean): ViewMode[] {

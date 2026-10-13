@@ -56,9 +56,10 @@ export interface CommandContext {
   manyCommits?: boolean;
   /**
    * The tab commands apply to: the active one, or the one a tab's context menu was opened on. `path`
-   * is what the tab shows: a file's path, or for a log tab the check run it is the log of.
+   * is what the tab shows: a file's path, or for a log tab the check run it is the log of; `commit`
+   * is the full id of the commit a file's tab stays at.
    */
-  tab?: { kind: TabKind; path?: string };
+  tab?: { kind: TabKind; path?: string; commit?: string };
   /** How many tabs are open. */
   tabCount?: number;
   /** What the active tab shows: a diff in a mode, or a file's text; none for a log. */

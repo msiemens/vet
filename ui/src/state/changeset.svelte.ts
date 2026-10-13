@@ -37,12 +37,10 @@ import {
 import { ReviewOrder } from "./reviewOrder";
 import { type ReviewSource, type WriteListener } from "./reviewSource";
 import { session } from "./session.svelte";
-import { type Shown, isCurrent } from "./shown";
+import { STALE_NOTICE, type Shown, isCurrent } from "./shown";
 import { type Range, followed, rangeKey, rangeView } from "./timelineRange";
 import { CHANGESET, commitView } from "./view";
 
-/** Said when a request is refused or rejected because the views it came from are about to be replaced. */
-const STALE_NOTICE = "Changes arrived — try again";
 /** What happens to the changeset on view: another is asked for, announced to be fetched, or the ask came to nothing. */
 export type Opening = { type: "requested" } | { type: "opened"; changeset: ChangesetKey } | { type: "unannounced" };
 

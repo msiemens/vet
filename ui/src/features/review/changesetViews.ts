@@ -5,7 +5,7 @@
 import { readStored, writeStored } from "../../lib/storage.ts";
 import type { Mode, ViewMode } from "../../lib/viewMode.ts";
 import type { HunkAnchor, PanePosition, ScrollPosition } from "./editor/ChangesetView.ts";
-import { CHANGES, type TabId, isStale, kindOf } from "./tabModel.ts";
+import { CHANGES, type TabId, commitOf, isFileTab, isStale, kindOf } from "./tabModel.ts";
 
 /** The two panes of a file tab: its diff and its text each keep their own position. */
 export interface FilePositions {
@@ -29,8 +29,9 @@ export interface SavedView {
 /**
  * The tabs a changeset comes back with: those it had that still have something to show (see
  * `isStale`; `changed` says which files the changeset changes; `hasLog` which logs are still
- * held), the Changes tab first, and the one that was active unless it is gone. A changeset seen
- * for the first time has the Changes tab alone, in the diff mode `diffMode`.
+ * held), the Changes tab first, and the one that was active unless it is gone. A tab that stays
+ * at a commit is kept: only the commit's own view can say whether it has anything left. A
+ * changeset seen for the first time has the Changes tab alone, in the diff mode `diffMode`.
  */
 export function restoredTabs(
   saved: SavedView | undefined,
@@ -39,7 +40,10 @@ export function restoredTabs(
   hasLog: (tab: TabId) => boolean,
 ) {
   const open = saved
-    ? saved.open.filter((tab) => (kindOf(tab) === "log" ? hasLog(tab) : !isStale(tab, saved.modes.get(tab), changed)))
+    ? saved.open.filter((tab) => {
+        if (kindOf(tab) === "log") return hasLog(tab);
+        return commitOf(tab) !== undefined || !isStale(tab, saved.modes.get(tab), changed);
+      })
     : [CHANGES];
   const active = saved && open.includes(saved.active) ? saved.active : CHANGES;
   const modes = new Map<TabId, ViewMode>();
@@ -53,7 +57,7 @@ export function restoredTabs(
 const VIEW_MODES: readonly unknown[] = ["unified", "split", "file"];
 
 const isLine = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
-const isTab = (v: unknown): v is TabId => v === CHANGES || (typeof v === "string" && v.startsWith("file:"));
+const isTab = (v: unknown): v is TabId => v === CHANGES || (typeof v === "string" && isFileTab(v as TabId));
 const record = (v: unknown): Record<string, unknown> | undefined =>
   typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
 

@@ -6,27 +6,38 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import Tab from "../../lib/ui/Tab.svelte";
   import { commands } from "../../state/commands";
-  import { type TabId, kindOf, pathOf, scrollToReveal, subjectOf } from "./tabModel";
+  import { type TabId, commitOf, kindOf, needsCommitName, pathOf, scrollToReveal, subjectOf } from "./tabModel";
   import type { Tabs } from "./Tabs.svelte";
 
   /**
    * `files` are the ones the first tab lists, or the commit's, which the first tab then names by its hash and
-   * subject; `onmenu` opens the context menu of a tab.
+   * subject; `unitOf` is the commit a file tab stays at, once it is read; `onmenu` opens the context menu of a tab.
    */
   let {
     tabs,
     files,
     commit,
+    unitOf,
     onmenu,
   }: {
     tabs: Tabs;
     files: readonly FileLayout[];
     commit?: CommitUnit;
+    unitOf: (id: TabId) => CommitUnit | undefined;
     onmenu: (id: TabId, x: number, y: number) => void;
   } = $props();
 
   /** Closing a tab is the Close Tab command, with the tab as its subject. */
-  const closing = (id: TabId) => commands.context({ tab: { kind: kindOf(id), path: subjectOf(id) } });
+  const closing = (id: TabId) =>
+    commands.context({ tab: { kind: kindOf(id), path: subjectOf(id), commit: commitOf(id) } });
+
+  /** What a file tab's tooltip says: the path, and for a tab at a commit the commit in full. */
+  function titleOf(id: TabId, path: string): string {
+    const at = commitOf(id);
+    if (at === undefined) return path;
+    const subject = unitOf(id)?.commit.subject;
+    return `${path}\nAs of ${at}${subject === undefined ? "" : ` ${subject}`}`;
+  }
 
   let strip: HTMLElement | undefined = $state();
 
@@ -58,7 +69,13 @@
     {@const subject = closing(id)}
     <Tab
       selected={tabs.active === id}
-      title={log ? (log.hint ?? log.title) : (path ?? (commit ? commit.commit.subject : "Every changed file"))}
+      title={log
+        ? (log.hint ?? log.title)
+        : path !== undefined
+          ? titleOf(id, path)
+          : commit
+            ? commit.commit.subject
+            : "Every changed file"}
       onselect={() => (tabs.active = id)}
       onclose={commands.isEnabled("tab.close", subject) ? () => commands.run("tab.close", subject) : undefined}
       closeLabel={tabs.active === id ? commands.tooltip("tab.close") : commands.label("tab.close")}
@@ -74,8 +91,18 @@
       {:else if path === undefined}
         All changes <span class="count">{files.length}</span>
       {:else}
+        {@const at = commitOf(id)}
         <FileIcon name={basename(path)} />
         {basename(path)}
+        {#if at !== undefined}
+          {@const unit = unitOf(id)}
+          <span class="at">
+            <Icon name={unit?.kind.type === "merge" ? "merge" : "commit"} size={12} />
+            {#if needsCommitName(tabs.open, id)}
+              <span class="mono">{unit?.commit.shortId ?? at.slice(0, 7)}</span>
+            {/if}
+          </span>
+        {/if}
       {/if}
     </Tab>
   {/each}
@@ -96,6 +123,16 @@
   .hash {
     margin: 0 6px 0 4px;
     color: var(--text-2);
+  }
+  .at {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--accent);
+  }
+  .at .mono {
+    color: var(--text-2);
+    font-size: var(--fs-mono-s);
   }
   .subject {
     max-width: 320px;

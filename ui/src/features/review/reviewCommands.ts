@@ -212,9 +212,9 @@ export interface FileActions {
   reviewOnly(path: string): void;
   /** Marks every changed file below the folder seen, or takes every mark back. */
   setFolderSeen(path: string, seen: boolean): void;
-  closeTab(kind: Exclude<TabKind, "changes">, path: string): void;
+  closeTab(kind: Exclude<TabKind, "changes">, path: string, commit?: string): void;
   /** Closes every tab but the Changes tab and this one, which gets the focus. */
-  closeOtherTabs(kind: TabKind, path?: string): void;
+  closeOtherTabs(kind: TabKind, path?: string, commit?: string): void;
   /** Focuses the tab `delta` places from the active one, wrapping around. */
   stepTab(delta: number): void;
   /** Shows the file the review is at in the file tree; answers whether a tree is there to show it. */
@@ -285,7 +285,7 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
       disabledReason: (c) => (c.tab ? "The Changes tab cannot be closed" : "No tab is open"),
       run: (c) => {
         if (!c.tab || c.tab.kind === "changes" || c.tab.path === undefined) return false;
-        a.closeTab(c.tab.kind, c.tab.path);
+        a.closeTab(c.tab.kind, c.tab.path, c.tab.commit);
       },
     },
     {
@@ -296,7 +296,7 @@ export function fileCommands(a: FileActions): Command<CommandContext>[] {
       disabledReason: () => "No other tab can be closed",
       run: (c) => {
         if (!c.tab) return false;
-        a.closeOtherTabs(c.tab.kind, c.tab.path);
+        a.closeOtherTabs(c.tab.kind, c.tab.path, c.tab.commit);
       },
     },
     {

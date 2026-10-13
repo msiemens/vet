@@ -28,9 +28,9 @@ export class Tabs {
     this.modes.set(CHANGES, changesMode);
   }
 
-  /** Opens the file's tab if needed, sets its view mode and focuses it. */
-  showFile(path: string, mode: ViewMode) {
-    const id = fileTab(path);
+  /** Opens the file's tab (the one at `commit`, a full id, if given) if needed, sets its view mode and focuses it. */
+  showFile(path: string, mode: ViewMode, commit?: string) {
+    const id = fileTab(path, commit);
     this.modes.set(id, mode);
     this.focus(id);
   }
@@ -68,8 +68,8 @@ export class Tabs {
     this.active = id;
   }
 
-  /** Closes the tabs that show a diff of a file `changed` no longer reports. */
-  dropStale(changed: (path: string) => boolean) {
-    for (const id of [...this.open]) if (isStale(id, this.modes.get(id), changed)) this.close(id);
+  /** Closes the tabs that show a diff of a file `changed` no longer reports in the tab's view. */
+  dropStale(changed: (id: TabId, path: string) => boolean) {
+    for (const id of [...this.open]) if (isStale(id, this.modes.get(id), (path) => changed(id, path))) this.close(id);
   }
 }

@@ -31,7 +31,8 @@
   import CommitHeader from "./CommitHeader.svelte";
   import { exposeRendered } from "./devHook";
   import type { SymbolRow } from "./symbolRows";
-  import { CHANGES, kindOf, pathOf, subjectOf, tabOf } from "./tabModel";
+  import CommitStrip from "./CommitStrip.svelte";
+  import { CHANGES, commitOf, kindOf, pathOf, subjectOf, tabOf } from "./tabModel";
   import TabStrip from "./TabStrip.svelte";
   import ViewControls from "./ViewControls.svelte";
 
@@ -103,10 +104,9 @@
     untrack(() => (picked = undefined));
   });
   // The active tab has hunks to step through: the Changes tab, or a changed file's.
-  const stepping = $derived.by(() => {
-    const path = pathOf(tabs.active);
-    return kindOf(tabs.active) === "changes" || (path !== undefined && !!changeset.file(path));
-  });
+  const stepping = $derived(kindOf(tabs.active) === "changes" || controller.fileChanged(tabs.active));
+  /** The commit the active file tab stays at. */
+  const pinned = $derived(commitOf(tabs.active));
   const fileOf = (path: string) => changeset.reviewed(path);
   // The symbols of the file the review shows (the active file tab, else the one selected in the tree) are found first.
   $effect(() => {
@@ -127,8 +127,8 @@
         const shown = changeset.currentShown();
         if (shown) void changeset.setDirectorySeen(shown, path, seen);
       },
-      closeTab: (kind, path) => tabs.close(tabOf(kind, path)),
-      closeOtherTabs: (kind, path) => tabs.closeOthers(tabOf(kind, path)),
+      closeTab: (kind, path, commit) => tabs.close(tabOf(kind, path, commit)),
+      closeOtherTabs: (kind, path, commit) => tabs.closeOthers(tabOf(kind, path, commit)),
       stepTab: (delta) => tabs.step(delta),
       revealFile: () => {
         if (!tree) return false;
@@ -241,7 +241,9 @@
         {tabs}
         files={changeset.shownFiles}
         {commit}
-        onmenu={(id, x, y) => openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: subjectOf(id) } })}
+        unitOf={(id) => controller.commitUnit(id)}
+        onmenu={(id, x, y) =>
+          openMenu(tabMenu, x, y, { tab: { kind: kindOf(id), path: subjectOf(id), commit: commitOf(id) } })}
       />
     {/if}
     <span class="grow"></span>
@@ -254,6 +256,7 @@
       Read-only: marks and comments only work in a range that ends at the latest version.
     </p>
   {/if}
+  {#if pinned !== undefined}<CommitStrip id={pinned} commit={controller.commitUnit(tabs.active)} />{/if}
   {#if commit && tabs.active === CHANGES}<CommitHeader {commit} />{/if}
   <!-- The handler only replaces the webview's menu inside an editor. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -269,7 +272,7 @@
       {@const path = pathOf(id)}
       {@const text = tabs.modes.get(id) === "file"}
       <!-- A file's tab has a pane for its diff, while the changeset changes the file, and one for its text. -->
-      {#if path === undefined || changeset.file(path)}
+      {#if path === undefined || controller.fileChanged(id)}
         <div class="pane" class:active={tabs.active === id && !text}>
           <div class="scroll" {@attach (root) => controller.attach(id, root)}></div>
         </div>

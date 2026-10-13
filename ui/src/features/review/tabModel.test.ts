@@ -1,6 +1,43 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fileTab, isStale, kindOf, modesOf, pathOf, scrollToReveal, settleMode, tabAfter, tabOf } from "./tabModel.ts";
+import {
+  commitOf,
+  fileTab,
+  isStale,
+  kindOf,
+  modesOf,
+  needsCommitName,
+  pathOf,
+  scrollToReveal,
+  settleMode,
+  subjectOf,
+  tabAfter,
+  tabOf,
+} from "./tabModel.ts";
+
+void test("a file opened at a commit is another tab than the file, and the id tells both back", () => {
+  const sha = "a".repeat(40);
+  const pinned = fileTab("src/a.rs", sha);
+  assert.notEqual(pinned, fileTab("src/a.rs"));
+  assert.notEqual(pinned, fileTab("src/a.rs", "b".repeat(40)));
+  assert.equal(tabOf("file", "src/a.rs", sha), pinned);
+  assert.equal(kindOf(pinned), "file");
+  assert.equal(pathOf(pinned), "src/a.rs");
+  assert.equal(subjectOf(pinned), "src/a.rs");
+  assert.equal(commitOf(pinned), sha);
+  assert.equal(commitOf(fileTab("src/a.rs")), undefined);
+  // A path with colons is still the file's.
+  assert.equal(pathOf(fileTab("c:/a:b.rs", sha)), "c:/a:b.rs");
+});
+
+void test("the commit is named in the tabs of a file open more than once, and only in the pinned ones", () => {
+  const [x, y] = ["x".repeat(40), "y".repeat(40)];
+  const open = [fileTab("a.rs", x), fileTab("b.rs", x), fileTab("a.rs", y), fileTab("c.rs"), fileTab("c.rs", x)];
+  assert.deepEqual(
+    open.map((id) => needsCommitName(open, id)),
+    [true, false, true, false, true],
+  );
+});
 
 void test("a file has one tab id whatever asks for it, and the id tells the path back", () => {
   assert.equal(tabOf("file", "src/a.rs"), fileTab("src/a.rs"));
