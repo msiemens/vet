@@ -17,7 +17,8 @@ use vet_app::session::{
     BaseDiffKind, BaseDiffView, BaseView, ChangesetList, CommentAt, CommentSpot, CommitKind, CommitsView, DirEntryKind,
     DirListing, DiscussionView, EntryInfo, ExcludedBy, ExcludedGroup, FileListing, FileStatus, FileView, ItemBlob,
     ItemView, Lifecycle, ManifestView, ModeChange, NewThread, NoText, ReviewUpdateView, ReviewView, RowReview,
-    SearchResult, SearchScope, SubmitReport, SyncNotice, TargetText, ThreadView, ThreadsView, VersionView, View, VoteSent,
+    SearchResult, SearchScope, SubmitReport, SyncNotice, TargetText, ThreadView, ThreadsView, VersionView, View,
+    VoteSent,
 };
 use vet_app::trust::{Origin, Trust};
 use vet_core::completion::{Completion, HunkState};
