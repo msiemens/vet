@@ -6,7 +6,7 @@ use ts_rs::TS;
 use crate::{
     Account, BackendSettings, BaseDiff, BlobContent, Calls, ChangesetKey, ChangesetRow, CheckLog, CommitChecks,
     CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta, LocationRows, Locations,
-    Manifest, PipelineOutcome, PipelineStep, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource,
+    Manifest, MappedLine, PipelineOutcome, PipelineStep, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource,
     Reachability, RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate, SearchFile, ServerInfo, Side, SymbolAt,
     SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo,
     WorkspaceSymbols,
@@ -209,6 +209,10 @@ pub enum Response {
     TargetLine {
         revision: u32,
         line: u32,
+    },
+    /// The answer to `MapLines`.
+    MappedLines {
+        lines: Vec<MappedLine>,
     },
     /// The answer to `CommentTarget`. For a range target, `line` is the line (0-based) of
     /// the target text that a unified diff shows the range's last line at, where a form for

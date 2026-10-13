@@ -135,6 +135,7 @@ pub fn effect(request: &Request) -> Effect {
         | Request::ItemBlob { .. }
         | Request::Threads { .. }
         | Request::TargetLine { .. }
+        | Request::MapLines { .. }
         | Request::CommentTarget { .. }
         | Request::PullRequestInfo { .. } => Effect::Query,
         Request::CloseProject { .. } => {
@@ -559,6 +560,12 @@ mod tests {
                 side: Side::Target,
                 path: path(),
                 line: 0,
+            },
+            Request::MapLines {
+                project,
+                from: 1,
+                path: path(),
+                lines: vec![0],
             },
             Request::CommentTarget {
                 project,

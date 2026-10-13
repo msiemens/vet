@@ -1264,6 +1264,51 @@ async fn versions_are_listed_once_a_review_started_and_an_interdiff_needs_two_of
 }
 
 #[tokio::test]
+async fn lines_of_an_earlier_version_are_mapped_to_where_they_are_now() {
+    let first = text(30, &[3]);
+    let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &first)]).await;
+    let mut one = Client::new(&fx.handler);
+    let project = open(&one, fx.repo.path()).await;
+    async fn map(client: &Client, project: ProjectId, from: u32, lines: &[u32]) -> Result<Response, String> {
+        let request = Request::MapLines {
+            project,
+            from,
+            path: "a.txt".into(),
+            lines: lines.to_vec(),
+        };
+        client.call(request).await
+    }
+    assert!(
+        map(&one, project, 1, &[0]).await.is_err(),
+        "no version exists before a review started"
+    );
+
+    one.toggle_hunk(project, 0, 0).await;
+    // Two lines in front, line 20 rewritten and line 25 deleted.
+    let edited: String = ["new 1\n", "new 2\n"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(first.split_inclusive('\n').enumerate().filter_map(|(i, l)| match i {
+            20 => Some("rewritten\n".to_owned()),
+            25 => None,
+            _ => Some(l.to_owned()),
+        }))
+        .collect();
+    write(fx.repo.path(), "a.txt", &edited);
+    assert_eq!(one.settled().await, 1);
+
+    let Response::MappedLines { lines } = map(&one, project, 1, &[0, 10, 20, 25, 29]).await.unwrap() else {
+        panic!("not a mapping");
+    };
+    let at = |line, kept| vet_protocol::MappedLine { line, kept };
+    assert_eq!(
+        lines,
+        [at(2, true), at(12, true), at(22, false), at(27, false), at(30, true)]
+    );
+    assert!(map(&one, project, 9, &[0]).await.is_err());
+}
+
+#[tokio::test]
 async fn a_review_starts_with_the_first_mark_and_finishing_returns_to_browsing() {
     let dirty = text(30, &[3]);
     let fx = fixture(&[("a.txt", &text(30, &[]))], &[("a.txt", &dirty)]).await;

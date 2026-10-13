@@ -338,6 +338,31 @@ impl Orchestrator {
         Ok(mapping::files(&listing))
     }
 
+    pub(crate) async fn map_lines(
+        &self,
+        project: ProjectId,
+        from: u32,
+        path: &str,
+        lines: &[u32],
+    ) -> Result<Response, String> {
+        let lines = self
+            .ready(project)
+            .await?
+            .session
+            .map_lines(from, path, lines)
+            .await
+            .map_err(message)?;
+        Ok(Response::MappedLines {
+            lines: lines
+                .into_iter()
+                .map(|m| vet_protocol::MappedLine {
+                    line: m.line,
+                    kept: m.kept,
+                })
+                .collect(),
+        })
+    }
+
     pub(crate) async fn target_line(
         &self,
         project: ProjectId,

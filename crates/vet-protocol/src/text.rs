@@ -19,6 +19,17 @@ pub enum Side {
 /// Offsets are UTF-16 units of the text with `\r\n` counted as one unit, as for [`TextChange`].
 pub type Highlights = Vec<u32>;
 
+/// Where a line of an earlier text is in the text now.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MappedLine {
+    /// 0-based. For a line that is gone, the nearest line that took its place.
+    pub line: u32,
+    /// The line itself is still there; false when an edit replaced or deleted it.
+    pub kept: bool,
+}
+
 /// A changed range of the base and target text, as a view that draws changes by whole lines needs
 /// it. Offsets are UTF-16 units of the text with `\r\n` counted as one unit.
 ///

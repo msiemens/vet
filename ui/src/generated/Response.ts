@@ -18,6 +18,7 @@ import type { LineDelta } from "./LineDelta";
 import type { LocationRows } from "./LocationRows";
 import type { Locations } from "./Locations";
 import type { Manifest } from "./Manifest";
+import type { MappedLine } from "./MappedLine";
 import type { PipelineOutcome } from "./PipelineOutcome";
 import type { PipelineStep } from "./PipelineStep";
 import type { PullRequestInfo } from "./PullRequestInfo";
@@ -93,4 +94,4 @@ truncated: boolean,
 /**
  * How many files had text to look in.
  */
-searched: number, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "commentTarget", target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread | { "type": "pullRequestInfo" } & PullRequestInfo | { "type": "reviewSubmitted" } & ReviewSubmitted;
+searched: number, } | { "type": "itemBlob", content: BlobContent, } | { "type": "threads", revision: number, threads: Array<Thread>, } | { "type": "targetLine", revision: number, line: number, } | { "type": "mappedLines", lines: Array<MappedLine>, } | { "type": "commentTarget", target: ThreadTarget, line: number | null, } | { "type": "thread" } & Thread | { "type": "pullRequestInfo" } & PullRequestInfo | { "type": "reviewSubmitted" } & ReviewSubmitted;

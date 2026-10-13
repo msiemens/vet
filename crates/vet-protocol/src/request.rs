@@ -577,6 +577,16 @@ pub enum Request {
         path: String,
         line: u32,
     },
+    /// Where the lines (0-based) of the target text of `path` in version `from` of the open
+    /// review are in the target text now, for rows found in an earlier text. Fails if no review
+    /// is open, there is no such version, or the file has no text in the version or now.
+    /// Answers with `Response::MappedLines`, one for each line, in order.
+    MapLines {
+        project: ProjectId,
+        from: u32,
+        path: String,
+        lines: Vec<u32>,
+    },
     /// What a comment on a part of the changeset file `path` (its current path) attaches
     /// to: the side and the path on that side. A file is commented on at its target
     /// side, a deleted one at its base; a hunk at its target lines, a pure deletion at

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use vet_core::content::NonTextKind;
 use vet_core::content::{BlobId, EntryKind, RepoPath};
+use vet_core::hunks::{MappedLine, changed_lines, map_line};
 use vet_core::inline::TextChange;
 use vet_core::review::Side;
 
@@ -123,6 +124,38 @@ impl<G: GitRepo + Send + Sync + 'static, S: LiveStore + Send + Sync + 'static> L
             revision: st.revision,
             content,
         })
+    }
+
+    /// Where the lines of the target text of `path` in version `from` of the open review are in the
+    /// target text now. Fails if no review is open, there is no such version, or the file has no
+    /// text in the version or now.
+    pub async fn map_lines(&self, from: u32, path: &str, lines: &[u32]) -> Result<Vec<MappedLine>> {
+        let st = self.published.read();
+        let Some(changeset) = st.changeset.filter(|_| st.review.is_some()) else {
+            return Err(SessionError::Invalid(
+                "versions are recorded once a review has started".into(),
+            ));
+        };
+        let version = (self.acquisition.store.versions(changeset).await?)
+            .into_iter()
+            .find(|v| v.n == from)
+            .ok_or_else(|| SessionError::NotFound(format!("version {from}")))?;
+        let Some((earlier, _)) = self.acquisition.store.snapshot(version.target).await? else {
+            return Err(SessionError::NotFound("snapshot of the version".into()));
+        };
+        let key = RepoPath::from(path);
+        let mut texts = Vec::new();
+        for snapshot in [&earlier, &*st.target] {
+            let entry = (snapshot.entries.get(&key))
+                .filter(|e| e.kind == EntryKind::File)
+                .ok_or_else(|| SessionError::NotFound(format!("file {path}")))?;
+            match self.acquisition.text_of(&BTreeMap::new(), &key, entry.blob).await? {
+                Ok(text) => texts.push(text),
+                Err(_) => return Err(SessionError::NotText(path.to_owned())),
+            }
+        }
+        let hunks = changed_lines(texts[0].as_bytes(), texts[1].as_bytes());
+        Ok(lines.iter().map(|&line| map_line(&hunks, line)).collect())
     }
 
     /// The bytes of one side of a non-text item's file at `revision`.
