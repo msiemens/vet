@@ -129,25 +129,34 @@ impl gix::diff::rewrites::tracker::Change for Ch {
     }
 }
 
-/// Serves blob contents the rewrite tracker asks for.
-struct Contents<'a>(HashMap<ObjectId, &'a [u8]>);
+/// Serves blob contents the rewrite tracker asks for. What it does not hold
+/// (worktree-only blobs) falls back to the object database, which is where
+/// the attribute stack finds the repository's `.gitattributes` files.
+struct Contents<'a> {
+    held: HashMap<ObjectId, &'a [u8]>,
+    repo: &'a gix::Repository,
+}
 
 impl Find for Contents<'_> {
     fn try_find<'a>(&self, id: &gix::oid, buffer: &'a mut Vec<u8>) -> gix::ExnResult<Option<gix::objs::Data<'a>>> {
-        Ok(self.0.get(id).map(|bytes| {
-            buffer.clear();
-            buffer.extend_from_slice(bytes);
-            gix::objs::Data::new(buffer, Kind::Blob, gix::hash::Kind::Sha1)
-        }))
+        let Some(bytes) = self.held.get(id) else {
+            return self.repo.objects.try_find(id, buffer);
+        };
+        buffer.clear();
+        buffer.extend_from_slice(bytes);
+        Ok(Some(gix::objs::Data::new(buffer, Kind::Blob, gix::hash::Kind::Sha1)))
     }
 }
 
 impl FindHeader for Contents<'_> {
     fn try_header(&self, id: &gix::oid) -> gix::ExnResult<Option<gix::objs::Header>> {
-        Ok(self.0.get(id).map(|bytes| gix::objs::Header {
-            kind: Kind::Blob,
-            size: bytes.len() as u64,
-        }))
+        match self.held.get(id) {
+            Some(bytes) => Ok(Some(gix::objs::Header {
+                kind: Kind::Blob,
+                size: bytes.len() as u64,
+            })),
+            None => self.repo.objects.try_header(id),
+        }
     }
 }
 
@@ -196,7 +205,10 @@ fn detect_renames(
                 Action::Continue(())
             },
             &mut cache,
-            &Contents(git_contents),
+            &Contents {
+                held: git_contents,
+                repo,
+            },
             |_| Ok::<(), Infallible>(()),
         )
         .map_err(err)?;

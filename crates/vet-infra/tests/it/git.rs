@@ -356,6 +356,28 @@ async fn renames_are_detected_with_their_edits() {
 }
 
 #[tokio::test]
+async fn rename_detection_between_commits_with_gitattributes() {
+    let dir = repo();
+    write(dir.path(), ".gitattributes", b"* text=auto eol=lf\n");
+    let body: String = (0..20).map(|i| format!("line {i}\n")).collect();
+    write(dir.path(), "old.md", body.as_bytes());
+    commit(dir.path());
+    let repo = GixRepo::new(dir.path());
+    let base = repo.commit_snapshot(&repo.head().await.unwrap()).await.unwrap();
+    std::fs::remove_file(dir.path().join("old.md")).unwrap();
+    write(
+        dir.path(),
+        "docs/new.md",
+        body.replace("line 5\n", "line five\n").as_bytes(),
+    );
+    write(dir.path(), "docs/fresh.rs", b"fn main() {}\n");
+    commit(dir.path());
+    let head = repo.commit_snapshot(&repo.head().await.unwrap()).await.unwrap();
+    let diff = repo.diff(&MemStore::default(), &base, &head).await.unwrap().diff;
+    assert_eq!(diff.renames.0.get(&path("old.md")), Some(&path("docs/new.md")));
+}
+
+#[tokio::test]
 async fn binary_mode_and_symlink_changes_are_non_text_items() {
     let dir = repo();
     write(dir.path(), "img.bin", b"\0\x01\x02");
