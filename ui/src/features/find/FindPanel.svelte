@@ -11,7 +11,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
-  import FilterField from "../../lib/ui/FilterField.svelte";
+  import SearchField from "../../lib/ui/SearchField.svelte";
   import Banner from "../../lib/ui/Banner.svelte";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
   import GroupHeader from "../../lib/ui/GroupHeader.svelte";
@@ -221,7 +221,14 @@
           {#if set.commit}<Icon name="commit" size={12} />{/if}
           <span class:mono={set.commit}>{chipLabel(set)}</span>
         </span>
-        <FilterField bind:input={field} bind:value={set.filters.query} label="Filter results" {onkeydown} />
+        <SearchField
+          small
+          bind:input={field}
+          bind:value={set.filters.query}
+          label="Filter results"
+          placeholder="Filter"
+          {onkeydown}
+        />
         <IconButton
           icon="preview"
           label="Preview of the code"

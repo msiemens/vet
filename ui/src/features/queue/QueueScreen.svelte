@@ -10,6 +10,7 @@
   import { ListNav } from "../../lib/ui/listNav";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import ProgressBar from "../../lib/ui/ProgressBar.svelte";
+  import SearchField from "../../lib/ui/SearchField.svelte";
   import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
   import { type Sort, sortRows } from "../../lib/ui/sorting";
@@ -165,10 +166,7 @@
         tabs={TABS.map((t) => ({ ...t, count: counts[t.id] }))}
       />
       <span class="grow"></span>
-      <label class="search">
-        <Icon name="search" size={13} />
-        <input class="field" type="text" bind:value={query} aria-label="Search changesets" spellcheck="false" />
-      </label>
+      <SearchField bind:value={query} label="Search changesets" width={260} />
     </div>
     <div class="loading">
       {#if queue.loading}<ProgressBar label="Loading changesets" />{/if}
@@ -273,23 +271,6 @@
   }
   .grow {
     flex: 1;
-  }
-  .search {
-    position: relative;
-    display: flex;
-    align-items: center;
-    width: 260px;
-    color: var(--text-3);
-  }
-  .search :global(svg) {
-    position: absolute;
-    left: 8px;
-    pointer-events: none;
-  }
-  .search input {
-    flex: 1;
-    min-width: 0;
-    padding-left: 26px;
   }
   .title,
   .source {

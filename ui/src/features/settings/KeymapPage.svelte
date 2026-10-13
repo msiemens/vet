@@ -1,6 +1,7 @@
 <script lang="ts">
   import { bindingOf, specOf } from "../../lib/keymap";
   import { conflictsOf } from "../../lib/keymapEdit";
+  import SearchField from "../../lib/ui/SearchField.svelte";
   import SettingsSection from "../../lib/ui/SettingsSection.svelte";
   import { commands } from "../../state/commands";
   import { isMac } from "../../state/host";
@@ -50,13 +51,7 @@
 </script>
 
 <div class="bar">
-  <input
-    type="search"
-    class="field"
-    placeholder="Search commands and keys"
-    aria-label="Search commands and keys"
-    bind:value={query}
-  />
+  <SearchField bind:value={query} label="Search commands and keys" placeholder="Search commands and keys" />
   <button class="ctl" type="button" disabled={!anyChanged} onclick={() => keymap.resetAll()}>Reset all</button>
 </div>
 
@@ -122,10 +117,6 @@
     display: flex;
     gap: 8px;
     margin-bottom: 12px;
-  }
-  .bar input {
-    flex: 1;
-    min-width: 0;
   }
   ul {
     list-style: none;

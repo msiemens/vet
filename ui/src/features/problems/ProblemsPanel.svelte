@@ -11,7 +11,7 @@
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
   import FilterChip from "../../lib/ui/FilterChip.svelte";
-  import FilterField from "../../lib/ui/FilterField.svelte";
+  import SearchField from "../../lib/ui/SearchField.svelte";
   import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
@@ -357,7 +357,14 @@
         ]}
       />
       <span class="grow"></span>
-      <FilterField bind:input={field} bind:value={filters.query} label="Filter problems" {onkeydown} />
+      <SearchField
+        small
+        bind:input={field}
+        bind:value={filters.query}
+        label="Filter problems"
+        placeholder="Filter"
+        {onkeydown}
+      />
       <Popover align="right">
         {#snippet trigger(toggle)}
           <IconButton
