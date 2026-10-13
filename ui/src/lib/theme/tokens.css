@@ -27,9 +27,7 @@
   --select: light-dark(rgba(45, 111, 216, 0.25), rgba(107, 156, 247, 0.35));
   /* The editor line the caret is on; translucent, so it lies over the backgrounds of added and deleted lines. */
   --current-line: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.06));
-  /* The hunk the caret is in (the File view): a light blue over its lines, translucent so the green
-     of the change still reads, and a stronger blue on its line numbers. */
-  --current-hunk: light-dark(rgba(45, 111, 216, 0.1), rgba(107, 156, 247, 0.12));
+  /* The hunk the caret is in (the File view): a blue on its line numbers. */
   --current-hunk-gutter: light-dark(rgba(45, 111, 216, 0.26), rgba(107, 156, 247, 0.3));
   /* What a search found in a line of code; translucent, so it lies over a selected row too. */
   --find: light-dark(rgba(250, 204, 21, 0.45), rgba(234, 179, 8, 0.4));

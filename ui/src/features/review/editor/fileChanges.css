@@ -18,15 +18,7 @@
   cursor: pointer;
 }
 
-/* The current hunk: a light blue over its lines, on the green of the change (and with the caret's
-   line on top), and a stronger blue on its line numbers. */
-.vet-text .cm-editor .cm-line.vet-current-hunk {
-  background-image: linear-gradient(var(--current-hunk), var(--current-hunk));
-}
-.vet-text .cm-editor .cm-line.vet-current-hunk.vet-current-line {
-  background-image:
-    linear-gradient(var(--current-line), var(--current-line)), linear-gradient(var(--current-hunk), var(--current-hunk));
-}
+/* The current hunk: a blue on its line numbers; its lines keep the tint of the change. */
 .vet-text .cm-editor .cm-lineNumbers .cm-gutterElement.vet-current-hunk {
   background: var(--current-hunk-gutter);
 }

@@ -1,7 +1,7 @@
 // The changes of a file drawn in its text (the File view): changed lines tinted by their hunk's
 // review state with the changed words of modified lines, the review strip, a wedge where lines were
-// removed and the peek of those lines, and the hunk the caret is in tinted blue over all of that,
-// with its line numbers a stronger blue. The layout comes from `fileLayout`; this module keeps it
+// removed and the peek of those lines, and the hunk the caret is in with its line numbers blue.
+// The layout comes from `fileLayout`; this module keeps it
 // with the review states and draws it.
 
 import { type Extension, type Range, RangeSet, StateEffect, StateField, type Text } from "@codemirror/state";
@@ -60,8 +60,7 @@ export interface ChangesState {
   /** The removals whose lines are shown. */
   peeks: ReadonlySet<number>;
   decos: DecorationSet;
-  /** The current hunk's lines and their line numbers. */
-  currentLines: DecorationSet;
+  /** The line numbers of the current hunk's lines. */
   currentNumbers: RangeSet<GutterMarker>;
 }
 
@@ -74,25 +73,17 @@ const wordDecos: Record<Tint, Decoration> = {
   faint: Decoration.mark({ class: "vet-fw vet-fw-faint" }),
 };
 
-const currentHunkLine = Decoration.line({ class: "vet-current-hunk" });
 const currentHunkNumber = new (class extends GutterMarker {
   elementClass = "vet-current-hunk";
 })();
 
-/** The current hunk's changed lines (a removal has none), as line decorations and line number markers. */
-function currentMarks(
-  layout: FileLayout,
-  current: number | null,
-  doc: Text,
-): Pick<ChangesState, "currentLines" | "currentNumbers"> {
+/** The line number markers of the current hunk's changed lines (a removal has none). */
+function currentNumbers(layout: FileLayout, current: number | null, doc: Text): RangeSet<GutterMarker> {
   const starts: number[] = [];
   if (current !== null)
     for (const [line, hunk] of layout.lineHunk) if (hunk === current) starts.push(doc.line(line + 1).from);
   starts.sort((a, b) => a - b);
-  return {
-    currentLines: Decoration.set(starts.map((from) => currentHunkLine.range(from))),
-    currentNumbers: RangeSet.of(starts.map((from) => currentHunkNumber.range(from))),
-  };
+  return RangeSet.of(starts.map((from) => currentHunkNumber.range(from)));
 }
 
 /** What the peek's button does to a removal in each state. */
@@ -183,7 +174,11 @@ export function changesField(source: ChangesSource, states: HunkState[], flags: 
     create(state) {
       const layout = fileLayout(source.hunks, source.changes, state.doc);
       const base = { layout, states, flags, current: null, peeks: new Set<number>() };
-      return { ...base, decos: build(source, base, state.doc), ...currentMarks(layout, null, state.doc) };
+      return {
+        ...base,
+        decos: build(source, base, state.doc),
+        currentNumbers: currentNumbers(layout, null, state.doc),
+      };
     },
     update(value, tr) {
       let next = value;
@@ -208,12 +203,12 @@ export function changesField(source: ChangesSource, states: HunkState[], flags: 
         const current = hunkAtLine(next.layout, lineOf(tr.state.doc, tr.selection.main.head)) ?? null;
         if (current !== next.current) next = { ...next, current };
       }
-      if (next.current !== value.current) next = { ...next, ...currentMarks(next.layout, next.current, tr.state.doc) };
+      if (next.current !== value.current)
+        next = { ...next, currentNumbers: currentNumbers(next.layout, next.current, tr.state.doc) };
       return rebuild ? { ...next, decos: build(source, next, tr.state.doc) } : next;
     },
     provide: (f) => [
       EditorView.decorations.from(f, (s) => s.decos),
-      EditorView.decorations.from(f, (s) => s.currentLines),
       lineNumberMarkers.from(f, (s) => s.currentNumbers),
     ],
   });
