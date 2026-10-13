@@ -47,6 +47,37 @@ void test("a missing server carries the reason and the backend's title and can b
   assert.ok(row.canInstall);
 });
 
+const all = {
+  documentSymbols: true,
+  definition: true,
+  references: true,
+  implementations: true,
+  hover: true,
+  callHierarchy: true,
+  workspaceSymbols: true,
+};
+
+void test("features list offered and missing ones in the fixed order", () => {
+  const row = serverRow({ ...found("installed"), features: { ...all, references: false, hover: false } });
+  assert.deepEqual(
+    row.features?.map((f) => [f.name, f.offered]),
+    [
+      ["File Structure", true],
+      ["Go to Definition", true],
+      ["Show Usages", false],
+      ["Go to Implementation", true],
+      ["Hover", false],
+      ["Call Hierarchy", true],
+      ["Symbol search", true],
+    ],
+  );
+});
+
+void test("a found server that has not started has unknown features, a missing one has none", () => {
+  assert.equal(serverRow(found("installed")).features, null);
+  assert.equal(serverRow({ ...missing, features: all }).features, undefined);
+});
+
 void test("install progress overrides the resolved state", () => {
   assert.equal(serverRow(missing, { running: true }).status, "installing");
   assert.equal(serverRow(missing, { running: true }).canInstall, false);

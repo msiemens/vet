@@ -1,5 +1,6 @@
 // What the "Language servers" page shows per language, derived from `ListServers`.
 
+import type { ServerFeatures } from "../../generated/ServerFeatures";
 import type { ServerInfo } from "../../generated/ServerInfo";
 import type { ServerOrigin } from "../../generated/ServerOrigin";
 import type { Tsserver } from "../../generated/Tsserver";
@@ -31,6 +32,13 @@ export interface ServerRow {
   canInstall: boolean;
   /** Why "Install" is off, if it is. */
   installBlocker?: string;
+  /** What the server offers; `null` until it has started, absent for a missing server. */
+  features?: ServerFeature[] | null;
+}
+
+export interface ServerFeature {
+  name: string;
+  offered: boolean;
 }
 
 const ORIGINS: Record<ServerOrigin, string> = {
@@ -53,6 +61,25 @@ const STATUS_LABELS: Record<ServerStatus, string> = {
   installing: "Installing…",
   failed: "Install failed",
 };
+
+/** The features in the order the page lists them, named as the app names them elsewhere. */
+const FEATURES: [keyof ServerFeatures, string][] = [
+  ["documentSymbols", "File Structure"],
+  ["definition", "Go to Definition"],
+  ["references", "Show Usages"],
+  ["implementations", "Go to Implementation"],
+  ["hover", "Hover"],
+  ["callHierarchy", "Call Hierarchy"],
+  ["workspaceSymbols", "Symbol search"],
+];
+
+/** `undefined` for a missing server (no line); `null` while a found one has not started yet. */
+function featureList(info: ServerInfo): ServerFeature[] | null | undefined {
+  if (info.state.type === "missing") return undefined;
+  const { features } = info;
+  if (!features) return null;
+  return FEATURES.map(([key, name]) => ({ name, offered: features[key] }));
+}
 
 export function serverRow(info: ServerInfo, install?: InstallProgress): ServerRow {
   const { state } = info;
@@ -79,5 +106,6 @@ export function serverRow(info: ServerInfo, install?: InstallProgress): ServerRo
     pinnedVersion: info.pinnedVersion ?? undefined,
     canInstall: info.canInstall && !install?.running,
     installBlocker: info.installBlocker ?? undefined,
+    features: featureList(info),
   };
 }

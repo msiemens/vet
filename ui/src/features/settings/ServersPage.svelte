@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { formatBytes } from "../../lib/formatBytes";
   import { match } from "../../lib/speedSearch";
+  import Icon from "../../lib/ui/Icon.svelte";
   import Marked from "../../lib/ui/Marked.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import ScrollArea from "../../lib/ui/ScrollArea.svelte";
@@ -16,6 +17,9 @@
   import { servers } from "../../state/servers.svelte";
   import ServerPathSheet from "./ServerPathSheet.svelte";
   import { serverRow, type ServerRow } from "./serverRows";
+
+  const CACHES_HINT =
+    "Answers kept from the language servers, in memory and between launches; the least recently used go first when the budget is exceeded. Clearing them only makes the next answers slower.";
 
   /** The server whose custom path sheet is open. */
   let editing = $state<ServerRow>();
@@ -201,6 +205,20 @@
             <span class="mono">{selected.pinnedVersion}</span>{/if}
         </dd>
 
+        {#if selected.features === null}
+          <dt>Features</dt>
+          <dd class="hint">Known once the server has started</dd>
+        {:else if selected.features}
+          <dt class="top">Features</dt>
+          <dd class="checks">
+            {#each selected.features as feature (feature.name)}
+              <span class="check" class:yes={feature.offered} title={feature.offered ? "Offered" : "Not offered"}>
+                <Icon name={feature.offered ? "check" : "close"} size={12} />{feature.name}
+              </span>
+            {/each}
+          </dd>
+        {/if}
+
         {#if selected.tsserver}
           <dt>tsserver</dt>
           <dd class="tsserver">
@@ -258,7 +276,11 @@
   {/if}
 
   <footer>
-    <span class="label">Semantic caches</span>
+    <span class="label"
+      >Semantic caches
+      <span class="info" role="img" aria-label={CACHES_HINT} title={CACHES_HINT}><Icon name="info" size={12} /></span
+      ></span
+    >
     <dl>
       {#if backendSettings.usage !== undefined}
         <dt>On disk</dt>
@@ -277,11 +299,6 @@
           onchange={(e) => void setBudget(e.currentTarget)}
         />
         <span>MiB</span>
-      </dd>
-      <dt></dt>
-      <dd class="hint">
-        Answers kept from the language servers, in memory and between launches; the least recently used go first when
-        the budget is exceeded. Clearing them only makes the next answers slower.
       </dd>
       {#if backendSettings.loadError}
         <dt></dt>
@@ -443,6 +460,36 @@
   }
   .label {
     color: var(--text-2);
+  }
+  .info {
+    display: inline-flex;
+    vertical-align: middle;
+    color: var(--text-3);
+  }
+  dt.top {
+    align-self: start;
+  }
+  .checks {
+    display: grid;
+    grid-template-columns: repeat(3, max-content);
+    gap: 3px 18px;
+  }
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    color: var(--text);
+  }
+  .check.yes {
+    color: var(--text-2);
+  }
+  .check :global(svg) {
+    flex: none;
+    color: var(--del-text);
+  }
+  .check.yes :global(svg) {
+    color: var(--ok);
   }
   .budget {
     display: flex;
