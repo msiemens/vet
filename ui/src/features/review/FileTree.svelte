@@ -2,6 +2,7 @@
   import { tick, untrack } from "svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import type { DirEntry } from "../../generated/DirEntry";
+  import type { ExcludedGroup } from "../../generated/ExcludedGroup";
   import type { ReviewedFile } from "../../state/reviewModel";
   import { dirname } from "../../lib/paths";
   import { arrowKey } from "../../lib/foldKeys";
@@ -27,6 +28,8 @@
   import { AllFiles } from "./AllFiles.svelte";
   import type { AllRow } from "./allFilesRows";
   import CommitList from "./CommitList.svelte";
+  import { excludedRows, extraRows } from "./excludedRows";
+  import NarrowingChip from "./NarrowingChip.svelte";
   import { closedKey, fileSymbolRows, type SymbolRow } from "./symbolRows";
   import { type Row, buildRows, buildTree, filterRows, summarize } from "./tree";
 
@@ -38,6 +41,10 @@
     list,
     selected,
     excluded,
+    excludedOpen = $bindable(false),
+    narrowed,
+    onreset,
+    none,
     changes,
     commits = [],
     commit,
@@ -66,8 +73,16 @@
     /** The children of a directory of the target snapshot, for "All files". */
     list: (path: string) => Promise<{ revision: number; entries: DirEntry[] } | undefined>;
     selected?: string;
-    /** Changes hidden by the review filter, collapsed into one group. */
-    excluded?: { lines: number; items: number };
+    /** Changes hidden by the review filter, collapsed into one group that opens to the files and why each is left out. */
+    excluded?: { lines: number; items: number; groups: readonly ExcludedGroup[] };
+    /** The group of excluded files is open. */
+    excludedOpen?: boolean;
+    /** While the review is narrowed: what it is narrowed to, as the chip words it. */
+    narrowed?: string;
+    /** Ends the narrowing. */
+    onreset: () => void;
+    /** The line under the header while the Changes tool lists no file. */
+    none: string;
     /** A single click, once no second click follows. */
     onselect: (path: string) => void;
     /** Double click or Enter. */
@@ -276,6 +291,8 @@
   const hits: ReadonlyMap<object, Range[]> | undefined = $derived((searchedChanges ?? searchedAll)?.hits);
 
   const hasExcluded = $derived(!!excluded && excluded.lines + excluded.items > 0 && !search.active);
+  const heldRows = $derived(excludedRows(excluded?.groups ?? []));
+  const extra = $derived(extraRows(hasExcluded, excludedOpen, heldRows));
   let changesList = $state<VirtualRows>();
   let allList = $state<VirtualRows>();
 
@@ -546,6 +563,7 @@
   <div class="sh sh-bar">
     <span>{TITLES[tool]}</span>
     {#if tool === "commits"}<span class="mono n">{commits.length}</span>{/if}
+    {#if tool === "changes" && narrowed}<NarrowingChip label={narrowed} {onreset} />{/if}
     <span class="grow"></span>
     {#if tool === "changes"}
       {#if symbols.progress.done < symbols.progress.total}
@@ -603,28 +621,39 @@
   <div class="body" role="presentation" bind:this={body} {onkeydown} {...rowNav.attributes} {...search.attributes}>
     {#if search.active}<SpeedSearchField query={search.query} found={!!hits?.size} />{/if}
     {#if scope === "changes"}
-      <!-- The excluded group is one more row after the files. -->
+      {#if !paths.length && !search.active}<p class="note">{none}</p>{/if}
+      <!-- The excluded group is one more row after the files, and the files it holds follow it while it is open. -->
       <VirtualRows
         bind:this={changesList}
-        count={shownChanges.length + (hasExcluded ? 1 : 0)}
+        count={shownChanges.length + extra}
         key={(i) => {
           const r = shownChanges.at(i);
-          if (!r) return "excluded";
+          if (!r) return `excluded${i - shownChanges.length}`;
           return r.kind === "symbol" ? closedKey(r.path, r.key) + r.kind : r.path + r.kind;
         }}
       >
         {#snippet row(i)}
           {@const r = shownChanges.at(i)}
-          {#if !r && excluded}
-            <div
-              class="tw excluded"
+          {@const held = heldRows.at(i - shownChanges.length - 1)}
+          {#if !r && excluded && i === shownChanges.length}
+            <button
+              class="flat tw excluded"
+              type="button"
+              tabindex="-1"
+              aria-expanded={excludedOpen}
               title="{excluded.lines} changed lines and {excluded.items} other changes excluded by the review filter"
+              onclick={() => (excludedOpen = !excludedOpen)}
             >
-              <span class="chev"><Icon name="closed" size={10} /></span><Icon
+              <span class="chev"><Icon name={excludedOpen ? "open" : "closed"} size={10} /></span><Icon
                 name="filter"
                 size={11}
                 stroke={2}
               />Excluded<span class="mono x">{excluded.lines}</span>
+            </button>
+          {:else if !r && held}
+            <div class="tw held" title="{held.name}: {held.why}">
+              <span class="name">{held.name}</span>
+              <span class="why">{held.why}</span>
             </div>
           {:else if r?.kind === "dir"}
             {@const hit = { cursor: i === cursor, ranges: hits?.get(r) }}
@@ -804,5 +833,16 @@
   .excluded {
     padding-left: 8px;
     color: var(--text-3);
+  }
+  .held {
+    padding-left: calc(8px + var(--w-chev) + 6px);
+    color: var(--text-3);
+  }
+  .why {
+    flex: none;
+    max-width: 50%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 11px;
   }
 </style>

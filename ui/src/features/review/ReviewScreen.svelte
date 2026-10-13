@@ -8,6 +8,7 @@
   import type { Backend } from "../../state/backend";
   import type { Changeset } from "../../state/changeset.svelte";
   import type { CommandContext } from "../../state/commands";
+  import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { platform } from "../../state/platform.svelte";
   import { session } from "../../state/session.svelte";
@@ -32,6 +33,9 @@
   import { provideActions } from "./reviewActions";
   import { editorMenu, fileHeaderMenu, tabMenu, treeMenu } from "./reviewCommands";
   import CommitHeader from "./CommitHeader.svelte";
+  import EmptyChanges from "./EmptyChanges.svelte";
+  import { type Action, type EmptyView, emptyView, pickRange } from "./emptyChanges";
+  import { narrowingLabel } from "./narrowing";
   import { exposeRendered } from "./devHook";
   import type { SymbolRow } from "./symbolRows";
   import CommitStrip from "./CommitStrip.svelte";
@@ -51,6 +55,8 @@
     side,
     bottom,
     softWrap,
+    onfilter,
+    ontool,
     scope,
     onready,
     onclose,
@@ -60,6 +66,10 @@
     changeset: Changeset;
     /** Which files wrap their long lines; the owner applies a change to the controller. */
     softWrap: SoftWrap;
+    /** Opens Settings at the review filter. */
+    onfilter: () => void;
+    /** Shows a tool window. */
+    ontool: (tool: "changes" | "all" | "comments" | "timeline") => void;
     /** What the changes shown are of, which names the first tab. */
     scope: string;
     /** The left tool window and whether its sidebar is shown. */
@@ -97,8 +107,80 @@
   /** What the loading note names. */
   const project = $derived(session.repo === undefined ? "the changeset" : repoName(session.repo));
   const revision = $derived(changeset.layout?.shown.revision);
-  /** The chosen target when it already contains the changeset, so there is nothing to show. */
-  const containedIn = $derived(changeset.paths.length ? undefined : changeset.layout?.base.containedIn);
+  /** The Changes tab lists no file, and says why instead. */
+  const empty = $derived.by((): EmptyView | undefined => {
+    const layout = changeset.layout;
+    const facts = changeset.facts;
+    if (changeset.loading || !layout || !facts || changeset.shownFiles.length || changeset.baseChanged)
+      return undefined;
+    const view = layout.shown.view.type;
+    return emptyView({
+      key: facts.target.changeset,
+      target: facts.target,
+      view: view === "commit" ? "commit" : view === "interdiff" ? "range" : "changeset",
+      base: layout.base,
+      changesetBase: facts.base,
+      review: facts.review,
+      excluded: layout.excluded,
+      filter: facts.filter,
+      narrowing: facts.narrowing,
+      repo: session.repo,
+      versions: versions.items,
+      interdiff: layout.interdiff,
+      commits: changeset.commits,
+      commitIndex: changeset.shownCommit,
+      pullRequest: platform.info,
+      threads: { total: threads.items.length, open: threads.items.filter((t) => t.status === "open").length },
+      now: Date.now(),
+    });
+  });
+  const narrowed = $derived(
+    changeset.facts?.narrowing && narrowingLabel(changeset.facts.filter, changeset.facts.narrowing),
+  );
+  /** What the Changes tool says under its header while it lists no file. */
+  const none = $derived(
+    changeset.layout?.excluded.length
+      ? "No files to review"
+      : changeset.shownCommit === undefined
+        ? "No changed files"
+        : "No files in this commit",
+  );
+  /** The tree's group of excluded files is open. */
+  let excludedOpen = $state(false);
+
+  function act(action: Action) {
+    switch (action.id) {
+      case "browse":
+        return ontool("all");
+      case "timeline":
+        return ontool("timeline");
+      case "comments":
+        return ontool("comments");
+      case "other":
+        return void commands.run("changeset.switch");
+      case "provider":
+        return void commands.run("changeset.openInBrowser");
+      case "back":
+        return void changeset.showWhole();
+      case "next":
+        return void changeset.stepCommit(1);
+      case "step":
+        return void (action.n !== undefined && changeset.showCommit(action.n));
+      case "filter":
+        return onfilter();
+      case "show":
+        excludedOpen = true;
+        return ontool("changes");
+      case "narrow":
+        return void changeset.narrow(action.filter);
+      case "reset":
+        return void changeset.narrow(undefined);
+      case "pick":
+        return void (action.n !== undefined && changeset.setRange(pickRange(versions.items, action.n)));
+      case "openFile":
+        return void (action.path !== undefined && controller.openSource(ON_SCREEN, action.path));
+    }
+  }
   /** The commit on view, while the changeset is reviewed by commit. */
   const commit = $derived(changeset.shownCommit === undefined ? undefined : changeset.commits[changeset.shownCommit]);
   const highlighted = $derived(pathOf(tabs.active) ?? selected);
@@ -238,7 +320,15 @@
         {revision}
         list={(path) => changeset.listDirectory(path)}
         selected={marked}
-        excluded={{ lines: changeset.layout?.excludedLines ?? 0, items: changeset.layout?.excludedItems ?? 0 }}
+        excluded={{
+          lines: changeset.layout?.excludedLines ?? 0,
+          items: changeset.layout?.excludedItems ?? 0,
+          groups: changeset.layout?.excluded ?? [],
+        }}
+        bind:excludedOpen
+        {narrowed}
+        onreset={() => void changeset.narrow(undefined)}
+        {none}
         changes={changeset.shownCommit === undefined ? changeset.paths.length : (changeset.facts?.files ?? 0)}
         commits={changeset.commits}
         commit={changeset.commitIndex}
@@ -266,7 +356,12 @@
     {/if}
     <span class="grow"></span>
     {#if !changeset.loading}
-      <ViewControls mode={tabs.modes.get(tabs.active)} {stepping} file={kindOf(tabs.active) === "file"} />
+      <ViewControls
+        mode={tabs.modes.get(tabs.active)}
+        {stepping}
+        file={kindOf(tabs.active) === "file"}
+        empty={!!empty && tabs.active === CHANGES}
+      />
     {/if}
   </div>
   {#if range && readOnly}
@@ -298,10 +393,8 @@
   <div class="panes" class:readonly={readOnly} class:loading={changeset.loading} oncontextmenu={paneMenu}>
     {#if changeset.loading}
       <p class="empty">Loading {project}…</p>
-    {:else if containedIn && tabs.active === CHANGES}
-      <p class="empty">
-        Nothing to review: {containedIn.branch} already contains {changeset.facts?.target.branch ?? "HEAD"}
-      </p>
+    {:else if empty && tabs.active === CHANGES}
+      <EmptyChanges view={empty} onact={act} />
     {/if}
     {#each tabs.open as id (id)}
       {@const path = pathOf(id)}

@@ -468,6 +468,12 @@
     await changeset.setRange(since);
   }
 
+  /** Shows a tool window: the Timeline under the editors, or one of the left rail's. */
+  function showTool(tool: "changes" | "all" | "comments" | "timeline") {
+    if (tool === "timeline") timelineOpen = true;
+    else Object.assign(left, { tool, open: true });
+  }
+
   function toggleTimeline() {
     timelineOpen = !timelineOpen;
   }
@@ -626,6 +632,8 @@
         rightTool={right.tool}
         rightOpen={right.open}
         {softWrap}
+        onfilter={() => showDialog("settings", "review")}
+        ontool={showTool}
         scope={scope?.label ?? "All changes"}
         onready={(c) => void (controller = c)}
         onclose={() => (controller = undefined)}

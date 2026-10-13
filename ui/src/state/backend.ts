@@ -459,6 +459,14 @@ export class Backend {
     expect(await this.conn.request({ type: "setProjectFilter", project: this.pid, filter }), "done");
   }
 
+  /**
+   * Narrows the review on view to `filter` in place of the project's, or ends the narrowing for none; every
+   * subscriber, this one included, then gets `snapshotSettled`. Rejects with the backend's message for an invalid glob.
+   */
+  async narrowReview(filter: ReviewFilter | undefined): Promise<void> {
+    expect(await this.conn.request({ type: "narrowReview", project: this.pid, filter: filter ?? null }), "done");
+  }
+
   /** Marks the open repository trusted or not; every subscriber, this one included, then gets `targetChanged` and `serversChanged`. */
   async setProjectTrusted(trusted: boolean): Promise<void> {
     expect(await this.conn.request({ type: "setProjectTrusted", project: this.pid, trusted }), "done");

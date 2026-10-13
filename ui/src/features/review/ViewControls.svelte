@@ -8,6 +8,7 @@
     mode,
     stepping,
     file,
+    empty = false,
   }: {
     /** What the focused tab shows, which the control switches; none for a log. */
     mode?: ViewMode;
@@ -15,13 +16,15 @@
     stepping: boolean;
     /** The focused tab is a file's, which can show its text. */
     file: boolean;
+    /** The tab shows no change, so there is nothing to step through and no mode to choose. */
+    empty?: boolean;
   } = $props();
 
   const options = $derived(
     [...MODES, ...(file ? [FILE_VIEW] : [])].map((m) => ({
       ...m,
       title: commands.hint(modeCommand(m.id)),
-      disabled: !commands.isEnabled(modeCommand(m.id)),
+      disabled: empty || !commands.isEnabled(modeCommand(m.id)),
     })),
   );
 
@@ -36,7 +39,7 @@
           icon={step.icon}
           label={commands.label(step.id)}
           title={commands.hint(step.id)}
-          disabled={!commands.isEnabled(step.id)}
+          disabled={empty || !commands.isEnabled(step.id)}
           size={22}
           iconSize={14}
           onclick={() => commands.run(step.id)}

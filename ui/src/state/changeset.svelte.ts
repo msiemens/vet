@@ -584,12 +584,23 @@ class ChangesetStore implements ViewSource {
     }
   }
 
-  /** Limits the review to the folder `path`. */
+  /** Limits this review to the folder `path`; the project's filter stays as it is. */
   async reviewOnly(path: string) {
     const filter = this.facts?.filter;
     if (!filter) return;
-    const error = await this.setFilter({ ...filter, roots: [path] });
-    if (error) session.notice = error;
+    await this.narrow({ ...filter, roots: [path] });
+  }
+
+  /**
+   * Narrows this review to `filter` in place of the project's, or ends the narrowing for none. As with `setFilter`,
+   * the backend then pushes `snapshotSettled`.
+   */
+  async narrow(filter: ReviewFilter | undefined) {
+    try {
+      await session.connected().narrowReview(filter);
+    } catch (error) {
+      session.notice = errorText(error);
+    }
   }
 
   /** The children of a directory of the target snapshot; `undefined` after showing why it failed. */

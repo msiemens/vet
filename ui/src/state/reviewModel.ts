@@ -6,6 +6,7 @@
 import type { AnalysisTrust } from "../generated/AnalysisTrust";
 import type { Base } from "../generated/Base";
 import type { Completion } from "../generated/Completion";
+import type { ExcludedGroup } from "../generated/ExcludedGroup";
 import type { FileChange } from "../generated/FileChange";
 import type { FileReview } from "../generated/FileReview";
 import type { InterdiffInfo } from "../generated/InterdiffInfo";
@@ -42,6 +43,8 @@ export interface ViewLayout {
   readonly interdiff?: InterdiffInfo;
   readonly excludedLines: number;
   readonly excludedItems: number;
+  /** The files the review leaves out, by the reason. */
+  readonly excluded: readonly ExcludedGroup[];
   readonly degraded?: WatchDegraded;
 }
 
@@ -51,7 +54,10 @@ export interface ChangesetFacts {
   /** The changeset's own base, which the header names where it is not the default branch's. */
   readonly base: Base;
   readonly review: ReviewInfo;
+  /** The project's filter. */
   readonly filter: ReviewFilter;
+  /** The filter this review is narrowed to, which replaces the project's until reset. */
+  readonly narrowing?: ReviewFilter;
   /** What analysis of the changeset may execute: the project's trust, and a pull request's own. */
   readonly trust: AnalysisTrust;
   readonly lens: Lens;
@@ -107,6 +113,7 @@ export function partsOf(manifest: Manifest, commit: number | undefined): Parts {
       interdiff: manifest.interdiff,
       excludedLines: manifest.excludedLines,
       excludedItems: manifest.excludedItems,
+      excluded: manifest.excluded,
       degraded: manifest.degraded,
     },
     facts: {
@@ -114,6 +121,7 @@ export function partsOf(manifest: Manifest, commit: number | undefined): Parts {
       base: manifest.changesetBase,
       review: manifest.review,
       filter: manifest.filter,
+      narrowing: manifest.narrowing,
       trust: manifest.trust,
       lens: manifest.lens,
       commits: manifest.commits,
