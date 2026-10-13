@@ -9,7 +9,9 @@
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import FilterField from "../../lib/ui/FilterField.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
+  import IconButton from "../../lib/ui/IconButton.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
+  import Menu from "../../lib/ui/Menu.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import Popover from "../../lib/ui/Popover.svelte";
@@ -27,6 +29,7 @@
     filtered,
     rowsOf,
   } from "../../state/problemRows";
+  import { chooseGroupItem, groupMenu, menuChanged } from "../../state/problemMenu";
   import { problems } from "../../state/problems.svelte";
   import { progress as tasks } from "../../state/progress.svelte";
   import { serverList } from "../../state/serverList.svelte";
@@ -85,6 +88,13 @@
     unseen: "Not seen",
     none: "Outside any hunk",
   } as const;
+
+  function chooseGroup(id: string) {
+    const next = chooseGroupItem(id, grouping, filters);
+    grouping = next.grouping;
+    filters.unseenOnly = next.unseenOnly;
+    filters.changedOnly = next.changedOnly;
+  }
 
   let scope = $state<Scope>("changed");
   let filters = $state({ ...NO_FILTERS, levels: { ...NO_FILTERS.levels } });
@@ -364,33 +374,16 @@
       <FilterField bind:input={field} bind:value={filters.query} label="Filter problems" {onkeydown} />
       <Popover align="right">
         {#snippet trigger(toggle)}
-          <button
-            class="flat menu"
-            class:on={filters.unseenOnly || filters.changedOnly || grouping !== "origin"}
-            type="button"
-            title="Group and filter"
-            aria-label="Group and filter"
-            onclick={toggle}><Icon name="filter" size={14} /></button
-          >
+          <IconButton
+            icon="filter"
+            label="Group and filter"
+            size={22}
+            iconSize={14}
+            active={menuChanged(grouping, filters)}
+            onclick={toggle}
+          />
         {/snippet}
-        <div class="menu-sheet">
-          <h5>Group by</h5>
-          {#each [{ id: "origin", label: "Origin, then file" }, { id: "file", label: "File" }, { id: "severity", label: "Severity" }] as g (g.id)}
-            <label class:off={g.id === "origin" && !settled}>
-              <input
-                type="radio"
-                name="problems-group"
-                checked={grouping === g.id}
-                disabled={g.id === "origin" && !settled}
-                onchange={() => (grouping = g.id as Grouping)}
-              />
-              {g.label}
-            </label>
-          {/each}
-          <h5>Show only</h5>
-          <label><input type="checkbox" bind:checked={filters.unseenOnly} /> Problems in hunks not seen</label>
-          <label><input type="checkbox" bind:checked={filters.changedOnly} /> Problems on changed lines</label>
-        </div>
+        <Menu items={groupMenu(grouping, filters, settled)} onselect={chooseGroup} />
       </Popover>
     {/snippet}
   </BottomToolHeader>
@@ -638,48 +631,6 @@
   }
   .chip[aria-pressed="false"]:hover {
     opacity: 0.9;
-  }
-  .menu {
-    width: 22px;
-    height: 22px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--radius);
-    color: var(--text-2);
-  }
-  .menu.on {
-    background: var(--toggle);
-    color: var(--accent);
-  }
-  .menu-sheet {
-    width: 250px;
-    padding: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: var(--fs-ctl);
-  }
-  .menu-sheet h5 {
-    margin: 4px 4px 2px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--text-3);
-    font-weight: 600;
-  }
-  .menu-sheet label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 3px 4px;
-    border-radius: 4px;
-  }
-  .menu-sheet label:hover {
-    background: var(--hov);
-  }
-  .menu-sheet label.off {
-    opacity: 0.5;
   }
   .notice {
     flex: none;

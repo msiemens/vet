@@ -32,7 +32,6 @@
   let list: HTMLElement;
   let openId = $state<string>();
   const checks = $derived(items.some((i) => i.checked !== undefined));
-
   const search = new SpeedSearch();
   const found = $derived(
     speedSearch && search.active
@@ -120,6 +119,8 @@
   {#each shown as item, i (item.separator ? `-${i}` : item.id)}
     {#if item.separator}
       <li role="separator"></li>
+    {:else if item.heading}
+      <li role="presentation" class="heading">{item.label}</li>
     {:else}
       <li
         role="none"
@@ -175,6 +176,14 @@
     height: 1px;
     margin: 4px 0;
     background: var(--line-soft);
+  }
+  .heading {
+    padding: 6px 12px 2px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-3);
+    font-weight: 600;
   }
   .nested {
     position: absolute;

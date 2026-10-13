@@ -39,6 +39,8 @@ export interface MenuItem {
   predefined?: PredefinedItem;
   /** A divider; no other field is used. */
   separator?: boolean;
+  /** A title over the items that follow, in the in-window `Menu` only; no other field but `label` is used. */
+  heading?: boolean;
   /** Makes it a submenu. */
   children?: MenuItem[];
 }
