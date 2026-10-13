@@ -8,6 +8,7 @@ import { EditorView } from "@codemirror/view";
 import type { CommentAt } from "../../../generated/CommentAt";
 import type { Thread } from "../../../generated/Thread";
 import type { ThreadTarget } from "../../../generated/ThreadTarget";
+import { toggleIn } from "../../../lib/foldKeys";
 import type { Shown } from "../../../state/shown";
 import { lineEnd } from "./positions";
 import type { Section, ThreadState } from "./section";
@@ -99,7 +100,7 @@ export class ThreadLayer {
     this.actions = threadActions(listeners, host.shown, {
       cancelDraft: () => this.setDraft(undefined),
       toggle: (thread) => {
-        if (!this.opened.delete(thread)) this.opened.add(thread);
+        toggleIn(this.opened, thread);
         this.show();
       },
     });

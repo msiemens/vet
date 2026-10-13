@@ -129,6 +129,24 @@ export function bestMatch(query: string, texts: readonly string[]): number {
   return best;
 }
 
+/**
+ * The row a search aims at, the one Enter opens: the best match of `query` among the rows that
+ * matched (`found`, indices into the rows, `nameOf` their names), or -1 for none.
+ */
+export function aimIndex(query: string, found: readonly number[], nameOf: (index: number) => string): number {
+  return found[Math.max(0, bestMatch(query, found.map(nameOf)))] ?? -1;
+}
+
+/**
+ * The matched row that Up or Down (`by` 1 or -1) steps to from `cursor`, wrapping round; from a row
+ * that is none of them, the first for Down and the last for Up. None when no row matched.
+ */
+export function stepMatch(found: readonly number[], cursor: number, by: number): number | undefined {
+  if (!found.length) return undefined;
+  const at = found.indexOf(cursor);
+  return found[at < 0 ? (by > 0 ? 0 : found.length - 1) : (at + by + found.length) % found.length];
+}
+
 /** The parts of `ranges` (merged, sorted) inside `[from, to)`, relative to `from`. */
 export function sliceRanges(ranges: readonly Range[], from: number, to: number): Range[] {
   return ranges

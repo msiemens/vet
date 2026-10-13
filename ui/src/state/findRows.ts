@@ -25,9 +25,10 @@ export function visible(places: readonly Place[], f: Filters): Place[] {
   });
 }
 
+/** A row of the list: a file's header, and under it its places. */
 export type Item =
-  | { kind: "file"; key: string; file: FoundFile; count: number; notSeen: number; open: boolean }
-  | { kind: "place"; key: string; place: Place };
+  | { kind: "file"; depth: 0; key: string; file: FoundFile; count: number; notSeen: number; open: boolean }
+  | { kind: "place"; depth: 1; key: string; place: Place };
 
 const notSeen = (p: Place) => p.review === "unseen" || p.review === "old";
 
@@ -46,6 +47,7 @@ export function itemsOf(places: readonly Place[], folded: ReadonlySet<string>): 
     const open = !folded.has(key);
     const header: Item = {
       kind: "file",
+      depth: 0,
       key,
       file,
       count: inFile.length,
@@ -54,6 +56,6 @@ export function itemsOf(places: readonly Place[], folded: ReadonlySet<string>): 
     };
     if (!open) return [header];
     const ordered = [...inFile].sort((a, b) => a.line - b.line || a.col - b.col);
-    return [header, ...ordered.map((place): Item => ({ kind: "place", key: place.id, place }))];
+    return [header, ...ordered.map((place): Item => ({ kind: "place", depth: 1, key: place.id, place }))];
   });
 }

@@ -3,8 +3,9 @@
   // listing its places by file with the review state of the hunk each is in, and a preview of the
   // place chosen. A click chooses a place, Enter and a double click open it where it was found.
   import { untrack } from "svelte";
-  import { SvelteSet } from "svelte/reactivity";
   import { letterOfStatus } from "../../lib/changeLetter";
+  import { arrowKey, toggled } from "../../lib/foldKeys";
+  import { plainKey } from "../../lib/listKeys";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
@@ -71,10 +72,7 @@
   };
 
   function fold(key: string) {
-    if (!set) return;
-    const next = new SvelteSet(set.folded);
-    if (!next.delete(key)) next.add(key);
-    set.folded = next;
+    if (set) set.folded = toggled(set.folded, key);
   }
 
   /** A place's own action is to be chosen, a file's to fold. */
@@ -100,7 +98,11 @@
   });
   $effect(() => () => nav.cancel());
 
-  const plain = (e: KeyboardEvent) => !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+  const folding = {
+    holds: (i: Item) => i.kind === "file",
+    open: (i: Item) => i.kind === "file" && i.open,
+    leaves: (i: Item) => i.kind === "place",
+  };
 
   function onkeydown(e: KeyboardEvent) {
     const take = () => {
@@ -125,17 +127,13 @@
       return;
     }
     const item = items.at(cursor);
-    if (item && set && plain(e) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    if (item && set && plainKey(e) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       take();
-      if (item.kind === "file") {
-        if (item.open === (e.key === "ArrowLeft")) fold(item.key);
-      } else if (e.key === "ArrowLeft") {
-        // A place steps back to its file's header.
-        let header = cursor;
-        while (header > 0 && items[header].kind !== "file") header--;
-        select(items[header]);
-        list?.reveal(header);
-      }
+      const step = arrowKey(items, cursor, e.key === "ArrowLeft" ? "left" : "right", folding);
+      if (step && "move" in step) {
+        select(items[step.move]);
+        list?.reveal(step.move);
+      } else if (step) fold(step.toggle.key);
       return;
     }
     if (e.key === "Enter" && e.altKey && !e.ctrlKey && !e.metaKey && item) {
@@ -143,13 +141,13 @@
       open(item, true);
       return;
     }
-    if (e.key === "Escape" && plain(e)) {
+    if (e.key === "Escape" && plainKey(e)) {
       take();
       if (set && narrowing({ ...set.filters, changeset: false, notSeen: false })) set.filters.query = "";
       else oneditor();
       return;
     }
-    if (e.key.length === 1 && plain(e) && e.key !== " ") {
+    if (e.key.length === 1 && plainKey(e) && e.key !== " ") {
       field?.focus();
       return;
     }

@@ -6,6 +6,7 @@
   import type { View } from "../../generated/View";
   import { letterOfStatus } from "../../lib/changeLetter";
   import { errorText } from "../../lib/errorText";
+  import { toggleIn } from "../../lib/foldKeys";
   import { segments, trimmed } from "../../lib/foundText";
   import { basename, dirname } from "../../lib/paths";
   import { NO_HIGHLIGHTS } from "../../lib/highlights";
@@ -225,9 +226,7 @@
     if (delta < 0 && rows[to - 1]?.kind === "file") list?.reveal(to - 1);
   }
 
-  function toggleFile(path: string) {
-    if (!collapsed.delete(path)) collapsed.add(path);
-  }
+  const toggleFile = (path: string) => toggleIn(collapsed, path);
 
   function open(row: ResultRow | undefined, ownTab: boolean) {
     if (row?.kind !== "line") return;

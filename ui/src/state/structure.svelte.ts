@@ -7,6 +7,7 @@ import { SvelteSet } from "svelte/reactivity";
 import type { FileOutline } from "../generated/FileOutline";
 import { isAbort } from "../lib/abort";
 import { errorText } from "../lib/errorText";
+import { toggleIn } from "../lib/foldKeys";
 import { readStored, writeStored } from "../lib/storage";
 import type { SymbolChange } from "../generated/SymbolChange";
 import type { SymbolInfo } from "../generated/SymbolInfo";
@@ -148,7 +149,7 @@ class StructureState {
   }
 
   toggleFold(key: string) {
-    if (!this.closed.delete(key)) this.closed.add(key);
+    toggleIn(this.closed, key);
   }
 
   setSort(on: boolean) {

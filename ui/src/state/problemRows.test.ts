@@ -140,6 +140,15 @@ void test("with origins known the list has the new problems above the old, each 
   assert.ok(rows.every((r) => r.kind !== "problem" || !r.pill));
 });
 
+void test("rows sit as deep as the groups and files that hold them", () => {
+  const list = [at("a.rs", 3), at("a.rs", 4, { severity: "error" })];
+  const depths = (grouping: "origin" | "file" | "severity") =>
+    rowsOf(list, { grouping, settled: true, folded: new Set() }).map((r) => `${r.kind}${r.depth}`);
+  assert.deepEqual(depths("origin"), ["group0", "file1", "problem2", "problem2"]);
+  assert.deepEqual(depths("file"), ["file0", "problem1", "problem1"]);
+  assert.deepEqual(depths("severity"), ["group0", "problem1", "group0", "problem1"]);
+});
+
 void test("a folded group or file hides its rows but keeps its count", () => {
   const list = [at("a.rs", 3), at("a.rs", 4), at("b.rs", 1)];
   const rows = rowsOf(list, { grouping: "origin", settled: true, folded: new Set(["o:new:a.rs"]) });

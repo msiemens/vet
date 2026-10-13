@@ -1,16 +1,40 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  aimIndex,
   bestMatch,
   highlightRuns,
   match,
   sliceRanges,
   speedSearchKey,
+  stepMatch,
   type SpeedSearchKeyEvent,
 } from "./speedSearch.ts";
 
 const ranges = (query: string, text: string) => match(query, text)?.ranges;
 const score = (query: string, text: string) => match(query, text)?.score ?? -Infinity;
+
+void test("the search aims at the best match among the rows that matched, not the first", () => {
+  const names = ["a_changeset", "x", "changeset", "y"];
+  assert.equal(
+    aimIndex("changeset", [0, 2], (i) => names[i]),
+    2,
+  );
+  assert.equal(
+    aimIndex("changeset", [], (i) => names[i]),
+    -1,
+  );
+});
+
+void test("Up and Down step from match to match, wrap round, and start at the end they come from", () => {
+  const found = [2, 5, 9];
+  assert.equal(stepMatch(found, 5, 1), 9);
+  assert.equal(stepMatch(found, 9, 1), 2);
+  assert.equal(stepMatch(found, 2, -1), 9);
+  assert.equal(stepMatch(found, -1, 1), 2);
+  assert.equal(stepMatch(found, 7, -1), 9);
+  assert.equal(stepMatch([], 0, 1), undefined);
+});
 
 void test("the capitals of a name's words match it, and the match reports where", () => {
   assert.deepEqual(ranges("CSV", "ChangesetView"), [

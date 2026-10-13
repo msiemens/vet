@@ -191,10 +191,19 @@ export function stepInFile(
   return [...list].reverse().find((p) => p.line < caretLine) ?? list[n - 1];
 }
 
+/** A row of the list; `depth` is how far it sits inside the groups and files above it. */
 export type Row =
-  | { kind: "group"; key: string; title: string; count: number; open: boolean; tone: "new" | "plain" | Level }
-  | { kind: "file"; key: string; path: string; count: number; open: boolean }
-  | { kind: "problem"; key: string; problem: Problem; showFile: boolean; pill: boolean };
+  | {
+      kind: "group";
+      depth: number;
+      key: string;
+      title: string;
+      count: number;
+      open: boolean;
+      tone: "new" | "plain" | Level;
+    }
+  | { kind: "file"; depth: number; key: string; path: string; count: number; open: boolean }
+  | { kind: "problem"; depth: number; key: string; problem: Problem; showFile: boolean; pill: boolean };
 
 export interface Layout {
   grouping: Grouping;
@@ -218,14 +227,21 @@ function byFile(problems: readonly Problem[]): [string, Problem[]][] {
   return [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
-function fileRows(problems: readonly Problem[], keyPrefix: string, layout: Layout, pill: boolean): Row[] {
+function fileRows(
+  problems: readonly Problem[],
+  keyPrefix: string,
+  layout: Layout,
+  pill: boolean,
+  depth: number,
+): Row[] {
   const rows: Row[] = [];
   for (const [path, found] of byFile(problems)) {
     const own = found.sort(byPlace);
     const key = `${keyPrefix}${path}`;
     const open = !layout.folded.has(key);
-    rows.push({ kind: "file", key, path, count: own.length, open });
-    if (open) for (const problem of own) rows.push({ kind: "problem", key, problem, showFile: false, pill });
+    rows.push({ kind: "file", depth, key, path, count: own.length, open });
+    if (open)
+      for (const problem of own) rows.push({ kind: "problem", depth: depth + 1, key, problem, showFile: false, pill });
   }
   return rows;
 }
@@ -246,8 +262,16 @@ export function rowsOf(problems: readonly Problem[], layout: Layout): Row[] {
       if (!own.length) continue;
       const key = `o:${origin}`;
       const open = !folded.has(key);
-      rows.push({ kind: "group", key, title, count: own.length, open, tone: origin === "new" ? "new" : "plain" });
-      if (open) rows.push(...fileRows(own, `${key}:`, layout, false));
+      rows.push({
+        kind: "group",
+        depth: 0,
+        key,
+        title,
+        count: own.length,
+        open,
+        tone: origin === "new" ? "new" : "plain",
+      });
+      if (open) rows.push(...fileRows(own, `${key}:`, layout, false, 1));
     }
     return rows;
   }
@@ -260,12 +284,13 @@ export function rowsOf(problems: readonly Problem[], layout: Layout): Row[] {
       if (!own.length) continue;
       const key = `s:${level}`;
       const open = !folded.has(key);
-      rows.push({ kind: "group", key, title: LEVEL_TITLE[level], count: own.length, open, tone: level });
-      if (open) for (const problem of own) rows.push({ kind: "problem", key, problem, showFile: true, pill: true });
+      rows.push({ kind: "group", depth: 0, key, title: LEVEL_TITLE[level], count: own.length, open, tone: level });
+      if (open)
+        for (const problem of own) rows.push({ kind: "problem", depth: 1, key, problem, showFile: true, pill: true });
     }
     return rows;
   }
-  return fileRows(problems, "f:", layout, !settled || grouping === "file");
+  return fileRows(problems, "f:", layout, !settled || grouping === "file", 0);
 }
 
 /** What the footer and the rail say of a changeset's problems. */

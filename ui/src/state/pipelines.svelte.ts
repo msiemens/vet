@@ -6,6 +6,7 @@ import { SvelteSet } from "svelte/reactivity";
 import type { PipelineAction } from "../generated/PipelineAction";
 import type { PipelineStep } from "../generated/PipelineStep";
 import { errorText } from "../lib/errorText";
+import { toggleIn } from "../lib/foldKeys";
 import { checks } from "./checks.svelte";
 import { session } from "./session.svelte";
 
@@ -49,7 +50,7 @@ class PipelineStore {
   }
 
   toggle(run: string) {
-    if (!this.folded.delete(run)) this.folded.add(run);
+    toggleIn(this.folded, run);
   }
 
   /**

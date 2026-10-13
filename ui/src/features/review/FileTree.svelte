@@ -6,8 +6,9 @@
   import type { ReviewedFile } from "../../state/reviewModel";
   import { dirname } from "../../lib/paths";
   import { letterOfChange } from "../../lib/changeLetter";
-  import { arrowKey } from "../../lib/foldKeys";
-  import { bestMatch, type Range } from "../../lib/speedSearch";
+  import { arrowKey, toggleIn } from "../../lib/foldKeys";
+  import { plainKey } from "../../lib/listKeys";
+  import { aimIndex, stepMatch, type Range } from "../../lib/speedSearch";
   import { fullName } from "../../lib/symbolLabel";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
@@ -262,10 +263,7 @@
   const allOpen = $derived(foldable.length > 0 && foldable.every(isOpen));
 
   const toggleFile = (path: string) => fileOpen.set(path, !isOpen(path));
-  const toggleSymbol = (row: SymbolRow) => {
-    const key = closedKey(row.path, row.key);
-    if (!closedSymbols.delete(key)) closedSymbols.add(key);
-  };
+  const toggleSymbol = (row: SymbolRow) => toggleIn(closedSymbols, closedKey(row.path, row.key));
   /** Opens every file that has symbols and every holder in them, or shuts the files. */
   function toggleAll() {
     openAll = !allOpen;
@@ -364,30 +362,17 @@
 
   /** The row Enter opens is the best match of what is typed. */
   function aim() {
-    const found = matches();
     const rows = shown();
-    cursor =
-      found[
-        Math.max(
-          0,
-          bestMatch(
-            search.query,
-            found.map((i) => rows[i].name),
-          ),
-        )
-      ] ?? -1;
+    cursor = aimIndex(search.query, matches(), (i) => rows[i].name);
     rowList()?.reveal(cursor);
   }
 
   function step(by: number) {
-    const found = matches();
-    if (!found.length) return;
-    const at = found.indexOf(cursor);
-    cursor = found[at < 0 ? (by > 0 ? 0 : found.length - 1) : (at + by + found.length) % found.length];
+    const to = stepMatch(matches(), cursor, by);
+    if (to === undefined) return;
+    cursor = to;
     rowList()?.reveal(cursor);
   }
-
-  const plain = (e: KeyboardEvent) => !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
 
   /** ← and → open, shut and move through files with symbols and symbols, F4 opens a symbol; answers whether the key was one. */
   function changesKey(e: KeyboardEvent): boolean {
@@ -399,13 +384,11 @@
       return true;
     }
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return false;
-    const step = arrowKey(
-      shownChanges,
-      cursor,
-      e.key === "ArrowLeft" ? "left" : "right",
-      (r) => (r.kind === "symbol" ? r.holds : r.kind === "file" && hasSymbols(r.path)),
-      (r) => (r.kind === "symbol" ? !closedSymbols.has(closedKey(r.path, r.key)) : isOpen(r.path)),
-    );
+    const step = arrowKey(shownChanges, cursor, e.key === "ArrowLeft" ? "left" : "right", {
+      holds: (r) => (r.kind === "symbol" ? r.holds : r.kind === "file" && hasSymbols(r.path)),
+      open: (r) => (r.kind === "symbol" ? !closedSymbols.has(closedKey(r.path, r.key)) : isOpen(r.path)),
+      leaves: (r) => r.kind === "symbol",
+    });
     if (!step) return false;
     if ("move" in step) {
       cursor = step.move;
@@ -437,7 +420,7 @@
         return;
       }
     }
-    if (!search.active && tool === "changes" && plain(e) && changesKey(e)) {
+    if (!search.active && tool === "changes" && plainKey(e) && changesKey(e)) {
       e.preventDefault();
       e.stopPropagation();
       return;

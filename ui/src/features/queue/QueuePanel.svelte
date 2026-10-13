@@ -6,6 +6,7 @@
   import type { CheckRun } from "../../generated/CheckRun";
   import type { Thread } from "../../generated/Thread";
   import { errorText } from "../../lib/errorText";
+  import { toggleIn } from "../../lib/foldKeys";
   import { readStored, writeStored } from "../../lib/storage";
   import { platformName } from "../../lib/platformName";
   import Avatar from "../../lib/ui/Avatar.svelte";
@@ -63,7 +64,7 @@
     ),
   );
   function fold(id: string) {
-    if (!shut.delete(id)) shut.add(id);
+    toggleIn(shut, id);
     writeStored(SECTION_KEY + id, shut.has(id) ? "shut" : undefined);
   }
 

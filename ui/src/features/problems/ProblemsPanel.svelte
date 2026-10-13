@@ -3,8 +3,9 @@
   // the change introduced first, each with the review state of the hunk it sits in. A click shows a
   // problem without taking the focus, Enter and a double click jump to its source.
   import { tick, untrack } from "svelte";
-  import { SvelteSet } from "svelte/reactivity";
   import type { Unavailable } from "../../generated/Unavailable";
+  import { arrowKey, toggled } from "../../lib/foldKeys";
+  import { plainKey } from "../../lib/listKeys";
   import { RestoreFailureList, limitedMessage, onlyStoodIn } from "../chrome";
   import Banner from "../../lib/ui/Banner.svelte";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
@@ -69,9 +70,9 @@
   type Scope = "changed" | "open" | "file";
   type Item =
     | Row
-    | { kind: "wait"; key: string; server: string; files: string[] }
-    | { kind: "na"; key: string; open: boolean; count: number }
-    | { kind: "naFile"; key: string; path: string; why: Unavailable };
+    | { kind: "wait"; depth: 0; key: string; server: string; files: string[] }
+    | { kind: "na"; depth: 0; key: string; open: boolean; count: number }
+    | { kind: "naFile"; depth: 1; key: string; path: string; why: Unavailable };
 
   const LEVELS: { id: Level; title: string }[] = [
     { id: "error", title: "Errors" },
@@ -153,11 +154,19 @@
   const items = $derived<Item[]>([
     ...rows,
     ...(indexing && serverOf && unanswered.length
-      ? [{ kind: "wait" as const, key: "wait", server: serverOf.server, files: unanswered }]
+      ? [{ kind: "wait" as const, depth: 0 as const, key: "wait", server: serverOf.server, files: unanswered }]
       : []),
-    ...(missing.length ? [{ kind: "na" as const, key: "na", open: naShown, count: missing.length }] : []),
+    ...(missing.length
+      ? [{ kind: "na" as const, depth: 0 as const, key: "na", open: naShown, count: missing.length }]
+      : []),
     ...(naShown
-      ? missing.map((m) => ({ kind: "naFile" as const, key: `na:${m.path}`, path: m.path, why: m.why }))
+      ? missing.map((m) => ({
+          kind: "naFile" as const,
+          depth: 1 as const,
+          key: `na:${m.path}`,
+          path: m.path,
+          why: m.why,
+        }))
       : []),
   ]);
 
@@ -177,11 +186,7 @@
 
   const keyOf = (item: Item) => (item.kind === "problem" ? `p:${item.problem.id}` : item.key);
 
-  function fold(key: string) {
-    const next = new SvelteSet(folded);
-    if (!next.delete(key)) next.add(key);
-    folded = next;
-  }
+  const fold = (key: string) => (folded = toggled(folded, key));
 
   /** The item's own action: show a problem, fold a group, show a file. */
   function single(item: Item) {
@@ -212,10 +217,15 @@
     double: open,
     highlight: { get: () => cursor, set: (i) => (cursor = i) },
     reveal: (i) => void list?.reveal(i),
+    start: () => items.findIndex((i) => i.kind === "problem" && i.problem.id === problems.selected),
   });
   $effect(() => () => nav.cancel());
 
-  const plain = (e: KeyboardEvent) => !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+  const folding = {
+    holds: (r: Item) => r.kind === "group" || r.kind === "file" || r.kind === "na",
+    open: (r: Item) => (r.kind === "na" ? naShown : "open" in r && r.open),
+    leaves: (r: Item) => r.kind === "problem" || r.kind === "naFile",
+  };
 
   function onkeydown(e: KeyboardEvent) {
     const take = () => {
@@ -236,30 +246,22 @@
       return;
     }
     const item = items.at(cursor);
-    if (item && plain(e) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    if (item && plainKey(e) && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       take();
-      const holds = (r: Item) => r.kind === "group" || r.kind === "file" || r.kind === "na";
-      const isOpen = (r: Item) => (r.kind === "na" ? naShown : "open" in r && r.open);
-      if (e.key === "ArrowRight") {
-        if (holds(item) && !isOpen(item)) single(item);
-      } else if (holds(item) && isOpen(item)) single(item);
-      else if (item.kind === "problem" || item.kind === "naFile" || item.kind === "wait") {
-        let holder = cursor - 1;
-        while (holder >= 0 && !holds(items[holder])) holder--;
-        if (holder >= 0) {
-          cursor = holder;
-          list?.reveal(holder);
-        }
-      }
+      const step = arrowKey(items, cursor, e.key === "ArrowLeft" ? "left" : "right", folding);
+      if (step && "move" in step) {
+        cursor = step.move;
+        list?.reveal(step.move);
+      } else if (step) single(step.toggle);
       return;
     }
-    if (e.key === "Escape" && plain(e)) {
+    if (e.key === "Escape" && plainKey(e)) {
       take();
       if (filters.query) filters.query = "";
       else oneditor();
       return;
     }
-    if (e.key.length === 1 && plain(e) && e.key !== " ") {
+    if (e.key.length === 1 && plainKey(e) && e.key !== " ") {
       field?.focus();
       return;
     }
@@ -275,10 +277,6 @@
     if (item?.kind !== "problem") return;
     problems.selected = item.problem.id;
     onshow(item.problem, false);
-  }
-
-  function focusin() {
-    if (cursor < 0) cursor = items.findIndex((i) => i.kind === "problem" && i.problem.id === problems.selected);
   }
 
   function click(e: MouseEvent, index: number) {
@@ -315,7 +313,7 @@
   const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 </script>
 
-<section aria-label="Problems" data-filter-keys onfocusin={focusin}>
+<section aria-label="Problems" data-filter-keys onfocusin={() => nav.focusin()}>
   <BottomToolHeader title="Problems" count={problems.summary?.badge ?? 0} {onclose}>
     {#snippet controls()}
       <Segmented

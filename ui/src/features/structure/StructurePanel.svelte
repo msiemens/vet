@@ -5,7 +5,8 @@
   import { tick, untrack } from "svelte";
   import type { SymbolInfo } from "../../generated/SymbolInfo";
   import { arrowKey } from "../../lib/foldKeys";
-  import { match } from "../../lib/speedSearch";
+  import { plainKey } from "../../lib/listKeys";
+  import { aimIndex, stepMatch } from "../../lib/speedSearch";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
@@ -32,10 +33,8 @@
 
   const search = new SpeedSearch();
   let cursor = $state(-1);
-  let root = $state<HTMLElement>();
   let body = $state<HTMLElement>();
   let list = $state<VirtualRows>();
-  let focused = $state(false);
 
   const target = $derived(structure.target);
   const outline = $derived(structure.load.state === "done" ? structure.load.outline : undefined);
@@ -85,6 +84,7 @@
     double: jump,
     highlight: { get: () => cursor, set: (i) => (cursor = i) },
     reveal: (i) => void list?.reveal(i),
+    start: () => rows.findIndex((r) => keyOf(r.symbol.id) === structure.selected),
   });
   $effect(() => () => nav.cancel());
 
@@ -104,53 +104,46 @@
     else for (const key of holderKeys(symbols)) structure.closed.add(key);
   }
 
+  /** The indices of the rows the search matched. */
+  const matched = () => rows.flatMap((r, i) => (r.ranges ? [i] : []));
+
   /** The row Enter acts on while searching: the best match of the query. */
   function aim() {
-    const found = rows.flatMap((r, i) => (r.ranges ? [i] : []));
-    const best = found.reduce<number | undefined>((a, i) => {
-      const score = (at: number) => match(search.query, rows[at].name)?.score ?? -Infinity;
-      return a === undefined || score(i) > score(a) ? i : a;
-    }, undefined);
-    cursor = best ?? -1;
+    cursor = aimIndex(search.query, matched(), (i) => rows[i].name);
     list?.reveal(cursor);
   }
 
   /** Up and Down while searching go from match to match. */
   function step(by: number) {
-    const found = rows.flatMap((r, i) => (r.ranges ? [i] : []));
-    if (!found.length) return;
-    const at = found.indexOf(cursor);
-    cursor = found[at < 0 ? (by > 0 ? 0 : found.length - 1) : (at + by + found.length) % found.length];
+    const to = stepMatch(matched(), cursor, by);
+    if (to === undefined) return;
+    cursor = to;
     list?.reveal(cursor);
   }
-
-  const plain = (e: KeyboardEvent) => !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
 
   function onkeydown(e: KeyboardEvent) {
     const take = () => {
       e.preventDefault();
       e.stopPropagation();
     };
-    if (search.active && (e.key === "ArrowDown" || e.key === "ArrowUp") && plain(e)) {
+    if (search.active && (e.key === "ArrowDown" || e.key === "ArrowUp") && plainKey(e)) {
       take();
       step(e.key === "ArrowDown" ? 1 : -1);
       return;
     }
     const row = rows.at(cursor);
-    if (!search.active && row && plain(e)) {
+    if (!search.active && row && plainKey(e)) {
       if (e.key === "F4") {
         take();
         jump(row);
         return;
       }
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        const fold = arrowKey(
-          rows,
-          cursor,
-          e.key === "ArrowLeft" ? "left" : "right",
-          (r) => r.holds,
-          (r) => r.open,
-        );
+        const fold = arrowKey(rows, cursor, e.key === "ArrowLeft" ? "left" : "right", {
+          holds: (r) => r.holds,
+          open: (r) => r.open,
+          leaves: () => true,
+        });
         if (fold) {
           take();
           if ("move" in fold) {
@@ -161,11 +154,11 @@
         }
       }
     }
-    if (e.key === "F4" && plain(e)) {
+    if (e.key === "F4" && plainKey(e)) {
       take();
       return;
     }
-    if (e.key === "Escape" && !search.active && plain(e)) {
+    if (e.key === "Escape" && !search.active && plainKey(e)) {
       take();
       oneditor();
       return;
@@ -177,22 +170,9 @@
     }
     if (nav.keydown(e)) take();
   }
-
-  function focusin() {
-    focused = true;
-    if (cursor < 0) {
-      const id = structure.selected;
-      cursor = rows.findIndex((r) => keyOf(r.symbol.id) === id);
-    }
-  }
-
-  function focusout(e: FocusEvent) {
-    if (e.relatedTarget instanceof Node && root?.contains(e.relatedTarget)) return;
-    focused = false;
-  }
 </script>
 
-<aside aria-label="Structure" bind:this={root} onfocusin={focusin} onfocusout={focusout}>
+<aside aria-label="Structure" onfocusin={() => nav.focusin()}>
   <div class="sh sh-bar">
     <span>Structure</span>
     {#if outline && !outline.unavailable}<span class="mono n">{symbols.length}</span>{/if}
@@ -247,7 +227,7 @@
   <div class="body" role="presentation" bind:this={body} {onkeydown} {...nav.attributes} {...search.attributes}>
     {#if search.active}<SpeedSearchField query={search.query} found={rows.length > 0} />{/if}
     {#if rows.length}
-      <StructureList bind:list {rows} selected={structure.selected} cursor={focused ? cursor : -1} onclick={click} />
+      <StructureList bind:list {rows} selected={structure.selected} {cursor} onclick={click} />
     {:else}
       <StructureNotice load={structure.load} file={fileName} matches={rows.length} />
     {/if}

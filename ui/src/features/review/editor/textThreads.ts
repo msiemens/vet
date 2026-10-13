@@ -7,6 +7,7 @@ import { type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { CommentAt } from "../../../generated/CommentAt";
 import type { Thread } from "../../../generated/Thread";
+import { toggleIn } from "../../../lib/foldKeys";
 import type { Shown } from "../../../state/shown";
 import { lineEnd } from "./positions";
 import { buildCard } from "./threadCard";
@@ -34,7 +35,7 @@ export class TextThreads {
     this.actions = threadActions(listeners, shown, {
       cancelDraft: () => this.setDraft(undefined),
       toggle: (thread) => {
-        if (!this.opened.delete(thread)) this.opened.add(thread);
+        toggleIn(this.opened, thread);
         this.show();
       },
     });
