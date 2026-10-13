@@ -37,6 +37,7 @@
     frame,
     onopenthread,
     onopenlog,
+    onbasechanged,
   }: {
     /** The selected changeset, which is the one on view; none selects nothing. */
     row?: QueueRow;
@@ -46,6 +47,8 @@
     onopenthread: (thread: Thread) => void;
     /** Shows the log of a failed run in the review. */
     onopenlog: (run: CheckRun) => void;
+    /** Shows the review with the Changes tab filtered to the lines seen against an older base. */
+    onbasechanged: () => void;
   } = $props();
 
   const SECTION_KEY = "vet.queue.section.";
@@ -241,7 +244,10 @@
               <div class="line top muted"><span class="strong">{summary.pushes}</span></div>
             {/if}
             {#if summary.oldBaseNote}
-              <div class="line top muted"><span class="stripes"></span><span>{summary.oldBaseNote}</span></div>
+              <div class="line top">
+                <span class="stripes"></span>
+                <button class="flat link note" type="button" onclick={onbasechanged}>{summary.oldBaseNote}</button>
+              </div>
             {/if}
           </div>
         {/snippet}
@@ -369,6 +375,10 @@
     color: var(--accent);
     font: inherit;
     white-space: nowrap;
+  }
+  .link.note {
+    white-space: normal;
+    text-align: left;
   }
   .small {
     font-size: var(--fs-mono-s);

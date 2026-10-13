@@ -691,7 +691,7 @@
         onopenthread={openThread}
         onopenlog={(run) => {
           screen = "review";
-          void controller?.openLog(run);
+          void controller?.openLog(run, logKey(run, undefined));
         }}
       />
     {/if}

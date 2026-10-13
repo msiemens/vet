@@ -12,6 +12,7 @@
   import Table from "../../lib/ui/Table.svelte";
   import type { Column } from "../../lib/ui/columns";
   import { type Sort, sortRows } from "../../lib/ui/sorting";
+  import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
@@ -94,6 +95,12 @@
   function showTab(id: QueueTab) {
     tab = id;
     writeStored(TAB_KEY, id);
+  }
+
+  /** The panel's link to the lines seen against an older base: the review shows them. */
+  async function openBaseChanged() {
+    await changeset.showBaseChanged();
+    onopen();
   }
 
   onMount(() => {
@@ -241,7 +248,7 @@
       {/each}
     </Table>
   </div>
-  <QueuePanel row={current} frame={own} {onopenthread} {onopenlog} />
+  <QueuePanel row={current} frame={own} {onopenthread} {onopenlog} onbasechanged={() => void openBaseChanged()} />
 </section>
 
 <style>
