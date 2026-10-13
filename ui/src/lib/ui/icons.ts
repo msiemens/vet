@@ -49,14 +49,14 @@ export const ICONS = {
   link: '<path d="M9 15l6-6M7 11l-2 2a3.5 3.5 0 005 5l2-2M17 13l2-2a3.5 3.5 0 00-5-5l-2 2"/>',
   module: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12L4 7.5M12 12v9"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
-  // Lucide's info (ISC).
-  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+  // Lucide's info (ISC). The dots of this and the next two are zero-length strokes, which only a round cap draws.
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4" stroke-linecap="round"/><path d="M12 8h.01" stroke-linecap="round"/>',
   // Lucide's triangle-alert (ISC).
   warning:
-    '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4" stroke-linecap="round"/><path d="M12 17h.01" stroke-linecap="round"/>',
   // Lucide's circle-alert (ISC).
   problems:
-    '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+    '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12" stroke-linecap="round"/><line x1="12" x2="12.01" y1="16" y2="16" stroke-linecap="round"/>',
   // Lucide's circle-x (ISC).
   error: '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
   minus: '<path d="M6 12h12"/>',
