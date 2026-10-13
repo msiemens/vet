@@ -416,6 +416,11 @@ export class ChangesetView {
     return this.sections.findIndex((s) => s.file.path === path);
   }
 
+  /** The paths of the files in the view, in order. */
+  paths(): string[] {
+    return this.sections.map((s) => s.file.path);
+  }
+
   load(fi: number): Promise<Loaded> {
     const s = this.sections[fi];
     s.loading ??= this.source.contents(s.file).then((loaded) => {

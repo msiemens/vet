@@ -111,10 +111,12 @@ export interface OpenedResult {
   /** The first match's column in the line and its width, in UTF-16 units. */
   col: number;
   width: number;
+  /** The place searched, whose line numbers the result has. */
+  scope: SearchScope;
   /** The full id of the commit searched, for a search of one commit. */
   commit?: string;
-  /** Show it in All changes: the place searched is the view on show. */
-  reveal: boolean;
+  /** The viewer asked for a tab of the file's own. */
+  ownTab: boolean;
   options: OpenedQuery;
 }
 

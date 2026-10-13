@@ -8,6 +8,7 @@ import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { CheckRun } from "../../generated/CheckRun";
 import type { CommitUnit } from "../../generated/CommitUnit";
 import type { Side } from "../../generated/Side";
+import type { View } from "../../generated/View";
 import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { TextSpan } from "../../generated/TextSpan";
 import { isAbort } from "../../lib/abort";
@@ -38,8 +39,9 @@ import { SUBMIT_KEY } from "../../lib/composer";
 import { errorText } from "../../lib/errorText";
 import { ChangesetView, type Listeners, type PanePosition, type ViewHooks } from "./editor/ChangesetView";
 import { fileSource } from "./editor/fileSource";
-import { type FindOptions, type FindPos, orderOf } from "./editor/findMatches";
+import { type FindOptions, type PathPos, fromPathPos, orderOf, toPathPos } from "./editor/findMatches";
 import type { OpenedResult } from "../search";
+import { routeFound } from "./foundRoute";
 import { type Finder, NO_SUMMARY, type FindSummary } from "./editor/findView";
 import { FindState } from "./FindState.svelte";
 import type { Rendered } from "./editor/rendered";
@@ -88,6 +90,8 @@ export type ChangesetSource = Pick<
   | "onOpening"
   | "shownCommit"
   | "stepCommit"
+  | "setRange"
+  | "showWhole"
   | "subscribe"
   | "state"
   | "version"
@@ -114,8 +118,8 @@ export class ReviewController {
   readonly tabs = new Tabs("unified");
   /** The find bar: the window's query, the tabs it is open in, and what the active tab's view found. */
   readonly find = new FindState();
-  /** Where the current match is in each tab, which a rebuilt view starts from. */
-  private findAt = new Map<TabId, FindPos>();
+  /** Where the current match is in each tab, which a rebuilt view starts from; by file, since the files before it come and go. */
+  private findAt = new Map<TabId, PathPos>();
   private wraps = 0;
   /** The tab whose current match is to be shown, as long as its view may still be replaced. */
   private landing?: TabId;
@@ -581,8 +585,17 @@ export class ReviewController {
     const finder = this.finder(id, shown);
     if (!finder || !this.find.open.has(id)) return;
     finder.onFind((summary) => this.found(id, shown, summary));
-    finder.find(this.find.options, this.findAt.get(id));
+    const at = this.findAt.get(id);
+    finder.find(this.find.options, at && fromPathPos(this.findPaths(id, shown), at));
     if (this.landing === id) void this.land(id, shown, finder);
+  }
+
+  /** The files of the sections a find in the tab's pane runs over, in order. */
+  private findPaths(id: TabId, pane: "text" | "diff"): readonly string[] {
+    const view = pane === "diff" ? this.views.get(id) : undefined;
+    if (view) return view.paths();
+    const path = pathOf(id);
+    return path === undefined ? [] : [path];
   }
 
   /** Scrolls the tab's current match into view; a view rebuilt meanwhile starts the find again and does it again. */
@@ -594,7 +607,8 @@ export class ReviewController {
   /** A pane found something: the bar shows it if it is the active tab's shown pane. */
   private found(id: TabId, pane: "text" | "diff", summary: FindSummary) {
     if (pane !== this.findPane(id) || !this.find.open.has(id)) return;
-    if (summary.at) this.findAt.set(id, summary.at);
+    const at = summary.at && toPathPos(this.findPaths(id, pane), summary.at);
+    if (at) this.findAt.set(id, at);
     if (id === this.tabs.active) this.find.summary = summary;
   }
 
@@ -625,8 +639,17 @@ export class ReviewController {
     return true;
   }
 
+  /** The view the window shows now. */
+  private viewOnShow(): View {
+    const range = this.changeset.currentLayout()?.interdiff;
+    if (range) return { type: "interdiff", from: range.from, to: range.to };
+    const index = this.changeset.shownCommit;
+    return index === undefined ? { type: "changeset" } : { type: "commit", index };
+  }
+
   /**
-   * Shows a result of Find in Files: in the Changes tab when it is the view the search was of and that
+   * Shows a result of Find in Files in a view of the place it was found in (see `routeFound`), which
+   * is brought on screen if it takes a view the window does not show: in the Changes tab when that
    * tab is on show, else in the file's own tab. The find bar opens there with the search's query and
    * the result as its current match.
    */
@@ -634,30 +657,26 @@ export class ReviewController {
     const { path, kind, line, col, width } = result;
     const side: Side = kind === "removed" ? "base" : "target";
     const span: TextSpan = { start: { line, col }, end: { line, col: col + width } };
-    const section = this.tabs.active === CHANGES && result.reveal ? this.changes.indexOf(path) : -1;
+    const route = routeFound(result.scope, this.viewOnShow(), result.ownTab);
+    if (route.show) {
+      if (route.show.type === "interdiff") await this.changeset.setRange({ from: route.show.from, to: route.show.to });
+      else await this.changeset.showWhole();
+      await tick();
+    }
+    const section = this.tabs.active === CHANGES && route.inChanges ? this.changes.indexOf(path) : -1;
     let id: TabId;
     if (section >= 0) {
       id = CHANGES;
-      this.tabs.active = CHANGES;
       await this.changes.goToSpan(section, side, span);
     } else {
-      await this.openLocation(
-        result.commit === undefined ? ON_SCREEN : fileTab(path, result.commit),
-        path,
-        line,
-        side,
-        span,
-      );
+      const pinned = route.pinned && result.commit !== undefined ? result.commit : undefined;
+      await this.openLocation(fileTab(path, pinned), path, line, side, span);
       id = this.tabs.active;
       if (pathOf(id) !== path) return;
     }
     const mode = this.findPane(id) === "text" ? "file" : "diff";
     Object.assign(this.find.options, result.options);
-    this.findAt.set(id, {
-      section: id === CHANGES ? section : (this.views.get(id)?.indexOf(path) ?? 0),
-      order: orderOf(result.hunks, kind, line, mode),
-      from: col,
-    });
+    this.findAt.set(id, { path, order: orderOf(result.hunks, kind, line, mode), from: col });
     this.find.open.add(id);
     this.landing = id;
     this.applyFind(id);

@@ -245,7 +245,8 @@
       col: first,
       width: (line.hits[0]?.to ?? first) - first,
       commit: index === undefined ? undefined : commits[index]?.id,
-      reveal: !ownTab && choice.scope.type === "view" && sameView(choice.scope.view, view),
+      scope: choice.scope,
+      ownTab,
       options: {
         text: find.text,
         matchCase: find.matchCase,
@@ -255,12 +256,6 @@
         onlyChanges: find.onlyChanges,
       },
     });
-  }
-
-  function sameView(a: View, b: View): boolean {
-    if (a.type !== b.type) return false;
-    if (a.type === "interdiff" && b.type === "interdiff") return a.from === b.from && a.to === b.to;
-    return a.type === "commit" && b.type === "commit" ? a.index === b.index : true;
   }
 
   function keydown(e: KeyboardEvent) {
