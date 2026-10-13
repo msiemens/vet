@@ -11,7 +11,7 @@
   import Segmented from "../../lib/ui/Segmented.svelte";
   import { commands } from "../../state/commands";
   import BaseNote from "./BaseNote.svelte";
-  import { completionTitle } from "./completionTitle";
+  import { completionTitle, nothingToReview } from "./completionTitle";
   import ScopeChip from "./ScopeChip.svelte";
   import type { BaseNote as BaseNoteInfo, ScopeChip as ScopeInfo } from "./scopeText";
   import TitleBar from "./TitleBar.svelte";
@@ -107,7 +107,11 @@
           { value: oldBase, color: "var(--old-base-stripes)" },
         ]}
       />
-      <span class="mono pct">{Math.round(seen)}%</span>
+      {#if completion && nothingToReview(completion)}
+        <span class="none">nothing to review</span>
+      {:else}
+        <span class="mono pct">{Math.round(seen)}%</span>
+      {/if}
     </span>
     {#if review?.state === "open"}
       <button
@@ -144,5 +148,9 @@
   }
   .pct {
     font-size: var(--fs-mono);
+  }
+  .none {
+    font-size: var(--fs-ctl);
+    color: var(--text-3);
   }
 </style>
