@@ -9,7 +9,8 @@
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { recentMenu } from "./recentCommands";
-  import { avatarColour, initials, searchRecent } from "./recentList";
+  import ProjectAvatar from "./ProjectAvatar.svelte";
+  import { searchRecent } from "./recentList";
 
   let {
     name,
@@ -113,9 +114,7 @@
             onclick={() => choose(project.path)}
             oncontextmenu={(e) => openMenu(e, project.path, i)}
           >
-            <span class="avatar" style:background="var(--avatar-{avatarColour(project.path)})"
-              >{initials(projectName)}</span
-            >
+            <ProjectAvatar path={project.path} />
             <span class="text">
               <span class="name"><Marked text={projectName} ranges={nameRanges} /></span>
               <span class="mono path"><PathText path={project.path} ranges={pathRanges} /></span>
@@ -196,17 +195,6 @@
   }
   .row.cursor:not(.on) {
     background: var(--hover);
-  }
-  .avatar {
-    flex: none;
-    width: 26px;
-    height: 26px;
-    display: grid;
-    place-items: center;
-    border-radius: var(--radius);
-    color: var(--on-avatar);
-    font-size: 11px;
-    font-weight: 600;
   }
   .text {
     flex: 1;

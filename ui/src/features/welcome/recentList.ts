@@ -1,12 +1,8 @@
-// What the welcome screen shows of the recent projects: the search over them, a project's initials
-// and avatar colour.
+// What the welcome screen shows of the recent projects: the search over them and a project's initials.
 
 import type { RecentProject } from "../../generated/RecentProject";
 import { repoName } from "../../lib/paths.ts";
 import { match, type Range } from "../../lib/speedSearch.ts";
-
-/** How many avatar colours the palette (`--avatar-1` …) has. */
-export const AVATAR_COLOURS = 6;
 
 export interface RecentMatch {
   project: RecentProject;
@@ -24,13 +20,6 @@ export function initials(name: string): string {
     .slice(0, 2)
     .join("")
     .toUpperCase();
-}
-
-/** Which palette colour (1-based) a project gets: the same for the same path, whatever else is listed. */
-export function avatarColour(path: string): number {
-  let hash = 0;
-  for (const char of path) hash = (Math.imul(hash, 31) + (char.codePointAt(0) ?? 0)) >>> 0;
-  return (hash % AVATAR_COLOURS) + 1;
 }
 
 function merge(ranges: Range[]): Range[] {

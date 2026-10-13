@@ -2,6 +2,7 @@
   import type { CommitUnit } from "../../generated/CommitUnit";
   import { ciIcon } from "../../lib/ciStatus";
   import { shortTime } from "../../lib/shortTime";
+  import Avatar from "../../lib/ui/Avatar.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import { checks } from "../../state/checks.svelte";
   import { passed } from "../checks";
@@ -10,9 +11,6 @@
   let { commit }: { commit: CommitUnit } = $props();
 
   const info = $derived(commit.commit);
-  /** One person always gets the same colour. */
-  const hue = $derived(Array.from(info.author, (c) => c.charCodeAt(0)).reduce((sum, c) => (sum * 31 + c) % 360, 7));
-  const initial = $derived(Array.from(info.author)[0]?.toUpperCase());
   const parents = $derived(commit.kind.type === "merge" ? commit.parents.map((p) => p.slice(0, 7)) : []);
   const checked = $derived(checks.of(info.id));
   const look = $derived(ciIcon(checked?.state));
@@ -23,7 +21,7 @@
   <div class="top">
     <strong class="subject">{info.subject}</strong>
     <span class="who">
-      <span class="avatar" style:--hue={hue} aria-hidden="true">{initial}</span>
+      <Avatar name={info.author} url={null} size={18} />
       {info.author}
     </span>
     <span class="meta">{shortTime(info.time, Date.now(), "detailed")}</span>
@@ -69,17 +67,6 @@
     color: var(--text);
     font-size: var(--fs-ctl);
     white-space: nowrap;
-  }
-  .avatar {
-    display: inline-flex;
-    justify-content: center;
-    align-items: center;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: hsl(var(--hue) 45% 38%);
-    color: white;
-    font-size: 11px;
   }
   .meta {
     color: var(--text-2);

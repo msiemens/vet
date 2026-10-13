@@ -1,6 +1,9 @@
-/** Which of the six avatar colours (1-6) a name gets, the same every time. */
-export function avatarColor(name: string): number {
+/** How many avatar colours the palette (`--avatar-1` …) has. */
+const COLOURS = 6;
+
+/** Which palette colour (1-based) a name or path gets: the same every time, whatever else is listed. */
+export function avatarColor(key: string): number {
   let hash = 0;
-  for (const c of name) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
-  return (hash % 6) + 1;
+  for (const char of key) hash = (Math.imul(hash, 31) + (char.codePointAt(0) ?? 0)) >>> 0;
+  return (hash % COLOURS) + 1;
 }

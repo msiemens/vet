@@ -10,7 +10,8 @@
   import { commands } from "../../state/commands";
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { recentMenu } from "./recentCommands";
-  import { avatarColour, initials, searchRecent } from "./recentList";
+  import ProjectAvatar from "./ProjectAvatar.svelte";
+  import { searchRecent } from "./recentList";
 
   // It draws its own window-controls area, and its buttons run the window's commands.
   let {
@@ -160,7 +161,7 @@
               onclick={() => open(project.path)}
               oncontextmenu={(e) => openMenu(e, project.path, i)}
             >
-              <span class="avatar" style:background="var(--avatar-{avatarColour(project.path)})">{initials(name)}</span>
+              <ProjectAvatar path={project.path} />
               <span class="text">
                 <span class="name"><Marked text={name} ranges={nameRanges} /></span>
                 <span class="mono path"><PathText path={project.path} ranges={pathRanges} /></span>
@@ -313,17 +314,6 @@
     padding: 0 12px;
     border-radius: var(--radius-sheet);
     text-align: left;
-  }
-  .avatar {
-    flex: none;
-    width: var(--s-avatar);
-    height: var(--s-avatar);
-    display: grid;
-    place-items: center;
-    border-radius: var(--radius-sheet);
-    color: var(--on-avatar);
-    font-size: 12px;
-    font-weight: 600;
   }
   .text {
     flex: 1;
