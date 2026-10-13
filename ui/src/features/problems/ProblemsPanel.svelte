@@ -5,7 +5,7 @@
   import { tick, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import type { Unavailable } from "../../generated/Unavailable";
-  import { limitedMessage } from "../chrome";
+  import { limitedMessage, onlyStoodIn } from "../chrome";
   import BottomToolHeader from "../../lib/ui/BottomToolHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
@@ -422,7 +422,7 @@
     <div class="notice warn">
       <Icon name="warning" size={14} />
       <div>
-        {limited} Errors about unresolved names may not be real.
+        {limited}{onlyStoodIn(changeset.restoreFailures) ? "" : " Errors about unresolved names may not be real."}
         <button class="link" type="button" aria-expanded={limitedOpen} onclick={() => (limitedOpen = !limitedOpen)}
           >{limitedOpen ? "Hide details" : "Details"}</button
         >

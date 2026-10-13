@@ -13,8 +13,8 @@ use vet_semantic::derived::{
 };
 use vet_semantic::pool::{Outcome, PoolError};
 use vet_semantic::ports::{
-    At, BackendId, Diagnostic, Feature, Features, LaunchError, Location, Pos, RestoreFailure, Severity, Span, Sym,
-    SymbolInfo, SymbolKind,
+    At, BackendId, Diagnostic, Feature, Features, LaunchError, Location, Pos, RestoreFailure, RestoreFailureKind,
+    Severity, Span, Sym, SymbolInfo, SymbolKind,
 };
 use vet_semantic::query::SemanticError;
 
@@ -505,6 +505,10 @@ fn server_state(state: &ServerState) -> p::ServerState {
 pub fn restore_failures(all: &[RestoreFailure]) -> Vec<p::RestoreFailure> {
     all.iter()
         .map(|f| p::RestoreFailure {
+            kind: match f.kind {
+                RestoreFailureKind::Failed => p::RestoreFailureKind::Failed,
+                RestoreFailureKind::StoodIn => p::RestoreFailureKind::StoodIn,
+            },
             project: f.project.clone(),
             tool: f.tool.clone(),
             message: f.message.clone(),

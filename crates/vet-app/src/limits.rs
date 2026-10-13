@@ -74,10 +74,13 @@ impl<R: Restorer + Sync> Restorer for Limiting<R> {
 
 #[cfg(test)]
 mod tests {
+    use vet_semantic::ports::RestoreFailureKind;
+
     use super::*;
 
     fn failure(project: &str) -> RestoreFailure {
         RestoreFailure {
+            kind: RestoreFailureKind::Failed,
             project: project.into(),
             tool: "pnpm".into(),
             message: "failed".into(),

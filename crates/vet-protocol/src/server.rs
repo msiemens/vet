@@ -95,12 +95,23 @@ pub struct ServerFeatures {
     pub workspace_symbols: bool,
 }
 
-/// A dependency restore step that failed (§7.2): what that project's analysis
-/// cannot resolve is missing, not wrong.
+/// How a restore step ended short of plain success.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RestoreFailureKind {
+    /// The step failed: what that project's analysis cannot resolve is missing, not wrong.
+    Failed,
+    /// A stand-in step installed the dependencies after the planned one was refused.
+    StoodIn,
+}
+
+/// A dependency restore step that failed or had to be stood in for (§7.2).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct RestoreFailure {
+    pub kind: RestoreFailureKind,
     /// The project directory, relative to the repository with `/`; `.` is the root.
     pub project: String,
     /// The tool that failed, e.g. `pnpm`.

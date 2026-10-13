@@ -435,10 +435,20 @@ pub enum Tree {
     Immutable,
 }
 
-/// A restore step that failed: the analysis of that project is limited to what
-/// does not need its dependencies.
+/// How a restore step ended short of plain success.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RestoreFailureKind {
+    /// The step failed: the analysis of that project is limited to what does not need its
+    /// dependencies.
+    Failed,
+    /// A stand-in step installed the dependencies after the planned one was refused.
+    StoodIn,
+}
+
+/// A restore step that failed or had to be stood in for.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RestoreFailure {
+    pub kind: RestoreFailureKind,
     /// The project directory, relative to the restored root with `/`; `.` is the root.
     pub project: String,
     /// The program that failed, e.g. `pnpm`.

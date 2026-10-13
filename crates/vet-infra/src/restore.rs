@@ -54,7 +54,7 @@ use serde_json::Value;
 use vet_app::progress::{TaskKind, Tasks};
 use vet_core::content::Hash;
 use vet_semantic::policy::AnalysisPolicy;
-use vet_semantic::ports::{Backend, RestoreFailure, Restored, Restorer};
+use vet_semantic::ports::{Backend, RestoreFailure, RestoreFailureKind, Restored, Restorer};
 
 use crate::budget::{Budget, Budgets, SEMANTIC_IO};
 use crate::exec::dotnet_env;
@@ -144,6 +144,7 @@ fn label(project: &Path) -> String {
 
 fn failure(project: &Path, tool: &str, message: String) -> RestoreFailure {
     RestoreFailure {
+        kind: RestoreFailureKind::Failed,
         project: label(project),
         tool: tool.to_owned(),
         message,
@@ -613,7 +614,10 @@ impl ToolRestorer {
                 Ok(Ran::AsPlanned) => records.push(step.record(Outcome::Ran)),
                 Ok(Ran::StoodIn(args)) => {
                     records.push(step.record_of(&args, Outcome::StoodIn(LOCK_OUT_OF_SYNC.into())));
-                    restored.failures.push(step.failure(LOCK_OUT_OF_SYNC.into()));
+                    restored.failures.push(RestoreFailure {
+                        kind: RestoreFailureKind::StoodIn,
+                        ..step.failure(LOCK_OUT_OF_SYNC.into())
+                    });
                 }
                 Err(why) => {
                     // The tool's output can quote code: only its first line is logged above `debug`.
@@ -781,6 +785,7 @@ impl ToolRestorer {
                     .cloned()
                     .chain(record.steps.iter().filter_map(|s| match &s.outcome {
                         Outcome::StoodIn(note) => Some(RestoreFailure {
+                            kind: RestoreFailureKind::StoodIn,
                             project: s.project.clone(),
                             tool: s.program.clone(),
                             message: note.clone(),
@@ -1642,6 +1647,7 @@ mod tests {
         assert_eq!(restored.failures.len(), 1, "{restored:?}");
         let failure = &restored.failures[0];
         assert_eq!((failure.project.as_str(), failure.tool.as_str()), ("bad", "cargo"));
+        assert_eq!(failure.kind, RestoreFailureKind::Failed);
         assert!(failure.message.contains("cargo fetch"), "{failure:?}");
         assert!(failure.message.contains("boom"), "{failure:?}");
     }
@@ -1665,6 +1671,7 @@ mod tests {
         );
         assert_eq!(restored.failures.len(), 1, "{restored:?}");
         assert_eq!(restored.failures[0].tool, "npm");
+        assert_eq!(restored.failures[0].kind, RestoreFailureKind::StoodIn);
         assert!(
             restored.failures[0]
                 .message
@@ -1715,6 +1722,7 @@ mod tests {
         let restored = restorer(&tools)
             .restore(dir.path(), &backend("typescript"), NO_EXEC)
             .await;
+        assert_eq!(restored.failures[0].kind, RestoreFailureKind::Failed);
         let message = &restored.failures[0].message;
         assert!(message.contains("--no-save") && message.contains("E404"), "{message}");
     }
