@@ -12,6 +12,7 @@
   import IconButton from "../../lib/ui/IconButton.svelte";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
+  import ProgressBar from "../../lib/ui/ProgressBar.svelte";
   import SeverityIcon from "../../lib/ui/SeverityIcon.svelte";
   import { ListNav } from "../../lib/ui/listNav";
   import Popover from "../../lib/ui/Popover.svelte";
@@ -397,7 +398,7 @@
           : ` (${Math.round(indexing.fraction * 100)}%)`}. Problems from the other files, and any that need the whole
         project, may be missing until it is done.
         {#if indexing.fraction !== undefined}
-          <div class="bar"><i style:width="{indexing.fraction * 100}%"></i></div>
+          <div class="bar"><ProgressBar fraction={indexing.fraction} label="{serverOf.server} indexing" /></div>
         {/if}
       </div>
     </div>
@@ -653,16 +654,7 @@
   }
   .bar {
     margin-top: 5px;
-    height: 3px;
     width: 160px;
-    background: var(--track);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .bar i {
-    display: block;
-    height: 100%;
-    background: var(--accent);
   }
   .body {
     flex: 1;

@@ -17,6 +17,7 @@
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
+  import Spinner from "../../lib/ui/Spinner.svelte";
   import { isMac } from "../../state/host";
   import type { PickerView } from "../../state/pickerTypes";
   import { countText, groupRows, matchedRow, opensBelow, symbolLabel, visibleRows } from "./pickerRows";
@@ -229,7 +230,7 @@
   {#if search.active}<SpeedSearchField query={search.query} found={hits.length > 0} />{/if}
 
   {#if view.body.phase === "searching"}
-    <div class="state"><span class="spinner" aria-hidden="true"></span>Searching…</div>
+    <div class="state"><Spinner />Searching…</div>
   {:else if view.body.phase === "stopped"}
     <div class="state stopped">
       <SeverityIcon severity="warning" />
@@ -362,19 +363,6 @@
   .stopped {
     justify-content: flex-start;
     color: var(--text);
-  }
-  .spinner {
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--track);
-    border-top-color: var(--text-3);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
   .list {
     flex: 1;

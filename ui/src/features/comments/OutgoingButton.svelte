@@ -5,6 +5,7 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import Menu from "../../lib/ui/Menu.svelte";
   import Popover from "../../lib/ui/Popover.svelte";
+  import Spinner from "../../lib/ui/Spinner.svelte";
   import { commands } from "../../state/commands";
   import { platform } from "../../state/platform.svelte";
   import { threads } from "../../state/threads.svelte";
@@ -102,7 +103,7 @@
       aria-label={title}
       onclick={toggle}
     >
-      {#if busy}<span class="spinner" aria-hidden="true"></span>{:else}<Icon name="outgoing" size={12} />{/if}
+      {#if busy}<Spinner />{:else}<Icon name="outgoing" size={12} />{/if}
       <span class="mono">{summary.failed > 0 ? summary.failed : summary.count}</span>
     </button>
   {/snippet}
@@ -189,20 +190,6 @@
   }
   .failed {
     color: var(--severity-error);
-  }
-  .spinner {
-    width: 10px;
-    height: 10px;
-    box-sizing: border-box;
-    border: 1.5px solid currentColor;
-    border-right-color: transparent;
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
   .outgoing {
     outline: none;
