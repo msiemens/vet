@@ -20,7 +20,7 @@
 //! A pull request's threads, votes and checks are in `discussion` and `checks`.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use azure_devops_rust_api::git::models::{GitPullRequest, PullRequestStatus};
@@ -34,7 +34,7 @@ use vet_app::platform::{
 };
 
 use crate::clock::unix_now;
-use crate::http::http_client;
+use crate::http::LazyClient;
 use crate::platform::limits::Gate;
 use access::{API_ENDPOINT, Access, failure};
 use limits::Watch;
@@ -150,8 +150,7 @@ struct State {
 
 pub struct AzureDevOpsClient<C> {
     credentials: C,
-    /// Set up when first needed: loading the system's certificates is not free, and may fail.
-    http: OnceLock<Result<reqwest::Client, String>>,
+    http: LazyClient,
     /// Where the services are, if not where Azure DevOps says.
     endpoints: Option<Endpoints>,
     /// Pull requests per page of the list.
@@ -182,7 +181,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
     pub fn new(credentials: C) -> Self {
         Self {
             credentials,
-            http: OnceLock::new(),
+            http: LazyClient::new(TIMEOUT),
             endpoints: None,
             page_size: PAGE_SIZE,
             now: unix_now,
@@ -205,11 +204,7 @@ impl<C: CredentialProvider + Sync> AzureDevOpsClient<C> {
             .credential(host, (self.now)())
             .await
             .ok_or_else(|| PlatformError::SignedOut(host.to_owned()))?;
-        let http = self
-            .http
-            .get_or_init(|| http_client(TIMEOUT))
-            .as_ref()
-            .map_err(|why| PlatformError::Unreachable(why.clone()))?;
+        let http = self.http.get().map_err(PlatformError::Unreachable)?;
         let watch = Watch {
             gate: self.limits.clone(),
             account: host.to_owned(),
@@ -466,9 +461,7 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
     }
 
     async fn viewer(&self, remote: &RemoteKey) -> Result<Viewer, PlatformError> {
-        let repository = repository(remote)?;
-        let access = self.access(&remote.account()).await?;
-        let me = self.me(&access, remote, &repository).await?;
+        let Call { me, .. } = self.call(remote).await?;
         Ok(Viewer {
             login: me.login,
             teams: me.teams,
@@ -480,10 +473,13 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
         remote: &RemoteKey,
         query: &PullRequestQuery,
     ) -> Result<PullRequestListing, PlatformError> {
-        let repository = repository(remote)?;
-        let access = self.access(&remote.account()).await?;
-        let me = self.me(&access, remote, &repository).await?;
-        let git = access.git(&self.endpoints().api)?;
+        let Call {
+            repository,
+            access,
+            git,
+            me,
+            ..
+        } = self.call(remote).await?;
         let web = web_address(remote);
 
         let mut found = Vec::new();
@@ -537,7 +533,13 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
     }
 
     async fn pull_request(&self, remote: &RemoteKey, number: u64) -> Result<PullRequestDetail, PlatformError> {
-        let repository = repository(remote)?;
+        let Call {
+            repository,
+            access,
+            git,
+            me,
+            ..
+        } = self.call(remote).await?;
         let Repository {
             organization,
             project,
@@ -550,9 +552,6 @@ impl<C: CredentialProvider + Sync> Platform for AzureDevOpsClient<C> {
             ))
         };
         let id = i32::try_from(number).map_err(|_| not_found())?;
-        let access = self.access(&remote.account()).await?;
-        let me = self.me(&access, remote, &repository).await?;
-        let git = access.git(&self.endpoints().api)?;
 
         let found = git
             .pull_requests_client()

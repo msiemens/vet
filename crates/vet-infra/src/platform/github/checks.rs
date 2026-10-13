@@ -356,11 +356,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
 
     /// The text at `address`, fetched with no credential.
     async fn plain_get(&self, host: &str, address: &str) -> Result<String, PlatformError> {
-        let http = self
-            .http
-            .get_or_init(|| crate::http::http_client(super::TIMEOUT))
-            .as_ref()
-            .map_err(|why| PlatformError::Unreachable(why.clone()))?;
+        let http = self.http.get().map_err(PlatformError::Unreachable)?;
         let gone = |e: reqwest::Error| PlatformError::Unreachable(format!("cannot reach the log of {host}: {e}"));
         let response = http.get(address).send().await.map_err(gone)?;
         if !response.status().is_success() {

@@ -3,35 +3,39 @@
 //! else; a refusal is logged with its host and the platform's reason, never a token, a
 //! request or a response.
 
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use reqwest::StatusCode;
 use vet_app::platform::{Credential, CredentialValidator, Owner, PlatformError, PlatformKind, ValidationError};
 
 use crate::clock::unix_now;
-use crate::http::http_client;
+use crate::http::LazyClient;
 use crate::platform::azure_devops::access::{API_ENDPOINT, Access};
-use crate::platform::github;
 use crate::platform::time::parse_token_expiry;
+use crate::platform::{github, message};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Default)]
 pub struct HttpValidator {
-    /// Set up when first needed: loading the system's certificates is not free, and may fail.
-    http: OnceLock<Result<reqwest::Client, String>>,
+    http: LazyClient,
     /// Where the APIs are, if not where the host says.
     #[cfg(test)]
     endpoint: Option<String>,
 }
 
+impl Default for HttpValidator {
+    fn default() -> Self {
+        Self {
+            http: LazyClient::new(TIMEOUT),
+            #[cfg(test)]
+            endpoint: None,
+        }
+    }
+}
+
 impl HttpValidator {
     fn http(&self) -> Result<&reqwest::Client, ValidationError> {
-        self.http
-            .get_or_init(|| http_client(TIMEOUT))
-            .as_ref()
-            .map_err(|why| ValidationError::Unreachable(why.clone()))
+        self.http.get().map_err(ValidationError::Unreachable)
     }
 
     fn endpoint(&self, default: impl FnOnce() -> String) -> String {
@@ -123,11 +127,7 @@ impl CredentialValidator for HttpValidator {
 }
 
 fn refusal(host: &str, status: StatusCode, reason: &str) -> ValidationError {
-    ValidationError::Rejected(if reason.is_empty() {
-        format!("{host} refused the token ({status})")
-    } else {
-        format!("{host} refused the token: {reason} ({status})")
-    })
+    ValidationError::Rejected(message::reason(host, "refused the token", reason, status))
 }
 
 #[cfg(test)]
@@ -148,7 +148,7 @@ mod tests {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let http = crate::http::client_builder(TIMEOUT).no_proxy().build().unwrap();
         HttpValidator {
-            http: OnceLock::from(Ok(http)),
+            http: LazyClient::ready(TIMEOUT, http),
             endpoint: Some(fake.base()),
         }
     }

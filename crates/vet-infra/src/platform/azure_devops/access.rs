@@ -16,6 +16,7 @@ use vet_app::platform::{Credential, CredentialSource, PlatformError};
 use super::limits::{Gating, Signals, Watch};
 use crate::clock::unix_now;
 use crate::platform::limits::Blocked;
+use crate::platform::message::{rate_limited, reason};
 
 /// Where the organizations are.
 pub(crate) const API_ENDPOINT: &str = "https://dev.azure.com";
@@ -40,6 +41,20 @@ impl TokenCredential for Bearer {
             OffsetDateTime::now_utc() + Duration::hours(1),
         ))
     }
+}
+
+/// The client of one service (`git`, `build`, ...) for the API under `$endpoint`: every service
+/// has its own builder type, with the same settings.
+macro_rules! service_client {
+    ($access:expr, $service:ident, $endpoint:expr) => {
+        Ok($service::ClientBuilder::new($access.credential.clone())
+            .endpoint(url($endpoint)?)
+            .transport($access.transport.clone())
+            .retry(retries())
+            .per_call_policies(requests($access.source))
+            .per_try_policies($access.gating())
+            .build())
+    };
 }
 
 /// A credential and a transport, from which the clients of the services are made.
@@ -89,46 +104,22 @@ impl Access {
 
     /// Pull requests, their threads, statuses and iterations.
     pub(crate) fn git(&self, endpoint: &str) -> Result<git::Client, PlatformError> {
-        Ok(git::ClientBuilder::new(self.credential.clone())
-            .endpoint(url(endpoint)?)
-            .transport(self.transport.clone())
-            .retry(retries())
-            .per_call_policies(requests(self.source))
-            .per_try_policies(self.gating())
-            .build())
+        service_client!(self, git, endpoint)
     }
 
     /// Builds, their timelines and logs.
     pub(crate) fn builds(&self, endpoint: &str) -> Result<build::Client, PlatformError> {
-        Ok(build::ClientBuilder::new(self.credential.clone())
-            .endpoint(url(endpoint)?)
-            .transport(self.transport.clone())
-            .retry(retries())
-            .per_call_policies(requests(self.source))
-            .per_try_policies(self.gating())
-            .build())
+        service_client!(self, build, endpoint)
     }
 
     /// The evaluations of a pull request's policies.
     pub(crate) fn policies(&self, endpoint: &str) -> Result<policy::Client, PlatformError> {
-        Ok(policy::ClientBuilder::new(self.credential.clone())
-            .endpoint(url(endpoint)?)
-            .transport(self.transport.clone())
-            .retry(retries())
-            .per_call_policies(requests(self.source))
-            .per_try_policies(self.gating())
-            .build())
+        service_client!(self, policy, endpoint)
     }
 
     /// Identities and the groups they are members of.
     pub(crate) fn identities(&self, endpoint: &str) -> Result<ims::Client, PlatformError> {
-        Ok(ims::ClientBuilder::new(self.credential.clone())
-            .endpoint(url(endpoint)?)
-            .transport(self.transport.clone())
-            .retry(retries())
-            .per_call_policies(requests(self.source))
-            .per_try_policies(self.gating())
-            .build())
+        service_client!(self, ims, endpoint)
     }
 
     /// The signed-in user, as the organization `organization` (of the account `account`)
@@ -166,7 +157,14 @@ impl Access {
         };
         self.watch.observe(&signals);
         let limit_end = signals.block_end(now).map(|(until, _)| until);
-        let body = response.text().await.unwrap_or_default();
+        let body = match response.text().await {
+            Ok(body) => body,
+            Err(_) => {
+                let error = PlatformError::Unreachable(format!("cannot read the answer of {account}"));
+                log_failure(account, Some((&endpoint, auth)), Some(status), "", &error);
+                return Err(error);
+            }
+        };
         let fail = |error: PlatformError| {
             log_failure(
                 account,
@@ -406,13 +404,7 @@ pub(crate) fn failure(host: &str, error: &azure_core::Error, now: i64) -> Platfo
 /// What an HTTP status, and the message the platform gave with it, mean for the caller.
 /// `limit_end` is when the limit its signals announce ends.
 fn from_status(host: &str, status: u16, message: &str, limit_end: Option<i64>, now: i64) -> PlatformError {
-    let reason = |what: &str| {
-        if message.is_empty() {
-            format!("{host} {what} ({status})")
-        } else {
-            format!("{host} {what}: {message} ({status})")
-        }
-    };
+    let reason = |what: &str| reason(host, what, message, status);
     match status {
         // A redirect goes to the sign-in page.
         300..=399 | 401 => PlatformError::Rejected(reason("refused the token")),
@@ -437,14 +429,6 @@ fn blocked_until(error: &(dyn std::error::Error + 'static)) -> Option<i64> {
     None
 }
 
-/// The limit on `host` ends at `until`.
-fn rate_limited(host: &str, until: i64, now: i64) -> PlatformError {
-    PlatformError::RateLimited {
-        message: format!("{host} asks to slow down; try again in {}", in_words(until - now)),
-        retry_at: Some(until),
-    }
-}
-
 /// Records a failed request: the method, address and the scheme of its credential (never the
 /// credential), the status and the start of the answer.
 pub(crate) fn log_failure(
@@ -464,11 +448,4 @@ pub(crate) fn log_failure(
         reason = %error,
         "Azure DevOps request failed"
     );
-}
-
-fn in_words(seconds: i64) -> String {
-    match u64::try_from(seconds).unwrap_or(0).div_ceil(60).max(1) {
-        1 => "a minute".to_owned(),
-        minutes => format!("{minutes} minutes"),
-    }
 }

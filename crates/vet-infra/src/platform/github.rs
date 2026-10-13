@@ -13,7 +13,7 @@
 
 use std::backtrace::Backtrace;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use http::HeaderValue;
@@ -37,8 +37,9 @@ use vet_app::platform::{
 };
 
 use crate::clock::unix_now;
-use crate::http::http_client;
+use crate::http::LazyClient;
 use crate::platform::limits::Blocked;
+use crate::platform::message::{rate_limited, reason};
 use limits::{Limits, SECONDARY_WAIT, Watch, WatchLayer};
 use tower::Layer;
 use tower::retry::RetryLayer;
@@ -188,8 +189,7 @@ struct State {
 
 pub struct GitHubClient<C> {
     credentials: C,
-    /// Set up when first needed: loading the system's certificates is not free, and may fail.
-    http: OnceLock<Result<reqwest::Client, String>>,
+    http: LazyClient,
     /// Where the APIs are, if not where the host says.
     endpoints: Option<Endpoints>,
     now: fn() -> i64,
@@ -216,7 +216,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
     pub fn new(credentials: C) -> Self {
         Self {
             credentials,
-            http: OnceLock::new(),
+            http: LazyClient::new(TIMEOUT),
             endpoints: None,
             now: unix_now,
             state: Mutex::default(),
@@ -248,11 +248,7 @@ impl<C: CredentialProvider + Sync> GitHubClient<C> {
         {
             return Ok(clients.clone());
         }
-        let http = self
-            .http
-            .get_or_init(|| http_client(TIMEOUT))
-            .as_ref()
-            .map_err(|why| PlatformError::Unreachable(why.clone()))?;
+        let http = self.http.get().map_err(PlatformError::Unreachable)?;
         let endpoints = self.endpoints(host);
         let unusable = |e: octocrab::Error| {
             PlatformError::Unexpected(format!("cannot set up the client for {host}: {}", short(&e)))
@@ -635,34 +631,9 @@ fn short(error: &octocrab::Error) -> String {
     error.to_string().lines().next().unwrap_or_default().to_owned()
 }
 
-fn rate_limited(host: &str, resets_at: i64, now: i64) -> PlatformError {
-    PlatformError::RateLimited {
-        message: format!(
-            "{host}'s rate limit is used up; it resets in {}",
-            duration_in_words(resets_at - now)
-        ),
-        retry_at: Some(resets_at),
-    }
-}
-
-fn duration_in_words(seconds: i64) -> String {
-    let minutes = u64::try_from(seconds).unwrap_or(0).div_ceil(60).max(1);
-    match minutes {
-        1 => "a minute".to_owned(),
-        2..=119 => format!("{minutes} minutes"),
-        _ => format!("{} hours", minutes.div_ceil(60)),
-    }
-}
-
 /// Why GitHub refused a request. Every message is fit to show.
 fn refusal(host: &str, status: StatusCode, message: &str) -> PlatformError {
-    let reason = |what: &str| {
-        if message.is_empty() {
-            format!("{host} {what} ({status})")
-        } else {
-            format!("{host} {what}: {message} ({status})")
-        }
-    };
+    let reason = |what: &str| reason(host, what, message, status);
     match status {
         StatusCode::UNAUTHORIZED => PlatformError::Rejected(reason("refused the token")),
         StatusCode::FORBIDDEN => PlatformError::Forbidden(reason("does not allow the token this")),

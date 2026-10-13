@@ -5,7 +5,7 @@ use super::*;
 fn rate_limited_until(until: i64, now: i64) -> PlatformError {
     PlatformError::RateLimited {
         message: format!(
-            "dev.azure.com/contoso asks to slow down; try again in {}",
+            "dev.azure.com/contoso's rate limit is used up; it resets in {}",
             match (until - now + 59) / 60 {
                 1 => "a minute".to_owned(),
                 minutes => format!("{minutes} minutes"),
@@ -190,7 +190,7 @@ async fn a_limit_is_logged_once_for_its_window() {
     let client = client(&fake);
     let log = vet_log::capture::Capture::default();
     let _guard = log.install(vet_log::filter(None).0);
-    let mentions = || log.text().matches("rate limit is used up").count();
+    let mentions = || log.text().matches("nothing is sent to it until it resets").count();
 
     client.list_pull_requests(&remote(), &all_open()).await.unwrap_err();
     assert_eq!(requests_to(&fake, "/statuses"), 1);

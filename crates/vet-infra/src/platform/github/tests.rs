@@ -62,7 +62,7 @@ fn client_with<C: CredentialProvider + Sync>(fake: &Fake, credentials: C) -> Git
     let http = client_builder(TIMEOUT).no_proxy().build().unwrap();
     GitHubClient {
         credentials,
-        http: OnceLock::from(Ok(http)),
+        http: LazyClient::ready(TIMEOUT, http),
         endpoints: Some(Endpoints {
             graphql: fake.base(),
             rest: fake.base(),

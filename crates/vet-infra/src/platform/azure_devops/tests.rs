@@ -40,7 +40,7 @@ fn client_with<C: CredentialProvider + Sync>(fake: &Fake, credentials: C) -> Azu
     let http = client_builder(TIMEOUT).no_proxy().build().unwrap();
     AzureDevOpsClient {
         credentials,
-        http: OnceLock::from(Ok(http)),
+        http: LazyClient::ready(TIMEOUT, http),
         endpoints: Some(Endpoints {
             api: fake.base(),
             identities: fake.base(),
@@ -708,7 +708,7 @@ async fn a_rejected_token_a_forbidden_repository_a_rate_limit_and_a_down_server_
     assert_eq!(
         error,
         PlatformError::RateLimited {
-            message: "dev.azure.com/contoso asks to slow down; try again in 2 minutes".to_owned(),
+            message: "dev.azure.com/contoso's rate limit is used up; it resets in 2 minutes".to_owned(),
             retry_at: Some(NOW + 120)
         }
     );
