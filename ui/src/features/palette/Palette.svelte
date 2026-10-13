@@ -6,7 +6,6 @@
   import { letterOfChange, letterOfStatus } from "../../lib/changeLetter";
   import { bindingOf, matches } from "../../lib/keymap";
   import { splitPath } from "../../lib/paths";
-  import { highlightRuns, sliceRanges, type Range } from "../../lib/speedSearch";
   import ChangeLetter from "../../lib/ui/ChangeLetter.svelte";
   import DiffBar from "../../lib/ui/DiffBar.svelte";
   import EmptyState from "../../lib/ui/EmptyState.svelte";
@@ -16,10 +15,13 @@
   import Icon from "../../lib/ui/Icon.svelte";
   import KeyHint from "../../lib/ui/KeyHint.svelte";
   import Kbd from "../../lib/ui/Kbd.svelte";
+  import { ListNav, revealCurrent } from "../../lib/ui/listNav";
+  import Marked from "../../lib/ui/Marked.svelte";
   import PanelTabs from "../../lib/ui/PanelTabs.svelte";
   import PopupShell from "../../lib/ui/PopupShell.svelte";
   import SeenMeter from "../../lib/ui/SeenMeter.svelte";
   import Spinner from "../../lib/ui/Spinner.svelte";
+  import SplitText from "../../lib/ui/SplitText.svelte";
   import TagChip from "../../lib/ui/TagChip.svelte";
   import { changeset } from "../../state/changeset.svelte";
   import { keyId } from "../../state/changesetKey";
@@ -64,8 +66,6 @@
 
   let { onchoose, onsettings }: { onchoose: (choice: Choice) => void; onsettings: () => void } = $props();
 
-  /** How far the Page keys move. */
-  const PAGE = 8;
   /** How long the query rests before the language servers are asked. */
   const SERVER_PAUSE_MS = 120;
   /** The tabs the Unchanged files toggle applies to. */
@@ -218,11 +218,13 @@
     return queue.watch();
   });
 
-  async function move(to: number) {
-    cursor = Math.max(0, Math.min(entries.length - 1, to));
-    await tick();
-    list?.querySelector(`[data-at="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
-  }
+  const nav = new ListNav<Entry>({
+    items: () => entries,
+    single: (entry) => choose(entry, false),
+    highlight: { get: () => at, set: (i) => (cursor = i) },
+    reveal: () => void revealCurrent(list),
+    field: true,
+  });
 
   function step(delta: number) {
     const ids = TABS.map((t) => t.id);
@@ -278,12 +280,6 @@
     void tick().then(run);
   }
 
-  // A list that scrolls under a pointer at rest makes the browser repeat the pointer's last move
-  // with no movement; only a pointer that moved takes the highlight.
-  function hover(e: MouseEvent, index: number) {
-    if (e.movementX !== 0 || e.movementY !== 0) cursor = index;
-  }
-
   function onkeydown(e: KeyboardEvent) {
     if (e.isComposing) return;
     const take = () => {
@@ -305,29 +301,12 @@
       step(tabs);
       return;
     }
-    if (e.ctrlKey || e.altKey || e.metaKey) return;
-    switch (e.key) {
-      case "ArrowDown":
-        take();
-        void move(at + 1);
-        break;
-      case "ArrowUp":
-        take();
-        void move(at - 1);
-        break;
-      case "PageDown":
-        take();
-        void move(at + PAGE);
-        break;
-      case "PageUp":
-        take();
-        void move(at - PAGE);
-        break;
-      case "Enter":
-        take();
-        choose(current, e.shiftKey);
-        break;
+    if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      take();
+      choose(current, true);
+      return;
     }
+    if (nav.keydown(e)) take();
   }
 
   /** The last two parts of a path, which is all a row has room for. */
@@ -335,19 +314,6 @@
     return path.split("/").slice(-2).join("/");
   }
 </script>
-
-{#snippet marked(text: string, ranges: readonly Range[] | undefined)}
-  {#each highlightRuns(text, ranges ?? []) as run, i (i)}{#if run.hit}<mark>{run.text}</mark
-      >{:else}{run.text}{/if}{/each}
-{/snippet}
-
-{#snippet split(lead: string, last: string, ranges: readonly Range[], title: string)}
-  <span class="path-text" {title}
-    ><span class="dir">{@render marked(lead, sliceRanges(ranges, 0, lead.length))}</span><span class="name"
-      >{@render marked(last, sliceRanges(ranges, lead.length, lead.length + last.length))}</span
-    ></span
-  >
-{/snippet}
 
 {#snippet result(row: Row, index: number)}
   {@const item = row.item}
@@ -359,14 +325,13 @@
     tabindex="-1"
     role="option"
     aria-selected={index === at}
-    data-at={index}
     onclick={(e) => choose({ type: "row", row }, e.shiftKey)}
-    onmousemove={(e) => hover(e, index)}
+    onmousemove={(e) => nav.hover(e, index)}
   >
     {#if item.kind === "file"}
       {@const parts = splitPath(item.path)}
       <span class="gl"><FileIcon name={parts.name} size={15} /></span>
-      {@render split(parts.dir, parts.name, row.ranges, item.path)}
+      <SplitText lead={parts.dir} last={parts.name} title={item.path} ranges={row.ranges} />
       {#if row.line !== undefined}<span class="meta">:{row.line}</span>{/if}
       <span class="sp"></span>
       <span class="meta">
@@ -379,7 +344,12 @@
       </span>
     {:else if item.kind === "symbol"}
       <span class="gl"><SymbolGlyph kind={item.symbolKind} /></span>
-      {@render split(item.label.slice(0, item.lead), item.label.slice(item.lead), row.ranges, item.label)}
+      <SplitText
+        lead={item.label.slice(0, item.lead)}
+        last={item.label.slice(item.lead)}
+        title={item.label}
+        ranges={row.ranges}
+      />
       <span class="sp"></span>
       <span class="meta">
         <span>{shortPath(item.info.id.path)}:{item.info.span.start.line + 1}</span>
@@ -387,7 +357,9 @@
       </span>
     {:else if item.kind === "changeset"}
       <span class="gl"><Icon name={item.icon} size={14} /></span>
-      <span class="lab">{@render marked(item.number ? `${item.number} ${item.title}` : item.title, row.ranges)}</span>
+      <span class="lab"
+        ><Marked text={item.number ? `${item.number} ${item.title}` : item.title} ranges={row.ranges} /></span
+      >
       {#if item.onView}<span class="badge">on view</span>{/if}
       <span class="sp"></span>
       <span class="meta">
@@ -400,14 +372,14 @@
       </span>
     {:else if item.kind === "thread"}
       <span class="gl thread"><Icon name="comments" size={14} /></span>
-      <span class="lab" class:resolved={item.resolved}>{@render marked(item.text, row.ranges)}</span>
+      <span class="lab" class:resolved={item.resolved}><Marked text={item.text} ranges={row.ranges} /></span>
       {#if item.moved}<span class="badge badge-moved">moved</span>{/if}
       {#if item.resolved}<span class="badge badge-ok">resolved</span>{/if}
       <span class="sp"></span>
       <span class="meta">{item.where === "changeset" ? item.where : shortPath(item.where)}</span>
     {:else}
       <span class="gl"><Icon name="zap" size={14} /></span>
-      <span class="lab">{@render marked(item.label, row.ranges)}</span>
+      <span class="lab"><Marked text={item.label} ranges={row.ranges} /></span>
       <span class="sp"></span>
       <span class="meta">
         {#if item.off}
@@ -431,9 +403,8 @@
       tabindex="-1"
       role="option"
       aria-selected={index === at}
-      data-at={index}
       onclick={() => choose(e, false)}
-      onmousemove={(ev) => hover(ev, index)}
+      onmousemove={(ev) => nav.hover(ev, index)}
     >
       <span class="gl"></span>
       <span class="lab">Show all {e.count} {TITLES[e.kind].toLowerCase()}</span>
@@ -449,9 +420,8 @@
       tabindex="-1"
       role="option"
       aria-selected={index === at}
-      data-at={index}
       onclick={() => choose(e, false)}
-      onmousemove={(ev) => hover(ev, index)}
+      onmousemove={(ev) => nav.hover(ev, index)}
     >
       <span class="gl"><Icon name="search" size={14} /></span>
       <span class="lab">Find “{e.query}” in files…</span>
@@ -666,11 +636,6 @@
     height: 24px;
     color: var(--accent);
     font-size: var(--fs-ctl);
-  }
-  mark {
-    background: transparent;
-    color: var(--accent);
-    font-weight: 650;
   }
   .where {
     display: inline-flex;

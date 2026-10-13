@@ -1,4 +1,4 @@
-<!-- The head of a popup at the caret: what it lists, how much, and its controls at the end. -->
+<!-- The head of a popup of a list: what it lists, how much, and its controls at the end; the popup's head row frames it. -->
 <script lang="ts">
   import type { Snippet } from "svelte";
 
@@ -32,7 +32,6 @@
     box-sizing: border-box;
     height: 33px;
     padding: 0 6px 0 12px;
-    border-bottom: 1px solid var(--line-soft);
     color: var(--text);
   }
   .title :global(code) {

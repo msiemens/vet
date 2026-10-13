@@ -1,8 +1,7 @@
 <script lang="ts">
   // The places Show Usages or Go to Implementation found, under the caret: usages grouped by file,
-  // implementations flat, two lines each. Arrow keys, Page keys, Home and End move,
-  // Enter opens, Escape closes, and typing filters.
-  import { onDestroy, onMount, tick } from "svelte";
+  // implementations flat, two lines each. The list keys move, Enter opens, Escape closes, and typing
+  // filters.
   import type { LocationRow } from "../../generated/LocationRow";
   import type { StatusLetter } from "../../lib/changeLetter";
   import { codeRuns, libraryLabel } from "../../lib/foundText";
@@ -13,9 +12,11 @@
   import GroupHeader from "../../lib/ui/GroupHeader.svelte";
   import Icon from "../../lib/ui/Icon.svelte";
   import IconButton from "../../lib/ui/IconButton.svelte";
+  import { ListNav, revealCurrent } from "../../lib/ui/listNav";
   import OpenInFindButton from "../../lib/ui/OpenInFindButton.svelte";
   import PathText from "../../lib/ui/PathText.svelte";
   import PopupHeader from "../../lib/ui/PopupHeader.svelte";
+  import PopupShell from "../../lib/ui/PopupShell.svelte";
   import QualifiedName from "../../lib/ui/QualifiedName.svelte";
   import { SpeedSearch } from "../../lib/ui/speedSearch.svelte";
   import SpeedSearchField from "../../lib/ui/SpeedSearchField.svelte";
@@ -39,16 +40,12 @@
   /** The most the popup grows to, and how wide it is with the places grouped, listed flat, or without any. */
   const MAX_HEIGHT = 520;
   const WIDTH = { grouped: 720, flat: 560, none: 520 };
-  /** How far the Page keys move. */
-  const PAGE = 8;
 
   const search = new SpeedSearch();
   let onlyChangeset = $state(false);
   let cursor = $state(0);
-  let root = $state<HTMLElement>();
   let list = $state<HTMLElement>();
-  let picked = false;
-  let before: Element | null = null;
+  let keepFocus = $state(false);
 
   const nouns = $derived(view.kind === "usages" ? "usages" : "implementations");
   const results = $derived(view.body.phase === "results" ? view.body : undefined);
@@ -69,48 +66,31 @@
   // "Searching…" to the results, not while typing or toggling the changeset.
   const down = $derived(opensBelow(view.anchor, window.innerHeight, MAX_HEIGHT));
 
-  const geometry = $derived.by(() => {
+  const place = $derived.by(() => {
     const { anchor } = view;
     const below = window.innerHeight - anchor.bottom - 12;
     const above = anchor.top - 12;
     const width = Math.min(WIDTH[!results?.rows.length ? "none" : flat ? "flat" : "grouped"], window.innerWidth - 16);
-    return {
-      down,
-      maxHeight: Math.min(MAX_HEIGHT, down ? below : above),
-      width,
-      left: Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8)),
-      top: anchor.bottom + 4,
-      bottom: window.innerHeight - anchor.top + 4,
-    };
-  });
-
-  onMount(() => {
-    before = document.activeElement;
-    root?.focus();
-  });
-  // A popup closed without a pick gives the focus back to the editor it came from.
-  onDestroy(() => {
-    if (!picked && before instanceof HTMLElement && before.isConnected) before.focus({ preventScroll: true });
+    const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8));
+    const side = down ? `top:${anchor.bottom + 4}px` : `bottom:${window.innerHeight - anchor.top + 4}px`;
+    const maxHeight = Math.min(MAX_HEIGHT, down ? below : above);
+    return `${side};left:${left}px;width:${width}px;max-height:${maxHeight}px`;
   });
 
   function pick(row: LocationRow) {
-    picked = true;
+    keepFocus = true;
     view.onpick(row);
   }
 
-  async function reveal() {
-    await tick();
-    list?.querySelector(`[data-at="${cursor}"]`)?.scrollIntoView({ block: "nearest" });
-  }
-
-  // A list that scrolls under a pointer at rest makes the browser repeat the pointer's last move
-  // with no movement; only a pointer that moved takes the highlight.
-  function hover(e: MouseEvent, at: number) {
-    if (e.movementX !== 0 || e.movementY !== 0) cursor = at;
-  }
+  const nav = new ListNav<LocationRow>({
+    items: () => hits,
+    single: pick,
+    highlight: { get: () => cursor, set: (i) => (cursor = i) },
+    reveal: () => void revealCurrent(list),
+  });
 
   function keep() {
-    picked = true;
+    keepFocus = true;
     view.onkeep?.();
   }
 
@@ -129,53 +109,14 @@
       return;
     }
     if (search.type(e)) return;
-    if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
-    const take = () => {
+    if (nav.keydown(e)) {
       e.preventDefault();
       e.stopPropagation();
-    };
-    const move = (to: number) => {
-      take();
-      cursor = Math.max(0, Math.min(hits.length - 1, to));
-      void reveal();
-    };
-    switch (e.key) {
-      case "Escape":
-        take();
-        view.onclose();
-        break;
-      case "ArrowDown":
-        move(cursor + 1);
-        break;
-      case "ArrowUp":
-        move(cursor - 1);
-        break;
-      case "PageDown":
-        move(cursor + PAGE);
-        break;
-      case "PageUp":
-        move(cursor - PAGE);
-        break;
-      case "Home":
-        move(0);
-        break;
-      case "End":
-        move(hits.length - 1);
-        break;
-      case "Enter": {
-        take();
-        const row = hits.at(cursor);
-        if (row) pick(row);
-        break;
-      }
     }
   }
 </script>
 
-<svelte:window
-  onpointerdown={(e) => root && !root.contains(e.target as Node) && view.onclose()}
-  onresize={() => view.onclose()}
-/>
+<svelte:window onresize={() => view.onclose()} />
 
 {#snippet code(row: LocationRow)}
   {#each codeRuns(view.kind === "implementations" ? matchedRow(row, view.symbol) : row) as run, i (i)}{#if run.hit}<mark
@@ -192,22 +133,7 @@
   {#if letter}<ChangeLetter {letter} />{/if}
 {/snippet}
 
-<div
-  class="surface picker"
-  class:above={!geometry.down}
-  role="dialog"
-  aria-label={view.kind === "usages" ? `Usages of ${view.symbol}` : `Implementations of ${view.symbol}`}
-  tabindex="-1"
-  bind:this={root}
-  {onkeydown}
-  {...{ [LIST]: "" }}
-  {...search.attributes}
-  style:top={geometry.down ? `${geometry.top}px` : undefined}
-  style:bottom={geometry.down ? undefined : `${geometry.bottom}px`}
-  style:left="{geometry.left}px"
-  style:width="{geometry.width}px"
-  style:max-height="{geometry.maxHeight}px"
->
+{#snippet head()}
   <PopupHeader>
     {view.kind === "usages" ? "Usages of" : "Implementations of"} <code>{view.symbol}</code>
     {#snippet meta()}
@@ -232,6 +158,19 @@
       {/if}
     {/snippet}
   </PopupHeader>
+{/snippet}
+
+<PopupShell
+  label={view.kind === "usages" ? `Usages of ${view.symbol}` : `Implementations of ${view.symbol}`}
+  field={false}
+  scroll={false}
+  {place}
+  attributes={{ [LIST]: "", ...search.attributes }}
+  bind:keepFocus
+  onclose={() => view.onclose()}
+  {onkeydown}
+  {head}
+>
   {#if search.active}<SpeedSearchField query={search.query} found={hits.length > 0} />{/if}
 
   {#if view.body.phase === "searching"}
@@ -259,11 +198,10 @@
           <button
             class="pick two"
             class:cur={at === cursor}
-            data-at={at}
             type="button"
             tabindex="-1"
             onclick={() => pick(row)}
-            onmousemove={(e) => hover(e, at)}
+            onmousemove={(e) => nav.hover(e, at)}
           >
             <StatusDot tone={row.change === "hunk" ? "ok" : "none"} />
             <span class="rows">
@@ -302,11 +240,10 @@
             <button
               class="pick hit"
               class:cur={item.at === cursor}
-              data-at={item.at}
               type="button"
               tabindex="-1"
               onclick={() => pick(item.row)}
-              onmousemove={(e) => hover(e, item.at)}
+              onmousemove={(e) => nav.hover(e, item.at)}
             >
               <StatusDot tone={item.row.change === "hunk" ? "ok" : "none"} />
               <span class="mono line">{item.row.line}</span>
@@ -318,20 +255,9 @@
       {/if}
     </div>
   {/if}
-</div>
+</PopupShell>
 
 <style>
-  .picker {
-    position: fixed;
-    z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    box-sizing: border-box;
-    outline: none;
-    font-size: var(--fs-ctl);
-    background: var(--bg-editor);
-    overflow: hidden;
-  }
   .list {
     flex: 1;
     min-height: 0;

@@ -1,7 +1,9 @@
 <script lang="ts">
-  // The popup of Search Everywhere and Find in Files: one surface under the header with an optional
-  // head row, the query field, the results and a line of key hints. It takes the focus when it opens
-  // and gives it back when it closes, unless a click went elsewhere; Escape and a click outside close it.
+  // The popup of Search Everywhere, Find in Files, File Structure and the location picker: one surface
+  // with an optional head row, the query field (without it the list is typed into, see `SpeedSearch`),
+  // the results and an optional line of key hints. It takes the focus when it opens and gives it
+  // back when it closes, unless a click went elsewhere or `keepFocus` says what was chosen takes it;
+  // Escape and a press outside close it. It sits under the header unless `place` puts it elsewhere.
   import { onDestroy, onMount, type Snippet } from "svelte";
   import Icon from "./Icon.svelte";
   import KeyHints from "./KeyHints.svelte";
@@ -10,12 +12,17 @@
     label,
     onclose,
     wide = false,
+    place,
+    field = true,
     value = $bindable(""),
     placeholder,
     invalid = false,
     input = $bindable(),
     body = $bindable(),
+    root = $bindable(),
+    keepFocus = $bindable(false),
     scroll = true,
+    attributes,
     onkeydown,
     head,
     trailing,
@@ -27,6 +34,10 @@
     onclose: () => void;
     /** Room for a preview beside the results. */
     wide?: boolean;
+    /** The style that places it, where it is not under the header. */
+    place?: string;
+    /** The query field. */
+    field?: boolean;
     /** The query. */
     value?: string;
     placeholder?: string;
@@ -35,8 +46,13 @@
     input?: HTMLInputElement;
     /** The element the results are in. */
     body?: HTMLElement;
+    root?: HTMLElement;
+    /** What is chosen takes the focus itself, so it is not given back. */
+    keepFocus?: boolean;
     /** The results scroll as a whole; without it they lay out and scroll themselves. */
     scroll?: boolean;
+    /** Attributes of the popup itself. */
+    attributes?: Record<string, string | undefined>;
     /** Reads the keys that reach the popup; one it leaves alone, Escape included, is read here. */
     onkeydown?: (e: KeyboardEvent) => void;
     /** A row above the query field. */
@@ -45,23 +61,21 @@
     trailing?: Snippet;
     children: Snippet;
     /** The key hints and what goes beside them. */
-    foot: Snippet;
+    foot?: Snippet;
   } = $props();
 
-  let root = $state<HTMLElement>();
   let before: Element | null = null;
-  // A click that began before the popup was there is not one outside it: the button that opens it.
-  let shownAt = 0;
-  // What was clicked outside took the focus itself.
-  let clickedAway = false;
+  // What was pressed outside took the focus itself.
+  let pressedAway = false;
 
   onMount(() => {
-    shownAt = performance.now();
     before = document.activeElement;
-    input?.focus();
+    (input ?? root)?.focus();
   });
   onDestroy(() => {
-    if (!clickedAway && before instanceof HTMLElement && before.isConnected) before.focus({ preventScroll: true });
+    if (!pressedAway && !keepFocus && before instanceof HTMLElement && before.isConnected) {
+      before.focus({ preventScroll: true });
+    }
   });
 
   function keys(e: KeyboardEvent) {
@@ -74,51 +88,67 @@
 </script>
 
 <svelte:window
-  onclick={(e) => {
-    if (e.timeStamp < shownAt || !root || root.contains(e.target as Node)) return;
-    clickedAway = true;
+  onpointerdown={(e) => {
+    if (!root || root.contains(e.target as Node)) return;
+    pressedAway = true;
     onclose();
   }}
 />
 
-<div class="surface popup" class:wide role="dialog" aria-label={label} tabindex="-1" bind:this={root} onkeydown={keys}>
+<div
+  class="surface popup"
+  class:under={place === undefined}
+  class:wide
+  role="dialog"
+  aria-label={label}
+  tabindex="-1"
+  style={place}
+  bind:this={root}
+  onkeydown={keys}
+  {...attributes}
+>
   {#if head}<div class="head">{@render head()}</div>{/if}
-  <div class="query">
-    <Icon name="search" size={14} stroke={1.7} />
-    <input
-      bind:this={input}
-      bind:value
-      class:invalid
-      type="text"
-      spellcheck="false"
-      autocomplete="off"
-      aria-label={label}
-      {placeholder}
-    />
-    {@render trailing?.()}
-  </div>
+  {#if field}
+    <div class="query">
+      <Icon name="search" size={14} stroke={1.7} />
+      <input
+        bind:this={input}
+        bind:value
+        class:invalid
+        type="text"
+        spellcheck="false"
+        autocomplete="off"
+        aria-label={label}
+        {placeholder}
+      />
+      {@render trailing?.()}
+    </div>
+  {/if}
   <div class="body" class:scroll bind:this={body}>{@render children()}</div>
-  <KeyHints>{@render foot()}</KeyHints>
+  {#if foot}<KeyHints>{@render foot()}</KeyHints>{/if}
 </div>
 
 <style>
   .popup {
     position: fixed;
     z-index: 1000;
-    top: calc(var(--h-header) + 6px);
-    left: 50%;
-    transform: translateX(-50%);
     display: flex;
     flex-direction: column;
-    width: min(var(--w-palette), calc(100vw - 16px));
-    max-height: min(var(--h-palette), calc(100vh - var(--h-header) - 40px));
     box-sizing: border-box;
     overflow: hidden;
+    outline: none;
     font-size: var(--fs);
     color: var(--text);
     background: var(--bg-editor);
   }
-  .popup.wide {
+  .under {
+    top: calc(var(--h-header) + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(var(--w-palette), calc(100vw - 16px));
+    max-height: min(var(--h-palette), calc(100vh - var(--h-header) - 40px));
+  }
+  .under.wide {
     width: min(var(--w-palette-wide), calc(100vw - 16px));
     height: min(var(--h-palette-wide), calc(100vh - var(--h-header) - 40px));
     max-height: none;
