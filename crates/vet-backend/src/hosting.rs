@@ -4,8 +4,9 @@
 use std::sync::Arc;
 
 use vet_app::platform::{
-    CheckLog, CommentRef, CommitChecks, Discussion, Platform, PlatformComment, PlatformError, PlatformKind,
-    PlatformTraits, PullRequestDetail, PullRequestListing, PullRequestQuery, RemoteKey, Submission, Submitted, Viewer,
+    CheckLog, CommentRef, CommitChecks, Discussion, PipelineAction, Platform, PlatformComment, PlatformError,
+    PlatformKind, PlatformTraits, PullRequestDetail, PullRequestListing, PullRequestQuery, RemoteKey, Step, Submission,
+    Submitted, Viewer,
 };
 
 use crate::{AzureDevOps, GitHub};
@@ -61,6 +62,14 @@ impl Platform for Hosting {
 
     async fn check_log(&self, remote: &RemoteKey, check: &str) -> Result<CheckLog, PlatformError> {
         on!(self, p => p.check_log(remote, check).await)
+    }
+
+    async fn steps(&self, remote: &RemoteKey, check: &str) -> Result<Vec<Step>, PlatformError> {
+        on!(self, p => p.steps(remote, check).await)
+    }
+
+    async fn pipeline_action(&self, remote: &RemoteKey, action: &PipelineAction) -> Result<(), PlatformError> {
+        on!(self, p => p.pipeline_action(remote, action).await)
     }
 
     async fn discussion(&self, remote: &RemoteKey, number: u64) -> Result<Discussion, PlatformError> {

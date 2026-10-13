@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    BackendSettings, ChangesetKey, CommentAt, EditChoice, Lens, NonTextKind, ProjectId, ReviewFilter, SearchPattern,
-    SearchScope, SearchSide, Secret, Side, SymbolId, ThreadStatus, ThreadTarget, View,
+    BackendSettings, ChangesetKey, CommentAt, EditChoice, Lens, NonTextKind, PipelineAction, ProjectId, ReviewFilter,
+    SearchPattern, SearchScope, SearchSide, Secret, Side, SymbolId, ThreadStatus, ThreadTarget, View,
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -130,6 +130,20 @@ pub enum Request {
     CheckLog {
         project: ProjectId,
         run: String,
+    },
+    /// The steps of a job of `Checks` that belongs to a `Pipeline`, in the order they run. Fails
+    /// with a message fit to show. Answers with `Response::PipelineSteps`.
+    PipelineSteps {
+        project: ProjectId,
+        check: String,
+    },
+    /// Asks the platform to re-run or stop a run of `Checks`; none for a changeset that is no
+    /// pull request. The platform does its work later, so ask for the checks again. A refusal of
+    /// the token, and a limit the platform asks to wait out, are in the answer; any other
+    /// failure is a message fit to show. Answers with `Response::PipelineChanged`.
+    ChangePipeline {
+        project: ProjectId,
+        action: PipelineAction,
     },
     /// Puts a changeset on view in place of the one that is: one is on view per project.
     /// Every subscriber, including the requester, gets `ChangesetOpened`; fetch the

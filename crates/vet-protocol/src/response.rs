@@ -6,9 +6,10 @@ use ts_rs::TS;
 use crate::{
     Account, BackendSettings, BaseDiff, BlobContent, Calls, ChangesetKey, ChangesetRow, CheckLog, CommitChecks,
     CommitUnit, Diagnostic, DirEntry, FileOutline, FileSymbols, Highlights, Lens, LineDelta, LocationRows, Locations,
-    Manifest, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource, Reachability, RecentProject,
-    RemovalImpact, ReviewSubmitted, ReviewUpdate, SearchFile, ServerInfo, Side, SymbolAt, SymbolSignature, Task,
-    TextChange, TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo, WorkspaceSymbols,
+    Manifest, PipelineOutcome, PipelineStep, ProjectId, PullRequestInfo, PullRequestRow, PullRequestSource,
+    Reachability, RecentProject, RemovalImpact, ReviewSubmitted, ReviewUpdate, SearchFile, ServerInfo, Side, SymbolAt,
+    SymbolSignature, Task, TextChange, TextContent, Thread, ThreadTarget, Unavailable, Usages, VersionInfo,
+    WorkspaceSymbols,
 };
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize, TS)]
@@ -74,9 +75,17 @@ pub enum Response {
         checks: Vec<CommitChecks>,
         /// Why the commits that are left out could not be answered for, fit to show.
         error: Option<String>,
+        /// Unix seconds: the platform limits requests until then, which is why `error` is set.
+        limited_until: Option<u32>,
     },
     /// The answer to `CheckLog`.
     CheckLog(CheckLog),
+    /// The answer to `PipelineSteps`.
+    PipelineSteps {
+        steps: Vec<PipelineStep>,
+    },
+    /// The answer to `ChangePipeline`.
+    PipelineChanged(PipelineOutcome),
     /// The versions of the open review, oldest first.
     Versions {
         versions: Vec<VersionInfo>,

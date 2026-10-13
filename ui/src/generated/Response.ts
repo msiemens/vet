@@ -18,6 +18,8 @@ import type { LineDelta } from "./LineDelta";
 import type { LocationRows } from "./LocationRows";
 import type { Locations } from "./Locations";
 import type { Manifest } from "./Manifest";
+import type { PipelineOutcome } from "./PipelineOutcome";
+import type { PipelineStep } from "./PipelineStep";
 import type { PullRequestInfo } from "./PullRequestInfo";
 import type { PullRequestRow } from "./PullRequestRow";
 import type { PullRequestSource } from "./PullRequestSource";
@@ -49,7 +51,11 @@ root: string, } | { "type": "done" } | { "type": "logDirectory", path: string, }
 /**
  * Why the commits that are left out could not be answered for, fit to show.
  */
-error: string | null, } | { "type": "checkLog" } & CheckLog | { "type": "versions", versions: Array<VersionInfo>, } | { "type": "commits", revision: number, lens: Lens, commits: Array<CommitUnit>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
+error: string | null, 
+/**
+ * Unix seconds: the platform limits requests until then, which is why `error` is set.
+ */
+limitedUntil: number | null, } | { "type": "checkLog" } & CheckLog | { "type": "pipelineSteps", steps: Array<PipelineStep>, } | { "type": "pipelineChanged" } & PipelineOutcome | { "type": "versions", versions: Array<VersionInfo>, } | { "type": "commits", revision: number, lens: Lens, commits: Array<CommitUnit>, } | { "type": "manifest" } & Manifest | { "type": "fileContents", revision: number, base: string | null, target: string | null, 
 /**
  * The changed ranges of the hunks in order, down to the words that differ within a
  * replaced region: line-snapped, one block per hunk (see [`TextChange`]).

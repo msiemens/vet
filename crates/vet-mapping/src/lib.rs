@@ -7,8 +7,8 @@ pub mod semantic;
 use base64::Engine;
 use vet_app::changeset::{CommitId, Lens, RemoteKey, Source, VersionOrigin};
 use vet_app::platform::{
-    ChangesAsked, CheckLog, CiState, CommitChecks, ConversationKind, PlatformError, PlatformKind, PlatformTraits,
-    Posting, PullRequestState, QueueStatus, ReviewVerdict, ReviewerState,
+    ChangesAsked, CheckLog, CiState, CommitChecks, ConversationKind, Phase, PipelineAction, PlatformError,
+    PlatformKind, PlatformTraits, Posting, PullRequestState, QueueStatus, ReviewVerdict, ReviewerState, Step,
 };
 use vet_app::ports::{CommitInfo, Degraded};
 use vet_app::pull_request::PullRequestList;
@@ -505,6 +505,20 @@ pub fn pull_requests(list: &PullRequestList, reviews: &[RowReview]) -> p::Respon
     }
 }
 
+fn check_phase(phase: Phase) -> p::CheckPhase {
+    match phase {
+        Phase::Queued => p::CheckPhase::Queued,
+        Phase::Running => p::CheckPhase::Running,
+        Phase::Finished => p::CheckPhase::Finished,
+        Phase::Cancelled => p::CheckPhase::Cancelled,
+    }
+}
+
+/// Seconds between two unix times, if both are known.
+fn elapsed(started: Option<i64>, finished: Option<i64>) -> Option<u32> {
+    started.zip(finished).map(|(from, to)| unix_secs((to - from).max(0)))
+}
+
 /// The answer to `Checks`; `error` is why some commit could not be answered for.
 pub fn checks(found: &[CommitChecks], error: Option<&PlatformError>) -> p::Response {
     p::Response::Checks {
@@ -520,19 +534,72 @@ pub fn checks(found: &[CommitChecks], error: Option<&PlatformError>) -> p::Respo
                         id: check.id.clone(),
                         name: check.name.clone(),
                         state: ci_state(check.state),
-                        duration: check
-                            .started
-                            .zip(check.finished)
-                            .map(|(from, to)| unix_secs((to - from).max(0))),
+                        phase: check_phase(check.phase),
+                        pipeline: check.run.as_ref().map(|run| run.id.clone()),
+                        duration: elapsed(check.started, check.finished),
                         url: check.url.clone(),
                         log: check.log,
+                    })
+                    .collect(),
+                pipelines: commit
+                    .runs()
+                    .into_iter()
+                    .map(|summary| p::Pipeline {
+                        id: summary.run.id,
+                        name: summary.run.name,
+                        detail: summary.run.detail,
+                        attempt: summary.run.attempt,
+                        state: ci_state(summary.state),
+                        phase: check_phase(summary.phase),
                     })
                     .collect(),
                 url: commit.url.clone(),
             })
             .collect(),
         error: error.map(ToString::to_string),
+        limited_until: match error {
+            Some(PlatformError::RateLimited { retry_at, .. }) => retry_at.map(unix_secs),
+            _ => None,
+        },
     }
+}
+
+/// The answer to `PipelineSteps`.
+pub fn pipeline_steps(steps: &[Step]) -> p::Response {
+    p::Response::PipelineSteps {
+        steps: steps
+            .iter()
+            .map(|step| p::PipelineStep {
+                name: step.name.clone(),
+                state: ci_state(step.state),
+                phase: check_phase(step.phase),
+                duration: elapsed(step.started, step.finished),
+            })
+            .collect(),
+    }
+}
+
+pub fn pipeline_action(action: p::PipelineAction) -> PipelineAction {
+    match action {
+        p::PipelineAction::RerunFailed { run } => PipelineAction::RerunFailed { run },
+        p::PipelineAction::RerunAll { run } => PipelineAction::RerunAll { run },
+        p::PipelineAction::RerunJob { check } => PipelineAction::RerunJob { check },
+        p::PipelineAction::Cancel { run } => PipelineAction::Cancel { run },
+    }
+}
+
+/// The answer to `ChangePipeline` after the platform's `result`. A failure that the viewer can
+/// act on is an outcome; any other is returned for the request to fail with.
+pub fn pipeline_outcome(result: Result<(), PlatformError>) -> Result<p::Response, PlatformError> {
+    Ok(p::Response::PipelineChanged(match result {
+        Ok(()) => p::PipelineOutcome::Accepted,
+        Err(PlatformError::Forbidden(message)) => p::PipelineOutcome::Forbidden { message },
+        Err(PlatformError::RateLimited { message, retry_at }) => p::PipelineOutcome::RateLimited {
+            message,
+            until: retry_at.map(unix_secs),
+        },
+        Err(other) => return Err(other),
+    }))
 }
 
 pub fn check_log(log: &CheckLog) -> p::Response {
@@ -982,6 +1049,15 @@ pub fn platform_traits(kind: PlatformKind) -> p::PlatformTraits {
             })
             .collect(),
         verdict_separate: traits.verdict_separate,
+        pipelines: p::PipelineWords {
+            group: traits.pipelines.group.into(),
+            step: traits.pipelines.step.into(),
+            rerun_failed: traits.pipelines.rerun_failed.into(),
+            rerun_all: traits.pipelines.rerun_all.into(),
+            rerun_group: traits.pipelines.rerun_group.into(),
+            cancel: traits.pipelines.cancel.into(),
+            rerun_all_replaces_running: traits.pipelines.rerun_all_replaces_running,
+        },
     }
 }
 
@@ -1172,6 +1248,50 @@ pub fn review_update(u: &ReviewUpdateView) -> p::ReviewUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_the_viewer_can_act_on_is_an_outcome_and_any_other_failure_fails_the_request() {
+        let done = pipeline_outcome(Ok(())).unwrap();
+        assert_eq!(done, p::Response::PipelineChanged(p::PipelineOutcome::Accepted));
+        let forbidden = pipeline_outcome(Err(PlatformError::Forbidden("no write".to_owned()))).unwrap();
+        assert_eq!(
+            forbidden,
+            p::Response::PipelineChanged(p::PipelineOutcome::Forbidden {
+                message: "no write".to_owned()
+            })
+        );
+        let limited = pipeline_outcome(Err(PlatformError::RateLimited {
+            message: "slow down".to_owned(),
+            retry_at: Some(1_700),
+        }))
+        .unwrap();
+        assert_eq!(
+            limited,
+            p::Response::PipelineChanged(p::PipelineOutcome::RateLimited {
+                message: "slow down".to_owned(),
+                until: Some(1_700)
+            })
+        );
+        assert!(pipeline_outcome(Err(PlatformError::NotFound("gone".to_owned()))).is_err());
+    }
+
+    #[test]
+    fn a_rate_limit_that_cut_the_checks_short_says_until_when() {
+        let limited = PlatformError::RateLimited {
+            message: "slow down".to_owned(),
+            retry_at: Some(1_700),
+        };
+        let p::Response::Checks { limited_until, .. } = checks(&[], Some(&limited)) else {
+            panic!("not the checks")
+        };
+        assert_eq!(limited_until, Some(1_700));
+        let p::Response::Checks { limited_until, .. } =
+            checks(&[], Some(&PlatformError::Unreachable("down".to_owned())))
+        else {
+            panic!("not the checks")
+        };
+        assert_eq!(limited_until, None);
+    }
 
     #[test]
     fn a_pull_request_key_names_its_repository_by_host_and_path_and_comes_back_as_it_went() {

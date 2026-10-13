@@ -75,7 +75,7 @@ async fn a_pull_request_from_a_fork_is_opened_and_reviewed_against_its_target() 
         panic!("not the commits")
     };
     let ids = commits.iter().map(|c| c.commit.id.clone()).collect();
-    let Response::Checks { checks, error } = client.call(Request::Checks { project, commits: ids }).await.unwrap()
+    let Response::Checks { checks, error, .. } = client.call(Request::Checks { project, commits: ids }).await.unwrap()
     else {
         panic!("not the checks")
     };

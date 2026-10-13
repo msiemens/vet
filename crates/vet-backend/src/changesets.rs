@@ -139,6 +139,38 @@ impl Orchestrator {
         Ok(mapping::check_log(&log))
     }
 
+    pub(crate) async fn pipeline_steps(&self, project: ProjectId, check: String) -> Result<Response, String> {
+        let remote = self
+            .hosted_pull_request(project)
+            .await?
+            .ok_or("the changeset on view is not a pull request")?;
+        let hosting = Hosting::of(remote.kind(), &self.github, &self.azure_devops);
+        let steps = hosting.steps(&remote, &check).await.map_err(|error| {
+            self.refused(&error, &remote.account());
+            message(error)
+        })?;
+        Ok(mapping::pipeline_steps(&steps))
+    }
+
+    pub(crate) async fn change_pipeline(
+        &self,
+        project: ProjectId,
+        action: vet_protocol::PipelineAction,
+    ) -> Result<Response, String> {
+        let remote = self
+            .hosted_pull_request(project)
+            .await?
+            .ok_or("the changeset on view is not a pull request")?;
+        let hosting = Hosting::of(remote.kind(), &self.github, &self.azure_devops);
+        let done = hosting
+            .pipeline_action(&remote, &mapping::pipeline_action(action))
+            .await;
+        mapping::pipeline_outcome(done).map_err(|error| {
+            self.refused(&error, &remote.account());
+            message(error)
+        })
+    }
+
     pub(crate) async fn open_changeset(&self, project: ProjectId, changeset: ChangesetKey) -> Result<Response, String> {
         let open = self.ready(project).await?;
         let source = mapping::core_changeset_key(changeset)?;

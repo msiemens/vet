@@ -106,6 +106,7 @@ pub fn effect(request: &Request) -> Effect {
         | Request::ChangesetLines { .. }
         | Request::Checks { .. }
         | Request::CheckLog { .. }
+        | Request::PipelineSteps { .. }
         | Request::Tasks { .. }
         | Request::Versions { .. }
         | Request::Commits { .. }
@@ -139,6 +140,9 @@ pub fn effect(request: &Request) -> Effect {
         Request::CloseProject { .. } => {
             Effect::Unannounced("unsubscribes the connection; the others see nothing change")
         }
+        Request::ChangePipeline { .. } => Effect::Unannounced(
+            "changes a run on the platform, which Vet keeps nothing of; the window that asked reads the checks again",
+        ),
         Request::ClearSemanticCaches => Effect::Unannounced(
             "only speed is lost; the disk use it answers with is read by the Settings page when it opens",
         ),
@@ -212,9 +216,9 @@ mod tests {
 
     use tokio::sync::mpsc::UnboundedReceiver;
     use vet_protocol::{
-        AnchorState, BackendSettings, ChangesetKey, CommentAt, EditChoice, Lens, Manifest, NonTextKind, ProjectId,
-        Response, ReviewFilter, SearchPattern, SearchScope, SearchSide, Secret, ServerMessage, Side, SymbolId, Thread,
-        ThreadStatus, ThreadTarget, View,
+        AnchorState, BackendSettings, ChangesetKey, CommentAt, EditChoice, Lens, Manifest, NonTextKind, PipelineAction,
+        ProjectId, Response, ReviewFilter, SearchPattern, SearchScope, SearchSide, Secret, ServerMessage, Side,
+        SymbolId, Thread, ThreadStatus, ThreadTarget, View,
     };
     use vet_transport::Events;
 
@@ -323,6 +327,14 @@ mod tests {
             Request::CheckLog {
                 project,
                 run: String::new(),
+            },
+            Request::PipelineSteps {
+                project,
+                check: String::new(),
+            },
+            Request::ChangePipeline {
+                project,
+                action: PipelineAction::Cancel { run: String::new() },
             },
             Request::OpenChangeset {
                 project,

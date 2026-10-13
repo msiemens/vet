@@ -84,6 +84,24 @@ pub struct PlatformTraits {
     /// In the platform's order.
     pub verdicts: Vec<Verdict>,
     pub verdict_separate: bool,
+    pub pipelines: PipelineWords,
+}
+
+/// What the platform calls the parts of a run, and how its actions differ.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PipelineWords {
+    /// What a run is made of and what is re-run: `job`, `stage`.
+    pub group: String,
+    /// What a group is made of: `step`, `task`.
+    pub step: String,
+    pub rerun_failed: String,
+    pub rerun_all: String,
+    pub rerun_group: String,
+    pub cancel: String,
+    /// Running everything again also stops a build that runs, so it asks first.
+    pub rerun_all_replaces_running: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
