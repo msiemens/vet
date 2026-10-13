@@ -140,14 +140,15 @@ button {
 
 /* `.pick`: a row of a list. `.on` is the selected row, on the selection background with its text as
    it was; `.cur` is the row the keys act on, which a list (`[data-list]`) shows only while it holds the
-   focus. */
+   focus, or, in a panel marked `data-filter-keys`, while its filter field does (the arrows move the
+   row as the field is typed in). */
 .pick.on {
   background: var(--toggle);
 }
 .pick.on:not(:disabled):hover {
   background: var(--toggle-hover);
 }
-.pick.cur:is(:not([data-list] *), [data-list]:focus-within *) {
+.pick.cur:is(:not([data-list] *), [data-list]:focus-within *, [data-filter-keys]:has(input:focus) *) {
   background: var(--select);
 }
 

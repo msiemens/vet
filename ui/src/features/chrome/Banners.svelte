@@ -45,7 +45,7 @@
 </script>
 
 {#if offBase !== undefined}
-  <Banner message={offBaseMessage(offBase)} />
+  <Banner tone="oldBase" message={offBaseMessage(offBase)} />
 {/if}
 
 {#if degraded && dismissedDegraded !== degraded}

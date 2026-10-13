@@ -14,8 +14,9 @@
     panel = false,
   }: {
     message: string;
-    /** What it tints with: blue for news, amber for a caution, red for something that failed. */
-    tone?: "info" | "warn" | "bad";
+    /** What it tints with: blue for news, orange for a warning, red for something that failed, amber
+     * for a note about an old base (the colour of the old-base stripes). */
+    tone?: "info" | "warn" | "bad" | "oldBase";
     /** The tone's icon before the message. */
     icon?: boolean;
     /** A notice inside a panel, a size smaller, rather than one under the header. */
@@ -31,7 +32,8 @@
 
   const TONES = {
     info: { color: "var(--severity-info)", severity: "info" },
-    warn: { color: "var(--old-base)", severity: "warning" },
+    warn: { color: "var(--severity-warning)", severity: "warning" },
+    oldBase: { color: "var(--old-base)", severity: "warning" },
     bad: { color: "var(--del-text)", severity: "error" },
   } as const;
 

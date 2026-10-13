@@ -185,7 +185,7 @@
       : `${s.spec.type === "search" ? s.spec.scope.label : "All changes"}${s.ran.version !== undefined && (s.spec.type === "usages" || s.spec.scope.label === "All changes") ? ` v${s.ran.version}` : ""}`;
 </script>
 
-<section aria-label="Find">
+<section aria-label="Find" data-filter-keys>
   <BottomToolHeader title="Find" count={set && countOf(set)} {onclose}>
     {#snippet controls()}
       {#if set}

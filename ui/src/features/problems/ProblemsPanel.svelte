@@ -315,7 +315,7 @@
   const base = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 </script>
 
-<section aria-label="Problems" onfocusin={focusin}>
+<section aria-label="Problems" data-filter-keys onfocusin={focusin}>
   <BottomToolHeader title="Problems" count={problems.summary?.badge ?? 0} {onclose}>
     {#snippet controls()}
       <Segmented
