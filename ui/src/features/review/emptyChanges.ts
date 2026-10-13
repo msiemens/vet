@@ -317,17 +317,6 @@ function emptyRange(input: EmptyInput): EmptyView {
 
 // ---- the changeset itself is empty ----
 
-/** The version that `version` took back: the one before it, when `version` changed the same files by the lines it had added and removed. */
-function takenBack(versions: readonly VersionInfo[], version: VersionInfo): number | undefined {
-  const before = versions.find((v) => v.n === version.n - 1);
-  if (!before || !version.files.length || version.files.length !== before.files.length) return undefined;
-  const swapped = version.files.every((f) => {
-    const was = before.files.find((b) => b.path === f.path);
-    return was?.delta.added === f.delta.removed && was.delta.removed === f.delta.added;
-  });
-  return swapped ? before.n : undefined;
-}
-
 function emptyWorkingTree(input: EmptyInput): EmptyView {
   const undone = input.review.state === "open" && input.versions.length > 1;
   if (undone) {
@@ -340,11 +329,13 @@ function emptyWorkingTree(input: EmptyInput): EmptyView {
         },
       );
       const names = v.files.map((f) => f.path.slice(f.path.lastIndexOf("/") + 1)).join(", ");
-      const undid = takenBack(input.versions, v);
+      // The tree matches the base now, so the newest version that changed a file is the one that put
+      // the files back as they were before the version it follows.
+      const undid = v.n === input.versions.length && v.files.length > 0 ? ` · undid v${v.n - 1}` : "";
       return {
         label: `v${v.n}`,
         value: [shortTime(v.at, input.now, "detailed"), ...(v.files.length ? [" ", mono(delta(total))] : [])],
-        meta: names ? (undid ? `${names} · undid v${undid}` : names) : v.n === 1 ? "opened" : undefined,
+        meta: names ? names + undid : v.n === 1 ? "opened" : undefined,
         action: v.files.length ? ({ id: "pick", label: "Show", n: v.n } as const) : undefined,
       };
     });
