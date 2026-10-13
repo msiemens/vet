@@ -36,6 +36,7 @@ const view: ViewActions = {
   showCard: () => (calls.push("card"), true),
   jumpToSource: () => (calls.push("jump"), caretFinds),
   stepCommit: (delta) => (calls.push(`commit ${delta}`), true),
+  toggleStructure: () => (calls.push("structure"), true),
   setViewMode: (mode) => calls.push(`mode ${mode}`),
 };
 const files: FileActions = {
@@ -160,6 +161,16 @@ void test("[ and ] go to the previous and next commit, and only while reviewing 
   const event = key({ key: "]", code: "BracketRight" });
   assert.equal(squash.dispatch(event), false);
   assert.equal(event.prevented, false);
+  assert.deepEqual(calls, []);
+});
+
+void test("Ctrl+F12 opens the file structure, also from the popup's field, and not on a log", () => {
+  const f12 = (init: Parameters<typeof key>[0] = {}) => key({ key: "F12", code: "F12", ctrlKey: true, ...init });
+  const r = setup({ tab: "file:a.rs" });
+  assert.equal(r.dispatch(f12()), true);
+  assert.equal(r.dispatch(f12({ inField: true })), true);
+  assert.deepEqual(calls, ["structure", "structure"]);
+  assert.equal(setup({ tab: "log:7" }).dispatch(f12()), false);
   assert.deepEqual(calls, []);
 });
 

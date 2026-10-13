@@ -60,7 +60,10 @@ export interface AppActions {
   restartLanguageServer(language: string): void;
 }
 
-/** The tool windows of the rails, with the key that shows or hides each. */
+/**
+ * The tool windows of the rails, with the key that shows or hides each. The keys count the left
+ * rail's tools, then the bottom's, then the right's, each from the top down or left to right.
+ */
 export const TOOL_WINDOWS: readonly {
   side: "left" | "right" | "bottom";
   id: string;
@@ -71,8 +74,9 @@ export const TOOL_WINDOWS: readonly {
   { side: "left", id: "all", label: "All Files", binding: "Alt-2" },
   { side: "left", id: "commits", label: "Commits", binding: "Alt-3" },
   { side: "left", id: "comments", label: "Comments", binding: "Alt-4" },
-  { side: "right", id: "symbol", label: "Symbol", binding: "Alt-5" },
-  { side: "bottom", id: "timeline", label: "Timeline", binding: "Alt-6" },
+  { side: "bottom", id: "timeline", label: "Timeline", binding: "Alt-5" },
+  { side: "right", id: "symbol", label: "Symbol", binding: "Alt-6" },
+  { side: "right", id: "structure", label: "Structure", binding: "Alt-7" },
 ];
 
 /** The id of the command that shows or hides the tool window `id`. */

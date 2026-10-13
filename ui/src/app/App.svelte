@@ -42,6 +42,7 @@
     viewCommands,
   } from "../features/review";
   import { SettingsDialog } from "../features/settings";
+  import { StructurePanel } from "../features/structure";
   import { type OpenLocation, SymbolPanel } from "../features/symbols";
   import { type RangeFile, RangeChips, TimelinePanel } from "../features/timeline";
   import { ProjectSwitcher, recentCommands, WelcomeScreen } from "../features/welcome";
@@ -560,7 +561,16 @@
         onready={(c) => void (controller = c)}
         onclose={() => (controller = undefined)}
       >
-        {#snippet side(tool)}{#if tool === "symbol"}<SymbolPanel onopen={openLocation} />{/if}{/snippet}
+        {#snippet side(tool)}
+          {#if tool === "symbol"}
+            <SymbolPanel onopen={openLocation} />
+          {:else if tool === "structure"}
+            <StructurePanel
+              onjump={(symbol, removed) => void controller?.jumpToOutlineSymbol(symbol, removed)}
+              onsettings={() => showDialog("settings", "servers")}
+            />
+          {/if}
+        {/snippet}
         {#snippet bottom({ selected, select })}
           {#if timelineOpen}
             <TimelinePanel

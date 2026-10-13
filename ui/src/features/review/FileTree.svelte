@@ -4,6 +4,7 @@
   import type { DirEntry } from "../../generated/DirEntry";
   import type { ReviewedFile } from "../../state/reviewModel";
   import { dirname } from "../../lib/paths";
+  import { arrowKey } from "../../lib/foldKeys";
   import { bestMatch, type Range } from "../../lib/speedSearch";
   import { fullName } from "../../lib/symbolLabel";
   import FileIcon from "../../lib/ui/FileIcon.svelte";
@@ -26,7 +27,7 @@
   import { AllFiles } from "./AllFiles.svelte";
   import type { AllRow } from "./allFilesRows";
   import CommitList from "./CommitList.svelte";
-  import { arrowKey, closedKey, fileSymbolRows, type SymbolRow } from "./symbolRows";
+  import { closedKey, fileSymbolRows, type SymbolRow } from "./symbolRows";
   import { type Row, buildRows, buildTree, filterRows, summarize } from "./tree";
 
   let {

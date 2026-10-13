@@ -9,6 +9,7 @@
     commits: "gitCommit",
     comments: "comments",
     symbol: "module",
+    structure: "structure",
   };
 
   export const TOOLS = {

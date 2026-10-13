@@ -11,10 +11,12 @@
   import { contextMenus } from "../../state/contextMenu.svelte";
   import { platform } from "../../state/platform.svelte";
   import { session } from "../../state/session.svelte";
+  import { structure } from "../../state/structure.svelte";
   import { symbols } from "../../state/symbols.svelte";
   import { threads } from "../../state/threads.svelte";
   import { versions } from "../../state/versions.svelte";
   import { CommentsPanel } from "../comments";
+  import { StructurePopup } from "../structure";
   import FileTree from "./FileTree.svelte";
   import "./editor/section.css";
   import "./editor/hunkBar.css";
@@ -111,6 +113,12 @@
   // The symbols of the file the review shows (the active file tab, else the one selected in the tree) are found first.
   $effect(() => {
     symbols.file = highlighted;
+  });
+  // The Structure tool lists the symbols of the file the active tab shows, in the view the tab reads.
+  $effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions -- the read makes the layout a dependency
+    changeset.layout;
+    structure.show(controller.structureTarget());
   });
 
   onMount(() => {
@@ -287,6 +295,9 @@
     {/each}
   </div>
   {@render bottom?.({ selected: highlighted, select })}
+  {#if structure.popup}
+    <StructurePopup onjump={(symbol, removed) => void controller.jumpToOutlineSymbol(symbol, removed)} />
+  {/if}
 </main>
 
 {#if rightOpen}
@@ -295,6 +306,7 @@
 
 <style>
   main {
+    position: relative;
     flex: 1;
     min-width: 0;
     display: flex;

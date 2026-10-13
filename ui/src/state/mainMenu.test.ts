@@ -173,8 +173,9 @@ void test("the Queue and Review screens are a radio pair, and the tool windows a
       ["view.tool.all", false],
       ["view.tool.commits", false],
       ["view.tool.comments", false],
-      ["view.tool.symbol", false],
       ["view.tool.timeline", true],
+      ["view.tool.symbol", false],
+      ["view.tool.structure", false],
     ],
   );
   const onQueue = menu({ screen: "queue" });

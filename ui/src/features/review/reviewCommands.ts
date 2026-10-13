@@ -29,6 +29,8 @@ export interface ViewActions {
   jumpToSource(): boolean;
   /** Shows the commit `delta` away from the one on view; answers whether there was one. */
   stepCommit(delta: number): boolean;
+  /** Opens the popup of the active file's symbols, or closes it; answers whether a file is shown. */
+  toggleStructure(): boolean;
   /** Shows the active tab in the view mode: a diff drawn that way, or the file's text. */
   setViewMode(mode: ViewMode): void;
 }
@@ -194,6 +196,15 @@ export function viewCommands(a: ViewActions): Command<CommandContext>[] {
       disabledReason: () => "Put the caret in an editor",
       run: (c) => c.editor?.showUsages(),
     },
+    {
+      id: "nav.fileStructure",
+      label: "File Structure",
+      binding: "Mod-F12",
+      inFields: true,
+      enabled: (c) => c.tab !== undefined && kindOf(c.tab) !== "log",
+      disabledReason: () => "Open a file or the Changes tab",
+      run: () => a.toggleStructure(),
+    },
     ...VIEW_MODES.map(({ id, label, binding, unavailable }): Command<CommandContext> => ({
       id: modeCommand(id),
       label,
@@ -356,6 +367,7 @@ export const editorMenu: MenuSpec = [
   { command: "review.goToDefinition" },
   { command: "nav.goToImplementation" },
   { command: "nav.showUsages" },
+  { command: "nav.fileStructure" },
   { command: "review.changeCard" },
   { command: "review.jumpToSource" },
   "-",

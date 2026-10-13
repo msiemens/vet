@@ -71,9 +71,10 @@ export function mainMenuSpec(s: MenuState): MenuSpec {
       items: [
         ...["changes", "all", "commits", "comments"].map((id) => toolItem(s, id)),
         "-",
-        toolItem(s, "symbol"),
-        "-",
         toolItem(s, "timeline"),
+        "-",
+        toolItem(s, "symbol"),
+        toolItem(s, "structure"),
       ],
     },
     "-",

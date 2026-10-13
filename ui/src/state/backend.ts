@@ -20,6 +20,7 @@ import type { Diagnostic } from "../generated/Diagnostic";
 import type { DirEntry } from "../generated/DirEntry";
 import type { EditChoice } from "../generated/EditChoice";
 import type { Event as ServerEvent } from "../generated/Event";
+import type { FileOutline } from "../generated/FileOutline";
 import type { FileSymbols } from "../generated/FileSymbols";
 import type { Lens } from "../generated/Lens";
 import type { LineDelta } from "../generated/LineDelta";
@@ -602,6 +603,15 @@ export class Backend {
   async fileSymbols(revision: number, path: string, signal?: AbortSignal): Promise<FileSymbols> {
     const request = { type: "fileSymbols", project: this.pid, revision, path } as const;
     return expect(await this.semantic(revision, request, signal), "fileSymbols");
+  }
+
+  /**
+   * Every symbol of the file `path` as `view` shows it, as of `revision` (the manifest's; a stale one
+   * is rejected); `unavailable` says why there are none.
+   */
+  async fileOutline(revision: number, view: View, path: string, signal?: AbortSignal): Promise<FileOutline> {
+    const request = { type: "fileOutline", project: this.pid, view, revision, path } as const;
+    return expect(await this.semantic(revision, request, signal), "fileOutline");
   }
 
   /**

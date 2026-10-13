@@ -26,6 +26,7 @@ export const reviewActions: ReviewActions = {
   showCard: () => live().showCard?.() ?? false,
   jumpToSource: () => live().jumpToSource?.() ?? false,
   stepCommit: (delta) => live().stepCommit?.(delta) ?? false,
+  toggleStructure: () => live().toggleStructure?.() ?? false,
   setViewMode: (mode) => live().setViewMode?.(mode),
   copyText: (text) => live().copyText?.(text),
   excludePath: (path, dir) => live().excludePath?.(path, dir),

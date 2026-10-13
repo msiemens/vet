@@ -8,6 +8,7 @@ import type { ChangedSymbol } from "../../generated/ChangedSymbol";
 import type { CheckRun } from "../../generated/CheckRun";
 import type { CommitUnit } from "../../generated/CommitUnit";
 import type { Side } from "../../generated/Side";
+import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { TextSpan } from "../../generated/TextSpan";
 import { isAbort } from "../../lib/abort";
 import type { LocationRow } from "../../generated/LocationRow";
@@ -26,6 +27,7 @@ import { serverList } from "../../state/serverList.svelte";
 import { languageOf, withoutImplementations } from "../../state/serverStatus";
 import { session } from "../../state/session.svelte";
 import { STALE_NOTICE, type Shown, isCurrent } from "../../state/shown";
+import { type StructureTarget, structure } from "../../state/structure.svelte";
 import { symbols } from "../../state/symbols.svelte";
 import { threads } from "../../state/threads.svelte";
 import { rangeKey } from "../../state/timelineRange";
@@ -233,6 +235,7 @@ export class ReviewController {
       diagnostics: (revision, path) =>
         this.analysable(id, "target") ? semantic.diagnostics(revision, path) : Promise.resolve([]),
       cursor: (revision, side, path, line, col) => {
+        structure.cursor(id, side, path, line, col);
         if (this.analysable(id, side)) symbols.follow(revision, side, path, line, col);
       },
     };
@@ -311,6 +314,26 @@ export class ReviewController {
   /** Starts reading the scopes the open tabs need. */
   private ensureScopes() {
     for (const id of this.tabs.open) this.sourceOf(id);
+  }
+
+  /**
+   * The file the Structure tool shows and the view it reads it in: the active file tab's, the file
+   * at the top of the Changes tab, none for a log. Reading it subscribes to the view's layout.
+   */
+  structureTarget(): StructureTarget | undefined {
+    const id = this.tabs.active;
+    const path = pathOf(id) ?? (id === CHANGES ? this.tabs.changesFile : undefined);
+    const shown = path === undefined ? undefined : this.sourceOf(id).currentShown();
+    if (path === undefined || !shown) return undefined;
+    // The Symbol panel works on the changeset's snapshots, which no commit on screen has.
+    const panel =
+      shown.view.type === "changeset" && this.changeset.shownCommit === undefined && this.analysable(id, "target");
+    return { tab: id, path, commit: commitOf(id), shown, panel };
+  }
+
+  /** Shows a symbol of the Structure list where it is declared, in the file's tab (the base side's text for a removed one). */
+  async jumpToOutlineSymbol(symbol: SymbolInfo, removed: boolean) {
+    await this.openLocation(this.tabs.active, symbol.id.path, symbol.at.line, removed ? "base" : "target");
   }
 
   /** The tabs that read `scope`. */
@@ -501,6 +524,11 @@ export class ReviewController {
         return true;
       },
       stepCommit: (delta) => this.changeset.stepCommit(delta),
+      toggleStructure: () => {
+        if (!structure.target) return false;
+        structure.popup = !structure.popup;
+        return true;
+      },
       setViewMode: (mode) => void this.setViewMode(mode),
     };
   }
