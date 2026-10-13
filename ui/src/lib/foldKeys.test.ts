@@ -44,6 +44,14 @@ void test("← from a row skips its siblings to the row that holds it", () => {
   assert.deepEqual(arrowKey(rows, 2, "left", folding), { move: 0 });
 });
 
+void test("← on a row that does not leave stays put even with a holder above", () => {
+  const rows: Row[] = [
+    { kind: "file", depth: 1, open: true, holds: true },
+    { kind: "file", depth: 2, open: false, holds: false },
+  ];
+  assert.equal(arrowKey(rows, 1, "left", folding), undefined);
+});
+
 void test("toggling a key puts it in a set that lacks it and takes it out of one that has it", () => {
   const set = new Set(["a"]);
   toggleIn(set, "b");
