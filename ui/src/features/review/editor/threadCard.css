@@ -255,14 +255,13 @@
 }
 .vet-thread-place {
   min-width: 0;
-  display: inline-flex;
   padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--fs-mono-s);
   color: var(--accent);
-}
-.vet-thread-place .path-text {
-  min-width: 0;
 }
 .vet-thread-new {
   display: inline-flex;
@@ -303,7 +302,7 @@
   font-size: 11.5px;
 }
 .vet-thread-folded .vet-thread-place {
-  flex: 0 1 45%;
+  flex: none;
 }
 
 /* A comment's markdown. */

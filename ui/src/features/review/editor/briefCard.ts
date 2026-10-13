@@ -29,13 +29,9 @@ export interface BriefOptions {
 function placeButton(brief: BriefOptions): HTMLElement {
   if (!brief.place) return el("span", "vet-thread-place", "Changeset");
   const { path, suffix } = brief.place;
-  const parts = splitPath(path);
-  const button = el("button", "flat vet-thread-place");
+  const button = el("button", "flat vet-thread-place", splitPath(path).name + suffix);
   button.type = "button";
   button.title = path;
-  const text = el("span", "path-text");
-  text.append(el("span", "dir", parts.dir), el("span", "name", parts.name + suffix));
-  button.append(text);
   button.addEventListener("click", (e) => {
     e.stopPropagation();
     brief.openThread();

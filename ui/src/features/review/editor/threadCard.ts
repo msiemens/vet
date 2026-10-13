@@ -326,8 +326,11 @@ export function foldedSummary(thread: Thread) {
   };
 }
 
-/** A resolved thread, folded to the row that says who started it and what they said; `extra` ends the row. */
-export function foldedCard(thread: Thread, toggle: () => void, extra?: HTMLElement): HTMLElement {
+/**
+ * A resolved thread, folded to the row that says who started it and what they said. A narrow row (`place`:
+ * where the thread is) leaves out who took part and who resolved it, and ends with the place.
+ */
+export function foldedCard(thread: Thread, toggle: () => void, place?: HTMLElement): HTMLElement {
   const summary = foldedSummary(thread);
   const card = el("div", "vet-thread-card vet-thread-folded");
   card.addEventListener("click", toggle);
@@ -337,11 +340,15 @@ export function foldedCard(thread: Thread, toggle: () => void, extra?: HTMLEleme
   const preview = el("span", "vet-thread-preview");
   preview.append(el("span", "vet-msg-author", summary.author), `: ${summary.text}`);
   card.append(chevron, ok, preview);
+  if (place) {
+    if (summary.count) card.append(el("span", "vet-thread-count", String(thread.messages.length)));
+    card.append(place);
+    return slot(card);
+  }
   if (summary.count) card.append(el("span", "vet-thread-count", summary.count));
   const stack = el("span", "vet-avatar-stack");
   stack.append(...summary.participants.slice(0, 3).map((p) => avatar(p.author, p.picture)));
   card.append(stack, el("span", "vet-thread-by", summary.resolved));
-  if (extra) card.append(extra);
   return slot(card);
 }
 

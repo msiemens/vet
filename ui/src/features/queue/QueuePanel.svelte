@@ -218,7 +218,7 @@
           <div class="body">
             <div class="line">
               <span
-                ><b>{summary.state}</b>{#if summary.detail}<span class="muted"> · {summary.detail}</span>{/if}</span
+                ><b>{summary.state}</b>{#if summary.detail}<span class="muted detail">{summary.detail}</span>{/if}</span
               >
               <span class="grow"></span>
               {#if summary.percent !== undefined}<span class="mono pct">{summary.percent} %</span>{/if}
@@ -265,7 +265,7 @@
 
         {#if head?.runs.length}
           {#snippet checksBody()}
-            <CheckRuns runs={failedFirst(head.runs)} onlog={onopenlog} markFailed />
+            <div class="runs"><CheckRuns runs={failedFirst(head.runs)} onlog={onopenlog} markFailed /></div>
           {/snippet}
           {#snippet foldedChecks()}
             <CiStatus state={head.state} size={12} />{passed(head).passed} passed
@@ -353,8 +353,10 @@
   .why.bad {
     color: var(--del-text);
   }
-  .part + .part::before {
-    content: "· ";
+  .part + .part::before,
+  .detail::before {
+    content: "·";
+    margin: 0 0.4em;
   }
   .part b {
     font-weight: 600;
@@ -414,6 +416,10 @@
     margin-top: 8px;
     border-radius: 2px;
     background: var(--old-base-stripes);
+  }
+  /* The runs start under the section's title, not under its chevron. */
+  .runs {
+    padding-left: var(--w-chev);
   }
   .cards {
     display: flex;
