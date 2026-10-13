@@ -38,8 +38,8 @@
       project</label
     >
     <p class="hint">
-      Dependencies of its changesets are installed with their install scripts, and language servers may run its code, as
-      for your own. A pull request from a fork still needs to be trusted on its own.
+      Lets Vet run this project's install scripts and build tools while analysing it. Pull requests from forks still
+      need to be trusted one by one.
     </p>
     <p class="hint">
       What a review shows and counts in this repository. It applies to every changeset of it and never changes review
