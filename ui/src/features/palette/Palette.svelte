@@ -151,11 +151,16 @@
   const asksServers = $derived(
     palette.unchanged && typed !== "" && revision !== undefined && SYMBOL_TABS.includes(palette.tab),
   );
-  /** What the servers found for the query as it stands. */
-  const found = $derived(palette.served?.query === typed ? palette.served.languages : []);
+  /** What the servers found for the query as it stands, on the revision on view. */
+  const answer = $derived(
+    palette.served?.query === typed && palette.served.revision === revision ? palette.served : undefined,
+  );
+  const found = $derived(answer?.languages ?? []);
+  /** The changed files whose changed symbols are not known: the servers' symbols in them could be changed ones. */
+  const unsettled = $derived(new Set(changeset.paths.filter((p) => symbols.files.get(p)?.state !== "done")));
   const candidates: Candidates = $derived({
     file: palette.unchanged ? [...files, ...others] : files,
-    symbol: [...symbolList, ...serverSymbolCandidates(found, symbolList)],
+    symbol: [...symbolList, ...serverSymbolCandidates(found, symbolList, unsettled)],
     changeset: changesets,
     thread: threadCandidates(threads.items),
     action: actions,
@@ -164,7 +169,7 @@
   const built = $derived(
     build(palette.tab, palette.query, candidates, palette.recent, {
       files: palette.unchanged && palette.listing && !palette.files,
-      symbols: asksServers && palette.served?.query !== typed,
+      symbols: asksServers && !answer,
     }),
   );
   const failed = $derived(failedServers(found, serverList.servers));
@@ -202,8 +207,11 @@
     }
     const query = typed;
     const at = revision;
-    const timer = setTimeout(() => void palette.searchSymbols(query, at), SERVER_PAUSE_MS);
-    return () => clearTimeout(timer);
+    const timer = setTimeout(() => palette.searchSymbols(query, at), SERVER_PAUSE_MS);
+    return () => {
+      clearTimeout(timer);
+      palette.cancelSymbols();
+    };
   });
   const findOff = $derived(commands.disabledReason(FIND_IN_FILES) ?? "");
   const hint = $derived(
@@ -564,11 +572,20 @@
     {/each}
     {#each failed as f (f.language)}
       <div class="note">
-        <span class="msg" title={f.failure}>{f.server} could not search: {f.failure}</span>
-        <button class="ctl" type="button" tabindex="-1" onclick={() => void serverList.restart(f.language)}
-          >Restart</button
-        >
-        <button class="ctl" type="button" tabindex="-1" onclick={() => finish(onsettings)}>Settings</button>
+        <span class="msg" title={f.message}>{f.server} could not search: {f.message}</span>
+        {#if f.actions.includes("restart")}
+          <button class="ctl" type="button" tabindex="-1" onclick={() => void serverList.restart(f.language)}
+            >Restart</button
+          >
+        {/if}
+        {#if f.actions.includes("trust")}
+          <button class="ctl" type="button" tabindex="-1" onclick={() => void changeset.trustPullRequest()}
+            >Trust this PR</button
+          >
+        {/if}
+        {#if f.actions.includes("settings")}
+          <button class="ctl" type="button" tabindex="-1" onclick={() => finish(onsettings)}>Settings</button>
+        {/if}
       </div>
     {/each}
     {#each indexing as text (text)}<div class="note"><span class="msg">{text}</span></div>{/each}

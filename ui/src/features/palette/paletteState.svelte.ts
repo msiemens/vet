@@ -1,13 +1,12 @@
 // Search Everywhere's state: whether the popup is up, its tab and query, what was chosen lately in
 // the open project, and the viewer's two settings. The popup (`Palette.svelte`) draws it.
 
-import type { LanguageSymbols } from "../../generated/LanguageSymbols";
-import { isAbort } from "../../lib/abort";
 import { errorText } from "../../lib/errorText";
 import { readStored, writeStored } from "../../lib/storage";
 import { type CommandContext, commands } from "../../state/commands";
 import { session } from "../../state/session.svelte";
 import { type PaletteTab, remember } from "./paletteRows";
+import { type Found, SymbolSearch } from "./symbolSearch";
 
 const UNCHANGED_KEY = "vet.palette.unchanged";
 const recentKey = (repo: string) => `vet.palette.recent:${repo}`;
@@ -42,11 +41,21 @@ class PaletteState {
   listing = $state(false);
   /** Only the latest request for the file list counts. */
   private asked = 0;
-  /** What the language servers found for `query`; none until they answer. */
-  served = $state.raw<{ query: string; languages: LanguageSymbols[] }>();
-  /** The servers are being asked. */
-  serving = $state(false);
-  private serverAsk?: AbortController;
+  /** What the language servers found for a query on a revision; none until they answer. */
+  served = $state.raw<Found>();
+  private readonly search = new SymbolSearch(
+    (query, revision, signal) => {
+      const backend = session.backend;
+      return backend ? backend.workspaceSymbols(revision, query, signal) : Promise.resolve([]);
+    },
+    {
+      apply: (found) => (this.served = found),
+      fail: (query, revision, error) => {
+        this.served = { query, revision, languages: [] };
+        session.notice = `Could not search the symbols: ${errorText(error)}`;
+      },
+    },
+  );
 
   constructor() {
     session.onClose(() => {
@@ -57,33 +66,20 @@ class PaletteState {
     });
   }
 
-  /** Asks the language servers for the symbols named like `query`; the previous ask is cancelled. */
-  async searchSymbols(query: string, revision: number) {
-    const backend = session.backend;
-    if (!backend) return;
-    this.serverAsk?.abort();
-    const ask = new AbortController();
-    this.serverAsk = ask;
-    this.serving = true;
-    try {
-      const languages = await backend.workspaceSymbols(revision, query, ask.signal);
-      if (this.serverAsk === ask) this.served = { query, languages };
-    } catch (error) {
-      if (this.serverAsk === ask && !isAbort(error)) {
-        this.served = { query, languages: [] };
-        session.notice = `Could not search the symbols: ${errorText(error)}`;
-      }
-    } finally {
-      if (this.serverAsk === ask) this.serving = false;
-    }
+  /** Asks the language servers for the symbols named like `query`; the search under way is cancelled. */
+  searchSymbols(query: string, revision: number) {
+    this.search.search(query, revision);
+  }
+
+  /** Stops the search under way, keeping what it found before. */
+  cancelSymbols() {
+    this.search.cancel();
   }
 
   /** Drops what the servers found and stops asking them. */
   forgetSymbols() {
-    this.serverAsk?.abort();
-    this.serverAsk = undefined;
+    this.search.cancel();
     this.served = undefined;
-    this.serving = false;
   }
 
   setUnchanged(on: boolean) {

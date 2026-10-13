@@ -8,6 +8,7 @@ import type { ServerInfo } from "../../generated/ServerInfo";
 import type { SymbolInfo } from "../../generated/SymbolInfo";
 import type { Task } from "../../generated/Task";
 import type { Thread } from "../../generated/Thread";
+import type { UnavailableKind } from "../../generated/UnavailableKind";
 import { splitQualified } from "../../lib/qualified.ts";
 import { shortLabel } from "../../lib/symbolLabel.ts";
 import { fractionOf } from "../../state/taskHeadline.ts";
@@ -65,22 +66,26 @@ export function symbolCandidates(
   return out;
 }
 
-const symbolKey = (symbol: SymbolInfo) => `${symbol.id.path}#${symbol.id.name.join("\0")}`;
+/** Names a declaration: its place too, since overloads share a name. */
+const symbolKey = (symbol: SymbolInfo) =>
+  `${symbol.id.path}#${symbol.id.name.join("\0")}@${symbol.at.line}:${symbol.at.col}`;
 
 /**
  * The symbols the language servers found by name that the changeset did not change. One the changed
- * symbols already hold is theirs, listed once and as changed.
+ * symbols already hold is theirs, listed once and as changed. A file of the changeset whose changed
+ * symbols are not known (`unsettled`) has none listed: they could be changed ones.
  */
 export function serverSymbolCandidates(
   languages: readonly LanguageSymbols[],
   changed: readonly SymbolCandidate[],
+  unsettled: ReadonlySet<string>,
 ): SymbolCandidate[] {
-  const taken = new Set(changed.map((c) => symbolKey(c.info)));
+  const taken = new Set(changed.filter((c) => c.change !== "removed").map((c) => symbolKey(c.info)));
   const out: SymbolCandidate[] = [];
   for (const { symbols } of languages) {
     for (const symbol of symbols) {
       const key = symbolKey(symbol);
-      if (taken.has(key)) continue;
+      if (taken.has(key) || unsettled.has(symbol.id.path)) continue;
       taken.add(key);
       const label = shortLabel(symbol);
       out.push({
@@ -98,19 +103,43 @@ export function serverSymbolCandidates(
   return out;
 }
 
-/** The languages whose server could not answer, with the server's name and why. */
-export function failedServers(
-  languages: readonly LanguageSymbols[],
-  servers: readonly ServerInfo[],
-): { language: string; server: string; failure: string }[] {
-  return languages.flatMap((l) =>
-    l.failure === null
+/** What the viewer can do about a server that could not answer. */
+export type FailureAction = "restart" | "settings" | "trust";
+
+export interface ServerFailure {
+  language: string;
+  server: string;
+  message: string;
+  actions: FailureAction[];
+}
+
+/** The ways out of a failure of `kind`: a restart cannot fix a server that is missing or not allowed to run. */
+function actionsFor(kind: UnavailableKind): FailureAction[] {
+  switch (kind) {
+    case "serverFailed":
+    case "queryFailed":
+      return ["restart", "settings"];
+    case "serverMissing":
+      return ["settings"];
+    case "analysisLimited":
+      return ["trust"];
+    case "unsupported":
+    case "snapshotUnavailable":
+      return [];
+  }
+}
+
+/** The languages whose server could not answer, with the server's name, why, and what can be done. */
+export function failedServers(languages: readonly LanguageSymbols[], servers: readonly ServerInfo[]): ServerFailure[] {
+  return languages.flatMap(({ language, failure }) =>
+    failure === null
       ? []
       : [
           {
-            language: l.language,
-            server: servers.find((s) => s.language === l.language)?.server ?? l.language,
-            failure: l.failure,
+            language,
+            server: servers.find((s) => s.language === language)?.server ?? language,
+            message: failure.message,
+            actions: actionsFor(failure.kind),
           },
         ],
   );

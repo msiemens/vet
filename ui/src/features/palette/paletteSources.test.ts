@@ -5,6 +5,8 @@ import type { LanguageSymbols } from "../../generated/LanguageSymbols";
 import type { ServerInfo } from "../../generated/ServerInfo";
 import type { Task } from "../../generated/Task";
 import type { Thread } from "../../generated/Thread";
+import type { Unavailable } from "../../generated/Unavailable";
+import type { UnavailableKind } from "../../generated/UnavailableKind";
 import {
   actionCandidates,
   failedServers,
@@ -12,7 +14,6 @@ import {
   serverSymbolCandidates,
   symbolCandidates,
   threadCandidates,
-  unchangedCandidates,
 } from "./paletteSources.ts";
 
 const symbol = (path: string, name: string[], change: ChangedSymbol["change"] = "modified"): ChangedSymbol => ({
@@ -46,17 +47,6 @@ void test("a member symbol is named after its container in its language's way, a
   assert.equal(found[0].change, "modified");
 });
 
-void test("the unchanged files are those of the project the changeset does not change", () => {
-  const found = unchangedCandidates(["a.rs", "b.rs", "c.rs"], new Set(["b.rs"]));
-  assert.deepEqual(
-    found.map((f) => [f.path, f.changed]),
-    [
-      ["a.rs", false],
-      ["c.rs", false],
-    ],
-  );
-});
-
 void test("two symbols of one name that changed differently are two candidates", () => {
   const found = symbolCandidates([
     { symbols: [symbol("a.rs", ["f"], "removed"), symbol("a.rs", ["f"], "added")], seen: 0 },
@@ -64,17 +54,24 @@ void test("two symbols of one name that changed differently are two candidates",
   assert.equal(new Set(found.map((s) => s.key)).size, 2);
 });
 
-const answer = (language: string, symbols: ChangedSymbol[], failure: string | null = null): LanguageSymbols => ({
+const failure = (kind: UnavailableKind, message = "why"): Unavailable => ({ kind, label: "", message, language: null });
+const answer = (language: string, symbols: ChangedSymbol[], failed: Unavailable | null = null): LanguageSymbols => ({
   language,
   symbols: symbols.map((s) => s.symbol),
-  failure,
+  failure: failed,
 });
+const at = (changed: ChangedSymbol, line: number): ChangedSymbol => ({
+  ...changed,
+  symbol: { ...changed.symbol, at: { line, col: 7 } },
+});
+const nothing: ReadonlySet<string> = new Set();
 
 void test("a symbol both the changeset and a server hold is listed once, as the changed one", () => {
   const changed = symbolCandidates([{ symbols: [symbol("a.rs", ["f"], "added")], seen: 0 }]);
   const found = serverSymbolCandidates(
     [answer("rust", [symbol("a.rs", ["f"]), symbol("b.rs", ["g"]), symbol("b.rs", ["g"])])],
     changed,
+    nothing,
   );
   assert.deepEqual(
     found.map((s) => [s.info.id.path, s.label, s.change, s.fromServer]),
@@ -82,10 +79,60 @@ void test("a symbol both the changeset and a server hold is listed once, as the 
   );
 });
 
-void test("a language whose server failed is named by its server, with why", () => {
-  const servers = [{ language: "python", server: "Pyright" }] as ServerInfo[];
-  const found = failedServers([answer("rust", []), answer("python", [], "not installed")], servers);
-  assert.deepEqual(found, [{ language: "python", server: "Pyright", failure: "not installed" }]);
+void test("an overload of a changed symbol is another symbol, and a removed symbol hides none", () => {
+  const changed = symbolCandidates([
+    { symbols: [symbol("A.cs", ["Run"], "modified"), at(symbol("A.cs", ["Gone"], "removed"), 70)], seen: 0 },
+  ]);
+  const found = serverSymbolCandidates(
+    [answer("csharp", [symbol("A.cs", ["Run"]), at(symbol("A.cs", ["Run"]), 80), at(symbol("A.cs", ["Gone"]), 70)])],
+    changed,
+    nothing,
+  );
+  assert.deepEqual(
+    found.map((s) => [s.label, s.info.at.line]),
+    [
+      ["Run", 80],
+      ["Gone", 70],
+    ],
+  );
+});
+
+void test("the servers' symbols of a file whose changed symbols are not known are left out", () => {
+  const found = serverSymbolCandidates(
+    [answer("rust", [symbol("a.rs", ["f"]), symbol("b.rs", ["g"])])],
+    [],
+    new Set(["a.rs"]),
+  );
+  assert.deepEqual(
+    found.map((s) => s.info.id.path),
+    ["b.rs"],
+  );
+});
+
+void test("a language whose server failed is named by its server, with why and what can be done", () => {
+  const servers = [
+    { language: "python", server: "Pyright" },
+    { language: "go", server: "gopls" },
+    { language: "csharp", server: "Roslyn" },
+    { language: "rust", server: "rust-analyzer" },
+  ] as ServerInfo[];
+  const found = failedServers(
+    [
+      answer("rust", []),
+      answer("python", [], failure("serverMissing", "not installed")),
+      answer("go", [], failure("analysisLimited")),
+      answer("csharp", [], failure("serverFailed")),
+    ],
+    servers,
+  );
+  assert.deepEqual(
+    found.map((f) => [f.server, f.message, f.actions]),
+    [
+      ["Pyright", "not installed", ["settings"]],
+      ["gopls", "why", ["trust"]],
+      ["Roslyn", "why", ["restart", "settings"]],
+    ],
+  );
 });
 
 const server = { language: "rust", server: "rust-analyzer" } as ServerInfo;
@@ -98,7 +145,10 @@ void test("a server still indexing is said to make the symbols incomplete, a fai
     "rust-analyzer is still indexing (62%). Symbols of unchanged files may be incomplete.",
   ]);
   assert.deepEqual(indexingNotes(ok, [server], [indexing("Indexing Pyright")]), []);
-  assert.deepEqual(indexingNotes([answer("rust", [], "boom")], [server], [indexing("Indexing rust-analyzer")]), []);
+  assert.deepEqual(
+    indexingNotes([answer("rust", [], failure("serverFailed"))], [server], [indexing("Indexing rust-analyzer")]),
+    [],
+  );
 });
 
 const thread = (over: Partial<Thread>): Thread =>
